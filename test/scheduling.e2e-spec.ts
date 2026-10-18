@@ -1,6 +1,9 @@
 import request from 'supertest';
+import { AxiosError } from 'axios';
+import { throwError } from 'rxjs';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
 import { forgetStaffingWorld, givenStaffingWorld } from './utils/staffing-world';
+import { recordedReads } from './utils/recorded-reads';
 
 /**
  * Generation and day-to-day schedule editing over HTTP: optimization jobs,
@@ -185,6 +188,217 @@ describe('Scheduling surface (e2e)', () => {
           }),
         });
         expect(harness.http.post).not.toHaveBeenCalled();
+      });
+    });
+
+    /*
+     * Lärarens dag: a refusal about a post's days carries HR data (Roller i
+     * skolan), and a run is read by every administrator. Stored without the
+     * figure; worded per reader when read (src/optimization/work-days.ts):
+     * rektor reads the days and the teacher, a schemaläggare without HR-läs
+     * neither — not in the sentence, not in a param, not anywhere in the body.
+     */
+    describe('a refusal about a post’s days', () => {
+      const EVA = '12121212-eeee-4eee-8eee-121212121212';
+      const POST = '13131313-eeee-4eee-8eee-131313131313';
+      const HIDDEN_ENGLISH =
+        "A teacher's limit on how many days a week they teach is one of the reasons the timetable could not be made. " +
+        'The limit is shown to the principal, a full administrator and anyone with HR read access.';
+      const rektor = () => asUser({ adminProfile: 'REKTOR' } as never);
+      const planner = () => asUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false } as never);
+      const evasPost = {
+        id: POST,
+        academicYearId: YEAR_ID,
+        userId: EVA,
+        maxTeachingDaysPerWeek: 3,
+        user: { firstName: 'Eva', lastName: 'Ek' },
+      };
+      const failedRun = {
+        id: VERSION_ID,
+        academicYearId: YEAR_ID,
+        status: 'FAILED',
+        solverStatus: null,
+        lessonsGenerated: 0,
+        conflictSummary: null,
+        conflictSummaryCode: null,
+        conflictSummaryParams: null,
+        conflicts: null,
+        notes: null,
+        // As run() stores the engine's pre-flight: no figure, the hidden
+        // English, Eva's Users id kept beside the params for the server.
+        error: HIDDEN_ENGLISH,
+        errorCode: 'TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK',
+        errorParams: { limit: POST, weekMinutes: 1500, subjectIds: [EVA] },
+        createdAt: new Date('2026-11-23T10:00:00.000Z'),
+        finishedAt: new Date('2026-11-23T10:00:02.000Z'),
+      };
+      const infeasibleRun = {
+        ...failedRun,
+        status: 'SUCCEEDED',
+        solverStatus: 'INFEASIBLE',
+        conflictSummary: '1 cause',
+        conflictSummaryCode: 'CONFLICT_CORE_SUMMARY',
+        conflictSummaryParams: { count: 1 },
+        conflicts: [
+          {
+            category: 'TEACHER_OVERLAP',
+            code: 'TEACHER_WORK_DAYS_CANNOT_BE_KEPT',
+            params: { limit: POST },
+            message: HIDDEN_ENGLISH,
+            resourceNames: [],
+            subjectIds: [EVA],
+          },
+        ],
+        error: null,
+        errorCode: null,
+        errorParams: null,
+      };
+
+      afterEach(() => {
+        harness.tx['optimizationJob']!['findUnique']!.mockReset();
+        harness.tx['optimizationJob']!['findMany']!.mockReset().mockResolvedValue([]);
+        harness.tx['teacherEmployment']!['findMany']!.mockReset().mockResolvedValue([]);
+        harness.tx['teachingRequirement']!['findMany']!.mockReset().mockResolvedValue([]);
+      });
+
+      it('shows rektor the failed run with the days read back from the post, and logs the read', async () => {
+        harness.tx['optimizationJob']!['findUnique']!.mockResolvedValue(failedRun);
+        harness.tx['teacherEmployment']!['findMany']!.mockResolvedValue([evasPost]);
+
+        const response = await request(http())
+          .get(`/api/v1/optimization/jobs/${VERSION_ID}`)
+          .set('x-test-user', rektor())
+          .expect(200);
+
+        expect(response.body).toMatchObject({
+          status: 'FAILED',
+          errorCode: 'TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK',
+          errorParams: { limit: POST, weekMinutes: 1500, days: 3 },
+          // `limit` is a post's id, which no screen resolves: whose post it
+          // is stands beside the sentence, as a conflict's resourceNames.
+          errorNames: ['Eva Ek'],
+          conflictSummaryNames: [],
+          notes: [],
+        });
+        expect(JSON.stringify(response.body)).not.toContain(EVA);
+        expect(recordedReads(harness.tx)).toEqual([expect.objectContaining({ kind: 'EMPLOYMENT', ids: [EVA] })]);
+      });
+
+      it('shows rektor a refused week’s days sentence with the teacher named', async () => {
+        harness.tx['optimizationJob']!['findMany']!.mockResolvedValue([infeasibleRun]);
+        harness.tx['teacherEmployment']!['findMany']!.mockResolvedValue([evasPost]);
+
+        const response = await request(http())
+          .get(`/api/v1/optimization/jobs?academicYearId=${YEAR_ID}`)
+          .set('x-test-user', rektor())
+          .expect(200);
+
+        expect(response.body[0].conflicts).toEqual([
+          {
+            category: 'TEACHER_OVERLAP',
+            code: 'TEACHER_WORK_DAYS_CANNOT_BE_KEPT',
+            params: { limit: POST, days: 3 },
+            message: HIDDEN_ENGLISH,
+            resourceNames: ['Eva Ek'],
+          },
+        ]);
+        // Named once, on the sentence about her: the summary counts causes.
+        expect(response.body[0]).toMatchObject({ conflictSummaryNames: [], errorNames: [] });
+      });
+
+      it.each([
+        ['the run', () => request(http()).get(`/api/v1/optimization/jobs/${VERSION_ID}`), failedRun],
+        ['the history', () => request(http()).get(`/api/v1/optimization/jobs?academicYearId=${YEAR_ID}`), infeasibleRun],
+      ])('shows a schemaläggare without HR-läs %s with no days, no post and no teacher anywhere', async (_what, ask, run) => {
+        harness.tx['optimizationJob']!['findUnique']!.mockResolvedValue(run);
+        harness.tx['optimizationJob']!['findMany']!.mockResolvedValue([run]);
+        // Were the posts read, they would say all of it.
+        harness.tx['teacherEmployment']!['findMany']!.mockResolvedValue([evasPost]);
+
+        const response = await ask().set('x-test-user', planner()).expect(200);
+
+        // Both lists there, and nobody in them.
+        const view = Array.isArray(response.body) ? response.body[0] : response.body;
+        expect(view).toMatchObject({ errorNames: [], conflictSummaryNames: [] });
+        const body = JSON.stringify(response.body);
+        expect(body).toContain('TEACHER_WORK_DAYS_HIDDEN');
+        expect(body).not.toMatch(/TEACHER_WORK_DAYS_(TOO_FEW|CANNOT)|"days"|Eva|subjectIds/);
+        expect(body).not.toContain(EVA);
+        expect(body).not.toContain(POST);
+        expect(body).not.toContain('1500');
+        expect(harness.tx['teacherEmployment']!['findMany']).not.toHaveBeenCalled();
+        expect(recordedReads(harness.tx)).toEqual([]);
+      });
+
+      describe('from the synchronous trigger', () => {
+        const refuseOverEvasDays = () => {
+          harness.tx['teachingRequirement']!['findMany']!.mockResolvedValue([
+            {
+              id: '14141414-eeee-4eee-8eee-141414141414',
+              subjectId: SUBJECT_ID,
+              studentGroupId: GROUP_ID,
+              teacherId: EVA,
+              coTeacherId: null,
+              lessonsPerWeek: 3,
+              minutesPerLesson: 60,
+              lessonLengths: [],
+              minutesBefore: 0,
+              minutesAfter: 0,
+              recurrence: 'ALL_WEEKS',
+              startDate: null,
+              endDate: null,
+              subject: { requiredRoomTypeId: null, name: 'Matematik' },
+            },
+          ]);
+          harness.tx['teacherEmployment']!['findMany']!.mockResolvedValue([evasPost]);
+          harness.http.post.mockImplementationOnce((_url: string, payload: { teacherDayLimits: { id: string }[] }) => {
+            const refused = new AxiosError('boom');
+            refused.response = {
+              status: 400,
+              data: {
+                code: 'INVALID_SCHEDULE_INPUT',
+                message: `The teacher's post ${payload.teacherDayLimits[0]!.id} allows teaching on at most 3 days a week …`,
+                details: {
+                  code: 'TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK',
+                  params: { limit: payload.teacherDayLimits[0]!.id, days: 3, weekMinutes: 180 },
+                },
+              },
+            } as never;
+            return throwError(() => refused);
+          });
+        };
+
+        it('answers a schemaläggare without HR-läs with the hidden sentence', async () => {
+          refuseOverEvasDays();
+
+          const response = await request(http())
+            .post('/api/v1/optimization/trigger')
+            .set('x-test-user', planner())
+            .send({ academicYearId: YEAR_ID })
+            .expect(400);
+
+          expect(response.body).toMatchObject({ code: 'TEACHER_WORK_DAYS_HIDDEN', detail: HIDDEN_ENGLISH });
+          const body = JSON.stringify(response.body);
+          expect(body).not.toMatch(/"days"|3 days|TOO_FEW/);
+          expect(body).not.toContain(EVA);
+          expect(body).not.toContain(POST);
+        });
+
+        it('answers rektor with the days read back from the post', async () => {
+          refuseOverEvasDays();
+
+          const response = await request(http())
+            .post('/api/v1/optimization/trigger')
+            .set('x-test-user', rektor())
+            .send({ academicYearId: YEAR_ID })
+            .expect(400);
+
+          expect(response.body).toMatchObject({
+            code: 'TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK',
+            params: { limit: POST, weekMinutes: 180, days: 3 },
+          });
+          expect(JSON.stringify(response.body)).not.toContain(EVA);
+        });
       });
     });
 

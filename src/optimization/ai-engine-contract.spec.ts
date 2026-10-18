@@ -68,6 +68,25 @@ const WORK_RULE_FIELDS = [
   'teacherId',
 ];
 
+/**
+ * Lärarens dag on the work rule: the daily cap and the free-day wish, each
+ * sent only when the rule sets it, so WORK_RULE_FIELDS above stays the pin of
+ * every rule written before them. optimization-engine/tests/test_optimize.py's
+ * `_field_names(AnonymousTeacherWorkRule)` must equal THIS set: the engine
+ * declares every optional field either way.
+ */
+const WORK_RULE_FIELDS_DAY = [...WORK_RULE_FIELDS, 'maxTeachingMinutesPerDay', 'preferredFreeDay'].sort();
+
+/**
+ * Deltid in days, its own list and its own id space (the post's, kept and
+ * reversed), so a refusal about it can be told from a cap's and masked for a
+ * reader without HR-läs. The engine's `_field_names(AnonymousTeacherDayLimit)`.
+ */
+const DAY_LIMIT_FIELDS = ['id', 'maxTeachingDaysPerWeek', 'teacherId'];
+
+/** The top level with a day limit sent: the key exists only then. */
+const PAYLOAD_FIELDS_WITH_DAY_LIMITS = [...PAYLOAD_FIELDS, 'teacherDayLimits'].sort();
+
 /** A sitting names a span of years, so there is nothing here to anonymise. */
 const SERVING_FIELDS = [
   'dayOfWeek',
@@ -251,6 +270,10 @@ describe('AI engine wire contract', () => {
         lunchStartTime: new Date('1970-01-01T10:30:00.000Z'),
         lunchEndTime: new Date('1970-01-01T13:30:00.000Z'),
         minDailyRestMinutes: 660,
+        // As the columns default (20261123090000): no cap, no wish. Spelled
+        // out because the database answers null for them, never undefined.
+        maxTeachingMinutesPerDay: null,
+        preferredFreeDayOfWeek: null,
       },
     ]);
     tx['availabilityConstraint']!['findMany']!.mockResolvedValue([
@@ -326,7 +349,6 @@ describe('AI engine wire contract', () => {
     // duplicated the week.
     tx['calendarLesson']!['deleteMany']!.mockResolvedValue({ count: 0 });
     tx['masterLesson']!['create']!.mockResolvedValue({ id: 'ml-1' });
-    tx['masterLesson']!['count']!.mockResolvedValue(0);
     tx['scheduleChangeLog']!['create']!.mockResolvedValue({});
 
     let sent: Record<string, unknown> = {};
@@ -469,6 +491,86 @@ describe('AI engine wire contract', () => {
     // open. Both would be broken by forwarding the row's own ids.
     expect(rules[0]!['id']).not.toBe('wr-1');
     expect(rules[0]!['teacherId']).not.toBe('t1');
+  });
+
+  it('sends a school without a cap, a wish or a day limit the bytes it always sent', async () => {
+    /*
+     * "Off by default" is the data: every rule written before Lärarens dag
+     * has no cap and no wish, and no post limits its days. Byte-identical
+     * means the same keys IN THE SAME ORDER on the rule, no null for a new
+     * field (a null is a key an older engine 422s on as surely as a value),
+     * and no `teacherDayLimits` at all, not an empty list.
+     */
+    const payload = await buildPayload();
+    const rule = (payload['teacherWorkRules'] as Array<Record<string, unknown>>)[0]!;
+
+    expect(Object.keys(rule)).toEqual([
+      'id',
+      'teacherId',
+      'lunchMinutes',
+      'lunchStartTime',
+      'lunchEndTime',
+      'minDailyRestMinutes',
+    ]);
+    expect(JSON.stringify(rule)).toBe(
+      `{"id":"${String(rule['id'])}","teacherId":"${String(rule['teacherId'])}","lunchMinutes":30,` +
+        `"lunchStartTime":"10:30:00","lunchEndTime":"13:30:00","minDailyRestMinutes":660}`,
+    );
+    expect(Object.keys(payload).sort()).toEqual(PAYLOAD_FIELDS);
+    expect(JSON.stringify(payload)).not.toMatch(/teacherDayLimits|maxTeaching|preferredFreeDay/);
+  });
+
+  it('sends a rule’s cap and wish under the names the engine declares, and a rule holding only them', async () => {
+    const payload = await buildPayload({}, [], [], (tx) => {
+      tx['teacherWorkRule']!['findMany']!.mockResolvedValue([
+        {
+          id: 'wr-1',
+          userId: 't1',
+          lunchMinutes: 30,
+          lunchStartTime: new Date('1970-01-01T10:30:00.000Z'),
+          lunchEndTime: new Date('1970-01-01T13:30:00.000Z'),
+          minDailyRestMinutes: 660,
+          maxTeachingMinutesPerDay: 270,
+          preferredFreeDayOfWeek: 5,
+        },
+        {
+          // A cap alone: no lunch and no rest, and a rule all the same.
+          id: 'wr-2',
+          userId: 't1',
+          lunchMinutes: null,
+          lunchStartTime: null,
+          lunchEndTime: null,
+          minDailyRestMinutes: null,
+          maxTeachingMinutesPerDay: 300,
+          preferredFreeDayOfWeek: null,
+        },
+      ]);
+    });
+    const rules = payload['teacherWorkRules'] as Array<Record<string, unknown>>;
+
+    expect(Object.keys(rules[0]!).sort()).toEqual(WORK_RULE_FIELDS_DAY);
+    expect(rules[0]).toMatchObject({ maxTeachingMinutesPerDay: 270, preferredFreeDay: 5 });
+    expect(Object.keys(rules[1]!).sort()).toEqual([...WORK_RULE_FIELDS, 'maxTeachingMinutesPerDay'].sort());
+    expect(rules[1]).toMatchObject({ lunchMinutes: null, minDailyRestMinutes: null, maxTeachingMinutesPerDay: 300 });
+  });
+
+  it('sends a post’s day limit exactly as the engine declares it, under the key it declares', async () => {
+    const payload = await buildPayload({}, [], [], (tx) => {
+      tx['teacherEmployment']!['findMany']!.mockResolvedValue([
+        { id: 'post-1', userId: 't1', maxTeachingDaysPerWeek: 4 },
+      ]);
+    });
+    const limits = payload['teacherDayLimits'] as Array<Record<string, unknown>>;
+    const requirements = payload['requirements'] as Array<Record<string, unknown>>;
+
+    expect(Object.keys(payload).sort()).toEqual(PAYLOAD_FIELDS_WITH_DAY_LIMITS);
+    expect(limits).toHaveLength(1);
+    expect(Object.keys(limits[0]!).sort()).toEqual(DAY_LIMIT_FIELDS);
+    expect(limits[0]!['maxTeachingDaysPerWeek']).toBe(4);
+    // The teacher is the requirement's token, and neither id is a real one.
+    expect(limits[0]!['teacherId']).toBe(requirements[0]!['teacherId']);
+    expect(limits[0]!['id']).not.toBe('post-1');
+    expect(JSON.stringify(payload)).not.toMatch(/post-1|"t1"/);
   });
 
   it('sends exactly the frame fields the engine declares', async () => {

@@ -25,6 +25,8 @@ import {
   type AnonMaps,
 } from './optimization-proxy.service';
 import * as eligibility from './room-eligibility';
+import { WORK_DAYS_HIDDEN_MESSAGE, WorkDaysRefusal } from './work-days';
+import { recordedReads } from '../../test/utils/recorded-reads';
 
 const ACADEMIC_YEAR = '44444444-4444-4444-8444-444444444444';
 /** One requirement, as the database holds it and as the engine sees it. */
@@ -108,6 +110,12 @@ const matchesWhere = (row: Row, where: Row = {}): boolean =>
       case 'isGenerated':
       case 'kind':
         return row[key] === filter;
+      case 'maxTeachingDaysPerWeek': {
+        // `{ not: null }`, the one shape the posts are read by: a post that
+        // limits its days.
+        if ((filter as { not?: unknown }).not !== null) throw new Error(`unexpected filter ${key}`);
+        return row[key] !== null && row[key] !== undefined;
+      }
       case 'AND':
         return (filter as Row[]).every((part) => matchesWhere(row, part));
       case 'OR':
@@ -252,6 +260,73 @@ describe('OptimizationProxyService', () => {
       expect(tx.masterLesson.deleteMany).not.toHaveBeenCalled();
     });
 
+    it('answers with the lessons it wrote, by their teachers and weekday, or with null when it wrote none', async () => {
+      // What the free-day wishes are read against (unkeptFreeDayWishes): the
+      // timetable as written, its teachers the requirement's at the time of
+      // writing. Null, not an empty list, for a run that left last week's
+      // timetable standing: there is nothing new to read a wish against.
+      await expect(persist({ status: 'INFEASIBLE' })).resolves.toBeNull();
+
+      tx.calendarLesson.deleteMany.mockResolvedValue({ count: 0 });
+      tx.masterLesson.deleteMany.mockResolvedValue({ count: 0 });
+      tx.teachingRequirement.findMany.mockResolvedValue([
+        { id: REAL_REQ, subjectId: 'subject-1', studentGroupId: 'group-1', teacherId: 'lead-1', coTeacherId: 'co-1' },
+      ]);
+      await expect(
+        persist(
+          { status: 'OPTIMAL', lessons: [{ ...placement(), dayOfWeek: 3 }] },
+          { requirements: [{ id: ANON_REQ, lessonsPerWeek: 1 }], requirementAnonMap: new Map([[REAL_REQ, ANON_REQ]]) },
+        ),
+      ).resolves.toEqual([{ teacherId: 'lead-1', coTeacherId: 'co-1', dayOfWeek: 3 }]);
+    });
+
+    it('answers with the lessons it kept, as they stand after its delete, beside the ones it wrote', async () => {
+      // The kept half is read here, in the write's transaction, after the
+      // delete: the solver has been running since the fetch, and the timetable
+      // a wish is read against is the one this leaves, not the one the fetch saw.
+      const order: string[] = [];
+      tx.calendarLesson.deleteMany.mockResolvedValue({ count: 0 });
+      tx.masterLesson.deleteMany.mockImplementation(async () => {
+        order.push('delete');
+        return { count: 0 };
+      });
+      tx.masterLesson.findMany.mockImplementation(async () => {
+        order.push('read');
+        return [
+          { teacherId: 'hand-1', coTeacherId: null, dayOfWeek: 5, isParked: false },
+          { teacherId: 'locked-1', coTeacherId: 'co-2', dayOfWeek: 2, isParked: false },
+          // Parked: kept, counted, and on no day.
+          { teacherId: 'parked-1', coTeacherId: null, dayOfWeek: 4, isParked: true },
+        ];
+      });
+      tx.masterLesson.create.mockImplementation(async () => {
+        order.push('create');
+        return {};
+      });
+      tx.teachingRequirement.findMany.mockResolvedValue([
+        { id: REAL_REQ, subjectId: 'subject-1', studentGroupId: 'group-1', teacherId: 'lead-1', coTeacherId: null },
+      ]);
+
+      await expect(
+        persist(
+          { status: 'OPTIMAL', lessons: [{ ...placement(), dayOfWeek: 3 }] },
+          { requirements: [{ id: ANON_REQ, lessonsPerWeek: 1 }], requirementAnonMap: new Map([[REAL_REQ, ANON_REQ]]) },
+        ),
+      ).resolves.toEqual([
+        { teacherId: 'hand-1', coTeacherId: null, dayOfWeek: 5 },
+        { teacherId: 'locked-1', coTeacherId: 'co-2', dayOfWeek: 2 },
+        { teacherId: 'lead-1', coTeacherId: null, dayOfWeek: 3 },
+      ]);
+      // After the delete, before the new rows: what the delete kept, and
+      // nothing the run wrote counted as kept.
+      expect(order).toEqual(['delete', 'read', 'create']);
+      // The one read the audit's count is taken from, too.
+      expect(tx.masterLesson.count).not.toHaveBeenCalled();
+      expect(tx.scheduleChangeLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ after: expect.objectContaining({ lockedPreserved: 3 }) }),
+      });
+    });
+
     it('checks the tenant before deleting anything', async () => {
       // Ordering matters: the schoolId guard sits after the status check but
       // before deleteMany, so a tokenless request cannot destroy data either.
@@ -276,7 +351,6 @@ describe('OptimizationProxyService', () => {
     beforeEach(() => {
       tx.masterLesson.deleteMany.mockResolvedValue({ count: 40 });
       tx.calendarLesson.deleteMany.mockResolvedValue({ count: 0 });
-      tx.masterLesson.count.mockResolvedValue(0);
     });
 
     const expectNothingTouched = () => {
@@ -397,7 +471,6 @@ describe('OptimizationProxyService', () => {
     beforeEach(() => {
       tx.masterLesson.deleteMany.mockResolvedValue({ count: 0 });
       tx.calendarLesson.deleteMany.mockResolvedValue({ count: 0 });
-      tx.masterLesson.count.mockResolvedValue(0);
       tx.lunchSitting.deleteMany.mockResolvedValue({ count: 0 });
       tx.calendarLunch.deleteMany.mockResolvedValue({ count: 0 });
       // The year's groups, a class and a teaching group. A sitting is written
@@ -694,7 +767,6 @@ describe('OptimizationProxyService', () => {
       tx.teachingRequirement.findMany.mockResolvedValue([]);
       tx.masterLesson.deleteMany.mockResolvedValue({ count: 3 });
       tx.calendarLesson.deleteMany.mockResolvedValue({ count: 7 });
-      tx.masterLesson.count.mockResolvedValue(2);
     });
 
     /** A master lesson row, in the columns the preserve rule reads. */
@@ -794,8 +866,11 @@ describe('OptimizationProxyService', () => {
       expect(tx.masterLesson.deleteMany).toHaveBeenCalledWith({
         where: { academicYearId: ACADEMIC_YEAR, NOT: preserved },
       });
-      expect(tx.masterLesson.count).toHaveBeenCalledWith({
+      // And what it kept is read back by the same clause, parked lessons and
+      // all: the audit counts them, the free-day wishes skip the parked.
+      expect(tx.masterLesson.findMany).toHaveBeenCalledWith({
         where: { academicYearId: ACADEMIC_YEAR, ...preserved },
+        select: { teacherId: true, coTeacherId: true, dayOfWeek: true, isParked: true },
       });
     });
 
@@ -1147,6 +1222,69 @@ describe('OptimizationProxyService', () => {
       expect((error as HttpException).getResponse()).toEqual({ message: 'No lunch break fits.' });
     });
 
+    describe('a pre-flight about a post’s days', () => {
+      const anonPost = 'aaaaaaaa-9999-4999-8999-aaaaaaaaaaaa';
+      const realPost = 'bbbbbbbb-9999-4999-8999-bbbbbbbbbbbb';
+      const teacher = 'cccccccc-9999-4999-8999-cccccccccccc';
+      const refuse = (limit: string) => {
+        const refused = new AxiosError('boom');
+        refused.response = {
+          status: 400,
+          data: {
+            message: `The teacher's post ${limit} allows teaching on at most 3 days a week …`,
+            details: {
+              code: 'TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK',
+              params: { limit, days: 3, weekMinutes: 1500 },
+            },
+          },
+        } as never;
+        http.post.mockReturnValue(throwError(() => refused));
+      };
+      const withPost = (): AnonMaps => ({
+        ...maps(),
+        dayLimitAnonMap: new Map([[realPost, anonPost]]),
+        dayLimitTeacherIds: new Map([[realPost, teacher]]),
+      });
+
+      it('is thrown without its figure, the post turned back, and its teacher off the body', async () => {
+        refuse(anonPost);
+
+        const error = await call({}, withPost()).catch((thrown: unknown) => thrown);
+
+        expect(error).toBeInstanceOf(WorkDaysRefusal);
+        expect((error as WorkDaysRefusal).getStatus()).toBe(400);
+        expect((error as WorkDaysRefusal).getResponse()).toEqual({
+          message: WORK_DAYS_HIDDEN_MESSAGE,
+          code: 'TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK',
+          params: { limit: realPost, weekMinutes: 1500 },
+        });
+        expect((error as WorkDaysRefusal).subjectIds).toEqual([teacher]);
+        expect(JSON.stringify((error as WorkDaysRefusal).getResponse())).not.toMatch(new RegExp(`${teacher}|3 days`));
+      });
+
+      it('keeps no teacher when it names a post the run did not send', async () => {
+        refuse('dddddddd-9999-4999-8999-dddddddddddd');
+
+        const error = await call({}, withPost()).catch((thrown: unknown) => thrown);
+
+        expect((error as WorkDaysRefusal).subjectIds).toEqual([]);
+      });
+
+      it('turns the post back in any other sentence that names it', async () => {
+        const refused = new AxiosError('boom');
+        refused.response = {
+          status: 400,
+          data: { message: `Post ${anonPost} is named.`, details: { code: 'X', params: {} } },
+        } as never;
+        http.post.mockReturnValue(throwError(() => refused));
+
+        const error = await call({}, withPost()).catch((thrown: unknown) => thrown);
+
+        expect(error).not.toBeInstanceOf(WorkDaysRefusal);
+        expect((error as HttpException).getResponse()).toEqual({ message: `Post ${realPost} is named.`, code: 'X', params: {} });
+      });
+    });
+
     it('never leaks the API key in the thrown error', async () => {
       http.post.mockReturnValue(throwError(() => new Error('kkkk')));
 
@@ -1247,6 +1385,12 @@ describe('OptimizationProxyService', () => {
       teachingMembers?: unknown[];
       lockedLessons?: unknown[];
       unlockedLessons?: unknown[];
+      /**
+       * The preserved lessons as persistMasterLessons finds them after its
+       * delete, when the timetable was edited while the solver ran. By
+       * default `lockedLessons`, as the fetch read them.
+       */
+      keptAfterSolve?: unknown[];
       rooms?: unknown[];
       constraints?: unknown[];
       /**
@@ -1267,6 +1411,8 @@ describe('OptimizationProxyService', () => {
       handSittings?: unknown[];
       /** Lärarnas arbetstid, as stored. */
       workRules?: unknown[];
+      /** The year's posts (TeacherEmployments), as stored: { id, userId, maxTeachingDaysPerWeek }. */
+      posts?: unknown[];
     };
 
     const arrange = (overrides: Arrangement = {}) => {
@@ -1305,13 +1451,16 @@ describe('OptimizationProxyService', () => {
       );
       const locked = (overrides.lockedLessons ?? []) as Row[];
       const unlocked = (overrides.unlockedLessons ?? []) as Row[];
+      // Nobody edits the timetable during the solve unless a test says so.
+      const kept = (overrides.keptAfterSolve ?? locked) as Row[];
       // fetchAndAnonymize queries masterLesson twice: the locked/manual set
-      // (where.OR) and the previous unlocked placements (where.isLocked=false).
+      // (where.OR, unparked) and the previous unlocked placements
+      // (where.isLocked=false). persistMasterLessons reads the kept set once
+      // more, after its delete (where.OR, parked or not).
       tx.masterLesson.findMany.mockImplementation(async ({ where, select }: Query = {}) => {
         assertSelects(select);
-        return (where?.['isLocked'] === false ? unlocked : locked).map((row) =>
-          selected(row, select),
-        );
+        const rows = where?.['isLocked'] === false ? unlocked : where?.['isParked'] === false ? locked : kept;
+        return rows.map((row) => selected(row, select));
       });
       tx.room.findMany.mockImplementation(
         table(overrides.rooms ?? [{ id: ROOM_ID, capacity: 30, type: 'CLASSROOM' }]),
@@ -1331,6 +1480,9 @@ describe('OptimizationProxyService', () => {
       // Empty by default, which is every school today: nobody has been able to
       // state a teacher's lunch or rest, so no week may change until they do.
       tx.teacherWorkRule.findMany.mockImplementation(table(overrides.workRules ?? []));
+      // And no post limits its days, which is every school until a decider
+      // sets one (20261123090000).
+      tx.teacherEmployment.findMany.mockImplementation(table(overrides.posts ?? []));
       // One row per school, found by the school: a findUnique without that
       // key is one Prisma refuses.
       tx.lunchSetting.findUnique.mockImplementation(async ({ where, select }: Query = {}) => {
@@ -1345,7 +1497,6 @@ describe('OptimizationProxyService', () => {
       });
       tx.masterLesson.deleteMany.mockResolvedValue({ count: 2 });
       tx.calendarLesson.deleteMany.mockResolvedValue({ count: 4 });
-      tx.masterLesson.count.mockResolvedValue(1);
       tx.masterLesson.create.mockResolvedValue({});
       tx.scheduleChangeLog.create.mockResolvedValue({});
     };
@@ -2258,7 +2409,8 @@ describe('OptimizationProxyService', () => {
     });
 
     it('appends a REGENERATE audit entry with the replacement counts', async () => {
-      arrange();
+      // One lesson the delete kept, read back after it.
+      arrange({ keptAfterSolve: [lockedLesson()] });
       echoEngine('OPTIMAL');
       const user = testUser({ schoolId: 'school-A', userId: 'admin-1' });
 
@@ -3255,6 +3407,10 @@ describe('OptimizationProxyService', () => {
         lunchStartTime: new Date('1970-01-01T10:30:00.000Z'),
         lunchEndTime: new Date('1970-01-01T13:30:00.000Z'),
         minDailyRestMinutes: 660,
+        // As the columns default (20261123090000): no cap and no wish. The
+        // database answers null for them, never a missing field.
+        maxTeachingMinutesPerDay: null,
+        preferredFreeDayOfWeek: null,
         ...overrides,
       });
 
@@ -3381,6 +3537,350 @@ describe('OptimizationProxyService', () => {
         // deliberately never reaches `nameById`, so the list stays empty rather
         // than acquiring a person.
         expect(detail.resourceNames).toEqual([]);
+      });
+    });
+
+    describe('lärarens dag', () => {
+      /*
+       * The daily cap and the free-day wish ride on the work rule; deltid in
+       * days rides on the post, its own list and its own id space, because the
+       * number is HR data (work-days.ts). None of the three may change one byte
+       * of a school's payload until somebody sets it.
+       */
+      const WORK_RULE_ID = '77777777-bbbb-4bbb-8bbb-777777777777';
+      const POST_ID = '99999999-bbbb-4bbb-8bbb-999999999999';
+      const CO_TEACHER = '88888888-bbbb-4bbb-8bbb-888888888888';
+      const workRule = (overrides: Record<string, unknown> = {}) => ({
+        id: WORK_RULE_ID,
+        userId: TEACHER_ID,
+        lunchMinutes: null,
+        lunchStartTime: null,
+        lunchEndTime: null,
+        minDailyRestMinutes: null,
+        maxTeachingMinutesPerDay: null,
+        preferredFreeDayOfWeek: null,
+        ...overrides,
+      });
+      const post = (overrides: Record<string, unknown> = {}) => ({
+        id: POST_ID,
+        userId: TEACHER_ID,
+        maxTeachingDaysPerWeek: 4,
+        ...overrides,
+      });
+
+      it('sends a rule’s cap and wish under the engine’s names, and a rule holding only them', async () => {
+        arrange({ workRules: [workRule({ maxTeachingMinutesPerDay: 270, preferredFreeDayOfWeek: 5 })] });
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+        const [rule] = postedPayload().teacherWorkRules;
+
+        // No lunch, no rest: the four sent as nulls, as a rule with only a
+        // rest sends its lunch, and the two new ones as numbers.
+        expect(rule).toEqual({
+          id: expect.any(String),
+          teacherId: postedPayload().requirements[0]!.teacherId,
+          lunchMinutes: null,
+          lunchStartTime: null,
+          lunchEndTime: null,
+          minDailyRestMinutes: null,
+          maxTeachingMinutesPerDay: 270,
+          preferredFreeDay: 5,
+        });
+      });
+
+      it('sends neither key, not even as null, for a rule that sets neither', async () => {
+        arrange({ workRules: [workRule({ minDailyRestMinutes: 660 })] });
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+        const [rule] = postedPayload().teacherWorkRules;
+
+        expect(Object.keys(rule!)).not.toContain('maxTeachingMinutesPerDay');
+        expect(Object.keys(rule!)).not.toContain('preferredFreeDay');
+      });
+
+      it('sends a post’s day limit with both ids anonymised, the teacher through the teachers’ own map', async () => {
+        arrange({ posts: [post()] });
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser({ channel: 'WEB' }));
+        const payload = postedPayload();
+
+        expect(payload.teacherDayLimits).toEqual([
+          { id: expect.any(String), teacherId: payload.requirements[0]!.teacherId, maxTeachingDaysPerWeek: 4 },
+        ]);
+        expect(payload.teacherDayLimits![0]!.id).not.toBe(POST_ID);
+        expect(JSON.stringify(payload)).not.toContain(TEACHER_ID);
+        expect(JSON.stringify(payload)).not.toContain(POST_ID);
+        // Read under the starter's own session, in the year: the where names
+        // the year and asks only for posts that set a limit.
+        expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith({
+          where: { academicYearId: ACADEMIC_YEAR, maxTeachingDaysPerWeek: { not: null } },
+          select: { id: true, userId: true, maxTeachingDaysPerWeek: true },
+        });
+        // A post's days are HR, and this transaction read them: the Läslogg
+        // names the teacher, by their Users id.
+        expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [TEACHER_ID] }]);
+      });
+
+      it('reads only this year’s posts that set a limit', async () => {
+        arrange({
+          posts: [
+            post({ id: 'post-without-a-limit', maxTeachingDaysPerWeek: null }),
+            post({ id: 'post-of-another-year', academicYearId: OTHER_YEAR }),
+          ],
+        });
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        expect(Object.keys(postedPayload())).not.toContain('teacherDayLimits');
+        expect(recordedReads(tx)).toEqual([]);
+      });
+
+      it('sends no key and writes no read when nobody’s post limits their days', async () => {
+        arrange();
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        expect(Object.keys(postedPayload())).not.toContain('teacherDayLimits');
+        expect(recordedReads(tx)).toEqual([]);
+      });
+
+      it('leaves out a limit whose teacher this year never mentions, says so, and logs no read of it', async () => {
+        arrange({ posts: [post({ userId: 'teacher-who-teaches-nothing' })] });
+        echoEngine();
+        const warn = warnings();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        expect(Object.keys(postedPayload())).not.toContain('teacherDayLimits');
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining(`day limit on post ${POST_ID}`));
+        expect(recordedReads(tx)).toEqual([]);
+      });
+
+      it('sends the same limits whoever starts the run, HR-läs or not', async () => {
+        // The rule is the same for every reader; only the wording is masked,
+        // and that when the run is read.
+        const limitsFor = async (user: ReturnType<typeof testUser>) => {
+          http.post.mockClear();
+          arrange({ posts: [post()] });
+          echoEngine();
+          await service.triggerScheduling(ACADEMIC_YEAR, user);
+          return postedPayload().teacherDayLimits!.map(({ maxTeachingDaysPerWeek }) => maxTeachingDaysPerWeek);
+        };
+
+        expect(await limitsFor(testUser({ adminProfile: 'REKTOR' } as never))).toEqual([4]);
+        expect(await limitsFor(testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false } as never))).toEqual([4]);
+      });
+
+      describe('a refusal about the days', () => {
+        const refuseOverTheDays = (summary?: { code: string; params: (payload: any) => object }) =>
+          answerWithConflicts((payload) => ({
+            summary: 'blocked',
+            summaryCode: summary?.code ?? 'CONFLICT_CORE_SUMMARY',
+            summaryParams: summary?.params(payload) ?? {},
+            conflicts: [
+              {
+                category: 'TEACHER_OVERLAP',
+                code: 'TEACHER_WORK_DAYS_CANNOT_BE_KEPT',
+                params: { limit: payload.teacherDayLimits[0].id, days: 4 },
+                message: `The teacher's post ${payload.teacherDayLimits[0].id} allows teaching on at most 4 days a week …`,
+                requirementIds: [],
+                roomIds: [],
+                constraintIds: [],
+                resourceIds: [payload.teacherDayLimits[0].id],
+              },
+              {
+                category: 'AVAILABILITY',
+                code: 'AVAIL_SOMETHING_ELSE',
+                // A sentence about something else that happens to say the post.
+                params: { count: 1 },
+                message: `See ${payload.teacherDayLimits[0].id}.`,
+                requirementIds: [],
+                roomIds: [],
+                constraintIds: [],
+                resourceIds: [],
+              },
+            ],
+          }));
+
+        it('comes back without its figure, the post named as a row, and its teacher kept for the server', async () => {
+          arrange({ posts: [post()] });
+          refuseOverTheDays();
+
+          const conflicts = (await service.triggerScheduling(ACADEMIC_YEAR, testUser())).conflicts!;
+          const [days, other] = conflicts.conflicts;
+
+          expect(days).toMatchObject({
+            category: 'TEACHER_OVERLAP',
+            code: 'TEACHER_WORK_DAYS_CANNOT_BE_KEPT',
+            params: { limit: POST_ID },
+            message: WORK_DAYS_HIDDEN_MESSAGE,
+            // The resource a deltid sentence is about is the person — never
+            // named here, and never stored (the job keeps no ids).
+            resourceIds: [TEACHER_ID],
+            resourceNames: [],
+            subjectIds: [TEACHER_ID],
+          });
+          expect(JSON.stringify(days)).not.toMatch(/"days"|4 days/);
+          // Another sentence is left as it was, the post's id turned back.
+          expect(other!.message).toBe(`See ${POST_ID}.`);
+          expect(other).not.toHaveProperty('subjectIds');
+          expect(conflicts).not.toHaveProperty('summarySubjectIds');
+          expect(conflicts.summary).toBe('blocked');
+        });
+
+        it('holds a summary about the days to the same rule', async () => {
+          arrange({ posts: [post()] });
+          refuseOverTheDays({
+            code: 'TEACHER_WORK_DAYS_CANNOT_BE_KEPT',
+            params: (payload) => ({ limit: payload.teacherDayLimits[0].id, days: 4 }),
+          });
+
+          const conflicts = (await service.triggerScheduling(ACADEMIC_YEAR, testUser())).conflicts!;
+
+          expect(conflicts).toMatchObject({
+            summary: WORK_DAYS_HIDDEN_MESSAGE,
+            summaryCode: 'TEACHER_WORK_DAYS_CANNOT_BE_KEPT',
+            summarySubjectIds: [TEACHER_ID],
+          });
+          expect(conflicts.summaryParams).toEqual({ limit: POST_ID });
+        });
+
+        it('keeps no teacher for a sentence naming a post the run did not send', async () => {
+          arrange({ posts: [post()] });
+          answerWithConflicts(() => ({
+            summary: 'blocked',
+            summaryCode: 'CONFLICT_CORE_SUMMARY',
+            summaryParams: {},
+            conflicts: [
+              {
+                category: 'TEACHER_OVERLAP',
+                code: 'TEACHER_WORK_DAYS_CANNOT_BE_KEPT',
+                params: { limit: 'cccccccc-3333-4333-8333-cccccccccccc', days: 4 },
+                message: '…',
+                requirementIds: [],
+                roomIds: [],
+                constraintIds: [],
+                resourceIds: [],
+              },
+            ],
+          }));
+
+          const [days] = (await service.triggerScheduling(ACADEMIC_YEAR, testUser())).conflicts!.conflicts;
+
+          expect(days!.subjectIds).toEqual([]);
+          expect(days!.params).toEqual({ limit: 'cccccccc-3333-4333-8333-cccccccccccc' });
+        });
+      });
+
+      describe('the free-day wishes the run did not keep', () => {
+        it('names a wish a generated lesson of theirs breaks', async () => {
+          // The echo places every lesson on Monday.
+          arrange({ workRules: [workRule({ preferredFreeDayOfWeek: 1 })] });
+          echoEngine();
+
+          const { notes } = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(notes).toEqual([
+            expect.objectContaining({
+              category: 'AVAILABILITY',
+              code: 'TEACHER_FREE_DAY_WISH_NOT_KEPT',
+              params: { rule: WORK_RULE_ID, day: 1 },
+              resourceIds: [WORK_RULE_ID],
+              resourceNames: [],
+            }),
+          ]);
+        });
+
+        it('names a wish a co-taught lesson breaks', async () => {
+          arrange({
+            requirements: [requirement({ coTeacherId: CO_TEACHER })],
+            workRules: [workRule({ userId: CO_TEACHER, preferredFreeDayOfWeek: 1 })],
+          });
+          echoEngine();
+
+          const { notes } = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(notes).toHaveLength(1);
+        });
+
+        it('names a wish a kept lesson breaks: the lock is the school’s, and so is the day', async () => {
+          // lockedLesson() is the teacher's, on Tuesday.
+          arrange({ lockedLessons: [lockedLesson()], workRules: [workRule({ preferredFreeDayOfWeek: 2 })] });
+          echoEngine();
+
+          const { notes } = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(notes!.map((note) => note.params)).toEqual([{ rule: WORK_RULE_ID, day: 2 }]);
+        });
+
+        it('names a wish a lesson placed by hand while the solver ran breaks', async () => {
+          // The fetch saw no Friday; the timetable the run leaves has one,
+          // placed by hand during the solve and kept by the delete.
+          arrange({
+            workRules: [workRule({ preferredFreeDayOfWeek: 5 })],
+            keptAfterSolve: [lockedLesson({ dayOfWeek: 5 })],
+          });
+          echoEngine();
+
+          const { notes } = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(notes!.map((note) => note.params)).toEqual([{ rule: WORK_RULE_ID, day: 5 }]);
+        });
+
+        it('says nothing of a kept lesson that is gone from the timetable the run leaves', async () => {
+          // Tuesday's lesson was locked when the fetch read it, and unlocked
+          // (so deleted by the run) or deleted by hand while the solver ran.
+          arrange({
+            lockedLessons: [lockedLesson()],
+            keptAfterSolve: [],
+            workRules: [workRule({ preferredFreeDayOfWeek: 2 })],
+          });
+          echoEngine();
+
+          await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).resolves.toMatchObject({ notes: [] });
+        });
+
+        it('reads a parked lesson as on no day', async () => {
+          arrange({
+            keptAfterSolve: [lockedLesson({ isParked: true })],
+            workRules: [workRule({ preferredFreeDayOfWeek: 2 })],
+          });
+          echoEngine();
+
+          await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).resolves.toMatchObject({ notes: [] });
+        });
+
+        it('reads a week whose every lesson is hand-placed against its kept lessons', async () => {
+          arrange({
+            requirements: [requirement({ lessonsPerWeek: 1 })],
+            lockedLessons: [lockedLesson()],
+            workRules: [workRule({ preferredFreeDayOfWeek: 2 })],
+          });
+
+          const { notes } = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(http.post).not.toHaveBeenCalled();
+          expect(notes).toHaveLength(1);
+        });
+
+        it('keeps a wish on a day the teacher teaches nothing', async () => {
+          arrange({ workRules: [workRule({ preferredFreeDayOfWeek: 5 })] });
+          echoEngine();
+
+          await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).resolves.toMatchObject({ notes: [] });
+        });
+
+        it('says nothing of wishes when the run wrote no timetable', async () => {
+          arrange({ workRules: [workRule({ preferredFreeDayOfWeek: 1 })], lockedLessons: [lockedLesson({ dayOfWeek: 1 })] });
+          answerWithConflicts(() => ({ summary: 'no', summaryCode: 'CONFLICT_NO_CORE', summaryParams: {}, conflicts: [] }));
+
+          await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).resolves.toMatchObject({ notes: [] });
+        });
       });
     });
 
