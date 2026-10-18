@@ -73,6 +73,8 @@ describe('loadConfiguration', () => {
       ss12000: { secretsKey: undefined, secretsKeyPrevious: undefined, background: true, allowInsecureLocal: false },
       // Unset: the nightly gallring ticks (and removes nothing until a school decides).
       gallring: { background: true },
+      // Unset: 30 s a candidate, two runs at once, four workers, the sweep on.
+      candidates: { maxSeconds: 30, runsMax: 2, solverWorkers: 4, background: true },
     });
   });
 

@@ -8,10 +8,12 @@ import { OptimizationProxyService } from './optimization-proxy.service';
 import { OptimizationJobsService } from './optimization-jobs.service';
 import { RoomOptimizationService } from './room-optimization.service';
 import { StaffingProposalService } from './staffing-proposal.service';
+import { ScheduleCandidatesService } from './schedule-candidates.service';
 
 @Module({
   imports: [
-    // For ScheduleVersionsService: a room apply snapshots the year first.
+    // For ScheduleVersionsService: a room apply and a schemaförslag apply
+    // snapshot the year first.
     CalendarModule,
     HttpModule.registerAsync({
       inject: [ConfigService],
@@ -33,6 +35,9 @@ import { StaffingProposalService } from './staffing-proposal.service';
     OptimizationJobsService,
     RoomOptimizationService,
     StaffingProposalService,
+    // Schemaförslag. Its sweep registers with the global JobRunner when
+    // CANDIDATES_BACKGROUND is on; the runner is @Optional, as GallringJob's.
+    ScheduleCandidatesService,
   ],
 })
 export class OptimizationModule {}

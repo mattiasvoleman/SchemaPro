@@ -101,3 +101,34 @@ describe('the read log\'s kinds across the schema, the gateway and the web', () 
     }
   });
 });
+
+/*
+ * A read that hands out something about other people either records itself
+ * or is in access-log.ts's NOT RECORDED list with its own reason. The list is
+ * prose, so what is pinned is that an entry is there and says why — not the
+ * wording — and that the service it names writes no recordRead.
+ */
+describe('reads not recorded, by decision', () => {
+  const ROOT = join(__dirname, '..', '..');
+  const source = readFileSync(join(__dirname, 'access-log.ts'), 'utf8');
+  const notRecorded = source.slice(source.indexOf('NOT RECORDED, by decision'), source.indexOf('export const ACCESS_KINDS'));
+
+  it('lists schemaförslag with its own reason: admin-only, ids and aggregates, no pupil', () => {
+    const entry = /- schemaförslag \(GET \/optimization\/candidates[\s\S]*?;\n/.exec(notRecorded)?.[0] ?? '';
+    expect(entry).not.toBe('');
+    expect(entry).toMatch(/administrators/);
+    expect(entry).toMatch(/schedule-versions\/:id/);
+    expect(entry).toMatch(/no\s+(\*\s+)?studentIds\s+(\*\s+)?and\s+(\*\s+)?no\s+(\*\s+)?participants/);
+  });
+
+  it('keeps the decisions it already held beside the new one', () => {
+    // The list is the record of each decision; an entry added beside another
+    // must not take its place (the counts entry was lost once that way).
+    expect(notRecorded).toMatch(/counts and summaries that name nobody \(\/users\/counts/);
+  });
+
+  it('and the candidate service records nothing', () => {
+    const service = readFileSync(join(ROOT, 'src', 'optimization', 'schedule-candidates.service.ts'), 'utf8');
+    expect(service).not.toMatch(/recordRead/);
+  });
+});

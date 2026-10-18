@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -21,6 +22,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { TriggerOptimizationDto } from './dto/trigger-optimization.dto';
 import { ApplyRoomChangesDto, RoomProposalDto } from './dto/room-optimization.dto';
 import { ApplyStaffingDto, StaffingProposalDto } from './dto/staffing-proposal.dto';
+import { ApplyCandidateDto, StartCandidatesDto } from './dto/schedule-candidates.dto';
 import { OptimizationProxyService } from './optimization-proxy.service';
 import {
   RoomOptimizationService,
@@ -36,6 +38,13 @@ import {
   OptimizationJobsService,
   type OptimizationJobView,
 } from './optimization-jobs.service';
+import {
+  ScheduleCandidatesService,
+  type CandidateApplyOutcome,
+  type CandidateCheck,
+  type CandidateLessonView,
+  type CandidatesOverview,
+} from './schedule-candidates.service';
 import type { AiEngineScheduleResponse } from './interfaces/ai-engine-payload.interface';
 
 /**
@@ -60,6 +69,7 @@ export class OptimizationController {
     private readonly jobsService: OptimizationJobsService,
     private readonly rooms: RoomOptimizationService,
     private readonly staffing: StaffingProposalService,
+    private readonly candidates: ScheduleCandidatesService,
   ) {}
 
   /**
@@ -187,5 +197,97 @@ export class OptimizationController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<StaffingApplyResult> {
     return this.staffing.apply(dto, user);
+  }
+
+  /**
+   * Schemaförslag: a run of two to four candidates of the year's grundschema,
+   * solved in the background one after another, each its own emphasis.
+   * Writes only the candidate tables — never the grundschema — so it names
+   * SCHEMALAGGNING alone. Throttled like Generera's own start: a run is up to
+   * four solves.
+   *
+   * 409 CANDIDATES_RUNNING, GENERATE_RUNNING, CANDIDATES_BUSY or
+   * CANDIDATES_NEED_A_DRAFT, and 404 REFRESH_GONE for a refresh of a batch
+   * that is gone; see ScheduleCandidatesService.start.
+   */
+  @Post('candidates')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  @Area('SCHEMALAGGNING')
+  startCandidates(
+    @Body() dto: StartCandidatesDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<{ runId: string }> {
+    return this.candidates.start(dto, user);
+  }
+
+  /**
+   * The year's newest run and newest batch, polled by the page while a run
+   * is going. No basis is rebuilt here; that is the check below.
+   */
+  @Get('candidates')
+  listCandidates(
+    @Query('academicYearId', new ParseUUIDPipe({ version: '4' }))
+    academicYearId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<CandidatesOverview> {
+    return this.candidates.overview(academicYearId, user);
+  }
+
+  /**
+   * Whether a batch still fits the draft, which parts changed if not, and
+   * the mode an apply must name. One rebuild of Generera's fetch per call,
+   * hence the limit; the page reads it once per batch.
+   */
+  @Get('candidates/runs/:runId/check')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  checkCandidates(
+    @Param('runId', new ParseUUIDPipe({ version: '4' })) runId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<CandidateCheck> {
+    return this.candidates.check(runId, user);
+  }
+
+  /** One candidate's lessons in the MasterLesson shape, resolved from their timplansposter now. */
+  @Get('candidates/:id/lessons')
+  candidateLessons(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<CandidateLessonView[]> {
+    return this.candidates.lessons(id, user);
+  }
+
+  /**
+   * Applies a candidate: the draft is replaced exactly as Generera replaces
+   * it, after a safety version. The class's areas, SCHEMALAGGNING and DRIFT,
+   * because in DIRECT the write also takes the replaced lessons off the
+   * calendar, as Generera's does. No solver call, so the room apply's limit.
+   * 409 PUBLISH_MODE_CHANGED, SCHEDULE_CANDIDATE_BUSY, _NOT_APPLICABLE or
+   * _STALE (with the basis parts that changed); see the service.
+   */
+  @Post('candidates/:id/apply')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  applyCandidate(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body() dto: ApplyCandidateDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<CandidateApplyOutcome> {
+    return this.candidates.apply(id, dto.expectedMode, user);
+  }
+
+  /**
+   * Removes the year's finished runs, and asks an active one to stop; it is
+   * never deleted under its task. Candidate tables only: SCHEMALAGGNING.
+   */
+  @Delete('candidates')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Area('SCHEMALAGGNING')
+  discardCandidates(
+    @Query('academicYearId', new ParseUUIDPipe({ version: '4' }))
+    academicYearId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<void> {
+    return this.candidates.discard(academicYearId, user);
   }
 }

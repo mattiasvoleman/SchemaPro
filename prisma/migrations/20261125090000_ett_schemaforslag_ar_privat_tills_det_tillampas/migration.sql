@@ -175,6 +175,7 @@ CREATE TABLE "ScheduleCandidates" (
     "metrics"      JSONB,
     "conflicts"    JSONB,
     "errorCode"    TEXT,
+    "errorParams"  JSONB,
     "createdAt"    TIMESTAMPTZ(6) NOT NULL DEFAULT now(),
 
     CONSTRAINT "ScheduleCandidates_pkey" PRIMARY KEY ("id"),

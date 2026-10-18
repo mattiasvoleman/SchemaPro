@@ -21,6 +21,8 @@ import {
   type SentenceShown,
   type StoredSentence,
 } from './work-days';
+import { candidatesRunning, yearHasActiveCandidateRun } from './schedule-candidates.service';
+import { lockYearForSolveStart, SCHEDULE_BUSY } from './regeneration-lock';
 
 /**
  * A stored params blob, read back as the scalars the engine promised.
@@ -433,6 +435,14 @@ export class OptimizationJobsService {
       // for only for its refusal: a year two steps ahead of the active one
       // (R6) is answered at the click, not in a job that fails later.
       await rostersOfYear(tx, user, academicYearId);
+      // Not beside a schemaförslag run of the year (design §3): the run is
+      // solving from the draft this job would replace, and an apply of one of
+      // its candidates would meet this job's write (GENERATE_STALE) or this
+      // job the apply's. Only a run that is still alive holds Generera off —
+      // inside its lease and its half hour — so a run whose instance died
+      // never locks the button until the sweep comes round.
+      await lockYearForSolveStart(tx, academicYearId, SCHEDULE_BUSY);
+      if (await yearHasActiveCandidateRun(tx, academicYearId)) throw candidatesRunning();
       return tx.optimizationJob.create({
         data: {
           schoolId: user.schoolId as string,
