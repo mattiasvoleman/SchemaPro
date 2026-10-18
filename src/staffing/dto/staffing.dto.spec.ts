@@ -208,6 +208,21 @@ describe('UpsertTeacherEmploymentDto mirrors the table CHECKs, bound for bound',
     ).resolves.toEqual(['contractKind']);
   });
 
+  it('holds deltid in days to the CHECK, 1..6 whole days, null as no limit and absent as stored (20261123090000)', async () => {
+    const base = { employmentPercent: 80 };
+    for (const days of [1, 6, null]) {
+      await expect(failing(UpsertTeacherEmploymentDto, { ...base, maxTeachingDaysPerWeek: days })).resolves.toEqual([]);
+    }
+    for (const days of [0, 7, 4.5, '4']) {
+      await expect(failing(UpsertTeacherEmploymentDto, { ...base, maxTeachingDaysPerWeek: days })).resolves.toEqual([
+        'maxTeachingDaysPerWeek',
+      ]);
+    }
+    await expect(messagesOf(UpsertTeacherEmploymentDto, { ...base, maxTeachingDaysPerWeek: 7 })).resolves.toContain(
+      'högst 6',
+    );
+  });
+
   it('says why in Swedish, because an admin reads these in the drawer', async () => {
     await expect(
       messagesOf(UpsertTeacherEmploymentDto, { employmentPercent: 110 }),

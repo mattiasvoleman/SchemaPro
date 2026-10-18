@@ -187,6 +187,8 @@ describe('Administrator profiles and areas (e2e)', () => {
       id: 'p1', schoolId: '33333333-3333-4333-8333-333333333333', userId: USER_ID, academicYearId: YEAR_ID,
       employmentPercent: new Prisma.Decimal('80.000'), reductionPercent: new Prisma.Decimal('20.000'),
       contractKind: 'FERIE', teachingTargetMinutesPerWeek: null, signature: 'KOL', note: 'skäl',
+      // Deltid in days (20261123090000): HR data, like the tjänst % beside it.
+      maxTeachingDaysPerWeek: 4,
       createdAt: new Date('2026-09-01T00:00:00Z'), updatedAt: new Date('2026-09-01T00:00:00Z'),
     };
     harness.tx['teacherEmployment']!['findMany']!.mockResolvedValue([post]);
@@ -196,13 +198,42 @@ describe('Administrator profiles and areas (e2e)', () => {
       .set('x-test-user', as('SCHEMALAGGARE'))
       .expect(200);
     expect(hidden.body[0]).toMatchObject({
-      employmentPercent: null, reductionPercent: null, note: null, signature: 'KOL', hrHidden: true,
+      employmentPercent: null, reductionPercent: null, note: null, maxTeachingDaysPerWeek: null, signature: 'KOL', hrHidden: true,
     });
 
     const shown = await request(http())
       .get(`/api/v1/teacher-employments?academicYearId=${YEAR_ID}`)
       .set('x-test-user', as('SCHEMALAGGARE', true))
       .expect(200);
-    expect(shown.body[0]).toMatchObject({ employmentPercent: 80, reductionPercent: 20, note: 'skäl' });
+    expect(shown.body[0]).toMatchObject({ employmentPercent: 80, reductionPercent: 20, note: 'skäl', maxTeachingDaysPerWeek: 4 });
+  });
+
+  it("lets the planner set a teacher's daily cap and wished free day, and refuses the expedition before the table", async () => {
+    /*
+     * Lärarens dag (20261123090000) is planering's, on the work rule: not HR,
+     * so a planner without HR-läs sets it, and the expedition, which does not
+     * plan, is refused by the route's area before anything is read.
+     */
+    harness.tx['user']!['findUnique']!.mockResolvedValue({ role: 'TEACHER' });
+    harness.tx['teacherWorkRule']!['upsert']!.mockResolvedValue({
+      id: 'r1', schoolId: '33333333-3333-4333-8333-333333333333', userId: USER_ID,
+      lunchMinutes: null, lunchStartTime: null, lunchEndTime: null, minDailyRestMinutes: null,
+      maxTeachingMinutesPerDay: 240, preferredFreeDayOfWeek: 3,
+      createdAt: new Date('2026-09-01T00:00:00Z'), updatedAt: new Date('2026-09-01T00:00:00Z'),
+    });
+    const planned = await request(http())
+      .put(`/api/v1/teacher-work-rules/${USER_ID}`)
+      .set('x-test-user', as('SCHEMALAGGARE'))
+      .send({ maxTeachingMinutesPerDay: 240, preferredFreeDayOfWeek: 3 })
+      .expect(200);
+    expect(planned.body).toMatchObject({ maxTeachingMinutesPerDay: 240, preferredFreeDayOfWeek: 3 });
+
+    const refused = await request(http())
+      .put(`/api/v1/teacher-work-rules/${USER_ID}`)
+      .set('x-test-user', as('EXPEDITION', true))
+      .send({ maxTeachingMinutesPerDay: 300 })
+      .expect(403);
+    expect(refused.body).toMatchObject({ code: 'AREA_NOT_YOURS' });
+    expect(harness.tx['teacherWorkRule']!['upsert']).toHaveBeenCalledTimes(1);
   });
 });

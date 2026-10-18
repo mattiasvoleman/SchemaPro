@@ -275,6 +275,38 @@ describe('StaffingLoadService', () => {
     expect(mine(hidden).subjects.every((subject) => subject.percentOfEmployment === null)).toBe(true);
   });
 
+  it('carries no deltid in days in a teacher’s employment, masked or not (20261123090000)', async () => {
+    /*
+     * The post is read whole (load-input.ts, no select), so the days are in
+     * the rows it reads; LoadEmployment maps a list that leaves them out
+     * (decision 7: the report, the checks and the picker do not judge days).
+     * Were they ever mapped, hideHr would null them for the masked reader —
+     * EMPLOYMENT_HR_FIELDS has them — and this says null either way.
+     */
+    tx.teacherEmployment.findMany.mockResolvedValue([
+      {
+        userId: ME,
+        employmentPercent: new Prisma.Decimal('80.000'),
+        reductionPercent: new Prisma.Decimal('0.000'),
+        contractKind: 'FERIE',
+        teachingTargetMinutesPerWeek: null,
+        signature: 'ME',
+        maxTeachingDaysPerWeek: 4,
+      },
+    ]);
+    const employmentOf = (report: Awaited<ReturnType<StaffingLoadService['load']>>) =>
+      report.teachers.find((row) => row.userId === ME)!.employment as Record<string, unknown> | null;
+
+    const hidden = employmentOf(await service.load(YEAR_ID, 'planned', testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false })));
+    expect(hidden).toMatchObject({ hrHidden: true });
+    expect(hidden!['maxTeachingDaysPerWeek'] ?? null).toBeNull();
+    expect(hidden).not.toHaveProperty('maxTeachingDaysPerWeek');
+
+    const shown = employmentOf(await service.load(YEAR_ID, 'planned', testUser()));
+    expect(shown).toMatchObject({ employmentPercent: 80 });
+    expect(shown).not.toHaveProperty('maxTeachingDaysPerWeek');
+  });
+
   it('reads the year’s uppdrag and the rows’ percentages into the report', async () => {
     tx.teachingRequirement.findMany.mockResolvedValue([
       requirementRow({ coTeacherId: COLLEAGUE, coTeacherLoadPercent: 50 }),

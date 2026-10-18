@@ -44,6 +44,10 @@ export const EMPLOYMENT_FIELDS = [
   'firstTeacherPercent',
   'lecturerPercent',
   'teachingTargetMinutesPerWeek',
+  // Deltid in days (20261123090000), beside the riktmärke in the card's
+  // form: the other figure about the teacher's week. HR data, which
+  // hideHrChanges leaves out for a reader without HR-läs.
+  'maxTeachingDaysPerWeek',
   'signature',
   'noteChanged',
 ] as const;

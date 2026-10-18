@@ -537,6 +537,19 @@ describe('YearRolloverService — rollover execute', () => {
     });
     Object.assign(rows['schoolBreak']![0]!, { kind: 'STAFF_DAY', minGradeLevel: 7, maxGradeLevel: 8 });
     Object.assign(rows['availabilityConstraint']![0]!, { type: 'PREFERRED_FREE', minGradeLevel: 7, maxGradeLevel: 9, userId: null, roomId: null });
+    if (carryStaffing) {
+      // What a post states beside its figures, COPY_UNLESS_DEFAULT each:
+      // Anna's carried as she has them, Cecilia's (none) not written at all.
+      // Deltid in days (20261123090000), and SCB's three (20261111090000),
+      // which the source read selected and then left behind until the days
+      // came to be proven here.
+      Object.assign(rows['teacherEmployment']!.find((post) => post['userId'] === IDS.anna)!, {
+        maxTeachingDaysPerWeek: 4,
+        employmentForm: 'VISSTID',
+        firstTeacherPercent: 20,
+        lecturerPercent: 10,
+      });
+    }
     const { world, service } = setup(rows);
     const source = JSON.parse(JSON.stringify(rows)) as Record<string, Row[]>;
     const { result } = await previewAndExecute(world, service, {
@@ -788,6 +801,13 @@ describe('YearRolloverService — rollover execute', () => {
       }
     }
     expect(checked).toBeGreaterThan(40);
+    // The days and SCB's three were written for the one post that has them.
+    const annasPost = world.rows['teacherEmployment']!.find(
+      (post) => post['academicYearId'] === target && post['userId'] === IDS.anna,
+    );
+    expect(annasPost ? [annasPost['maxTeachingDaysPerWeek'], annasPost['employmentForm'], annasPost['firstTeacherPercent'], annasPost['lecturerPercent']] : null).toEqual(
+      carryStaffing ? [4, 'VISSTID', 20, 10] : null,
+    );
     // The block was carried and its rows joined it.
     expect([...new Set(blockRules)].sort()).toEqual(['MAP_BLOCK', 'PROMOTE_BLOCK_NAME']);
     // Both ways a timplan row is written were audited.
@@ -1233,8 +1253,13 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
     expect(reads[0]!.ids).toEqual(expect.arrayContaining([IDS.anna, IDS.bo, IDS.cecilia]));
   });
 
-  it('previews who and what is carried, names every nedsättning and target override, and blocks on none of it', async () => {
-    const { world, service } = setup(staffingRows());
+  it('previews who and what is carried, names every nedsättning, target override and day limit, and blocks on none of it', async () => {
+    const rows = staffingRows();
+    // Deltid in days on Cecilia's post (20261123090000), and on Bo's, who is not carried.
+    for (const post of rows['teacherEmployment']!) {
+      if (post['userId'] === IDS.cecilia || post['userId'] === IDS.bo) post['maxTeachingDaysPerWeek'] = 3;
+    }
+    const { world, service } = setup(rows);
     const preview = await service.previewRollover(IDS.yearA, { ...OPTIONS, carryStaffing: true }, admin);
     expect(writesOf(world.calls)).toEqual([]);
     expect(preview.blocking).toBe(false);
@@ -1242,6 +1267,7 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
       carried: 2,
       withReduction: [IDS.anna],
       withTargetOverride: [IDS.cecilia],
+      withDayLimit: [IDS.cecilia],
       notCarried: [{ userId: IDS.bo, reason: 'INACTIVE' }],
       signaturesDropped: [],
       fromPeriod: [],
@@ -1269,7 +1295,7 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
       { code: 'STAFFING_DUTY_GROUP_DROPPED', blocking: false, params: { duties: 1, groups: ['9A'] } },
       { code: 'STAFFING_TEACHERS_NOT_CARRIED', blocking: false, params: { teachers: 2 } },
       { code: 'STAFFING_SLOT_OFF_GRID', blocking: false, params: { duties: 1 } },
-      { code: 'STAFFING_PER_YEAR_TERMS_CARRIED', blocking: false, params: { reductions: 1, overrides: 1 } },
+      { code: 'STAFFING_PER_YEAR_TERMS_CARRIED', blocking: false, params: { reductions: 1, overrides: 1, dayLimits: 1 } },
     ]);
     // Carried tables are not "left behind".
     expect(preview.skipped.map((entry) => entry.model)).not.toEqual(expect.arrayContaining(['TeacherEmployment']));

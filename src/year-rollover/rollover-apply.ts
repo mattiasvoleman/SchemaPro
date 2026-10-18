@@ -311,6 +311,7 @@ export async function applyStaffingWrites(
         ...(row.employmentForm ? { employmentForm: row.employmentForm } : {}),
         ...(row.firstTeacherPercent ? { firstTeacherPercent: row.firstTeacherPercent } : {}),
         ...(row.lecturerPercent ? { lecturerPercent: row.lecturerPercent } : {}),
+        ...(row.maxTeachingDaysPerWeek ? { maxTeachingDaysPerWeek: row.maxTeachingDaysPerWeek } : {}),
       })),
     });
     counts.employments = count;

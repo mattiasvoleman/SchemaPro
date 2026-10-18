@@ -82,6 +82,8 @@ export interface SourceEmployment {
   employmentForm?: TeacherEmploymentForm | null;
   firstTeacherPercent?: number | null;
   lecturerPercent?: number | null;
+  /** Deltid in days, 20261123090000: the post's own, no period states it. Absent or null: no limit. */
+  maxTeachingDaysPerWeek?: number | null;
   /** The post's periods (20261022120000), by Från; [] for a post the same all year. */
   periods: SourcePeriod[];
 }
@@ -161,6 +163,7 @@ export interface StaffingWrites {
     employmentForm?: TeacherEmploymentForm;
     firstTeacherPercent?: number;
     lecturerPercent?: number;
+    maxTeachingDaysPerWeek?: number;
   }[];
   duties: {
     sourceDutyId: string;
@@ -199,6 +202,11 @@ export interface StaffingCarryPreview {
     withReduction: string[];
     /** A per-teacher target carried, likewise. */
     withTargetOverride: string[];
+    /**
+     * Deltid in days carried (20261123090000), likewise. HR data: the
+     * staffing preview is shown to deciders only, who read it.
+     */
+    withDayLimit: string[];
     notCarried: { userId: string; reason: EmploymentNotCarried }[];
     signaturesDropped: { userId: string; signature: string }[];
     /**
@@ -247,6 +255,7 @@ export function staffNamedBy(preview: StaffingCarryPreview): string[] {
     ...preview.teachers.map((row) => row.userId),
     ...employments.withReduction,
     ...employments.withTargetOverride,
+    ...employments.withDayLimit,
     ...employments.notCarried.map((row) => row.userId),
     ...employments.signaturesDropped.map((row) => row.userId),
     ...employments.fromPeriod.map((row) => row.userId),
@@ -319,6 +328,7 @@ export function planStaffingCarry(input: StaffingCarryInput): StaffingCarryPlan 
       carried: 0,
       withReduction: [],
       withTargetOverride: [],
+      withDayLimit: [],
       notCarried: [],
       signaturesDropped: [],
       fromPeriod: [],
@@ -402,11 +412,14 @@ export function planStaffingCarry(input: StaffingCarryInput): StaffingCarryPlan 
       ...(employment.employmentForm ? { employmentForm: employment.employmentForm } : {}),
       ...(employment.firstTeacherPercent ? { firstTeacherPercent: employment.firstTeacherPercent } : {}),
       ...(employment.lecturerPercent ? { lecturerPercent: employment.lecturerPercent } : {}),
+      // The post's own, never a period's: no period states it (20261123090000).
+      ...(employment.maxTeachingDaysPerWeek ? { maxTeachingDaysPerWeek: employment.maxTeachingDaysPerWeek } : {}),
     });
     preview.employments.carried++;
     employmentOf.set(employment.userId, 'CARRIED');
     if (Number(figures.reductionPercent) > 0) preview.employments.withReduction.push(employment.userId);
     if (figures.teachingTargetMinutesPerWeek !== null) preview.employments.withTargetOverride.push(employment.userId);
+    if (employment.maxTeachingDaysPerWeek) preview.employments.withDayLimit.push(employment.userId);
   }
 
   // ---- uppdrag
@@ -545,10 +558,17 @@ export function planStaffingCarry(input: StaffingCarryInput): StaffingCarryPlan 
   const ended = preview.duties.notCarried.filter((row) => row.reason === 'ENDS_BEFORE_YEAR').length;
   if (ended > 0) add('STAFFING_DUTY_ENDED', { duties: ended });
   if (preview.duties.fromCleared.length > 0) add('STAFFING_DUTY_FROM_CLEARED', { duties: preview.duties.fromCleared.length });
-  if (preview.employments.withReduction.length > 0 || preview.employments.withTargetOverride.length > 0) {
+  // A post's days (Lärarens dag) are such a term too, and a hard one: the
+  // new year's generator refuses a week over them.
+  if (
+    preview.employments.withReduction.length > 0 ||
+    preview.employments.withTargetOverride.length > 0 ||
+    preview.employments.withDayLimit.length > 0
+  ) {
     add('STAFFING_PER_YEAR_TERMS_CARRIED', {
       reductions: preview.employments.withReduction.length,
       overrides: preview.employments.withTargetOverride.length,
+      dayLimits: preview.employments.withDayLimit.length,
     });
   }
   if (preview.employments.signaturesDropped.length > 0) {

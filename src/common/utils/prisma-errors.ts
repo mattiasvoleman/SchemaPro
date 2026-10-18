@@ -337,8 +337,8 @@ export function writeConflict(): ConflictException {
 
 /**
  * The lokal timplan CHECKs (migrations 20261006120000 and 20261007130000),
- * the Fas 2 tjänstefördelning CHECKs (20261007090000) and the lektionslängder
- * CHECK (20261008090000) by constraint name, as the field and the bound a 400 should state. The DTOs mirror each
+ * the Fas 2 tjänstefördelning CHECKs (20261007090000), the lektionslängder
+ * CHECK (20261008090000) and Lärarens dag's three (20261123090000) by constraint name, as the field and the bound a 400 should state. The DTOs mirror each
  * bound, so this is the second line: a value a DTO counted differently from
  * the column (lengths are code points on both sides now, but the next
  * difference will not announce itself) answers 400 naming the field rather
@@ -362,6 +362,12 @@ const NAMED_CHECKS: Record<string, string> = {
   TeacherEmployments_lecturerPercent_check: 'lecturerPercent: lektorsuppdragets andel är 1 till 100 % av tjänsten, i hela procent.',
   TeacherEmployments_career_share_check:
     'firstTeacherPercent: förstelärar- och lektorsuppdraget kan tillsammans vara högst hela tjänsten.',
+  TeacherEmployments_maxTeachingDaysPerWeek_check:
+    'maxTeachingDaysPerWeek: tjänsten medger 1 till 6 undervisningsdagar i veckan, eller ingen gräns.',
+  TeacherWorkRules_maxTeachingMinutesPerDay_check:
+    'maxTeachingMinutesPerDay: dagstaket är 30 till 720 minuter, i femminuterssteg.',
+  TeacherWorkRules_preferredFreeDayOfWeek_check:
+    'preferredFreeDayOfWeek: den önskade lediga dagen är en veckodag, 1 (måndag) till 7 (söndag).',
   TeacherDuties_label_is_sane: 'label: uppdraget behöver ett namn på högst 80 tecken.',
   TeacherDuties_minutesPerWeek_is_sane: 'minutesPerWeek: ett uppdrag är 1 till 2400 minuter per vecka.',
   TeacherDuties_note_is_sane: 'note: anteckningen kan vara högst 500 tecken.',

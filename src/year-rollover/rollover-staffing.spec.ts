@@ -131,7 +131,16 @@ describe('planStaffingCarry — the rollover (nothing in the target yet)', () =>
       expect.objectContaining({ userId: T1, kind: 'AMNESANSVAR', label: 'Ämnesansvar Ma', minutesPerWeek: 40, countsAsTeaching: true, subjectId: 'ma', note: 'note', groupKey: null, slots: [{ dayOfWeek: 3, startTime: '13:00', endTime: '13:45' }] }),
     ]);
     expect(plan.preview.employments).toMatchObject({ carried: 2, withReduction: [T1], withTargetOverride: [T2] });
-    expect(plan.problems).toEqual([{ code: 'STAFFING_PER_YEAR_TERMS_CARRIED', blocking: false, params: { reductions: 1, overrides: 1 } }]);
+    expect(plan.problems).toEqual([{ code: 'STAFFING_PER_YEAR_TERMS_CARRIED', blocking: false, params: { reductions: 1, overrides: 1, dayLimits: 0 } }]);
+  });
+
+  it('a post whose only term for the year is its days is still a term to check (Lärarens dag)', () => {
+    const plan = planStaffingCarry(input([post(T1, { maxTeachingDaysPerWeek: 3 })], []));
+
+    expect(plan.preview.employments).toMatchObject({ withReduction: [], withTargetOverride: [], withDayLimit: [T1] });
+    expect(plan.problems).toEqual([
+      { code: 'STAFFING_PER_YEAR_TERMS_CARRIED', blocking: false, params: { reductions: 0, overrides: 0, dayLimits: 1 } },
+    ]);
   });
 
   describe('a post that changes during the year', () => {

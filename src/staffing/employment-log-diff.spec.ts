@@ -65,6 +65,21 @@ describe('diffLogEntry', () => {
     ]);
   });
 
+  it('lists deltid in days in its place in the form, created and changed (20261123090000)', () => {
+    // Not a key last and alphabetical: the column has its place, beside the riktmärke.
+    expect(diffLogEntry('EMPLOYMENT', null, { ...post, maxTeachingDaysPerWeek: 4 }).map((change) => change.field)).toEqual([
+      'employmentPercent',
+      'reductionPercent',
+      'contractKind',
+      'teachingTargetMinutesPerWeek',
+      'maxTeachingDaysPerWeek',
+      'signature',
+    ]);
+    expect(diffLogEntry('EMPLOYMENT', { ...post, maxTeachingDaysPerWeek: 4 }, { ...post, maxTeachingDaysPerWeek: null })).toEqual([
+      { field: 'maxTeachingDaysPerWeek', before: 4, after: null },
+    ]);
+  });
+
   it('says a note was written, never what it said, in the note’s place in the form', () => {
     const changes = diffLogEntry('EMPLOYMENT', post, { ...post, signature: 'ANS', noteChanged: true });
     expect(changes).toEqual([

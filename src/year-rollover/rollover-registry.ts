@@ -476,8 +476,8 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
     option: 'carryStaffing',
     reason:
       'Tjänster carry into the next year when the admin asks for them ("Ta med tjänster och uppdrag"): ' +
-      'an active TEACHER or SCHOOL_ADMIN keeps percent, nedsättning, contract, target and signature, ' +
-      'and the preview names every nedsättning and target override, which are often agreed for one year.',
+      'an active TEACHER or SCHOOL_ADMIN keeps percent, nedsättning, contract, target, deltid in days and signature, ' +
+      'and the preview names every nedsättning, target override and day limit, which are often agreed for one year.',
     whenOff: {
       reason: 'Tjänster are rolled by staffing Fas 5, which decides what a post carries into the next year.',
       previewCount: true,
@@ -502,6 +502,13 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
       employmentForm: 'COPY_UNLESS_DEFAULT',
       firstTeacherPercent: 'COPY_UNLESS_DEFAULT',
       lecturerPercent: 'COPY_UNLESS_DEFAULT',
+      // Deltid in days (20261123090000) carries with the post, from the post
+      // itself: a period never states it, so the post's is the one in force
+      // on the year's last day. Like a nedsättning it is often agreed for a
+      // year, so the preview names every post that carries one
+      // (withDayLimit), to the deciders it is shown to. Null on most posts,
+      // and then not named in the write (the planHash stays).
+      maxTeachingDaysPerWeek: 'COPY_UNLESS_DEFAULT',
       ...timestamps,
     },
   },

@@ -7,6 +7,7 @@ import {
 import type { PrismaClient, TeacherWorkRule } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { Role } from '../auth/enums/role.enum';
+import { profileWrites } from '../auth/admin-areas';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId, requireUserId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
@@ -34,7 +35,33 @@ export interface TeacherWorkRuleResponse {
   /** HH:MM, or null when this teacher has no lunch rule. */
   lunchEndTime: string | null;
   minDailyRestMinutes: number | null;
+  /**
+   * Lärarens dag (20261123090000): the most minutes of teaching on one day,
+   * or null for no cap. Not HR: the riktmärke in minutes is every
+   * administrator's, and a day's cap is a fact about the timetable.
+   */
+  maxTeachingMinutesPerDay: number | null;
+  /** The ISO weekday the teacher would rather have free (soft), or null. */
+  preferredFreeDayOfWeek: number | null;
 }
+
+/**
+ * The problem `code` of a write by somebody who does not plan that would
+ * change a teacher's daily cap or wished free day: the gateway's copy of the
+ * refusal app.teacher_work_rules_day_is_planned gives (20261123090000).
+ */
+export const WORK_RULE_DAY_IS_PLANNED = 'WORK_RULE_DAY_IS_PLANNED';
+
+/**
+ * The trigger's own sentence, as a sentence: the web and a direct PostgREST
+ * write are told the same thing (teacher-work-rules.service.spec.ts holds
+ * the two equal).
+ */
+export const WORK_RULE_DAY_IS_PLANNED_MESSAGE =
+  'Dagstaket och den önskade lediga dagen sätts av en administratör som planerar.';
+
+/** Lärarens dag on the row: the two columns only an administrator who plans writes. */
+const DAY_FIELDS = ['maxTeachingMinutesPerDay', 'preferredFreeDayOfWeek'] as const;
 
 /**
  * Lärarnas arbetstid: one row per teacher, upserted by the teacher named in the
@@ -90,6 +117,23 @@ export class TeacherWorkRulesService {
    * merge that answers that is where FrameTimes needed a locking read. A PUT of
    * the whole arbetstid has no such question — what is absent from the payload is
    * a rule that does not apply, which is the same sentence the column means.
+   *
+   * BUT FOR LÄRARENS DAG (20261123090000): the daily cap and the wished free
+   * day are written when sent — null clears — and kept when absent. They are
+   * the administrator's, on a row the teacher writes too, so a teacher's
+   * own PUT of their lunch, or a web from before them, must leave them
+   * where they are.
+   *
+   * AND NEVER FROM A WRITER WHO DOES NOT PLAN. Every administrator who
+   * reaches this write holds planering (@Area on the controller), so that is
+   * the teacher writing their own row. Restating what the row holds is
+   * fine — the web sends the form whole — but a body that would change
+   * either is refused here with WORK_RULE_DAY_IS_PLANNED, where the trigger
+   * would answer the same as AREA_NOT_YOURS. Past that check the two are
+   * left out of the teacher's write altogether, create and update both, so
+   * the database never sees them from a teacher: the trigger judges an
+   * upsert as the update it becomes, and a write that names neither column
+   * is one it has nothing to judge in.
    */
   async upsert(
     userId: string,
@@ -101,16 +145,19 @@ export class TeacherWorkRulesService {
     assertLunchIsWhole(dto);
     assertLunchFits(dto);
 
+    const plans = writesPlanning(user);
     const data = {
       lunchMinutes: dto.lunchMinutes ?? null,
       lunchStartTime: dto.lunchStartTime ? parseTimeString(dto.lunchStartTime) : null,
       lunchEndTime: dto.lunchEndTime ? parseTimeString(dto.lunchEndTime) : null,
       minDailyRestMinutes: dto.minDailyRestMinutes ?? null,
+      ...(plans ? dayData(dto) : {}),
     };
 
     try {
       const row = await this.prisma.withRls(user, async (tx) => {
         await assertIsStaff(tx, userId);
+        if (!plans) await assertDayIsKept(tx, userId, dto);
         return tx.teacherWorkRule.upsert({
           where: { userId },
           create: { schoolId, userId, ...data },
@@ -130,14 +177,36 @@ export class TeacherWorkRulesService {
    * every field null are the same fact, and the empty row is the worse of the two
    * to leave behind: it reads as a rule somebody wrote and then emptied, and the
    * payload would carry it to the engine as an assumption about nothing.
+   *
+   * A TEACHER'S DELETE KEEPS LÄRARENS DAG. Their own row may hold a cap or a
+   * wish an administrator set (20261123090000), which the teacher may not
+   * take away — the table's trigger refuses a delete of such a row from
+   * them. What the teacher means by "ingen arbetstidsregel" is their lunch
+   * and their rest, so that is what goes: the row is deleted where it holds
+   * neither cap nor wish, and otherwise its lunch and rest are cleared and
+   * the row stays. The delete names the condition rather than reading the
+   * row first, so a cap an administrator sets in between is seen by the
+   * delete itself (it re-reads the row it locks) and the row is kept; a row
+   * that is not there at all is the update's 404, as the delete's was.
    */
   async remove(userId: string, user: AuthenticatedUser): Promise<void> {
     requireSchoolId(user);
     this.assertMayWrite(userId, user);
     try {
-      await this.prisma.withRls(user, (tx) =>
-        tx.teacherWorkRule.delete({ where: { userId } }),
-      );
+      await this.prisma.withRls(user, async (tx) => {
+        if (writesPlanning(user)) {
+          await tx.teacherWorkRule.delete({ where: { userId } });
+          return;
+        }
+        const deleted = await tx.teacherWorkRule.deleteMany({
+          where: { userId, maxTeachingMinutesPerDay: null, preferredFreeDayOfWeek: null },
+        });
+        if (deleted.count > 0) return;
+        await tx.teacherWorkRule.update({
+          where: { userId },
+          data: { lunchMinutes: null, lunchStartTime: null, lunchEndTime: null, minDailyRestMinutes: null },
+        });
+      });
     } catch (error) {
       rethrowPrismaError(error);
     }
@@ -169,7 +238,49 @@ function toResponse(row: TeacherWorkRule): TeacherWorkRuleResponse {
     lunchStartTime: row.lunchStartTime ? toWallClock(row.lunchStartTime) : null,
     lunchEndTime: row.lunchEndTime ? toWallClock(row.lunchEndTime) : null,
     minDailyRestMinutes: row.minDailyRestMinutes,
+    maxTeachingMinutesPerDay: row.maxTeachingMinutesPerDay,
+    preferredFreeDayOfWeek: row.preferredFreeDayOfWeek,
   };
+}
+
+/**
+ * Whether the writer plans: an administrator whose profile writes
+ * planering, as app.current_user_may('PLANERING', true) asks it in the
+ * trigger. RolesGuard has already held every administrator who reaches a
+ * write here to it, so in practice this is "not the teacher"; asked of the
+ * profile all the same, so the gateway's rule and the table's are one rule.
+ */
+function writesPlanning(user: AuthenticatedUser): boolean {
+  return user.role === Role.SCHOOL_ADMIN && profileWrites(user.adminProfile, 'PLANERING');
+}
+
+/** Lärarens dag as the body states it: what is sent, null included; nothing for what is absent. */
+function dayData(dto: UpsertTeacherWorkRuleDto): Partial<Record<(typeof DAY_FIELDS)[number], number | null>> {
+  return Object.fromEntries(
+    DAY_FIELDS.filter((field) => dto[field] !== undefined).map((field) => [field, dto[field]]),
+  );
+}
+
+/**
+ * A writer who does not plan may send the cap and the wish only as the row
+ * holds them. Read only when the body names one, so a teacher's lunch save
+ * from a web that does not send them costs no statement; a teacher with no
+ * row holds neither, so a value is a change and a null is not.
+ */
+async function assertDayIsKept(
+  tx: PrismaClient,
+  userId: string,
+  dto: UpsertTeacherWorkRuleDto,
+): Promise<void> {
+  const sent = DAY_FIELDS.filter((field) => dto[field] !== undefined);
+  if (sent.length === 0) return;
+  const stored = await tx.teacherWorkRule.findUnique({
+    where: { userId },
+    select: { maxTeachingMinutesPerDay: true, preferredFreeDayOfWeek: true },
+  });
+  if (sent.some((field) => dto[field] !== (stored?.[field] ?? null))) {
+    throw new ForbiddenException({ message: WORK_RULE_DAY_IS_PLANNED_MESSAGE, code: WORK_RULE_DAY_IS_PLANNED });
+  }
 }
 
 /**

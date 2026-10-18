@@ -14,6 +14,7 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { IsCalendarDate } from '../../resources/dto/is-calendar-date';
+import { MAX_TEACHING_DAYS_PER_WEEK_MAX, MAX_TEACHING_DAYS_PER_WEEK_MIN } from '../../common/teacher-day';
 
 /**
  * En lärares tjänst för ett läsår: tjänstgöringsgrad, nedsättning, avtal.
@@ -34,7 +35,9 @@ import { IsCalendarDate } from '../../resources/dto/is-calendar-date';
  * 20261111090000) are the exception: absent KEEPS what the row holds, null
  * clears it, a value writes it. They came after the rest, and a web from
  * before them, open in a tab over the release, would otherwise clear them on
- * its next save. A new post without them has none.
+ * its next save. A new post without them has none. Deltid in days
+ * (maxTeachingDaysPerWeek, 20261123090000) came later still, and is read the
+ * same way for the same reason.
  *
  * THREE DECIMALS on the two percentages, because SCB and IST report a share of
  * a post "upp till tre decimaler" and 66,667 is how a two-thirds post is
@@ -124,6 +127,23 @@ export class UpsertTeacherEmploymentDto {
   @Min(1, { message: 'Lektorsuppdragets andel är minst 1 % — lämna fältet tomt för en lärare som inte är lektor.' })
   @Max(100, { message: 'Lektorsuppdragets andel kan vara högst hela tjänsten.' })
   lecturerPercent?: number | null;
+
+  /**
+   * Deltid in days (Lärarens dag, 20261123090000): the most weekdays with
+   * teaching the post allows, 1..6 as the table's CHECK says. Hard where it
+   * is set: the generator refuses a week that cannot keep it. HR data, like
+   * the tjänst %. Null: no limit. Absent: as stored (see the class comment).
+   * On the post only — a period of the post does not state it.
+   */
+  @IsOptional()
+  @IsInt({ message: 'Undervisningsdagarna per vecka anges som ett helt antal dagar.' })
+  @Min(MAX_TEACHING_DAYS_PER_WEEK_MIN, {
+    message: `Undervisningsdagarna per vecka är minst ${MAX_TEACHING_DAYS_PER_WEEK_MIN} — lämna fältet tomt för ingen gräns.`,
+  })
+  @Max(MAX_TEACHING_DAYS_PER_WEEK_MAX, {
+    message: `Undervisningsdagarna per vecka kan vara högst ${MAX_TEACHING_DAYS_PER_WEEK_MAX}.`,
+  })
+  maxTeachingDaysPerWeek?: number | null;
 }
 
 /**

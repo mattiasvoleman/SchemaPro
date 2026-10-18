@@ -123,6 +123,12 @@ export function toEmploymentResponse(
   };
 }
 
+/**
+ * The post's columns a PUT that leaves them out keeps (employmentData):
+ * SCB's three (20261111090000) and deltid in days (20261123090000).
+ */
+const KEPT_WHEN_ABSENT = ['employmentForm', 'firstTeacherPercent', 'lecturerPercent', 'maxTeachingDaysPerWeek'] as const;
+
 /** Every read of a post includes its periods, by Från. */
 const WITH_PERIODS = { periods: { orderBy: { validFrom: 'asc' } } } satisfies Prisma.TeacherEmploymentInclude;
 
@@ -190,9 +196,18 @@ export class TeacherEmploymentsService {
     });
     // A period's versions are left out for a reader without HR-läs, as the
     // periods are from the post (hr-visibility.ts): when and how a post
-    // changes is HR data like the percentages.
-    const shown = readsHr(user) ? rows : rows.filter((row) => row.entity !== 'PERIOD');
-    const entries = shown.slice(0, HISTORY_LIMIT).map((row) => ({
+    // changes is HR data like the percentages. So is a version of the post
+    // whose one change was deltid in days (20261123090000): hideHrChanges
+    // leaves that change out whole, and the empty version left behind would
+    // still say, by being there, that something HR moved on that date.
+    const hr = readsHr(user);
+    const shown = (hr ? rows : rows.filter((row) => row.entity !== 'PERIOD'))
+      .map((row) => {
+        const changes = diffLogEntry(row.entity, row.before, row.after);
+        return { row, changes, masked: hr ? changes : hideHrChanges(changes) };
+      })
+      .filter(({ changes, masked }) => masked.length > 0 || changes.length === 0);
+    const entries = shown.slice(0, HISTORY_LIMIT).map(({ row, masked }) => ({
       id: row.id,
       version: row.version,
       entity: row.entity,
@@ -200,9 +215,7 @@ export class TeacherEmploymentsService {
       action: row.action,
       actorId: row.actorId,
       createdAt: row.createdAt,
-      changes: readsHr(user)
-        ? diffLogEntry(row.entity, row.before, row.after)
-        : hideHrChanges(diffLogEntry(row.entity, row.before, row.after)),
+      changes: masked,
       ...(row.entity === 'PERIOD' ? { periodFrom: periodFromOf(row.action, row.before, row.after) } : {}),
     }));
     this.logger.log(`History read [user=${userId}, year=${academicYearId}, entries=${entries.length}]`);
@@ -241,8 +254,8 @@ export class TeacherEmploymentsService {
 
   /**
    * Write (or rewrite) one teacher's post for one year. The whole row is
-   * replaced, every time, for the reason the DTO gives — but for SCB's three,
-   * which a PUT that leaves them out keeps (employmentData).
+   * replaced, every time, for the reason the DTO gives — but for SCB's three
+   * and the days, which a PUT that leaves them out keeps (employmentData).
    */
   async upsert(
     userId: string,
@@ -265,13 +278,11 @@ export class TeacherEmploymentsService {
         // The answer is the post the caller sent and, when it has any, its
         // periods, which the caller did not: a read of them, recorded as the
         // post's reads are (EMPLOYMENT), in the write's own transaction. So is
-        // one of SCB's three the PUT left out and the row keeps: handed back,
-        // not sent. A post with neither answers only what was sent, a write's
-        // echo.
+        // one of SCB's three, or the days, the PUT left out and the row keeps:
+        // handed back, not sent. A post with neither answers only what was
+        // sent, a write's echo.
         const answer = toEmploymentResponse(saved);
-        const keptUnsent = (['employmentForm', 'firstTeacherPercent', 'lecturerPercent'] as const).some(
-          (field) => dto[field] === undefined && (saved[field] ?? null) !== null,
-        );
+        const keptUnsent = KEPT_WHEN_ABSENT.some((field) => dto[field] === undefined && (saved[field] ?? null) !== null);
         if (answer.periods.length > 0 || keptUnsent) await recordRead(tx, 'EMPLOYMENT', [userId], user.channel);
         // Only one who decides writes a post, and every decider reads HR
         // data; masked all the same, so the answer can never say more than
@@ -393,6 +404,7 @@ export function employmentData(dto: UpsertTeacherEmploymentDto): {
   employmentForm?: NonNullable<UpsertTeacherEmploymentDto['employmentForm']> | null;
   firstTeacherPercent?: number | null;
   lecturerPercent?: number | null;
+  maxTeachingDaysPerWeek?: number | null;
 } {
   const reductionPercent = dto.reductionPercent ?? 0;
   if (reductionPercent > dto.employmentPercent) {
@@ -424,6 +436,8 @@ export function employmentData(dto: UpsertTeacherEmploymentDto): {
     ...(dto.employmentForm !== undefined ? { employmentForm: dto.employmentForm } : {}),
     ...(dto.firstTeacherPercent !== undefined ? { firstTeacherPercent } : {}),
     ...(dto.lecturerPercent !== undefined ? { lecturerPercent } : {}),
+    // Deltid in days (20261123090000), the same way and for the same reason.
+    ...(dto.maxTeachingDaysPerWeek !== undefined ? { maxTeachingDaysPerWeek: dto.maxTeachingDaysPerWeek } : {}),
   };
 }
 
