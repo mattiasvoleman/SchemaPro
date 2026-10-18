@@ -23,6 +23,7 @@ import {
   useScheduleVersions,
   type VersionLesson,
 } from "@/lib/queries";
+import { ApiError } from "@/lib/api";
 import type { LessonRecurrence, MasterLesson, Person, Room, Subject } from "@/lib/types";
 import { recurrenceBadge } from "@/components/schedule/recurrence-badge";
 import { Button } from "@/components/ui/button";
@@ -155,7 +156,10 @@ export function VersionsDialog({
       onRestored(); // full replace — the local command stack no longer applies
       toast.success(t("versionRestored", { count: result.restoredLessons }));
     } catch (error) {
-      showError(error);
+      // The year's regeneration lock (Schemaförslag): a Generera, an apply of
+      // a schemaförslag or another restore is rewriting the year right now.
+      if (error instanceof ApiError && error.code === "SCHEDULE_BUSY") toast.error(t("versionRestoreBusy"));
+      else showError(error);
     }
   };
 

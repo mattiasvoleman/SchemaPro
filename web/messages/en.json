@@ -1295,6 +1295,7 @@
     "versionRestore": "Restore",
     "versionSaved": "Snapshot saved",
     "versionRestored": "{count} lessons restored from snapshot",
+    "versionRestoreBusy": "The timetable is being rewritten right now (Generate, a schedule candidate or another restore). Try again in a moment.",
     "versionsEmpty": "No snapshots yet. Save one before making big changes.",
     "suggestTitle": "That slot is taken — here are the nearest free ones",
     "suggestBody": "These placements are conflict-free for this lesson's class, teacher and room.",
@@ -5435,5 +5436,258 @@
     "whatLog": "A guardian's subscription is written to the read log as a read of the child's weekly timetable, once for each day the calendar fetches it.",
     "stopBodyUnknown": "All of this group's subscriptions stop working at once. If you turn it on again, each person creates a new one.",
     "countLoading": "Counting the subscriptions…"
+  },
+  "scheduleCandidates": {
+    "section": {
+      "title": "Timetable proposals",
+      "description": "Compute two to four alternative base timetables, each with its own emphasis, and compare them before you choose. Nothing is published, and the draft changes only when you apply a proposal.",
+      "retention": "Proposals are kept for 7 days.",
+      "count": "Number of proposals",
+      "start": "Compute proposals",
+      "starting": "Starting…",
+      "started": "The proposals are being computed. You can leave the page meanwhile.",
+      "compare": "Compare the proposals",
+      "blockedGenerating": "Generate is running for this school year. Proposals can be computed once the run has finished.",
+      "blockedPrerequisites": "Proposals can be computed once the prerequisites above are met.",
+      "loadFailed": "The proposals could not be loaded",
+      "loadFailedHint": "Generate and the base timetable are unaffected. Reload the page to see the proposals."
+    },
+    "status": {
+      "none": "No proposals for this school year.",
+      "PENDING": "The proposals are waiting to start.",
+      "RUNNING": "Computing proposals: {done} of {total} done.",
+      "CANCELLING": "The proposals are being cancelled.",
+      "SUCCEEDED": "{count, plural, one {# proposal ready} other {# proposals ready}} {date}.",
+      "applied": "Proposal {ordinal} has been applied.",
+      "FAILED": "The proposals failed {date}:"
+    },
+    "generateBlocked": "Timetable proposals are being computed for this school year. Generate can be started once they are done.",
+    "generateBlockedLink": "See the proposals",
+    "jobErrors": {
+      "GENERATE_STALE": "The base timetable changed while the run was in progress — a lesson was locked or deleted, or a timetable proposal was applied — so the run wrote nothing. Generate again.",
+      "SCHEDULE_BUSY": "Someone else was writing the base timetable at the same time, so the run was not saved. Try again in a moment.",
+      "CANDIDATES_RUNNING": "Timetable proposals are being computed for this school year. Generate can be started once they are done."
+    },
+    "page": {
+      "title": "Timetable proposals",
+      "subtitle": "Compare the proposals with the base timetable as it stands and apply the one that fits best",
+      "back": "Back to Generate timetable",
+      "loadFailed": "The proposals could not be loaded",
+      "loadFailedHint": "The draft and the base timetable are untouched. Reload the page.",
+      "refetchFailedHint": "What is shown is the proposals as last loaded. Reload the page to see whether anything has changed.",
+      "noYear": "There is no active school year, so there are no proposals to show.",
+      "emptyTitle": "No proposals yet",
+      "emptyBody": "Compute proposals from Generate timetable. They are kept for 7 days.",
+      "emptyAction": "Go to Generate timetable"
+    },
+    "candidateName": "Proposal {ordinal}: {label}",
+    "variant": {
+      "KEEP": "Keep the most",
+      "TEACHER_GAPS": "Fewer gaps for teachers",
+      "SPREAD": "More even weeks",
+      "FREE": "Freer placement",
+      "unknown": "Proposal {ordinal}"
+    },
+    "solver": {
+      "INFEASIBLE": "No valid timetable",
+      "TIMEOUT": "Ran out of time",
+      "REJECTED": "Rejected: did not match the curriculum",
+      "unknown": "No timetable"
+    },
+    "parts": {
+      "requirements": "the curriculum entries",
+      "preserved": "the locked and hand-placed lessons",
+      "draft": "the draft's lessons",
+      "rooms": "the rooms",
+      "rules": "the school's rules",
+      "rosters": "the classes and groups"
+    },
+    "runErrors": {
+      "CANDIDATE_RUN_CANCELLED": "The proposals were cancelled before they were done.",
+      "CANDIDATE_ENGINE_TIMEOUT": "The timetable engine did not answer in time. Try again in a moment.",
+      "CANDIDATE_ENGINE_FAILED": "The scheduling engine answered with an error. Try again in a moment.",
+      "ENGINE_LACKS_CANDIDATES": "The timetable engine is older than the rest of the service and cannot compute proposals yet. Try again in a few minutes.",
+      "CANDIDATES_FIRST_FAILED": "The first proposal got no timetable, and the others would have met the same obstacle. What stopped it is below.",
+      "CANDIDATES_FIRST_FAILED_UNNAMED": "The first proposal got no timetable, and the others would have met the same obstacle.",
+      "CANDIDATES_FIRST_TIMEOUT": "The first proposal could not be finished in time, so the others were not computed.",
+      "CANDIDATES_NONE_APPLICABLE": "None of the proposals produced a timetable that can be applied.",
+      "CANDIDATE_RUN_INTERRUPTED": "The service restarted while the proposals were being computed. Compute them again.",
+      "CANDIDATE_RUN_ABANDONED": "The proposals stopped responding and have been cancelled. Compute them again.",
+      "generic": "The proposals could not be computed."
+    },
+    "refusal": {
+      "title": "The proposals cannot be applied right now",
+      "STAFF_UNSTAFFED_REQUIREMENTS": "Curriculum entries have no teacher, and the school's setting refuses to generate then. Staff them in the staffing workspace before applying a proposal.",
+      "BLOCK_PARTLY_LOCKED_SUMMARY": "A parallel block is partly locked. Unlock its lessons, or lock all of them, before applying a proposal.",
+      "other": "The base timetable cannot be generated as it stands, so no proposal can be applied."
+    },
+    "errors": {
+      "CANDIDATES_RUNNING": "Proposals are already being computed for this school year. Wait until they are done.",
+      "GENERATE_RUNNING": "Generate is running for this school year. Try again once the run has finished.",
+      "CANDIDATES_BUSY": "Many schools are computing proposals right now. Try again in a few minutes.",
+      "CANDIDATES_NEED_A_DRAFT": "Generate a first timetable, then you can compute proposals from it.",
+      "SCHEDULE_BUSY": "The base timetable is being rewritten right now. Try again in a moment.",
+      "REFRESH_GONE": "The proposals to refresh no longer exist. Compute new ones from Generate timetable.",
+      "PUBLISH_MODE_CHANGED": "The school's publishing mode has changed since the page was loaded. Open Apply again and read what applies now.",
+      "PUBLISH_IN_PROGRESS": "The timetable is being published right now. Try again in a moment.",
+      "SCHEDULE_CANDIDATE_BUSY": "Someone else is changing the base timetable right now. Try again in a moment.",
+      "SCHEDULE_CANDIDATE_NOT_APPLICABLE": "The proposal cannot be applied: the run is not finished, or the proposal got no timetable.",
+      "SCHEDULE_CANDIDATE_STALE": "The base timetable has changed since the proposals were computed. Refresh the proposals and compare again.",
+      "SCHEDULE_CANDIDATE_STALE_PARTS": "The base timetable has changed since the proposals were computed: {parts}. Refresh the proposals and compare again.",
+      "CANDIDATE_GONE": "The proposal no longer exists. It may have been deleted or replaced by newer proposals.",
+      "TOO_MANY": "Too many attempts in a short time. Wait a minute and try again.",
+      "generic": "Something went wrong. Try again."
+    },
+    "progress": {
+      "title": "Computing the proposals",
+      "count": "{done} of {total} done",
+      "pending": "Waiting to start…",
+      "cancelling": "Cancelling…",
+      "label": "Proposals done",
+      "hint": "Each proposal gets half a minute, the same for all so they can be compared. The page updates by itself, and you can leave it meanwhile.",
+      "cancel": "Cancel"
+    },
+    "failed": {
+      "title": "The proposals could not be computed {date}",
+      "cancelledTitle": "The proposals were cancelled",
+      "conflicts": "What stopped the first proposal",
+      "olderBatch": "The comparison below is of the proposals from {date}.",
+      "again": "Compute proposals again from Generate timetable"
+    },
+    "batch": {
+      "made": "Computed {date}.",
+      "madeBy": "Computed {date} by {name}."
+    },
+    "applied": {
+      "title": "{name} has been applied",
+      "body": "It was applied {date}. The base timetable is now built on it, so these proposals are compared against a timetable they were not computed from — refresh them to compare again.",
+      "version": "A version was saved first: “{name}”. It is under Versions in the timetable.",
+      "versionsLink": "Open the timetable",
+      "publishingLink": "Go to Publishing",
+      "toast": "Proposal {ordinal} applied: {count, plural, one {# lesson} other {# lessons}} in the base timetable"
+    },
+    "check": {
+      "checking": "Checking the proposals against the base timetable…",
+      "failed": "Could not check whether the proposals still hold",
+      "failedHint": "The proposals cannot be applied until the check has succeeded.",
+      "retry": "Check again"
+    },
+    "stale": {
+      "title": "The base timetable has changed since the proposals were computed",
+      "body": "Changed since then: {parts}. The proposals are built on what applied then and cannot be applied until they are refreshed.",
+      "bodyUnnamed": "The proposals are built on what applied then and cannot be applied until they are refreshed.",
+      "refresh": "Refresh the proposals",
+      "refreshing": "Refreshing…",
+      "refreshStarted": "The proposals are being recomputed from today's base timetable."
+    },
+    "table": {
+      "title": "Comparison",
+      "caption": "The proposals compared with the base timetable as it stands. Under each value is the difference from the current one.",
+      "measure": "Measure",
+      "current": "Current",
+      "currentDraft": "Current draft",
+      "currentSchedule": "Current timetable",
+      "candidate": "Proposal {ordinal}",
+      "sameAs": "Same as proposal {ordinal}",
+      "applied": "Applied"
+    },
+    "row": {
+      "unplaced": "Unplaced",
+      "unplacedHint": "Curriculum lines that do not get all their time",
+      "moved": "Lessons moved",
+      "movedHint": "Of the draft's generated lessons",
+      "rooms": "Room changes",
+      "roomsHint": "Same time, another room",
+      "teachers": "Teachers' gaps",
+      "teachersHint": "All teachers' minutes in an ordinary week",
+      "pupils": "Pupils' gaps",
+      "pupilsHint": "Minutes per pupil in an ordinary week",
+      "apply": "Apply"
+    },
+    "cell": {
+      "minutes": "{minutes} min",
+      "perPupil": "{minutes} min per pupil",
+      "teachersDetail": "{count, plural, one {# teacher} other {# teachers}} with gaps · worst {worst} min",
+      "pupilsDetail": "{count, plural, one {# class} other {# classes}} with gaps · worst {worst} min",
+      "delta": "{delta} against current",
+      "unplaced": "{lines, plural, =0 {All placed} one {# line · {minutes} min a week} other {# lines · {minutes} min a week}}",
+      "lines": "{count, plural, one {# line} other {# lines}}",
+      "movedOf": "{moved} of {of}",
+      "notApplicable": "Not applicable",
+      "computing": "Computing…",
+      "failed": "Could not be computed"
+    },
+    "apply": {
+      "button": "Apply",
+      "buttonLabel": "Apply proposal {ordinal}: {label}",
+      "blockedRunning": "Proposals are being computed for this school year. These can be applied once the run has finished.",
+      "titleDraft": "Apply proposal {ordinal}: {label}?",
+      "bodyDraft": "The draft's generated lessons are replaced with the proposal's, the same way as when you generate. Locked and hand-placed lessons stay. A version is saved first, so you can go back under Versions. Nothing is published.",
+      "titleDirect": "Apply proposal {ordinal}: {label} in direct mode?",
+      "bodyDirect": "The school publishes directly, so the proposal also changes the calendar: the upcoming lessons it replaces are removed from the calendar and come back only at the next publish. A version is saved first.",
+      "futureLessons": "{count, plural, =0 {No upcoming lessons are removed from the calendar} one {# upcoming lesson is removed from the calendar} other {# upcoming lessons are removed from the calendar}}",
+      "coverAssignments": "{count, plural, =0 {No cover assignments are affected} one {# cover assignment on them is lost} other {# cover assignments on them are lost}}",
+      "switchFirstHint": "In draft mode only the draft changes, and the calendar only when you publish.",
+      "switchFirst": "Switch to draft mode first",
+      "direct": "Apply directly",
+      "confirm": "Apply",
+      "applying": "Applying…"
+    },
+    "review": {
+      "title": "Review a proposal",
+      "hint": "Who is worse off, and which lessons move.",
+      "pick": "Proposal"
+    },
+    "worse": {
+      "title": "Worse for",
+      "hint": "The teachers whose gaps grow most against the current timetable, in minutes in an ordinary week.",
+      "row": "{name}: {before} → {after} min",
+      "none": "No teacher gets more gaps.",
+      "failed": "The gaps could not be computed, because something they are computed from could not be loaded."
+    },
+    "moved": {
+      "title": "Moved lessons",
+      "caption": "{name}: {count, plural, one {# difference} other {# differences}} from the draft",
+      "none": "The proposal keeps all of the draft's lessons where they are.",
+      "class": "Class",
+      "subject": "Subject",
+      "from": "From",
+      "to": "To",
+      "room": "Room",
+      "kindROOM": "Same time, new room",
+      "kindADDED": "New lesson",
+      "kindREMOVED": "Removed",
+      "noRoom": "No room",
+      "slot": "{day} {start}–{end}",
+      "showAll": "Show all {count}",
+      "showFewer": "Show fewer",
+      "failed": "The proposal's lessons could not be loaded",
+      "failedHint": "Reload the page. The proposal and the draft are untouched."
+    },
+    "week": {
+      "title": "The week in {name}",
+      "hint": "A week of the proposal as it would look, for a class, a group, a teacher or a room.",
+      "kind": "Show",
+      "kindGROUP": "Class or group",
+      "classes": "Classes",
+      "teachingGroups": "Teaching groups",
+      "kindTEACHER": "Teacher",
+      "kindROOM": "Room",
+      "week": "Week",
+      "odd": "Week {week} (odd)",
+      "even": "Week {week} (even)",
+      "noTargets": "There is nothing to show."
+    },
+    "discard": {
+      "button": "Delete the proposals",
+      "title": "Delete the proposals?",
+      "body": "This school year's proposals are deleted. The draft and the base timetable do not change.",
+      "confirm": "Delete",
+      "titleActive": "Cancel the proposals?",
+      "bodyActive": "The proposals being computed are cancelled, and this school year's earlier proposals are deleted. The draft and the base timetable do not change.",
+      "confirmActive": "Cancel the proposals",
+      "done": "The proposals have been deleted.",
+      "cancelled": "The proposals are being cancelled."
+    }
   }
 }

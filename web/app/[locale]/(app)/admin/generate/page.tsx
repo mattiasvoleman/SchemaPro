@@ -14,6 +14,8 @@ import {
   XCircle,
 } from "lucide-react";
 import { Link } from "@/i18n/navigation";
+import { ApiError } from "@/lib/api";
+import { isActiveRun } from "@/lib/candidates/labels";
 import { engineMessage, type MessageLookup } from "@/lib/engine-message";
 import {
   useAcademicYears,
@@ -49,6 +51,22 @@ import {
   PlanningYearPicker,
   ProjectedRostersBanner,
 } from "@/components/schedule/planning-year";
+import { CandidatesSection } from "./candidates-section";
+import { useScheduleCandidates } from "./use-schedule-candidates";
+
+/**
+ * How long the gateway counts a PENDING or RUNNING job as running when it
+ * refuses a candidate run beside it (GENERATE_RUNNING): a job older than
+ * this is one whose task was lost, and refusing for it would refuse for ever.
+ */
+const GENERATE_RUNNING_MS = 15 * 60 * 1000;
+
+/**
+ * How often the year's history is read again while it holds a job this page
+ * did not start that is still running: nothing else reads it again while
+ * the page stays open, and its row is what holds Ta fram förslag back.
+ */
+const HISTORY_POLL_MS = 5000;
 
 /**
  * A history row's word for how the run ended: the gateway's own refusals
@@ -75,6 +93,7 @@ export default function GeneratePage() {
   const tEngine = useTranslations("engineMessages");
   const tStaffing = useTranslations("staffing");
   const tCommon = useTranslations("common");
+  const tCandidates = useTranslations("scheduleCandidates");
   const locale = useLocale();
   /*
    * The year generated for: this one, or next year before its activation.
@@ -192,6 +211,14 @@ export default function GeneratePage() {
   const { data: job } = useOptimizationJob(jobId);
   const historyQuery = useOptimizationHistory(year?.id ?? null);
   const history = historyQuery.data;
+  /*
+   * Schemaförslag (design §6). A candidate run and a Generera run of the same
+   * year would both replace the draft's generated lessons, so each waits for
+   * the other — the gateway refuses either way (CANDIDATES_RUNNING,
+   * GENERATE_RUNNING); the page says so before the click.
+   */
+  const candidatesQuery = useScheduleCandidates(year?.id ?? null);
+  const candidateRunActive = isActiveRun(candidatesQuery.data?.latest?.run.status);
 
   // Optimization profile — persisted locally per browser.
   const [weights, setWeights] = useState<Required<ObjectiveWeights>>({
@@ -369,6 +396,51 @@ export default function GeneratePage() {
     startOptimization.isPending ||
     job?.status === "PENDING" ||
     job?.status === "RUNNING";
+  /*
+   * Another admin's run, or this page's from before a reload, as the history
+   * last read it. This page's own job is judged by its poll instead: the
+   * history row it started as stays PENDING until the list is read again.
+   *
+   * Judged against `now`, a clock the poll below moves, not Date.now() in
+   * the render: nothing else renders this page again when the 15 minutes
+   * pass, and a block computed once would outlive the job it was about.
+   */
+  const [now, setNow] = useState(() => Date.now());
+  const foreignGenerating = (history ?? []).some(
+    (entry) =>
+      entry.id !== job?.id &&
+      (entry.status === "PENDING" || entry.status === "RUNNING") &&
+      now - new Date(entry.createdAt).getTime() < GENERATE_RUNNING_MS,
+  );
+  const generating = isRunning || foreignGenerating;
+  /*
+   * While such a job runs, the history is read again every few seconds and
+   * the clock moves with it: its row turning SUCCEEDED or FAILED, or ageing
+   * past the gateway's 15 minutes, is what lets the proposals start. No poll
+   * otherwise: the list is read when the page opens and when a run of its
+   * own ends. Here, not as a refetchInterval on useOptimizationHistory:
+   * lib/queries.ts is in every route's chunk.
+   */
+  const refetchHistory = historyQuery.refetch;
+  const hasYear = year !== null;
+  useEffect(() => {
+    if (!foreignGenerating || !hasYear) return;
+    const timer = window.setInterval(() => {
+      setNow(Date.now());
+      void refetchHistory();
+    }, HISTORY_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [foreignGenerating, hasYear, refetchHistory]);
+  /*
+   * This page's own job, once it has ended: the history read right after
+   * the start still has its row as PENDING, so the list below would show a
+   * finished run as waiting until a reload. It is read again.
+   */
+  const jobStatus = job?.status;
+  useEffect(() => {
+    if (!hasYear) return;
+    if (jobStatus === "SUCCEEDED" || jobStatus === "FAILED") void refetchHistory();
+  }, [jobStatus, hasYear, refetchHistory]);
 
   const run = async () => {
     if (!year) return;
@@ -379,9 +451,29 @@ export default function GeneratePage() {
       });
       setJobId(newJobId);
     } catch (error) {
+      // A candidate run that started in another tab since this page last read.
+      // The overview is read again, so the section shows that run and polls
+      // it, and Generera waits for it here with the reason beside it.
+      if (error instanceof ApiError && error.code === "CANDIDATES_RUNNING") {
+        toast.error(tCandidates("jobErrors.CANDIDATES_RUNNING"));
+        void candidatesQuery.refetch();
+        return;
+      }
       toast.error(error instanceof Error ? error.message : tCommon("error"));
     }
   };
+
+  /**
+   * The gateway's own reasons for a job it stopped before writing, which are
+   * not the engine's and so not in its catalogue: the draft changed under
+   * the run (GENERATE_STALE), or another write held the year (SCHEDULE_BUSY).
+   */
+  const jobErrorText = (code: string | null): string | null =>
+    code === "GENERATE_STALE"
+      ? tCandidates("jobErrors.GENERATE_STALE")
+      : code === "SCHEDULE_BUSY"
+        ? tCandidates("jobErrors.SCHEDULE_BUSY")
+        : null;
 
   const solverStatus = job?.status === "SUCCEEDED" ? job.solverStatus : null;
   // Both verdicts mean "no timetable came back", but only INFEASIBLE is a
@@ -500,6 +592,15 @@ export default function GeneratePage() {
               disables — a greyed button with no reason beside it is a button
               people click at and then call support about.
             */}
+            {candidateRunActive ? (
+              <p id="generate-blocked-candidates" className="mr-auto max-w-prose text-sm text-foreground">
+                {tCandidates("generateBlocked")}{" "}
+                {/* A plain anchor: the section is on this page, and a locale link would leave it. */}
+                <a href="#candidates" className="underline underline-offset-4">
+                  {tCandidates("generateBlockedLink")}
+                </a>
+              </p>
+            ) : null}
             {blockedByStaffing ? (
               <p id="generate-blocked-unstaffed" className="mr-auto max-w-prose text-sm text-foreground">
                 {t("preStaffed")} ({t("preStaffedMissing", { count: unstaffedCount })}).{" "}
@@ -517,10 +618,17 @@ export default function GeneratePage() {
             ) : null}
             <Button
               className="w-full sm:w-auto"
-              disabled={!canRun || isRunning}
+              disabled={!canRun || isRunning || candidateRunActive}
               onClick={run}
               data-writes="SCHEMALAGGNING DRIFT"
-              aria-describedby={blockedByStaffing ? "generate-blocked-unstaffed" : undefined}
+              aria-describedby={
+                [
+                  candidateRunActive ? "generate-blocked-candidates" : null,
+                  blockedByStaffing ? "generate-blocked-unstaffed" : null,
+                ]
+                  .filter(Boolean)
+                  .join(" ") || undefined
+              }
             >
               {isRunning ? (
                 <>
@@ -697,6 +805,14 @@ export default function GeneratePage() {
         </SectionCard>
       </div>
 
+      <CandidatesSection
+        year={year}
+        overview={candidatesQuery}
+        canStart={canRun}
+        generating={generating}
+        weights={weights}
+      />
+
       {job && (job.status === "SUCCEEDED" || job.status === "FAILED") ? (
         <SectionCard
           id="last-run"
@@ -712,20 +828,21 @@ export default function GeneratePage() {
           }
           description={
             job.status === "FAILED"
-              ? job.error
-                ? (
-                    <>
-                      <p>
-                        {engineText({
-                          code: job.errorCode,
-                          message: job.error,
-                          params: job.errorParams,
-                        })}
-                      </p>
-                      {errorNames.length > 0 ? <p className="font-medium">{errorNames.join(", ")}</p> : null}
-                    </>
-                  )
-                : tCommon("error")
+              ? jobErrorText(job.errorCode) ??
+                (job.error
+                  ? (
+                      <>
+                        <p>
+                          {engineText({
+                            code: job.errorCode,
+                            message: job.error,
+                            params: job.errorParams,
+                          })}
+                        </p>
+                        {errorNames.length > 0 ? <p className="font-medium">{errorNames.join(", ")}</p> : null}
+                      </>
+                    )
+                  : tCommon("error"))
               : refusedUnstaffed
                 ? t("statusUnstaffed")
                 : refusedPartlyLocked
