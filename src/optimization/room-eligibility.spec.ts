@@ -300,4 +300,95 @@ describe('roomNeedsOf', () => {
       ),
     ).toMatchObject({ studentGroupSize: 3, minGradeLevel: 7, maxGradeLevel: 8 });
   });
+
+  describe('in a tioårig läsår (SFS 2025:729)', () => {
+    /*
+     * The same school a reform later: the same pupils in the same åldersband,
+     * numbered one up — what the nioårig läsår calls 7A is 8A, and 9A is 10A.
+     * A room's span and a salsregel are stated in the nioårig numbering for
+     * good (grade-numbering.ts), so the needs are read over into it: the same
+     * pupils need the same room in either numbering, and a "7–9" lab still
+     * takes the class that is now called 10A.
+     */
+    const TIOARIG_GROUPS = GROUPS.map((group) => ({
+      ...group,
+      gradeLevel: group.gradeLevel === null ? null : group.gradeLevel + 1,
+    }));
+    const tioarigRostersFor = (groupIds: string[], named: string[] = []): Promise<Rosters> =>
+      loadRosters(schoolOf(PEOPLE, MEMBERSHIPS).tx, CURRENT, groupIds, TIOARIG_GROUPS, named);
+
+    it('needs the room the same pupils needed in the nioårig numbering', async () => {
+      const nioarig = await rostersFor([CLASS_7A, MA]);
+      const tioarig = await tioarigRostersFor([CLASS_7A, MA]);
+
+      const needs = roomNeedsOf(tioarig, { groupIds: [CLASS_7A, MA] }, { requiredRoomTypeId: 'lab' }, 'TIOARIG');
+
+      expect(needs).toEqual({
+        studentGroupSize: 3,
+        minGradeLevel: 7,
+        maxGradeLevel: 9,
+        requiredRoomTypeId: 'lab',
+      });
+      expect(needs).toEqual(roomNeedsOf(nioarig, { groupIds: [CLASS_7A, MA] }, { requiredRoomTypeId: 'lab' }));
+    });
+
+    it('reads a named pupil’s year over as well', async () => {
+      const rosters = await tioarigRostersFor([CLASS_7A], [pupil(4)]);
+
+      expect(
+        roomNeedsOf(
+          rosters,
+          { groupIds: [CLASS_7A], studentIds: [pupil(4)] },
+          { requiredRoomTypeId: null },
+          'TIOARIG',
+        ),
+      ).toMatchObject({ studentGroupSize: 3, minGradeLevel: 7, maxGradeLevel: 8 });
+    });
+
+    it('leaves the span itself in the läsår’s own numbering: only the needs are read over', async () => {
+      // gradeSpanOf is what the staffing load and the behörighet check read
+      // too, each translating at its own comparison; it says the classes as
+      // the läsår numbers them.
+      const rosters = await tioarigRostersFor([MA]);
+
+      expect(gradeSpanOf(rosters, [MA])).toEqual({ min: 8, max: 10 });
+      expect(roomNeedsOf(rosters, { groupIds: [MA] }, { requiredRoomTypeId: null }, 'TIOARIG')).toMatchObject({
+        minGradeLevel: 7,
+        maxGradeLevel: 9,
+      });
+    });
+
+    it('still asks for no years for a group nobody is in', async () => {
+      const rosters = await tioarigRostersFor([EMPTY]);
+
+      expect(roomNeedsOf(rosters, { groupIds: [EMPTY] }, { requiredRoomTypeId: null }, 'TIOARIG')).toEqual({
+        studentGroupSize: 1,
+        minGradeLevel: null,
+        maxGradeLevel: null,
+        requiredRoomTypeId: null,
+      });
+    });
+
+    it('reads a tioårig åk 1 as the förskoleklass an F–3 room is stated for', async () => {
+      // Nioårig 0 is förskoleklass, the åldersband that is the new åk 1.
+      const rosters = await loadRosters(schoolOf([], []).tx, CURRENT, [CLASS_7A], [{ id: CLASS_7A, gradeLevel: 1 }]);
+
+      expect(roomNeedsOf(rosters, { groupIds: [CLASS_7A] }, { requiredRoomTypeId: null }, 'TIOARIG')).toMatchObject({
+        minGradeLevel: 0,
+        maxGradeLevel: 0,
+      });
+    });
+
+    it('reads a nioårig läsår as it always did, named or by default', async () => {
+      const rosters = await rostersFor([CLASS_7A, MA]);
+
+      expect(roomNeedsOf(rosters, { groupIds: [CLASS_7A, MA] }, { requiredRoomTypeId: null }, 'NIOARIG')).toEqual(
+        roomNeedsOf(rosters, { groupIds: [CLASS_7A, MA] }, { requiredRoomTypeId: null }),
+      );
+      expect(roomNeedsOf(rosters, { groupIds: [CLASS_7A, MA] }, { requiredRoomTypeId: null }, 'NIOARIG')).toMatchObject({
+        minGradeLevel: 7,
+        maxGradeLevel: 9,
+      });
+    });
+  });
 });

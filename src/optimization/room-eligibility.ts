@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
+import { toNioarigSpan, type GradeNumbering } from '../common/grade-numbering';
 import { halfPairs, halvesByClass, unplacedShareOf, type GroupHalf } from '../common/class-halves';
 import {
   readHomeClassesOf,
@@ -188,9 +189,16 @@ export function roomNeedsOf(
   rosters: Rosters,
   attendance: { groupIds: string[]; studentIds?: string[] },
   subject: { requiredRoomTypeId: string | null },
+  /**
+   * The rosters' läsår's numbering. The needs' grades are read in NIOARIG,
+   * which a room's span and a salsregel are stated in for good
+   * (grade-numbering.ts): a tioårig läsår's 10A needs a room for the 9 a
+   * "7–9" room takes.
+   */
+  numbering: GradeNumbering = 'NIOARIG',
 ): RoomNeeds {
   const studentIds = attendance.studentIds ?? [];
-  const span = gradeSpanOf(rosters, attendance.groupIds, studentIds);
+  const span = toNioarigSpan(gradeSpanOf(rosters, attendance.groupIds, studentIds), numbering);
   const expected = attendance.groupIds.reduce(
     (sum, groupId) => sum + (rosters.unplacedShare.get(groupId) ?? 0),
     0,
