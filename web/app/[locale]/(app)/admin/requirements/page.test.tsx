@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { toast } from "sonner";
@@ -1348,6 +1348,8 @@ describe("Timplan CSV", () => {
 
     // The active year first: 7A's two alternating requirements, no 8B.
     await user.click(exportButton());
+    // The builder loads at the click: the file follows a moment later.
+    await waitFor(() => expect(mockDownloadCsv).toHaveBeenCalledTimes(1));
     const [firstName, firstFile] = mockDownloadCsv.mock.calls[0] as [string, string];
     expect(firstName).toBe("timplansposter.csv");
     expect(firstFile).toContain("7A;SO;2;60;0;0;;;udda;;");
@@ -1361,6 +1363,7 @@ describe("Timplan CSV", () => {
     await user.click(screen.getByRole("option", { name: "2027/2028" }));
 
     await user.click(exportButton());
+    await waitFor(() => expect(mockDownloadCsv).toHaveBeenCalledTimes(2));
     const [, secondFile] = mockDownloadCsv.mock.calls[1] as [string, string];
     expect(secondFile).toContain("8B;BI;1;60;0;0;;;alla;;");
     expect(secondFile).not.toContain("7A");
@@ -1953,6 +1956,56 @@ describe("Timplan cell dialog candidates", () => {
       render(<RequirementsPage />);
 
       expect(state.rostersAskedFor.every((id) => id === null)).toBe(true);
+    });
+  });
+
+  /*
+   * A tioårig läsår in the picker (SFS 2025:729). A behörighet is stated in
+   * NIOARIG for good (grade-numbering.ts), and a TIOARIG läsår's classes are
+   * one higher than the same children in it: its 10A is the 9 Anna's 7–9 was
+   * written for, and its 7A the 6 that only Bo's 1–6 reaches. The page hands
+   * the year's numbering on with its bounds (yearBounds) and the span stays
+   * the class's own; the cover rule reads it over. The badge names a kind and
+   * never a grade, so nothing here is said in the other numbering.
+   */
+  describe("in a tioårig läsår", () => {
+    const tioarigYear = { ...year, name: "2028/2029", startDate: "2028-08-14", endDate: "2029-06-08" };
+    const tenA = { id: "g-10a", academicYearId: "y1", name: "10A", kind: "CLASS", gradeLevel: 10 };
+
+    it("badges 10A by Anna's 7–9 and leaves Bo's 1–6 short of it", async () => {
+      state.years = loaded([{ ...tioarigYear, gradeNumbering: "TIOARIG" }] as never);
+      state.groups = loaded([...groups, tenA]);
+      await openTeacherPicker("cellLabel(10A|Samhällsorientering)");
+
+      expect(optionNamed("Anna Svensson")?.textContent).toContain("kindLEGITIMATION");
+      expect(optionNamed("Bo Lind")?.textContent).toContain("candidateUnqualified");
+    });
+
+    it("reads 7A as the NIOARIG 6: Bo's 1–6 covers it and Anna's 7–9 does not", async () => {
+      state.years = loaded([{ ...tioarigYear, gradeNumbering: "TIOARIG" }] as never);
+      await openTeacherPicker("cellLabelPeriod(7A|Samhällsorientering|2|60|badgeOdd)");
+
+      expect(optionNamed("Bo Lind")?.textContent).toContain("kindBEHORIG");
+      expect(optionNamed("Anna Svensson")?.textContent).toContain("candidateUnqualified");
+      // The minutes are the report's, whatever the numbering.
+      expect(optionNamed("Anna Svensson")?.textContent).toContain("candidateRemaining(120)");
+    });
+
+    it("reads Ma71 through its member's 7A the same way", async () => {
+      state.years = loaded([{ ...tioarigYear, gradeNumbering: "TIOARIG" }] as never);
+      await openTeacherPicker("cellLabel(Ma71|Samhällsorientering)");
+
+      expect(optionNamed("Bo Lind")?.textContent).toContain("kindBEHORIG");
+      expect(optionNamed("Anna Svensson")?.textContent).toContain("candidateUnqualified");
+    });
+
+    it("leaves a nine-year läsår's 10A, specialskolans åk 10, outside Anna's 7–9", async () => {
+      state.years = loaded([{ ...year, gradeNumbering: "NIOARIG" }] as never);
+      state.groups = loaded([...groups, tenA]);
+      await openTeacherPicker("cellLabel(10A|Samhällsorientering)");
+
+      expect(optionNamed("Anna Svensson")?.textContent).toContain("candidateUnqualified");
+      expect(optionNamed("Bo Lind")?.textContent).toContain("candidateUnqualified");
     });
   });
 

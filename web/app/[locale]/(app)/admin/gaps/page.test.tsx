@@ -671,6 +671,110 @@ describe("Gaps page — free time", () => {
     expect(onDay("gaps.freeTitle", 4).join(" ")).not.toContain("17:00");
   });
 
+  /*
+   * A tioårig läsår (SFS 2025:729). Ramtider and weekly årskursregler are
+   * school-wide and stated in NIOARIG (grade-numbering.ts), and a TIOARIG
+   * läsår's classes are one higher than the same children in it: its 10B is
+   * the 9 a "7–9" frame binds, as the solver payload sends it. The page reads
+   * the year it searches off usePlanningYear, so the year here carries the
+   * numbering and 8B is renamed into what that year calls it.
+   *
+   * Read raw, 10 is outside 7–9 and the search offers Thursday afternoon to
+   * a class the frame sends home at 15:00. A nine-year läsår's 10B is
+   * specialskolans åk 10 and stays outside — the contrast rows below.
+   */
+  describe("in a tioårig läsår", () => {
+    const FRAME_7_9 = {
+      id: "ram-1",
+      minGradeLevel: 7,
+      maxGradeLevel: 9,
+      dayOfWeek: null,
+      startTime: "08:00:00",
+      endTime: "15:00:00",
+    };
+    /** A weekly year rule for 7–9, Thursday afternoon: no row named, a span instead. */
+    const RULE_7_9 = {
+      id: "c-years-7-9",
+      resourceType: "GRADE_LEVEL",
+      userId: null,
+      roomId: null,
+      studentGroupId: null,
+      minGradeLevel: 7,
+      maxGradeLevel: 9,
+      dayOfWeek: 4,
+      date: null,
+      startTime: "14:00:00",
+      endTime: "17:00:00",
+      type: "UNAVAILABLE",
+      reason: "Ramtid",
+    } as AvailabilityConstraint;
+    const TIOARIG_YEAR = { ...THIS_YEAR, name: "2028/29", gradeNumbering: "TIOARIG" };
+
+    /** 8B as a year calls it: 10B in the year above, same pupils and lessons. */
+    const tenB = () => {
+      state.groups = GROUPS.map((group) =>
+        group.id === "g-8b" ? { ...group, name: "10B", gradeLevel: 10 } : group,
+      );
+    };
+
+    const thursdayOf = async (name: string) => {
+      const user = userEvent.setup();
+      render(<GapsPage />);
+      await check(user, name);
+      await searchFree(user);
+      return onDay("gaps.freeTitle", 4).join(" ");
+    };
+
+    it("stops offering 10B the time a 7–9 ramtid has closed, as the 9 it is in NIOARIG", async () => {
+      years.year = TIOARIG_YEAR;
+      tenB();
+      state.frameTimes = [FRAME_7_9];
+
+      const framedDay = await thursdayOf("10B");
+      expect(framedDay).not.toContain("17:00");
+      expect(framedDay).toContain("15:00");
+    });
+
+    it("closes 10B's time for a weekly 7–9 year rule", async () => {
+      years.year = TIOARIG_YEAR;
+      tenB();
+      state.constraints = [RULE_7_9];
+
+      const ruledDay = await thursdayOf("10B");
+      expect(ruledDay).not.toMatch(/–1[5-7]:00/);
+      expect(ruledDay).toContain("14:00");
+    });
+
+    it("leaves a tioårig 7A, the NIOARIG 6, outside the same frame", async () => {
+      // The other end of the shift: 7A's pupils are the ones a 4–6 rule was
+      // written for, and a 7–9 frame does not send them home.
+      years.year = TIOARIG_YEAR;
+      state.frameTimes = [FRAME_7_9];
+
+      expect(await thursdayOf("7A")).toContain("17:00");
+
+      // The same 7A in a nine-year läsår is inside 7–9, and sent home at 15:00.
+      cleanup();
+      years.year = THIS_YEAR;
+      const nineYear = await thursdayOf("7A");
+      expect(nineYear).not.toContain("17:00");
+      expect(nineYear).toContain("15:00");
+    });
+
+    it("leaves a nine-year läsår's 10B outside both, numbered or not", async () => {
+      tenB();
+      state.frameTimes = [FRAME_7_9];
+      state.constraints = [RULE_7_9];
+
+      // No numbering on the year: a row read before the column, NIOARIG.
+      expect(await thursdayOf("10B")).toContain("17:00");
+
+      cleanup();
+      years.year = { ...THIS_YEAR, gradeNumbering: "NIOARIG" };
+      expect(await thursdayOf("10B")).toContain("17:00");
+    });
+  });
+
   it("refuses to answer a question about nobody, and clears back to it", async () => {
     const user = userEvent.setup();
     render(<GapsPage />);

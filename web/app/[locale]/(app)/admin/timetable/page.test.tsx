@@ -79,6 +79,8 @@ const planning = vi.hoisted(() => ({
     predecessorId: null as string | null,
     startDate: "2026-08-17",
     endDate: "2027-06-11",
+    /** Absent is NIOARIG; the tioårig rast rows set it and put it back. */
+    gradeNumbering: undefined as "NIOARIG" | "TIOARIG" | undefined,
   },
   successor: null as null | {
     id: string;
@@ -898,6 +900,47 @@ describe("the rasts a class must observe", () => {
     // would claim every stage keeps the same hours — the same reason the lunch
     // bands are hidden there.
     expect(screen.queryByText("Förmiddagsrast")).toBeNull();
+  });
+
+  /*
+   * A tioårig läsår on screen (SFS 2025:729). A rast is school-wide and stated
+   * in NIOARIG (grade-numbering.ts), and a TIOARIG läsår's classes are one
+   * higher than the same children in it, so the page reads the class's span
+   * in NIOARIG through the shown year's numbering before it asks which rasts
+   * bind — the one map frames, year rules and room locks are judged by too.
+   * Its 7.1 is the 6 the 4–6 rast was written for; its 4.1 the 3 it never
+   * reached.
+   */
+  describe("in a tioårig läsår", () => {
+    afterEach(() => {
+      planning.active.gradeNumbering = undefined;
+    });
+
+    it("draws the 4–6 rast for 7.1, the NIOARIG 6", async () => {
+      planning.active.gradeNumbering = "TIOARIG";
+      render(<TimetablePage />);
+      await filterTo("7.1");
+      expect(screen.getAllByText("Förmiddagsrast")).toHaveLength(5);
+    });
+
+    it("draws nothing for 4.1, the NIOARIG 3", async () => {
+      planning.active.gradeNumbering = "TIOARIG";
+      render(<TimetablePage />);
+      await filterTo("4.1");
+      expect(screen.queryByText("Förmiddagsrast")).toBeNull();
+    });
+
+    it("reads a year numbered NIOARIG as the unnumbered one above", async () => {
+      // The first two rows of this describe, with the numbering spelled out.
+      planning.active.gradeNumbering = "NIOARIG";
+      render(<TimetablePage />);
+      await filterTo("7.1");
+      expect(screen.queryByText("Förmiddagsrast")).toBeNull();
+      cleanup();
+      render(<TimetablePage />);
+      await filterTo("4.1");
+      expect(screen.getAllByText("Förmiddagsrast")).toHaveLength(5);
+    });
   });
 });
 
