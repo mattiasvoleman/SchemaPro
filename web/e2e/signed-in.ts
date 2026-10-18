@@ -33,6 +33,18 @@ export async function signInAs(context: BrowserContext, person: SignedInPerson, 
 }
 
 /**
+ * Asks the stub for a state its one world does not hold, by the name its
+ * fixtures give it (Schemaförslag's run still working, say: SCENARIOS in
+ * e2e/stub/fixtures/candidates.ts). Every request the page sends carries
+ * the name in the x-stub-scenario header, and the handlers that know it
+ * answer that state. The Next.js server's own reads never carry it, so a
+ * scenario can only change what the browser is answered.
+ */
+export async function askForScenario(page: Page, scenario: string) {
+  await page.setExtraHTTPHeaders({ "x-stub-scenario": scenario });
+}
+
+/**
  * Collects what the page asked the stub for and did not get: a read with no
  * fixture, one whose handler threw, and one that never got an answer at all,
  * each a `METHOD /path — what to do` line. A page that got every read it

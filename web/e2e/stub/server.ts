@@ -171,11 +171,13 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
       return;
     }
     const body = await readBody(request);
+    const scenario = request.headers["x-stub-scenario"];
     const result = match.route.handler({
       person: personForToken(bearer(request)),
       params: match.params,
       query: url.searchParams,
       body,
+      scenario: typeof scenario === "string" && scenario !== "" ? scenario : null,
     });
     if (result instanceof Reply) {
       if (result.options.miss) {
