@@ -139,8 +139,9 @@ async function main(): Promise<void> {
     data: { name: 'Högstadieskolan', slug: SCHOOL_SLUG, timezone: 'Europe/Stockholm' },
   });
   const schoolId = school.id;
+  // Nioårig by name: the school's 7–9 is that numbering's (seed.ts says why).
   const year = await prisma.academicYear.create({
-    data: { schoolId, ...currentSchoolYear(), isActive: true },
+    data: { schoolId, ...currentSchoolYear(), gradeNumbering: 'NIOARIG', isActive: true },
   });
 
   await prisma.lunchSetting.create({

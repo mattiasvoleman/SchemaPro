@@ -151,8 +151,10 @@ async function main(): Promise<void> {
   const schoolId = school.id;
 
   const yearSpec = currentSchoolYear();
+  // Nioårig by name: the classes, frames and timplan below are F–9, and a
+  // läsår starting after 2028-06-30 would otherwise be filled in tioårig.
   const year = await prisma.academicYear.create({
-    data: { schoolId, ...yearSpec, isActive: true },
+    data: { schoolId, ...yearSpec, gradeNumbering: 'NIOARIG', isActive: true },
   });
 
   // Lunch belongs to the building, not to the läsår, so there is exactly one
