@@ -1901,6 +1901,57 @@ describe('MasterLessonsService', () => {
         SCHOOL_ID,
       );
     });
+
+    it('warns of the walk from the teacher’s lesson at the other site, and asks nothing for a lesson without a room', async () => {
+      const NORRA = '10000000-0000-4000-8000-0000000000a1';
+      const SODRA = '20000000-0000-4000-8000-0000000000a2';
+      const NORRA_ROOM = '00000000-aaaa-4aaa-8aaa-0000000000a3';
+      arrangeCreate();
+      tx.siteTravelTime.findMany.mockImplementation(
+        answerRows([{ schoolId: SCHOOL_ID, siteAId: NORRA, siteBId: SODRA, minutes: 15 }]),
+      );
+      tx.site.findMany.mockImplementation(
+        answerRows([
+          { id: NORRA, name: 'Norra', schoolId: SCHOOL_ID },
+          { id: SODRA, name: 'Södra', schoolId: SCHOOL_ID },
+        ]),
+      );
+      tx.room.findMany.mockImplementation(
+        answerRows([
+          { id: ROOM_ID, siteId: SODRA, schoolId: SCHOOL_ID },
+          { id: NORRA_ROOM, siteId: NORRA, schoolId: SCHOOL_ID },
+        ]),
+      );
+      tx.studentGroup.findMany.mockResolvedValue([]);
+      tx.user.findMany.mockImplementation(
+        answerRows([{ id: TEACHER_ID, role: 'TEACHER', firstName: 'Anna', lastName: 'Ek' }]),
+      );
+      const before = otherLesson({ teacherId: TEACHER_ID, roomId: NORRA_ROOM, startTime: t('09:00'), endTime: t('10:00') });
+      const created = lessonRecord({ startTime: t('10:05'), endTime: t('11:05') });
+      tx.masterLesson.create.mockResolvedValue(created);
+      // The clash scan before the write, then the day read after it, with the new lesson in it.
+      tx.masterLesson.findMany
+        .mockImplementationOnce(answerRows([before]))
+        .mockImplementation(answerRows([before, { ...created, subject: { name: 'Svenska' } }]));
+
+      const result = await service.create(createDto({ startTime: '10:05', endTime: '11:05' }), testUser());
+
+      expect(result.warnings).toEqual([
+        {
+          code: 'TRAVEL_TIME_SHORT',
+          params: { party: 'TEACHER', name: 'Anna Ek', from: 'Norra', to: 'Södra', minutes: 15, gap: 5, other: 'Math', time: '09:00–10:00' },
+        },
+      ]);
+
+      // Without a room the lesson walks nowhere: the figures are not asked for.
+      tx.siteTravelTime.findMany.mockClear();
+      tx.masterLesson.create.mockResolvedValue({ ...created, roomId: null });
+      tx.masterLesson.findMany.mockImplementation(answerRows([before]));
+      await expect(
+        service.create(createDto({ roomId: undefined, startTime: '10:05', endTime: '11:05' }), testUser()),
+      ).resolves.toMatchObject({ warnings: [] });
+      expect(tx.siteTravelTime.findMany).not.toHaveBeenCalled();
+    });
   });
 
   // -------------------------------------------------------------------
@@ -2806,6 +2857,8 @@ describe('MasterLessonsService', () => {
         const [read] = tx.masterLesson.findUnique.mock.calls[0] as [Query];
         expect(read.select!.school.select._count.select).toEqual({
           academicYears: expect.anything(),
+          // Skolområden och restid's gate, counted in the same statement.
+          siteTravelTimes: true,
           teacherWorkRules: { where: { maxTeachingMinutesPerDay: { not: null } } },
           teacherEmployments: {
             where: {

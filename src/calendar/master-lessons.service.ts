@@ -472,7 +472,13 @@ export class MasterLessonsService {
           teachers,
         )),
       );
-      warnings.push(...(await this.travelWarnings(tx, rosters, await readSiteMap(tx, year.schoolId), [created])));
+      // The walks between sites, only for a lesson in a room: one without a
+      // room walks nowhere, and a create (which has no school statement to
+      // count the figures in) asks nothing for it. With a room, one indexed
+      // question at a school without a figure (readSiteMap).
+      if (created.roomId !== null) {
+        warnings.push(...(await this.travelWarnings(tx, rosters, await readSiteMap(tx, year.schoolId), [created])));
+      }
 
       this.logger.log(`Master lesson created manually [lesson=${created.id}]`);
       this.announce(year.schoolId, mode);
