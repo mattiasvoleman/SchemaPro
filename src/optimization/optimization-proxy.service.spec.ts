@@ -23,6 +23,7 @@ import type {
 import {
   calendarSweepWhere,
   coverageLessonsOf,
+  engineMayStillBeSolving,
   OptimizationProxyService,
   previousLessonsFrom,
   unplacedOf,
@@ -181,6 +182,23 @@ const table =
       .filter((row) => matchesWhere(row, where))
       .map((row) => selected(row, select));
   };
+
+describe('engineMayStillBeSolving (a schemaförslag run keeps its call\'s deadline)', () => {
+  it('after a call that reached the engine and timed out: this gateway\'s timeout, or the engine\'s own 503 or 504', () => {
+    expect(engineMayStillBeSolving(new ServiceUnavailableException('The AI engine did not respond in time.'))).toBe(true);
+    expect(engineMayStillBeSolving(new HttpException({ message: 'The AI engine returned an error.' }, 503))).toBe(true);
+    expect(engineMayStillBeSolving(new HttpException({ message: 'The AI engine returned an error.' }, 504))).toBe(true);
+  });
+
+  it('never after a call that did not connect, failed before it was sent, or that the engine answered', () => {
+    expect(engineMayStillBeSolving(new ServiceUnavailableException('The AI engine could not be reached.'))).toBe(false);
+    expect(engineMayStillBeSolving(new ServiceUnavailableException('AI engine unavailable.'))).toBe(false);
+    expect(engineMayStillBeSolving(new HttpException({ message: 'older', code: 'ENGINE_LACKS_CANDIDATES' }, 503))).toBe(false);
+    expect(engineMayStillBeSolving(new HttpException('The AI engine returned an error.', 500))).toBe(false);
+    expect(engineMayStillBeSolving(new HttpException({ message: 'Lunch has no room.', code: 'LUNCH_WINDOW_EMPTY' }, 400))).toBe(false);
+    expect(engineMayStillBeSolving(new Error('boom'))).toBe(false);
+  });
+});
 
 describe('OptimizationProxyService', () => {
   let service: OptimizationProxyService;

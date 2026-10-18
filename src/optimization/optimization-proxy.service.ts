@@ -428,6 +428,29 @@ export type RegenerationScope = { kind: 'NOT_PRESERVED' } | { kind: 'IDS'; ids: 
  * The write's own where-clause, exported so a check can count exactly the rows
  * an apply would take off the calendar (design §3, futureCalendarLessons).
  */
+/** callAiEngine's 503 when no connection was made: the engine never had the request. */
+const ENGINE_UNREACHABLE = 'The AI engine could not be reached.';
+/** callAiEngine's 503 for a failure before or outside the HTTP call itself. */
+const ENGINE_UNAVAILABLE = 'AI engine unavailable.';
+
+/**
+ * Whether a failed engine call may have left the engine solving. It did when
+ * the call reached the engine and ran out of time: this gateway's own timeout
+ * ("did not respond in time"), or the engine's 503/504, whose wait does not
+ * stop the solve thread. A call that never connected, or failed before it was
+ * sent, left nothing running; neither did an engine that answered anything
+ * else. A schemaförslag run keeps its call's deadline on the first kind only.
+ */
+export function engineMayStillBeSolving(error: unknown): boolean {
+  if (!(error instanceof HttpException)) return false;
+  const status = error.getStatus();
+  if (status !== HttpStatus.SERVICE_UNAVAILABLE && status !== HttpStatus.GATEWAY_TIMEOUT) return false;
+  const body = error.getResponse();
+  const shape = typeof body === 'object' && body !== null ? (body as { message?: unknown; code?: unknown }) : { message: body };
+  if (shape.code === ENGINE_LACKS_CANDIDATES) return false;
+  return shape.message !== ENGINE_UNREACHABLE && shape.message !== ENGINE_UNAVAILABLE;
+}
+
 /**
  * The year's machine-owned masters: everything a regeneration replaces, by
  * PRESERVED_FROM_REGENERATION. The one statement of that rule outside the
@@ -2788,9 +2811,7 @@ export class OptimizationProxyService {
                   this.logger.error(
                     `AI engine unreachable at ${this.aiConfig.baseUrl} [${error.code ?? 'no code'}]`,
                   );
-                  throw new ServiceUnavailableException(
-                    'The AI engine could not be reached.',
-                  );
+                  throw new ServiceUnavailableException(ENGINE_UNREACHABLE);
                 }
                 /*
                  * The engine's own sentence, not a generic one.
@@ -2871,7 +2892,7 @@ export class OptimizationProxyService {
                   error.response.status,
                 );
               }
-              throw new ServiceUnavailableException('AI engine unavailable.');
+              throw new ServiceUnavailableException(ENGINE_UNAVAILABLE);
             }),
           ),
       );
@@ -2879,7 +2900,7 @@ export class OptimizationProxyService {
       return response.data;
     } catch (error) {
       if (error instanceof HttpException) throw error;
-      throw new ServiceUnavailableException('AI engine unavailable.');
+      throw new ServiceUnavailableException(ENGINE_UNAVAILABLE);
     }
   }
 

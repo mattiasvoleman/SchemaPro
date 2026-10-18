@@ -474,6 +474,14 @@ describe('ScheduleCandidatesService', () => {
         expect.objectContaining({ data: expect.objectContaining({ status: 'FAILED', engineBusyUntil: null }) }),
       );
 
+      // An engine never reached has nothing of the run to solve.
+      proxy.solveCandidate.mockRejectedValueOnce(new ServiceUnavailableException('The AI engine could not be reached.'));
+      run = { status: 'PENDING', progress: 0, basis: null, basisParts: null };
+      await startAndRun(dto({ count: 2 }));
+      expect(tx.scheduleCandidateRun.updateMany).toHaveBeenLastCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: 'FAILED', engineBusyUntil: null }) }),
+      );
+
       // A timeout (the gateway's, or the engine's 503, whose wait does not
       // stop its solve thread) keeps the call's deadline.
       proxy.solveCandidate.mockRejectedValueOnce(new ServiceUnavailableException('The AI engine did not respond in time.'));
