@@ -44,8 +44,9 @@ Checks, all derived from the request:
                       work rule's cap — the union of every lesson's own
                       clock span, the locked ones from `fixedLessons`
                       included — and the weekdays they teach on within their
-                      post's limit; what the school locked judged as the
-                      engine is held to it, see _teacher_day_problems
+                      post's limit in every week `lockedWeekdays` names; what
+                      the school locked judged as the engine is held to it,
+                      see _teacher_day_problems
 
 Use as a library::
 
@@ -369,17 +370,25 @@ def _teacher_day_problems(request, lessons) -> list[str]:
     `fixedLessons` — they come back in no response — and WHAT THE SCHOOL
     LOCKED IS NOT JUDGED ON ITS OWN, the distribution check's reading. A
     weekday is held to the cap only if the solver placed a lesson on it, and
-    then with the locked minutes counted. The days are held to the larger of
-    the post's limit and the number of weekdays the locked lessons already
-    take: a school that locked four days on a three-day post broke the limit
-    by hand, and the solver is held to adding no fifth.
+    then with every locked minute on that weekday counted, an odd week's
+    beside an even week's: the strict reading, as the engine's.
+
+    THE DAYS ARE COUNTED IN EACH WEEK THE POST NAMES. The request has no
+    weeks, so `lockedWeekdays` is what says which locks are taught together
+    — each set the weekdays one real week's locks hold — and every lesson
+    the solver placed runs every week. Each week is held to the larger of
+    the post's limit and the days its own locks take: a week the school
+    locked on four days of a three-day post broke the limit by hand, and the
+    solver is held to adding no fifth to it. Every set the request carries
+    is read, the ones the engine leaves out as implied included, so a wrong
+    proof there is a red line here.
     """
     caps: dict = defaultdict(list)
     for rule in request.teacher_work_rules:
         if rule.max_teaching_minutes_per_day is not None:
             caps[rule.teacher_id].append((rule.id, rule.max_teaching_minutes_per_day))
     limits = {
-        limit.teacher_id: (limit.id, limit.max_teaching_days_per_week)
+        limit.teacher_id: (limit.id, limit.max_teaching_days_per_week, limit.locked_weekdays)
         for limit in request.teacher_day_limits
     }
     if not caps and not limits:
@@ -412,14 +421,16 @@ def _teacher_day_problems(request, lessons) -> list[str]:
                     problems.append(
                         f"teacher work rule {rule_id}: {minutes} minutes of teaching on "
                         f"weekday {weekday}, its rule allows {cap} a day")
-    for teacher, (limit_id, most) in limits.items():
+    for teacher, (limit_id, most, weeks) in limits.items():
         taught = set(placed.get(teacher, {}))
-        held = set(locked.get(teacher, {}))
-        days = len(taught | held)
-        if days > max(most, len(held)):
-            problems.append(
-                f"teacher post {limit_id}: teaching on {days} days a week "
-                f"({len(held)} of them locked), its post allows {most}")
+        for week in weeks:
+            held = set(week)
+            days = len(taught | held)
+            if days > max(most, len(held)):
+                where = f": weekdays {', '.join(map(str, sorted(held)))}" if held else ""
+                problems.append(
+                    f"teacher post {limit_id}: teaching on {days} days a week "
+                    f"({len(held)} of them locked{where}), its post allows {most}")
     return problems
 
 

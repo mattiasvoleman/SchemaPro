@@ -2345,6 +2345,8 @@ class SchedulerSolver:
         # spread usually built it — the reasons the idle and distribution
         # terms above give for their own overlaps. A teacher whose rest rule
         # built the day reuses its literals and pays here for nothing it adds.
+        # A post's weeks (lockedWeekdays) are rows under its one literal and
+        # add no variable: every `works` they count is charged here already.
         ruled = {
             rule.teacher_id
             for rule in request.teacher_work_rules
@@ -3400,10 +3402,16 @@ class SchedulerSolver:
           the week's minutes against the N best days, a day holding at most
           the room the teacher's lessons can take there (_teaching_room: the
           frames, rasts and margins in the domains, less the locked lessons)
-          and, under a cap, at most its residual. N is the limit or, where the
-          locked lessons already sit on more days, that many — the days a
-          teacher can teach on number no more than the larger of the two, and
+          and, under a cap, at most its residual. N is the limit or, in a
+          week whose locks already sit on more of the grid's days, that many
+          — and ANY week refuses, because the model holds every one
+          (_week_sets). In a week with locks on L the solver's lessons take
+          the grid days of L and at most max(0, N − |L|) more, which is no
+          more than max(N, |L ∩ grid|) days and no more than the grid has;
           taking the BEST that many days, locked or not, can only overcount.
+          The week with the fewest locked grid days is the one that can tip,
+          so it is the one read — a week inside another the model leaves out
+          has at most N of them, and counts N either way.
           ONLY WHERE THE LIMIT TIPS THE WEEK: a week every day together cannot
           hold either is too much with no post at all, and is the model's to
           refuse with whatever does tip it — a limit allowing every day with
@@ -3438,7 +3446,7 @@ class SchedulerSolver:
                 requirements_of.setdefault(teacher_id, []).append(requirement)
 
         weekdays = self._grid.schedule_days
-        lock_minutes, lock_days = _teacher_locks(request.fixed_lessons)
+        lock_minutes, _lock_days = _teacher_locks(request.fixed_lessons)
         reaching = [rule for rule in capped if rule.teacher_id in week_minutes]
 
         def residual(teacher_id: UUID, cap: int, weekday: int) -> int:
@@ -3497,7 +3505,7 @@ class SchedulerSolver:
                 per_day.append(held)
             days = max(
                 min(limit.max_teaching_days_per_week, len(weekdays)),
-                len(lock_days.get(teacher_id, set()) & set(weekdays)),
+                min(len(week & set(weekdays)) for week in _week_sets(limit)),
             )
             if week_minutes[teacher_id] > sum(per_day):
                 # Every day, no limit: the week is too much for the teacher
@@ -7399,12 +7407,30 @@ class SchedulerSolver:
         unclipped and their union once (_teacher_locks), and they are never
         refused here: what they already take is subtracted from the cap — the
         residual, floored at zero, which then closes the day to the solver's
-        own lessons under the literal and never bare — and the weekdays they
-        hold are teaching days already, whatever this builder does. So the
-        days limit counts the OTHER days, against what the locked ones leave
-        of N. A school that hand-placed a breach was warned beside that edit
+        own lessons under the literal and never bare. The cap counts every
+        lock on a weekday, an odd week's beside an even week's, which is the
+        strict reading and the safe one for a generator. A school that
+        hand-placed a breach was warned beside that edit
         (master-lessons.service.ts), and refusing the week for it would turn
         the warning into a block one screen later.
+
+        THE DAYS ARE HELD IN EVERY WEEK THE LOCKS MAKE, and not against the
+        weekdays of every lock at once. The gateway reads the real ISO weeks
+        and sends the sets of weekdays the teacher's locks hold together in
+        one (AnonymousTeacherDayLimit.locked_weekdays); for each set L the
+        days the solver's own lessons take outside L number at most
+        max(0, N − |L|). A generated lesson runs every week, so a weekday
+        outside some week's locks is a day added to that week, wherever else
+        the locks sit. The union of the weekdays was the reading once, and it
+        let a post of two, locked Monday and Tuesday in odd weeks and
+        Wednesday and Thursday in even ones, take a weekly Monday and a
+        weekly Wednesday: N − 4 floored at zero closed Friday alone, and
+        every real week had three days. Every set hangs on the one literal,
+        because the post is one rule and the week its unit; a set inside
+        another of at most N days says nothing the larger does not and is
+        never built (_week_sets proves it). For a teacher locked the same
+        every week the list is that one set, and the model is the one the
+        union built.
 
         THE LINKING CONSTRAINT IS THE ONE BARE LINE, AND IT IS SAFE BARE. For a
         teacher with a days limit, every day's minutes are at most the room
@@ -7460,9 +7486,10 @@ class SchedulerSolver:
 
         NOTHING THAT CANNOT BIND IS BUILT. A day whose residual already holds
         every minute the teacher's lessons could bring there — or every minute
-        the day has room for — has no cap constraint, and a limit that allows
-        at least as many days as the teacher's lessons can reach has no days
-        constraint. A rule naming a teacher with nothing left to place builds
+        the day has room for — has no cap constraint, a week whose locks leave
+        at least as many days as the teacher's lessons can reach outside them
+        has no days row, and a limit none of whose weeks has one has no
+        literal either. A rule naming a teacher with nothing left to place builds
         nothing at all, as the lunch and the rest skip them. With no rule set
         this returns before reading anything, and the model is the one every
         school had before.
@@ -7481,7 +7508,7 @@ class SchedulerSolver:
         slots_per_day = self._grid.slots_per_day
         slot_minutes = self._grid.slot_minutes
         weekdays = self._grid.schedule_days
-        lock_minutes, lock_days = _teacher_locks(fixed_lessons)
+        lock_minutes, _lock_days = _teacher_locks(fixed_lessons)
         locked_busy = self._teacher_busy_from_locks(fixed_lessons)
 
         reach_of: dict[str, dict[int, list[tuple[int, int]]]] = {}
@@ -7514,7 +7541,6 @@ class SchedulerSolver:
             room = self._teaching_room(
                 [reach(decision) for decision in group], locked_busy, teacher_id,
             )
-            locked = lock_days.get(teacher_id, set())
 
             def works(day_index: int) -> cp_model.IntVar:
                 return self._teacher_day_works(
@@ -7558,13 +7584,19 @@ class SchedulerSolver:
                     ).OnlyEnforceIf(literal)
 
             for limit in limits:
-                allowed = max(0, limit.max_teaching_days_per_week - len(locked))
-                candidates = [
-                    day_index
-                    for day_index, weekday in enumerate(weekdays)
-                    if weekday not in locked and reaching[day_index]
-                ]
-                if allowed >= len(candidates):
+                # One row per week the locks make: the days outside that
+                # week's locks, against what they leave of N.
+                weeks = []
+                for held in _week_sets(limit):
+                    allowed = max(0, limit.max_teaching_days_per_week - len(held))
+                    candidates = [
+                        day_index
+                        for day_index, weekday in enumerate(weekdays)
+                        if weekday not in held and reaching[day_index]
+                    ]
+                    if allowed < len(candidates):
+                        weeks.append((candidates, allowed))
+                if not weeks:
                     continue
                 literal = registry.register(
                     model,
@@ -7576,9 +7608,12 @@ class SchedulerSolver:
                     # through its own map and masks the sentence on read.
                     resource_ids=[limit.id],
                 )
-                model.Add(
-                    sum(works(day_index) for day_index in candidates) <= allowed,
-                ).OnlyEnforceIf(literal)
+                # A count of `works`, under the literal: no weighted row
+                # against a constant here either.
+                for candidates, allowed in weeks:
+                    model.Add(
+                        sum(works(day_index) for day_index in candidates) <= allowed,
+                    ).OnlyEnforceIf(literal)
                 # The linking rows, bare and implied — see the docstring — on
                 # every day, the locked ones included: they are what tells the
                 # LP that a locked day holds its room and no more. A row whose
@@ -8562,9 +8597,14 @@ def _teacher_locks(
     weekday the grid does not teach. Those are the right windows for keeping
     a generated lesson out of a locked one's way; they are the wrong minutes
     for a cap, which a lesson locked 07:30-09:00 on an 08:00 grid would have
-    shortened by thirty minutes the teacher really does teach. And a lock on a
-    Saturday is a teaching day on any reading of the post's limit, whether or
-    not this grid has a Saturday in it.
+    shortened by thirty minutes the teacher really does teach.
+
+    THE WEEKDAYS ARE EVERY WEEK'S AT ONCE, which is what the free-day wish
+    asks — is any lesson of the teacher's on that weekday — and NOT what the
+    post's days are held against: an odd week's Monday and an even week's
+    Wednesday are never one week's two days, and the days limit reads the
+    weeks the gateway sends instead (AnonymousTeacherDayLimit.locked_weekdays,
+    _week_sets).
 
     THE UNION, because two locked lessons the clash check let through overlap
     in time and not in teacher: the teacher is in one room at a time
@@ -8591,6 +8631,33 @@ def _teacher_locks(
     for teacher_id, weekday in spans:
         days[teacher_id].add(weekday)
     return minutes, dict(days)
+
+
+def _week_sets(limit: AnonymousTeacherDayLimit) -> list[frozenset[int]]:
+    r"""The weeks a days limit is held in: each set of locked weekdays once,
+    less every set another one already holds for it.
+
+    A WEEK INSIDE ANOTHER OF AT MOST N DAYS IS IMPLIED, and only then. Write G
+    for the grid days the solver's lessons take; a week with locks on L is
+    held by |G \ L| ≤ max(0, N − |L|). For L' ⊂ L with |L| ≤ N,
+    |G \ L'| = |G \ L| + |G ∩ (L \ L')| ≤ (N − |L|) + (|L| − |L'|) =
+    N − |L'|, which is the line of L'. Past N the floor breaks it — L's line
+    is then G ⊆ L, and G may take every day of L \ L' — so a set inside one
+    the locks alone put over N is a week of its own and stays. A dropped set
+    always has a kept one above it: whatever implied it is either kept or
+    implied in turn by a larger set of at most N, and the sets are finite.
+
+    In the payload's order of first mention, so the rows are built in the
+    same order on every run, and a list of one set — a teacher locked the
+    same every week — is that set and nothing else.
+    """
+    most = limit.max_teaching_days_per_week
+    distinct = list(dict.fromkeys(frozenset(week) for week in limit.locked_weekdays))
+    return [
+        week
+        for week in distinct
+        if not any(week < other and len(other) <= most for other in distinct)
+    ]
 
 
 def _day_reach(

@@ -565,11 +565,20 @@ class AnonymousTeacherDayLimit(CamelModel):
     the gateway mask exactly the sentences that carry the figure, on read,
     for a reader without HR access, and leave the cap's sentences alone.
 
-    NOT REFUSED FOR WHAT THE LOCKED LESSONS DO. A teacher whose hand-placed
+    NOT REFUSED FOR WHAT THE LOCKED LESSONS DO. A week whose hand-placed
     lessons already sit on more days than the post allows broke the limit by
     hand, and was warned beside that edit; the engine holds what it PLACES to
-    the days that are left, and to the locked days themselves where none are.
-    See SchedulerSolver._add_teacher_day_constraints.
+    the days that week has left, and to the locked days themselves where none
+    are. See SchedulerSolver._add_teacher_day_constraints.
+
+    COUNTED WEEK BY WEEK, as the gateway's own check counts a hand edit. A
+    teacher whose post allows two days and who is locked on Monday and
+    Tuesday in odd weeks and on Wednesday and Thursday in even ones teaches
+    two days in every week the school has; the four weekdays together are no
+    week at all, and a limit read off them would let the generator put a
+    weekly lesson on Monday and another on Wednesday — three days in every
+    week, and nobody told. The engine has no weeks, so the gateway reads them
+    and sends what they hold: `locked_weekdays` below.
 
     A TEACHING DAY is a weekday with at least one lesson the teacher is on,
     as lead or as co-teacher, generated or locked — src/common/teacher-day.ts.
@@ -583,6 +592,71 @@ class AnonymousTeacherDayLimit(CamelModel):
     #: 1..6 as the database bounds it (TeacherEmployments_maxTeachingDaysPerWeek_check).
     #: Seven would be no limit at all on any week a school has.
     max_teaching_days_per_week: int = Field(alias="maxTeachingDaysPerWeek", ge=1, le=6)
+    #: The weeks the post is held in: every distinct set of ISO weekdays the
+    #: teacher's preserved lessons — every lesson the payload sends as a
+    #: FixedLesson the teacher is lead or co-teacher on, ending after it
+    #: starts — hold together in one real ISO week, by their recurrence and
+    #: their dates (src/common/teacher-day.ts's week reading). [[]] for a
+    #: teacher with no preserved lesson; [[1, 2]] for one locked on Monday and
+    #: Tuesday every week; [[1, 2], [3, 4]] for the odd and even weeks above.
+    #:
+    #: WHAT THE ENGINE HOLDS, for every set L: the generated lessons take at
+    #: most max(0, N − |L|) of the grid's days outside L. A generated lesson
+    #: is a weekly lesson — the stricter reading for an A/B or dated
+    #: requirement, as everywhere the engine has no weeks — so it adds a day
+    #: to every week whose locks do not already hold its weekday, and a week
+    #: with |L| days locked has N − |L| left to add. A week the locks alone
+    #: put over N gets nothing added, and is not refused for what it holds.
+    #: |L| counts a weekday the grid does not teach: a Saturday lesson is a
+    #: teaching day on any reading of the post.
+    #:
+    #: A SET INSIDE ANOTHER MAY BE LEFT OUT — BUT ONLY INSIDE ONE OF AT MOST N.
+    #: Write G for the weekdays the generated lessons take. L's line is
+    #: |G \ L| ≤ max(0, N − |L|). For L' ⊆ L with |L| ≤ N:
+    #:   |G \ L'| = |G \ L| + |G ∩ (L \ L')| ≤ (N − |L|) + (|L| − |L'|) = N − |L'|,
+    #: which is L''s line, so L's implies it and a week with L' in it is safe
+    #: wherever every week with L is. Past N the floor breaks the step: L's
+    #: line is then G ⊆ L, which still lets G take every day of L \ L'. With
+    #: L = {Mon, Tue, Wed} on a post of two and L' = {Mon}, G = {Tue, Wed}
+    #: keeps L's week at its three locked days and gives L''s week three —
+    #: the silent breach this field exists to close, one week over. So "only
+    #: the maximal sets" is wrong exactly there. The gateway leaves out what
+    #: this proves and nothing more (lockedWeekdaySets, src/common/
+    #: teacher-day.ts), and the engine prunes by the same rule itself
+    #: (scheduler_solver._week_sets), so a gateway that sent every distinct
+    #: set would build no row more. Measured against an encoding of every
+    #: real week: of 400 random payloads sending only the maximal sets, 25
+    #: came back with a week the generator had put over its post; of 2,000
+    #: sending every distinct set, none did, none was refused that had a
+    #: timetable, and none raised.
+    #:
+    #: REQUIRED, and it breaks nothing deployed: the limit is new, unmerged,
+    #: and no gateway that sends it is running. A default would be a reading
+    #: of the weeks the engine cannot make — every lock every week is the
+    #: lenient one this field replaces — and a gateway that forgot the field
+    #: would get it silently. At most 128: every set of weekdays there is,
+    #: once each.
+    locked_weekdays: list[list[DayOfWeek]] = Field(
+        alias="lockedWeekdays", min_length=1, max_length=128,
+    )
+
+    @field_validator("locked_weekdays")
+    @classmethod
+    def weekdays_once_each(cls, value: list[list[DayOfWeek]]) -> list[list[DayOfWeek]]:
+        """A set of weekdays, each at most once.
+
+        A weekday twice in one week is a gateway that joined two lessons'
+        weekdays without reading them as a set, and what else that reading
+        got wrong the engine cannot tell from here: |L| is what the line
+        subtracts from the post. A shape, refused as one, as two limits for
+        one post are below. The same SET twice is only a repeat, and the
+        engine reads the list as sets.
+        """
+        for weekdays in value:
+            if len(set(weekdays)) != len(weekdays):
+                msg = "lockedWeekdays names a weekday twice in one week."
+                raise ValueError(msg)
+        return value
 
 
 class FrameTime(CamelModel):

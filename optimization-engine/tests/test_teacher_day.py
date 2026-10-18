@@ -16,6 +16,10 @@ WHAT COUNTS IS src/common/teacher-day.ts's definition: every lesson the teacher
 is on, lead or co-teacher, generated or locked, in its own minutes. The locked
 ones are facts — what they already take is subtracted, and what they break on
 their own is the hand edit's warning, never this engine's refusal.
+
+THE DAYS ARE HELD WEEK BY WEEK, in the weeks the gateway reads off the locks
+and sends as the post's lockedWeekdays (TestTheWeeks); a test that names none
+gets the every-week reading of its own locks from _request.
 """
 
 from __future__ import annotations
@@ -32,6 +36,7 @@ from pydantic import ValidationError
 
 from app.config import Settings
 from app.exceptions import InvalidScheduleInputError
+from app.messages import MESSAGES, arguments_of, render
 from app.schemas.schedule import (
     AnonymousTeacherDayLimit,
     AnonymousTeacherWorkRule,
@@ -68,7 +73,7 @@ LIMIT = str(uuid4())
 REQUIREMENT = str(uuid4())
 OTHER_REQUIREMENT = str(uuid4())
 
-MONDAY, TUESDAY, WEDNESDAY = range(3)
+MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY = range(5)
 
 #: Every variable this feature names starts here, and nothing older does.
 PREFIX = "ld"
@@ -85,8 +90,16 @@ def _rule(**values: object) -> dict[str, object]:
     return row
 
 
-def _limit(days: int, *, teacher: str = TEACHER, limit_id: str = LIMIT) -> dict[str, object]:
-    return {"id": limit_id, "teacherId": teacher, "maxTeachingDaysPerWeek": days}
+def _limit(
+    days: int, *, teacher: str = TEACHER, limit_id: str = LIMIT,
+    weeks: list[list[int]] | None = None,
+) -> dict[str, object]:
+    """TEACHER's post. `weeks` is its lockedWeekdays; left out, _request reads
+    them off the payload's locks as every-week ones."""
+    row: dict[str, object] = {"id": limit_id, "teacherId": teacher, "maxTeachingDaysPerWeek": days}
+    if weeks is not None:
+        row["lockedWeekdays"] = weeks
+    return row
 
 
 def _locked(
@@ -162,6 +175,29 @@ def _payload(
 
 
 def _request(payload: dict[str, object]) -> OptimizeScheduleRequest:
+    """The payload as the engine reads it, a post's weeks filled in where the
+    test left them out.
+
+    THE GATEWAY'S READING OF EVERY-WEEK LOCKS: every lock this file builds
+    runs every week, so the post's one week holds every weekday the
+    teacher's locks are on — lead or co-teacher, ending after they start —
+    and [[]] with none. Filled here and not in _limit, so a test that swaps
+    the locks (`{**payload, "fixedLessons": []}`) swaps the week with them.
+    A test about the weeks names them itself, and this leaves them alone.
+    """
+    limits = []
+    for limit in payload.get("teacherDayLimits") or []:
+        if "lockedWeekdays" not in limit:
+            held = sorted({
+                fixed["dayOfWeek"]
+                for fixed in payload.get("fixedLessons") or []
+                if limit["teacherId"] in (fixed.get("teacherId"), fixed.get("coTeacherId"))
+                and fixed["endTime"] > fixed["startTime"]
+            })
+            limit = {**limit, "lockedWeekdays": [held]}
+        limits.append(limit)
+    if limits:
+        payload = {**payload, "teacherDayLimits": limits}
     return OptimizeScheduleRequest.model_validate(payload)
 
 
@@ -272,6 +308,14 @@ def _lesson(
     })
 
 
+def _every_set_of_weekdays() -> list[set[int]]:
+    """All 128 sets of ISO weekdays, the empty one included."""
+    return [
+        {weekday for weekday in range(1, 8) if mask >> (weekday - 1) & 1}
+        for mask in range(128)
+    ]
+
+
 class TestTheFields:
     """The contract's two new fields on the work rule, and the post's own row."""
 
@@ -310,11 +354,41 @@ class TestTheFields:
     @pytest.mark.parametrize("days", [0, 7])
     def test_the_days_are_one_to_six(self, days: int) -> None:
         with pytest.raises(ValidationError):
-            AnonymousTeacherDayLimit.model_validate(_limit(days))
+            AnonymousTeacherDayLimit.model_validate(_limit(days, weeks=[[]]))
 
     @pytest.mark.parametrize("days", [1, 6])
     def test_one_and_six_are_limits(self, days: int) -> None:
-        assert AnonymousTeacherDayLimit.model_validate(_limit(days)).max_teaching_days_per_week == days
+        limit = AnonymousTeacherDayLimit.model_validate(_limit(days, weeks=[[]]))
+
+        assert limit.max_teaching_days_per_week == days
+
+    def test_the_weeks_are_required(self) -> None:
+        """No default: every lock every week is the reading the field replaces,
+        and a gateway that forgot the key would get it without a word."""
+        with pytest.raises(ValidationError, match="lockedWeekdays"):
+            AnonymousTeacherDayLimit.model_validate(_limit(2))
+
+    @pytest.mark.parametrize("weeks", [[], [[0]], [[8]], [[1, 1]], [[]] * 129])
+    def test_a_week_is_a_set_of_iso_weekdays_and_there_is_at_least_one(
+        self, weeks: list[list[int]],
+    ) -> None:
+        # No week at all is not "no locks" — that is [[]] — and 129 is more
+        # sets than seven weekdays have.
+        with pytest.raises(ValidationError):
+            AnonymousTeacherDayLimit.model_validate(_limit(2, weeks=weeks))
+
+    def test_a_weekday_twice_in_one_week_is_named(self) -> None:
+        with pytest.raises(ValidationError, match="weekday twice in one week"):
+            AnonymousTeacherDayLimit.model_validate(_limit(2, weeks=[[3], [1, 2, 1]]))
+
+    @pytest.mark.parametrize("weeks", [
+        [[]], [[1, 2], [3, 4]], [[2, 1], [1, 2]], [[6, 7]],
+        [sorted(week) for week in _every_set_of_weekdays()],
+    ])
+    def test_a_set_may_be_empty_repeated_or_a_weekend(self, weeks: list[list[int]]) -> None:
+        limit = AnonymousTeacherDayLimit.model_validate(_limit(2, weeks=weeks))
+
+        assert limit.locked_weekdays == weeks
 
     def test_absent_is_no_limit_and_no_rule_field(self) -> None:
         request = _request({**_payload(rules=[_rule()]), "teacherDayLimits": []})
@@ -594,7 +668,7 @@ class TestTheDailyCap:
 
 
 class TestTheDaysLimit:
-    """At most N days a week; the locked days are teaching days already."""
+    """At most N days a week; a week's locked days are teaching days already."""
 
     def test_the_limit_holds_to_the_day(self) -> None:
         two = _payload(limits=[_limit(2)])
@@ -657,6 +731,189 @@ class TestTheDaysLimit:
 
         assert [(record.code, record.params) for record in records] == [
             ("TEACHER_WORK_DAYS_CANNOT_BE_KEPT", {"limit": LIMIT, "days": 2}),
+        ]
+
+
+def _hour_locked_on(*weekdays: int) -> list[dict[str, object]]:
+    """TEACHER locked 11:00-12:00 on each weekday named: three hours of room left there."""
+    return [_locked("11:00:00", "12:00:00", weekday) for weekday in weekdays]
+
+
+def _days_rows(payload: dict[str, object], **settings: object) -> list[tuple[list[str], int]]:
+    """The rows TEACHER's days literal holds: (the `works` they count, the bound)."""
+    _solver, (model, *_rest) = _build(payload, **settings)
+    proto = model.Proto()
+    names = [variable.name for variable in proto.variables]
+    if f"lddays_{TEACHER}" not in names:
+        return []
+    literal = names.index(f"lddays_{TEACHER}")
+    return [
+        (sorted(names[var] for var in constraint.linear.vars), list(constraint.linear.domain)[-1])
+        for constraint in proto.constraints
+        if constraint.has_linear() and list(constraint.enforcement_literal) == [literal]
+    ]
+
+
+class TestTheWeeks:
+    """The days are held in every real week the locks make, never against all their weekdays at once.
+
+    The engine has no weeks. The gateway reads them and sends, per post, the
+    sets of weekdays the teacher's locks hold together in one
+    (lockedWeekdays); a generated lesson runs every week, so it adds its
+    weekday to every week whose locks are not already on it. Locked an hour
+    from 11:00 on the days named, so each such day has three hours left.
+    """
+
+    @pytest.mark.parametrize(
+        "weeks", [[[1, 2], [3, 4]], [[1, 2], [4, 5]]], ids=["odd-and-even", "autumn-and-spring"],
+    )
+    def test_a_post_of_two_the_weeks_fill_leaves_a_weekly_lesson_nowhere(
+        self, weeks: list[list[int]],
+    ) -> None:
+        """The review's case. Monday and Tuesday in odd weeks, Wednesday and
+        Thursday in even ones (or Monday and Tuesday in the autumn, Thursday
+        and Friday in the spring): two days in every week, on a post of two.
+        A weekly lesson adds its weekday to every week that does not have it,
+        and every weekday is one some week does not have — so it goes nowhere,
+        and the post is named. The union of the weekdays once read this as
+        four locked days over a post of two, closed the one day left, and put
+        the lesson on a locked weekday: three days in every other week."""
+        payload = _payload(
+            limits=[_limit(2, weeks=weeks)], lessons_per_week=1,
+            fixed_lessons=_hour_locked_on(*sorted({day for week in weeks for day in week})),
+        )
+        assert _refusal(payload, **FIVE_DAYS) is None
+
+        for day_index in (MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY):
+            assert _solve(payload, [(day_index, "08:00")], **FIVE_DAYS) == "INFEASIBLE"
+        response = SchedulerSolver(_settings(SOLVER_PROBE_SECONDS=0, **FIVE_DAYS)).solve(
+            _request(payload),
+        )
+        assert response.status == "INFEASIBLE"
+        # Named whenever the explaining solve finished, as above.
+        if response.conflicts and response.conflicts.summary_code == "CONFLICT_CORE_SUMMARY":
+            codes = [detail.code for detail in response.conflicts.conflicts]
+            assert "TEACHER_WORK_DAYS_CANNOT_BE_KEPT" in codes
+        # Every lock in every week is a week over the post by hand, and a
+        # lesson on one of its own weekdays adds nothing to it.
+        every_week = [sorted({day for week in weeks for day in week})]
+        union = {**payload, "teacherDayLimits": [_limit(2, weeks=every_week)]}
+        assert _solve(union, [(MONDAY, "08:00")], **FIVE_DAYS) == "FEASIBLE"
+
+    def test_on_a_post_of_three_a_lesson_goes_where_every_week_keeps_three(self) -> None:
+        """Odd weeks Monday and Tuesday, even weeks Wednesday and Thursday, on a
+        post of three: each week has one day to give. A Monday lesson is the
+        even weeks' third day and a Wednesday one the odd weeks', so the pair
+        fits; Monday and Tuesday are both new to the even weeks, and Friday is
+        new to both — so beside another day it is a fourth somewhere, and on
+        its own it is everyone's third."""
+        weeks = [[1, 2], [3, 4]]
+        payload = _payload(
+            limits=[_limit(3, weeks=weeks)], lessons_per_week=2,
+            fixed_lessons=_hour_locked_on(1, 2, 3, 4),
+        )
+
+        assert _solve(payload, [(MONDAY, "08:00"), (WEDNESDAY, "08:00")], **FIVE_DAYS) == "FEASIBLE"
+        assert _solve(payload, [(TUESDAY, "08:00"), (THURSDAY, "08:00")], **FIVE_DAYS) == "FEASIBLE"
+        assert _solve(payload, [(FRIDAY, "08:00"), (FRIDAY, "09:00")], **FIVE_DAYS) == "FEASIBLE"
+        assert _solve(payload, [(MONDAY, "08:00"), (TUESDAY, "08:00")], **FIVE_DAYS) == "INFEASIBLE"
+        assert _solve(payload, [(WEDNESDAY, "08:00"), (THURSDAY, "08:00")], **FIVE_DAYS) == (
+            "INFEASIBLE"
+        )
+        assert _solve(payload, [(MONDAY, "08:00"), (FRIDAY, "08:00")], **FIVE_DAYS) == "INFEASIBLE"
+
+        response = SchedulerSolver(_settings(**FIVE_DAYS)).solve(_request(payload))
+        assert response.status in {"OPTIMAL", "FEASIBLE"}
+        assert _validate(payload, response.lessons, **FIVE_DAYS) == []
+        placed = {lesson.day_of_week for lesson in response.lessons}
+        assert all(len(placed | set(week)) <= 3 for week in weeks)
+
+    def test_a_weekly_lesson_on_thursday_is_the_autumn_s_third_day(self) -> None:
+        """The dated case: Monday and Tuesday until Christmas, Thursday and
+        Friday after it, on a post of three. Thursday is the autumn's third
+        day and Monday the spring's, so the two fit; Thursday and Friday are
+        both the autumn's — four days there, though each is a locked weekday
+        of the spring."""
+        payload = _payload(
+            limits=[_limit(3, weeks=[[1, 2], [4, 5]])], lessons_per_week=2,
+            fixed_lessons=_hour_locked_on(1, 2, 4, 5),
+        )
+
+        assert _solve(payload, [(MONDAY, "08:00"), (THURSDAY, "08:00")], **FIVE_DAYS) == "FEASIBLE"
+        assert _solve(payload, [(WEDNESDAY, "08:00"), (WEDNESDAY, "09:00")], **FIVE_DAYS) == (
+            "FEASIBLE"
+        )
+        assert _solve(payload, [(THURSDAY, "08:00"), (FRIDAY, "08:00")], **FIVE_DAYS) == (
+            "INFEASIBLE"
+        )
+
+    def test_one_set_is_the_model_every_week_locks_always_built(self) -> None:
+        """A teacher locked the same every week sends one set, and its one row
+        is the one the union of the weekdays built: the days off Monday and
+        Tuesday, against what the two leave of three — the same model, proto
+        for proto, as the union reading built over 600 payloads with
+        every-week locks. Its subsets, the empty week, a repeat and another
+        order are weeks the one set already holds, and build nothing more."""
+        locked = _payload(fixed_lessons=_hour_locked_on(1, 2))
+
+        def payload(weeks: list[list[int]]) -> dict[str, object]:
+            return {**locked, "teacherDayLimits": [_limit(3, weeks=weeks)]}
+
+        every_week = _shape(payload([[1, 2]]), **FIVE_DAYS)
+        assert _shape({**locked, "teacherDayLimits": [_limit(3)]}, **FIVE_DAYS) == every_week
+        for weeks in ([[2, 1]], [[1, 2], [1, 2]], [[1], [1, 2], [], [2]]):
+            assert _shape(payload(weeks), **FIVE_DAYS) == every_week, weeks
+        assert _days_rows(payload([[1], [1, 2], [], [2]]), **FIVE_DAYS) == [
+            ([f"ldworks_{TEACHER}_{day}" for day in (WEDNESDAY, THURSDAY, FRIDAY)], 1),
+        ]
+        # The edge of "at most N": a set of exactly N days still holds the
+        # sets inside it.
+        exactly = {**locked, "teacherDayLimits": [_limit(2, weeks=[[1, 2]])]}
+        inside = {**locked, "teacherDayLimits": [_limit(2, weeks=[[1], [1, 2]])]}
+        assert _shape(inside, **FIVE_DAYS) == _shape(exactly, **FIVE_DAYS)
+
+    def test_a_week_inside_one_the_locks_put_over_the_post_is_a_week_of_its_own(self) -> None:
+        """The proof's edge. Monday to Wednesday locked in one week is over a
+        post of two by hand; Monday alone in another is not. The first says
+        the solver adds no day to it, which still lets a lesson on Tuesday and
+        one on Wednesday through — and both are new to the Monday week: three
+        days, one of them the generator's. So that week is a row of its own,
+        and only the larger set would let the pair through."""
+        payload = _payload(
+            limits=[_limit(2, weeks=[[1, 2, 3], [1]])], lessons_per_week=2,
+            fixed_lessons=_hour_locked_on(1, 2, 3),
+        )
+        tuesday_and_wednesday = [(TUESDAY, "08:00"), (WEDNESDAY, "08:00")]
+
+        assert _solve(payload, tuesday_and_wednesday, **FIVE_DAYS) == "INFEASIBLE"
+        assert _solve(payload, [(MONDAY, "08:00"), (TUESDAY, "08:00")], **FIVE_DAYS) == "FEASIBLE"
+        assert _days_rows(payload, **FIVE_DAYS) == [
+            ([f"ldworks_{TEACHER}_{day}" for day in (THURSDAY, FRIDAY)], 0),
+            ([f"ldworks_{TEACHER}_{day}" for day in (TUESDAY, WEDNESDAY, THURSDAY, FRIDAY)], 1),
+        ]
+        larger_only = {**payload, "teacherDayLimits": [_limit(2, weeks=[[1, 2, 3]])]}
+        assert _solve(larger_only, tuesday_and_wednesday, **FIVE_DAYS) == "FEASIBLE"
+
+    def test_a_week_that_leaves_every_day_builds_no_row(self) -> None:
+        """Three days on a post of three: Monday and Tuesday locked in one week
+        leave one day, and Wednesday is the only one there is; Wednesday in
+        another leaves two, and Monday and Tuesday are the two. Neither row can
+        bind, so neither is built — nor the literal, nor anything else."""
+        payload = _payload(
+            limits=[_limit(3, weeks=[[1, 2], [3]])], fixed_lessons=_hour_locked_on(1, 2, 3),
+        )
+
+        assert _shape(payload) == _shape({**payload, "teacherDayLimits": []})
+
+    def test_one_week_that_binds_is_built_and_the_rest_are_not(self) -> None:
+        # Monday to Wednesday locked is every day the short week has: no day
+        # outside it to count. Monday alone leaves one of the other two.
+        payload = _payload(
+            limits=[_limit(2, weeks=[[1, 2, 3], [1]])], fixed_lessons=_hour_locked_on(1, 2, 3),
+        )
+
+        assert _days_rows(payload) == [
+            ([f"ldworks_{TEACHER}_{day}" for day in (TUESDAY, WEDNESDAY)], 1),
         ]
 
 
@@ -966,6 +1223,63 @@ class TestWhatIsRefusedBeforeAnySolve:
         assert error is not None
         assert error.code == "TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK"
 
+    def test_the_week_with_the_fewest_locked_days_is_the_one_counted(self) -> None:
+        """An hour locked on Monday to Thursday, on a post of two, and eight
+        hours to place. Locked every week, every week has four days whatever
+        happens, and the best four hold thirteen hours. Locked two days a
+        week, a week has two, and the best two hold seven — Friday's four and
+        a locked day's three — so no week holds eight. And it takes only one
+        such week: Monday alone in a week beside the four-day ones is one."""
+        payload = _payload(
+            limits=[_limit(2, weeks=[[1, 2], [3, 4]])], lessons_per_week=8,
+            fixed_lessons=_hour_locked_on(1, 2, 3, 4),
+        )
+
+        error = _refusal(payload, **FIVE_DAYS)
+        assert error is not None
+        assert error.code == "TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK"
+        assert error.params == {"limit": LIMIT, "days": 2, "weekMinutes": 480}
+        every_week = {**payload, "teacherDayLimits": [_limit(2, weeks=[[1, 2, 3, 4]])]}
+        assert _refusal(every_week, **FIVE_DAYS) is None
+        one_short = {**payload, "teacherDayLimits": [_limit(2, weeks=[[1, 2, 3, 4], [1]])]}
+        assert _refusal(one_short, **FIVE_DAYS) is not None
+
+    def test_a_locked_weekday_off_the_grid_spends_the_post_and_holds_no_room(self) -> None:
+        """Monday and Saturday locked every week, on a post of one: both are
+        teaching days, so the post is spent and the solver's lessons may go
+        on Monday alone, three hours beside its lock. The pre-flight counts
+        a week's locked days of the GRID — Saturday has no room on this one
+        to count — so the best one day, four hours, is what five must fit in.
+        Locked Monday and Tuesday instead, the two locked days are two days
+        of room, and the week goes on to the model, which fits it."""
+        payload = _payload(
+            limits=[_limit(1)], lessons_per_week=5,
+            fixed_lessons=_hour_locked_on(1) + [_locked("09:00:00", "10:00:00", 6)],
+        )
+
+        error = _refusal(payload, **FIVE_DAYS)
+        assert error is not None
+        assert error.code == "TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK"
+        on_the_grid = {**payload, "fixedLessons": _hour_locked_on(1, 2)}
+        assert _refusal(on_the_grid, **FIVE_DAYS) is None
+
+    def test_no_week_the_model_accepts_is_refused(self) -> None:
+        """Odd weeks Monday and Tuesday, even weeks Wednesday and Thursday, a
+        post of three and six hours: the model puts three on Monday and three
+        on Wednesday, beside their locked hours, and every week has three
+        days. The pre-flight counts a week's own locked days with the post's
+        three, never the one day the post has left beside them — that would
+        be four hours, and a refusal of a week that has a timetable."""
+        payload = _payload(
+            limits=[_limit(3, weeks=[[1, 2], [3, 4]])], lessons_per_week=6,
+            fixed_lessons=_hour_locked_on(1, 2, 3, 4),
+        )
+
+        assert _refusal(payload, **FIVE_DAYS) is None
+        response = SchedulerSolver(_settings(**FIVE_DAYS)).solve(_request(payload))
+        assert response.status in {"OPTIMAL", "FEASIBLE"}
+        assert _validate(payload, response.lessons, **FIVE_DAYS) == []
+
     @pytest.mark.parametrize("days", [3, 6])
     def test_a_post_that_cannot_bind_is_not_named(self, days: int) -> None:
         """Locks fill Monday to Wednesday until 11:00, so the week holds three
@@ -1227,6 +1541,19 @@ class TestTheFreeDayWish:
         ]) == 0
 
 
+def test_the_note_on_a_wish_given_up_names_the_day_and_no_id() -> None:
+    """The gateway's note, registered here: its params are the day alone, and
+    whose wish it was is the teacher's name the gateway adds on read as the
+    note's resourceNames. The work rule's uuid in the sentence was a line
+    nobody could tell the teacher from."""
+    template = MESSAGES["TEACHER_FREE_DAY_WISH_NOT_KEPT"]
+
+    assert arguments_of(template) == {"day"}
+    assert render("TEACHER_FREE_DAY_WISH_NOT_KEPT", {"day": 3}).startswith(
+        "A teacher wishes Wednesdays free,",
+    )
+
+
 class TestTheWishAndTheDisruption:
     """A6: the teacher's previous slots on the wished day earn nothing."""
 
@@ -1435,7 +1762,7 @@ class TestTheIndependentCheck:
 
         assert _validate(limited, [_lesson(1), _lesson(1, "09:00", "10:00")]) == []
         assert _validate(limited, [_lesson(1), _lesson(2)]) == [
-            f"teacher post {LIMIT}: teaching on 3 days a week (1 of them locked), "
+            f"teacher post {LIMIT}: teaching on 3 days a week (1 of them locked: weekdays 3), "
             "its post allows 2",
         ]
 
@@ -1448,6 +1775,39 @@ class TestTheIndependentCheck:
 
         assert _validate(over, [_lesson(2)]) == []
         assert _validate(over, [_lesson(3)]) != []
+
+    def test_every_week_is_counted_on_its_own(self) -> None:
+        """The checker reads the weeks the request names, not the model: odd
+        weeks Monday and Tuesday, even weeks Wednesday and Thursday, a post of
+        three. Monday and Wednesday are a third day each; Monday and Tuesday
+        are the even weeks' fourth. Every set the request names is read, so a
+        week the engine leaves out as implied is still checked here."""
+        payload = _payload(
+            limits=[_limit(3, weeks=[[1, 2], [3, 4]])], lessons_per_week=2,
+            fixed_lessons=_hour_locked_on(1, 2, 3, 4),
+        )
+
+        assert _validate(payload, [_lesson(1), _lesson(3)], **FIVE_DAYS) == []
+        assert _validate(payload, [_lesson(1), _lesson(2)], **FIVE_DAYS) == [
+            f"teacher post {LIMIT}: teaching on 4 days a week (2 of them locked: weekdays 3, 4), "
+            "its post allows 3",
+        ]
+        # Locked on all four every week: over the post by hand, and a lesson
+        # on one of the four adds nothing — on Friday it is a fifth.
+        every_week = {**payload, "teacherDayLimits": [_limit(3, weeks=[[1, 2, 3, 4]])]}
+        assert _validate(every_week, [_lesson(1), _lesson(2)], **FIVE_DAYS) == []
+        assert _validate(every_week, [_lesson(1), _lesson(5)], **FIVE_DAYS) == [
+            f"teacher post {LIMIT}: teaching on 5 days a week "
+            "(4 of them locked: weekdays 1, 2, 3, 4), its post allows 3",
+        ]
+        # A week inside one the locks put over the post is a week of its own:
+        # Tuesday and Wednesday add nothing to Monday-to-Wednesday, and two
+        # days to Monday alone.
+        nested = {**payload, "teacherDayLimits": [_limit(2, weeks=[[1, 2, 3], [1]])]}
+        assert _validate(nested, [_lesson(2), _lesson(3)], **FIVE_DAYS) == [
+            f"teacher post {LIMIT}: teaching on 3 days a week (1 of them locked: weekdays 1), "
+            "its post allows 2",
+        ]
 
     def test_a_co_taught_lesson_is_the_co_teacher_s(self) -> None:
         co_capped = _payload(

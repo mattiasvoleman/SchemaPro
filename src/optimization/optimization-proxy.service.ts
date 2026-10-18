@@ -23,6 +23,10 @@ import { judgeBlocks, partlyLockedRefusal } from './parallel-blocks';
 import { canonicalShape, lessonMinutesOf } from '../common/lesson-lengths';
 import { effectiveDistribution, hasDistributionRule } from '../common/subject-distribution';
 import { minutesOf } from '../common/solver-grid';
+import { lockedWeekdaySets, type YearSpan } from '../common/teacher-day';
+
+/** A @db.Time column (midnight-anchored UTC) as minutes since midnight. */
+const clockMinutes = (time: Date): number => time.getUTCHours() * 60 + time.getUTCMinutes();
 
 /** A hand-placed lesson's length, from its two @db.Time columns (midnight-anchored UTC). */
 const lessonMinutes = (start: Date, end: Date): number => {
@@ -802,9 +806,11 @@ export class OptimizationProxyService {
         dayOfWeek: true,
         startTime: true,
         endTime: true,
-        // Not forwarded — the engine has no notion of weeks. Selected because
-        // the subtraction below has to know which weeks a preserved lesson is
-        // really there before it cancels any of a requirement's demand.
+        // Not forwarded as they are — the engine has no notion of weeks.
+        // Selected because the subtraction below has to know which weeks a
+        // preserved lesson is really there before it cancels any of a
+        // requirement's demand, and because a post's day limit is sent with
+        // the weekdays these lessons hold week by week (lockedWeekdays).
         recurrence: true,
         startDate: true,
         endDate: true,
@@ -1680,10 +1686,51 @@ export class OptimizationProxyService {
      * of a reader with HR-läs with the teacher named, and written to the
      * Läslogg by a Users id.
      */
+    /*
+     * AND THE WEEKDAYS THE TEACHER'S FIXED LESSONS HOLD, WEEK BY WEEK
+     * (lockedWeekdaySets): the lessons sent as fixed placements that the
+     * teacher leads or co-teaches, read by their recurrence and dates, which
+     * the fixed placement itself does not carry. The engine counts a lesson
+     * it places as taught every week, and a weekday as already taught only
+     * in the weeks one of these runs on it — not, as it did, every weekday
+     * any of them holds as taught in every week, which read a part-timer's
+     * Monday and Tuesday in odd weeks and Wednesday and Thursday in even ones
+     * as four days spent, and placed a weekly Monday and Wednesday on top.
+     * The lessons were read above. The läsår's first and last day bound the
+     * weeks read — a null date is the year's own bound, and a week outside it
+     * is no week the school has — and are read only when a post has a limit:
+     * one statement then, none for a school that sets no days.
+     */
+    const lockedWeekdaysOf = (userId: string, maxDays: number, year: YearSpan | undefined): DayOfWeek[][] =>
+      lockedWeekdaySets(
+        preservedLessons
+          .filter((lesson) => lesson.teacherId === userId || lesson.coTeacherId === userId)
+          .map((lesson) => ({
+            id: lesson.id,
+            dayOfWeek: lesson.dayOfWeek,
+            startMinutes: clockMinutes(lesson.startTime),
+            endMinutes: clockMinutes(lesson.endTime),
+            recurrence: lesson.recurrence,
+            startDate: lesson.startDate ? lesson.startDate.toISOString().slice(0, 10) : null,
+            endDate: lesson.endDate ? lesson.endDate.toISOString().slice(0, 10) : null,
+          })),
+        maxDays,
+        year,
+      ) as DayOfWeek[][];
     const rawDayLimits = await tx.teacherEmployment.findMany({
       where: { academicYearId, maxTeachingDaysPerWeek: { not: null } },
       select: { id: true, userId: true, maxTeachingDaysPerWeek: true },
     });
+    const yearRow =
+      rawDayLimits.length > 0
+        ? await tx.academicYear.findUnique({
+            where: { id: academicYearId },
+            select: { startDate: true, endDate: true },
+          })
+        : null;
+    const yearSpan: YearSpan | undefined = yearRow
+      ? { startDate: yearRow.startDate.toISOString().slice(0, 10), endDate: yearRow.endDate.toISOString().slice(0, 10) }
+      : undefined;
     const teacherDayLimits: AnonymousTeacherDayLimit[] = rawDayLimits.flatMap(
       (post): AnonymousTeacherDayLimit[] => {
         const teacherId = teacherAnonMap.get(post.userId);
@@ -1695,12 +1742,14 @@ export class OptimizationProxyService {
           return [];
         }
         dayLimitTeacherIds.set(post.id, post.userId);
+        // The where admits no null.
+        const maxTeachingDaysPerWeek = post.maxTeachingDaysPerWeek as number;
         return [
           {
             id: anonId(dayLimitAnonMap, post.id),
             teacherId,
-            // The where admits no null.
-            maxTeachingDaysPerWeek: post.maxTeachingDaysPerWeek as number,
+            maxTeachingDaysPerWeek,
+            lockedWeekdays: lockedWeekdaysOf(post.userId, maxTeachingDaysPerWeek, yearSpan),
           },
         ];
       },

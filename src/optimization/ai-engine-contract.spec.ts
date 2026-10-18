@@ -81,8 +81,11 @@ const WORK_RULE_FIELDS_DAY = [...WORK_RULE_FIELDS, 'maxTeachingMinutesPerDay', '
  * Deltid in days, its own list and its own id space (the post's, kept and
  * reversed), so a refusal about it can be told from a cap's and masked for a
  * reader without HR-läs. The engine's `_field_names(AnonymousTeacherDayLimit)`.
+ * `lockedWeekdays` is required on both sides: the weekdays the teacher's fixed
+ * lessons hold week by week (common/teacher-day.ts, lockedWeekdaySets), which
+ * the limit is held against in place of every weekday any of them holds.
  */
-const DAY_LIMIT_FIELDS = ['id', 'maxTeachingDaysPerWeek', 'teacherId'];
+const DAY_LIMIT_FIELDS = ['id', 'lockedWeekdays', 'maxTeachingDaysPerWeek', 'teacherId'];
 
 /** The top level with a day limit sent: the key exists only then. */
 const PAYLOAD_FIELDS_WITH_DAY_LIMITS = [...PAYLOAD_FIELDS, 'teacherDayLimits'].sort();
@@ -567,6 +570,9 @@ describe('AI engine wire contract', () => {
     expect(limits).toHaveLength(1);
     expect(Object.keys(limits[0]!).sort()).toEqual(DAY_LIMIT_FIELDS);
     expect(limits[0]!['maxTeachingDaysPerWeek']).toBe(4);
+    // A teacher with no fixed lesson: one week, holding no weekday — a list
+    // of lists of ISO weekdays, never an empty list.
+    expect(limits[0]!['lockedWeekdays']).toEqual([[]]);
     // The teacher is the requirement's token, and neither id is a real one.
     expect(limits[0]!['teacherId']).toBe(requirements[0]!['teacherId']);
     expect(limits[0]!['id']).not.toBe('post-1');

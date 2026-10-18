@@ -327,6 +327,28 @@ export interface AnonymousTeacherDayLimit {
   teacherId: string;
   /** 1..6. */
   maxTeachingDaysPerWeek: number;
+  /**
+   * The weekdays the teacher's fixed lessons (as lead or co-teacher, those
+   * that take time) hold together, one set per kind of ISO week they make,
+   * read by their recurrence and dates (src/common/teacher-day.ts,
+   * lockedWeekdaySets): never empty, `[[]]` for a teacher with none. For
+   * every set L the engine holds the lessons it places to at most
+   * max(0, N − |L|) of the grid's days outside L, under the teacher's one
+   * days literal — a placed lesson is a weekly lesson to it, and adds a day
+   * to every week whose fixed lessons are not already on its weekday.
+   *
+   * The fixed lessons carry no weeks of their own (AnonymousFixedLesson), and
+   * reading every weekday any of them holds as taught in every week — the
+   * union — was the lenient direction: a part-timer of two days on Monday
+   * and Tuesday in odd weeks and Wednesday and Thursday in even ones left
+   * the engine no day to count, and a weekly Monday and Wednesday made every
+   * week three. Only the sets no other implies are sent (see the helper).
+   *
+   * REQUIRED, unlike the work rule's late fields: the list is new in the
+   * same release as this field, and no engine that knows the list has been
+   * deployed without it.
+   */
+  lockedWeekdays: DayOfWeek[][];
 }
 
 export interface AnonymousConstraint {
@@ -544,9 +566,11 @@ export interface AiEngineConflictDetail {
    * SERVER-ONLY. The Users ids of the teachers whose post a days-bearing
    * sentence names (work-days.ts), filled by the gateway on the way back and
    * kept beside the stored refusal so a reader with HR-läs can be shown the
-   * days from the post and the read written to the Läslogg. No answer of the
-   * API carries it: the job view is a whitelist, and the synchronous trigger
-   * answers with a status.
+   * days from the post and the read written to the Läslogg. And the teacher
+   * whose free-day wish a note says was not kept (free-day-wishes.ts), whom
+   * the job view names for every reader. No answer of the API carries it:
+   * the job view is a whitelist, and the synchronous trigger answers with a
+   * status.
    */
   subjectIds?: string[];
 }
@@ -585,9 +609,10 @@ export interface AiEngineScheduleResponse {
   conflicts?: AiEngineConflictAnalysis | null;
   /**
    * The soft wishes a finished run did not keep (free-day-wishes.ts), in a
-   * conflict's shape. Never sent by the engine, which says where the lessons
-   * went and nothing about wishes; filled by the gateway from what it wrote.
-   * Empty or absent when the run wrote no timetable.
+   * conflict's shape, each with its teacher in `subjectIds`. Never sent by
+   * the engine, which says where the lessons went and nothing about wishes;
+   * filled by the gateway from what it wrote. Empty or absent when the run
+   * wrote no timetable.
    */
   notes?: AiEngineConflictDetail[];
 }

@@ -4130,11 +4130,15 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
     # Deltid in days, apart from the work rule because it is HR: the id is the
     # POST's, which the gateway keeps its own map for (dayLimitAnonMap) and
     # masks every WORK_DAYS sentence by on read. Sent as a key only when a
-    # post in the payload has a limit.
+    # post in the payload has a limit. lockedWeekdays is the gateway's
+    # reading of the real weeks — the weekdays the teacher's preserved
+    # lessons hold together in each — and is required on every limit, [[]]
+    # for a teacher with no lock: the engine has no weeks to read it from.
     assert _field_names(AnonymousTeacherDayLimit) == {
         "id",
         "teacherId",
         "maxTeachingDaysPerWeek",
+        "lockedWeekdays",
     }
     # The group's years, so a serving and a frame can reach a MEAL — which has
     # no requirement to read a span off.

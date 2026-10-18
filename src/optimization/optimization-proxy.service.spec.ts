@@ -3608,7 +3608,12 @@ describe('OptimizationProxyService', () => {
         const payload = postedPayload();
 
         expect(payload.teacherDayLimits).toEqual([
-          { id: expect.any(String), teacherId: payload.requirements[0]!.teacherId, maxTeachingDaysPerWeek: 4 },
+          {
+            id: expect.any(String),
+            teacherId: payload.requirements[0]!.teacherId,
+            maxTeachingDaysPerWeek: 4,
+            lockedWeekdays: [[]],
+          },
         ]);
         expect(payload.teacherDayLimits![0]!.id).not.toBe(POST_ID);
         expect(JSON.stringify(payload)).not.toContain(TEACHER_ID);
@@ -3622,6 +3627,146 @@ describe('OptimizationProxyService', () => {
         // A post's days are HR, and this transaction read them: the Läslogg
         // names the teacher, by their Users id.
         expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [TEACHER_ID] }]);
+      });
+
+      /*
+       * The weekdays the teacher's fixed lessons hold, one set per kind of
+       * week (common/teacher-day.ts, lockedWeekdaySets): what the engine holds
+       * the limit against now that it no longer reads every weekday any of
+       * them holds as spent in every week.
+       */
+      describe('the weekdays the teacher’s fixed lessons hold, week by week', () => {
+        const limit = () => postedPayload().teacherDayLimits![0]!;
+        const at = (day: string) => new Date(`${day}T00:00:00.000Z`);
+
+        it('sends one week holding no weekday for a teacher with no fixed lesson', async () => {
+          arrange({ posts: [post()] });
+          echoEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(limit().lockedWeekdays).toEqual([[]]);
+        });
+
+        it('sends the odd weeks’ Monday and Tuesday and the even weeks’ Wednesday and Thursday apart, not as four days', async () => {
+          arrange({
+            posts: [post({ maxTeachingDaysPerWeek: 2 })],
+            lockedLessons: [
+              lockedLesson({ id: 'even-thu', dayOfWeek: 4, recurrence: 'EVEN_WEEKS' }),
+              lockedLesson({ id: 'odd-mon', dayOfWeek: 1, recurrence: 'ODD_WEEKS' }),
+              lockedLesson({ id: 'even-wed', dayOfWeek: 3, recurrence: 'EVEN_WEEKS' }),
+              lockedLesson({ id: 'odd-tue', dayOfWeek: 2, recurrence: 'ODD_WEEKS' }),
+            ],
+          });
+          echoEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(limit()).toMatchObject({ maxTeachingDaysPerWeek: 2, lockedWeekdays: [[1, 2], [3, 4]] });
+          // The fixed placements themselves still carry no weeks.
+          expect(Object.keys(postedPayload().fixedLessons[0]!)).not.toContain('recurrence');
+        });
+
+        it('reads the weeks of the läsår only, its dates read when a post has a limit and not otherwise', async () => {
+          // An undated Monday and a Tuesday over the whole year, on a post of
+          // one day: every week of the year holds both. Unbounded, a week
+          // after the year would add Monday alone, inside a set over the
+          // limit, and hold the engine to a week the school does not have.
+          arrange({
+            posts: [post({ maxTeachingDaysPerWeek: 1 })],
+            lockedLessons: [
+              lockedLesson({ id: 'mon', dayOfWeek: 1 }),
+              lockedLesson({ id: 'tue', dayOfWeek: 2, startDate: at('2026-08-17'), endDate: at('2027-06-11') }),
+            ],
+          });
+          tx.academicYear.findUnique.mockResolvedValue({ startDate: at('2026-08-17'), endDate: at('2027-06-11') } as never);
+          echoEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(limit().lockedWeekdays).toEqual([[1, 2]]);
+          expect(tx.academicYear.findUnique).toHaveBeenCalledWith({
+            where: { id: ACADEMIC_YEAR },
+            select: { startDate: true, endDate: true },
+          });
+        });
+
+        it('reads no year for a school whose posts set no days', async () => {
+          arrange({ workRules: [workRule({ minDailyRestMinutes: 660 })] });
+          echoEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(postedPayload().teacherDayLimits ?? []).toEqual([]);
+          expect(tx.academicYear.findUnique).not.toHaveBeenCalledWith(
+            expect.objectContaining({ select: { startDate: true, endDate: true } }),
+          );
+        });
+
+        it('reads a term’s dates off the row: the autumn’s days and the spring’s, never one week', async () => {
+          const autumn = { startDate: at('2026-08-17'), endDate: at('2026-12-18') };
+          const spring = { startDate: at('2027-01-11'), endDate: at('2027-06-11') };
+          arrange({
+            posts: [post({ maxTeachingDaysPerWeek: 2 })],
+            lockedLessons: [
+              lockedLesson({ id: 'mon', dayOfWeek: 1, ...autumn }),
+              lockedLesson({ id: 'tue', dayOfWeek: 2, ...autumn }),
+              lockedLesson({ id: 'thu', dayOfWeek: 4, ...spring }),
+              lockedLesson({ id: 'fri', dayOfWeek: 5, ...spring }),
+            ],
+          });
+          echoEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(limit().lockedWeekdays).toEqual([
+            [1, 2],
+            [4, 5],
+          ]);
+        });
+
+        it('counts the lessons the teacher co-teaches, and no colleague’s, nor one that takes no time', async () => {
+          arrange({
+            // Demand the four do not cover, so the engine is asked.
+            requirements: [requirement({ lessonsPerWeek: 10 })],
+            posts: [post({ maxTeachingDaysPerWeek: 5 })],
+            lockedLessons: [
+              lockedLesson({ id: 'led', dayOfWeek: 1 }),
+              lockedLesson({ id: 'co', dayOfWeek: 3, teacherId: CO_TEACHER, coTeacherId: TEACHER_ID }),
+              lockedLesson({ id: 'colleague', dayOfWeek: 4, teacherId: CO_TEACHER }),
+              lockedLesson({ id: 'empty', dayOfWeek: 5, startTime: nineAm, endTime: nineAm }),
+            ],
+          });
+          echoEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(limit().lockedWeekdays).toEqual([[1, 3]]);
+        });
+
+        it('holds each post against its own teacher’s lessons and its own number of days', async () => {
+          // Monday every week and Tuesday the odd ones, co-taught, and a
+          // Friday of the lead's own: the lead's even weeks lie inside the odd
+          // ones on a post of three; the co-teacher's even weeks' Monday does
+          // not lie inside a set their post of one allows, and is said too.
+          arrange({
+            requirements: [requirement({ coTeacherId: CO_TEACHER, lessonsPerWeek: 10 })],
+            posts: [post({ maxTeachingDaysPerWeek: 3 }), post({ id: 'post-of-co', userId: CO_TEACHER, maxTeachingDaysPerWeek: 1 })],
+            lockedLessons: [
+              lockedLesson({ id: 'mon', dayOfWeek: 1, coTeacherId: CO_TEACHER }),
+              lockedLesson({ id: 'tue', dayOfWeek: 2, coTeacherId: CO_TEACHER, recurrence: 'ODD_WEEKS' }),
+              lockedLesson({ id: 'own-fri', dayOfWeek: 5 }),
+            ],
+          });
+          echoEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(postedPayload().teacherDayLimits!.map((sent) => [sent.maxTeachingDaysPerWeek, sent.lockedWeekdays])).toEqual([
+            [3, [[1, 2, 5]]],
+            [1, [[1], [1, 2]]],
+          ]);
+        });
       });
 
       it('reads only this year’s posts that set a limit', async () => {
@@ -3789,9 +3934,11 @@ describe('OptimizationProxyService', () => {
             expect.objectContaining({
               category: 'AVAILABILITY',
               code: 'TEACHER_FREE_DAY_WISH_NOT_KEPT',
-              params: { rule: WORK_RULE_ID, day: 1 },
+              params: { day: 1 },
               resourceIds: [WORK_RULE_ID],
               resourceNames: [],
+              // Whose wish, for the job view to name when the run is read.
+              subjectIds: [TEACHER_ID],
             }),
           ]);
         });
@@ -3805,7 +3952,8 @@ describe('OptimizationProxyService', () => {
 
           const { notes } = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
 
-          expect(notes).toHaveLength(1);
+          // About the co-teacher, whose wish it is, and not the lead.
+          expect(notes!.map((note) => note.subjectIds)).toEqual([[CO_TEACHER]]);
         });
 
         it('names a wish a kept lesson breaks: the lock is the school’s, and so is the day', async () => {
@@ -3815,7 +3963,7 @@ describe('OptimizationProxyService', () => {
 
           const { notes } = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
 
-          expect(notes!.map((note) => note.params)).toEqual([{ rule: WORK_RULE_ID, day: 2 }]);
+          expect(notes!.map((note) => note.params)).toEqual([{ day: 2 }]);
         });
 
         it('names a wish a lesson placed by hand while the solver ran breaks', async () => {
@@ -3829,7 +3977,7 @@ describe('OptimizationProxyService', () => {
 
           const { notes } = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
 
-          expect(notes!.map((note) => note.params)).toEqual([{ rule: WORK_RULE_ID, day: 5 }]);
+          expect(notes!.map((note) => note.params)).toEqual([{ day: 5 }]);
         });
 
         it('says nothing of a kept lesson that is gone from the timetable the run leaves', async () => {

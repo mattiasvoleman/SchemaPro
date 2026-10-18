@@ -11,6 +11,7 @@ import {
   PREFERRED_FREE_DAY_MAX,
   PREFERRED_FREE_DAY_MIN,
   hasTeacherDayRule,
+  lockedWeekdaySets,
   teacherDayBreaches,
   unionMinutes,
   type TeacherDayRule,
@@ -391,5 +392,178 @@ describe('teacherDayBreaches', () => {
         lesson('m', 4),
       ]),
     ).toEqual([{ kind: 'DAILY_CAP', dayOfWeek: 4, minutes: 120, cap: 60, lessonIds: ['m', 'z'] }]);
+  });
+});
+
+/*
+ * THE WEEKDAYS THE GENERATOR IS TOLD A TEACHER'S KEPT LESSONS HOLD, one set
+ * per real week (AnonymousTeacherDayLimit.lockedWeekdays): it counts a lesson
+ * it places as a day of every week whose set lacks that weekday, so the
+ * sets must be the weeks' own and not their union, and a set may be left
+ * out only where a larger one of at most the limit's days implies it.
+ */
+describe('lockedWeekdaySets', () => {
+  const lesson = (id: string, dayOfWeek: number, extra: Partial<TeachingLesson> = {}): TeachingLesson => ({
+    id,
+    dayOfWeek,
+    startMinutes: clock('08:00'),
+    endMinutes: clock('09:00'),
+    ...extra,
+  });
+
+  it('is the empty week alone for a teacher with no kept lesson', () => {
+    expect(lockedWeekdaySets([], 2)).toEqual([[]]);
+  });
+
+  it('a lesson that takes no time holds no weekday', () => {
+    const empty = lesson('empty', 2, { startMinutes: clock('10:00'), endMinutes: clock('10:00') });
+    const inverted = lesson('inverted', 3, { startMinutes: clock('11:00'), endMinutes: clock('10:00') });
+    expect(lockedWeekdaySets([empty, inverted], 2)).toEqual([[]]);
+    expect(lockedWeekdaySets([lesson('a', 1), empty], 2)).toEqual([[1]]);
+  });
+
+  it('every-week lessons hold their weekdays in every week, and no week is empty', () => {
+    expect(lockedWeekdaySets([lesson('t', 2), lesson('m', 1), lesson('m2', 1, { startMinutes: clock('10:00') })], 4)).toEqual([
+      [1, 2],
+    ]);
+  });
+
+  it('odd weeks’ Monday and Tuesday and even weeks’ Wednesday and Thursday are two weeks of two days, not four', () => {
+    // The review's part-timer, on a post of two days: every real week is
+    // within it. Read as the union, the engine had no day left to count and
+    // let a weekly Monday and Wednesday make every week three.
+    const week = [
+      lesson('w', 3, { recurrence: 'EVEN_WEEKS' }),
+      lesson('th', 4, { recurrence: 'EVEN_WEEKS' }),
+      lesson('m', 1, { recurrence: 'ODD_WEEKS' }),
+      lesson('tu', 2, { recurrence: 'ODD_WEEKS' }),
+    ];
+    expect(lockedWeekdaySets(week, 2)).toEqual([
+      [1, 2],
+      [3, 4],
+    ]);
+  });
+
+  it('an autumn’s Monday and Tuesday and a spring’s Thursday and Friday are two sets, the weeks between them implied', () => {
+    // Before the autumn, over Christmas and after the spring nothing is
+    // kept: those weeks' empty set lies inside either term's, of two days.
+    const week = [
+      lesson('th', 4, { startDate: '2027-01-11', endDate: '2027-06-11' }),
+      lesson('fr', 5, { startDate: '2027-01-11', endDate: '2027-06-11' }),
+      lesson('m', 1, { startDate: '2026-08-17', endDate: '2026-12-18' }),
+      lesson('tu', 2, { startDate: '2026-08-17', endDate: '2026-12-18' }),
+    ];
+    expect(lockedWeekdaySets(week, 2)).toEqual([
+      [1, 2],
+      [4, 5],
+    ]);
+    // On a post of one day both terms' kept lessons are over it alone, so
+    // the empty weeks are implied by neither, and say the limit as it reads
+    // without locks.
+    expect(lockedWeekdaySets(week, 1)).toEqual([[], [1, 2], [4, 5]]);
+  });
+
+  it('leaves out a week’s set inside a larger one of at most the limit’s days', () => {
+    // Monday every week, Tuesday the odd ones: the even weeks' Monday lies
+    // inside the odd weeks' Monday and Tuesday.
+    const week = [lesson('m', 1), lesson('tu', 2, { recurrence: 'ODD_WEEKS' })];
+    expect(lockedWeekdaySets(week, 3)).toEqual([[1, 2]]);
+    expect(lockedWeekdaySets(week, 2)).toEqual([[1, 2]]);
+  });
+
+  it('keeps a smaller week’s set that is not inside the larger, whatever the limit', () => {
+    // Monday in odd weeks, Tuesday and Wednesday in even ones: the odd weeks
+    // may take two days off Monday, the even weeks one off Tuesday and
+    // Wednesday, and neither bound says the other. Size alone is not
+    // implication.
+    const week = [
+      lesson('m', 1, { recurrence: 'ODD_WEEKS' }),
+      lesson('tu', 2, { recurrence: 'EVEN_WEEKS' }),
+      lesson('w', 3, { recurrence: 'EVEN_WEEKS' }),
+    ];
+    expect(lockedWeekdaySets(week, 3)).toEqual([[1], [2, 3]]);
+  });
+
+  it('keeps a week’s set inside a larger one over the limit, which does not imply it', () => {
+    // Monday to Wednesday in odd weeks and Monday alone in even ones, on a
+    // post of two days: the odd weeks allow nothing off Monday to Wednesday,
+    // and a placed Tuesday and Wednesday would fit that and give the even
+    // weeks three days. Their Monday is said too.
+    const week = [
+      lesson('m', 1),
+      lesson('tu', 2, { recurrence: 'ODD_WEEKS' }),
+      lesson('w', 3, { recurrence: 'ODD_WEEKS' }),
+    ];
+    expect(lockedWeekdaySets(week, 2)).toEqual([[1], [1, 2, 3]]);
+    // On a post of three the odd weeks are within it, and imply the even.
+    expect(lockedWeekdaySets(week, 3)).toEqual([[1, 2, 3]]);
+  });
+
+  describe('given the läsår, only its weeks', () => {
+    const year = { startDate: '2026-08-17', endDate: '2027-06-11' };
+
+    it('reads no week before the year starts or after it ends', () => {
+      // An undated Monday and a Tuesday dated over the whole year, on a post
+      // of one day: every week the school has holds both. Unbounded, the
+      // weeks before 17 August and after 11 June add a Monday alone, which —
+      // inside a set over the limit — would hold the generator to it.
+      const week = [lesson('m', 1), lesson('tu', 2, { startDate: '2026-08-17', endDate: '2027-06-11' })];
+      expect(lockedWeekdaySets(week, 1)).toEqual([[1], [1, 2]]);
+      expect(lockedWeekdaySets(week, 1, year)).toEqual([[1, 2]]);
+    });
+
+    it('keeps a real week of the year that a dated lesson has left', () => {
+      // The Tuesday ends at Christmas: the spring's weeks hold Monday alone.
+      const week = [lesson('m', 1), lesson('tu', 2, { startDate: '2026-08-17', endDate: '2026-12-18' })];
+      expect(lockedWeekdaySets(week, 1, year)).toEqual([[1], [1, 2]]);
+    });
+
+    it('reads a week that holds the year’s first day, and its last', () => {
+      // The year starts on a Wednesday and ends on a Tuesday. The first week's
+      // Monday lies before the year and the last week's Friday after it, but
+      // both weeks are the year's: a Wednesday in the first and a Tuesday in
+      // the last are each a week's set. (The weeks between hold neither, and
+      // their empty set lies inside each of these, of at most one day.)
+      const short = { startDate: '2026-08-19', endDate: '2027-06-08' };
+      const week = [
+        lesson('w', 3, { startDate: '2026-08-19', endDate: '2026-08-21' }),
+        lesson('tu', 2, { startDate: '2027-06-08', endDate: '2027-06-08' }),
+      ];
+      expect(lockedWeekdaySets(week, 1, short)).toEqual([[2], [3]]);
+    });
+
+    it('holds undated lessons to the year’s own first weeks, both parities', () => {
+      const week = [lesson('o', 1, { recurrence: 'ODD_WEEKS' }), lesson('e', 4, { recurrence: 'EVEN_WEEKS' })];
+      expect(lockedWeekdaySets(week, 1, year)).toEqual([[1], [4]]);
+      expect(lockedWeekdaySets([], 1, year)).toEqual([[]]);
+    });
+  });
+
+  it('reads the week after a lesson ends, whose set no week around a start holds', () => {
+    // a runs Mondays in September, b Tuesdays from mid-September to the new
+    // year: September's first weeks hold Monday, its last both, and October
+    // to December Tuesday alone — a set found only after a's end. On a post
+    // of one day the weeks of both are over it, and neither single day is
+    // implied by them.
+    const week = [
+      lesson('a', 1, { startDate: '2026-09-01', endDate: '2026-09-30' }),
+      lesson('b', 2, { startDate: '2026-09-15', endDate: '2026-12-31' }),
+    ];
+    expect(lockedWeekdaySets(week, 1)).toEqual([[1], [1, 2], [2]]);
+    // On a post of two the weeks of both imply every other.
+    expect(lockedWeekdaySets(week, 2)).toEqual([[1, 2]]);
+  });
+
+  it('reads three weeks from the first week after an end, which across week 53 reach an even one', () => {
+    // a's last Monday is its end date, 21 December 2026 (week 52); weeks 53
+    // and 2027's 1 are both odd, so the even weeks' Tuesday alone is first
+    // taught in week 2 — the third week after the end, and only the third
+    // when the weeks are counted from the week after the end's own.
+    const week = [lesson('a', 1, { endDate: '2026-12-21' }), lesson('b', 2, { recurrence: 'EVEN_WEEKS' })];
+    expect(lockedWeekdaySets(week, 1)).toEqual([[1], [1, 2], [2]]);
+  });
+
+  it('counts a weekday off the school’s days like any other', () => {
+    expect(lockedWeekdaySets([lesson('sat', 6), lesson('m', 1)], 2)).toEqual([[1, 6]]);
   });
 });
