@@ -8,7 +8,7 @@ import {
   toNioarig,
   type GradeNumbering,
 } from "@/lib/grade-numbering";
-import { toNioarigSpan } from "@/lib/nioarig-span";
+import { toNioarigSpan } from "@/lib/grade-span";
 import { unitSpanIn } from "@/lib/school-units";
 
 /**

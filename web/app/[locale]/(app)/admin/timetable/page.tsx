@@ -174,7 +174,6 @@ import {
 } from "@/lib/conflicts";
 import type { OpenSlotMatch, PlacementSuggestion } from "@/lib/placement-search";
 import { buildGradeSpans } from "@/lib/grade-span";
-import { toNioarigSpan } from "@/lib/nioarig-span";
 import { restorableInput } from "@/lib/lesson-restore";
 import { breaksRoomLock } from "@/lib/room-locks";
 import {
@@ -593,24 +592,24 @@ export default function TimetablePage() {
   // rules, frames, lunch, rasts, room locks — is school-wide and stated so,
   // and a tioårig läsår's 10A is the 9 a "7–9" frame binds, as the solver
   // payload sends it.
-  const gradeSpanOf = useMemo(() => {
-    const spans = buildGradeSpans({
-      // The shown year's groups only, as the server reads them: a home class
-      // of another year (the active one, while the projection loads) would
-      // lend a teaching group a grade in another numbering.
-      groups: (groups ?? []).filter((group) => group.academicYearId === shownYear?.id),
-      membersByGroup: (memberships ?? []).reduce((map, row) => {
-        const list = map.get(row.studentGroupId);
-        if (list) list.push(row.studentId);
-        else map.set(row.studentGroupId, [row.studentId]);
-        return map;
-      }, new Map<string, string[]>()),
-      homeClassOf: studentGroupOf,
-    });
-    return shownYear?.gradeNumbering === "TIOARIG"
-      ? new Map([...spans].map(([id, span]) => [id, toNioarigSpan(span, "TIOARIG")!]))
-      : spans;
-  }, [groups, memberships, studentGroupOf, shownYear?.id, shownYear?.gradeNumbering]);
+  const gradeSpanOf = useMemo(
+    () =>
+      buildGradeSpans({
+        // The shown year's groups only, as the server reads them: a home class
+        // of another year (the active one, while the projection loads) would
+        // lend a teaching group a grade in another numbering.
+        groups: (groups ?? []).filter((group) => group.academicYearId === shownYear?.id),
+        membersByGroup: (memberships ?? []).reduce((map, row) => {
+          const list = map.get(row.studentGroupId);
+          if (list) list.push(row.studentId);
+          else map.set(row.studentGroupId, [row.studentId]);
+          return map;
+        }, new Map<string, string[]>()),
+        homeClassOf: studentGroupOf,
+        numbering: shownYear?.gradeNumbering,
+      }),
+    [groups, memberships, studentGroupOf, shownYear?.id, shownYear?.gradeNumbering],
+  );
 
   /** Groups sharing students — the manual-edit twin of the engine's pairs, halves included. */
   const groupConflictMap = useMemo(
