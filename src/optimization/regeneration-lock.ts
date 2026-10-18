@@ -154,6 +154,25 @@ export async function lockYearForGrundschemaEdit(
   }
 }
 
+/**
+ * The same for edits named by their lessons (a block card's move): the years
+ * are read in the same statement, a plain read under the caller's row-level
+ * security, so no row is locked first and another school's year is never
+ * waited for.
+ */
+export async function lockYearsOfLessonsForGrundschemaEdit(
+  tx: PrismaClient,
+  lessonIds: readonly string[],
+): Promise<void> {
+  if (lessonIds.length === 0) return;
+  try {
+    await tx.$executeRaw`SELECT app.lock_years_for_grundschema_edit(ARRAY(SELECT DISTINCT "academicYearId" FROM "MasterLessons" WHERE "id" = ANY(${[...lessonIds]}::uuid[])))`;
+  } catch (error) {
+    if (isLockTimeout(error)) throw grundschemaBeingRewritten();
+    throw error;
+  }
+}
+
 /** A hand edit that met a rewrite of the year: what is rewriting it, and what to do. */
 export function grundschemaBeingRewritten(): ConflictException {
   return new ConflictException({

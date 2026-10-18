@@ -4,6 +4,7 @@ import {
   GENERATE_STALE,
   generateStale,
   lockApplyYearKey,
+  lockYearsOfLessonsForGrundschemaEdit,
   lockYearForCandidateApply,
   lockYearForRegeneration,
   lockYearForSolveStart,
@@ -55,6 +56,21 @@ describe('the year’s start lock (Generera’s POST jobs and a candidate start)
     );
 
     expect(bodyOf(error)).toMatchObject({ code: 'CANDIDATES_RUNNING' });
+  });
+});
+
+describe('a block card’s share of its years’ regeneration lock', () => {
+  it('reads the years in the lock’s own statement, under the caller’s RLS, and answers a wait past 5 s with SCHEDULE_BUSY', async () => {
+    const executeRaw = jest.fn().mockResolvedValue(0);
+    await lockYearsOfLessonsForGrundschemaEdit(clientWith(executeRaw), ['l-1', 'l-2']);
+    expect(executeRaw.mock.calls.map(rawSql)).toEqual([
+      'SELECT app.lock_years_for_grundschema_edit(ARRAY(SELECT DISTINCT "academicYearId" FROM "MasterLessons" WHERE "id" = ANY(?::uuid[])))',
+    ]);
+    expect(executeRaw.mock.calls[0]!.slice(1)).toEqual([['l-1', 'l-2']]);
+
+    const timedOut = jest.fn().mockRejectedValueOnce(lockTimeout());
+    const error = await lockYearsOfLessonsForGrundschemaEdit(clientWith(timedOut), ['l-1']).catch((thrown: unknown) => thrown);
+    expect(bodyOf(error)).toMatchObject({ code: SCHEDULE_BUSY });
   });
 });
 
