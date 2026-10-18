@@ -24,7 +24,7 @@ import {
 import { candidateWeek, currentWeek, replacedLessons } from "@/lib/candidates/lessons";
 import { movedLessons } from "@/lib/candidates/moved";
 import type { CandidateBatch, CandidateView } from "@/lib/candidates/types";
-import { alternates, referenceMonday, type WeekNames, type WeekTargetKind } from "@/lib/candidates/week";
+import { alternates, otherParityMonday, referenceMonday, type WeekNames, type WeekTargetKind } from "@/lib/candidates/week";
 import { buildRosterIndex } from "@/lib/lesson-audience";
 import { isoWeekOf, plusDays } from "@/lib/print-sheet";
 import { usePlanningYear } from "@/lib/planning-year";
@@ -334,7 +334,8 @@ export default function CandidatesPage() {
   // choice made for another candidate does not linger once the select has gone.
   const firstWeekCut = year !== null && thisMonday !== null && thisMonday < year.startDate.slice(0, 10);
   const offersNextWeek = selectedWeek !== undefined && (alternates(selectedWeek) || firstWeekCut);
-  const monday = thisMonday ? plusDays(thisMonday, nextWeek && offersNextWeek ? 7 : 0) : null;
+  const otherMonday = thisMonday === null || year === null ? null : otherParityMonday(year, thisMonday);
+  const monday = thisMonday ? (nextWeek && offersNextWeek && otherMonday ? otherMonday : thisMonday) : null;
   const weekLabel = (date: string) => {
     const week = Number(isoWeekOf(date).split("W")[1]);
     return week % 2 === 1 ? t("week.odd", { week }) : t("week.even", { week });
@@ -439,6 +440,15 @@ export default function CandidatesPage() {
         }
       />
     </div>
+  ) : check.refusalCode ? (
+    // Before the stale branch: the gateway answers a draft that meets a
+    // pre-flight refusal as stale with no parts named, and a refresh would
+    // meet the same refusal. What helps is the refusal's own sentence.
+    <div id={applyReasonId}>
+      <Notice tone="warning" title={t("refusal.title")}>
+        {t(refusalKey(check.refusalCode))}
+      </Notice>
+    </div>
   ) : stale ? (
     <div id={applyReasonId}>
       <Notice
@@ -456,13 +466,6 @@ export default function CandidatesPage() {
             ? t("stale.body", { parts: changedPartsText(t, check.changed, locale) })
             : t("stale.bodyUnnamed")}
         </p>
-        {check.refusalCode ? <p>{t(refusalKey(check.refusalCode))}</p> : null}
-      </Notice>
-    </div>
-  ) : check.refusalCode ? (
-    <div id={applyReasonId}>
-      <Notice tone="warning" title={t("refusal.title")}>
-        {t(refusalKey(check.refusalCode))}
       </Notice>
     </div>
   ) : null;
@@ -636,7 +639,12 @@ export default function CandidatesPage() {
                 lessonsFailed={lessons.failed}
                 appliedId={batch.run.appliedCandidateId}
                 applyBlockedBy={applyReason ? applyReasonId : null}
-                onApply={setApplying}
+                onApply={(candidate) => {
+                  setApplying(candidate);
+                  // The counts the DIRECT dialog shows, and whether the batch
+                  // still fits, read again now rather than at page load.
+                  void checkQuery.refetch();
+                }}
               />
             </SectionCard>
 
@@ -764,7 +772,7 @@ export default function CandidatesPage() {
                           onChange={(event) => setNextWeek(event.target.value === "next")}
                         >
                           <option value="this">{weekLabel(thisMonday)}</option>
-                          <option value="next">{weekLabel(plusDays(thisMonday, 7))}</option>
+                          <option value="next">{weekLabel(otherMonday ?? plusDays(thisMonday, 7))}</option>
                         </NativeSelect>
                       </div>
                     ) : null}
@@ -847,6 +855,7 @@ export default function CandidatesPage() {
         candidate={applying}
         label={applying ? variantLabel(t, applying) : ""}
         check={check}
+        checking={checkQuery.isFetching}
         pending={apply.isPending}
         onOpenChange={(open) => (open ? undefined : setApplying(null))}
         onConfirm={confirmApply}

@@ -42,6 +42,19 @@ export function referenceMonday(year: YearBounds, today: string): string {
   return plusDays(day, 1 - weekday);
 }
 
+/**
+ * The other parity's week beside `monday`: the next, unless the läsår has
+ * ended by then — its last week, or the summer after it, which
+ * referenceMonday holds to that week — and then the one before, while that
+ * is still inside it. Every week of a year longer than one has one or the
+ * other.
+ */
+export function otherParityMonday(year: YearBounds, monday: string): string {
+  const next = plusDays(monday, 7);
+  if (next <= year.endDate.slice(0, 10)) return next;
+  return plusDays(monday, -1) >= year.startDate.slice(0, 10) ? plusDays(monday, -7) : next;
+}
+
 /** Whether a date is a day of the läsår: the sheet draws nothing before its start or after its end. */
 export function inYear(year: YearBounds, date: string): boolean {
   return date >= year.startDate.slice(0, 10) && date <= year.endDate.slice(0, 10);

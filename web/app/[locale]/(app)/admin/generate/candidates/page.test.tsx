@@ -18,7 +18,11 @@ import CandidatesPage from "./page";
 
 function render(ui: React.ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return renderPlain(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+  const result = renderPlain(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+  // A rerender keeps the same client, as the page would.
+  const rerender = (next: React.ReactElement) =>
+    result.rerender(<QueryClientProvider client={client}>{next}</QueryClientProvider>);
+  return { ...result, rerender };
 }
 
 const ACTIVE = { id: "y-1", name: "2026/27", isActive: true, predecessorId: null, startDate: "2026-08-17", endDate: "2027-06-11" };
@@ -91,6 +95,8 @@ const CHECK = { stale: false, changed: [], refusalCode: null, mode: "DRAFT", fut
 const state = vi.hoisted(() => ({
   overview: undefined as unknown,
   check: undefined as unknown,
+  checkFetching: false,
+  checkRefetch: vi.fn(),
   checkFailed: false,
   lessons: {} as Record<string, unknown>,
   origin: undefined as unknown,
@@ -155,7 +161,8 @@ vi.mock("./use-candidate-details", () => ({
     data: runId ? state.check : undefined,
     isLoading: false,
     isError: state.checkFailed,
-    refetch: vi.fn(),
+    isFetching: state.checkFetching,
+    refetch: state.checkRefetch,
   }),
   useCandidateLessons: (() => {
     // A stable answer per call pattern, as the real hook's combine gives;
@@ -204,6 +211,8 @@ beforeEach(() => {
   toast.error.mockReset();
   state.overview = { latest: BATCH, batch: BATCH, unplaced: { lines: 0, minutes: 0, draftLines: 1, draftMinutes: 40 } };
   state.check = CHECK;
+  state.checkFetching = false;
+  state.checkRefetch = vi.fn();
   state.checkFailed = false;
   state.origin = DRAFT;
   state.lessons = { "c-1": KEPT, "c-2": MOVED };
@@ -391,6 +400,28 @@ describe("applying", () => {
     );
   });
 
+  it("reads the check again as the dialog opens, holds the confirm until it is back, and refuses one it finds stale", async () => {
+    state.checkFetching = true;
+    const { rerender } = render(<CandidatesPage />);
+    const user = userEvent.setup();
+
+    await user.click(applyButton(2, "TEACHER_GAPS"));
+    // Opening the dialog reads the check again: its counts and verdict are the moment's.
+    expect(state.checkRefetch).toHaveBeenCalledTimes(1);
+    let dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("scheduleCandidates.apply.checking")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "scheduleCandidates.apply.confirm" })).toBeDisabled();
+
+    // The read comes back: the draft has moved under the batch since the page loaded.
+    state.checkFetching = false;
+    state.check = { ...CHECK, stale: true, changed: ["draft"] };
+    rerender(<CandidatesPage />);
+    dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("scheduleCandidates.apply.noLonger")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "scheduleCandidates.apply.confirm" })).toBeDisabled();
+    expect(apply.mutateAsync).not.toHaveBeenCalled();
+  });
+
   it("offers nothing to apply for a candidate without a timetable", () => {
     render(<CandidatesPage />);
     expect(screen.queryByRole("button", { name: /apply\.buttonLabel\(3/ })).toBeNull();
@@ -444,6 +475,17 @@ describe("a batch the draft has moved away from", () => {
     render(<CandidatesPage />);
 
     expect(screen.getByText("scheduleCandidates.refusal.STAFF_UNSTAFFED_REQUIREMENTS")).toBeInTheDocument();
+    expect(applyButton(2, "TEACHER_GAPS")).toBeDisabled();
+  });
+
+  it("names the refusal, and offers no refresh, in the shape the gateway sends it: stale with no part named", () => {
+    // A refresh would meet the same refusal; the grundschema did not change.
+    state.check = { ...CHECK, stale: true, changed: [], refusalCode: "STAFF_UNSTAFFED_REQUIREMENTS" };
+    render(<CandidatesPage />);
+
+    expect(screen.getByText("scheduleCandidates.refusal.STAFF_UNSTAFFED_REQUIREMENTS")).toBeInTheDocument();
+    expect(screen.queryByText("scheduleCandidates.stale.title")).toBeNull();
+    expect(screen.queryByRole("button", { name: "scheduleCandidates.stale.refresh" })).toBeNull();
     expect(applyButton(2, "TEACHER_GAPS")).toBeDisabled();
   });
 
