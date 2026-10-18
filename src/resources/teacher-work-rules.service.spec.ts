@@ -506,7 +506,8 @@ describe('TeacherWorkRulesService', () => {
           service.upsert(ME, dto({ maxTeachingMinutesPerDay: 300 }), testUser({ role: Role.TEACHER, adminProfile: 'FULL' })),
         ).rejects.toMatchObject({ response: { code: WORK_RULE_DAY_IS_PLANNED } });
         tx.teacherWorkRule.deleteMany.mockResolvedValue({ count: 1 });
-        await service.remove(ME, testUser({ role: Role.TEACHER, adminProfile: 'FULL' }));
+        // Asking for the day fields too, which a writer who plans may.
+        await service.remove(ME, testUser({ role: Role.TEACHER, adminProfile: 'FULL' }), true);
         expect(tx.teacherWorkRule.delete).not.toHaveBeenCalled();
       });
 
@@ -553,14 +554,58 @@ describe('TeacherWorkRulesService', () => {
   });
 
   describe('remove', () => {
-    it('deletes the teacher’s row, keyed on the teacher', async () => {
-      await service.remove(ME, testUser());
+    it('deletes the teacher’s row, keyed on the teacher, for an administrator who plans and asks for the day fields too', async () => {
+      await service.remove(ME, testUser(), true);
 
       expect(tx.teacherWorkRule.delete).toHaveBeenCalledWith({
         where: { userId: ME },
       });
-      // An administrator who plans takes the cap and the wish with it.
+      // The cap and the wish go with it, as the request said they should.
       expect(tx.teacherWorkRule.deleteMany).not.toHaveBeenCalled();
+      expect(tx.teacherWorkRule.update).not.toHaveBeenCalled();
+    });
+
+    /*
+     * A BARE DELETE IS THE TEACHER'S, WHOEVER SENDS IT: a web from before
+     * Lärarens dag reads a row holding only a cap as no rule and deletes
+     * when its four fields are empty, so an administrator's DELETE keeps the
+     * two day fields unless it says `includeDay` (the web of this release).
+     */
+    describe('an administrator’s delete that does not ask for the day fields', () => {
+      it('deletes the row where it holds neither cap nor wish, in one statement that says so', async () => {
+        tx.teacherWorkRule.deleteMany.mockResolvedValue({ count: 1 });
+
+        await service.remove(COLLEAGUE, testUser());
+
+        expect(tx.teacherWorkRule.deleteMany).toHaveBeenCalledWith({
+          where: { userId: COLLEAGUE, maxTeachingMinutesPerDay: null, preferredFreeDayOfWeek: null },
+        });
+        expect(tx.teacherWorkRule.update).not.toHaveBeenCalled();
+        expect(tx.teacherWorkRule.delete).not.toHaveBeenCalled();
+      });
+
+      it('clears the lunch and the rest and keeps a cap or a wish a colleague set', async () => {
+        tx.teacherWorkRule.deleteMany.mockResolvedValue({ count: 0 });
+        tx.teacherWorkRule.update.mockResolvedValue(storedRow({ userId: COLLEAGUE, maxTeachingMinutesPerDay: 270 }));
+
+        await service.remove(COLLEAGUE, testUser(), false);
+
+        expect(tx.teacherWorkRule.update).toHaveBeenCalledWith({
+          where: { userId: COLLEAGUE },
+          data: { lunchMinutes: null, lunchStartTime: null, lunchEndTime: null, minDailyRestMinutes: null },
+        });
+        expect(tx.teacherWorkRule.delete).not.toHaveBeenCalled();
+      });
+
+      it('takes a profile that does not plan, asking for them, as not asking', async () => {
+        // RolesGuard stops such a writer first (@Area on the controller).
+        tx.teacherWorkRule.deleteMany.mockResolvedValue({ count: 1 });
+
+        await service.remove(COLLEAGUE, testUser({ adminProfile: 'EXPEDITION' }), true);
+
+        expect(tx.teacherWorkRule.delete).not.toHaveBeenCalled();
+        expect(tx.teacherWorkRule.deleteMany).toHaveBeenCalledTimes(1);
+      });
     });
 
     describe('a teacher’s own, which may hold the administrator’s cap or wish (20261123090000)', () => {
@@ -591,6 +636,18 @@ describe('TeacherWorkRulesService', () => {
           data: { lunchMinutes: null, lunchStartTime: null, lunchEndTime: null, minDailyRestMinutes: null },
         });
         expect(tx.teacherWorkRule.delete).not.toHaveBeenCalled();
+      });
+
+      it('ignores a teacher asking for the day fields too: not refused, not obeyed', async () => {
+        tx.teacherWorkRule.deleteMany.mockResolvedValue({ count: 0 });
+        tx.teacherWorkRule.update.mockResolvedValue(storedRow({ maxTeachingMinutesPerDay: 270 }));
+
+        await service.remove(ME, teacher(), true);
+
+        expect(tx.teacherWorkRule.delete).not.toHaveBeenCalled();
+        expect(tx.teacherWorkRule.update).toHaveBeenCalledWith(
+          expect.objectContaining({ data: { lunchMinutes: null, lunchStartTime: null, lunchEndTime: null, minDailyRestMinutes: null } }),
+        );
       });
 
       it('answers a row that is not there with the 404 the delete gave', async () => {
@@ -625,7 +682,7 @@ describe('TeacherWorkRulesService', () => {
         }),
       );
 
-      await expect(service.remove(ME, testUser())).rejects.toBeInstanceOf(
+      await expect(service.remove(ME, testUser(), true)).rejects.toBeInstanceOf(
         NotFoundException,
       );
     });

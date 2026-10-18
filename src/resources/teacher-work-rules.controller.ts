@@ -8,6 +8,7 @@ import {
   Param,
   ParseUUIDPipe,
   Put,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -21,7 +22,7 @@ import {
   TeacherWorkRulesService,
   type TeacherWorkRuleResponse,
 } from './teacher-work-rules.service';
-import { UpsertTeacherWorkRuleDto } from './dto/teacher-work-rule.dto';
+import { RemoveTeacherWorkRuleQueryDto, UpsertTeacherWorkRuleDto } from './dto/teacher-work-rule.dto';
 
 /**
  * Lärarnas arbetstid — the lunch a teacher is owed and the rest between their
@@ -40,7 +41,9 @@ import { UpsertTeacherWorkRuleDto } from './dto/teacher-work-rule.dto';
  * a teacher's PUT that would change either is a 403 WORK_RULE_DAY_IS_PLANNED,
  * and a teacher's DELETE of a row holding one clears their lunch and rest
  * and keeps the row (TeacherWorkRulesService; the table's trigger holds the
- * same for a write that does not come through here).
+ * same for a write that does not come through here). So does an
+ * administrator's, unless it says `?includeDay=true`: a web from before the
+ * two fields deletes when its form of four is empty.
  *
  * KEYED ON THE TEACHER, not on the row's id. The table holds one row per teacher
  * (`@@unique([userId])`), so PUT on the person is the whole write surface: there
@@ -86,8 +89,9 @@ export class TeacherWorkRulesController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async remove(
     @Param('userId', new ParseUUIDPipe({ version: '4' })) userId: string,
+    @Query() query: RemoveTeacherWorkRuleQueryDto,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<void> {
-    await this.rules.remove(userId, user);
+    await this.rules.remove(userId, user, query.includeDay === true);
   }
 }

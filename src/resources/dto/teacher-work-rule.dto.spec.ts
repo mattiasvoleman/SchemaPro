@@ -1,6 +1,6 @@
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
-import { UpsertTeacherWorkRuleDto } from './teacher-work-rule.dto';
+import { RemoveTeacherWorkRuleQueryDto, UpsertTeacherWorkRuleDto } from './teacher-work-rule.dto';
 
 /** The suggested arbetstid: 30 minutes inside 10:30-13:30, and 11 hours of rest. */
 const base = {
@@ -163,5 +163,32 @@ describe('UpsertTeacherWorkRuleDto limits', () => {
     expect(Object.values(errors[0]!.constraints ?? {}).join(' ')).toContain(
       'femminuterssteg',
     );
+  });
+});
+
+/*
+ * DELETE's `includeDay`, as a URL carries it: only `true` makes an
+ * administrator's delete take the cap and the wish with the row
+ * (TeacherWorkRulesService.remove); anything but a flag is a 400, never a
+ * delete that guessed.
+ */
+describe('RemoveTeacherWorkRuleQueryDto', () => {
+  const read = async (query: object) => {
+    const dto = plainToInstance(RemoveTeacherWorkRuleQueryDto, query);
+    return { includeDay: dto.includeDay, failing: (await validate(dto)).map((error) => error.property) };
+  };
+
+  it('reads "true" and "false" as the flags they say, and absence as no flag', async () => {
+    await expect(read({ includeDay: 'true' })).resolves.toEqual({ includeDay: true, failing: [] });
+    await expect(read({ includeDay: 'false' })).resolves.toEqual({ includeDay: false, failing: [] });
+    await expect(read({})).resolves.toEqual({ includeDay: undefined, failing: [] });
+  });
+
+  it('refuses anything else, in Swedish, and keeps it as it came rather than as a flag', async () => {
+    for (const value of ['yes', '1', 'TRUE', '']) {
+      await expect(read({ includeDay: value })).resolves.toEqual({ includeDay: value, failing: ['includeDay'] });
+    }
+    const errors = await validate(plainToInstance(RemoveTeacherWorkRuleQueryDto, { includeDay: 'ja' }));
+    expect(Object.values(errors[0]!.constraints ?? {})).toEqual(["includeDay: 'true' eller 'false'."]);
   });
 });

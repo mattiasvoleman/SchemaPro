@@ -418,7 +418,14 @@ describe("useTeacherWorkRuleActions", () => {
     });
   });
 
-  it("deletes by the teacher's id", async () => {
+  /*
+   * `?includeDay=true` is load-bearing, not decoration: without it the
+   * gateway keeps the cap and the free-day wish (a bare DELETE is what a web
+   * from before Lärarens dag sends, and must not take them away), so this
+   * dialog's "clear everything" would leave a cap the reader just emptied
+   * standing behind a summary that says no rule.
+   */
+  it("deletes by the teacher's id, and says it means the cap and the wish too", async () => {
     const harness = createHarness();
     const { result } = renderHook(() => useTeacherWorkRuleActions(), {
       wrapper: harness.wrapper,
@@ -428,7 +435,7 @@ describe("useTeacherWorkRuleActions", () => {
       await result.current.remove.mutateAsync("t-1");
     });
 
-    expect(mockApi.delete).toHaveBeenCalledWith("/api/v1/teacher-work-rules/t-1");
+    expect(mockApi.delete).toHaveBeenCalledWith("/api/v1/teacher-work-rules/t-1?includeDay=true");
     expect(invalidatedKeys(harness)).toEqual([["teacher-work-rules"]]);
   });
 

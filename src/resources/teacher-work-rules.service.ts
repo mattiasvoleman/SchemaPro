@@ -188,13 +188,28 @@ export class TeacherWorkRulesService {
    * row first, so a cap an administrator sets in between is seen by the
    * delete itself (it re-reads the row it locks) and the row is kept; a row
    * that is not there at all is the update's 404, as the delete's was.
+   *
+   * AND SO DOES AN ADMINISTRATOR'S, UNLESS IT SAYS IT MEANS THEM
+   * (`includeDay`, the query's `?includeDay=true`). The two arrived after
+   * the dialog that deletes: a web from before them reads a row holding
+   * only a cap as no rule, and sends this DELETE when its four fields are
+   * empty — so a tab left open over the release, saving a teacher's lunch
+   * away, deleted the cap or the wish a colleague had set since with the
+   * new web, and nothing on either screen said so. The PUT keeps the two
+   * when they are absent for the same reason (UpsertTeacherWorkRuleDto). A
+   * bare DELETE is therefore the teacher's, whoever sends it; only a writer
+   * who plans and asks for the two deletes the row whole, which the web of
+   * this release does when its form, which holds both, is empty. A teacher
+   * asking for them is not refused, only not obeyed: they never remove the
+   * administrator's fields, and a 403 would turn their own "no rule" into
+   * an error about two fields they did not touch.
    */
-  async remove(userId: string, user: AuthenticatedUser): Promise<void> {
+  async remove(userId: string, user: AuthenticatedUser, includeDay = false): Promise<void> {
     requireSchoolId(user);
     this.assertMayWrite(userId, user);
     try {
       await this.prisma.withRls(user, async (tx) => {
-        if (writesPlanning(user)) {
+        if (includeDay && writesPlanning(user)) {
           await tx.teacherWorkRule.delete({ where: { userId } });
           return;
         }
