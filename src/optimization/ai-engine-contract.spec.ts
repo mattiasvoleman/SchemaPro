@@ -456,11 +456,14 @@ describe('AI engine wire contract', () => {
     // A field added to the payload (and to PAYLOAD_FIELDS) fails here until
     // candidate-basis.ts reads it or names it as excluded: otherwise a
     // candidate solved before a change to it would be applied after.
+    // Every field any payload can carry: the ones a key is sent for only when
+    // it has a value (teacherDayLimits) as well as the ones always sent, since
+    // a field the guard never sees is the one a stale candidate slips through.
     const covered = [...BASIS_PAYLOAD_FIELDS, ...BASIS_EXCLUDED_FIELDS];
     expect(new Set(covered).size).toBe(covered.length);
-    expect(PAYLOAD_FIELDS.filter((field) => !covered.includes(field as never))).toEqual([]);
+    expect(PAYLOAD_FIELDS_WITH_DAY_LIMITS.filter((field) => !covered.includes(field as never))).toEqual([]);
     // And nothing is read that the payload no longer has.
-    expect(BASIS_PAYLOAD_FIELDS.filter((field) => !PAYLOAD_FIELDS.includes(field))).toEqual([]);
+    expect(BASIS_PAYLOAD_FIELDS.filter((field) => !PAYLOAD_FIELDS_WITH_DAY_LIMITS.includes(field))).toEqual([]);
   });
 
   it('sends a schemaförslag candidate Generera\'s fields plus search, and search exactly its four', async () => {

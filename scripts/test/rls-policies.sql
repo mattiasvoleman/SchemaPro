@@ -23989,9 +23989,9 @@ END $$;
 SET LOCAL ROLE app_authenticated;
 ROLLBACK;
 
--- Section 160: schemaförslag, katalogen (20261125090000).
+-- Section 170: schemaförslag, katalogen (20261125090000).
 --
--- What sections 161-167 prove by acting, read from the catalogue, where a
+-- What sections 171-178 prove by acting, read from the catalogue, where a
 -- later migration that loosens one shows up even on a path no section walks.
 -- Both tables have row security, not forced on the owner the two functions
 -- run as, and exactly the administrator's arms, each TO app_authenticated,
@@ -24233,7 +24233,7 @@ BEGIN
 END $$;
 
 -- ---------------------------------------------------------------------------
--- Section 161: skolans administratörer läser schemaförslagen, den vars
+-- Section 171: skolans administratörer läser schemaförslagen, den vars
 -- profil skriver schemaläggning skriver dem, och ingen annan ser dem
 -- (20261125090000).
 --
@@ -24263,18 +24263,18 @@ END $$;
 -- ---------------------------------------------------------------------------
 
 BEGIN;
-SELECT set_config('app.test_rls161_other', :'admin_auth_id', true);
+SELECT set_config('app.test_rls171_other', :'admin_auth_id', true);
 
 -- 'rows N' (and undone), 'refused' (row security), 'denied' (no grant), or
 -- the error.
-CREATE FUNCTION pg_temp.rls161_try(statement text) RETURNS text LANGUAGE plpgsql AS $$
+CREATE FUNCTION pg_temp.rls171_try(statement text) RETURNS text LANGUAGE plpgsql AS $$
 DECLARE n bigint; st text; msg text;
 BEGIN
   EXECUTE statement;
   GET DIAGNOSTICS n = ROW_COUNT;
-  RAISE EXCEPTION USING ERRCODE = 'ZM161', MESSAGE = n::text;
+  RAISE EXCEPTION USING ERRCODE = 'ZM171', MESSAGE = n::text;
 EXCEPTION
-  WHEN SQLSTATE 'ZM161' THEN
+  WHEN SQLSTATE 'ZM171' THEN
     GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT;
     RETURN 'rows ' || msg;
   WHEN insufficient_privilege THEN
@@ -24287,7 +24287,7 @@ END $$;
 
 -- The primary school's administrator files a finished run with a candidate,
 -- so that another school's rows are there to be missed.
-SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls161_other'))::text, true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls171_other'))::text, true);
 DO $$
 DECLARE yr uuid; run uuid;
 BEGIN
@@ -24299,7 +24299,7 @@ BEGIN
   VALUES (app.current_school_id(), yr, 'SUCCEEDED', 1, 1, now()) RETURNING id INTO run;
   INSERT INTO "ScheduleCandidates" ("runId", "schoolId", ordinal, variant, "solverStatus")
   VALUES (run, app.current_school_id(), 1, 'KEEP', 'OPTIMAL');
-  PERFORM set_config('app.test_rls161_school_a', app.current_school_id()::text, true);
+  PERFORM set_config('app.test_rls171_school_a', app.current_school_id()::text, true);
 END $$;
 
 DO $$
@@ -24314,8 +24314,8 @@ DECLARE
     ['00000000-0000-4000-8000-000000000111', 'TEACHER', 'none'],
     ['00000000-0000-4000-8000-000000000112', 'STUDENT', 'none'],
     ['00000000-0000-4000-8000-000000000113', 'GUARDIAN', 'none'],
-    [current_setting('app.test_rls161_other'), 'SCHOOL_ADMIN', 'elsewhere']];
-  a constant uuid := current_setting('app.test_rls161_school_a')::uuid;
+    [current_setting('app.test_rls171_other'), 'SCHOOL_ADMIN', 'elsewhere']];
+  a constant uuid := current_setting('app.test_rls171_school_a')::uuid;
   m uuid;
   yr uuid;
   fixture uuid;
@@ -24409,7 +24409,7 @@ BEGIN
     ) AS t(what, statement, writes, reads, nobody, elsewhere) LOOP
       want := CASE kind WHEN 'writes' THEN probe.writes WHEN 'reads' THEN probe.reads
                         WHEN 'none' THEN probe.nobody ELSE probe.elsewhere END;
-      got := pg_temp.rls161_try(probe.statement);
+      got := pg_temp.rls171_try(probe.statement);
       IF got IS DISTINCT FROM want THEN
         wrong := wrong || format('%s: %s met "%s", expected "%s"', who, probe.what, got, want);
       END IF;
@@ -24431,7 +24431,7 @@ DECLARE
   cand uuid;
 BEGIN
   INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-  VALUES (m, 'RLS161 år', DATE '2081-08-15', DATE '2082-06-10', false, now()) RETURNING id INTO yr;
+  VALUES (m, 'RLS171 år', DATE '2081-08-15', DATE '2082-06-10', false, now()) RETURNING id INTO yr;
 
   -- Started, a candidate stored under the run's lock, finished, applied.
   INSERT INTO "ScheduleCandidateRuns" ("schoolId", "academicYearId", "createdById", requested, "leaseSeconds", weights)
@@ -24484,7 +24484,7 @@ BEGIN
     'UPDATE "ScheduleCandidateRuns" SET "heartbeatAt" = now()',
     'DELETE FROM "ScheduleCandidateRuns"', 'DELETE FROM "ScheduleCandidates"',
     'SELECT app.schedule_candidates_sweep()', 'SELECT app.schedule_candidate_runs_active()'] LOOP
-    got := pg_temp.rls161_try(s);
+    got := pg_temp.rls171_try(s);
     IF got <> 'denied' THEN RAISE EXCEPTION 'candidates: PostgREST''s role met "%" for %', got, s; END IF;
   END LOOP;
 END $$;
@@ -24492,7 +24492,7 @@ SET LOCAL ROLE app_authenticated;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
--- Section 162: ett förslag hör till sin körnings skola och en körning till
+-- Section 172: ett förslag hör till sin körnings skola och en körning till
 -- sitt läsårs, och båda försvinner med körningen, läsåret och skolan
 -- (20261125090000).
 --
@@ -24508,14 +24508,14 @@ ROLLBACK;
 -- arm's WITH CHECK alone answers. A run has one candidate per ordinal
 -- (23505, named). Deleting a run takes its candidates, and deleting a year
 -- takes its runs and theirs; a school's delete cascades the same way
--- (section 160 reads that key, since no administrator may delete a school).
+-- (section 170 reads that key, since no administrator may delete a school).
 -- ---------------------------------------------------------------------------
 
 BEGIN;
-SELECT set_config('app.test_rls162_other', :'admin_auth_id', true);
+SELECT set_config('app.test_rls172_other', :'admin_auth_id', true);
 
 -- 'none' (the row stays) or 'sqlstate:constraint' of a statement's refusal.
-CREATE FUNCTION pg_temp.rls162_refusal(statement text) RETURNS text LANGUAGE plpgsql AS $$
+CREATE FUNCTION pg_temp.rls172_refusal(statement text) RETURNS text LANGUAGE plpgsql AS $$
 DECLARE st text; con text;
 BEGIN
   EXECUTE statement;
@@ -24524,14 +24524,14 @@ EXCEPTION WHEN OTHERS THEN
   GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, con = CONSTRAINT_NAME;
   RETURN st || ':' || coalesce(con, '');
 END $$;
-CREATE FUNCTION pg_temp.rls162_as(sub text) RETURNS void LANGUAGE plpgsql AS $$
+CREATE FUNCTION pg_temp.rls172_as(sub text) RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
   PERFORM set_config('request.jwt.claims', json_build_object('sub', sub)::text, true);
 END $$;
 
 DO $$
 DECLARE
-  other constant text := current_setting('app.test_rls162_other');
+  other constant text := current_setting('app.test_rls172_other');
   a uuid;
   ya uuid;
   ra uuid;
@@ -24545,18 +24545,18 @@ DECLARE
   n bigint;
 BEGIN
   -- The primary school's finished run, in its own year.
-  PERFORM pg_temp.rls162_as(other);
+  PERFORM pg_temp.rls172_as(other);
   a := app.current_school_id();
   SELECT id INTO ya FROM "AcademicYears" WHERE "schoolId" = a ORDER BY "isActive" DESC, id LIMIT 1;
   INSERT INTO "ScheduleCandidateRuns" ("schoolId", "academicYearId", status, requested, progress)
   VALUES (a, ya, 'SUCCEEDED', 1, 1) RETURNING id INTO ra;
 
   -- The matrix school's, with two candidates.
-  PERFORM pg_temp.rls162_as('00000000-0000-4000-8000-000000000105');
+  PERFORM pg_temp.rls172_as('00000000-0000-4000-8000-000000000105');
   m := app.current_school_id();
   IF m IS NULL OR m = a OR ya IS NULL THEN RAISE EXCEPTION 'tenant keys: the two schools are not there; fixtures did not run'; END IF;
   INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-  VALUES (m, 'RLS162 år', DATE '2082-08-15', DATE '2083-06-10', false, now()) RETURNING id INTO ym;
+  VALUES (m, 'RLS172 år', DATE '2082-08-15', DATE '2083-06-10', false, now()) RETURNING id INTO ym;
   INSERT INTO "ScheduleCandidateRuns" ("schoolId", "academicYearId", status, requested, progress)
   VALUES (m, ym, 'SUCCEEDED', 2, 2) RETURNING id INTO rm;
   INSERT INTO "ScheduleCandidates" ("runId", "schoolId", ordinal, variant, "solverStatus")
@@ -24588,15 +24588,15 @@ BEGIN
      format('INSERT INTO "ScheduleCandidates" ("runId", "schoolId", ordinal, variant, "solverStatus") VALUES (%L, %L, 2, ''SPREAD'', ''OPTIMAL'')', rm, m),
      '23505:ScheduleCandidates_runId_ordinal_key')
   ) AS t(what, statement, refusal) LOOP
-    got := pg_temp.rls162_refusal(c.statement);
+    got := pg_temp.rls172_refusal(c.statement);
     IF got IS DISTINCT FROM c.refusal THEN
       RAISE EXCEPTION 'tenant keys: % was answered "%", expected "%"', c.what, got, c.refusal;
     END IF;
   END LOOP;
 
   -- The primary school's administrator, on the matrix school's run under their own school: the key.
-  PERFORM pg_temp.rls162_as(other);
-  got := pg_temp.rls162_refusal(format(
+  PERFORM pg_temp.rls172_as(other);
+  got := pg_temp.rls172_refusal(format(
     'INSERT INTO "ScheduleCandidates" ("runId", "schoolId", ordinal, variant, "solverStatus") VALUES (%L, %L, 3, ''SPREAD'', ''OPTIMAL'')', rm, a));
   IF got IS DISTINCT FROM '23503:ScheduleCandidates_runId_schoolId_fkey' THEN
     RAISE EXCEPTION 'tenant keys: another school''s candidate on the matrix school''s run was answered "%"', got;
@@ -24607,7 +24607,7 @@ BEGIN
   END IF;
 
   -- A run removed takes its candidates, as the schemaläggare.
-  PERFORM pg_temp.rls162_as('00000000-0000-4000-8000-000000000107');
+  PERFORM pg_temp.rls172_as('00000000-0000-4000-8000-000000000107');
   IF (SELECT "schoolId" FROM "ScheduleCandidateRuns" WHERE id = rm) IS DISTINCT FROM m
      OR (SELECT count(*) FROM "ScheduleCandidates" WHERE "runId" = rm) <> 2 THEN
     RAISE EXCEPTION 'tenant keys: the matrix school''s run or its candidates moved';
@@ -24623,9 +24623,9 @@ BEGIN
   END IF;
 
   -- A year removed takes its runs and their candidates, as FULL.
-  PERFORM pg_temp.rls162_as('00000000-0000-4000-8000-000000000105');
+  PERFORM pg_temp.rls172_as('00000000-0000-4000-8000-000000000105');
   INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-  VALUES (m, 'RLS162 borttaget år', DATE '2083-08-15', DATE '2084-06-10', false, now()) RETURNING id INTO yd;
+  VALUES (m, 'RLS172 borttaget år', DATE '2083-08-15', DATE '2084-06-10', false, now()) RETURNING id INTO yd;
   INSERT INTO "ScheduleCandidateRuns" ("schoolId", "academicYearId", status, requested, progress)
   VALUES (m, yd, 'RUNNING', 2, 1) RETURNING id INTO rd;
   INSERT INTO "ScheduleCandidates" ("runId", "schoolId", ordinal, variant, "solverStatus") VALUES (rd, m, 1, 'KEEP', 'OPTIMAL');
@@ -24642,7 +24642,7 @@ END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
--- Section 163: en körning åt gången per läsår
+-- Section 173: en körning åt gången per läsår
 -- (ScheduleCandidateRuns_one_active_per_year).
 --
 -- With a PENDING run in a year, a second PENDING, RUNNING or CANCELLING run
@@ -24656,10 +24656,10 @@ ROLLBACK;
 -- ---------------------------------------------------------------------------
 
 BEGIN;
-SELECT set_config('app.test_rls163_other', :'admin_auth_id', true);
+SELECT set_config('app.test_rls173_other', :'admin_auth_id', true);
 
 -- 'none' (the row stays) or 'sqlstate:constraint' of a statement's refusal.
-CREATE FUNCTION pg_temp.rls163_refusal(statement text) RETURNS text LANGUAGE plpgsql AS $$
+CREATE FUNCTION pg_temp.rls173_refusal(statement text) RETURNS text LANGUAGE plpgsql AS $$
 DECLARE st text; con text;
 BEGIN
   EXECUTE statement;
@@ -24670,14 +24670,14 @@ EXCEPTION WHEN OTHERS THEN
 END $$;
 
 -- The primary school's year has an active run of its own.
-SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls163_other'))::text, true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls173_other'))::text, true);
 DO $$
 DECLARE yr uuid;
 BEGIN
   INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-  VALUES (app.current_school_id(), 'RLS163 år', DATE '2085-08-15', DATE '2086-06-10', false, now()) RETURNING id INTO yr;
+  VALUES (app.current_school_id(), 'RLS173 år', DATE '2085-08-15', DATE '2086-06-10', false, now()) RETURNING id INTO yr;
   INSERT INTO "ScheduleCandidateRuns" ("schoolId", "academicYearId", status, requested) VALUES (app.current_school_id(), yr, 'RUNNING', 2);
-  PERFORM set_config('app.test_rls163_year_a', yr::text, true);
+  PERFORM set_config('app.test_rls173_year_a', yr::text, true);
 END $$;
 
 SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
@@ -24697,50 +24697,50 @@ BEGIN
    ORDER BY "createdAt" LIMIT 1;
   IF fixture_year IS NULL THEN RAISE EXCEPTION 'one active run: the matrix school has no finished run; fixtures did not run'; END IF;
   INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-  VALUES (m, 'RLS163 år 1', DATE '2086-08-15', DATE '2087-06-10', false, now()) RETURNING id INTO y1;
+  VALUES (m, 'RLS173 år 1', DATE '2086-08-15', DATE '2087-06-10', false, now()) RETURNING id INTO y1;
   INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-  VALUES (m, 'RLS163 år 2', DATE '2087-08-15', DATE '2088-06-10', false, now()) RETURNING id INTO y2;
+  VALUES (m, 'RLS173 år 2', DATE '2087-08-15', DATE '2088-06-10', false, now()) RETURNING id INTO y2;
   INSERT INTO "ScheduleCandidateRuns" ("schoolId", "academicYearId", status, requested) VALUES (m, y1, 'PENDING', 2) RETURNING id INTO r1;
 
   FOREACH st IN ARRAY ARRAY['PENDING', 'RUNNING', 'CANCELLING'] LOOP
-    got := pg_temp.rls163_refusal(format(insert_run, m, y1, st));
+    got := pg_temp.rls173_refusal(format(insert_run, m, y1, st));
     IF got IS DISTINCT FROM '23505:ScheduleCandidateRuns_one_active_per_year' THEN
       RAISE EXCEPTION 'one active run: a second % run of the year was answered "%"', st, got;
     END IF;
   END LOOP;
   FOREACH st IN ARRAY ARRAY['SUCCEEDED', 'FAILED', 'SUCCEEDED', 'FAILED'] LOOP
-    got := pg_temp.rls163_refusal(format(insert_run, m, y1, st));
+    got := pg_temp.rls173_refusal(format(insert_run, m, y1, st));
     IF got <> 'none' THEN RAISE EXCEPTION 'one active run: a % run beside the active one was answered "%"', st, got; END IF;
   END LOOP;
-  got := pg_temp.rls163_refusal(format(insert_run, m, y2, 'RUNNING'));
+  got := pg_temp.rls173_refusal(format(insert_run, m, y2, 'RUNNING'));
   IF got <> 'none' THEN RAISE EXCEPTION 'one active run: a run of another year of the school was answered "%"', got; END IF;
-  got := pg_temp.rls163_refusal(format(insert_run, m, fixture_year, 'CANCELLING'));
+  got := pg_temp.rls173_refusal(format(insert_run, m, fixture_year, 'CANCELLING'));
   IF got <> 'none' THEN RAISE EXCEPTION 'one active run: a run of the fixture''s year beside its finished run was answered "%"', got; END IF;
-  IF (SELECT count(*) FROM "ScheduleCandidateRuns" WHERE "academicYearId" = current_setting('app.test_rls163_year_a')::uuid) <> 0 THEN
+  IF (SELECT count(*) FROM "ScheduleCandidateRuns" WHERE "academicYearId" = current_setting('app.test_rls173_year_a')::uuid) <> 0 THEN
     RAISE EXCEPTION 'one active run: the matrix school reads the primary school''s run';
   END IF;
 
   -- Cancelled, it still holds the year; a finished run set active again is refused the same way.
   UPDATE "ScheduleCandidateRuns" SET status = 'CANCELLING' WHERE id = r1;
   SELECT id INTO done FROM "ScheduleCandidateRuns" WHERE "academicYearId" = y1 AND status = 'FAILED' LIMIT 1;
-  got := pg_temp.rls163_refusal(format('UPDATE "ScheduleCandidateRuns" SET status = ''RUNNING'' WHERE id = %L', done));
+  got := pg_temp.rls173_refusal(format('UPDATE "ScheduleCandidateRuns" SET status = ''RUNNING'' WHERE id = %L', done));
   IF got IS DISTINCT FROM '23505:ScheduleCandidateRuns_one_active_per_year' THEN
     RAISE EXCEPTION 'one active run: a finished run set running beside a cancelled one was answered "%"', got;
   END IF;
-  got := pg_temp.rls163_refusal(format(insert_run, m, y1, 'PENDING'));
+  got := pg_temp.rls173_refusal(format(insert_run, m, y1, 'PENDING'));
   IF got IS DISTINCT FROM '23505:ScheduleCandidateRuns_one_active_per_year' THEN
     RAISE EXCEPTION 'one active run: a run beside a cancelled one was answered "%"', got;
   END IF;
 
   -- Failed: the year is free.
   UPDATE "ScheduleCandidateRuns" SET status = 'FAILED', "finishedAt" = now() WHERE id = r1;
-  got := pg_temp.rls163_refusal(format(insert_run, m, y1, 'PENDING'));
+  got := pg_temp.rls173_refusal(format(insert_run, m, y1, 'PENDING'));
   IF got <> 'none' THEN RAISE EXCEPTION 'one active run: the year took no run after its run failed: "%"', got; END IF;
 END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
--- Section 164: varje CHECK släpper in och vägrar vid sina gränser
+-- Section 174: varje CHECK släpper in och vägrar vid sina gränser
 -- (20261125090000).
 --
 -- As FULL in the matrix school, one row at a time, each undone at once: a
@@ -24764,13 +24764,13 @@ BEGIN;
 SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
 
 -- 'none' (undone) or 'sqlstate:constraint' of a statement's refusal.
-CREATE FUNCTION pg_temp.rls164_try(statement text) RETURNS text LANGUAGE plpgsql AS $$
+CREATE FUNCTION pg_temp.rls174_try(statement text) RETURNS text LANGUAGE plpgsql AS $$
 DECLARE st text; con text;
 BEGIN
   EXECUTE statement;
-  RAISE EXCEPTION USING ERRCODE = 'ZM164';
+  RAISE EXCEPTION USING ERRCODE = 'ZM174';
 EXCEPTION
-  WHEN SQLSTATE 'ZM164' THEN RETURN 'none';
+  WHEN SQLSTATE 'ZM174' THEN RETURN 'none';
   WHEN OTHERS THEN
     GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, con = CONSTRAINT_NAME;
     RETURN st || ':' || coalesce(con, '');
@@ -24789,7 +24789,7 @@ DECLARE
   long_name constant text := 'A' || repeat('Z', 63);
 BEGIN
   INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-  VALUES (m, 'RLS164 år', DATE '2088-08-15', DATE '2089-06-10', false, now()) RETURNING id INTO yr;
+  VALUES (m, 'RLS174 år', DATE '2088-08-15', DATE '2089-06-10', false, now()) RETURNING id INTO yr;
   INSERT INTO "ScheduleCandidateRuns" ("schoolId", "academicYearId", status, requested, progress)
   VALUES (m, yr, 'SUCCEEDED', 4, 4) RETURNING id INTO run;
 
@@ -24835,7 +24835,7 @@ BEGIN
     ('a code and a newline', 2, 0, NULL, 600, NULL, NULL, NULL, 'A' || E'\n', 'errorCode_is_a_name'),
     ('an empty code', 2, 0, NULL, 600, NULL, NULL, NULL, '', 'errorCode_is_a_name')
   ) AS t(what, requested, progress, basis, lease, applied_id, applied_at, error, code, refused_by) LOOP
-    got := pg_temp.rls164_try(format(
+    got := pg_temp.rls174_try(format(
       'INSERT INTO "ScheduleCandidateRuns" ("schoolId", "academicYearId", status, requested, progress, basis, "leaseSeconds",
                                             "appliedCandidateId", "appliedAt", error, "errorCode")
        VALUES (%L, %L, ''FAILED'', %s, %s, %L, %s, %L, %L, %L, %L)',
@@ -24853,7 +24853,7 @@ BEGIN
     ('RUNNING', now(), 'discarded_is_finished'),
     ('CANCELLING', now(), 'discarded_is_finished')
   ) AS t(status, discarded, refused_by) LOOP
-    got := pg_temp.rls164_try(format(
+    got := pg_temp.rls174_try(format(
       'INSERT INTO "ScheduleCandidateRuns" ("schoolId", "academicYearId", status, requested, "discardedAt")
        VALUES (%L, %L, %L, 2, %L)', m, yr, c.status, c.discarded));
     want := coalesce('23514:ScheduleCandidateRuns_' || c.refused_by, 'none');
@@ -24862,7 +24862,7 @@ BEGIN
     END IF;
   END LOOP;
   UPDATE "ScheduleCandidateRuns" SET "discardedAt" = now() WHERE id = run;
-  got := pg_temp.rls164_try(format('UPDATE "ScheduleCandidateRuns" SET status = ''RUNNING'' WHERE id = %L', run));
+  got := pg_temp.rls174_try(format('UPDATE "ScheduleCandidateRuns" SET status = ''RUNNING'' WHERE id = %L', run));
   IF got IS DISTINCT FROM '23514:ScheduleCandidateRuns_discarded_is_finished' THEN
     wrong := wrong || format('a discarded run made RUNNING again: "%s"', got);
   END IF;
@@ -24907,7 +24907,7 @@ BEGIN
     ('a code with a dash', 1, 'KEEP', NULL, 'FAILED', '[]', 'ENGINE-TIMEOUT', 'errorCode_is_a_name'),
     ('a code from a digit', 1, 'KEEP', NULL, 'FAILED', '[]', '5XX', 'errorCode_is_a_name')
   ) AS t(what, ordinal, variant, seed, status, lessons, code, refused_by) LOOP
-    got := pg_temp.rls164_try(format(
+    got := pg_temp.rls174_try(format(
       'INSERT INTO "ScheduleCandidates" ("runId", "schoolId", ordinal, variant, seed, "solverStatus", lessons, "errorCode")
        VALUES (%L, %L, %s, %L, %L, %L, %L, %L)',
       run, m, c.ordinal, c.variant, c.seed, c.status, c.lessons, c.code));
@@ -24915,7 +24915,7 @@ BEGIN
     IF got IS DISTINCT FROM want THEN wrong := wrong || format('candidate with %s: "%s", expected "%s"', c.what, got, want); END IF;
   END LOOP;
   -- The lessons are never left out.
-  got := pg_temp.rls164_try(format(
+  got := pg_temp.rls174_try(format(
     'INSERT INTO "ScheduleCandidates" ("runId", "schoolId", ordinal, variant, "solverStatus", lessons) VALUES (%L, %L, 1, ''KEEP'', ''OPTIMAL'', NULL)', run, m));
   IF split_part(got, ':', 1) <> '23502' THEN wrong := wrong || format('candidate with no lessons: "%s"', got); END IF;
 
@@ -24926,7 +24926,7 @@ END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
--- Section 165: städningen markerar körningar som har tappat sin instans och
+-- Section 175: städningen markerar körningar som har tappat sin instans och
 -- tar bort dem som är äldre än sju dagar, i alla skolor
 -- (app.schedule_candidates_sweep).
 --
@@ -24957,29 +24957,29 @@ ROLLBACK;
 --   * the sweep returns 12 (five marked, seven deleted), and 0 when called
 --     again; a year whose run it marked takes a new run.
 --
--- Only an owner's function sees both schools with no principal; section 160
+-- Only an owner's function sees both schools with no principal; section 170
 -- reads that it is one.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
-SELECT set_config('app.test_rls165_other', :'admin_auth_id', true);
+SELECT set_config('app.test_rls175_other', :'admin_auth_id', true);
 SELECT app.schedule_candidates_sweep() >= 0;
 
-CREATE FUNCTION pg_temp.rls165_as(sub text) RETURNS void LANGUAGE plpgsql AS $$
+CREATE FUNCTION pg_temp.rls175_as(sub text) RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
   PERFORM set_config('request.jwt.claims', CASE WHEN sub IS NULL THEN '' ELSE json_build_object('sub', sub)::text END, true);
 END $$;
 -- A run of the current principal's school in a year of its own.
-CREATE FUNCTION pg_temp.rls165_run(label text, status text, heartbeat timestamptz, lease integer, created timestamptz)
+CREATE FUNCTION pg_temp.rls175_run(label text, status text, heartbeat timestamptz, lease integer, created timestamptz)
 RETURNS uuid LANGUAGE plpgsql AS $$
 DECLARE yr uuid; run uuid;
 BEGIN
   INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-  VALUES (app.current_school_id(), 'RLS165 ' || label, DATE '2070-08-15', DATE '2071-06-10', false, now()) RETURNING id INTO yr;
+  VALUES (app.current_school_id(), 'RLS175 ' || label, DATE '2070-08-15', DATE '2071-06-10', false, now()) RETURNING id INTO yr;
   INSERT INTO "ScheduleCandidateRuns" ("schoolId", "academicYearId", status, requested, progress, "heartbeatAt", "leaseSeconds",
                                        "createdAt", error, "errorCode", "errorParams")
   VALUES (app.current_school_id(), yr, status::"ScheduleCandidateRunStatus", 2, 1, heartbeat, lease, created,
-          'RLS165 tidigare fel', 'RLS165_EARLIER', '{"x": 1}')
+          'RLS175 tidigare fel', 'RLS175_EARLIER', '{"x": 1}')
   RETURNING id INTO run;
   RETURN run;
 END $$;
@@ -24988,34 +24988,34 @@ DO $$
 DECLARE
   t constant timestamptz := now();
   ms constant interval := interval '1 millisecond';
-  other constant text := current_setting('app.test_rls165_other');
+  other constant text := current_setting('app.test_rls175_other');
   r jsonb := '{}';
   n integer;
   rec record;
   cand uuid;
 BEGIN
-  PERFORM pg_temp.rls165_as('00000000-0000-4000-8000-000000000105');
+  PERFORM pg_temp.rls175_as('00000000-0000-4000-8000-000000000105');
   IF (SELECT slug FROM "Schools" WHERE id = app.current_school_id()) IS DISTINCT FROM 'rls-roller-school' THEN
     RAISE EXCEPTION 'sweep: the full administrator is not in rls-roller-school; fixtures did not run';
   END IF;
   r := r || jsonb_build_object(
-    'past_lease', pg_temp.rls165_run('past_lease', 'RUNNING', t - interval '600 seconds' - ms, 600, t - interval '20 minutes'),
-    'short_lease', pg_temp.rls165_run('short_lease', 'RUNNING', t - interval '61 seconds', 60, t - interval '2 minutes'),
-    'never_taken', pg_temp.rls165_run('never_taken', 'PENDING', t - interval '11 minutes', 600, t - interval '11 minutes'),
-    'half_hour_old', pg_temp.rls165_run('half_hour_old', 'CANCELLING', t, 600, t - interval '30 minutes' - ms),
-    'lease_ends_now', pg_temp.rls165_run('lease_ends_now', 'PENDING', t - interval '600 seconds', 600, t - interval '20 minutes'),
-    'exactly_half_hour', pg_temp.rls165_run('exactly_half_hour', 'RUNNING', t, 600, t - interval '30 minutes'),
-    'long_lease', pg_temp.rls165_run('long_lease', 'RUNNING', t - interval '25 minutes', 3600, t - interval '26 minutes'),
-    'fresh', pg_temp.rls165_run('fresh', 'PENDING', t, 600, t),
-    'finished', pg_temp.rls165_run('finished', 'SUCCEEDED', t - interval '1 day', 600, t - interval '2 days'),
-    'week_old', pg_temp.rls165_run('week_old', 'FAILED', t - interval '7 days', 600, t - interval '7 days' - ms),
-    'applied_old', pg_temp.rls165_run('applied_old', 'SUCCEEDED', t - interval '30 days', 600, t - interval '30 days'),
-    'exactly_week', pg_temp.rls165_run('exactly_week', 'SUCCEEDED', t - interval '7 days', 600, t - interval '7 days'),
-    'discarded_ended', pg_temp.rls165_run('discarded_ended', 'FAILED', t, 600, t - interval '2 minutes'),
-    'discarded_ends_now', pg_temp.rls165_run('discarded_ends_now', 'FAILED', t, 600, t - interval '2 minutes'),
-    'discarded_no_call', pg_temp.rls165_run('discarded_no_call', 'FAILED', t, 600, t - interval '2 minutes'),
-    'discarded_out', pg_temp.rls165_run('discarded_out', 'FAILED', t, 600, t - interval '2 minutes'),
-    'call_ended', pg_temp.rls165_run('call_ended', 'FAILED', t, 600, t - interval '2 minutes'));
+    'past_lease', pg_temp.rls175_run('past_lease', 'RUNNING', t - interval '600 seconds' - ms, 600, t - interval '20 minutes'),
+    'short_lease', pg_temp.rls175_run('short_lease', 'RUNNING', t - interval '61 seconds', 60, t - interval '2 minutes'),
+    'never_taken', pg_temp.rls175_run('never_taken', 'PENDING', t - interval '11 minutes', 600, t - interval '11 minutes'),
+    'half_hour_old', pg_temp.rls175_run('half_hour_old', 'CANCELLING', t, 600, t - interval '30 minutes' - ms),
+    'lease_ends_now', pg_temp.rls175_run('lease_ends_now', 'PENDING', t - interval '600 seconds', 600, t - interval '20 minutes'),
+    'exactly_half_hour', pg_temp.rls175_run('exactly_half_hour', 'RUNNING', t, 600, t - interval '30 minutes'),
+    'long_lease', pg_temp.rls175_run('long_lease', 'RUNNING', t - interval '25 minutes', 3600, t - interval '26 minutes'),
+    'fresh', pg_temp.rls175_run('fresh', 'PENDING', t, 600, t),
+    'finished', pg_temp.rls175_run('finished', 'SUCCEEDED', t - interval '1 day', 600, t - interval '2 days'),
+    'week_old', pg_temp.rls175_run('week_old', 'FAILED', t - interval '7 days', 600, t - interval '7 days' - ms),
+    'applied_old', pg_temp.rls175_run('applied_old', 'SUCCEEDED', t - interval '30 days', 600, t - interval '30 days'),
+    'exactly_week', pg_temp.rls175_run('exactly_week', 'SUCCEEDED', t - interval '7 days', 600, t - interval '7 days'),
+    'discarded_ended', pg_temp.rls175_run('discarded_ended', 'FAILED', t, 600, t - interval '2 minutes'),
+    'discarded_ends_now', pg_temp.rls175_run('discarded_ends_now', 'FAILED', t, 600, t - interval '2 minutes'),
+    'discarded_no_call', pg_temp.rls175_run('discarded_no_call', 'FAILED', t, 600, t - interval '2 minutes'),
+    'discarded_out', pg_temp.rls175_run('discarded_out', 'FAILED', t, 600, t - interval '2 minutes'),
+    'call_ended', pg_temp.rls175_run('call_ended', 'FAILED', t, 600, t - interval '2 minutes'));
   INSERT INTO "ScheduleCandidates" ("runId", "schoolId", ordinal, variant, "solverStatus")
   SELECT (r ->> w.name)::uuid, app.current_school_id(), 1, 'KEEP', 'OPTIMAL'
     FROM unnest(ARRAY['week_old', 'applied_old', 'exactly_week', 'discarded_ended']) w(name);
@@ -25027,19 +25027,19 @@ BEGIN
   UPDATE "ScheduleCandidateRuns" c SET "appliedCandidateId" = x.id, "appliedAt" = t - interval '29 days'
     FROM "ScheduleCandidates" x WHERE x."runId" = c.id AND c.id = (r ->> 'applied_old')::uuid;
 
-  PERFORM pg_temp.rls165_as(other);
+  PERFORM pg_temp.rls175_as(other);
   r := r || jsonb_build_object(
-    'other_stale', pg_temp.rls165_run('other_stale', 'RUNNING', t - interval '2 hours', 600, t - interval '3 hours'),
-    'other_old', pg_temp.rls165_run('other_old', 'FAILED', t - interval '8 days', 600, t - interval '8 days'),
-    'other_discarded', pg_temp.rls165_run('other_discarded', 'SUCCEEDED', t, 600, t - interval '2 minutes'));
+    'other_stale', pg_temp.rls175_run('other_stale', 'RUNNING', t - interval '2 hours', 600, t - interval '3 hours'),
+    'other_old', pg_temp.rls175_run('other_old', 'FAILED', t - interval '8 days', 600, t - interval '8 days'),
+    'other_discarded', pg_temp.rls175_run('other_discarded', 'SUCCEEDED', t, 600, t - interval '2 minutes'));
   INSERT INTO "ScheduleCandidates" ("runId", "schoolId", ordinal, variant, "solverStatus")
   VALUES ((r ->> 'other_old')::uuid, app.current_school_id(), 1, 'KEEP', 'OPTIMAL');
   UPDATE "ScheduleCandidateRuns" SET "discardedAt" = t - interval '1 minute', "engineBusyUntil" = t - interval '1 minute'
    WHERE id = (r ->> 'other_discarded')::uuid;
-  PERFORM set_config('app.test_rls165', r::text, true);
+  PERFORM set_config('app.test_rls175', r::text, true);
 
   -- The sweep, with no principal.
-  PERFORM pg_temp.rls165_as(NULL);
+  PERFORM pg_temp.rls175_as(NULL);
   n := app.schedule_candidates_sweep();
   IF n IS DISTINCT FROM 12 THEN RAISE EXCEPTION 'sweep: it changed % rows, expected 5 marked and 7 deleted', n; END IF;
 
@@ -25066,7 +25066,7 @@ BEGIN
     ('other_old', 'GONE', other),
     ('other_discarded', 'GONE', other)
   ) AS v(name, expected, sub) LOOP
-    PERFORM pg_temp.rls165_as(rec.sub);
+    PERFORM pg_temp.rls175_as(rec.sub);
     IF rec.expected = 'GONE' THEN
       IF EXISTS (SELECT 1 FROM "ScheduleCandidateRuns" WHERE id = (r ->> rec.name)::uuid)
          OR EXISTS (SELECT 1 FROM "ScheduleCandidates" WHERE "runId" = (r ->> rec.name)::uuid) THEN
@@ -25081,22 +25081,22 @@ BEGIN
                                          FROM "ScheduleCandidateRuns" WHERE id = (r ->> rec.name)::uuid) x);
       END IF;
     ELSIF NOT EXISTS (SELECT 1 FROM "ScheduleCandidateRuns" WHERE id = (r ->> rec.name)::uuid AND status::text = rec.expected
-                         AND "errorCode" = 'RLS165_EARLIER' AND "errorParams" IS NOT NULL AND "finishedAt" IS NULL) THEN
+                         AND "errorCode" = 'RLS175_EARLIER' AND "errorParams" IS NOT NULL AND "finishedAt" IS NULL) THEN
       RAISE EXCEPTION 'sweep: the run "%" was changed: %', rec.name,
         (SELECT row_to_json(x) FROM (SELECT status, "errorCode", "finishedAt" FROM "ScheduleCandidateRuns"
                                        WHERE id = (r ->> rec.name)::uuid) x);
     END IF;
   END LOOP;
-  PERFORM pg_temp.rls165_as('00000000-0000-4000-8000-000000000105');
+  PERFORM pg_temp.rls175_as('00000000-0000-4000-8000-000000000105');
   IF NOT EXISTS (SELECT 1 FROM "ScheduleCandidates" WHERE "runId" = (r ->> 'exactly_week')::uuid) THEN
     RAISE EXCEPTION 'sweep: the candidate of a run exactly seven days old is gone';
   END IF;
 
   -- Nothing is left for a second call, and the marked run's year is free.
-  PERFORM pg_temp.rls165_as(NULL);
+  PERFORM pg_temp.rls175_as(NULL);
   n := app.schedule_candidates_sweep();
   IF n IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'sweep: a second call changed % rows', n; END IF;
-  PERFORM pg_temp.rls165_as('00000000-0000-4000-8000-000000000105');
+  PERFORM pg_temp.rls175_as('00000000-0000-4000-8000-000000000105');
   INSERT INTO "ScheduleCandidateRuns" ("schoolId", "academicYearId", requested)
   SELECT "schoolId", "academicYearId", 2 FROM "ScheduleCandidateRuns" WHERE id = (r ->> 'past_lease')::uuid;
   IF NOT FOUND THEN RAISE EXCEPTION 'sweep: the year of an abandoned run took no new run'; END IF;
@@ -25104,7 +25104,7 @@ END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
--- Section 166: städningen väntar aldrig på en rad som en annan transaktion
+-- Section 176: städningen väntar aldrig på en rad som en annan transaktion
 -- håller (app.schedule_candidates_sweep, FOR UPDATE SKIP LOCKED).
 --
 -- The gateway sweeps before every start, and a run's task holds its row FOR
@@ -25116,8 +25116,8 @@ ROLLBACK;
 -- is the runner's PGPASSWORD) and passes the output on through cat. That
 -- psql commits two runs of the matrix school that the sweep changes, one an
 -- hour past its lease and one eight days old with a candidate; locks both
--- FOR UPDATE; says so with the advisory lock (166, 2); and, until this
--- transaction's (166, 1) is gone, polls rather than waits for it, so that a
+-- FOR UPDATE; says so with the advisory lock (176, 2); and, until this
+-- transaction's (176, 1) is gone, polls rather than waits for it, so that a
 -- sweep waiting on its rows is no deadlock the server would break by ending
 -- the second connection. Here, with lock_timeout 5 s, the sweep returns, and
 -- both rows are as they were, still held and still past their time. A sweep
@@ -25130,32 +25130,32 @@ ROLLBACK;
 -- section, and are cleared first if an earlier run left them.
 -- ---------------------------------------------------------------------------
 
-\set rls166 'SET statement_timeout = ''120s''; '
-\set rls166 :rls166 'SELECT set_config(''request.jwt.claims'', ''{"sub": "00000000-0000-4000-8000-000000000105"}'', false); '
-\set rls166 :rls166 'DELETE FROM "ScheduleCandidateRuns" WHERE id IN (''00000000-0000-4000-8000-000000001661'', ''00000000-0000-4000-8000-000000001662''); '
-\set rls166 :rls166 'INSERT INTO "ScheduleCandidateRuns" (id, "schoolId", "academicYearId", status, requested, progress, "heartbeatAt", "leaseSeconds", "createdAt") '
-\set rls166 :rls166 'SELECT x.id, y."schoolId", y.id, x.status, 2, 1, x.beat, 600, x.made FROM "AcademicYears" y, (VALUES '
-\set rls166 :rls166 '(''00000000-0000-4000-8000-000000001661''::uuid, ''RUNNING''::"ScheduleCandidateRunStatus", now() - interval ''1 hour'', now() - interval ''2 hours''), '
-\set rls166 :rls166 '(''00000000-0000-4000-8000-000000001662''::uuid, ''FAILED''::"ScheduleCandidateRunStatus", now() - interval ''8 days'', now() - interval ''8 days'')) '
-\set rls166 :rls166 'x(id, status, beat, made) WHERE y."schoolId" = app.current_school_id() AND y.name = ''Roller 2030/31''; '
-\set rls166 :rls166 'INSERT INTO "ScheduleCandidates" ("runId", "schoolId", ordinal, variant, "solverStatus") '
-\set rls166 :rls166 'SELECT id, "schoolId", 1, ''KEEP'', ''OPTIMAL'' FROM "ScheduleCandidateRuns" WHERE id = ''00000000-0000-4000-8000-000000001662''; '
-\set rls166 :rls166 'BEGIN; '
-\set rls166 :rls166 'SELECT count(*) FROM (SELECT 1 FROM "ScheduleCandidateRuns" WHERE id IN (''00000000-0000-4000-8000-000000001661'', ''00000000-0000-4000-8000-000000001662'') FOR UPDATE) held; '
-\set rls166 :rls166 'SELECT pg_advisory_xact_lock(166, 2); '
-\set rls166 :rls166 'DO $$ BEGIN WHILE EXISTS (SELECT 1 FROM pg_locks WHERE locktype = ''advisory'' AND classid = 166 AND objid = 1 AND objsubid = 2) '
-\set rls166 :rls166 'LOOP PERFORM pg_sleep(0.05); END LOOP; END $$; '
-\set rls166 :rls166 'DELETE FROM "ScheduleCandidateRuns" WHERE id IN (''00000000-0000-4000-8000-000000001661'', ''00000000-0000-4000-8000-000000001662''); '
-\set rls166 :rls166 'COMMIT;'
-\setenv RLS166_SQL :rls166
+\set rls176 'SET statement_timeout = ''120s''; '
+\set rls176 :rls176 'SELECT set_config(''request.jwt.claims'', ''{"sub": "00000000-0000-4000-8000-000000000105"}'', false); '
+\set rls176 :rls176 'DELETE FROM "ScheduleCandidateRuns" WHERE id IN (''00000000-0000-4000-8000-000000001661'', ''00000000-0000-4000-8000-000000001662''); '
+\set rls176 :rls176 'INSERT INTO "ScheduleCandidateRuns" (id, "schoolId", "academicYearId", status, requested, progress, "heartbeatAt", "leaseSeconds", "createdAt") '
+\set rls176 :rls176 'SELECT x.id, y."schoolId", y.id, x.status, 2, 1, x.beat, 600, x.made FROM "AcademicYears" y, (VALUES '
+\set rls176 :rls176 '(''00000000-0000-4000-8000-000000001661''::uuid, ''RUNNING''::"ScheduleCandidateRunStatus", now() - interval ''1 hour'', now() - interval ''2 hours''), '
+\set rls176 :rls176 '(''00000000-0000-4000-8000-000000001662''::uuid, ''FAILED''::"ScheduleCandidateRunStatus", now() - interval ''8 days'', now() - interval ''8 days'')) '
+\set rls176 :rls176 'x(id, status, beat, made) WHERE y."schoolId" = app.current_school_id() AND y.name = ''Roller 2030/31''; '
+\set rls176 :rls176 'INSERT INTO "ScheduleCandidates" ("runId", "schoolId", ordinal, variant, "solverStatus") '
+\set rls176 :rls176 'SELECT id, "schoolId", 1, ''KEEP'', ''OPTIMAL'' FROM "ScheduleCandidateRuns" WHERE id = ''00000000-0000-4000-8000-000000001662''; '
+\set rls176 :rls176 'BEGIN; '
+\set rls176 :rls176 'SELECT count(*) FROM (SELECT 1 FROM "ScheduleCandidateRuns" WHERE id IN (''00000000-0000-4000-8000-000000001661'', ''00000000-0000-4000-8000-000000001662'') FOR UPDATE) held; '
+\set rls176 :rls176 'SELECT pg_advisory_xact_lock(176, 2); '
+\set rls176 :rls176 'DO $$ BEGIN WHILE EXISTS (SELECT 1 FROM pg_locks WHERE locktype = ''advisory'' AND classid = 176 AND objid = 1 AND objsubid = 2) '
+\set rls176 :rls176 'LOOP PERFORM pg_sleep(0.05); END LOOP; END $$; '
+\set rls176 :rls176 'DELETE FROM "ScheduleCandidateRuns" WHERE id IN (''00000000-0000-4000-8000-000000001661'', ''00000000-0000-4000-8000-000000001662''); '
+\set rls176 :rls176 'COMMIT;'
+\setenv RLS176_SQL :rls176
 \setenv PGHOST :HOST
 \setenv PGPORT :PORT
 \setenv PGUSER :USER
 \setenv PGDATABASE :DBNAME
 
 BEGIN;
-SELECT pg_advisory_xact_lock(166, 1);
-\o | printf '%s\n' "$RLS166_SQL" | psql -X -q -v ON_ERROR_STOP=1 -f - >/dev/null & cat; wait; exit 0
+SELECT pg_advisory_xact_lock(176, 1);
+\o | printf '%s\n' "$RLS176_SQL" | psql -X -q -v ON_ERROR_STOP=1 -f - >/dev/null & cat; wait; exit 0
 
 -- The second connection holds its rows.
 DO $$
@@ -25165,7 +25165,7 @@ BEGIN
   LOOP
     EXIT WHEN EXISTS (SELECT 1 FROM pg_locks
                        WHERE locktype = 'advisory' AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
-                         AND classid = 166 AND objid = 2 AND objsubid = 2 AND granted AND pid <> pg_backend_pid());
+                         AND classid = 176 AND objid = 2 AND objsubid = 2 AND granted AND pid <> pg_backend_pid());
     IF clock_timestamp() > deadline THEN
       RAISE EXCEPTION 'sweep and held rows: the second connection never held its runs (its error, if any, is above)';
     END IF;
@@ -25209,7 +25209,7 @@ BEGIN
 END $$;
 ROLLBACK;
 \o
-\setenv RLS166_SQL
+\setenv RLS176_SQL
 \setenv PGHOST
 \setenv PGPORT
 \setenv PGUSER
@@ -25223,13 +25223,13 @@ BEGIN
               WHERE id IN ('00000000-0000-4000-8000-000000001661', '00000000-0000-4000-8000-000000001662')) THEN
     RAISE EXCEPTION 'sweep and held rows: the second connection left its runs behind';
   END IF;
-  IF EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND classid = 166 AND objsubid = 2) THEN
+  IF EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND classid = 176 AND objsubid = 2) THEN
     RAISE EXCEPTION 'sweep and held rows: the second connection is still there';
   END IF;
 END $$;
 
 -- ---------------------------------------------------------------------------
--- Section 167: hur många körningar som är aktiva, i alla skolor
+-- Section 177: hur många körningar som är aktiva, i alla skolor
 -- (app.schedule_candidate_runs_active).
 --
 -- The count the gateway caps concurrent runs with is the runs the sweep
@@ -25251,20 +25251,20 @@ END $$;
 -- ---------------------------------------------------------------------------
 
 BEGIN;
-SELECT set_config('app.test_rls167_other', :'admin_auth_id', true);
+SELECT set_config('app.test_rls177_other', :'admin_auth_id', true);
 
-CREATE FUNCTION pg_temp.rls167_as(sub text) RETURNS void LANGUAGE plpgsql AS $$
+CREATE FUNCTION pg_temp.rls177_as(sub text) RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
   PERFORM set_config('request.jwt.claims', CASE WHEN sub IS NULL THEN '' ELSE json_build_object('sub', sub)::text END, true);
 END $$;
 -- A run of the current principal's school in a year of its own.
-CREATE FUNCTION pg_temp.rls167_run(status text, heartbeat timestamptz, lease integer, created timestamptz,
+CREATE FUNCTION pg_temp.rls177_run(status text, heartbeat timestamptz, lease integer, created timestamptz,
                                    busy timestamptz DEFAULT NULL)
 RETURNS uuid LANGUAGE plpgsql AS $$
 DECLARE yr uuid; run uuid;
 BEGIN
   INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-  VALUES (app.current_school_id(), 'RLS167 år ' || gen_random_uuid(), DATE '2075-08-15', DATE '2076-06-10', false, now()) RETURNING id INTO yr;
+  VALUES (app.current_school_id(), 'RLS177 år ' || gen_random_uuid(), DATE '2075-08-15', DATE '2076-06-10', false, now()) RETURNING id INTO yr;
   INSERT INTO "ScheduleCandidateRuns" ("schoolId", "academicYearId", status, requested, "heartbeatAt", "leaseSeconds", "createdAt", "engineBusyUntil")
   VALUES (app.current_school_id(), yr, status::"ScheduleCandidateRunStatus", 2, heartbeat, lease, created, busy)
   RETURNING id INTO run;
@@ -25281,38 +25281,38 @@ DECLARE
   m uuid;
   d uuid;
 BEGIN
-  PERFORM pg_temp.rls167_as(NULL);
+  PERFORM pg_temp.rls177_as(NULL);
   before := app.schedule_candidate_runs_active();
 
-  PERFORM pg_temp.rls167_as('00000000-0000-4000-8000-000000000105');
+  PERFORM pg_temp.rls177_as('00000000-0000-4000-8000-000000000105');
   m := app.current_school_id();
   -- Counted.
-  PERFORM pg_temp.rls167_run('PENDING', t, 600, t);
-  PERFORM pg_temp.rls167_run('RUNNING', t, 600, t);
-  PERFORM pg_temp.rls167_run('CANCELLING', t, 600, t);
-  PERFORM pg_temp.rls167_run('RUNNING', t - interval '600 seconds', 600, t - interval '20 minutes');
-  PERFORM pg_temp.rls167_run('PENDING', t, 600, t - interval '30 minutes');
-  PERFORM pg_temp.rls167_run('RUNNING', t - interval '25 minutes', 3600, t - interval '26 minutes');
+  PERFORM pg_temp.rls177_run('PENDING', t, 600, t);
+  PERFORM pg_temp.rls177_run('RUNNING', t, 600, t);
+  PERFORM pg_temp.rls177_run('CANCELLING', t, 600, t);
+  PERFORM pg_temp.rls177_run('RUNNING', t - interval '600 seconds', 600, t - interval '20 minutes');
+  PERFORM pg_temp.rls177_run('PENDING', t, 600, t - interval '30 minutes');
+  PERFORM pg_temp.rls177_run('RUNNING', t - interval '25 minutes', 3600, t - interval '26 minutes');
   -- Counted for the engine call still out: failed under it, and past its lease.
-  PERFORM pg_temp.rls167_run('FAILED', t, 600, t, t + interval '1 second');
-  PERFORM pg_temp.rls167_run('RUNNING', t - interval '600 seconds' - ms, 600, t - interval '20 minutes', t + interval '10 seconds');
-  d := pg_temp.rls167_run('FAILED', t, 600, t, t + ms);
+  PERFORM pg_temp.rls177_run('FAILED', t, 600, t, t + interval '1 second');
+  PERFORM pg_temp.rls177_run('RUNNING', t - interval '600 seconds' - ms, 600, t - interval '20 minutes', t + interval '10 seconds');
+  d := pg_temp.rls177_run('FAILED', t, 600, t, t + ms);
   UPDATE "ScheduleCandidateRuns" SET "discardedAt" = t WHERE id = d;
   -- Not counted.
-  PERFORM pg_temp.rls167_run('FAILED', t, 600, t, t - ms);
-  d := pg_temp.rls167_run('FAILED', t, 600, t, t - ms);
+  PERFORM pg_temp.rls177_run('FAILED', t, 600, t, t - ms);
+  d := pg_temp.rls177_run('FAILED', t, 600, t, t - ms);
   UPDATE "ScheduleCandidateRuns" SET "discardedAt" = t WHERE id = d;
-  PERFORM pg_temp.rls167_run('SUCCEEDED', t, 600, t);
-  PERFORM pg_temp.rls167_run('FAILED', t, 600, t);
-  PERFORM pg_temp.rls167_run('RUNNING', t - interval '600 seconds' - ms, 600, t - interval '20 minutes');
-  PERFORM pg_temp.rls167_run('PENDING', t, 600, t - interval '30 minutes' - ms);
-  PERFORM pg_temp.rls167_run('RUNNING', t - interval '61 seconds', 60, t - interval '2 minutes');
+  PERFORM pg_temp.rls177_run('SUCCEEDED', t, 600, t);
+  PERFORM pg_temp.rls177_run('FAILED', t, 600, t);
+  PERFORM pg_temp.rls177_run('RUNNING', t - interval '600 seconds' - ms, 600, t - interval '20 minutes');
+  PERFORM pg_temp.rls177_run('PENDING', t, 600, t - interval '30 minutes' - ms);
+  PERFORM pg_temp.rls177_run('RUNNING', t - interval '61 seconds', 60, t - interval '2 minutes');
   -- The primary school's, counted.
-  PERFORM pg_temp.rls167_as(current_setting('app.test_rls167_other'));
-  PERFORM pg_temp.rls167_run('PENDING', t, 600, t);
+  PERFORM pg_temp.rls177_as(current_setting('app.test_rls177_other'));
+  PERFORM pg_temp.rls177_run('PENDING', t, 600, t);
 
   FOREACH sub IN ARRAY ARRAY['00000000-0000-4000-8000-000000000105', '00000000-0000-4000-8000-000000000111', NULL] LOOP
-    PERFORM pg_temp.rls167_as(sub);
+    PERFORM pg_temp.rls177_as(sub);
     n := app.schedule_candidate_runs_active();
     IF n IS DISTINCT FROM before + 10 THEN
       RAISE EXCEPTION 'active runs: asked by %, the count is %, expected % before and 10 more', coalesce(sub, 'no principal'), n, before;
@@ -25325,7 +25325,7 @@ BEGIN
   PERFORM app.schedule_candidates_sweep();
   n := app.schedule_candidate_runs_active();
   IF n IS DISTINCT FROM before + 10 THEN RAISE EXCEPTION 'active runs: after a sweep the count is %, expected %', n, before + 10; END IF;
-  PERFORM pg_temp.rls167_as('00000000-0000-4000-8000-000000000105');
+  PERFORM pg_temp.rls177_as('00000000-0000-4000-8000-000000000105');
   IF EXISTS (SELECT 1 FROM "ScheduleCandidateRuns" WHERE id = d) THEN
     RAISE EXCEPTION 'active runs: the sweep kept a discarded run whose call had ended';
   END IF;
@@ -25338,7 +25338,7 @@ END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
--- Section 168: en handredigering tar sin del av läsårets omskrivningslås och
+-- Section 178: en handredigering tar sin del av läsårets omskrivningslås och
 -- lämnar sin lock_timeout som den var (app.lock_years_for_grundschema_edit).
 --
 -- MasterLessonsService takes it after the plain read that names a lesson's

@@ -313,7 +313,11 @@ describe('Schemaförslag (e2e)', () => {
         .set('x-test-user', admin())
         .expect(200);
       expect(response.body).toEqual({ stale: false, changed: [], refusalCode: null, mode: 'DRAFT', futureCalendarLessons: 0, coverAssignments: 0 });
-      expect(sqlOf(harness.tx.$executeRaw.mock.calls[0])).toBe('SET TRANSACTION READ ONLY');
+      // Not READ ONLY since Lärarens dag: the fetch writes its Läslogg row for
+      // the posts' day limits it reads. Nothing of the timetable is written.
+      expect(harness.tx.$executeRaw.mock.calls.map((call) => sqlOf(call))).not.toContain('SET TRANSACTION READ ONLY');
+      expect(harness.tx['masterLesson']!['deleteMany']).not.toHaveBeenCalled();
+      expect(harness.tx['masterLesson']!['createMany']).not.toHaveBeenCalled();
     });
 
     it('applies a candidate in DRAFT: the safety version first, the write, the change log, the run marked applied', async () => {

@@ -4269,8 +4269,11 @@ async function runChecks(
           // the year's read, +0. Pinned beside the budget spec's
           // (projected-rosters.budget.spec.ts), and below as the one SELECT
           // that the create without a teacher does not send.
-          'POST a lesson with a teacher': 17,
-          'POST a lesson without a teacher': 16,
+          // +1 on both since Schemaförslag (20261125090000): after the year is
+          // read, its share of the regeneration lock
+          // (app.lock_years_for_grundschema_edit), as on a PATCH.
+          'POST a lesson with a teacher': 18,
+          'POST a lesson without a teacher': 17,
         },
         JSON.stringify(sent, null, 1),
       );

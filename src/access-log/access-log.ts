@@ -89,8 +89,14 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *     slots, the moved and unplaced counts, a refusal's sentences — and no
  *     pupil: the stored lessons, the lunches and the lessons response carry
  *     no studentIds and no participants (schedule-candidates.service.spec.ts).
- *     A row per poll of the page would record the timetable layer about
- *     the people who already read it;
+ *     Nor a post's days: a sentence about them is stored as the hidden one
+ *     (TEACHER_WORK_DAYS_HIDDEN, no figure, no post, no teacher) for every
+ *     reader, so nothing HR is shown. What IS recorded is each rebuild of
+ *     the fetch reading the posts' day limits it sends the engine — the
+ *     run, the check before an apply and the apply itself — by the
+ *     fetch's own recordRead (EMPLOYMENT), as Generera's is. A row per poll
+ *     of the page would record the timetable layer about the people who
+ *     already read it;
  *   - the publication check's timplan coverage (preview and publish): it
  *     judges by both layers and hands out group lines and the verdicts'
  *     sentences, and a pupil verdict's sentence ("En elev i 7A ...") names

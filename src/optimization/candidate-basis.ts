@@ -73,6 +73,7 @@ export const BASIS_PAYLOAD_FIELDS = [
   'requirements',
   'roomPreferences',
   'rooms',
+  'teacherDayLimits',
   'teacherWorkRules',
 ] as const;
 
@@ -128,6 +129,7 @@ export type BasisPayload = Pick<
   | 'rasts'
   | 'roomPreferences'
   | 'teacherWorkRules'
+  | 'teacherDayLimits'
   | 'fixedLessons'
   | 'groups'
   | 'previousLessons'
@@ -302,6 +304,19 @@ export function basisInputsOf(source: BasisSource): BasisInputs {
         id: realOf(rule.id),
         teacherId: realOf(rule.teacherId),
       })),
+      // Lärarens dag: deltid in days, by the post (its own id space, kept and
+      // reversed). The key is sent only when a post sets a limit, and is read
+      // the same way, so a school that limits nobody's days keeps the basis it
+      // had: its batches stay fresh across the release that added the field.
+      ...(payload.teacherDayLimits !== undefined
+        ? {
+            teacherDayLimits: payload.teacherDayLimits.map((limit) => ({
+              ...limit,
+              id: realOf(limit.id),
+              teacherId: realOf(limit.teacherId),
+            })),
+          }
+        : {}),
       storedRules: source.storedRules,
     },
     rosters: {
