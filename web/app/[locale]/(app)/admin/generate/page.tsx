@@ -826,8 +826,23 @@ export default function GeneratePage() {
               </h3>
               <p className="max-w-prose text-sm text-muted-foreground">{t("notesHint")}</p>
               <ul className="list-disc space-y-1 pl-5 text-sm">
+                {/*
+                  WHOSE WISH, under the sentence as a conflict's groups are.
+                  The sentence names only the weekday: the gateway keeps the
+                  teacher's id beside the note on the server and names them
+                  here at read time, for every reader — a free-day wish is
+                  staff-readable, not HR, so unlike a days refusal nobody's
+                  list comes back empty for want of HR-läs. Empty or absent
+                  (a run stored before the names) draws nothing rather than
+                  an empty line.
+                */}
                 {notes.map((note, index) => (
-                  <li key={index}>{engineText(note)}</li>
+                  <li key={index}>
+                    <p>{engineText(note)}</p>
+                    {note.resourceNames && note.resourceNames.length > 0 ? (
+                      <p className="font-medium">{note.resourceNames.join(", ")}</p>
+                    ) : null}
+                  </li>
                 ))}
               </ul>
             </section>

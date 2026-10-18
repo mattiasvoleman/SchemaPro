@@ -87,15 +87,18 @@ function refusalOf(error: unknown): {
 }
 
 /**
- * The teachers a stored params blob is about, from its server-only key.
+ * The teachers a stored params blob, or a stored conflict or note, is about,
+ * from its server-only key.
  *
  * A run's row has one column per part of a refusal and none for whose post
  * the summary or the error names, so those ride inside their own params blob
  * under `subjectIds` — an array, which asParams drops, so it never reaches a
- * reader. A conflict keeps them beside its params instead (StoredConflict).
+ * reader. A conflict and a note keep them beside their params instead
+ * (StoredConflict). Only strings: a hand-edited row with anything else in the
+ * list must not reach a read as a teacher.
  */
-function subjectsOf(params: unknown): string[] {
-  const ids = (params as { subjectIds?: unknown } | null | undefined)?.subjectIds;
+function subjectsOf(stored: unknown): string[] {
+  const ids = (stored as { subjectIds?: unknown } | null | undefined)?.subjectIds;
   return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [];
 }
 
@@ -135,9 +138,22 @@ export interface StoredConflict {
    * SERVER-ONLY: whose post a days-bearing sentence names, as Users ids
    * (work-days.ts). Kept, unlike the id arrays, because the sentence was
    * stored without its figure and the post is where a reader with HR-läs is
-   * shown it from; never in a view (conflictView is a whitelist).
+   * shown it from; never in a view (conflictView is a whitelist). On a note,
+   * whose free-day wish it was (free-day-wishes.ts), named when it is read.
    */
   subjectIds?: string[];
+}
+
+/** One conflict-shaped entry of the engine's answer, as the job row keeps it. */
+function storedOf(detail: AiEngineConflictDetail): StoredConflict {
+  return {
+    category: detail.category,
+    code: detail.code,
+    params: detail.params ?? {},
+    message: detail.message,
+    resourceNames: detail.resourceNames ?? [],
+    ...(detail.subjectIds && detail.subjectIds.length > 0 ? { subjectIds: detail.subjectIds } : {}),
+  };
 }
 
 /** One sentence as a reader is shown it: StoredConflict's whitelist. */
@@ -168,7 +184,8 @@ export interface OptimizationJobView {
   conflicts: ConflictView[];
   /**
    * The soft wishes the finished run did not keep (free-day-wishes.ts), in a
-   * conflict's shape. An empty list when there are none, and on every run
+   * conflict's shape, the teacher whose wish it was in resourceNames for
+   * every reader. An empty list when there are none, and on every run
    * before 20261123090100, whose column is null.
    */
   notes: ConflictView[];
@@ -237,6 +254,11 @@ function conflictView(entry: Partial<StoredConflict>): ConflictView {
   };
 }
 
+/** Users rows as the names a view puts beside a sentence: first and last, as the days sentence's. */
+function namesOf(rows: ReadonlyArray<{ id: string; firstName: string; lastName: string }>): ReadonlyMap<string, string> {
+  return new Map(rows.map((row) => [row.id, `${row.firstName} ${row.lastName}`]));
+}
+
 /** A stored list of conflict-shaped entries; anything but a list is none. */
 function entriesOf(value: unknown): Partial<StoredConflict>[] {
   return Array.isArray(value) ? (value as Partial<StoredConflict>[]) : [];
@@ -248,7 +270,7 @@ function entriesOf(value: unknown): Partial<StoredConflict>[] {
  */
 function daysSentencesOf(job: JobRow): StoredSentence[] {
   return [
-    ...entriesOf(job.conflicts).map((entry) => sentenceOf(entry.code, entry.params, entry.message, entry.subjectIds)),
+    ...entriesOf(job.conflicts).map((entry) => sentenceOf(entry.code, entry.params, entry.message, subjectsOf(entry))),
     summaryOf(job),
     failureOf(job),
   ].filter((sentence) => isDaysBearing(sentence.code));
@@ -284,17 +306,28 @@ function sentenceOf(
   return { code: code ?? null, params: asParams(params), message: message ?? null, subjectIds: subjectIds ?? [] };
 }
 
+/** The teachers the notes of these runs are about: whom their view names. */
+function notedOf(jobs: readonly JobRow[]): string[] {
+  return [...new Set(jobs.flatMap((job) => entriesOf(job.notes).flatMap(subjectsOf)))];
+}
+
+const NO_NAMES: ReadonlyMap<string, string> = new Map();
+
 /**
  * A run as one reader is shown it, and whose post's days that showed them.
  *
  * `posts` is what was read back for a reader with HR-läs (work-days.ts), or
- * null for a reader without. Every field is built from the whitelist: nothing
- * of the stored JSON is spread into the answer, so a field kept for the
- * server (subjectIds) cannot leave by being next to one that may.
+ * null for a reader without. `names` are the teachers the notes are about,
+ * read back for every reader (Users id → first and last name); a teacher not
+ * in it — gone, or a row naming somebody else's — is named by nobody. Every
+ * field is built from the whitelist: nothing of the stored JSON is spread
+ * into the answer, so a field kept for the server (subjectIds) cannot leave
+ * by being next to one that may.
  */
 export function jobView(
   job: JobRow,
   posts: ReadonlyMap<string, PostShown> | null,
+  names: ReadonlyMap<string, string> = NO_NAMES,
 ): { view: OptimizationJobView; revealed: string[] } {
   const revealed: string[] = [];
   const say = (sentence: StoredSentence): SentenceShown => {
@@ -308,7 +341,7 @@ export function jobView(
   const conflicts: ConflictView[] = [];
   for (const entry of entriesOf(job.conflicts)) {
     const stored = conflictView(entry);
-    const shown = say(sentenceOf(stored.code, stored.params, stored.message, entry.subjectIds));
+    const shown = say(sentenceOf(stored.code, stored.params, stored.message, subjectsOf(entry)));
     if (shown.code === TEACHER_WORK_DAYS_HIDDEN) {
       if (hiddenCategories.has(stored.category)) continue;
       hiddenCategories.add(stored.category);
@@ -347,7 +380,13 @@ export function jobView(
       errorParams: failure.params,
       errorNames: failure.names,
       conflicts,
-      notes: entriesOf(job.notes).map(conflictView),
+      // Whose wish it was, beside the sentence as a conflict's classes are:
+      // the name the school gives the teacher now, never a stored copy.
+      notes: entriesOf(job.notes).map((entry) => {
+        const note = conflictView(entry);
+        const named = subjectsOf(entry).flatMap((id) => names.get(id) ?? []);
+        return { ...note, resourceNames: [...note.resourceNames, ...named] };
+      }),
       error: failure.message,
       createdAt: job.createdAt.toISOString(),
       finishedAt: job.finishedAt ? job.finishedAt.toISOString() : null,
@@ -474,7 +513,7 @@ export class OptimizationJobsService {
       message: body.message,
       subjectIds: error.subjectIds,
     };
-    const shown = await this.shownTo(user, [{ academicYearId, sentences: [sentence] }], (posts) => {
+    const shown = await this.shownTo(user, [{ academicYearId, sentences: [sentence] }], [], (posts) => {
       const said = forReader(sentence, posts(academicYearId));
       return { result: said, revealed: said.revealed };
     });
@@ -489,37 +528,58 @@ export class OptimizationJobsService {
     return this.shownTo(
       user,
       jobs.map((job) => ({ academicYearId: job.academicYearId, sentences: daysSentencesOf(job) })),
-      (posts) => {
-        const shown = jobs.map((job) => jobView(job, posts(job.academicYearId)));
+      notedOf(jobs),
+      (posts, names) => {
+        const shown = jobs.map((job) => jobView(job, posts(job.academicYearId), names));
         return { result: shown.map(({ view }) => view), revealed: shown.flatMap(({ revealed }) => revealed) };
       },
     );
   }
 
   /**
-   * What a days sentence needs before it can be shown: nothing for a reader
-   * without HR-läs (they are shown the hidden sentence) or for an answer that
-   * holds none; for a reader with HR-läs, the posts it names, read back.
+   * What a run needs before it can be shown: for a reader with HR-läs, the
+   * posts its days sentences name, read back (nothing for a reader without:
+   * they are shown the hidden sentence); and for every reader, the names of
+   * the teachers its notes are about (`named`).
    *
-   * A SECOND TRANSACTION, and only then. The run itself is read in one
-   * statement (queryWithRls), which has no room for the Läslogg's; every
-   * read the Generera page polls stays that one statement, and a reader is
-   * charged a second only when they are shown a post's days. The read is of
-   * the posts as they stand, for the run's year: a post whose limit has since
-   * been cleared, or that is gone, is not read back, and its sentence stays
-   * hidden (forReader). What is shown is written to the Läslogg in the same
-   * transaction — Users ids, which is what app.personal_data_read records.
+   * A SECOND STATEMENT, and only then. The run itself is read in one
+   * (queryWithRls), which has no room for the Läslogg's; every read the
+   * Generera page polls stays that one statement for a run with neither, a
+   * reader is charged one more for the names of a run that broke a wish,
+   * and a transaction of its own when they are shown a post's days. The read
+   * is of the posts as they stand, for the run's year: a post whose limit has
+   * since been cleared, or that is gone, is not read back, and its sentence
+   * stays hidden (forReader). What is shown of a post is written to the
+   * Läslogg in the same transaction — Users ids, which is what
+   * app.personal_data_read records.
+   *
+   * THE NAMES ARE NOT RECORDED. A note puts a teacher's name beside their
+   * wished free day, which is on the work rule every member of staff reads
+   * (the table's staff policy, GET /teacher-work-rules) and not on the post:
+   * a name beside a staff-readable fact, as the timetable layer names who
+   * teaches what (access-log.ts, NOT RECORDED). What the days sentence
+   * records is the post's days it shows, not the name beside them, and the
+   * publication check names the teachers it stops on the same way.
    */
   private async shownTo<T>(
     user: AuthenticatedUser,
     wanted: Array<{ academicYearId: string; sentences: StoredSentence[] }>,
-    show: (posts: (academicYearId: string) => ReadonlyMap<string, PostShown> | null) => {
+    named: readonly string[],
+    show: (
+      posts: (academicYearId: string) => ReadonlyMap<string, PostShown> | null,
+      names: ReadonlyMap<string, string>,
+    ) => {
       result: T;
       revealed: string[];
     },
   ): Promise<T> {
     const subjects = [...new Set(wanted.flatMap(({ sentences }) => sentences.flatMap((s) => s.subjectIds)))];
-    if (!readsHr(user) || subjects.length === 0) return show(() => null).result;
+    const people = { where: { id: { in: [...named] } }, select: { id: true, firstName: true, lastName: true } };
+    if (!readsHr(user) || subjects.length === 0) {
+      if (named.length === 0) return show(() => null, NO_NAMES).result;
+      const rows = await this.prisma.queryWithRls(user, (db) => db.user.findMany(people));
+      return show(() => null, namesOf(rows)).result;
+    }
     const years = [...new Set(wanted.map(({ academicYearId }) => academicYearId))];
     return this.prisma.withRls(user, async (tx) => {
       const posts = await tx.teacherEmployment.findMany({
@@ -545,7 +605,8 @@ export class OptimizationJobsService {
         });
         byYear.set(post.academicYearId, ofYear);
       }
-      const { result, revealed } = show((academicYearId) => byYear.get(academicYearId) ?? new Map());
+      const rows = named.length > 0 ? await tx.user.findMany(people) : [];
+      const { result, revealed } = show((academicYearId) => byYear.get(academicYearId) ?? new Map(), namesOf(rows));
       await recordRead(tx, 'EMPLOYMENT', revealed, user.channel);
       return result;
     });
@@ -581,28 +642,13 @@ export class OptimizationJobsService {
         conflictSummaryParams: storedParams(conflicts?.summaryParams, conflicts?.summarySubjectIds),
         // Stored as the proxy realised them: a days-bearing sentence already
         // without its figure, its teachers beside it (work-days.ts).
-        conflicts: (conflicts?.conflicts ?? []).map(
-          (conflict): StoredConflict => ({
-            category: conflict.category,
-            code: conflict.code,
-            params: conflict.params ?? {},
-            message: conflict.message,
-            resourceNames: conflict.resourceNames ?? [],
-            ...(conflict.subjectIds && conflict.subjectIds.length > 0 ? { subjectIds: conflict.subjectIds } : {}),
-          }),
-        ) as unknown as Prisma.InputJsonValue,
-        // The wishes it did not keep, conflict-shaped, with the work rule as
-        // their resource; null when it kept every one, as on every run before.
+        conflicts: (conflicts?.conflicts ?? []).map(storedOf) as unknown as Prisma.InputJsonValue,
+        // The wishes it did not keep, kept as a conflict is, the teacher's
+        // Users id beside each and no name: the view names them when read.
+        // Null when it kept every one, as on every run before.
         notes:
           response.notes && response.notes.length > 0
-            ? (response.notes.map((note) => ({
-                category: note.category,
-                code: note.code,
-                params: note.params,
-                message: note.message,
-                resourceIds: note.resourceIds,
-                resourceNames: note.resourceNames ?? [],
-              })) as unknown as Prisma.InputJsonValue)
+            ? (response.notes.map(storedOf) as unknown as Prisma.InputJsonValue)
             : Prisma.DbNull,
         finishedAt: new Date(),
       });

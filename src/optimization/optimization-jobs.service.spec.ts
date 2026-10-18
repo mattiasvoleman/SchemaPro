@@ -702,6 +702,17 @@ describe('OptimizationJobsService', () => {
         errorCode: 'TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK',
         errorParams: { limit: POST, weekMinutes: 1500, subjectIds: [EVA] },
       });
+    /** A note as run() stores it: the day, Eva beside it, nobody named. */
+    const wishNote = (overrides: Record<string, unknown> = {}) => ({
+      category: 'AVAILABILITY',
+      code: 'TEACHER_FREE_DAY_WISH_NOT_KEPT',
+      params: { day: 5 },
+      message: 'A teacher wishes Fridays free …',
+      resourceNames: [],
+      subjectIds: [EVA],
+      ...overrides,
+    });
+    const evasName = { id: EVA, firstName: 'Eva', lastName: 'Ek' };
     const evasPost = (overrides: Record<string, unknown> = {}) => ({
       academicYearId: YEAR_ID,
       userId: EVA,
@@ -831,25 +842,27 @@ describe('OptimizationJobsService', () => {
         );
       });
 
-      it('stores the wishes the run did not keep, in a conflict’s shape with the rule as resource', async () => {
+      it('stores the wishes the run did not keep as a conflict is kept, the teacher beside each and no name', async () => {
         proxy.triggerScheduling.mockResolvedValue(
           engineResponse({
             notes: [
               {
                 category: 'AVAILABILITY',
                 code: 'TEACHER_FREE_DAY_WISH_NOT_KEPT',
-                params: { rule: RULE, day: 5 },
-                message: 'The teacher working-time rule … wishes Fridays free …',
+                params: { day: 5 },
+                message: 'A teacher wishes Fridays free …',
                 requirementIds: [],
                 roomIds: [],
                 constraintIds: [],
                 resourceIds: [RULE],
                 resourceNames: [],
+                subjectIds: [EVA],
               },
               {
+                // A note as an older proxy built it: no names, nobody beside it.
                 category: 'AVAILABILITY',
                 code: 'TEACHER_FREE_DAY_WISH_NOT_KEPT',
-                params: { rule: RULE, day: 1 },
+                params: { day: 1 },
                 message: 'Mondays',
                 requirementIds: [],
                 roomIds: [],
@@ -863,6 +876,8 @@ describe('OptimizationJobsService', () => {
         await service.start(YEAR_ID, testUser());
         await flushBackgroundRun();
 
+        // Not the rule's id: no view reads one, and it is the teacher the
+        // note is about.
         expect(tx.optimizationJob.update).toHaveBeenLastCalledWith({
           where: { id: JOB_ID },
           data: expect.objectContaining({
@@ -871,17 +886,16 @@ describe('OptimizationJobsService', () => {
               {
                 category: 'AVAILABILITY',
                 code: 'TEACHER_FREE_DAY_WISH_NOT_KEPT',
-                params: { rule: RULE, day: 5 },
-                message: 'The teacher working-time rule … wishes Fridays free …',
-                resourceIds: [RULE],
+                params: { day: 5 },
+                message: 'A teacher wishes Fridays free …',
                 resourceNames: [],
+                subjectIds: [EVA],
               },
               {
                 category: 'AVAILABILITY',
                 code: 'TEACHER_FREE_DAY_WISH_NOT_KEPT',
-                params: { rule: RULE, day: 1 },
+                params: { day: 1 },
                 message: 'Mondays',
-                resourceIds: [RULE],
                 resourceNames: [],
               },
             ],
@@ -1106,23 +1120,121 @@ describe('OptimizationJobsService', () => {
       });
     });
 
+    /*
+     * A free-day wish is the work rule's, which every member of staff reads:
+     * its note names the teacher for every reader, read back by Users id when
+     * the run is read, and the Läslogg is not written for a name.
+     */
+    describe('a note about a free-day wish', () => {
+      const wishRun = (overrides: Record<string, unknown> = {}) =>
+        row({ solverStatus: 'OPTIMAL', conflicts: [], notes: [wishNote()], ...overrides });
+
+      it('names the teacher for a reader without HR-läs, in one statement more and no Läslogg', async () => {
+        tx.optimizationJob.findUnique.mockResolvedValue(wishRun());
+        tx.user.findMany.mockResolvedValue([evasName]);
+
+        const view = await service.get(JOB_ID, noHr());
+
+        expect(view.notes).toEqual([
+          {
+            category: 'AVAILABILITY',
+            code: 'TEACHER_FREE_DAY_WISH_NOT_KEPT',
+            params: { day: 5 },
+            message: 'A teacher wishes Fridays free …',
+            resourceNames: ['Eva Ek'],
+          },
+        ]);
+        expect(JSON.stringify(view)).not.toMatch(/subjectIds|22222222-dddd/);
+        expect(prisma.queryWithRls).toHaveBeenCalledTimes(2);
+        expect(prisma.withRls).not.toHaveBeenCalled();
+        expect(tx.user.findMany).toHaveBeenCalledWith({
+          where: { id: { in: [EVA] } },
+          select: { id: true, firstName: true, lastName: true },
+        });
+        expect(tx.teacherEmployment.findMany).not.toHaveBeenCalled();
+        expect(recordedReads(tx)).toEqual([]);
+      });
+
+      it('names the teacher for a reader with HR-läs too, beside a run with no days sentence', async () => {
+        tx.optimizationJob.findUnique.mockResolvedValue(wishRun());
+        tx.user.findMany.mockResolvedValue([evasName]);
+
+        const view = await service.get(JOB_ID, hr());
+
+        expect(view.notes[0]!.resourceNames).toEqual(['Eva Ek']);
+        expect(prisma.withRls).not.toHaveBeenCalled();
+        expect(recordedReads(tx)).toEqual([]);
+      });
+
+      it('reads the names in the transaction that reads the posts, when the run has both', async () => {
+        tx.optimizationJob.findUnique.mockResolvedValue(wishRun({ conflicts: [daysConflict()] }));
+        tx.teacherEmployment.findMany.mockResolvedValue([evasPost()]);
+        tx.user.findMany.mockResolvedValue([evasName]);
+
+        const view = await service.get(JOB_ID, hr());
+
+        expect(view.notes[0]!.resourceNames).toEqual(['Eva Ek']);
+        expect(view.conflicts[0]).toMatchObject({ params: { limit: POST, days: 3 }, resourceNames: ['Eva Ek'] });
+        // The run's read, then one transaction for the posts and the names.
+        expect(prisma.queryWithRls).toHaveBeenCalledTimes(1);
+        expect(prisma.withRls).toHaveBeenCalledTimes(1);
+        // The Läslogg names her for the post's days, not for the name.
+        expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [EVA] }]);
+      });
+
+      it('reads no name for a reader with HR-läs shown a post’s days but no note', async () => {
+        tx.optimizationJob.findUnique.mockResolvedValue(row());
+        tx.teacherEmployment.findMany.mockResolvedValue([evasPost()]);
+
+        await service.get(JOB_ID, hr());
+
+        expect(tx.user.findMany).not.toHaveBeenCalled();
+      });
+
+      it('reads no name for a run that broke no wish', async () => {
+        tx.optimizationJob.findUnique.mockResolvedValue(wishRun({ notes: null }));
+
+        await expect(service.get(JOB_ID, noHr())).resolves.toMatchObject({ notes: [] });
+        expect(prisma.queryWithRls).toHaveBeenCalledTimes(1);
+        expect(tx.user.findMany).not.toHaveBeenCalled();
+      });
+
+      it('reads the history’s names once, for every run in it, each teacher once', async () => {
+        const OLLE = '33333333-dddd-4ddd-8ddd-333333333333';
+        tx.optimizationJob.findMany.mockResolvedValue([
+          wishRun(),
+          wishRun({ notes: [wishNote({ params: { day: 1 } }), wishNote({ subjectIds: [OLLE] })] }),
+        ]);
+        tx.user.findMany.mockResolvedValue([evasName, { id: OLLE, firstName: 'Olle', lastName: 'Ås' }]);
+
+        const views = await service.list(YEAR_ID, noHr());
+
+        expect(views.map((view) => view.notes.map((note) => note.resourceNames))).toEqual([
+          [['Eva Ek']],
+          [['Eva Ek'], ['Olle Ås']],
+        ]);
+        expect(tx.user.findMany).toHaveBeenCalledTimes(1);
+        expect(tx.user.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: { in: [EVA, OLLE] } } }));
+      });
+
+      it('names nobody a read does not find: a teacher RLS hides, or gone', async () => {
+        tx.optimizationJob.findUnique.mockResolvedValue(wishRun());
+
+        const view = await service.get(JOB_ID, noHr());
+
+        expect(view.notes[0]!.resourceNames).toEqual([]);
+      });
+    });
+
     describe('the view', () => {
       it('is a whitelist: nothing kept for the server, and no id of a note, leaves', () => {
         const { view } = jobView(
           row({
             conflicts: [{ ...lunchConflict, subjectIds: [EVA], resourceIds: [RULE], extra: 'kept' }],
-            notes: [
-              {
-                category: 'AVAILABILITY',
-                code: 'TEACHER_FREE_DAY_WISH_NOT_KEPT',
-                params: { rule: RULE, day: 5 },
-                message: 'Fridays',
-                resourceIds: [RULE],
-                resourceNames: [],
-              },
-            ],
+            notes: [{ ...wishNote(), resourceIds: [RULE], extra: 'kept' }],
           }) as never,
           null,
+          new Map([[EVA, 'Eva Ek']]),
         );
 
         expect(view.conflicts).toEqual([lunchConflict]);
@@ -1130,11 +1242,28 @@ describe('OptimizationJobsService', () => {
           {
             category: 'AVAILABILITY',
             code: 'TEACHER_FREE_DAY_WISH_NOT_KEPT',
-            params: { rule: RULE, day: 5 },
-            message: 'Fridays',
-            resourceNames: [],
+            params: { day: 5 },
+            message: 'A teacher wishes Fridays free …',
+            resourceNames: ['Eva Ek'],
           },
         ]);
+      });
+
+      it('names a note’s teacher only from the names it is given, after any name the note kept', () => {
+        const run = row({
+          notes: [
+            wishNote({ resourceNames: ['Kept'] }),
+            // A hand-edited row: a number is nobody, and an id with no name
+            // (a teacher since removed) names nobody either.
+            wishNote({ subjectIds: [42, 'gone'] }),
+            wishNote({ subjectIds: 'not a list' }),
+          ],
+        });
+
+        expect(jobView(run as never, null).view.notes.map((note) => note.resourceNames)).toEqual([['Kept'], [], []]);
+        expect(
+          jobView(run as never, null, new Map([[EVA, 'Eva Ek']])).view.notes.map((note) => note.resourceNames),
+        ).toEqual([['Kept', 'Eva Ek'], [], []]);
       });
 
       it('drops a conflict’s params that are not scalars, and its code and params when it has none', () => {

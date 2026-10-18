@@ -23534,7 +23534,7 @@ BEGIN
   UPDATE "OptimizationJobs"
      SET status = 'SUCCEEDED', "finishedAt" = now(),
          notes = jsonb_build_array(jsonb_build_object('code', 'TEACHER_FREE_DAY_WISH_NOT_KEPT', 'category', 'AVAILABILITY',
-                                                      'params', jsonb_build_object('rule', gen_random_uuid(), 'day', 5)))
+                                                      'params', jsonb_build_object('day', 5), 'subjectIds', jsonb_build_array(gen_random_uuid())))
    WHERE id = run;
   IF NOT FOUND THEN RAISE EXCEPTION 'runs: the schemaläggare could not finish a run through the API'; END IF;
 

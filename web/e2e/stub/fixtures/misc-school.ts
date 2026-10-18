@@ -12,7 +12,7 @@ import type { SchoolUnit } from "../../../lib/school-units";
 import type { AcademicYear, LunchSettings, YearRosters } from "../../../lib/types";
 import { KIND, uid } from "../sessions";
 import { addDays, stockholmInstant, TODAY } from "./calendar";
-import { ADMIN, MASTER_LESSONS, NEXT_CLASSES, ROOM_LIST, ROOM_TYPES, ROOMS, SCHOOL, STUDENT_LIST, SUBJECTS, YEAR } from "./world";
+import { ADMIN, MASTER_LESSONS, NEXT_CLASSES, ROOM_LIST, ROOM_TYPES, ROOMS, SCHOOL, STUDENT_LIST, SUBJECTS, TEACHERS, YEAR } from "./world";
 
 /**
  * The school's own settings and the admin tools that read them: lunch rules,
@@ -53,9 +53,11 @@ export const LUNCH_SETTINGS: LunchSettings = {
  * an earlier one the solver could not satisfy (a requirement too many for
  * 7A's week, since moved). The run that laid the grundschema gave up Bo's
  * wish to have Wednesdays free (school-days.ts), which it says in its notes
- * (Lärarens dag, 20261123090100); the refused runs never laid a week and say
- * none, as the gateway answers them. None is about a post's days, so none
- * names a teacher (conflictSummaryNames, errorNames).
+ * (Lärarens dag, 20261123090100), naming Bo under the sentence as the gateway
+ * does at read time for every reader — the sentence itself names only the
+ * weekday. The refused runs never laid a week and say none, as the gateway
+ * answers them. None is about a post's days, so none names a teacher
+ * (conflictSummaryNames, errorNames).
  */
 const YEAR_JOBS: OptimizationJob[] = [
   {
@@ -71,11 +73,13 @@ const YEAR_JOBS: OptimizationJob[] = [
     notes: [
       {
         category: "AVAILABILITY",
-        // The catalogue's English as the gateway stores it, the rule's own id in it.
-        message: `The teacher working-time rule ${uid(KIND.misc, 1032)} wishes Wednesdays free, and the new timetable gives the teacher lessons that day. A wish is weighed against the rest of the week and gives way where keeping it would cost more.`,
+        // The catalogue's English as the gateway stores it: the weekday and
+        // nobody's id. Whose wish it was is the name below.
+        message:
+          "A teacher wishes Wednesdays free, and the new timetable gives them lessons that day. A wish is weighed against the rest of the week and gives way where keeping it would cost more.",
         code: "TEACHER_FREE_DAY_WISH_NOT_KEPT",
-        params: { rule: uid(KIND.misc, 1032), day: 3 },
-        resourceNames: [],
+        params: { day: 3 },
+        resourceNames: [`${TEACHERS.bo.firstName} ${TEACHERS.bo.lastName}`],
       },
     ],
     error: null,
