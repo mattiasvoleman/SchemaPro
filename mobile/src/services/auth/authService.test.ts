@@ -1,6 +1,8 @@
+import React from 'react';
+import TestRenderer, { act } from 'react-test-renderer';
 import { AuthApiError, AuthRetryableFetchError } from '@supabase/supabase-js';
 import * as Network from 'expo-network';
-import { endSessionHere, getSupabase } from '../supabase';
+import { endSessionHere, getSupabase, storedSessionUserId } from '../supabase';
 import { currentApp } from '../../config/appIdentity';
 import { clearCachedSchoolData } from '../database/localDatabase';
 import { releaseOnSignedOut, unregisterOnLogout } from '../pushRegistration';
@@ -9,6 +11,8 @@ import { ApiError } from '../api';
 import { AuthError, AuthService } from './authService';
 import { lookupProvider } from './schoolAccount';
 import { loadWebBrowser } from './webBrowser';
+import { useSecureAuth } from '../../hooks/useSecureAuth';
+import type { AuthState } from '../../types';
 
 jest.mock('../supabase', () => ({ getSupabase: jest.fn(), endSessionHere: jest.fn(), storedSessionUserId: jest.fn(async () => 'auth-1') }));
 jest.mock('../../config/appIdentity', () => ({ currentApp: jest.fn(() => 'rastra') }));
@@ -107,6 +111,7 @@ beforeEach(() => {
   (SecureTokenStore.clearSession as jest.Mock).mockImplementation(async () => {
     order.push('clearSession');
   });
+  (storedSessionUserId as jest.Mock).mockResolvedValue('auth-1');
 });
 
 describe('AuthService.login', () => {
@@ -443,6 +448,8 @@ describe.each(['rastra', 'vardnadshavare'] as const)('the gate in %s', (app) => 
   ])('signs out a session the server ended (%s): the cache goes, push is released, the queue stays', async (_case, sessionError) => {
     const same = { isAuthenticated: true, teacherId: 'u-1', role: own } as const;
     const { from } = supabase({ session: null, sessionError });
+    // supabase-js has removed it, or there was none: nothing is stored.
+    (storedSessionUserId as jest.Mock).mockResolvedValue(null);
     await expect(AuthService.recheckProfile(same)).rejects.toMatchObject({ code: 'SESSION_EXPIRED' });
     expect(from).not.toHaveBeenCalled();
     expect(SecureTokenStore.clearSession).toHaveBeenCalled();
@@ -478,7 +485,9 @@ describe('AuthService.onSessionEnded', () => {
     AuthService.onSessionEnded(ended);
     emit('SIGNED_OUT');
     await flush();
-    expect(order).toEqual(['clearSession', 'release', 'ended']);
+    // Push first: whatever else cannot be cleared, the phone stops showing
+    // the ended person's notices.
+    expect(order).toEqual(['release', 'clearSession', 'ended']);
     // The roster cache goes; clearCachedSchoolData keeps the queue by design.
     expect(clearCachedSchoolData).toHaveBeenCalledTimes(1);
     expect(ended).toHaveBeenCalledTimes(1);
@@ -515,6 +524,251 @@ describe('AuthService.onSessionEnded', () => {
       throw new Error('[Supabase] EXPO_PUBLIC_SUPABASE_URL / EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY are not set.');
     });
     expect(() => AuthService.onSessionEnded(ended)()).not.toThrow();
+  });
+
+  it.each([
+    // getDb() throws until initDatabase() has opened it, and for good when it failed.
+    ['the local database is not open', () => (clearCachedSchoolData as jest.Mock).mockRejectedValueOnce(new Error('[LocalDatabase] Database is not initialized. Call initDatabase() first.'))],
+    ['the keychain refuses the cached profile', () => (SecureTokenStore.clearSession as jest.Mock).mockRejectedValueOnce(new Error('User interaction is not allowed.'))],
+    ['the push token cannot be read', () => (releaseOnSignedOut as jest.Mock).mockRejectedValueOnce(new Error('User interaction is not allowed.'))],
+  ])('does every other step, and signs the app out, when one fails (%s)', async (_case, fail) => {
+    supabase({});
+    fail();
+    const ended = jest.fn();
+    AuthService.onSessionEnded(ended);
+    emit('SIGNED_OUT');
+    await flush();
+    expect(releaseOnSignedOut).toHaveBeenCalledTimes(1);
+    expect(SecureTokenStore.clearSession).toHaveBeenCalledTimes(1);
+    expect(clearCachedSchoolData).toHaveBeenCalledTimes(1);
+    expect(ended).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A recheck that outlives its session. getSession() can wait out a refresh's
+// retries, about half a minute; meanwhile the logout button can end the
+// session without joining that refresh (offline, endSessionHere), the next
+// person can sign in, or the listener can end it. The answer that finally
+// comes is about a session the app no longer holds, and must not end the one
+// that followed, nor word a logout as an expiry.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type SessionAnswer = { data: { session: { user: { id: string } } | null }; error: Error | null };
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (reason: unknown) => void } {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+const refused = (): Error => new AuthApiError('Invalid Refresh Token: Refresh Token Not Found', 400, 'refresh_token_not_found');
+
+describe('AuthService.recheckProfile after its session ended', () => {
+  const same = { isAuthenticated: true, teacherId: 'u-1', role: 'TEACHER' } as const;
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+  beforeEach(() => {
+    (currentApp as jest.Mock).mockReturnValue('rastra');
+    (releaseOnSignedOut as jest.Mock).mockClear();
+    (clearCachedSchoolData as jest.Mock).mockClear();
+    (SecureTokenStore.saveTeacherSession as jest.Mock).mockClear();
+    (SecureTokenStore.getTeacherSession as jest.Mock).mockResolvedValue({ teacherId: 'u-1', role: 'TEACHER', authId: 'auth-1' });
+    // The logout removed the stored session.
+    (storedSessionUserId as jest.Mock).mockResolvedValue(null);
+  });
+
+  it('says nothing after a logout made while it waited, and clears nothing more', async () => {
+    const { getSession } = supabase({});
+    const refresh = deferred<SessionAnswer>();
+    getSession.mockImplementationOnce(() => refresh.promise);
+    const recheck = AuthService.recheckProfile(same);
+    await AuthService.logout();
+    refresh.resolve({ data: { session: null }, error: refused() });
+    await expect(recheck).resolves.toBe(same);
+    // The logout's own clean-up, once.
+    expect(SecureTokenStore.clearSession).toHaveBeenCalledTimes(1);
+    expect(clearCachedSchoolData).toHaveBeenCalledTimes(1);
+    expect(releaseOnSignedOut).not.toHaveBeenCalled();
+  });
+
+  it('keeps the session of the next person, who signed in while it waited', async () => {
+    const { getSession } = supabase({ signIn: { data: { user: { id: 'auth-2' } }, error: null }, profile: { id: 'u-2', role: 'TEACHER' } });
+    const refresh = deferred<SessionAnswer>();
+    getSession.mockImplementationOnce(() => refresh.promise);
+    const recheck = AuthService.recheckProfile(same);
+    await AuthService.logout();
+    await expect(AuthService.login({ email: 'b@b.se', password: 'y' })).resolves.toMatchObject({ teacherId: 'u-2' });
+    // A's refresh is refused at last; supabase-js keeps B's session, saved meanwhile.
+    (storedSessionUserId as jest.Mock).mockResolvedValue('auth-2');
+    refresh.resolve({ data: { session: null }, error: refused() });
+    await expect(recheck).resolves.toBe(same);
+    expect(SecureTokenStore.saveTeacherSession).toHaveBeenCalledWith('u-2', 'TEACHER', 'auth-2');
+    expect(SecureTokenStore.clearSession).toHaveBeenCalledTimes(1);
+    expect(clearCachedSchoolData).toHaveBeenCalledTimes(1);
+    expect(releaseOnSignedOut).not.toHaveBeenCalled();
+  });
+
+  it('ends nothing while a session is still stored: a refused refresh keeps a newer one', async () => {
+    supabase({ session: null, sessionError: refused() });
+    (storedSessionUserId as jest.Mock).mockResolvedValue('auth-2');
+    await expect(AuthService.recheckProfile(same)).resolves.toBe(same);
+    expect(SecureTokenStore.clearSession).not.toHaveBeenCalled();
+    expect(clearCachedSchoolData).not.toHaveBeenCalled();
+    expect(releaseOnSignedOut).not.toHaveBeenCalled();
+  });
+
+  it('counts a sign-in as a new session, for a recheck the screen started just after a logout', async () => {
+    // The screen's last render still showed A when the app came to the
+    // front; the logout had already ended A's session.
+    const { getSession } = supabase({ signIn: { data: { user: { id: 'auth-2' } }, error: null }, profile: { id: 'u-2', role: 'TEACHER' } });
+    await AuthService.logout();
+    const refresh = deferred<SessionAnswer>();
+    getSession.mockImplementationOnce(() => refresh.promise);
+    const recheck = AuthService.recheckProfile(same);
+    await AuthService.login({ email: 'b@b.se', password: 'y' });
+    // storedSessionUserId answers none when the keychain cannot be read.
+    refresh.resolve({ data: { session: null }, error: refused() });
+    await expect(recheck).resolves.toBe(same);
+    expect(SecureTokenStore.clearSession).toHaveBeenCalledTimes(1);
+    expect(releaseOnSignedOut).not.toHaveBeenCalled();
+  });
+
+  it('asks nothing about a session that ended while it was read', async () => {
+    const { getSession, from } = supabase({ profile: { id: 'u-1', role: 'SCHOOL_ADMIN' } });
+    const refresh = deferred<SessionAnswer>();
+    getSession.mockImplementationOnce(() => refresh.promise);
+    const recheck = AuthService.recheckProfile(same);
+    await AuthService.logout();
+    refresh.resolve({ data: { session: { user: { id: 'auth-1' } } }, error: null });
+    await expect(recheck).resolves.toBe(same);
+    expect(from).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a role it admits, cached over whatever followed', 'SCHOOL_ADMIN'],
+    ['a role it refuses, worded as the other app', 'GUARDIAN'],
+  ])('leaves a role read for a session that has since ended alone (%s)', async (_case, role) => {
+    const { from } = supabase({ session: { user: { id: 'auth-1' } } });
+    const read = deferred<{ data: { id: string; role: string } | null; error: null }>();
+    from.mockImplementationOnce(() => ({ select: () => ({ eq: () => ({ maybeSingle: () => read.promise }) }) }));
+    const recheck = AuthService.recheckProfile(same);
+    await flush();
+    expect(from).toHaveBeenCalledTimes(1);
+    await AuthService.logout();
+    order.length = 0;
+    read.resolve({ data: { id: 'u-1', role }, error: null });
+    await expect(recheck).resolves.toBe(same);
+    expect(SecureTokenStore.saveTeacherSession).not.toHaveBeenCalled();
+    expect(order).toEqual([]);
+  });
+
+  it.each([
+    ['inside the refresh that found it gone', 'refresh'],
+    ['while it reads the storage', 'storage'],
+  ])('leaves a session the listener ended to the listener (%s): one clean-up, one wording', async (_case, when) => {
+    const { getSession } = supabase({});
+    const ended = jest.fn();
+    AuthService.onSessionEnded(ended);
+    // supabase-js says SIGNED_OUT to its listeners inside the refresh that was refused.
+    getSession.mockImplementationOnce(async () => {
+      if (when === 'refresh') emit('SIGNED_OUT');
+      return { data: { session: null }, error: refused() };
+    });
+    (storedSessionUserId as jest.Mock).mockImplementation(async () => {
+      if (when === 'storage') emit('SIGNED_OUT');
+      return null;
+    });
+    await expect(AuthService.recheckProfile(same)).resolves.toBe(same);
+    await flush();
+    expect(ended).toHaveBeenCalledTimes(1);
+    expect(releaseOnSignedOut).toHaveBeenCalledTimes(1);
+    expect(clearCachedSchoolData).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// And the hook applies a recheck's answer only to the state it checked: what
+// a logout or another person's sign-in set while it waited stays.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('useSecureAuth.recheckProfile', () => {
+  let recheck: jest.SpyInstance;
+  let renderer: TestRenderer.ReactTestRenderer | undefined;
+
+  beforeEach(() => {
+    (currentApp as jest.Mock).mockReturnValue('rastra');
+    (SecureTokenStore.getTeacherSession as jest.Mock).mockResolvedValue({ teacherId: 'u-1', role: 'TEACHER', authId: 'auth-1' });
+    recheck = jest.spyOn(AuthService, 'recheckProfile');
+  });
+
+  afterEach(() => {
+    recheck.mockRestore();
+    act(() => renderer?.unmount());
+    renderer = undefined;
+  });
+
+  function render(): { current: ReturnType<typeof useSecureAuth> } {
+    const hook = {} as { current: ReturnType<typeof useSecureAuth> };
+    function Probe(): null {
+      hook.current = useSecureAuth();
+      return null;
+    }
+    act(() => {
+      renderer = TestRenderer.create(React.createElement(Probe));
+    });
+    return hook;
+  }
+
+  async function signIn(hook: { current: ReturnType<typeof useSecureAuth> }, authId: string, teacherId: string): Promise<AuthState> {
+    supabase({ signIn: { data: { user: { id: authId } }, error: null }, profile: { id: teacherId, role: 'TEACHER' } });
+    await act(() => hook.current.login(`${teacherId}@skola.example`, 'x'));
+    return hook.current.authState;
+  }
+
+  it('keeps the next person signed in on an answer about the one before, and says nothing', async () => {
+    const hook = render();
+    const checked = await signIn(hook, 'auth-1', 'u-1');
+    const answer = deferred<AuthState>();
+    recheck.mockImplementationOnce(() => answer.promise);
+    const pending = hook.current.recheckProfile(checked);
+    await act(() => hook.current.logout());
+    await signIn(hook, 'auth-2', 'u-2');
+    await act(async () => {
+      answer.reject(new AuthError('SESSION_EXPIRED', 'Invalid Refresh Token: Refresh Token Not Found'));
+      await pending;
+    });
+    expect(hook.current.authState).toEqual({ isAuthenticated: true, teacherId: 'u-2', role: 'TEACHER' });
+    expect(hook.current.error).toBeNull();
+
+    // The session it checked is still the app's: signed out, and the login screen says why.
+    const again = deferred<AuthState>();
+    recheck.mockImplementationOnce(() => again.promise);
+    const second = hook.current.recheckProfile(hook.current.authState);
+    await act(async () => {
+      again.reject(new AuthError('SESSION_EXPIRED', 'Invalid Refresh Token: Refresh Token Not Found'));
+      await second;
+    });
+    expect(hook.current.authState).toEqual({ isAuthenticated: false, teacherId: null, role: null });
+    expect(hook.current.error).toBe('SESSION_EXPIRED');
+  });
+
+  it('does not sign a person back in on a role read before their logout', async () => {
+    const hook = render();
+    const checked = await signIn(hook, 'auth-1', 'u-1');
+    const answer = deferred<AuthState>();
+    recheck.mockImplementationOnce(() => answer.promise);
+    const pending = hook.current.recheckProfile(checked);
+    await act(() => hook.current.logout());
+    await act(async () => {
+      answer.resolve({ ...checked, role: 'SCHOOL_ADMIN' });
+      await pending;
+    });
+    expect(hook.current.authState).toEqual({ isAuthenticated: false, teacherId: null, role: null });
   });
 });
 

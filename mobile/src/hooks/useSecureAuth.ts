@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { AuthError, AuthService, type AuthErrorCode } from '../services/auth/authService';
 import type { AuthState } from '../types';
 
@@ -28,7 +28,16 @@ const INITIAL_STATE: AuthState = {
  * Exposes typed login/logout/restore functions consumed by AuthContext.
  */
 export function useSecureAuth(): UseSecureAuthReturn {
-  const [authState, setAuthState] = useState<AuthState>(INITIAL_STATE);
+  const [authState, setRenderedState] = useState<AuthState>(INITIAL_STATE);
+  // The state as last set, ahead of the render that shows it: a recheck that
+  // settles after a logout or another sign-in is compared with this. An
+  // updater would see the same, but React runs it only at the next render,
+  // too late to decide whether the login screen is told anything.
+  const latest = useRef<AuthState>(INITIAL_STATE);
+  const setAuthState = useCallback((next: AuthState): void => {
+    latest.current = next;
+    setRenderedState(next);
+  }, []);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<AuthErrorCode | null>(null);
 
@@ -44,7 +53,7 @@ export function useSecureAuth(): UseSecureAuthReturn {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [setAuthState]);
 
   const loginWithSchoolAccount = useCallback(async (email: string): Promise<void> => {
     setIsLoading(true);
@@ -58,7 +67,7 @@ export function useSecureAuth(): UseSecureAuthReturn {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [setAuthState]);
 
   const logout = useCallback(async (): Promise<void> => {
     setIsLoading(true);
@@ -68,7 +77,7 @@ export function useSecureAuth(): UseSecureAuthReturn {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [setAuthState]);
 
   const restoreSession = useCallback(async (): Promise<void> => {
     setIsLoading(true);
@@ -83,18 +92,22 @@ export function useSecureAuth(): UseSecureAuthReturn {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [setAuthState]);
 
   /** The profile as the school has it now (AuthService.recheckProfile); never blocks, never needs the network. */
   const recheckProfile = useCallback(async (current: AuthState): Promise<void> => {
+    // Applied only to the state it checked: a logout, or the next person's
+    // sign-in, while it waited is neither undone nor told the session expired.
+    const unchanged = (): boolean => latest.current.teacherId === current.teacherId;
     try {
       const next = await AuthService.recheckProfile(current);
-      if (next !== current) setAuthState(next);
+      if (next !== current && unchanged()) setAuthState(next);
     } catch (err) {
+      if (!unchanged()) return;
       setAuthState(INITIAL_STATE);
       if (err instanceof AuthError) setError(err.code);
     }
-  }, []);
+  }, [setAuthState]);
 
   /** A session the server ended (AuthService.onSessionEnded): signed out, and the login screen says why. */
   const watchSessionEnd = useCallback(
@@ -103,7 +116,7 @@ export function useSecureAuth(): UseSecureAuthReturn {
         setAuthState(INITIAL_STATE);
         setError('SESSION_EXPIRED');
       }),
-    [],
+    [setAuthState],
   );
 
   return { authState, isLoading, error, login, loginWithSchoolAccount, logout, restoreSession, recheckProfile, watchSessionEnd };
