@@ -4,6 +4,7 @@ import type {
   TeacherQualificationKind,
 } from '@prisma/client';
 import { weeklyMinutesOf } from '../common/lesson-lengths';
+import { toNioarigSpan, type GradeNumbering } from '../common/grade-numbering';
 import { changesDuringYear, postStretches, type LoadPeriod, type PostStretchDates } from './employment-periods';
 import {
   peakPerWeekByKey,
@@ -296,7 +297,8 @@ export interface LoadQualification {
 }
 
 export interface LoadInput {
-  year: YearBounds;
+  /** With its numbering when tioårig: the behörigheter are judged through it (qualificationCovers). */
+  year: JudgedYear;
   policy: LoadPolicy | null;
   employments: LoadEmployment[];
   requirements: LoadRequirement[];
@@ -647,20 +649,32 @@ export function qualificationValidInYear(
 }
 
 /**
+ * The year a behörighet is judged in: its bounds, and its numbering when it is
+ * the tioårig one (absent is NIOARIG, so a nine-year year is the object it
+ * always was).
+ */
+export type JudgedYear = YearBounds & { gradeNumbering?: GradeNumbering };
+
+/**
  * Whether one qualification covers a requirement: same subject, the whole
  * grade span inside the qualification's, and valid at some point of the year.
  * A requirement whose group has no derivable grade is covered by any
  * qualification in the subject — the span cannot be judged, and refusing it
  * would flag every memberless teaching group.
+ *
+ * A behörighet is stated in the nine-year numbering for good (grade-numbering.ts):
+ * the requirement's span, in its year's numbering, is read in NIOARIG first, so
+ * a tioårig läsår's 10A is judged as the 9 a "7–9" holds — as the rollover
+ * judges it.
  */
 export function qualificationCovers(
   qualification: LoadQualification,
   requirement: Pick<LoadRequirement, 'subjectId' | 'gradeSpan'>,
-  year: YearBounds,
+  year: JudgedYear,
 ): boolean {
   if (qualification.subjectId !== requirement.subjectId) return false;
   if (!qualificationValidInYear(qualification, year)) return false;
-  const span = requirement.gradeSpan;
+  const span = toNioarigSpan(requirement.gradeSpan, year.gradeNumbering ?? 'NIOARIG');
   if (span === null) return true;
   return qualification.minGradeLevel <= span.min && qualification.maxGradeLevel >= span.max;
 }
@@ -683,7 +697,7 @@ export function strongestCoveringQualification(
   held: LoadQualification[],
   userId: string,
   requirement: Pick<LoadRequirement, 'subjectId' | 'gradeSpan'>,
-  year: YearBounds,
+  year: JudgedYear,
 ): LoadQualification['kind'] | null {
   let best: LoadQualification['kind'] | null = null;
   for (const qualification of held) {

@@ -1,6 +1,6 @@
 import { recordedReads } from '../../test/utils/recorded-reads';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import {
   createPrismaMock,
   createTxMock,
@@ -11,6 +11,7 @@ import {
 import type { PrismaService } from '../database/prisma.service';
 import { Role } from '../auth/enums/role.enum';
 import { StaffingLoadService } from './staffing-load.service';
+import { readLoadInput } from './load-input';
 
 const SCHOOL_ID = '33333333-3333-4333-8333-333333333333';
 const ME = '22222222-2222-4222-8222-222222222222';
@@ -83,7 +84,7 @@ describe('StaffingLoadService', () => {
     // The year's flags ride on the same read, for the roster basis.
     expect(tx.academicYear.findUnique).toHaveBeenCalledWith({
       where: { id: YEAR_ID },
-      select: { startDate: true, endDate: true, isActive: true, predecessorId: true },
+      select: { startDate: true, endDate: true, isActive: true, predecessorId: true, gradeNumbering: true },
     });
     expect(tx.staffingPolicy.findUnique).toHaveBeenCalledWith({ where: { schoolId: SCHOOL_ID } });
     expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith({ where: { academicYearId: YEAR_ID } });
@@ -190,6 +191,92 @@ describe('StaffingLoadService', () => {
     expect(report.unqualifiedAssignments).toEqual([
       expect.objectContaining({ requirementId: 'req-1', gradeSpan: { min: 8, max: 8 } }),
     ]);
+  });
+
+  /*
+   * A tioårig läsår (SFS 2025:729). readLoadInput carries the year's numbering
+   * on the input's year only when it is TIOARIG, so a nioårig year is the
+   * object it always was; the spans stay in the year's numbering and the
+   * behörighet reads them in NIOARIG through it (qualificationCovers). A 10A
+   * is the 9 a "7–9" holds; its 11 is not, and is listed as 11.
+   */
+  describe('a tioårig läsår', () => {
+    const BOUNDS = { startDate: '2028-08-21', endDate: '2029-06-15' };
+    const yearRow = (gradeNumbering?: 'NIOARIG' | 'TIOARIG') => ({
+      startDate: new Date(`${BOUNDS.startDate}T00:00:00.000Z`),
+      endDate: new Date(`${BOUNDS.endDate}T00:00:00.000Z`),
+      isActive: true,
+      predecessorId: null,
+      ...(gradeNumbering ? { gradeNumbering } : {}),
+    });
+    const classOf = (grade: number) => {
+      tx.studentGroup.findMany.mockResolvedValue([{ id: GROUP_7A, name: `${grade}A`, gradeLevel: grade }]);
+      tx.teachingRequirement.findMany.mockResolvedValue([
+        requirementRow({ studentGroup: { name: `${grade}A`, gradeLevel: grade } }),
+      ]);
+    };
+
+    beforeEach(() => {
+      tx.teacherSubjectQualification.findMany.mockResolvedValue([
+        { userId: ME, subjectId: MA, minGradeLevel: 7, maxGradeLevel: 9, kind: 'LEGITIMATION', validFrom: null, validTo: null },
+      ]);
+    });
+
+    it('readLoadInput carries the numbering on the year only when it is tioårig', async () => {
+      classOf(10);
+      tx.academicYear.findUnique.mockResolvedValue(yearRow('TIOARIG'));
+      const tioarig = await readLoadInput(tx as unknown as PrismaClient, testUser(), YEAR_ID, SCHOOL_ID);
+      expect(tioarig!.input.year).toStrictEqual({ ...BOUNDS, gradeNumbering: 'TIOARIG' });
+      // The span itself stays the year's own: 10, not the NIOARIG 9.
+      expect(tioarig!.input.requirements[0]!.gradeSpan).toEqual({ min: 10, max: 10 });
+
+      for (const row of [yearRow('NIOARIG'), yearRow()]) {
+        tx.academicYear.findUnique.mockResolvedValue(row);
+        const nioarig = await readLoadInput(tx as unknown as PrismaClient, testUser(), YEAR_ID, SCHOOL_ID);
+        expect(nioarig!.input.year).toStrictEqual(BOUNDS);
+      }
+    });
+
+    it('lists no tioårig 10A taught under a 7–9 behörighet, and lists its 11 as 11', async () => {
+      tx.academicYear.findUnique.mockResolvedValue(yearRow('TIOARIG'));
+      classOf(10);
+      expect((await service.load(YEAR_ID, undefined, testUser())).unqualifiedAssignments).toEqual([]);
+
+      classOf(11);
+      expect((await service.load(YEAR_ID, undefined, testUser())).unqualifiedAssignments).toEqual([
+        expect.objectContaining({ requirementId: 'req-1', userId: ME, groupName: '11A', gradeSpan: { min: 11, max: 11 } }),
+      ]);
+    });
+
+    it('lists the same 10A in a nioårig läsår, the numbering stored or absent, and answers its year as it did', async () => {
+      classOf(10);
+      for (const row of [yearRow('NIOARIG'), yearRow()]) {
+        tx.academicYear.findUnique.mockResolvedValue(row);
+        const report = await service.load(YEAR_ID, undefined, testUser());
+        expect(report.unqualifiedAssignments).toEqual([
+          expect.objectContaining({ requirementId: 'req-1', gradeSpan: { min: 10, max: 10 } }),
+        ]);
+        expect(report.year).toStrictEqual(BOUNDS);
+      }
+    });
+
+    it('suggestTeachers badges a 7–9 behörighet on a tioårig 10A row, and not on a nioårig one', async () => {
+      classOf(10);
+      tx.teachingRequirement.findUnique.mockResolvedValue({
+        academicYearId: YEAR_ID,
+        subjectId: MA,
+        studentGroup: { predecessorId: null },
+      });
+      tx.user.findMany.mockResolvedValue([{ id: ME }]);
+      const kindOf = async (row: ReturnType<typeof yearRow>) => {
+        tx.academicYear.findUnique.mockResolvedValue(row);
+        const answer = await service.suggestTeachers('req-1', testUser());
+        return answer.candidates.find((candidate) => candidate.userId === ME)?.qualificationKind;
+      };
+      expect(await kindOf(yearRow('TIOARIG'))).toBe('LEGITIMATION');
+      expect(await kindOf(yearRow('NIOARIG'))).toBeNull();
+      expect(await kindOf(yearRow())).toBeNull();
+    });
   });
 
   it('cuts a teacher’s answer down to their own row and hides the admin’s lists', async () => {

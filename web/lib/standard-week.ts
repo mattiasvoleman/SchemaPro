@@ -8,6 +8,7 @@
 
 import { teachingWeeks, type ClosedRange, type TeachingPeriod, type YearBounds } from "@/lib/teaching-hours";
 import type { GradeSpan, LoadQualification, LoadRequirement } from "@/lib/teacher-load";
+import { toNioarig, type GradeNumbering } from "@/lib/grade-numbering";
 
 /**
  * How much of a standardvecka one requirement is worth, 0..1: undated rows 1
@@ -48,16 +49,23 @@ export function qualificationValidInYear(
  * grade span inside the qualification's, and valid at some point of the year.
  * A requirement whose group has no derivable grade is covered by any
  * qualification in the subject — the span cannot be judged, and refusing it
- * would flag every memberless teaching group.
+ * would flag every memberless teaching group. A behörighet is stated in
+ * NIOARIG, so a tioårig year's span is read so first (the gateway's rule).
  */
 export function qualificationCovers(
   qualification: LoadQualification,
   requirement: Pick<LoadRequirement, "subjectId" | "gradeSpan">,
-  year: YearBounds,
+  year: YearBounds & { gradeNumbering?: GradeNumbering },
 ): boolean {
   if (qualification.subjectId !== requirement.subjectId) return false;
   if (!qualificationValidInYear(qualification, year)) return false;
   const span = requirement.gradeSpan;
   if (span === null) return true;
-  return qualification.minGradeLevel <= span.min && qualification.maxGradeLevel >= span.max;
+  // toNioarig, not lib/nioarig-span: the requirements route bundles this
+  // module already (timplan-planned) and sits at its budget.
+  const numbering = year.gradeNumbering ?? "NIOARIG";
+  return (
+    qualification.minGradeLevel <= toNioarig(span.min, numbering)! &&
+    qualification.maxGradeLevel >= toNioarig(span.max, numbering)!
+  );
 }

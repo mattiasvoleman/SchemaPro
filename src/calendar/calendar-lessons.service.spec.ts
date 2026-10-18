@@ -496,6 +496,62 @@ describe('CalendarLessonsService', () => {
         ).resolves.toMatchObject({ warnings: [] });
         expect(tx.teacherSubjectQualification.findMany).not.toHaveBeenCalled();
       });
+
+      /*
+       * A tioårig läsår (SFS 2025:729): the class's årskurs is one higher
+       * than the same åldersband in a nioårig one, and the behörighet is
+       * stated in NIOARIG. The year read with the class carries its
+       * numbering, handed to the check with the lesson's day as the window,
+       * so a 10A is the 9 a "7–9" holds; the warning names the årskurs as the
+       * year numbers it.
+       */
+      describe('in a tioårig läsår', () => {
+        const yearNumbered = (gradeNumbering: 'NIOARIG' | 'TIOARIG', grade: number) => {
+          // Projected by its select: a select without the numbering reads nioårig.
+          tx.academicYear.findFirst.mockImplementation(
+            answerFirst({ id: 'year-1', isActive: true, predecessorId: null, gradeNumbering }),
+          );
+          tx.studentGroup.findMany.mockResolvedValue([{ id: GROUP_ID, gradeLevel: grade }]);
+        };
+        const sevenToNine = () => held({ minGradeLevel: 7, maxGradeLevel: 9 });
+
+        it('says nothing of a vikarie with a 7–9 behörighet on a 10A, reading no year beyond the class’s', async () => {
+          arrangeAssign();
+          arrangePolicy('WARN', [sevenToNine()]);
+          yearNumbered('TIOARIG', 10);
+
+          await expect(
+            service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID }, testUser()),
+          ).resolves.toMatchObject({ warnings: [] });
+          // The numbering came with the class's year; nothing reads the year again for it.
+          expect(tx.academicYear.findUnique).not.toHaveBeenCalled();
+        });
+
+        it('warns of a 7–9 vikarie on an 11, naming åk 11', async () => {
+          arrangeAssign();
+          arrangePolicy('REFUSE', [sevenToNine()]);
+          yearNumbered('TIOARIG', 11);
+
+          const result = await service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID }, testUser());
+
+          expect(result.warnings).toEqual([
+            { code: 'STAFF_TEACHER_NOT_QUALIFIED', params: { role: 'SUBSTITUTE', subject: 'Engelska', grades: '11' } },
+          ]);
+          expect(tx.calendarLessonTeacher.create).toHaveBeenCalledTimes(1);
+        });
+
+        it('a nioårig läsår as it always was: a 7–9 vikarie on a 10 is warned of', async () => {
+          arrangeAssign();
+          arrangePolicy('WARN', [sevenToNine()]);
+          yearNumbered('NIOARIG', 10);
+
+          const result = await service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID }, testUser());
+
+          expect(result.warnings).toEqual([
+            { code: 'STAFF_TEACHER_NOT_QUALIFIED', params: { role: 'SUBSTITUTE', subject: 'Engelska', grades: '10' } },
+          ]);
+        });
+      });
     });
 
     it('warns of the walk between sites a pick leaves too little time for, and assigns all the same', async () => {
@@ -1410,6 +1466,73 @@ describe('CalendarLessonsService', () => {
         const answer = await service.suggestSubstitutes(LESSON_ID, testUser());
 
         expect(answer.map((s) => s.teacherId)).not.toContain(TEACHER_ID);
+      });
+
+      /*
+       * A tioårig läsår (SFS 2025:729). The badge reads the lesson's span in
+       * NIOARIG, as the behörigheter are stated and as the vikarie warning
+       * judges it: a tioårig 10A is the 9 a "7–9" holds, its 11 the NIOARIG
+       * 10 it does not, its 7 the NIOARIG 6 a "1–6" holds. A nioårig läsår
+       * badges as it always did.
+       */
+      describe('in a tioårig läsår', () => {
+        const yearNumbered = (gradeNumbering: 'NIOARIG' | 'TIOARIG', grade: number) => {
+          // Projected by its select: a select without the numbering reads nioårig.
+          tx.academicYear.findFirst.mockImplementation(
+            answerFirst({ id: 'year-1', isActive: true, predecessorId: null, gradeNumbering }),
+          );
+          tx.studentGroup.findMany.mockResolvedValue([{ id: GROUP_ID, gradeLevel: grade }]);
+        };
+
+        it('badges a 7–9 behörighet on a tioårig 10A, as the vikarie warning judges it', async () => {
+          yearNumbered('TIOARIG', 10);
+          tx.teacherSubjectQualification.findMany.mockImplementation(answerRows([qualification()]));
+
+          await expect(service.suggestSubstitutes(LESSON_ID, testUser())).resolves.toEqual([
+            { teacherId: LEGIT_ID, isPrimary: false, qualificationKind: 'LEGITIMATION' },
+            { teacherId: PRIMARY_ID, isPrimary: true, qualificationKind: null },
+            { teacherId: OTHER_ID, isPrimary: false, qualificationKind: null },
+          ]);
+        });
+
+        it('badges no 7–9 on a tioårig 11, and a 1–6 on a tioårig 7', async () => {
+          tx.teacherSubjectQualification.findMany.mockImplementation(
+            answerRows([
+              qualification(),
+              qualification({ userId: TILLATEN_ID, kind: 'TILLATEN', minGradeLevel: 1, maxGradeLevel: 6 }),
+            ]),
+          );
+
+          yearNumbered('TIOARIG', 11);
+          await expect(service.suggestSubstitutes(LESSON_ID, testUser())).resolves.toEqual([
+            { teacherId: PRIMARY_ID, isPrimary: true, qualificationKind: null },
+            { teacherId: OTHER_ID, isPrimary: false, qualificationKind: null },
+          ]);
+
+          yearNumbered('TIOARIG', 7);
+          await expect(service.suggestSubstitutes(LESSON_ID, testUser())).resolves.toEqual([
+            { teacherId: TILLATEN_ID, isPrimary: false, qualificationKind: 'TILLATEN' },
+            { teacherId: PRIMARY_ID, isPrimary: true, qualificationKind: null },
+            { teacherId: OTHER_ID, isPrimary: false, qualificationKind: null },
+          ]);
+        });
+
+        it('a nioårig läsår badges as it always did: a 7–9 does not reach its 10, and does its 7', async () => {
+          tx.teacherSubjectQualification.findMany.mockImplementation(answerRows([qualification()]));
+
+          yearNumbered('NIOARIG', 10);
+          await expect(service.suggestSubstitutes(LESSON_ID, testUser())).resolves.toEqual([
+            { teacherId: PRIMARY_ID, isPrimary: true, qualificationKind: null },
+            { teacherId: OTHER_ID, isPrimary: false, qualificationKind: null },
+          ]);
+
+          yearNumbered('NIOARIG', 7);
+          await expect(service.suggestSubstitutes(LESSON_ID, testUser())).resolves.toEqual([
+            { teacherId: LEGIT_ID, isPrimary: false, qualificationKind: 'LEGITIMATION' },
+            { teacherId: PRIMARY_ID, isPrimary: true, qualificationKind: null },
+            { teacherId: OTHER_ID, isPrimary: false, qualificationKind: null },
+          ]);
+        });
       });
     });
   });

@@ -19,7 +19,7 @@ import {
   type StaffingFinding,
   type StaffingWarning,
 } from './staffing-checks';
-import type { LoadEmployment, LoadInput, LoadQualification, LoadRequirement } from './teacher-load';
+import type { JudgedYear, LoadEmployment, LoadInput, LoadQualification, LoadRequirement } from './teacher-load';
 
 const YEAR = { startDate: '2026-08-17', endDate: '2027-06-11' };
 const ANNA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -152,6 +152,102 @@ describe('qualificationFinding', () => {
     expect(
       ask({ qualifications: [fromAugust], window: { startDate: '2026-06-01', endDate: '2026-06-01' } }),
     ).not.toBeNull();
+  });
+});
+
+/*
+ * Tioårig grundskola (SFS 2025:729). The behörighet is stated in NIOARIG; the
+ * window carries the läsår's numbering when it is tioårig (JudgedYear), and
+ * the span is read through it — a tioårig 10A is the 9 a "7–9" holds. The
+ * finding names the årskurser as the läsår numbers them: an 11 against a
+ * "7–9" says 11, never the NIOARIG 10 it was judged as.
+ */
+describe('qualificationFinding in a tioårig läsår', () => {
+  const TIOARIG: JudgedYear = { startDate: '2028-08-21', endDate: '2029-06-15', gradeNumbering: 'TIOARIG' };
+  const NIOARIG: JudgedYear = { startDate: '2027-08-16', endDate: '2028-06-09', gradeNumbering: 'NIOARIG' };
+  const ask = (span: { min: number; max: number } | null, window: JudgedYear) =>
+    qualificationFinding({
+      policy: policy(),
+      qualifications: [qualification()],
+      userId: ANNA,
+      role: 'TEACHER',
+      subject: { id: MA, name: 'Matematik' },
+      span,
+      window,
+    });
+
+  it('passes a 10A, and the tioårig högstadium 8–10, under a 7–9 behörighet', () => {
+    expect(ask({ min: 10, max: 10 }, TIOARIG)).toBeNull();
+    expect(ask({ min: 8, max: 10 }, TIOARIG)).toBeNull();
+  });
+
+  it('names an 11 against a 7–9 as the läsår numbers it, "11", and says so in Swedish', () => {
+    const finding = ask({ min: 11, max: 11 }, TIOARIG);
+    expect(finding).toEqual({
+      code: STAFF_TEACHER_NOT_QUALIFIED,
+      mode: 'WARN',
+      userId: ANNA,
+      params: { role: 'TEACHER', subject: 'Matematik', grades: '11' },
+    });
+    expect(staffingSentence(finding!)).toBe('Läraren saknar behörighet i Matematik för åk 11.');
+    // A span reaching past the behörighet names the whole span, in the year's numbering.
+    expect(ask({ min: 9, max: 11 }, TIOARIG)?.params.grades).toBe('9–11');
+    // A tioårig 7 is the NIOARIG 6, below the 7–9.
+    expect(ask({ min: 7, max: 7 }, TIOARIG)?.params.grades).toBe('7');
+  });
+
+  it('judges a nioårig läsår raw, the numbering stated or absent: its 10 is past a 7–9', () => {
+    for (const window of [NIOARIG, YEAR]) {
+      expect(ask({ min: 9, max: 9 }, window)).toBeNull();
+      expect(ask({ min: 10, max: 10 }, window)?.params.grades).toBe('10');
+    }
+  });
+
+  it('still passes a span it cannot judge, and still reads validity against the window', () => {
+    expect(ask(null, TIOARIG)).toBeNull();
+    // A vikarie's day before the behörighet starts: not valid that day, whatever the numbering.
+    expect(
+      qualificationFinding({
+        policy: policy(),
+        qualifications: [qualification({ validFrom: '2028-09-01' })],
+        userId: ANNA,
+        role: 'SUBSTITUTE',
+        subject: { id: MA, name: 'Matematik' },
+        span: { min: 10, max: 10 },
+        window: { startDate: '2028-08-28', endDate: '2028-08-28', gradeNumbering: 'TIOARIG' } as JudgedYear,
+      })?.params,
+    ).toEqual({ role: 'SUBSTITUTE', subject: 'Matematik', grades: '10' });
+  });
+
+  it('judges a timplanspost write and a batch through the input’s year the same way', () => {
+    const tioarigInput = input({ year: TIOARIG });
+    const tenA = requirement({ id: 'req-10a', gradeSpan: { min: 10, max: 10 }, groupName: '10A' });
+    const elevenA = requirement({ id: 'req-11a', gradeSpan: { min: 11, max: 11 }, groupName: '11A' });
+    const write = (after: LoadRequirement, year: LoadInput) =>
+      judgeRequirementWrite({ input: year, policy: policy({ overAllocationMode: 'OFF' }), before: null, after, subjectName: 'Matematik' });
+
+    expect(write({ ...tenA, teacherId: ANNA }, tioarigInput)).toEqual([]);
+    expect(write({ ...elevenA, teacherId: ANNA }, tioarigInput)).toEqual([
+      expect.objectContaining({ code: STAFF_TEACHER_NOT_QUALIFIED, params: { role: 'TEACHER', subject: 'Matematik', grades: '11' } }),
+    ]);
+    // The nioårig year as it always was: the 10 is not held.
+    expect(write({ ...tenA, teacherId: ANNA }, input())).toEqual([
+      expect.objectContaining({ code: STAFF_TEACHER_NOT_QUALIFIED, params: expect.objectContaining({ grades: '10' }) }),
+    ]);
+
+    const batch = (year: LoadInput) =>
+      judgeRequirementBatch({
+        input: { ...year, requirements: [tenA, elevenA] },
+        policy: policy({ overAllocationMode: 'OFF' }),
+        changes: [
+          { requirementId: 'req-10a', teacherId: ANNA },
+          { requirementId: 'req-11a', teacherId: ANNA },
+        ],
+      });
+    expect(batch(tioarigInput)).toEqual([
+      expect.objectContaining({ params: expect.objectContaining({ grades: '11' }), requirementIds: ['req-11a'] }),
+    ]);
+    expect(batch(input()).map((finding) => finding.requirementIds)).toEqual([['req-10a'], ['req-11a']]);
   });
 });
 

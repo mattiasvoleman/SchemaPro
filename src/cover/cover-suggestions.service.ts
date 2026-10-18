@@ -11,6 +11,7 @@ import { dayOf, dutyRunsOn } from '../staffing/duty-dates';
 import { changesDuringYear, postOfWeek } from '../staffing/employment-periods';
 import { readsHr } from '../staffing/hr-visibility';
 import { attendanceSpan } from '../staffing/staffing-enforcement';
+import { toNioarigSpan, type GradeNumbering } from '../common/grade-numbering';
 import { gradesParam } from '../staffing/staffing-checks';
 import { targetMinutesPerWeek, yearTargetMinutesPerWeek, type LoadEmployment, type LoadPolicy } from '../staffing/teacher-load';
 import { pairsStatement, toBoardItem, type PairRow } from './cover-board';
@@ -83,6 +84,7 @@ interface YearInfo {
   predecessorId: string | null;
   startDate: string;
   endDate: string;
+  gradeNumbering: GradeNumbering;
 }
 
 /** Everything the ranking reads for a day's lessons, read once. */
@@ -309,7 +311,15 @@ export class CoverSuggestionsService {
     const day = read.days.get(userId)!;
     const target = targetOf(lesson);
     const span = context.spanOf.get(lesson.id) ?? null;
-    const qualification = strongestOn(context.qualifications, userId, lesson.subjectId, span, dayDate(lesson.date));
+    // Judged in NIOARIG, as behörigheter are stated (grade-numbering.ts); the
+    // reason still names the årskurser the lesson's year uses (`span`).
+    const qualification = strongestOn(
+      context.qualifications,
+      userId,
+      lesson.subjectId,
+      toNioarigSpan(span, context.year?.gradeNumbering ?? 'NIOARIG'),
+      dayDate(lesson.date),
+    );
     const groups = new Set([lesson.studentGroupId, ...lesson.extraGroupIds]);
     const theirs = context.requirements.filter((row) => row.teacherId === userId || row.coTeacherId === userId);
     const lessonMinutes = Math.round((lesson.endsAt.getTime() - lesson.startsAt.getTime()) / 60_000);
@@ -508,10 +518,17 @@ export class CoverSuggestionsService {
   private async yearOf(tx: PrismaClient, studentGroupId: string): Promise<YearInfo | null> {
     const year = await tx.academicYear.findFirst({
       where: { studentGroups: { some: { id: studentGroupId } } },
-      select: { id: true, isActive: true, predecessorId: true, startDate: true, endDate: true },
+      select: { id: true, isActive: true, predecessorId: true, startDate: true, endDate: true, gradeNumbering: true },
     });
     return year
-      ? { id: year.id, isActive: year.isActive, predecessorId: year.predecessorId, startDate: asDay(year.startDate), endDate: asDay(year.endDate) }
+      ? {
+          id: year.id,
+          isActive: year.isActive,
+          predecessorId: year.predecessorId,
+          startDate: asDay(year.startDate),
+          endDate: asDay(year.endDate),
+          gradeNumbering: year.gradeNumbering ?? 'NIOARIG',
+        }
       : null;
   }
 }

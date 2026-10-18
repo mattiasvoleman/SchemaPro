@@ -1,6 +1,15 @@
 import { ConflictException } from '@nestjs/common';
 import type { PrismaClient } from '@prisma/client';
-import { STAFFING_FIELDS, enforceRequirementBatch, mergeRequirement, readCheckPolicy, touchesStaffing } from './staffing-enforcement';
+import { createTxMock, type TxMock } from '../../test/utils/prisma-mock';
+import type { GradeNumbering } from '../common/grade-numbering';
+import {
+  STAFFING_FIELDS,
+  enforceRequirementBatch,
+  lessonQualificationFindings,
+  mergeRequirement,
+  readCheckPolicy,
+  touchesStaffing,
+} from './staffing-enforcement';
 import { judgeRequirementWrite } from './staffing-checks';
 import { DEFAULT_CHECK_POLICY } from './staffing-checks';
 import { buildTeacherLoadReport, loadWeightOf, type LoadInput, type LoadRequirement } from './teacher-load';
@@ -188,5 +197,112 @@ describe('enforceRequirementBatch', () => {
     expect(enforceRequirementBatch({ input: year(), policy: refuseLoad, postsLocked: 0, changes, rowName: names })).toEqual([]);
     const off = { ...DEFAULT_CHECK_POLICY, qualificationMode: 'OFF' as const, overAllocationMode: 'OFF' as const };
     expect(enforceRequirementBatch({ input: year(), policy: off, postsLocked: 1, changes, rowName: names })).toEqual([]);
+  });
+});
+
+/*
+ * lessonQualificationFindings in a tioårig läsår (SFS 2025:729). The lesson's
+ * span is its year's — a 10A is 10 — and the behörighet is stated in NIOARIG,
+ * so the span is read through the year's numbering: a "7–9" holds the tioårig
+ * 10A (NIOARIG 9) and not the 11 (NIOARIG 10). The numbering comes from the
+ * caller (the vikarie path has read the year), else with the year the window
+ * is read from (the master-lesson PATCH), else alone beside a window. The
+ * finding names the årskurser as the year numbers them.
+ */
+describe('lessonQualificationFindings and the läsår’s numbering', () => {
+  const G10 = 'g-10a';
+  const G11 = 'g-11a';
+  const YEAR_ID = 'year-1';
+  let tx: TxMock;
+
+  /** The year row as Prisma answers it: only the selected columns. */
+  const storeYear = (gradeNumbering: GradeNumbering | null) => {
+    const row: Record<string, unknown> | null =
+      gradeNumbering === null
+        ? null
+        : {
+            startDate: new Date('2028-08-21T00:00:00.000Z'),
+            endDate: new Date('2029-06-15T00:00:00.000Z'),
+            gradeNumbering,
+          };
+    tx.academicYear.findUnique.mockImplementation((query: { select: Record<string, boolean> }) =>
+      Promise.resolve(
+        row && Object.fromEntries(Object.keys(query.select).filter((key) => query.select[key]).map((key) => [key, row[key]])),
+      ),
+    );
+  };
+
+  beforeEach(() => {
+    tx = createTxMock();
+    // No policy row: the defaults, qualificationMode WARN.
+    tx.staffingPolicy.findUnique.mockResolvedValue(null);
+    tx.teacherSubjectQualification.findMany.mockResolvedValue([
+      { userId: 'anna', subjectId: 'ma', minGradeLevel: 7, maxGradeLevel: 9, kind: 'LEGITIMATION', validFrom: null, validTo: null },
+    ]);
+    tx.subject.findUnique.mockResolvedValue({ name: 'Matematik' });
+    // Two classes with no pupils on the roster: each one's own årskurs is its span.
+    tx.studentGroup.findMany.mockResolvedValue([
+      { id: G10, gradeLevel: 10 },
+      { id: G11, gradeLevel: 11 },
+    ]);
+  });
+
+  const ask = (groupId: string, extra: { window?: { startDate: string; endDate: string }; gradeNumbering?: GradeNumbering } = {}) =>
+    lessonQualificationFindings(tx as unknown as PrismaClient, {
+      schoolId: 'school',
+      academicYearId: YEAR_ID,
+      subjectId: 'ma',
+      groupIds: [groupId],
+      assignees: [{ userId: 'anna', role: 'TEACHER' }],
+      rosters: { kind: 'CURRENT' },
+      ...extra,
+    });
+  const notQualified = (grades: string, role = 'TEACHER') => [
+    { code: 'STAFF_TEACHER_NOT_QUALIFIED', mode: 'WARN', userId: 'anna', params: { role, subject: 'Matematik', grades } },
+  ];
+
+  it('without a window, reads the numbering with the läsår: a tioårig 10A passes a 7–9, its 11 is named "11"', async () => {
+    storeYear('TIOARIG');
+    await expect(ask(G10)).resolves.toEqual([]);
+    await expect(ask(G11)).resolves.toEqual(notQualified('11'));
+    // One read of the year, the numbering on it; never a second for the numbering alone.
+    expect(tx.academicYear.findUnique).toHaveBeenCalledTimes(2);
+    for (const [query] of tx.academicYear.findUnique.mock.calls) {
+      expect(query).toEqual({ where: { id: YEAR_ID }, select: { startDate: true, endDate: true, gradeNumbering: true } });
+    }
+  });
+
+  it('judges a nioårig läsår raw, as it always did: its 10 is past a 7–9', async () => {
+    storeYear('NIOARIG');
+    await expect(ask(G10)).resolves.toEqual(notQualified('10'));
+  });
+
+  it('with a window and no numbering, reads the year’s numbering alone; a year it cannot see is nioårig', async () => {
+    const day = { startDate: '2028-09-04', endDate: '2028-09-04' };
+    storeYear('TIOARIG');
+    await expect(ask(G10, { window: day })).resolves.toEqual([]);
+    expect(tx.academicYear.findUnique).toHaveBeenCalledWith({ where: { id: YEAR_ID }, select: { gradeNumbering: true } });
+
+    storeYear(null);
+    await expect(ask(G10, { window: day })).resolves.toEqual(notQualified('10'));
+  });
+
+  it('with the caller’s numbering and a window, reads no year at all and judges through what it was handed', async () => {
+    const day = { startDate: '2028-09-04', endDate: '2028-09-04' };
+    await expect(ask(G10, { window: day, gradeNumbering: 'TIOARIG' })).resolves.toEqual([]);
+    await expect(ask(G11, { window: day, gradeNumbering: 'TIOARIG' })).resolves.toEqual(notQualified('11'));
+    await expect(ask(G10, { window: day, gradeNumbering: 'NIOARIG' })).resolves.toEqual(notQualified('10'));
+    expect(tx.academicYear.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('still reads validity on the window in a tioårig läsår: a behörighet starting after the day is not held', async () => {
+    tx.teacherSubjectQualification.findMany.mockResolvedValue([
+      { userId: 'anna', subjectId: 'ma', minGradeLevel: 7, maxGradeLevel: 9, kind: 'LEGITIMATION', validFrom: new Date('2028-09-05T00:00:00.000Z'), validTo: null },
+    ]);
+    const day = { startDate: '2028-09-04', endDate: '2028-09-04' };
+    await expect(ask(G10, { window: day, gradeNumbering: 'TIOARIG' })).resolves.toEqual(notQualified('10'));
+    await expect(
+      ask(G10, { window: { startDate: '2028-09-05', endDate: '2028-09-05' }, gradeNumbering: 'TIOARIG' }),
+    ).resolves.toEqual([]);
   });
 });

@@ -17,7 +17,9 @@ import {
   type StaffingRole,
   type StaffingWarning,
 } from './staffing-checks';
-import type { LoadInput, LoadModel, LoadQualification, LoadRequirement } from './teacher-load';
+import type { JudgedYear, LoadInput, LoadModel, LoadQualification, LoadRequirement } from './teacher-load';
+import { yearNumberingOf } from '../common/year-numbering';
+import type { GradeNumbering } from '../common/grade-numbering';
 import type { YearBounds } from './teaching-weeks';
 
 /**
@@ -516,6 +518,8 @@ export async function lessonQualificationFindings(
     studentIds?: string[];
     assignees: { userId: string; role: StaffingRole }[];
     window?: YearBounds;
+    /** The year's numbering when the caller has read it; else it is read with the window. */
+    gradeNumbering?: GradeNumbering;
     /** For the span: see attendanceSpan. Resolved only when the span is asked. */
     rosters: BasisOrYear;
   },
@@ -552,11 +556,16 @@ export async function lessonQualificationFindings(
     ? null
     : await tx.academicYear.findUnique({
         where: { id: args.academicYearId },
-        select: { startDate: true, endDate: true },
+        select: { startDate: true, endDate: true, gradeNumbering: true },
       });
   if (!subject) return [];
-  const window = args.window ?? (year ? { startDate: asDay(year.startDate), endDate: asDay(year.endDate) } : null);
-  if (!window) return [];
+  const bounds = args.window ?? (year ? { startDate: asDay(year.startDate), endDate: asDay(year.endDate) } : null);
+  if (!bounds) return [];
+  // The span is the lesson's year's; the behörighet reads it in NIOARIG
+  // through the year's numbering (qualificationCovers).
+  const numbering =
+    args.gradeNumbering ?? (year ? (year.gradeNumbering ?? 'NIOARIG') : await yearNumberingOf(tx, args.academicYearId));
+  const window: JudgedYear = numbering === 'TIOARIG' ? { ...bounds, gradeNumbering: numbering } : bounds;
 
   const span = await attendanceSpan(tx, args);
   return args.assignees
