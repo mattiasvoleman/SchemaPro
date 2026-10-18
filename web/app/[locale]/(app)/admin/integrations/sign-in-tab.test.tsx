@@ -6,6 +6,8 @@ import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import sv from "@/messages/sv.json";
 import { ApiError, api } from "@/lib/api";
 import IntegrationsPage from "./page";
+import { ProfileProvider } from "@/components/profile-context";
+import type { Profile } from "@/lib/types";
 import { PERSONAL_MAIL_DOMAINS, domainsOf, isPersonalDomain, sessionFits } from "./sign-in-types";
 import type { SignInSettings } from "./sign-in-types";
 
@@ -63,12 +65,15 @@ function answer() {
   });
 }
 
-async function openTab() {
+/** The tab, as a writer of Integrationer sees it or, with `reader`, a läsare (Läsbehörighet). */
+async function openTab(reader = false) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={queryClient}>
       <NextIntlClientProvider locale="sv" messages={sv} timeZone="Europe/Stockholm">
-        <IntegrationsPage />
+        <ProfileProvider profile={{} as Profile} school={null} readOnly={reader}>
+          <IntegrationsPage />
+        </ProfileProvider>
       </NextIntlClientProvider>
     </QueryClientProvider>,
   );
@@ -211,15 +216,19 @@ describe("/admin/integrations — Inloggning", () => {
     expect(toast.success).toHaveBeenCalledWith("Personalen loggar nu in med skolkonto.");
   });
 
-  it("keeps the saved method on screen for a profile that does not write Integrationer, and marks every change", async () => {
+  it("keeps the saved method on screen for a reader, read-only and not pressable, and marks every change", async () => {
     settings = {
       available: true,
       method: { provider: "azure", domains: ["skola.example"], entraTenantId: TENANT, googleHostedDomain: null, ssoOnlyForStaff: false, updatedAt: "2026-10-20T08:00:00.000Z" },
       session: { schoolAccount: { provider: "azure", entraTenantId: TENANT } },
     };
-    const card = await openTab();
+    const card = await openTab(true);
+    // Read, scrolled and copied, by pointer and keyboard, and changed by neither.
     const form = within(card).getByLabelText("E-postdomäner").closest("form")!;
-    expect(form).toHaveAttribute("data-writes-inert", "INTEGRATIONER");
+    expect(form).not.toHaveAttribute("data-writes-inert");
+    expect(within(card).getByLabelText("E-postdomäner")).toHaveAttribute("readonly");
+    expect(within(card).getByRole("combobox", { name: "Inloggning" })).toBeDisabled();
+    expect(within(card).getByRole("switch", { name: "Kräv skolkonto för personal" })).toBeDisabled();
     expect(within(form).getByRole("button", { name: "Spara inloggningen" })).toHaveAttribute("data-writes", "INTEGRATIONER");
     // The row, label and all: a press on the label presses the switch, and that saves.
     expect(within(card).getByRole("switch", { name: "Kräv skolkonto för personal" }).closest("[data-writes-inert]")).toHaveAttribute(

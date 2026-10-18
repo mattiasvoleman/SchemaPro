@@ -180,11 +180,11 @@ export function SourceCard({ source }: { source: SourceView | null }) {
   return (
     <SectionCard id="ss-source" title={t("title")} description={t("body")}>
       <div className="space-y-6">
-        {/* The fields show the source as saved, so a profile that does not
-            write Integrationer reads them; they take no pointer, and Save is hidden. */}
+        {/* The fields show the source as saved. A reader (Läsbehörighet) reads,
+            scrolls and copies them but changes none (read-only, the selects
+            disabled), and Save is hidden. */}
         <form
           className="space-y-4"
-          data-writes-inert="INTEGRATIONER"
           onSubmit={(event) => {
             event.preventDefault();
             if (canSave) submit(inputOf(form), t("saved"));
@@ -192,10 +192,10 @@ export function SourceCard({ source }: { source: SourceView | null }) {
         >
           <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
             <FormField id="ss-name" label={t("name")}>
-              <Input value={form.name} maxLength={120} placeholder={t("namePlaceholder")} onChange={(e) => set("name", e.target.value)} />
+              <Input readOnly={readOnly} value={form.name} maxLength={120} placeholder={t("namePlaceholder")} onChange={(e) => set("name", e.target.value)} />
             </FormField>
             <FormField id="ss-auth" label={t("authKind")}>
-              <select className={NATIVE_SELECT} value={form.authKind} onChange={(e) => set("authKind", e.target.value as AuthKind)}>
+              <select className={NATIVE_SELECT} disabled={readOnly} value={form.authKind} onChange={(e) => set("authKind", e.target.value as AuthKind)}>
                 {AUTH_KINDS.map((kind) => (
                   <option key={kind} value={kind}>
                     {t(`authKinds.${kind}`)}
@@ -211,6 +211,7 @@ export function SourceCard({ source }: { source: SourceView | null }) {
             error={baseProblem ? t(`urlProblems.${baseProblem}`) : undefined}
           >
             <Input
+              readOnly={readOnly}
               inputMode="url"
               autoComplete="off"
               spellCheck={false}
@@ -232,6 +233,7 @@ export function SourceCard({ source }: { source: SourceView | null }) {
                   error={tokenProblem ? t(`urlProblems.${tokenProblem}`) : undefined}
                 >
                   <Input
+                    readOnly={readOnly}
                     inputMode="url"
                     autoComplete="off"
                     spellCheck={false}
@@ -242,13 +244,13 @@ export function SourceCard({ source }: { source: SourceView | null }) {
                   />
                 </FormField>
                 <FormField id="ss-client-id" label={t("clientId")}>
-                  <Input autoComplete="off" spellCheck={false} value={form.clientId} maxLength={256} onChange={(e) => set("clientId", e.target.value)} />
+                  <Input readOnly={readOnly} autoComplete="off" spellCheck={false} value={form.clientId} maxLength={256} onChange={(e) => set("clientId", e.target.value)} />
                 </FormField>
                 <FormField id="ss-scope" label={t("tokenScope")}>
-                  <Input autoComplete="off" spellCheck={false} value={form.tokenScope} maxLength={512} onChange={(e) => set("tokenScope", e.target.value)} />
+                  <Input readOnly={readOnly} autoComplete="off" spellCheck={false} value={form.tokenScope} maxLength={512} onChange={(e) => set("tokenScope", e.target.value)} />
                 </FormField>
                 <FormField id="ss-style" label={t("tokenAuthStyle")}>
-                  <select className={NATIVE_SELECT} value={form.tokenAuthStyle} onChange={(e) => set("tokenAuthStyle", e.target.value as TokenAuthStyle)}>
+                  <select className={NATIVE_SELECT} disabled={readOnly} value={form.tokenAuthStyle} onChange={(e) => set("tokenAuthStyle", e.target.value as TokenAuthStyle)}>
                     {TOKEN_STYLES.map((style) => (
                       <option key={style} value={style}>
                         {t(`tokenAuthStyles.${style}`)}
@@ -264,11 +266,11 @@ export function SourceCard({ source }: { source: SourceView | null }) {
           ) : null}
           <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
             <FormField id="ss-page" label={t("pageSize")}>
-              <Input type="number" min={100} max={2000} step={100} value={form.pageSize} onChange={(e) => set("pageSize", e.target.value)} />
+              <Input readOnly={readOnly} type="number" min={100} max={2000} step={100} value={form.pageSize} onChange={(e) => set("pageSize", e.target.value)} />
             </FormField>
             <div className="flex items-center justify-between gap-4 self-end rounded-md border p-3">
               <Label htmlFor="ss-enabled">{t("enabled")}</Label>
-              <Switch id="ss-enabled" checked={form.enabled} onCheckedChange={(checked) => set("enabled", checked)} />
+              <Switch id="ss-enabled" checked={form.enabled} disabled={readOnly} onCheckedChange={(checked) => set("enabled", checked)} />
             </div>
           </div>
           <Button type="submit" disabled={!canSave} data-writes="INTEGRATIONER">

@@ -166,11 +166,11 @@ function SignInCard({ settings }: { settings: SignInSettings }) {
         ) : null}
         <p className="text-sm text-muted-foreground">{signedInWith}</p>
 
-        {/* The fields show the method as saved: read by a profile that does
-            not write Integrationer, but not pressed, and Save is hidden. */}
+        {/* The fields show the method as saved. A reader (Läsbehörighet) reads,
+            scrolls and copies them but changes none (read-only, the provider
+            disabled), and Save is hidden. */}
         <form
           className="space-y-4"
-          data-writes-inert="INTEGRATIONER"
           onSubmit={(event) => {
             event.preventDefault();
             if (canSave) persist(input, t("saved"));
@@ -179,6 +179,7 @@ function SignInCard({ settings }: { settings: SignInSettings }) {
           <FormField id="sign-in-provider" label={t("provider")}>
             <select
               className={NATIVE_SELECT}
+              disabled={readOnly}
               value={form.provider}
               onChange={(event) => set("provider", event.target.value as SignInProvider)}
             >
@@ -199,6 +200,7 @@ function SignInCard({ settings }: { settings: SignInSettings }) {
             }
           >
             <Textarea
+              readOnly={readOnly}
               rows={3}
               autoComplete="off"
               spellCheck={false}
@@ -214,6 +216,7 @@ function SignInCard({ settings }: { settings: SignInSettings }) {
               error={tenantProblem ? t("tenantInvalid") : undefined}
             >
               <Input
+                readOnly={readOnly}
                 autoComplete="off"
                 spellCheck={false}
                 maxLength={36}
@@ -229,6 +232,7 @@ function SignInCard({ settings }: { settings: SignInSettings }) {
               error={hostedInvalid ? t("hostedDomainInvalid") : hostedPersonal ? t("hostedDomainPersonal") : undefined}
             >
               <Input
+                readOnly={readOnly}
                 autoComplete="off"
                 spellCheck={false}
                 maxLength={253}
