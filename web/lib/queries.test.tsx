@@ -44,12 +44,13 @@ import {
   useSubjects,
   useSubstituteSuggestions,
   useTeacherLessons,
-  useTeacherWorkRuleActions,
-  useTeacherWorkRules,
   useUpdateMasterLesson,
   type ImportReport,
   type OptimizationJob,
 } from "./queries";
+// A module of its own for the bundle, tested here on the same Supabase and
+// gateway stand-ins: its read goes through lib/queries.ts's selectAll.
+import { useTeacherWorkRuleActions, useTeacherWorkRules } from "./work-rule-queries";
 import {
   useAbsenceReportActions,
   useAbsenceReports,
@@ -301,6 +302,8 @@ describe("useTeacherWorkRules", () => {
       lunchStartTime: "10:30:00",
       lunchEndTime: "13:30:00",
       minDailyRestMinutes: 660,
+      maxTeachingMinutesPerDay: 300,
+      preferredFreeDayOfWeek: null,
     },
     {
       id: "w-2",
@@ -309,6 +312,8 @@ describe("useTeacherWorkRules", () => {
       lunchStartTime: null,
       lunchEndTime: null,
       minDailyRestMinutes: 540,
+      maxTeachingMinutesPerDay: null,
+      preferredFreeDayOfWeek: 5,
     },
   ];
 
@@ -321,8 +326,12 @@ describe("useTeacherWorkRules", () => {
     expect(result.current.data).toEqual(rows);
     expect(queryClient.getQueryData(["teacher-work-rules"])).toEqual(rows);
     expect(supabaseMocks.from).toHaveBeenCalledWith("TeacherWorkRules");
+    // The day's cap and the free-day wish too (Lärarens dag): the dialog sends
+    // every key, so one missing here would be cleared by the next lunch saved.
     expect(argsFor("TeacherWorkRules", "select")).toEqual([
-      ["id, userId, lunchMinutes, lunchStartTime, lunchEndTime, minDailyRestMinutes"],
+      [
+        "id, userId, lunchMinutes, lunchStartTime, lunchEndTime, minDailyRestMinutes, maxTeachingMinutesPerDay, preferredFreeDayOfWeek",
+      ],
     ]);
     expect(argsFor("TeacherWorkRules", "order")).toEqual([["userId"], ["id"]]);
   });
@@ -363,6 +372,8 @@ describe("useTeacherWorkRuleActions", () => {
         lunchStartTime: "10:30",
         lunchEndTime: "13:30",
         minDailyRestMinutes: 660,
+        maxTeachingMinutesPerDay: 300,
+        preferredFreeDayOfWeek: 5,
       });
     });
 
@@ -371,6 +382,8 @@ describe("useTeacherWorkRuleActions", () => {
       lunchStartTime: "10:30",
       lunchEndTime: "13:30",
       minDailyRestMinutes: 660,
+      maxTeachingMinutesPerDay: 300,
+      preferredFreeDayOfWeek: 5,
     });
     // Not ["people"]: a rule is not part of the person row, and invalidating the
     // register would refetch the school's longest list on every lunch saved.
@@ -390,6 +403,8 @@ describe("useTeacherWorkRuleActions", () => {
         lunchStartTime: null,
         lunchEndTime: null,
         minDailyRestMinutes: 660,
+        maxTeachingMinutesPerDay: null,
+        preferredFreeDayOfWeek: null,
       });
     });
 
@@ -398,6 +413,8 @@ describe("useTeacherWorkRuleActions", () => {
       lunchStartTime: null,
       lunchEndTime: null,
       minDailyRestMinutes: 660,
+      maxTeachingMinutesPerDay: null,
+      preferredFreeDayOfWeek: null,
     });
   });
 
@@ -430,6 +447,8 @@ describe("useTeacherWorkRuleActions", () => {
           lunchStartTime: "10:30",
           lunchEndTime: "10:40",
           minDailyRestMinutes: null,
+          maxTeachingMinutesPerDay: null,
+          preferredFreeDayOfWeek: null,
         }),
       ).rejects.toThrow("HTTP 400");
     });

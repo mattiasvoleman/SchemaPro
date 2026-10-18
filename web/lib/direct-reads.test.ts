@@ -33,6 +33,14 @@ const TABLES = [
   "StudentEnrollments",
   "TimplanStatements",
   "Ss12000SyncChanges",
+  /*
+   * The generator's runs (20261123090100): their policies are the API role's
+   * alone since a run's refusal can name a teacher's deltid, which the
+   * gateway masks per reader at the read (Lärarens dag). /admin/generate
+   * reads them through /api/v1/optimization/jobs; a direct read would come
+   * back empty and draw a school that has never generated.
+   */
+  "OptimizationJobs",
 ];
 const NAMES = TABLES.join("|");
 

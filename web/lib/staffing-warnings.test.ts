@@ -1,3 +1,4 @@
+import { createTranslator } from "next-intl";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
 import type { MessageLookup } from "@/lib/engine-message";
@@ -35,6 +36,24 @@ describe("staffing warnings", () => {
     for (const code of STAFFING_CODES) {
       expect(sv.engineMessages).toHaveProperty(code);
     }
+  });
+
+  it("names the lesson a hand edit took past the teacher's day, as the gateway sends it", () => {
+    // Lärarens dag. The role alone said "Läraren" for every member of a block
+    // card, so the gateway sends the edited lesson's name as a distribution
+    // warning does; real ICU here, so the select and the day read as Swedish.
+    const t = createTranslator({ locale: "sv", messages: sv, namespace: "engineMessages" }) as unknown as MessageLookup;
+    const said = (code: string, params: Record<string, string | number>) => warningText(t, { code, params });
+
+    expect(said("TEACHER_DAY_TOO_LONG", { role: "LEAD", requirement: "Tyska för 7A", day: 2, minutes: 150, cap: 120 })).toBe(
+      "Tyska för 7A: läraren undervisar nu 150 minuter på tisdagen, mer än de 120 minuter per dag som arbetstidsregeln tillåter.",
+    );
+    expect(said("TEACHER_WEEK_TOO_MANY_DAYS", { role: "CO_TEACHER", requirement: "Franska för 7B", days: 4, max: 3 })).toBe(
+      "Franska för 7B: medläraren undervisar nu 4 dagar i veckan, fler än de 3 som tjänsten tillåter.",
+    );
+    expect(said("TEACHER_WEEK_TOO_MANY_DAYS_HIDDEN", { role: "LEAD", requirement: "Tyska för 7A" })).toMatch(
+      /^Tyska för 7A: läraren undervisar nu fler dagar i veckan än tjänsten tillåter\./,
+    );
   });
 });
 

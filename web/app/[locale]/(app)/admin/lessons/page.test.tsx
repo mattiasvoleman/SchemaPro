@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { toast } from "sonner";
 import sv from "@/messages/sv.json";
 import DayPlannerPage from "./page";
 
@@ -23,6 +24,7 @@ globalThis.ResizeObserver ??= class ResizeObserverStub {
  */
 
 const cancel = vi.hoisted(() => vi.fn());
+const substitute = vi.hoisted(() => vi.fn());
 const state = vi.hoisted(() => ({
   asked: [] as string[],
   lessons: { data: undefined as unknown, isLoading: false, isError: false },
@@ -58,7 +60,7 @@ vi.mock("@/lib/queries", () => ({
   useLessonActions: () => ({
     cancel: { mutateAsync: cancel, isPending: false },
     reinstate: { mutateAsync: vi.fn(), isPending: false },
-    substitute: { mutateAsync: vi.fn(), isPending: false },
+    substitute: { mutateAsync: substitute, isPending: false },
     changeRoom: { mutateAsync: vi.fn(), isPending: false },
   }),
 }));
@@ -78,6 +80,8 @@ beforeEach(() => {
   state.asked = [];
   state.lessons = { data: [LESSON], isLoading: false, isError: false };
   cancel.mockReset().mockResolvedValue({});
+  substitute.mockReset();
+  vi.mocked(toast.warning).mockClear();
 });
 
 afterEach(() => {
@@ -141,5 +145,49 @@ describe("Dagsplanering", () => {
     state.lessons = { data: [{ ...LESSON, status: "CANCELLED" }], isLoading: false, isError: false };
     renderPage();
     expect(screen.getByRole("button", { name: "Återinsätt 08:00–09:00 Matematik 7A" })).toHaveAttribute("data-writes", "DRIFT");
+  });
+
+  it("says every warning a vikarie can get in Swedish, the cover's own as well as the engine's", async () => {
+    // PATCH /calendar-lessons/:id/substitute answers with the staffing
+    // policy's STAFF_* and the cover's COVER_* (cover-rules.ts
+    // CoverWarningCode, the days one masked for a reader without HR-läs) in
+    // one list. The COVER_* live in coverErrors only, so a toast read from
+    // engineMessages alone said "COVER_EXCEEDS_DAILY_CAP".
+    const cover: [string, Record<string, string | number>][] = [
+      ["COVER_BREAKS_LUNCH", { minutes: 30 }],
+      ["COVER_BREAKS_DAILY_REST", { side: "BEFORE", minutes: 660 }],
+      ["COVER_EXCEEDS_DAILY_CAP", { minutes: 300 }],
+      ["COVER_BEYOND_WORK_DAYS", { days: 3 }],
+      ["COVER_BEYOND_WORK_DAYS_HIDDEN", {}],
+      ["COVER_TEACHER_UNAVAILABLE", { label: "" }],
+      ["COVER_TEACHER_BOOKED", {}],
+      ["COVER_POOL_NOT_DECLARED", {}],
+    ];
+    substitute.mockResolvedValue({
+      warnings: [
+        { code: "STAFF_TEACHER_NOT_QUALIFIED", params: { role: "SUBSTITUTE", subject: "Matematik", grades: "any" } },
+        ...cover.map(([code, params]) => ({ code, params })),
+      ],
+    });
+    const user = userEvent.setup();
+    renderPage();
+    const row = within(screen.getByRole("table", { name: /Dagens lektioner/ })).getByText("Matematik").closest("tr")!;
+    await user.click(within(row).getByRole("button", { name: "Tilldela vikarie 08:00–09:00 Matematik 7A" }));
+    const dialog = await screen.findByRole("dialog", {}, { timeout: 5000 });
+    await user.click(within(dialog).getByRole("combobox", { name: "Vikarierande lärare" }));
+    await user.click(await screen.findByRole("option", { name: "Bo Ek" }));
+    await user.click(within(dialog).getByRole("button", { name: "Tilldela vikarie" }));
+
+    await waitFor(() => expect(toast.warning).toHaveBeenCalledTimes(1));
+    const [title, options] = vi.mocked(toast.warning).mock.calls[0];
+    expect(title).toBe("Vikarie tilldelad");
+    const description = String((options as { description: string }).description);
+    expect(description).not.toMatch(/COVER_|STAFF_/);
+    expect(description).toContain("Vikarien saknar behörighet i Matematik.");
+    expect(description).toContain("Vikarien förlorar sin lunch på 30 min.");
+    expect(description).toContain("Vikarien går över sitt tak på 300 min undervisning den dagen.");
+    expect(description).toContain("Vikarien får fler än 3 undervisningsdagar den veckan.");
+    expect(description).toContain(sv.coverErrors.COVER_BEYOND_WORK_DAYS_HIDDEN);
+    expect(description).toContain(sv.coverErrors.COVER_POOL_NOT_DECLARED);
   });
 });

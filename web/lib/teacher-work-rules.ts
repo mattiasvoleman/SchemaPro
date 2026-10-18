@@ -1,8 +1,9 @@
 import { timeToMinutes } from "@/lib/utils";
 
 /**
- * A teacher's own working time: the lunch they are owed and the night between
- * two teaching days.
+ * A teacher's own working time: the lunch they are owed, the night between
+ * two teaching days, how much they teach on one day at most, and the weekday
+ * they would rather have free (Lärarens dag, migration 20261123090000).
  *
  * Mirrors the row in TeacherWorkRules and the engine's
  * `AnonymousTeacherWorkRule`. Clock strings are HH:MM:SS as PostgREST returns
@@ -34,6 +35,18 @@ export interface TeacherWorkRule {
    * null for no rest rule.
    */
   minDailyRestMinutes: number | null;
+  /**
+   * The most minutes of teaching on one day, or null for no cap. HARD, like
+   * the lunch and the rest: every lesson the teacher is on, as lead or as
+   * medlärare, start to end, overlaps counted once (src/common/teacher-day.ts).
+   */
+  maxTeachingMinutesPerDay: number | null;
+  /**
+   * The ISO weekday (1 = Monday) the teacher would rather have free, or null
+   * for no wish. SOFT, unlike everything else on the row: the generator weighs
+   * it against the rest of the week and never refuses one over it.
+   */
+  preferredFreeDayOfWeek: number | null;
 }
 
 export const LUNCH_MINUTES_MIN = 5;
@@ -47,6 +60,20 @@ export const LUNCH_MINUTES_MAX = 240;
 export const LUNCH_MINUTES_STEP = 5;
 export const REST_MINUTES_MIN = 60;
 export const REST_MINUTES_MAX = 1320;
+/**
+ * The day's cap: the gateway's bounds (src/common/teacher-day.ts) and the
+ * table's CHECK. Half an hour at the bottom, because a cap below the shortest
+ * lesson a school runs refuses every week the teacher has one; twelve hours at
+ * the top, because a longer one caps nothing. On the five-minute grid for the
+ * lunch's reason: the engine counts in five-minute steps, and a cap it would
+ * have to round is not the cap the school wrote.
+ */
+export const DAY_CAP_MINUTES_MIN = 30;
+export const DAY_CAP_MINUTES_MAX = 720;
+export const DAY_CAP_MINUTES_STEP = 5;
+/** ISO weekdays, Monday to Sunday: the column's CHECK, whichever days the school teaches. */
+export const FREE_DAY_MIN = 1;
+export const FREE_DAY_MAX = 7;
 
 /**
  * What the form offers when somebody starts filling an EMPTY row.
@@ -63,10 +90,20 @@ export const SUGGESTED_DRAFT: WorkRuleDraft = {
   lunchStartTime: "10:30",
   lunchEndTime: "13:30",
   minDailyRestMinutes: "660",
+  /*
+   * NEVER A CAP, AND NEVER A WISH. The lunch and the rest have numbers the
+   * working-time agreements share; a day's cap has none — it is this
+   * teacher's arrangement with this school — and a suggested one would be a
+   * hard rule nobody chose, refusing the next run of a school that only
+   * wanted the lunch. The free day is the teacher's own, and a weekday
+   * offered by default would soon be everybody's.
+   */
+  maxTeachingMinutesPerDay: "",
+  preferredFreeDayOfWeek: "",
 };
 
 /**
- * The form's own shape: four strings, because "" is the only way a controlled
+ * The form's own shape: strings, because "" is the only way a controlled
  * `<input type="number">` can hold "nothing said" — a number-typed state would
  * have to pick 0 or NaN for the empty case, and 0 is precisely the value that
  * must never reach the API.
@@ -76,6 +113,9 @@ export interface WorkRuleDraft {
   lunchStartTime: string;
   lunchEndTime: string;
   minDailyRestMinutes: string;
+  maxTeachingMinutesPerDay: string;
+  /** "" for no wish, else "1".."7": the weekday select's own value. */
+  preferredFreeDayOfWeek: string;
 }
 
 export const EMPTY_DRAFT: WorkRuleDraft = {
@@ -83,14 +123,18 @@ export const EMPTY_DRAFT: WorkRuleDraft = {
   lunchStartTime: "",
   lunchEndTime: "",
   minDailyRestMinutes: "",
+  maxTeachingMinutesPerDay: "",
+  preferredFreeDayOfWeek: "",
 };
 
-/** The four nullable fields as the gateway takes them. Times are HH:MM. */
+/** The six nullable fields as the gateway takes them. Times are HH:MM. */
 export interface WorkRuleBody {
   lunchMinutes: number | null;
   lunchStartTime: string | null;
   lunchEndTime: string | null;
   minDailyRestMinutes: number | null;
+  maxTeachingMinutesPerDay: number | null;
+  preferredFreeDayOfWeek: number | null;
 }
 
 /**
@@ -109,7 +153,10 @@ export type WorkRuleProblem =
   | { reason: "lunchWindowBackwards" }
   | { reason: "lunchWindowTooNarrow"; minutes: number; window: number }
   | { reason: "lunchWindowOffGrid"; step: number }
-  | { reason: "restOutOfRange"; min: number; max: number };
+  | { reason: "restOutOfRange"; min: number; max: number }
+  | { reason: "dayCapOutOfRange"; min: number; max: number }
+  | { reason: "dayCapOffGrid"; step: number }
+  | { reason: "freeDayOutOfRange" };
 
 /** HH:MM, with optional seconds — what PostgREST sends and what the DTO takes. */
 const TIME = /^\d{2}:\d{2}(:\d{2})?$/;
@@ -140,13 +187,19 @@ function wholeMinutes(value: string): number | null {
 /**
  * Whether the draft says nothing at all — which is a legitimate answer, and the
  * one every teacher starts from.
+ *
+ * ALL SIX FIELDS. The dialog DELETES the row when this says yes, so a draft
+ * holding only a cap or only a wish that read as empty would take a stored cap
+ * away together with the lunch somebody cleared beside it.
  */
 export function isEmptyDraft(draft: WorkRuleDraft): boolean {
   return (
     draft.lunchMinutes.trim() === "" &&
     clock(draft.lunchStartTime) === "" &&
     clock(draft.lunchEndTime) === "" &&
-    draft.minDailyRestMinutes.trim() === ""
+    draft.minDailyRestMinutes.trim() === "" &&
+    draft.maxTeachingMinutesPerDay.trim() === "" &&
+    draft.preferredFreeDayOfWeek.trim() === ""
   );
 }
 
@@ -228,13 +281,41 @@ export function validateDraft(draft: WorkRuleDraft): WorkRuleProblem | null {
     }
   }
 
+  // The cap stands on its own, like the rest: in range first and on the grid
+  // second, so a typo of 3000 is a number out of range, not one off the grid.
+  if (draft.maxTeachingMinutesPerDay.trim() !== "") {
+    const cap = wholeMinutes(draft.maxTeachingMinutesPerDay);
+    if (cap === null || cap < DAY_CAP_MINUTES_MIN || cap > DAY_CAP_MINUTES_MAX) {
+      return {
+        reason: "dayCapOutOfRange",
+        min: DAY_CAP_MINUTES_MIN,
+        max: DAY_CAP_MINUTES_MAX,
+      };
+    }
+    if (cap % DAY_CAP_MINUTES_STEP !== 0) {
+      return { reason: "dayCapOffGrid", step: DAY_CAP_MINUTES_STEP };
+    }
+  }
+
+  /*
+   * The select offers nothing else, so this is a value restored from a row
+   * the form never wrote. Said rather than sent: draftToBody would turn it
+   * into null, and the save would clear a wish nobody chose to clear.
+   */
+  if (draft.preferredFreeDayOfWeek.trim() !== "") {
+    const day = wholeMinutes(draft.preferredFreeDayOfWeek);
+    if (day === null || day < FREE_DAY_MIN || day > FREE_DAY_MAX) {
+      return { reason: "freeDayOutOfRange" };
+    }
+  }
+
   return null;
 }
 
 /**
  * The draft as the gateway takes it.
  *
- * All four keys are always present, including the null ones. A PATCH that
+ * All six keys are always present, including the null ones. A PATCH that
  * OMITS a field leaves the stored value alone, so a body built from only the
  * filled fields would make "clear the lunch rule" impossible: the reader would
  * empty the three boxes, press Spara, and find the old rule still there at the
@@ -256,6 +337,10 @@ export function draftToBody(draft: WorkRuleDraft): WorkRuleBody {
     lunchStartTime: start === "" ? null : start.slice(0, 5),
     lunchEndTime: end === "" ? null : end.slice(0, 5),
     minDailyRestMinutes: rest,
+    // Both always named, null included: the gateway keeps a field the body
+    // leaves out, so an omitted cap could never be taken away from here.
+    maxTeachingMinutesPerDay: wholeMinutes(draft.maxTeachingMinutesPerDay),
+    preferredFreeDayOfWeek: wholeMinutes(draft.preferredFreeDayOfWeek),
   };
 }
 
@@ -276,28 +361,24 @@ export function ruleToDraft(rule: TeacherWorkRule | undefined): WorkRuleDraft {
     lunchEndTime: rule.lunchEndTime === null ? "" : rule.lunchEndTime.slice(0, 5),
     minDailyRestMinutes:
       rule.minDailyRestMinutes === null ? "" : String(rule.minDailyRestMinutes),
+    /*
+     * `== null`, not `=== null`: a row that arrives without the key — a
+     * select that forgot the column, a stub that drops what its fixture
+     * lacks — must open as nothing said rather than as the string
+     * "undefined", which the form would refuse, leaving the lunch on the same
+     * row unsavable.
+     */
+    maxTeachingMinutesPerDay:
+      rule.maxTeachingMinutesPerDay == null ? "" : String(rule.maxTeachingMinutesPerDay),
+    preferredFreeDayOfWeek:
+      rule.preferredFreeDayOfWeek == null ? "" : String(rule.preferredFreeDayOfWeek),
   };
 }
 
-/** Whether a stored row says anything at all, as opposed to being four nulls. */
-export function hasAnyRule(rule: TeacherWorkRule | undefined): boolean {
-  if (!rule) return false;
-  return (
-    rule.lunchMinutes !== null ||
-    rule.lunchStartTime !== null ||
-    rule.lunchEndTime !== null ||
-    rule.minDailyRestMinutes !== null
-  );
-}
-
-/**
- * Minutes as hours and the remainder, for reading a rest rule back.
- *
- * 660 is eleven hours to everybody who set it and a meaningless number on a
- * page. The split is done here rather than formatted here because the two cases
- * need two different sentences — "11 timmar" and "9 tim 30 min" — and a
- * locale's decimal comma is the translator's business, not this module's.
+/*
+ * hasAnyRule and splitHours — reading a stored row back — live beside the
+ * summary in components/schedule/teacher-work-time-summary.tsx. Every staff
+ * row on /admin/people draws that summary, so whatever it imports is in the
+ * page's own JS, and this module, the form's rules, is fetched only with the
+ * dialog.
  */
-export function splitHours(minutes: number): { hours: number; minutes: number } {
-  return { hours: Math.floor(minutes / 60), minutes: minutes % 60 };
-}

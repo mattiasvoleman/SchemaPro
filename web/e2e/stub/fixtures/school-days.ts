@@ -71,6 +71,11 @@ export const LUNCH_SERVINGS: LunchServing[] = [
   { id: uid(KIND.misc, 1022), minGradeLevel: 8, maxGradeLevel: 9, dayOfWeek: null, startTime: "12:10:00", endTime: "12:50:00", seats: null },
 ];
 
+/**
+ * Anna's lunch and rest, and Lärarens dag (20261123090000): a cap of five
+ * hours' teaching a day on her row, and Bo's row holding nothing but a wish to
+ * have Wednesdays free — the row a school writes when the wish is all it has.
+ */
 export const TEACHER_WORK_RULES: TeacherWorkRule[] = [
   {
     id: uid(KIND.misc, 1031),
@@ -79,6 +84,18 @@ export const TEACHER_WORK_RULES: TeacherWorkRule[] = [
     lunchStartTime: "11:00:00",
     lunchEndTime: "13:00:00",
     minDailyRestMinutes: 660,
+    maxTeachingMinutesPerDay: 300,
+    preferredFreeDayOfWeek: null,
+  },
+  {
+    id: uid(KIND.misc, 1032),
+    userId: TEACHERS.bo.id,
+    lunchMinutes: null,
+    lunchStartTime: null,
+    lunchEndTime: null,
+    minDailyRestMinutes: null,
+    maxTeachingMinutesPerDay: null,
+    preferredFreeDayOfWeek: 3,
   },
 ];
 

@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
@@ -101,13 +103,17 @@ const { saveEmployment, createPerson, updatePerson, unlinkGuardian, inviteOne } 
   inviteOne: vi.fn(),
 }));
 
-vi.mock("@/lib/queries", () => ({
-  usePeople: () => ({ data: people, isLoading: false }),
+// The working-time rules have a module of their own, for the bundle.
+vi.mock("@/lib/work-rule-queries", () => ({
   useTeacherWorkRules: () => ({ data: state.workRules }),
   useTeacherWorkRuleActions: () => ({
     save: { mutateAsync: vi.fn(), isPending: false },
     remove: { mutateAsync: vi.fn(), isPending: false },
   }),
+}));
+
+vi.mock("@/lib/queries", () => ({
+  usePeople: () => ({ data: people, isLoading: false }),
   useGroups: () => ({ data: groups }),
   useGroupMemberships: () => ({ data: memberships }),
   useAcademicYears: () => ({
@@ -520,6 +526,8 @@ describe("People page", () => {
         lunchStartTime: "10:30:00",
         lunchEndTime: "13:30:00",
         minDailyRestMinutes: 660,
+        maxTeachingMinutesPerDay: null,
+        preferredFreeDayOfWeek: null,
       };
 
       it("says plainly when a teacher has none — not four zeroes", async () => {
@@ -541,6 +549,35 @@ describe("People page", () => {
 
         expect(screen.getByText("summaryLunch(30|10:30|13:30)")).toBeInTheDocument();
         expect(screen.getByText("summaryRestHours(11)")).toBeInTheDocument();
+      });
+
+      it("reads a cap and a free-day wish back on the row, and draws no field of the form until it is opened", async () => {
+        // Lärarens dag: a row that holds only these two is still a rule,
+        // never "no rule". That the summary is drawn without the dialog's
+        // CODE is a property of the import graph, not of the DOM, and is
+        // pinned below ("what the register loads before the Arbetstid
+        // dialog is opened").
+        state.workRules = [
+          {
+            ...workRule,
+            lunchMinutes: null,
+            lunchStartTime: null,
+            lunchEndTime: null,
+            minDailyRestMinutes: null,
+            maxTeachingMinutesPerDay: 300,
+            preferredFreeDayOfWeek: 5,
+          },
+        ];
+        const user = userEvent.setup();
+        render(<PeoplePage />);
+
+        await user.click(nameButton("Karin Ek"));
+
+        expect(screen.getByText("summaryDayCap(300)")).toBeInTheDocument();
+        expect(screen.getByText("summaryFreeDay(5)")).toBeInTheDocument();
+        expect(screen.queryByText("noRule")).toBeNull();
+        // Nothing of the form is drawn until the row action asks for it.
+        expect(screen.queryByLabelText("dayCapMinutes")).toBeNull();
       });
 
       it("is reachable from a teacher's row and from no pupil's", () => {
@@ -597,9 +634,22 @@ describe("People page", () => {
 
         await user.click(screen.getByRole("button", { name: "editFor(Karin Ek)" }));
 
-        expect(screen.getByText("title(Karin Ek)")).toBeInTheDocument();
+        // Fetched on the first open (React.lazy), so the first look waits for
+        // it: a loader that never settled fails here, by name.
+        expect(await screen.findByText("title(Karin Ek)")).toBeInTheDocument();
         expect(screen.getByLabelText("lunchMinutes")).toHaveValue(30);
         expect(screen.getByLabelText("windowStart")).toHaveValue("10:30");
+      });
+
+      it("opens the form with the stored cap and wish, so the next save keeps them", async () => {
+        state.workRules = [{ ...workRule, maxTeachingMinutesPerDay: 270, preferredFreeDayOfWeek: 3 }];
+        const user = userEvent.setup();
+        render(<PeoplePage />);
+
+        await user.click(screen.getByRole("button", { name: "editFor(Karin Ek)" }));
+
+        expect(await screen.findByLabelText("dayCapMinutes")).toHaveValue(270);
+        expect(screen.getByLabelText("freeDay")).toHaveValue("3");
       });
 
       it("opens empty for a teacher the table says nothing about", async () => {
@@ -611,7 +661,7 @@ describe("People page", () => {
 
         await user.click(screen.getByRole("button", { name: "editFor(Karin Ek)" }));
 
-        expect(screen.getByLabelText("lunchMinutes")).toHaveValue(null);
+        expect(await screen.findByLabelText("lunchMinutes")).toHaveValue(null);
         expect(screen.getByText("emptyMeansNoRule")).toBeInTheDocument();
       });
     });
@@ -711,7 +761,16 @@ describe("People page", () => {
     });
 
     it("prefills the dialog from the stored post and sends the whole row with the two fields replaced", async () => {
-      state.employments = [{ ...employment, reductionPercent: 20, note: "Mentor 7B", employmentForm: "VISSTID", firstTeacherPercent: 10 }];
+      state.employments = [
+        {
+          ...employment,
+          reductionPercent: 20,
+          note: "Mentor 7B",
+          employmentForm: "VISSTID",
+          firstTeacherPercent: 10,
+          maxTeachingDaysPerWeek: 4,
+        },
+      ];
       const user = userEvent.setup();
       render(<PeoplePage />);
 
@@ -722,7 +781,8 @@ describe("People page", () => {
       await user.type(percent, "100");
       await user.click(screen.getByRole("button", { name: "save" }));
 
-      // The nedsättning, the note and SCB's fields set on the card survive a change made here.
+      // The nedsättning, the note, SCB's fields and the undervisningsdagar set on
+      // the card survive a change made here: PUT replaces the row whole.
       expect(saveEmployment).toHaveBeenCalledWith({
         userId: "t-1",
         academicYearId: "year-1",
@@ -735,6 +795,7 @@ describe("People page", () => {
         employmentForm: "VISSTID",
         firstTeacherPercent: 10,
         lecturerPercent: null,
+        maxTeachingDaysPerWeek: 4,
       });
     });
 
@@ -789,6 +850,7 @@ describe("People page", () => {
         employmentForm: null,
         firstTeacherPercent: null,
         lecturerPercent: null,
+        maxTeachingDaysPerWeek: null,
       });
     });
   });
@@ -975,5 +1037,108 @@ describe("People page", () => {
       expect(history).toHaveTextContent("historyChanged(TEACHER|profile.EXPEDITION)");
       expect(history).toHaveTextContent("historyBy(Rita Nilsson)");
     });
+  });
+});
+
+/*
+ * WHAT THE REGISTER LOADS BEFORE THE ARBETSTID DIALOG IS OPENED.
+ *
+ * The dialog and lib/teacher-work-rules behind it are a chunk of their own
+ * (React.lazy in page.tsx) because the route sits at its 190KB budget, and
+ * the summary every staff row draws lives in a module that imports nothing of
+ * the form's. Neither is visible in the DOM — the dialog is mounted only when
+ * the row action is clicked, lazy or not — and the split is about 1.6KB, too
+ * little for the bundle gate to notice it undone. So this reads the source:
+ * every module the page or the summary reaches through a static import
+ * (`import type` and `export type` are erased and do not count, `import()`
+ * is the lazy edge and is not followed) must be neither of the two.
+ */
+describe("what the register loads before the Arbetstid dialog is opened", () => {
+  const WEB = path.resolve(__dirname, "../../../../..");
+  const PAGE = "app/[locale]/(app)/admin/people/page.tsx";
+  const SUMMARY = "components/schedule/teacher-work-time-summary.tsx";
+  const FORM = ["components/schedule/teacher-work-time-dialog.tsx", "lib/teacher-work-rules.ts"];
+
+  // An import or a re-export with a `from`, or a bare side-effect import;
+  // never `import(`, which has no space or quote after the keyword.
+  const STATIC = /^\s*(?:import|export)\s+(type\s+)?(?:([^;"'`]*?)\s+from\s+)?["']([^"']+)["']/gm;
+
+  const typeOnly = (typeKeyword: string | undefined, clause: string | undefined): boolean => {
+    if (typeKeyword) return true;
+    const names = /^\{([\s\S]*)\}$/.exec(clause?.trim() ?? "")?.[1].split(",").map((name) => name.trim()).filter(Boolean);
+    return names !== undefined && names.length > 0 && names.every((name) => name.startsWith("type "));
+  };
+
+  const resolveFrom = (file: string, spec: string): string | null => {
+    const base = spec.startsWith("@/")
+      ? path.join(WEB, spec.slice(2))
+      : spec.startsWith(".")
+        ? path.resolve(path.dirname(file), spec)
+        : null;
+    if (base === null) return null; // a package, not this app's code
+    const found = [`${base}.ts`, `${base}.tsx`, path.join(base, "index.ts"), path.join(base, "index.tsx"), base].find(
+      (candidate) => /\.tsx?$/.test(candidate) && existsSync(candidate),
+    );
+    if (!found) throw new Error(`${path.relative(WEB, file)} imports ${spec}, which this walk cannot find`);
+    return found;
+  };
+
+  const reachable = (entry: string): string[] => {
+    const seen = new Set<string>();
+    const queue = [path.join(WEB, entry)];
+    while (queue.length > 0) {
+      const file = queue.pop()!;
+      if (seen.has(file)) continue;
+      seen.add(file);
+      for (const [, typeKeyword, clause, spec] of readFileSync(file, "utf8").matchAll(STATIC)) {
+        if (typeOnly(typeKeyword, clause)) continue;
+        const target = resolveFrom(file, spec);
+        if (target) queue.push(target);
+      }
+    }
+    return [...seen].map((file) => path.relative(WEB, file));
+  };
+
+  it("reaches neither the dialog nor its rules from the page, through any static import", () => {
+    const page = reachable(PAGE);
+    // The walk is real: it gets to the summary and the rules' query hooks.
+    expect(page).toContain(SUMMARY);
+    expect(page).toContain("lib/work-rule-queries.ts");
+    expect(page.filter((file) => FORM.includes(file))).toEqual([]);
+  });
+
+  it("draws the summary from a module that imports nothing of the form's", () => {
+    expect(reachable(SUMMARY).filter((file) => FORM.includes(file))).toEqual([]);
+  });
+
+  it("fetches the dialog only through React.lazy", () => {
+    const source = readFileSync(path.join(WEB, PAGE), "utf8");
+    expect(source).toMatch(/lazy\(\(\) =>\s*import\("@\/components\/schedule\/teacher-work-time-dialog"\)/);
+    // Named once, in that import(): a second mention outside the comments
+    // would be a second way in.
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    expect(code.match(/teacher-work-time-dialog/g)).toHaveLength(1);
+  });
+
+  it("would see a static import of either, and not an erased one", () => {
+    // The walk's own two edges, on a stand-in source: a value import is
+    // followed, a type-only one is not.
+    const lines = [
+      'import { TeacherWorkTimeDialog } from "@/components/schedule/teacher-work-time-dialog";',
+      'import type { WorkRuleBody } from "@/lib/teacher-work-rules";',
+      'import { type WorkRuleBody as Body } from "@/lib/teacher-work-rules";',
+      'export { workRuleBody } from "@/lib/teacher-work-rules";',
+      'const Lazy = lazy(() => import("@/lib/teacher-work-rules"));',
+    ];
+    const followed = lines.map((line) =>
+      [...line.matchAll(STATIC)].filter(([, typeKeyword, clause]) => !typeOnly(typeKeyword, clause)).map((m) => m[3]),
+    );
+    expect(followed).toEqual([
+      ["@/components/schedule/teacher-work-time-dialog"],
+      [],
+      [],
+      ["@/lib/teacher-work-rules"],
+      [],
+    ]);
   });
 });

@@ -5,6 +5,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import type { MessageLookup } from "@/lib/engine-message";
 import { savedToast } from "@/lib/staffing-warnings";
+import { chainLookup } from "@/lib/chain-lookup";
 import { shiftDate } from "@/lib/cover-absence-form";
 import { toDateString } from "@/lib/utils";
 import {
@@ -63,6 +64,9 @@ export default function DayPlannerPage() {
   const t = useTranslations("dayPlanner");
   const tCommon = useTranslations("common");
   const tEngine = useTranslations("engineMessages") as unknown as MessageLookup;
+  // The vikarie's warnings mix the engine's STAFF_* with the cover's COVER_*
+  // (lunch, rest, the cap, the days), as on Lärarfrånvaro and the cover board.
+  const tWarnings = chainLookup(useTranslations("coverErrors") as unknown as MessageLookup, tEngine);
   const tStatus = useTranslations("lessonStatus");
   const locale = useLocale();
 
@@ -182,7 +186,7 @@ export default function DayPlannerPage() {
       });
       // A vikarie is never refused, only warned: the warning is the rektor's
       // one signal that the cover lacks behörighet, so it is said here.
-      savedToast(tEngine, t("substitutedToast"), result.warnings);
+      savedToast(tWarnings, t("substitutedToast"), result.warnings);
       setTarget(null);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : tCommon("error"));

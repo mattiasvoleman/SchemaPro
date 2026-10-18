@@ -78,6 +78,8 @@ const staffingPlan: StaffingCarryPreview = {
     carried: 2,
     withReduction: ["t-bo"],
     withTargetOverride: [],
+    // Bo teaches four days a week, agreed for this year.
+    withDayLimit: ["t-bo"],
     notCarried: [{ userId: "t-gone", reason: "INACTIVE" }],
     signaturesDropped: [],
     // Bo went down from January with no end date: that is his post next year.
@@ -476,7 +478,7 @@ describe("RolloverWizard", () => {
     expect(screen.queryByRole("heading", { name: "Tjänster och uppdrag" })).toBeNull();
   });
 
-  it("reviews the carried tjänster by name: the nedsättning to check, the mentorskap renamed and the one left behind", async () => {
+  it("reviews the carried tjänster by name: the nedsättning and the days to check, the mentorskap renamed and the one left behind", async () => {
     const user = userEvent.setup();
     renderWizard();
     await waitFor(() => expect(previewCalls().length).toBeGreaterThan(0));
@@ -487,6 +489,9 @@ describe("RolloverWizard", () => {
     );
     const listUnder = (title: string) => within(section).getByText(title).nextElementSibling as HTMLElement;
     expect(within(listUnder("Nedsättningen följer med — gäller den även nästa läsår?")).getByText("Bo Alm")).toBeInTheDocument();
+    expect(
+      within(listUnder("Gränsen för undervisningsdagar per vecka följer med — gäller den även nästa läsår?")).getByText("Bo Alm"),
+    ).toBeInTheDocument();
     expect(within(listUnder("Byter namn med gruppen")).getByText("Mentor 7A → Mentor 8A — Bo Alm")).toBeInTheDocument();
     expect(
       within(

@@ -51,7 +51,11 @@ export const LUNCH_SETTINGS: LunchSettings = {
 /**
  * This year's runs, newest first: the one that laid today's grundschema, and
  * an earlier one the solver could not satisfy (a requirement too many for
- * 7A's week, since moved).
+ * 7A's week, since moved). The run that laid the grundschema gave up Bo's
+ * wish to have Wednesdays free (school-days.ts), which it says in its notes
+ * (Lärarens dag, 20261123090100); the refused runs never laid a week and say
+ * none, as the gateway answers them. None is about a post's days, so none
+ * names a teacher (conflictSummaryNames, errorNames).
  */
 const YEAR_JOBS: OptimizationJob[] = [
   {
@@ -62,10 +66,22 @@ const YEAR_JOBS: OptimizationJob[] = [
     conflictSummary: null,
     conflictSummaryCode: null,
     conflictSummaryParams: null,
+    conflictSummaryNames: [],
     conflicts: [],
+    notes: [
+      {
+        category: "AVAILABILITY",
+        // The catalogue's English as the gateway stores it, the rule's own id in it.
+        message: `The teacher working-time rule ${uid(KIND.misc, 1032)} wishes Wednesdays free, and the new timetable gives the teacher lessons that day. A wish is weighed against the rest of the week and gives way where keeping it would cost more.`,
+        code: "TEACHER_FREE_DAY_WISH_NOT_KEPT",
+        params: { rule: uid(KIND.misc, 1032), day: 3 },
+        resourceNames: [],
+      },
+    ],
     error: null,
     errorCode: null,
     errorParams: null,
+    errorNames: [],
     createdAt: ago(9, "14:02"),
     finishedAt: ago(9, "14:03"),
   },
@@ -78,6 +94,7 @@ const YEAR_JOBS: OptimizationJob[] = [
       "No timetable satisfies every rule. Start with the causes below: together they make the week impossible.",
     conflictSummaryCode: "CONFLICT_CORE_SUMMARY",
     conflictSummaryParams: {},
+    conflictSummaryNames: [],
     conflicts: [
       {
         category: "REQUIREMENT_DEMAND",
@@ -87,9 +104,11 @@ const YEAR_JOBS: OptimizationJob[] = [
         resourceNames: ["7A"],
       },
     ],
+    notes: [],
     error: null,
     errorCode: null,
     errorParams: null,
+    errorNames: [],
     createdAt: ago(10, "10:15"),
     finishedAt: ago(10, "10:16"),
   },
@@ -104,6 +123,7 @@ const YEAR_JOBS: OptimizationJob[] = [
       "1 block has lessons locked or placed by hand while the rest of the block is still to be placed, and a block's lessons are placed together.",
     conflictSummaryCode: "BLOCK_PARTLY_LOCKED_SUMMARY",
     conflictSummaryParams: { count: 1 },
+    conflictSummaryNames: [],
     conflicts: [
       {
         category: "TEACHING_BLOCK",
@@ -113,9 +133,11 @@ const YEAR_JOBS: OptimizationJob[] = [
         resourceNames: ["Språkval åk 7"],
       },
     ],
+    notes: [],
     error: null,
     errorCode: null,
     errorParams: null,
+    errorNames: [],
     createdAt: ago(11, "08:40"),
     finishedAt: ago(11, "08:40"),
   },
