@@ -287,6 +287,23 @@ describe('Publish and regenerate (e2e)', () => {
       masters.push(row);
       return row;
     });
+    // Generera's write creates its lessons in one createMany (Schemaförslag's
+    // shared write, optimization-proxy.service.ts): the same rows as above.
+    tx['masterLesson']!['createMany']!.mockImplementation(async ({ data }: any) => {
+      for (const entry of data) {
+        masters.push({
+          ...entry,
+          id: `master-${++sequence}`,
+          isLocked: false,
+          extraGroups: [],
+          participants: [],
+          recurrence: 'ALL_WEEKS',
+          startDate: null,
+          endDate: null,
+        });
+      }
+      return { count: data.length };
+    });
     tx['masterLesson']!['deleteMany']!.mockImplementation(async () => {
       const removed = masters.filter((row) => !isPreserved(row));
       masters = masters.filter(isPreserved);

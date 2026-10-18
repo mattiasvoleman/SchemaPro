@@ -276,7 +276,7 @@ export class RoomOptimizationService {
       // such lock — the exposure migration 20260822131500 states for two admins
       // editing one slot. The from-room on every UPDATE below still refuses a
       // hand edit of a lesson this moves.
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('room-optimization'), hashtext(${dto.academicYearId}))`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('room-optimization'), hashtext(${dto.academicYearId}::uuid::text))`;
 
       const state = await this.readYear(tx, user, dto.academicYearId);
       // Everything the proposal read, re-read here and compared whole. A

@@ -7618,6 +7618,9 @@ async function mealChecks(owner: Client, api: PrismaService): Promise<void> {
           new Map(),
           [{ studentGroupId: school.class7a, dayOfWeek: 2, startTime: '12:30:00', endTime: '13:00:00' }],
           new Map([[school.class7a, 2]]),
+          // The draft's own masters as the fetch saw them: none, the school's
+          // lessons are handmade.
+          [],
         ),
       );
       assert.deepEqual({ student: await mealsSeenBy(student), guardian: await mealsSeenBy(parent) }, published);
