@@ -91,4 +91,4 @@
           - cell "0 h"
           - cell "0 h"
           - cell "88 h"
-    - paragraph: Undervisningstid är den tid skolan erbjuder; frånvaro dras inte av. Hittills är genomförd och tillgodoräknad tid, och för dagar då skolan inte har publicerat något schema den planerade tiden. Planerat är skolans timplan för stadiet, eller för de årskurser kolumnen anger. Timplanens timmar är SchemaPros referensdata (SFS <år>:945 B1).
+    - paragraph: Undervisningstid är den tid skolan erbjuder; frånvaro dras inte av. Hittills är genomförd och tillgodoräknad tid, och för dagar då skolan inte har publicerat något schema den planerade tiden. Planerat är skolans timplan för stadiet, eller för de årskurser kolumnen anger. Timplanens timmar är Rastra Schemas referensdata (SFS <år>:945 B1).

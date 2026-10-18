@@ -1,9 +1,9 @@
 /**
- * SchemaPro's tillgänglighetsredogörelse, after Digg's model for lagen
+ * Rastra Schema's tillgänglighetsredogörelse, after Digg's model for lagen
  * (2018:1937) om tillgänglighet till digital offentlig service.
  *
  * The law binds the school's huvudman — a kommun, or the board of a
- * fristående skola — and not SchemaPro: the huvudman publishes the statement
+ * fristående skola — and not Rastra Schema: the huvudman publishes the statement
  * for the service it offers. So who stands behind it and how to reach them
  * are the deployment's to say, from the server's environment (contactFromEnv):
  * ACCESSIBILITY_ORGANISATION, ACCESSIBILITY_EMAIL, ACCESSIBILITY_PHONE and
@@ -38,9 +38,12 @@ const ul = (...items: Inline[][]): Block => ({ kind: "ul", items });
 export const DIGG_REPORT_URL =
   "https://www.digg.se/analys-och-uppfoljning/lagen-om-tillganglighet-till-digital-offentlig-service-dos-lagen/anmal-bristande-tillganglighet";
 
-export const UPDATED = "14 oktober 2026";
+/** When the self-assessment below was made. */
+export const ASSESSED = "14 oktober 2026";
+/** The statement's own last change: the product's new name, 2026-10-17. */
+export const UPDATED = "18 oktober 2026";
 
-export const TITLE = "Tillgänglighetsredogörelse för SchemaPro";
+export const TITLE = "Tillgänglighetsredogörelse för Rastra Schema";
 
 /** Who stands behind the service and how to reach them; null when not set. */
 export interface Contact {
@@ -79,10 +82,10 @@ export function statement(contact: Contact): { intro: Block[]; sections: Section
   const reachable = contact.email !== null || contact.phone !== null;
   const intro: Block[] = [
     p(
-      `${contact.organisation ? `${contact.organisation} står bakom SchemaPro, skolans` : "SchemaPro är skolans"} tjänst för schema, närvaro och frånvaro. Vi vill att så många som möjligt ska kunna använda tjänsten. Den här redogörelsen beskriver hur SchemaPro uppfyller lagen om tillgänglighet till digital offentlig service, vilka tillgänglighetsproblem vi känner till och hur du kan rapportera brister till oss så att vi kan åtgärda dem.`,
+      `${contact.organisation ? `${contact.organisation} står bakom Rastra Schema, skolans` : "Rastra Schema är skolans"} tjänst för schema, närvaro och frånvaro. Vi vill att så många som möjligt ska kunna använda tjänsten. Den här redogörelsen beskriver hur Rastra Schema uppfyller lagen om tillgänglighet till digital offentlig service, vilka tillgänglighetsproblem vi känner till och hur du kan rapportera brister till oss så att vi kan åtgärda dem.`,
     ),
     p(
-      "Redogörelsen gäller webbtjänsten SchemaPro: inloggningen, alla sidor för skolans administratörer, lärare, elever och vårdnadshavare, och Schemavisaren, där skolan delar sitt publicerade schema med en länk. Den gäller inte SchemaPros mobilapp, som ännu inte finns i App Store eller Google Play. Appen får en egen redogörelse när den publiceras där.",
+      "Redogörelsen gäller webbtjänsten Rastra Schema: inloggningen, alla sidor för skolans administratörer, lärare, elever och vårdnadshavare, och Schemavisaren, där skolan delar sitt publicerade schema med en länk. Den gäller inte mobilappen, som ännu inte finns i App Store eller Google Play. Appen får en egen redogörelse när den publiceras där.",
     ),
   ];
   const missing = p(
@@ -104,7 +107,7 @@ export function statement(contact: Contact): { intro: Block[]; sections: Section
       blocks: [
         ...(reachable
           ? [
-              p("Om du behöver innehåll från SchemaPro som inte är tillgängligt för dig kan du kontakta oss:"),
+              p("Om du behöver innehåll från Rastra Schema som inte är tillgängligt för dig kan du kontakta oss:"),
               ul(
                 ...[email ? ["E-post: ", email] : null, contact.phone ? [`Telefon: ${contact.phone}`] : null].filter(
                   (item): item is Inline[] => item !== null,
@@ -150,7 +153,7 @@ export function statement(contact: Contact): { intro: Block[]; sections: Section
       level: 2,
       blocks: [
         p(
-          "SchemaPro är delvis förenlig med lagen om tillgänglighet till digital offentlig service, på grund av de brister som beskrivs nedan. Kraven är nivå AA i WCAG 2.1, som standarden EN 301 549 hänvisar till.",
+          "Rastra Schema är delvis förenlig med lagen om tillgänglighet till digital offentlig service, på grund av de brister som beskrivs nedan. Kraven är nivå AA i WCAG 2.1, som standarden EN 301 549 hänvisar till.",
         ),
       ],
     },
@@ -176,13 +179,13 @@ export function statement(contact: Contact): { intro: Block[]; sections: Section
     {
       heading: "Innehåll som inte omfattas av lagen",
       level: 3,
-      blocks: [p("Vi känner inte till något innehåll i SchemaPro som är undantaget från lagen.")],
+      blocks: [p("Vi känner inte till något innehåll i Rastra Schema som är undantaget från lagen.")],
     },
     {
       heading: "Hur vi har testat tjänsten",
       level: 2,
       blocks: [
-        p("Vi har gjort en självskattning (intern testning) av SchemaPro:"),
+        p("Vi har gjort en självskattning (intern testning) av Rastra Schema:"),
         ul(
           [
             "Automatisk granskning med verktyget axe mot WCAG 2.1 nivå A och AA av varje sida i tjänsten: inloggningen, alla sidor för administratörer, lärare, elever och vårdnadshavare (som var och en av rollerna), Schemavisaren och den här redogörelsen, i dator- och mobilbredd och i ljust och mörkt tema (Schemavisaren har bara det ljusa). Granskningen körs vid varje ändring av tjänsten. Den granskar sidorna som de ser ut när de har laddats, och dessutom huvudmenyn på mobil och notismenyn öppna. Andra dialogrutor och menyer som öppnas med ett klick granskas inte automatiskt; de ingår i skärmläsartestet, som återstår.",
@@ -193,7 +196,7 @@ export function statement(contact: Contact): { intro: Block[]; sections: Section
           ["Tester av tangentbordsanvändning, synligt fokus och kontrast för inloggningen och schemaläggningen."],
           ["Ett manus för testet med skärmläsare, med vad som ska höras i varje steg för de fyra rollerna. Själva testet återstår (se ovan)."],
         ),
-        p(`Senaste bedömningen gjordes den ${UPDATED}.`),
+        p(`Senaste bedömningen gjordes den ${ASSESSED}.`),
         p(`Redogörelsen uppdaterades senast den ${UPDATED}.`),
       ],
     },

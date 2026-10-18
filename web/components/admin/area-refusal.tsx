@@ -38,10 +38,11 @@ export function AreaRefusal({
   overviewHref: string;
 }) {
   const t = useTranslations("adminAreas");
+  const tCommon = useTranslations("common");
   const profileName = t(`profile.${profile ?? "FULL"}`);
   return (
     <Page width="narrow">
-      <title>{`${t("gateTitle")} · SchemaPro`}</title>
+      <title>{`${t("gateTitle")} · ${tCommon("appName")}`}</title>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">{t("gateTitle")}</h1>
       </div>

@@ -1,7 +1,7 @@
 - dialog "Huvudmeny":
   - complementary:
     - button "Stäng"
-    - text: SchemaPro Exempelskolan
+    - text: Rastra Schema Exempelskolan
     - navigation "Huvudmeny":
       - list:
         - listitem:

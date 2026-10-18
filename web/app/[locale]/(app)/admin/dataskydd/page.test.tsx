@@ -72,8 +72,8 @@ describe("/admin/dataskydd", () => {
   it("starts every kind at Ej beslutat, and says a purge cannot be undone before anything else", async () => {
     renderPage();
     expect(await screen.findByRole("heading", { level: 1, name: "Dataskydd och gallring" })).toBeInTheDocument();
-    expect(screen.getByText("En gallring går inte att ångra i SchemaPro")).toBeInTheDocument();
-    expect(screen.getByText(/SchemaPro gör ännu inga arkivuttag/)).toBeInTheDocument();
+    expect(screen.getByText("En gallring går inte att ångra i Rastra Schema")).toBeInTheDocument();
+    expect(screen.getByText(/Rastra Schema gör ännu inga arkivuttag/)).toBeInTheDocument();
     await screen.findByRole("button", { name: "Ändra gallringsperioden för Närvaro" });
     for (const name of ["Närvaro", "Frånvaroanmälningar", "Ledighetsansökningar", "Notiser", "Ändringsloggar", "Frånvaroorsaker", "Läslogg", "Slutade personer"]) {
       expect(within(row(name)).getByText("Ej beslutat")).toBeInTheDocument();

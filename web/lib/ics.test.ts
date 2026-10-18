@@ -55,7 +55,7 @@ describe("buildIcs", () => {
     const lines = ics.split("\r\n");
     expect(lines[0]).toBe("BEGIN:VCALENDAR");
     expect(lines[1]).toBe("VERSION:2.0");
-    expect(lines[2]).toBe("PRODID:-//SchemaPro//Timetable//EN");
+    expect(lines[2]).toBe("PRODID:-//Rastra//Timetable//EN");
     expect(lines[3]).toBe("X-WR-CALNAME:Timetable 26/27");
     expect(lines[lines.length - 1]).toBe("END:VCALENDAR");
     // CRLF is the only line separator: no bare LF remains once CRLF is removed.

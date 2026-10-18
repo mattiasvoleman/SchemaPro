@@ -196,7 +196,7 @@ test("the SCB file saves the gateway's text as it came, names what the school fi
   expect(txt.suggestedFilename()).toBe(`${filename}.txt`);
   const text = await readFile((await txt.path())!, "utf8");
   expect(text.charCodeAt(0)).not.toBe(0xfeff);
-  expect(text.startsWith("SchemaPro;")).toBe(true);
+  expect(text.startsWith("Rastra Schema;")).toBe(true);
   expect(text.split("\r\n").at(-1)).toBe("");
 
   // PersonNr once, then each row that lacks more: Eva's post says no

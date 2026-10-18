@@ -51,7 +51,7 @@ describe("tillgänglighetsredogörelsen", () => {
     const text = toMarkdown(contactFromEnv({}));
     expect(text).not.toMatch(/[{}]/);
     expect(text).toContain("Kontaktuppgifterna för tillgänglighetsfrågor är inte inlagda ännu.");
-    expect(text).toContain("SchemaPro är skolans tjänst");
+    expect(text).toContain("Rastra Schema är skolans tjänst");
     // Still Digg's route, which needs no configuration.
     expect(text).toContain(`](${DIGG_REPORT_URL})`);
   });
@@ -65,7 +65,7 @@ describe("tillgänglighetsredogörelsen", () => {
         ACCESSIBILITY_RESPONSE_DAYS: "5",
       }),
     );
-    expect(text).toContain("Exempelkommunen står bakom SchemaPro");
+    expect(text).toContain("Exempelkommunen står bakom Rastra Schema");
     expect(text).toContain("- E-post: [tillganglighet@kommun.example](mailto:tillganglighet@kommun.example)");
     expect(text).toContain("- Telefon: 000-00 00 00");
     expect(text).toContain("Vi svarar normalt inom 5 arbetsdagar.");

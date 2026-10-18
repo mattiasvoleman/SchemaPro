@@ -11,7 +11,7 @@ export interface PageHeaderBack {
 }
 
 export interface PageHeaderProps {
-  /** The h1, and the browser tab's title ("{title} · SchemaPro"). */
+  /** The h1, and the browser tab's title ("{title} · Rastra Schema", in the page's language). */
   title: string;
   /** One sentence, no trailing period. */
   subtitle?: string;
