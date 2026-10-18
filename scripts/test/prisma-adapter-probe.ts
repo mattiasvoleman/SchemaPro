@@ -6246,8 +6246,8 @@ async function givenTeacherDaySchool(owner: Client): Promise<TeacherDaySchool> {
   const limited = await person('TEACHER', 'Deltid');
   const free = await person('TEACHER', 'Ledig');
   const year = await one<{ id: string }>(
-    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-     VALUES ($1, $2, $3::date, $4::date, true, now()) RETURNING id`,
+    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
+     VALUES ($1, $2, $3::date, $4::date, true, 'NIOARIG', now()) RETURNING id`,
     [school.id, `${MARKER} lärarens dag`, dayAt(-60), dayAt(200)],
   );
   const group = (name: string, grade: number) =>
