@@ -1403,6 +1403,24 @@ BEGIN
   INSERT INTO "IntegrationApiKeys" ("schoolId", name, "keyHash", scopes) VALUES (s2, 'ND hel', repeat('b1', 32), '{attendances.read,absences.read}');
 END $$;
 
+-- Lärarens dag (section 160, 20261123090000): the matrix school's teacher
+-- has a daily cap of 300 minutes and wishes Fridays free, written here as
+-- the owner, with no person signed in, which the cap's trigger lets through.
+-- On EVERY run, for the same reason as the närvaro block's decision above:
+-- on a database that ran main's fixtures the matrix school's block has
+-- already returned. Section 116's probes copy, touch and take this row, as
+-- they did the bare one: every profile that writes planering may, and the
+-- trigger asks nobody else, since the row is none of theirs.
+DO $$
+BEGIN
+  UPDATE "TeacherWorkRules" w SET "maxTeachingMinutesPerDay" = 300, "preferredFreeDayOfWeek" = 5
+    FROM "Users" u
+   WHERE u.id = w."userId" AND u."authId" = '00000000-0000-4000-8000-000000000111';
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'rls-fixtures: the matrix school''s teacher has no work rule to plan';
+  END IF;
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.
