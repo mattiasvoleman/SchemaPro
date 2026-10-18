@@ -1,3 +1,4 @@
+import { type GradeNumbering } from '../../common/grade-numbering';
 import { compareUnits, unitForGrade } from '../../school-units/school-unit-map';
 import { toSs12000Duties, type Ss12000Duty } from '../ss12000-duties';
 import { inTurn } from './in-turn';
@@ -172,9 +173,13 @@ export class IdSpace {
   get primaryOrganisation(): string {
     return this.organisations[0]!.id;
   }
-  /** The Organisation of a class, a pupil's class or a mentor's class, by its årskurs. */
-  organisationOf(grade: number | null): string {
-    const unit = unitForGrade(this.units, grade);
+  /**
+   * The Organisation of a class, a pupil's class or a mentor's class, by its
+   * årskurs in its läsår's numbering (a TIOARIG läsår reads a unit's span as
+   * SFS 2025:729 övergångsbestämmelse 5 does, unitSpanIn).
+   */
+  organisationOf(grade: number | null, numbering: GradeNumbering = 'NIOARIG'): string {
+    const unit = unitForGrade(this.units, grade, numbering);
     return unit ? this.unitIds.get(unit.id)! : this.primaryOrganisation;
   }
   /** The Organisation emitted under `id`, if one is. */
@@ -250,7 +255,7 @@ export interface Relation {
 export class Model {
   readonly usersById: Map<string, UserRow>;
   readonly groupsById: Map<string, GroupRow>;
-  readonly yearsById: Map<string, { id: string; startDate: Date; endDate: Date; isActive: boolean }>;
+  readonly yearsById: Map<string, { id: string; startDate: Date; endDate: Date; isActive: boolean; gradeNumbering?: GradeNumbering }>;
 
   private constructor(
     readonly slice: SchoolSlice,
@@ -259,7 +264,7 @@ export class Model {
     readonly school: { id: string; name: string; createdAt: Date; updatedAt: Date; timezone: string },
     readonly users: UserRow[],
     readonly groups: GroupRow[],
-    years: { id: string; startDate: Date; endDate: Date; isActive: boolean }[],
+    years: { id: string; startDate: Date; endDate: Date; isActive: boolean; gradeNumbering?: GradeNumbering }[],
     readonly activeYearId: string | null,
     readonly types: Awaited<ReturnType<SchoolSlice['schoolTypes']>>,
   ) {
@@ -309,9 +314,15 @@ export class Model {
     return { id, displayName: this.ids.organisation(id)?.unit?.name ?? this.school.name };
   }
 
-  /** The Organisation a group belongs to: its skolenhet by its årskurs. */
+  /** The Organisation a group belongs to: its skolenhet by its årskurs, in its own läsår's numbering. */
   groupOrganisation(groupId: string): string {
-    return this.ids.organisationOf(this.groupsById.get(groupId)?.gradeLevel ?? null);
+    const group = this.groupsById.get(groupId);
+    return this.ids.organisationOf(group?.gradeLevel ?? null, this.numberingOf(group?.academicYearId));
+  }
+
+  /** A läsår's numbering; NIOARIG for one the slice does not hold. */
+  numberingOf(academicYearId: string | null | undefined): GradeNumbering {
+    return (academicYearId ? this.yearsById.get(academicYearId)?.gradeNumbering : undefined) ?? 'NIOARIG';
   }
 
   personRef(userId: string): Ref | null {
@@ -405,7 +416,7 @@ export class Model {
         if (!schoolType) continue;
         out.set(pupilId, {
           // The skolenhet holding the pupil's årskurs now.
-          enroledAt: this.organisationRef(this.ids.organisationOf(open.gradeLevel)),
+          enroledAt: this.organisationRef(this.ids.organisationOf(open.gradeLevel, this.numberingOf(open.academicYearId))),
           ...(open.gradeLevel !== null && open.gradeLevel >= 0 && open.gradeLevel <= 11 ? { schoolYear: open.gradeLevel } : {}),
           schoolType,
           startDate: dayOf(sorted[first]!.validFrom),

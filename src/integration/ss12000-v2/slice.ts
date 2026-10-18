@@ -1,3 +1,4 @@
+import type { GradeNumbering } from '../../common/grade-numbering';
 import { Prisma, type PrismaClient, type SchoolForm } from '@prisma/client';
 import { inTurn } from './in-turn';
 import { readGrundschema } from '../../publication/published-grundschema';
@@ -41,6 +42,8 @@ export interface YearRow {
   startDate: Date;
   endDate: Date;
   isActive: boolean;
+  /** Its classes' numbering: a skolenhet's span is read through it (unitSpanIn). */
+  gradeNumbering: GradeNumbering;
 }
 
 export interface UserRow {
@@ -229,7 +232,7 @@ export class SchoolSlice {
     async () =>
       (await this.tx.academicYear.findMany({
         where: { schoolId: this.schoolId },
-        select: { id: true, startDate: true, endDate: true, isActive: true },
+        select: { id: true, startDate: true, endDate: true, isActive: true, gradeNumbering: true },
       })) as YearRow[],
   );
 

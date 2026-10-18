@@ -84,7 +84,7 @@ export async function readLocalSlice(tx: PrismaClient, schoolId: string, options
     }),
     tx.academicYear.findMany({
       where: { schoolId },
-      select: { id: true, startDate: true, endDate: true, isActive: true },
+      select: { id: true, startDate: true, endDate: true, isActive: true, gradeNumbering: true },
       orderBy: { startDate: 'asc' },
     }),
     // When an applied sync change last deactivated each person: a person an
@@ -148,6 +148,8 @@ export async function readLocalSlice(tx: PrismaClient, schoolId: string, options
       startDate: day(year.startDate) ?? '',
       endDate: day(year.endDate) ?? '',
       isActive: year.isActive,
+      // Only when tioårig: a nine-year year is the row it always was.
+      ...(year.gradeNumbering === 'TIOARIG' ? { gradeNumbering: year.gradeNumbering } : {}),
     })),
     units: units.map((unit) => ({ ...unit, schoolTypes: [...unit.schoolTypes] })),
     lastAppliedAt: null,

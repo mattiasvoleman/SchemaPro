@@ -118,4 +118,19 @@ describe('readLocalSlice', () => {
       ['u2', false],
     ]);
   });
+
+  it("reads each läsår's numbering: a tioårig one carries it, a nioårig one is the row it always was", async () => {
+    const tx = createTxMock();
+    tx.school.findFirst.mockResolvedValue({ name: 'Ekskolan', timezone: 'Europe/Stockholm' });
+    tx.academicYear.findMany.mockResolvedValue([
+      { id: 'y2027', startDate: new Date('2027-08-01T00:00:00Z'), endDate: new Date('2028-07-31T00:00:00Z'), isActive: false, gradeNumbering: 'NIOARIG' },
+      { id: 'y2028', startDate: new Date('2028-08-01T00:00:00Z'), endDate: new Date('2029-07-31T00:00:00Z'), isActive: true, gradeNumbering: 'TIOARIG' },
+    ]);
+    const result = await readLocalSlice(tx as unknown as PrismaClient, 'school', { lock: false });
+    expect(tx.academicYear.findMany).toHaveBeenCalledWith(expect.objectContaining({ select: expect.objectContaining({ gradeNumbering: true }) }));
+    expect(result.years).toEqual([
+      { id: 'y2027', startDate: '2027-08-01', endDate: '2028-07-31', isActive: false },
+      { id: 'y2028', startDate: '2028-08-01', endDate: '2029-07-31', isActive: true, gradeNumbering: 'TIOARIG' },
+    ]);
+  });
 });

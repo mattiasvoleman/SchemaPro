@@ -52,6 +52,7 @@ import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TableCard } from "@/components/ui/table-card";
+import type { GradeNumbering } from "@/lib/grade-numbering";
 import { SCHOOL_UNITS_KEY, useSchoolUnits } from "./use-school-units";
 
 // F–10, in the nine-year numbering a unit's span is stated in.
@@ -75,7 +76,12 @@ interface UnitBody {
   gradeTo: number | null;
 }
 
-export function SchoolUnitsCard({ classes }: { classes: StudentGroup[] }) {
+/**
+ * `numbering`: the active year's (absent is NIOARIG). A unit's span is stated
+ * in NIOARIG and a tioårig läsår places its classes as SFS 2025:729
+ * övergångsbestämmelse 5 reads it (unitSpanIn).
+ */
+export function SchoolUnitsCard({ classes, numbering }: { classes: StudentGroup[]; numbering?: GradeNumbering }) {
   const t = useTranslations("schoolUnits");
   const tCommon = useTranslations("common");
   const tGrades = useTranslations("grades");
@@ -103,14 +109,14 @@ export function SchoolUnitsCard({ classes }: { classes: StudentGroup[] }) {
   const classesOf = useMemo(() => {
     const out = new Map<string, string[]>();
     for (const klass of classes) {
-      const unit = unitForGrade(list, klass.gradeLevel);
+      const unit = unitForGrade(list, klass.gradeLevel, numbering);
       if (unit) out.set(unit.id, [...(out.get(unit.id) ?? []), klass.name]);
     }
     return out;
-  }, [classes, list]);
+  }, [classes, list, numbering]);
   const outside = useMemo(
-    () => classes.filter((klass) => klass.gradeLevel !== null && gradeOutsideUnits(list, klass.gradeLevel)),
-    [classes, list],
+    () => classes.filter((klass) => klass.gradeLevel !== null && gradeOutsideUnits(list, klass.gradeLevel, numbering)),
+    [classes, list, numbering],
   );
 
   const startCreate = () => {

@@ -132,6 +132,110 @@ describe('skolenheter', () => {
     world.mentorships.length = 0;
     expect((await service.getDuty(caller(), W.emp1, {}))['dutyAt']).toEqual({ id: W.org });
   });
+
+  // SFS 2025:729: a tioårig läsår's årskurs is one higher than the same
+  // åldersband's in the nioårig numbering a unit's span is stated in, and
+  // övergångsbestämmelse 5 reads the span one up, an åk 1 approval also for
+  // the new åk 1 and one for förskoleklass alone lapsing (unitSpanIn): F–6 is
+  // 1–7, 7–9 is 8–10. Each row is read in its own läsår's numbering.
+  const tioarig = (world: ProviderWorld, yearId: string = W.year) => {
+    world.years.find((year) => year['id'] === yearId)!['gradeNumbering'] = 'TIOARIG';
+  };
+
+  it('a tioårig läsår puts 7A — the nioåriga 6:orna — in F–6 with its pupils, activities, events, mentor and närvaro; 8B stays in 7–9', async () => {
+    const { world, service } = split();
+    tioarig(world);
+    world.attendanceShared = true;
+    expect((await service.getGroup(caller(), W.c7aSource, {}))['organisation']).toEqual({ id: W.org });
+    expect((await service.getGroup(caller(), W.c8b, {}))['organisation']).toEqual({ id: U79 });
+    expect(ids(await service.listGroups(caller(), { organisation: U79 }))).toEqual([W.c8b]);
+    // The pupil's schoolYear stays the läsår's own: 7, not the nioåriga 6.
+    const [p1] = await service.lookupPersons(caller(), { ids: [W.p1Source] }, {});
+    expect(p1!['enrolments']).toEqual([expect.objectContaining({ enroledAt: { id: W.org }, schoolYear: 7 })]);
+    const by = async (raw: Record<string, unknown>) => ids(await service.listPersons(caller(), raw)).sort();
+    expect(await by({ 'relationship.organisation': U79, 'relationship.entity.type': 'enrolment' })).toEqual([W.p3, W.p4].sort());
+    expect(await by({ 'relationship.organisation': W.org, 'relationship.entity.type': 'enrolment' })).toEqual([W.p1Source, W.p2].sort());
+    expect(ids(await service.listActivities(caller(), { organisation: U79 }))).toEqual([W.m2]);
+    expect(ids(await service.listActivities(caller(), { organisation: W.org })).sort()).toEqual([W.m1, adhocActivityId(W.l3Adhoc)].sort());
+    expect(ids(await service.listCalendarEvents(caller(), { ...WINDOW, organisation: U79 }))).toEqual([W.l5Cancelled]);
+    expect(ids(await service.listCalendarEvents(caller(), { ...WINDOW, organisation: W.org })).sort()).toEqual([W.l1, W.l2Substituted, W.l3Adhoc].sort());
+    // Tove mentors 7A: her Duty is at F–6 now.
+    expect((await service.getDuty(caller(), W.emp1, {}))['dutyAt']).toEqual({ id: W.org });
+    expect(ids(await service.listDuties(caller(), { organisation: U79 }))).toEqual([]);
+    // Närvaro and frånvaro by organisation follow the class.
+    expect(ids(await service.listAttendances(caller(), { organisation: U79 }))).toEqual([]);
+    expect(ids(await service.listAttendances(caller(), { organisation: W.org })).sort()).toEqual(
+      [W.attPresent, W.attLate, W.attExcused, W.attAbsent, W.attUnknown].sort(),
+    );
+    expect(ids(await service.listAbsences(caller(), { organisation: U79 }))).toEqual([W.absGranted]);
+    expect(ids(await service.listAbsences(caller(), { organisation: W.org })).sort()).toEqual([W.absSick, W.absHours, W.absForged].sort());
+  });
+
+  it('reads each class in its own läsår\'s numbering: last year\'s nioåriga 7C is 7–9\'s beside this tioårig 7A, and a tioårig läsår ahead moves nothing now', async () => {
+    const C7C = '30000000-0000-4000-8000-000000000097';
+    const { world, service } = split();
+    world.groups.push({
+      id: C7C, schoolId: W.school, academicYearId: W.pastYear, name: '7C', kind: 'CLASS', gradeLevel: 7, ss12000Id: null,
+      createdAt: new Date('2025-05-01T08:00:00Z'), updatedAt: new Date('2025-05-02T08:00:00Z'),
+    });
+    tioarig(world, W.futureYear);
+    expect((await service.getGroup(caller(), W.c7aSource, {}))['organisation']).toEqual({ id: U79 });
+    expect((await service.getGroup(caller(), C7C, {}))['organisation']).toEqual({ id: U79 });
+    tioarig(world, W.year);
+    expect((await service.getGroup(caller(), W.c7aSource, {}))['organisation']).toEqual({ id: W.org });
+    expect((await service.getGroup(caller(), C7C, {}))['organisation']).toEqual({ id: U79 });
+  });
+
+  it('derives a tioårig läsår\'s skolformer over the span övergångsbestämmelse 5 reads, an F unit holding none, and keeps the nioårig order for the first unit', async () => {
+    const F0 = 'aaaaaaaa-0000-4000-8000-0000000000f0';
+    const U16 = 'aaaaaaaa-0000-4000-8000-000000000016';
+    const C1A = '30000000-0000-4000-8000-000000000091';
+    const SP_PLAN = '11000000-0000-4000-8000-000000000003';
+    const { world, service } = setup();
+    // No skolformer of their own: each derives them from the active year's timplans.
+    world.units.push(
+      unit(F0, 'Ekskolan F', '10000000', 0, 0, [], null),
+      unit(U16, 'Ekskolan 1–6', '11111111', 1, 6, [], W.org),
+      unit(U79, 'Ekskolan 7–9', '22222222', 7, 9, [], null),
+    );
+    // A row for 10 the nioåriga 7–9 never reads and the tioåriga 8–10 does.
+    world.localTimplans.push({ id: SP_PLAN, schoolId: W.school, schoolForm: 'SPECIALSKOLA' });
+    world.yearTimplans.push({ schoolId: W.school, academicYearId: W.year, gradeLevel: 10, localTimplanId: SP_PLAN });
+    world.groups.push({
+      id: C1A, schoolId: W.school, academicYearId: W.year, name: '1A', kind: 'CLASS', gradeLevel: 1, ss12000Id: null,
+      createdAt: new Date('2026-05-01T08:00:00Z'), updatedAt: new Date('2026-05-02T08:00:00Z'),
+    });
+    const typesOf = async () =>
+      Object.fromEntries((await service.listOrganisations(caller(), {})).data.map((o) => [o.id, o['schoolTypes'] ?? null]));
+    expect(await typesOf()).toEqual({ [F0]: ['FKLASS'], [W.org]: ['GR'], [U79]: ['GR'] });
+    tioarig(world);
+    // The world keeps its förskoleklass row; the F unit reads none of it.
+    expect(await typesOf()).toEqual({ [F0]: null, [W.org]: ['GR'], [U79]: ['GR', 'SP'] });
+    // The new åk 1 is the 1–6 unit's, not the F unit's (not toNioarig at the bottom).
+    expect((await service.getGroup(caller(), C1A, {}))['organisation']).toEqual({ id: W.org });
+    expect((await service.getGroup(caller(), W.c7aSource, {}))['organisation']).toEqual({ id: W.org });
+    // What no span holds is still the first unit's — F, first in the nioårig order, though it holds nothing now.
+    expect((await service.getGroup(caller(), W.ma7, {}))['organisation']).toEqual({ id: F0 });
+    expect((await service.getRoom(caller(), W.r1, {}))['owner']).toEqual({ id: F0 });
+  });
+
+  it('a nioårig läsår, stated or left out, answers exactly as before', async () => {
+    const answers = async (service: Ss12000V2Service) =>
+      JSON.stringify([
+        (await service.listOrganisations(caller(), {})).data,
+        (await service.listGroups(caller(), {})).data,
+        (await service.listPersons(caller(), {})).data,
+        (await service.listDuties(caller(), {})).data,
+        (await service.listActivities(caller(), {})).data,
+        (await service.listCalendarEvents(caller(), WINDOW)).data,
+      ]);
+    const absent = split();
+    const stated = split();
+    for (const year of stated.world.years) year['gradeNumbering'] = 'NIOARIG';
+    const before = await answers(absent.service);
+    expect(before).toContain(U79);
+    expect(await answers(stated.service)).toBe(before);
+  });
 });
 
 describe('persons', () => {

@@ -1,3 +1,4 @@
+import { unitSpanIn } from '../../common/grade-numbering';
 import { Injectable } from '@nestjs/common';
 import { inTurn } from './in-turn';
 import type { PrismaClient } from '@prisma/client';
@@ -394,8 +395,12 @@ export class Ss12000V2Service {
       const derived = (): string[] => {
         if (!active) return [];
         if (!unit || unit.gradeFrom === null || unit.gradeTo === null) return unit && model.ids.organisations.length > 1 ? [] : model.types.ofYear(active);
+        // The unit's årskurser in the active year's numbering, as its
+        // timplan rows are keyed (unitSpanIn): an F-only unit holds none then.
+        const span = unitSpanIn(unit, model.numberingOf(active));
+        if (!span) return [];
         const types = new Set<string>();
-        for (let grade = unit.gradeFrom; grade <= unit.gradeTo; grade++) {
+        for (let grade = span.gradeFrom; grade <= span.gradeTo; grade++) {
           const type = model.types.of(active, grade);
           if (type) types.add(type);
         }
