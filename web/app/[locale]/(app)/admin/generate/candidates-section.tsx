@@ -133,7 +133,8 @@ export function CandidatesSection({ year, overview, canStart, generating, weight
               {reason}
             </p>
           ) : null}
-          <div className="space-y-1">
+          {/* The count belongs to the start, and goes with it for a profile that does not write SCHEMALAGGNING. */}
+          <div className="space-y-1" data-writes="SCHEMALAGGNING">
             <Label htmlFor={countId}>{t("section.count")}</Label>
             <NativeSelect
               id={countId}
@@ -150,6 +151,9 @@ export function CandidatesSection({ year, overview, canStart, generating, weight
             </NativeSelect>
           </div>
           <Button
+            // POST candidates is SCHEMALAGGNING's: hidden from a profile that
+            // does not write it (Läsbehörighet's läsare among them).
+            data-writes="SCHEMALAGGNING"
             variant="outline"
             className="w-full sm:w-auto"
             disabled={!year || !canStart || generating || active || start.isPending}

@@ -207,7 +207,8 @@ describe('Schemaförslag (e2e)', () => {
 
     it('answers the newest run and batch with the five figures, and lets every administrator read it', async () => {
       harness.tx['scheduleCandidateRun']!['findFirst']!.mockResolvedValue(runRow);
-      for (const profile of ['FULL', 'EXPEDITION']) {
+      // The läsare (Läsbehörighet) reads them like every administrator.
+      for (const profile of ['FULL', 'EXPEDITION', 'LASARE']) {
         const response = await request(http())
           .get(`/api/v1/optimization/candidates?academicYearId=${YEAR_ID}`)
           .set('x-test-user', as(profile))
@@ -421,7 +422,12 @@ describe('Schemaförslag (e2e)', () => {
         data: { status: 'CANCELLING' },
       });
       expect(harness.tx['scheduleCandidateRun']!['deleteMany']).toHaveBeenCalledWith({
-        where: { academicYearId: YEAR_ID, status: { in: ['SUCCEEDED', 'FAILED'] } },
+        where: {
+          academicYearId: YEAR_ID,
+          status: { in: ['SUCCEEDED', 'FAILED'] },
+          // Never a run whose engine call can still be solving (its cap place).
+          OR: [{ engineBusyUntil: null }, { engineBusyUntil: { lte: expect.any(Date) } }],
+        },
       });
     });
 
@@ -431,6 +437,33 @@ describe('Schemaförslag (e2e)', () => {
         .set('x-test-user', as('EXPEDITION'))
         .expect(403);
       expect(harness.tx['scheduleCandidateRun']!['deleteMany']).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('the läsare (Läsbehörighet)', () => {
+    it('never starts, refreshes, discards or applies: each is 403 AREA_NOT_YOURS before anything is read or written', async () => {
+      const reader = as('LASARE');
+      const writes = [
+        () => request(http()).post('/api/v1/optimization/candidates').set('x-test-user', reader).send({ academicYearId: YEAR_ID }),
+        () =>
+          request(http())
+            .post('/api/v1/optimization/candidates')
+            .set('x-test-user', reader)
+            .send({ academicYearId: YEAR_ID, refreshOf: RUN_ID }),
+        () => request(http()).delete(`/api/v1/optimization/candidates?academicYearId=${YEAR_ID}`).set('x-test-user', reader),
+        () =>
+          request(http())
+            .post(`/api/v1/optimization/candidates/${CANDIDATE_ID}/apply`)
+            .set('x-test-user', reader)
+            .send({ expectedMode: 'DRAFT' }),
+      ];
+      for (const write of writes) {
+        const refused = await write().expect(403);
+        expect(refused.body).toMatchObject({ code: 'AREA_NOT_YOURS' });
+      }
+      expect(harness.tx['scheduleCandidateRun']!['create']).not.toHaveBeenCalled();
+      expect(harness.tx['scheduleCandidateRun']!['deleteMany']).not.toHaveBeenCalled();
+      expect(harness.tx['scheduleCandidate']!['findUnique']).not.toHaveBeenCalled();
     });
   });
 });
