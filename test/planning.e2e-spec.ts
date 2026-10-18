@@ -3909,7 +3909,7 @@ describe('Planning surface (e2e)', () => {
     const PLAN_ID = 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1';
     const YEARS: LockedTable = {
       name: 'AcademicYears',
-      columns: ['id', 'schoolId', 'name', 'startDate', 'endDate', 'isActive'],
+      columns: ['id', 'schoolId', 'name', 'startDate', 'endDate', 'isActive', 'gradeNumbering'],
       lock: 'FOR NO KEY UPDATE',
     };
     const MODELS = ['academicYearTimplan', 'localTimplan', 'academicYear'];
@@ -3921,6 +3921,17 @@ describe('Planning surface (e2e)', () => {
     };
     beforeEach(resetModels);
     afterEach(resetModels);
+
+    it('400s a plan for årskurs 0 of a tioårig year, which has no förskoleklass, and writes nothing', async () => {
+      givenLockedRows(YEARS, [{ id: YEAR_ID, schoolId: SCHOOL_ID, gradeNumbering: 'TIOARIG' }]);
+      const response = await request(http())
+        .put(`/api/v1/academic-years/${YEAR_ID}/timplans`)
+        .set('x-test-user', admin())
+        .send({ timplans: [{ gradeLevel: 0, localTimplanId: PLAN_ID }] })
+        .expect(400);
+      expect(JSON.stringify(response.body)).toContain('tioårigt och har ingen förskoleklass');
+      expect(harness.tx['academicYearTimplan']!['create']).not.toHaveBeenCalled();
+    });
 
     it('an admin replaces the year’s mapping and reads it back, draft marked', async () => {
       givenLockedRows(YEARS, [{ id: YEAR_ID, schoolId: SCHOOL_ID }]);
