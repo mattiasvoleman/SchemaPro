@@ -71,8 +71,8 @@ describe('the generator gateway’s sentences are the catalogue’s', () => {
   });
 
   it.each([1, 2, 3, 4, 5, 6, 7])('says TEACHER_FREE_DAY_WISH_NOT_KEPT for weekday %i as the catalogue does', (day) => {
-    const rule = '77777777-aaaa-4aaa-8aaa-777777777777';
     expect(fixture[TEACHER_FREE_DAY_WISH_NOT_KEPT]).toBeDefined();
-    expect(freeDayWishMessage(rule, day)).toBe(render(fixture[TEACHER_FREE_DAY_WISH_NOT_KEPT]!, { rule, day }));
+    // The day is all the sentence takes: whose wish it is stands beside it.
+    expect(freeDayWishMessage(day)).toBe(render(fixture[TEACHER_FREE_DAY_WISH_NOT_KEPT]!, { day }));
   });
 });

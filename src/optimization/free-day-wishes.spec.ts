@@ -38,18 +38,20 @@ describe('unkeptFreeDayWishes', () => {
     ).toEqual([]);
   });
 
-  it('names a wish a lesson she leads breaks, in a conflict’s shape, naming the rule and nobody', () => {
+  it('names a wish a lesson she leads breaks, in a conflict’s shape: the day in the sentence, Eva beside it, nobody named', () => {
     expect(unkeptFreeDayWishes([wish()], [lesson({ teacherId: EVA, dayOfWeek: 5 })])).toEqual([
       {
         category: 'AVAILABILITY',
         code: TEACHER_FREE_DAY_WISH_NOT_KEPT,
-        params: { rule: RULE_EVA, day: 5 },
-        message: freeDayWishMessage(RULE_EVA, 5),
+        params: { day: 5 },
+        message: freeDayWishMessage(5),
         requirementIds: [],
         roomIds: [],
         constraintIds: [],
         resourceIds: [RULE_EVA],
         resourceNames: [],
+        // Server-only: the job view names her from it when the run is read.
+        subjectIds: [EVA],
       },
     ]);
   });
@@ -78,10 +80,10 @@ describe('unkeptFreeDayWishes', () => {
       ],
     );
 
-    expect(notes.map((note) => note.params)).toEqual([
-      { rule: '77777777-ffff-4fff-8fff-777777777770', day: 1 },
-      { rule: RULE_EVA, day: 3 },
-      { rule: RULE_OLLE, day: 3 },
+    expect(notes.map((note) => [note.params, note.resourceIds, note.subjectIds])).toEqual([
+      [{ day: 1 }, ['77777777-ffff-4fff-8fff-777777777770'], [EVA]],
+      [{ day: 3 }, [RULE_EVA], [EVA]],
+      [{ day: 3 }, [RULE_OLLE], [OLLE]],
     ]);
   });
 });
@@ -95,15 +97,14 @@ describe('freeDayWishMessage', () => {
     [5, 'Fridays'],
     [6, 'Saturdays'],
     [7, 'Sundays'],
-  ])('names weekday %i as %s', (day, name) => {
-    expect(freeDayWishMessage(RULE_EVA, day)).toBe(
-      `The teacher working-time rule ${RULE_EVA} wishes ${name} free, and the new timetable gives the teacher ` +
-        `lessons that day. A wish is weighed against the rest of the week and gives way where keeping it would ` +
-        `cost more.`,
+  ])('names weekday %i as %s, and no rule', (day, name) => {
+    expect(freeDayWishMessage(day)).toBe(
+      `A teacher wishes ${name} free, and the new timetable gives them lessons that day. A wish is weighed ` +
+        `against the rest of the week and gives way where keeping it would cost more.`,
     );
   });
 
   it('names a day outside the week by its number, as the catalogue’s other branch does', () => {
-    expect(freeDayWishMessage(RULE_EVA, 8)).toContain('wishes day 8 free');
+    expect(freeDayWishMessage(8)).toContain('wishes day 8 free');
   });
 });

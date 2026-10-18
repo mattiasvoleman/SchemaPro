@@ -402,6 +402,90 @@ describe('Scheduling surface (e2e)', () => {
       });
     });
 
+    /*
+     * Lärarens dag: a free-day wish the run did not keep is the work rule's,
+     * which every member of staff reads, so its note names the teacher for
+     * every reader — read back by the Users id stored beside it, which no
+     * body carries, and never written to the Läslogg.
+     */
+    describe('a note about a free-day wish', () => {
+      const EVA = '12121212-ffff-4fff-8fff-121212121212';
+      const wishRun = {
+        id: VERSION_ID,
+        academicYearId: YEAR_ID,
+        status: 'SUCCEEDED',
+        solverStatus: 'OPTIMAL',
+        lessonsGenerated: 24,
+        conflictSummary: null,
+        conflictSummaryCode: null,
+        conflictSummaryParams: null,
+        conflicts: [],
+        // As run() stores it: the day, Eva beside it, nobody named.
+        notes: [
+          {
+            category: 'AVAILABILITY',
+            code: 'TEACHER_FREE_DAY_WISH_NOT_KEPT',
+            params: { day: 5 },
+            message: 'A teacher wishes Fridays free, and the new timetable gives them lessons that day. …',
+            resourceNames: [],
+            subjectIds: [EVA],
+          },
+        ],
+        error: null,
+        errorCode: null,
+        errorParams: null,
+        createdAt: new Date('2026-11-23T10:00:00.000Z'),
+        finishedAt: new Date('2026-11-23T10:00:30.000Z'),
+      };
+
+      afterEach(() => {
+        harness.tx['optimizationJob']!['findUnique']!.mockReset();
+        harness.tx['optimizationJob']!['findMany']!.mockReset().mockResolvedValue([]);
+        harness.tx['user']!['findMany']!.mockReset().mockResolvedValue([]);
+      });
+
+      it.each([
+        ['a schemaläggare without HR-läs', () => asUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false } as never)],
+        ['rektor', () => asUser({ adminProfile: 'REKTOR' } as never)],
+      ])('names the teacher whose wish it was to %s, with the day and no id', async (_who, reader) => {
+        harness.tx['optimizationJob']!['findUnique']!.mockResolvedValue(wishRun);
+        harness.tx['user']!['findMany']!.mockResolvedValue([{ id: EVA, firstName: 'Eva', lastName: 'Ek' }]);
+
+        const response = await request(http())
+          .get(`/api/v1/optimization/jobs/${VERSION_ID}`)
+          .set('x-test-user', reader())
+          .expect(200);
+
+        expect(response.body.notes).toEqual([
+          {
+            category: 'AVAILABILITY',
+            code: 'TEACHER_FREE_DAY_WISH_NOT_KEPT',
+            params: { day: 5 },
+            message: wishRun.notes[0]!.message,
+            resourceNames: ['Eva Ek'],
+          },
+        ]);
+        expect(JSON.stringify(response.body)).not.toMatch(/subjectIds|"rule"/);
+        expect(JSON.stringify(response.body)).not.toContain(EVA);
+        expect(harness.tx['user']!['findMany']).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { id: { in: [EVA] } } }),
+        );
+        expect(recordedReads(harness.tx)).toEqual([]);
+      });
+
+      it('names her in the run history too', async () => {
+        harness.tx['optimizationJob']!['findMany']!.mockResolvedValue([wishRun]);
+        harness.tx['user']!['findMany']!.mockResolvedValue([{ id: EVA, firstName: 'Eva', lastName: 'Ek' }]);
+
+        const response = await request(http())
+          .get(`/api/v1/optimization/jobs?academicYearId=${YEAR_ID}`)
+          .set('x-test-user', admin())
+          .expect(200);
+
+        expect(response.body[0].notes.map((note: { resourceNames: string[] }) => note.resourceNames)).toEqual([['Eva Ek']]);
+      });
+    });
+
     it('denies a teacher starting a run', async () => {
       await request(http())
         .post('/api/v1/optimization/jobs')

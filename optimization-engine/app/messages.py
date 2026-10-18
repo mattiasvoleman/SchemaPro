@@ -432,11 +432,18 @@ MESSAGES: dict[str, str] = {
     ),
     # Sent by the GATEWAY after a run that worked: a wish the timetable did not
     # keep, which is a note beside a result and never a refusal of one.
+    #
+    # THE DAY AND NOTHING ELSE. Whose wish it was is the teacher's name, which
+    # the gateway puts in the note's resourceNames when the run is read — the
+    # way the days sentence is named, and for every reader, since the wish is
+    # staff-readable and not HR — and the web draws under the line as it does
+    # a conflict's. The work rule's id was a param here once, and no screen
+    # resolves one to a person: the line said which wish broke and not whose.
     "TEACHER_FREE_DAY_WISH_NOT_KEPT": (
-        "The teacher working-time rule {rule} wishes {day, select, 1 {Mondays} 2 {Tuesdays} "
-        "3 {Wednesdays} 4 {Thursdays} 5 {Fridays} 6 {Saturdays} 7 {Sundays} other {day {day}}} "
-        "free, and the new timetable gives the teacher lessons that day. A wish is weighed "
-        "against the rest of the week and gives way where keeping it would cost more."
+        "A teacher wishes {day, select, 1 {Mondays} 2 {Tuesdays} 3 {Wednesdays} "
+        "4 {Thursdays} 5 {Fridays} 6 {Saturdays} 7 {Sundays} other {day {day}}} free, and "
+        "the new timetable gives them lessons that day. A wish is weighed against the rest of "
+        "the week and gives way where keeping it would cost more."
     ),
     # Sent by the GATEWAY beside a hand edit of the grundschema that breaks the
     # cap or the days (master-lessons.service.ts): warnings, never refusals.

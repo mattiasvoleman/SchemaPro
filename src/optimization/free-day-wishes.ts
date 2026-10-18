@@ -23,15 +23,24 @@ import type { AiEngineConflictDetail } from './interfaces/ai-engine-payload.inte
  *
  * Staff-readable: the wish is on the work rule, beside the lunch and the rest,
  * and not on the post. Nothing here is masked.
+ *
+ * WHOSE WISH IT IS IS THE TEACHER'S NAME, put beside the note when the run is
+ * read (OptimizationJobsService, for every reader) and never into it. The
+ * sentence says the day and nothing else: it named the work rule's id once,
+ * as the lunch and rest sentences do, and no screen resolves a work rule's id
+ * to a person, so a school read which wish broke and not whose. A name stored
+ * in the note would outlive a rename and a gallring of the person in a copy
+ * nothing updates; the teacher's Users id rides beside the note instead, in
+ * the server-only `subjectIds` a days sentence keeps its teacher in.
  */
 
 export const TEACHER_FREE_DAY_WISH_NOT_KEPT = 'TEACHER_FREE_DAY_WISH_NOT_KEPT' as const;
 
 /** One teacher's wish, as their work rule states it. */
 export interface FreeDayWish {
-  /** The work rule's real id: what the sentence names, as every arbetstid sentence does. */
+  /** The work rule's real id: the row the note is about, and its order among a day's. */
   ruleId: string;
-  /** The teacher, whose lessons are looked for. */
+  /** The teacher, whose lessons are looked for and whom the note is about. */
   userId: string;
   /** ISO weekday. */
   day: number;
@@ -60,19 +69,19 @@ const WEEKDAYS: Record<number, string> = {
  * never says it. The web renders the Swedish from the code and params; this is
  * what a screen falls back to.
  */
-export function freeDayWishMessage(rule: string, day: number): string {
+export function freeDayWishMessage(day: number): string {
   return (
-    `The teacher working-time rule ${rule} wishes ${WEEKDAYS[day] ?? `day ${day}`} free, ` +
-    `and the new timetable gives the teacher lessons that day. A wish is weighed against ` +
-    `the rest of the week and gives way where keeping it would cost more.`
+    `A teacher wishes ${WEEKDAYS[day] ?? `day ${day}`} free, and the new timetable gives them ` +
+    `lessons that day. A wish is weighed against the rest of the week and gives way where ` +
+    `keeping it would cost more.`
   );
 }
 
 /**
  * Every wish the finished timetable breaks, as a conflict-shaped note: the
  * category of a teacher's own time (AVAILABILITY), the work rule as the one
- * resource, nobody named. In weekday order, then by rule, so two reads of one
- * run say it in one order.
+ * resource, the teacher in `subjectIds` and nobody named yet. In weekday
+ * order, then by rule, so two reads of one run say it in one order.
  */
 export function unkeptFreeDayWishes(
   wishes: readonly FreeDayWish[],
@@ -91,12 +100,13 @@ export function unkeptFreeDayWishes(
     .map((wish) => ({
       category: 'AVAILABILITY',
       code: TEACHER_FREE_DAY_WISH_NOT_KEPT,
-      params: { rule: wish.ruleId, day: wish.day },
-      message: freeDayWishMessage(wish.ruleId, wish.day),
+      params: { day: wish.day },
+      message: freeDayWishMessage(wish.day),
       requirementIds: [],
       roomIds: [],
       constraintIds: [],
       resourceIds: [wish.ruleId],
       resourceNames: [],
+      subjectIds: [wish.userId],
     }));
 }

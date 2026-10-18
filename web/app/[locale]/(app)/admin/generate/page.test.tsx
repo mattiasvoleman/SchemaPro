@@ -604,13 +604,16 @@ describe("a refusal the engine named", () => {
  * result, the engine catalogue's sentence, and no category badge.
  */
 describe("wishes a finished run could not keep", () => {
+  // The sentence names the weekday alone; WHOSE wish it was arrives in
+  // resourceNames, named by the gateway at read time for every reader.
   const WISH = {
     category: "AVAILABILITY",
     code: "TEACHER_FREE_DAY_WISH_NOT_KEPT",
-    params: { rule: "w-1", day: 3 },
+    params: { day: 3 },
     message: "The wish could not be kept.",
-    resourceNames: [],
+    resourceNames: ["Eva Ek"],
   };
+  const SENTENCE = "engineMessages.TEACHER_FREE_DAY_WISH_NOT_KEPT(3)";
   const laid = (extra: Record<string, unknown>) => ({
     id: "job-n",
     status: "SUCCEEDED",
@@ -627,11 +630,33 @@ describe("wishes a finished run could not keep", () => {
     render(<GeneratePage />);
 
     const section = screen.getByRole("region", { name: "generate.notesTitle" });
-    expect(within(section).getByText("engineMessages.TEACHER_FREE_DAY_WISH_NOT_KEPT(w-1|3)")).toBeInTheDocument();
+    expect(within(section).getByText(SENTENCE)).toBeInTheDocument();
     expect(within(section).getByText("generate.notesHint")).toBeInTheDocument();
     expect(screen.queryByText("conflictCategories.AVAILABILITY")).toBeNull();
     // Not a conflict: the conflicts' heading stays away from a run that has none.
     expect(screen.queryByText("generate.conflicts")).toBeNull();
+  });
+
+  it("names whose wish it was under the sentence, every name the gateway sent", () => {
+    state.job = laid({ notes: [WISH, { ...WISH, params: { day: 5 }, resourceNames: ["Eva Ek", "Olle Ås"] }] });
+    render(<GeneratePage />);
+
+    expect(screen.getByText(SENTENCE).nextElementSibling).toHaveTextContent(/^Eva Ek$/);
+    expect(screen.getByText("engineMessages.TEACHER_FREE_DAY_WISH_NOT_KEPT(5)").nextElementSibling).toHaveTextContent(
+      /^Eva Ek, Olle Ås$/,
+    );
+  });
+
+  it("draws no name line for a note that names nobody, or a run stored before the names", () => {
+    state.job = laid({ notes: [{ ...WISH, resourceNames: [] }] });
+    const { unmount } = render(<GeneratePage />);
+    expect(screen.getByText(SENTENCE).nextElementSibling).toBeNull();
+    unmount();
+
+    const { resourceNames: _absent, ...stored } = WISH;
+    state.job = laid({ notes: [stored] });
+    render(<GeneratePage />);
+    expect(screen.getByText(SENTENCE).nextElementSibling).toBeNull();
   });
 
   it("falls back to the gateway's English for a wish this build cannot translate", () => {

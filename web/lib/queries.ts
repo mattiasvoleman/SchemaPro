@@ -865,7 +865,11 @@ export interface ConflictDetail {
    */
   code?: string | null;
   params?: Record<string, string | number> | null;
-  /** The school's names for the groups the sentence is about; empty when it names none. */
+  /**
+   * The school's names for the groups the sentence is about; empty when it
+   * names none. On a note (OptimizationJob.notes) the teacher whose wish it
+   * was, named by the gateway at read time.
+   */
   resourceNames?: string[];
 }
 
@@ -890,7 +894,10 @@ export interface OptimizationJob {
    * TEACHER_FREE_DAY_WISH_NOT_KEPT), in the conflicts' shape so the page
    * renders them the same way. Not refusals: the week was laid, and these are
    * what it cost. Absent from a gateway before 20261123090100, which reads as
-   * none.
+   * none. The sentence names only the weekday ({day}); whose wish it was is
+   * the note's resourceNames — the teacher's name, which the gateway resolves
+   * from the Users id it keeps beside the note on the server, for every
+   * reader (a wish is staff-readable, not HR).
    */
   notes?: ConflictDetail[];
   error: string | null;
