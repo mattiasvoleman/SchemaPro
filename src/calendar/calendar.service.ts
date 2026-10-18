@@ -1,3 +1,4 @@
+import { toNioarig } from '../common/grade-numbering';
 import {
   BadRequestException,
   Injectable,
@@ -196,6 +197,7 @@ export class CalendarService {
         id: true,
         startDate: true,
         endDate: true,
+        gradeNumbering: true,
         school: { select: { timezone: true } },
       },
     });
@@ -539,7 +541,9 @@ export class CalendarService {
         ) {
           continue;
         }
-        for (const rast of rastsForSpan(rasts, grade, weekday)) {
+        // Rasts are school-wide and NIOARIG (grade-numbering.ts): the class's
+        // årskurs is read so.
+        for (const rast of rastsForSpan(rasts, toNioarig(grade, year.gradeNumbering ?? 'NIOARIG')!, weekday)) {
           const startsAt = zonedTimeToUtc(date, timeToString(rast.startTime), timezone);
           const endsAt = zonedTimeToUtc(date, timeToString(rast.endTime), timezone);
           pendingCreates.push(() =>
