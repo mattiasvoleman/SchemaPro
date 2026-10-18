@@ -10,6 +10,7 @@ import {
   type PrismaMock,
   type TxMock,
 } from '../../test/utils/prisma-mock';
+import { recordedReads } from '../../test/utils/recorded-reads';
 import type { PrismaService } from '../database/prisma.service';
 import type { NotificationsService } from '../notifications/notifications.service';
 import type { RealtimeService } from '../realtime/realtime.service';
@@ -791,6 +792,112 @@ describe('CalendarLessonsService', () => {
       expect(tx.calendarLessonTeacher.create).toHaveBeenCalledTimes(1);
     });
 
+    /*
+     * Lärarens dag: the daily cap and the post's deltid in days are warnings
+     * a manual pick gets, as the lunch is. The days name their figure only to
+     * a reader with HR-läs, and the post they were read off is recorded when
+     * they fire — and only then.
+     */
+    describe('the daily cap and the deltid in days', () => {
+      const arrangeDay = (maxTeachingDaysPerWeek: number | null) => {
+        arrange([{ teacherId: TEACHER_ID, role: 'LEAD' }]);
+        tx.school.findUnique.mockResolvedValue({ timezone: 'Europe/Stockholm' });
+        // The lesson's year, so the post is read; the behörighet question off.
+        tx.academicYear.findFirst.mockImplementation(answerFirst({ id: 'year-1', isActive: true, predecessorId: null }));
+        tx.staffingPolicy.findUnique.mockResolvedValue({
+          qualificationMode: 'OFF',
+          overAllocationMode: 'OFF',
+          overAllocationTolerancePercent: 10,
+          fullTimeTeachingMinutesPerWeek: null,
+          unstaffedGeneration: 'ALLOW',
+        });
+        // A cap of 30 minutes: the 60-minute cover alone is over it.
+        tx.teacherWorkRule.findMany.mockImplementation(
+          answerRows([
+            {
+              userId: SUB_ID,
+              lunchMinutes: null,
+              lunchStartTime: null,
+              lunchEndTime: null,
+              minDailyRestMinutes: null,
+              maxTeachingMinutesPerDay: 30,
+              preferredFreeDayOfWeek: null,
+            },
+          ]),
+        );
+        tx.teacherEmployment.findMany.mockImplementation(
+          answerRows([
+            {
+              userId: SUB_ID,
+              employmentPercent: 40,
+              reductionPercent: 0,
+              contractKind: 'FERIE',
+              teachingTargetMinutesPerWeek: null,
+              signature: null,
+              maxTeachingDaysPerWeek,
+            },
+          ]),
+        );
+        // The lesson is on Monday 10 August; the substitute teaches that
+        // Tuesday and Wednesday. The day's own read finds nothing.
+        tx.calendarLessonTeacher.findMany.mockImplementation((query: Query) =>
+          answerRows(
+            (query.where?.calendarLesson as Row | undefined)?.status
+              ? [
+                  { teacherId: SUB_ID, calendarLesson: { date: new Date('2026-08-11T00:00:00.000Z') } },
+                  { teacherId: SUB_ID, calendarLesson: { date: new Date('2026-08-12T00:00:00.000Z') } },
+                ]
+              : [],
+          )(query),
+        );
+      };
+
+      it('names the cap and the days to a reader with HR-läs, and records the post the days were read off', async () => {
+        arrangeDay(2);
+
+        const result = await service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID }, testUser());
+
+        expect(result.warnings).toEqual([
+          { code: 'COVER_EXCEEDS_DAILY_CAP', params: { minutes: 30 } },
+          { code: 'COVER_BEYOND_WORK_DAYS', params: { days: 2 } },
+        ]);
+        expect(tx.calendarLessonTeacher.create).toHaveBeenCalledTimes(1);
+        expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: null, ids: [SUB_ID] }]);
+      });
+
+      it('says the days without their figure to a reader without HR-läs, and records the read all the same', async () => {
+        arrangeDay(2);
+
+        const result = await service.assignSubstitute(
+          LESSON_ID,
+          { teacherId: SUB_ID },
+          testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false, channel: 'WEB' }),
+        );
+
+        expect(result.warnings).toEqual([
+          { code: 'COVER_EXCEEDS_DAILY_CAP', params: { minutes: 30 } },
+          { code: 'COVER_BEYOND_WORK_DAYS_HIDDEN', params: {} },
+        ]);
+        expect(JSON.stringify(result)).not.toContain('"days"');
+        expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [SUB_ID] }]);
+      });
+
+      it('a post with room for the day, or with no limit, warns of the cap alone, asks no week and records nothing', async () => {
+        for (const limit of [3, null]) {
+          arrangeDay(limit);
+          tx.$executeRaw.mockClear();
+          tx.calendarLessonTeacher.findMany.mockClear();
+
+          const result = await service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID }, testUser());
+
+          expect(result.warnings).toEqual([{ code: 'COVER_EXCEEDS_DAILY_CAP', params: { minutes: 30 } }]);
+          expect(recordedReads(tx)).toEqual([]);
+          // The day's own read, and the week's only where the post has a limit.
+          expect(tx.calendarLessonTeacher.findMany).toHaveBeenCalledTimes(limit === null ? 1 : 2);
+        }
+      });
+    });
+
     it('enters the publication lock first, then locks the lesson, then the substitute, before any check', async () => {
       arrange([{ teacherId: TEACHER_ID, role: 'LEAD' }]);
       const order: string[] = [];
@@ -852,6 +959,34 @@ describe('CalendarLessonsService', () => {
       await expect(service.suggestSubstitutes(LESSON_ID, testUser())).resolves.toEqual([
         { teacherId: FREE, isPrimary: true, qualificationKind: null },
       ]);
+    });
+
+    it('drops a part-timer whose deltid in days the lesson would break, silently: no reason, no läslogg row', async () => {
+      const FREE = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+      const PART = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+      storeLesson();
+      tx.teacherSubjectQualification.count.mockResolvedValue(0);
+      tx.teachingRequirement.findMany.mockResolvedValue([{ teacherId: FREE, coTeacherId: PART, studentGroupId: GROUP_ID }]);
+      tx.user.findMany.mockResolvedValue([{ id: FREE }, { id: PART }]);
+      tx.calendarLesson.findFirst.mockImplementation(answerFirst(null));
+      tx.school.findUnique.mockResolvedValue({ timezone: 'Europe/Stockholm' });
+      tx.studentGroup.findUnique.mockResolvedValue({ academicYearId: 'year-1' });
+      // One day a week, and that day is Wednesday; the lesson is on Monday.
+      tx.teacherEmployment.findMany.mockResolvedValue([
+        { userId: PART, employmentPercent: 20, reductionPercent: 0, contractKind: 'FERIE', teachingTargetMinutesPerWeek: null, signature: null, maxTeachingDaysPerWeek: 1 },
+      ]);
+      tx.calendarLessonTeacher.findMany.mockImplementation((query: Query) =>
+        Promise.resolve(
+          (query.where?.calendarLesson as Row | undefined)?.status
+            ? [{ teacherId: PART, calendarLesson: { date: new Date('2026-08-12T00:00:00.000Z') } }]
+            : [],
+        ),
+      );
+
+      await expect(service.suggestSubstitutes(LESSON_ID, testUser())).resolves.toEqual([
+        { teacherId: FREE, isPrimary: true, qualificationKind: null },
+      ]);
+      expect(recordedReads(tx)).toEqual([]);
     });
   });
 

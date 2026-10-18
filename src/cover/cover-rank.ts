@@ -42,6 +42,22 @@ import type { Span } from './cover-rules';
  *       list shows.
  *   PREFERS_FREE −10
  *       A PREFERRED_FREE row is a wish, never a filter.
+ *   FREE_DAY_WISH −10
+ *       The work rule's wished free weekday (Lärarens dag), on a date the
+ *       candidate holds no lesson: the cover would turn the day they asked to
+ *       keep free into a working day. As heavy as PREFERS_FREE, the other
+ *       wish, and for the same reason no heavier: a wish orders colleagues
+ *       the rules leave close, and −10 is no larger than the step between two
+ *       behörighet tiers (10 and 15), so among colleagues equally present it
+ *       can bring a legitimerad teacher level with a behörig one, never under.
+ *       It stacks on NOT_ON_SITE, which such a day earns unless a cancelled
+ *       lesson of theirs released them, because the two are different costs:
+ *       being called in is the school's, the lost free day the teacher's. A
+ *       day they already teach on costs no wish; the term is gone once a
+ *       lesson holds it. And nothing here is read off the post's deltid in
+ *       days: a term from it would order the list by a figure the reader
+ *       without HR-läs may not see, as the target once did (Roller i skolan).
+ *       The days are a rule (cover-rules.ts WORK_DAYS) or nothing.
  *
  * Sorted by tier, then score, then fewer covers this week, then id: two
  * loads of the same day agree.
@@ -67,7 +83,8 @@ export type RankReasonCode =
   | 'POOL_PREFERRED'
   | 'POOL'
   | 'POOL_LAST'
-  | 'PREFERS_FREE';
+  | 'PREFERS_FREE'
+  | 'FREE_DAY_WISH';
 
 export interface RankReason {
   code: RankReasonCode;
@@ -95,6 +112,8 @@ export interface RankInput {
   load: { weekMinutes: number; target: number | null; tolerancePercent: number };
   poolPreference: CoverPoolPreference;
   prefersFree: boolean;
+  /** The lesson's date is the weekday their work rule wishes free. */
+  wishesFreeDay?: boolean;
   names: { subject: string; group: string; grades: string | null };
 }
 
@@ -162,6 +181,7 @@ export function rankCandidate(input: RankInput): Ranked {
     else add('POOL', 0);
   }
   if (input.prefersFree) add('PREFERS_FREE', -10);
+  if (input.wishesFreeDay && input.dayLessons.length === 0) add('FREE_DAY_WISH', -10);
 
   return {
     userId: input.userId,

@@ -4,11 +4,14 @@ import {
   hardFindings,
   hasGap,
   isFeasible,
+  maskFindings,
+  maskWarnings,
   prefersFree,
   softWarnings,
   type CoverTarget,
   type PersonDay,
   type PersonLesson,
+  type RuleFinding,
 } from './cover-rules';
 
 const TZ = 'Europe/Stockholm';
@@ -212,6 +215,122 @@ describe('cover rules', () => {
     // The Sunday of the change is 25 hours long.
     const sunday = liftWindow('2026-10-25', clock('00:00'), clock('23:59'), TZ);
     expect((sunday.end - sunday.start) / 3_600_000).toBe(25);
+  });
+
+  describe('the daily cap (Lärarens dag)', () => {
+    it('an exact fit is fine; a minute over is not, and names the cap', () => {
+      // 08:00–10:00 own, 10:00–11:00 the cover: 180 minutes.
+      const person = (cap: number) => day({ dailyCapMinutes: cap, lessons: [lesson('a', '08:00', '10:00')] });
+      expect(codes(person(180))).toEqual([]);
+      expect(hardFindings(person(175), target())).toEqual([{ code: 'DAILY_CAP', params: { minutes: 175 } }]);
+    });
+
+    it('counts two overlapping lessons as their union, as src/common/teacher-day.ts does', () => {
+      // 08:00–09:20 and 09:00–10:00 are 120 minutes together, not 140: with the cover's 60, 180.
+      const person = day({ dailyCapMinutes: 180, lessons: [lesson('a', '08:00', '09:20'), lesson('b', '09:00', '10:00')] });
+      expect(codes(person)).toEqual([]);
+      expect(codes({ ...person, dailyCapMinutes: 179 })).toEqual(['DAILY_CAP']);
+    });
+
+    it('counts the cover’s date only, lessons that hold their time only, and the cover once', () => {
+      const person = day({
+        dailyCapMinutes: 60,
+        lessons: [
+          lesson('tomorrow', '08:00', '12:00', { date: '2026-10-15' }),
+          lesson('off', '08:00', '09:00', { status: 'CANCELLED' }),
+          // Their own row on the covered lesson is the cover's span again.
+          lesson('cover', '10:00', '11:00'),
+        ],
+      });
+      expect(codes(person)).toEqual([]);
+      expect(codes({ ...person, lessons: [lesson('held', '08:00', '09:00', { status: 'COMPLETED' })] })).toEqual(['DAILY_CAP']);
+    });
+
+    it('fires on a day already over the cap: unlike the lunch, every lesson makes it longer', () => {
+      expect(codes(day({ dailyCapMinutes: 60, lessons: [lesson('a', '08:00', '10:00')] }), target('13:00', '14:00'))).toEqual(['DAILY_CAP']);
+    });
+
+    it('counts a pick given earlier in the same proposal', () => {
+      const person = day({ dailyCapMinutes: 120, lessons: [lesson('a', '08:00', '09:00')] });
+      expect(codes(person)).toEqual([]);
+      expect(codes(person, target(), [lesson('earlier', '13:00', '14:00')])).toEqual(['DAILY_CAP']);
+    });
+
+    it('no cap, no rule', () => {
+      expect(codes(day({ lessons: [lesson('a', '00:00', '10:00'), lesson('b', '11:00', '23:00')] }))).toEqual([]);
+    });
+  });
+
+  describe('the deltid in days (Lärarens dag)', () => {
+    // D is Wednesday 14 October; its ISO week runs 12–18 October.
+    const week = (...dates: string[]) => dates.map((d) => `2026-10-${d}`);
+
+    it('a date the person already teaches on costs no day, however many the week holds', () => {
+      expect(codes(day({ maxTeachingDaysPerWeek: 3, weekTeachingDates: week('12', '13', '14', '15') }))).toEqual([]);
+    });
+
+    it('a new date fires once the week would hold more than the post allows, and names the limit', () => {
+      expect(hardFindings(day({ maxTeachingDaysPerWeek: 3, weekTeachingDates: week('12', '13', '15') }), target())).toEqual([
+        { code: 'WORK_DAYS', params: { days: 3 } },
+      ]);
+      expect(codes(day({ maxTeachingDaysPerWeek: 3, weekTeachingDates: week('12', '13') }))).toEqual([]);
+    });
+
+    it('two picks on one new date: each is judged against the stored week, so neither passes for the other', () => {
+      const person = day({ maxTeachingDaysPerWeek: 3, weekTeachingDates: week('12', '13', '15') });
+      // Judged against the stored week and the picks, the second would find
+      // Wednesday taught by the first and pass: a fourth day for a three-day post.
+      expect(codes(person, target('13:00', '14:00'), [lesson('first', '10:00', '11:00')])).toEqual(['WORK_DAYS']);
+      // Two picks on one new date that fits stay one day.
+      const room = day({ maxTeachingDaysPerWeek: 3, weekTeachingDates: week('12', '13') });
+      expect(codes(room, target('13:00', '14:00'), [lesson('first', '10:00', '11:00')])).toEqual([]);
+    });
+
+    it('a pick on another new date of the week is a day too', () => {
+      const person = day({ maxTeachingDaysPerWeek: 2, weekTeachingDates: week('12') });
+      expect(codes(person)).toEqual([]);
+      expect(codes(person, target(), [lesson('thursday', '10:00', '11:00', { date: '2026-10-15' })])).toEqual(['WORK_DAYS']);
+    });
+
+    it('no limit, no rule; no stored week is a week with nothing in it', () => {
+      expect(codes(day({ weekTeachingDates: week('12', '13', '15', '16') }))).toEqual([]);
+      expect(codes(day({ maxTeachingDaysPerWeek: 1 }))).toEqual([]);
+      expect(codes(day({ maxTeachingDaysPerWeek: 1 }), target(), [lesson('thursday', '10:00', '11:00', { date: '2026-10-15' })])).toEqual([
+        'WORK_DAYS',
+      ]);
+    });
+  });
+
+  describe('masking for a reader without HR-läs', () => {
+    const findings: RuleFinding[] = [
+      { code: 'DAILY_CAP', params: { minutes: 240 } },
+      { code: 'WORK_DAYS', params: { days: 3 } },
+      { code: 'LUNCH', params: { minutes: 30 } },
+    ];
+
+    it('the days lose their figure and their code; the cap, which staff read, keeps its minutes', () => {
+      expect(maskFindings(findings, false)).toEqual([
+        { code: 'DAILY_CAP', params: { minutes: 240 } },
+        { code: 'WORK_DAYS_HIDDEN', params: {} },
+        { code: 'LUNCH', params: { minutes: 30 } },
+      ]);
+      expect(maskFindings(findings, true)).toEqual(findings);
+    });
+
+    it('the warnings a manual pick gets: the cap and the days, the days masked the same way', () => {
+      const warnings = softWarnings(findings);
+      expect(warnings).toEqual([
+        { code: 'COVER_EXCEEDS_DAILY_CAP', params: { minutes: 240 } },
+        { code: 'COVER_BEYOND_WORK_DAYS', params: { days: 3 } },
+        { code: 'COVER_BREAKS_LUNCH', params: { minutes: 30 } },
+      ]);
+      expect(maskWarnings(warnings, false)).toEqual([
+        { code: 'COVER_EXCEEDS_DAILY_CAP', params: { minutes: 240 } },
+        { code: 'COVER_BEYOND_WORK_DAYS_HIDDEN', params: {} },
+        { code: 'COVER_BREAKS_LUNCH', params: { minutes: 30 } },
+      ]);
+      expect(maskWarnings(warnings, true)).toEqual(warnings);
+    });
   });
 
   it('a lesson given earlier in the same proposal counts as SCHEDULED', () => {

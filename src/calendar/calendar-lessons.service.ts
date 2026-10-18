@@ -29,7 +29,9 @@ import {
   type RemovedTeacher,
 } from '../cover/cover-decisions';
 import { readPersonDays, schoolTimezone } from '../cover/cover-context';
-import { hardFindings, softWarnings, type CoverWarningCode } from '../cover/cover-rules';
+import { hardFindings, maskWarnings, softWarnings, type CoverWarningCode } from '../cover/cover-rules';
+import { recordRead } from '../access-log/access-log';
+import { readsHr } from '../staffing/hr-visibility';
 import { coverEmail, coverMeta, withdrawnEmail, withdrawnMeta, type NoticeLesson } from '../cover/cover-notices';
 import { scopeOf } from './lesson-roster';
 import { lessonEmail, type LessonNoticeType } from './lesson-notices';
@@ -55,8 +57,9 @@ export interface CoverWarning {
  * A vikarie assigned, with what the staffing policy says about their behörighet
  * for this lesson (STAFF_TEACHER_NOT_QUALIFIED) — a warning even when the policy
  * says REFUSE; see assignSubstitute — and the cover rules the pick breaks
- * (lunch, daily rest, a closure or a booking of theirs, a pool member outside
- * their declared hours), warnings too.
+ * (lunch, daily rest, the daily cap, the post's deltid in days — without its
+ * figure for a reader without HR-läs — a closure or a booking of theirs, a
+ * pool member outside their declared hours), warnings too.
  */
 export interface SubstituteResult extends LessonActionResult {
   warnings: Array<StaffingWarning | CoverWarning>;
@@ -481,7 +484,7 @@ export class CalendarLessonsService {
         )
       : [];
     const timezone = await schoolTimezone(tx, schoolId);
-    warnings.push(...(await this.coverWarnings(tx, lesson, substitute, year?.id ?? null, timezone)));
+    warnings.push(...(await this.coverWarnings(tx, lesson, substitute, year?.id ?? null, timezone, user)));
 
     if (replaces === undefined) {
       await tx.calendarLessonTeacher.deleteMany({ where: { calendarLessonId: id } });
@@ -591,13 +594,21 @@ export class CalendarLessonsService {
     return notices;
   }
 
-  /** The cover rules a manual pick breaks, as warnings (cover-rules.ts softWarnings). */
+  /**
+   * The cover rules a manual pick breaks, as warnings (cover-rules.ts
+   * softWarnings), worded for the reader: the post's deltid in days without
+   * its figure for one without HR-läs (maskWarnings). When the days warning
+   * fires, the substitute's post was read for the answer, masked or not, and
+   * that is recorded (EMPLOYMENT); a pick it does not fire for sends no
+   * statement more than it did.
+   */
   private async coverWarnings(
     tx: PrismaClient,
     lesson: LessonForAction,
     substitute: { id: string; role: string; isActive: boolean },
     academicYearId: string | null,
     timezone: string,
+    user: AuthenticatedUser,
   ): Promise<CoverWarning[]> {
     const date = lesson.date.toISOString().slice(0, 10);
     const read = await readPersonDays(tx, {
@@ -611,15 +622,17 @@ export class CalendarLessonsService {
     });
     const day = read.days.get(substitute.id);
     if (!day) return [];
-    return softWarnings(
-      hardFindings(day, {
-        id: lesson.id,
-        date,
-        start: lesson.startsAt.getTime(),
-        end: lesson.endsAt.getTime(),
-        teacherIds: [],
-      }),
-    );
+    const findings = hardFindings(day, {
+      id: lesson.id,
+      date,
+      start: lesson.startsAt.getTime(),
+      end: lesson.endsAt.getTime(),
+      teacherIds: [],
+    });
+    if (findings.some((finding) => finding.code === 'WORK_DAYS')) {
+      await recordRead(tx, 'EMPLOYMENT', [substitute.id], user.channel);
+    }
+    return maskWarnings(softWarnings(findings), readsHr(user));
   }
 
   /**
@@ -852,10 +865,13 @@ export class CalendarLessonsService {
         free.push(teacher);
       }
       // The cover rules, intersected: a duty slot, a closure, a booking, the
-      // lunch or the rest of a work rule, an absence or an undeclared pool
-      // member drops a teacher this picker used to offer, so every suggestion
-      // is one the board would make too (cover-rules.ts). The year only
-      // decides which uppdrag slots block, read from the class.
+      // lunch, the rest or the daily cap of a work rule, the post's deltid in
+      // days, an absence or an undeclared pool member drops a teacher this
+      // picker used to offer, so every suggestion is one the board would make
+      // too (cover-rules.ts). The year decides which uppdrag slots block and
+      // which posts are read, from the class. Dropped, never named: the list
+      // says no reason, so a post's limit leaves it unrecorded, as an
+      // absence does (src/access-log/access-log.ts).
       const feasible = await this.feasibleOf(tx, lesson, free.map((teacher) => teacher.id));
 
       const suggestions: SubstituteSuggestion[] = [];
