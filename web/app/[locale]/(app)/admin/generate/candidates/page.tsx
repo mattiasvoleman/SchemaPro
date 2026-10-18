@@ -456,7 +456,7 @@ export default function CandidatesPage() {
         tone="warning"
         title={t("stale.title")}
         action={
-          <Button size="sm" onClick={refresh} disabled={start.isPending}>
+          <Button size="sm" data-writes="SCHEMALAGGNING" onClick={refresh} disabled={start.isPending}>
             <RefreshCw aria-hidden="true" className={start.isPending ? "animate-spin" : undefined} />
             {start.isPending ? t("stale.refreshing") : t("stale.refresh")}
           </Button>
@@ -488,7 +488,13 @@ export default function CandidatesPage() {
         <Notice
           title={t("progress.title")}
           action={
-            <Button variant="outline" size="sm" onClick={() => setDiscardOpen(true)} disabled={status === "CANCELLING"}>
+            <Button
+              variant="outline"
+              size="sm"
+              data-writes="SCHEMALAGGNING"
+              onClick={() => setDiscardOpen(true)}
+              disabled={status === "CANCELLING"}
+            >
               {t("progress.cancel")}
             </Button>
           }
@@ -841,7 +847,7 @@ export default function CandidatesPage() {
             />
             {/* While a run works, its own notice offers Avbryt instead. */}
             {(latest || batch) && !active ? (
-              <Button variant="outline" size="sm" onClick={() => setDiscardOpen(true)}>
+              <Button variant="outline" size="sm" data-writes="SCHEMALAGGNING" onClick={() => setDiscardOpen(true)}>
                 {t("discard.button")}
               </Button>
             ) : null}

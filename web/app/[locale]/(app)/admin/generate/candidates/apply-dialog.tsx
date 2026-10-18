@@ -136,6 +136,7 @@ export function ApplyDialog({
               <Button
                 variant="outline"
                 className="border-destructive text-destructive hover:bg-destructive/10 hover:text-destructive"
+                data-writes="SCHEMALAGGNING DRIFT"
                 onClick={onConfirm}
                 disabled={blocked}
               >
@@ -151,7 +152,7 @@ export function ApplyDialog({
               )}
             </>
           ) : (
-            <Button onClick={onConfirm} disabled={blocked}>
+            <Button data-writes="SCHEMALAGGNING DRIFT" onClick={onConfirm} disabled={blocked}>
               {pending ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
               {pending ? t("apply.applying") : t("apply.confirm")}
             </Button>

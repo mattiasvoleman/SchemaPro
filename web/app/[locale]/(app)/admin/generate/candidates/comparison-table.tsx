@@ -237,6 +237,10 @@ export function ComparisonTable({
                 <Button
                   size="sm"
                   variant="outline"
+                  // The apply is SCHEMALAGGNING and DRIFT, as Generera's write
+                  // (the controller's class areas): hidden from a profile
+                  // that lacks either, a läsare among them.
+                  data-writes="SCHEMALAGGNING DRIFT"
                   disabled={applyBlockedBy !== null}
                   aria-describedby={applyBlockedBy ?? undefined}
                   aria-label={t("apply.buttonLabel", { ordinal: candidate.ordinal, label: variantLabel(t, candidate) })}
