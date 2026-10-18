@@ -783,6 +783,21 @@ describe('computeDiff: skolenheter', () => {
     ]);
   });
 
+  it("reads a tioårig register's new åk 1 as a 1–6 unit's 1, never a widening to förskoleklass, also beside an F unit", () => {
+    // Övergångsbestämmelse 5: an approval from åk 1 covers the new åk 1, and
+    // one for förskoleklass alone covers nothing (unitGradeOf, unitSpanIn).
+    const u16 = linkedUnit({ gradeFrom: 1, gradeTo: 6 });
+    const register = roster({ organisations: [org()], people: [at(1), at(7)] });
+    expect(units(autumn2028(register, slice({ units: [u16], years: years2028('TIOARIG') })).changes)).toEqual([]);
+    // The school's own förskoleklass unit, no source's: what overlaps() measures a span against.
+    const fOnly = linkedUnit({ id: OTHER_UNIT, name: 'Ekskolan F', code: '11111111', ss12000Id: null, gradeFrom: 0, gradeTo: 0 });
+    expect(units(autumn2028(register, slice({ units: [fOnly, u16], years: years2028('TIOARIG') })).changes)).toEqual([]);
+    // Not yet a unit: created at 1–6, beside the F unit it does not overlap.
+    expect(units(autumn2028(register, slice({ units: [fOnly], years: years2028('TIOARIG') })).changes)).toEqual([
+      expect.objectContaining({ op: 'CREATE', after: expect.objectContaining({ gradeFrom: 1, gradeTo: 6 }) }),
+    ]);
+  });
+
   it('CREATEs a unit for a tioårig register with its pupils\' årskurser in the nioåriga numbering', () => {
     const result = autumn2028(roster({ organisations: [org()], people: [at(2), at(5), at(7)] }), slice({ units: [], years: years2028('TIOARIG') }));
     expect(units(result.changes)).toEqual([
@@ -844,6 +859,65 @@ describe('computeDiff: skolenheter', () => {
     const before = diff(placing, slice(local)).changes;
     expect(codes(before)).toEqual(['GROUP_UNIT_MISMATCH']);
     expect(diff(placing, slice({ ...local, years: stated })).changes).toEqual(before);
+  });
+
+  it("places the active nioårig läsår's classes in its own numbering, while the register is read through the tioårig läsår containing today", () => {
+    const f6 = linkedUnit({ id: OTHER_UNIT, name: 'Ekskolan F–6', code: '11111111', ss12000Id: OTHER_ORG, gradeFrom: 0, gradeTo: 6 });
+    const u79 = linkedUnit({ name: 'Ekskolan 7–9', gradeFrom: 7, gradeTo: 9 });
+    const klass = (grade: number) => ({
+      id: loc(900 + grade), name: `${grade}A`, kind: 'CLASS' as const, academicYearId: NEXT_YEAR, gradeLevel: grade, ss12000Id: ext(900 + grade),
+      updatedAt: new Date('2028-06-01T00:00:00Z'),
+    });
+    const lastTerm = { startDate: '2027-08-15', endDate: '2028-06-10' };
+    const result = autumn2028(
+      roster({
+        organisations: [org({ displayName: 'Ekskolan 7–9' }), org({ id: OTHER_ORG, displayName: 'Ekskolan F–6', schoolUnitCode: '11111111' })],
+        // Today's tioåriga 8:or and 10:or, and last year's nioåriga 6A and 7A, both at 7–9.
+        people: [at(8), at(10)],
+        groups: [group(ext(906), '6A', 'Klass', [], lastTerm), group(ext(907), '7A', 'Klass', [], lastTerm)],
+      }),
+      slice({ units: [f6, u79], groups: [klass(6), klass(7)], years: years2028('TIOARIG', NEXT_YEAR) }),
+    );
+    // The register is tioårig: 7–9 holds its 8–10.
+    expect(units(result.changes)).toEqual([]);
+    // Last year's 7A is the nioåriga 7, 7–9's as the source has it, not the tioåriga 7 F–6 would hold; its 6A is F–6's.
+    expect(result.changes.filter((c) => c.conflictCode === 'GROUP_UNIT_MISMATCH')).toEqual([
+      expect.objectContaining({ externalId: ext(906), localId: loc(906), after: { name: '6A', gradeLevel: 6, sourceUnit: 'Ekskolan 7–9', localUnit: 'Ekskolan F–6' } }),
+    ]);
+  });
+
+  it('reads the register in the nioårig läsår containing today, though the tioårig läsår after it is already the active one', () => {
+    const u79 = linkedUnit({ gradeFrom: 7, gradeTo: 9 });
+    const register = roster({ organisations: [org()], people: [at(8), at(10)] });
+    const july = computeDiff({ roster: register, local: slice({ units: [u79], years: years2028('TIOARIG') }), today: '2028-07-15', organisationIds: [ORG] });
+    // In 2027/28 the register's 10 is specialskolans tionde: beyond 7–9.
+    expect(units(july.changes)).toEqual([
+      expect.objectContaining({ op: 'UPDATE', before: { unitName: 'Ekskolan', gradeFrom: 7, gradeTo: 9 }, after: { gradeFrom: 7, gradeTo: 10 } }),
+    ]);
+  });
+
+  it("places a tioårig 1A in the 1–6 unit beside an F unit, as övergångsbestämmelse 5 reads an approval from åk 1, and a 7A there too", () => {
+    const f = linkedUnit({ id: OTHER_UNIT, name: 'Ekskolan F', code: '11111111', ss12000Id: OTHER_ORG, gradeFrom: 0, gradeTo: 0 });
+    const u16 = linkedUnit({ name: 'Ekskolan 1–6', gradeFrom: 1, gradeTo: 6 });
+    const klass = (grade: number) => ({
+      id: loc(900 + grade), name: `${grade}A`, kind: 'CLASS' as const, academicYearId: HT2028, gradeLevel: grade, ss12000Id: ext(900 + grade),
+      updatedAt: new Date('2028-09-01T00:00:00Z'),
+    });
+    const term = { startDate: '2028-08-15', endDate: '2029-06-10' };
+    const register = roster({
+      organisations: [org({ displayName: 'Ekskolan 1–6' }), org({ id: OTHER_ORG, displayName: 'Ekskolan F', schoolUnitCode: '11111111' })],
+      groups: [group(ext(901), '1A', 'Klass', [], term), group(ext(907), '7A', 'Klass', [], term)],
+    });
+    const mismatch = (numbering: 'TIOARIG' | null) =>
+      autumn2028(register, slice({ units: [f, u16], groups: [klass(1), klass(7)], years: years2028(numbering) })).changes.filter(
+        (c) => c.conflictCode === 'GROUP_UNIT_MISMATCH',
+      );
+    // The F unit holds nothing in a tioårig läsår: the new åk 1 is not the nioåriga förskoleklass.
+    expect(mismatch('TIOARIG')).toEqual([]);
+    // Nioårig, 7A is in no span: the first unit's, F, in the nioårig order.
+    expect(mismatch(null)).toEqual([
+      expect.objectContaining({ externalId: ext(907), localId: loc(907), after: { name: '7A', gradeLevel: 7, sourceUnit: 'Ekskolan 1–6', localUnit: 'Ekskolan F' } }),
+    ]);
   });
 });
 
