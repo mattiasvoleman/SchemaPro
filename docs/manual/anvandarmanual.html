@@ -55,6 +55,7 @@
       <li><span>5.6 Publicera schemat</span><span class="dots"></span><span class="pg" data-pg="s56"></span></li>
       <li><span>5.7 Utkastläge, giltighet och påfyllning</span><span class="dots"></span><span class="pg" data-pg="s57"></span></li>
       <li><span>5.8 Skriv ut scheman</span><span class="dots"></span><span class="pg" data-pg="s58"></span></li>
+      <li><span>5.9 Schemaförslag</span><span class="dots"></span><span class="pg" data-pg="s59"></span></li>
     </ol>
     <li><span>6 · Fas 4 — Daglig drift</span><span class="dots"></span><span class="pg" data-pg="ch6"></span></li>
     <li><span>7 · Integrationer</span><span class="dots"></span><span class="pg" data-pg="ch7"></span></li>
@@ -2551,6 +2552,11 @@
     genereringen när du har tid att invänta resultatet, förslagsvis en gång och
     därefter med små justeringar.
   </p>
+  <p>
+    Vill du se flera alternativ innan du bestämmer dig, till exempel ett med
+    färre håltimmar för lärarna, tar du fram <span class="ui">Schemaförslag</span>
+    längre ned på samma sida i stället (5.9).
+  </p>
 
   <h3 id="s53"><span class="num">5.3</span>Granska och justera grundschemat</h3>
   <p>
@@ -3075,6 +3081,146 @@
     vårdnadshavaren barnets vecka som familjen ser den, med vikarie och
     lunch. Lärarmanualen och
     manualen för vårdnadshavare beskriver det.
+  </p>
+
+  <h3 id="s59"><span class="num">5.9</span>Schemaförslag</h3>
+  <p>
+    En körning av <span class="ui">Generera schema</span> ger ett schema.
+    Schemaförslag ger två till fyra, vart och ett med sin egen tyngdpunkt, som
+    du jämför sida vid sida innan du väljer. Förslagen är privata tills du
+    tillämpar ett: bara skolans administratörer ser dem, inget publiceras, och
+    utkastet ändras först när du klickar <span class="ui">Tillämpa</span>.
+  </p>
+  <ol>
+    <li>Gå till <span class="path">Schemaläggning › Generera schema</span>.
+      Under rubriken <span class="ui">Schemaförslag</span> väljer du
+      <span class="ui">Antal förslag</span> (2–4, förvalt 3) och klickar
+      <span class="ui">Ta fram förslag</span>. Samma förutsättningar som för
+      Generera schema ska vara uppfyllda, och läsåret behöver ett genererat
+      schema att utgå från.</li>
+    <li>Förslagen tas fram i bakgrunden, ett i taget, och vart och ett får
+      lika lång tid, en halv minut, så att tyngdpunkterna jämförs på lika
+      villkor. Under
+      tiden står <em>Tar fram förslag: 1 av 3 klara</em>, och du kan lämna
+      sidan.</li>
+    <li>Klicka <span class="ui">Jämför förslagen</span>.</li>
+  </ol>
+  <p>
+    Alla förslag utgår från utkastet och från optimeringsprofilen på sidan
+    (5.1), och tyngdpunkten läggs ovanpå profilen:
+  </p>
+  <table>
+    <thead><tr><th style="width:38%">Förslag</th><th>Tyngdpunkt</th></tr></thead>
+    <tbody>
+      <tr><td class="k">1 · Behåll mest</td><td>Samma profil som Generera schema, utan extra tyngdpunkt: så mycket som möjligt ligger kvar.</td></tr>
+      <tr><td class="k">2 · Färre håltimmar för lärarna</td><td>Kompakta lärardagar väger tyngre och schemastabiliteten lättare.</td></tr>
+      <tr><td class="k">3 · Jämnare veckor</td><td>Ämnena sprids jämnare över veckan, och schemastabiliteten väger lättare.</td></tr>
+      <tr><td class="k">4 · Friare placering</td><td>Schemastabiliteten väger inte alls: motorn lägger lektionerna fritt.</td></tr>
+    </tbody>
+  </table>
+  <p>
+    Blir två förslag nästan likadana — mindre än en procent av lektionerna
+    skiljer — står det <em>Samma som förslag 1</em> över det senare.
+    Generera schema och Schemaförslag väntar på varandra: medan förslag tas
+    fram för läsåret går Generera schema inte att starta, och medan en
+    generering pågår går Ta fram förslag inte att starta. Skälet står bredvid
+    knappen. Är nästa läsår rullat men inte aktiverat väljer du läsår överst
+    på sidan, som när du genererar (8.2).
+  </p>
+  <h4>Jämförelsen</h4>
+  <p>
+    Sidan <span class="ui">Schemaförslag</span> visar en tabell. Första
+    kolumnen är grundschemat som det ser ut nu, <em>Nuvarande utkast</em> i
+    utkastläge och <em>Nuvarande schema</em> när skolan publicerar direkt.
+    Sedan kommer ett förslag per kolumn. Under varje värde står skillnaden mot
+    nuvarande med tecken, till exempel <em>+30 min</em>, <em>−12 min</em> eller
+    <em>±0</em>, så att ingenting hänger på färg.
+  </p>
+  <table>
+    <thead><tr><th style="width:30%">Rad</th><th>Vad den säger</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Oplacerat</td><td>Timplansposter som inte får hela sin tid, och hur många minuter i veckan de saknar. Står en gång för alla förslag: de lägger samma lektioner, bara på olika platser.</td></tr>
+      <tr><td class="k">Flyttade lektioner</td><td>Hur många av utkastets genererade lektioner förslaget lägger på en annan dag eller tid, till exempel <em>3 av 14</em>.</td></tr>
+      <tr><td class="k">Salsbyten</td><td>Lektioner som ligger kvar på samma tid men i en annan sal.</td></tr>
+      <tr><td class="k">Lärarnas håltimmar</td><td>Alla lärares håltimmar i minuter en vanlig vecka, hur många lärare som har någon, och den som har flest.</td></tr>
+      <tr><td class="k">Elevernas håltimmar</td><td>Minuter per elev en vanlig vecka, hur många klasser som har någon, och den klass som har flest.</td></tr>
+    </tbody>
+  </table>
+  <p>
+    Håltimmarna räknas som på sidan
+    <span class="path">Schemaläggning › Luckor och håltimmar</span>: en lucka
+    på minst 15 minuter, med lunchen avräknad. En lektion varannan vecka
+    räknas till hälften, och en parkerad lektion räknas inte.
+  </p>
+  <p>
+    Under <span class="ui">Granska ett förslag</span> väljer du ett förslag i
+    taget. <span class="ui">Blir sämre för</span> namnger de lärare vars
+    håltimmar ökar mest. <span class="ui">Flyttade lektioner</span> visar
+    klass, ämne, från och till, och sal. En lektion som bara byter sal står
+    som <em>Samma tid, ny sal</em>. Under <span class="ui">Veckan i</span>
+    och förslagets namn ser du en vecka av förslaget som den skulle se ut,
+    för en klass, en undervisningsgrupp, en lärare eller en sal. Veckan för en
+    klass har också lektionerna i de undervisningsgrupper som klassens elever
+    går i, som när du filtrerar schemat på klassen. Det är den här veckan som
+    visas, och före läsåret dess första vecka. Dagar före läsårets första dag
+    är tomma, och börjar läsåret mitt i veckan kan du också välja veckan
+    efter. Har förslaget lektioner varannan vecka väljer du udda eller jämn
+    vecka.
+  </p>
+  <h4>Tillämpa ett förslag</h4>
+  <p>
+    Klicka <span class="ui">Tillämpa</span> under förslaget. Utkastets
+    genererade lektioner ersätts med förslagets, på samma sätt som när du
+    genererar. Låsta och handlagda lektioner står kvar. Innan något skrivs
+    sparas en version, till exempel <em>Före schemaförslag 2 – Färre
+    håltimmar för lärarna</em>, så du kan gå tillbaka under
+    <span class="ui">Versioner</span> (5.5). Meddelandet efteråt namnger
+    versionen och länkar till schemat.
+  </p>
+  <div class="warn">
+    <span class="label">När skolan publicerar direkt</span>
+    <p>
+      I direkt publicering når förslaget också kalendern. De kommande
+      lektioner det ersätter tas bort ur kalendern och kommer tillbaka först
+      vid nästa publicering, och vikarier som tilldelats dem försvinner med
+      dem. Dialogen säger hur många lektioner och vikarietilldelningar det
+      gäller, och föreslår i första hand <span class="ui">Byt till
+      utkastläge först</span>, som tar dig till Publicering (5.7): i
+      utkastläge ändras bara utkastet, och kalendern först när du
+      publicerar. <span class="ui">Tillämpa direkt</span> skriver med en gång,
+      och meddelandet efteråt länkar också till Publicering. Har skolan bytt
+      publiceringsläge medan dialogen var öppen nekas tillämpningen, och du
+      öppnar den igen för att läsa vad som gäller nu.
+    </p>
+  </div>
+  <div class="note">
+    <span class="label">När grundschemat har ändrats sedan förslagen togs fram</span>
+    <p>
+      Förslagen gäller grundschemat som det såg ut när de togs fram. Har någon
+      sedan dess ändrat timplanen, de låsta eller handlagda lektionerna,
+      utkastets lektioner, salarna, skolans regler eller klasserna och
+      grupperna, säger sidan vad som ändrats och
+      <span class="ui">Tillämpa</span> går inte att klicka. Klicka
+      <span class="ui">Uppdatera förslagen</span>: samma förslag räknas om
+      utifrån dagens grundschema och kommer tillbaka så lika de gamla som
+      möjligt. Detsamma gäller när ett av förslagen har tillämpats, eftersom
+      de andra då jämförs mot ett schema de inte togs fram från. Återställer du
+      en version med samma innehåll som förslagen utgick från, går de att
+      tillämpa igen.
+    </p>
+  </div>
+  <p>
+    Förslag sparas i 7 dagar. Nya förslag ersätter läsårets äldre så snart
+    de är klara; misslyckas de står de äldre kvar.
+    <span class="ui">Ta bort förslagen</span> tar bort läsårets förslag.
+    <span class="ui">Avbryt</span> stoppar förslag som håller på att tas fram,
+    och tar bort läsårets tidigare förslag också. Utkastet och grundschemat
+    ändras inte av någotdera. Får det första
+    förslaget inget giltigt schema avbryts resten, eftersom alla förslag har
+    samma hårda villkor, och sidan visar det som stoppade det, som efter en
+    generering (5.2 och kapitel 9). Hinner det första förslaget inte bli
+    klart inom tiden avbryts resten också, och sidan säger det, med det
+    motorn fann när den prövade att lätta på en regel i taget.
   </p>
 </section>
 
@@ -4929,6 +5075,16 @@
         <td class="k">Knappen Generera schema går inte att klicka</td>
         <td>En förutsättning saknas.</td>
         <td>Läs rutan <span class="ui">Förutsättningar</span> — den visar vilken som inte är uppfylld.</td>
+      </tr>
+      <tr>
+        <td class="k">Generera schema eller Ta fram förslag går inte att klicka, och det står att den andra körs</td>
+        <td>Schemaförslag tas fram för läsåret, eller en generering pågår. Båda ersätter utkastets genererade lektioner, så de väntar på varandra.</td>
+        <td>Vänta tills körningen är klar, eller avbryt förslagen på sidan Schemaförslag (5.9).</td>
+      </tr>
+      <tr>
+        <td class="k">Tillämpa på ett schemaförslag går inte att klicka</td>
+        <td>Grundschemat har ändrats sedan förslagen togs fram, eller nya förslag tas fram just nu.</td>
+        <td>Klicka <span class="ui">Uppdatera förslagen</span>, eller vänta tills de nya förslagen är klara (5.9).</td>
       </tr>
       <tr>
         <td class="k">Knappen är avstängd och det står att timplansposter saknar lärare</td>
