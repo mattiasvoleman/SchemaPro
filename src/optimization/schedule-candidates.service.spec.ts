@@ -492,6 +492,41 @@ describe('ScheduleCandidatesService', () => {
       expect(timedOut.data).not.toHaveProperty('engineBusyUntil');
     });
 
+    it('keeps the deadline of a run cancelled while its call was out when that call times out, and clears it when the engine answered', async () => {
+      // A DELETE (or an apply) sets the run CANCELLING while the call is out;
+      // the engine's own 503 then comes back. The run ends CANCELLED, still
+      // counted: the solve thread the 503 left behind runs on.
+      const cancelledThen = (error: HttpException) =>
+        proxy.solveCandidate.mockImplementationOnce(async () => {
+          run.status = 'CANCELLING';
+          throw error;
+        });
+      cancelledThen(new HttpException({ message: 'The AI engine returned an error.' }, 503));
+      await startAndRun(dto({ count: 2 }));
+      const cancelled = tx.scheduleCandidateRun.updateMany.mock.calls.at(-1)![0] as { where: Record<string, unknown>; data: Record<string, unknown> };
+      expect(cancelled.where).toEqual({ id: RUN, status: 'CANCELLING' });
+      expect(cancelled.data).toMatchObject({ status: 'FAILED', errorCode: CANDIDATE_RUN_CANCELLED });
+      expect(cancelled.data).not.toHaveProperty('engineBusyUntil');
+      expect(run.status).toBe('FAILED');
+
+      // The gateway's own timeout: the same.
+      run = { status: 'PENDING', progress: 0, basis: null, basisParts: null };
+      cancelledThen(new ServiceUnavailableException('The AI engine did not respond in time.'));
+      await startAndRun(dto({ count: 2 }));
+      expect((tx.scheduleCandidateRun.updateMany.mock.calls.at(-1)![0] as { data: Record<string, unknown> }).data).not.toHaveProperty('engineBusyUntil');
+
+      // An engine that answered, or was never reached, solves nothing on.
+      for (const answered of [new HttpException('The AI engine returned an error.', 500), new ServiceUnavailableException('The AI engine could not be reached.')]) {
+        run = { status: 'PENDING', progress: 0, basis: null, basisParts: null };
+        cancelledThen(answered);
+        await startAndRun(dto({ count: 2 }));
+        expect(tx.scheduleCandidateRun.updateMany).toHaveBeenLastCalledWith({
+          where: { id: RUN, status: 'CANCELLING' },
+          data: expect.objectContaining({ status: 'FAILED', errorCode: CANDIDATE_RUN_CANCELLED, engineBusyUntil: null }),
+        });
+      }
+    });
+
     it('bumps the heartbeat by compare-and-set before the fetch and before every call, and only while PENDING or RUNNING', async () => {
       await startAndRun(dto({ count: 2 }));
       const cas = steps.filter((step) => step.startsWith('x:UPDATE "ScheduleCandidateRuns" SET "status" = \'RUNNING\''));
@@ -875,8 +910,10 @@ describe('ScheduleCandidatesService', () => {
       const overview = await service.overview(YEAR, user, NOW);
       expect(overview.latest!.run).toMatchObject({ id: 'new', status: 'RUNNING', progress: 1 });
       expect(overview.batch!.run.id).toBe(RUN);
+      // Neither question finds a run a discard removed.
+      expect(tx.scheduleCandidateRun.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { academicYearId: YEAR, discardedAt: null } }));
       expect(tx.scheduleCandidateRun.findFirst).toHaveBeenLastCalledWith(
-        expect.objectContaining({ where: { academicYearId: YEAR, status: 'SUCCEEDED' } }),
+        expect.objectContaining({ where: { academicYearId: YEAR, status: 'SUCCEEDED', discardedAt: null } }),
       );
 
       tx.scheduleCandidateRun.findFirst.mockResolvedValue(null);
@@ -975,9 +1012,12 @@ describe('ScheduleCandidatesService', () => {
       expect(tx.calendarLessonTeacher.count).toHaveBeenCalledWith({ where: { role: 'SUBSTITUTE', calendarLesson: { is: where } } });
     });
 
-    it('404 CANDIDATE_GONE for a run that is not there', async () => {
+    it('404 CANDIDATE_GONE for a run that is not there, or that a discard removed', async () => {
       tx.scheduleCandidateRun.findUnique.mockResolvedValue(null);
       await expect(service.check(RUN, user)).rejects.toMatchObject({ status: 404, response: expect.objectContaining({ code: CANDIDATE_GONE }) });
+      tx.scheduleCandidateRun.findUnique.mockResolvedValue({ academicYearId: YEAR, basis: BASIS, basisParts: PARTS, discardedAt: new Date() });
+      await expect(service.check(RUN, user)).rejects.toMatchObject({ status: 404, response: expect.objectContaining({ code: CANDIDATE_GONE }) });
+      expect(proxy.prepareSchedule).not.toHaveBeenCalled();
     });
   });
 
@@ -1173,6 +1213,40 @@ describe('ScheduleCandidatesService', () => {
         where: { academicYearId: YEAR, status: { in: ['SUCCEEDED', 'FAILED'] }, OR: [{ engineBusyUntil: null }, { engineBusyUntil: { lte: expect.any(Date) } }] },
       });
       expect(run.status).toBe('CANCELLING');
+      // No run with a call out: nothing is marked.
+      expect(tx.scheduleCandidate.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('empties and hides a finished run whose engine call can still be solving, instead of deleting its place under the cap', async () => {
+      tx.scheduleCandidateRun.findMany.mockResolvedValueOnce([{ id: 'interrupted' }]);
+      await service.discard(YEAR, user);
+      const deleted = tx.scheduleCandidateRun.deleteMany.mock.calls[0][0] as { where: { OR: Array<{ engineBusyUntil: unknown }> } };
+      const asked = tx.scheduleCandidateRun.findMany.mock.calls[0][0] as { where: { engineBusyUntil: { gt: Date } } };
+      expect(asked).toEqual({ where: { academicYearId: YEAR, status: { in: ['SUCCEEDED', 'FAILED'] }, engineBusyUntil: { gt: expect.any(Date) } }, select: { id: true } });
+      // One clock for the rows deleted and the rows kept: each run is in exactly one.
+      expect(deleted.where.OR[1]).toEqual({ engineBusyUntil: { lte: asked.where.engineBusyUntil.gt } });
+      expect(tx.scheduleCandidate.deleteMany).toHaveBeenCalledWith({ where: { runId: { in: ['interrupted'] } } });
+      expect(tx.scheduleCandidateRun.updateMany).toHaveBeenLastCalledWith({
+        where: { id: { in: ['interrupted'] }, discardedAt: null },
+        data: { discardedAt: asked.where.engineBusyUntil.gt },
+      });
+    });
+
+    it('a new batch hides the year\'s older runs whose call is still out the same way', async () => {
+      tx.scheduleCandidateRun.findMany.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
+        where['engineBusyUntil'] ? [{ id: 'timed-out' }] : [],
+      );
+      await startAndRun(dto({ count: 2 }));
+      expect(run.status).toBe('SUCCEEDED');
+      expect(tx.scheduleCandidateRun.findMany).toHaveBeenCalledWith({
+        where: { academicYearId: YEAR, id: { not: RUN }, status: { in: ['SUCCEEDED', 'FAILED'] }, engineBusyUntil: { gt: expect.any(Date) } },
+        select: { id: true },
+      });
+      expect(tx.scheduleCandidate.deleteMany).toHaveBeenCalledWith({ where: { runId: { in: ['timed-out'] } } });
+      expect(tx.scheduleCandidateRun.updateMany).toHaveBeenCalledWith({
+        where: { id: { in: ['timed-out'] }, discardedAt: null },
+        data: { discardedAt: expect.any(Date) },
+      });
     });
   });
 });
