@@ -12,6 +12,14 @@ export interface GatewayContext {
   params: Record<string, string>;
   query: URLSearchParams;
   body: unknown;
+  /**
+   * A state the one world does not hold, asked for by name in the
+   * x-stub-scenario header (e2e/signed-in.ts askForScenario): a run still
+   * working, a batch the draft has moved away from. A handler that knows the
+   * name answers that state; every other ignores it. Only the browser sends
+   * it, so it is for requests the browser makes.
+   */
+  scenario: string | null;
 }
 
 export class Reply {

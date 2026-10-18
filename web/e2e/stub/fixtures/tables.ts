@@ -68,8 +68,11 @@ export const tables: Tables = {
   Rooms: withSchool(ROOM_LIST),
   TeachingRequirements: withSchool(REQUIREMENTS),
   TeachingBlocks: withSchool(BLOCKS),
+  // Every lesson is the solver's (isGenerated): the job that laid today's
+  // grundschema wrote them all (misc-school.ts), so the locked Monday
+  // Swedish is the one a regeneration or a Schemaförslag keeps (candidates.ts).
   MasterLessons: withSchool(
-    MASTER_LESSONS.map(({ extraGroupIds: _groups, studentIds: _students, ...lesson }) => lesson),
+    MASTER_LESSONS.map(({ extraGroupIds: _groups, studentIds: _students, ...lesson }) => ({ ...lesson, isGenerated: true })),
   ),
   MasterLessonGroups: MASTER_LESSONS.flatMap((lesson) =>
     lesson.extraGroupIds.map((studentGroupId) => ({ masterLessonId: lesson.id, studentGroupId })),

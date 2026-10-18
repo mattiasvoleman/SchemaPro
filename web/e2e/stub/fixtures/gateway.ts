@@ -1,4 +1,5 @@
 import { route, type GatewayRoute } from "../gateway-routes";
+import { candidateRoutes } from "./gateway-candidates";
 import { coverRoutes } from "./gateway-cover";
 import { familyRoutes } from "./gateway-family";
 import { leaveRoutes } from "./gateway-leave";
@@ -28,6 +29,7 @@ export const ROUTE_FILES: Array<{ file: string; routes: GatewayRoute[] }> = [
   { file: "gateway-reads.ts", routes: readRoutes },
   { file: "gateway-leave.ts", routes: leaveRoutes },
   { file: "gateway-roles.ts", routes: roleRoutes },
+  { file: "gateway-candidates.ts", routes: candidateRoutes },
 ];
 
 export const gatewayRoutes: GatewayRoute[] = ROUTE_FILES.flatMap((entry) => entry.routes);
