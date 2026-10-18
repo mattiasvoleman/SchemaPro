@@ -89,6 +89,33 @@ describe("buildGradeSpans", () => {
 
     expect(result.has("kör")).toBe(false);
   });
+
+  it("reads a tioårig läsår's spans in NIOARIG, both ends, and a nioårig one as it is", () => {
+    // Frames, raster, lunch and weekly year rules are stated in NIOARIG for
+    // good: a tioårig 10A is the 9 a "7–9" frame binds, and a språkval across
+    // 8A and 10A is the 7–9 the solver payload sends.
+    const input = {
+      groups: [
+        { id: "10a", gradeLevel: 10 },
+        { id: "8a", gradeLevel: 8 },
+        { id: "sp1", gradeLevel: null },
+      ],
+      membersByGroup: new Map([["sp1", ["s1", "s2"]]]),
+      homeClassOf: new Map<string, string | null>([
+        ["s1", "8a"],
+        ["s2", "10a"],
+      ]),
+    };
+
+    const tioarig = buildGradeSpans({ ...input, numbering: "TIOARIG" });
+    expect([tioarig.get("10a"), tioarig.get("8a"), tioarig.get("sp1")]).toEqual([
+      { min: 9, max: 9 },
+      { min: 7, max: 7 },
+      { min: 7, max: 9 },
+    ]);
+    expect(buildGradeSpans({ ...input, numbering: "NIOARIG" })).toEqual(buildGradeSpans(input));
+    expect(buildGradeSpans(input).get("sp1")).toEqual({ min: 8, max: 10 });
+  });
 });
 
 describe("spanMeetsRule", () => {

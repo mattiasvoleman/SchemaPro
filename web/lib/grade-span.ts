@@ -20,6 +20,8 @@
  * the part that decides what happens to a group with no members yet.
  */
 
+import type { GradeNumbering } from "@/lib/grade-numbering";
+
 export interface GradeSpan {
   min: number;
   max: number;
@@ -32,6 +34,27 @@ export interface GradeSpanInput {
   membersByGroup: Map<string, readonly string[]>;
   /** studentId → their home class, which is where a year actually lives. */
   homeClassOf: Map<string, string | null>;
+  /**
+   * The läsår's numbering, for a page that compares the spans with frames,
+   * lunch, raster or weekly year rules: those are stated in NIOARIG for good
+   * (grade-numbering.ts), so a TIOARIG läsår's spans are read so (10A as the
+   * 9 a "7–9" frame binds), as the solver payload sends them. A page that
+   * compares them with the year's own rows (lov) leaves it out.
+   */
+  numbering?: GradeNumbering;
+}
+
+/** A TIOARIG årskurs in NIOARIG: one lower, 12 staying "and above", no TIOARIG 0. */
+const nioarig = (grade: number) => (grade >= 12 ? 12 : grade > 0 ? grade - 1 : 0);
+
+/**
+ * A span of a läsår of `numbering`, in NIOARIG: the gateway's toNioarigSpan
+ * (src/common/grade-numbering.ts), replayed from the shared fixture by
+ * grade-numbering.contract.test.ts. Here and not in lib/grade-numbering.ts,
+ * which every importer bundles whole, beside the spans it reads.
+ */
+export function toNioarigSpan(span: GradeSpan | null, numbering: GradeNumbering): GradeSpan | null {
+  return span === null || numbering === "NIOARIG" ? span : { min: nioarig(span.min), max: nioarig(span.max) };
 }
 
 /**
@@ -53,6 +76,7 @@ export function buildGradeSpans({
   groups,
   membersByGroup,
   homeClassOf,
+  numbering = "NIOARIG",
 }: GradeSpanInput): Map<string, GradeSpan> {
   const ownGrade = new Map(groups.map((group) => [group.id, group.gradeLevel]));
   const spans = new Map<string, GradeSpan>();
@@ -68,7 +92,7 @@ export function buildGradeSpans({
       grades.push(group.gradeLevel);
     }
     if (grades.length > 0) {
-      spans.set(group.id, { min: Math.min(...grades), max: Math.max(...grades) });
+      spans.set(group.id, toNioarigSpan({ min: Math.min(...grades), max: Math.max(...grades) }, numbering)!);
     }
   }
 

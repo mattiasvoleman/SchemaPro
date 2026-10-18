@@ -64,8 +64,8 @@ export function qualificationCovers(
   if (!qualificationValidInYear(qualification, year)) return false;
   const span = requirement.gradeSpan;
   if (span === null) return true;
-  // toNioarig, not lib/nioarig-span: the requirements route bundles this
-  // module already (timplan-planned) and sits at its budget.
+  // toNioarig rather than grade-span's toNioarigSpan: the requirements route
+  // bundles grade-numbering already (timplan-planned) and sits at its budget.
   const numbering = year.gradeNumbering ?? "NIOARIG";
   return (
     qualification.minGradeLevel <= toNioarig(span.min, numbering)! &&
