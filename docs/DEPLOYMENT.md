@@ -50,9 +50,10 @@ verification (step 9).
   wiring.
 - A host for the web app (Vercel is the path of least resistance).
 - Node.js 20+, Docker, and the Supabase dashboard open.
-- For the mobile app only: an Expo organisation, Apple Developer Program and
-  Google Play Console memberships as an organisation, and a Firebase
-  project. Apple and Google verify the organisation and want its D-U-N-S
+- For the mobile apps only (Rastra and Rastra vårdnadshavare, §12): an Expo
+  organisation, Apple Developer Program and Google Play Console memberships
+  as an organisation, and a Firebase project, one of each for both apps.
+  Apple and Google verify the organisation and want its D-U-N-S
   number, which takes days to weeks, so start them on day one (§12.1).
   Nothing else in this runbook waits for them, and the half day above does
   not count them.
@@ -83,10 +84,12 @@ All in the Supabase dashboard:
    - Site URL: your web origin, e.g. `https://app.yourschool.example`
    - Redirect URLs: add `https://app.yourschool.example/**` (the invite and
      password-reset flows land on `/<locale>/update-password`, and "Logga in
-     med skolkonto" on `/<locale>/auth/callback`), and the app's
-     `schemapro://auth/callback` (its production and preview builds, §11).
+     med skolkonto" on `/<locale>/auth/callback`), and Rastra's
+     `rastra://auth/callback` (its production and preview builds, §11).
      A project that development builds sign in to also gets
-     `schemapro-dev://auth/callback` (§12)
+     `rastra-dev://auth/callback` (§12). Rastra vårdnadshavare needs none:
+     guardians sign in with a password, and that app offers no school
+     account (§11.5)
 3. **Email templates** (Authentication → Emails): review the *Invite user* and
    *Reset password* templates; the defaults work. For real deliverability,
    configure custom SMTP (Authentication → SMTP) — Supabase's built-in sender
@@ -303,43 +306,53 @@ account."*
 
 ## 8. Mobile app
 
-The app is distributed as a build, not deployed. Its code and settings are
-compiled into each build, so it does not change when the API or the web
-redeploys, and a change to it reaches nobody until a new build is installed
-(§12.9). Builds run on EAS or with `eas build --local` on a Mac, never on
-GitHub Actions: CI typechecks, tests and bundles the app and builds nothing.
-§12 covers the accounts, the credentials, internal builds, push on a device
-and the stores' internal tracks.
+`mobile/` builds two apps: **Rastra**, for staff and pupils, and **Rastra
+vårdnadshavare**, for guardians (§12). They are distributed as builds, not
+deployed. Their code and settings are compiled into each build, so a build
+does not change when the API or the web redeploys, and a change to the app
+reaches nobody until a new build is installed (§12.9). Builds run on EAS or
+with `eas build --local` on a Mac, never on GitHub Actions: CI typechecks,
+tests and bundles the app and builds nothing. §12 covers the accounts, the
+credentials, internal builds, push on a device and the stores' internal
+tracks.
 
-The app reads these when it is built: a developer's `npm start` from
+Both apps read these when they are built: a developer's `npm start` from
 `mobile/.env.local`, a preview or production build from the EAS environment
-of its profile (§12.2).
+of its profile (§12.2). The two apps share those environments, so they talk
+to the same API and the same Supabase project.
 
 | Variable | Value | Unset |
 | --- | --- | --- |
 | `EXPO_PUBLIC_API_BASE_URL` | the API origin, `https://`; plain `http://` only to localhost, in a development build | nothing loads; a preview or production build on EAS stops before it builds |
 | `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | from step 1 | no sign-in; a preview or production build on EAS stops before it builds |
 | `EXPO_PUBLIC_WS_BASE_URL` | the API origin, `wss://` | no live schedule updates; the schedule still loads |
-| `EXPO_PUBLIC_SCHOOL_ACCOUNTS` | `on` | no *Logga in med skolkonto* in the app (§11.1) |
+| `EXPO_PUBLIC_SCHOOL_ACCOUNTS` | `on` | no *Logga in med skolkonto* in Rastra (§11.1). Rastra vårdnadshavare never offers it, whatever the value |
 
-Push needs no value here: the EAS project's id is in `app.json` (§12.2), and
-an Android build's `google-services.json` comes from EAS (§12.3).
+Push needs no value here: the EAS project's id, one for both apps, is in
+`app.json` (§12.2), and an Android build's `google-services.json` comes from
+EAS (§12.3).
 
-Local development runs in the app's own development build (SchemaPro Dev),
-not in Expo Go, which cannot run it: the app refuses to open its database
-without SQLCipher, and push needs the app's own native build.
+Local development runs in each app's own development build (Rastra Dev,
+Rastra vårdnadshavare Dev), not in Expo Go, which cannot run them: the app
+refuses to open its database without SQLCipher, and push needs the app's
+own native build.
 
 ```bash
 cd mobile
-npm ci                       # with npm 11, as CI; mobile/.npmrc sets legacy-peer-deps
-cp .env.example .env.local   # or: eas env:pull --environment development
-npm start                    # APP_VARIANT=development expo start
+npm ci                        # with npm 11, as CI; mobile/.npmrc sets legacy-peer-deps
+cp .env.example .env.local    # or: eas env:pull --environment development
+npm start                     # Rastra Dev: APP=rastra APP_VARIANT=development expo start
+npm run start:vardnadshavare  # Rastra vårdnadshavare Dev
 ```
 
-The lockfile is npm 11's, which CI pins (`npm install -g npm@11`); an npm of
-another major may rewrite it or refuse it. The development build itself comes
-from `eas build --profile development` (§12.5), or from `npm run ios` /
-`npm run android` on a Mac with Xcode or the Android SDK.
+A development build takes its app config from the server it loads from, so
+Rastra vårdnadshavare Dev is served by `npm run start:vardnadshavare` only
+(§12.2 item 5). The lockfile is npm 11's, which CI pins (`npm install -g
+npm@11`); an npm of another major may rewrite it or refuse it. The
+development builds themselves come from `eas build --profile
+rastra-development` and `--profile vardnadshavare-development` (§12.5), or
+from `npm run ios` / `npm run android` and `npm run ios:vardnadshavare` /
+`npm run android:vardnadshavare` on a Mac with Xcode or the Android SDK.
 
 ### 8.1 Turning push on
 
@@ -354,17 +367,19 @@ production changes before the last step.
    (no name, no subject, group or room, no free text; see
    `src/notifications/push-messages.ts`), but a device token and the fact
    of a notice are still personal data.
-2. **An EAS project and push credentials** (§12.2, §12.3): the project's id
-   in `app.json`; for Android, `google-services.json` as an EAS file
-   variable and the FCM V1 service-account key; for iOS, an APNs key (a
-   paid Apple Developer membership, §12.1).
-3. **A build made after step 2, tried and distributed** (§12.4 to §12.8).
-   The id, `google-services.json` and the iOS push entitlement go into the
-   binary when it is built, so only such a build can register: one without
-   the id reports push as unavailable and registers nothing, and one without
-   `google-services.json` gets no token on Android. Try push end to end on a
-   test stack first (§12.6), and have the build on people's phones before
-   step 4.
+2. **One EAS project for both apps, and push credentials for each of their
+   four application ids** (§12.2, §12.3): the project's id in `app.json`;
+   for Android, one `google-services.json` naming all four packages as an
+   EAS file variable, and the FCM V1 service-account key assigned to each
+   package; for iOS, an APNs key assigned to each bundle id (a paid Apple
+   Developer membership, §12.1).
+3. **Builds of both apps made after step 2, tried and distributed** (§12.4
+   to §12.8). The id, `google-services.json` and the iOS push entitlement go
+   into the binary when it is built, so only such a build can register: one
+   without the id reports push as unavailable and registers nothing, and one
+   without `google-services.json` gets no token on Android. Try push end to
+   end in both apps on a test stack first (§12.6), and have the builds on
+   people's phones before step 4.
 4. **The API**: `PUSH_NOTIFICATIONS=expo` (plus `EXPO_ACCESS_TOKEN` if enhanced
    push security is on). The receipt checker starts with it: every five
    minutes, in-process, safe across instances (each ticket is claimed with
@@ -399,7 +414,7 @@ Walk the full product loop once, in order:
 7. **Publish** (`/admin/timetable`): review per group/teacher, publish, and
    confirm `CalendarLessons` appear for the term.
 8. **Teacher flow**: sign in as the teacher (web): weekly schedule shows;
-   record attendance for today's lesson. On mobile, with an internal build
+   record attendance for today's lesson. In Rastra, with an internal build
    whose EAS environment points at this deployment (§12.4, §12.5): sign in,
    open the schedule tab, take attendance in airplane mode, re-enable
    network and confirm the queue syncs (banner returns to *Connected*,
@@ -718,7 +733,8 @@ Walk the full product loop once, in order:
 ## 11. School-account sign-in ("Logga in med skolkonto")
 
 Staff sign in with the account they already have in their organisation's
-Microsoft Entra ID or Google Workspace, on the web and in the app. Supabase
+Microsoft Entra ID or Google Workspace, on the web and in Rastra (Rastra
+vårdnadshavare offers no school account, §11.5). Supabase
 Auth runs the OAuth flow and links the school account to the **invited**
 person by verified e-mail address. Public signups stay off (§1, step 4), so
 an address nobody invited gets no account: the invitation is still the gate.
@@ -814,7 +830,7 @@ person sees changes before the operator turns them on.
 |---|---|---|
 | `SCHOOL_ACCOUNTS=on` | API | Lets a school save its row on /admin/integrations → Inloggning. Off, the tab says "Inte påslaget än" and saves nothing (409 `SIGN_IN_NOT_AVAILABLE`); removing a row always works. |
 | `NEXT_PUBLIC_SCHOOL_ACCOUNTS=on` | web (build time) | Shows *Logga in med skolkonto* on /login. |
-| `EXPO_PUBLIC_SCHOOL_ACCOUNTS=on` | app (build time, in the build's EAS environment, §12.2) | Shows the button in the app. |
+| `EXPO_PUBLIC_SCHOOL_ACCOUNTS=on` | app (build time, in the build's EAS environment, §12.2) | Shows the button in Rastra. Rastra vårdnadshavare never shows it. |
 
 1. Run the migration (§2) **before** the code that uses it is deployed: the
    gateway's `/api/v1/sign-in-method` and `/public/v1/sign-in-methods/:domain`
@@ -848,7 +864,7 @@ person sees changes before the operator turns them on.
    redirect URLs (11.5). With the providers on and the hook off, anyone
    invited could sign in with any matching school account and nothing would
    be pinned: **never enable a provider without the hook.**
-4. Make a new build of the app with `EXPO_PUBLIC_SCHOOL_ACCOUNTS=on` in the
+4. Make a new build of Rastra with `EXPO_PUBLIC_SCHOOL_ACCOUNTS=on` in the
    EAS environment it is built from (§12.2), distribute it (§12.7, §12.8)
    and wait until staff have updated. **Only then** go on: once the next
    step lets schools save, an admin can turn on *Kräv skolkonto för
@@ -915,10 +931,11 @@ instead of letting it wait.
 
 In the Microsoft Entra admin center of the tenant that owns Rastra's app:
 
-1. App registrations → New registration. Supported account types: *Accounts
-   in any organizational directory (Any Microsoft Entra ID tenant —
-   Multitenant)*, without personal Microsoft accounts. Redirect URI (Web):
-   `https://<project-ref>.supabase.co/auth/v1/callback`.
+1. App registrations → New registration. Name: **Rastra**, the name a
+   kommun's IT department and its staff see when they consent. Supported
+   account types: *Accounts in any organizational directory (Any Microsoft
+   Entra ID tenant — Multitenant)*, without personal Microsoft accounts.
+   Redirect URI (Web): `https://<project-ref>.supabase.co/auth/v1/callback`.
 2. Certificates & secrets → New client secret. Note its expiry date and put a
    reminder in the calendar: an expired secret stops every school-account
    sign-in. The secret goes into the Supabase dashboard and nowhere else (not
@@ -978,9 +995,11 @@ For each kommun (or school) that wants it:
 1. Google Cloud console → Google Auth Platform → Clients → Create client →
    *Web application*. Authorized JavaScript origins: the web origin.
    Authorized redirect URI: `https://<project-ref>.supabase.co/auth/v1/callback`.
-2. Audience: *External* (several Workspaces sign in). Scopes: `openid`,
-   `.../auth/userinfo.email`, `.../auth/userinfo.profile`; nothing sensitive,
-   so no security assessment, but brand verification takes a few days.
+2. Branding: app name **Rastra**, which Google's consent screen shows to
+   staff and Workspace administrators. Audience: *External* (several
+   Workspaces sign in). Scopes: `openid`, `.../auth/userinfo.email`,
+   `.../auth/userinfo.profile`; nothing sensitive, so no security
+   assessment, but brand verification takes a few days.
 3. Supabase dashboard → Authentication → Sign In / Providers → Google:
    enable, Client ID, Client Secret.
 4. Per school: if its Workspace restricts third-party apps, the Workspace
@@ -992,10 +1011,17 @@ For each kommun (or school) that wants it:
 
 Authentication → URL Configuration → Redirect URLs must contain
 `https://<web origin>/**` (or `/sv/auth/callback` and `/en/auth/callback`)
-and `schemapro://auth/callback` for the app's production and preview builds.
+and `rastra://auth/callback` for Rastra's production and preview builds.
 A project that development builds sign in to also lists
-`schemapro-dev://auth/callback`, the development build's own scheme (§12).
-A redirect that is not listed fails at Auth, before any provider.
+`rastra-dev://auth/callback`, Rastra Dev's own scheme (§12). A redirect
+that is not listed fails at Auth, before any provider.
+
+Rastra vårdnadshavare needs no entry. Guardians sign in with a password,
+and that app never offers *Logga in med skolkonto*, whatever
+`EXPO_PUBLIC_SCHOOL_ACCOUNTS` says, since the EAS environments are shared
+with Rastra (§12.2). Remove `schemapro://auth/callback` and
+`schemapro-dev://auth/callback` where a project still lists them: nothing
+that uses them has been distributed.
 
 ### 11.6 Verify (per school)
 
@@ -1005,7 +1031,7 @@ A redirect that is not listed fails at Auth, before any provider.
    organisation. The status reads *På*.
 3. Sign out. On /login, type the address and choose *Logga in med skolkonto*.
    The provider's sign-in opens with the address filled in, and you land on
-   the role's start page. Repeat once in the app.
+   the role's start page. Repeat once in Rastra.
 4. As an admin signed in that way, the card says so; only then can *Kräv
    skolkonto för personal* be switched on (and only once staff have the app
    build from 11.1). Confirm a teacher's password is refused afterwards with
@@ -1130,8 +1156,8 @@ minute per address is set for a school signing in at once. The alternative,
 a Microsoft and a Google button and no lookup, would put both in front of
 every guardian who signs in with a password.
 
-**Accepted risk: the app's custom scheme.** The app comes back from the
-provider on `schemapro://auth/callback`, and any app on the phone can
+**Accepted risk: the app's custom scheme.** Rastra comes back from the
+provider on `rastra://auth/callback`, and any app on the phone can
 register that scheme. A malicious app installed on a teacher's phone could
 start a school-account sign-in of its own with that redirect and receive the
 result, and Entra may sign in silently through the shared browser session.
@@ -1142,41 +1168,92 @@ and an `apple-app-site-association` / `assetlinks.json` served by the web.
 identities the first store uploads create (§12.7, §12.8). Until then the
 risk is accepted: it needs a malicious app already installed on a staff
 member's phone, and the 24-hour limit above bounds how long a stolen session
-lasts. The development build's `schemapro-dev://auth/callback` carries the
-same risk, on developers' phones only.
+lasts. Rastra Dev's `rastra-dev://auth/callback` carries the same risk, on
+developers' phones only. Rastra vårdnadshavare has no school-account
+sign-in, so it has no redirect of this kind to take.
 
-## 12. Building and distributing the app (EAS)
+## 12. Building and distributing the apps (EAS)
 
-The app reaches a phone only as a build. Builds are made by EAS Build,
-Expo's build service, from `mobile/`, or on a Mac with `eas build --local`,
-and never on GitHub Actions: CI typechecks, tests and bundles the app (the
+The apps reach a phone only as builds. Builds are made by EAS Build, Expo's
+build service, from `mobile/`, or on a Mac with `eas build --local`, and
+never on GitHub Actions: CI typechecks, tests and bundles the app (the
 mobile job in `.github/workflows/ci.yml`) and builds nothing. Nothing has
 been distributed yet. This section goes from no accounts to an internal
 build on a phone, push on a real device and the stores' internal tracks; the
 store listings, review and a public release belong to the stores phase.
 
-`mobile/eas.json` has three build profiles. Each takes its variables from
-the EAS environment of the same name and sets `APP_VARIANT`, which
-`mobile/app.config.ts` applies on top of `app.json`:
+**Two apps from one code base.** Every account has one role, and each app
+admits only its own:
+
+- **Rastra**, for staff and pupils: TEACHER, SCHOOL_ADMIN (every admin
+  profile) and STUDENT.
+- **Rastra vårdnadshavare**, for guardians: GUARDIAN.
+
+Any other role is admitted by neither. A sign-in in the wrong app is refused
+on the login screen, with a message in Swedish (English in the English
+localisation) that names the right app. A session restored at start whose
+role is the other app's is ended on this device only: the same person's
+session in the other app and on the web goes on, the device's push
+registration is removed, and the offline attendance queue is kept. The check
+reads the role cached on the device, so an offline start needs no network.
+It is the app's own check, not a security boundary: the gateway cannot tell
+the two apps apart, and RBAC and RLS decide what a role reads in either.
+
+Two variables choose the build: `APP` (`rastra` or `vardnadshavare`) and
+`APP_VARIANT` (`development`, `preview` or `production`). `mobile/eas.json`
+has a build profile for each pair, named after both. Each sets the two in
+its `env` and takes its other variables from the EAS environment of its
+variant, and `mobile/app.config.ts` applies them on top of `app.json`:
 
 | Profile | Name under the icon | Bundle id and package | Scheme | Distribution |
 | --- | --- | --- | --- | --- |
-| `development` | SchemaPro Dev | `com.schemapro.teacher.dev` | `schemapro-dev` | internal: a development client that loads its JavaScript from a developer's `npm start` |
-| `preview` | SchemaPro Test | `com.schemapro.teacher` | `schemapro` | internal: ad hoc on an iPhone, an APK on Android |
-| `production` | SchemaPro | `com.schemapro.teacher` | `schemapro` | store: TestFlight and Play's internal track |
+| `rastra-development` | Rastra Dev | `se.rastra.app.dev` | `rastra-dev` | internal: a development client that loads its JavaScript from a developer's `npm start` |
+| `rastra-preview` | Rastra Test | `se.rastra.app` | `rastra` | internal: ad hoc on an iPhone, an APK on Android |
+| `rastra-production` | Rastra | `se.rastra.app` | `rastra` | store: TestFlight and Play's internal track |
+| `vardnadshavare-development` | Rastra vårdnadshavare Dev | `se.rastra.vardnadshavare.dev` | `rastra-vardnadshavare-dev` | internal: a development client served by `npm run start:vardnadshavare` |
+| `vardnadshavare-preview` | Rastra vårdnadshavare Test | `se.rastra.vardnadshavare` | `rastra-vardnadshavare` | internal: ad hoc on an iPhone, an APK on Android |
+| `vardnadshavare-production` | Rastra vårdnadshavare | `se.rastra.vardnadshavare` | `rastra-vardnadshavare` | store: TestFlight and Play's internal track |
 
-Preview and production share an identity on purpose: one Firebase Android
-app, one Apple App ID, one set of push credentials and one build-number
-counter. The cost is that they cannot sit side by side: a preview build
-takes the production app's place on the phone (§12.4 has Android's catch).
-Development has an id of its own, so that a developer's client can sit
-beside either. `APP_VARIANT` unset means production, so `expo export`, CI and
-anything else that does not ask build exactly what `app.json` describes; an
-unknown value stops the build.
+There is no bare `development`, `preview` or `production` profile, so an
+`eas build` or `eas submit` without `--profile` stops instead of guessing
+an app.
+
+Within one app, preview and production share an identity on purpose: one
+Firebase Android app, one Apple App ID, one set of push credentials and one
+build-number counter. The cost is that they cannot sit side by side: a
+preview build takes the production app's place on the phone (§12.4 has
+Android's catch). Development has an id of its own, so that a developer's
+client can sit beside either. The two apps share none of this: each has its
+own ids, credentials, build counter and store records, and both can be
+installed on one phone. On an iPhone's home screen "Rastra vårdnadshavare"
+and its Test and Dev forms are all cut to about "Rastra vård…", so there the
+name does not tell the guardian app's development build from the build
+beside it.
+
+`APP_VARIANT` unset means production and `APP` unset means `rastra`, so
+`expo export`, CI and anything else that does not ask build exactly what
+`app.json` describes: Rastra's production identity. An unknown value of
+either stops the build, and so does an unset `APP` on the EAS builder
+(§12.2 item 4).
+
+**One EAS project for both apps**, slug `rastra`, with four application ids.
+The gateway sends a school's pushes to Expo together, up to 100 tokens a
+request, so a class's pupils and guardians share a request. Expo refuses a
+request whose tokens belong to different projects, and the gateway does not
+retry a refused request (a 4xx), so with a project per app whole chunks of a
+school's pushes would fail. Within one project Expo routes each token to its
+own app's credentials, and the gateway needs no change. One project also
+means one set of EAS environments for both apps (§12.2) and one project id,
+which `eas init` writes into `app.json`. Build numbers are kept per
+application id, so each app still has its own counter (§12.9).
 
 Build from a clean checkout of a commit that is on GitHub, and note the
 commit in the build log (§12.9). EAS uploads the working tree as it is on
 disk, untracked files included, minus what `.gitignore` excludes.
+
+A tester's internal SchemaPro build (`com.schemapro.teacher`, from before
+the rename) is a different app, and Rastra cannot see its session or its
+offline attendance queue. Let that queue empty before uninstalling it.
 
 ### 12.1 Accounts and lead times
 
@@ -1184,35 +1261,43 @@ Start these on day one. Apple and Google verify the organisation, which
 takes days to weeks, and every iPhone build waits for Apple; only the
 Android APK of §12.4 can be made before.
 
-1. **Expo.** An organisation on expo.dev owns the EAS project, with at least
-   two members, so that the project does not hang on one person's account,
-   and two-factor authentication for each. EAS Build works on the free plan,
-   with a limited monthly allowance and a slower queue.
+1. **Expo.** An organisation on expo.dev owns the EAS project, the one both
+   apps belong to (§12), with at least two members, so that the project
+   does not hang on one person's account, and two-factor authentication for
+   each. EAS Build works on the free plan, with a limited monthly allowance
+   and a slower queue.
 2. **Apple Developer Program, as an organisation** (99 USD a membership
    year; accredited educational institutions, nonprofits and government
    entities can ask for a fee waiver). Apple wants a legal entity (not a
    trade name), its D-U-N-S number (government entities excepted), an
    enrolling person with the authority to bind it, and a public website and
    a work e-mail address on the organisation's own domain. Enrolled as an
-   individual instead, the person's legal name is shown as the seller. Even
-   an ad hoc build for one iPhone needs the paid membership. The home domain
-   is undecided (PRODUCT.md), and Apple checks the website and the e-mail
-   address against it, so it is decided before this enrolment.
+   individual instead, the person's legal name is shown as the seller. One
+   membership holds both apps. Even an ad hoc build for one iPhone needs the
+   paid membership. The home domain is undecided (PRODUCT.md), and Apple
+   checks the website and the e-mail address against it, so it is decided
+   before this enrolment.
 3. **Google Play Console, as an organisation** (a one-time registration
    fee). An organisation account needs a D-U-N-S number too; Dun & Bradstreet
    issues one free, and Google says to allow up to 30 days. Google's rule
    that a new account runs a closed test with 12 testers for 14 days before
    production is written for personal accounts, and internal testing
-   (§12.8) is not affected either way.
+   (§12.8) is not affected either way. One account holds both apps.
 4. **Firebase.** One project for push on Android (FCM, to which Expo hands
-   every Android push), with two Android apps: `com.schemapro.teacher`
-   (production and preview) and `com.schemapro.teacher.dev` (development).
+   every Android push), with four Android apps: `se.rastra.app` (Rastra's
+   production and preview), `se.rastra.app.dev` (Rastra Dev),
+   `se.rastra.vardnadshavare` (Rastra vårdnadshavare's production and
+   preview) and `se.rastra.vardnadshavare.dev` (Rastra vårdnadshavare Dev).
 5. **The Expo data processing agreement**, before a push reaches a real
    user (§8.1 step 1). Internal builds against a test stack (§12.6) hold no
    pupil's or staff member's records and do not wait for it. The testers'
    own push tokens and iPhone device ids still pass through Expo and Apple
    (§12.5, §12.6), so the testers are staff or developers who have agreed to
    that.
+6. **The store names.** An App Store name must be unique in the store.
+   Check that "Rastra" and "Rastra vårdnadshavare" are free in the App Store
+   and on Google Play before the first uploads (§12.7, §12.8), which also
+   fix the ids for good.
 
 Each account belongs to the organisation, and its sign-ins live in the
 password manager, never in this repository: the repository is public.
@@ -1232,17 +1317,23 @@ password manager, never in this repository: the repository is public.
    It creates the project on expo.dev and writes its id and owner into
    `app.json` (`extra.eas.projectId`, `owner`). `app.config.ts` passes
    `app.json` through, which is what lets the CLI write the static file.
-   Commit the change. The id is an identifier, not a secret, and the app
-   asks Expo for its push token with it: a build made without it says "Den
-   här versionen av appen kan inte ta emot pushnotiser." when push is turned
-   on. The slug, `schemapro-teacher`, is the project's name on EAS and stays
-   as it is from here on, since the CLI refuses an app config whose slug is
-   not the project's. Anyone who builds later finds the id in the repository
-   and does not run `eas init` again.
+   Commit the change. Both apps belong to this one project (§12), so it runs
+   once, not once per app, and all six builds carry the same id. The id is
+   an identifier, not a secret, and each app asks Expo for its push token
+   with it: a build made without it says "Den här versionen av appen kan
+   inte ta emot pushnotiser." when push is turned on. The slug, `rastra`, is
+   the project's name on EAS. It is fixed once `eas init` has created the
+   project (none exists yet), since the CLI refuses an app config whose
+   slug is not the project's. Anyone who builds later finds the id in the
+   repository and does not run `eas init` again.
 3. **The environments.** EAS has three, `development`, `preview` and
-   `production`, and each profile names its own, so a build always takes the
-   variables of its profile's environment. Set §8's values in each, for
-   example:
+   `production`, and both apps share them: each profile names the
+   environment of its variant, so `rastra-preview` and
+   `vardnadshavare-preview` both take the preview environment's variables.
+   The two apps talk to the same API and Supabase project, so no value
+   differs between them; one that ever must goes in the profiles' `env` in
+   `eas.json`, which wins over the environment. Set §8's values in each
+   environment, for example:
 
    ```bash
    eas env:set --name EXPO_PUBLIC_API_BASE_URL --value https://api.yourschool.example \
@@ -1270,21 +1361,50 @@ password manager, never in this repository: the repository is public.
    The preview environment decides it for every internal build at once:
    point it at a test stack (§12.6) while push is tried, since production
    keeps push off until §8.1 step 1.
-4. **The profiles** are the table above. `APP_VARIANT` is set in each
-   profile's `env` in `eas.json`, which wins over a variable of that name in
-   the environment. EAS installs the dependencies with a plain `npm ci`:
+4. **The profiles** are the table above (§12). `APP` and `APP_VARIANT` are
+   set in each profile's `env` in `eas.json`, which wins over a variable of
+   that name in the environment, and every command names its profile. On
+   the builder (EAS's machines, and `eas build --local`) every build, of
+   any variant, stops while it reads the app config:
+   - when `APP` is unset or unknown. Unset means Rastra everywhere else, but
+     a profile that forgot it would build Rastra whatever its name says, and
+     the first store upload fixes an id for good (§12.7, §12.8);
+   - when `app.json`'s base identity (`ios.bundleIdentifier`,
+     `android.package`) is not exactly `se.rastra.app`. `app.config.ts`
+     derives every other id from it, so another id there means something
+     wrote an evaluated config back into `app.json`, and every build from it
+     would be signed as the wrong app. Restore it with `git checkout
+     mobile/app.json`.
+
+   EAS installs the dependencies with a plain `npm ci`:
    `mobile/.npmrc` makes it resolve peers as CI does (`legacy-peer-deps`),
    and the `eas-build-pre-install` script in `mobile/package.json` first
    installs npm 11, which wrote the lockfile and which CI pins, whatever npm
    the build image ships. It does so only on EAS's own machines. `eas build
    --local` installs with the npm of the machine it runs on, which should be
    npm 11 as in §8. Run it as `NPM_CONFIG_MIN_RELEASE_AGE=0 eas build -p
-   <platform> --profile <profile> --local`. eas-cli fetches its local build
-   plugin with `npx`, at its own exact version and in `mobile/`, where
-   `mobile/.npmrc` refuses a version published less than seven days ago. The
+   <platform> --profile <profile> --local`, with one of the six profiles
+   (for example `--profile vardnadshavare-preview`). eas-cli fetches its
+   local build plugin with `npx`, at its own exact version and in
+   `mobile/`, where `mobile/.npmrc` refuses a version published less than
+   seven days ago. The
    variable lifts that rule for this one command, as Expo's own build tools
    do for their `npx` calls. The plugin's `npm ci` still installs the
    lockfile exactly as it is. Versions and build numbers are §12.9.
+5. **The development scripts** in `mobile/package.json` choose the app the
+   same way. `npm start` serves Rastra Dev (`APP=rastra
+   APP_VARIANT=development expo start`), and `npm run start:vardnadshavare`
+   serves Rastra vårdnadshavare Dev (`APP=vardnadshavare`, the same
+   variant, and `expo start --scheme rastra-vardnadshavare-dev`). `npm run
+   ios` and `npm run android` build and run Rastra Dev locally, and `npm run
+   ios:vardnadshavare` and `npm run android:vardnadshavare` the guardian
+   one. A development build takes its app config from the server it loads
+   from, so a guardian development client is served by
+   `start:vardnadshavare` only: served by `npm start`, it believes it is
+   Rastra and refuses every guardian. The two development clients cannot
+   share the scheme `expo start`'s QR code opens (`exp+rastra`, from the one
+   slug), so only Rastra Dev registers it, and the guardian script points
+   its QR code at Rastra vårdnadshavare Dev's own scheme instead.
 
 `mobile/ios` and `mobile/android` are generated for each build and are
 gitignored (`mobile/.gitignore`). Committed, they would make EAS treat the
@@ -1303,28 +1423,39 @@ Firebase service-account key, `credentials.json`, keystores, `.p8` and
 `.p12` files and provisioning profiles); read `git status` all the same
 before the first commit after a credentials session.
 
+EAS keeps credentials per application id, and the two apps have four:
+`se.rastra.app` and `se.rastra.vardnadshavare` (each app's preview and
+production builds), and `se.rastra.app.dev` and
+`se.rastra.vardnadshavare.dev` (the development builds). Signing and push
+are set up per id, so four times; the APNs and FCM keys themselves belong to
+the account, and the same key is chosen for each id.
+
 **iOS: EAS manages it.** At the first `eas build -p ios` of a profile, sign
 in with the Apple account when the CLI asks. EAS then:
 
-- registers the App ID, `com.schemapro.teacher` (or `.dev` for the
-  development profile), with the push capability, since `expo-notifications`
-  puts the `aps-environment` entitlement in every build;
+- registers the profile's App ID, with the push capability, since
+  `expo-notifications` puts the `aps-environment` entitlement in every
+  build. That makes four App IDs in all, one per bundle id;
 - creates a distribution certificate (Apple allows two per account; each
-  lasts a year) and a provisioning profile per bundle id and kind: ad hoc,
-  listing the registered iPhones, for development and preview, and App Store
-  for production;
+  lasts a year; one serves both apps) and a provisioning profile per bundle
+  id and kind: ad hoc, listing the registered iPhones, for development and
+  preview, and App Store for production, six in all;
 - asks whether to set up push notifications. Answer yes: it creates an APNs
   key or reuses the account's. One key serves every bundle id of the team,
   in both of Apple's push environments, and does not expire; Apple allows
-  two per account. Later, `eas credentials -p ios` → *Push Notifications:
+  two per account. EAS asks once per bundle id, at the first build that
+  uses it: each time, choose the key already there, so that all four bundle
+  ids have it. Later, `eas credentials -p ios` → *Push Notifications:
   Manage your Apple Push Notifications Key* does the same.
 
-**Android: back the keystore up.** At the first Android build of a profile,
-EAS offers to generate an upload keystore: accept. There is one for
-`com.schemapro.teacher` (preview and production) and one for `.dev`.
-Download each at once with `eas credentials -p android` (choose the profile,
-then the keystore), put the file and its passwords in the password manager,
-and delete the download. Every APK of §12.4 is signed with it, and Android
+**Android: back the keystores up.** At the first Android build of a
+package, EAS offers to generate an upload keystore: accept. There is one
+per package, four in all: `se.rastra.app` and `se.rastra.vardnadshavare`
+(each shared by its app's preview and production builds), and the two
+`.dev` packages. Download each at once with `eas credentials -p android`
+(choose a profile that builds that package, then the keystore), put the
+file and its passwords in the password manager, and delete the download.
+Every APK of §12.4 is signed with its package's keystore, and Android
 updates an installed app only from the same key. Play App Signing (§12.8)
 lets a lost upload key be reset with Google for the app from Play; an APK
 signed with a lost key can never be updated, only uninstalled.
@@ -1332,10 +1463,13 @@ signed with a lost key can never be updated, only uninstalled.
 **Android push (FCM V1)** takes two files, both from the Firebase project
 of §12.1:
 
-1. **`google-services.json`.** With both Android apps added, download it
-   from Firebase (Project settings → General → Your apps); it then names
-   both packages. Upload it to EAS as a file variable for all three
-   environments:
+1. **`google-services.json`.** With all four Android apps added, download
+   it from Firebase (Project settings → General → Your apps); it then names
+   all four packages. A file downloaded before the last app was added fails
+   the Android build of the package it leaves out ("No matching client
+   found for package name"), so download it again after adding an app.
+   Upload it to EAS as one file variable for all three environments, which
+   both apps share:
 
    ```bash
    eas env:set --name GOOGLE_SERVICES_JSON --type file --value ./google-services.json \
@@ -1355,111 +1489,141 @@ of §12.1:
    leaves gitignored files out, and EAS gives no secret variable to a local
    build. So before a local Android build, run `export
    GOOGLE_SERVICES_JSON="$PWD/google-services.json"` in `mobile/` (an
-   absolute path), and build as in §12.2 item 4. With the local copy present, every cloud Android build
-   prints that `android.googleServicesFile` "won't be uploaded to the
-   builder". That is expected, because the builder takes the file variable
-   instead. A preview or production Android build, on EAS or local, stops
+   absolute path), and build as in §12.2 item 4. With the local copy
+   present, every cloud Android build prints that
+   `android.googleServicesFile` "won't be uploaded to the builder". That is
+   expected, because the builder takes the file variable instead. A
+   preview or production Android build, on EAS or local, stops
    without one or the other (§12.2). A development build without the file
    still builds, but gets no push token: turning push on says
    "Pushnotiserna gick inte att slå på. Försök igen."
 2. **The service-account key**, with which Expo sends to FCM. In Firebase,
    Project settings → Service accounts → *Generate new private key*. Then
-   `eas credentials -p android`, the `production` profile, *Google Service
-   Account* → *Manage your Google Service Account Key for Push Notifications
-   (FCM V1)* → *Set up a Google Service Account Key for Push Notifications
-   (FCM V1)*, and upload the file. Do the same with the `development`
-   profile, choosing the key already uploaded or uploading the same file, so
-   that `.dev` has it too. Then delete the downloaded file: it can send a
-   push to every install of the app, and a new one can always be generated.
+   `eas credentials -p android`, the `rastra-production` profile, *Google
+   Service Account* → *Manage your Google Service Account Key for Push
+   Notifications (FCM V1)* → *Set up a Google Service Account Key for Push
+   Notifications (FCM V1)*, and upload the file. Do the same with
+   `rastra-development`, `vardnadshavare-production` and
+   `vardnadshavare-development`, choosing the key already uploaded, so that
+   all four packages have it; a preview build uses its production
+   package's. A package without it gets no Android push, and only that
+   app's sends fail. Then delete the downloaded file: it can send a push to
+   every install of both apps, and a new one can always be generated.
    The key and `google-services.json` come from the same Firebase project,
    or every Android send fails with `MismatchSenderId`.
 
-**Store submission keys**, for `eas submit` (§12.7, §12.8):
+**Store submission keys**, for `eas submit` (§12.7, §12.8). One key of each
+kind serves both apps; EAS assigns it per app, so it is chosen once under
+`rastra-production` and once under `vardnadshavare-production`:
 
 - App Store Connect: an API key, which `eas submit -p ios` offers to create
   the first time, or `eas credentials -p ios` → *App Store Connect: Manage
   your API Key*.
 - Google Play: a Google Cloud service account with a JSON key, invited in
-  Play Console (Users and permissions) with permission to release this app
-  to testing tracks, and uploaded with `eas credentials -p android` under
-  *Google Service Account*, as the key for Play Store submissions. Then
-  delete the downloaded key, as with the FCM key. The first Play upload is
-  by hand anyway (§12.8), so this can wait for the second.
+  Play Console (Users and permissions) with permission to release both
+  apps to testing tracks, and uploaded with `eas credentials -p android`
+  under *Google Service Account*, as the key for Play Store submissions.
+  Then delete the downloaded key, as with the FCM key. Each app's first
+  Play upload is by hand anyway (§12.8), so this can wait for the second.
 
 ### 12.4 The first internal Android build
 
-1. `eas build -p android --profile preview`, once the preview environment
-   has its values (§12.2) and `GOOGLE_SERVICES_JSON` (§12.3). The first run
-   generates the keystore (§12.3). The result is an APK signed by EAS, with
-   the next build number.
+1. `eas build -p android --profile rastra-preview`, and `--profile
+   vardnadshavare-preview` for Rastra vårdnadshavare, once the preview
+   environment has its values (§12.2) and `GOOGLE_SERVICES_JSON` (§12.3).
+   Each app's first run generates its keystore (§12.3). The result is an
+   APK signed by EAS, with that app's next build number.
 2. On the Android phone, open the build's page (the link the CLI prints, or
    its QR code), download the APK and install it, allowing the browser to
    install apps when Android asks.
-3. Check: "SchemaPro Test" under the icon, the splash, a sign-in with a test
-   account against the deployment the preview environment points at, the
-   schedule, and attendance taken in airplane mode that syncs once the
-   network is back. On every tab, the content runs down to the tab bar
-   with no empty strip above it, and nothing hides under the status bar.
+3. Check each app: its name under the icon ("Rastra Test", "Rastra
+   vårdnadshavare Test"), the splash, and a sign-in with a test account of
+   its role against the deployment the preview environment points at. In
+   Rastra, the schedule, and attendance taken in airplane mode that syncs
+   once the network is back; in Rastra vårdnadshavare, the children's
+   schedules and an absence report. On every tab, the content runs down to
+   the tab bar with no empty strip above it, and nothing hides under the
+   status bar.
+4. The wrong app: sign in with a guardian account in Rastra, and with a
+   teacher account in Rastra vårdnadshavare. Each is refused on the login
+   screen with a message that names the other app. Then, signed in with the
+   right account, close each app and start it again in airplane mode: it
+   opens signed in at once, since the check reads the role cached on the
+   phone, and an offline start reads the session from the phone's storage
+   without waiting for a token refresh that cannot happen.
+5. The appearance, in light and in dark: the splash, then every tab,
+   switching the phone's appearance in Quick Settings (Control Center on an
+   iPhone) while the app is open. No screen keeps the other appearance's
+   colours, the status bar stays legible, and an alert follows the phone
+   (§12.12).
+6. On an Android tablet with Android 16 or later, the tablet check of
+   §12.12.
 
 Every later preview build installs over the one before and keeps its data,
 since the build number only rises. **Android's catch:** a preview APK and
-the production app from Play (§12.8) have the same package but not the same
-signing key, so Android refuses to install one over the other. The tester
-then uninstalls first, which deletes the app's local data, the offline
-attendance queue included: let the queue empty before.
+its app's production build from Play (§12.8) have the same package but not
+the same signing key, so Android refuses to install one over the other. The
+tester then uninstalls first, which deletes the app's local data, the
+offline attendance queue included: let the queue empty before.
 
 ### 12.5 The first internal iPhone build
 
 1. Register each iPhone with `eas device:create`, choosing the website
-   option. The tester opens the link or QR code on that iPhone and installs
-   the profile it offers in Settings. `eas device:list` lists the registered
-   devices, and `eas device:rename` gives one a name you will recognise.
-2. `eas build -p ios --profile preview`, interactively the first time,
-   signing in with the Apple account (§12.3). The build is signed ad hoc for
-   every iPhone registered when it is made. For a new or just renewed
-   membership, Apple can take 24 to 72 hours to accept a new device, and a
-   build that includes it may fail until then: wait and build again.
+   option, and the iPad of §12.12 the same way. The tester opens the link
+   or QR code on that device and installs the profile it offers in
+   Settings. `eas device:list` lists the registered devices, and `eas
+   device:rename` gives one a name you will recognise.
+2. `eas build -p ios --profile rastra-preview`, and `--profile
+   vardnadshavare-preview` for Rastra vårdnadshavare, interactively the
+   first time, signing in with the Apple account (§12.3). The build is
+   signed ad hoc for every device registered when it is made. For a new or
+   just renewed membership, Apple can take 24 to 72 hours to accept a new
+   device, and a build that includes it may fail until then: wait and build
+   again.
 
-   **The encryption question.** Until the owner has decided export
-   compliance (§12.11), every interactive iOS build first asks *iOS app only
-   uses standard/exempt encryption?* Whatever the answer, the build goes on
-   without one. The CLI tries to write the answer into `app.json`, and with
-   it the iOS settings of the profile it builds (a development build's
-   bundle id included). `app.config.ts` keeps the answer out, so the CLI
-   rolls its write back and prints the line it would have added. Do not add
-   that line. The decision goes into `app.json` as
-   `ios.config.usesNonExemptEncryption`, and then the question stops. After
-   any interactive `eas` command, `git status mobile/` shows nothing except
-   what `eas init` wrote (§12.2). A changed bundle id or package is reverted
-   at once with `git checkout mobile/app.json`. A build from an `app.json`
-   whose id ends in `.dev` stops on the builder.
-3. On the iPhone, open the build's page and install. iOS 16 and later run it
-   only in Developer Mode: open the app once and let iOS refuse, then
-   Settings → Privacy & Security → Developer Mode → on, restart, and confirm
-   with *Turn On* and the passcode. This is once per iPhone.
-4. Check as in §12.4, step 3.
+   The build asks no encryption question: `app.json` declares the answer
+   (§12.11). Interactive `eas` commands can still write to `app.json`, so
+   after one, `git status mobile/` shows nothing except what `eas init`
+   wrote (§12.2). A changed bundle id or package is reverted at once with
+   `git checkout mobile/app.json`; a build from an `app.json` whose base id
+   is not `se.rastra.app` stops on the builder (§12.2 item 4).
+3. On the iPhone (or iPad), open the build's page and install. iOS 16 and
+   later run it only in Developer Mode: open the app once and let iOS
+   refuse, then Settings → Privacy & Security → Developer Mode → on,
+   restart, and confirm with *Turn On* and the passcode. This is once per
+   device.
+4. Check as in §12.4, steps 3 to 6, with an iPad for step 6. On the home
+   screen, "Rastra vårdnadshavare Test" is cut to about "Rastra vård…"
+   (§12): check that it still reads as the guardian app beside "Rastra
+   Test".
 
 **An iPhone added later** is in no build made before it was registered.
 Register it, then either build again, interactively so that EAS updates the
 provisioning profile (a non-interactive build reuses the old profile unless
 it is given `--refresh-ad-hoc-provisioning-profile` and an App Store Connect
 API key), or re-sign an existing preview build: `eas build:resign -p ios
---source-profile preview -e preview`, which asks which one (or takes `--id`).
-Apple allows 100 iPhones a membership year for ad hoc builds, and a device
-disabled during the year still counts.
+--source-profile rastra-preview -e rastra-preview` (or the guardian app's
+`vardnadshavare-preview` in both places), which asks which one (or takes
+`--id`). Apple allows 100 iPhones a membership year for ad hoc builds, and
+a device disabled during the year still counts.
 
-**Development builds** work the same way with `--profile development`, on
-both platforms; an iPhone is registered first. Install SchemaPro Dev, run
-`npm start` in `mobile/` (it sets `APP_VARIANT=development`) and open the
-server from the app. The phone and the computer must be on the same network,
-and the API the app talks to must be https, as a phone is not localhost
-(§8). On an iPhone, SchemaPro Dev first asks to find devices on the local
-network ("Utvecklingsbygget letar efter utvecklingsservern …"): allow it.
-Refused, it cannot reach `npm start`; turn it back on under Settings →
-Privacy & Security → Local Network, or use `npm start -- --tunnel`.
-Preview and production builds never ask. A plain `npx expo start`, without `APP_VARIANT`, describes the
-production app to the development build, and a school-account sign-in would
-not come back to it.
+**Development builds** work the same way with `--profile
+rastra-development` or `--profile vardnadshavare-development`, on both
+platforms; an iPhone is registered first. Install Rastra Dev and run `npm
+start` in `mobile/`, or install Rastra vårdnadshavare Dev and run `npm run
+start:vardnadshavare` (§12.2 item 5), and open the server from the app. The
+phone and the computer must be on the same network, and the API the app
+talks to must be https, as a phone is not localhost (§8). On an iPhone, a
+development build first asks to find devices on the local network
+("Utvecklingsbygget letar efter utvecklingsservern …"): allow it. Refused,
+it cannot reach the server; turn it back on under Settings → Privacy &
+Security → Local Network, or use `npm start -- --tunnel` (`npm run
+start:vardnadshavare -- --tunnel`). Preview and production builds never
+ask. A development build served by the other app's script believes it is
+that app: Rastra vårdnadshavare Dev served by `npm start` refuses every
+guardian. A plain `npx expo start`, without `APP` and `APP_VARIANT`,
+describes Rastra's production app to the development build, and a
+school-account sign-in would not come back to it.
 
 ### 12.6 Push on a real iPhone and Android phone
 
@@ -1473,8 +1637,11 @@ to whoever the gateway holds, so it runs against a test stack:
   the seeded admin row's `"authId"` and `"invitedAt"`. Do the same for one
   seeded teacher, or invite a test teacher at `/admin/people` to a mailbox
   you control. Then generate and publish a timetable as in §9 steps 6 and
-  7, so that the Day planner has this week's lessons. These steps run in
-  the test stack's web app, below;
+  7, so that the Day planner has this week's lessons. For step 5 below,
+  also add a test pupil to a class with lessons this week and a test
+  guardian at `/admin/people`, link the guardian to the pupil there, and
+  invite both to mailboxes you control. These steps run in the test
+  stack's web app, below;
 - a gateway deployed against it as in §5, with `PUSH_NOTIFICATIONS=expo`
   (and `EXPO_ACCESS_TOKEN` if enhanced push security is on), reachable over
   https: a second service on the container host, or an https tunnel to a
@@ -1488,29 +1655,32 @@ to whoever the gateway holds, so it runs against a test stack:
   when it is built. The test web app's origin comes first in the test
   gateway's `CORS_ORIGINS`, since invite links go there, and is in the test
   project's redirect URLs;
-- internal builds pointed at both: preview builds (§12.4, §12.5) built with
-  the preview environment's values, or development builds with
-  `.env.local`.
+- internal builds of both apps pointed at both: preview builds (§12.4,
+  §12.5) built with the preview environment's values, or development builds
+  with `.env.local`.
 
-On one iPhone and one Android phone:
+On one iPhone and one Android phone, in both apps:
 
-1. Sign in as a test teacher, open Inställningar → Pushnotiser and turn the
-   switch on. The phone asks for permission here and only here: allow it.
+1. Sign in, as a test teacher in Rastra and as the test guardian in Rastra
+   vårdnadshavare, open Inställningar → Pushnotiser and turn the switch on.
+   The phone asks for permission here and only here, once per app: allow it.
 2. Read what Settings says:
    - No switch, only "Skolan har inte slagit på pushnotiser.": the gateway
      this build talks to has push off, or did not answer
      `GET /api/v1/push/config`.
    - "Den här versionen av appen kan inte ta emot pushnotiser.": the build
      has no EAS project id (§12.2, step 2). Commit it and build again.
-   - "Notiser är avstängda för SchemaPro i telefonens inställningar.": the
-     phone's permission was refused. Allow notifications for the app in the
-     phone's settings and turn the switch on again.
+   - "Notiser är avstängda för … i telefonens inställningar.", naming the
+     app as it is installed: the phone's permission was refused. Allow
+     notifications for that app in the phone's settings and turn the switch
+     on again.
    - "Pushnotiserna gick inte att slå på. Försök igen.": the phone gave no
      token, or the gateway refused the registration. On Android it is
      usually a development build without `google-services.json` (§12.3); on
      iOS, a build signed without the push capability.
    - The switch stays on, with nothing under it: the device is registered.
-3. As the owner on the test database, find the device's row:
+3. As the owner on the test database, find the devices' rows, one per app
+   on each phone (each app has its own token):
 
    ```sql
    select platform, locale, token, "lastSeenAt" from "DevicePushTokens"
@@ -1524,7 +1694,17 @@ On one iPhone and one Android phone:
    group or room, and a tap opens the app's Notiser. On Android, Expo sends
    at normal priority, so a phone in deep sleep may show it some minutes
    late.
-5. To tell the Expo leg from the gateway, send to the token from step 3 by
+5. Both apps in one request. Keep the test guardian signed in to Rastra
+   vårdnadshavare; in Rastra, log out and sign in as the test pupil, and
+   turn push on as in step 1. Cancel one of the pupil's lessons later this
+   week in the Day planner. Both the pupil and the guardian get *Inställd
+   lektion*, unless they turned that kind off in Settings, and the
+   gateway's log has no `Expo refused a request` line and no
+   `RequestFailed` among `Push tickets with errors`. The gateway sends a
+   school's pushes to Expo together, pupils' and guardians' tokens in one
+   request, so this is the check that one EAS project carries both apps
+   (§12). Reinstate the lesson afterwards.
+6. To tell the Expo leg from the gateway, send to a token from step 3 by
    hand, with Expo's push notification tool (expo.dev/notifications) or:
 
    ```bash
@@ -1533,9 +1713,10 @@ On one iPhone and one Android phone:
    ```
 
    adding `-H 'Authorization: Bearer <EXPO_ACCESS_TOKEN>'` once enhanced
-   push security is on. If this arrives and step 4's did not, read the
-   gateway's log; if neither arrives, look at the credentials (§12.3).
-6. After 15 to 20 minutes the receipt checker has asked Expo about the send.
+   push security is on. If this arrives and step 4's or step 5's did not,
+   read the gateway's log; if neither arrives, look at the credentials of
+   that token's app (§12.3).
+7. After 15 to 20 minutes the receipt checker has asked Expo about the sends.
    Look for evidence that it did, since "no failures" alone also holds for a
    pass that had nothing to check:
 
@@ -1549,9 +1730,10 @@ On one iPhone and one Android phone:
    errors`, `Push receipts with errors` or `Delivery failed` line, and names
    no error code (`MismatchSenderId`, `InvalidCredentials`,
    `DeviceNotRegistered`).
-7. Log out of the app: the row from step 3 is gone.
-8. Write the result in the build log (§12.9): the date, the phone and its OS
-   version, the build, and what arrived.
+8. Log out of each app: the query of step 3 no longer lists that app's
+   row.
+9. Write the result in the build log (§12.9): the date, the phone and its OS
+   version, the builds, and what arrived in each app.
 
 **Enhanced push security** makes Expo refuse a send without the project's
 access token. Turn it on (expo.dev, the account's access token settings)
@@ -1560,27 +1742,40 @@ round, every send fails as unauthorised in between.
 
 ### 12.7 TestFlight internal testing
 
-1. `eas build -p ios --profile production`: an App Store build with the
-   next build number.
-2. `eas submit -p ios --profile production --latest` uploads it (or add
-   `--auto-submit` to the build). With no `ascAppId` in
-   `submit.production.ios` yet, the first submit creates the app's record in
-   App Store Connect. Check its name, which must be unique in the App Store
-   (§12.11), and set Swedish as the primary language under App Information.
-   Then put the app's Apple ID (App Store Connect → the app → App
-   Information) into `mobile/eas.json` as `submit.production.ios.ascAppId`
-   and commit it: it is an identifier, not a secret, and later submits skip
-   the creation.
+Each app has its own record in App Store Connect, so these steps run once
+per app: with `rastra-production` for Rastra and `vardnadshavare-production`
+for Rastra vårdnadshavare.
+
+1. `eas build -p ios --profile rastra-production`: an App Store build with
+   that app's next build number.
+2. `eas submit -p ios --profile rastra-production --id <build id>` uploads
+   it (the id is on the build's page and in `eas build:list`), or add
+   `--auto-submit` to the build, which submits with the submit profile of
+   the same name. Not `--latest`: it takes the project's newest App Store
+   build for the platform, whichever app that is, and the project holds both
+   apps' builds. With no `ascAppId` in the submit profile's `ios` yet, the
+   first submit creates the app's record in App Store Connect. Check its
+   name, which must be unique in the App Store (§12.1), and set Swedish as
+   the primary language under App Information. Then put the app's Apple ID
+   (App Store Connect → the app → App Information) into `mobile/eas.json`
+   as `submit.rastra-production.ios.ascAppId` (for the guardian app,
+   `submit.vardnadshavare-production.ios.ascAppId`, a different id) and
+   commit it: it is an identifier, not a secret, and later submits skip the
+   creation.
 
    **The bundle id is final from this upload.** Apple does not let an app's
-   bundle id change once a build is uploaded, so §12.11's first question is
-   decided before this step.
-3. **Export compliance.** Until `ios.config.usesNonExemptEncryption` is
-   decided (§12.11), the build's own question goes unanswered (§12.5 step
-   2), and every uploaded build waits in TestFlight as *Missing Compliance*
-   until someone answers Apple's encryption questions for that build. Answer
-   them as the owner has decided, never just to get a build through.
-4. TestFlight → Internal Testing: create a group and add testers. Internal
+   bundle id change once a build is uploaded; the ids are decided (§12.11).
+   Nor, as is commonly documented, can a later version drop iPad support
+   once a version with it is uploaded (§12.12).
+3. **Export compliance is declared.** `app.json` sets
+   `ios.config.usesNonExemptEncryption` to `false` (§12.11), which Expo
+   writes into each build's Info.plist as `ITSAppUsesNonExemptEncryption`,
+   so an uploaded build does not wait in TestFlight as *Missing
+   Compliance*. One that waits all the same was built without the key:
+   look at `app.json` before answering Apple's encryption questions by hand,
+   and never answer them just to get a build through.
+4. TestFlight → Internal Testing, in each app's record: create a group and
+   add testers. Internal
    testers are App Store Connect users of the team, at most 100, and each
    accepts the invitation in the TestFlight app. Internal builds need no
    beta review, and each one can be installed for 90 days after upload. A
@@ -1590,28 +1785,36 @@ round, every send fails as unauthorised in between.
 
 ### 12.8 Google Play internal testing
 
-1. In Play Console, create the app by hand: its name, default language
-   Swedish (sv-SE), app, free, and the declarations Play asks for; only what
-   internal testing needs, as the store listing waits for the stores phase.
-2. `eas build -p android --profile production`: an app bundle (AAB) signed
-   with the upload keystore. Download it from the build's page.
-3. **The first upload is by hand.** Testing → Internal testing → Create new
-   release. Play asks to use Play App Signing: accept, so that Google holds
-   the key that signs the app on phones and the EAS keystore is only the
-   upload key. Upload the AAB, save, and roll the release out to internal
-   testing. This upload fixes the package name for good, so §12.11's first
-   question is decided before it. (Expo's documentation says `eas submit`
+Each app is its own app in Play Console, so these steps too run once per
+app, with the profiles of §12.7.
+
+1. In Play Console, create the app by hand: its name (Rastra, or Rastra
+   vårdnadshavare), default language Swedish (sv-SE), app, free, and the
+   declarations Play asks for; only what internal testing needs, as the
+   store listing waits for the stores phase.
+2. `eas build -p android --profile rastra-production`: an app bundle (AAB)
+   signed with that package's upload keystore. Download it from the build's
+   page.
+3. **Each app's first upload is by hand.** Testing → Internal testing →
+   Create new release. Play asks to use Play App Signing: accept, so that
+   Google holds the key that signs the app on phones and the EAS keystore
+   is only the upload key. Upload the AAB, save, and roll the release out
+   to internal testing. This upload fixes the package name for good; the
+   packages are decided (§12.11). (Expo's documentation says `eas submit`
    can make this first release too; by hand, the person who accepts Play App
    Signing reads what they accept.)
 4. Testers: Internal testing → Testers, an e-mail list of Google accounts
    (at most 100) and the opt-in link to send them. A tester opts in with
    that account and installs the app from Play.
-5. Later builds go with `eas submit -p android --profile production
-   --latest` and the Play key of §12.3. `submit.production.android` sends
-   each to the internal track as a draft, which is all Play accepts while
-   the app itself is a draft; roll each one out in Play Console.
-6. Note the app signing key's SHA-256 (App integrity → App signing):
-   App Links need it (§12.10), next to the upload keystore's own.
+5. Later builds go with `eas submit -p android --profile rastra-production
+   --id <build id>`, or `--auto-submit` on the build (not `--latest`, as in
+   §12.7), and the Play key of §12.3. Each app's submit profile
+   (`submit.rastra-production.android`,
+   `submit.vardnadshavare-production.android`) sends each build to the
+   internal track as a draft, which is all Play accepts while the app
+   itself is a draft; roll each one out in Play Console.
+6. Note each app's signing key's SHA-256 (App integrity → App signing):
+   App Links need Rastra's (§12.10), next to the upload keystore's own.
 
 ### 12.9 Versions, updates and expiry
 
@@ -1620,9 +1823,11 @@ round, every send fails as unauthorised in between.
   them. The build number (iOS `buildNumber`, Android `versionCode`) lives on
   EAS (`cli.appVersionSource: "remote"`), and preview and production raise
   it at every build (`autoIncrement`). Never set it in `app.json`, where EAS
-  would ignore it. Preview and production share the counter, as they share
-  the id, and the first build gets 1; `eas build:version:set -p ios` (or
-  `-p android`) sets it by hand if it ever has to jump.
+  would ignore it. EAS keeps the counter per application id, so each app
+  has its own, which its preview and production builds share as they share
+  the id, and each app's first build gets 1. `eas build:version:set -p ios
+  --profile rastra-production` (or `-p android`, or the guardian app's
+  profile) sets it by hand if it ever has to jump.
 - **No over-the-air updates.** The app has no `expo-updates`. Every change
   to its code or its texts, however small, reaches a phone only as a new
   build that the person installs: from TestFlight or Play, or from the
@@ -1636,8 +1841,9 @@ round, every send fails as unauthorised in between.
   its own (it needs `expo-updates`, a runtime version policy and a channel
   per profile).
 - **The build log.** For every build that leaves a developer's hands: the
-  date, profile, version and build number, commit, the API its environment
-  points at, and where it went (which testers, TestFlight, Play). Once it
+  date, profile (which names the app), version and build number, commit,
+  the API its environment points at, and where it went (which testers,
+  TestFlight, Play). Once it
   names testers, keep it with the operator's notes rather than in this
   repository.
 - **What expires:**
@@ -1654,85 +1860,160 @@ round, every send fails as unauthorised in between.
     recent Android version, about a year after each release, and keeping
     the Expo SDK current is what keeps the app eligible.
 
-  The APNs key, the FCM service-account key and the Android keystores do
-  not expire.
+  The APNs key, the FCM service-account key and the four Android keystores
+  do not expire.
 
 ### 12.10 Universal Links and App Links
 
 This is the follow-up that closes §11's accepted risk of the custom scheme.
-The app would come back from a school-account sign-in on an https address of
-the web origin, which only SchemaPro's own signed app can claim, instead of
-on `schemapro://auth/callback`, which any app can register. It takes:
+Rastra would come back from a school-account sign-in on an https address of
+the web origin, which only Rastra's own signed app can claim, instead of on
+`rastra://auth/callback`, which any app can register. Rastra vårdnadshavare
+has no school-account sign-in and needs none of this. It takes:
 
 - **the home domain**, which is undecided (PRODUCT.md). The claimed address
   sits on the web origin, and moving it later takes a new build;
 - **on iOS**, the Associated Domains entitlement (`ios.associatedDomains`,
   `applinks:<web host>`) in the app config, and the web serving
   `/.well-known/apple-app-site-association` (JSON, over https, with no
-  redirect) that names the app as `<Team ID>.com.schemapro.teacher` and the
+  redirect) that names the app as `<Team ID>.se.rastra.app` and the
   callback path. The Team ID is the Apple Developer account's (§12.1);
 - **on Android**, an intent filter with `autoVerify` for the same https
   path, and the web serving `/.well-known/assetlinks.json` with the package
-  and the SHA-256 of every key that signs an installed app: Play's app
-  signing key (§12.8), and the EAS upload keystore for preview APKs, which
-  `eas credentials -p android` shows (§12.3);
+  `se.rastra.app` and the SHA-256 of every key that signs an installed
+  copy: Rastra's app signing key on Play (§12.8), and its EAS upload
+  keystore for preview APKs, which `eas credentials -p android` shows
+  (§12.3);
 - **in the app**, a sign-in that receives the https redirect instead of a
   scheme (`mobile/src/services/auth/authService.ts`). Check how
   `expo-web-browser`'s authentication session takes an https callback on
   the iOS versions the app supports;
 - **on the web**, a page at that path for a phone without the app, and **in
-  Supabase**, the new redirect URL (§11.5). `schemapro://auth/callback`
-  comes off the list only once no installed build uses it, since every
-  build keeps the redirect it was built with (§12.9). The development build,
-  `com.schemapro.teacher.dev`, keeps `schemapro-dev://` unless it is named in
-  both files too.
+  Supabase**, the new redirect URL (§11.5). `rastra://auth/callback` comes
+  off the list only once no installed build uses it, since every build
+  keeps the redirect it was built with (§12.9). Rastra Dev,
+  `se.rastra.app.dev`, keeps `rastra-dev://` unless it is named in both
+  files too.
 
-### 12.11 Open decisions for the owner
+### 12.11 Decisions
 
-The build keeps today's values until the owner decides. What each touches:
+The owner decided these on 2026-10-17. What each touches:
 
-1. **The bundle id and package, `com.schemapro.teacher`.** "teacher" dates
-   from when the app was for teachers alone; pupils and guardians use it
-   now, and a reverse-domain id usually follows the home domain, which is
-   undecided. The id is in `app.json` (`ios.bundleIdentifier`,
-   `android.package`), and `app.config.ts` derives `.dev` from it. It
-   becomes permanent at the first App Store Connect upload (§12.7) and at
-   the first Play upload (§12.8). Changed before those, it costs a new App
-   ID, new Firebase Android apps and a new `google-services.json`, the FCM
-   key assigned again, new keystores and a build counter from 1; changed
-   after, it is a new app in both stores. Nobody using the app sees the id.
-2. **Tablet support** (`ios.supportsTablet: false` and `orientation:
-   "portrait"` in `app.json`). Teachers often take attendance on a shared
-   tablet (PRODUCT.md). Off, an iPad runs the app in iPhone compatibility
-   mode, in portrait, and the App Store asks for no iPad screenshots. On,
-   the screens must lay out at iPad sizes in both orientations, be tested on
-   an iPad and come with iPad screenshots. Android has no such switch: from
-   Android 16, an app that targets it, as this one does, has its
-   orientation lock ignored on large screens, so Android tablets can show it
-   in landscape either way.
-3. **The display name, "SchemaPro"** (`name` in `app.json`; the variants
-   add " Dev" and " Test"). It is the name under the icon and the one iOS
-   puts in its Face ID question, and the app's own Swedish texts name
-   SchemaPro too ("Notiser är avstängda för SchemaPro …"). The store names
-   are set apart from it: the App Store name must be unique in the store
-   (§12.7), and Play's title is set in Play Console (§12.8).
-4. **Dark only, or following the phone** (`userInterfaceStyle: "dark"`).
-   Automatic alone would turn the system's own parts (alerts, pickers, the
-   keyboard) light over an app that stays dark, since the screens' colours
-   are fixed in the code and the status bar is set to light. Following the
-   phone for real takes a light theme for every screen, a light splash, and
-   the WCAG 2.1 AA contrast check in both themes (PRODUCT.md).
-5. **Export compliance** (`ios.config.usesNonExemptEncryption`, unset). The
-   app encrypts its local database itself, with SQLCipher (`expo-sqlite`'s
-   `useSQLCipher`), beyond the HTTPS and keychain that iOS provides. Whether
-   that is exempt under the US export rules Apple asks about is the owner's
-   call. Unset, `eas build` asks at every interactive iOS build and the
-   answer is kept out of the build (§12.5 step 2), and every build waits as
-   *Missing Compliance* until its questions are answered by hand (§12.7).
-   Set in `app.json` (there, not as `ios.infoPlist.ITSAppUsesNonExemptEncryption`,
-   which `app.config.ts` drops), the value goes into every build's
-   Info.plist and the question stops; `true` also brings the export
-   documentation Apple then asks for.
+1. **Two apps, each admitting only its own roles** (§12): Rastra for staff
+   and pupils, Rastra vårdnadshavare for guardians. Their ids are
+   `se.rastra.app` and `se.rastra.vardnadshavare`, with `.dev` for the
+   development builds. `app.json` holds Rastra's (`ios.bundleIdentifier`,
+   `android.package`), and `app.config.ts` derives the rest. Each id
+   becomes permanent at its app's first App Store Connect upload (§12.7)
+   and first Play upload (§12.8); changed after, it is a new app in both
+   stores. They replace `com.schemapro.teacher`, which no store has seen.
+   Nobody using the apps sees an id.
+2. **The display names, "Rastra" and "Rastra vårdnadshavare"** (preview
+   builds add " Test", development builds " Dev"). They are the names under
+   the icon and in the phone's settings, and each app's own texts name the
+   app they mean. The store names are set apart from them: the App Store
+   name must be unique in the store (§12.1, §12.7), and Play's title is set
+   in Play Console (§12.8). On an iPhone's home screen the guardian app's
+   name is cut to about "Rastra vård…" (§12).
+3. **Tablets: on** (`ios.supportsTablet: true`, `orientation: "portrait"`
+   kept). §12.12 says what that gives and how it is checked.
+4. **Appearance: follows the phone** (`userInterfaceStyle: "automatic"`),
+   with a light and a dark palette (§12.12).
+5. **Export compliance: exempt** (`ios.config.usesNonExemptEncryption:
+   false` in `app.json`, which Expo writes into Info.plist as
+   `ITSAppUsesNonExemptEncryption` false). The apps' encryption is HTTPS,
+   the system keychain and SQLCipher (AES) for the local database
+   (`expo-sqlite`'s `useSQLCipher`). Treating that as exempt is the usual
+   interpretation for standard encryption of local storage and HTTPS; it is
+   **not a legal assessment**. With the key set, `eas build` asks no
+   encryption question (§12.5) and TestFlight builds do not wait as
+   *Missing Compliance* (§12.7). Any further encryption the apps add
+   reopens the decision, and `true` would bring the export documentation
+   Apple then asks for.
+
+**Chosen with the build, and reversible until the first `eas init` and the
+first store uploads:**
+
+- **One EAS project**, slug `rastra` (§12, §12.2): one project id in
+  `app.json`, one set of EAS environments for both apps, and credentials
+  per application id (§12.3). Two projects would make the gateway's mixed
+  push requests fail (§12).
+- **No school accounts in Rastra vårdnadshavare.** Guardians sign in with
+  a password, so only Rastra's schemes go into Supabase's redirect URLs
+  (§1, §11.5), and §11.7's accepted risk of the custom scheme and §12.10
+  concern Rastra alone. The Entra app registration and the Google consent
+  screen, which IT departments see, are named Rastra (§11.3, §11.4).
+
+**Still open:**
+
+- **Two columns in the attendance register on wide tablets: not adopted.**
+  The register is one centred column at every width. Two columns would
+  order the class row by row (pupil 1 beside pupil 2), and a register is
+  read down; adopting them takes the owner's yes.
+- **A mark of its own for the guardian app.** Both apps have the same icon,
+  so on a phone with both (a teacher who is also a parent, with an account
+  for each) only the name under the icon tells them apart, and an iPhone
+  cuts the guardian app's short. A mark of its own changes the icon files
+  and `mobile/scripts/render-brand-assets.mjs`.
+- **Whether school accounts should ever come to the guardian app.** If they
+  do, it needs `rastra-vardnadshavare://auth/callback` (and the `-dev` one)
+  in Supabase's redirect URLs, and §11.7's accepted risk and §12.10 extend
+  to it.
+
+### 12.12 Tablets and appearance
+
+**Tablets.** `ios.supportsTablet` is `true`, and `orientation` stays
+`"portrait"`:
+
+- Phones run in portrait.
+- On an iPad, Expo writes all four orientations and `UIRequiresFullScreen`
+  false, so the app takes part in iPad multitasking: Split View, Slide Over
+  and Stage Manager give it any window width and change it while it runs.
+  Apple is retiring the full-screen opt-out (TN3192), so a resizable app is
+  the lasting choice.
+- Android 16 and later ignore the portrait lock on tablets (smallest width
+  600 dp and up), since the app targets SDK 36, so the app runs there in
+  any orientation and window size. Android 12L to 15 tablets keep the
+  lock, and letterbox the app when held on their side.
+
+The screens lay out from the window's width, never the screen's
+(`mobile/src/layout/responsive.ts`): reading columns of at most 680 points
+and forms of at most 480; from 840, the guardian's absence and leave forms
+beside their lists; on wide screens, the child's week as a grid of days.
+The attendance register stays one centred column (§12.11).
+
+Check this on a device before the first store upload and after any change
+to a screen's layout:
+
+- on an iPad: portrait and landscape; Split View at its narrowest and its
+  widest; a Stage Manager window resized while a screen is open; and the
+  keyboard up on the login form, the guardian's absence form and the leave
+  form, with the field being typed in still in view;
+- on an Android tablet with Android 16 or later: both orientations and a
+  resized window.
+
+An iPad gets an internal build as an iPhone does (§12.5). App Store Connect
+asks for 13-inch iPad screenshots for an app that runs on iPad, and Play
+for tablet screenshots; both belong to the stores phase. As is commonly
+documented, iPad support cannot be withdrawn once a version with it is
+uploaded (§12.7).
+
+**Face ID only where attendance is taken.** Rastra asks for Face ID before
+attendance is sent, and says why in Swedish (English in the English
+localisation). Rastra vårdnadshavare takes no attendance, so its build
+carries no Face ID purpose text and no biometric permission: iOS never asks,
+and Android lists no fingerprint or biometric access.
+
+**Appearance.** The apps follow the phone's light or dark appearance
+(`userInterfaceStyle: "automatic"`). Every colour is a role in
+`mobile/src/theme/tokens.ts`, with one palette per appearance: light is the
+web's light theme, and dark is the app's navy.
+`mobile/src/theme/contrast.test.ts` measures every text and control pair
+against WCAG 2.1 AA in both, and a source scan refuses a colour written
+anywhere else. The splash has a light and a dark ground. The native view
+behind the screens is set once, at build time, so the app repaints it
+whenever the phone switches. The device check is §12.4 step 5, on an iPhone
+and an Android phone.
 
 ## 12. Several schools per login ("Flera skolor per inloggning")
 

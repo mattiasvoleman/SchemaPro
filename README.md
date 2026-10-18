@@ -134,14 +134,17 @@ npm run dev                 # http://localhost:3000
 cd mobile
 npm ci                      # with npm 11, as CI; mobile/.npmrc sets legacy-peer-deps
 cp .env.example .env.local  # API base URL + Supabase URL/key (https on a phone)
-npm start                   # APP_VARIANT=development expo start
+npm start                   # Rastra; npm run start:vardnadshavare for the guardian app
 ```
 
-The app runs in its own development build (SchemaPro Dev), not in Expo Go:
-it refuses to open its database without SQLCipher, which only its own build
-compiles in, and push needs that build too. Make one with `npm run ios` /
-`npm run android` (Xcode / the Android SDK), or on EAS with
-`eas build --profile development` (the CLI is the npm package `eas-cli`). The
+The code builds two apps: Rastra, for staff and pupils, and Rastra
+vårdnadshavare, for guardians (`APP` in `mobile/app.config.ts`). Each runs in
+its own development build (Rastra Dev, Rastra vårdnadshavare Dev), not in Expo
+Go: the app refuses to open its database without SQLCipher, which only its own
+build compiles in, and push needs that build too. Make one with `npm run ios` /
+`npm run android` (or the `:vardnadshavare` twins; Xcode / the Android SDK), or
+on EAS with `eas build --profile rastra-development` or
+`vardnadshavare-development` (the CLI is the npm package `eas-cli`). The
 lockfile is written by npm 11, which CI pins. Internal and store builds,
 credentials and push on a device: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
 §12.
