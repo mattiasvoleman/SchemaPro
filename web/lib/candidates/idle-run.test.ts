@@ -135,6 +135,28 @@ describe("idleOf — one grundschema's håltimmar", () => {
     expect(measure(currentWeek(draft)).teachers.minutes).toBe(120);
   });
 
+  it("builds the years each group holds as /admin/gaps does: the planned year's groups, a tioårig one read in NIOARIG", () => {
+    /*
+     * Ramtider and weekly year rules are stated in NIOARIG, so a tioårig
+     * 10A is the 9 a "7–9" frame binds (grade-span.ts). The context is the
+     * page's own inputs: the same spans give the same holes as /admin/gaps.
+     */
+    const groups = inputs().groups.map((group) => (group.id === "g-7a" ? { ...group, gradeLevel: 10 } : group));
+    const memberships = [{ studentId: "p-1", studentGroupId: "g-ma71" }];
+
+    const tioarig = idleContextOf(inputs({ groups, memberships, numbering: "TIOARIG" })).gradeSpanOf;
+    expect([tioarig.get("g-7a"), tioarig.get("g-ma71")]).toEqual([
+      { min: 9, max: 9 },
+      { min: 9, max: 9 },
+    ]);
+    // Another year's class lends nobody a grade, and is not measured.
+    expect(tioarig.has("g-old")).toBe(false);
+
+    const nioarig = idleContextOf(inputs({ groups, memberships, numbering: "NIOARIG" })).gradeSpanOf;
+    expect(nioarig.get("g-7a")).toEqual({ min: 10, max: 10 });
+    expect(idleContextOf(inputs({ groups, memberships })).gradeSpanOf).toEqual(nioarig);
+  });
+
   it("credits the school's lunch, as /admin/gaps does", () => {
     const week = [lesson("g-7a", "10:00", "11:00"), lesson("g-7a", "12:00", "13:00")];
     const lunch = {

@@ -191,6 +191,7 @@ export default function CandidatesPage() {
       frameTimes,
       lunch,
       academicYearId: year.id,
+      numbering: year.gradeNumbering,
       teacherIds: current.filter((person) => person.role === "TEACHER").map((person) => person.id),
     };
   }, [year, peopleQuery.data, people, constraints, groups, memberships, frameTimes, requirements, lunch, rostersPending]);
