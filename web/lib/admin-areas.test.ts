@@ -62,16 +62,17 @@ describe("the läsare (Läsbehörighet)", () => {
     expect(closedPages("LASARE")).toEqual([{ path: "/admin/dataskydd", gate: "DECIDES" }]);
   });
 
-  it("opens every other admin page read-only, each named by its area, Personer by the register", () => {
+  it("opens every other admin page read-only, each named by its area, Personer by the register and planering", () => {
     const pages = readOnlyPages("LASARE");
     const expected = Object.entries(PAGE_GATES)
       .filter(([path, gate]) => gate !== "DECIDES" && (gate !== null || path === "/admin/people"))
       .map(([path]) => path)
       .sort();
     expect(pages.map((page) => page.path).sort()).toEqual(expected);
-    expect(pages.find((page) => page.path === "/admin/people")?.area).toBe("PERSONAL");
-    expect(pages.find((page) => page.path === "/admin/timetable")?.area).toBe("SCHEMALAGGNING");
-    expect(pages.find((page) => page.path === "/admin/calendar-feeds")?.area).toBe("PUBLICERING");
+    // Personer: the register, and each teacher's arbetstid, behörigheter and uppdrag.
+    expect(pages.find((page) => page.path === "/admin/people")?.areas).toEqual(["PERSONAL", "PLANERING"]);
+    expect(pages.find((page) => page.path === "/admin/timetable")?.areas).toEqual(["SCHEMALAGGNING"]);
+    expect(pages.find((page) => page.path === "/admin/calendar-feeds")?.areas).toEqual(["PUBLICERING"]);
     expect(pages.some((page) => page.path === "/admin")).toBe(false);
     expect(profileReadsPage("LASARE", "DRIFT")).toBe(true);
     expect(profileReadsPage("LASARE", "DECIDES")).toBe(false);

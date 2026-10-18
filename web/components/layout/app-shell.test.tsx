@@ -681,9 +681,23 @@ describe("AppShell for a läsare (Läsbehörighet)", () => {
     expect(notice("SCHEMALAGGNING")).not.toBeVisible();
     cleanup();
     readerShell("/admin");
-    for (const area of ["PLANERING", "SCHEMALAGGNING", "PUBLICERING", "DRIFT", "PERSONAL", "INTEGRATIONER"]) {
+    for (const area of ["PLANERING", "SCHEMALAGGNING", "PUBLICERING", "DRIFT", "PERSONAL PLANERING", "INTEGRATIONER"]) {
       expect(notice(area)).not.toBeVisible();
     }
+  });
+
+  it("names both of Personer's areas in one notice: the register's writers and planering's", () => {
+    readerShell("/admin/people");
+    const people = notice("PERSONAL PLANERING");
+    expect(people).toBeVisible();
+    expect(notice("PERSONAL")).toBeNull();
+    expect(notice("PLANERING")).not.toBeVisible();
+    expect(people?.textContent).toContain("readOnlyBody(adminAreas.profile.LASARE)");
+    // The register is changed by the expedition, and planering by a schemaläggare, not the other way.
+    expect(people?.textContent).toMatch(/readOnlyWriters\(adminAreas\.area\.PERSONAL\|[^)]*doer\.EXPEDITION\)/);
+    expect(people?.textContent).not.toMatch(/readOnlyWriters\(adminAreas\.area\.PERSONAL\|[^)]*doer\.SCHEMALAGGARE/);
+    expect(people?.textContent).toMatch(/readOnlyWriters\(adminAreas\.area\.PLANERING\|[^)]*doer\.SCHEMALAGGARE\)/);
+    expect(people?.textContent).not.toMatch(/readOnlyWriters\(adminAreas\.area\.PLANERING\|[^)]*doer\.EXPEDITION/);
   });
 
   it("gives the dataskydd page the page that says why, not a read-only one", () => {
