@@ -506,7 +506,7 @@ const GROUP_CHOICE_SV: Record<string, string> = {
   PROMOTE_WITHOUT_GRADE: 'har ingen årskurs att flytta upp',
   INTAKE_NOT_LOWEST: 'är inte en klass i den lägsta årskursen, så INTAKE går inte',
   CARRY_FORSKOLEKLASS:
-    'är förskoleklass och kan inte följa med oförändrad in i hösten 2028: den börjar direkt i årskurs 2 (SFS 2025:729)',
+    'är förskoleklass och kan inte stanna kvar in i hösten 2028: den börjar direkt i årskurs 2 (SFS 2025:729)',
 };
 
 /** The first blocking problem as the 400 or 409 the execute answers with. */
@@ -551,7 +551,7 @@ function refuseBlockedRollover(plan: RolloverPlan, source: RolloverSource): void
   if (required) {
     throw new BadRequestException({
       message:
-        'renumber2028: skolan har en lokal timplan eller en förskoleklass, så den har en av de skolformer som ' +
+        'renumber2028: skolan har en beslutad lokal timplan eller en förskoleklass, så den har en av de skolformer som ' +
         'SFS 2025:729 numrerar om från hösten 2028. Numreringen kan inte behållas.',
       code: 'ROLLOVER_2028_RENUMBERING_REQUIRED',
     });

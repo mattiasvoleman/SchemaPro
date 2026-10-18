@@ -502,7 +502,7 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
     classGrades.set(grade, list);
   }
   for (const grade of [...classGrades.keys()].sort((a, b) => a - b)) {
-    if (!attachableGrade(grade, input.gradeNumbering ?? "NIOARIG")) continue;
+    if (grade > TIMPLAN_MAX_ATTACHABLE_GRADE) continue;
     const ids = classGrades.get(grade)!;
     const attached = planOfGrade.get(grade);
     if (attached) {
@@ -525,6 +525,8 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
       });
       continue;
     }
+    // A plan is asked only of an årskurs the year can attach one to.
+    if (!attachableGrade(grade, input.gradeNumbering ?? "NIOARIG")) continue;
     verdicts.push({
       code: "TIMPLAN_YEAR_GRADE_UNATTACHED",
       severity: "notice",
