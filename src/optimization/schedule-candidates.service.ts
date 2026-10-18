@@ -45,6 +45,7 @@ import type { StoredConflict } from './optimization-jobs.service';
 import {
   calendarSweepWhere,
   draftMastersWhere,
+  engineMayStillBeSolving,
   OptimizationProxyService,
   previousLessonsFrom,
   type CandidateLesson,
@@ -861,10 +862,11 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
         } catch (error) {
           const failure = engineFailureOf(error);
           this.logger.warn(`Candidate engine call failed [runId=${runId}, ordinal=${candidate.ordinal}, code=${failure.code ?? 'none'}]`);
-          // A timeout — the gateway's, or the engine's own 503, whose wait
-          // does not stop its solve thread — leaves the solve running: the
-          // run keeps the call's deadline. Any answer the engine gave clears it.
-          await this.fail(runId, user, failure, { keepEngineBusy: failure.code === CANDIDATE_ENGINE_TIMEOUT });
+          // A call that reached the engine and timed out — the gateway's
+          // timeout, or the engine's own 503, whose wait does not stop its
+          // solve thread — leaves the solve running: the run keeps the call's
+          // deadline. An engine never reached, or one that answered, clears it.
+          await this.fail(runId, user, failure, { keepEngineBusy: engineMayStillBeSolving(error) });
           return;
         }
 
