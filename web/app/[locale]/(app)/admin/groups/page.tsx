@@ -121,11 +121,13 @@ export default function GroupsPage() {
   const memberships = membershipsQuery.data;
   const setMembers = useSetGroupMembers();
 
-  // The active year's classes, for the skolenheter card's map.
-  const activeClasses = useMemo(() => {
-    const active = years.find((year) => year.isActive);
-    return (groups ?? []).filter((group) => group.kind === "CLASS" && group.academicYearId === active?.id);
-  }, [groups, years]);
+  // The active year's classes, for the skolenheter card's map, and the year's
+  // numbering they are placed by.
+  const activeYear = years.find((year) => year.isActive);
+  const activeClasses = useMemo(
+    () => (groups ?? []).filter((group) => group.kind === "CLASS" && group.academicYearId === activeYear?.id),
+    [groups, activeYear?.id],
+  );
 
   const students = useMemo(
     () =>
@@ -532,7 +534,7 @@ export default function GroupsPage() {
         </>
       )}
 
-      <SchoolUnitsCard classes={activeClasses} />
+      <SchoolUnitsCard classes={activeClasses} numbering={activeYear?.gradeNumbering} />
 
       <LazyClassHalvesDialog
         opened={halvesFor}

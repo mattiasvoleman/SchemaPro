@@ -177,6 +177,72 @@ describe('ScbFileService', () => {
     expect(recordedReads(tx).find((read) => read.kind === 'STAFF_ABSENCES')).toEqual({ kind: 'STAFF_ABSENCES', channel: 'WEB', ids: [BO] });
   });
 
+  describe("the läsår's numbering", () => {
+    const F6 = { id: 'u-f6', name: 'Norra F–6', code: '11111111', gradeFrom: 0, gradeTo: 6 };
+    const U79 = { id: 'u-79', name: 'Norra 7–9', code: '22222222', gradeFrom: 7, gradeTo: 9 };
+    const GROUP_10A = '77777777-7777-4777-8777-777777777777';
+    /** A läsår from HT 2028 of `gradeNumbering`, its 10A taught by Anna, the school split F–6 and 7–9. */
+    const yearOf = (gradeNumbering: 'NIOARIG' | 'TIOARIG') => {
+      tx.academicYear.findUnique.mockImplementation(({ select }: { select: Record<string, unknown> }) =>
+        Promise.resolve(
+          'startDate' in select
+            ? {
+                startDate: new Date('2028-08-21T00:00:00.000Z'),
+                endDate: new Date('2029-06-15T00:00:00.000Z'),
+                isActive: true,
+                predecessorId: null,
+                gradeNumbering,
+              }
+            : { name: '2028/29', school: { name: 'Norra skolan', timezone: 'Europe/Stockholm' } },
+        ),
+      );
+      tx.teacherEmployment.findMany.mockResolvedValue([postRow(ANNA)]);
+      tx.teachingRequirement.findMany.mockResolvedValue([
+        {
+          id: 'req-10a',
+          subjectId: MA,
+          studentGroupId: GROUP_10A,
+          teacherId: ANNA,
+          coTeacherId: null,
+          lessonsPerWeek: 4,
+          minutesPerLesson: 60,
+          lessonLengths: [],
+          teacherLoadPercent: 100,
+          coTeacherLoadPercent: 100,
+          recurrence: 'ALL_WEEKS',
+          startDate: null,
+          endDate: null,
+          subject: { name: 'Matematik' },
+          studentGroup: { name: '10A', gradeLevel: 10 },
+        },
+      ]);
+      tx.studentGroup.findMany.mockResolvedValue([{ id: GROUP_10A, gradeLevel: 10, name: '10A', kind: 'CLASS' }]);
+      tx.academicYearTimplan.findMany.mockResolvedValue([{ gradeLevel: 10, localTimplan: { schoolForm: 'GRUNDSKOLA' } }]);
+      tx.schoolUnit.findMany.mockResolvedValue([U79, F6]);
+    };
+
+    it("hands the file a tioårig läsår's numbering: 10A is the 7–9 unit's högstadium, in scope", async () => {
+      yearOf('TIOARIG');
+      const file = await service.build(YEAR_ID, testUser(), new Date('2028-10-16T10:00:00.000Z'));
+      expect(file.rows.map((row) => [row[col('SkolenhetsKod')], row[col('Verksamhetstyp')], row[col('OmfLarare')]])).toEqual([
+        ['22222222', '6', '100'],
+      ]);
+      expect(file.notices.map((notice) => notice.code)).toEqual(['NOT_HT2026']);
+    });
+
+    it('reads a nine-year läsår from HT 2028 as before: åk 10 lies in no unit and is out of scope', async () => {
+      yearOf('NIOARIG');
+      const file = await service.build(YEAR_ID, testUser(), new Date('2028-10-16T10:00:00.000Z'));
+      expect(file.rows.map((row) => [row[col('SkolenhetsKod')], row[col('Verksamhetstyp')]])).toEqual([['11111111', '']]);
+      expect(file.notices).toEqual(
+        expect.arrayContaining([
+          { code: 'GRADE_OUT_OF_SCOPE', params: { grade: 10 } },
+          { code: 'GRADE_WITHOUT_UNIT', params: { grade: 10, unit: 'Norra F–6' } },
+        ]),
+      );
+    });
+  });
+
   it('records nothing for a year with nobody to report', async () => {
     tx.teacherEmployment.findMany.mockResolvedValue([]);
     tx.teachingRequirement.findMany.mockResolvedValue([]);

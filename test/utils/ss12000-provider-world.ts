@@ -178,6 +178,11 @@ export class ProviderWorld {
   readonly settled: Row[] = [];
   readonly rawStatements: string[] = [];
 
+  /**
+   * No gradeNumbering: absent reads as NIOARIG (Model.numberingOf), as every
+   * läsår before 2028-07-01 is. A spec making one TIOARIG sets it on the row;
+   * the CHECK that keeps such a läsår from HT 2028 is Postgres's, not the world's.
+   */
   readonly years: Row[] = [
     { id: W.pastYear, schoolId: W.school, startDate: d('2025-08-18'), endDate: d('2026-06-12'), isActive: false },
     { id: W.year, schoolId: W.school, startDate: d('2026-08-17'), endDate: d('2027-06-11'), isActive: true },

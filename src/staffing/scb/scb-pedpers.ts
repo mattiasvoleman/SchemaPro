@@ -3,6 +3,7 @@ import { compareUnits, gradeOutsideUnits, unitForGrade, type UnitSpan } from '..
 import { dutyRunsOn, type DutyDates } from '../duty-dates';
 import { postOn, type LoadPeriod, type PostFigures } from '../employment-periods';
 import type { GradeSpan, TeacherAssignment } from '../teacher-load';
+import type { GradeNumbering } from '../../common/grade-numbering';
 
 /*
  * SCB:s Pedagogisk personal, the file itself: built by the gateway in SCB's
@@ -365,8 +366,11 @@ export interface ScbTeacher {
 export interface ScbFileInput {
   /** The download day in the school's zone, yyyy-mm-dd (column 2). */
   exportDate: string;
-  /** The läsår: its name for the file name, its bounds for a leave's length. */
-  year: { name: string; startDate: string; endDate: string };
+  /**
+   * The läsår: its name for the file name, its bounds for a leave's length,
+   * and its numbering (absent is NIOARIG) for the skolenhet and the stadium.
+   */
+  year: { name: string; startDate: string; endDate: string; gradeNumbering?: GradeNumbering };
   schoolName: string;
   /** The year's planned report rows, each post with its three SCB fields. */
   teachers: readonly ScbTeacher[];
@@ -554,11 +558,21 @@ function leaveAround(
 // Rows
 // ---------------------------------------------------------------------------
 
-/** The verksamhetstyp a grade is reported under, and why not when it cannot be. */
-function stageOf(grade: number, formByGrade: ReadonlyMap<number, SchoolForm>): { type: Verksamhetstyp; notice?: ScbNotice } {
-  if (grade === 0) return { type: '1' };
-  if (grade < 1 || grade > 9) return { type: '', notice: { code: 'GRADE_OUT_OF_SCOPE', params: { grade } } };
-  const band = grade <= 3 ? 0 : grade <= 6 ? 1 : 2;
+/**
+ * The verksamhetstyp a grade is reported under, and why not when it cannot be.
+ * A tioårig läsår's stadier are 1–4 / 5–7 / 8–10 and it has no förskoleklass
+ * (SFS 2025:729); SCB has not yet published how it codes them, so they take
+ * the stadium codes their pupils had (NOT_HT2026 says the spec is 2026's).
+ */
+function stageOf(
+  grade: number,
+  formByGrade: ReadonlyMap<number, SchoolForm>,
+  numbering: GradeNumbering,
+): { type: Verksamhetstyp; notice?: ScbNotice } {
+  const tioarig = numbering === 'TIOARIG';
+  if (grade === 0 && !tioarig) return { type: '1' };
+  if (grade < 1 || grade > (tioarig ? 10 : 9)) return { type: '', notice: { code: 'GRADE_OUT_OF_SCOPE', params: { grade } } };
+  const band = tioarig ? (grade <= 4 ? 0 : grade <= 7 ? 1 : 2) : grade <= 3 ? 0 : grade <= 6 ? 1 : 2;
   const form = formByGrade.get(grade);
   if (form === 'ANPASSAD_GRUNDSKOLA_AMNEN' || form === 'ANPASSAD_GRUNDSKOLA_AMNESOMRADEN') {
     return { type: (['10', '11', '12'] as const)[band] };
@@ -631,10 +645,11 @@ export function buildScbFile(input: ScbFileInput): ScbFile {
   const unitById = new Map(units.map((unit) => [unit.id, unit]));
   if (units.length === 0) notice({ code: 'NO_SCHOOL_UNIT', params: {} });
   /** The unit a grade's teaching is reported under ("" without units), naming a grade no span holds. */
+  const numbering = input.year.gradeNumbering ?? 'NIOARIG';
   const unitOf = (grade: number | null): string => {
-    const unit = unitForGrade(units, grade);
+    const unit = unitForGrade(units, grade, numbering);
     if (!unit) return '';
-    if (grade !== null && gradeOutsideUnits(units, grade)) {
+    if (grade !== null && gradeOutsideUnits(units, grade, numbering)) {
       notice({ code: 'GRADE_WITHOUT_UNIT', params: { grade, unit: unit.name } });
     }
     return unit.id;
@@ -714,7 +729,7 @@ export function buildScbFile(input: ScbFileInput): ScbFile {
         // split by its grades in each.
         const grades = gradesOf(assignment.gradeSpan);
         shares = grades.map((grade) => {
-          const stage = stageOf(grade, input.schoolFormByGrade);
+          const stage = stageOf(grade, input.schoolFormByGrade, numbering);
           if (stage.notice) notice(stage.notice);
           return { unit: unitOf(grade), type: stage.type, minutes: minutes / grades.length };
         });

@@ -761,4 +761,105 @@ describe('SCB Pedagogisk personal, the rows', () => {
       expect(file.rows[0]![col('SkolenhetsKod')]).toBe('11111111');
     });
   });
+
+  // SFS 2025:729: a läsår from HT 2028 may be tioårig, its classes one up (8A
+  // is 10A). A skolenhet's span is stated in the nine-year numbering and read
+  // as övergångsbestämmelse 5 reads an approval (F–6 holds 1–7, 7–9 holds
+  // 8–10, förskoleklass alone nothing); the stadier are 1–4, 5–7 and 8–10,
+  // and there is no förskoleklass. What the file names, it names in the
+  // läsår's own årskurser.
+  describe('a tioårig läsår', () => {
+    const F6 = { id: 'u-f6', name: 'Norra F–6', code: '11111111', gradeFrom: 0, gradeTo: 6 };
+    const U79 = { id: 'u-79', name: 'Norra 7–9', code: '22222222', gradeFrom: 7, gradeTo: 9 };
+    const tioarig = { name: '2028/29', startDate: '2028-08-21', endDate: '2029-06-15', gradeNumbering: 'TIOARIG' as const };
+    const formsOf = (form: SchoolForm) =>
+      new Map<number, SchoolForm>([1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((grade) => [grade, form]));
+    const tio = (overrides: Partial<ScbFileInput>) =>
+      input({ exportDate: '2028-10-16', year: tioarig, schoolFormByGrade: formsOf('GRUNDSKOLA'), ...overrides });
+    /** Anna, 200 minutes of Matematik a week in one class of each grade. */
+    const teaching = (...grades: number[]) =>
+      teacher('t-anna', {
+        assignments: grades.map((grade) =>
+          assignment({ groupName: `${grade}A`, gradeSpan: { min: grade, max: grade }, timeMinutesPerWeek: 200 }),
+        ),
+      });
+    const cells = (file: ReturnType<typeof buildScbFile>, ...names: string[]) =>
+      file.rows.map((row) => names.map((name) => row[col(name)]));
+
+    it('places 7A in F–6 and 10A in 7–9, each span read one up, and names no grade outside a unit', () => {
+      const file = buildScbFile(tio({ units: [U79, F6], teachers: [teaching(1, 7, 8, 10)] }));
+      expect(cells(file, 'SkolenhetsKod', 'Verksamhetstyp', 'OmfLarare')).toEqual([
+        ['11111111', '4', '25'],
+        ['11111111', '5', '25'],
+        ['22222222', '6', '50'],
+      ]);
+      // Only that SCB's spec is 2026's.
+      expect(file.notices.map((entry) => entry.code)).toEqual(['NOT_HT2026']);
+    });
+
+    it("reports the new åk 1 under the 1–6 unit, not the förskoleklass unit's, which stays the first unit", () => {
+      const FK = { id: 'u-fk', name: 'Norra förskoleklass', code: '33333333', gradeFrom: 0, gradeTo: 0 };
+      const U16 = { id: 'u-16', name: 'Norra 1–6', code: '44444444', gradeFrom: 1, gradeTo: 6 };
+      const file = buildScbFile(tio({ units: [FK, U16, U79], teachers: [teaching(1, 7)] }));
+      expect(cells(file, 'SkolenhetsKod', 'Verksamhetstyp')).toEqual([
+        ['44444444', '4'],
+        ['44444444', '5'],
+      ]);
+      expect(file.notices.map((entry) => entry.code)).toEqual(['NOT_HT2026']);
+      // A post with no planned teaching goes to the first unit, as in a nine-year läsår.
+      const idle = buildScbFile(tio({ units: [U16, U79, FK], teachers: [teacher('t-anna', { assignments: [] })] }));
+      expect(idle.rows[0]![col('SkolenhetsKod')]).toBe('33333333');
+    });
+
+    it('codes the stadier 1–4, 5–7 and 8–10 as 4, 5 and 6, and anpassad grundskola as 10, 11 and 12', () => {
+      const file = buildScbFile(tio({ teachers: [teaching(4, 5, 7, 8)] }));
+      expect(cells(file, 'Verksamhetstyp', 'OmfLarare')).toEqual([
+        ['4', '25'],
+        ['5', '50'],
+        ['6', '25'],
+      ]);
+      expect(file.notices.map((entry) => entry.code)).toEqual(['NOT_HT2026']);
+      const anpassad = buildScbFile(
+        tio({ schoolFormByGrade: formsOf('ANPASSAD_GRUNDSKOLA_AMNEN'), teachers: [teaching(4, 5, 8, 10)] }),
+      );
+      expect(cells(anpassad, 'Verksamhetstyp')).toEqual([['10'], ['11'], ['12']]);
+    });
+
+    it('reports åk 10, and leaves out åk 0, which a tioårig läsår has none of, and åk 11, by their own numbers', () => {
+      const file = buildScbFile(tio({ units: [U79, F6], teachers: [teaching(0, 10, 11)] }));
+      expect(cells(file, 'SkolenhetsKod', 'Verksamhetstyp')).toEqual([
+        ['11111111', ''],
+        ['22222222', '6'],
+      ]);
+      expect(file.notices).toEqual(
+        expect.arrayContaining([
+          { code: 'GRADE_OUT_OF_SCOPE', params: { grade: 0 } },
+          { code: 'GRADE_WITHOUT_UNIT', params: { grade: 0, unit: 'Norra F–6' } },
+          { code: 'GRADE_OUT_OF_SCOPE', params: { grade: 11 } },
+          { code: 'GRADE_WITHOUT_UNIT', params: { grade: 11, unit: 'Norra F–6' } },
+        ]),
+      );
+      expect(file.notices.filter((entry) => entry.params.grade === 10)).toEqual([]);
+      // Not förskoleklass: no row of verksamhetstyp 1.
+      expect(file.rows.some((row) => row[col('Verksamhetstyp')] === '1')).toBe(false);
+    });
+
+    it('reads a nine-year läsår named NIOARIG exactly as one with no numbering: F is förskoleklass, åk 10 is out', () => {
+      const year = { name: '2026/27', startDate: '2026-08-17', endDate: '2027-06-11' };
+      const teachers = [teaching(0, 7, 10)];
+      const named = buildScbFile(input({ year: { ...year, gradeNumbering: 'NIOARIG' }, units: [U79, F6], teachers }));
+      expect(named).toEqual(buildScbFile(input({ year, units: [U79, F6], teachers })));
+      expect(cells(named, 'SkolenhetsKod', 'Verksamhetstyp')).toEqual([
+        ['11111111', '1'],
+        ['11111111', ''],
+        ['22222222', '6'],
+      ]);
+      expect(named.notices).toEqual(
+        expect.arrayContaining([
+          { code: 'GRADE_OUT_OF_SCOPE', params: { grade: 10 } },
+          { code: 'GRADE_WITHOUT_UNIT', params: { grade: 10, unit: 'Norra F–6' } },
+        ]),
+      );
+    });
+  });
 });

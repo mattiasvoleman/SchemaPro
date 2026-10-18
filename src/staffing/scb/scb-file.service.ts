@@ -161,7 +161,13 @@ export class ScbFileService {
           : [];
       const file = buildScbFile({
         exportDate: dayIn(now),
-        year: { name: yearRow.name, startDate: read.year.startDate, endDate: read.year.endDate },
+        year: {
+          name: yearRow.name,
+          startDate: read.year.startDate,
+          endDate: read.year.endDate,
+          // The skolenhet and the stadium are read in the year's numbering.
+          ...(read.input.year.gradeNumbering ? { gradeNumbering: read.input.year.gradeNumbering } : {}),
+        },
         schoolName: yearRow.school?.name ?? '',
         teachers,
         firstTeacherDuties: duties.map((duty) => ({

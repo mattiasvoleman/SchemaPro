@@ -1,3 +1,4 @@
+import { toNioarig, type GradeNumbering } from '../../common/grade-numbering';
 import { normaliseUnitCode, spansOverlap, unitForGrade } from '../../school-units/school-unit-map';
 import type { FetchedRoster } from './fetch-plan';
 import { activeOn, isProtected, type DutyRole, type S1Duty, type S1Group, type S1Organisation, type S1Person } from './s1';
@@ -119,6 +120,8 @@ export interface LocalYear {
   startDate: string;
   endDate: string;
   isActive: boolean;
+  /** Its classes' numbering; absent is NIOARIG (grade-numbering.ts). */
+  gradeNumbering?: GradeNumbering;
 }
 
 export interface LocalUnit {
@@ -941,7 +944,10 @@ function unitsDiff(input: UnitsDiffInput): void {
     }
     // Only a FULL run reads every pupil: an incremental one would see the
     // årskurser of the pupils that changed.
-    const span = roster.mode === 'FULL' ? sourceSpan(roster, organisation.id, today) : null;
+    const span =
+      roster.mode === 'FULL'
+        ? sourceSpan(roster, organisation.id, today, yearContaining(local.years, today)?.gradeNumbering ?? 'NIOARIG')
+        : null;
     const holder = code ? units.find((unit) => unit.code === code && unit.id !== linked?.id) : undefined;
 
     // The local unit this organisation is, or would be.
@@ -1086,7 +1092,7 @@ function unitsDiff(input: UnitsDiffInput): void {
     if (input.groupYear.get(group.id)?.id !== input.activeYear.id) continue;
     const local = groupsByExt.get(group.id);
     if (!local || local.gradeLevel === null) continue;
-    const unit = unitForGrade(map, local.gradeLevel);
+    const unit = unitForGrade(map, local.gradeLevel, input.activeYear.gradeNumbering ?? 'NIOARIG');
     if (!unit || unit.ext === group.organisationId) continue;
     const named = map.find((entry) => entry.ext === group.organisationId);
     note('GROUP', 'CONFLICT', 'GROUP_UNIT_MISMATCH', group.id, local.id, {
@@ -1112,17 +1118,24 @@ function sourceCode(organisation: S1Organisation, note: UnitsDiffInput['note'], 
 }
 
 /**
- * Lowest to highest schoolYear (0..10, the nine-year numbering a unit's span
- * is stated in) of the enrolments at the organisation active on `today`; null
- * when none gives one. A register in the tioårig numbering from HT 2028 is a
- * follow-up: its årskurser must be read back first.
+ * Lowest to highest schoolYear of the enrolments at the organisation active on
+ * `today`, in the nine-year numbering a unit's span is stated in (0..10); null
+ * when none gives one. The register numbers its årskurser as the läsår
+ * containing `today` does (`numbering`): from HT 2028 a tioårig register's
+ * 8–10 is the unit's 7–9, never a widening to 10.
  */
-function sourceSpan(roster: FetchedRoster, organisationId: string, today: string): { gradeFrom: number; gradeTo: number } | null {
+function sourceSpan(
+  roster: FetchedRoster,
+  organisationId: string,
+  today: string,
+  numbering: GradeNumbering,
+): { gradeFrom: number; gradeTo: number } | null {
   const grades: number[] = [];
   for (const person of roster.persons.values()) {
     for (const enrolment of person.enrolments) {
       if (enrolment.organisationId !== organisationId || enrolment.cancelled || !activeOn(today, enrolment.startDate, enrolment.endDate)) continue;
-      if (enrolment.schoolYear !== null && enrolment.schoolYear >= 0 && enrolment.schoolYear <= 10) grades.push(enrolment.schoolYear);
+      const grade = toNioarig(enrolment.schoolYear, numbering);
+      if (grade !== null && grade >= 0 && grade <= 10) grades.push(grade);
     }
   }
   return grades.length === 0 ? null : { gradeFrom: Math.min(...grades), gradeTo: Math.max(...grades) };

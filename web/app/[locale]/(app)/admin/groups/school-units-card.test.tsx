@@ -64,6 +64,36 @@ describe("Skolenheter", () => {
     expect(screen.getByText("outside(10A|Norra F–6)")).toBeInTheDocument();
   });
 
+  it("places a tioårig läsår's classes by the units' spans read one up: 10A in 7–9, 7A in F–6, none outside", () => {
+    // SFS 2025:729: F–6 holds åk 1–7, 7–9 holds 8–10. The spans shown stay
+    // the nine-year ones the units are stated in.
+    render(
+      <SchoolUnitsCard
+        classes={[klass("1A", 1), klass("7A", 7), klass("8A", 8), klass("10A", 10)]}
+        numbering="TIOARIG"
+      />,
+    );
+    const table = screen.getByRole("table", { name: "caption" });
+    const rows = within(table).getAllByRole("row").slice(1).map((row) => within(row).getAllByRole("cell").map((cell) => cell.textContent));
+    expect(rows.map((cells) => [cells[0], cells[3], cells[4]])).toEqual([
+      ["Norra F–6", "span(grade(0)|grade(6))", "1A, 7A"],
+      ["Norra 7–9fromSource", "span(grade(7)|grade(9))", "8A, 10A"],
+    ]);
+    expect(screen.queryByText("outsideTitle")).toBeNull();
+    expect(screen.queryByText(/^outside\(/)).toBeNull();
+  });
+
+  it("names a tioårig class past every unit's span, and a nine-year läsår's 10A as before", () => {
+    const { unmount } = render(<SchoolUnitsCard classes={[klass("11A", 11), klass("10A", 10)]} numbering="TIOARIG" />);
+    expect(screen.getByText("outside(11A|Norra F–6)")).toBeInTheDocument();
+    unmount();
+    render(<SchoolUnitsCard classes={[klass("10A", 10), klass("7A", 7)]} numbering="NIOARIG" />);
+    expect(screen.getByText("outside(10A|Norra F–6)")).toBeInTheDocument();
+    const table = screen.getByRole("table", { name: "caption" });
+    const rows = within(table).getAllByRole("row").slice(1).map((row) => within(row).getAllByRole("cell").map((cell) => cell.textContent));
+    expect(rows.map((cells) => cells[4])).toEqual(["10A", "7A"]);
+  });
+
   it("says what a school without units gets, and what a failed read is", () => {
     state.units = { data: [], isLoading: false, isError: false };
     const { unmount } = render(<SchoolUnitsCard classes={[]} />);
