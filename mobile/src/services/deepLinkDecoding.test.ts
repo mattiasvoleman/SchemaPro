@@ -8,7 +8,7 @@ import { parse } from 'query-string';
  * query-string, which decodes each value with decode-uri-component. Every
  * published version up to 0.4.2 burns superlinear CPU on malformed
  * percent-encoding (GHSA-vcc3-ghjq-m6fr), and on a phone the JavaScript thread
- * is the UI thread: a `schemapro://` link carrying a 3 kB malformed value froze
+ * is the UI thread: a `rastra://` link carrying a 3 kB malformed value froze
  * the app for over a minute. The patched 0.5.0 is ESM-only and unusable from
  * query-string 7's `require()`, so the fix is vendored as CommonJS.
  *

@@ -4,10 +4,10 @@
  *
  * The PNGs are committed, and this script is their source: change the mark
  * here and run it again rather than editing a PNG. PRODUCT.md (Brand
- * Commitments) says SchemaPro has no logo or app icon, and that the web's
- * stock calendar icon and the app's "SP" letters are placeholders. This is
- * that placeholder carried over to the native assets, so it stays provisional
- * until a real mark is drawn.
+ * Commitments) says the product has no logo or app icon, and that the web's
+ * stock calendar icon is a placeholder. This is that placeholder carried over
+ * to the native assets of both Rastra apps, so it stays provisional until a
+ * real mark is drawn.
  *
  * The mark is the web's brand tile: web/components/layout/app-shell.tsx draws
  * lucide's CalendarRange in primary-foreground on a bg-primary square, with
@@ -15,8 +15,9 @@
  *   #5048e5  --primary in light, hsl(243 75% 59%), web/app/globals.css
  *   #7871f4  --primary in .dark, hsl(243 85% 70%), web/app/globals.css
  *   #ffffff  --primary-foreground in light
- *   #0f0f1a  the background every mobile screen paints (login.tsx and the
- *            rest); the splash screen's backgroundColor, set in app config
+ *   #f4f4f5 / #0f0f1a  the page in the light and the dark palette
+ *            (src/theme/tokens.ts), and the splash screen's backgroundColor
+ *            and dark.backgroundColor in app.json
  *
  * The glyph is CalendarRange exactly as lucide ships it: a 24-unit viewBox,
  * stroke 2, round caps and joins. Its ink spans x 2–22 and y 1–23 (the
@@ -46,7 +47,9 @@
  *                         keeps: no inked pixel lies more than 219 px (23 dp)
  *                         from the centre, against the circle's 313 px.
  *   splash-icon.png       1024 px, RGBA. The splash image, shown at
- *                         imageWidth 128 on #0f0f1a: a #5048e5 tile with
+ *                         imageWidth 128 on either page colour (the tile
+ *                         measures 5.62:1 on the light, 3.08:1 on the dark,
+ *                         and carries its own ground): a #5048e5 tile with
  *                         rx 320 (40 dp at 128 dp), white glyph at the icon's
  *                         transform. Android 12+ shows only the central
  *                         192 dp circle of its 288 dp icon slot; the tile's

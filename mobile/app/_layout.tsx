@@ -63,7 +63,7 @@ function AuthGate(): React.JSX.Element {
     } else if (authState.isAuthenticated && (inAuthGroup || segments[0] !== homeGroup)) {
       router.replace(homeRoute);
     }
-  }, [authState.isAuthenticated, isLoading, segments, router]);
+  }, [authState.isAuthenticated, authState.role, isLoading, segments, router]);
 
   return <Slot />;
 }

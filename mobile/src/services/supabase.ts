@@ -1,6 +1,6 @@
 import 'react-native-url-polyfill/auto';
 import * as SecureStore from 'expo-secure-store';
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { createClient, isAuthRetryableFetchError, type SupabaseClient } from '@supabase/supabase-js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Supabase client for the mobile app.
@@ -77,6 +77,15 @@ const secureChunkedStorage = {
 
 let _client: SupabaseClient | null = null;
 
+/**
+ * The key the session is stored under: supabase-js's own default
+ * (`sb-<project ref>-auth-token`), named here so that a sign-out can remove
+ * it itself when supabase-js does not (endSessionHere).
+ */
+function sessionKey(url: string): string {
+  return `sb-${new URL(url).hostname.split('.')[0]}-auth-token`;
+}
+
 export function getSupabase(): SupabaseClient {
   if (_client) return _client;
   if (!SUPABASE_URL || !SUPABASE_KEY) {
@@ -87,6 +96,7 @@ export function getSupabase(): SupabaseClient {
   _client = createClient(SUPABASE_URL, SUPABASE_KEY, {
     auth: {
       storage: secureChunkedStorage,
+      storageKey: sessionKey(SUPABASE_URL),
       autoRefreshToken: true,
       persistSession: true,
       detectSessionInUrl: false,
@@ -103,4 +113,41 @@ export function getSupabase(): SupabaseClient {
 export async function getAccessToken(): Promise<string | null> {
   const { data } = await getSupabase().auth.getSession();
   return data.session?.access_token ?? null;
+}
+
+/**
+ * The user id of the session stored on this device, read from the storage
+ * itself and so without the network: offline, past the access token's hour,
+ * getSession() answers none although the session is still there.
+ */
+export async function storedSessionUserId(): Promise<string | null> {
+  if (!SUPABASE_URL) return null;
+  try {
+    const raw = await secureChunkedStorage.getItem(sessionKey(SUPABASE_URL));
+    const id: unknown = raw ? (JSON.parse(raw) as { user?: { id?: unknown } }).user?.id : null;
+    return typeof id === 'string' ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Ends the session on this device. 'local' revokes this session only, so the
+ * same person's session in the other Rastra app or on the web lives on;
+ * 'global' is the logout button's, which ends all of them.
+ *
+ * Offline, with an access token past its expiry, supabase-js first tries to
+ * refresh, fails and returns before it removes anything (GoTrueClient
+ * _signOut): the session would come back at the next start with a network.
+ * The stored session is then removed here; the server's refresh token is
+ * left to expire.
+ */
+export async function endSessionHere(scope: 'local' | 'global'): Promise<void> {
+  const client = getSupabase();
+  const { error } = await client.auth.signOut({ scope });
+  if (error && isAuthRetryableFetchError(error) && SUPABASE_URL) {
+    const key = sessionKey(SUPABASE_URL);
+    await secureChunkedStorage.removeItem(key);
+    await secureChunkedStorage.removeItem(`${key}-code-verifier`);
+  }
 }

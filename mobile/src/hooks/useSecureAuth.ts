@@ -12,6 +12,7 @@ interface UseSecureAuthReturn {
   readonly loginWithSchoolAccount: (email: string) => Promise<void>;
   readonly logout: () => Promise<void>;
   readonly restoreSession: () => Promise<void>;
+  readonly recheckProfile: (current: AuthState) => Promise<void>;
 }
 
 const INITIAL_STATE: AuthState = {
@@ -72,13 +73,26 @@ export function useSecureAuth(): UseSecureAuthReturn {
     try {
       const state = await AuthService.restoreSession();
       setAuthState(state);
-    } catch {
-      // Session could not be restored — treat as signed-out.
+    } catch (err) {
+      // Session could not be restored — treat as signed-out. A session the
+      // gate ended (the other app's role) says so on the login screen.
       setAuthState(INITIAL_STATE);
+      if (err instanceof AuthError) setError(err.code);
     } finally {
       setIsLoading(false);
     }
   }, []);
 
-  return { authState, isLoading, error, login, loginWithSchoolAccount, logout, restoreSession };
+  /** The profile as the school has it now (AuthService.recheckProfile); never blocks, never needs the network. */
+  const recheckProfile = useCallback(async (current: AuthState): Promise<void> => {
+    try {
+      const next = await AuthService.recheckProfile(current);
+      if (next !== current) setAuthState(next);
+    } catch (err) {
+      setAuthState(INITIAL_STATE);
+      if (err instanceof AuthError) setError(err.code);
+    }
+  }, []);
+
+  return { authState, isLoading, error, login, loginWithSchoolAccount, logout, restoreSession, recheckProfile };
 }

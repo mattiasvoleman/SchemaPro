@@ -1,4 +1,5 @@
 import { ApiError, apiRequest } from '../api';
+import { currentApp } from '../../config/appIdentity';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // "Logga in med skolkonto" (migration 20261020090000): which provider a
@@ -59,7 +60,9 @@ export async function lookupProvider(domain: string): Promise<SchoolAccountProvi
  * hook and the providers (docs/DEPLOYMENT.md §11).
  */
 export function schoolAccountsOffered(): boolean {
-  return process.env['EXPO_PUBLIC_SCHOOL_ACCOUNTS'] === 'on';
+  // Staff and pupils only: the guardian app signs in with a password, and
+  // its scheme then needs no place in Supabase's redirect allow list.
+  return process.env['EXPO_PUBLIC_SCHOOL_ACCOUNTS'] === 'on' && currentApp() === 'rastra';
 }
 
 /** What the provider is told about who is signing in (see the web's providerHints). */

@@ -4,28 +4,43 @@
     "appVersionSource": "remote"
   },
   "build": {
-    "development": {
+    "rastra-development": {
       "developmentClient": true,
       "distribution": "internal",
       "environment": "development",
-      "env": { "APP_VARIANT": "development" }
+      "env": { "APP": "rastra", "APP_VARIANT": "development" }
     },
-    "preview": {
+    "rastra-preview": {
       "distribution": "internal",
       "environment": "preview",
-      "env": { "APP_VARIANT": "preview" },
+      "env": { "APP": "rastra", "APP_VARIANT": "preview" },
       "autoIncrement": true,
       "android": { "buildType": "apk" }
     },
-    "production": {
+    "rastra-production": {
       "distribution": "store",
       "environment": "production",
-      "env": { "APP_VARIANT": "production" },
+      "env": { "APP": "rastra", "APP_VARIANT": "production" },
       "autoIncrement": true
+    },
+    "vardnadshavare-development": {
+      "extends": "rastra-development",
+      "env": { "APP": "vardnadshavare", "APP_VARIANT": "development" }
+    },
+    "vardnadshavare-preview": {
+      "extends": "rastra-preview",
+      "env": { "APP": "vardnadshavare", "APP_VARIANT": "preview" }
+    },
+    "vardnadshavare-production": {
+      "extends": "rastra-production",
+      "env": { "APP": "vardnadshavare", "APP_VARIANT": "production" }
     }
   },
   "submit": {
-    "production": {
+    "rastra-production": {
+      "android": { "track": "internal", "releaseStatus": "draft" }
+    },
+    "vardnadshavare-production": {
       "android": { "track": "internal", "releaseStatus": "draft" }
     }
   }

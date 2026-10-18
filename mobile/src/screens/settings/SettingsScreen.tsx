@@ -38,7 +38,7 @@ import {
 /**
  * Settings, the same screen for every role: the language, push on this
  * device (offered only when the school's gateway sends push), what may leave
- * SchemaPro as e-mail and push per notice type (the school's required ones
+ * Rastra as e-mail and push per notice type (the school's required ones
  * shown on and locked), and logging out — which also takes this device off
  * the person's push.
  */

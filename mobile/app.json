@@ -1,10 +1,10 @@
 {
   "expo": {
-    "name": "SchemaPro",
-    "slug": "schemapro-teacher",
+    "name": "Rastra",
+    "slug": "rastra",
     "version": "1.0.0",
     "orientation": "portrait",
-    "scheme": "schemapro",
+    "scheme": "rastra",
     "userInterfaceStyle": "automatic",
     "icon": "./assets/images/icon.png",
     "backgroundColor": "#0f0f1a",
@@ -46,11 +46,14 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.schemapro.teacher",
+      "bundleIdentifier": "se.rastra.app",
       "icon": {
         "light": "./assets/images/icon.png",
         "dark": "./assets/images/icon-dark.png",
         "tinted": "./assets/images/icon-tinted.png"
+      },
+      "config": {
+        "usesNonExemptEncryption": false
       },
       "infoPlist": {
         "CFBundleDevelopmentRegion": "sv",
@@ -59,11 +62,11 @@
           "en"
         ],
         "CFBundleAllowMixedLocalizations": true,
-        "NSFaceIDUsageDescription": "SchemaPro ber om Face ID innan närvaron skickas, så att den inte kan skickas från en olåst enhet som ligger framme. Appen får bara veta om det lyckades."
+        "NSFaceIDUsageDescription": "Rastra ber om Face ID innan närvaron skickas, så att den inte kan skickas från en olåst enhet som ligger framme. Appen får bara veta om det lyckades."
       }
     },
     "android": {
-      "package": "com.schemapro.teacher",
+      "package": "se.rastra.app",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "monochromeImage": "./assets/images/adaptive-icon.png",

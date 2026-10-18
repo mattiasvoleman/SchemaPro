@@ -3,43 +3,72 @@ import { join } from 'node:path';
 import type { ConfigContext, ExpoConfig } from 'expo/config';
 
 /**
- * The app's identity per build variant.
+ * Which app a build is, and in which variant.
  *
- * app.json stays the base. It holds everything every build shares (plugins,
- * permission texts, icons, Android permissions) and the production identity.
- * This file changes only what differs between variants:
+ * One code base, two apps with store listings of their own, chosen by APP:
+ * - rastra: "Rastra", for staff and pupils (se.rastra.app).
+ * - vardnadshavare: "Rastra vårdnadshavare", for guardians
+ *   (se.rastra.vardnadshavare). It has no attendance, so no Face ID: its
+ *   build carries no Face ID purpose text and no biometric permission.
+ * Each app admits only its own roles (src/services/auth/appGate.ts), and it
+ * learns which app it is from extra.app, written here from the same table
+ * that gives it its bundle id.
  *
- * - development: a dev client ("SchemaPro Dev") with a bundle identifier,
- *   Android package and URL scheme of its own, so it installs beside the real
- *   app and the school-account sign-in comes back to it and not to the other
- *   app (Linking.createURL takes the first scheme, so
- *   schemapro-dev://auth/callback must be in Supabase's redirect URLs before
+ * APP_VARIANT picks the variant of either app:
+ * - development: a dev client (" Dev") with an id and URL scheme of its own
+ *   (".dev", "-dev"), so it installs beside the real app and a sign-in comes
+ *   back to it (Linking.createURL takes the first scheme, so
+ *   rastra-dev://auth/callback must be in Supabase's redirect URLs before
  *   school accounts are switched on in that build).
- * - preview: the internal test build ("SchemaPro Test"). It keeps production's
+ * - preview: the internal test build (" Test"). It keeps production's
  *   identity, so it replaces the real app on a test phone instead of sitting
  *   beside it: one Firebase client, one App ID, one version counter, and the
- *   redirect URL production already registers. Only the name under the icon
- *   tells it apart.
- * - production: exactly app.json.
+ *   redirect URL production already registers.
+ * - production: the store app.
  *
- * eas.json sets APP_VARIANT per build profile. Unset means production, so
+ * eas.json sets both per build profile. Unset means Rastra in production, so
  * `expo export`, CI and anything else that does not ask builds exactly what
- * app.json describes. An unknown value throws rather than falling back: a
- * typo must not produce a build that installs over the real app.
+ * app.json describes; on the EAS builder an unset APP stops the build, since
+ * a profile that forgot it would sign Rastra under the guardian app's name.
+ * An unknown value throws everywhere: a typo must not produce a build that
+ * installs over the real app.
  *
  * It exports a function of the static config, so `eas init` can still write
  * extra.eas.projectId (and owner) into app.json: @expo/config writes the
  * static file and checks that this function passes the change through, which
- * `...config` does. The push registration reads the id from there.
+ * `...config` does. Both apps are one EAS project, so the push registration
+ * of either reads the same id from there.
  */
 
 export type AppVariant = 'development' | 'preview' | 'production';
+export type AppId = 'rastra' | 'vardnadshavare';
 
 const VARIANTS: Readonly<Record<AppVariant, { name: string; id: string; scheme: string }>> = {
   development: { name: ' Dev', id: '.dev', scheme: '-dev' },
   preview: { name: ' Test', id: '', scheme: '' },
   production: { name: '', id: '', scheme: '' },
 };
+
+/**
+ * The production identity app.json holds: Rastra's. A build from an app.json
+ * that says anything else (a variant's or the other app's id, written back by
+ * a tool from the config it evaluated) would be signed and uploaded under the
+ * wrong id, and the first upload fixes an id for good.
+ */
+const RASTRA_ID = 'se.rastra.app';
+
+/** The guardian app's identity; Rastra's is app.json's. */
+const GUARDIAN = {
+  name: 'Rastra vårdnadshavare',
+  id: 'se.rastra.vardnadshavare',
+  scheme: 'rastra-vardnadshavare',
+} as const;
+
+/** Plugins that write a Face ID purpose text of their own (an English default) unless told not to. */
+const FACE_ID_PLUGINS: readonly string[] = ['expo-secure-store', 'expo-local-authentication'];
+
+/** What expo-local-authentication's library manifest asks for on Android. */
+const BIOMETRIC_PERMISSIONS: readonly string[] = ['android.permission.USE_BIOMETRIC', 'android.permission.USE_FINGERPRINT'];
 
 /**
  * What a release build cannot work without. A missing EXPO_PUBLIC_* value is
@@ -64,44 +93,44 @@ export function appVariant(raw: string | undefined): AppVariant {
   throw new Error(`APP_VARIANT must be development, preview or production, not "${raw}".`);
 }
 
+export function appId(raw: string | undefined, onEasBuilder = false): AppId {
+  if (raw === 'rastra' || raw === 'vardnadshavare') return raw;
+  if (raw === undefined || raw === '') {
+    if (onEasBuilder) throw new Error('APP must be set in the build profile: rastra or vardnadshavare.');
+    return 'rastra';
+  }
+  throw new Error(`APP must be rastra or vardnadshavare, not "${raw}".`);
+}
+
 function required(value: string | string[] | undefined, field: string): string {
   if (typeof value !== 'string' || value === '') throw new Error(`app.json must set ${field} as a single string.`);
   return value;
 }
 
 /**
- * app.json holds production's identity, and only this file adds `.dev`. An id
- * that already ends in it means something wrote a development build's
- * evaluated config back into app.json, and every build from it, production's
- * included, would be signed and uploaded as the development app. A build
- * from such a tree stops on the builder rather than at the store, where the
- * first upload fixes the id for good (appConfig.test.ts stops the commit).
- * Not where EAS CLI evaluates this file: a throw there would also stop the
- * CLI from rolling back such a write (withoutPromptedEncryptionAnswer).
+ * Checked on the builder, not where EAS CLI evaluates this file: a throw
+ * there would also stop the CLI from rolling back a write of its own that
+ * left app.json with another id (appConfig.test.ts stops such a commit).
  */
-function assertProductionIdentity(value: string, field: string): void {
-  const id = VARIANTS.development.id;
-  if (value.endsWith(id)) {
-    throw new Error(`app.json's ${field} ends in "${id}", the development build's suffix; restore it (git checkout mobile/app.json).`);
+function assertRastraIdentity(value: string, field: string): void {
+  if (value !== RASTRA_ID) {
+    throw new Error(`app.json's ${field} is "${value}", not Rastra's production id "${RASTRA_ID}"; restore it (git checkout mobile/app.json).`);
   }
 }
 
 /**
- * The answer to Apple's export-compliance question is the owner's decision
- * (docs/DEPLOYMENT.md §12.11) and goes into app.json as
- * ios.config.usesNonExemptEncryption, which Expo writes into Info.plist.
- * Until it is there, `eas build -p ios` asks the question itself and writes
- * the answer as infoPlist.ITSAppUsesNonExemptEncryption, together with the
- * whole ios block it evaluated for the build's variant (a development build's
- * bundle id included), into app.json. Dropping that key here makes the CLI's
- * check after the write fail, so it rolls app.json back, prints what it would
- * have added and builds on without it: the build waits as Missing Compliance
- * in TestFlight, as the runbook says.
+ * FCM's google-services.json. On the builder it is the EAS file variable
+ * GOOGLE_SERVICES_JSON (a path to the file there); on a developer's machine
+ * it may be a gitignored mobile/google-services.json. Neither is ever in the
+ * repository. One file serves both apps: it lists a client for each of the
+ * four packages. Prebuild throws on a configured path that does not exist,
+ * so the field is set only when there is a file to point at; without it the
+ * Android build has no FCM, and turning push on in Settings fails because
+ * no token can be fetched.
  */
-function withoutPromptedEncryptionAnswer(infoPlist: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
-  if (!infoPlist || !('ITSAppUsesNonExemptEncryption' in infoPlist)) return infoPlist;
-  const { ITSAppUsesNonExemptEncryption: _answer, ...rest } = infoPlist;
-  return rest;
+function googleServicesFile(env: NodeJS.ProcessEnv, projectRoot: string): string | undefined {
+  if (env.GOOGLE_SERVICES_JSON) return env.GOOGLE_SERVICES_JSON;
+  return existsSync(join(projectRoot, 'google-services.json')) ? './google-services.json' : undefined;
 }
 
 /**
@@ -113,28 +142,26 @@ function withoutPromptedEncryptionAnswer(infoPlist: Record<string, unknown> | un
 const DEV_LOCAL_NETWORK_TEXT =
   'Utvecklingsbygget letar efter utvecklingsservern på det lokala nätverket och hämtar appens kod därifrån.';
 
-/**
- * FCM's google-services.json. On the builder it is the EAS file variable
- * GOOGLE_SERVICES_JSON (a path to the file there); on a developer's machine
- * it may be a gitignored mobile/google-services.json. Neither is ever in the
- * repository. Prebuild throws on a configured path that does not exist, so
- * the field is set only when there is a file to point at; without it the
- * Android build has no FCM, and turning push on in Settings fails because
- * no token can be fetched.
- */
-function googleServicesFile(env: NodeJS.ProcessEnv, projectRoot: string): string | undefined {
-  if (env.GOOGLE_SERVICES_JSON) return env.GOOGLE_SERVICES_JSON;
-  return existsSync(join(projectRoot, 'google-services.json')) ? './google-services.json' : undefined;
+type Plugins = NonNullable<ExpoConfig['plugins']>;
+
+/** The guardian app's plugins: the Face ID text plugins told to write none (false removes the key). */
+function withoutFaceId(plugins: Plugins): Plugins {
+  return plugins.map((plugin) => {
+    const [name, props] = Array.isArray(plugin) ? plugin : [plugin, undefined];
+    if (typeof name !== 'string' || !FACE_ID_PLUGINS.includes(name)) return plugin;
+    return [name, { ...(props as Record<string, unknown> | undefined), faceIDPermission: false }];
+  });
 }
 
 export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
   // Aliased so that babel-preset-expo never rewrites these reads when jest
   // transforms this file.
   const env = process.env;
+  const onEasBuilder = env.EAS_BUILD === 'true' || env.EAS_BUILD === '1';
   const variant = appVariant(env.APP_VARIANT);
+  const app = appId(env.APP, onEasBuilder);
   const firebase = googleServicesFile(env, projectRoot);
 
-  const onEasBuilder = env.EAS_BUILD === 'true' || env.EAS_BUILD === '1';
   if (onEasBuilder && variant !== 'development') {
     const missing: string[] = REQUIRED_IN_RELEASE.filter((name) => !env[name]);
     // An Android release without FCM installs and runs, and no one notices
@@ -145,39 +172,56 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
     }
   }
 
-  const name = required(config.name, 'expo.name');
+  const rastraName = required(config.name, 'expo.name');
   const slug = required(config.slug, 'expo.slug');
-  const scheme = required(config.scheme, 'expo.scheme');
+  const rastraScheme = required(config.scheme, 'expo.scheme');
   const bundleIdentifier = required(config.ios?.bundleIdentifier, 'expo.ios.bundleIdentifier');
   const androidPackage = required(config.android?.package, 'expo.android.package');
   if (onEasBuilder) {
-    assertProductionIdentity(bundleIdentifier, 'expo.ios.bundleIdentifier');
-    assertProductionIdentity(androidPackage, 'expo.android.package');
+    assertRastraIdentity(bundleIdentifier, 'expo.ios.bundleIdentifier');
+    assertRastraIdentity(androidPackage, 'expo.android.package');
   }
 
+  const guardian = app === 'vardnadshavare';
+  const identity = guardian
+    ? { name: GUARDIAN.name, ios: GUARDIAN.id, android: GUARDIAN.id, scheme: GUARDIAN.scheme }
+    : { name: rastraName, ios: bundleIdentifier, android: androidPackage, scheme: rastraScheme };
   const suffix = VARIANTS[variant];
-  const infoPlist = withoutPromptedEncryptionAnswer(config.ios?.infoPlist);
+
+  const { NSFaceIDUsageDescription: _faceId, ...withoutFaceIdText } = config.ios?.infoPlist ?? {};
+  const infoPlist = guardian ? withoutFaceIdText : config.ios?.infoPlist;
+  const plugins = config.plugins ?? [];
+
   return {
     ...config,
-    name: `${name}${suffix.name}`,
+    name: `${identity.name}${suffix.name}`,
     slug,
-    scheme: `${scheme}${suffix.scheme}`,
+    scheme: `${identity.scheme}${suffix.scheme}`,
+    // The running app's own identity (src/config/appIdentity.ts): which roles
+    // it admits, and the names its texts give.
+    extra: { ...config.extra, app: { id: app, name: identity.name, otherName: guardian ? rastraName : GUARDIAN.name } },
+    // The guardian app has no Face ID text to localise.
+    locales: guardian ? undefined : config.locales,
     ios: {
       ...config.ios,
-      bundleIdentifier: `${bundleIdentifier}${suffix.id}`,
+      bundleIdentifier: `${identity.ios}${suffix.id}`,
       infoPlist: variant === 'development' ? { ...infoPlist, NSLocalNetworkUsageDescription: DEV_LOCAL_NETWORK_TEXT } : infoPlist,
     },
     android: {
       ...config.android,
-      package: `${androidPackage}${suffix.id}`,
+      package: `${identity.android}${suffix.id}`,
+      ...(guardian ? { blockedPermissions: [...(config.android?.blockedPermissions ?? []), ...BIOMETRIC_PERMISSIONS] } : {}),
       ...(firebase ? { googleServicesFile: firebase } : {}),
     },
     plugins: [
-      ...(config.plugins ?? []),
-      // Only the development build answers exp+schemapro-teacher://, the
-      // scheme `expo start`'s QR code opens. The plugin is applied to every
-      // build either way; listing it is how the option is set.
-      ['expo-dev-client', { addGeneratedScheme: variant === 'development' }],
+      ...(guardian ? withoutFaceId(plugins) : plugins),
+      // Only Rastra's development build answers exp+rastra://, the scheme
+      // `expo start`'s QR code opens: both dev clients share the slug, and
+      // two apps claiming one scheme would leave the phone to pick. The
+      // guardian dev client is opened through its own scheme
+      // (`npm run start:vardnadshavare` passes --scheme). The plugin is
+      // applied to every build either way; listing it is how the option is set.
+      ['expo-dev-client', { addGeneratedScheme: variant === 'development' && !guardian }],
     ],
   };
 };

@@ -22,7 +22,8 @@ import { assertSecureBaseUrl } from './network/secureUrl';
  * Sent on every request, a public one too: the gateway records the channel of
  * a read as APP from it. It describes the client to whoever reads the log and
  * grants nothing — any caller can send it. The app is no browser, so a custom
- * header costs no CORS preflight.
+ * header costs no CORS preflight. The name is from before the product was
+ * renamed Rastra; the gateway reads it by this name, so it stays.
  */
 export const CLIENT_HEADER = 'X-SchemaPro-Client';
 

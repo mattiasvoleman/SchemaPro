@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { useAuth } from '../../src/context/AuthContext';
 import { schoolAccountsOffered } from '../../src/services/auth/schoolAccount';
+import { currentApp } from '../../src/config/appIdentity';
 import { useI18n } from '../../src/context/LocaleContext';
 import { DISABLED_OPACITY } from '../../src/theme/tokens';
 import { makeStyles, useAppTheme } from '../../src/theme/ThemeContext';
@@ -61,7 +62,7 @@ export default function LoginScreen(): React.JSX.Element {
             importantForAccessibility="no"
           />
           <Text style={styles.title}>{t('login.title')}</Text>
-          <Text style={styles.subtitle}>{t('login.subtitle')}</Text>
+          <Text style={styles.subtitle}>{t(`login.subtitle.${currentApp() ?? 'rastra'}`)}</Text>
 
           {/* ── Form ─────────────────────────────────────────────────────── */}
           <View style={styles.form}>
