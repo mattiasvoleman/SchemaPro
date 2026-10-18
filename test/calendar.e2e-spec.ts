@@ -1,5 +1,6 @@
 import { of } from 'rxjs';
 import request from 'supertest';
+import { recordedReads } from './utils/recorded-reads';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
 
 /**
@@ -264,16 +265,14 @@ describe('Publish and regenerate (e2e)', () => {
       },
     ]);
 
-    // The two shapes the proxy asks for (locked/manual, then the previous
+    // The shapes the proxy asks for (locked/manual — before the solve and
+    // again after its delete, for the lessons the run kept — then the previous
     // unlocked placements) plus publish's whole-year read.
     tx['masterLesson']!['findMany']!.mockImplementation(async ({ where }: any) => {
       if (where?.isLocked === false) return masters.filter((row) => !row.isLocked);
       if (where?.OR) return masters.filter(isPreserved);
       return masters;
     });
-    tx['masterLesson']!['count']!.mockImplementation(
-      async () => masters.filter(isPreserved).length,
-    );
     tx['masterLesson']!['create']!.mockImplementation(async ({ data }: any) => {
       const row: MasterRow = {
         ...data,
@@ -511,5 +510,162 @@ describe('Publish and regenerate (e2e)', () => {
 
     expect(masters.map((row) => row.id)).toEqual(['master-monday']);
     expect(publishedDates()).toEqual(MONDAYS);
+  });
+});
+
+/**
+ * Lärarens dag on a hand edit of the grundschema, over HTTP: a drag that
+ * leaves the teacher's day longer than their cap, or their week on more days
+ * than their post allows, is saved — 200, never a 409 — and says so in
+ * `warnings`, naming the lesson as the ämnesfördelning does ('Idrott för
+ * 7A'), worded for the reader after serialisation. The days are the
+ * post's, HR data: a schemaläggare without HR-läs is told the verdict with no
+ * figure in the body at all, and the read of the post is in the läslogg
+ * whichever wording went out.
+ */
+describe('Lärarens dag on a hand edit (e2e)', () => {
+  const LESSON_ID = '12121212-1212-4212-8212-121212121212';
+  let harness: TestHarness;
+  const http = () => harness.app.getHttpServer();
+
+  /** Monday 10:00–11:00, led by TEACHER_ID; the school counts its rules as the gate does. */
+  const stored = (counts: { caps: number; days: number }) => ({
+    id: LESSON_ID,
+    academicYearId: YEAR_ID,
+    subjectId: SUBJECT_ID,
+    studentGroupId: GROUP_ID,
+    teacherId: TEACHER_ID,
+    coTeacherId: null,
+    roomId: null,
+    dayOfWeek: 1,
+    startTime: time(10),
+    endTime: time(11),
+    isLocked: false,
+    isParked: false,
+    recurrence: 'ALL_WEEKS',
+    startDate: null,
+    endDate: null,
+    extraGroups: [],
+    participants: [],
+    school: {
+      id: SCHOOL_ID,
+      timezone: 'Europe/Stockholm',
+      _count: { academicYears: 1, teacherWorkRules: counts.caps, teacherEmployments: counts.days },
+    },
+  });
+  /** A lesson of TEACHER_ID's week as the edit leaves it. */
+  const taught = (id: string, dayOfWeek: number, start: Date, end: Date) => ({
+    id,
+    teacherId: TEACHER_ID,
+    coTeacherId: null,
+    dayOfWeek,
+    startTime: start,
+    endTime: end,
+    recurrence: 'ALL_WEEKS',
+    startDate: null,
+    endDate: null,
+  });
+
+  const arrange = (
+    counts: { caps: number; days: number },
+    dayOfWeek: number,
+    week: ReturnType<typeof taught>[],
+  ) => {
+    const tx = harness.tx;
+    tx['masterLesson']!['findUnique']!.mockResolvedValue(stored(counts));
+    tx['masterLesson']!['update']!.mockResolvedValue({ ...stored(counts), dayOfWeek });
+    // The clash scan of the new day and the ämnesfördelning's week find
+    // nobody; the teacher's week is the read over both teacher columns.
+    tx['masterLesson']!['findMany']!.mockImplementation(async ({ where }: any) => (where?.OR ? week : []));
+    // What the edited lesson is called, read once a warning names it; every
+    // other raw statement (the mode, the block, the timplanspost) finds no row.
+    tx.$queryRaw.mockImplementation(async (strings: unknown, ...values: unknown[]) =>
+      Array.isArray(strings) && strings.join('?').includes('FROM "MasterLessons" m') && (values[0] as string[]).includes(LESSON_ID)
+        ? [{ id: LESSON_ID, subjectName: 'Idrott', groupName: '7A' }]
+        : [],
+    );
+  };
+  const drag = (dayOfWeek: number, user: string) =>
+    request(http())
+      .patch(`/api/v1/master-lessons/${LESSON_ID}`)
+      .set('x-test-user', user)
+      .send({ dayOfWeek });
+
+  beforeAll(async () => {
+    harness = await createTestApp();
+  });
+
+  afterAll(async () => {
+    await harness.close();
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('a drag that makes the teacher’s Tuesday longer than their cap is saved, and the 200 says so with the figures', async () => {
+    arrange({ caps: 1, days: 0 }, 2, [
+      taught('13131313-1313-4313-8313-131313131313', 2, time(8), time(9, 30)),
+      taught(LESSON_ID, 2, time(10), time(11)),
+    ]);
+    harness.tx['teacherWorkRule']!['findMany']!.mockResolvedValue([
+      { userId: TEACHER_ID, maxTeachingMinutesPerDay: 120 },
+    ]);
+
+    const response = await drag(2, asUser({})).expect(200);
+
+    expect(response.body.dayOfWeek).toBe(2);
+    expect(response.body.warnings).toEqual([
+      {
+        code: 'TEACHER_DAY_TOO_LONG',
+        params: { role: 'LEAD', requirement: 'Idrott för 7A', day: 2, minutes: 150, cap: 120 },
+      },
+    ]);
+    expect(harness.tx['masterLesson']!['update']).toHaveBeenCalledTimes(1);
+  });
+
+  describe('a week on more days than the post allows', () => {
+    // Monday and Tuesday already taught; the lesson dragged to Wednesday is
+    // the third day of a post that allows two.
+    const threeDays = () => {
+      arrange({ caps: 0, days: 1 }, 3, [
+        taught('14141414-1414-4414-8414-141414141414', 1, time(8), time(9)),
+        taught('15151515-1515-4515-8515-151515151515', 2, time(8), time(9)),
+        taught(LESSON_ID, 3, time(10), time(11)),
+      ]);
+      harness.tx['teacherEmployment']!['findMany']!.mockResolvedValue([
+        { userId: TEACHER_ID, maxTeachingDaysPerWeek: 2 },
+      ]);
+    };
+
+    it('a schemaläggare without HR-läs gets the verdict and no figure of the post anywhere in the body', async () => {
+      threeDays();
+
+      const response = await drag(3, asUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false })).expect(200);
+
+      expect(response.body.warnings).toEqual([
+        { code: 'TEACHER_WEEK_TOO_MANY_DAYS_HIDDEN', params: { role: 'LEAD', requirement: 'Idrott för 7A' } },
+      ]);
+      expect(JSON.stringify(response.body.warnings)).not.toMatch(/"days"|"max"/);
+      expect(recordedReads(harness.tx)).toEqual([
+        expect.objectContaining({ kind: 'EMPLOYMENT', ids: [TEACHER_ID] }),
+      ]);
+    });
+
+    it('the same drag by a full administrator gets the count and the limit', async () => {
+      threeDays();
+
+      const response = await drag(3, asUser({})).expect(200);
+
+      expect(response.body.warnings).toEqual([
+        {
+          code: 'TEACHER_WEEK_TOO_MANY_DAYS',
+          params: { role: 'LEAD', requirement: 'Idrott för 7A', days: 3, max: 2 },
+        },
+      ]);
+      expect(recordedReads(harness.tx)).toEqual([
+        expect.objectContaining({ kind: 'EMPLOYMENT', ids: [TEACHER_ID] }),
+      ]);
+    });
   });
 });

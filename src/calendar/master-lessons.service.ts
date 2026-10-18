@@ -44,6 +44,14 @@ import {
 import { requirementName } from '../optimization/optimization-proxy.service';
 import { BLOCK_SPLIT, blockMoveOf, readLessonBlock, sameSlot, type BlockSlot } from './block-lessons';
 import { groupsOfPupils, halfPairs, type GroupHalf } from '../common/class-halves';
+import {
+  hasTeacherDayRule,
+  teacherDayBreaches,
+  type TeacherDayBreach,
+  type TeacherDayRule,
+} from '../common/teacher-day';
+import { readsHr } from '../staffing/hr-visibility';
+import { recordRead } from '../access-log/access-log';
 
 export interface MasterLessonConflict {
   kind: 'TEACHER' | 'ROOM' | 'GROUP' | 'AVAILABILITY';
@@ -81,6 +89,28 @@ interface DistributionPost {
 /** What a lesson nobody wrote a number for occupies outside itself: nothing. */
 const NO_BUFFER: PupilBuffer = { minutesBefore: 0, minutesAfter: 0 };
 
+/**
+ * Whether the school can hold a Lärarens dag rule at all: a cap on some
+ * teacher's work rule, a day limit on some post of the lesson's year. From
+ * counts a read the edit already makes carries (teacherDayCounts).
+ */
+interface TeacherDayGate {
+  caps: boolean;
+  days: boolean;
+}
+
+/** An edited lesson as Lärarens dag asks about it: who teaches it, after the edit. */
+interface TeacherDayLesson {
+  id: string;
+  teacherId: string | null;
+  coTeacherId: string | null;
+  /**
+   * What it is called (requirementName), when the edit has read that already,
+   * as a block card has; absent, it is read once a warning names the lesson.
+   */
+  requirement?: string;
+}
+
 export interface MasterLessonResult {
   id: string;
   academicYearId: string;
@@ -112,17 +142,56 @@ export interface BlockSplitWarning {
   params: { block: string };
 }
 
+/** Which of the lesson's two teachers a Lärarens dag warning is about. */
+export type TeacherDayRole = 'LEAD' | 'CO_TEACHER';
+
+/**
+ * A hand edit that leaves a teacher's day longer than their cap, or their week
+ * on more days than their post allows (Lärarens dag, common/teacher-day.ts).
+ *
+ * THE PARAMS NAME A LESSON AND A ROLE, NEVER A PERSON, as every warning here
+ * does: `requirement` is the edited lesson the teacher is on, called what the
+ * ämnesfördelning's warning calls it ('Idrott för 7A', requirementName), and
+ * `role` what the teacher is on it; the page knows who leads that lesson and
+ * who is its medlärare. On a block card, whose members each have their own
+ * teachers, the lesson is what tells one member's teacher from another's —
+ * two leads over their caps would otherwise be two sentences about
+ * "läraren", and two days limits hidden from the reader one sentence twice.
+ * The cap is the work rule's, which every member of staff reads, so its
+ * figures go to every editor. The days are the post's, HR data like the
+ * tjänst %: a reader with HR-läs gets the count and the limit, anybody else
+ * the verdict alone (TEACHER_WEEK_TOO_MANY_DAYS_HIDDEN) — the rule is the
+ * same for every reader, and only its wording is not. That a verdict and the
+ * grid together let a careful reader narrow the limit down is accepted, as
+ * it was for STAFF_TEACHER_OVER_TARGET_HIDDEN (4c65c4b7): a hand edit that
+ * silently breaks a rule the next generation refuses would cost more.
+ */
+export type TeacherDayWarning =
+  | {
+      code: 'TEACHER_DAY_TOO_LONG';
+      params: { role: TeacherDayRole; requirement: string; day: number; minutes: number; cap: number };
+    }
+  | {
+      code: 'TEACHER_WEEK_TOO_MANY_DAYS';
+      params: { role: TeacherDayRole; requirement: string; days: number; max: number };
+    }
+  | { code: 'TEACHER_WEEK_TOO_MANY_DAYS_HIDDEN'; params: { role: TeacherDayRole; requirement: string } };
+
 /**
  * What a hand edit is told beside the saved lesson: the staffing policy's WARN
  * about a teacher it put on the lesson, the ämnesfördelning the timplanspost
- * is held to when the edit breaks it, and a parallel block the move split.
- * Each is a code from the engine catalogue and its params, rendered by the
- * page; none is a refusal.
+ * is held to when the edit breaks it, a parallel block the move split, and a
+ * teacher's day or week the edit leaves over their rule. Each is a code from
+ * the engine catalogue and its params, rendered by the page; none is a
+ * refusal.
  */
-export type LessonWarning = StaffingWarning | DistributionWarning | BlockSplitWarning;
+export type LessonWarning = StaffingWarning | DistributionWarning | BlockSplitWarning | TeacherDayWarning;
 
 export interface CreateMasterLessonResult extends MasterLessonResult {
-  /** The ämnesfördelning the new lesson breaks; empty when it breaks none. */
+  /**
+   * The ämnesfördelning the new lesson breaks, then its teachers' days and
+   * weeks it leaves over their rule; empty when it breaks none.
+   */
   warnings: LessonWarning[];
 }
 
@@ -136,9 +205,10 @@ export interface UpdateMasterLessonResult extends MasterLessonResult {
   removedCalendarLessons: number;
   /**
    * What the staffing policy's WARN mode says about a teacher this PATCH put on
-   * the lesson (STAFF_TEACHER_NOT_QUALIFIED only — see update()), and the
-   * ämnesfördelning the moved lesson breaks (DISTRIBUTION_*). Empty when
-   * nothing was found.
+   * the lesson (STAFF_TEACHER_NOT_QUALIFIED only — see update()), the
+   * ämnesfördelning the moved lesson breaks (DISTRIBUTION_*), and the
+   * teachers' days and weeks it leaves over their rule (TEACHER_DAY_*,
+   * TEACHER_WEEK_*). Empty when nothing was found.
    */
   warnings: LessonWarning[];
 }
@@ -149,7 +219,11 @@ export interface MoveBlockCardResult {
   /** Future calendar lessons moved along with the members, summed. */
   propagatedLessons: number;
   removedCalendarLessons: number;
-  /** The ämnesfördelning a member breaks on its new day; never a refusal. */
+  /**
+   * The ämnesfördelning a member breaks on its new day, and the members'
+   * teachers' days and weeks the move leaves over their rule; never a
+   * refusal.
+   */
   warnings: LessonWarning[];
   /**
    * Lessons of the block that stood where the card landed and stand on it
@@ -247,9 +321,25 @@ export class MasterLessonsService {
   ): Promise<CreateMasterLessonResult> {
     return this.prisma.withRls(user, async (tx) => {
       const mode = await enterGrundschemaWrite(tx, requireSchoolId(user));
+      const teachers = [dto.teacherId ?? null, dto.coTeacherId ?? null];
       const year = await tx.academicYear.findUnique({
         where: { id: dto.academicYearId },
-        select: { id: true, schoolId: true, isActive: true, predecessorId: true },
+        select: {
+          id: true,
+          schoolId: true,
+          isActive: true,
+          predecessorId: true,
+          // Lärarens dag: whether the new lesson's teachers have a day limit
+          // on their post of this year, counted inside this statement
+          // (teacherDayWarnings).
+          _count: {
+            select: {
+              teacherEmployments: {
+                where: { userId: { in: teachers.filter((id): id is string => id !== null) }, ...DAY_LIMITED },
+              },
+            },
+          },
+        },
       });
       if (!year) {
         throw new NotFoundException('Academic year not found.');
@@ -357,7 +447,28 @@ export class MasterLessonsService {
 
       // Read after the write, from the week as it now stands: the new lesson
       // is in it, and a breach it is no part of is not this edit's to report.
-      const warnings = await this.distributionWarnings(tx, created);
+      const warnings: LessonWarning[] = await this.distributionWarnings(tx, created);
+      // Lärarens dag the same way, for the teachers the new lesson names. A
+      // create reads no row the school's caps could be counted in — a year
+      // has no relation to the work rules, and selecting its school would be
+      // a statement of its own on every create — so a lesson created with a
+      // teacher reads the teachers' caps (one statement), which is the gate
+      // itself; the day limit is counted in the year's read above. A lesson
+      // created without a teacher asks nothing. That one statement is the
+      // only thing a create pays in a school without a rule, and it is
+      // pinned where the PATCH's statements are: the budget spec
+      // (projected-rosters.budget.spec.ts) and the adapter probe's (z),
+      // 'POST a lesson with a teacher'.
+      warnings.push(
+        ...(await this.teacherDayWarnings(
+          tx,
+          user,
+          { caps: true, days: (year._count?.teacherEmployments ?? 0) > 0 },
+          created.academicYearId,
+          [created],
+          teachers,
+        )),
+      );
 
       this.logger.log(`Master lesson created manually [lesson=${created.id}]`);
       this.announce(year.schoolId, mode);
@@ -393,6 +504,9 @@ export class MasterLessonsService {
               _count: {
                 select: {
                   academicYears: { where: { AND: [SETTLED_CURRENT, { masterLessons: { some: { id } } }] } },
+                  // Lärarens dag's gate, in the same statement for the same
+                  // reason (teacherDayCounts).
+                  ...teacherDayCounts(id),
                 },
               },
             },
@@ -672,6 +786,31 @@ export class MasterLessonsService {
         warnings.push(...(await this.distributionWarnings(tx, updated)));
       }
 
+      // Lärarens dag, asked of the week as the PATCH leaves it, beside the
+      // ämnesfördelning and a warning for the same reason. Asked about every
+      // teacher of a lesson that moved — another slot, other weeks, back from
+      // the tray — and about a teacher this PATCH put on a lesson that stays,
+      // whose week has gained it. A teacher who keeps a lesson that keeps its
+      // slot has the week they had, so a room, a lock, or the dialog's save
+      // that restates what it shows asks nothing; nor does a lesson on the
+      // tray, which occupies nothing.
+      const teachersBefore = new Set([lesson.teacherId, lesson.coTeacherId]);
+      const teachersAfter = [updated.teacherId, updated.coTeacherId];
+      warnings.push(
+        ...(await this.teacherDayWarnings(
+          tx,
+          user,
+          teacherDayGateOf(lesson.school._count),
+          lesson.academicYearId,
+          [updated],
+          !placedAfter
+            ? []
+            : movesTheLesson
+              ? teachersAfter
+              : teachersAfter.filter((teacherId) => !teachersBefore.has(teacherId)),
+        )),
+      );
+
       const before = toResult(lesson);
       const after = toResult(updated);
       await this.writeChangeLog(tx, {
@@ -789,12 +928,14 @@ export class MasterLessonsService {
             select: {
               id: true,
               timezone: true,
-              // As in update(): whether the year is one R1 or R2 settles.
+              // As in update(): whether the year is one R1 or R2 settles, and
+              // Lärarens dag's gate.
               _count: {
                 select: {
                   academicYears: {
                     where: { AND: [SETTLED_CURRENT, { masterLessons: { some: { id: dto.lessonIds[0] } } }] },
                   },
+                  ...teacherDayCounts(dto.lessonIds[0]!),
                 },
               },
             },
@@ -966,6 +1107,28 @@ export class MasterLessonsService {
         });
         results.push(after);
         if (moved > 0 || removed > 0) notices.push({ lesson, after });
+      }
+      // Lärarens dag once for the card, over every member's teachers: the
+      // move is one, and so are its reads of the rules and of the week,
+      // however many members it has. Each member goes with its name, read
+      // with the card, so a warning says which member's teacher it means. A
+      // card put back where it stood moves nobody's day and asks nothing.
+      if (!sameSlot(landing, origin)) {
+        warnings.push(
+          ...(await this.teacherDayWarnings(
+            tx,
+            user,
+            teacherDayGateOf(leader.school._count),
+            leader.academicYearId,
+            lessons.map((lesson) => ({
+              id: lesson.id,
+              teacherId: lesson.teacherId,
+              coTeacherId: lesson.coTeacherId,
+              requirement: requirementName(lesson.subject.name, lesson.studentGroup.name),
+            })),
+            lessons.flatMap((lesson) => [lesson.teacherId, lesson.coTeacherId]),
+          )),
+        );
       }
 
       this.logger.log(
@@ -1152,6 +1315,147 @@ export class MasterLessonsService {
     )
       .filter((breach) => breach.lessonIds.includes(lesson.id))
       .map((breach) => distributionWarning(breach, name));
+  }
+
+  /**
+   * LÄRARENS DAG ON A HAND EDIT: the days and weeks of `teachers` that the
+   * `edited` lessons leave over the teacher's rule, as warnings.
+   *
+   * The rule is the teacher's cap (TeacherWorkRules) and the day limit of
+   * their post for the lesson's own läsår (TeacherEmployments) — a rolled
+   * year's grundschema is laid in spring, against next year's posts. The week
+   * it is asked of is every lesson of that läsår the teacher is on, as lead or
+   * as medlärare, as the edit leaves it, a parked one left out; the arithmetic
+   * is common/teacher-day.ts, which the Vikarietavla counts with too and the
+   * generator's checker replays. Only the weeks an edited lesson runs in are
+   * asked about (teacherDayBreaches' `about`), for the verdict and for its
+   * figure, as the ämnesfördelning reports only what includes the edited
+   * lesson: a Tuesday the school had already made too long, or the odd
+   * weeks' Monday beside the even weeks' the edit made, is not this save's
+   * to repeat. A warning and never a 409, like the ämnesfördelning: a school
+   * that gives a teacher a long day by hand has decided to. And the only one
+   * there is: the generator keeps the rule for every lesson it places, but
+   * takes a lesson placed by hand as a fact and never refuses a week over
+   * what such lessons break alone, so a breach made here is said here or
+   * nowhere.
+   *
+   * ONE WARNING PER BREACH, about the edited lesson the teacher is on: the
+   * one they lead when they lead one (LEAD), else one they are medlärare on,
+   * the first by name of several — a card's members are one per post, and a
+   * teacher on two of them at one hour is a clash the move was refused for,
+   * so several is a row the clash check let through. Two warnings that say
+   * the same thing are one: only members a toast cannot tell apart anyway
+   * (two posts of one class whose subjects share a name) word alike, and the
+   * same sentence twice would say nothing the first did not.
+   *
+   * NOTHING FOR A SCHOOL WITHOUT A RULE, which is every school today: `gate`
+   * comes from counts the edit's existing reads carry (teacherDayCounts), and
+   * when it is shut not one statement is sent. Where it is open, the
+   * teachers' caps are one statement and their posts' day limits another,
+   * each only on its own side of the gate; the week is one more, read only
+   * when one of these teachers has a rule; and what an edited lesson is
+   * called one more, only when a warning names a lesson the edit has not
+   * read the names of (a create's, a PATCH's: their reads select no
+   * relation, and two selected ones would be two statements on every edit).
+   *
+   * THE DAYS ARE THE POST'S, which is HR data: worded per reader
+   * (teacherDayWarning), and a days warning in either wording is a read of
+   * the post that told it, recorded in the läslogg as one (EMPLOYMENT) for
+   * the teachers it is about. A cap is the work rule's, which every member of
+   * staff reads, and records nothing.
+   */
+  private async teacherDayWarnings(
+    tx: PrismaClient,
+    user: AuthenticatedUser,
+    gate: TeacherDayGate,
+    academicYearId: string,
+    edited: readonly TeacherDayLesson[],
+    teachers: Iterable<string | null>,
+  ): Promise<TeacherDayWarning[]> {
+    const asked = [...new Set([...teachers].filter((teacherId): teacherId is string => teacherId !== null))];
+    if (asked.length === 0) return [];
+    const caps = gate.caps
+      ? await tx.teacherWorkRule.findMany({
+          where: { userId: { in: asked }, ...CAPPED },
+          select: { userId: true, maxTeachingMinutesPerDay: true },
+        })
+      : [];
+    const limits = gate.days
+      ? await tx.teacherEmployment.findMany({
+          where: { academicYearId, userId: { in: asked }, ...DAY_LIMITED },
+          select: { userId: true, maxTeachingDaysPerWeek: true },
+        })
+      : [];
+    const capOf = new Map(caps.map((row) => [row.userId, row.maxTeachingMinutesPerDay]));
+    const limitOf = new Map(limits.map((row) => [row.userId, row.maxTeachingDaysPerWeek]));
+    const rules = new Map<string, TeacherDayRule>(
+      asked
+        .map((teacherId): [string, TeacherDayRule] => [
+          teacherId,
+          {
+            maxTeachingMinutesPerDay: capOf.get(teacherId) ?? null,
+            maxTeachingDaysPerWeek: limitOf.get(teacherId) ?? null,
+          },
+        ])
+        .filter(([, rule]) => hasTeacherDayRule(rule)),
+    );
+    if (rules.size === 0) return [];
+
+    const ruled = [...rules.keys()];
+    const week = await tx.masterLesson.findMany({
+      where: {
+        academicYearId,
+        isParked: false,
+        OR: [{ teacherId: { in: ruled } }, { coTeacherId: { in: ruled } }],
+      },
+      select: {
+        id: true,
+        teacherId: true,
+        coTeacherId: true,
+        dayOfWeek: true,
+        startTime: true,
+        endTime: true,
+        recurrence: true,
+        startDate: true,
+        endDate: true,
+      },
+    });
+    const about = new Set(edited.map((lesson) => lesson.id));
+    const told: Array<{ breach: TeacherDayBreach; role: TeacherDayRole; on: TeacherDayLesson[] }> = [];
+    const postsTold: string[] = [];
+    for (const [teacherId, rule] of rules) {
+      const lessons = week
+        .filter((row) => row.teacherId === teacherId || row.coTeacherId === teacherId)
+        .map((row) => ({
+          id: row.id,
+          dayOfWeek: row.dayOfWeek,
+          startMinutes: toMinutes(row.startTime),
+          endMinutes: toMinutes(row.endTime),
+          recurrence: row.recurrence,
+          startDate: toDateStringOrNull(row.startDate),
+          endDate: toDateStringOrNull(row.endDate),
+        }));
+      // Every breach asked about the edited lessons takes one of them in.
+      for (const breach of teacherDayBreaches(rule, lessons, about)) {
+        const involved = edited.filter((lesson) => breach.lessonIds.includes(lesson.id));
+        const led = involved.filter((lesson) => lesson.teacherId === teacherId);
+        told.push(
+          led.length > 0 ? { breach, role: 'LEAD', on: led } : { breach, role: 'CO_TEACHER', on: involved },
+        );
+        if (breach.kind === 'WORK_DAYS') postsTold.push(teacherId);
+      }
+    }
+    const unnamed = told.flatMap(({ on }) => on.filter((lesson) => lesson.requirement === undefined));
+    const names = unnamed.length > 0 ? await lessonNames(tx, unnamed) : new Map<string, string>();
+    const showsHr = readsHr(user);
+    const warnings = new Map<string, TeacherDayWarning>();
+    for (const { breach, role, on } of told) {
+      const requirements = on.map((lesson) => lesson.requirement ?? names.get(lesson.id) ?? '');
+      const warning = teacherDayWarning(breach, role, requirements, showsHr);
+      warnings.set(JSON.stringify(warning), warning);
+    }
+    await recordRead(tx, 'EMPLOYMENT', postsTold, user.channel);
+    return [...warnings.values()];
   }
 
   // ---------------------------------------------------------------------
@@ -1815,6 +2119,85 @@ const LESSON_SELECT = {
   extraGroups: { select: { studentGroupId: true } },
   participants: { select: { studentId: true } },
 } as const;
+
+/** A work rule that holds a cap (Lärarens dag, 20261123090000). */
+const CAPPED = { maxTeachingMinutesPerDay: { not: null } };
+/** A post that holds a day limit (Lärarens dag, 20261123090000). */
+const DAY_LIMITED = { maxTeachingDaysPerWeek: { not: null } };
+
+/**
+ * LÄRARENS DAG'S GATE, COUNTED INSIDE THE SCHOOL'S STATEMENT: whether any
+ * teacher of the school has a cap, and whether any post of the edited
+ * lesson's year has a day limit — the year found as the one holding the
+ * lesson, since the lesson is not read yet when the statement is built.
+ *
+ * update() and moveBlockCard() already read the lesson's school (its clock,
+ * and whether R1 or R2 settles its year), so a `_count` there is a join in a
+ * statement that is sent anyway, where a read of the rules would be one more
+ * on every drag of every school (projected-rosters.budget.spec.ts, and the
+ * adapter probe's case (z), which counts it at Postgres). A school without a
+ * rule — every school until an administrator sets one — then pays nothing:
+ * the counts are 0, and teacherDayWarnings sends no statement. Coarse on
+ * purpose: a school with one capped teacher reads the edited lesson's
+ * teachers' caps on every edit that changes a teacher's day, one indexed
+ * statement, rather than carrying the teachers' ids into a filter the
+ * lesson's own read has not answered yet.
+ */
+function teacherDayCounts(lessonId: string) {
+  return {
+    teacherWorkRules: { where: CAPPED },
+    teacherEmployments: {
+      where: { ...DAY_LIMITED, academicYear: { is: { masterLessons: { some: { id: lessonId } } } } },
+    },
+  };
+}
+
+function teacherDayGateOf(count: { teacherWorkRules: number; teacherEmployments: number }): TeacherDayGate {
+  return { caps: count.teacherWorkRules > 0, days: count.teacherEmployments > 0 };
+}
+
+/**
+ * What the lessons are called, by id (requirementName, as the ämnesfördelning's
+ * warning calls a lesson): the subject and the class joined in ONE statement,
+ * where the same two as selected relations of a lesson read would be two
+ * more. Under the caller's RLS, which shows an editor the lesson they just
+ * wrote and its names; a lesson it did not show would go unnamed ('').
+ */
+async function lessonNames(tx: PrismaClient, lessons: readonly TeacherDayLesson[]): Promise<Map<string, string>> {
+  const ids = [...new Set(lessons.map((lesson) => lesson.id))];
+  const rows = await tx.$queryRaw<Array<{ id: string; subjectName: string; groupName: string }>>`
+    SELECT m."id", s."name" AS "subjectName", g."name" AS "groupName"
+      FROM "MasterLessons" m
+      JOIN "Subjects" s ON s."id" = m."subjectId"
+      JOIN "StudentGroups" g ON g."id" = m."studentGroupId"
+     WHERE m."id" = ANY(${ids}::uuid[])`;
+  return new Map(rows.map((row) => [row.id, requirementName(row.subjectName, row.groupName)]));
+}
+
+/**
+ * A breach as the warning a hand edit gets back, worded for its reader: the
+ * cap's figures to anybody, the post's to a reader with HR-läs only (see
+ * TeacherDayWarning). About the edited lessons the teacher is on in `role`,
+ * by name, and named by the first of them as Swedish sorts names: one lesson
+ * in a toast, the same one whatever order they were read in.
+ */
+export function teacherDayWarning(
+  breach: TeacherDayBreach,
+  role: TeacherDayRole,
+  requirements: readonly string[],
+  showsHr: boolean,
+): TeacherDayWarning {
+  const [requirement] = [...requirements].sort((a, b) => a.localeCompare(b, 'sv'));
+  if (breach.kind === 'DAILY_CAP') {
+    return {
+      code: 'TEACHER_DAY_TOO_LONG',
+      params: { role, requirement, day: breach.dayOfWeek, minutes: breach.minutes, cap: breach.cap },
+    };
+  }
+  return showsHr
+    ? { code: 'TEACHER_WEEK_TOO_MANY_DAYS', params: { role, requirement, days: breach.days, max: breach.max } }
+    : { code: 'TEACHER_WEEK_TOO_MANY_DAYS_HIDDEN', params: { role, requirement } };
+}
 
 interface LessonRecord {
   id: string;

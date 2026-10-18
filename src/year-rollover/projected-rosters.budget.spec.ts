@@ -1,6 +1,14 @@
 import type { PrismaService } from '../database/prisma.service';
 import { testUser } from '../../test/utils/prisma-mock';
-import { IDS, defaultRolloverRows, givenRolloverWorld, prismaFor, statementsOf, type Row } from '../../test/utils/rollover-world';
+import {
+  IDS,
+  defaultRolloverRows,
+  givenRolloverWorld,
+  prismaFor,
+  statementsOf,
+  type RolloverWorld,
+  type Row,
+} from '../../test/utils/rollover-world';
 import { MasterLessonsService } from '../calendar/master-lessons.service';
 import type { NotificationsService } from '../notifications/notifications.service';
 import type { RealtimeService } from '../realtime/realtime.service';
@@ -32,7 +40,7 @@ import { TeachingRequirementsService } from '../resources/teaching-requirements.
 const admin = testUser();
 const clock = (value: string) => new Date(`1970-01-01T${value}:00.000Z`);
 
-function school() {
+function school(arrange: (rows: Record<string, Row[]>) => void = () => undefined) {
   const rows = defaultRolloverRows();
   const lesson = (id: string, studentGroupId: string, dayOfWeek: number, extra: Row = {}): Row => ({
     id,
@@ -79,8 +87,37 @@ function school() {
   ];
   rows['teacherEmployment'] = [];
   rows['lunchSetting'] = [{ schoolId: IDS.school, lunchEnabled: true, lunchMinutes: 30 }];
+  arrange(rows);
   const world = givenRolloverWorld(rows, { strict: true });
   return { world, prisma: prismaFor(world) as unknown as PrismaService };
+}
+
+/**
+ * The school's PrismaService, but a master lesson's create hands back the
+ * class and pupil rows it wrote as Postgres does — the world keeps the
+ * nested `{ create: [...] }` as it was given, and toResult reads the rows.
+ * The call goes to the world unchanged, so it is recorded, and counted, as
+ * it was made.
+ */
+function writingNested(world: RolloverWorld): PrismaService {
+  const tx = new Proxy(world.tx as unknown as Record<string, unknown>, {
+    get(target, key) {
+      const model = Reflect.get(target, key) as object;
+      if (key !== 'masterLesson') return model;
+      return new Proxy(model, {
+        get(inner, method) {
+          const call = Reflect.get(inner, method) as (args: Row) => Promise<Row>;
+          if (method !== 'create') return call;
+          return async (args: Row) => {
+            const row = await call(args);
+            const written = (field: string) => (row[field] as { create: Row[] }).create;
+            return { ...row, extraGroups: written('extraGroups'), participants: written('participants') };
+          };
+        },
+      });
+    },
+  });
+  return prismaFor({ ...world, tx: tx as unknown as RolloverWorld['tx'] }) as unknown as PrismaService;
 }
 
 describe('the active year’s statement budget', () => {
@@ -101,7 +138,8 @@ describe('the active year’s statement budget', () => {
       'masterLesson.findUnique › participants',
       // The school, which now also counts whether the lesson's year is one
       // R1 or R2 settles: a `_count` inside this statement, not a relation
-      // select of the year after it.
+      // select of the year after it. And, since Lärarens dag, whether the
+      // school has a cap or the year a day limit: two more counts in it.
       'masterLesson.findUnique › school',
       'masterLesson.findMany',
       'masterLesson.findMany › subject',
@@ -138,8 +176,116 @@ describe('the active year’s statement budget', () => {
       // names, joined in ONE statement — asked because the lesson moved to
       // another day. The school has no rule, so its week is never read.
       '$queryRaw.$queryRaw',
+      // Lärarens dag: no cap and no day limit counted above, so nothing.
       'scheduleChangeLog.create',
     ]);
+  });
+
+  it('the same drag where the new teacher has a cap and a day limit: 33 statements, three where a rule is', async () => {
+    // What a school that sets Lärarens dag pays on a drag: the teachers' caps,
+    // their posts' day limits for the lesson's year, and their week — after
+    // the ämnesfördelning's read, before the change log. Anna's week holds
+    // the one lesson, which breaks neither rule, so no read is recorded.
+    const { world, prisma } = school((rows) => {
+      rows['teacherWorkRule'] = [
+        {
+          id: 'f6000000-0000-4000-8000-000000000001',
+          schoolId: IDS.school,
+          userId: IDS.anna,
+          maxTeachingMinutesPerDay: 360,
+        },
+      ];
+      rows['teacherEmployment'] = [
+        {
+          id: 'f6000000-0000-4000-8000-000000000002',
+          schoolId: IDS.school,
+          userId: IDS.anna,
+          academicYearId: IDS.yearA,
+          employmentPercent: 100,
+          reductionPercent: 0,
+          maxTeachingDaysPerWeek: 5,
+        },
+      ];
+    });
+    const service = new MasterLessonsService(
+      prisma,
+      { notifyMasterTimetableChanged: jest.fn() } as unknown as RealtimeService,
+      { recipientsForLessons: jest.fn(async () => []), notifyUsers: jest.fn() } as unknown as NotificationsService,
+    );
+    const updated = await service.update(
+      'f5000000-0000-4000-8000-000000000001',
+      { dayOfWeek: 2, teacherId: IDS.anna },
+      admin,
+    );
+    expect(updated.warnings).toEqual([]);
+    const statements = statementsOf(world.calls);
+    expect(statements).toHaveLength(33);
+    expect(statements.slice(-5)).toEqual([
+      '$queryRaw.$queryRaw',
+      'teacherWorkRule.findMany',
+      'teacherEmployment.findMany',
+      'masterLesson.findMany',
+      'scheduleChangeLog.create',
+    ]);
+  });
+
+  it('a master lesson created with a teacher, in a school without a rule: 14 statements, one of them the teacher’s cap', async () => {
+    // THE ONE STATEMENT A CREATE PAYS FOR LÄRARENS DAG WHERE NO RULE IS SET,
+    // pinned because it cannot be carried. A PATCH and a card move count the
+    // gate inside the school statement they send anyway (teacherDayCounts);
+    // a create reads no row the school's caps can be counted in — the year
+    // has no relation to the work rules, and its school selected for the
+    // count would be a statement of its own, +1 on every create, teacher or
+    // not. So the create asks the named teachers' caps directly, the gate
+    // and the rule in one indexed statement, and only when the lesson names
+    // a teacher; the posts' day limits ride on the year's read as a `_count`.
+    // Counted at Postgres too: the adapter probe's (z), 'POST a lesson with
+    // a teacher'.
+    const statementsOfCreate = async (teacherId?: string) => {
+      const { world } = school();
+      const service = new MasterLessonsService(
+        writingNested(world),
+        { notifyMasterTimetableChanged: jest.fn() } as unknown as RealtimeService,
+        { recipientsForLessons: jest.fn(async () => []), notifyUsers: jest.fn() } as unknown as NotificationsService,
+      );
+      // Thursday 10:00, where 7A meets nobody: no roster is read.
+      const created = await service.create(
+        {
+          academicYearId: IDS.yearA,
+          subjectId: IDS.ma,
+          studentGroupId: IDS.g7a,
+          ...(teacherId ? { teacherId } : {}),
+          dayOfWeek: 4,
+          startTime: '10:00',
+          endTime: '11:00',
+        },
+        admin,
+      );
+      expect(created.warnings).toEqual([]);
+      return statementsOf(world.calls);
+    };
+    const withoutTeacher = [
+      // Publicering's mode read, then the year with its flags and the count
+      // of day limits on the named teachers' posts, in one statement.
+      '$queryRaw.$queryRaw',
+      'academicYear.findUnique',
+      // The clash scan of the day.
+      'masterLesson.findMany',
+      'masterLesson.findMany › subject',
+      'masterLesson.findMany › extraGroups',
+      'masterLesson.findMany › participants',
+      'availabilityConstraint.findMany',
+      'masterLesson.create',
+      'masterLesson.create › row',
+      'masterLesson.create › extraGroups',
+      'masterLesson.create › participants',
+      'scheduleChangeLog.create',
+      // Ämnesfördelning: the timplanspost, joined; it has no rule.
+      '$queryRaw.$queryRaw',
+    ];
+    expect(await statementsOfCreate()).toEqual(withoutTeacher);
+    // Lärarens dag: the teacher has no cap, so nothing is asked after it.
+    expect(await statementsOfCreate(IDS.anna)).toEqual([...withoutTeacher, 'teacherWorkRule.findMany']);
   });
 
   it('a timplanspost given a teacher under a WARN policy: 18 statements, as before', async () => {
