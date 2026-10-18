@@ -386,7 +386,7 @@ export async function familyPushChecks(owner: Client, api: PrismaService, marker
       assert.ok(calls.every((c) => c.rowsAtCall === 1), 'the hook ran before the row was visible to another connection');
       const [message] = calls[1]!.body as Array<{ to: string; body: string; data: { notificationId: string; type: string } }>;
       assert.equal(message!.to, TOKEN);
-      assert.equal(message!.body, `Unreported absence ${new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', day: 'numeric', month: 'short' }).format(new Date(`${d(0)}T12:00:00Z`))}. Open SchemaPro to see more.`);
+      assert.equal(message!.body, `Unreported absence ${new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', day: 'numeric', month: 'short' }).format(new Date(`${d(0)}T12:00:00Z`))}. Open the app to see more.`);
       assert.ok(!JSON.stringify(calls[1]!.body).includes('Ella') && !JSON.stringify(calls[1]!.body).includes('Matematik'));
       const { rows } = await owner.query<{ id: string }>(`SELECT id FROM "Notifications" WHERE "userId" = $1`, [school.guardianId]);
       assert.deepEqual(rows.map((r) => r.id), [message!.data.notificationId]);

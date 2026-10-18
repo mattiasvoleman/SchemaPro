@@ -8,7 +8,7 @@ const TZ = 'Europe/Stockholm';
 describe('lessonEmail', () => {
   it('says each notice in Swedish, with the subject and the time on the school’s clock', () => {
     const lesson = { subjectName: 'Matematik', startsAt: SUMMER };
-    const see = '\n\nSe schemat i SchemaPro.';
+    const see = '\n\nSe schemat i Rastra Schema.';
     expect(lessonEmail('LESSON_CANCELLED', lesson, TZ)).toEqual({
       subject: 'Inställd lektion: Matematik tis 13 okt 08:00',
       body: `Matematik tis 13 okt 08:00 är inställd.${see}`,

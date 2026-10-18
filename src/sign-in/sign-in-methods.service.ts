@@ -165,7 +165,7 @@ export class SignInMethodsService {
     const schoolId = requireSchoolId(user);
     if (!this.schoolAccounts) {
       throw new ConflictException({
-        message: 'Inloggning med skolkonto är inte påslagen för SchemaPro ännu.',
+        message: 'Inloggning med skolkonto är inte påslagen för Rastra Schema ännu.',
         code: 'SIGN_IN_NOT_AVAILABLE',
       });
     }

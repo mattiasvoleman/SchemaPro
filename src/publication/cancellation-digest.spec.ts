@@ -81,14 +81,14 @@ describe('the avbokning digest', () => {
   it('writes its e-mail in Swedish, for one lesson or several, one day or a span, and for the reversal', () => {
     expect(digestEmail('Prao åk 9', { count: 12, first: '2026-10-19', last: '2026-10-23' }, false)).toEqual({
       subject: 'Inställda lektioner: Prao åk 9',
-      body: 'Prao åk 9: 12 lektioner mellan 19 okt och 23 okt är inställda.\n\nSe schemat i SchemaPro.',
+      body: 'Prao åk 9: 12 lektioner mellan 19 okt och 23 okt är inställda.\n\nSe schemat i Rastra Schema.',
     });
     expect(digestEmail('Friluftsdag', { count: 1, first: '2026-10-19', last: '2026-10-19' }, false).body).toBe(
-      'Friluftsdag: En lektion den 19 okt är inställd.\n\nSe schemat i SchemaPro.',
+      'Friluftsdag: En lektion den 19 okt är inställd.\n\nSe schemat i Rastra Schema.',
     );
     expect(digestEmail('Prao åk 9', { count: 12, first: '2026-10-19', last: '2026-10-23' }, true)).toEqual({
       subject: 'Avbokningen är ångrad: Prao åk 9',
-      body: 'Avbokningen Prao åk 9 är ångrad. 12 lektioner mellan 19 okt och 23 okt blir av som planerat.\n\nSe schemat i SchemaPro.',
+      body: 'Avbokningen Prao åk 9 är ångrad. 12 lektioner mellan 19 okt och 23 okt blir av som planerat.\n\nSe schemat i Rastra Schema.',
     });
   });
 });

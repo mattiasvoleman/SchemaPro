@@ -71,8 +71,8 @@ describe('push messages', () => {
     expect(pushText('LESSON_COVER_WITHDRAWN', META, 'sv', TZ).body).toBe('Vikariepasset tis 13 okt 08:00 är avbokat.');
     expect(pushText('LESSON_ROOM_CHANGED', META, 'sv', TZ).body).toBe('En lektion tis 13 okt 08:00 har bytt sal.');
     expect(pushText('SCHEDULE_CHANGED', META, 'sv', TZ).body).toBe('Schemat har ändrats.');
-    expect(pushText('ABSENCE_UNREPORTED', META, 'sv', TZ).body).toBe('Oanmäld frånvaro 13 okt. Öppna SchemaPro för att se mer.');
-    expect(pushText('ABSENCE_UNREPORTED', META, 'en', TZ).body).toBe('Unreported absence 13 Oct. Open SchemaPro to see more.');
+    expect(pushText('ABSENCE_UNREPORTED', META, 'sv', TZ).body).toBe('Oanmäld frånvaro 13 okt. Öppna appen för att se mer.');
+    expect(pushText('ABSENCE_UNREPORTED', META, 'en', TZ).body).toBe('Unreported absence 13 Oct. Open the app to see more.');
     expect(pushText('LEAVE_DECIDED', META, 'sv', TZ).body).toBe('Ledighetsansökan 19 okt–21 okt har beviljats.');
     expect(pushText('LEAVE_DECIDED', { ...META, status: 'REJECTED' }, 'en', TZ).body).toBe('The leave request 19 Oct–21 Oct has been rejected.');
     expect(pushText('ROOM_BOOKING_DECIDED', META, 'sv', TZ).body).toBe('Din lokalbokning tis 13 okt 08:00 har godkänts.');
@@ -115,8 +115,8 @@ describe('push messages', () => {
   it('counts several notices of a kind in one push', () => {
     expect(pushText('LESSON_CANCELLED', META, 'sv', TZ, 3).body).toBe('3 lektioner är inställda.');
     expect(pushText('LESSON_SUBSTITUTE_COVER', META, 'en', TZ, 2).body).toBe('You have 2 new cover lessons.');
-    expect(pushText('ABSENCE_UNREPORTED', META, 'sv', TZ, 2).body).toBe('2 oanmälda frånvaron 13 okt. Öppna SchemaPro för att se mer.');
-    expect(pushText('ABSENCE_UNREPORTED', {}, 'sv', TZ, 2).body).toBe('Oanmäld frånvaro. Öppna SchemaPro för att se mer.');
+    expect(pushText('ABSENCE_UNREPORTED', META, 'sv', TZ, 2).body).toBe('2 oanmälda frånvaron 13 okt. Öppna appen för att se mer.');
+    expect(pushText('ABSENCE_UNREPORTED', {}, 'sv', TZ, 2).body).toBe('Oanmäld frånvaro. Öppna appen för att se mer.');
   });
 
   it('falls back to a body without a time when the meta has none', () => {

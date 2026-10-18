@@ -274,7 +274,7 @@ describe('CoverService', () => {
         meta: { subjectName: 'Matematik', startsAt: START.toISOString() },
         email: {
           subject: 'Självstudier: Matematik ons 14 okt 10:00',
-          body: 'Matematik ons 14 okt 10:00 blir självstudier under tillsyn.\n\nSe schemat i SchemaPro.',
+          body: 'Matematik ons 14 okt 10:00 blir självstudier under tillsyn.\n\nSe schemat i Rastra Schema.',
         },
       });
     });
@@ -427,7 +427,7 @@ describe('CoverService', () => {
             meta: { subjectName: 'Matematik', startsAt: START.toISOString() },
             email: {
               subject: 'Lektionen blir av: Matematik ons 14 okt 10:00',
-              body: 'Matematik ons 14 okt 10:00 blir av som planerat.\n\nSe schemat i SchemaPro.',
+              body: 'Matematik ons 14 okt 10:00 blir av som planerat.\n\nSe schemat i Rastra Schema.',
             },
           },
         ]);

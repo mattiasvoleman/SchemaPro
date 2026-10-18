@@ -168,7 +168,7 @@ export function feedIcs(document: FeedDocument, stamp: Date): string {
   const lines: string[] = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//SchemaPro//Kalenderprenumeration//SV',
+    'PRODID:-//Rastra//Kalenderprenumeration//SV',
     'CALSCALE:GREGORIAN',
     'METHOD:PUBLISH',
     `X-WR-CALNAME:${escapeText(`${words.calendar} – ${document.title} (${document.school})`)}`,

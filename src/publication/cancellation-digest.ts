@@ -120,12 +120,12 @@ export function digestEmail(
   if (reversed) {
     return {
       subject: `Avbokningen är ångrad: ${name}`,
-      body: `Avbokningen ${name} är ångrad. ${lessons} ${span} blir av som planerat.\n\nSe schemat i SchemaPro.`,
+      body: `Avbokningen ${name} är ångrad. ${lessons} ${span} blir av som planerat.\n\nSe schemat i Rastra Schema.`,
     };
   }
   return {
     subject: `Inställda lektioner: ${name}`,
-    body: `${name}: ${lessons} ${span} ${share.count === 1 ? 'är inställd' : 'är inställda'}.\n\nSe schemat i SchemaPro.`,
+    body: `${name}: ${lessons} ${span} ${share.count === 1 ? 'är inställd' : 'är inställda'}.\n\nSe schemat i Rastra Schema.`,
   };
 }
 
