@@ -23,6 +23,13 @@ export interface ApplyDialogProps {
   check: CandidateCheck | null;
   /** The check is being read again (it is, each time the dialog opens): its counts are not yet today's. */
   checking: boolean;
+  /**
+   * That read failed (a network error, the check's throttle). The check in
+   * hand is then the last good one, perhaps from page load, so nothing is
+   * confirmed on it: the dialog says so and offers the read again.
+   */
+  checkFailed: boolean;
+  onRetryCheck: () => void;
   pending: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirm: () => void;
@@ -38,20 +45,32 @@ export interface ApplyDialogProps {
  *
  * The page reads the check again as the dialog opens, so the counts and the
  * verdict are the moment's, not the page load's: nothing can be confirmed
- * until that read is back, and a batch it finds stale or refused cannot be
- * confirmed at all (the apply would answer 409 anyway).
+ * until that read is back and succeeded — a failed read leaves only the old
+ * counts, so it blocks too, with a retry — and a batch it finds stale or
+ * refused cannot be confirmed at all (the apply would answer 409 anyway).
  *
  * Focus is the shared DialogContent's: the first control on open, back to
  * the button that opened it on close, and nothing can close the dialog while
  * the write is in flight.
  */
-export function ApplyDialog({ candidate, label, check, checking, pending, onOpenChange, onConfirm }: ApplyDialogProps) {
+export function ApplyDialog({
+  candidate,
+  label,
+  check,
+  checking,
+  checkFailed,
+  onRetryCheck,
+  pending,
+  onOpenChange,
+  onConfirm,
+}: ApplyDialogProps) {
   const t = useTranslations("scheduleCandidates");
   const tCommon = useTranslations("common");
   const direct = check?.mode === "DIRECT";
   const ordinal = candidate?.ordinal ?? 0;
-  const noLonger = !checking && check !== null && (check.stale || check.refusalCode !== null);
-  const blocked = pending || checking || noLonger;
+  const failed = !checking && checkFailed;
+  const noLonger = !checking && !failed && check !== null && (check.stale || check.refusalCode !== null);
+  const blocked = pending || checking || failed || noLonger || check === null;
 
   return (
     <Dialog open={candidate !== null} onOpenChange={(open) => (pending ? undefined : onOpenChange(open))}>
@@ -78,6 +97,18 @@ export function ApplyDialog({ candidate, label, check, checking, pending, onOpen
           <p role="status" aria-busy="true" className="text-sm text-foreground">
             {t("apply.checking")}
           </p>
+        ) : failed ? (
+          <Notice
+            tone="destructive"
+            title={t("check.failed")}
+            action={
+              <Button variant="outline" size="sm" onClick={onRetryCheck}>
+                {t("check.retry")}
+              </Button>
+            }
+          >
+            {t("check.failedHint")}
+          </Notice>
         ) : noLonger ? (
           <Notice tone="warning" title={t("apply.noLonger")}>
             {t("apply.noLongerHint")}

@@ -4232,7 +4232,11 @@ async function runChecks(
           // StudentGroups SELECT by id and by halfOfId), since an empty half
           // has no membership row to be found by. A PATCH that meets nobody,
           // as the drag to Monday, asks nothing.
-          'PATCH a new teacher': 35,
+          // +1 each since Schemaförslag (20261125090000): after the lesson is
+          // read, its year's share of the regeneration lock
+          // (app.lock_years_for_grundschema_edit), one statement, so an edit
+          // beside an apply answers 409 within 5 s and never deadlocks with it.
+          'PATCH a new teacher': 36,
           // +1 each since Ämnesfördelning: a drag to another weekday asks the
           // lesson's timplanspost for its distribution rule (one indexed
           // SELECT), and stops there when the post has none, as here. A
@@ -4247,8 +4251,8 @@ async function runChecks(
           // gate is open the teachers' caps and their posts' limits are a
           // statement each, and the week one more once a teacher has either
           // ((ld-d)).
-          'PATCH a drag': 23,
-          'PATCH a drag back beside 8A': 27,
+          'PATCH a drag': 24,
+          'PATCH a drag back beside 8A': 28,
           'place a meal': 7,
           // +1 since Tjänstens perioder (20261022120000): the year has posts,
           // so the load read asks for their periods (one indexed SELECT); a

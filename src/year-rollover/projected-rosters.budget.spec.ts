@@ -121,7 +121,7 @@ function writingNested(world: RolloverWorld): PrismaService {
 }
 
 describe('the active year’s statement budget', () => {
-  it('a master lesson dragged to another day, with its teacher changed: 30 statements (29 before Halvklasser’s groups read, 28 before the block’s read, 27 before the ämnesfördelning’s read, 26 before Publicering’s mode read)', async () => {
+  it('a master lesson dragged to another day, with its teacher changed: 31 statements (30 before Schemaförslag’s edit lock, 29 before Halvklasser’s groups read, 28 before the block’s read, 27 before the ämnesfördelning’s read, 26 before Publicering’s mode read)', async () => {
     const { world, prisma } = school();
     const service = new MasterLessonsService(
       prisma,
@@ -141,6 +141,10 @@ describe('the active year’s statement budget', () => {
       // select of the year after it. And, since Lärarens dag, whether the
       // school has a cap or the year a day limit: two more counts in it.
       'masterLesson.findUnique › school',
+      // Schemaförslag: the lesson's year's share of the regeneration lock
+      // (app.lock_years_for_grundschema_edit), one statement, before any row
+      // is locked — an edit beside an apply answers 409 within 5 s.
+      '$executeRaw.$executeRaw',
       'masterLesson.findMany',
       'masterLesson.findMany › subject',
       'masterLesson.findMany › extraGroups',

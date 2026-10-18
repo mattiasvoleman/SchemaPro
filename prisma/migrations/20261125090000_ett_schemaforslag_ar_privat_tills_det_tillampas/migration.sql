@@ -67,6 +67,22 @@
 -- CANDIDATES_RUNNING, and asks app.schedule_candidate_runs_active() — how
 -- many runs are active across schools, a number and nothing else — before
 -- it starts one, so the solver is never asked for more than a few at once.
+-- A run's task writes engineBusyUntil before every engine call (the latest
+-- the solve it asks for can still be running) and clears it when the call
+-- returns; a run failed while a call was out — the API restarting — keeps
+-- it, and is counted until then, since the engine solves on after the
+-- caller is gone. The year is free at once all the same.
+--
+-- ## A hand edit beside a rewrite
+--
+-- app.lock_years_for_grundschema_edit(years) is a hand edit's share of the
+-- year's regeneration lock (the gateway's 'grundschema-regenerate' key,
+-- which Generera's write, a version restore and an apply take exclusively),
+-- waited for at most 5 s like app.enter_grundschema_write's publication lock,
+-- in one statement. An edit meeting a rewrite answers 409 at once instead of
+-- waiting on the apply's row locks into its own 15 s; and since both sides
+-- take the advisory lock before any row, an apply and an edit cannot
+-- deadlock.
 --
 -- ## Locks
 --
@@ -123,6 +139,7 @@ CREATE TABLE "ScheduleCandidateRuns" (
     "errorParams"    JSONB,
     "heartbeatAt"    TIMESTAMPTZ(6) NOT NULL DEFAULT now(),
     "leaseSeconds"   INTEGER NOT NULL DEFAULT 600,
+    "engineBusyUntil" TIMESTAMPTZ(6),
     "createdAt"      TIMESTAMPTZ(6) NOT NULL DEFAULT now(),
     "startedAt"      TIMESTAMPTZ(6),
     "finishedAt"     TIMESTAMPTZ(6),
@@ -314,13 +331,35 @@ COMMENT ON FUNCTION app.schedule_candidates_sweep() IS
 CREATE FUNCTION app.schedule_candidate_runs_active() RETURNS integer
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
   SELECT count(*)::integer FROM "ScheduleCandidateRuns"
-   WHERE "status" IN ('PENDING', 'RUNNING', 'CANCELLING')
-     AND "heartbeatAt" + make_interval(secs => "leaseSeconds") >= now()
-     AND "createdAt" >= now() - interval '30 minutes'
+   WHERE ("status" IN ('PENDING', 'RUNNING', 'CANCELLING')
+          AND "heartbeatAt" + make_interval(secs => "leaseSeconds") >= now()
+          AND "createdAt" >= now() - interval '30 minutes')
+      -- A call left solving on the engine by a run that failed under it.
+      OR "engineBusyUntil" > now()
 $$;
 
 COMMENT ON FUNCTION app.schedule_candidate_runs_active() IS
-  'Schemaförslag (20261125090000): how many candidate runs are active across schools, the ones the sweep would not yet abandon. A number and nothing else; the gateway caps concurrent runs with it.';
+  'Schemaförslag (20261125090000): how many candidate runs are active across schools, the ones the sweep would not yet abandon, and any run whose last engine call can still be solving. A number and nothing else; the gateway caps concurrent runs with it.';
+
+CREATE FUNCTION app.lock_years_for_grundschema_edit(p_years uuid[]) RETURNS void
+LANGUAGE plpgsql SET search_path = "public", "pg_temp" AS $$
+DECLARE
+  previous text := current_setting('lock_timeout');
+  y uuid;
+BEGIN
+  -- At most 5 s, then 55P03 (the gateway's 409 SCHEDULE_BUSY); the caller's
+  -- own lock_timeout is put back for the rest of its transaction. Sorted, so
+  -- two edits of several years meet the keys in one order.
+  PERFORM set_config('lock_timeout', '5s', true);
+  FOR y IN SELECT DISTINCT x FROM unnest(p_years) AS x WHERE x IS NOT NULL ORDER BY x LOOP
+    PERFORM pg_advisory_xact_lock_shared(hashtext('grundschema-regenerate'), hashtext(y::text));
+  END LOOP;
+  PERFORM set_config('lock_timeout', previous, true);
+END
+$$;
+
+COMMENT ON FUNCTION app.lock_years_for_grundschema_edit(uuid[]) IS
+  'Schemaförslag (20261125090000): a hand edit''s share of each year''s regeneration lock, waited for at most 5 s (55P03), taken before the edit locks any row. The caller''s privileges; it reads and writes nothing.';
 
 -- ---------------------------------------------------------------------------
 -- Grants, guarded
@@ -337,16 +376,19 @@ BEGIN
       EXECUTE format('REVOKE ALL ON "ScheduleCandidates" FROM %I', r);
       EXECUTE format('REVOKE ALL ON FUNCTION app.schedule_candidates_sweep() FROM %I', r);
       EXECUTE format('REVOKE ALL ON FUNCTION app.schedule_candidate_runs_active() FROM %I', r);
+      EXECUTE format('REVOKE ALL ON FUNCTION app.lock_years_for_grundschema_edit(uuid[]) FROM %I', r);
     END IF;
   END LOOP;
   REVOKE ALL ON FUNCTION app.schedule_candidates_sweep() FROM PUBLIC;
   REVOKE ALL ON FUNCTION app.schedule_candidate_runs_active() FROM PUBLIC;
+  REVOKE ALL ON FUNCTION app.lock_years_for_grundschema_edit(uuid[]) FROM PUBLIC;
 
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_authenticated') THEN
     GRANT SELECT, INSERT, UPDATE, DELETE ON "ScheduleCandidateRuns" TO "app_authenticated";
     GRANT SELECT, INSERT, DELETE ON "ScheduleCandidates" TO "app_authenticated";
     GRANT EXECUTE ON FUNCTION app.schedule_candidates_sweep() TO "app_authenticated";
     GRANT EXECUTE ON FUNCTION app.schedule_candidate_runs_active() TO "app_authenticated";
+    GRANT EXECUTE ON FUNCTION app.lock_years_for_grundschema_edit(uuid[]) TO "app_authenticated";
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
     GRANT SELECT ON "ScheduleCandidateRuns" TO "service_role";

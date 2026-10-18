@@ -456,6 +456,25 @@ describe('ScheduleCandidatesService', () => {
       expect(calls[1]).toEqual({ weights: { disruption: 2, teacherGap: 8 }, search: { workers: 2, probes: false, maxSeconds: 90, seed: 1 }, timeoutMs: 135_000 });
     });
 
+    it('sets each call\'s engine deadline with its heartbeat and clears it as the candidate is stored, the run finishes or fails', async () => {
+      await startAndRun(dto({ count: 2 }));
+      const raw = tx.$executeRaw.mock.calls.map((args) => sqlOf(args));
+      // Lead 30 + 45 + 20 s, then 30 + 45 s.
+      expect(raw.filter(({ text }) => text.includes('make_interval(secs =>')).map(({ values }) => values[0])).toEqual([95, 75]);
+      expect(raw.filter(({ text }) => text.includes('"progress" = "progress" + 1')).every(({ text }) => text.includes('"engineBusyUntil" = NULL'))).toBe(true);
+      expect(tx.scheduleCandidateRun.update).toHaveBeenLastCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: 'SUCCEEDED', engineBusyUntil: null }) }),
+      );
+
+      // A failed call has returned: nothing of the run is solving.
+      proxy.solveCandidate.mockRejectedValueOnce(new ServiceUnavailableException('The AI engine did not respond in time.'));
+      run = { status: 'PENDING', progress: 0, basis: null, basisParts: null };
+      await startAndRun(dto({ count: 2 }));
+      expect(tx.scheduleCandidateRun.updateMany).toHaveBeenLastCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: 'FAILED', engineBusyUntil: null }) }),
+      );
+    });
+
     it('bumps the heartbeat by compare-and-set before the fetch and before every call, and only while PENDING or RUNNING', async () => {
       await startAndRun(dto({ count: 2 }));
       const cas = steps.filter((step) => step.startsWith('x:UPDATE "ScheduleCandidateRuns" SET "status" = \'RUNNING\''));
@@ -749,9 +768,20 @@ describe('ScheduleCandidatesService', () => {
       for (let turn = 0; turn < 20 && !release; turn++) await new Promise((resolve) => setImmediate(resolve));
       expect(service.running).toEqual([RUN]);
 
+      // The call out on the engine was given its deadline with the heartbeat:
+      // 30 s + 45 + the lead's probe 20, the latest it can still be solving.
+      const busy = tx.$executeRaw.mock.calls
+        .map((args) => sqlOf(args))
+        .filter(({ text }) => text.includes('"engineBusyUntil" = now() + make_interval(secs =>'));
+      expect(busy.map(({ values }) => values[0])).toEqual([95]);
+
       await service.onModuleDestroy();
       expect(run).toMatchObject({ status: 'FAILED', errorCode: CANDIDATE_RUN_INTERRUPTED });
       expect(prisma.withRls).toHaveBeenLastCalledWith(user, expect.any(Function));
+      // The interruption keeps that deadline: the run holds its place under
+      // CANDIDATE_RUNS_MAX until the orphaned solve could have ended.
+      const interrupted = tx.scheduleCandidateRun.updateMany.mock.calls.at(-1)![0] as { data: Record<string, unknown> };
+      expect(interrupted.data).not.toHaveProperty('engineBusyUntil');
 
       // The task wakes to a run that is no longer its own, and writes nothing.
       release();

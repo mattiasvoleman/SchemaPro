@@ -520,6 +520,11 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
    * of after the lease, and the page says the service restarted rather than
    * that the run stopped answering. Each under the admin who started it, as
    * every write of the run is.
+   *
+   * engineBusyUntil is left as the last call set it: the engine solves on
+   * after its caller is gone, so the run keeps its place under
+   * CANDIDATE_RUNS_MAX until that call could have ended
+   * (app.schedule_candidate_runs_active), while the year itself is free.
    */
   async onModuleDestroy(): Promise<void> {
     this.jobs?.unregister(SWEEP_JOB);
@@ -837,8 +842,13 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
 
       const applicable: Array<{ ordinal: number; lessons: CandidateLesson[]; metrics: CandidateMetrics }> = [];
       for (const [index, candidate] of plan.candidates.entries()) {
-        if (!(await this.heartbeat(runId, user))) return await this.stopped(runId, user);
         const call = callOf(candidate, index);
+        // The call's own deadline goes on the run with the heartbeat: until
+        // then the engine may be solving for it, whatever becomes of the run.
+        const timeoutMs = callTimeoutMs(call, plan.settings);
+        if (!(await this.heartbeat(runId, user, undefined, Math.ceil(timeoutMs / 1000)))) {
+          return await this.stopped(runId, user);
+        }
 
         let solution: CandidateSolution;
         try {
@@ -846,7 +856,7 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
             weights: candidate.weights,
             search: searchFor(call, plan.settings),
             ...(candidate.previous ? { previousLessons: previousLessonsFrom(prepared, candidate.previous) } : {}),
-            timeoutMs: callTimeoutMs(call, plan.settings),
+            timeoutMs,
           });
         } catch (error) {
           const failure = engineFailureOf(error);
@@ -881,14 +891,16 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
   /**
    * The compare-and-set every step of the task begins with: RUNNING, the
    * heartbeat now (the database's clock, the one the sweep reads), startedAt
-   * once, and the basis when it is known — WHERE the run is still PENDING or
-   * RUNNING. False when nothing was updated: the run is no longer the task's,
-   * and the task writes nothing more.
+   * once, the basis when it is known, and before an engine call the latest
+   * that call can still be solving (engineBusyUntil) — WHERE the run is still
+   * PENDING or RUNNING. False when nothing was updated: the run is no longer
+   * the task's, and the task writes nothing more.
    */
   private async heartbeat(
     runId: string,
     user: AuthenticatedUser,
     basis?: { basis: string; parts: BasisParts },
+    engineSeconds?: number,
   ): Promise<boolean> {
     const updated = await this.prisma.withRls(user, (tx) =>
       basis
@@ -898,11 +910,18 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
                               "basis" = ${basis.basis}, "basisParts" = ${JSON.stringify(basis.parts)}::jsonb
                         WHERE "id" = ${runId}::uuid AND "status" IN ('PENDING', 'RUNNING')`,
           )
-        : tx.$executeRaw(
-            Prisma.sql`UPDATE "ScheduleCandidateRuns"
-                          SET "status" = 'RUNNING', "heartbeatAt" = now(), "startedAt" = coalesce("startedAt", now())
-                        WHERE "id" = ${runId}::uuid AND "status" IN ('PENDING', 'RUNNING')`,
-          ),
+        : engineSeconds !== undefined
+          ? tx.$executeRaw(
+              Prisma.sql`UPDATE "ScheduleCandidateRuns"
+                            SET "status" = 'RUNNING', "heartbeatAt" = now(), "startedAt" = coalesce("startedAt", now()),
+                                "engineBusyUntil" = now() + make_interval(secs => ${engineSeconds})
+                          WHERE "id" = ${runId}::uuid AND "status" IN ('PENDING', 'RUNNING')`,
+            )
+          : tx.$executeRaw(
+              Prisma.sql`UPDATE "ScheduleCandidateRuns"
+                            SET "status" = 'RUNNING', "heartbeatAt" = now(), "startedAt" = coalesce("startedAt", now())
+                          WHERE "id" = ${runId}::uuid AND "status" IN ('PENDING', 'RUNNING')`,
+            ),
     );
     return Number(updated) > 0;
   }
@@ -972,7 +991,7 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
         select: { id: true },
       });
       await tx.$executeRaw(
-        Prisma.sql`UPDATE "ScheduleCandidateRuns" SET "progress" = "progress" + 1, "heartbeatAt" = now() WHERE "id" = ${plan.runId}::uuid`,
+        Prisma.sql`UPDATE "ScheduleCandidateRuns" SET "progress" = "progress" + 1, "heartbeatAt" = now(), "engineBusyUntil" = NULL WHERE "id" = ${plan.runId}::uuid`,
       );
       if (!firstFailed) return 'stored';
       await tx.scheduleCandidateRun.update({
@@ -1010,6 +1029,7 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
             error: 'No candidate found a timetable that can be applied.',
             errorCode: CANDIDATES_NONE_APPLICABLE,
             errorParams: Prisma.DbNull,
+            engineBusyUntil: null,
             finishedAt: new Date(),
           },
         });
@@ -1020,6 +1040,7 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
         data: {
           status: 'SUCCEEDED',
           unplaced: jsonOrDbNull(unplaced),
+          engineBusyUntil: null,
           finishedAt: new Date(),
         },
       });
@@ -1044,6 +1065,9 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
           error: truncate(failure.message),
           errorCode: codeOrNull(failure.code),
           errorParams: jsonOrDbNull(failure.params),
+          // The call that failed has returned (its timeout outlasts the
+          // engine's own ceiling), so nothing of this run is solving.
+          engineBusyUntil: null,
           finishedAt: new Date(),
         },
       });
@@ -1341,6 +1365,7 @@ async function markCancelled(tx: PrismaClient, runId: string): Promise<void> {
       error: 'The run was cancelled before it finished.',
       errorCode: CANDIDATE_RUN_CANCELLED,
       errorParams: Prisma.DbNull,
+      engineBusyUntil: null,
       finishedAt: new Date(),
     },
   });

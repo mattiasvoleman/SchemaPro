@@ -856,6 +856,8 @@ export default function CandidatesPage() {
         label={applying ? variantLabel(t, applying) : ""}
         check={check}
         checking={checkQuery.isFetching}
+        checkFailed={checkQuery.isError}
+        onRetryCheck={() => void checkQuery.refetch()}
         pending={apply.isPending}
         onOpenChange={(open) => (open ? undefined : setApplying(null))}
         onConfirm={confirmApply}
