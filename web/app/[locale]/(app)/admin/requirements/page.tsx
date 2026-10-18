@@ -152,7 +152,6 @@ import {
 } from "@/lib/queries";
 import { useStaffingLoad, useTeacherQualifications } from "@/lib/staffing-queries";
 import { STAFFING_KEYS } from "@/lib/staffing-keys";
-import { requirementsToCsv } from "@/lib/requirements-csv-export";
 import { buildGradeSpans } from "@/lib/grade-span";
 import { useYearRosters } from "@/lib/planning-year";
 import { withProjectedHomes } from "@/lib/projected-rosters";
@@ -1036,8 +1035,16 @@ export default function RequirementsPage() {
    * has: two läsår may both own a "7A", and the id-to-name map would then be
    * built from whichever came last in the list.
    */
-  const exportCsv = () =>
-    requirementsToCsv(requirements ?? [], yearGroups, subjects ?? [], people ?? []);
+  //
+  // The builder is loaded at the click, not with the route: the page sits at
+  // its bundle budget, and nobody pays for the CSV code who never exports.
+  const exportCsv = async () =>
+    (await import("@/lib/requirements-csv-export")).requirementsToCsv(
+      requirements ?? [],
+      yearGroups,
+      subjects ?? [],
+      people ?? [],
+    );
 
   /**
    * Nothing to export is one reason to disable the button. An unanswered

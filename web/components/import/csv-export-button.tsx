@@ -13,8 +13,12 @@ import {
 
 export interface CsvExport {
   kind: ImportKind;
-  /** Called on click; returns the finished file contents. */
-  build: () => string;
+  /**
+   * Called on click; returns the finished file contents — or a promise of
+   * them, for a page that loads its builder at the click rather than with
+   * the route (/admin/requirements, at its bundle budget).
+   */
+  build: () => string | Promise<string>;
   /** Nothing to export — the entry is shown but disabled. */
   empty?: boolean;
 }
@@ -32,13 +36,12 @@ export interface CsvExport {
 export function CsvExportButton({ exports }: { exports: CsvExport[] }) {
   const t = useTranslations("csvImport");
 
-  const run = (entry: CsvExport) =>
-    downloadCsv(CSV_TEMPLATES[entry.kind].filename, entry.build());
+  const run = async (entry: CsvExport) => downloadCsv(CSV_TEMPLATES[entry.kind].filename, await entry.build());
 
   if (exports.length === 1) {
     const only = exports[0]!;
     return (
-      <Button variant="outline" onClick={() => run(only)} disabled={only.empty}>
+      <Button variant="outline" onClick={() => void run(only)} disabled={only.empty}>
         <Download />
         {t("exportButton")}
       </Button>
@@ -58,7 +61,7 @@ export function CsvExportButton({ exports }: { exports: CsvExport[] }) {
           <DropdownMenuItem
             key={entry.kind}
             disabled={entry.empty}
-            onSelect={() => run(entry)}
+            onSelect={() => void run(entry)}
           >
             {t(`kinds.${entry.kind}`)}
           </DropdownMenuItem>
