@@ -3411,7 +3411,7 @@
     "graduatingGradePlaceholder": "Välj årskurs",
     "gradeOption": "{grade, select, 0 {Förskoleklass} other {Årskurs {grade}}}",
     "numbering2028": "Numrering från hösten 2028",
-    "numbering2028Hint": "Skolan har varken lokal timplan eller förskoleklass, så SchemaPro vet inte om den tioåriga grundskolan gäller den.",
+    "numbering2028Hint": "Skolan har varken en beslutad lokal timplan eller en förskoleklass, så SchemaPro vet inte om den tioåriga grundskolan gäller den.",
     "numbering2028Placeholder": "Välj numrering",
     "numbering2028Renumber": "Tioårig: skolan är grundskola, anpassad grundskola, specialskola eller sameskola",
     "numbering2028Keep": "Behåll numreringen: skolan har ingen av de fyra skolformerna",
@@ -3464,7 +3464,7 @@
       "PROMOTE_GRADUATING": "Gruppen går ut och kan inte flyttas upp.",
       "PROMOTE_WITHOUT_GRADE": "Gruppen har ingen årskurs att flytta upp.",
       "INTAKE_NOT_LOWEST": "Ny klass för intaget går bara för klasser i den lägsta årskursen.",
-      "CARRY_FORSKOLEKLASS": "Förskoleklassen kan inte följa med oförändrad in i hösten 2028: den börjar direkt i åk 2."
+      "CARRY_FORSKOLEKLASS": "Förskoleklassen kan inte stanna kvar in i hösten 2028: den börjar direkt i åk 2."
     },
     "leaves": {
       "PROMOTE": "—",
@@ -3594,7 +3594,7 @@
       "ROLLOVER_2028_RENUMBERING": "Det nya läsåret börjar {startYear} och numreras tioårigt: enligt {source} flyttas varje klass upp två årskurser i stället för en (8A blir 10A, förskoleklassen börjar direkt i åk 2), och en klass som stannar flyttas upp en. Ny klass för intaget öppnas en årskurs över den lägsta klassen, så förskoleklassens blir nya åk 1; annars läggs nya åk 1 till när läsåret är skapat. Varje äldre årskull behåller sin timplan och den äldre totala tiden.",
       "ROLLOVER_2028_NOT_RENUMBERED": "Det nya läsåret börjar {startYear} men behåller skolans numrering, eftersom skolan inte har någon av de skolformer som {source} numrerar om. Klasserna flyttas upp en årskurs som vanligt.",
       "ROLLOVER_2028_SCHOOL_FORM_UNKNOWN": "Det nya läsåret börjar {startYear}, när {source} numrerar om grundskolan, anpassade grundskolan, specialskolan och sameskolan. Välj numrering under Numrering från hösten 2028.",
-      "ROLLOVER_2028_RENUMBERING_REQUIRED": "Skolan har en lokal timplan eller en förskoleklass, så den har en av de skolformer som {source} numrerar om från {startYear}. Numreringen kan inte behållas.",
+      "ROLLOVER_2028_RENUMBERING_REQUIRED": "Skolan har en beslutad lokal timplan eller en förskoleklass, så den har en av de skolformer som {source} numrerar om från {startYear}. Numreringen kan inte behållas.",
       "ROLLOVER_GRADE_ABOVE_12": "{groups} skulle hamna över åk 12 nästa läsår. Välj ett annat utfall för dem."
     },
     "errors": {
@@ -3616,7 +3616,7 @@
       "ROLLOVER_UNKNOWN_BREAK": "Ett valt lov finns inte längre i läsåret. Ladda om sidan.",
       "GRADUATING_GRADE_REQUIRED": "Välj vilken årskurs som går ut.",
       "INTAKE_NOT_LOWEST": "En ny klass för intaget går bara att öppna bredvid en klass i den lägsta årskursen.",
-      "CARRY_FORSKOLEKLASS": "Förskoleklassen kan inte följa med oförändrad in i hösten 2028: den börjar direkt i åk 2.",
+      "CARRY_FORSKOLEKLASS": "Förskoleklassen kan inte stanna kvar in i hösten 2028: den börjar direkt i åk 2.",
       "ROLLOVER_2028_SCHOOL_FORM_UNKNOWN": "Välj numrering från hösten 2028 i steg 1.",
       "ROLLOVER_2028_RENUMBERING_REQUIRED": "Skolan har en av de skolformer som numreras om hösten 2028, så numreringen kan inte behållas.",
       "ROLLOVER_GRADE_ABOVE_12": "Några grupper skulle hamna över åk 12 nästa läsår. Välj ett annat utfall för dem.",

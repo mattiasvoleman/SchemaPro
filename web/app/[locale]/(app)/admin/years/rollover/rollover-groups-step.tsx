@@ -150,11 +150,14 @@ export function RolloverGroupsStep({
               // so the one choice of its own is to stay behind; a promotion or
               // a carry offered here would be ignored without a word.
               const halfOf = group.halfOfId ? sourceGroups.find((other) => other.id === group.halfOfId) : undefined;
+              // Across the reform förskoleklassen begins directly in åk 2:
+              // it cannot stay (CARRY_FORSKOLEKLASS), so it is not offered.
+              const canCarry = !(renumbers && group.gradeLevel === 0);
               const outcomes: ("PROMOTE" | "CARRY" | "SKIP" | "INTAKE")[] = halfOf
                 ? ["SKIP"]
                 : [
                     ...(canPromote ? (["PROMOTE"] as const) : []),
-                    "CARRY",
+                    ...(canCarry ? (["CARRY"] as const) : []),
                     "SKIP",
                     ...(canIntake ? (["INTAKE"] as const) : []),
                   ];

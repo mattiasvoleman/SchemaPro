@@ -6,7 +6,9 @@ import type { RolloverPreview } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { RolloverStaffingReview } from "./rollover-staffing-review";
 
-const OUTCOMES = ["PROMOTE", "CARRY", "INTAKE", "GRADUATE", "SKIP"] as const;
+// CARRY_RENUMBERED: across the reform, a carried group with an årskurs moves
+// up one with its årskull; one without an årskurs is carried unchanged.
+const OUTCOMES = ["PROMOTE", "CARRY_RENUMBERED", "CARRY", "INTAKE", "GRADUATE", "SKIP"] as const;
 
 /** dayOfWeek 1 = Monday, as in AvailabilityConstraints. */
 const DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] as const;
@@ -75,7 +77,9 @@ export function RolloverReview({
   };
   const byOutcome = new Map<string, number>();
   for (const group of plan.groups) {
-    byOutcome.set(group.outcome, (byOutcome.get(group.outcome) ?? 0) + 1);
+    const key =
+      group.outcome === "CARRY" && plan.reform2028?.renumbers && !group.noGrade ? "CARRY_RENUMBERED" : group.outcome;
+    byOutcome.set(key, (byOutcome.get(key) ?? 0) + 1);
   }
   const members = plan.groups.reduce((sum, group) => sum + group.membersCopied, 0);
   // The classes' pupils who leave with no class at the activation.
@@ -107,7 +111,7 @@ export function RolloverReview({
           {OUTCOMES.filter((outcome) => byOutcome.has(outcome)).map((outcome) => (
             <li key={outcome}>
               <Badge variant="secondary">
-                {outcome === "CARRY" && plan.reform2028?.renumbers
+                {outcome === "CARRY_RENUMBERED"
                   ? t("outcomeCountCarryRenumbered", { count: byOutcome.get(outcome)! })
                   : t(`outcomeCount.${outcome}`, { count: byOutcome.get(outcome)! })}
               </Badge>
