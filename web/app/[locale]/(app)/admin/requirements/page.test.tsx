@@ -1369,6 +1369,27 @@ describe("Timplan CSV", () => {
     expect(secondFile).not.toContain("7A");
   });
 
+  it("says so and downloads nothing when the builder no longer loads", async () => {
+    // A deploy since the page opened takes the builder's chunk away: the click
+    // answers with the page's error, not with nothing at all.
+    vi.doMock("@/lib/requirements-csv-export", () => {
+      throw new Error("Failed to fetch dynamically imported module");
+    });
+    try {
+      const user = userEvent.setup();
+      render(<RequirementsPage />);
+
+      await user.click(exportButton());
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith("error"));
+      expect(mockDownloadCsv).not.toHaveBeenCalled();
+    } finally {
+      vi.doUnmock("@/lib/requirements-csv-export");
+      // The file's toast is not reset between tests, and later ones assert none.
+      (toast.error as Mock).mockClear();
+    }
+  });
+
   it("names the year picker, now that it stands among buttons", () => {
     // Its value is the year, so a trigger without a name announces as
     // "2026/2027, combobox" — which of the three controls in that header is
