@@ -33,6 +33,9 @@ const lessonMinutes = (start: Date, end: Date): number => {
 import { readUnstaffedRequirements } from '../staffing/unstaffed-requirements';
 import { enterGrundschemaWrite, type PublishMode } from '../publication/publish-mode';
 import { STAFF_UNSTAFFED_REQUIREMENTS } from '../staffing/staffing-checks';
+import { recordRead, type AccessChannel } from '../access-log/access-log';
+import { WORK_DAYS_HIDDEN_MESSAGE, WorkDaysRefusal, isDaysBearing, withoutDays } from './work-days';
+import { unkeptFreeDayWishes, type FreeDayWish, type TeachersOnDay } from './free-day-wishes';
 import type {
   AiEngineConflictAnalysis,
   AiEngineScheduleRequest,
@@ -49,6 +52,7 @@ import type {
   AnonymousRequirement,
   AnonymousRoom,
   AnonymousRoomPreference,
+  AnonymousTeacherDayLimit,
   AnonymousTeacherWorkRule,
   ConstraintKind,
   DayOfWeek,
@@ -140,6 +144,22 @@ export interface AnonMaps {
    * a refusal could name.
    */
   blockAnonMap?: Map<string, string>;
+  /**
+   * And the post a deltid sentence names (TEACHER_WORK_DAYS_*): the post's
+   * real id -> its anonymous one, kept and reversed like the work rule's, so
+   * `limit` comes back as a row and not as a uuid in no table. Optional like
+   * `blockAnonMap`, for its reason: only the generator's route sends a days
+   * limit, and a route that sends none has none a refusal could name.
+   */
+  dayLimitAnonMap?: Map<string, string>;
+  /**
+   * The post's real id -> its teacher's Users id. Never reversed into text:
+   * it is how a days sentence's `subjectIds` and `resourceIds` come to say
+   * WHOSE post it is (work-days.ts) — which the gateway must know to show the
+   * days to a reader with HR-läs and to write that read to the Läslogg, and
+   * which no answer carries.
+   */
+  dayLimitTeacherIds?: Map<string, string>;
   /** Real group id -> the school's own name, the last step out of id space. */
   nameById: Map<string, string>;
   /**
@@ -206,7 +226,7 @@ export class OptimizationProxyService {
       if (refusal) return { refusal, data: null };
       return {
         refusal: null,
-        data: await this.fetchAndAnonymize(tx, academicYearId, requireSchoolId(user), basis),
+        data: await this.fetchAndAnonymize(tx, academicYearId, requireSchoolId(user), basis, user.channel),
       };
     });
     if (fetched.refusal) {
@@ -225,6 +245,7 @@ export class OptimizationProxyService {
       rasts,
       roomPreferences,
       teacherWorkRules,
+      teacherDayLimits,
       fixedLessons,
       groups,
       previousLessons,
@@ -236,10 +257,13 @@ export class OptimizationProxyService {
       roomTypeAnonMap,
       constraintAnonMap,
       workRuleAnonMap,
+      dayLimitAnonMap,
+      dayLimitTeacherIds,
       nameById,
       blockAnonMap,
       blockRefusal,
       storedRules,
+      freeDayWishes,
     } = fetched.data;
 
     const anonMaps: AnonMaps = {
@@ -250,6 +274,8 @@ export class OptimizationProxyService {
       constraintAnonMap,
       workRuleAnonMap,
       blockAnonMap,
+      dayLimitAnonMap,
+      dayLimitTeacherIds,
       nameById,
     };
 
@@ -286,6 +312,8 @@ export class OptimizationProxyService {
       rasts,
       roomPreferences,
       teacherWorkRules,
+      // Only when somebody's post limits their days: see AiEngineScheduleRequest.
+      ...(teacherDayLimits.length > 0 ? { teacherDayLimits } : {}),
       fixedLessons,
       groups,
       previousLessons,
@@ -314,7 +342,7 @@ export class OptimizationProxyService {
     // Step 3: Persist the master-lesson output, translating anon ids back.
     // `requirements` rides along as the demand the response is checked against
     // before anything is deleted — see persistMasterLessons.
-    await this.prisma.withRls(user, (tx) =>
+    const written = await this.prisma.withRls(user, (tx) =>
       this.persistMasterLessons(
         tx,
         academicYearId,
@@ -336,10 +364,17 @@ export class OptimizationProxyService {
     // The sittings and the refusal leave this method carrying REAL ids and
     // the school's own names. Everything the engine sees is anonymised, so a
     // caller handed the raw reply would get uuids that exist in no table.
+    //
+    // And the free-day wishes the timetable just written does not keep, read
+    // off the timetable persist left: what it wrote and what it kept, as they
+    // stood when it wrote — see unkeptFreeDayWishes. None when nothing was
+    // written: a refused week keeps last week's timetable, and the wishes it
+    // broke were said when it was made.
     return {
       ...response,
       lunches: realisedLunches ?? [],
       conflicts: this.realiseConflicts(response.conflicts, anonMaps),
+      notes: written === null ? [] : unkeptFreeDayWishes(freeDayWishes, written),
     };
   }
 
@@ -380,21 +415,39 @@ export class OptimizationProxyService {
       maps.workRuleAnonMap,
       // The block a block's sentence names, which `resourceIds` carries too.
       maps.blockAnonMap ?? new Map<string, string>(),
+      // The post a deltid sentence names. In `resourceIds` it goes one step
+      // further, to the post's teacher, below.
+      maps.dayLimitAnonMap ?? new Map<string, string>(),
     ]) {
       for (const [realId, anonId] of map) realByAnon.set(anonId, realId);
     }
+    const teacherOfPost = maps.dayLimitTeacherIds ?? new Map<string, string>();
+    const summaryParams = this.namedParams(conflicts.summaryParams ?? {}, maps);
+    const summaryBearsDays = isDaysBearing(conflicts.summaryCode);
     return {
-      summary: this.named(conflicts.summary, maps),
+      // A days-bearing sentence leaves without its figure: see work-days.ts.
+      // The summary never is one today — the engine's summaries count causes
+      // and name none — and is held to the same rule all the same, since it
+      // is stored and shown like every line under it.
+      summary: summaryBearsDays ? WORK_DAYS_HIDDEN_MESSAGE : this.named(conflicts.summary, maps),
       summaryCode: conflicts.summaryCode,
-      summaryParams: this.namedParams(conflicts.summaryParams ?? {}, maps),
+      summaryParams: summaryBearsDays ? withoutDays(summaryParams) : summaryParams,
+      ...(summaryBearsDays ? { summarySubjectIds: this.limitSubjects(summaryParams, maps) } : {}),
       conflicts: conflicts.conflicts.map((detail) => {
-        const resourceIds = detail.resourceIds.map(
-          (anonId) => realByAnon.get(anonId) ?? anonId,
-        );
-        return {
+        // A post's id goes on to its teacher's: the resource a deltid
+        // sentence is about is the person, and nothing else in this list is
+        // ever a Users id. Never named — see nameById — and never shown: the
+        // stored refusal keeps no ids, and the reader is told whose post it
+        // is only when they read HR (OptimizationJobsService).
+        const resourceIds = detail.resourceIds.map((anonId) => {
+          const realId = realByAnon.get(anonId) ?? anonId;
+          return teacherOfPost.get(realId) ?? realId;
+        });
+        const params = this.namedParams(detail.params ?? {}, maps);
+        const realised = {
           ...detail,
           message: this.named(detail.message, maps),
-          params: this.namedParams(detail.params ?? {}, maps),
+          params,
           resourceIds,
           // Only the ones there IS a name for. A teacher is deliberately
           // absent — see nameById — so a reservation about one names the
@@ -403,8 +456,26 @@ export class OptimizationProxyService {
             .map((realId) => maps.nameById.get(realId))
             .filter((name): name is string => name !== undefined),
         };
+        if (!isDaysBearing(detail.code)) return realised;
+        return {
+          ...realised,
+          params: withoutDays(params),
+          message: WORK_DAYS_HIDDEN_MESSAGE,
+          subjectIds: this.limitSubjects(params, maps),
+        };
       }),
     };
+  }
+
+  /**
+   * The teacher whose post a days sentence names, by its `limit` param once
+   * that is the post's real id again: the Users id the Läslogg records and
+   * the job store keeps beside the sentence. Empty when the sentence names no
+   * post this run sent, which then stays hidden from every reader.
+   */
+  private limitSubjects(params: Record<string, string | number>, maps: AnonMaps): string[] {
+    const teacher = maps.dayLimitTeacherIds?.get(String(params['limit']));
+    return teacher === undefined ? [] : [teacher];
   }
 
   /**
@@ -573,6 +644,8 @@ export class OptimizationProxyService {
     academicYearId: string,
     schoolId: string,
     basis: RosterBasis,
+    /** The reader's client, for the Läslogg row the days limits write. */
+    channel?: AccessChannel | null,
   ): Promise<{
     requirements: AnonymousRequirement[];
     rooms: AnonymousRoom[];
@@ -583,6 +656,8 @@ export class OptimizationProxyService {
     rasts: AnonymousRast[];
     roomPreferences: AnonymousRoomPreference[];
     teacherWorkRules: AnonymousTeacherWorkRule[];
+    /** Deltid in days; empty when no post the payload reaches sets it. */
+    teacherDayLimits: AnonymousTeacherDayLimit[];
     fixedLessons: AnonymousFixedLesson[];
     groups: AnonymousGroup[];
     previousLessons: AnonymousPreviousLesson[];
@@ -603,6 +678,10 @@ export class OptimizationProxyService {
     constraintAnonMap: Map<string, string>;
     /** And the arbetstid one names, which is the ONLY way back to that row. */
     workRuleAnonMap: Map<string, string>;
+    /** And the post a days sentence names, back to the row. */
+    dayLimitAnonMap: Map<string, string>;
+    /** The post → its teacher, for whom a days sentence is about. Never sent. */
+    dayLimitTeacherIds: Map<string, string>;
     /** Real group id → the school's name for it, for realiseConflicts. */
     nameById: Map<string, string>;
     /** Parallella block: the block a refusal names, back to the real one. */
@@ -610,6 +689,8 @@ export class OptimizationProxyService {
     /** BLOCK_PARTLY_LOCKED, in anonymous ids, or null to go on. */
     blockRefusal: AiEngineConflictAnalysis | null;
     storedRules: ScheduleRules | null;
+    /** Every free-day wish of the school's teachers, in real ids. Never sent. */
+    freeDayWishes: FreeDayWish[];
   }> {
     // Anonymous-id lookup tables: realId → anonId.
     const teacherAnonMap = new Map<string, string>();
@@ -635,6 +716,10 @@ export class OptimizationProxyService {
     // engine names the block in every sentence about it, and the id has to
     // come back to the row the school wrote.
     const blockAnonMap = new Map<string, string>();
+    // Deltid in days, by the post that sets it. A map for the work rules'
+    // reason, and a second one beside it for whose post it is: see the read.
+    const dayLimitAnonMap = new Map<string, string>();
+    const dayLimitTeacherIds = new Map<string, string>();
 
     const anonId = (map: Map<string, string>, realId: string): string => {
       const existing = map.get(realId);
@@ -1532,6 +1617,10 @@ export class OptimizationProxyService {
         lunchStartTime: true,
         lunchEndTime: true,
         minDailyRestMinutes: true,
+        // Lärarens dag: the cap and the wish, set by an administrator who
+        // plans (20261123090000). Numbers, like the rest above.
+        maxTeachingMinutesPerDay: true,
+        preferredFreeDayOfWeek: true,
       },
     });
 
@@ -1557,10 +1646,71 @@ export class OptimizationProxyService {
               ? this.timeToString(rule.lunchEndTime)
               : null,
             minDailyRestMinutes: rule.minDailyRestMinutes,
+            // Each only when set, never as null: the four above have been
+            // on the wire since the list existed, these have not, and a school
+            // that sets neither sends what it always sent. A rule holding only
+            // one of them (no lunch, no rest) is a rule all the same, and is
+            // sent with the four as nulls.
+            ...(rule.maxTeachingMinutesPerDay !== null
+              ? { maxTeachingMinutesPerDay: rule.maxTeachingMinutesPerDay }
+              : {}),
+            ...(rule.preferredFreeDayOfWeek !== null
+              ? { preferredFreeDay: rule.preferredFreeDayOfWeek as DayOfWeek }
+              : {}),
           },
         ];
       },
     );
+
+    /*
+     * Deltid in days (TeacherEmployments.maxTeachingDaysPerWeek): the year's
+     * posts that set it, and only those. Read the way every other row here is,
+     * under the starter's own session, and NOT filtered by whether the starter
+     * reads HR: every administrator's arm reads the posts, and a week generated
+     * by a schemaläggare without HR-läs must hold the same limits as one
+     * generated by rektor, or the timetable would depend on who pressed the
+     * button. What a reader is SHOWN of a refusal about it is decided when the
+     * run is read (work-days.ts); the rule itself is the same for everybody.
+     *
+     * The teacher through `teacherAnonMap` and the post through its own kept
+     * map, exactly as the work rules above go — and a limit whose teacher
+     * this year never mentions is left out and said in the log, for their
+     * reason. Whose post it is is kept beside the map (`dayLimitTeacherIds`)
+     * and never sent: it is how a refusal about the post can be put in front
+     * of a reader with HR-läs with the teacher named, and written to the
+     * Läslogg by a Users id.
+     */
+    const rawDayLimits = await tx.teacherEmployment.findMany({
+      where: { academicYearId, maxTeachingDaysPerWeek: { not: null } },
+      select: { id: true, userId: true, maxTeachingDaysPerWeek: true },
+    });
+    const teacherDayLimits: AnonymousTeacherDayLimit[] = rawDayLimits.flatMap(
+      (post): AnonymousTeacherDayLimit[] => {
+        const teacherId = teacherAnonMap.get(post.userId);
+        if (teacherId === undefined) {
+          this.logger.warn(
+            `Skipping the day limit on post ${post.id}: its teacher has no lesson, reservation ` +
+              `or requirement in this year, so there is nothing to hold it against.`,
+          );
+          return [];
+        }
+        dayLimitTeacherIds.set(post.id, post.userId);
+        return [
+          {
+            id: anonId(dayLimitAnonMap, post.id),
+            teacherId,
+            // The where admits no null.
+            maxTeachingDaysPerWeek: post.maxTeachingDaysPerWeek as number,
+          },
+        ];
+      },
+    );
+    // A post's days are HR data, and this transaction read them for every
+    // teacher whose limit it sends: written to the Läslogg in the read's own
+    // transaction, as every read of a post is. Nobody shown them — the engine
+    // gets an anonymous number — but the starter's session read them, and the
+    // log is of reads. No limit sent, nothing written.
+    await recordRead(tx, 'EMPLOYMENT', dayLimitTeacherIds.values(), channel);
 
     // Anonymize the conflict pairs with the same group map the requirements
     // used, so the engine sees a consistent id space. Pairs whose groups never
@@ -1598,6 +1748,7 @@ export class OptimizationProxyService {
       rasts,
       roomPreferences,
       teacherWorkRules,
+      teacherDayLimits,
       fixedLessons,
       groups,
       previousLessons,
@@ -1609,9 +1760,21 @@ export class OptimizationProxyService {
       roomTypeAnonMap,
       constraintAnonMap,
       workRuleAnonMap,
+      dayLimitAnonMap,
+      dayLimitTeacherIds,
       nameById,
       blockAnonMap,
       blockRefusal,
+      // The free-day wishes, for what the finished timetable is read against
+      // (unkeptFreeDayWishes): every rule that states one, sent to the engine
+      // or not — a teacher who teaches nothing keeps theirs trivially. The
+      // lessons regeneration keeps are NOT taken from here: they are read by
+      // persistMasterLessons, after its delete, as the timetable it leaves.
+      freeDayWishes: rawWorkRules.flatMap((rule): FreeDayWish[] =>
+        rule.preferredFreeDayOfWeek === null
+          ? []
+          : [{ ruleId: rule.id, userId: rule.userId, day: rule.preferredFreeDayOfWeek }],
+      ),
       // An empty object would send `rules: {}` and read as "rules were
       // considered and came to nothing", which the engine treats the same but
       // a reader of the payload would not.
@@ -1648,6 +1811,7 @@ export class OptimizationProxyService {
       maps.workRuleAnonMap,
       maps.lessonAnonMap ?? new Map<string, string>(),
       maps.blockAnonMap ?? new Map<string, string>(),
+      maps.dayLimitAnonMap ?? new Map<string, string>(),
     ]) {
       for (const [realId, anonId] of map) real.set(anonId, realId);
     }
@@ -1752,7 +1916,7 @@ export class OptimizationProxyService {
                 // An object body rather than a string: Nest returns it as the
                 // response body, where `message` is still where every reader
                 // of this API already looks.
-                const named =
+                const named: { code?: string; params?: Record<string, string | number> } =
                   readable && body?.details && typeof body.details.code === 'string'
                     ? {
                         code: body.details.code,
@@ -1762,6 +1926,18 @@ export class OptimizationProxyService {
                         ),
                       }
                     : {};
+                // A pre-flight about a post's days (TEACHER_WORK_DAYS_TOO_FEW_
+                // FOR_WEEK) leaves as a realised 200 does, without its figure,
+                // and with its teacher where no answer reaches: see
+                // WorkDaysRefusal.
+                if (isDaysBearing(named.code)) {
+                  const params = named.params ?? {};
+                  throw new WorkDaysRefusal(
+                    { message: WORK_DAYS_HIDDEN_MESSAGE, code: named.code as string, params: withoutDays(params) },
+                    error.response.status,
+                    this.limitSubjects(params, maps),
+                  );
+                }
                 throw new HttpException(
                   { message: detail, ...named },
                   error.response.status,
@@ -1779,6 +1955,13 @@ export class OptimizationProxyService {
     }
   }
 
+  /**
+   * Writes the engine's week in place of the machine's last one, and answers
+   * with the timetable that leaves, by its lessons' teachers and weekday: the
+   * lessons it kept, as they stand after its delete, and the ones it wrote —
+   * what the free-day wishes are read against (unkeptFreeDayWishes) — or with
+   * null when it wrote nothing and left the timetable as it was.
+   */
   private async persistMasterLessons(
     tx: PrismaClient,
     academicYearId: string,
@@ -1795,7 +1978,7 @@ export class OptimizationProxyService {
     lunches: AiEngineLunch[] | null,
     /** groupId → children seated, so the kitchen's list needs no re-derivation. */
     headcountByGroup: Map<string, number>,
-  ): Promise<void> {
+  ): Promise<TeachersOnDay[] | null> {
     // First, before anything is read: the publication lock and the mode
     // (publish-mode.ts). In DRAFT the regenerated grundschema is a draft.
     // A principal with no tenant is refused below, before anything is
@@ -1809,7 +1992,7 @@ export class OptimizationProxyService {
       this.logger.warn(
         `AI engine returned ${response.status} for academicYearId=${academicYearId}. No master lessons written.`,
       );
-      return;
+      return null;
     }
 
     // Invert: anonId → realId for requirements and rooms.
@@ -1994,9 +2177,24 @@ export class OptimizationProxyService {
     const { count: removedUnlocked } = await tx.masterLesson.deleteMany({
       where: { academicYearId, NOT: preservedWhere },
     });
-    const lockedPreserved = await tx.masterLesson.count({
+    /*
+     * What the delete left: the audit's count, and the kept half of the
+     * timetable the free-day wishes are read against. Read here, after the
+     * delete, and not carried from the fetch: the solver has been running in
+     * between, and a lesson placed by hand while it ran is kept now, as one
+     * unlocked while it ran is deleted now — neither as the fetch saw them.
+     * (The publication lock is shared in DIRECT, so a hand edit committed
+     * between this read and this transaction's commit is still missed: a
+     * window of the writes below, not of a solve.) One read for both, where a
+     * count stood: the transaction, which holds that lock, sends no more
+     * statements than it did. A parked lesson is kept and counted, and
+     * occupies no day.
+     */
+    const preserved = await tx.masterLesson.findMany({
       where: { academicYearId, ...preservedWhere },
+      select: { teacherId: true, coTeacherId: true, dayOfWeek: true, isParked: true },
     });
+    const lockedPreserved = preserved.length;
 
     await Promise.all(creates.map((data) => tx.masterLesson.create({ data })));
 
@@ -2034,6 +2232,12 @@ export class OptimizationProxyService {
         },
       },
     });
+
+    return [...preserved.filter((lesson) => !lesson.isParked), ...creates].map((lesson) => ({
+      teacherId: lesson.teacherId,
+      coTeacherId: lesson.coTeacherId,
+      dayOfWeek: lesson.dayOfWeek,
+    }));
   }
 
   /**

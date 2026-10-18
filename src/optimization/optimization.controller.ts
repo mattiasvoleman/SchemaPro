@@ -108,12 +108,16 @@ export class OptimizationController {
     // Same body as POST /jobs, so the same tuning has to reach the solver.
     // Dropping it silently produced a schedule under the school's stored rules
     // while the caller believed their own had been applied.
-    const result = await this.proxy.triggerScheduling(
-      dto.academicYearId,
-      user,
-      dto.weights ?? null,
-      dto.rules ?? null,
-    );
+    //
+    // A refusal is thrown on as the engine's sentence, and one about a post's
+    // days is worded for this caller first, as a stored run is for its
+    // reader: the hidden sentence without HR-läs, the post's days read back
+    // with it (work-days.ts). Every other error goes on untouched.
+    const result = await this.proxy
+      .triggerScheduling(dto.academicYearId, user, dto.weights ?? null, dto.rules ?? null)
+      .catch(async (error: unknown) => {
+        throw await this.jobsService.refusalForReader(error, dto.academicYearId, user);
+      });
     return { status: result.status, lessonsGenerated: result.lessons.length };
   }
 

@@ -54,13 +54,19 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *     /print/timetables) is this layer too, every class's, teacher's or
  *     room's week by Schemavisaren's whitelist, with no pupil on it; a
  *     printed week of a pupil is the family's week, recorded when it was
- *     read;
+ *     read. A hand edit's warning that a teacher now teaches more days than
+ *     their post allows (Lärarens dag) is the post's and not this layer's,
+ *     and is recorded (EMPLOYMENT) whenever it is given, worded or hidden;
  *   - substitute suggestions (GET /calendar-lessons/:id/substitute-
  *     suggestions) and the rollover preview's cleared teachers and
  *     qualification warnings: teachers with their behörighet, which staff
  *     read directly (TeacherSubjectQualifications), against the timetable.
- *     An absent teacher is left out, not named. The cover candidates, which
- *     do name the absent and state load, are recorded;
+ *     An absent teacher is left out, not named, and so is one whose post's
+ *     deltid in days (Lärarens dag) the lesson would break: the list says
+ *     who may be asked, never why another may not. The cover candidates,
+ *     which do name the absent and state load, are recorded, and so are the
+ *     people their deltid leaves out there and a manual pick the days warn
+ *     about (EMPLOYMENT);
  *   - the cover day proposal's absences, which it gives only by id: who
  *     is away is the board's, which records it. The substitutes it would
  *     book come with their cover counter and their week against their
@@ -68,6 +74,12 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *   - counts and summaries that name nobody (/users/counts, the attendance
  *     summary, the rollover preview's pupils, the stage overview without a
  *     class);
+ *   - a generator run's refusal about a post's deltid in days (Lärarens
+ *     dag), read by an administrator without HR-läs: it is worded as
+ *     TEACHER_WORK_DAYS_HIDDEN, with no teacher, no post and no figure
+ *     (src/optimization/work-days.ts). Read with HR-läs it names the teacher
+ *     and the days, read back from the post, and is recorded (EMPLOYMENT), as
+ *     the run's own read of the limits it sends the engine is;
  *   - the publication check's timplan coverage (preview and publish): it
  *     judges by both layers and hands out group lines and the verdicts'
  *     sentences, and a pupil verdict's sentence ("En elev i 7A ...") names

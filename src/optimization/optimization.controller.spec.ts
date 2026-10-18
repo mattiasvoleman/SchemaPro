@@ -17,7 +17,7 @@ const JOB_ID = '66666666-6666-4666-8666-666666666666';
 
 describe('OptimizationController', () => {
   let proxy: { triggerScheduling: jest.Mock };
-  let jobs: { start: jest.Mock; get: jest.Mock; list: jest.Mock };
+  let jobs: { start: jest.Mock; get: jest.Mock; list: jest.Mock; refusalForReader: jest.Mock };
   let rooms: { propose: jest.Mock; apply: jest.Mock };
   let staffing: { propose: jest.Mock; apply: jest.Mock };
   let controller: OptimizationController;
@@ -29,7 +29,13 @@ describe('OptimizationController', () => {
 
   beforeEach(() => {
     proxy = { triggerScheduling: jest.fn() };
-    jobs = { start: jest.fn(), get: jest.fn(), list: jest.fn() };
+    jobs = {
+      start: jest.fn(),
+      get: jest.fn(),
+      list: jest.fn(),
+      // As the service answers every error but a days refusal: the error itself.
+      refusalForReader: jest.fn(async (error: unknown) => error),
+    };
     rooms = { propose: jest.fn(), apply: jest.fn() };
     staffing = { propose: jest.fn(), apply: jest.fn() };
     controller = new OptimizationController(
@@ -183,6 +189,28 @@ describe('OptimizationController', () => {
       await expect(controller.trigger(dto(), testUser())).rejects.toThrow(
         'AI engine unavailable.',
       );
+    });
+
+    it('throws a refusal as the job service words it for this caller', async () => {
+      // A refusal about a post's days is HR wording, and this route answers the
+      // caller directly: it goes through the same reader-aware wording a
+      // stored run does (OptimizationJobsService.refusalForReader).
+      const refusal = new Error('the engine’s');
+      const worded = new Error('worded for the reader');
+      proxy.triggerScheduling.mockRejectedValue(refusal);
+      jobs.refusalForReader.mockResolvedValue(worded);
+      const user = testUser();
+
+      await expect(controller.trigger(dto(), user)).rejects.toBe(worded);
+      expect(jobs.refusalForReader).toHaveBeenCalledWith(refusal, YEAR_ID, user);
+    });
+
+    it('asks nothing of the job service when the run succeeds', async () => {
+      proxy.triggerScheduling.mockResolvedValue(engineResponse());
+
+      await controller.trigger(dto(), testUser());
+
+      expect(jobs.refusalForReader).not.toHaveBeenCalled();
     });
   });
 

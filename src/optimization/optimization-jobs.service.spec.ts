@@ -16,8 +16,10 @@ import type {
   AiEngineLesson,
   AiEngineScheduleResponse,
 } from './interfaces/ai-engine-payload.interface';
-import { OptimizationJobsService } from './optimization-jobs.service';
+import { OptimizationJobsService, jobView } from './optimization-jobs.service';
 import type { OptimizationProxyService } from './optimization-proxy.service';
+import { recordedReads } from '../../test/utils/recorded-reads';
+import { TEACHER_WORK_DAYS_HIDDEN, WORK_DAYS_HIDDEN_MESSAGE, WorkDaysRefusal } from './work-days';
 
 const JOB_ID = '66666666-6666-4666-8666-666666666666';
 const YEAR_ID = '44444444-4444-4444-8444-444444444444';
@@ -196,6 +198,8 @@ describe('OptimizationJobsService', () => {
               resourceNames: [],
             },
           ],
+          // Every wish kept, or none stated: null, as on every run before.
+          notes: DbNull,
           finishedAt: expect.any(Date),
         },
       });
@@ -489,10 +493,15 @@ describe('OptimizationJobsService', () => {
         // have to guard or a JSON body would drop.
         conflictSummaryCode: null,
         conflictSummaryParams: null,
+        // No days sentence, so nobody named beside one: always a list.
+        conflictSummaryNames: [],
         conflicts: [{ category: 'ROOM_OVERLAP', message: 'clash', resourceNames: [] }],
+        // And a row from before the wishes: no notes, an empty list.
+        notes: [],
         error: null,
         errorCode: null,
         errorParams: null,
+        errorNames: [],
         createdAt: '2026-08-07T10:00:00.000Z',
         finishedAt: '2026-08-07T10:00:42.000Z',
       });
@@ -603,10 +612,13 @@ describe('OptimizationJobsService', () => {
           // "no code, show the English" rather than losing the field.
           conflictSummaryCode: null,
           conflictSummaryParams: null,
+          conflictSummaryNames: [],
           conflicts: [],
+          notes: [],
           error: 'The AI engine returned an error.',
           errorCode: null,
           errorParams: null,
+          errorNames: [],
           createdAt: '2026-08-07T09:00:00.000Z',
           finishedAt: null,
         },
@@ -626,6 +638,603 @@ describe('OptimizationJobsService', () => {
       tx.optimizationJob.findMany.mockResolvedValue([]);
 
       await expect(service.list(YEAR_ID, testUser())).resolves.toEqual([]);
+    });
+  });
+
+  /*
+   * Lärarens dag: a refusal about a post's days is stored without its figure
+   * and worded for its reader when it is read (work-days.ts), and the
+   * free-day wishes a finished run did not keep are stored beside it.
+   */
+  describe('Lärarens dag', () => {
+    const EVA = '22222222-dddd-4ddd-8ddd-222222222222';
+    const POST = '44444444-dddd-4ddd-8ddd-444444444444';
+    const RULE = '77777777-dddd-4ddd-8ddd-777777777777';
+    const OTHER_YEAR = '44444444-4444-4444-8444-4444444444ff';
+    const noHr = () => testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false } as never);
+    const hr = () => testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: true, channel: 'WEB' } as never);
+
+    /** A days conflict as run() stores it: no figure, the hidden English, Eva beside it. */
+    const daysConflict = (overrides: Record<string, unknown> = {}) => ({
+      category: 'TEACHER_OVERLAP',
+      code: 'TEACHER_WORK_DAYS_CANNOT_BE_KEPT',
+      params: { limit: POST },
+      message: WORK_DAYS_HIDDEN_MESSAGE,
+      resourceNames: [],
+      subjectIds: [EVA],
+      ...overrides,
+    });
+    const lunchConflict = {
+      category: 'AVAILABILITY',
+      code: 'TEACHER_LUNCH_HAS_NOWHERE_TO_GO',
+      params: { rule: RULE, minutes: 30, day: 2 },
+      message: 'The 30-minute lunch …',
+      resourceNames: [],
+    };
+    const row = (overrides: Record<string, unknown> = {}) => ({
+      id: JOB_ID,
+      academicYearId: YEAR_ID,
+      status: 'SUCCEEDED',
+      solverStatus: 'INFEASIBLE',
+      lessonsGenerated: 0,
+      conflictSummary: '2 causes',
+      conflictSummaryCode: 'CONFLICT_CORE_SUMMARY',
+      conflictSummaryParams: { count: 2 },
+      conflicts: [daysConflict(), lunchConflict],
+      notes: null,
+      error: null,
+      errorCode: null,
+      errorParams: null,
+      createdAt: new Date('2026-11-23T10:00:00.000Z'),
+      finishedAt: new Date('2026-11-23T10:00:30.000Z'),
+      ...overrides,
+    });
+    /** A failed run whose pre-flight refused the week over Eva's days. */
+    const preflightRow = () =>
+      row({
+        status: 'FAILED',
+        solverStatus: null,
+        conflictSummary: null,
+        conflictSummaryCode: null,
+        conflictSummaryParams: null,
+        conflicts: null,
+        error: WORK_DAYS_HIDDEN_MESSAGE,
+        errorCode: 'TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK',
+        errorParams: { limit: POST, weekMinutes: 1500, subjectIds: [EVA] },
+      });
+    const evasPost = (overrides: Record<string, unknown> = {}) => ({
+      academicYearId: YEAR_ID,
+      userId: EVA,
+      maxTeachingDaysPerWeek: 3,
+      user: { firstName: 'Eva', lastName: 'Ek' },
+      ...overrides,
+    });
+
+    describe('what run() stores', () => {
+      it('keeps a days conflict’s teachers beside it, and no key on any other', async () => {
+        proxy.triggerScheduling.mockResolvedValue(
+          engineResponse({
+            status: 'INFEASIBLE',
+            conflicts: {
+              summary: '2 causes',
+              summaryCode: 'CONFLICT_CORE_SUMMARY',
+              summaryParams: { count: 2 },
+              conflicts: [
+                {
+                  category: 'TEACHER_OVERLAP',
+                  code: 'TEACHER_WORK_DAYS_CANNOT_BE_KEPT',
+                  params: { limit: POST },
+                  message: WORK_DAYS_HIDDEN_MESSAGE,
+                  requirementIds: [],
+                  roomIds: [],
+                  constraintIds: [],
+                  resourceIds: [EVA],
+                  resourceNames: [],
+                  subjectIds: [EVA],
+                },
+                {
+                  ...lunchConflict,
+                  category: 'AVAILABILITY',
+                  requirementIds: [],
+                  roomIds: [],
+                  constraintIds: [],
+                  resourceIds: [RULE],
+                  // An empty list is no teacher: no key either.
+                  subjectIds: [],
+                },
+              ],
+            },
+          }),
+        );
+
+        await service.start(YEAR_ID, testUser());
+        await flushBackgroundRun();
+
+        expect(tx.optimizationJob.update).toHaveBeenLastCalledWith({
+          where: { id: JOB_ID },
+          data: expect.objectContaining({
+            conflictSummaryParams: { count: 2 },
+            conflicts: [daysConflict(), lunchConflict],
+          }),
+        });
+      });
+
+      it('keeps a days-bearing summary’s teachers inside its params, where no reader is given them', async () => {
+        proxy.triggerScheduling.mockResolvedValue(
+          engineResponse({
+            status: 'INFEASIBLE',
+            conflicts: {
+              summary: WORK_DAYS_HIDDEN_MESSAGE,
+              summaryCode: 'TEACHER_WORK_DAYS_CANNOT_BE_KEPT',
+              summaryParams: { limit: POST },
+              summarySubjectIds: [EVA],
+              conflicts: [],
+            },
+          }),
+        );
+
+        await service.start(YEAR_ID, testUser());
+        await flushBackgroundRun();
+
+        expect(tx.optimizationJob.update).toHaveBeenLastCalledWith({
+          where: { id: JOB_ID },
+          data: expect.objectContaining({ conflictSummaryParams: { limit: POST, subjectIds: [EVA] } }),
+        });
+      });
+
+      it('keeps a days pre-flight’s teachers inside its error params', async () => {
+        proxy.triggerScheduling.mockRejectedValue(
+          new WorkDaysRefusal(
+            {
+              message: WORK_DAYS_HIDDEN_MESSAGE,
+              code: 'TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK',
+              params: { limit: POST, weekMinutes: 1500 },
+            },
+            400,
+            [EVA],
+          ),
+        );
+
+        await service.start(YEAR_ID, testUser());
+        await flushBackgroundRun();
+
+        expect(tx.optimizationJob.update).toHaveBeenLastCalledWith({
+          where: { id: JOB_ID },
+          data: {
+            status: 'FAILED',
+            error: WORK_DAYS_HIDDEN_MESSAGE,
+            errorCode: 'TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK',
+            errorParams: { limit: POST, weekMinutes: 1500, subjectIds: [EVA] },
+            finishedAt: expect.any(Date),
+          },
+        });
+      });
+
+      it('keeps no params, and so no teachers, for a days refusal whose body is not an object', async () => {
+        // The teachers ride on the exception, never in the body; with no
+        // params to sit beside, nothing is stored for them.
+        const refusal = new WorkDaysRefusal(
+          { message: WORK_DAYS_HIDDEN_MESSAGE, code: 'TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK', params: {} },
+          400,
+          [EVA],
+        );
+        jest.spyOn(refusal, 'getResponse').mockReturnValue('refused');
+        proxy.triggerScheduling.mockRejectedValue(refusal);
+
+        await service.start(YEAR_ID, testUser());
+        await flushBackgroundRun();
+
+        expect(tx.optimizationJob.update).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ error: 'refused', errorCode: null, errorParams: DbNull }),
+          }),
+        );
+      });
+
+      it('stores the wishes the run did not keep, in a conflict’s shape with the rule as resource', async () => {
+        proxy.triggerScheduling.mockResolvedValue(
+          engineResponse({
+            notes: [
+              {
+                category: 'AVAILABILITY',
+                code: 'TEACHER_FREE_DAY_WISH_NOT_KEPT',
+                params: { rule: RULE, day: 5 },
+                message: 'The teacher working-time rule … wishes Fridays free …',
+                requirementIds: [],
+                roomIds: [],
+                constraintIds: [],
+                resourceIds: [RULE],
+                resourceNames: [],
+              },
+              {
+                category: 'AVAILABILITY',
+                code: 'TEACHER_FREE_DAY_WISH_NOT_KEPT',
+                params: { rule: RULE, day: 1 },
+                message: 'Mondays',
+                requirementIds: [],
+                roomIds: [],
+                constraintIds: [],
+                resourceIds: [RULE],
+              },
+            ],
+          }),
+        );
+
+        await service.start(YEAR_ID, testUser());
+        await flushBackgroundRun();
+
+        expect(tx.optimizationJob.update).toHaveBeenLastCalledWith({
+          where: { id: JOB_ID },
+          data: expect.objectContaining({
+            status: 'SUCCEEDED',
+            notes: [
+              {
+                category: 'AVAILABILITY',
+                code: 'TEACHER_FREE_DAY_WISH_NOT_KEPT',
+                params: { rule: RULE, day: 5 },
+                message: 'The teacher working-time rule … wishes Fridays free …',
+                resourceIds: [RULE],
+                resourceNames: [],
+              },
+              {
+                category: 'AVAILABILITY',
+                code: 'TEACHER_FREE_DAY_WISH_NOT_KEPT',
+                params: { rule: RULE, day: 1 },
+                message: 'Mondays',
+                resourceIds: [RULE],
+                resourceNames: [],
+              },
+            ],
+          }),
+        });
+      });
+
+      it('stores no notes when the run broke no wish', async () => {
+        proxy.triggerScheduling.mockResolvedValue(engineResponse({ notes: [] }));
+
+        await service.start(YEAR_ID, testUser());
+        await flushBackgroundRun();
+
+        expect(tx.optimizationJob.update).toHaveBeenLastCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ notes: DbNull }) }),
+        );
+      });
+    });
+
+    describe('a reader without HR-läs', () => {
+      it('is shown every days sentence as the hidden one, its category kept, and nothing read back', async () => {
+        tx.optimizationJob.findUnique.mockResolvedValue(row());
+
+        const view = await service.get(JOB_ID, noHr());
+
+        expect(view.conflicts).toEqual([
+          {
+            category: 'TEACHER_OVERLAP',
+            code: TEACHER_WORK_DAYS_HIDDEN,
+            params: {},
+            message: WORK_DAYS_HIDDEN_MESSAGE,
+            resourceNames: [],
+          },
+          lunchConflict,
+        ]);
+        expect(prisma.withRls).not.toHaveBeenCalled();
+        expect(tx.teacherEmployment.findMany).not.toHaveBeenCalled();
+        expect(recordedReads(tx)).toEqual([]);
+        // No post, no teacher, no figure anywhere in what leaves.
+        expect(JSON.stringify(view)).not.toMatch(new RegExp(`${EVA}|${POST}|subjectIds`));
+      });
+
+      it('is shown two hidden sentences of one category as one, and of two categories as two', async () => {
+        tx.optimizationJob.findUnique.mockResolvedValue(
+          row({
+            conflicts: [
+              daysConflict(),
+              lunchConflict,
+              daysConflict({ code: 'TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK', params: { limit: 'post-2', weekMinutes: 900 } }),
+              daysConflict({ category: 'REQUIREMENT_DEMAND' }),
+            ],
+          }),
+        );
+
+        const view = await service.get(JOB_ID, noHr());
+
+        expect(view.conflicts.map((conflict) => [conflict.category, conflict.code])).toEqual([
+          ['TEACHER_OVERLAP', TEACHER_WORK_DAYS_HIDDEN],
+          ['AVAILABILITY', 'TEACHER_LUNCH_HAS_NOWHERE_TO_GO'],
+          ['REQUIREMENT_DEMAND', TEACHER_WORK_DAYS_HIDDEN],
+        ]);
+      });
+
+      it('is shown a days pre-flight as the hidden sentence, and never the teachers kept beside it', async () => {
+        tx.optimizationJob.findUnique.mockResolvedValue(preflightRow());
+
+        const view = await service.get(JOB_ID, noHr());
+
+        expect(view).toMatchObject({
+          error: WORK_DAYS_HIDDEN_MESSAGE,
+          errorCode: TEACHER_WORK_DAYS_HIDDEN,
+          errorParams: {},
+          errorNames: [],
+          conflictSummaryNames: [],
+        });
+        expect(JSON.stringify(view)).not.toMatch(new RegExp(`${EVA}|${POST}|1500|Eva`));
+      });
+
+      it('is shown a days-bearing summary as the hidden sentence', async () => {
+        tx.optimizationJob.findUnique.mockResolvedValue(
+          row({
+            conflictSummary: WORK_DAYS_HIDDEN_MESSAGE,
+            conflictSummaryCode: 'TEACHER_WORK_DAYS_CANNOT_BE_KEPT',
+            conflictSummaryParams: { limit: POST, subjectIds: [EVA] },
+            conflicts: [],
+          }),
+        );
+
+        await expect(service.get(JOB_ID, noHr())).resolves.toMatchObject({
+          conflictSummary: WORK_DAYS_HIDDEN_MESSAGE,
+          conflictSummaryCode: TEACHER_WORK_DAYS_HIDDEN,
+          conflictSummaryParams: {},
+          conflictSummaryNames: [],
+        });
+      });
+    });
+
+    describe('a reader with HR-läs', () => {
+      it('is shown the days from the post as it stands and the teacher named, and the read is logged', async () => {
+        tx.optimizationJob.findUnique.mockResolvedValue(row());
+        tx.teacherEmployment.findMany.mockResolvedValue([evasPost()]);
+
+        const view = await service.get(JOB_ID, hr());
+
+        expect(view.conflicts).toEqual([
+          {
+            category: 'TEACHER_OVERLAP',
+            code: 'TEACHER_WORK_DAYS_CANNOT_BE_KEPT',
+            params: { limit: POST, days: 3 },
+            message: WORK_DAYS_HIDDEN_MESSAGE,
+            resourceNames: ['Eva Ek'],
+          },
+          lunchConflict,
+        ]);
+        // The run's own read stays one statement; the posts are a second
+        // transaction, for the run's year and the teachers it names.
+        expect(prisma.queryWithRls).toHaveBeenCalledTimes(1);
+        expect(prisma.withRls).toHaveBeenCalledTimes(1);
+        expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith({
+          where: { academicYearId: { in: [YEAR_ID] }, userId: { in: [EVA] }, maxTeachingDaysPerWeek: { not: null } },
+          select: {
+            academicYearId: true,
+            userId: true,
+            maxTeachingDaysPerWeek: true,
+            user: { select: { firstName: true, lastName: true } },
+          },
+        });
+        expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [EVA] }]);
+        // Never the Users id the row keeps.
+        expect(JSON.stringify(view)).not.toContain(EVA);
+      });
+
+      it('is shown a days pre-flight with its days, from the post', async () => {
+        tx.optimizationJob.findUnique.mockResolvedValue(preflightRow());
+        tx.teacherEmployment.findMany.mockResolvedValue([evasPost({ maxTeachingDaysPerWeek: 2 })]);
+
+        const view = await service.get(JOB_ID, hr());
+
+        expect(view).toMatchObject({
+          errorCode: 'TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK',
+          errorParams: { limit: POST, weekMinutes: 1500, days: 2 },
+          // The post's id is no name a screen resolves: the teacher is
+          // named beside the sentence, as a conflict's are in resourceNames.
+          errorNames: ['Eva Ek'],
+          conflictSummaryNames: [],
+        });
+        expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [EVA] }]);
+        expect(JSON.stringify(view)).not.toContain(EVA);
+      });
+
+      it('is shown a days-bearing summary with its days and the teacher named beside it', async () => {
+        tx.optimizationJob.findUnique.mockResolvedValue(
+          row({
+            conflictSummary: WORK_DAYS_HIDDEN_MESSAGE,
+            conflictSummaryCode: 'TEACHER_WORK_DAYS_CANNOT_BE_KEPT',
+            conflictSummaryParams: { limit: POST, subjectIds: [EVA] },
+            conflicts: [],
+          }),
+        );
+        tx.teacherEmployment.findMany.mockResolvedValue([evasPost()]);
+
+        await expect(service.get(JOB_ID, hr())).resolves.toMatchObject({
+          conflictSummaryCode: 'TEACHER_WORK_DAYS_CANNOT_BE_KEPT',
+          conflictSummaryParams: { limit: POST, days: 3 },
+          conflictSummaryNames: ['Eva Ek'],
+          errorNames: [],
+        });
+        expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [EVA] }]);
+      });
+
+      it('is shown the hidden sentence, and logged nothing, when the post has no limit now or is gone', async () => {
+        tx.optimizationJob.findUnique.mockResolvedValue(row());
+        tx.teacherEmployment.findMany.mockResolvedValue([]);
+
+        const view = await service.get(JOB_ID, hr());
+
+        expect(view.conflicts[0]).toMatchObject({ code: TEACHER_WORK_DAYS_HIDDEN, params: {}, resourceNames: [] });
+        expect(recordedReads(tx)).toEqual([]);
+      });
+
+      it('is shown a days pre-flight hidden, and nobody named, when the post has no limit now', async () => {
+        tx.optimizationJob.findUnique.mockResolvedValue(preflightRow());
+        tx.teacherEmployment.findMany.mockResolvedValue([]);
+
+        await expect(service.get(JOB_ID, hr())).resolves.toMatchObject({
+          errorCode: TEACHER_WORK_DAYS_HIDDEN,
+          errorParams: {},
+          errorNames: [],
+        });
+        expect(recordedReads(tx)).toEqual([]);
+      });
+
+      it('reads back a post of the run’s own year only', async () => {
+        tx.optimizationJob.findUnique.mockResolvedValue(row());
+        tx.teacherEmployment.findMany.mockResolvedValue([evasPost({ academicYearId: OTHER_YEAR })]);
+
+        const view = await service.get(JOB_ID, hr());
+
+        expect(view.conflicts[0]!.code).toBe(TEACHER_WORK_DAYS_HIDDEN);
+      });
+
+      it('reads nothing back for a run with no days sentence', async () => {
+        tx.optimizationJob.findUnique.mockResolvedValue(row({ conflicts: [lunchConflict] }));
+
+        await expect(service.get(JOB_ID, hr())).resolves.toMatchObject({ conflicts: [lunchConflict] });
+        expect(prisma.withRls).not.toHaveBeenCalled();
+      });
+
+      it('reads the history’s posts once, for every run in it', async () => {
+        tx.optimizationJob.findMany.mockResolvedValue([row(), preflightRow(), row({ conflicts: [lunchConflict] })]);
+        tx.teacherEmployment.findMany.mockResolvedValue([evasPost(), evasPost({ userId: 'nobody-asked' })]);
+
+        const views = await service.list(YEAR_ID, hr());
+
+        expect(views.map((view) => view.conflicts[0]?.params?.['days'] ?? view.errorParams?.['days'])).toEqual([
+          3,
+          3,
+          undefined,
+        ]);
+        expect(tx.teacherEmployment.findMany).toHaveBeenCalledTimes(1);
+        expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [EVA] }]);
+      });
+    });
+
+    describe('the view', () => {
+      it('is a whitelist: nothing kept for the server, and no id of a note, leaves', () => {
+        const { view } = jobView(
+          row({
+            conflicts: [{ ...lunchConflict, subjectIds: [EVA], resourceIds: [RULE], extra: 'kept' }],
+            notes: [
+              {
+                category: 'AVAILABILITY',
+                code: 'TEACHER_FREE_DAY_WISH_NOT_KEPT',
+                params: { rule: RULE, day: 5 },
+                message: 'Fridays',
+                resourceIds: [RULE],
+                resourceNames: [],
+              },
+            ],
+          }) as never,
+          null,
+        );
+
+        expect(view.conflicts).toEqual([lunchConflict]);
+        expect(view.notes).toEqual([
+          {
+            category: 'AVAILABILITY',
+            code: 'TEACHER_FREE_DAY_WISH_NOT_KEPT',
+            params: { rule: RULE, day: 5 },
+            message: 'Fridays',
+            resourceNames: [],
+          },
+        ]);
+      });
+
+      it('drops a conflict’s params that are not scalars, and its code and params when it has none', () => {
+        const { view } = jobView(
+          row({
+            conflicts: [
+              { category: 'ROOM_OVERLAP', message: 'clash', params: { room: 'Aulan', nested: { deep: true } } },
+              { category: 'ROOM_OVERLAP', message: 'old' },
+            ],
+          }) as never,
+          null,
+        );
+
+        expect(view.conflicts).toEqual([
+          { category: 'ROOM_OVERLAP', message: 'clash', params: { room: 'Aulan' }, resourceNames: [] },
+          { category: 'ROOM_OVERLAP', message: 'old', resourceNames: [] },
+        ]);
+        expect(Object.keys(view.conflicts[1]!)).toEqual(['category', 'message', 'resourceNames']);
+      });
+
+      it('reads a notes column that is not a list as none', () => {
+        expect(jobView(row({ notes: { unexpected: 'shape' } }) as never, null).view.notes).toEqual([]);
+      });
+
+      it('reads only Users ids out of the teachers a params blob keeps', () => {
+        // A hand-edited row with something else in the list must not reach
+        // the posts' read or the Läslogg as a teacher.
+        const posts = new Map([[EVA, { days: 3, name: 'Eva Ek' }]]);
+        const run = { ...preflightRow(), errorParams: { limit: POST, subjectIds: [EVA, 42] } };
+
+        expect(jobView(run as never, posts)).toMatchObject({
+          view: { errorParams: { limit: POST, days: 3 } },
+          revealed: [EVA],
+        });
+      });
+
+      it('says which teachers it showed the days of', () => {
+        const posts = new Map([[EVA, { days: 3, name: 'Eva Ek' }]]);
+
+        expect(jobView(row() as never, posts).revealed).toEqual([EVA]);
+        expect(jobView(preflightRow() as never, posts).revealed).toEqual([EVA]);
+        expect(jobView(row() as never, null).revealed).toEqual([]);
+      });
+    });
+
+    describe('the synchronous trigger’s refusal', () => {
+      const refusal = () =>
+        new WorkDaysRefusal(
+          {
+            message: WORK_DAYS_HIDDEN_MESSAGE,
+            code: 'TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK',
+            params: { limit: POST, weekMinutes: 1500 },
+          },
+          400,
+          [EVA],
+        );
+
+      it('hands back every other error as it came', async () => {
+        const error = new HttpException({ message: 'lunch', code: 'LUNCH_X', params: {} }, 400);
+
+        await expect(service.refusalForReader(error, YEAR_ID, noHr())).resolves.toBe(error);
+        await expect(service.refusalForReader('boom', YEAR_ID, hr())).resolves.toBe('boom');
+        expect(prisma.withRls).not.toHaveBeenCalled();
+      });
+
+      it('words a days refusal as the hidden sentence for a reader without HR-läs', async () => {
+        const answer = (await service.refusalForReader(refusal(), YEAR_ID, noHr())) as HttpException;
+
+        expect(answer).toBeInstanceOf(HttpException);
+        expect(answer).not.toBeInstanceOf(WorkDaysRefusal);
+        expect(answer.getStatus()).toBe(400);
+        // Exactly this, and no other key.
+        expect(answer.getResponse()).toEqual({
+          message: WORK_DAYS_HIDDEN_MESSAGE,
+          code: TEACHER_WORK_DAYS_HIDDEN,
+          params: {},
+        });
+        expect(Object.keys(answer.getResponse() as object)).toEqual(['message', 'code', 'params']);
+        expect(prisma.withRls).not.toHaveBeenCalled();
+      });
+
+      it('words it with the post’s days for a reader with HR-läs, and logs the read', async () => {
+        tx.teacherEmployment.findMany.mockResolvedValue([evasPost({ maxTeachingDaysPerWeek: 4 })]);
+
+        const answer = (await service.refusalForReader(refusal(), YEAR_ID, hr())) as HttpException;
+
+        expect(answer.getResponse()).toEqual({
+          message: WORK_DAYS_HIDDEN_MESSAGE,
+          code: 'TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK',
+          params: { limit: POST, weekMinutes: 1500, days: 4 },
+        });
+        // No name: problem+json carries code and params only (see refusalForReader).
+        expect(Object.keys(answer.getResponse() as object)).toEqual(['message', 'code', 'params']);
+        expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { academicYearId: { in: [YEAR_ID] }, userId: { in: [EVA] }, maxTeachingDaysPerWeek: { not: null } },
+          }),
+        );
+        expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [EVA] }]);
+      });
     });
   });
 });

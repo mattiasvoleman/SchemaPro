@@ -286,6 +286,47 @@ export interface AnonymousTeacherWorkRule {
    * of their first the next. Null: no rest rule.
    */
   minDailyRestMinutes: number | null;
+  /**
+   * Lärarens dag: the most minutes this teacher teaches on one day, every
+   * lesson they lead or co-teach counted start to end (src/common/teacher-day.ts);
+   * 30..720 on the 5-minute grid. HARD, like the lunch and the rest.
+   *
+   * OPTIONAL, NOT NULLABLE, unlike the four above: the key is sent only when
+   * the rule sets it. Those four were on the wire from the first release of
+   * this list; these arrived after, and a key an older engine has not heard of
+   * is a 422 for the whole run (extra="forbid"). A school that sets no cap
+   * sends the bytes it always sent.
+   */
+  maxTeachingMinutesPerDay?: number;
+  /**
+   * Lärarens dag: the ISO weekday this teacher wishes free. SOFT: the engine
+   * pays for a lesson on it and never refuses a week over it, and the gateway
+   * names the wishes a finished run did not keep (free-day-wishes.ts). Sent
+   * only when set, for the reason the cap is.
+   */
+  preferredFreeDay?: DayOfWeek;
+}
+
+/**
+ * Deltid in days: on how many weekdays a teacher teaches at most, from their
+ * post (TeacherEmployments.maxTeachingDaysPerWeek). HARD.
+ *
+ * Its own list, and its own id space, rather than a field on the work rule,
+ * because the number is HR data and the work rule is not: a refusal about it
+ * names THIS id (the gateway's dayLimitAnonMap, kept and reversed to the post
+ * like the work rule's), and that is how the gateway tells a days sentence
+ * from a cap sentence by more than its code — and masks it for a reader
+ * without HR-läs (work-days.ts). The teacher rides the same discarded map the
+ * requirements use, so the engine can tie the limit to their lessons and to
+ * nobody's name.
+ */
+export interface AnonymousTeacherDayLimit {
+  /** The POST's anonymous id, reversible so a refusal names a row. */
+  id: string;
+  /** The teacher's anonymous id, from the same map the requirements use. */
+  teacherId: string;
+  /** 1..6. */
+  maxTeachingDaysPerWeek: number;
 }
 
 export interface AnonymousConstraint {
@@ -424,6 +465,12 @@ export interface AiEngineScheduleRequest {
    * week is hand-placed, and such a teacher has no requirement left at all.
    */
   teacherWorkRules: AnonymousTeacherWorkRule[];
+  /**
+   * Deltid in days, one per post that sets it. The KEY is sent only when the
+   * list is not empty, so a school that limits nobody's days sends the payload
+   * it always sent, and an engine that predates the field never meets it.
+   */
+  teacherDayLimits?: AnonymousTeacherDayLimit[];
   /** Locked master lessons the solver must plan around (never re-placed). */
   fixedLessons: AnonymousFixedLesson[];
   /** Every group the week concerns, with its dining-hall headcount. */
@@ -493,6 +540,15 @@ export interface AiEngineConflictDetail {
    * a line that says "the classes named here" can show them.
    */
   resourceNames?: string[];
+  /**
+   * SERVER-ONLY. The Users ids of the teachers whose post a days-bearing
+   * sentence names (work-days.ts), filled by the gateway on the way back and
+   * kept beside the stored refusal so a reader with HR-läs can be shown the
+   * days from the post and the read written to the Läslogg. No answer of the
+   * API carries it: the job view is a whitelist, and the synchronous trigger
+   * answers with a status.
+   */
+  subjectIds?: string[];
 }
 
 export interface AiEngineConflictAnalysis {
@@ -501,6 +557,8 @@ export interface AiEngineConflictAnalysis {
   summaryCode: string;
   summaryParams: Record<string, string | number>;
   conflicts: AiEngineConflictDetail[];
+  /** SERVER-ONLY, as AiEngineConflictDetail.subjectIds, for a days-bearing summary. */
+  summarySubjectIds?: string[];
 }
 
 export interface AiEngineScheduleResponse {
@@ -525,6 +583,13 @@ export interface AiEngineScheduleResponse {
    */
   lunches?: AiEngineLunch[];
   conflicts?: AiEngineConflictAnalysis | null;
+  /**
+   * The soft wishes a finished run did not keep (free-day-wishes.ts), in a
+   * conflict's shape. Never sent by the engine, which says where the lessons
+   * went and nothing about wishes; filled by the gateway from what it wrote.
+   * Empty or absent when the run wrote no timetable.
+   */
+  notes?: AiEngineConflictDetail[];
 }
 
 /**
