@@ -1353,6 +1353,11 @@ export async function scheduleCandidateChecks(
       assert.equal(await activeNow(), idle + 1, 'the interrupted run left the count while its call is out');
       const capped = new ScheduleCandidatesService(api, proxy, versions, realtime, configOf(idle + 1));
       await refusedWith(capped.start({ academicYearId: year, count: 2 }, admin), 409, 'CANDIDATES_BUSY');
+      // "Ta bort förslagen" removes the year's finished runs, but not this one
+      // while its call is out: the row is its place under the cap.
+      await capped.discard(year, admin);
+      assert.equal((await runRow(runId)).errorCode, 'CANDIDATE_RUN_INTERRUPTED', 'the discard removed a run whose call is out');
+      assert.equal(await activeNow(), idle + 1, 'the discard freed the place of a call still out');
 
       // The engine answers; the orphaned task wakes to a run that is not its own.
       solving.release();

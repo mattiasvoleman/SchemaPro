@@ -861,7 +861,10 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
         } catch (error) {
           const failure = engineFailureOf(error);
           this.logger.warn(`Candidate engine call failed [runId=${runId}, ordinal=${candidate.ordinal}, code=${failure.code ?? 'none'}]`);
-          await this.fail(runId, user, failure);
+          // A timeout — the gateway's, or the engine's own 503, whose wait
+          // does not stop its solve thread — leaves the solve running: the
+          // run keeps the call's deadline. Any answer the engine gave clears it.
+          await this.fail(runId, user, failure, { keepEngineBusy: failure.code === CANDIDATE_ENGINE_TIMEOUT });
           return;
         }
 
@@ -1045,7 +1048,7 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
         },
       });
       const { count } = await tx.scheduleCandidateRun.deleteMany({
-        where: { academicYearId: plan.academicYearId, id: { not: plan.runId }, status: { in: FINISHED } },
+        where: { academicYearId: plan.academicYearId, id: { not: plan.runId }, status: { in: FINISHED }, ...noCallOut() },
       });
       this.logger.log(`Candidate run succeeded [runId=${plan.runId}, superseded=${count}]`);
     });
@@ -1056,7 +1059,12 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
    * run a DELETE set CANCELLING ends CANCELLED instead, and one already
    * finished is left alone.
    */
-  private async fail(runId: string, user: AuthenticatedUser, failure: RunFailure): Promise<void> {
+  private async fail(
+    runId: string,
+    user: AuthenticatedUser,
+    failure: RunFailure,
+    options: { keepEngineBusy?: boolean } = {},
+  ): Promise<void> {
     await this.prisma.withRls(user, async (tx) => {
       const { count } = await tx.scheduleCandidateRun.updateMany({
         where: { id: runId, status: { in: ['PENDING', 'RUNNING'] } },
@@ -1065,9 +1073,9 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
           error: truncate(failure.message),
           errorCode: codeOrNull(failure.code),
           errorParams: jsonOrDbNull(failure.params),
-          // The call that failed has returned (its timeout outlasts the
-          // engine's own ceiling), so nothing of this run is solving.
-          engineBusyUntil: null,
+          // Cleared when the engine answered (nothing of the run is solving);
+          // kept after a timeout, when its solve thread may run on.
+          ...(options.keepEngineBusy ? {} : { engineBusyUntil: null }),
           finishedAt: new Date(),
         },
       });
@@ -1346,7 +1354,10 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
         where: { academicYearId, status: { in: ['PENDING', 'RUNNING'] } },
         data: { status: 'CANCELLING' },
       });
-      await tx.scheduleCandidateRun.deleteMany({ where: { academicYearId, status: { in: FINISHED } } });
+      // A run whose engine call can still be solving keeps its row (and its
+      // place under CANDIDATE_RUNS_MAX) until it could have ended; the next
+      // discard or the sweep removes it.
+      await tx.scheduleCandidateRun.deleteMany({ where: { academicYearId, status: { in: FINISHED }, ...noCallOut() } });
     });
   }
 }
@@ -1369,6 +1380,11 @@ async function markCancelled(tx: PrismaClient, runId: string): Promise<void> {
       finishedAt: new Date(),
     },
   });
+}
+
+/** Rows no engine call of theirs can still be solving for: no deadline, or one passed. */
+function noCallOut(): Prisma.ScheduleCandidateRunWhereInput {
+  return { OR: [{ engineBusyUntil: null }, { engineBusyUntil: { lte: new Date() } }] };
 }
 
 /** A nullable Json column's value: the blob, or SQL NULL (never the JSON literal null). */

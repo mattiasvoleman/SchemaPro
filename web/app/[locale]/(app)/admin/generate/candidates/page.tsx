@@ -1,6 +1,6 @@
 "use client";
 
-import { lazy, Suspense, useCallback, useId, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useId, useMemo, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Layers, RefreshCw } from "lucide-react";
@@ -349,6 +349,7 @@ export default function CandidatesPage() {
   const apply = useApplyCandidate();
   const discard = useDiscardCandidates();
   const [applying, setApplying] = useState<CandidateView | null>(null);
+  const applyReasonRef = useRef<HTMLDivElement | null>(null);
   const [discardOpen, setDiscardOpen] = useState(false);
 
   const errorText = (error: unknown, route: "start" | "apply" | "discard") =>
@@ -620,7 +621,13 @@ export default function CandidatesPage() {
               </Notice>
             ) : null}
 
-            {applyReason}
+            {applyReason ? (
+              // Focusable, so a dialog closing over a Tillämpa this reason has
+              // just disabled hands focus here rather than to <body>.
+              <div ref={applyReasonRef} tabIndex={-1} className="outline-none">
+                {applyReason}
+              </div>
+            ) : null}
 
             <SectionCard
               id="comparison"
@@ -855,9 +862,20 @@ export default function CandidatesPage() {
         candidate={applying}
         label={applying ? variantLabel(t, applying) : ""}
         check={check}
-        checking={checkQuery.isFetching}
+        // Not only isFetching: a read paused while the browser is offline is
+        // not fetching either, and must hold the confirm as well.
+        checking={checkQuery.fetchStatus !== "idle"}
         checkFailed={checkQuery.isError}
         onRetryCheck={() => void checkQuery.refetch()}
+        onCloseAutoFocus={(event) => {
+          // The opener is disabled whenever a reason is shown (a failed or
+          // stale check): focus the reason, which says why.
+          const reason = applyReasonRef.current;
+          if (reason?.isConnected) {
+            event.preventDefault();
+            reason.focus();
+          }
+        }}
         pending={apply.isPending}
         onOpenChange={(open) => (open ? undefined : setApplying(null))}
         onConfirm={confirmApply}

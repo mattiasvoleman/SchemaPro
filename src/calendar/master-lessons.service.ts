@@ -325,9 +325,6 @@ export class MasterLessonsService {
   ): Promise<CreateMasterLessonResult> {
     return this.prisma.withRls(user, async (tx) => {
       const mode = await enterGrundschemaWrite(tx, requireSchoolId(user));
-      // Beside other edits, never inside a rewrite of the year (an apply, a
-      // Generera write, a restore): at most 5 s, then 409 SCHEDULE_BUSY.
-      await lockYearForGrundschemaEdit(tx, dto.academicYearId);
       const teachers = [dto.teacherId ?? null, dto.coTeacherId ?? null];
       const year = await tx.academicYear.findUnique({
         where: { id: dto.academicYearId },
@@ -351,6 +348,11 @@ export class MasterLessonsService {
       if (!year) {
         throw new NotFoundException('Academic year not found.');
       }
+      // Beside other edits, never inside a rewrite of the year (an apply, a
+      // Generera write, a restore): at most 5 s, then 409 SCHEDULE_BUSY. On
+      // the year row-level security has just shown is the caller's, so
+      // another school's rewrite is never waited for.
+      await lockYearForGrundschemaEdit(tx, year.id);
       // Whose classes these are (projected-rosters.ts), from the flags just
       // read: nothing more is asked of the active year, and a rolled year
       // not yet activated judges pupil clashes on the pupils its activation
