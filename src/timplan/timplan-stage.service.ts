@@ -495,7 +495,7 @@ export async function computeStages(
   const activeHT = htOf(activeStart);
 
   const years = await tx.academicYear.findMany({
-    select: { id: true, name: true, startDate: true, endDate: true, predecessorId: true },
+    select: { id: true, name: true, startDate: true, endDate: true, predecessorId: true, gradeNumbering: true },
     orderBy: { startDate: 'asc' },
   });
   const open = await tx.studentEnrollment.findMany({
@@ -628,7 +628,13 @@ export async function computeStages(
       candidate.id !== academicYearId ? [] : families ? families.rows.map(toDeliveredMaster) : await readMasters(tx, candidate.id);
     const read: StageYearRead = {
       year: bounds,
-      planned: { year: { startDate: bounds.startDate, endDate: bounds.endDate }, ...rows },
+      // In the year's numbering, so a plan's row and the asked årskurser read
+      // as the coverage page reads them (planRowOfInput, attachableGrade).
+      planned: {
+        year: { startDate: bounds.startDate, endDate: bounds.endDate },
+        ...rows,
+        ...(candidate.gradeNumbering === 'TIOARIG' ? { gradeNumbering: candidate.gradeNumbering } : {}),
+      },
       memberships,
       audiences: delivered.audiences,
       horizon: delivered.horizon,
