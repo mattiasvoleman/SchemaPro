@@ -39,6 +39,7 @@ from app.schemas.schedule import (
     ScheduledLesson,
     ScheduledLunch,
     ScheduleRules,
+    SearchOptions,
     SolverStatus,
 )
 
@@ -433,6 +434,57 @@ class _TeacherDayLiterals:
 
     on_day: dict[str, dict[int, cp_model.IntVar]] = field(default_factory=dict)
     works: dict[tuple[UUID, int], cp_model.IntVar] = field(default_factory=dict)
+
+
+def settings_for_search(settings: Settings, search: SearchOptions | None) -> Settings:
+    """The Settings one request is solved under: the deployment's, with the
+    request's own budget when it brought one.
+
+    A COPY, NEVER THE SHARED OBJECT. app.state.settings is read by every
+    request this process serves at once, and a schemaförslag candidate and a
+    school's own Generera can be solving side by side. A candidate's thirty
+    seconds written onto it would become the next Generera's budget, and that
+    Generera's TIMEOUT would tell a school it ran out of a minute it was never
+    given.
+
+    ONE FIELD CARRIES THE BUDGET EVERYWHERE. The phase caps, solve()'s
+    deadline, the explanation's cap, the blocks verdict's remainder, the
+    timeout diagnosis and the `budget` a TIMEOUT's conflict reports all read
+    solver_max_time_seconds. Replacing that one value is what makes every one
+    of them the request's; threading a number through instead would leave
+    whichever reader nobody remembered on the configured minute.
+
+    ONLY EVER SMALLER. The request's maxSeconds is min'd with the configured
+    budget, so no caller buys more time than the deployment gives a Generera.
+    The TIMEOUT probe is bounded by half of maxSeconds, so a candidate's
+    explanation costs at most half of what its search was allowed; with
+    probes off it is never run, and its bound does not matter.
+
+    IDEMPOTENT, and the very same object when nothing changes: absent search,
+    one without maxSeconds, or a maxSeconds that lowers neither bound returns
+    `settings` itself. run_solver scopes the settings before it builds
+    the solver and solve() scopes them again for a direct caller (the
+    benchmarks, the tests); the second call is then a no-op.
+    """
+    if search is None or search.max_seconds is None:
+        return settings
+    update: dict[str, float] = {}
+    budget = min(float(search.max_seconds), settings.solver_max_time_seconds)
+    if budget != settings.solver_max_time_seconds:
+        update["solver_max_time_seconds"] = budget
+    if search.runs_probes:
+        probe = min(settings.solver_probe_seconds, search.max_seconds / 2)
+        if probe != settings.solver_probe_seconds:
+            update["solver_probe_seconds"] = probe
+    return settings.model_copy(update=update) if update else settings
+
+
+def _runs_probes(request: OptimizeScheduleRequest) -> bool:
+    """Whether this request pays for the explaining work a refusal buys.
+
+    True unless the request says otherwise: see SearchOptions.probes.
+    """
+    return request.search is None or request.search.runs_probes
 
 
 class SchedulerSolver:
@@ -1628,7 +1680,18 @@ class SchedulerSolver:
         If it cannot reproduce the proof within the budget, the verdict still
         stands — it was proved by the first solve — and the response degrades to
         an unexplained INFEASIBLE rather than an invented explanation.
+
+        Not run at all for a request that turned its probes off: the verdict
+        is the proof's, and a candidate after the first has the first one's
+        hard rules, so the first one's explanation is already the school's.
         """
+        if not _runs_probes(request):
+            return OptimizeScheduleResponse(
+                request_id=request.request_id,
+                status="INFEASIBLE",
+                lessons=[],
+                conflicts=None,
+            )
         # WITH the objective, though the proof came from a model without one,
         # and that is not an oversight. Dropping it here shortens some solves —
         # measured on the lunch-bounded rast payload, UNKNOWN at the 15-second
@@ -1729,7 +1792,15 @@ class SchedulerSolver:
         FEASIBLE, never as phase 1's raw status — a satisfaction solve calls
         any solution OPTIMAL, which would misstate an objective it never
         evaluated.
+
+        A request carrying `search` is solved by a solver of its own, built on
+        the request's own Settings — see settings_for_search — so nothing
+        below reads a budget the request did not ask for, and this solver's
+        own Settings, which may be the app's, are left as they were.
         """
+        scoped = settings_for_search(self._settings, request.search)
+        if scoped is not self._settings:
+            return SchedulerSolver(scoped).solve(request)
         self._validate_request(request)
         # THE STEP, beside the grid it counts in. Per request, because the week
         # decides it: one lesson locked at 08:05 takes a school searched every
@@ -1788,9 +1859,8 @@ class SchedulerSolver:
                 feas_model.AddHint(lunch_feas[key], slot)
 
         # ---- phase 1a: clean satisfaction build -----------------------------
-        phase1 = cp_model.CpSolver()
-        phase1.parameters.max_time_in_seconds = min(
-            total_budget, self.CLEAN_SAT_CAP_SECONDS,
+        phase1 = self._generation_solver(
+            request, min(total_budget, self.CLEAN_SAT_CAP_SECONDS),
         )
         phase1_code = phase1.Solve(feas_model)
 
@@ -1847,8 +1917,7 @@ class SchedulerSolver:
                 )
             clone_model = model.Clone()
             clone_model.ClearObjective()
-            phase1b = cp_model.CpSolver()
-            phase1b.parameters.max_time_in_seconds = remaining
+            phase1b = self._generation_solver(request, remaining)
             phase1b_code = phase1b.Solve(clone_model)
 
             if phase1b_code == cp_model.MODEL_INVALID:
@@ -1905,9 +1974,19 @@ class SchedulerSolver:
             model.AddHint(decision.room_index, winner_solver.Value(source.room_index))
         for literal, source_literal in hint_literals:
             model.AddHint(literal, winner_solver.Value(source_literal))
+        if request.search is not None:
+            # A schemaförslag candidate's phase 2 starts from a COMPLETE hint.
+            # Only for a request that carries `search`, so a Generera is solved
+            # exactly as before; see _complete_the_hint for what it buys.
+            self._complete_the_hint(
+                model, request, winner_solver, lunch_full, winner_lunch,
+                seconds=remaining,
+            )
+            remaining = _remaining()
+            if remaining < self.MIN_PHASE_SECONDS:
+                return _phase1_response()
 
-        phase2 = cp_model.CpSolver()
-        phase2.parameters.max_time_in_seconds = remaining
+        phase2 = self._generation_solver(request, remaining)
         phase2_code = phase2.Solve(model)
         if phase2_code == cp_model.MODEL_INVALID:
             msg = f"CP-SAT rejected the generated model: {model.Validate()}"
@@ -1927,6 +2006,111 @@ class SchedulerSolver:
         # Phase 2 came up empty: fall back to the phase-1 schedule rather than
         # returning nothing. FEASIBLE, deliberately.
         return _phase1_response()
+
+    # Ceiling on the solve that completes phase 2's hint, and its share of
+    # what is left: measured at under half a CPU-second on the 500- and
+    # 1,000-pupil bench schools, so either bound only matters on a week far
+    # larger than the benchmark's.
+    HINT_COMPLETION_CAP_SECONDS = 10.0
+    HINT_COMPLETION_SHARE = 1 / 3
+
+    def _complete_the_hint(
+        self,
+        model: cp_model.CpModel,
+        request: OptimizeScheduleRequest,
+        winner: cp_model.CpSolver,
+        lunch_full: dict[tuple[UUID, int], cp_model.IntVar],
+        winner_lunch: dict[tuple[UUID, int], cp_model.IntVar],
+        *,
+        seconds: float,
+    ) -> bool:
+        """Turn phase 2's hint into a whole solution of the full model.
+
+        THE HINT phase 2 is given is phase 1's timetable — every start, every
+        room — and nothing else: none of the variables the objective adds.
+        CP-SAT says so in its own log, on the 500-pupil bench school warm-started
+        from its draft: "The solution hint is incomplete: 3240 out of 18679 non
+        fixed variables hinted". It completes the rest itself, and badly. Its
+        first solution held the draft's lessons exactly and scored 16,274 —
+        the same lessons had scored 825 when the draft was solved — because a
+        teacher's `first` and `last`, a pair's same-day literal and a
+        kept-lesson literal are whatever the completing search happened to
+        set. The local search then spends the budget repairing a start it was
+        handed broken, and moves lessons while it does. Measured on
+        thirty-second candidates (docs/verification-baseline.md,
+        "Schemaförslag"): at 500 pupils every emphasis came back with more
+        håltimmar than the draft it started from — "Färre håltimmar för
+        lärarna" with 6,840 minutes against the draft's 930 — and at 1,000 no
+        candidate's phase 2 found anything in its thirty seconds, two of the
+        three coming back as the draft itself.
+
+        SO THE TIMETABLE IS HELD AND ONLY THE REST IS SOLVED: the lessons, the
+        rooms and the lunches pinned to phase 1's values
+        (fix_variables_to_their_hinted_value), which leaves CP-SAT a small
+        problem it solves to optimality in a fraction of a second, and its
+        answer becomes the hint for every variable. Phase 2 then starts from
+        phase 1's timetable at that timetable's true objective. The same
+        candidates, same budgets: 390 minutes for "Färre håltimmar", and at
+        1,000 pupils a timetable of its own from every one.
+
+        Only for a request carrying `search` — every schemaförslag candidate
+        sends it — so a Generera's solve is unchanged byte for byte; whether
+        Generera should have it too is a measurement of its own.
+
+        False, and the partial hint left as it was, when the completing solve
+        finds nothing inside its share of the budget.
+        """
+        for key, variable in lunch_full.items():
+            source = winner_lunch.get(key)
+            if source is not None:
+                model.AddHint(variable, winner.Value(source))
+        completion = self._generation_solver(
+            request,
+            min(seconds * self.HINT_COMPLETION_SHARE, self.HINT_COMPLETION_CAP_SECONDS),
+        )
+        completion.parameters.fix_variables_to_their_hinted_value = True
+        code = completion.Solve(model)
+        if code not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            logger.info("hint completion: %s, phase 2 keeps the partial hint", completion.StatusName(code))
+            return False
+        values = list(completion.response_proto.solution)
+        model.ClearHints()
+        for index, value in enumerate(values):
+            model.AddHint(model.get_int_var_from_proto_index(index), value)
+        logger.info(
+            "hint completion: %s, objective %d, %d variables hinted",
+            completion.StatusName(code), completion.ObjectiveValue(), len(values),
+        )
+        return True
+
+    @staticmethod
+    def _generation_solver(
+        request: OptimizeScheduleRequest, seconds: float,
+    ) -> cp_model.CpSolver:
+        """A CpSolver for one of solve()'s generation solves.
+
+        THE GENERATION SOLVES ONLY: phase 1a, phase 1b, phase 2 and the solve
+        that completes phase 2's hint, the ones that decide which timetable
+        the school gets. The lunch stage keeps its
+        one deterministic worker, for the reason _lunch_stage_solver gives.
+        The probes and the explanation are left as they were: they run only
+        on a refusal, which a seed cannot turn into a timetable, and a seed
+        that moved a refusal's named causes would have the same week explain
+        itself differently from one request to the next.
+
+        Nothing but the time limit is set when the request names neither a
+        seed nor a worker count, which is every request but a candidate's: the
+        parameters are then exactly what they were before `search` existed.
+        """
+        solver = cp_model.CpSolver()
+        solver.parameters.max_time_in_seconds = seconds
+        search = request.search
+        if search is not None:
+            if search.seed is not None:
+                solver.parameters.random_seed = search.seed
+            if search.workers is not None:
+                solver.parameters.num_workers = search.workers
+        return solver
 
     def _hint_previous_lessons(
         self,
@@ -4230,8 +4414,11 @@ class SchedulerSolver:
 
         None when the probe has no budget, the relaxed week refuses by name,
         or it finds nothing inside the budget: the unexplained verdict stands
-        rather than an invented one.
+        rather than an invented one. None as well for a request that turned its
+        probes off.
         """
+        if not _runs_probes(request):
+            return None
         budget = self._settings.solver_probe_seconds
         if seconds_left is not None:
             budget = min(budget, seconds_left)
@@ -4284,9 +4471,12 @@ class SchedulerSolver:
         nothing, and the summary says so. But "with the corridor at 0 this week
         solves in four seconds" is a sentence a rektor can act on, and it is
         true.
+
+        None for a request that turned its probes off, as for a deployment
+        that set SOLVER_PROBE_SECONDS to zero: the TIMEOUT then stands bare.
         """
         budget = self._settings.solver_probe_seconds
-        if budget <= 0:
+        if budget <= 0 or not _runs_probes(request):
             return None
 
         relaxations = self._timeout_relaxations(request)

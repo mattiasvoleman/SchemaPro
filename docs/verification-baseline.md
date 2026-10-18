@@ -857,6 +857,121 @@ reaches every group whose years overlap it; and a STUDENT_GROUP row covering
 the whole lunch window excuses that class from lunch that day, as it does in
 the engine.
 
+### Schemaförslag: four emphases, four timetables — at one budget
+
+A schemaförslag run asks for two to four candidates of the year's week, each a
+few `ObjectiveWeights` overrides and a seed on top of the school's request,
+every one warm-started from the current draft. Whether "Färre håltimmar för
+lärarna" has fewer håltimmar than "Behåll mest" is a measurement, and the
+design set its bar: each non-KEEP candidate's share of the draft's lessons
+moved differs from KEEP's by at least **3 percentage points**, TEACHER_GAPS
+leaves the teachers **fewer idle minutes** than KEEP (per teacher and day, the
+minutes between the first lesson's start and the last one's end not spent
+teaching), and SPREAD's week is **more even** (per class, the variance of its
+lessons per weekday). `benchmarks/candidate_variants.py` runs the procedure
+on the bench school (`solve_2000_students.py`: 720 lessons at 500 pupils,
+1,440 at 1,000). A cold solve on the engine's own weights is the draft (120 s
+and 300 s); its lessons go back as `previousLessons`, and each variant is sent
+a `search` of four workers, the probes on the first call only. The design's
+procedure, measured first, sent KEEP no `maxSeconds` and every later
+candidate 30; the gateway as shipped sends every candidate the same
+`maxSeconds` (below). Every candidate came back FEASIBLE and passed
+`validate_schedule.py`.
+
+**The clock is CPU time, not the wall.** The host's load average was 90–470
+through every run, so a thirty-second wall budget measured the neighbours.
+`--cpu-clock` stops each CP-SAT solve when its process has spent
+`limit × workers` CPU-seconds and reads the solver's own deadline off the same
+count, so the seconds here (30.4–31.1 per candidate, 60.4–61.0 for a
+sixty-second KEEP) are what the work takes on a host with those cores to
+itself; the real wall time was 50–540 s a candidate. CP-SAT on four workers is
+not deterministic, so a row is a distribution: means, ranges in brackets.
+
+**First, a candidate came back worse than its draft.** Phase 2's hint was
+phase 1's timetable alone, and CP-SAT completed the objective's own variables
+by search, so the local search started from a broken objective: 16,274 for the
+draft's own lessons, which had scored 825 when the draft was solved. At 500
+pupils TEACHER_GAPS returned **6,840** minutes of håltimmar (the compare
+page's figure, `web/lib/gaps.ts`) against the draft's 930, SPREAD 2,970 and
+FREE 15,390; at 1,000 no candidate's phase 2 found anything in its thirty
+seconds, and two of the three came back as the draft unchanged. A request that
+carries `search` now completes the hint first with the timetable held
+(`SchedulerSolver._complete_the_hint`, under half a CPU-second here): the same
+candidates gave 390, 330 and 240 at 500 pupils and a timetable of their own at
+1,000. Generera sends no `search` and is solved as before.
+
+**At the design's budgets TEACHER_GAPS fails, and none of four retunes fixes
+it.** The design sent KEEP no `maxSeconds`, so it got the engine's sixty
+seconds against the others' thirty. Over every run, a thirty-second TEACHER_GAPS averaged 2,120
+idle minutes at 500 pupils (seven runs) and 29,930 at 1,000 (four) against a
+sixty-second KEEP's 1,880 and 28,340 (three each), and at 1,000 its 7.3 %
+moved was within 1.4 points of KEEP's 5.9 %. Four retunes — disruption 0 and
+1 at teacherGap 8, the first again with spread 0, teacherGap 30 at disruption
+2, one run each — each left more idle minutes than the sixty-second KEEP of
+its run at both sizes (1,950–2,580 against 1,920; 31,200–32,760 against
+28,980), and three of
+them moved within a point of it at 1,000. The budget buys CPU: a 1,000-pupil
+KEEP on every core for thirty seconds (29,160) lands within 3 % of one on four
+cores for sixty (28,340). The comparison is fair only at one budget.
+
+**At one budget the design's table passes.** Every candidate, KEEP included,
+at `maxSeconds` 30 and four workers; six runs of KEEP and TEACHER_GAPS at 500
+pupils, three of everything else:
+
+| 500 pupils | moved % | apart from KEEP % | teacher idle min | håltimmar | day variance | same-day pairs |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+| draft | — | — | 3,180 | 930 | 0.76 | 35 |
+| KEEP | 1.2 [0.4–1.7] | — | 2,490 [2,100–2,760] | 605 | 0.78 | 38 |
+| TEACHER_GAPS | 6.7 [4.6–8.8] | 6.7 | **2,080** [1,320–2,640] | 365 | 0.68 | 30 |
+| SPREAD | 6.3 [5.0–8.3] | 6.3 | 2,070 | 440 | **0.69** [0.62–0.72] | 25 |
+| FREE | 45.8 [41.5–51.1] | 45.9 | 1,950 | 310 | 0.70 | 16 |
+
+| 1,000 pupils | moved % | apart from KEEP % | teacher idle min | håltimmar | day variance | same-day pairs |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+| draft | — | — | 34,920 | 21,840 | 1.41 | 606 |
+| KEEP | 1.9 [1.7–2.4] | — | 32,440 [32,370–32,490] | 20,010 | 1.33 | 600 |
+| TEACHER_GAPS | 7.8 [6.2–10.0] | 8.0 | **29,190** [28,230–30,450] | 17,370 | 1.11 | 565 |
+| SPREAD | 16.1 [11.3–19.7] | 17.5 | 38,380 | 24,890 | **0.94** [0.80–1.09] | 507 |
+| FREE | 12.0 [6.4–15.6] | 13.5 | 36,920 | 23,930 | 1.15 | 560 |
+
+Run by run, against the KEEP of the same run: all 21 moved-% margins clear 3
+points (the narrowest 3.3, SPREAD at 500); SPREAD is the more even week, with
+fewer same-day pairs, in 6 of 6; TEACHER_GAPS has fewer idle minutes in
+**8 of 9**. The miss is at 500 pupils, 2,640 against 2,100: that draft has 930
+håltimmar left in the whole school's week, and the spread between runs is as
+wide as the effect. No two candidates of a run came within 4.6 % of each
+other, so none would be stored as `sameAs`. Sixty seconds each (one run per
+size) passes too, by more: TEACHER_GAPS 1,350 against 2,010 and 24,450 against
+26,700. A teacherGap of 16 (three runs at 500) gave 1,960 idle minutes, inside
+the spread of the table's 8, so the table stays as designed. The seeds do not
+separate the first two: CP-SAT's default `random_seed` is 1, TEACHER_GAPS'
+seed, so KEEP and TEACHER_GAPS differ by their weights alone.
+
+So the table is the design's — KEEP no overrides and no seed; TEACHER_GAPS
+disruption 2, teacherGap 8, seed 1; SPREAD disruption 2, spread 9, seed 2;
+FREE disruption 0, seed 3 — and **every candidate, KEEP included, is sent the
+same `maxSeconds`**, `CANDIDATE_MAX_SECONDS` (`searchFor` in
+`src/optimization/candidate-variants.ts`), which is what the gateway does.
+
+**Four workers cost what they withhold.** KEEP's teacher idle minutes on four
+workers and on every core of the 8-core host, the number of runs in
+parentheses:
+
+| KEEP | 500, 30 s | 500, 60 s | 1,000, 30 s | 1,000, 60 s |
+| :--- | ---: | ---: | ---: | ---: |
+| 4 workers | 2,490 (6) | 1,880 (3) | 32,440 (3) | 28,340 (3) |
+| every core | 1,770 (2) | 1,470 (1) | 29,160 (2) | 21,240 (1) |
+
+At 1,000 pupils every core for sixty seconds leaves a quarter fewer idle
+minutes than four, and every core for thirty comes within 3 % of four for
+sixty. The cap is the price of two runs and a Generera sharing one machine.
+
+Caveats: one bench school and one draft, the benchmark's own optimised solve,
+so at 500 pupils there is little left to remove. The CPU clock flatters a
+solve slightly — presolve runs on one thread and is counted as if on all of
+them — and under this load the four workers did not get equal shares. The
+candidates' wall-clock behaviour on an idle host is not measured here.
+
 ### Corrections to earlier entries in this document
 
 - An earlier revision said the complexity guard was "pessimistic … not the

@@ -781,6 +781,56 @@ class ScheduleRules(CamelModel):
     )
 
 
+class SearchOptions(CamelModel):
+    """How one request's search is run: where it starts, how long, on how much.
+
+    NEVER WHAT IS SEARCHED FOR. Every rule and every weight stays where it
+    was; a request carrying this is solved against exactly the week and the
+    objective it would be solved against without it. That is what lets a
+    schemaförslag run ask for two to four different candidates of one week
+    without a second notion of the school: the candidates differ by their
+    weights and by where CP-SAT starts looking, and these four fields are the
+    second half of that.
+
+    Sent ONLY for a candidate run, and absent is today's request byte for
+    byte. PRESENT, EVEN EMPTY, IT ALSO MEANS "THIS IS A CANDIDATE": phase 2
+    then starts from a completed hint (SchedulerSolver._complete_the_hint),
+    which a candidate warm-started from a draft cannot do without — measured,
+    a thirty-second candidate otherwise comes back worse than the draft it
+    started from. Each field below only ever adds to that; one left out keeps
+    CP-SAT's default, or the configured budget.
+
+    THE BUDGET CAN ONLY SHRINK. maxSeconds is min'd with the engine's own
+    SOLVER_MAX_TIME_SECONDS, so a gateway that asks for ten minutes never gets
+    more than the deployment allows a Generera, and a candidate run cannot buy
+    itself a longer turn on a shared machine than the school's own button.
+    """
+
+    #: CP-SAT's random_seed on the generation solves. Different seeds start the
+    #: portfolio's workers in different places, which is the cheap way to get a
+    #: different timetable of equal quality out of the same objective.
+    seed: int | None = Field(default=None, ge=0, le=2_147_483_647)
+    #: The solve budget, in whole seconds, and the probe's with it: see
+    #: settings_for_search, which turns it into the request's own Settings.
+    #: Five is the floor: under it a candidate is little more than its warm
+    #: start, and the TIMEOUT that follows would read as a fact about the
+    #: school's week when it is a fact about the caller's number.
+    max_seconds: int | None = Field(default=None, alias="maxSeconds", ge=5, le=600)
+    #: False skips the explaining work a refusal pays for — the TIMEOUT probe,
+    #: the INFEASIBLE explanation and the blocks verdict. Absent means true.
+    #: A candidate after the first has the same hard rules as the first, so the
+    #: first one's refusal already said everything a probe could.
+    probes: bool | None = None
+    #: CP-SAT's num_workers on the generation solves. Absent is CP-SAT's own
+    #: default (every core), which is right for one Generera at a time and
+    #: wrong for two candidate runs sharing a machine with it.
+    workers: int | None = Field(default=None, ge=1, le=16)
+
+    @property
+    def runs_probes(self) -> bool:
+        return self.probes is not False
+
+
 class OptimizeScheduleRequest(CamelModel):
     request_id: UUID4 = Field(alias="requestId")
     academic_year_id: UUID4 = Field(alias="academicYearId")
@@ -865,6 +915,9 @@ class OptimizeScheduleRequest(CamelModel):
     )
     weights: ObjectiveWeights | None = None
     rules: ScheduleRules | None = None
+    # Optional, and absent on every request but a schemaförslag candidate's;
+    # absent is today's solve byte for byte. See SearchOptions.
+    search: SearchOptions | None = None
 
     @field_validator("group_conflicts")
     @classmethod
