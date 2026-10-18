@@ -66,6 +66,8 @@ const employment = (
   employmentForm: null,
   firstTeacherPercent: null,
   lecturerPercent: null,
+  // Lärarens dag (20261123090000): no limit in days unless a post says one.
+  maxTeachingDaysPerWeek: null,
   // The gateway lists every post with its periods (20261022120000).
   periods: [],
   ...extra,
@@ -104,8 +106,10 @@ export const EMPLOYMENTS: TeacherEmployment[] = [
   }),
   employment(2, TEACHERS.bo.id, 40, "FERIE", "BEK", { employmentForm: "VISSTID" }),
   employment(3, TEACHERS.cecilia.id, 30, "SEMESTER", "CÅS", { employmentForm: "TILLSVIDARE" }),
-  // 80 %, as her Friday constraint in school-days.ts says.
-  employment(5, TEACHERS.eva.id, 80, "FERIE", "EHO", { note: "Ledig fredagar." }),
+  // 80 %, as her Friday constraint in school-days.ts says, and four days a
+  // week on the post itself (Lärarens dag): the deltid the constraint stood
+  // in for.
+  employment(5, TEACHERS.eva.id, 80, "FERIE", "EHO", { note: "Ledig fredagar.", maxTeachingDaysPerWeek: 4 }),
 ];
 
 // --- Behörigheter ------------------------------------------------------------
@@ -257,6 +261,7 @@ export function historyOf(userId: string): HistoryEntry[] {
           ["firstTeacherPercent", post.firstTeacherPercent],
           ["lecturerPercent", post.lecturerPercent],
           ["teachingTargetMinutesPerWeek", post.teachingTargetMinutesPerWeek],
+          ["maxTeachingDaysPerWeek", post.maxTeachingDaysPerWeek],
           ["signature", post.signature],
           ["noteChanged", post.note && post.reductionPercent === 0 ? true : null],
         ]),

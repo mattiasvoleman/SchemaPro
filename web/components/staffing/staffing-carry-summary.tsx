@@ -18,8 +18,10 @@ import type { StaffingCarryPreview } from "@/lib/types";
  * NAMED, NOT COUNTED, where a person has to act: a nedsättning or an own
  * riktmärke is often agreed for one year only, and carried silently it is a
  * confident wrong target in every report — so the teachers are listed by
- * name. The preview sends ids; `teacherName` resolves them from the roster
- * the page already holds.
+ * name. A limit on undervisningsdagar is the same kind of agreement and
+ * worse carried silently: the generator refuses every week over it. The
+ * preview sends ids; `teacherName` resolves them from the roster the page
+ * already holds.
  */
 
 type DutyRow = { sourceDutyId: string; userId: string; label: string };
@@ -104,6 +106,7 @@ export function StaffingCarrySummary({
       />
       <Section title={t("withReduction")} items={names(employments.withReduction)} warn />
       <Section title={t("withTargetOverride")} items={names(employments.withTargetOverride)} warn />
+      <Section title={t("withDayLimit")} items={names(employments.withDayLimit ?? [])} warn />
       <Section title={t("mentorskapLeft")} items={notCarried("GROUP_LEAVES").map(duty)} warn />
       <Section title={t("endedBeforeYear")} items={notCarried("ENDS_BEFORE_YEAR").map(duty)} />
       <Section

@@ -17,10 +17,27 @@ import {
 } from "lucide-react";
 import { LazyCsvImportDialog } from "@/components/import/lazy-csv-import-dialog";
 import { CsvExportButton } from "@/components/import/csv-export-button";
-import {
-  TeacherWorkTimeDialog,
-  TeacherWorkTimeSummary,
-} from "@/components/schedule/teacher-work-time-dialog";
+import { TeacherWorkTimeSummary } from "@/components/schedule/teacher-work-time-summary";
+/*
+ * The Arbetstid dialog, fetched when somebody opens it.
+ *
+ * It was imported statically while it held the lunch and the rest, and it
+ * and lib/teacher-work-rules behind it were about 1.6KB gzipped of this
+ * route's own JS, which sat at 188.8 of its 190KB. Lärarens dag gives it a
+ * cap and a free-day wish; added to a static dialog they would have put the
+ * route at the budget's edge, where the next app-wide chunk re-slice fails
+ * CI. Lazy, with the cap and the wish in it, the route measured 187.0KB
+ * (2026-10-17). It is mounted only when the row action is clicked, so
+ * nothing lazy is reachable during SSR — the condition the cards below rely
+ * on. The summary every staff row draws stays static, in a module of its own
+ * that imports nothing of the form's: a module the page shares with a lazy
+ * chunk stays whole on the page.
+ */
+const TeacherWorkTimeDialog = lazy(() =>
+  import("@/components/schedule/teacher-work-time-dialog").then((module) => ({
+    default: module.TeacherWorkTimeDialog,
+  })),
+);
 /*
  * Fetched when a staff row is opened, not when the register loads.
  *
@@ -81,8 +98,8 @@ import {
   useRequirements,
   useSubjects,
   useStudentGuardians,
-  useTeacherWorkRules,
 } from "@/lib/queries";
+import { useTeacherWorkRules } from "@/lib/work-rule-queries";
 import {
   useStaffingPolicy,
   useTeacherEmploymentActions,
@@ -1339,16 +1356,20 @@ export default function PeoplePage() {
         of the rules query cannot throw away half-typed input; the key is what
         makes the other direction work too — a row that arrives after the dialog
         was opened, or one replaced by a save, changes the key and the form is
-        filled again from what is now stored.
+        filled again from what is now stored. Fetched on the first open, so
+        the first click waits for the chunk with nothing drawn, as the role
+        chooser in the person dialog does.
       */}
       {workTimeFor ? (
-        <TeacherWorkTimeDialog
-          key={`${workTimeFor.id}:${workRuleOf(workTimeFor.id)?.id ?? "none"}`}
-          open
-          onOpenChange={(open) => !open && setWorkTimeFor(null)}
-          teacher={workTimeFor}
-          rule={workRuleOf(workTimeFor.id)}
-        />
+        <Suspense fallback={null}>
+          <TeacherWorkTimeDialog
+            key={`${workTimeFor.id}:${workRuleOf(workTimeFor.id)?.id ?? "none"}`}
+            open
+            onOpenChange={(open) => !open && setWorkTimeFor(null)}
+            teacher={workTimeFor}
+            rule={workRuleOf(workTimeFor.id)}
+          />
+        </Suspense>
       ) : null}
 
       <LazyCsvImportDialog

@@ -232,14 +232,25 @@ describe("reasons in plain Swedish", () => {
     expect(reasonText(t, { code: "SOMETHING_NEW", params: {} })).toBe("SOMETHING_NEW");
   });
 
+  it("says the day's cap with its minutes, and the masked days without a figure (Lärarens dag)", () => {
+    expect(reasonText(t, { code: "DAILY_CAP", params: { minutes: 300 } })).toBe(
+      "Skulle gå över sitt tak på 300 min undervisning den dagen",
+    );
+    expect(reasonText(t, { code: "WORK_DAYS_HIDDEN", params: {} })).not.toMatch(/\d/);
+  });
+
   it("has a sentence, in both languages, for every code the gateway ranks or excludes by", () => {
     // src/cover/cover-rank.ts RankReasonCode and src/cover/cover-rules.ts HardRuleCode.
     const codes = [
       "QUAL_LEGITIMATION", "QUAL_BEHORIG", "QUAL_TILLATEN", "TEACHES_SUBJECT", "TEACHES_GROUP_SUBJECT",
       "TEACHES_GROUP", "MENTOR", "GAP_FILL", "ON_SITE", "NOT_ON_SITE", "RELEASED", "AT_EVENT", "COUNTER_WEEK",
       "COUNTER_TERM", "UNDER_TARGET", "OVER_TARGET", "POOL_PREFERRED", "POOL", "POOL_LAST", "PREFERS_FREE",
+      "FREE_DAY_WISH",
       "INACTIVE", "ON_LESSON", "ABSENT", "BUSY_LESSON", "BUSY_DUTY", "UNAVAILABLE", "BOOKED_ROOM", "LUNCH",
       "DAILY_REST", "POOL_NOT_DECLARED",
+      // Lärarens dag: the day's cap, the post's days, and the days masked for
+      // a reader without HR-läs (src/cover/cover-rules.ts maskFindings).
+      "DAILY_CAP", "WORK_DAYS", "WORK_DAYS_HIDDEN",
     ];
     expect(codes.filter((code) => !(code in sv.coverReasons))).toEqual([]);
     expect(codes.filter((code) => !(code in en.coverReasons))).toEqual([]);
@@ -271,6 +282,9 @@ describe("cover refusals", () => {
       "ABSENCE_END", "AVAILABILITY_SHAPE", "AVAILABILITY_NOT_YOURS", "POOL_MEMBER_MUST_BE_TEACHER",
       "REASON_BUILTIN_LABEL", "COVER_BREAKS_LUNCH", "COVER_BREAKS_DAILY_REST", "COVER_TEACHER_UNAVAILABLE",
       "COVER_TEACHER_BOOKED", "COVER_POOL_NOT_DECLARED",
+      // Lärarens dag's warnings for a manual pick (WARNING_OF), the days one
+      // masked for a reader without HR-läs.
+      "COVER_EXCEEDS_DAILY_CAP", "COVER_BEYOND_WORK_DAYS", "COVER_BEYOND_WORK_DAYS_HIDDEN",
     ];
     expect(codes.filter((code) => !(code in sv.coverErrors))).toEqual([]);
     expect(codes.filter((code) => !(code in en.coverErrors))).toEqual([]);
@@ -306,6 +320,18 @@ describe("the other-teacher pick", () => {
       ],
     });
     expect(options.map((teacher) => teacher.id)).toEqual(["t-eva", "t-fia"]);
+  });
+
+  it("keeps whoever only the day's cap or the days exclude: a manual pick of them is a warning, not a refusal", () => {
+    const options = otherTeacherOptions(teachers, item({ teachers: [{ teacherId: "t-anna", role: "LEAD" }] }), {
+      candidates: [],
+      excluded: [
+        { userId: "t-bo", codes: [{ code: "DAILY_CAP", params: { minutes: 300 } }] },
+        { userId: "t-cia", codes: [{ code: "WORK_DAYS", params: { days: 4 } }] },
+        { userId: "t-dan", codes: [{ code: "WORK_DAYS_HIDDEN", params: {} }] },
+      ],
+    });
+    expect(options.map((teacher) => teacher.id)).toEqual(["t-bo", "t-cia", "t-dan", "t-eva", "t-fia"]);
   });
 });
 

@@ -156,7 +156,49 @@ describe("EmploymentCard", () => {
       employmentForm: null,
       firstTeacherPercent: null,
       lecturerPercent: null,
+      maxTeachingDaysPerWeek: null,
     });
+  });
+
+  it("reads the undervisningsdagar back, and says nothing for a post without a limit", () => {
+    const { unmount } = renderCard({ employment: { ...employment, maxTeachingDaysPerWeek: 4 } });
+    expect(screen.getByText("employmentSummaryTeachingDays(4)")).toBeInTheDocument();
+    unmount();
+
+    renderCard({ employment: { ...employment, maxTeachingDaysPerWeek: null } });
+    expect(screen.queryByText(/employmentSummaryTeachingDays/)).not.toBeInTheDocument();
+  });
+
+  it("sends the undervisningsdagar typed, with no limit as the empty field's meaning", async () => {
+    const user = userEvent.setup();
+    renderCard();
+    await user.click(screen.getByRole("button", { name: "add" }));
+    expect(field("teachingDaysPerWeek").placeholder).toBe("teachingDaysNone");
+    type("employmentPercent", "80");
+    type("teachingDaysPerWeek", "4");
+    await user.click(screen.getByRole("button", { name: "save" }));
+    expect(save.mock.calls[0]?.[0]).toMatchObject({ maxTeachingDaysPerWeek: 4 });
+  });
+
+  it("refuses a count of days outside 1–6 beside the field, and keeps the save disabled", async () => {
+    const user = userEvent.setup();
+    renderCard();
+    await user.click(screen.getByRole("button", { name: "add" }));
+    type("employmentPercent", "80");
+    type("teachingDaysPerWeek", "7");
+    expect(screen.getByRole("alert")).toHaveTextContent("problem_teachingDaysOutOfRange(1|6)");
+    expect(screen.getByRole("button", { name: "save" })).toBeDisabled();
+  });
+
+  it("keeps the stored undervisningsdagar when the admin edits only the percentage", async () => {
+    // PUT replaces the row: a body without the days would take the limit away.
+    const user = userEvent.setup();
+    renderCard({ employment: { ...employment, maxTeachingDaysPerWeek: 4 } });
+    await user.click(screen.getByRole("button", { name: "editEmployment" }));
+    expect(field("teachingDaysPerWeek").value).toBe("4");
+    type("employmentPercent", "100");
+    await user.click(screen.getByRole("button", { name: "save" }));
+    expect(save.mock.calls[0]?.[0]).toMatchObject({ maxTeachingDaysPerWeek: 4 });
   });
 
   it("sends the karriärtjänst shares typed, and says a share above the post beside the fields", async () => {
@@ -234,6 +276,26 @@ describe("EmploymentCard, Roller i skolan", () => {
     expect(screen.queryByText(/employmentSummary\(/)).not.toBeInTheDocument();
     expect(screen.queryByText(/derivedTarget/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "editEmployment" })).not.toBeInTheDocument();
+  });
+
+  it("says nothing of the undervisningsdagar to a reader the percentages are hidden from", () => {
+    // The gateway nulls the days with the percentages; even a row that carried
+    // them draws nothing in the hidden branch — not a figure, not "dolt", whose
+    // presence on only the posts with a limit would say which they are.
+    me.adminProfile = "SCHEMALAGGARE";
+    renderCard({
+      employment: {
+        ...employment,
+        employmentPercent: null,
+        reductionPercent: null,
+        note: null,
+        hrHidden: true,
+        maxTeachingDaysPerWeek: 4,
+      },
+    });
+    expect(screen.getByText("hrHiddenNotice")).toBeInTheDocument();
+    expect(screen.queryByText(/employmentSummaryTeachingDays/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/hrHidden$/)).not.toBeInTheDocument();
   });
 
   it("offers no post to add to somebody who does not decide, and says who does", () => {

@@ -4,10 +4,15 @@ import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { TriangleAlert } from "lucide-react";
-import { useTeacherWorkRuleActions } from "@/lib/queries";
+import { useTeacherWorkRuleActions } from "@/lib/work-rule-queries";
 import type { Person, TeacherWorkRule } from "@/lib/types";
 import {
+  DAY_CAP_MINUTES_MAX,
+  DAY_CAP_MINUTES_MIN,
+  DAY_CAP_MINUTES_STEP,
   EMPTY_DRAFT,
+  FREE_DAY_MAX,
+  FREE_DAY_MIN,
   LUNCH_MINUTES_MAX,
   LUNCH_MINUTES_MIN,
   LUNCH_MINUTES_STEP,
@@ -15,18 +20,17 @@ import {
   REST_MINUTES_MIN,
   SUGGESTED_DRAFT,
   draftToBody,
-  hasAnyRule,
   isEmptyDraft,
   ruleToDraft,
-  splitHours,
   validateDraft,
   type WorkRuleDraft,
   type WorkRuleProblem,
 } from "@/lib/teacher-work-rules";
-import { formatTime } from "@/lib/utils";
+import { splitHours } from "@/components/schedule/teacher-work-time-summary";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { NativeSelect } from "@/components/ui/native-select";
 import {
   Dialog,
   DialogContent,
@@ -45,56 +49,11 @@ import {
  */
 const FIVE_MINUTE_STEP = 5 * 60;
 
-/**
- * A stored rule read back in prose.
- *
- * Sits beside the form rather than in it, because the two answer different
- * questions with the same row: the dialog is where a rule is written, this is
- * where a school checks what it wrote without opening anything. FOUR NULLS ARE
- * SPELLED OUT — "no working-time rule", not four dashes and not four zeroes.
- * The difference is the whole design: zero minutes of lunch would be a promise
- * the solver keeps, and nothing said is a promise it never makes.
- */
-export function TeacherWorkTimeSummary({ rule }: { rule: TeacherWorkRule | undefined }) {
-  const t = useTranslations("teacherWorkTime");
-
-  if (!hasAnyRule(rule) || !rule) {
-    return <p className="text-sm text-muted-foreground">{t("noRule")}</p>;
-  }
-
-  const lunch =
-    rule.lunchMinutes !== null &&
-    rule.lunchStartTime !== null &&
-    rule.lunchEndTime !== null
-      ? t("summaryLunch", {
-          minutes: rule.lunchMinutes,
-          // The seconds PostgREST adds are cut here for the same reason the
-          // form cuts them: "10:30:00" is not how anybody writes a lunch.
-          start: formatTime(rule.lunchStartTime),
-          end: formatTime(rule.lunchEndTime),
-        })
-      : null;
-
-  const rest =
-    rule.minDailyRestMinutes === null
-      ? null
-      : (() => {
-          const split = splitHours(rule.minDailyRestMinutes);
-          return split.minutes === 0
-            ? t("summaryRestHours", { hours: split.hours })
-            : t("summaryRestHoursMinutes", {
-                hours: split.hours,
-                minutes: split.minutes,
-              });
-        })();
-
-  return (
-    <ul className="space-y-0.5 text-sm">
-      {lunch === null ? null : <li>{lunch}</li>}
-      {rest === null ? null : <li>{rest}</li>}
-    </ul>
-  );
-}
+/** The weekdays the wish can name, Monday first, as the column's CHECK has them. */
+const FREE_DAYS = Array.from(
+  { length: FREE_DAY_MAX - FREE_DAY_MIN + 1 },
+  (_, index) => FREE_DAY_MIN + index,
+);
 
 export interface TeacherWorkTimeDialogProps {
   open: boolean;
@@ -106,19 +65,28 @@ export interface TeacherWorkTimeDialogProps {
 }
 
 /**
- * A teacher's own working time: the lunch they are owed, and the night.
+ * A teacher's own working time: the lunch they are owed, the night, how much
+ * they teach on one day at most, and the weekday they would rather have free.
  *
  * THE EMPTY FORM IS A REAL ANSWER, and it is the one nearly every row starts
- * from. Four empty fields mean the solver promises this teacher nothing, which
- * is what every school in production is running today — so the dialog says that
- * in a sentence rather than drawing four zeroes that would read as a rule of
- * "no lunch at all". Saving an emptied row DELETES it, for the reason
- * useTeacherWorkRuleMutations gives.
+ * from. Empty fields mean the solver promises this teacher nothing, which is
+ * what every school in production is running today — so the dialog says that
+ * in a sentence rather than drawing zeroes that would read as a rule of "no
+ * lunch at all". Saving an emptied row DELETES it, for the reason
+ * useTeacherWorkRuleActions gives.
  *
  * The suggestions are offered and never stored. A default on the column would
  * make every school that has not opened this dialog refuse its next generation
  * run over a rule nobody wrote; a button that fills the draft leaves the
- * decision, and the save, with the reader.
+ * decision, and the save, with the reader. The suggestion fills the lunch and
+ * the rest only: see SUGGESTED_DRAFT for why it never carries a cap.
+ *
+ * ONE ROW, TWO KINDS OF FIELD. The lunch, the rest and the day's cap are hard
+ * — the generator refuses a week that cannot keep them — and the free day is
+ * a wish it weighs and may give up. The dialog says which is which where each
+ * is written, because a school that read the wish as a rule would expect the
+ * day to be kept, and one that read the cap as a wish would be surprised by
+ * the refusal.
  *
  * THE DRAFT IS INITIALISED ONCE, AT MOUNT. The page remounts this component
  * with a key built from the teacher and the row, which is what makes a
@@ -135,6 +103,7 @@ export function TeacherWorkTimeDialog({
 }: TeacherWorkTimeDialogProps) {
   const t = useTranslations("teacherWorkTime");
   const tCommon = useTranslations("common");
+  const tDays = useTranslations("days");
   const actions = useTeacherWorkRuleActions();
 
   const [draft, setDraft] = useState<WorkRuleDraft>(() => ruleToDraft(rule));
@@ -221,6 +190,27 @@ export function TeacherWorkTimeDialog({
       : t("restEqualsHoursMinutes", { hours: split.hours, minutes: split.minutes });
   };
 
+  /**
+   * 270 read back as "= 4 tim 30 min", beside the field.
+   *
+   * A cap is thought of in hours and lessons and typed in minutes, so the
+   * number is said back the way the school thinks of it. The same rule as the
+   * rest's readout: only for a value the form would save. Three sentences,
+   * because a cap can be under an hour (30..55 minutes) as well as whole hours,
+   * and "0 tim 45 min" is not how anybody says three quarters of an hour.
+   */
+  const capReadout = (): string | null => {
+    const cap = draft.maxTeachingMinutesPerDay;
+    if (cap.trim() === "") return null;
+    if (validateDraft({ ...EMPTY_DRAFT, maxTeachingMinutesPerDay: cap })) return null;
+    const split = splitHours(Number(cap.trim()));
+    if (split.hours === 0) return t("dayCapEqualsMinutes", { minutes: split.minutes });
+    return split.minutes === 0
+      ? t("dayCapEqualsHours", { hours: split.hours })
+      : t("dayCapEqualsHoursMinutes", { hours: split.hours, minutes: split.minutes });
+  };
+  const capSaid = capReadout();
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
@@ -232,7 +222,9 @@ export function TeacherWorkTimeDialog({
             The cost, where the rule is written rather than at the top of the
             register this dialog opens from. A hard rule can refuse a whole
             week, and the moment that is worth knowing is the moment somebody
-            is typing the number that would do it.
+            is typing the number that would do it. The sentence names the hard
+            fields and says the free day is not one of them; the free day's
+            own section says what a wish does instead.
           */}
           <DialogDescription className="flex items-start gap-2">
             <TriangleAlert className="mt-0.5 size-4 shrink-0" />
@@ -302,6 +294,70 @@ export function TeacherWorkTimeDialog({
               {t("restMinutesHint")}
               {restReadout() === null ? null : <> · {restReadout()}</>}
             </p>
+          </div>
+
+          {/*
+            Undervisning per dag. No placeholder, unlike the lunch and the
+            rest above: a greyed number in an empty field reads as a value the
+            school could just accept, and there is no cap anybody should
+            accept without choosing it.
+          */}
+          <div role="group" aria-labelledby="work-day-cap-title" className="space-y-2 border-t pt-4">
+            <h3 id="work-day-cap-title" className="text-sm font-semibold">
+              {t("dayCapTitle")}
+            </h3>
+            <Label htmlFor="work-day-cap">{t("dayCapMinutes")}</Label>
+            <div className="flex items-center gap-3">
+              <Input
+                id="work-day-cap"
+                type="number"
+                inputMode="numeric"
+                min={DAY_CAP_MINUTES_MIN}
+                max={DAY_CAP_MINUTES_MAX}
+                step={DAY_CAP_MINUTES_STEP}
+                value={draft.maxTeachingMinutesPerDay}
+                onChange={(event) =>
+                  setDraft((previous) => ({
+                    ...previous,
+                    maxTeachingMinutesPerDay: event.target.value,
+                  }))
+                }
+              />
+              {capSaid === null ? null : (
+                <span className="shrink-0 text-sm text-muted-foreground">{capSaid}</span>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground">{t("dayCapHint")}</p>
+          </div>
+
+          {/*
+            Önskad ledig dag. A native select, every weekday the column
+            allows: the dialog is fetched on its own, so the control costs no
+            route anything, and a phone gets its own picker.
+          */}
+          <div role="group" aria-labelledby="work-free-day-title" className="space-y-2 border-t pt-4">
+            <h3 id="work-free-day-title" className="text-sm font-semibold">
+              {t("freeDayTitle")}
+            </h3>
+            <Label htmlFor="work-free-day">{t("freeDay")}</Label>
+            <NativeSelect
+              id="work-free-day"
+              value={draft.preferredFreeDayOfWeek}
+              onChange={(event) =>
+                setDraft((previous) => ({
+                  ...previous,
+                  preferredFreeDayOfWeek: event.target.value,
+                }))
+              }
+            >
+              <option value="">{t("freeDayNone")}</option>
+              {FREE_DAYS.map((day) => (
+                <option key={day} value={String(day)}>
+                  {tDays(String(day))}
+                </option>
+              ))}
+            </NativeSelect>
+            <p className="text-xs text-muted-foreground">{t("freeDayHint")}</p>
           </div>
 
           {/*

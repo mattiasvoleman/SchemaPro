@@ -122,6 +122,7 @@ describe("employmentDraftToBody", () => {
       employmentForm: null,
       firstTeacherPercent: null,
       lecturerPercent: null,
+      maxTeachingDaysPerWeek: null,
     });
   });
 
@@ -146,6 +147,7 @@ describe("employmentDraftToBody", () => {
       employmentForm: null,
       firstTeacherPercent: null,
       lecturerPercent: null,
+      maxTeachingDaysPerWeek: null,
     });
   });
 
@@ -163,6 +165,7 @@ describe("employmentDraftToBody", () => {
       employmentForm: "VISSTID" as const,
       firstTeacherPercent: 10,
       lecturerPercent: null,
+      maxTeachingDaysPerWeek: 4,
     };
     expect(employmentDraftToBody(employmentToDraft(row))).toEqual({
       employmentPercent: 66.667,
@@ -174,8 +177,56 @@ describe("employmentDraftToBody", () => {
       employmentForm: "VISSTID",
       firstTeacherPercent: 10,
       lecturerPercent: null,
+      maxTeachingDaysPerWeek: 4,
     });
     expect(employmentToDraft(null)).toBe(EMPTY_EMPLOYMENT_DRAFT);
+  });
+});
+
+describe("undervisningsdagar per vecka on the post (Lärarens dag, 20261123090000)", () => {
+  it("takes whole days 1–6, and empty for no limit", () => {
+    expect(validateEmploymentDraft(draft({ maxTeachingDaysPerWeek: "" }))).toBeNull();
+    for (const days of ["1", "4", "6", " 5 "]) {
+      expect(validateEmploymentDraft(draft({ maxTeachingDaysPerWeek: days }))).toBeNull();
+    }
+  });
+
+  it("refuses a count outside 1–6, or not whole, naming the range", () => {
+    for (const days of ["0", "7", "4,5", "-1", "fyra"]) {
+      expect(validateEmploymentDraft(draft({ maxTeachingDaysPerWeek: days }))).toEqual({
+        reason: "teachingDaysOutOfRange",
+        min: 1,
+        max: 6,
+      });
+    }
+  });
+
+  it("is checked after every other field, so a wrong tjänst is said first", () => {
+    expect(validateEmploymentDraft(draft({ employmentPercent: "0", maxTeachingDaysPerWeek: "9" }))).toMatchObject({
+      reason: "percentOutOfRange",
+    });
+  });
+
+  it("sends a stated count as a number and an empty field as null", () => {
+    expect(employmentDraftToBody(draft({ maxTeachingDaysPerWeek: " 4 " }))).toMatchObject({ maxTeachingDaysPerWeek: 4 });
+    expect(employmentDraftToBody(draft({ maxTeachingDaysPerWeek: "" }))).toMatchObject({ maxTeachingDaysPerWeek: null });
+  });
+
+  it("reads a post with no limit, or from a gateway before the field, as no limit", () => {
+    const post = {
+      id: "e1",
+      userId: "u1",
+      academicYearId: "y1",
+      employmentPercent: 100,
+      reductionPercent: 0,
+      contractKind: "FERIE" as const,
+      teachingTargetMinutesPerWeek: null,
+      signature: null,
+      note: null,
+    };
+    expect(employmentToDraft(post).maxTeachingDaysPerWeek).toBe("");
+    expect(employmentToDraft({ ...post, maxTeachingDaysPerWeek: null }).maxTeachingDaysPerWeek).toBe("");
+    expect(employmentToDraft({ ...post, maxTeachingDaysPerWeek: 3 }).maxTeachingDaysPerWeek).toBe("3");
   });
 });
 
@@ -396,6 +447,7 @@ describe("every refusal has a sentence in both locales", () => {
     "targetOutOfRange",
     "signatureTooLong",
     "noteTooLong",
+    "teachingDaysOutOfRange",
     "subjectRequired",
     "spanReversed",
     "validityReversed",

@@ -104,6 +104,8 @@ describe("StaffingCarryDialog", () => {
       "Mentor 8A — Bo Alm",
     );
     expect(screen.getByText(/1 lärare har redan en tjänst i läsåret och hoppas över helt/)).toBeInTheDocument();
+    // An older gateway sends no withDayLimit: no heading over nobody.
+    expect(screen.queryByText(/Gränsen för undervisningsdagar per vecka/)).toBeNull();
     // A zero side of a problem is not printed: no "0 uppdrag … hör till dem".
     expect(screen.queryByText(/0 uppdrag/)).toBeNull();
 
@@ -111,6 +113,17 @@ describe("StaffingCarryDialog", () => {
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
     expect(executes()).toEqual([["/api/v1/academic-years/y27/staffing-rollover", { planHash: HASH }]]);
     expect(toast.success).toHaveBeenCalledWith("2027/28 fick 1 tjänst och 2 uppdrag.");
+  });
+
+  it("names whose limit on teaching days is carried, beside the own riktmärke", async () => {
+    // A days limit is agreed like a nedsättning, often for one year, and it
+    // is a hard rule the generator refuses weeks over: carried silently it
+    // would refuse next year's timetable for a reason nobody was shown.
+    post.mockResolvedValue(preview({ employments: { ...preview().employments, withDayLimit: ["t-bo", "t-gone"] } }));
+    renderDialog();
+    const title = await screen.findByText("Gränsen för undervisningsdagar per vecka följer med — gäller den även nästa läsår?");
+    expect(title).toHaveClass("text-warning-foreground");
+    expect(title.nextElementSibling).toHaveTextContent("Bo AlmGun Gone");
   });
 
   it("names a person who only had uppdrag and is not carried, and prints no zero side of a problem", async () => {
@@ -125,7 +138,7 @@ describe("StaffingCarryDialog", () => {
         },
         problems: [
           { code: "STAFFING_TEACHERS_NOT_CARRIED", blocking: false, params: { teachers: 1 } },
-          { code: "STAFFING_PER_YEAR_TERMS_CARRIED", blocking: false, params: { reductions: 2, overrides: 0 } },
+          { code: "STAFFING_PER_YEAR_TERMS_CARRIED", blocking: false, params: { reductions: 2, overrides: 0, dayLimits: 0 } },
           { code: "STAFFING_ALREADY_PRESENT", blocking: false, params: { teachers: 0, duties: 2 } },
         ],
       }),

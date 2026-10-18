@@ -458,6 +458,93 @@ describe("a refusal that names classes", () => {
   });
 });
 
+/*
+ * Lärarens dag: a refusal over a post's days names the post by its id
+ * (`limit`), which no screen resolves. For a reader with HR-läs the gateway
+ * names the teachers beside the sentence — errorNames for a failed run,
+ * conflictSummaryNames for a summary — as a conflict's resourceNames; for
+ * anyone else the sentence is the hidden one and the lists are empty.
+ */
+describe("a days refusal, read with HR-läs", () => {
+  const preflight = (extra: Record<string, unknown>) => ({
+    id: "job-d",
+    status: "FAILED",
+    solverStatus: null,
+    lessonsGenerated: 0,
+    conflictSummary: null,
+    conflicts: [],
+    error: "Post post-eva allows teaching on at most 3 days a week.",
+    errorCode: "TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK",
+    errorParams: { limit: "post-eva", days: 3, weekMinutes: 1500 },
+    createdAt: "2026-10-18T10:00:00.000Z",
+    ...extra,
+  });
+  const SENTENCE = "engineMessages.TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK(post-eva|3|1500)";
+
+  it("names whose post stopped the run, under the sentence", () => {
+    state.job = preflight({ errorNames: ["Eva Ek"] });
+    render(<GeneratePage />);
+
+    expect(screen.getByText(SENTENCE).nextElementSibling).toHaveTextContent(/^Eva Ek$/);
+  });
+
+  it("names nobody for a reader the gateway named nobody to, or a gateway that sends no list", () => {
+    state.job = preflight({ errorNames: [] });
+    const { unmount } = render(<GeneratePage />);
+    expect(screen.getByText(SENTENCE).nextElementSibling).toBeNull();
+    unmount();
+
+    state.job = preflight({});
+    render(<GeneratePage />);
+    expect(screen.getByText(SENTENCE).nextElementSibling).toBeNull();
+  });
+
+  it("names them under a summary as well", () => {
+    state.job = {
+      id: "job-s",
+      status: "SUCCEEDED",
+      solverStatus: "INFEASIBLE",
+      conflictSummary: "Two posts' days cannot both hold.",
+      conflictSummaryCode: "TEACHER_WORK_DAYS_CANNOT_BE_KEPT",
+      conflictSummaryParams: { limit: "post-eva", days: 3 },
+      conflictSummaryNames: ["Eva Ek", "Bo Alm"],
+      conflicts: [{ category: "AVAILABILITY", message: "x", resourceNames: [] }],
+      createdAt: "2026-10-18T10:00:00.000Z",
+    };
+    render(<GeneratePage />);
+
+    expect(screen.getByText("engineMessages.TEACHER_WORK_DAYS_CANNOT_BE_KEPT(post-eva|3)").nextElementSibling).toHaveTextContent(
+      /^Eva Ek, Bo Alm$/,
+    );
+  });
+
+  it("names nobody under a summary that came with an empty list, or with none", () => {
+    const summary = (extra: Record<string, unknown>) => ({
+      id: "job-s",
+      status: "SUCCEEDED",
+      solverStatus: "INFEASIBLE",
+      conflictSummary: "Two posts' days cannot both hold.",
+      conflictSummaryCode: "TEACHER_WORK_DAYS_HIDDEN",
+      conflictSummaryParams: {},
+      conflicts: [{ category: "AVAILABILITY", message: "x", resourceNames: [] }],
+      createdAt: "2026-10-18T10:00:00.000Z",
+      ...extra,
+    });
+    const SUMMARY = "engineMessages.TEACHER_WORK_DAYS_HIDDEN()";
+
+    // The summary is followed straight by the list of causes, with no line
+    // of names between them.
+    state.job = summary({ conflictSummaryNames: [] });
+    const { unmount } = render(<GeneratePage />);
+    expect(screen.getByText(SUMMARY).nextElementSibling?.tagName).toBe("UL");
+    unmount();
+
+    state.job = summary({});
+    render(<GeneratePage />);
+    expect(screen.getByText(SUMMARY).nextElementSibling?.tagName).toBe("UL");
+  });
+});
+
 describe("a refusal the engine named", () => {
   it("shows the Swedish for the code, not the engine's English", () => {
     // The engine writes English and names each sentence; the page renders the
@@ -508,6 +595,76 @@ describe("a refusal the engine named", () => {
     render(<GeneratePage />);
 
     expect(screen.getByText("A rule this build has never heard of.")).toBeInTheDocument();
+  });
+});
+
+/*
+ * Lärarens dag: the wishes a laid week could not keep. The run succeeded, so
+ * they are neither conflicts nor refusals — a heading of their own under the
+ * result, the engine catalogue's sentence, and no category badge.
+ */
+describe("wishes a finished run could not keep", () => {
+  const WISH = {
+    category: "AVAILABILITY",
+    code: "TEACHER_FREE_DAY_WISH_NOT_KEPT",
+    params: { rule: "w-1", day: 3 },
+    message: "The wish could not be kept.",
+    resourceNames: [],
+  };
+  const laid = (extra: Record<string, unknown>) => ({
+    id: "job-n",
+    status: "SUCCEEDED",
+    solverStatus: "OPTIMAL",
+    lessonsGenerated: 40,
+    conflictSummary: null,
+    conflicts: [],
+    createdAt: "2026-10-17T10:00:00.000Z",
+    ...extra,
+  });
+
+  it("lists them under their own heading in the catalogue's words, with no badge", () => {
+    state.job = laid({ notes: [WISH] });
+    render(<GeneratePage />);
+
+    const section = screen.getByRole("region", { name: "generate.notesTitle" });
+    expect(within(section).getByText("engineMessages.TEACHER_FREE_DAY_WISH_NOT_KEPT(w-1|3)")).toBeInTheDocument();
+    expect(within(section).getByText("generate.notesHint")).toBeInTheDocument();
+    expect(screen.queryByText("conflictCategories.AVAILABILITY")).toBeNull();
+    // Not a conflict: the conflicts' heading stays away from a run that has none.
+    expect(screen.queryByText("generate.conflicts")).toBeNull();
+  });
+
+  it("falls back to the gateway's English for a wish this build cannot translate", () => {
+    state.untranslated = ["TEACHER_FREE_DAY_WISH_NOT_KEPT"];
+    state.job = laid({ notes: [WISH] });
+    render(<GeneratePage />);
+
+    expect(screen.getByText("The wish could not be kept.")).toBeInTheDocument();
+  });
+
+  it("says nothing for a run that kept every wish, or a gateway that sends no notes", () => {
+    state.job = laid({ notes: [] });
+    const { unmount } = render(<GeneratePage />);
+    expect(screen.queryByText("generate.notesTitle")).toBeNull();
+    unmount();
+
+    state.job = laid({});
+    render(<GeneratePage />);
+    expect(screen.queryByText("generate.notesTitle")).toBeNull();
+  });
+
+  it("says nothing of wishes on a run that failed", () => {
+    state.job = laid({
+      status: "FAILED",
+      solverStatus: null,
+      error: "The engine could not be reached.",
+      errorCode: null,
+      errorParams: null,
+      notes: [WISH],
+    });
+    render(<GeneratePage />);
+
+    expect(screen.queryByText("generate.notesTitle")).toBeNull();
   });
 });
 

@@ -679,6 +679,14 @@ export interface TeacherEmployment {
   firstTeacherPercent?: number | null;
   lecturerPercent?: number | null;
   /**
+   * Undervisningsdagar per vecka, deltid in days (migration 20261123090000):
+   * the most weekdays with teaching the post allows, 1..6, hard for the
+   * generator; null for no limit. HR data like the percentages: null for a
+   * reader the gateway hides them from (hrHidden), so the web never tells a
+   * hidden limit from none and shows neither. Absent from a gateway before it.
+   */
+  maxTeachingDaysPerWeek?: number | null;
+  /**
    * The post from a date (migration 20261022120000), by Från. Absent from a
    * gateway before it; empty for a post that is the same all year, and for a
    * reader the percentages are hidden from (hrHidden): when and how a post
@@ -992,6 +1000,12 @@ export interface StaffingCarryPreview {
     withReduction: string[];
     /** A per-teacher riktmärke carried, likewise. */
     withTargetOverride: string[];
+    /**
+     * Undervisningsdagar per vecka carried, likewise — and a hard rule the
+     * generator refuses weeks over. HR data, in a preview shown to deciders
+     * only (absent from an older gateway).
+     */
+    withDayLimit?: string[];
     notCarried: { userId: string; reason: "INACTIVE" | "NOT_STAFF" | "ALREADY_PRESENT" }[];
     signaturesDropped: { userId: string; signature: string }[];
     /** A period with no Till ran to the year's end: its figures are the carried post (absent from an older gateway). */

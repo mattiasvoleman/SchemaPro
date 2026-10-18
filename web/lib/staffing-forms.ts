@@ -37,6 +37,14 @@ export const PERCENT_DECIMALS = 3;
 export const TARGET_MINUTES_MAX = 2400;
 export const SIGNATURE_MAX = 8;
 export const NOTE_MAX = 500;
+/**
+ * Undervisningsdagar per vecka, deltid in days (migration 20261123090000):
+ * the gateway's bounds (src/common/teacher-day.ts) and the column's CHECK. Up
+ * to six, because a school can teach on a Saturday and a limit of the whole
+ * week is no limit.
+ */
+export const TEACHING_DAYS_MIN = 1;
+export const TEACHING_DAYS_MAX = 6;
 
 export interface EmploymentDraft {
   employmentPercent: string;
@@ -51,6 +59,8 @@ export interface EmploymentDraft {
   /** Whole per cent of the post, "" for none: SCB's ForsteLarare and Lektor. */
   firstTeacherPercent: string;
   lecturerPercent: string;
+  /** "" = no limit; else the most weekdays with teaching the post allows. */
+  maxTeachingDaysPerWeek: string;
 }
 
 export const EMPTY_EMPLOYMENT_DRAFT: EmploymentDraft = {
@@ -63,6 +73,7 @@ export const EMPTY_EMPLOYMENT_DRAFT: EmploymentDraft = {
   employmentForm: "",
   firstTeacherPercent: "",
   lecturerPercent: "",
+  maxTeachingDaysPerWeek: "",
 };
 
 /** The anställningsformer the form offers, in SCB's order (T, V). */
@@ -79,6 +90,7 @@ export interface EmploymentBody {
   employmentForm: TeacherEmploymentForm | null;
   firstTeacherPercent: number | null;
   lecturerPercent: number | null;
+  maxTeachingDaysPerWeek: number | null;
 }
 
 export type EmploymentProblem =
@@ -91,7 +103,8 @@ export type EmploymentProblem =
   | { reason: "noteTooLong"; max: number }
   | { reason: "firstTeacherOutOfRange" }
   | { reason: "lecturerOutOfRange" }
-  | { reason: "careerAbovePost"; first: number; lecturer: number };
+  | { reason: "careerAbovePost"; first: number; lecturer: number }
+  | { reason: "teachingDaysOutOfRange"; min: number; max: number };
 
 /**
  * A number with at most `decimals` decimals, or null for anything else.
@@ -164,7 +177,19 @@ export function validateEmploymentDraft(draft: EmploymentDraft): EmploymentProbl
   if ((first ?? 0) + (lecturer ?? 0) > 100) {
     return { reason: "careerAbovePost", first: first ?? 0, lecturer: lecturer ?? 0 };
   }
+
+  // Deltid in days: whole days 1–6, or nothing said — the column's CHECK.
+  if (teachingDays(draft.maxTeachingDaysPerWeek) === undefined) {
+    return { reason: "teachingDaysOutOfRange", min: TEACHING_DAYS_MIN, max: TEACHING_DAYS_MAX };
+  }
   return null;
+}
+
+/** Undervisningsdagar per vecka: null for an empty field, undefined when it is not 1–6 whole. */
+function teachingDays(value: string): number | null | undefined {
+  if (value.trim() === "") return null;
+  const days = wholeNumber(value);
+  return days === null || days < TEACHING_DAYS_MIN || days > TEACHING_DAYS_MAX ? undefined : days;
 }
 
 /** A karriärtjänst share: null for an empty field, undefined when it is not 1–100 whole. */
@@ -198,6 +223,9 @@ export function employmentDraftToBody(draft: EmploymentDraft): EmploymentBody {
     employmentForm: draft.employmentForm === "" ? null : draft.employmentForm,
     firstTeacherPercent: careerShare(draft.firstTeacherPercent) ?? null,
     lecturerPercent: careerShare(draft.lecturerPercent) ?? null,
+    // Always named: PUT replaces the row, so a body without the days would
+    // take a deltid limit away every time somebody corrected a signature.
+    maxTeachingDaysPerWeek: teachingDays(draft.maxTeachingDaysPerWeek) ?? null,
   };
 }
 
@@ -215,6 +243,8 @@ export function employmentToDraft(row: TeacherEmployment | null | undefined): Em
     employmentForm: row.employmentForm ?? "",
     firstTeacherPercent: row.firstTeacherPercent == null ? "" : String(row.firstTeacherPercent),
     lecturerPercent: row.lecturerPercent == null ? "" : String(row.lecturerPercent),
+    // Absent from a gateway before 20261123090000, and null for no limit.
+    maxTeachingDaysPerWeek: row.maxTeachingDaysPerWeek == null ? "" : String(row.maxTeachingDaysPerWeek),
   };
 }
 

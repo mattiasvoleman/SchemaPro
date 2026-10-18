@@ -3,10 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
 import type { TeacherWorkRule } from "@/lib/types";
-import {
-  TeacherWorkTimeDialog,
-  TeacherWorkTimeSummary,
-} from "./teacher-work-time-dialog";
+import { TeacherWorkTimeDialog } from "./teacher-work-time-dialog";
 
 /**
  * What this file guards: WHAT GETS SENT, and what deliberately does not.
@@ -21,8 +18,13 @@ import {
  *   week.
  *
  *   A CLEARED form that sends a PATCH of the fields it still has. The body has
- *   to name all four keys or the old rule survives the clearing, and the school
+ *   to name every key or the old rule survives the clearing, and the school
  *   finds out at the next generation run.
+ *
+ *   A CAP OR A WISH LOST to an edit of something else (Lärarens dag). They sit
+ *   on the same row as the lunch, so a save that did not carry them, or a
+ *   cleared lunch that read the row as empty and deleted it, would take them
+ *   away without anybody choosing to.
  *
  *   A REFUSAL the reader never sees. The gateway rejects a half-filled lunch
  *   trio in English prose written for a log; the form has to name the missing
@@ -32,7 +34,7 @@ import {
 const saveMock = vi.fn();
 const removeMock = vi.fn();
 
-vi.mock("@/lib/queries", () => ({
+vi.mock("@/lib/work-rule-queries", () => ({
   useTeacherWorkRuleActions: () => ({
     save: { mutateAsync: saveMock, isPending: false },
     remove: { mutateAsync: removeMock, isPending: false },
@@ -57,8 +59,17 @@ const rule = (overrides: Partial<TeacherWorkRule> = {}): TeacherWorkRule => ({
   lunchStartTime: "10:30:00",
   lunchEndTime: "13:30:00",
   minDailyRestMinutes: 660,
+  maxTeachingMinutesPerDay: null,
+  preferredFreeDayOfWeek: null,
   ...overrides,
 });
+
+const NO_LUNCH_OR_REST = {
+  lunchMinutes: null,
+  lunchStartTime: null,
+  lunchEndTime: null,
+  minDailyRestMinutes: null,
+};
 
 const onOpenChange = vi.fn();
 
@@ -318,7 +329,23 @@ describe("what a full row sends", () => {
       lunchStartTime: "10:30",
       lunchEndTime: "13:30",
       minDailyRestMinutes: 660,
+      maxTeachingMinutesPerDay: null,
+      preferredFreeDayOfWeek: null,
     });
+  });
+
+  it("round-trips a stored cap and wish too, as numbers", async () => {
+    const user = userEvent.setup();
+    open(rule({ maxTeachingMinutesPerDay: 270, preferredFreeDayOfWeek: 5 }));
+
+    expect(field("dayCapMinutes").value).toBe("270");
+    expect((screen.getByLabelText("freeDay") as HTMLSelectElement).value).toBe("5");
+
+    await user.click(save());
+
+    expect(saveMock).toHaveBeenCalledWith(
+      expect.objectContaining({ lunchMinutes: 30, maxTeachingMinutesPerDay: 270, preferredFreeDayOfWeek: 5 }),
+    );
   });
 
   it("sends the same upsert for a teacher who had no row", async () => {
@@ -330,12 +357,15 @@ describe("what a full row sends", () => {
     await user.click(screen.getByRole("button", { name: "useSuggestion" }));
     await user.click(save());
 
+    // The suggestion is the lunch and the rest, never a cap or a free day.
     expect(saveMock).toHaveBeenCalledWith({
       userId: "t-1",
       lunchMinutes: 30,
       lunchStartTime: "10:30",
       lunchEndTime: "13:30",
       minDailyRestMinutes: 660,
+      maxTeachingMinutesPerDay: null,
+      preferredFreeDayOfWeek: null,
     });
   });
 
@@ -352,6 +382,8 @@ describe("what a full row sends", () => {
       lunchStartTime: null,
       lunchEndTime: null,
       minDailyRestMinutes: 660,
+      maxTeachingMinutesPerDay: null,
+      preferredFreeDayOfWeek: null,
     });
   });
 
@@ -383,10 +415,10 @@ describe("what a full row sends", () => {
 });
 
 describe("clearing a rule", () => {
-  it("deletes the row instead of storing four nulls", async () => {
+  it("deletes the row instead of storing nulls", async () => {
     /*
-     * A row of four nulls is legal and would read back as "no rule", so this
-     * could have been a PUT of nothing. It is a DELETE because the school's own
+     * A row of nulls is legal and would read back as "no rule", so this could
+     * have been a PUT of nothing. It is a DELETE because the school's own
      * question is which of its teachers have a working time set, and a table
      * where half the rows mean nothing cannot answer it by counting.
      */
@@ -405,6 +437,189 @@ describe("clearing a rule", () => {
     expect(removeMock).toHaveBeenCalledWith("t-1");
     expect(saveMock).not.toHaveBeenCalled();
     expect(toast.success).toHaveBeenCalledWith("cleared");
+  });
+
+  it("keeps the row, with its cap and wish, when only the lunch and the rest are cleared", async () => {
+    // The row is not empty while a cap or a wish is on it: a DELETE here would
+    // take the cap away with a lunch somebody meant to remove.
+    const user = userEvent.setup();
+    open(rule({ maxTeachingMinutesPerDay: 300, preferredFreeDayOfWeek: 3 }));
+
+    setNumber("lunchMinutes", "");
+    setTime("windowStart", "");
+    setTime("windowEnd", "");
+    setNumber("restMinutes", "");
+
+    expect(screen.queryByText("emptyMeansNoRule")).toBeNull();
+    await user.click(save());
+
+    expect(removeMock).not.toHaveBeenCalled();
+    expect(saveMock).toHaveBeenCalledWith({
+      userId: "t-1",
+      lunchMinutes: null,
+      lunchStartTime: null,
+      lunchEndTime: null,
+      minDailyRestMinutes: null,
+      maxTeachingMinutesPerDay: 300,
+      preferredFreeDayOfWeek: 3,
+    });
+  });
+
+  it("deletes the row once the cap and the wish are cleared too", async () => {
+    const user = userEvent.setup();
+    open(rule({ ...NO_LUNCH_OR_REST, maxTeachingMinutesPerDay: 300, preferredFreeDayOfWeek: 3 }));
+
+    setNumber("dayCapMinutes", "");
+    fireEvent.change(screen.getByLabelText("freeDay"), { target: { value: "" } });
+    await user.click(save());
+
+    expect(removeMock).toHaveBeenCalledWith("t-1");
+    expect(saveMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("the day's cap", () => {
+  it("is offered empty, with no suggested number, and says it is hard", () => {
+    // A greyed number in the field would read as a value the school could just
+    // accept; no cap should be accepted without choosing it.
+    open(undefined);
+
+    expect(field("dayCapMinutes").value).toBe("");
+    expect(field("dayCapMinutes").placeholder).toBe("");
+    // Its own group, named by the section title a screen reader announces on entry.
+    expect(screen.getByRole("group", { name: "dayCapTitle" })).toContainElement(field("dayCapMinutes"));
+    expect(screen.getByText("dayCapHint")).toBeInTheDocument();
+    expect(screen.getByText("hardRuleHint")).toBeInTheDocument();
+  });
+
+  it("sends a cap on its own, with everything else null", async () => {
+    const user = userEvent.setup();
+    open(undefined);
+
+    setNumber("dayCapMinutes", "270");
+    await user.click(save());
+
+    expect(saveMock).toHaveBeenCalledWith({
+      userId: "t-1",
+      lunchMinutes: null,
+      lunchStartTime: null,
+      lunchEndTime: null,
+      minDailyRestMinutes: null,
+      maxTeachingMinutesPerDay: 270,
+      preferredFreeDayOfWeek: null,
+    });
+  });
+
+  it("does not complete the lunch trio or offer the suggestion once a cap is written", () => {
+    open(undefined);
+
+    setNumber("dayCapMinutes", "300");
+
+    expect(field("lunchMinutes").value).toBe("");
+    expect(screen.queryByRole("button", { name: "useSuggestion" })).toBeNull();
+  });
+
+  it("refuses a cap outside half an hour to twelve hours, and the save with it", () => {
+    open(undefined);
+
+    setNumber("dayCapMinutes", "25");
+
+    expect(screen.getByRole("status")).toHaveTextContent(/dayCapOutOfRange\(30\|720\)/);
+    expect(save()).toBeDisabled();
+  });
+
+  it("refuses a cap off the five-minute grid", () => {
+    open(undefined);
+
+    setNumber("dayCapMinutes", "272");
+
+    expect(screen.getByRole("status")).toHaveTextContent(/dayCapOffGrid\(5\)/);
+    expect(save()).toBeDisabled();
+  });
+
+  it("reads 270 back as hours and minutes beside the field", () => {
+    open(rule({ maxTeachingMinutesPerDay: 270 }));
+
+    expect(screen.getByText("dayCapEqualsHoursMinutes(4|30)")).toBeInTheDocument();
+  });
+
+  it("reads a whole number of hours as hours alone", () => {
+    open(rule({ maxTeachingMinutesPerDay: 300 }));
+
+    expect(screen.getByText("dayCapEqualsHours(5)")).toBeInTheDocument();
+  });
+
+  it("reads a cap under an hour as minutes alone, never as nought hours", () => {
+    open(rule({ maxTeachingMinutesPerDay: 45 }));
+
+    expect(screen.getByText("dayCapEqualsMinutes(45)")).toBeInTheDocument();
+    expect(screen.queryByText(/dayCapEqualsHours/)).toBeNull();
+  });
+
+  it("says nothing beside the field while the number would be refused", () => {
+    open(undefined);
+
+    setNumber("dayCapMinutes", "272");
+
+    expect(screen.queryByText(/dayCapEquals/)).toBeNull();
+  });
+});
+
+describe("the free-day wish", () => {
+  const select = () => screen.getByLabelText("freeDay") as HTMLSelectElement;
+
+  it("offers no wish first, then every weekday Monday to Sunday", () => {
+    open(undefined);
+
+    expect(select().value).toBe("");
+    expect([...select().options].map((option) => [option.value, option.textContent])).toEqual([
+      ["", "freeDayNone"],
+      ["1", "1"],
+      ["2", "2"],
+      ["3", "3"],
+      ["4", "4"],
+      ["5", "5"],
+      ["6", "6"],
+      ["7", "7"],
+    ]);
+  });
+
+  it("says where it is chosen that it is a wish, not a rule", () => {
+    open(undefined);
+
+    const group = screen.getByRole("group", { name: "freeDayTitle" });
+    expect(group).toContainElement(select());
+    expect(group).toHaveTextContent("freeDayHint");
+  });
+
+  it("sends a wish on its own as the weekday's number", async () => {
+    const user = userEvent.setup();
+    open(undefined);
+
+    await user.selectOptions(select(), "5");
+    await user.click(save());
+
+    expect(saveMock).toHaveBeenCalledWith({
+      userId: "t-1",
+      lunchMinutes: null,
+      lunchStartTime: null,
+      lunchEndTime: null,
+      minDailyRestMinutes: null,
+      maxTeachingMinutesPerDay: null,
+      preferredFreeDayOfWeek: 5,
+    });
+  });
+
+  it("is taken away by choosing no wish, while the rest of the row is kept", async () => {
+    const user = userEvent.setup();
+    open(rule({ preferredFreeDayOfWeek: 5 }));
+
+    await user.selectOptions(select(), "");
+    await user.click(save());
+
+    expect(saveMock).toHaveBeenCalledWith(
+      expect.objectContaining({ lunchMinutes: 30, minDailyRestMinutes: 660, preferredFreeDayOfWeek: null }),
+    );
   });
 });
 
@@ -430,43 +645,8 @@ describe("the rest field read back as hours", () => {
   });
 });
 
-describe("the summary beside the form", () => {
-  it("spells out that a teacher has no rule", () => {
-    render(<TeacherWorkTimeSummary rule={undefined} />);
-
-    expect(screen.getByText("noRule")).toBeInTheDocument();
-  });
-
-  it("spells it out for a row of four nulls too", () => {
-    render(
-      <TeacherWorkTimeSummary
-        rule={rule({
-          lunchMinutes: null,
-          lunchStartTime: null,
-          lunchEndTime: null,
-          minDailyRestMinutes: null,
-        })}
-      />,
-    );
-
-    expect(screen.getByText("noRule")).toBeInTheDocument();
-  });
-
-  it("reads a full rule back without the seconds", () => {
-    render(<TeacherWorkTimeSummary rule={rule()} />);
-
-    expect(screen.getByText("summaryLunch(30|10:30|13:30)")).toBeInTheDocument();
-    expect(screen.getByText("summaryRestHours(11)")).toBeInTheDocument();
-  });
-
-  it("names only the half a rest-only rule sets", () => {
-    render(
-      <TeacherWorkTimeSummary
-        rule={rule({ lunchMinutes: null, lunchStartTime: null, lunchEndTime: null })}
-      />,
-    );
-
-    expect(screen.queryByText(/summaryLunch/)).toBeNull();
-    expect(screen.getByText("summaryRestHours(11)")).toBeInTheDocument();
-  });
-});
+/*
+ * The summary beside the form is its own module now, drawn on every staff row
+ * while this dialog is fetched only when opened: its tests are in
+ * teacher-work-time-summary.test.tsx.
+ */

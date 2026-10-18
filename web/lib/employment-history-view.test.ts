@@ -21,6 +21,7 @@ const labels: HistoryLabels = {
       employmentForm: "Anställningsform",
       firstTeacherPercent: "Förstelärare",
       lecturerPercent: "Lektor",
+      maxTeachingDaysPerWeek: "Undervisningsdagar per vecka",
       label: "Benämning",
       minutesPerWeek: "Tid",
       countsAsTeaching: "Räknas",
@@ -128,6 +129,22 @@ describe("historyLines", () => {
         labels,
       ),
     ).toEqual(["Anställningsform: — → Visstid", "Förstelärare: 10 % → 20 %", "Lektor: 5 % → —"]);
+  });
+
+  it("says the undervisningsdagar as the count of days, and no limit as empty (Lärarens dag)", () => {
+    // HR like the percentages: a reader without HR-läs is never handed the
+    // change at all (the gateway drops it), so there is no "dolt" line to draw.
+    expect(
+      historyLines(
+        entry({
+          changes: [{ field: "maxTeachingDaysPerWeek", before: 5, after: 4 }],
+        }),
+        labels,
+      ),
+    ).toEqual(["Undervisningsdagar per vecka: 5 → 4"]);
+    expect(
+      historyLines(entry({ changes: [{ field: "maxTeachingDaysPerWeek", before: 4, after: null }] }), labels),
+    ).toEqual(["Undervisningsdagar per vecka: 4 → —"]);
   });
 
   it("states what an uppdrag was created with and what a deleted one had", () => {

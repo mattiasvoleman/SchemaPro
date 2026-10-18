@@ -1040,6 +1040,34 @@ describe("a re-teachered lesson under the staffing policy", () => {
     expect(options.description).toBe("engineMessages.DISTRIBUTION_TOO_MANY_ON_DAY(Slöjd för 5.1|1|2|1)");
   });
 
+  it("says a breach of the teacher's day the same way, the days masked for a reader without HR-läs", async () => {
+    // Lärarens dag: the gateway warns, never refuses, and words the days per
+    // reader. The page adds no code for it — savedToast renders any code. The
+    // lesson is named in the sentence (`requirement`, as a distribution
+    // warning names it): on a block card the role alone could be any member's.
+    const TOO_LONG = {
+      code: "TEACHER_DAY_TOO_LONG",
+      params: { role: "LEAD", requirement: "Slöjd för 5.1", day: 1, minutes: 330, cap: 300 },
+    };
+    const TOO_MANY_HIDDEN = {
+      code: "TEACHER_WEEK_TOO_MANY_DAYS_HIDDEN",
+      params: { role: "LEAD", requirement: "Slöjd för 5.1" },
+    };
+    noMutation.mutateAsync.mockResolvedValue({
+      id: "l-slojd",
+      propagatedLessons: 0,
+      warnings: [TOO_LONG, TOO_MANY_HIDDEN],
+    });
+
+    await saveSlojd();
+
+    await waitFor(() => expect(toasts.warning).toHaveBeenCalledTimes(1));
+    const [, options] = toasts.warning.mock.calls[0]!;
+    expect(options.description).toBe(
+      "engineMessages.TEACHER_DAY_TOO_LONG(LEAD|Slöjd för 5.1|1|330|300) engineMessages.TEACHER_WEEK_TOO_MANY_DAYS_HIDDEN(LEAD|Slöjd för 5.1)",
+    );
+  });
+
   it("warns about a lesson placed by hand as it is created, too", async () => {
     // Duplicated, so the new lesson's subject and class are filled in.
     const TOO_CLOSE = {

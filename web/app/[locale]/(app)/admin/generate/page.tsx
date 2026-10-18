@@ -402,6 +402,22 @@ export default function GeneratePage() {
   const refusedPartlyLocked =
     solverStatus === "INFEASIBLE" &&
     job?.conflictSummaryCode === "BLOCK_PARTLY_LOCKED_SUMMARY";
+  /**
+   * The wishes a laid week could not keep (Lärarens dag): a teacher's free
+   * day the generator gave up for the rest of the week. Not conflicts — the
+   * run succeeded — so they get a heading of their own under the result. A
+   * gateway before them sends no field, which is none.
+   */
+  const notes = job?.notes ?? [];
+  /**
+   * Whose post a days refusal is about, for a reader with HR-läs (Lärarens
+   * dag): the sentence's `limit` is a post's id, which no screen resolves, so
+   * the gateway names the teachers beside it, and they are drawn under the
+   * sentence as a conflict's resourceNames are. Empty for every other reader
+   * and every other sentence; absent from an older gateway.
+   */
+  const errorNames = job?.errorNames ?? [];
+  const summaryNames = job?.conflictSummaryNames ?? [];
 
   /** When a run was started, in the app's language — not the browser's. */
   const runDate = useMemo(
@@ -697,11 +713,18 @@ export default function GeneratePage() {
           description={
             job.status === "FAILED"
               ? job.error
-                ? engineText({
-                    code: job.errorCode,
-                    message: job.error,
-                    params: job.errorParams,
-                  })
+                ? (
+                    <>
+                      <p>
+                        {engineText({
+                          code: job.errorCode,
+                          message: job.error,
+                          params: job.errorParams,
+                        })}
+                      </p>
+                      {errorNames.length > 0 ? <p className="font-medium">{errorNames.join(", ")}</p> : null}
+                    </>
+                  )
                 : tCommon("error")
               : refusedUnstaffed
                 ? t("statusUnstaffed")
@@ -754,13 +777,16 @@ export default function GeneratePage() {
                 {t("conflicts")}
               </h3>
               {job.conflictSummary ? (
-                <p className="text-sm text-muted-foreground">
-                  {engineText({
-                    code: job.conflictSummaryCode,
-                    message: job.conflictSummary,
-                    params: job.conflictSummaryParams,
-                  })}
-                </p>
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    {engineText({
+                      code: job.conflictSummaryCode,
+                      message: job.conflictSummary,
+                      params: job.conflictSummaryParams,
+                    })}
+                  </p>
+                  {summaryNames.length > 0 ? <p className="text-sm font-medium">{summaryNames.join(", ")}</p> : null}
+                </>
               ) : null}
               <ul className="space-y-2">
                 {job.conflicts.map((conflict, index) => (
@@ -784,6 +810,27 @@ export default function GeneratePage() {
             </section>
           ) : job.status === "SUCCEEDED" && solverStatus === "INFEASIBLE" ? (
             <p className="text-sm text-muted-foreground">{t("noConflicts")}</p>
+          ) : null}
+
+          {/*
+            Plain lines rather than the conflicts' warning boxes, and no
+            category badge: nothing here stopped the run or needs fixing
+            before the next one. Each sentence is the engine catalogue's
+            through engineText, so it reads in the reader's language and
+            falls back to the gateway's English like every refusal above.
+          */}
+          {job.status === "SUCCEEDED" && notes.length > 0 ? (
+            <section aria-labelledby="last-run-notes" className="space-y-2">
+              <h3 id="last-run-notes" className="text-sm font-semibold">
+                {t("notesTitle")}
+              </h3>
+              <p className="max-w-prose text-sm text-muted-foreground">{t("notesHint")}</p>
+              <ul className="list-disc space-y-1 pl-5 text-sm">
+                {notes.map((note, index) => (
+                  <li key={index}>{engineText(note)}</li>
+                ))}
+              </ul>
+            </section>
           ) : null}
         </SectionCard>
       ) : null}

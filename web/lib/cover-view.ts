@@ -222,17 +222,8 @@ export function errorParams(error: unknown): Record<string, string | number> {
   return error instanceof ApiError ? (error.params ?? {}) : {};
 }
 
-/**
- * A lookup that reads the cover's own sentences first and the engine
- * catalogue second — the old picker's warnings mix STAFF_* (engine) with
- * COVER_* (gateway), and engineMessages may only hold what the engine sends.
- */
-export function chainLookup(first: MessageLookup, second: MessageLookup): MessageLookup {
-  const lookup = ((key: string, values?: Record<string, string | number>) =>
-    first.has(key) ? first(key, values) : second(key, values)) as MessageLookup;
-  lookup.has = (key: string) => first.has(key) || second.has(key);
-  return lookup;
-}
+/** The cover's sentences first, the engine's second: see lib/chain-lookup.ts. */
+export { chainLookup } from "@/lib/chain-lookup";
 
 /** The built-in categories the gateway seeds (teacher-absences.service.ts BUILTINS). */
 export const BUILTIN_REASONS = ["SICK", "CHILD_CARE", "WORK_TRAVEL", "PROFESSIONAL_DEVELOPMENT", "OTHER"] as const;

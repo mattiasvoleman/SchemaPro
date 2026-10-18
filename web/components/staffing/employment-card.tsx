@@ -12,6 +12,8 @@ import {
   NOTE_MAX,
   SIGNATURE_MAX,
   TARGET_MINUTES_MAX,
+  TEACHING_DAYS_MAX,
+  TEACHING_DAYS_MIN,
   employmentDraftToBody,
   employmentToDraft,
   parseDecimal,
@@ -129,6 +131,13 @@ function derived(
  * THE POST FROM A DATE (migration 20261022120000) is a timeline under the
  * summary — EmploymentPeriods — once there is a post to change: the base
  * row's figures above are the post where no period says otherwise.
+ *
+ * UNDERVISNINGSDAGAR PER VECKA (Lärarens dag, migration 20261123090000) is
+ * deltid in days, on the post and not on its periods, and HR like the
+ * percentages: the gateway nulls it for a reader without HR-läs, and the
+ * card says it only in the visible branch. Not in the hidden one, not even
+ * as "dolt" — a line drawn only for the posts that have a limit would say
+ * which teachers have one.
  */
 export function EmploymentCard({
   teacher,
@@ -266,6 +275,9 @@ export function EmploymentCard({
             ) : null}
             {visible.lecturerPercent ? (
               <li>{t("employmentSummaryLecturer", { percent: visible.lecturerPercent })}</li>
+            ) : null}
+            {visible.maxTeachingDaysPerWeek != null ? (
+              <li>{t("employmentSummaryTeachingDays", { days: visible.maxTeachingDaysPerWeek })}</li>
             ) : null}
             <li>
               {storedTarget === null
@@ -413,6 +425,27 @@ export function EmploymentCard({
               onChange={(event) => patch({ teachingTargetMinutesPerWeek: event.target.value })}
             />
             <p className="text-xs text-muted-foreground">{t("targetOverrideHint")}</p>
+          </div>
+          {/*
+            Empty is "no limit", said in the field itself rather than as a
+            number: there is no count of days a post has by default, and a
+            stored 5 on a five-day school would be a hard rule that changes
+            nothing until the school starts teaching on a Saturday.
+          */}
+          <div className="space-y-1.5">
+            <Label htmlFor={`emp-days-${teacher.id}`}>{t("teachingDaysPerWeek")}</Label>
+            <Input
+              id={`emp-days-${teacher.id}`}
+              type="number"
+              inputMode="numeric"
+              min={TEACHING_DAYS_MIN}
+              max={TEACHING_DAYS_MAX}
+              step={1}
+              placeholder={t("teachingDaysNone")}
+              value={draft.maxTeachingDaysPerWeek}
+              onChange={(event) => patch({ maxTeachingDaysPerWeek: event.target.value })}
+            />
+            <p className="text-xs text-muted-foreground">{t("teachingDaysHint")}</p>
           </div>
           <div className="space-y-1.5">
             <Label htmlFor={`emp-note-${teacher.id}`}>

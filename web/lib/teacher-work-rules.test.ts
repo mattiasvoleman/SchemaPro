@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import en from "@/messages/en.json";
 import sv from "@/messages/sv.json";
 import {
+  DAY_CAP_MINUTES_MAX,
+  DAY_CAP_MINUTES_MIN,
   EMPTY_DRAFT,
   LUNCH_MINUTES_MAX,
   LUNCH_MINUTES_MIN,
@@ -9,10 +11,8 @@ import {
   REST_MINUTES_MIN,
   SUGGESTED_DRAFT,
   draftToBody,
-  hasAnyRule,
   isEmptyDraft,
   ruleToDraft,
-  splitHours,
   validateDraft,
   type TeacherWorkRule,
   type WorkRuleDraft,
@@ -25,7 +25,7 @@ import {
  * Every other rule this app sends the solver is a closing — an hour a room or a
  * teacher cannot be used — and an absent row there means "no restriction". Here
  * an absent NUMBER means the same thing while a present 0 would be a promise the
- * solver has to keep and cannot, so each of the four fields has to survive the
+ * solver has to keep and cannot, so each of the six fields has to survive the
  * round trip as null rather than as a number. A regression would not throw: the
  * form would look right, the save would succeed, and the school would find out
  * when a week it has always been able to generate came back refused.
@@ -54,6 +54,8 @@ const rule = (overrides: Partial<TeacherWorkRule> = {}): TeacherWorkRule => ({
   lunchStartTime: "10:30:00",
   lunchEndTime: "13:30:00",
   minDailyRestMinutes: 660,
+  maxTeachingMinutesPerDay: null,
+  preferredFreeDayOfWeek: null,
   ...overrides,
 });
 
@@ -69,31 +71,43 @@ describe("an empty row", () => {
     expect(isEmptyDraft(draft({ lunchMinutes: "  ", minDailyRestMinutes: " " }))).toBe(true);
   });
 
-  it("sends four nulls, never four zeroes", () => {
+  it("sends six nulls, never six zeroes", () => {
     expect(draftToBody(EMPTY_DRAFT)).toEqual({
       lunchMinutes: null,
       lunchStartTime: null,
       lunchEndTime: null,
       minDailyRestMinutes: null,
+      maxTeachingMinutesPerDay: null,
+      preferredFreeDayOfWeek: null,
     });
   });
 
   it("is what a teacher with no stored row starts from", () => {
     expect(ruleToDraft(undefined)).toEqual(EMPTY_DRAFT);
-    expect(hasAnyRule(undefined)).toBe(false);
   });
 
-  it("is what a row of four nulls reads back as", () => {
+  it("is what a row of nulls reads back as", () => {
     // Legal by the table's CHECK, so it can exist however the row was written;
-    // it must not render as a rule.
+    // it must not render as a rule. hasAnyRule's half of this is in
+    // components/schedule/teacher-work-time-summary.test.tsx.
     const nulls = rule({
       lunchMinutes: null,
       lunchStartTime: null,
       lunchEndTime: null,
       minDailyRestMinutes: null,
     });
-    expect(hasAnyRule(nulls)).toBe(false);
     expect(isEmptyDraft(ruleToDraft(nulls))).toBe(true);
+  });
+
+  it("is not empty while it holds only a cap, or only a wish", () => {
+    /*
+     * The dialog DELETES the row when the draft is empty. A cap or a wish
+     * that did not count here would be deleted with the lunch somebody
+     * cleared beside it, and the generator would lose a rule nobody took away.
+     */
+    expect(isEmptyDraft(draft({ maxTeachingMinutesPerDay: "300" }))).toBe(false);
+    expect(isEmptyDraft(draft({ preferredFreeDayOfWeek: "5" }))).toBe(false);
+    expect(isEmptyDraft(draft({ maxTeachingMinutesPerDay: " ", preferredFreeDayOfWeek: " " }))).toBe(true);
   });
 });
 
@@ -249,6 +263,8 @@ describe("the rest rule, which stands on its own", () => {
       lunchStartTime: null,
       lunchEndTime: null,
       minDailyRestMinutes: 660,
+      maxTeachingMinutesPerDay: null,
+      preferredFreeDayOfWeek: null,
     });
   });
 
@@ -302,6 +318,8 @@ describe("the round trip", () => {
       lunchStartTime: "10:30",
       lunchEndTime: "13:30",
       minDailyRestMinutes: "660",
+      maxTeachingMinutesPerDay: "",
+      preferredFreeDayOfWeek: "",
     });
   });
 
@@ -311,6 +329,8 @@ describe("the round trip", () => {
       lunchStartTime: "10:30",
       lunchEndTime: "13:30",
       minDailyRestMinutes: 660,
+      maxTeachingMinutesPerDay: null,
+      preferredFreeDayOfWeek: null,
     });
   });
 
@@ -320,13 +340,36 @@ describe("the round trip", () => {
       lunchStartTime: null,
       lunchEndTime: null,
     });
-    expect(hasAnyRule(restOnly)).toBe(true);
     expect(draftToBody(ruleToDraft(restOnly))).toEqual({
       lunchMinutes: null,
       lunchStartTime: null,
       lunchEndTime: null,
       minDailyRestMinutes: 660,
+      maxTeachingMinutesPerDay: null,
+      preferredFreeDayOfWeek: null,
     });
+  });
+
+  it("carries a stored cap and wish through the form and back as numbers", () => {
+    // The form names every key, so a cap it had not read would be sent as
+    // null by the next lunch somebody saved, and the cap would be gone.
+    const stored = rule({ maxTeachingMinutesPerDay: 270, preferredFreeDayOfWeek: 5 });
+    expect(ruleToDraft(stored)).toMatchObject({
+      maxTeachingMinutesPerDay: "270",
+      preferredFreeDayOfWeek: "5",
+    });
+    expect(draftToBody(ruleToDraft(stored))).toMatchObject({
+      maxTeachingMinutesPerDay: 270,
+      preferredFreeDayOfWeek: 5,
+    });
+  });
+
+  it("opens a row without the two newer keys as nothing said, not as the word undefined", () => {
+    const { maxTeachingMinutesPerDay: _cap, preferredFreeDayOfWeek: _day, ...older } = rule();
+    const draftOf = ruleToDraft(older as TeacherWorkRule);
+    expect(draftOf).toMatchObject({ maxTeachingMinutesPerDay: "", preferredFreeDayOfWeek: "" });
+    // And the lunch on the same row stays savable.
+    expect(validateDraft(draftOf)).toBeNull();
   });
 
   it("names every key in the body, including the null ones", () => {
@@ -340,7 +383,9 @@ describe("the round trip", () => {
       "lunchEndTime",
       "lunchMinutes",
       "lunchStartTime",
+      "maxTeachingMinutesPerDay",
       "minDailyRestMinutes",
+      "preferredFreeDayOfWeek",
     ]);
   });
 });
@@ -352,6 +397,17 @@ describe("the suggestion", () => {
       lunchStartTime: "10:30",
       lunchEndTime: "13:30",
       minDailyRestMinutes: "660",
+      maxTeachingMinutesPerDay: "",
+      preferredFreeDayOfWeek: "",
+    });
+  });
+
+  it("never carries a cap or a free day", () => {
+    // A suggested cap would be a hard rule nobody chose: the next run of a
+    // school that only wanted the lunch would be refused over it.
+    expect(draftToBody(SUGGESTED_DRAFT)).toMatchObject({
+      maxTeachingMinutesPerDay: null,
+      preferredFreeDayOfWeek: null,
     });
   });
 
@@ -360,17 +416,78 @@ describe("the suggestion", () => {
   });
 });
 
-describe("minutes read back as hours", () => {
-  it("splits a whole number of hours", () => {
-    expect(splitHours(660)).toEqual({ hours: 11, minutes: 0 });
+describe("the day's cap, which stands on its own", () => {
+  it("is allowed with nothing else on the row, and sent as a number", () => {
+    expect(validateDraft(draft({ maxTeachingMinutesPerDay: "270" }))).toBeNull();
+    expect(draftToBody(draft({ maxTeachingMinutesPerDay: " 270 " }))).toEqual({
+      lunchMinutes: null,
+      lunchStartTime: null,
+      lunchEndTime: null,
+      minDailyRestMinutes: null,
+      maxTeachingMinutesPerDay: 270,
+      preferredFreeDayOfWeek: null,
+    });
   });
 
-  it("splits a remainder", () => {
-    expect(splitHours(570)).toEqual({ hours: 9, minutes: 30 });
+  it("accepts both ends of the gateway's range", () => {
+    expect([DAY_CAP_MINUTES_MIN, DAY_CAP_MINUTES_MAX]).toEqual([30, 720]);
+    expect(validateDraft(draft({ maxTeachingMinutesPerDay: "30" }))).toBeNull();
+    expect(validateDraft(draft({ maxTeachingMinutesPerDay: "720" }))).toBeNull();
   });
 
-  it("handles less than an hour", () => {
-    expect(splitHours(45)).toEqual({ hours: 0, minutes: 45 });
+  it("refuses a cap under half an hour or over twelve hours, naming the range", () => {
+    for (const value of ["25", "725", "0", "-30", "300.5", "fem"]) {
+      expect(validateDraft(draft({ maxTeachingMinutesPerDay: value }))).toEqual({
+        reason: "dayCapOutOfRange",
+        min: 30,
+        max: 720,
+      });
+    }
+  });
+
+  it("refuses a cap off the engine's five-minute grid", () => {
+    expect(validateDraft(draft({ maxTeachingMinutesPerDay: "272" }))).toEqual({
+      reason: "dayCapOffGrid",
+      step: 5,
+    });
+  });
+
+  it("says a number out of range is out of range, not off the grid", () => {
+    // 3001 fails both rules; the reader typed a number, so the message is
+    // about the number.
+    expect(validateDraft(draft({ maxTeachingMinutesPerDay: "3001" }))).toMatchObject({
+      reason: "dayCapOutOfRange",
+    });
+  });
+
+  it("is reported even when the lunch and the rest beside it are fine", () => {
+    expect(
+      validateDraft(draft({ ...fullLunch, minDailyRestMinutes: "660", maxTeachingMinutesPerDay: "20" })),
+    ).toMatchObject({ reason: "dayCapOutOfRange" });
+  });
+});
+
+describe("the free-day wish", () => {
+  it("takes every ISO weekday, Monday to Sunday, and sends it as a number", () => {
+    for (const day of [1, 2, 3, 4, 5, 6, 7]) {
+      expect(validateDraft(draft({ preferredFreeDayOfWeek: String(day) }))).toBeNull();
+      expect(draftToBody(draft({ preferredFreeDayOfWeek: String(day) })).preferredFreeDayOfWeek).toBe(day);
+    }
+  });
+
+  it("refuses a value the select never offers rather than sending it as null", () => {
+    // A null in the body would clear a stored wish nobody chose to clear.
+    for (const value of ["0", "8", "1.5", "fredag"]) {
+      expect(validateDraft(draft({ preferredFreeDayOfWeek: value }))).toEqual({
+        reason: "freeDayOutOfRange",
+      });
+    }
+  });
+
+  it("is checked after the cap, in the order the dialog draws them", () => {
+    expect(
+      validateDraft(draft({ maxTeachingMinutesPerDay: "10", preferredFreeDayOfWeek: "9" })),
+    ).toMatchObject({ reason: "dayCapOutOfRange" });
   });
 });
 
@@ -394,6 +511,9 @@ describe("the refusals are translated", () => {
     lunchWindowTooNarrow: true,
     lunchWindowOffGrid: true,
     restOutOfRange: true,
+    dayCapOutOfRange: true,
+    dayCapOffGrid: true,
+    freeDayOutOfRange: true,
   };
 
   it.each(Object.keys(REASONS))("%s reads in Swedish and in English", (reason) => {
