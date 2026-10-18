@@ -236,6 +236,61 @@ describe('skolenheter', () => {
     expect(before).toContain(U79);
     expect(await answers(stated.service)).toBe(before);
   });
+
+  it("a tioårig läsår moves every relationship with the class: memberships, a guardian's responsibleFor and the mentor's duty", async () => {
+    const { world, service } = split();
+    const by = async (organisation: string, type: string) =>
+      ids(await service.listPersons(caller(), { 'relationship.organisation': organisation, 'relationship.entity.type': type })).sort();
+    // Nioårig: 7A and 8B are both 7–9's; Ma7, without an årskurs, the first unit's.
+    expect(await by(U79, 'groupMembership')).toEqual([W.p1Source, W.p2, W.p3, W.p4].sort());
+    expect(await by(U79, 'responsibleFor.enrolment')).toEqual([W.g1]);
+    expect(await by(U79, 'duty')).toEqual([W.t1]);
+    tioarig(world);
+    // 7A — Palle, Petra, and Pelle before his move — is F–6's; 8B stays 7–9's.
+    expect(await by(U79, 'groupMembership')).toEqual([W.p3, W.p4].sort());
+    expect(await by(W.org, 'groupMembership')).toEqual([W.p1Source, W.p2, W.p3, W.p4].sort());
+    // Gun answers for Palle in 7A, and Tove mentors it.
+    expect(await by(U79, 'responsibleFor.enrolment')).toEqual([]);
+    expect(await by(W.org, 'responsibleFor.enrolment')).toEqual([W.g1]);
+    expect(await by(U79, 'duty')).toEqual([]);
+    expect(await by(W.org, 'duty')).toEqual([W.t1]);
+  });
+
+  it("one answer holds both läsår's classes, each read in its own numbering: last year's nioåriga 7C and its pupil at 7–9 beside this tioårig 7A at F–6", async () => {
+    const C7C = '30000000-0000-4000-8000-000000000098';
+    const { world, service } = split();
+    world.groups.push({
+      id: C7C, schoolId: W.school, academicYearId: W.pastYear, name: '7C', kind: 'CLASS', gradeLevel: 7, ss12000Id: null,
+      createdAt: new Date('2025-05-01T08:00:00Z'), updatedAt: new Date('2025-05-02T08:00:00Z'),
+    });
+    // Petra was in last year's 7C until the summer.
+    world.enrollments.push({
+      schoolId: W.school, studentId: W.p2, academicYearId: W.pastYear, studentGroupId: C7C, gradeLevel: 7,
+      validFrom: new Date('2025-08-18T00:00:00Z'), validTo: new Date('2026-06-13T00:00:00Z'),
+    });
+    tioarig(world);
+    const placed = Object.fromEntries((await service.listGroups(caller(), {})).data.map((group) => [group.id, (group['organisation'] as { id: string }).id]));
+    expect(placed).toEqual({ [C7C]: U79, [W.c6a]: W.org, [W.c7aSource]: W.org, [W.c8b]: U79, [W.ma7]: W.org });
+    expect(ids(await service.listGroups(caller(), { organisation: U79 })).sort()).toEqual([C7C, W.c8b].sort());
+    // Petra's 7C membership is 7–9's, her 7A one F–6's.
+    const members = async (organisation: string) =>
+      ids(await service.listPersons(caller(), { 'relationship.organisation': organisation, 'relationship.entity.type': 'groupMembership' })).sort();
+    expect(await members(U79)).toEqual([W.p2, W.p3, W.p4].sort());
+    expect(await members(W.org)).toEqual([W.p1Source, W.p2, W.p3, W.p4].sort());
+  });
+
+  it("derives skolformer in the active läsår's numbering: a tioårig läsår before or after it reads no row of 10", async () => {
+    const SP_PLAN = '11000000-0000-4000-8000-000000000003';
+    const { world, service } = split();
+    world.localTimplans.push({ id: SP_PLAN, schoolId: W.school, schoolForm: 'SPECIALSKOLA' });
+    world.yearTimplans.push({ schoolId: W.school, academicYearId: W.year, gradeLevel: 10, localTimplanId: SP_PLAN });
+    const u79 = async () => (await service.listOrganisations(caller(), { schoolUnitCode: '22222222' })).data[0]!['schoolTypes'];
+    tioarig(world, W.pastYear);
+    tioarig(world, W.futureYear);
+    expect(await u79()).toEqual(['GR']);
+    tioarig(world, W.year);
+    expect(await u79()).toEqual(['GR', 'SP']);
+  });
 });
 
 describe('persons', () => {

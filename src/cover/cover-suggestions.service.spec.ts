@@ -3,6 +3,7 @@ import { recordedReads } from '../../test/utils/recorded-reads';
 import type { PrismaService } from '../database/prisma.service';
 import type { CoverService } from './cover.service';
 import { basisOf, CoverSuggestionsService } from './cover-suggestions.service';
+import { attendanceSpan } from '../staffing/staffing-enforcement';
 import { yearTargetMinutesPerWeek } from '../staffing/teacher-load';
 
 jest.mock('../staffing/staffing-enforcement', () => ({
@@ -427,6 +428,84 @@ describe('CoverSuggestionsService', () => {
     await expect(service.candidates(LESSON, testUser())).rejects.toThrow('Lesson not found.');
   });
 
+  /*
+   * A tioårig läsår (SFS 2025:729). The lesson's span is its year's — a 10A
+   * is 10 — and the behörighet is stated in NIOARIG, so strongestOn is asked
+   * of the span read through the year's numbering: S's "7–9" holds the
+   * tioårig 10A (NIOARIG 9), not its 11 (NIOARIG 10) nor its 7 (NIOARIG 6).
+   * The QUAL_ reason names the årskurs as the year numbers it. A nioårig
+   * läsår ranks as it always did. Only the year row's numbering is read for
+   * this; its dates stay the fixture's.
+   */
+  const yearNumbered = (gradeNumbering: 'NIOARIG' | 'TIOARIG' | undefined, grade: number) => {
+    const row: Record<string, unknown> = {
+      id: 'year',
+      isActive: true,
+      predecessorId: null,
+      startDate: new Date('2026-08-17T00:00:00.000Z'),
+      endDate: new Date('2027-06-11T00:00:00.000Z'),
+      ...(gradeNumbering ? { gradeNumbering } : {}),
+    };
+    // Answered by its select, as the database does: a select without the numbering reads nioårig.
+    tx.academicYear.findFirst.mockImplementation((query?: { select?: Record<string, boolean> }) =>
+      Promise.resolve(
+        query?.select
+          ? Object.fromEntries(Object.keys(query.select).filter((key) => key in row).map((key) => [key, row[key]]))
+          : row,
+      ),
+    );
+    jest.mocked(attendanceSpan).mockResolvedValue({ min: grade, max: grade });
+  };
+  // The module mock's span, put back for the tests that rely on its 7.
+  afterEach(() => jest.mocked(attendanceSpan).mockResolvedValue({ min: 7, max: 7 }));
+
+  describe('in a tioårig läsår', () => {
+    const candidateS = async () =>
+      (await service.candidates(LESSON, testUser())).candidates.find((c) => c.userId === S)!;
+    const qualReasons = <R extends { code: string }>(candidate: { reasons: R[] }) =>
+      candidate.reasons.filter((r) => r.code.startsWith('QUAL_'));
+
+    it('ranks a 7–9 behörighet on a tioårig 10A as LEGITIMATION, the reason naming åk 10', async () => {
+      yearNumbered('TIOARIG', 10);
+      const s = await candidateS();
+      expect(s.qualificationKind).toBe('LEGITIMATION');
+      expect(qualReasons(s)).toEqual([
+        expect.objectContaining({ code: 'QUAL_LEGITIMATION', params: { subject: 'Matematik', grades: '10' } }),
+      ]);
+    });
+
+    it('gives a 7–9 behörighet nothing on a tioårig 11, nor on a tioårig 7', async () => {
+      for (const grade of [11, 7]) {
+        yearNumbered('TIOARIG', grade);
+        const s = await candidateS();
+        expect(s.qualificationKind).toBeNull();
+        expect(qualReasons(s)).toEqual([]);
+      }
+    });
+
+    it('a nioårig läsår, the numbering stored or absent, as it always did: nothing on its 10, LEGITIMATION on its 7', async () => {
+      for (const numbering of ['NIOARIG', undefined] as const) {
+        yearNumbered(numbering, 10);
+        expect((await candidateS()).qualificationKind).toBeNull();
+
+        yearNumbered(numbering, 7);
+        const s = await candidateS();
+        expect(s.qualificationKind).toBe('LEGITIMATION');
+        expect(qualReasons(s)[0]?.params).toEqual({ subject: 'Matematik', grades: '7' });
+      }
+    });
+
+    it('reads the numbering with the class’s year, in the one read that gives its id and dates', async () => {
+      yearNumbered('TIOARIG', 10);
+      await candidateS();
+      expect(tx.academicYear.findFirst).toHaveBeenCalledTimes(1);
+      expect(tx.academicYear.findFirst).toHaveBeenCalledWith({
+        where: { studentGroups: { some: { id: '7a' } } },
+        select: { id: true, isActive: true, predecessorId: true, startDate: true, endDate: true, gradeNumbering: true },
+      });
+    });
+  });
+
   describe('Fördela dagen', () => {
     const pair = {
       absenceId: ABSENCE,
@@ -483,6 +562,25 @@ describe('CoverSuggestionsService', () => {
       // Nothing open: nothing proposed, nothing more read.
       tx.$queryRaw.mockResolvedValue([{ ...pair, lessonStatus: 'CANCELLED' }]);
       expect((await service.proposal(D, [], testUser())).items).toEqual([]);
+    });
+
+    it('scores a tioårig 10A’s behörighet in NIOARIG as the candidates do, the reason naming åk 10; its 11 gets none', async () => {
+      tx.$queryRaw.mockResolvedValue([pair]);
+      const qualOfS = async () =>
+        (await service.proposal(D, [], testUser())).items
+          .find((item) => item.userId === S)!
+          .reasons.filter((r) => r.code.startsWith('QUAL_'));
+
+      yearNumbered('TIOARIG', 10);
+      expect(await qualOfS()).toEqual([
+        expect.objectContaining({ code: 'QUAL_LEGITIMATION', params: { subject: 'Matematik', grades: '10' } }),
+      ]);
+      // S is still the one proposed (the pool is LAST_RESORT), with no behörighet to show.
+      yearNumbered('TIOARIG', 11);
+      expect(await qualOfS()).toEqual([]);
+      // The same 10 in a nioårig läsår is past the 7–9.
+      yearNumbered('NIOARIG', 10);
+      expect(await qualOfS()).toEqual([]);
     });
 
     it('records the substitutes it would book as EMPLOYMENT (each comes with their counter and load), and the absences, ids only, not at all', async () => {

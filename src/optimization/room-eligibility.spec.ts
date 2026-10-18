@@ -379,6 +379,23 @@ describe('roomNeedsOf', () => {
       });
     });
 
+    it('reads specialskolans åk 11 as 10, and twelve as the “and above” it is in both', async () => {
+      // A room for 10–12 is nioårig 10–12: the tioårig 11 it takes is one
+      // down, and the 12 the bounds run to is no class one down.
+      const rosters = await loadRosters(schoolOf([], []).tx, CURRENT, [CLASS_8A, CLASS_9A], [
+        { id: CLASS_8A, gradeLevel: 11 },
+        { id: CLASS_9A, gradeLevel: 12 },
+      ]);
+
+      expect(roomNeedsOf(rosters, { groupIds: [CLASS_8A] }, { requiredRoomTypeId: null }, 'TIOARIG')).toMatchObject({
+        minGradeLevel: 10,
+        maxGradeLevel: 10,
+      });
+      expect(
+        roomNeedsOf(rosters, { groupIds: [CLASS_8A, CLASS_9A] }, { requiredRoomTypeId: null }, 'TIOARIG'),
+      ).toMatchObject({ minGradeLevel: 10, maxGradeLevel: 12 });
+    });
+
     it('reads a nioårig läsår as it always did, named or by default', async () => {
       const rosters = await rostersFor([CLASS_7A, MA]);
 

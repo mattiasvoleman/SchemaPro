@@ -3388,6 +3388,72 @@ describe('MasterLessonsService', () => {
         ).resolves.toMatchObject({ warnings: [] });
         expect(tx.teacherSubjectQualification.findMany).not.toHaveBeenCalled();
       });
+
+      /*
+       * A tioårig läsår (SFS 2025:729). The PATCH hands the check neither a
+       * window nor a numbering, so the läsår is read once for both, and the
+       * class's årskurs is read in NIOARIG through it: a 7–9 teacher on a 10A
+       * is the 9 she holds; on an 11 the refusal names åk 11, as the läsår
+       * numbers it. A nioårig läsår is judged as it always was.
+       */
+      describe('in a tioårig läsår', () => {
+        const yearNumbered = (gradeNumbering: 'NIOARIG' | 'TIOARIG', grade: number) => {
+          const row: Record<string, unknown> =
+            gradeNumbering === 'TIOARIG'
+              ? { startDate: day('2028-08-21'), endDate: day('2029-06-15'), gradeNumbering }
+              : { startDate: day('2026-08-17'), endDate: day('2027-06-11'), gradeNumbering };
+          // Answered by its select: a select without the numbering reads nioårig.
+          tx.academicYear.findUnique.mockImplementation((query: { select: Record<string, boolean> }) =>
+            Promise.resolve(Object.fromEntries(Object.keys(query.select).map((key) => [key, row[key]]))),
+          );
+          tx.studentGroup.findMany.mockResolvedValue([{ id: GROUP_ID, gradeLevel: grade }]);
+        };
+        const holdsSevenToNine = () => [{ ...someoneElses[0], userId: NEW_TEACHER_ID }];
+
+        it('REFUSE: re-teachers a 10A to a teacher holding 7–9, warning of nothing, the numbering read with the year', async () => {
+          arrangeUpdate({}, { teacherId: NEW_TEACHER_ID });
+          arrangePolicy('REFUSE', holdsSevenToNine());
+          yearNumbered('TIOARIG', 10);
+
+          await expect(
+            service.update(LESSON_ID, { teacherId: NEW_TEACHER_ID }, testUser()),
+          ).resolves.toMatchObject({ warnings: [] });
+          expect(tx.masterLesson.update).toHaveBeenCalledTimes(1);
+          expect(tx.academicYear.findUnique).toHaveBeenCalledTimes(1);
+          expect(tx.academicYear.findUnique).toHaveBeenCalledWith({
+            where: { id: YEAR_ID },
+            select: { startDate: true, endDate: true, gradeNumbering: true },
+          });
+        });
+
+        it('REFUSE: 409 for the same teacher on an 11, naming åk 11, and the lesson is not touched', async () => {
+          arrangeUpdate({}, { teacherId: NEW_TEACHER_ID });
+          arrangePolicy('REFUSE', holdsSevenToNine());
+          yearNumbered('TIOARIG', 11);
+
+          await expect(
+            service.update(LESSON_ID, { teacherId: NEW_TEACHER_ID }, testUser()),
+          ).rejects.toMatchObject({
+            response: {
+              code: 'STAFF_TEACHER_NOT_QUALIFIED',
+              params: { role: 'TEACHER', subject: 'Matematik', grades: '11' },
+            },
+          });
+          expect(tx.masterLesson.update).not.toHaveBeenCalled();
+        });
+
+        it('a nioårig läsår as it always did: the 7–9 teacher on a 10 is warned of, as åk 10', async () => {
+          arrangeUpdate({}, { teacherId: NEW_TEACHER_ID });
+          arrangePolicy('WARN', holdsSevenToNine());
+          yearNumbered('NIOARIG', 10);
+
+          const updated = await service.update(LESSON_ID, { teacherId: NEW_TEACHER_ID }, testUser());
+
+          expect(updated.warnings).toEqual([
+            { code: 'STAFF_TEACHER_NOT_QUALIFIED', params: { role: 'TEACHER', subject: 'Matematik', grades: '10' } },
+          ]);
+        });
+      });
     });
 
     it('removes the LEAD assignment when the teacher is cleared', async () => {

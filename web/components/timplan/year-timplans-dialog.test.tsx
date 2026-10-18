@@ -1,7 +1,8 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AcademicYear } from "@/lib/types";
+import { ProfileProvider } from "@/components/profile-context";
+import type { AcademicYear, Profile } from "@/lib/types";
 import { YearTimplansDialog } from "./year-timplans-dialog";
 
 Element.prototype.hasPointerCapture ??= () => false;
@@ -213,6 +214,36 @@ describe("YearTimplansDialog", () => {
     // The new åk 1 follows the 2028 lydelse; åk 2 (last year's förskoleklass) keeps the older total.
     expect(within(rows[0]!).queryByText(/notThisCohort/)).toBeNull();
     expect(within(rows[1]!).getByText("notThisCohort(grade(2))")).toBeInTheDocument();
+  });
+
+  // Läsbehörighet over a tioårig year: åk 10, the row the numbering adds, is
+  // as closed to a reader as the rest (disabled, so no key opens it either),
+  // and the årskull that may not follow its plan is still said, as reading.
+  it("gives a reader a tioårig year's åk 1 to åk 10 disabled and inert, the cohort mark kept to read", async () => {
+    state.plans = [{ id: "p-2028", name: "Grundskola 2028", status: "DECIDED", nationalTimplanVersionId: "v-2028" }];
+    state.saved = [
+      { gradeLevel: 1, localTimplanId: "p-2028", planName: "Grundskola 2028", planStatus: "DECIDED" },
+      { gradeLevel: 2, localTimplanId: "p-2028", planName: "Grundskola 2028", planStatus: "DECIDED" },
+    ];
+    const tioarig: AcademicYear[] = [
+      { id: "y-1", name: "2028/29", startDate: "2028-08-14", endDate: "2029-06-08", isActive: true, predecessorId: null, graduatingGradeLevel: null, gradeNumbering: "TIOARIG" },
+    ];
+    const user = userEvent.setup();
+    render(
+      <ProfileProvider profile={{} as Profile} school={null} readOnly>
+        <YearTimplansDialog open onOpenChange={() => {}} years={tioarig} initialYearId={null} />
+      </ProfileProvider>,
+    );
+    for (const grade of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
+      expect(select(grade)).toBeDisabled();
+      expect(select(grade)).toHaveAttribute("data-writes-inert", "PLANERING");
+    }
+    expect(select(1)).toHaveTextContent("Grundskola 2028");
+    expect(screen.getByText("notThisCohort(grade(2))")).toBeInTheDocument();
+    await user.click(select(10));
+    expect(screen.queryByRole("option")).toBeNull();
+    expect(screen.getByRole("button", { name: "save" })).toHaveAttribute("data-writes", "PLANERING");
+    expect(state.save.mutateAsync).not.toHaveBeenCalled();
   });
 
   it("reads a läsår's autumn term as the gateway does: a 2027/28 starting in January is HT 2027", () => {

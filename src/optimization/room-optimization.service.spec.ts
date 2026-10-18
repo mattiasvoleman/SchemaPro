@@ -797,6 +797,23 @@ describe('RoomOptimizationService', () => {
         );
       });
 
+      it('reads a lesson for two classes over at both ends', async () => {
+        // 7A's åk 10 and 7B's åk 8 share it: nioårig 9 and 7, the 7–9 a
+        // högstadiet lab takes — not the 8–10 it would refuse.
+        yearNumbered('TIOARIG');
+        groups = [
+          { id: GROUP_7A, gradeLevel: 10 },
+          { id: GROUP_7B, gradeLevel: 8 },
+        ];
+        rows[0]!.extraGroups = [{ studentGroupId: GROUP_7B }];
+        engine();
+
+        await propose();
+
+        expect(sentLesson(ELIN_FIRST)).toMatchObject({ minGradeLevel: 7, maxGradeLevel: 9 });
+        expect(sentLesson(ALEX_FIRST)).toMatchObject({ minGradeLevel: 7, maxGradeLevel: 7 });
+      });
+
       it('reads a tioårig åk 1 as the förskoleklass, and a class without a year as none', async () => {
         yearNumbered('TIOARIG');
         groups = [{ id: GROUP_7A, gradeLevel: 1 }];
