@@ -1214,9 +1214,15 @@ variant, and `mobile/app.config.ts` applies them on top of `app.json`:
 | `vardnadshavare-preview` | Rastra vårdnadshavare Test | `se.rastra.vardnadshavare` | `rastra-vardnadshavare` | internal: ad hoc on an iPhone, an APK on Android |
 | `vardnadshavare-production` | Rastra vårdnadshavare | `se.rastra.vardnadshavare` | `rastra-vardnadshavare` | store: TestFlight and Play's internal track |
 
-There is no bare `development`, `preview` or `production` profile, so an
-`eas build` or `eas submit` without `--profile` stops instead of guessing
-an app.
+There is no bare `development`, `preview` or `production` build profile,
+so `eas build` without `--profile` stops instead of guessing an app. `eas
+submit` does not stop: without `--profile` it falls back to EAS's default
+submit profile, or to the one named after the chosen build's profile. So
+always pass `--profile` to `eas submit`, or submit with the build's
+`--auto-submit`. Each submit profile names its app's bundle id, package and
+store name itself, because a standalone `eas submit` reads the app config
+without the build profile's `APP` and would otherwise see Rastra's
+(`mobile/src/config/easProfiles.test.ts` keeps the two in step).
 
 Within one app, preview and production share an identity on purpose: one
 Firebase Android app, one Apple App ID, one set of push credentials and one
@@ -1317,7 +1323,10 @@ password manager, never in this repository: the repository is public.
    It creates the project on expo.dev and writes its id and owner into
    `app.json` (`extra.eas.projectId`, `owner`). `app.config.ts` passes
    `app.json` through, which is what lets the CLI write the static file.
-   Commit the change. Both apps belong to this one project (§12), so it runs
+   The CLI writes the whole evaluated `extra`, so `app.json` also gains
+   `extra.app` (Rastra's identity) and `extra.router`: delete those two,
+   which `app.config.ts` and expo-router add on every evaluation anyway,
+   and commit the rest. Both apps belong to this one project (§12), so it runs
    once, not once per app, and all six builds carry the same id. The id is
    an identifier, not a secret, and each app asks Expo for its push token
    with it: a build made without it says "Den här versionen av appen kan
@@ -1401,7 +1410,11 @@ password manager, never in this repository: the repository is public.
    one. A development build takes its app config from the server it loads
    from, so a guardian development client is served by
    `start:vardnadshavare` only: served by `npm start`, it believes it is
-   Rastra and refuses every guardian. The two development clients cannot
+   Rastra, refuses every guardian and ends a guardian session it had
+   restored (sign in again once it is served right). `npm run ios` and the
+   other run scripts generate `mobile/ios` or `mobile/android` only when it
+   is missing, so delete both before switching a local build to the other
+   app. The two development clients cannot
    share the scheme `expo start`'s QR code opens (`exp+rastra`, from the one
    slug), so only Rastra Dev registers it, and the guardian script points
    its QR code at Rastra vårdnadshavare Dev's own scheme instead.
@@ -1754,9 +1767,10 @@ for Rastra vårdnadshavare.
    the same name. Not `--latest`: it takes the project's newest App Store
    build for the platform, whichever app that is, and the project holds both
    apps' builds. With no `ascAppId` in the submit profile's `ios` yet, the
-   first submit creates the app's record in App Store Connect. Check its
-   name, which must be unique in the App Store (§12.1), and set Swedish as
-   the primary language under App Information. Then put the app's Apple ID
+   first submit creates the app's record in App Store Connect, with the
+   bundle id, store name and primary language (Swedish) the submit profile
+   names. Check the name, which must be unique in the App Store (§12.1);
+   if it is taken, eas-cli picks a variant and says so. Then put the app's Apple ID
    (App Store Connect → the app → App Information) into `mobile/eas.json`
    as `submit.rastra-production.ios.ascAppId` (for the guardian app,
    `submit.vardnadshavare-production.ios.ascAppId`, a different id) and

@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "expo-router/entry",
   "scripts": {
-    "start": "APP=rastra APP_VARIANT=development expo start",
+    "start": "APP=rastra APP_VARIANT=development expo start --scheme exp+rastra",
     "start:vardnadshavare": "APP=vardnadshavare APP_VARIANT=development expo start --scheme rastra-vardnadshavare-dev",
     "android": "APP=rastra APP_VARIANT=development expo run:android",
     "android:vardnadshavare": "APP=vardnadshavare APP_VARIANT=development expo run:android",

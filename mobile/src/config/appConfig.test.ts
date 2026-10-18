@@ -85,6 +85,19 @@ describe('app.config: two apps, three variants each', () => {
     expect(production.android?.googleServicesFile).toBeUndefined();
   });
 
+  it('overrides an extra.app that `eas init` copied into app.json, so the guardian build stays itself', () => {
+    // eas-cli writes the whole evaluated extra into app.json: Rastra's identity, with the project id.
+    const written: ExpoConfig = {
+      ...base,
+      extra: { app: { id: 'rastra', name: 'Rastra', otherName: 'Rastra vårdnadshavare' }, router: {}, eas: { projectId: 'p' } },
+    };
+    expect(resolve({ APP: 'vardnadshavare' }, written).extra).toEqual({
+      app: { id: 'vardnadshavare', name: 'Rastra vårdnadshavare', otherName: 'Rastra' },
+      router: {},
+      eas: { projectId: 'p' },
+    });
+  });
+
   it('writes the running app\'s identity into extra.app, where the sign-in gate and the texts read it', () => {
     for (const variant of VARIANTS) {
       expect(resolve({ APP_VARIANT: variant }).extra?.['app']).toEqual({ id: 'rastra', name: 'Rastra', otherName: 'Rastra vårdnadshavare' });
@@ -97,7 +110,7 @@ describe('app.config: two apps, three variants each', () => {
   });
 
   it('changes nothing but the identity: every other field of app.json reaches every Rastra variant', () => {
-    // extra.eas.projectId and owner are what `eas init` writes; push needs the id in every build of both apps.
+    // extra.eas.projectId and owner are what `eas init` is for; push needs the id in every build of both apps.
     const linked: ExpoConfig = { ...base, owner: 'school-org', extra: { eas: { projectId: 'project-id' } } };
     for (const app of ['rastra', 'vardnadshavare']) {
       for (const variant of VARIANTS) {

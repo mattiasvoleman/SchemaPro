@@ -38,10 +38,12 @@
   },
   "submit": {
     "rastra-production": {
-      "android": { "track": "internal", "releaseStatus": "draft" }
+      "ios": { "bundleIdentifier": "se.rastra.app", "appName": "Rastra", "language": "sv" },
+      "android": { "applicationId": "se.rastra.app", "track": "internal", "releaseStatus": "draft" }
     },
     "vardnadshavare-production": {
-      "android": { "track": "internal", "releaseStatus": "draft" }
+      "ios": { "bundleIdentifier": "se.rastra.vardnadshavare", "appName": "Rastra vårdnadshavare", "language": "sv" },
+      "android": { "applicationId": "se.rastra.vardnadshavare", "track": "internal", "releaseStatus": "draft" }
     }
   }
 }
