@@ -93,8 +93,8 @@ export async function ss12000SyncChecks(owner: Client, api: PrismaService, marke
     [`${marker} ss12000`, ss12000Slug(marker)],
   );
   const year = await one<{ id: string }>(
-    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-     VALUES ($1, $2, $3::date, $4::date, true, now()) RETURNING id`,
+    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
+     VALUES ($1, $2, $3::date, $4::date, true, 'NIOARIG', now()) RETURNING id`,
     [school.id, `${marker} ss12000`, isoDay(-120), isoDay(240)],
   );
   const person = (role: string, email: string, first: string, last: string) =>

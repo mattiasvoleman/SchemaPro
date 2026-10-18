@@ -63,8 +63,8 @@ export async function skolenheterChecks(owner: Client, api: PrismaService, marke
     )
   ).id;
   const year = await one<{ id: string }>(
-    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-     VALUES ($1, 'probe skolenheter', '${today}'::date - 30, '${today}'::date + 300, true, now()) RETURNING id`,
+    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
+     VALUES ($1, 'probe skolenheter', '${today}'::date - 30, '${today}'::date + 300, true, 'NIOARIG', now()) RETURNING id`,
     [s],
   );
   const c7 = await one<{ id: string }>(

@@ -58,8 +58,10 @@ export async function scbFileChecks(owner: Client, api: PrismaService, marker: s
   ).id;
   // A läsår of its own far ahead, so its mätdatum is a date no other probe owns.
   const year = await one<{ id: string }>(
-    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-     VALUES ($1, '2096/97', DATE '2096-08-13', DATE '2097-06-10', true, now()) RETURNING id`,
+    // Nioårig by name: the file's stadier are F–9's (a tioårig läsår's are
+    // scb-pedpers.spec.ts's), and a läsår from HT 2028 is otherwise tioårig.
+    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
+     VALUES ($1, '2096/97', DATE '2096-08-13', DATE '2097-06-10', true, 'NIOARIG', now()) RETURNING id`,
     [s],
   );
   const person = async (role: string, first: string, last: string, adminProfile: string | null = null) => {

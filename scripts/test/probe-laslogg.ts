@@ -113,8 +113,8 @@ export async function lasloggChecks(owner: Client, api: PrismaService, marker: s
   );
   const s = school.id;
   const year = await one<{ id: string }>(
-    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-     VALUES ($1, 'probe läslogg', '${today}'::date - 30, '${today}'::date + 300, true, now()) RETURNING id`,
+    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
+     VALUES ($1, 'probe läslogg', '${today}'::date - 30, '${today}'::date + 300, true, 'NIOARIG', now()) RETURNING id`,
     [s],
   );
   const home = await one<{ id: string }>(

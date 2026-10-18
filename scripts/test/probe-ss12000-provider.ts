@@ -77,8 +77,8 @@ export async function ss12000ProviderChecks(owner: Client, api: PrismaService, m
     [`${marker} ss12000 provider`, ss12000ProviderSlug(marker)],
   );
   const year = await one<{ id: string }>(
-    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-     VALUES ($1, $2, $3::date, $4::date, true, now()) RETURNING id`,
+    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
+     VALUES ($1, $2, $3::date, $4::date, true, 'NIOARIG', now()) RETURNING id`,
     [school.id, `${marker} provider`, day(-60), day(240)],
   );
   const group = await one<{ id: string }>(

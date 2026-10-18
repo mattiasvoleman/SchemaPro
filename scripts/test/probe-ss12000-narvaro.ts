@@ -157,8 +157,8 @@ export async function ss12000NarvaroChecks(owner: Client, api: PrismaService, ma
   const s = school.id;
   const yearOf = (name: string, from: number, to: number, active: boolean) =>
     one<{ id: string }>(
-      `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-       VALUES ($1, $2, $3::date, $4::date, $5, now()) RETURNING id`,
+      `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
+       VALUES ($1, $2, $3::date, $4::date, $5, 'NIOARIG', now()) RETURNING id`,
       [s, `${marker} ${name}`, day(from), day(to), active],
     );
   const past = await yearOf('förra året', -800, -430, false);
