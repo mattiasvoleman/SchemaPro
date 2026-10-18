@@ -1,5 +1,5 @@
 import type { GradeSpan } from "@/lib/grade-span";
-import { qualificationCovers } from "@/lib/standard-week";
+import { qualificationCovers, type JudgedYear } from "@/lib/standard-week";
 import type { LoadQualification, TeacherLoad } from "@/lib/teacher-load";
 import type { TeacherQualification, TeacherQualificationKind } from "@/lib/types";
 
@@ -47,7 +47,7 @@ export function candidateQualification(
   teacherId: string,
   subjectId: string,
   gradeSpan: GradeSpan | null,
-  year: { startDate: string; endDate: string },
+  year: JudgedYear,
 ): CandidateQualification {
   if (qualifications.length === 0) return { recorded: false };
   let best: TeacherQualificationKind | null = null;

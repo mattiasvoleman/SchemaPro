@@ -52,10 +52,13 @@ export function qualificationValidInYear(
  * would flag every memberless teaching group. A behörighet is stated in
  * NIOARIG, so a tioårig year's span is read so first (the gateway's rule).
  */
+/** A läsår a behörighet is judged in: its dates, and its numbering when tioårig. */
+export type JudgedYear = YearBounds & { gradeNumbering?: GradeNumbering };
+
 export function qualificationCovers(
   qualification: LoadQualification,
   requirement: Pick<LoadRequirement, "subjectId" | "gradeSpan">,
-  year: YearBounds & { gradeNumbering?: GradeNumbering },
+  year: JudgedYear,
 ): boolean {
   if (qualification.subjectId !== requirement.subjectId) return false;
   if (!qualificationValidInYear(qualification, year)) return false;

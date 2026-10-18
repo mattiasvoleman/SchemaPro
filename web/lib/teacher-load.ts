@@ -43,6 +43,7 @@ import {
   qualificationValidInYear,
   singleGrade,
   standardWeekWeight,
+  type JudgedYear,
 } from "@/lib/standard-week";
 import {
   peakPerWeekByKey,
@@ -199,7 +200,7 @@ export interface LoadQualification {
 }
 
 export interface LoadInput {
-  year: YearBounds;
+  year: JudgedYear;
   policy: LoadPolicy | null;
   employments: LoadEmployment[];
   requirements: LoadRequirement[];
@@ -535,7 +536,7 @@ export function strongestCoveringQualification(
   held: LoadQualification[],
   userId: string,
   requirement: Pick<LoadRequirement, "subjectId" | "gradeSpan">,
-  year: YearBounds,
+  year: JudgedYear,
 ): LoadQualification["kind"] | null {
   let best: LoadQualification["kind"] | null = null;
   for (const qualification of held) {

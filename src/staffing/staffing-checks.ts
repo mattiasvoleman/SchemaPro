@@ -8,13 +8,13 @@ import {
   strongestCoveringQualification,
   targetMinutesPerWeek,
   type GradeSpan,
+  type JudgedYear,
   type LoadEmployment,
   type LoadInput,
   type LoadQualification,
   type LoadRequirement,
   type StretchLoad,
 } from './teacher-load';
-import type { YearBounds } from './teaching-weeks';
 
 /*
  * Tjänstefördelningens två frågor vid varje skrivning, ställda på ETT ställe.
@@ -174,7 +174,8 @@ export function qualificationFinding(args: {
   role: StaffingRole;
   subject: { id: string; name: string };
   span: GradeSpan | null;
-  window: YearBounds;
+  /** With the läsår's numbering when it is tioårig (qualificationCovers). */
+  window: JudgedYear;
 }): StaffingFinding | null {
   const mode = args.policy.qualificationMode;
   if (mode === 'OFF') return null;
