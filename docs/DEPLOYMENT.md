@@ -341,7 +341,7 @@ own native build.
 cd mobile
 npm ci                        # with npm 11, as CI; mobile/.npmrc sets legacy-peer-deps
 cp .env.example .env.local    # or: eas env:pull --environment development
-npm start                     # Rastra Dev: APP=rastra APP_VARIANT=development expo start
+npm start                     # Rastra Dev: APP=rastra APP_VARIANT=development expo start --scheme exp+rastra
 npm run start:vardnadshavare  # Rastra vårdnadshavare Dev
 ```
 
@@ -1402,9 +1402,12 @@ password manager, never in this repository: the repository is public.
    lockfile exactly as it is. Versions and build numbers are §12.9.
 5. **The development scripts** in `mobile/package.json` choose the app the
    same way. `npm start` serves Rastra Dev (`APP=rastra
-   APP_VARIANT=development expo start`), and `npm run start:vardnadshavare`
-   serves Rastra vårdnadshavare Dev (`APP=vardnadshavare`, the same
-   variant, and `expo start --scheme rastra-vardnadshavare-dev`). `npm run
+   APP_VARIANT=development expo start --scheme exp+rastra`), and `npm run
+   start:vardnadshavare` serves Rastra vårdnadshavare Dev
+   (`APP=vardnadshavare`, the same variant, and `expo start --scheme
+   rastra-vardnadshavare-dev`). Both name their QR code's scheme, so that a
+   `mobile/ios` or `mobile/android` left over from the other app cannot
+   choose it. `npm run
    ios` and `npm run android` build and run Rastra Dev locally, and `npm run
    ios:vardnadshavare` and `npm run android:vardnadshavare` the guardian
    one. A development build takes its app config from the server it loads
@@ -2003,8 +2006,10 @@ to a screen's layout:
   widest; a Stage Manager window resized while a screen is open; and the
   keyboard up on the login form, the guardian's absence form and the leave
   form, with the field being typed in still in view;
-- on an Android tablet with Android 16 or later: both orientations and a
-  resized window.
+- on an Android tablet with Android 16 or later: both orientations, a
+  resized window, and the keyboard up on the absence and leave forms with
+  the field being typed in still in view (the app draws edge to edge, and
+  the forms move for the keyboard through a KeyboardAvoidingView there).
 
 An iPad gets an internal build as an iPhone does (§12.5). App Store Connect
 asks for 13-inch iPad screenshots for an app that runs on iPad, and Play

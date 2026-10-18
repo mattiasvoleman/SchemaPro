@@ -15,11 +15,9 @@ import eas from '../../eas.json';
  * without the build profile's env (APP unset is Rastra), so each submit
  * profile names its app's ids itself; they must be the ones the build gets.
  */
-type Profile = {
-  extends?: string;
-  environment?: string;
-  env?: Record<string, string>;
-};
+type Platform = 'ios' | 'android';
+type Section = { environment?: string; env?: Record<string, string> };
+type Profile = Section & { extends?: string; ios?: Section; android?: Section };
 
 const BUILD = eas.build as Record<string, Profile>;
 const SUBMIT = eas.submit as Record<
@@ -27,13 +25,28 @@ const SUBMIT = eas.submit as Record<
   { ios?: { bundleIdentifier?: string; appName?: string }; android?: { applicationId?: string } }
 >;
 
-/** A profile with what it extends merged in, as eas-json does: the extending profile's env keys win. */
-function resolved(name: string): Profile {
+/** eas-json's merge (resolver.js): the update wins, env keys merge, and so do the platform sections. */
+function merge<T extends Profile>(base: T, update: T): T {
+  const merged: T = { ...base, ...update };
+  if (base.env && update.env) merged.env = { ...base.env, ...update.env };
+  for (const platform of ['ios', 'android'] as const) {
+    const [b, u] = [base[platform], update[platform]];
+    if (b && u) merged[platform] = merge(b, u);
+  }
+  return merged;
+}
+
+function chain(name: string): Profile {
   const profile = BUILD[name];
   if (!profile) throw new Error(`no build profile ${name}`);
-  if (!profile.extends) return profile;
-  const base = resolved(profile.extends);
-  return { ...base, ...profile, env: { ...base.env, ...profile.env } };
+  const { extends: parent, ...rest } = profile;
+  return parent ? merge(chain(parent), rest) : rest;
+}
+
+/** A profile as one platform's build sees it: what it extends, then that platform's section over the rest. */
+function resolved(name: string, platform: Platform): Section {
+  const { ios, android, ...base } = chain(name);
+  return merge(base, (platform === 'ios' ? ios : android) ?? {});
 }
 
 const SAVED = { ...process.env };
@@ -63,13 +76,16 @@ describe('eas.json build profiles', () => {
     );
   });
 
-  it.each(NAMES)('%s builds the app and variant its name says, from the environment of that variant', (name) => {
-    const [app, variant] = name.split('-');
-    const profile = resolved(name);
-    expect(profile.env?.['APP']).toBe(app);
-    expect(profile.env?.['APP_VARIANT']).toBe(variant);
-    expect(profile.environment).toBe(variant);
-  });
+  it.each(NAMES.flatMap((name) => (['ios', 'android'] as const).map((platform) => [name, platform] as const)))(
+    '%s builds the app and variant its name says on %s, from the environment of that variant',
+    (name, platform) => {
+      const [app, variant] = name.split('-');
+      const profile = resolved(name, platform);
+      expect(profile.env?.['APP']).toBe(app);
+      expect(profile.env?.['APP_VARIANT']).toBe(variant);
+      expect(profile.environment).toBe(variant);
+    },
+  );
 });
 
 describe('eas.json submit profiles', () => {
@@ -78,10 +94,11 @@ describe('eas.json submit profiles', () => {
   });
 
   it.each(Object.keys(SUBMIT))('%s names the ids and the name its build gets', (name) => {
-    const built = evaluate(resolved(name).env ?? {});
+    const ios = evaluate(resolved(name, 'ios').env ?? {});
+    const android = evaluate(resolved(name, 'android').env ?? {});
     const submit = SUBMIT[name];
-    expect(submit?.ios?.bundleIdentifier).toBe(built.ios?.bundleIdentifier);
-    expect(submit?.ios?.appName).toBe(built.name);
-    expect(submit?.android?.applicationId).toBe(built.android?.package);
+    expect(submit?.ios?.bundleIdentifier).toBe(ios.ios?.bundleIdentifier);
+    expect(submit?.ios?.appName).toBe(ios.name);
+    expect(submit?.android?.applicationId).toBe(android.android?.package);
   });
 });
