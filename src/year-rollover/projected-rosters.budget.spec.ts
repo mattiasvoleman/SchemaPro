@@ -230,6 +230,7 @@ describe('the active year’s statement budget', () => {
   });
 
   it('a master lesson created with a teacher, in a school without a rule: 14 statements, one of them the teacher’s cap', async () => {
+    const ROOM = '00000000-0000-4000-8000-0000000000e1';
     // THE ONE STATEMENT A CREATE PAYS FOR LÄRARENS DAG WHERE NO RULE IS SET,
     // pinned because it cannot be carried. A PATCH and a card move count the
     // gate inside the school statement they send anyway (teacherDayCounts);
@@ -241,7 +242,7 @@ describe('the active year’s statement budget', () => {
     // a teacher; the posts' day limits ride on the year's read as a `_count`.
     // Counted at Postgres too: the adapter probe's (z), 'POST a lesson with
     // a teacher'.
-    const statementsOfCreate = async (teacherId?: string) => {
+    const statementsOfCreate = async (teacherId?: string, roomId?: string) => {
       const { world } = school();
       const service = new MasterLessonsService(
         writingNested(world),
@@ -255,6 +256,7 @@ describe('the active year’s statement budget', () => {
           subjectId: IDS.ma,
           studentGroupId: IDS.g7a,
           ...(teacherId ? { teacherId } : {}),
+          ...(roomId ? { roomId } : {}),
           dayOfWeek: 4,
           startTime: '10:00',
           endTime: '11:00',
@@ -286,6 +288,15 @@ describe('the active year’s statement budget', () => {
     expect(await statementsOfCreate()).toEqual(withoutTeacher);
     // Lärarens dag: the teacher has no cap, so nothing is asked after it.
     expect(await statementsOfCreate(IDS.anna)).toEqual([...withoutTeacher, 'teacherWorkRule.findMany']);
+    // Skolområden och restid: a lesson in a room asks whether the school has
+    // a travel figure, one indexed statement that ends it where none is
+    // (readSiteMap reads the pairs first). A lesson without a room walks
+    // nowhere and asks nothing, so the two above are unchanged.
+    expect(await statementsOfCreate(IDS.anna, ROOM)).toEqual([
+      ...withoutTeacher,
+      'teacherWorkRule.findMany',
+      'siteTravelTime.findMany',
+    ]);
   });
 
   it('a timplanspost given a teacher under a WARN policy: 18 statements, as before', async () => {
