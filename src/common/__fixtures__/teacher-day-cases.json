@@ -1,0 +1,854 @@
+{
+  "_comment": "Lärarens dag (src/common/teacher-day.ts), replayed by src/common/teacher-day.spec.ts and by the engine's benchmarks/validate_schedule.py check (the every-week cases with open dates only: the engine has no weeks). A lesson is the teacher’s, as lead or medlärare; start and end are HH:MM; recurrence, startDate and endDate are optional (absent = every week, open). Generated from teacher-day.ts by a script that checks every case against breaches written by hand; never edit this file by hand.",
+  "cases": [
+    {
+      "name": "no rule says nothing about a long Monday",
+      "rule": {
+        "maxTeachingMinutesPerDay": null,
+        "maxTeachingDaysPerWeek": null
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "12:00"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "13:00",
+          "end": "17:00"
+        },
+        {
+          "id": "c",
+          "dayOfWeek": 2,
+          "start": "08:00",
+          "end": "09:00"
+        }
+      ],
+      "breaches": []
+    },
+    {
+      "name": "a rule kept says nothing either",
+      "rule": {
+        "maxTeachingMinutesPerDay": 480,
+        "maxTeachingDaysPerWeek": 5
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "12:00"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "13:00",
+          "end": "15:00"
+        },
+        {
+          "id": "c",
+          "dayOfWeek": 3,
+          "start": "08:00",
+          "end": "09:00"
+        }
+      ],
+      "breaches": []
+    },
+    {
+      "name": "two overlapping lessons on Monday count their union",
+      "rule": {
+        "maxTeachingMinutesPerDay": 120,
+        "maxTeachingDaysPerWeek": null
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "09:20"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "09:00",
+          "end": "10:30",
+          "recurrence": "ODD_WEEKS",
+          "startDate": null,
+          "endDate": null
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "DAILY_CAP",
+          "dayOfWeek": 1,
+          "minutes": 150,
+          "cap": 120,
+          "lessonIds": [
+            "a",
+            "b"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "the same hour taught twice is one hour",
+      "rule": {
+        "maxTeachingMinutesPerDay": 60,
+        "maxTeachingDaysPerWeek": null
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "09:00"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "09:00"
+        },
+        {
+          "id": "c",
+          "dayOfWeek": 1,
+          "start": "08:15",
+          "end": "08:45"
+        }
+      ],
+      "breaches": []
+    },
+    {
+      "name": "touching lessons add up end to end, and exactly the cap is kept",
+      "rule": {
+        "maxTeachingMinutesPerDay": 120,
+        "maxTeachingDaysPerWeek": null
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "09:00"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "09:00",
+          "end": "10:00"
+        }
+      ],
+      "breaches": []
+    },
+    {
+      "name": "touching lessons over the cap are one stretch",
+      "rule": {
+        "maxTeachingMinutesPerDay": 150,
+        "maxTeachingDaysPerWeek": null
+      },
+      "lessons": [
+        {
+          "id": "c",
+          "dayOfWeek": 1,
+          "start": "10:00",
+          "end": "11:00"
+        },
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "09:00"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "09:00",
+          "end": "10:00"
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "DAILY_CAP",
+          "dayOfWeek": 1,
+          "minutes": 180,
+          "cap": 150,
+          "lessonIds": [
+            "a",
+            "b",
+            "c"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a cap per weekday in weekday order, and one lesson longer than the cap breaks it alone",
+      "rule": {
+        "maxTeachingMinutesPerDay": 60,
+        "maxTeachingDaysPerWeek": null
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 2,
+          "start": "08:00",
+          "end": "10:00"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "09:30"
+        },
+        {
+          "id": "c",
+          "dayOfWeek": 5,
+          "start": "08:00",
+          "end": "08:40"
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "DAILY_CAP",
+          "dayOfWeek": 1,
+          "minutes": 90,
+          "cap": 60,
+          "lessonIds": [
+            "b"
+          ]
+        },
+        {
+          "kind": "DAILY_CAP",
+          "dayOfWeek": 2,
+          "minutes": 120,
+          "cap": 60,
+          "lessonIds": [
+            "a"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "an odd-week and an even-week lesson on one Monday never meet",
+      "rule": {
+        "maxTeachingMinutesPerDay": 90,
+        "maxTeachingDaysPerWeek": null
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "09:00",
+          "recurrence": "ODD_WEEKS"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "10:00",
+          "end": "11:00",
+          "recurrence": "EVEN_WEEKS"
+        }
+      ],
+      "breaches": []
+    },
+    {
+      "name": "an every-week lesson meets both parities, and the most one week holds is the figure",
+      "rule": {
+        "maxTeachingMinutesPerDay": 90,
+        "maxTeachingDaysPerWeek": null
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "09:00",
+          "recurrence": "ALL_WEEKS"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "10:00",
+          "end": "11:00",
+          "recurrence": "ODD_WEEKS"
+        },
+        {
+          "id": "c",
+          "dayOfWeek": 1,
+          "start": "12:00",
+          "end": "13:00",
+          "recurrence": "EVEN_WEEKS"
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "DAILY_CAP",
+          "dayOfWeek": 1,
+          "minutes": 120,
+          "cap": 90,
+          "lessonIds": [
+            "a",
+            "b",
+            "c"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a lesson in no week over the cap is no part of the breach",
+      "rule": {
+        "maxTeachingMinutesPerDay": 90,
+        "maxTeachingDaysPerWeek": null
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "09:00"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "10:00",
+          "end": "11:00",
+          "recurrence": "ODD_WEEKS"
+        },
+        {
+          "id": "c",
+          "dayOfWeek": 1,
+          "start": "12:00",
+          "end": "12:20",
+          "recurrence": "EVEN_WEEKS"
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "DAILY_CAP",
+          "dayOfWeek": 1,
+          "minutes": 120,
+          "cap": 90,
+          "lessonIds": [
+            "a",
+            "b"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "dated windows that never overlap never meet",
+      "rule": {
+        "maxTeachingMinutesPerDay": 90,
+        "maxTeachingDaysPerWeek": null
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "09:00",
+          "startDate": "2026-08-17",
+          "endDate": "2026-12-18"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "10:00",
+          "end": "11:00",
+          "startDate": "2027-01-11",
+          "endDate": "2027-06-11"
+        }
+      ],
+      "breaches": []
+    },
+    {
+      "name": "dated windows that overlap meet in the weeks they share",
+      "rule": {
+        "maxTeachingMinutesPerDay": 90,
+        "maxTeachingDaysPerWeek": null
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "09:00",
+          "startDate": "2026-08-17",
+          "endDate": "2026-12-18"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "10:00",
+          "end": "11:00",
+          "startDate": "2026-11-02",
+          "endDate": null
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "DAILY_CAP",
+          "dayOfWeek": 1,
+          "minutes": 120,
+          "cap": 90,
+          "lessonIds": [
+            "a",
+            "b"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a window that ends on the Monday another begins meets it that Monday",
+      "rule": {
+        "maxTeachingMinutesPerDay": 90,
+        "maxTeachingDaysPerWeek": null
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "09:00",
+          "startDate": null,
+          "endDate": "2026-12-21"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "10:00",
+          "end": "11:00",
+          "startDate": "2026-12-21",
+          "endDate": null
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "DAILY_CAP",
+          "dayOfWeek": 1,
+          "minutes": 120,
+          "cap": 90,
+          "lessonIds": [
+            "a",
+            "b"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a window that ends on a Friday and one that begins on it never share a Monday",
+      "rule": {
+        "maxTeachingMinutesPerDay": 90,
+        "maxTeachingDaysPerWeek": null
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "09:00",
+          "startDate": null,
+          "endDate": "2026-12-18"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "10:00",
+          "end": "11:00",
+          "startDate": "2026-12-18",
+          "endDate": null
+        }
+      ],
+      "breaches": []
+    },
+    {
+      "name": "lessons open at the start meet in the weeks before the first date of all",
+      "rule": {
+        "maxTeachingMinutesPerDay": 90,
+        "maxTeachingDaysPerWeek": null
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "09:00",
+          "endDate": "2026-10-20"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "10:00",
+          "end": "11:00",
+          "endDate": "2026-11-30"
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "DAILY_CAP",
+          "dayOfWeek": 1,
+          "minutes": 120,
+          "cap": 90,
+          "lessonIds": [
+            "a",
+            "b"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a Monday lesson that ends on a Tuesday and a Friday one that starts the Wednesday after share that week",
+      "rule": {
+        "maxTeachingMinutesPerDay": null,
+        "maxTeachingDaysPerWeek": 2
+      },
+      "lessons": [
+        {
+          "id": "l",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "09:00",
+          "endDate": "2026-10-20"
+        },
+        {
+          "id": "c",
+          "dayOfWeek": 3,
+          "start": "08:00",
+          "end": "09:00"
+        },
+        {
+          "id": "m",
+          "dayOfWeek": 5,
+          "start": "08:00",
+          "end": "09:00",
+          "startDate": "2026-10-21"
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "WORK_DAYS",
+          "days": 3,
+          "max": 2,
+          "lessonIds": [
+            "c",
+            "l",
+            "m"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a start in an odd week is no even week: the even Monday lesson never meets the Tuesday one",
+      "rule": {
+        "maxTeachingMinutesPerDay": null,
+        "maxTeachingDaysPerWeek": 2
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "09:00",
+          "recurrence": "EVEN_WEEKS",
+          "endDate": "2026-10-23"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 2,
+          "start": "08:00",
+          "end": "09:00",
+          "startDate": "2026-10-19"
+        },
+        {
+          "id": "c",
+          "dayOfWeek": 3,
+          "start": "08:00",
+          "end": "09:00"
+        }
+      ],
+      "breaches": []
+    },
+    {
+      "name": "nor on a Monday the two lessons never share",
+      "rule": {
+        "maxTeachingMinutesPerDay": 90,
+        "maxTeachingDaysPerWeek": null
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "09:00",
+          "recurrence": "EVEN_WEEKS",
+          "endDate": "2026-10-23"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "10:00",
+          "end": "11:00",
+          "startDate": "2026-10-19"
+        }
+      ],
+      "breaches": []
+    },
+    {
+      "name": "week 53 and week 1 are both odd: a lesson starting in week 52 first meets an even-week one in week 2",
+      "rule": {
+        "maxTeachingMinutesPerDay": null,
+        "maxTeachingDaysPerWeek": 1
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "09:00",
+          "startDate": "2026-12-22"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 2,
+          "start": "08:00",
+          "end": "09:00",
+          "recurrence": "EVEN_WEEKS"
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "WORK_DAYS",
+          "days": 2,
+          "max": 1,
+          "lessonIds": [
+            "a",
+            "b"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "three teaching days break a limit of two",
+      "rule": {
+        "maxTeachingMinutesPerDay": null,
+        "maxTeachingDaysPerWeek": 2
+      },
+      "lessons": [
+        {
+          "id": "c",
+          "dayOfWeek": 3,
+          "start": "08:00",
+          "end": "09:00"
+        },
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "09:00"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 2,
+          "start": "08:00",
+          "end": "09:00"
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "WORK_DAYS",
+          "days": 3,
+          "max": 2,
+          "lessonIds": [
+            "a",
+            "b",
+            "c"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "two lessons on one weekday are one teaching day",
+      "rule": {
+        "maxTeachingMinutesPerDay": null,
+        "maxTeachingDaysPerWeek": 2
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "09:00"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "13:00",
+          "end": "14:00"
+        },
+        {
+          "id": "c",
+          "dayOfWeek": 4,
+          "start": "08:00",
+          "end": "09:00"
+        }
+      ],
+      "breaches": []
+    },
+    {
+      "name": "days are counted per week: an odd Monday and an even Tuesday are never taught in one",
+      "rule": {
+        "maxTeachingMinutesPerDay": null,
+        "maxTeachingDaysPerWeek": 2
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "09:00",
+          "recurrence": "ODD_WEEKS"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 2,
+          "start": "08:00",
+          "end": "09:00",
+          "recurrence": "EVEN_WEEKS"
+        },
+        {
+          "id": "c",
+          "dayOfWeek": 3,
+          "start": "08:00",
+          "end": "09:00"
+        }
+      ],
+      "breaches": []
+    },
+    {
+      "name": "a lesson in no week over the days limit is no part of the breach",
+      "rule": {
+        "maxTeachingMinutesPerDay": null,
+        "maxTeachingDaysPerWeek": 2
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "09:00"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 2,
+          "start": "08:00",
+          "end": "09:00",
+          "recurrence": "ODD_WEEKS"
+        },
+        {
+          "id": "c",
+          "dayOfWeek": 3,
+          "start": "08:00",
+          "end": "09:00",
+          "recurrence": "ODD_WEEKS"
+        },
+        {
+          "id": "d",
+          "dayOfWeek": 4,
+          "start": "08:00",
+          "end": "09:00",
+          "recurrence": "EVEN_WEEKS"
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "WORK_DAYS",
+          "days": 3,
+          "max": 2,
+          "lessonIds": [
+            "a",
+            "b",
+            "c"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "terms that never overlap are counted apart for the days too",
+      "rule": {
+        "maxTeachingMinutesPerDay": null,
+        "maxTeachingDaysPerWeek": 1
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "09:00",
+          "startDate": "2026-08-17",
+          "endDate": "2026-12-18"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 2,
+          "start": "08:00",
+          "end": "09:00",
+          "startDate": "2027-01-11",
+          "endDate": null
+        }
+      ],
+      "breaches": []
+    },
+    {
+      "name": "both rules broken: the caps first, then the days",
+      "rule": {
+        "maxTeachingMinutesPerDay": 120,
+        "maxTeachingDaysPerWeek": 1
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "10:00"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "10:30",
+          "end": "11:30"
+        },
+        {
+          "id": "c",
+          "dayOfWeek": 3,
+          "start": "08:00",
+          "end": "09:00"
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "DAILY_CAP",
+          "dayOfWeek": 1,
+          "minutes": 180,
+          "cap": 120,
+          "lessonIds": [
+            "a",
+            "b"
+          ]
+        },
+        {
+          "kind": "WORK_DAYS",
+          "days": 2,
+          "max": 1,
+          "lessonIds": [
+            "a",
+            "b",
+            "c"
+          ]
+        }
+      ]
+    }
+  ]
+}
