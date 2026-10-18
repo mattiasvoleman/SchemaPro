@@ -156,14 +156,26 @@ def _teacher_day_rows(
     """Work rules, day limits and locked lessons for --teacher-day-rules.
 
     WITH --infeasible-days, TK-0's post allows three days and two afternoons of
-    theirs are locked, Monday and Tuesday 12:00-16:00. The locked days are
-    teaching days whatever happens, so one more day is all the post leaves:
+    theirs are locked, Monday and Tuesday 12:00-16:00, every week — so the
+    post's one week is [[1, 2]]. The locked days are teaching days whatever
+    happens, so one more day is all the post leaves:
     four hours on each locked morning and a day of eight is 16 lessons, against
     21. The pre-flight counts the best three days the week has — three whole
     days, 24 lessons — and lets it through, which is the point: only the model
     can see that two of the three are the locked ones, and the linking rows are
     what let it say so at once rather than search for the budget.
     """
+    locked = [
+        {
+            "id": _uid(f"locked-TK-0-{day}"),
+            "teacherId": _uid("teacher-TK-0"),
+            "studentGroupId": _uid(f"group-locked-TK-0-{day}"),
+            "dayOfWeek": day,
+            "startTime": "12:00:00",
+            "endTime": "16:00:00",
+        }
+        for day in (1, 2)
+    ] if infeasible_days else []
     rules = []
     limits = []
     for teacher, (cap, days, wish) in TEACHER_DAY_RULES.items():
@@ -177,22 +189,18 @@ def _teacher_day_rows(
                 **({"preferredFreeDay": wish} if wish is not None else {}),
             })
         if days is not None:
+            # Every lock here runs every week, so every week holds them all:
+            # the one set the gateway sends for such a teacher, and [[]] for
+            # a teacher with none.
+            held = sorted({
+                lesson["dayOfWeek"] for lesson in locked if lesson["teacherId"] == _uid(teacher)
+            })
             limits.append({
                 "id": _uid(f"post-{teacher}"),
                 "teacherId": _uid(teacher),
                 "maxTeachingDaysPerWeek": days,
+                "lockedWeekdays": [held],
             })
-    locked = [
-        {
-            "id": _uid(f"locked-TK-0-{day}"),
-            "teacherId": _uid("teacher-TK-0"),
-            "studentGroupId": _uid(f"group-locked-TK-0-{day}"),
-            "dayOfWeek": day,
-            "startTime": "12:00:00",
-            "endTime": "16:00:00",
-        }
-        for day in (1, 2)
-    ] if infeasible_days else []
     return rules, limits, locked
 
 

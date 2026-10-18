@@ -41,8 +41,12 @@
  * hour in any week a school has; a Monday lesson that ends on a Tuesday and
  * a Friday lesson that starts on the Wednesday after are both taught in
  * that one week, on two days, though no date has both. The engine has no
- * weeks at all and counts every lesson, the stricter reading, which is the
- * safe direction for a generator and the noisy one for a warning.
+ * weeks for the lessons it places and reads each as taught every week, the
+ * stricter reading, which is the safe direction for a generator and the
+ * noisy one for a warning; the lessons it plans around it is told week by
+ * week, as the weekdays they hold together (lockedWeekdaySets), because the
+ * lenient reading of those — every weekday any of them holds taught in
+ * every week — let it give a part-timer's odd weeks the even weeks' day.
  *
  * PURE. Dates are 'YYYY-MM-DD', read as the midnight UTC a @db.Date column
  * holds, which is what runsOn is asked about; times are minutes since
@@ -155,6 +159,12 @@ const mondayOf = (date: Date): Date => addDays(date, 1 - (date.getUTCDay() || 7)
  */
 const UNDATED_WEEKS = [parseDay('2024-01-01'), parseDay('2024-01-08')];
 
+/** A läsår's first and last day, 'YYYY-MM-DD'. */
+export interface YearSpan {
+  startDate: string;
+  endDate: string;
+}
+
 /**
  * Whether the lesson runs in the ISO week that starts on `monday`: whether it
  * runs on its own weekday's date of that week, by the rule publishing
@@ -172,31 +182,48 @@ function runsInWeek(lesson: TeachingLesson, monday: Date): boolean {
   );
 }
 
+/** The Monday of the week of the lesson's first own date on or after `date`. */
+const firstWeekFrom = (lesson: TeachingLesson, date: Date): Date =>
+  mondayOf(addDays(date, (lesson.dayOfWeek - (date.getUTCDay() || 7) + 7) % 7));
+
 /**
  * The lessons that run together in some ISO weeks, one set per week — weeks
- * enough that every set of lessons running together in ANY week is inside
- * one of these sets. Both limits only grow with the set, so the most a week
- * here holds is the most any week holds, and a lesson that runs in a week
- * over a limit runs in one of these over it; each is a real week, so nothing
- * here is over a limit that no week is.
+ * enough that every set of lessons running together in ANY week IS one of
+ * these sets. Both limits only grow with the set, so the most a week here
+ * holds is the most any week holds, and a lesson that runs in a week over a
+ * limit runs in one of these over it; each is a real week, so nothing here is
+ * over a limit that no week is.
  *
- * WHY THESE WEEKS ARE ENOUGH. Take lessons S that all run in a week W. A
- * lesson is inside its window in consecutive weeks only — its own date in a
- * week moves forward with the week — and a lesson open at the start is
- * inside it in every week before one it runs in. So from the latest FIRST
- * WEEK among S's members with a start date (the week of the member's first
- * own date on or after its start) up to W, every week is inside every
- * member's window, and the first of those with W's parity holds all of S.
- * ISO parity alternates except across a year of 53 weeks, whose week 53 and
- * the week 1 after it are both odd (2026's is), so that week is the first
- * week itself, the next or the one after: three weeks per start date. When
- * no member of S has a start date, look before the earliest date any lesson
- * has: every lesson open at the start is inside its window in those weeks,
- * so the one of W's parity among the three before it holds S — three in a
- * row always hold both parities. When no lesson has a date at all, an odd
- * week and an even week hold every set there is.
+ * WHY THESE WEEKS ARE EVERY WEEK THERE IS. A lesson is inside its window in
+ * consecutive weeks only — its own date in a week moves forward with the
+ * week — so which lessons are inside their windows changes only in an EVENT
+ * WEEK: the week of a lesson's first own date on or after its start, where
+ * it comes in, and the week of its first own date after its end, where it
+ * goes out. Between two event weeks the lessons inside are the same, and
+ * which of them run depends on the week's parity alone. ISO parity
+ * alternates except across a year of 53 weeks, whose week 53 and the week 1
+ * after it are both odd (2026's is) — two even weeks never follow each
+ * other — so any three weeks in a row hold both parities, and the three
+ * from each event week hold every set of its stretch (a stretch shorter than
+ * that is all among them). The stretch before the first event is read three
+ * weeks before the earliest date any lesson has, which is before every event
+ * week (each lies in that date's week or later); with no date at all there
+ * is no event, and an odd week and an even week hold every set there is.
+ *
+ * The weeks after an end were added for lockedWeekdaySets, which needs each
+ * week's own set and not only one around it. They are real weeks, so
+ * teacherDayBreaches reads the same figures and names the same lessons with
+ * them as without: the weeks around a start already held a superset of each.
+ *
+ * WITH A YEAR, ONLY ITS WEEKS. A null date is the läsår's own bound — the
+ * one runsOn materialises a lesson to — so a week before the year starts or
+ * after it ends is no week the school has, and is left out: every week kept
+ * holds at least one of the year's dates. The stretch before the first event
+ * inside the year is then read in the year's own first three weeks, where
+ * every lesson open at its start already runs; an event before the year is
+ * that stretch's, and one after it ends nothing the year holds.
  */
-function weeksOf(lessons: readonly TeachingLesson[]): TeachingLesson[][] {
+function weeksOf(lessons: readonly TeachingLesson[], year?: YearSpan): TeachingLesson[][] {
   const mondays = new Map<number, Date>();
   const take = (monday: Date) => {
     for (let week = 0; week < 3; week++) {
@@ -208,18 +235,23 @@ function weeksOf(lessons: readonly TeachingLesson[]): TeachingLesson[][] {
     .flatMap((lesson) => [lesson.startDate, lesson.endDate])
     .filter((date): date is string => !!date)
     .sort();
-  if (dates.length === 0) {
+  if (year) {
+    take(mondayOf(parseDay(year.startDate)));
+  } else if (dates.length === 0) {
     for (const monday of UNDATED_WEEKS) mondays.set(monday.getTime(), monday);
   } else {
     take(addDays(mondayOf(parseDay(dates[0]!)), -21));
   }
   for (const lesson of lessons) {
-    if (!lesson.startDate) continue;
-    const start = parseDay(lesson.startDate);
-    // The lesson's first own date on or after its start.
-    take(mondayOf(addDays(start, (lesson.dayOfWeek - (start.getUTCDay() || 7) + 7) % 7)));
+    if (lesson.startDate) take(firstWeekFrom(lesson, parseDay(lesson.startDate)));
+    // The first week it no longer runs in: its first own date after the end.
+    if (lesson.endDate) take(firstWeekFrom(lesson, addDays(parseDay(lesson.endDate), 1)));
   }
-  return [...mondays.values()].map((monday) => lessons.filter((lesson) => runsInWeek(lesson, monday)));
+  const first = year ? mondayOf(parseDay(year.startDate)).getTime() : -Infinity;
+  const last = year ? parseDay(year.endDate).getTime() : Infinity;
+  return [...mondays.values()]
+    .filter((monday) => monday.getTime() >= first && monday.getTime() <= last)
+    .map((monday) => lessons.filter((lesson) => runsInWeek(lesson, monday)));
 }
 
 /**
@@ -288,4 +320,84 @@ export function teacherDayBreaches(
   }
 
   return breaches;
+}
+
+/**
+ * THE WEEKDAYS A TEACHER'S KEPT LESSONS HOLD TOGETHER, WEEK BY WEEK: what the
+ * generator holds a post's days against (AnonymousTeacherDayLimit
+ * .lockedWeekdays), each set ascending, the sets in a fixed order.
+ *
+ * `lessons` are the lessons the payload sends as fixed placements that the
+ * teacher is on, as lead or medlärare; one that takes no time makes no day,
+ * as everywhere here. For each set L the engine holds
+ *
+ *   Σ works[d] over the grid's days d not in L  ≤  max(0, N − |L|)
+ *
+ * — a lesson it places is a weekly lesson to it, so it adds a day to every
+ * week whose kept lessons are not already on that weekday — and with one set
+ * per real week, no week the generator leaves is over N unless its kept
+ * lessons were over N alone. The union of every weekday any kept lesson
+ * holds, which is what the engine read before this, is the lenient reading:
+ * Monday and Tuesday in odd weeks and Wednesday and Thursday in even ones,
+ * for a post of two days, left it no day to count, and a weekly lesson on
+ * Monday and one on Wednesday gave every week three.
+ *
+ * A teacher with no kept lesson holds the empty set in every week, so the
+ * answer is never empty: [[]], under which Σ works[d] ≤ N is the limit as it
+ * reads without locks.
+ *
+ * ONLY THE SETS NO OTHER SET IMPLIES, and which those are depends on N. Let
+ * L' be a week's set inside another week's L. When |L| ≤ N, L's constraint
+ * implies L''s, since the days outside L' are those outside L and those of
+ * L that L' lacks:
+ *
+ *   Σ_{d ∉ L'} works[d] = Σ_{d ∉ L} works[d] + Σ_{d ∈ L∖L'} works[d]
+ *                       ≤ (N − |L|) + (|L| − |L'|) = N − |L'|,
+ *
+ * which is not negative, so the max(0, …) changes nothing; L' is left out.
+ * When |L| > N, L's kept lessons are over the limit alone and its bound is 0,
+ * and the same sum gives only |L ∖ L'|, which can be more than N − |L'|:
+ * Monday to Wednesday in odd weeks and Monday alone in even ones, for a post
+ * of two days, allows nothing off Monday to Wednesday under L, and a
+ * Tuesday and a Wednesday fit that and give even weeks three days. So a set
+ * is left out only when it lies inside a larger one of at most N weekdays —
+ * every set it lies inside of more than N is not enough — and what is left
+ * out is implied by what is kept: the largest set of at most N containing
+ * it lies inside no larger one of at most N, so it is kept itself. Where no
+ * week's kept lessons break the limit, which a hand edit is warned about
+ * (master-lessons.service.ts), this is the maximal sets.
+ *
+ * ONLY THE LÄSÅR'S WEEKS, given `year`. A week before it starts or after it
+ * ends runs the undated lessons and none of the dated, so its set lies inside
+ * one of the year's — and where that larger set is over N it is not implied,
+ * and would hold the generator to a week the school does not have: a post of
+ * one day with an undated Monday and a Tuesday dated over the whole year
+ * would give [1] beside [1, 2], and refuse a week whose every real week
+ * already holds the two days its kept lessons hold. Without `year` the weeks
+ * are read unbounded, as teacherDayBreaches reads them (where a week inside
+ * another only ever repeats a smaller figure).
+ */
+export function lockedWeekdaySets(
+  lessons: readonly TeachingLesson[],
+  maxDaysPerWeek: number,
+  year?: YearSpan,
+): number[][] {
+  const taking = lessons.filter((lesson) => lesson.endMinutes > lesson.startMinutes);
+  const byKey = new Map<string, number[]>();
+  for (const week of weeksOf(taking, year)) {
+    const days = [...new Set(week.map((lesson) => lesson.dayOfWeek))].sort((a, b) => a - b);
+    byKey.set(days.join(','), days);
+  }
+  const sets = [...byKey.values()];
+  const implies = (larger: number[], set: number[]) =>
+    larger.length > set.length && larger.length <= maxDaysPerWeek && set.every((day) => larger.includes(day));
+  return sets.filter((set) => !sets.some((larger) => implies(larger, set))).sort(byWeekdays);
+}
+
+/** Weekday by weekday, a set before the sets it begins. */
+function byWeekdays(a: readonly number[], b: readonly number[]): number {
+  for (let i = 0; i < Math.min(a.length, b.length); i++) {
+    if (a[i] !== b[i]) return a[i]! - b[i]!;
+  }
+  return a.length - b.length;
 }
