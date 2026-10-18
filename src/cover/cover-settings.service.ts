@@ -57,13 +57,22 @@ export class CoverSettingsService {
 
   async reasons(user: AuthenticatedUser): Promise<ReasonView[]> {
     const schoolId = requireSchoolId(user);
+    const list = async (tx: PrismaClient) =>
+      (
+        await tx.teacherAbsenceReason.findMany({
+          select: REASON_SELECT,
+          orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
+        })
+      ).map(reasonView);
+    if (user.role !== Role.SCHOOL_ADMIN) return this.prisma.withRls(user, list);
     return this.write(user, async (tx) => {
-      if (user.role === Role.SCHOOL_ADMIN) await ensureDefaultReasons(tx, schoolId);
-      const rows = await tx.teacherAbsenceReason.findMany({
-        select: REASON_SELECT,
-        orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
-      });
-      return rows.map(reasonView);
+      // The built-ins are seeded by an administrator who writes drift, as
+      // the table's insert arm requires, and an upsert is checked against
+      // that arm even when every row exists. So the database is asked first,
+      // as the arm asks it; a läsare (Läsbehörighet), refused, lists what is
+      // there instead of failing the read.
+      if (await writesDrift(tx)) await ensureDefaultReasons(tx, schoolId);
+      return list(tx);
     });
   }
 
@@ -221,6 +230,12 @@ export class CoverSettingsService {
       rethrowCoverError(error);
     }
   }
+}
+
+/** May the signed-in administrator write drift? The database's answer, the one its write arms ask. */
+async function writesDrift(tx: PrismaClient): Promise<boolean> {
+  const [row] = await tx.$queryRaw<Array<{ may: boolean }>>`SELECT app.current_user_may('DRIFT'::"AdminArea", true) AS may`;
+  return row?.may === true;
 }
 
 export async function settingsOf(tx: PrismaClient, schoolId: string): Promise<CoverSettingsView> {
