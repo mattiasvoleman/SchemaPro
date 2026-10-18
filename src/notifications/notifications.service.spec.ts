@@ -357,7 +357,7 @@ describe('NotificationsService', () => {
 
       const [, init] = fetchMock.mock.calls[0] as [string, { body: string }];
       expect(JSON.parse(init.body)).toMatchObject({
-        from: 'SchemaPro <noreply@schemapro.app>',
+        from: 'Rastra Schema <noreply@schemapro.app>',
         to: ['noreply@schemapro.app'],
       });
     });

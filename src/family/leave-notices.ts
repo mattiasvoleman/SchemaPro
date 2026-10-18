@@ -45,8 +45,8 @@ export function leaveNoticeEntries(schoolId: string, rows: readonly LeaveNoticeR
         subject: 'New leave request / Ny ledighetsansökan',
         // The reason stays in SchemaPro: e-mail leaves it.
         body:
-          `A leave request for ${name} (${range}, ${days} school ${days === 1 ? 'day' : 'days'}) is waiting for your decision in SchemaPro.` +
-          `\n\nEn ledighetsansökan för ${name} (${range}, ${days} ${days === 1 ? 'skoldag' : 'skoldagar'}) väntar på ditt beslut i SchemaPro.`,
+          `A leave request for ${name} (${range}, ${days} school ${days === 1 ? 'day' : 'days'}) is waiting for your decision in Rastra timetable.` +
+          `\n\nEn ledighetsansökan för ${name} (${range}, ${days} ${days === 1 ? 'skoldag' : 'skoldagar'}) väntar på ditt beslut i Rastra Schema.`,
         recipients: told.flatMap((row) => (row.email ? [{ userId: row.userId, email: row.email }] : [])),
       },
     };

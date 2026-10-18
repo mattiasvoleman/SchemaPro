@@ -247,7 +247,7 @@ describe('CalendarLessonsService', () => {
         expect.objectContaining({
           email: {
             subject: 'Inställd lektion: Mathematics mån 10 aug 10:00',
-            body: 'Mathematics mån 10 aug 10:00 är inställd.\n\nSe schemat i SchemaPro.',
+            body: 'Mathematics mån 10 aug 10:00 är inställd.\n\nSe schemat i Rastra Schema.',
           },
         }),
       );
@@ -274,7 +274,7 @@ describe('CalendarLessonsService', () => {
           // Swedish, on the school's clock (10:00 in Stockholm, not 08:00 UTC).
           email: {
             subject: 'Inställd lektion: Mathematics mån 10 aug 10:00',
-            body: 'Mathematics mån 10 aug 10:00 är inställd. Anledning: Fire drill\n\nSe schemat i SchemaPro.',
+            body: 'Mathematics mån 10 aug 10:00 är inställd. Anledning: Fire drill\n\nSe schemat i Rastra Schema.',
           },
         }),
       );
@@ -346,7 +346,7 @@ describe('CalendarLessonsService', () => {
         meta: { subjectName: 'Mathematics', startsAt: '2026-08-10T08:00:00.000Z' },
         email: {
           subject: 'Lektionen blir av: Mathematics mån 10 aug 10:00',
-          body: 'Mathematics mån 10 aug 10:00 blir av som planerat.\n\nSe schemat i SchemaPro.',
+          body: 'Mathematics mån 10 aug 10:00 blir av som planerat.\n\nSe schemat i Rastra Schema.',
         },
       });
     });
@@ -660,7 +660,7 @@ describe('CalendarLessonsService', () => {
           type: 'LESSON_SUBSTITUTE',
           email: {
             subject: 'Vikarie: Mathematics mån 10 aug 10:00',
-            body: 'Mathematics mån 10 aug 10:00 har en vikarie.\n\nSe schemat i SchemaPro.',
+            body: 'Mathematics mån 10 aug 10:00 har en vikarie.\n\nSe schemat i Rastra Schema.',
           },
         }),
       );
@@ -1119,7 +1119,7 @@ describe('CalendarLessonsService', () => {
         meta: { subjectName: 'Mathematics', startsAt: '2026-08-10T08:00:00.000Z' },
         email: {
           subject: 'Ny sal: Mathematics mån 10 aug 10:00',
-          body: 'Mathematics mån 10 aug 10:00 har flyttat till en annan sal.\n\nSe schemat i SchemaPro.',
+          body: 'Mathematics mån 10 aug 10:00 har flyttat till en annan sal.\n\nSe schemat i Rastra Schema.',
         },
       });
     });

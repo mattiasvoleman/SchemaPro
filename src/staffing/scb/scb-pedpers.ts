@@ -187,7 +187,7 @@ export const SCB_COLUMNS: readonly ScbColumn[] = SCB_PEDPERS_2026.columns.map(([
  * what to write should SCB's check refuse it; open until SCB answers or a
  * return is checked.
  */
-export const SCB_SYSTEM = 'SchemaPro';
+export const SCB_SYSTEM = 'Rastra Schema';
 export const SCB_SYSTEM_VERSION = '0.1.0';
 
 /** SCB's maximum for PersonNamn and SkolenhetNamn. */

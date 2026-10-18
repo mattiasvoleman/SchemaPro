@@ -182,8 +182,8 @@ describe('LeaveService', () => {
         email: {
           subject: 'New leave request / Ny ledighetsansökan',
           body:
-            'A leave request for Ella Elev (2027-02-15 – 2027-02-16, 2 school days) is waiting for your decision in SchemaPro.\n\n' +
-            'En ledighetsansökan för Ella Elev (2027-02-15 – 2027-02-16, 2 skoldagar) väntar på ditt beslut i SchemaPro.',
+            'A leave request for Ella Elev (2027-02-15 – 2027-02-16, 2 school days) is waiting for your decision in Rastra timetable.\n\n' +
+            'En ledighetsansökan för Ella Elev (2027-02-15 – 2027-02-16, 2 skoldagar) väntar på ditt beslut i Rastra Schema.',
           // A mentor with no address gets the inbox notice and the push only.
           recipients: [{ userId: ANNA, email: 'anna@skolan.se' }],
         },

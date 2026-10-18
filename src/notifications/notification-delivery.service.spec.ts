@@ -273,7 +273,7 @@ describe('NotificationDeliveryService (push)', () => {
       'A lesson Tue 13 Oct 08:00 has a substitute.',
       'Du har ett vikariepass tis 13 okt 08:00.',
       'Ett vikariepass är avbokat.',
-      'Unreported absence 13 Oct. Open SchemaPro to see more.',
+      'Unreported absence 13 Oct. Open the app to see more.',
     ]);
   });
 

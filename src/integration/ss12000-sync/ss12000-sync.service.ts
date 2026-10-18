@@ -494,7 +494,7 @@ export class Ss12000SyncService {
           }
           const stale = () =>
             new ConflictException({
-              message: 'Registret eller SchemaPro har ändrats sedan hämtningen – hämta igen.',
+              message: 'Registret eller Rastra Schema har ändrats sedan hämtningen – hämta igen.',
               code: 'SS12000_DIFF_STALE',
             });
           if (dto.basisHash !== run.basisHash) throw stale();

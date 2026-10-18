@@ -120,7 +120,7 @@ describe('the SCB column table', () => {
     expect(scbColumnApplies('Lektor', '12')).toBe(true);
   });
 
-  it("states SchemaPro's own release in column 3, at most SCB's 15 characters", () => {
+  it("states Rastra Schema's own release in column 3, at most SCB's 15 characters", () => {
     const pkg = JSON.parse(readFileSync(join(__dirname, '..', '..', '..', 'package.json'), 'utf8')) as { version: string };
     expect(SCB_SYSTEM_VERSION).toBe(pkg.version);
     expect(SCB_SYSTEM_VERSION.length).toBeLessThanOrEqual(15);
@@ -155,7 +155,7 @@ describe('the text SCB takes', () => {
     expect(lines.every((line) => line.split(';').length === 80)).toBe(true);
     // Line 1 is a person, not SCB's variable names.
     expect(lines[0]).not.toContain('SkolenhetsKod');
-    expect(lines[0]!.startsWith('SchemaPro;2026-10-15;0.1.0;12345678;;Bo Alm;6;Norra skolan;T;')).toBe(true);
+    expect(lines[0]!.startsWith('Rastra Schema;2026-10-15;0.1.0;12345678;;Bo Alm;6;Norra skolan;T;')).toBe(true);
     // The rows the CSV is written from are the text's, value for value.
     expect(file.rows.map((row) => row.join(';'))).toEqual(lines);
     expect(file.columns).toEqual(SCB_COLUMNS);
@@ -189,7 +189,7 @@ describe('the text SCB takes', () => {
 });
 
 describe('SCB Pedagogisk personal, the rows', () => {
-  it('fills what SchemaPro knows: unit, verksamhetstyp, AnstForm, OmfLarare and the subjects', () => {
+  it('fills what Rastra Schema knows: unit, verksamhetstyp, AnstForm, OmfLarare and the subjects', () => {
     const file = buildScbFile(
       input({
         teachers: [
@@ -205,7 +205,7 @@ describe('SCB Pedagogisk personal, the rows', () => {
     );
     const [row] = file.rows;
     expect(row).toHaveLength(80);
-    expect(row![col('System')]).toBe('SchemaPro');
+    expect(row![col('System')]).toBe('Rastra Schema');
     expect(row![col('Datum')]).toBe('2026-10-15');
     expect(row![col('SkolenhetsKod')]).toBe('12345678');
     expect(row![col('SkolenhetNamn')]).toBe('Norra skolan');

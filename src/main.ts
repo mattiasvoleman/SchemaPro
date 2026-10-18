@@ -54,7 +54,7 @@ async function bootstrap(): Promise<void> {
   await app.listen(port);
 
   const logger = new Logger('Bootstrap');
-  logger.log(`SchemaPro API running on port ${port} [${appConfig.nodeEnv}]`);
+  logger.log(`Rastra API running on port ${port} [${appConfig.nodeEnv}]`);
 }
 
 bootstrap().catch((error: unknown) => {

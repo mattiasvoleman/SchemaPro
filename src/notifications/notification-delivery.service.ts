@@ -284,7 +284,7 @@ export class NotificationDeliveryService {
 
   private async sendEmails(addresses: string[], subject: string, body: string): Promise<void> {
     const apiKey = process.env.RESEND_API_KEY;
-    const from = process.env.EMAIL_FROM ?? 'SchemaPro <noreply@schemapro.app>';
+    const from = process.env.EMAIL_FROM ?? 'Rastra Schema <noreply@schemapro.app>';
     if (!apiKey || addresses.length === 0) return;
 
     for (let at = 0; at < addresses.length; at += EMAIL_BCC_CHUNK) {

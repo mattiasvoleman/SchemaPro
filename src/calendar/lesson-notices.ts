@@ -29,7 +29,7 @@ export function lessonEmail(
   reason?: string | null,
 ): { subject: string; body: string } {
   const what = `${lesson.subjectName} ${swedishWhen(lesson.startsAt, timezone)}`;
-  const see = 'Se schemat i SchemaPro.';
+  const see = 'Se schemat i Rastra Schema.';
   switch (type) {
     case 'LESSON_CANCELLED':
       return {

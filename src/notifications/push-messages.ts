@@ -95,9 +95,9 @@ const SV: Record<PushKind, Template> = {
   },
   ABSENCE_UNREPORTED: {
     title: 'Frånvaro',
-    one: 'Oanmäld frånvaro {date}. Öppna SchemaPro för att se mer.',
-    bare: 'Oanmäld frånvaro. Öppna SchemaPro för att se mer.',
-    many: '{count} oanmälda frånvaron {date}. Öppna SchemaPro för att se mer.',
+    one: 'Oanmäld frånvaro {date}. Öppna appen för att se mer.',
+    bare: 'Oanmäld frånvaro. Öppna appen för att se mer.',
+    many: '{count} oanmälda frånvaron {date}. Öppna appen för att se mer.',
   },
   LEAVE_DECIDED: {
     title: 'Ledighet',
@@ -185,9 +185,9 @@ const EN: Record<PushKind, Template> = {
   },
   ABSENCE_UNREPORTED: {
     title: 'Absence',
-    one: 'Unreported absence {date}. Open SchemaPro to see more.',
-    bare: 'Unreported absence. Open SchemaPro to see more.',
-    many: '{count} unreported absences {date}. Open SchemaPro to see more.',
+    one: 'Unreported absence {date}. Open the app to see more.',
+    bare: 'Unreported absence. Open the app to see more.',
+    many: '{count} unreported absences {date}. Open the app to see more.',
   },
   LEAVE_DECIDED: {
     title: 'Leave',
