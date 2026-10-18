@@ -27,7 +27,7 @@ import {
  *   LocalTimplans_name_is_sane           non-blank, at most 100 characters
  *   LocalTimplans_planningWeeks_is_sane  20.0..40.0, NUMERIC(4,1)
  *   LocalTimplans_decisionNote_is_sane   non-blank, at most 500
- *   LocalTimplanEntries_gradeLevel_is_sane      0..11 (20261121090000)
+ *   LocalTimplanEntries_gradeLevel_is_sane      0..11 (20261126090000)
  *   LocalTimplanEntries_minutesPerWeek_is_sane  0..1200, any integer
  *   LocalTimplanEntries_note_is_sane            at most 500 (blank allowed)
  *

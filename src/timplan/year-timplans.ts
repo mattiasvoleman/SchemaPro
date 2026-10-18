@@ -140,7 +140,7 @@ export function speaksFor(
   return row !== null && plan.gradeLevels.includes(row);
 }
 
-/** AcademicYearTimplans_gradeLevel_is_sane's top (20261121090000). */
+/** AcademicYearTimplans_gradeLevel_is_sane's top (20261126090000). */
 const MAX_ATTACHABLE_GRADE = 11;
 
 /** A DECIDED plan, and the grades it speaks for by default. */

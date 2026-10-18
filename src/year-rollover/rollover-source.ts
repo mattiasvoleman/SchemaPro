@@ -42,7 +42,7 @@ export interface SourceYear {
   startDate: string;
   endDate: string;
   isActive: boolean;
-  /** The numbering its årskurser are in (20261121091000). */
+  /** The numbering its årskurser are in (20261126091000). */
   gradeNumbering: GradeNumbering;
 }
 

@@ -235,7 +235,7 @@ const VERDICT_ORDER: Record<PlannedVerdictCode, number> = {
 
 /**
  * The highest årskurs a year can attach a plan to: AcademicYearTimplans'
- * CHECK (0..11 since 20261121090000: specialskolan's eleventh årskurs) and
+ * CHECK (0..11 since 20261126090000: specialskolan's eleventh årskurs) and
  * the year PUT's DTO. Classes may go to 12 (StudentGroups allow it); above 11
  * there is nothing to attach, so no notice asks for it.
  */

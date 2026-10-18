@@ -642,7 +642,7 @@ enum TimplanStage {
   LAG_MELLAN
 }
 
-/// The numbers a läsår gives its årskurser (20261121091000): NIOARIG today's,
+/// The numbers a läsår gives its årskurser (20261126091000): NIOARIG today's,
 /// förskoleklass 0; TIOARIG those of SFS 2025:729 from HT 2028, no förskoleklass.
 enum GradeNumbering {
   NIOARIG
@@ -1371,7 +1371,7 @@ model AcademicYear {
   /// 4 numbers them anew from HT 2028). Written once, at INSERT (GN409 after);
   /// TIOARIG only for a year starting 2028-07-01 or later (CHECK). Left out,
   /// a trigger fills it: NIOARIG before 2028-07-01, else the numbering of the
-  /// school's latest year from that date, else TIOARIG. See 20261121091000.
+  /// school's latest year from that date, else TIOARIG. See 20261126091000.
   gradeNumbering       GradeNumbering @default(dbgenerated())
   createdAt DateTime @default(now()) @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @db.Timestamptz(6)
@@ -1457,7 +1457,7 @@ model SchoolUnit {
   code        String?
   schoolTypes SchoolUnitType[] @default([])
   /// 0..10, both or neither; 0 = förskoleklass. In the nine-year numbering
-  /// for good, like every school-wide span (20261121091000).
+  /// for good, like every school-wide span (20261126091000).
   gradeFrom   Int?
   gradeTo     Int?
   /// The source's Organisation id once an admin linked the unit; written only

@@ -2,7 +2,7 @@ import type { Prisma } from '@prisma/client';
 import type { GradeNumbering } from './grade-numbering';
 
 /**
- * A läsår's numbering (AcademicYears.gradeNumbering, 20261121091000), for a
+ * A läsår's numbering (AcademicYears.gradeNumbering, 20261126091000), for a
  * reader that compares its classes' årskurser with a school-wide span and
  * holds no year row of its own (grade-numbering.ts). NIOARIG for a year the
  * caller cannot see, which is every year before 2028-07-01 anyway: such a

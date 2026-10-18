@@ -24,7 +24,7 @@
 --   * CancellationBatches' GRADES scope: a cancellation for åk 11.
 --
 -- Not SchoolUnits' span. It is school-wide, so it is stated in the nine-year
--- numbering for good, like frames and behörigheter (20261121091000): there a
+-- numbering for good, like frames and behörigheter (20261126091000): there a
 -- specialskola unit is F–10, 0..10, as today. A unit's span in the tioårig
 -- numbering is a pair of its own, proposed by SFS 2025:729 övergångs-
 -- bestämmelse 5 and confirmed by an admin (a follow-up, before HT 2028).

@@ -1,6 +1,6 @@
 /**
  * The adapter probe's checks for the tioårig grundskola (SFS 2025:729,
- * 20261121091000), through the real services on the API's role and real
+ * 20261126091000), through the real services on the API's role and real
  * Postgres as CI runs it: a school rolled over into HT 2028 reads its classes
  * one up, and every school-wide span it stated in the nioårig numbering still
  * binds the same children. In a school of its own (slug <marker>-tioarig),

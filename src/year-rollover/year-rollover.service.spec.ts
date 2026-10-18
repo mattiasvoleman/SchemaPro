@@ -1188,7 +1188,7 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
     );
     expect(groupReads).toHaveLength(1);
     // The FOURTH: the source read of the year selects its numbering
-    // (20261121091000). Asserted, then taken out.
+    // (20261126091000). Asserted, then taken out.
     const yearReads = world.calls.filter(
       (call) =>
         call.model === 'academicYear' &&

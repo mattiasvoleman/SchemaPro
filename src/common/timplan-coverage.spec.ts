@@ -239,7 +239,7 @@ describe('stageGradesFor — keyed on the version, not on the school form alone'
   });
 
   it('gives specialskolan eleven årskurser in the 2028 law: 1–5 / 6–8 / 9–11 (12 kap. 3 §)', () => {
-    // SFS2025:729/SPE (20261121090000), a row of P0's form with no cells.
+    // SFS2025:729/SPE (20261126090000), a row of P0's form with no cells.
     expect(stageGradesFor({ schoolForm: 'SPECIALSKOLA', appliesFromCohortTerm: 'HT2028' })).toEqual({
       LAG: [1, 2, 3, 4, 5],
       MELLAN: [6, 7, 8],

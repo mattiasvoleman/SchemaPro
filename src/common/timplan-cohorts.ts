@@ -82,7 +82,7 @@ import { cohortYear, stageGradesFor, type BaseStage, type SchoolForm } from './t
  * the tioårig cut stageGradesFor gives a lydelse from HT 2028 (1–4 / 5–7 /
  * 8–10; sameskolan 1–4 / 5–7; specialskolan 1–5 / 6–8 / 9–11, SFS 2025:729
  * 12 kap. 3 §, whose 8 604 h version is SFS2025:729/SPE, seeded with the
- * tables' årskurs 11 by 20261121090000).
+ * tables' årskurs 11 by 20261126090000).
  *
  * ## Which version, per stage
  *
