@@ -6,6 +6,7 @@ import { ApiError, apiRequest } from './api';
 import { translatorFor } from '../i18n';
 import { loadLocale } from '../i18n/localeStore';
 import type { Locale } from '../i18n/translate';
+import { NOTIFICATION_ACCENT } from '../theme/tokens';
 
 /**
  * This device's push registration, for the signed-in person only.
@@ -311,6 +312,6 @@ export async function ensureAndroidChannel(name: string): Promise<void> {
   await Notifications.setNotificationChannelAsync(ANDROID_CHANNEL_ID, {
     name,
     importance: Notifications.AndroidImportance.DEFAULT,
-    lightColor: '#6366f1',
+    lightColor: NOTIFICATION_ACCENT,
   }).catch(() => undefined);
 }

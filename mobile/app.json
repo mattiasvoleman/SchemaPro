@@ -5,7 +5,7 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "scheme": "schemapro",
-    "userInterfaceStyle": "dark",
+    "userInterfaceStyle": "automatic",
     "icon": "./assets/images/icon.png",
     "backgroundColor": "#0f0f1a",
     "locales": {
@@ -37,12 +37,15 @@
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 128,
           "resizeMode": "contain",
-          "backgroundColor": "#0f0f1a"
+          "backgroundColor": "#f4f4f5",
+          "dark": {
+            "backgroundColor": "#0f0f1a"
+          }
         }
       ]
     ],
     "ios": {
-      "supportsTablet": false,
+      "supportsTablet": true,
       "bundleIdentifier": "com.schemapro.teacher",
       "icon": {
         "light": "./assets/images/icon.png",

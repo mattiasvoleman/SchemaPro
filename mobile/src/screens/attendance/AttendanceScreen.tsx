@@ -6,6 +6,7 @@ import {
   Text,
   TouchableOpacity,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { TAB_SCREEN_EDGES } from '../tabScreenEdges';
@@ -19,6 +20,9 @@ import { useBiometrics } from '../../hooks/useBiometrics';
 import { useOfflineAttendance } from '../../hooks/useOfflineAttendance';
 import { getStudentsByIds } from '../../services/database/localDatabase';
 import type { AttendanceStatus, Student, SyncProblem, SyncStatus } from '../../types';
+import { DISABLED_OPACITY, type Tone } from '../../theme/tokens';
+import { makeStyles, useAppTheme } from '../../theme/ThemeContext';
+import { FORM_MAX, REGISTER_MAX, useColumnLayout, widthClass } from '../../layout/responsive';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -35,24 +39,25 @@ interface StudentAttendanceItem {
 
 const STATUS_OPTIONS = ['present', 'absent', 'late', 'excused'] as const satisfies readonly AttendanceStatus[];
 
-const STATUS_COLORS: Record<AttendanceStatus, string> = {
-  present: '#22c55e',
-  absent: '#ef4444',
-  late:   '#f59e0b',
-  excused: '#8b5cf6',
+/** One meaning per colour, as the web's ATTENDANCE_STATUS_VARIANT: excused is information. */
+const STATUS_TONE: Record<AttendanceStatus, Tone> = {
+  present: 'success',
+  absent: 'danger',
+  late: 'warning',
+  excused: 'neutral',
 };
 
 type SyncConfig = {
-  readonly color: string;
+  readonly tone: Tone;
   readonly dotChar: string;
 };
 
-// The words are the catalogue's (attendance.sync.*); only colour and glyph here.
+// The words are the catalogue's (attendance.sync.*); only tone and glyph here.
 const SYNC_STATUS_CONFIG: Record<SyncStatus, SyncConfig> = {
-  connected: { color: '#22c55e', dotChar: '●' },
-  offline:   { color: '#f59e0b', dotChar: '◌' },
-  syncing:   { color: '#3b82f6', dotChar: '↻' },
-  error:     { color: '#ef4444', dotChar: '✕' },
+  connected: { tone: 'success', dotChar: '●' },
+  offline:   { tone: 'warning', dotChar: '◌' },
+  syncing:   { tone: 'neutral', dotChar: '↻' },
+  error:     { tone: 'danger', dotChar: '✕' },
 };
 
 /** The banner's line: the status, what is waiting, and what went wrong. */
@@ -109,8 +114,14 @@ function useRefusedPrompt() {
 
 function SyncBanner({ status, pendingCount, problem }: SyncBannerProps): React.JSX.Element {
   const { t } = useI18n();
+  const { colors } = useAppTheme();
+  const styles = useStyles();
   const cfg = SYNC_STATUS_CONFIG[status];
   const promptRefused = useRefusedPrompt();
+  // The tone is the tint, the edge and the glyph; the words stay in the
+  // running ink (DESIGN.md, The Ink Stays Foreground Rule).
+  const ground = { backgroundColor: colors.toneTint[cfg.tone], borderBottomColor: colors[cfg.tone] };
+  const glyph = { color: colors[cfg.tone] };
 
   if (problem?.code === 'RECORDS_REFUSED') {
     return (
@@ -118,10 +129,10 @@ function SyncBanner({ status, pendingCount, problem }: SyncBannerProps): React.J
         accessibilityRole="button"
         accessibilityHint={t('attendance.refused.hint')}
         onPress={() => void promptRefused()}
-        style={[styles.banner, { backgroundColor: `${cfg.color}22`, borderBottomColor: cfg.color }]}
+        style={[styles.banner, ground]}
       >
-        <Text style={[styles.bannerDot, { color: cfg.color }]}>{cfg.dotChar}</Text>
-        <Text style={[styles.bannerText, { color: cfg.color }]} numberOfLines={3}>
+        <Text style={[styles.bannerDot, glyph]}>{cfg.dotChar}</Text>
+        <Text style={styles.bannerText} numberOfLines={3}>
           {syncBannerText(t, status, pendingCount, problem)}
         </Text>
       </TouchableOpacity>
@@ -130,13 +141,10 @@ function SyncBanner({ status, pendingCount, problem }: SyncBannerProps): React.J
 
   return (
     <View
-      style={[
-        styles.banner,
-        { backgroundColor: `${cfg.color}22`, borderBottomColor: cfg.color },
-      ]}
+      style={[styles.banner, ground]}
     >
-      <Text style={[styles.bannerDot, { color: cfg.color }]}>{cfg.dotChar}</Text>
-      <Text style={[styles.bannerText, { color: cfg.color }]} numberOfLines={problem ? 3 : 1}>
+      <Text style={[styles.bannerDot, glyph]}>{cfg.dotChar}</Text>
+      <Text style={styles.bannerText} numberOfLines={problem ? 3 : 1}>
         {syncBannerText(t, status, pendingCount, problem)}
       </Text>
     </View>
@@ -146,10 +154,14 @@ function SyncBanner({ status, pendingCount, problem }: SyncBannerProps): React.J
 interface StudentRowProps {
   readonly item: StudentAttendanceItem;
   readonly onStatusChange: (studentId: string, status: AttendanceStatus) => void;
+  /** 44 pt buttons where there is room (Apple's minimum target); the phone keeps 38. */
+  readonly large: boolean;
 }
 
-function StudentRow({ item, onStatusChange }: StudentRowProps): React.JSX.Element {
+function StudentRow({ item, onStatusChange, large }: StudentRowProps): React.JSX.Element {
   const { t } = useI18n();
+  const { colors } = useAppTheme();
+  const styles = useStyles();
   return (
     <View style={styles.row}>
       <Text style={styles.rowName} numberOfLines={1}>
@@ -163,7 +175,8 @@ function StudentRow({ item, onStatusChange }: StudentRowProps): React.JSX.Elemen
               key={s}
               style={[
                 styles.statusBtn,
-                isActive && { backgroundColor: STATUS_COLORS[s], borderColor: STATUS_COLORS[s] },
+                large && styles.statusBtnLarge,
+                isActive && { backgroundColor: colors[STATUS_TONE[s]], borderColor: colors[STATUS_TONE[s]] },
               ]}
               onPress={() => onStatusChange(item.student.id, s)}
               accessibilityRole="button"
@@ -201,6 +214,8 @@ export function AttendanceScreen(): React.JSX.Element {
   const { activeLesson, activeLessonFromCache, syncState, triggerManualSync } = useSync();
   const { authState } = useAuth();
   const { t } = useI18n();
+  const { colors } = useAppTheme();
+  const styles = useStyles();
   const { authenticate, isAuthenticating } = useBiometrics();
   const { enqueue, isSubmitting } = useOfflineAttendance();
 
@@ -281,11 +296,14 @@ export function AttendanceScreen(): React.JSX.Element {
     }
   }, [activeLesson, authState.teacherId, students, attendanceMap, authenticate, enqueue, triggerManualSync, t]);
 
+  const { width } = useWindowDimensions();
+  const large = widthClass(width) !== 'compact';
+  const { gutter } = useColumnLayout(REGISTER_MAX);
   const renderItem = useCallback(
     ({ item }: { item: StudentAttendanceItem }): React.JSX.Element => (
-      <StudentRow item={item} onStatusChange={handleStatusChange} />
+      <StudentRow item={item} onStatusChange={handleStatusChange} large={large} />
     ),
-    [handleStatusChange],
+    [handleStatusChange, large],
   );
 
   const keyExtractor = useCallback(
@@ -323,7 +341,7 @@ export function AttendanceScreen(): React.JSX.Element {
       />
 
       {/* ── Lesson Header ──────────────────────────────────────────────── */}
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingHorizontal: gutter }]}>
         <Text style={styles.headerSubject}>{activeLesson.subjectName}</Text>
         <Text style={styles.headerMeta}>
           {`${activeLesson.roomName}  ·  ${formatTimeRange(activeLesson.startTime, activeLesson.endTime)}`}
@@ -339,7 +357,7 @@ export function AttendanceScreen(): React.JSX.Element {
       {/* ── Loading overlay ────────────────────────────────────────────── */}
       {isBusy && (
         <View style={styles.loadingOverlay} pointerEvents="none">
-          <ActivityIndicator size="large" color="#6366f1" />
+          <ActivityIndicator size="large" color={colors.primary} />
         </View>
       )}
 
@@ -348,28 +366,30 @@ export function AttendanceScreen(): React.JSX.Element {
         data={listData}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
-        contentContainerStyle={{ paddingBottom: 110 }}
+        contentContainerStyle={{ paddingBottom: 110, paddingHorizontal: gutter }}
       />
 
       {/* ── Submit Footer ──────────────────────────────────────────────── */}
       <View style={styles.footer}>
-        <TouchableOpacity
-          style={[
-            styles.submitBtn,
-            (!allRecorded || isBusy) && styles.submitBtnDisabled,
-          ]}
-          onPress={() => { void handleSubmit(); }}
-          disabled={!allRecorded || isBusy}
-          accessibilityRole="button"
-          accessibilityLabel={t('attendance.submitA11y')}
-          accessibilityState={{ disabled: !allRecorded || isBusy }}
-        >
-          {isBiometricPending ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.submitBtnText}>{t('attendance.submit')}</Text>
-          )}
-        </TouchableOpacity>
+        <View style={styles.footerColumn}>
+          <TouchableOpacity
+            style={[
+              styles.submitBtn,
+              (!allRecorded || isBusy) && styles.submitBtnDisabled,
+            ]}
+            onPress={() => { void handleSubmit(); }}
+            disabled={!allRecorded || isBusy}
+            accessibilityRole="button"
+            accessibilityLabel={t('attendance.submitA11y')}
+            accessibilityState={{ disabled: !allRecorded || isBusy }}
+          >
+            {isBiometricPending ? (
+              <ActivityIndicator color={colors.onPrimary} />
+            ) : (
+              <Text style={styles.submitBtnText}>{t('attendance.submit')}</Text>
+            )}
+          </TouchableOpacity>
+        </View>
       </View>
     </SafeAreaView>
   );
@@ -379,10 +399,10 @@ export function AttendanceScreen(): React.JSX.Element {
 // Styles
 // ─────────────────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((c) => ({
   container: {
     flex: 1,
-    backgroundColor: '#0f0f1a',
+    backgroundColor: c.background,
   },
 
   // Banner
@@ -399,6 +419,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   bannerText: {
+    color: c.text,
     fontSize: 12,
     fontWeight: '600',
     flexShrink: 1,
@@ -409,26 +430,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#1e1e3a',
+    borderBottomColor: c.borderSubtle,
   },
   headerSubject: {
     fontSize: 22,
     fontWeight: '700',
-    color: '#e2e8f0',
+    color: c.text,
     marginBottom: 4,
   },
   headerMeta: {
     fontSize: 14,
-    color: '#94a3b8',
+    color: c.textMuted,
     marginBottom: 2,
   },
   headerProgress: {
     fontSize: 12,
-    color: '#64748b',
+    color: c.textMuted,
   },
   headerCached: {
     fontSize: 12,
-    color: '#f59e0b',
+    color: c.warning,
     marginTop: 6,
   },
 
@@ -437,16 +458,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 18,
+    paddingHorizontal: 2,
     paddingVertical: 13,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#1e1e3a',
+    borderBottomColor: c.borderSubtle,
   },
   rowName: {
     flex: 1,
     fontSize: 15,
     fontWeight: '500',
-    color: '#e2e8f0',
+    color: c.text,
     marginRight: 12,
   },
   rowButtons: {
@@ -459,17 +480,18 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#1a1a2e',
+    backgroundColor: c.surface,
     borderWidth: 1,
-    borderColor: '#2d2d4a',
+    borderColor: c.border,
   },
+  statusBtnLarge: { width: 44, height: 44 },
   statusBtnLabel: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#475569',
+    color: c.textMuted,
   },
   statusBtnLabelActive: {
-    color: '#fff',
+    color: c.onTone,
   },
 
   // Empty state
@@ -482,12 +504,13 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 22,
     fontWeight: '700',
-    color: '#e2e8f0',
+    color: c.text,
     marginBottom: 10,
   },
   emptySubtitle: {
+    maxWidth: FORM_MAX,
     fontSize: 14,
-    color: '#64748b',
+    color: c.textMuted,
     textAlign: 'center',
     lineHeight: 22,
   },
@@ -502,7 +525,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(15,15,26,0.55)',
+    backgroundColor: c.scrim,
     zIndex: 10,
   },
 
@@ -515,25 +538,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingBottom: 32,
     paddingTop: 12,
-    backgroundColor: '#0f0f1a',
+    backgroundColor: c.background,
     borderTopWidth: 1,
-    borderTopColor: '#1e1e3a',
+    borderTopColor: c.borderSubtle,
   },
+  footerColumn: { width: '100%', maxWidth: FORM_MAX, alignSelf: 'center' },
   submitBtn: {
-    backgroundColor: '#6366f1',
+    backgroundColor: c.primary,
     paddingVertical: 17,
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
   },
   submitBtnDisabled: {
-    backgroundColor: '#3730a3',
-    opacity: 0.5,
+    opacity: DISABLED_OPACITY,
   },
   submitBtnText: {
-    color: '#fff',
+    color: c.onPrimary,
     fontSize: 15,
     fontWeight: '700',
     letterSpacing: 0.3,
   },
-});
+}));

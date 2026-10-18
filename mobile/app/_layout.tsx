@@ -6,6 +6,7 @@ import { AuthProvider, useAuth } from '../src/context/AuthContext';
 import { LocaleProvider, useI18n } from '../src/context/LocaleContext';
 import { NetworkProvider } from '../src/context/NetworkContext';
 import { SyncProvider } from '../src/context/SyncContext';
+import { AppThemeProvider, useAppTheme } from '../src/theme/ThemeContext';
 import {
   ensureAndroidChannel,
   forgetTap,
@@ -120,18 +121,25 @@ function PushBridge(): null {
 //                    └─ PushBridge + AuthGate  (need auth state)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** The status bar's glyphs in the appearance's contrast: dark on light, light on dark. */
+function ThemedStatusBar(): React.JSX.Element {
+  return <StatusBar style={useAppTheme().statusBar} />;
+}
+
 export default function RootLayout(): React.JSX.Element {
   return (
-    <LocaleProvider>
-      <NetworkProvider>
-        <AuthProvider>
-          <SyncProvider>
-            <StatusBar style="light" />
-            <PushBridge />
-            <AuthGate />
-          </SyncProvider>
-        </AuthProvider>
-      </NetworkProvider>
-    </LocaleProvider>
+    <AppThemeProvider>
+      <LocaleProvider>
+        <NetworkProvider>
+          <AuthProvider>
+            <SyncProvider>
+              <ThemedStatusBar />
+              <PushBridge />
+              <AuthGate />
+            </SyncProvider>
+          </AuthProvider>
+        </NetworkProvider>
+      </LocaleProvider>
+    </AppThemeProvider>
   );
 }

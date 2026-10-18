@@ -3,12 +3,12 @@ import {
   ActivityIndicator,
   RefreshControl,
   SectionList,
-  StyleSheet,
   Text,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { TAB_SCREEN_EDGES } from '../tabScreenEdges';
+import { makeStyles, useAppTheme } from '../../theme/ThemeContext';
 import {
   entryKey,
   fetchSchedule,
@@ -17,6 +17,7 @@ import {
 } from '../../services/schedule';
 import { useI18n } from '../../context/LocaleContext';
 import { formatDayHeading, formatTimeRange } from '../../i18n/format';
+import { useColumnLayout } from '../../layout/responsive';
 
 /**
  * Student weekly schedule: lessons and meals, in the order they are lived.
@@ -32,11 +33,14 @@ import { formatDayHeading, formatTimeRange } from '../../i18n/format';
 const DAYS_AHEAD = 7;
 
 export function StudentScheduleScreen(): React.JSX.Element {
+  const { colors } = useAppTheme();
+  const styles = useStyles();
   const { t, locale } = useI18n();
   const [rows, setRows] = useState<ScheduleEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { gutter } = useColumnLayout();
 
   const load = useCallback(async () => {
     try {
@@ -74,7 +78,7 @@ export function StudentScheduleScreen(): React.JSX.Element {
     return (
       <SafeAreaView style={styles.container} edges={TAB_SCREEN_EDGES}>
         <View style={styles.center}>
-          <ActivityIndicator size="large" color="#6366f1" />
+          <ActivityIndicator size="large" color={colors.primary} />
         </View>
       </SafeAreaView>
     );
@@ -82,16 +86,17 @@ export function StudentScheduleScreen(): React.JSX.Element {
 
   return (
     <SafeAreaView style={styles.container} edges={TAB_SCREEN_EDGES}>
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingHorizontal: gutter }]}>
         <Text style={styles.headerTitle}>{t('studentSchedule.title')}</Text>
         <Text style={styles.headerSubtitle}>{t('schedule.nextDays', { count: DAYS_AHEAD })}</Text>
       </View>
-      {error ? <Text style={styles.errorText}>{error}</Text> : null}
+      {error ? <Text style={[styles.errorText, { paddingHorizontal: gutter }]}>{error}</Text> : null}
       <SectionList
         sections={sections}
         keyExtractor={entryKey}
+        contentContainerStyle={{ paddingHorizontal: gutter }}
         refreshControl={
-          <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor="#6366f1" />
+          <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} progressBackgroundColor={colors.surface} />
         }
         renderSectionHeader={({ section }) => (
           <Text style={styles.sectionHeader}>{section.title}</Text>
@@ -139,42 +144,42 @@ export function StudentScheduleScreen(): React.JSX.Element {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0f0f1a' },
+const useStyles = makeStyles((c) => ({
+  container: { flex: 1, backgroundColor: c.background },
   center: { padding: 32, alignItems: 'center' },
   header: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 },
-  headerTitle: { color: '#e2e8f0', fontSize: 22, fontWeight: '700' },
-  headerSubtitle: { color: '#94a3b8', fontSize: 13, marginTop: 2 },
-  errorText: { color: '#f87171', paddingHorizontal: 16, paddingBottom: 8 },
+  headerTitle: { color: c.text, fontSize: 22, fontWeight: '700' },
+  headerSubtitle: { color: c.textMuted, fontSize: 13, marginTop: 2 },
+  errorText: { color: c.danger, paddingHorizontal: 16, paddingBottom: 8 },
   sectionHeader: {
-    color: '#94a3b8',
+    color: c.textMuted,
     fontSize: 13,
     fontWeight: '700',
     // No textTransform: 'capitalize' would write "Tisdag 13 Oktober", and a
     // Swedish month takes no capital.
-    paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 6,
   },
   card: {
-    backgroundColor: '#1a1a2e',
-    borderColor: '#1e1e3a',
+    backgroundColor: c.surface,
+    borderColor: c.borderSubtle,
     borderWidth: 1,
     borderRadius: 14,
     padding: 14,
-    marginHorizontal: 16,
     marginBottom: 8,
   },
-  cardCancelled: { opacity: 0.5 },
+  // A cancelled lesson is still read: no fade (its meta line measured 1.7–3.3:1
+  // faded), the struck title in muted ink and the word on the badge say it.
+  cardCancelled: { backgroundColor: c.background },
   // Muted, and amber like the web band, so the meal reads as the day's shape
   // rather than as one more thing to be somewhere for.
-  cardLunch: { backgroundColor: '#1c1a12', borderColor: '#3a3418' },
-  cardTitleLunch: { color: '#fbbf24', fontWeight: '600' },
+  cardLunch: { backgroundColor: c.lunchSurface, borderColor: c.lunchBorder },
+  cardTitleLunch: { color: c.lunchText, fontWeight: '600' },
   // Quieter than the meal: several a day, and none of them is somewhere to be.
-  cardRast: { backgroundColor: '#141a1c', borderColor: '#1e3038' },
-  cardTitleRast: { color: '#7dd3fc', fontWeight: '600' },
-  cardTitle: { color: '#e2e8f0', fontWeight: '600' },
-  cancelledText: { textDecorationLine: 'line-through' },
-  cardMeta: { color: '#94a3b8', fontSize: 12, marginTop: 2 },
-  emptyTitle: { color: '#e2e8f0', fontSize: 16, fontWeight: '700' },
-});
+  cardRast: { backgroundColor: c.breakSurface, borderColor: c.breakBorder },
+  cardTitleRast: { color: c.breakText, fontWeight: '600' },
+  cardTitle: { color: c.text, fontWeight: '600' },
+  cancelledText: { color: c.textMuted, textDecorationLine: 'line-through' },
+  cardMeta: { color: c.textMuted, fontSize: 12, marginTop: 2 },
+  emptyTitle: { color: c.text, fontSize: 16, fontWeight: '700' },
+}));

@@ -4,7 +4,6 @@ import {
   Alert,
   RefreshControl,
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
@@ -12,21 +11,29 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { TAB_SCREEN_EDGES } from '../tabScreenEdges';
+import { makeStyles, useAppTheme } from '../../theme/ThemeContext';
+import type { Tone } from '../../theme/tokens';
 import { fetchChildren } from '../../services/children';
 import { deciderOf, fetchLeaveRequests, requestLeave } from '../../services/leaveRequests';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/LocaleContext';
 import { schoolDate } from '../../i18n/format';
+import { useWindowDimensions } from 'react-native';
+import { Column } from '../../layout/Column';
+import { READABLE_MAX, TWO_COLUMN_MAX, sideBySide } from '../../layout/responsive';
 import type { ChildRow, LeaveRequestRow, LeaveRequestStatus } from '../../types';
 
-const STATUS_COLORS: Record<LeaveRequestStatus, string> = {
-  PENDING: '#94a3b8',
-  APPROVED: '#34d399',
-  REJECTED: '#f87171',
+/** One meaning per colour, as the web's LEAVE_STATUS_VARIANT: an undecided request needs action. */
+const STATUS_TONE: Record<LeaveRequestStatus, Tone> = {
+  PENDING: 'warning',
+  APPROVED: 'success',
+  REJECTED: 'danger',
 };
 
 /** Leave requests (ledighetsansökan): submit + follow decisions. */
 export function LeaveRequestsScreen(): React.JSX.Element {
+  const { colors } = useAppTheme();
+  const styles = useStyles();
   const { authState } = useAuth();
   const { t } = useI18n();
   const [children, setChildren] = useState<ChildRow[]>([]);
@@ -39,6 +46,7 @@ export function LeaveRequestsScreen(): React.JSX.Element {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const wide = sideBySide(useWindowDimensions().width);
 
   const load = useCallback(async () => {
     if (!authState.teacherId) return;
@@ -103,7 +111,7 @@ export function LeaveRequestsScreen(): React.JSX.Element {
     return (
       <SafeAreaView style={styles.container} edges={TAB_SCREEN_EDGES}>
         <View style={styles.center}>
-          <ActivityIndicator size="large" color="#6366f1" />
+          <ActivityIndicator size="large" color={colors.primary} />
         </View>
       </SafeAreaView>
     );
@@ -113,148 +121,154 @@ export function LeaveRequestsScreen(): React.JSX.Element {
     <SafeAreaView style={styles.container} edges={TAB_SCREEN_EDGES}>
       <ScrollView
         refreshControl={
-          <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor="#6366f1" />
+          <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} progressBackgroundColor={colors.surface} />
         }
       >
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>{t('leave.title')}</Text>
-          <Text style={styles.headerSubtitle}>{t('leave.subtitle')}</Text>
-        </View>
+        <Column max={wide ? TWO_COLUMN_MAX : READABLE_MAX}>
+          <View style={styles.header}>
+            <Text style={styles.headerTitle}>{t('leave.title')}</Text>
+            <Text style={styles.headerSubtitle}>{t('leave.subtitle')}</Text>
+          </View>
 
-        <View style={styles.card}>
-          <Text style={styles.label}>{t('leave.child')}</Text>
-          <View style={styles.chipRow}>
-            {children.map((child) => (
-              <TouchableOpacity
-                key={child.id}
-                accessibilityRole="button"
-                onPress={() => setSelectedChild(child.id)}
-                style={[styles.chip, selectedChild === child.id && styles.chipActive]}
-              >
-                <Text
-                  style={[styles.chipText, selectedChild === child.id && styles.chipTextActive]}
+          <View style={wide ? styles.split : null}>
+          <View style={[styles.card, wide && styles.half]}>
+            <Text style={styles.label}>{t('leave.child')}</Text>
+            <View style={styles.chipRow}>
+              {children.map((child) => (
+                <TouchableOpacity
+                  key={child.id}
+                  accessibilityRole="button"
+                  onPress={() => setSelectedChild(child.id)}
+                  style={[styles.chip, selectedChild === child.id && styles.chipActive]}
                 >
-                  {`${child.firstName} ${child.lastName}`}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-          <Text style={styles.label}>{t('leave.from')}</Text>
-          <TextInput
-            style={styles.input}
-            value={startDate}
-            onChangeText={setStartDate}
-            autoCapitalize="none"
-            placeholderTextColor="#64748b"
-          />
-          <Text style={styles.label}>{t('leave.to')}</Text>
-          <TextInput
-            style={styles.input}
-            value={endDate}
-            onChangeText={setEndDate}
-            autoCapitalize="none"
-            placeholderTextColor="#64748b"
-          />
-          <Text style={styles.label}>{t('leave.reason')}</Text>
-          <TextInput
-            style={[styles.input, styles.multiline]}
-            value={reason}
-            onChangeText={setReason}
-            multiline
-            placeholder={t('leave.reasonPlaceholder')}
-            placeholderTextColor="#64748b"
-          />
-          <TouchableOpacity
-            accessibilityRole="button"
-            style={[styles.submit, isSubmitting && styles.submitDisabled]}
-            onPress={() => void submit()}
-            disabled={isSubmitting}
-          >
-            {isSubmitting ? (
-              <ActivityIndicator color="#ffffff" />
-            ) : (
-              <Text style={styles.submitText}>{t('leave.submit')}</Text>
-            )}
-          </TouchableOpacity>
-        </View>
-
-        {leaves.map((leave) => (
-          <View key={leave.id} style={styles.leaveRow}>
-            <View style={styles.leaveHeader}>
-              <Text style={styles.leaveName}>{childName(leave.studentId)}</Text>
-              <Text style={[styles.leaveStatus, { color: STATUS_COLORS[leave.status] }]}>
-                {t(`leave.status.${leave.status}`)}
-              </Text>
+                  <Text
+                    style={[styles.chipText, selectedChild === child.id && styles.chipTextActive]}
+                  >
+                    {`${child.firstName} ${child.lastName}`}
+                  </Text>
+                </TouchableOpacity>
+              ))}
             </View>
-            <Text style={styles.leaveMeta}>
-              {`${leave.startDate.slice(0, 10)} – ${leave.endDate.slice(0, 10)}`}
-            </Text>
-            <Text style={styles.leaveReason}>{leave.reason}</Text>
-            {deciderOf(leave) ? (
-              <Text style={styles.leaveNote}>
-                {t(deciderOf(leave) === 'MENTOR' ? 'leave.decidedByMentor' : 'leave.decidedByRektor')}
-              </Text>
-            ) : null}
-            {leave.decisionNote ? (
-              <Text style={styles.leaveNote}>{t('leave.note', { note: leave.decisionNote })}</Text>
-            ) : null}
+            <Text style={styles.label}>{t('leave.from')}</Text>
+            <TextInput
+              style={styles.input}
+              value={startDate}
+              onChangeText={setStartDate}
+              autoCapitalize="none"
+              placeholderTextColor={colors.textMuted}
+            />
+            <Text style={styles.label}>{t('leave.to')}</Text>
+            <TextInput
+              style={styles.input}
+              value={endDate}
+              onChangeText={setEndDate}
+              autoCapitalize="none"
+              placeholderTextColor={colors.textMuted}
+            />
+            <Text style={styles.label}>{t('leave.reason')}</Text>
+            <TextInput
+              style={[styles.input, styles.multiline]}
+              value={reason}
+              onChangeText={setReason}
+              multiline
+              placeholder={t('leave.reasonPlaceholder')}
+              placeholderTextColor={colors.textMuted}
+            />
+            <TouchableOpacity
+              accessibilityRole="button"
+              style={[styles.submit, isSubmitting && styles.submitDisabled]}
+              onPress={() => void submit()}
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? (
+                <ActivityIndicator color={colors.onPrimary} />
+              ) : (
+                <Text style={styles.submitText}>{t('leave.submit')}</Text>
+              )}
+            </TouchableOpacity>
           </View>
-        ))}
-        <View style={styles.footerSpace} />
+
+          <View style={wide ? styles.half : null}>
+          {leaves.map((leave) => (
+            <View key={leave.id} style={styles.leaveRow}>
+              <View style={styles.leaveHeader}>
+                <Text style={styles.leaveName}>{childName(leave.studentId)}</Text>
+                <Text style={[styles.leaveStatus, { color: colors[STATUS_TONE[leave.status]] }]}>
+                  {t(`leave.status.${leave.status}`)}
+                </Text>
+              </View>
+              <Text style={styles.leaveMeta}>
+                {`${leave.startDate.slice(0, 10)} – ${leave.endDate.slice(0, 10)}`}
+              </Text>
+              <Text style={styles.leaveReason}>{leave.reason}</Text>
+              {deciderOf(leave) ? (
+                <Text style={styles.leaveNote}>
+                  {t(deciderOf(leave) === 'MENTOR' ? 'leave.decidedByMentor' : 'leave.decidedByRektor')}
+                </Text>
+              ) : null}
+              {leave.decisionNote ? (
+                <Text style={styles.leaveNote}>{t('leave.note', { note: leave.decisionNote })}</Text>
+              ) : null}
+            </View>
+          ))}
+          </View>
+          </View>
+          <View style={styles.footerSpace} />
+        </Column>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0f0f1a' },
+const useStyles = makeStyles((c) => ({
+  container: { flex: 1, backgroundColor: c.background },
   center: { padding: 32, alignItems: 'center' },
   header: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 },
-  headerTitle: { color: '#e2e8f0', fontSize: 22, fontWeight: '700' },
-  headerSubtitle: { color: '#94a3b8', fontSize: 13, marginTop: 2 },
+  headerTitle: { color: c.text, fontSize: 22, fontWeight: '700' },
+  headerSubtitle: { color: c.textMuted, fontSize: 13, marginTop: 2 },
   card: {
-    backgroundColor: '#1a1a2e',
-    borderColor: '#2d2d4a',
+    backgroundColor: c.surface,
+    borderColor: c.border,
     borderWidth: 1,
     borderRadius: 14,
     padding: 14,
     marginHorizontal: 16,
     marginBottom: 16,
   },
-  label: { color: '#94a3b8', fontSize: 12, marginBottom: 6, marginTop: 10 },
+  label: { color: c.textMuted, fontSize: 12, marginBottom: 6, marginTop: 10 },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
-    borderColor: '#2d2d4a',
+    borderColor: c.border,
     borderWidth: 1,
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 6,
   },
-  chipActive: { backgroundColor: '#6366f1', borderColor: '#6366f1' },
-  chipText: { color: '#94a3b8', fontSize: 13 },
-  chipTextActive: { color: '#ffffff', fontWeight: '600' },
+  chipActive: { backgroundColor: c.primary, borderColor: c.primary },
+  chipText: { color: c.textMuted, fontSize: 13 },
+  chipTextActive: { color: c.onPrimary, fontWeight: '600' },
   input: {
-    backgroundColor: '#0f0f1a',
-    borderColor: '#2d2d4a',
+    backgroundColor: c.background,
+    borderColor: c.borderStrong,
     borderWidth: 1,
     borderRadius: 10,
-    color: '#e2e8f0',
+    color: c.text,
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
   multiline: { minHeight: 70, textAlignVertical: 'top' },
   submit: {
-    backgroundColor: '#6366f1',
+    backgroundColor: c.primary,
     borderRadius: 10,
     alignItems: 'center',
     paddingVertical: 12,
     marginTop: 16,
   },
   submitDisabled: { opacity: 0.6 },
-  submitText: { color: '#ffffff', fontWeight: '700' },
+  submitText: { color: c.onPrimary, fontWeight: '700' },
   leaveRow: {
-    backgroundColor: '#1a1a2e',
-    borderColor: '#1e1e3a',
+    backgroundColor: c.surface,
+    borderColor: c.borderSubtle,
     borderWidth: 1,
     borderRadius: 14,
     padding: 14,
@@ -262,10 +276,12 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   leaveHeader: { flexDirection: 'row', justifyContent: 'space-between' },
-  leaveName: { color: '#e2e8f0', fontWeight: '600' },
+  leaveName: { color: c.text, fontWeight: '600' },
   leaveStatus: { fontWeight: '700', fontSize: 12 },
-  leaveMeta: { color: '#94a3b8', fontSize: 12, marginTop: 2 },
-  leaveReason: { color: '#cbd5e1', marginTop: 4 },
-  leaveNote: { color: '#94a3b8', fontSize: 12, marginTop: 4 },
+  leaveMeta: { color: c.textMuted, fontSize: 12, marginTop: 2 },
+  leaveReason: { color: c.text, marginTop: 4 },
+  leaveNote: { color: c.textMuted, fontSize: 12, marginTop: 4 },
   footerSpace: { height: 32 },
-});
+  split: { flexDirection: 'row', alignItems: 'flex-start' },
+  half: { flexBasis: 0, flexGrow: 1 },
+}));

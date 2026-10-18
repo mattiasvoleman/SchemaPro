@@ -3,13 +3,13 @@ import {
   ActivityIndicator,
   RefreshControl,
   SectionList,
-  StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { TAB_SCREEN_EDGES } from '../tabScreenEdges';
+import { makeStyles, useAppTheme } from '../../theme/ThemeContext';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/LocaleContext';
@@ -18,6 +18,7 @@ import { formatDayHeading, formatTime } from '../../i18n/format';
 import { getSupabase } from '../../services/supabase';
 import { openLessonForAttendance } from '../../services/roster';
 import { fetchSupervisionWeek, passCardsOf, type PassCard } from '../../services/supervisionWeek';
+import { useColumnLayout } from '../../layout/responsive';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Read-only schedule for the signed-in teacher.
@@ -98,6 +99,8 @@ async function fetchSchedule(teacherId: string): Promise<ScheduleRow[]> {
 }
 
 export function ScheduleScreen(): React.JSX.Element {
+  const { colors } = useAppTheme();
+  const styles = useStyles();
   const { authState } = useAuth();
   const { t, locale } = useI18n();
   const { setActiveLesson } = useSync();
@@ -112,6 +115,7 @@ export function ScheduleScreen(): React.JSX.Element {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [openingId, setOpeningId] = useState<string | null>(null);
+  const { gutter } = useColumnLayout();
 
   /** True when the schedule shown is the one just read. */
   const load = useCallback(async (): Promise<boolean> => {
@@ -207,7 +211,7 @@ export function ScheduleScreen(): React.JSX.Element {
     return (
       <SafeAreaView style={styles.container} edges={TAB_SCREEN_EDGES}>
         <View style={styles.center}>
-          <ActivityIndicator size="large" color="#6366f1" />
+          <ActivityIndicator size="large" color={colors.primary} />
         </View>
       </SafeAreaView>
     );
@@ -215,19 +219,21 @@ export function ScheduleScreen(): React.JSX.Element {
 
   return (
     <SafeAreaView style={styles.container} edges={TAB_SCREEN_EDGES}>
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingHorizontal: gutter }]}>
         <Text style={styles.headerTitle}>{t('schedule.title')}</Text>
         <Text style={styles.headerSubtitle}>{t('schedule.nextDays', { count: DAYS_AHEAD })}</Text>
       </View>
 
-      {error !== null && <Text style={styles.errorText}>{error}</Text>}
-      {passesFailed && error === null && <Text style={styles.errorText}>{t('schedule.passesError')}</Text>}
+      {error !== null && <Text style={[styles.errorText, { paddingHorizontal: gutter }]}>{error}</Text>}
+      {passesFailed && error === null && (
+        <Text style={[styles.errorText, { paddingHorizontal: gutter }]}>{t('schedule.passesError')}</Text>
+      )}
 
       <SectionList
         sections={sections}
         keyExtractor={(item) => (item.kind === 'LESSON' ? item.row.id : item.card.key)}
         refreshControl={
-          <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor="#6366f1" />
+          <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} progressBackgroundColor={colors.surface} />
         }
         renderSectionHeader={({ section }) => (
           <Text style={styles.sectionHeader}>{section.title}</Text>
@@ -295,7 +301,7 @@ export function ScheduleScreen(): React.JSX.Element {
                 </Text>
               </View>
               {openingId === item.id ? (
-                <ActivityIndicator color="#6366f1" />
+                <ActivityIndicator color={colors.primary} />
               ) : (
                 <Text style={styles.cardChevron}>›</Text>
               )}
@@ -308,16 +314,16 @@ export function ScheduleScreen(): React.JSX.Element {
             <Text style={styles.emptySubtitle}>{t('schedule.emptyBody', { count: DAYS_AHEAD })}</Text>
           </View>
         }
-        contentContainerStyle={rows.length === 0 && passes.length === 0 ? styles.listEmpty : styles.list}
+        contentContainerStyle={[rows.length === 0 && passes.length === 0 ? styles.listEmpty : styles.list, { paddingHorizontal: gutter }]}
       />
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((c) => ({
   container: {
     flex: 1,
-    backgroundColor: '#0f0f1a',
+    backgroundColor: c.background,
   },
   center: {
     flex: 1,
@@ -330,21 +336,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#1e1e3a',
+    borderBottomColor: c.borderSubtle,
   },
   headerTitle: {
     fontSize: 22,
     fontWeight: '700',
-    color: '#e2e8f0',
+    color: c.text,
   },
   headerSubtitle: {
     fontSize: 13,
-    color: '#64748b',
+    color: c.textMuted,
     marginTop: 2,
   },
   errorText: {
     fontSize: 13,
-    color: '#f87171',
+    color: c.danger,
     textAlign: 'center',
     paddingHorizontal: 18,
     paddingTop: 10,
@@ -358,30 +364,29 @@ const styles = StyleSheet.create({
   sectionHeader: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#64748b',
+    color: c.textMuted,
     textTransform: 'uppercase',
     letterSpacing: 0.6,
-    paddingHorizontal: 18,
+    paddingHorizontal: 4,
     paddingTop: 18,
     paddingBottom: 8,
   },
   card: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginHorizontal: 14,
     marginBottom: 8,
     padding: 14,
     borderRadius: 14,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: c.surface,
     borderWidth: 1,
-    borderColor: '#2d2d4a',
+    borderColor: c.border,
     gap: 14,
   },
-  cardCancelled: {
-    opacity: 0.45,
-  },
+  // A cancelled lesson is still read: no fade (its meta line measured 1.7–3.3:1
+  // faded), the struck title in muted ink and the word on the badge say it.
+  cardCancelled: { backgroundColor: c.background },
   cardPass: {
-    borderColor: '#b45309',
+    borderColor: c.warning,
     borderLeftWidth: 4,
   },
   // A pass somebody else has that day, or nobody: dashed and untinted, as
@@ -400,11 +405,11 @@ const styles = StyleSheet.create({
   cardTimeText: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#e2e8f0',
+    color: c.text,
   },
   cardTimeSub: {
     fontSize: 12,
-    color: '#64748b',
+    color: c.textMuted,
     marginTop: 2,
   },
   cardBody: {
@@ -413,28 +418,28 @@ const styles = StyleSheet.create({
   cardSubject: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#e2e8f0',
+    color: c.text,
     marginBottom: 2,
   },
   cardMeta: {
     fontSize: 13,
-    color: '#94a3b8',
+    color: c.textMuted,
   },
   cardChevron: {
     fontSize: 24,
-    color: '#475569',
+    color: c.textMuted,
     fontWeight: '300',
   },
   emptyTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#e2e8f0',
+    color: c.text,
     marginBottom: 8,
   },
   emptySubtitle: {
     fontSize: 14,
-    color: '#64748b',
+    color: c.textMuted,
     textAlign: 'center',
     lineHeight: 22,
   },
-});
+}));
