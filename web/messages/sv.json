@@ -5631,7 +5631,10 @@
       "switchFirst": "Byt till utkastläge först",
       "direct": "Tillämpa direkt",
       "confirm": "Tillämpa",
-      "applying": "Tillämpar…"
+      "applying": "Tillämpar…",
+      "checking": "Kontrollerar att förslaget fortfarande passar utkastet…",
+      "noLonger": "Förslaget passar inte längre utkastet",
+      "noLongerHint": "Grundschemat har ändrats sedan förslagen togs fram, eller möter nu ett hinder. Stäng dialogen och se vad som ändrats."
     },
     "review": {
       "title": "Granska ett förslag",

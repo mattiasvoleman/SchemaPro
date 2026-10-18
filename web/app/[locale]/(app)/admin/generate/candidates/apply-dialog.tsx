@@ -21,6 +21,8 @@ export interface ApplyDialogProps {
   label: string;
   /** The batch's check: the mode the apply names, and in DIRECT what the calendar loses. */
   check: CandidateCheck | null;
+  /** The check is being read again (it is, each time the dialog opens): its counts are not yet today's. */
+  checking: boolean;
   pending: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirm: () => void;
@@ -34,15 +36,22 @@ export interface ApplyDialogProps {
  * counts the check measured, and offers the way round first: switch to draft
  * mode, where the calendar changes only when somebody publishes.
  *
+ * The page reads the check again as the dialog opens, so the counts and the
+ * verdict are the moment's, not the page load's: nothing can be confirmed
+ * until that read is back, and a batch it finds stale or refused cannot be
+ * confirmed at all (the apply would answer 409 anyway).
+ *
  * Focus is the shared DialogContent's: the first control on open, back to
  * the button that opened it on close, and nothing can close the dialog while
  * the write is in flight.
  */
-export function ApplyDialog({ candidate, label, check, pending, onOpenChange, onConfirm }: ApplyDialogProps) {
+export function ApplyDialog({ candidate, label, check, checking, pending, onOpenChange, onConfirm }: ApplyDialogProps) {
   const t = useTranslations("scheduleCandidates");
   const tCommon = useTranslations("common");
   const direct = check?.mode === "DIRECT";
   const ordinal = candidate?.ordinal ?? 0;
+  const noLonger = !checking && check !== null && (check.stale || check.refusalCode !== null);
+  const blocked = pending || checking || noLonger;
 
   return (
     <Dialog open={candidate !== null} onOpenChange={(open) => (pending ? undefined : onOpenChange(open))}>
@@ -65,7 +74,15 @@ export function ApplyDialog({ candidate, label, check, pending, onOpenChange, on
           </DialogDescription>
         </DialogHeader>
 
-        {direct && check ? (
+        {checking ? (
+          <p role="status" aria-busy="true" className="text-sm text-foreground">
+            {t("apply.checking")}
+          </p>
+        ) : noLonger ? (
+          <Notice tone="warning" title={t("apply.noLonger")}>
+            {t("apply.noLongerHint")}
+          </Notice>
+        ) : direct && check ? (
           <Notice tone="warning" role={null}>
             <ul className="list-disc space-y-1 pl-5">
               <li>{t("apply.futureLessons", { count: check.futureCalendarLessons })}</li>
@@ -85,7 +102,7 @@ export function ApplyDialog({ candidate, label, check, pending, onOpenChange, on
                 variant="outline"
                 className="border-destructive text-destructive hover:bg-destructive/10 hover:text-destructive"
                 onClick={onConfirm}
-                disabled={pending}
+                disabled={blocked}
               >
                 {pending ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
                 {pending ? t("apply.applying") : t("apply.direct")}
@@ -99,7 +116,7 @@ export function ApplyDialog({ candidate, label, check, pending, onOpenChange, on
               )}
             </>
           ) : (
-            <Button onClick={onConfirm} disabled={pending}>
+            <Button onClick={onConfirm} disabled={blocked}>
               {pending ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
               {pending ? t("apply.applying") : t("apply.confirm")}
             </Button>

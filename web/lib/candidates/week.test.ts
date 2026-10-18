@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildRosterIndex } from "@/lib/lesson-audience";
 import type { MasterLesson } from "@/lib/types";
-import { alternates, candidateSheet, concerns, inYear, parityOf, referenceMonday, runsOn } from "./week";
+import { alternates, candidateSheet, concerns, inYear, otherParityMonday, parityOf, referenceMonday, runsOn } from "./week";
 
 const YEAR = { startDate: "2026-08-17", endDate: "2027-06-11" };
 
@@ -42,6 +42,18 @@ describe("the week shown", () => {
     // Before the year: its first week; after it: its last.
     expect(referenceMonday(YEAR, "2026-07-01")).toBe("2026-08-17");
     expect(referenceMonday(YEAR, "2027-07-20")).toBe("2027-06-07");
+  });
+
+  it("offers the other parity in the next week, or in the last week of the läsår the one before", () => {
+    // A week in the middle: the next one.
+    expect(otherParityMonday(YEAR, "2026-10-12")).toBe("2026-10-19");
+    // The year ends Friday 11 June; its last week's next week lies wholly
+    // after it (and a summer day is held to that last week), so the week
+    // before, still inside the year, is the other parity.
+    expect(otherParityMonday(YEAR, "2027-06-07")).toBe("2027-05-31");
+    expect(otherParityMonday(YEAR, referenceMonday(YEAR, "2027-07-20"))).toBe("2027-05-31");
+    // The first week: the next one, even when it is cut short at its start.
+    expect(otherParityMonday(YEAR, "2026-08-17")).toBe("2026-08-24");
   });
 
   it("holds a planning spring to the start's week, and a weekend start to the Monday after it", () => {

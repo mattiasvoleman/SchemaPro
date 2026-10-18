@@ -5631,7 +5631,10 @@
       "switchFirst": "Switch to draft mode first",
       "direct": "Apply directly",
       "confirm": "Apply",
-      "applying": "Applying…"
+      "applying": "Applying…",
+      "checking": "Checking that the proposal still fits the draft…",
+      "noLonger": "The proposal no longer fits the draft",
+      "noLongerHint": "The timetable has changed since the proposals were made, or now meets an obstacle. Close the dialog to see what changed."
     },
     "review": {
       "title": "Review a proposal",

@@ -24,14 +24,17 @@ const LESSONS_KEY = [...CANDIDATES_KEY, "lessons"] as const;
 /**
  * GET candidates/runs/:runId/check: the batch against today's basis, and the
  * publication mode the apply must name. One basis rebuild on the server per
- * call and throttled to ten a minute, so it is read once per run and kept
- * (staleTime Infinity); the apply and a refresh ask again by invalidating it.
+ * call and throttled to ten a minute, so it is kept (staleTime Infinity)
+ * rather than polled — but read again on every visit to the page (a Generera
+ * between two visits changes the draft) and when the apply dialog opens; the
+ * apply and a refresh ask again by invalidating it.
  */
 export function useCandidateCheck(runId: string | null) {
   return useQuery({
     queryKey: [...CHECK_KEY, runId],
     enabled: runId !== null,
     staleTime: Infinity,
+    refetchOnMount: "always",
     retry: false,
     queryFn: () => api.get<CandidateCheck>(`/api/v1/optimization/candidates/runs/${runId}/check`),
   });
