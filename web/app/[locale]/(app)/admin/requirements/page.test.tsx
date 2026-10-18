@@ -5,6 +5,8 @@ import { toast } from "sonner";
 import { ApiError } from "@/lib/api";
 import { downloadCsv } from "@/lib/csv-export";
 import RequirementsPage from "./page";
+import { ProfileProvider } from "@/components/profile-context";
+import type { Profile } from "@/lib/types";
 
 // Radix needs these in jsdom to open a Select or a Dialog — environment, not
 // behaviour under test.
@@ -2383,14 +2385,14 @@ describe("Parallella block on the timplan", () => {
 describe("Timplansposter under Läsbehörighet", () => {
   // The (app) layout's readOnlyStyle hides [data-writes~="PLANERING"] for a
   // profile that does not write planering (teaching-requirements.controller.ts
-  // and /import/requirements, @Area('PLANERING')). The cell stays a button:
-  // its dialog is the post's reading (the teachers, the weeks, the buffers),
-  // and only its Spara and Ta bort are writes.
-  it("marks Importera and the dialog's Spara and Ta bort, and leaves the modes, the cells and Avbryt", async () => {
+  // and /import/requirements, @Area('PLANERING')). A post's cell stays a
+  // button: its dialog is the post's reading. An empty cell's "+" adds one.
+  it("marks Importera, an empty cell and the dialog's Spara and Ta bort, and leaves the modes, a post's cell and Avbryt", async () => {
     render(<RequirementsPage />);
     expect(screen.getByRole("button", { name: "button" })).toHaveAttribute("data-writes", "PLANERING");
     expect(screen.getByRole("button", { name: "blocks.toggle" })).not.toHaveAttribute("data-writes");
     expect(screen.getByRole("button", { name: "target.toggle" })).not.toHaveAttribute("data-writes");
+    expect(screen.getByLabelText("cellLabel(7A|Bild)")).toHaveAttribute("data-writes", "PLANERING");
     const cell = screen.getByLabelText("cellLabelPeriod(7A|Samhällsorientering|2|60|badgeOdd)");
     expect(cell).not.toHaveAttribute("data-writes-inert");
     expect(cell).not.toHaveAttribute("data-writes");
@@ -2399,5 +2401,23 @@ describe("Timplansposter under Läsbehörighet", () => {
     expect(screen.getByRole("button", { name: "save" })).toHaveAttribute("data-writes", "PLANERING");
     expect(screen.getByRole("button", { name: "delete" })).toHaveAttribute("data-writes", "PLANERING");
     expect(screen.getByRole("button", { name: "cancel" })).not.toHaveAttribute("data-writes");
+    expect(await screen.findByRole("button", { name: "addLength" })).toHaveAttribute("data-writes", "PLANERING");
+    // A writer's fields take what is typed.
+    expect(screen.getByLabelText("lessonsPerWeek")).toBeEnabled();
+  });
+
+  it("gives a reader a post's fields disabled, by keyboard as by pointer", async () => {
+    render(
+      <ProfileProvider profile={{} as Profile} school={null} readOnly>
+        <RequirementsPage />
+      </ProfileProvider>,
+    );
+    await userEvent.click(screen.getByLabelText("cellLabelPeriod(7A|Samhällsorientering|2|60|badgeOdd)"));
+    const dialog = within(screen.getByRole("dialog"));
+    expect(dialog.getByLabelText("lessonsPerWeek")).toBeDisabled();
+    expect(dialog.getByLabelText("minutesPerLesson")).toBeDisabled();
+    expect(screen.getByRole("dialog").querySelector("fieldset")).toBeDisabled();
+    // Avbryt, outside the fields, still closes it.
+    expect(dialog.getByRole("button", { name: "cancel" })).toBeEnabled();
   });
 });

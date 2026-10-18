@@ -182,7 +182,8 @@ import {
   shapeFromDraft,
   type DraftPart,
 } from "@/lib/lesson-lengths-text";
-import { EXTRA_ROW_GRID, LessonLengthsFields } from "@/components/timplan/lesson-lengths-fields";
+import { EXTRA_ROW_GRID } from "@/components/timplan/lesson-lengths-grid";
+import { useReadOnly } from "@/components/profile-context";
 import { useLengthsInWords } from "@/components/timplan/use-lengths-in-words";
 import type { TargetSources } from "@/lib/requirements-target";
 import type { TargetState } from "@/components/timplan/requirements-target";
@@ -238,6 +239,17 @@ const NO_TEACHER = "__none__";
 const RecurrenceFields = lazy(() =>
   import("@/components/schedule/recurrence-fields").then((module) => ({
     default: module.RecurrenceFields,
+  })),
+);
+/**
+ * The extra lengths, fetched with the cell dialog like the recurrence: only
+ * the dialog draws them, and the route has no room to carry them (its budget
+ * is 190 KB). Nothing holds their place: a uniform post shows only the
+ * button under the first pair.
+ */
+const LessonLengthsFields = lazy(() =>
+  import("@/components/timplan/lesson-lengths-fields").then((module) => ({
+    default: module.LessonLengthsFields,
   })),
 );
 /** Holds the recurrence box's place in the dialog while its code arrives. */
@@ -591,6 +603,7 @@ export default function RequirementsPage() {
       live = false;
     };
   }, [blocksMode, blocksModule, tCommon]);
+  const reader = useReadOnly();
   const [cell, setCell] = useState<CellTarget | null>(null);
   /** Ta bort asks first: a ConfirmDialog over the cell dialog, named after the cell. */
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -1529,6 +1542,8 @@ export default function RequirementsPage() {
                                     })) + (targetSentence ? `. ${targetSentence}` : "")
                             }
                             onClick={() => openCell(group.id, subject.id)}
+                            // An empty cell's "+" adds a post: planering's.
+                            data-writes={requirement || targetCell ? undefined : "PLANERING"}
                             className={
                               targetCell && target
                                 ? target.module.targetCellClass(targetCell.tone)
@@ -1656,7 +1671,12 @@ export default function RequirementsPage() {
                 : ""}
             </DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
+          {/*
+            A reader (Läsbehörighet) opens a post to read it: every field is
+            disabled, by keyboard as by pointer, and Spara and Ta bort are
+            hidden (data-writes). An empty cell offers it nothing to open.
+          */}
+          <fieldset disabled={reader} className="min-w-0 space-y-4">
             {cell?.existing?.blockId ? (
               <Notice role={null}>{t("blocks.memberNotice")}</Notice>
             ) : null}
@@ -1690,12 +1710,14 @@ export default function RequirementsPage() {
                 />
               </div>
             </div>
-            <LessonLengthsFields
-              first={{ lessons: form.lessonsPerWeek, minutes: form.minutesPerLesson }}
-              extra={form.extraLengths}
-              onChange={(extraLengths) => setForm({ ...form, extraLengths })}
-              statusId="req-lengths-status"
-            />
+            <Suspense fallback={null}>
+              <LessonLengthsFields
+                first={{ lessons: form.lessonsPerWeek, minutes: form.minutesPerLesson }}
+                extra={form.extraLengths}
+                onChange={(extraLengths) => setForm({ ...form, extraLengths })}
+                statusId="req-lengths-status"
+              />
+            </Suspense>
             {/*
               Mål mode's line under the two numbers it reads: what the
               timplan asks of this class in this subject, and what the post
@@ -1937,7 +1959,7 @@ export default function RequirementsPage() {
               </div>
             </details>
             {refusal ? <RefusalNotice text={refusalText(tEngine, refusal)} /> : null}
-          </div>
+          </fieldset>
           <DialogFooter className="sm:justify-between">
             {cell?.existing ? (
               <Button
