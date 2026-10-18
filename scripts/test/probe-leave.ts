@@ -224,8 +224,8 @@ export async function leaveChecks(owner: Client, api: PrismaService, marker: str
         years.push(
           (
             await one<{ id: string }>(
-              `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-               VALUES ($1, $2, $3::date, $4::date, false, now()) RETURNING id`,
+              `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
+               VALUES ($1, $2, $3::date, $4::date, false, 'NIOARIG', now()) RETURNING id`,
               [school.id, `fall ${index}.${y}`, year.startDate, year.endDate],
             )
           ).id,
@@ -282,8 +282,8 @@ export async function leaveChecks(owner: Client, api: PrismaService, marker: str
   );
   const s = school.id;
   const year = await one<{ id: string }>(
-    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-     VALUES ($1, $2, $3::date, $4::date, true, now()) RETURNING id`,
+    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
+     VALUES ($1, $2, $3::date, $4::date, true, 'NIOARIG', now()) RETURNING id`,
     [s, `${marker} ledighet`, addDays(today, -30), addDays(today, 200)],
   );
   const group = async (name: string, grade: number) =>
@@ -669,8 +669,8 @@ export async function leaveChecks(owner: Client, api: PrismaService, marker: str
     ).id;
     const oldEnd = addDays(today, 20);
     const source = await one<{ id: string }>(
-      `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-       VALUES ($1, $2, $3::date, $4::date, true, now()) RETURNING id`,
+      `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
+       VALUES ($1, $2, $3::date, $4::date, true, 'NIOARIG', now()) RETURNING id`,
       [id, `${marker} ${suffix} 1`, addDays(today, -30), oldEnd],
     );
     const class7a = (

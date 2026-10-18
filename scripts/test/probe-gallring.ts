@@ -95,13 +95,13 @@ export async function gallringChecks(owner: Client, api: PrismaService, marker: 
     [s],
   );
   const current = await one<{ id: string }>(
-    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-     VALUES ($1, 'probe i år', '${today}'::date - 30, '${today}'::date + 300, true, now()) RETURNING id`,
+    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
+     VALUES ($1, 'probe i år', '${today}'::date - 30, '${today}'::date + 300, true, 'NIOARIG', now()) RETURNING id`,
     [s],
   );
   const lessonsYear = await one<{ id: string }>(
-    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-     VALUES ($1, 'probe förra', ${ago(15)}, '${today}'::date - 62, false, now()) RETURNING id`,
+    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
+     VALUES ($1, 'probe förra', ${ago(15)}, '${today}'::date - 62, false, 'NIOARIG', now()) RETURNING id`,
     [s],
   );
   const subject = await one<{ id: string }>(`INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES ($1, 'Probe', 'PRB', now()) RETURNING id`, [s]);

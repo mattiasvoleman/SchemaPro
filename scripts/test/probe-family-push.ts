@@ -69,8 +69,8 @@ async function givenFamilySchool(owner: Client, marker: string): Promise<FamilyS
     [`${marker} familj`, familySlug(marker)],
   );
   const year = await one<{ id: string }>(
-    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-     VALUES ($1, $2, $3::date, $4::date, true, now()) RETURNING id`,
+    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
+     VALUES ($1, $2, $3::date, $4::date, true, 'NIOARIG', now()) RETURNING id`,
     [school.id, `${marker} familj`, addDays(today, -60), addDays(today, 200)],
   );
   const group = (name: string, kind: 'CLASS' | 'TEACHING_GROUP') =>

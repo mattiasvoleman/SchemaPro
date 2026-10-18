@@ -2557,8 +2557,8 @@ async function runChecks(
     const one = async <T extends object>(sql: string, params: unknown[]): Promise<T> => (await owner.query<T>(sql, params)).rows[0]!;
 
     const year = await one<{ id: string }>(
-      `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-       VALUES ($1, $2 || ' genomfört', $3::date, $4::date, false, now()) RETURNING id`,
+      `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
+       VALUES ($1, $2 || ' genomfört', $3::date, $4::date, false, 'NIOARIG', now()) RETURNING id`,
       [fixture.schoolId, MARKER, dayAt(-60), dayAt(200)],
     );
     const subject = await one<{ id: string }>(
@@ -4114,21 +4114,6 @@ async function runChecks(
           await owner.query('ROLLBACK');
         }
 
-        // 2028: a school its plans and year show no form for is asked (SFS
-        // 2025:729 covers the four forms); told, the preview renumbers and says it.
-        const options2028 = { name: `${MARKER} eh 2028`, startDate: '2028-08-14', endDate: '2029-06-08', graduatingGradeLevel: 9 };
-        const asked = await rollover.previewRollover(curYear, options2028, ehAdmin);
-        assert.deepEqual(
-          asked.problems.filter((problem) => problem.code.startsWith('ROLLOVER_2028')).map((problem) => [problem.code, problem.blocking]),
-          [['ROLLOVER_2028_SCHOOL_FORM_UNKNOWN', true]],
-        );
-        const into2028 = await rollover.previewRollover(curYear, { ...options2028, renumber2028: true }, ehAdmin);
-        assert.deepEqual(
-          into2028.problems.filter((problem) => problem.code === 'ROLLOVER_2028_RENUMBERING'),
-          [{ code: 'ROLLOVER_2028_RENUMBERING', blocking: false, params: { startYear: 2028, source: 'SFS 2025:729, övergångsbestämmelse 4' } }],
-        );
-        assert.deepEqual(into2028.reform2028, { renumbers: true, numbering: 'TIOARIG' });
-
         // 7: a year deleted takes its history along, nothing raised — once its
         // pupils have left its classes (YEAR_HAS_HOME_PUPILS guards that).
         await owner.query(`UPDATE "Users" SET "studentGroupId" = NULL WHERE "schoolId" = $1 AND role = 'STUDENT'`, [eh.schoolId]);
@@ -4801,7 +4786,7 @@ interface EnrolmentSchool {
   today: string;
   currentStart: string;
   prevEnd1: string;
-  rolloverOptions: { name: string; startDate: string; endDate: string; graduatingGradeLevel: number };
+  rolloverOptions: { name: string; startDate: string; endDate: string; graduatingGradeLevel: number; renumber2028: boolean };
 }
 
 /**
@@ -4825,8 +4810,8 @@ async function givenEnrolmentSchool(owner: Client): Promise<EnrolmentSchool> {
     [`${MARKER} elevhistorik`, `${MARKER}-elevhistorik`],
   );
   const year = await one<{ id: string }>(
-    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-     VALUES ($1, $2, $3::date, $4::date, true, now()) RETURNING id`,
+    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
+     VALUES ($1, $2, $3::date, $4::date, true, 'NIOARIG', now()) RETURNING id`,
     [school.id, `${MARKER} eh förra`, day.prevStart, day.prevEnd],
   );
   const group = (name: string, grade: number) =>
@@ -4866,7 +4851,11 @@ async function givenEnrolmentSchool(owner: Client): Promise<EnrolmentSchool> {
     today: day.today,
     currentStart: day.start,
     prevEnd1: day.prevEnd1,
-    rolloverOptions: { name: `${MARKER} eh i år`, startDate: day.start, endDate: day.end, graduatingGradeLevel: 9 },
+    // Dates follow the real day, so from 2028-08-20 to 2029-08-04 this
+    // rollover crosses HT 2028. The school shows no form and keeps its
+    // numbering then (ROLLOVER_2028_NOT_RENUMBERED); the reform is
+    // probe-tioarig.ts's, on fixed dates.
+    rolloverOptions: { name: `${MARKER} eh i år`, startDate: day.start, endDate: day.end, graduatingGradeLevel: 9, renumber2028: false },
   };
 }
 
@@ -5321,8 +5310,8 @@ async function givenFas3School(owner: Client): Promise<Fas3School> {
   const t4 = await person('TEACHER', 't4');
   const inactive = await person('TEACHER', 'inactive', false);
   const year = await one<{ id: string }>(
-    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-     VALUES ($1, $2, $3::date, $4::date, true, now()) RETURNING id`,
+    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
+     VALUES ($1, $2, $3::date, $4::date, true, 'NIOARIG', now()) RETURNING id`,
     [school.id, `${MARKER} fas3`, dayAt(-60), dayAt(200)],
   );
   const class7a = await one<{ id: string }>(
@@ -5459,8 +5448,10 @@ async function givenBudgetSchool(owner: Client): Promise<BudgetSchool> {
   const admin = await person('SCHOOL_ADMIN', 'admin');
   const teachers = [await person('TEACHER', 't1'), await person('TEACHER', 't2'), await person('TEACHER', 't3'), await person('TEACHER', 't4')];
   const year = await one<{ id: string }>(
-    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-     VALUES ($1, $2, '2096-08-13', '2097-06-11', true, now()) RETURNING id`,
+    // Nioårig by name: the school's 7A and its 7–9 behörigheter are that
+    // numbering's, and a läsår from HT 2028 is otherwise filled in tioårig.
+    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
+     VALUES ($1, $2, '2096-08-13', '2097-06-11', true, 'NIOARIG', now()) RETURNING id`,
     [school.id, `${MARKER} budget`],
   );
   const group = (name: string, grade: number) =>
@@ -5681,8 +5672,8 @@ async function givenCoverSchool(owner: Client): Promise<CoverSchool> {
   const s2 = await person('TEACHER', 's2');
   const pool = await person('TEACHER', 'pool');
   const year = await one<{ id: string }>(
-    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-     VALUES ($1, $2, $3::date, $4::date, true, now()) RETURNING id`,
+    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
+     VALUES ($1, $2, $3::date, $4::date, true, 'NIOARIG', now()) RETURNING id`,
     [school.id, `${MARKER} vikarie`, dayAt(-60), dayAt(200)],
   );
   const group = (name: string, grade: number) =>
@@ -6978,8 +6969,8 @@ async function givenPublicationSchool(
   const admin = await person('SCHOOL_ADMIN', 'admin');
   const teacher = await person('TEACHER', 't1');
   const year = await one<{ id: string }>(
-    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-     VALUES ($1, $2, $3, $4, true, now()) RETURNING id`,
+    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
+     VALUES ($1, $2, $3, $4, true, 'NIOARIG', now()) RETURNING id`,
     [school.id, `${MARKER} publicering`, dates.start, dates.end],
   );
   const g7a = await one<{ id: string }>(

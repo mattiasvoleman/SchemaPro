@@ -6,8 +6,9 @@
  * binds the same children. In a school of its own (slug <marker>-tioarig),
  * swept whole before and after:
  *
- *   ti1  the rollover from 2027/28 into 2028/29 writes a tioårig läsår and
- *        moves each class two årskurser: 8A → 10A, 5A → 7A;
+ *   ti1  the rollover from 2027/28 into 2028/29 asks a school that shows no
+ *        form, renumbers when told, writes a tioårig läsår and moves each
+ *        class two årskurser: 8A → 10A, 5A → 7A;
  *   ti2  under qualificationMode REFUSE, a teacher behörig in matematik 7–9
  *        is assigned 10A's matematik, and one behörig 1–6 is refused it; 7A
  *        the other way round — the behörigheter stated nioårig, the classes
@@ -173,8 +174,20 @@ export async function tioarigChecks(owner: Client, api: PrismaService, marker: s
       assert.equal(source.gradeNumbering, 'NIOARIG');
       // Åk 9 leaves the nioårig school; there is none here, so 8A stays.
       const options = { name: 'Ti 2028/29', startDate: '2028-08-14', endDate: '2029-06-08', breaks: [], renumber2028: true, graduatingGradeLevel: 9 };
+      // A school its plans and year show no form for is asked (SFS 2025:729
+      // covers the four forms); told, the preview renumbers and says it.
+      const { renumber2028: _told, ...unasked } = options;
+      const asked = await rollover.previewRollover(source.id, unasked, asAdmin);
+      assert.deepEqual(
+        asked.problems.filter((problem) => problem.code.startsWith('ROLLOVER_2028')).map((problem) => [problem.code, problem.blocking]),
+        [['ROLLOVER_2028_SCHOOL_FORM_UNKNOWN', true]],
+      );
       const preview = await rollover.previewRollover(source.id, options, asAdmin);
       assert.equal(preview.blocking, false, JSON.stringify(preview.problems));
+      assert.deepEqual(
+        preview.problems.filter((problem) => problem.code.startsWith('ROLLOVER_2028')),
+        [{ code: 'ROLLOVER_2028_RENUMBERING', blocking: false, params: { startYear: 2028, source: 'SFS 2025:729, övergångsbestämmelse 4' } }],
+      );
       assert.deepEqual(preview.reform2028, { renumbers: true, numbering: 'TIOARIG' });
       const result = await rollover.executeRollover(
         source.id,

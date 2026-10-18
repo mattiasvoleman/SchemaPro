@@ -75,8 +75,8 @@ export async function calendarFeedChecks(owner: Client, api: PrismaService, mark
   ).id;
   const year = (
     await one<{ id: string }>(
-      `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-       VALUES ($1, 'probe kalender', $2::date - 60, $2::date + 300, true, now()) RETURNING id`,
+      `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
+       VALUES ($1, 'probe kalender', $2::date - 60, $2::date + 300, true, 'NIOARIG', now()) RETURNING id`,
       [s, today],
     )
   ).id;
