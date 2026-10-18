@@ -28,7 +28,7 @@ describe("PageHeader", () => {
 
   it("names the browser tab after the h1", () => {
     render(<PageHeader title="Tjänstefördelning" />);
-    expect(document.title).toBe("Tjänstefördelning · SchemaPro");
+    expect(document.title).toBe("Tjänstefördelning · Rastra Schema");
   });
 
   it("renders a named back link above the h1, hidden in print", () => {

@@ -1,18 +1,28 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { hasLocale } from "next-intl";
-import { setRequestLocale } from "next-intl/server";
+import { getTranslations, setRequestLocale } from "next-intl/server";
 import { routing } from "@/i18n/routing";
 import { Providers } from "@/components/providers";
 import "../globals.css";
 
-export const metadata: Metadata = {
-  title: {
-    default: "SchemaPro",
-    template: "%s · SchemaPro",
-  },
-  description: "AI-driven school scheduling & attendance system",
-};
+/**
+ * The app's name is the language's (common.appName): Rastra Schema in
+ * Swedish, Rastra timetable in English, the product's names since
+ * 2026-10-17. DocumentTitle writes the same template for the client pages.
+ */
+export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
+  const { locale } = await params;
+  const t = await getTranslations({
+    locale: hasLocale(routing.locales, locale) ? locale : routing.defaultLocale,
+    namespace: "common",
+  });
+  const name = t("appName");
+  return {
+    title: { default: name, template: `%s · ${name}` },
+    description: "AI-driven school scheduling & attendance system",
+  };
+}
 
 export function generateStaticParams() {
   return routing.locales.map((locale) => ({ locale }));

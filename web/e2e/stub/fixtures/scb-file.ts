@@ -57,7 +57,7 @@ export function scbFileOf(year: AcademicYear): ScbFile {
     const form = post?.employmentForm === "TILLSVIDARE" ? "T" : post?.employmentForm === "VISSTID" ? "V" : "";
     const omf = post ? Math.round((post.employmentPercent ?? 0) - (post.reductionPercent ?? 0)) : null;
     rows.push([
-      "SchemaPro",
+      "Rastra Schema",
       TODAY,
       "0.1.0",
       unit.code ?? "",

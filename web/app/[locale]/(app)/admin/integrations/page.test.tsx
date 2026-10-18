@@ -561,7 +561,7 @@ describe("/admin/integrations — the register", () => {
     const dialog = await screen.findByRole("dialog");
     await user.click(await within(dialog).findByRole("button", { name: "Tillämpa 1" }));
     await user.click(within((await screen.findAllByRole("dialog")).at(-1)!).getByRole("button", { name: "Tillämpa" }));
-    expect(await within(dialog).findByText("Registret eller SchemaPro har ändrats sedan hämtningen. Stäng och synka igen.")).toBeInTheDocument();
+    expect(await within(dialog).findByText("Registret eller Rastra Schema har ändrats sedan hämtningen. Stäng och synka igen.")).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Tillämpa 1" })).toBeDisabled();
   });
 

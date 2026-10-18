@@ -31,15 +31,15 @@ describe("the SCB file in the browser", () => {
     const csv = scbCsv({
       columns,
       rows: [
-        ["SchemaPro", "2026-10-15", "0.1.0", "12345678", "", "Anna Öberg"],
-        ["SchemaPro", "2026-10-15", "0.1.0", "", "", "=Bo Alm"],
+        ["Rastra Schema", "2026-10-15", "0.1.0", "12345678", "", "Anna Öberg"],
+        ["Rastra Schema", "2026-10-15", "0.1.0", "", "", "=Bo Alm"],
       ],
     });
     expect(csv.startsWith("﻿")).toBe(true);
     expect(csv.endsWith("\r\n")).toBe(true);
     const parsed = parseCsv(csv);
     expect(parsed.headers).toEqual(columns);
-    expect(parsed.rows[0]).toEqual(["SchemaPro", "2026-10-15", "0.1.0", "12345678", "", "Anna Öberg"]);
+    expect(parsed.rows[0]).toEqual(["Rastra Schema", "2026-10-15", "0.1.0", "12345678", "", "Anna Öberg"]);
     // Excel's formula guard belongs to the CSV, never to SCB's .txt.
     expect(csv).toContain("'=Bo Alm");
   });

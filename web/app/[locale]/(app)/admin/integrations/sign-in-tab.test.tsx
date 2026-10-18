@@ -281,7 +281,7 @@ describe("/admin/integrations — Inloggning", () => {
     await user.click(within(card).getByRole("button", { name: "Spara inloggningen" }));
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(
-        "En annan skola loggar in med en annan inloggning på delad.example. Ta bort domänen här, eller kontakta den som driftar SchemaPro om domänen är er.",
+        "En annan skola loggar in med en annan inloggning på delad.example. Ta bort domänen här, eller kontakta den som driftar Rastra Schema om domänen är er.",
       ),
     );
   });

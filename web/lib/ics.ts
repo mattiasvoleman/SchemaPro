@@ -149,7 +149,7 @@ export function buildIcs(
   const lines: string[] = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
-    "PRODID:-//SchemaPro//Timetable//EN",
+    "PRODID:-//Rastra//Timetable//EN",
     `X-WR-CALNAME:${escapeText(options.calendarName)}`,
   ];
 

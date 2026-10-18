@@ -1,7 +1,7 @@
 - link "Hoppa till innehållet":
   - /url: "#main"
 - complementary:
-  - text: SchemaPro Exempelskolan
+  - text: Rastra Schema Exempelskolan
   - navigation "Huvudmeny":
     - list:
       - listitem:
@@ -112,10 +112,10 @@
   - button "Rut Rektorsson": RR
 - main:
   - heading "Notiser" [level=1]
-  - paragraph: Välj vad som skickas till dig utanför SchemaPro
+  - paragraph: Välj vad som skickas till dig utanför Rastra Schema
   - region "E-post och push":
     - heading "E-post och push" [level=2]
-    - text: Det du slår av skickas inte som e-post eller push. Notisen finns ändå kvar här i SchemaPro.
+    - text: Det du slår av skickas inte som e-post eller push. Notisen finns ändå kvar här i Rastra Schema.
     - list:
       - listitem:
         - text: Inställda lektioner

@@ -291,10 +291,10 @@ describe("Rapporter › Tjänstefördelning", () => {
       specVersionDate: "2026-05-07",
       columns: ["System", "Datum", "PersonNamn"],
       rows: [
-        ["SchemaPro", "2026-10-16", "Bo Alm"],
-        ["SchemaPro", "2026-10-16", "Anna Öberg"],
+        ["Rastra Schema", "2026-10-16", "Bo Alm"],
+        ["Rastra Schema", "2026-10-16", "Anna Öberg"],
       ],
-      text: "SchemaPro;2026-10-16;Bo Alm\r\nSchemaPro;2026-10-16;Anna Öberg\r\n",
+      text: "Rastra Schema;2026-10-16;Bo Alm\r\nRastra Schema;2026-10-16;Anna Öberg\r\n",
       missing: [{ line: 1, name: "Bo Alm", unit: "Norra skolan", verksamhetstyp: "", fields: ["ANSTFORM", "VERKSAMHETSTYP"] }],
       notices: [{ code: "REDUCTION", params: { name: "Anna Öberg" } }],
     };
@@ -326,7 +326,7 @@ describe("Rapporter › Tjänstefördelning", () => {
     const [filename, csv] = download.mock.calls[0] as [string, string];
     expect(filename).toBe("scb-pedagogisk-personal-2026-27.csv");
     expect(csv.split("\r\n")[0]).toBe("\uFEFFSystem;Datum;PersonNamn");
-    expect(csv.split("\r\n")[2]).toBe("SchemaPro;2026-10-16;Anna Öberg");
+    expect(csv.split("\r\n")[2]).toBe("Rastra Schema;2026-10-16;Anna Öberg");
   });
 
   it("says a refusal in its own words, never Nest's English, and leaves no older file's panel standing", async () => {
@@ -334,7 +334,7 @@ describe("Rapporter › Tjänstefördelning", () => {
     const { toast } = await import("sonner");
     const file = {
       filename: "f.txt", matdatum: "2026-10-15", specVersionDate: "2026-05-07", columns: ["System"],
-      rows: [["SchemaPro"]], text: "SchemaPro\r\n", missing: [], notices: [],
+      rows: [["Rastra Schema"]], text: "Rastra Schema\r\n", missing: [], notices: [],
     };
     apiGet.mockResolvedValueOnce(file);
     render(<StaffingReport />);
@@ -400,7 +400,7 @@ describe("Rapporter › Tjänstefördelning", () => {
     await user.click(screen.getByRole("option", { name: /2027\/28/ }));
     answer({
       filename: "scb-pedagogisk-personal-2026-27.txt", matdatum: "2026-10-15", specVersionDate: "2026-05-07",
-      columns: ["System"], rows: [["SchemaPro"]], text: "SchemaPro\r\n", missing: [], notices: [],
+      columns: ["System"], rows: [["Rastra Schema"]], text: "Rastra Schema\r\n", missing: [], notices: [],
     });
     // The file asked for is saved under its own year's name; its lists stay with that year.
     await waitFor(() => expect(downloadText).toHaveBeenCalledTimes(1));
