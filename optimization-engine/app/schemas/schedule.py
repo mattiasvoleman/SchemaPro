@@ -461,10 +461,33 @@ class AnonymousTeacherWorkRule(CamelModel):
     grid the model does, so the refusal and the model agree to the minute. A
     422 from this class would be the right verdict in the wrong language.
 
-    NO MAXIMUM CONSECUTIVE TEACHING AND NO DAILY CAP, deliberately, and they
-    are not forgotten: the one comparable chain rule in this repo six-folded
-    the variable count, so a consecutive-teaching rule waits for a per-teacher
-    flag of its own.
+    A DAILY CAP, NOW, AND STILL NO MAXIMUM CONSECUTIVE TEACHING. The cap was
+    left out of the first version beside the consecutive rule, on the strength
+    of the one comparable CHAIN rule in this repo six-folding the variable
+    count. The cap is not a chain. It is one linear sum per teacher and day —
+    the minutes of the lessons that land there, at most the cap — over one
+    literal per lesson and day saying where the lesson landed, and those
+    literals are built only for a teacher whose row sets a cap (or whose post
+    limits their days): a school that has set none builds the model it always
+    built, variable for variable. Nothing orders the lessons inside the day,
+    which is exactly the part the consecutive rule needs and the part that
+    costs, so that rule still waits for a per-teacher flag of its own.
+
+    MINUTES, NOT LESSONS: every lesson the teacher is on — lead or co-teacher,
+    generated or locked — counted in its own minutes, start to end, because
+    lessons are not one length and every other figure about a teacher's time
+    is minutes already (src/common/teacher-day.ts is the one definition).
+
+    THE FREE-DAY WISH IS THE ONE SOFT FIELD ON THIS ROW. The lunch, the rest
+    and the cap are refused by name when they cannot hold; the wish is paid
+    for in the objective and never refuses anything, which is why it reaches
+    only the full model and builds nothing in the satisfaction phase.
+
+    THE DAYS A WEEK ARE NOT HERE, and must not be: this row is read by every
+    member of staff, and a deltid limit is HR. They come on
+    AnonymousTeacherDayLimit, a list of their own with an id space of their
+    own, so that the gateway can mask every sentence about them for a reader
+    without HR read access without touching a sentence about the cap.
     """
 
     #: The RULE's id, not the teacher's, and it is the one thing in this model
@@ -489,6 +512,23 @@ class AnonymousTeacherWorkRule(CamelModel):
     min_daily_rest_minutes: int | None = Field(
         default=None, alias="minDailyRestMinutes", ge=60, le=1320,
     )
+    #: The most minutes of teaching on any one day. Bounded and stepped as the
+    #: database bounds it (TeacherWorkRules_maxTeachingMinutesPerDay_check):
+    #: half an hour is the least that is still a day's teaching, twelve hours
+    #: the most a school day can hold, and the multiple of five is this
+    #: engine's grid, so the cap is a number the model can compare a sum of
+    #: lesson lengths with exactly. Outside those it is a gateway that lost
+    #: the database's own CHECK, and a 422 about a shape rather than a
+    #: sentence a school reads.
+    max_teaching_minutes_per_day: int | None = Field(
+        default=None, alias="maxTeachingMinutesPerDay", ge=30, le=720, multiple_of=5,
+    )
+    #: The ISO weekday the teacher would rather have free. SOFT: paid for in
+    #: the objective (weight_free_day_wish) and never refused. A weekday the
+    #: school does not teach, or one the teacher's own locked lessons already
+    #: hold, is a wish nothing the solver does can keep or break, and builds
+    #: nothing at all.
+    preferred_free_day: DayOfWeek | None = Field(default=None, alias="preferredFreeDay")
 
     @model_validator(mode="after")
     def validate_lunch_trio(self) -> AnonymousTeacherWorkRule:
@@ -510,6 +550,39 @@ class AnonymousTeacherWorkRule(CamelModel):
     def has_lunch(self) -> bool:
         """Whether this rule asks for a lunch at all. Validated as a trio."""
         return self.lunch_minutes is not None
+
+
+class AnonymousTeacherDayLimit(CamelModel):
+    """Deltid in days: a teacher's post allows teaching on at most N days a week.
+
+    HR DATA, AND THE REASON THIS IS NOT A FIELD ON THE WORK RULE. The work
+    rule is read by every member of staff; how many days a part-time post
+    covers is read by the principal, a full administrator and whoever holds
+    HR read access, and by nobody else. So the limit travels apart, with an
+    id space of its own — the POST's id, which the gateway keeps a map for
+    (dayLimitAnonMap) as it keeps one for the work rule — and every sentence
+    about it has a code of its own containing WORK_DAYS. That is what lets
+    the gateway mask exactly the sentences that carry the figure, on read,
+    for a reader without HR access, and leave the cap's sentences alone.
+
+    NOT REFUSED FOR WHAT THE LOCKED LESSONS DO. A teacher whose hand-placed
+    lessons already sit on more days than the post allows broke the limit by
+    hand, and was warned beside that edit; the engine holds what it PLACES to
+    the days that are left, and to the locked days themselves where none are.
+    See SchedulerSolver._add_teacher_day_constraints.
+
+    A TEACHING DAY is a weekday with at least one lesson the teacher is on,
+    as lead or as co-teacher, generated or locked — src/common/teacher-day.ts.
+    """
+
+    #: The post's id, never the teacher's — the reason the work rule gives:
+    #: the teacher map is discarded, and a refusal naming a teacher would reach
+    #: the school as a uuid that resolves to nobody.
+    id: UUID4
+    teacher_id: UUID4 = Field(alias="teacherId")
+    #: 1..6 as the database bounds it (TeacherEmployments_maxTeachingDaysPerWeek_check).
+    #: Seven would be no limit at all on any week a school has.
+    max_teaching_days_per_week: int = Field(alias="maxTeachingDaysPerWeek", ge=1, le=6)
 
 
 class FrameTime(CamelModel):
@@ -685,6 +758,13 @@ class OptimizeScheduleRequest(CamelModel):
     teacher_work_rules: list[AnonymousTeacherWorkRule] = Field(
         default_factory=list, alias="teacherWorkRules", max_length=2000,
     )
+    # Deltid in days, one row per post that has a limit. Empty is every school
+    # that has set none, and the gateway sends the key only when it is not, so
+    # such a school's payload is byte for byte what it was. Capped as the work
+    # rules are, for their reason: one post per teacher and year.
+    teacher_day_limits: list[AnonymousTeacherDayLimit] = Field(
+        default_factory=list, alias="teacherDayLimits", max_length=2000,
+    )
     room_preferences: list[AnonymousRoomPreference] = Field(
         default_factory=list,
         alias="roomPreferences",
@@ -728,6 +808,37 @@ class OptimizeScheduleRequest(CamelModel):
         validator report every lesson as overlapping itself.
         """
         return [(first, second) for first, second in value if first != second]
+
+    @model_validator(mode="after")
+    def validate_day_limits(self) -> OptimizeScheduleRequest:
+        """One limit per post, and one post per teacher.
+
+        A SHAPE, NOT A SENTENCE, refused here as a 422 for the reason the work
+        rule's half-filled lunch is: the database keeps one post per teacher
+        and year (the unique index on TeacherEmployments), and the payload
+        carries one year, so a second limit for one teacher — or the same post
+        twice — is a gateway that joined something twice, never an
+        administrator who typed something impossible. A school has nothing to
+        go and change, and a sentence in its language would send it looking.
+
+        AND IT CANNOT BE READ EITHER WAY ROUND. Two limits for one teacher
+        built as two would hold the stricter and name both, and "the first one
+        wins" would be the engine quietly choosing which half of a payload it
+        believes; for an HR figure the gateway masks per post, a refusal
+        naming the wrong post is a leak in the making. So neither: the payload
+        is refused before anything reads it. (The work rule's own two-rows
+        case is built as two, and argued in _add_teacher_work_constraints;
+        it carries no HR figure.)
+        """
+        ids = [limit.id for limit in self.teacher_day_limits]
+        if len(set(ids)) != len(ids):
+            msg = "teacherDayLimits ids must be unique."
+            raise ValueError(msg)
+        teachers = [limit.teacher_id for limit in self.teacher_day_limits]
+        if len(set(teachers)) != len(teachers):
+            msg = "teacherDayLimits names one teacher twice."
+            raise ValueError(msg)
+        return self
 
 
 class ScheduledLesson(CamelModel):

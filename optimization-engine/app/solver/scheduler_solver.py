@@ -7,7 +7,7 @@ import time
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date as date_type
 from uuid import UUID
 
@@ -26,6 +26,7 @@ from app.schemas.schedule import (
     AnonymousGroup,
     AnonymousRequirement,
     AnonymousRoom,
+    AnonymousTeacherDayLimit,
     AnonymousTeacherWorkRule,
     FixedLesson,
     FrameTime,
@@ -63,6 +64,10 @@ class ResolvedWeights:
     teacher_gap: int
     lunch_drift: int
     date_unavailable: int
+    #: Paid per day a teacher teaches on their wished free weekday. Settings
+    #: only, no per-request override: the contract stays the two fields the
+    #: work rule carries.
+    free_day_wish: int = 0
 
 
 @dataclass(frozen=True)
@@ -94,6 +99,11 @@ class LessonDecision:
     _padded: cp_model.IntervalVar | None = None
     #: The same lesson as the PUPILS are occupied by it. See pupil_padded_of.
     _pupils: cp_model.IntervalVar | None = None
+    #: The starts `start` was built on, kept for the builders that ask which
+    #: DAYS a lesson can fall on and which slots of them it can take — see
+    #: _day_reach. The domain itself, not a second computation of it, so a
+    #: rule reading it and the variable it constrains cannot disagree.
+    starts: cp_model.Domain | None = None
 
 
 def padded_of(model: cp_model.CpModel, decision: LessonDecision) -> cp_model.IntervalVar:
@@ -401,6 +411,30 @@ class _TeacherDay:
     taught: cp_model.LinearExpr
 
 
+@dataclass
+class _TeacherDayLiterals:
+    """Where each lesson landed and whether a teacher works a day: Lärarens dag's own.
+
+    A SEPARATE CACHE FROM `teacher_days`, and the separation is the encoding.
+    _TeacherDay is the rest rule's two-sided day, and _add_idle_time_objective
+    reads first, last and taught off any entry it finds there — so an entry
+    written by the cap would switch the idle term from its one-sided pair to
+    the two-sided one for every teacher with a cap, and roughly double the
+    satisfaction model for them (the rest rule measured +9,267 variables on
+    the gate week for the same pair). Nothing here has a first or a last.
+
+    `on_day` is keyed by the LESSON, not by the teacher: one literal per lesson
+    and day it can fall on, exactly one of them true, shared by the lead and
+    the co-teacher, since a co-taught lesson lands on one day for both.
+    `works` is keyed (teacher, day index): true exactly when one of the
+    teacher's lessons is there. Built lazily, for the teachers and days a rule
+    can bind, so a school with no rule builds none of either.
+    """
+
+    on_day: dict[str, dict[int, cp_model.IntVar]] = field(default_factory=dict)
+    works: dict[tuple[UUID, int], cp_model.IntVar] = field(default_factory=dict)
+
+
 class SchedulerSolver:
     """CP-SAT weekly master timetable optimizer."""
 
@@ -521,18 +555,41 @@ class SchedulerSolver:
             teacher_days,
             step=step,
         )
+        # Lärarens dag: the cap on a teacher's minutes a day and the post's
+        # limit on their days. RIGHT AFTER the work rules, because it READS
+        # what the rest rule left in `teacher_days` — a teacher with a rest
+        # already has a literal per lesson and day and a `works`, and building
+        # a second set beside them would be two answers to "does Anna teach on
+        # Tuesday" — and never writes there. Its own literals go in
+        # `day_literals`, which the free-day wish below reads in turn.
+        day_literals = _TeacherDayLiterals()
+        self._add_teacher_day_constraints(
+            model,
+            registry,
+            decisions,
+            request.teacher_work_rules,
+            request.teacher_day_limits,
+            request.fixed_lessons,
+            day_vars,
+            teacher_days,
+            day_literals,
+        )
         # Ämnesfördelning. On the day variables alone, so its place among the
         # rule builders says nothing; it reads `day_vars` as the spread
         # objective does and builds the same one per lesson where both run.
         self._add_distribution_constraints(model, registry, decisions, day_vars)
         if include_objective:
             weights = self._resolve_weights(request)
+            # The wishes the objective prices, read once: the free-day term
+            # pays for them and the disruption term stops paying AGAINST them.
+            wished_free = self._free_day_wishes(request, weights)
             objective_terms = [
                 *self._add_preference_objective(
                     model, decisions, rooms, request.constraints, weights,
                 ),
                 *self._add_disruption_objective(
                     model, decisions, request.previous_lessons, weights,
+                    wished_free=set(wished_free),
                 ),
                 *self._add_lunch_stability_objective(model, lunch_starts, weights),
                 *self._add_spread_objective(model, decisions, weights, day_vars),
@@ -542,6 +599,9 @@ class SchedulerSolver:
                 ),
                 *self._add_room_preference_objective(
                     model, decisions, rooms, room_plan, request.room_preferences, weights,
+                ),
+                *self._add_free_day_objective(
+                    model, decisions, wished_free, weights, teacher_days, day_literals,
                 ),
             ]
             model.Minimize(sum(objective_terms) if objective_terms else 0)
@@ -2044,6 +2104,17 @@ class SchedulerSolver:
                                                the week. Zero unless a rast
                                                asks; the minutes a rast reserves
                                                cost no variables at all
+            (D + 1)L_t      teacher's day      per teacher whose row caps the
+            + D + DC + 1                       day or whose post limits the
+            + W                                days, and who has a lesson: a
+                                               day literal per lesson and day,
+                                               the lesson's own day variable, a
+                                               `works` per day, a cap literal
+                                               per day and capping row (C of
+                                               them) and the days literal; and
+                                               one `works` per free-day wish (W)
+                                               whose teacher has a lesson. Zero
+                                               without a rule
 
         NO TERM FOR THE PADDED INTERVALS, and that is a measurement rather than
         an omission. A lesson can now carry two extra interval protos — the
@@ -2266,6 +2337,37 @@ class SchedulerSolver:
             or requirement.min_days_between is not None
         )
 
+        # _add_teacher_day_constraints and _add_free_day_objective, charged per
+        # teacher with a lesson as if every day of every rule could bind: the
+        # builders skip what cannot, and an upper bound may count it anyway.
+        # The day literals are charged to each teacher though a co-taught
+        # lesson's are one set for both, and the day variable though the
+        # spread usually built it — the reasons the idle and distribution
+        # terms above give for their own overlaps. A teacher whose rest rule
+        # built the day reuses its literals and pays here for nothing it adds.
+        ruled = {
+            rule.teacher_id
+            for rule in request.teacher_work_rules
+            if rule.max_teaching_minutes_per_day is not None
+        } | {limit.teacher_id for limit in request.teacher_day_limits}
+        teacher_day_vars = sum(
+            (day_count + 1) * lessons_by_teacher[teacher_id] + day_count
+            for teacher_id in ruled
+            if lessons_by_teacher.get(teacher_id, 0) > 0
+        )
+        for rule in request.teacher_work_rules:
+            if lessons_by_teacher.get(rule.teacher_id, 0) == 0:
+                continue
+            if rule.max_teaching_minutes_per_day is not None:
+                teacher_day_vars += day_count
+            if rule.preferred_free_day is not None:
+                teacher_day_vars += 1
+        teacher_day_vars += sum(
+            1
+            for limit in request.teacher_day_limits
+            if lessons_by_teacher.get(limit.teacher_id, 0) > 0
+        )
+
         return (
             4 * total_lessons
             + room_class_vars
@@ -2283,6 +2385,7 @@ class SchedulerSolver:
             + teacher_work_vars
             + rast_order_vars
             + distribution_vars
+            + teacher_day_vars
             # _add_block_constraints: one literal per block. Its equalities are
             # constraints on starts that exist already, and add no variable.
             + len(_blocks_of(request.requirements))
@@ -2549,6 +2652,13 @@ class SchedulerSolver:
         # the pupils' one, and behind that return a school with teacher rules and
         # no school-wide lunch would never have been told a thing.
         self._verify_teacher_work_rules(request)
+
+        # LÄRARENS DAG, beside the work rules and for their reason: a cap no
+        # day can hold, or days too few for the week, is arithmetic on
+        # constants, and the model would otherwise refuse it with a core about
+        # every teacher's every day. Also before the lunch block's early
+        # return, which a school without a pupils' lunch would never get past.
+        self._verify_teacher_day_rules(request)
 
         # THE WEEK, not the lesson. Every locked requirement above can have a
         # room and the set of them still not fit: three subjects locked into one
@@ -3268,6 +3378,143 @@ class SchedulerSolver:
                 "nightMinutes": max(0, longest_night) * minutes,
                 "lessons": lessons_by_teacher[rule.teacher_id],
             })
+
+    def _verify_teacher_day_rules(self, request: OptimizeScheduleRequest) -> None:
+        """The three refusals Lärarens dag can be arithmetic.
+
+        ON THE MINUTES STILL TO PLACE. A teacher's week here is what the solver
+        has to put somewhere — the generated lessons they are on, as lead or
+        co-teacher, each requirement once — and what is locked is a fact that
+        only takes room away: from the cap on its own weekday, from the day it
+        sits on. A teacher whose whole week is hand-placed has nothing to
+        place, and is refused nothing, as the builder skips them.
+
+        UPPER BOUNDS ONLY, so a week this refuses is a week no timetable
+        exists for, and a week that is merely tight goes to the solver and is
+        refused there under the rule's literal:
+
+          a lesson longer than the cap fits on no day at all;
+          the week's minutes against every school day's residual — the cap
+          less what the teacher's locked lessons take that weekday — with
+          rooms, frames and every other teacher ignored;
+          the week's minutes against the N best days, a day holding at most
+          the room the teacher's lessons can take there (_teaching_room: the
+          frames, rasts and margins in the domains, less the locked lessons)
+          and, under a cap, at most its residual. N is the limit or, where the
+          locked lessons already sit on more days, that many — the days a
+          teacher can teach on number no more than the larger of the two, and
+          taking the BEST that many days, locked or not, can only overcount.
+          ONLY WHERE THE LIMIT TIPS THE WEEK: a week every day together cannot
+          hold either is too much with no post at all, and is the model's to
+          refuse with whatever does tip it — a limit allowing every day with
+          room among them, which the model does not even build.
+
+        EVERY CAP BEFORE ANY DAYS, and the order is for a reader without HR
+        read access. The days refusal carries the post's figure and is masked
+        for them into a sentence with nothing in it to act on; a cap refusal
+        is theirs to read. Where both are true, the one they can act on comes
+        first, and fixing it may be all the week needed.
+        """
+        capped = [
+            rule
+            for rule in request.teacher_work_rules
+            if rule.max_teaching_minutes_per_day is not None
+        ]
+        limits = request.teacher_day_limits
+        if not capped and not limits:
+            return
+
+        week_minutes: dict[UUID, int] = {}
+        longest: dict[UUID, int] = {}
+        requirements_of: dict[UUID, list[AnonymousRequirement]] = {}
+        for requirement in request.requirements:
+            for teacher_id in dict.fromkeys(_teachers_of(requirement)):
+                week_minutes[teacher_id] = (
+                    week_minutes.get(teacher_id, 0) + sum(requirement.lesson_minutes())
+                )
+                longest[teacher_id] = max(
+                    longest.get(teacher_id, 0), requirement.minutes_per_lesson,
+                )
+                requirements_of.setdefault(teacher_id, []).append(requirement)
+
+        weekdays = self._grid.schedule_days
+        lock_minutes, lock_days = _teacher_locks(request.fixed_lessons)
+        reaching = [rule for rule in capped if rule.teacher_id in week_minutes]
+
+        def residual(teacher_id: UUID, cap: int, weekday: int) -> int:
+            return max(0, cap - lock_minutes.get((teacher_id, weekday), 0))
+
+        for rule in reaching:
+            cap = rule.max_teaching_minutes_per_day
+            assert cap is not None
+            if longest[rule.teacher_id] > cap:
+                raise InvalidScheduleInputError.of("TEACHER_LESSON_LONGER_THAN_DAILY_CAP", {
+                    "rule": str(rule.id),
+                    "minutes": cap,
+                    "lessonMinutes": longest[rule.teacher_id],
+                })
+        for rule in reaching:
+            cap = rule.max_teaching_minutes_per_day
+            assert cap is not None
+            room = sum(residual(rule.teacher_id, cap, weekday) for weekday in weekdays)
+            if week_minutes[rule.teacher_id] > room:
+                raise InvalidScheduleInputError.of("TEACHER_DAILY_CAP_TOO_SMALL_FOR_WEEK", {
+                    "rule": str(rule.id),
+                    "minutes": cap,
+                    "days": len(weekdays),
+                    "weekMinutes": week_minutes[rule.teacher_id],
+                })
+
+        if not limits:
+            return
+        slots_per_day = self._grid.slots_per_day
+        lattice = _start_lattice(_start_step(request, self._grid), self._grid.horizon)
+        locked_busy = self._teacher_busy_from_locks(request.fixed_lessons)
+        for limit in limits:
+            teacher_id = limit.teacher_id
+            if teacher_id not in week_minutes:
+                continue
+            reaches = []
+            for requirement in requirements_of[teacher_id]:
+                domains = self._start_domains(
+                    requirement, request.frame_times, request.rasts, lattice,
+                )
+                for minutes in requirement.lesson_minutes():
+                    duration = self._grid.minutes_to_slots(minutes)
+                    reaches.append(_day_reach(domains[duration], duration, slots_per_day))
+            room = self._teaching_room(reaches, locked_busy, teacher_id)
+            caps = [
+                rule.max_teaching_minutes_per_day
+                for rule in reaching
+                if rule.teacher_id == teacher_id
+                and rule.max_teaching_minutes_per_day is not None
+            ]
+            per_day = []
+            for day_index, weekday in enumerate(weekdays):
+                held = room.get(day_index, 0) * self._grid.slot_minutes
+                for cap in caps:
+                    held = min(held, residual(teacher_id, cap, weekday))
+                per_day.append(held)
+            days = max(
+                min(limit.max_teaching_days_per_week, len(weekdays)),
+                len(lock_days.get(teacher_id, set()) & set(weekdays)),
+            )
+            if week_minutes[teacher_id] > sum(per_day):
+                # Every day, no limit: the week is too much for the teacher
+                # whatever the post says, and the post is not what tips it.
+                # Named, it would tell a decider to allow more days when no
+                # number of days helps, and a reader without HR read access
+                # would get the masked sentence where the model's own core
+                # can name a cause they can act on. This is also the model's
+                # "allowed >= candidates" skip, read here: a count reaching
+                # every day with room takes all of them, so its sum is this one.
+                continue
+            if week_minutes[teacher_id] > sum(sorted(per_day, reverse=True)[:days]):
+                raise InvalidScheduleInputError.of("TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK", {
+                    "limit": str(limit.id),
+                    "days": limit.max_teaching_days_per_week,
+                    "weekMinutes": week_minutes[teacher_id],
+                })
 
     def _locks_in_stretch(
         self,
@@ -4198,6 +4445,46 @@ class SchedulerSolver:
                     ],
                 }),
             ))
+        # LÄRARENS DAG IS TWO PROBES AS WELL, for the same reason and one more:
+        # the cap is a number on the work rule and the days a number on the
+        # post, two screens and two people — and the days are HR, so a single
+        # probe naming both would leave a reader without HR access unable to
+        # tell whether the fix is theirs to make. The days probe names no post
+        # and no figure; it says only that some post limits its days.
+        #
+        # BETWEEN THE REST AND THE LUNCH, AND THE DAYS FIRST. After the rest,
+        # whose 9,267 variables on the gate week are an order more than these
+        # cost (the högstadium week's three caps add 336 variables to 6,627,
+        # its three posts 258); before the lunch, which adds no measurable
+        # time. The days before the cap because a days limit is the harder of
+        # the two to search: a pigeonhole over day literals, where a cap is
+        # one sum a day. Measured on the högstadium week with one worker and
+        # fixed seeds, so the host's load does not enter the number: to a
+        # first timetable the three posts alone took 2.8 and 5.1 units of
+        # deterministic time and one seed in three was still searching at
+        # 240 s, the three caps alone 0.9 to 4.5, and neither 0.2 to 0.3. The
+        # same week's deliberately impossible post
+        # (benchmarks/hogstadium.py --infeasible-days) was still UNKNOWN after
+        # 60 s with the linking rows taken out. Each probe keeps the other
+        # rule, or a finding would name one and measure two.
+        if request.teacher_day_limits:
+            out.append((
+                "PROBE_SOLVED_WITHOUT_TEACHER_DAY_LIMITS",
+                request.model_copy(update={"teacher_day_limits": []}),
+            ))
+        if any(
+            rule.max_teaching_minutes_per_day is not None
+            for rule in request.teacher_work_rules
+        ):
+            out.append((
+                "PROBE_SOLVED_WITHOUT_TEACHER_DAILY_CAP",
+                request.model_copy(update={
+                    "teacher_work_rules": [
+                        rule.model_copy(update={"max_teaching_minutes_per_day": None})
+                        for rule in request.teacher_work_rules
+                    ],
+                }),
+            ))
         if any(rule.has_lunch for rule in request.teacher_work_rules):
             out.append((
                 "PROBE_SOLVED_WITHOUT_TEACHER_LUNCH",
@@ -4318,6 +4605,22 @@ class SchedulerSolver:
             if rule.min_daily_rest_minutes is not None
             and rule.teacher_id in with_lessons
         )
+        # Lärarens dag on the same terms. A count of posts with a limit, never
+        # which post or how many days: the gateway masks the figure on read
+        # for whoever may not see it, and a log line has no reader to mask for.
+        teacher_caps = sum(
+            1
+            for rule in request.teacher_work_rules
+            if rule.max_teaching_minutes_per_day is not None
+            and rule.teacher_id in with_lessons
+        )
+        teacher_day_limits = sum(
+            1 for limit in request.teacher_day_limits if limit.teacher_id in with_lessons
+        )
+        # The wishes the full model prices; the satisfaction phase that timed
+        # out built none of them, and the cleared clone carries them as free
+        # variables, which is why they are worth a number here at all.
+        free_day_wishes = len(self._free_day_wishes(request, self._resolve_weights(request)))
         # Requirements carrying an ämnesfördelning, either half. Off the
         # requirements themselves, which are exactly what the model built from:
         # a requirement in the payload has lessons left to place.
@@ -4353,6 +4656,8 @@ class SchedulerSolver:
             f"frameTimes={len(request.frame_times)}, diningSeats={seats}, "
             f"fixedLessons={len(request.fixed_lessons)}, "
             f"teacherLunches={teacher_lunches}, teacherRests={teacher_rests}, "
+            f"teacherDailyCaps={teacher_caps}, teacherDayLimits={teacher_day_limits}, "
+            f"freeDayWishes={free_day_wishes}, "
             f"distributionRules={distribution_rules}, blocks={blocks}, "
             f"startStepMinutes={step_minutes}, "
             f"budget={self._settings.solver_max_time_seconds}s. "
@@ -4411,6 +4716,7 @@ class SchedulerSolver:
                         changeover=changeover,
                         lead=lead,
                         trail=trail,
+                        starts=domains[duration],
                     ),
                 )
 
@@ -5158,6 +5464,7 @@ class SchedulerSolver:
                 else self._settings.weight_room_preference
             ),
             date_unavailable=self._settings.weight_date_unavailable,
+            free_day_wish=self._settings.weight_free_day_wish,
         )
 
     def _add_preference_objective(
@@ -5331,12 +5638,28 @@ class SchedulerSolver:
         decisions: list[LessonDecision],
         previous_lessons: list[PreviousLesson],
         weights: ResolvedWeights,
+        *,
+        wished_free: set[tuple[UUID, int]] | None = None,
     ) -> list[cp_model.LinearExpr]:
         """Minimal-disruption re-optimization.
 
         For every slot the previous schedule used, the solver is penalized
         unless some lesson instance of the same requirement stays on it. The
         previous slots are also fed in as solver hints (warm start).
+
+        NOT ON A DAY ITS TEACHER WISHES FREE. `wished_free` holds (teacher, ISO
+        weekday) for every free-day wish the objective prices, and a previous
+        slot on that weekday of a requirement that teacher teaches, as lead or
+        co-teacher, earns nothing for being kept. The wish says exactly those
+        slots are not worth keeping, and left in, the two terms would bid
+        against each other over the same lessons: at 8 a slot, five lessons on
+        last term's Friday cancel a wish of 40 before anything else in the week
+        has had a say, and a school re-generating to give a teacher Fridays
+        free would get last term's Fridays back. The hint stays — it is a place to
+        START searching, which last term's week still is — and every other
+        requirement's slots on that day keep their reward.
+
+        None or empty is the term as it always was, slot for slot.
         """
         if weights.disruption <= 0 or not previous_lessons:
             return []
@@ -5350,6 +5673,11 @@ class SchedulerSolver:
         for index, previous in enumerate(previous_lessons):
             candidates = by_requirement.get(previous.requirement_id)
             if not candidates:
+                continue
+            if wished_free and any(
+                (teacher_id, previous.day_of_week) in wished_free
+                for teacher_id in _teachers_of(candidates[0].lesson.requirement)
+            ):
                 continue
             try:
                 start_slot = self._grid.parse_hhmmss(previous.start_time)
@@ -7033,6 +7361,459 @@ class SchedulerSolver:
                 ).append((abs_start, abs_end))
         return busy
 
+    def _add_teacher_day_constraints(
+        self,
+        model: cp_model.CpModel,
+        registry: AssumptionRegistry,
+        decisions: list[LessonDecision],
+        work_rules: list[AnonymousTeacherWorkRule],
+        day_limits: list[AnonymousTeacherDayLimit],
+        fixed_lessons: list[FixedLesson],
+        day_vars: dict[str, cp_model.IntVar],
+        teacher_days: dict[tuple[UUID, int], _TeacherDay],
+        literals: _TeacherDayLiterals,
+    ) -> None:
+        """Lärarens dag: at most a cap of minutes a day, on at most N days a week.
+
+        TWO RULES ON TWO ROWS, AND TWO LITERALS. The cap is the work rule's —
+        staff-readable, named by the rule's id — and the days are the post's,
+        which is HR and named by the post's id. A core that blamed them as one
+        would put the deltid figure inside a sentence every administrator
+        reads, so they never share a literal or a code: one per (teacher, day)
+        for the cap, under TEACHER_DAILY_CAP_CANNOT_BE_KEPT, because "Anna's
+        Tuesday" is what the school opens and the day lifts the line in the
+        reading order; one per teacher for the days, under
+        TEACHER_WORK_DAYS_CANNOT_BE_KEPT, because the week is the unit of a
+        days limit. Every rule constraint hangs on its literal and nothing
+        rule-shaped is ever posted bare: a bare narrowing proves a week
+        impossible without touching an assumption, and the empty core that
+        follows erases every other cause the payload has.
+
+        IN MINUTES, EACH LESSON ITS OWN. The cap is a sum over the day's
+        literals of each lesson's length in minutes — 90 for slöjd, 40 for a
+        short idrott — against what the cap leaves. The lengths are on the
+        grid (INPUT_LESSON_LENGTH_OFF_GRID), so the sum is exact.
+
+        THE LOCKED LESSONS ARE FACTS, the distribution builder's precedent. A
+        teacher's hand-placed lessons are counted at their exact clock spans,
+        unclipped and their union once (_teacher_locks), and they are never
+        refused here: what they already take is subtracted from the cap — the
+        residual, floored at zero, which then closes the day to the solver's
+        own lessons under the literal and never bare — and the weekdays they
+        hold are teaching days already, whatever this builder does. So the
+        days limit counts the OTHER days, against what the locked ones leave
+        of N. A school that hand-placed a breach was warned beside that edit
+        (master-lessons.service.ts), and refusing the week for it would turn
+        the warning into a block one screen later.
+
+        THE LINKING CONSTRAINT IS THE ONE BARE LINE, AND IT IS SAFE BARE. For a
+        teacher with a days limit, every day's minutes are at most the room
+        the day has for them times `works`: `Σ minutes·x ≤ C·works`, C being
+        the slots any of the teacher's lessons could occupy that day less what
+        their locked lessons take (_teaching_room). That is implied by the
+        teacher's NoOverlap and the locked lessons' own avoidance, both bare,
+        so it can refuse nothing — and it is what turns a days limit the week
+        cannot hold from a pigeonhole the search walks for its whole budget
+        into an LP the solver closes at once. Measured by the design review on
+        a sixteen-lesson week, UNKNOWN after 20 s without it and INFEASIBLE in
+        0.02 s with it; and on the högstadium week's impossible post
+        (benchmarks/hogstadium.py --infeasible-days), side by side on one
+        loaded host, UNKNOWN after 60 s without it and INFEASIBLE in 3.1 s
+        with it. A locked day gets its row too, and needs it most: that post
+        is impossible because its two locked afternoons hold less than the
+        week does.
+
+        NEVER AGAINST A CONSTANT, a locked day included. A locked day's rows —
+        the cap's under its literal, the linking one bare — are `≤ R·works`
+        and not `≤ R`, though the lock makes it a teaching day either way:
+        `works` is 1 whenever a term of the sum is not 0, so the bound is the
+        same and the LP row no weaker. (The rest rule's `works` is its
+        lessons' maximum, so a lock does not force it to 1 either.) The
+        constant form is what CP-SAT 9.15.6755's
+        presolve threw an IndexError on (absl raw_hash_map::at, out of Solve,
+        a 500 to the school): two `Σ minutes·x ≤ R` rows on two locked days,
+        once a limit the locks fill has closed every other day and each
+        lesson's day literals are down to those two — phase 1 pins every
+        literal, so a row under one is as constant there as a bare one. The
+        review's fuzz found it in 3 weeks of about 1,000 from the linking
+        row, and with that row dropped once in 1,500 from the cap's, each a
+        week that should have named the post (test_teacher_day.py keeps
+        both). Dropping the locked days' rows is not the cure either: side
+        by side at a load of 237-300 on the högstadium week's impossible
+        post, INFEASIBLE in 14.6 s times `works`, 16.2 s against the
+        constant, and TIMEOUT on the 90 s budget with the linking rows of
+        the locked days left out.
+
+        `works` IS NOT FREE. Each lesson on the day implies it, and it is at
+        most their sum, so it is true exactly when the teacher teaches there;
+        a free literal would be a decision the search could take for nothing,
+        and a few thousand such were measured flipping a solvable model to
+        UNKNOWN (see _build_model).
+
+        THE REST RULE'S DAY IS REUSED, NEVER REBUILT, AND NEVER WRITTEN.
+        Where _add_teacher_rest already built a teacher's day, its per-lesson
+        literals and its `works` are these, read off `teacher_days`; anywhere
+        else the literals are one per lesson in `literals`, shared by lead and
+        co-teacher. _teacher_day_bounds is not called: an entry it wrote would
+        switch the idle objective to the two-sided pair for every capped
+        teacher. See _TeacherDayLiterals.
+
+        NOTHING THAT CANNOT BIND IS BUILT. A day whose residual already holds
+        every minute the teacher's lessons could bring there — or every minute
+        the day has room for — has no cap constraint, and a limit that allows
+        at least as many days as the teacher's lessons can reach has no days
+        constraint. A rule naming a teacher with nothing left to place builds
+        nothing at all, as the lunch and the rest skip them. With no rule set
+        this returns before reading anything, and the model is the one every
+        school had before.
+
+        A CO-TAUGHT LESSON IS FULL TEACHING FOR BOTH, as everywhere a teacher
+        rule reads the week (_teachers_of), and a legacy row naming one person
+        as both lead and co-teacher is one lesson for them, not two.
+        """
+        capped = [
+            rule for rule in work_rules if rule.max_teaching_minutes_per_day is not None
+        ]
+        if not capped and not day_limits:
+            return
+
+        by_teacher = _lessons_by_teacher(decisions)
+        slots_per_day = self._grid.slots_per_day
+        slot_minutes = self._grid.slot_minutes
+        weekdays = self._grid.schedule_days
+        lock_minutes, lock_days = _teacher_locks(fixed_lessons)
+        locked_busy = self._teacher_busy_from_locks(fixed_lessons)
+
+        reach_of: dict[str, dict[int, list[tuple[int, int]]]] = {}
+
+        def reach(decision: LessonDecision) -> dict[int, list[tuple[int, int]]]:
+            key = decision.lesson.key()
+            if key not in reach_of:
+                assert decision.starts is not None
+                reach_of[key] = _day_reach(decision.starts, decision.duration, slots_per_day)
+            return reach_of[key]
+
+        # One teacher at a time, in the payload's order of first mention, so a
+        # payload builds the same variables in the same order on every run.
+        teachers = list(dict.fromkeys(
+            [rule.teacher_id for rule in capped] + [limit.teacher_id for limit in day_limits],
+        ))
+        for teacher_id in teachers:
+            group = by_teacher.get(teacher_id)
+            if not group:
+                continue
+            rules = [rule for rule in capped if rule.teacher_id == teacher_id]
+            limits = [limit for limit in day_limits if limit.teacher_id == teacher_id]
+            on = self._teacher_day_on(
+                model, teacher_id, decisions, teacher_days, day_vars, literals, reach,
+            )
+            reaching = {
+                day_index: [decision for decision in group if day_index in reach(decision)]
+                for day_index in range(len(weekdays))
+            }
+            room = self._teaching_room(
+                [reach(decision) for decision in group], locked_busy, teacher_id,
+            )
+            locked = lock_days.get(teacher_id, set())
+
+            def works(day_index: int) -> cp_model.IntVar:
+                return self._teacher_day_works(
+                    model, teacher_id, day_index, reaching[day_index], on,
+                    teacher_days, literals,
+                )
+
+            def taught(day_index: int) -> cp_model.LinearExpr:
+                return sum(
+                    decision.duration * slot_minutes * on(decision, day_index)
+                    for decision in reaching[day_index]
+                )
+
+            for rule in rules:
+                cap = rule.max_teaching_minutes_per_day
+                assert cap is not None
+                for day_index, weekday in enumerate(weekdays):
+                    lessons = reaching[day_index]
+                    if not lessons:
+                        continue
+                    residual = max(0, cap - lock_minutes.get((teacher_id, weekday), 0))
+                    bringable = sum(decision.duration for decision in lessons) * slot_minutes
+                    if residual >= min(bringable, room.get(day_index, 0) * slot_minutes):
+                        continue
+                    literal = registry.register(
+                        model,
+                        name=f"ldcap_{teacher_id}_{day_index}",
+                        category="TEACHER_OVERLAP",
+                        code="TEACHER_DAILY_CAP_CANNOT_BE_KEPT",
+                        params={"rule": str(rule.id), "minutes": cap, "day": weekday},
+                        # The rule and never the teacher — see the lunch's
+                        # literal in _add_teacher_lunch.
+                        resource_ids=[rule.id],
+                    )
+                    # Times the day's `works`, a locked day's too, which is
+                    # what lets one LP row see the cap and the days limit
+                    # together — and never against a constant: see the
+                    # docstring's CP-SAT paragraph.
+                    model.Add(
+                        taught(day_index) <= residual * works(day_index),
+                    ).OnlyEnforceIf(literal)
+
+            for limit in limits:
+                allowed = max(0, limit.max_teaching_days_per_week - len(locked))
+                candidates = [
+                    day_index
+                    for day_index, weekday in enumerate(weekdays)
+                    if weekday not in locked and reaching[day_index]
+                ]
+                if allowed >= len(candidates):
+                    continue
+                literal = registry.register(
+                    model,
+                    name=f"lddays_{teacher_id}",
+                    category="TEACHER_OVERLAP",
+                    code="TEACHER_WORK_DAYS_CANNOT_BE_KEPT",
+                    params={"limit": str(limit.id), "days": limit.max_teaching_days_per_week},
+                    # The POST, never the teacher: the gateway reverses it
+                    # through its own map and masks the sentence on read.
+                    resource_ids=[limit.id],
+                )
+                model.Add(
+                    sum(works(day_index) for day_index in candidates) <= allowed,
+                ).OnlyEnforceIf(literal)
+                # The linking rows, bare and implied — see the docstring — on
+                # every day, the locked ones included: they are what tells the
+                # LP that a locked day holds its room and no more. A row whose
+                # room holds every minute the day's lessons could bring says
+                # nothing the lessons' own implications on `works` do not,
+                # and is left out.
+                for day_index in range(len(weekdays)):
+                    lessons = reaching[day_index]
+                    capacity = room.get(day_index, 0) * slot_minutes
+                    bringable = sum(decision.duration for decision in lessons) * slot_minutes
+                    if not lessons or capacity >= bringable:
+                        continue
+                    model.Add(taught(day_index) <= capacity * works(day_index))
+
+    def _teacher_day_on(
+        self,
+        model: cp_model.CpModel,
+        teacher_id: UUID,
+        decisions: list[LessonDecision],
+        teacher_days: dict[tuple[UUID, int], _TeacherDay],
+        day_vars: dict[str, cp_model.IntVar],
+        literals: _TeacherDayLiterals,
+        reach: Callable[[LessonDecision], dict[int, list[tuple[int, int]]]],
+    ) -> Callable[[LessonDecision, int], cp_model.IntVar]:
+        """`on(lesson, day)`: the literal saying this teacher's lesson is on that day.
+
+        The rest rule's own where it built the teacher's day: _teacher_day_bounds
+        took the teacher's lessons in the order _add_teacher_work_constraints
+        collected them — every decision once per time the teacher is named on
+        it, so a legacy row with one person as lead and co-teacher is there
+        twice — and its `on_day` is aligned with that list. The first position
+        of a lesson is its literal; a second is the same fact.
+
+        Anywhere else, the lesson's own one-hot in `literals`, built on first
+        use: a literal per day the lesson can fall on, exactly one true, their
+        weighted sum the lesson's `day_` variable — the channelling the
+        distribution rule uses, on the same day variable the spread reads.
+        """
+        position: dict[str, int] = {}
+        for index, decision in enumerate(
+            decision
+            for decision in decisions
+            for named in _teachers_of(decision.lesson.requirement)
+            if named == teacher_id
+        ):
+            position.setdefault(decision.lesson.key(), index)
+
+        def on(decision: LessonDecision, day_index: int) -> cp_model.IntVar:
+            built = teacher_days.get((teacher_id, day_index))
+            if built is not None:
+                return built.on_day[position[decision.lesson.key()]]
+            key = decision.lesson.key()
+            one_hot = literals.on_day.get(key)
+            if one_hot is None:
+                day = self._day_var(model, decision, day_vars)
+                one_hot = {
+                    index: model.NewBoolVar(f"ldon_{key}_{index}")
+                    for index in sorted(reach(decision))
+                }
+                model.AddExactlyOne(one_hot.values())
+                model.Add(day == sum(index * literal for index, literal in one_hot.items()))
+                literals.on_day[key] = one_hot
+            return one_hot[day_index]
+
+        return on
+
+    def _teacher_day_works(
+        self,
+        model: cp_model.CpModel,
+        teacher_id: UUID,
+        day_index: int,
+        lessons: list[LessonDecision],
+        on: Callable[[LessonDecision, int], cp_model.IntVar],
+        teacher_days: dict[tuple[UUID, int], _TeacherDay],
+        literals: _TeacherDayLiterals,
+    ) -> cp_model.IntVar:
+        """True exactly when the teacher teaches on the day: implied by every
+        lesson there, and at most their sum. The rest rule's own where it built
+        the day, which is the same fact by AddMaxEquality."""
+        built = teacher_days.get((teacher_id, day_index))
+        if built is not None:
+            return built.works
+        key = (teacher_id, day_index)
+        works = literals.works.get(key)
+        if works is None:
+            present = [on(decision, day_index) for decision in lessons]
+            works = model.NewBoolVar(f"ldworks_{teacher_id}_{day_index}")
+            for literal in present:
+                model.AddImplication(literal, works)
+            model.Add(works <= sum(present))
+            literals.works[key] = works
+        return works
+
+    def _teaching_room(
+        self,
+        reaches: list[dict[int, list[tuple[int, int]]]],
+        locked_busy: dict[tuple[UUID, int], list[tuple[int, int]]],
+        teacher_id: UUID,
+    ) -> dict[int, int]:
+        """Day index -> the slots a teacher's lessons can take that day, at most.
+
+        Every slot one of the lessons COULD occupy — the union, over the
+        lessons and the starts their domains allow, of start to start plus
+        length — less the slots the teacher's locked lessons take, at the
+        outward windows _add_fixed_lesson_constraints blocks. Frames, rasts
+        and the pupils' margins are in the domains already, so they are in
+        this; reservations are not, because they hang on literals, and an
+        upper bound that subtracted them would no longer be implied by what
+        is bare.
+
+        WHY THAT IS A BOUND NO TIMETABLE BEATS: every lesson the teacher has on
+        the day lies inside the union, no two of them overlap (their NoOverlap)
+        and none overlaps a locked one (its avoidance) — so their lengths add up
+        to at most what is left. Read by the linking rows and by the days
+        pre-flight, which is the same arithmetic on the same domains.
+        """
+        by_day: dict[int, list[tuple[int, int]]] = defaultdict(list)
+        for reach in reaches:
+            for day_index, ranges in reach.items():
+                by_day[day_index].extend(ranges)
+        room: dict[int, int] = {}
+        for day_index, ranges in by_day.items():
+            covered = _merge_ranges(ranges)
+            for window in locked_busy.get((teacher_id, day_index), []):
+                covered = _subtract_range(covered, window)
+            room[day_index] = sum(end - start for start, end in covered)
+        return room
+
+    def _free_day_wishes(
+        self, request: OptimizeScheduleRequest, weights: ResolvedWeights,
+    ) -> list[tuple[UUID, int]]:
+        """(teacher, ISO weekday) for every free-day wish the objective prices.
+
+        ONE READING FOR BOTH TERMS: the wish's own, which pays for a day the
+        teacher works, and the disruption term, which stops paying for the
+        teacher's previous slots on that day. Read apart they could disagree
+        about which wishes are in force, and a day the wish gave up on would
+        lose its slots' reward for nothing.
+
+        A WISH NOTHING CAN KEEP OR BREAK IS NOT IN FORCE: a weekday the school
+        does not teach — and never through TimeGrid.day_index, which raises
+        for a Saturday on a Monday-to-Friday grid — a day the teacher's own
+        locked lessons already hold, and a teacher with nothing left to place.
+        With the weight at zero or below, no wish is in force at all.
+        """
+        if weights.free_day_wish <= 0:
+            return []
+        teaching = {
+            teacher_id
+            for requirement in request.requirements
+            for teacher_id in _teachers_of(requirement)
+        }
+        _minutes, lock_days = _teacher_locks(request.fixed_lessons)
+        wishes: list[tuple[UUID, int]] = []
+        for rule in request.teacher_work_rules:
+            weekday = rule.preferred_free_day
+            if weekday is None or weekday not in self._grid.schedule_days:
+                continue
+            if rule.teacher_id not in teaching:
+                continue
+            if weekday in lock_days.get(rule.teacher_id, set()):
+                continue
+            wishes.append((rule.teacher_id, weekday))
+        return wishes
+
+    def _add_free_day_objective(
+        self,
+        model: cp_model.CpModel,
+        decisions: list[LessonDecision],
+        wishes: list[tuple[UUID, int]],
+        weights: ResolvedWeights,
+        teacher_days: dict[tuple[UUID, int], _TeacherDay],
+        literals: _TeacherDayLiterals,
+    ) -> list[cp_model.LinearExpr]:
+        """A teacher's wished free weekday, paid once if they teach on it.
+
+        `weight × works(teacher, day)` and nothing more: the wish is "no lessons
+        that day", so the first lesson there breaks it and the fifth breaks
+        nothing further. In the FULL model only, like every objective term —
+        the satisfaction phase builds nothing for a wish, so a school's wishes
+        cannot make its timetable harder to find.
+
+        `works` IS REUSED WHERE IT EXISTS: the rest rule's day, or the one the
+        cap or the days limit built. Otherwise one literal for the wish alone,
+        held up by each lesson that can land on the day — through the lesson's
+        day literal where the cap built one, and otherwise as "this lesson
+        starts outside the day unless the teacher works it", which is a domain
+        on the start and costs no variable at all. One variable per wish, then,
+        and never a literal per lesson for a teacher whose only rule is a wish.
+        Minimising pulls the literal down wherever no lesson holds it up.
+
+        A day no lesson of the teacher can reach is a wish kept by the frames
+        themselves: a constant, and no term.
+        """
+        if not wishes:
+            return []
+        by_teacher = _lessons_by_teacher(decisions)
+        slots_per_day = self._grid.slots_per_day
+        horizon = self._grid.horizon
+        penalties: list[cp_model.LinearExpr] = []
+        for teacher_id, weekday in wishes:
+            day_index = self._grid.day_index(weekday)
+            reaching = []
+            for decision in by_teacher.get(teacher_id, []):
+                assert decision.starts is not None
+                if day_index in _day_reach(decision.starts, decision.duration, slots_per_day):
+                    reaching.append(decision)
+            if not reaching:
+                continue
+            built = teacher_days.get((teacher_id, day_index))
+            works = built.works if built is not None else literals.works.get(
+                (teacher_id, day_index),
+            )
+            if works is None:
+                works = model.NewBoolVar(f"ldwish_{teacher_id}_{day_index}")
+                outside = cp_model.Domain.FromIntervals([
+                    interval
+                    for interval in (
+                        [0, day_index * slots_per_day - 1],
+                        [(day_index + 1) * slots_per_day, horizon],
+                    )
+                    if interval[0] <= interval[1]
+                ])
+                for decision in reaching:
+                    one_hot = literals.on_day.get(decision.lesson.key())
+                    if one_hot is not None and day_index in one_hot:
+                        model.AddImplication(one_hot[day_index], works)
+                    else:
+                        model.AddLinearExpressionInDomain(
+                            decision.start, outside,
+                        ).OnlyEnforceIf(works.Not())
+                literals.works[(teacher_id, day_index)] = works
+            penalties.append(works * weights.free_day_wish)
+        return penalties
+
     @staticmethod
     def _room_allowed(room: AnonymousRoom, requirement: AnonymousRequirement) -> bool:
         capacity_ok = room.capacity is None or room.capacity >= requirement.student_group_size
@@ -7748,6 +8529,88 @@ def _teachers_of(requirement: AnonymousRequirement) -> tuple[UUID, ...]:
         for teacher_id in (requirement.teacher_id, requirement.co_teacher_id)
         if teacher_id is not None
     )
+
+
+def _lessons_by_teacher(
+    decisions: list[LessonDecision],
+) -> dict[UUID, list[LessonDecision]]:
+    """Teacher -> the lessons they are on, each lesson once.
+
+    `_teachers_of` AS A SET, which is the difference from the older readers:
+    a legacy row naming one person as both lead and co-teacher is one lesson
+    for that person, and a cap that counted its minutes twice would refuse a
+    day nobody teaches longer than the cap.
+    """
+    by_teacher: dict[UUID, list[LessonDecision]] = {}
+    for decision in decisions:
+        for teacher_id in dict.fromkeys(_teachers_of(decision.lesson.requirement)):
+            by_teacher.setdefault(teacher_id, []).append(decision)
+    return by_teacher
+
+
+def _teacher_locks(
+    fixed_lessons: list[FixedLesson],
+) -> tuple[dict[tuple[UUID, int], int], dict[UUID, set[int]]]:
+    """What a teacher's hand-placed lessons already take: minutes per weekday, and the weekdays.
+
+    (teacher, ISO weekday) -> the minutes of the union of the clock spans of
+    every locked lesson the teacher is on, as lead or co-teacher; and teacher
+    -> the ISO weekdays those lessons are on.
+
+    THE CLOCK, EXACT AND UNCLIPPED — not _teacher_busy_from_locks, which rounds
+    a window outward to the slot and clips it to the school day, and drops a
+    weekday the grid does not teach. Those are the right windows for keeping
+    a generated lesson out of a locked one's way; they are the wrong minutes
+    for a cap, which a lesson locked 07:30-09:00 on an 08:00 grid would have
+    shortened by thirty minutes the teacher really does teach. And a lock on a
+    Saturday is a teaching day on any reading of the post's limit, whether or
+    not this grid has a Saturday in it.
+
+    THE UNION, because two locked lessons the clash check let through overlap
+    in time and not in teacher: the teacher is in one room at a time
+    (src/common/teacher-day.ts counts the same way). A lesson with no length
+    takes no time and makes no teaching day.
+    """
+    spans: dict[tuple[UUID, int], list[tuple[int, int]]] = defaultdict(list)
+    for fixed in fixed_lessons:
+        start = _clock_minutes(fixed.start_time)
+        end = _clock_minutes(fixed.end_time)
+        if end <= start:
+            continue
+        for teacher_id in dict.fromkeys(
+            teacher_id
+            for teacher_id in (fixed.teacher_id, fixed.co_teacher_id)
+            if teacher_id is not None
+        ):
+            spans[(teacher_id, fixed.day_of_week)].append((start, end))
+    minutes = {
+        key: sum(end - start for start, end in _merge_ranges(ranges))
+        for key, ranges in spans.items()
+    }
+    days: dict[UUID, set[int]] = defaultdict(set)
+    for teacher_id, weekday in spans:
+        days[teacher_id].add(weekday)
+    return minutes, dict(days)
+
+
+def _day_reach(
+    starts: cp_model.Domain, duration: int, slots_per_day: int,
+) -> dict[int, list[tuple[int, int]]]:
+    """Day index -> the absolute [a, b) slots a lesson on these starts can occupy there.
+
+    Every interval of the domain lies inside one day by construction —
+    _start_domains builds one range per day and only ever cuts it — and is
+    split at a day's edge all the same, so a domain from anywhere else cannot
+    smear one day's slots into the next. The keys are the days the lesson can
+    fall on at all.
+    """
+    reach: dict[int, list[tuple[int, int]]] = defaultdict(list)
+    for low, high in _domain_intervals(starts):
+        for day_index in range(low // slots_per_day, high // slots_per_day + 1):
+            first = max(low, day_index * slots_per_day)
+            last = min(high, (day_index + 1) * slots_per_day - 1)
+            reach[day_index].append((first, last + duration))
+    return dict(reach)
 
 
 def _blocks_of(

@@ -39,6 +39,13 @@ Checks, all derived from the request:
                       elevens val) at the same times: each member's lessons
                       placed on the same weekdays, starts and ends as the
                       first member's
+    teacher's day     Lärarens dag: per teacher, lead and co-teacher alike,
+                      the minutes of teaching on each weekday within their
+                      work rule's cap — the union of every lesson's own
+                      clock span, the locked ones from `fixedLessons`
+                      included — and the weekdays they teach on within their
+                      post's limit; what the school locked judged as the
+                      engine is held to it, see _teacher_day_problems
 
 Use as a library::
 
@@ -325,6 +332,97 @@ def _block_problems(request, lessons) -> list[str]:
     return problems
 
 
+def _clock(value: str) -> int:
+    """'HH:MM' or 'HH:MM:SS' as minutes since midnight — this file's own reading."""
+    parts = value.split(":")
+    return int(parts[0]) * 60 + int(parts[1])
+
+
+def _union_minutes(spans) -> int:
+    """Minutes the [start, end) spans cover together, an overlap counted once."""
+    total = 0
+    reach = None
+    for start, end in sorted(span for span in spans if span[1] > span[0]):
+        if reach is None or start > reach[1]:
+            if reach is not None:
+                total += reach[1] - reach[0]
+            reach = [start, end]
+        else:
+            reach[1] = max(reach[1], end)
+    if reach is not None:
+        total += reach[1] - reach[0]
+    return total
+
+
+def _teacher_day_problems(request, lessons) -> list[str]:
+    """Lärarens dag — a teacher's cap a day and their post's days — re-read from the request.
+
+    THE SAME DEFINITION AS THE GATEWAY'S, NOT THE ENGINE'S CODE: every lesson
+    the teacher is on, as lead or as co-teacher, counted in its own clock
+    minutes from the lesson's start to its end, and a day's minutes the union
+    of those spans, so two lessons that overlap count their overlap once.
+    src/common/teacher-day.ts is that definition, and its fixture is replayed
+    against this function in the engine's tests; nothing here is borrowed
+    from the model builder, which is the point of the file.
+
+    THE LOCKED LESSONS ARE IN THE WEEK, at their own clock times from
+    `fixedLessons` — they come back in no response — and WHAT THE SCHOOL
+    LOCKED IS NOT JUDGED ON ITS OWN, the distribution check's reading. A
+    weekday is held to the cap only if the solver placed a lesson on it, and
+    then with the locked minutes counted. The days are held to the larger of
+    the post's limit and the number of weekdays the locked lessons already
+    take: a school that locked four days on a three-day post broke the limit
+    by hand, and the solver is held to adding no fifth.
+    """
+    caps: dict = defaultdict(list)
+    for rule in request.teacher_work_rules:
+        if rule.max_teaching_minutes_per_day is not None:
+            caps[rule.teacher_id].append((rule.id, rule.max_teaching_minutes_per_day))
+    limits = {
+        limit.teacher_id: (limit.id, limit.max_teaching_days_per_week)
+        for limit in request.teacher_day_limits
+    }
+    if not caps and not limits:
+        return []
+
+    req_by_id = {r.id: r for r in request.requirements}
+    placed: dict = defaultdict(lambda: defaultdict(list))
+    for lesson in lessons:
+        requirement = req_by_id.get(lesson.requirement_id)
+        if requirement is None:
+            continue
+        span = (_clock(lesson.start_time), _clock(lesson.end_time))
+        for teacher in {requirement.teacher_id, requirement.co_teacher_id} - {None}:
+            placed[teacher][lesson.day_of_week].append(span)
+    locked: dict = defaultdict(lambda: defaultdict(list))
+    for fixed in request.fixed_lessons:
+        span = (_clock(fixed.start_time), _clock(fixed.end_time))
+        if span[1] <= span[0]:
+            continue
+        for teacher in {fixed.teacher_id, fixed.co_teacher_id} - {None}:
+            locked[teacher][fixed.day_of_week].append(span)
+
+    problems: list[str] = []
+    for teacher, rules in caps.items():
+        for weekday in sorted(placed.get(teacher, {})):
+            minutes = _union_minutes(
+                placed[teacher][weekday] + locked.get(teacher, {}).get(weekday, []))
+            for rule_id, cap in rules:
+                if minutes > cap:
+                    problems.append(
+                        f"teacher work rule {rule_id}: {minutes} minutes of teaching on "
+                        f"weekday {weekday}, its rule allows {cap} a day")
+    for teacher, (limit_id, most) in limits.items():
+        taught = set(placed.get(teacher, {}))
+        held = set(locked.get(teacher, {}))
+        days = len(taught | held)
+        if days > max(most, len(held)):
+            problems.append(
+                f"teacher post {limit_id}: teaching on {days} days a week "
+                f"({len(held)} of them locked), its post allows {most}")
+    return problems
+
+
 def validate(grid, request, lessons) -> list[str]:
     """Return a list of rule violations; empty means the timetable is valid."""
     problems: list[str] = []
@@ -473,6 +571,7 @@ def validate(grid, request, lessons) -> list[str]:
 
     problems.extend(_distribution_problems(request, placed_weekdays))
     problems.extend(_block_problems(request, lessons))
+    problems.extend(_teacher_day_problems(request, lessons))
 
     rules = request.rules
     if rules is not None:
