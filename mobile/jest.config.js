@@ -26,12 +26,15 @@ module.exports = {
   // already wrong: data access, sync and pure logic. Screens and React context
   // are wiring around them, and counting a component nobody renders in this
   // environment would only make the number look better than the testing is.
+  // The window arithmetic every screen lays out by (src/layout) is pure logic
+  // of the same kind: no phone shows a mistake in it, only a tablet does.
   collectCoverageFrom: [
     'src/services/**/*.ts',
     'src/utils/**/*.ts',
     'src/hooks/**/*.ts',
     'src/i18n/**/*.ts',
     'src/theme/**/*.ts',
+    'src/layout/**/*.ts',
     '!src/**/*.d.ts',
   ],
   coverageThreshold: {

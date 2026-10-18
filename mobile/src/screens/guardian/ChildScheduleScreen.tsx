@@ -113,6 +113,10 @@ export function ChildScheduleScreen(): React.JSX.Element {
   const days = useMemo(() => (shown ? familyDays(shown) : []), [shown]);
   const todayDay = shown ? days.find((day) => day.date === shown.today) ?? null : null;
   const columns = view === 'week' ? weekColumns(width, days.length) : 1;
+  // How wide the body may grow, from the window and the view alone: a week
+  // always has Monday to Friday, so five is exact, and a week still loading
+  // (no days yet) does not narrow the body and widen it again.
+  const bodyColumns = view === 'week' ? weekColumns(width, 5) : 1;
 
   const step = (direction: -1 | 1): void => {
     if (!shown) return;
@@ -183,7 +187,10 @@ export function ChildScheduleScreen(): React.JSX.Element {
       <ScrollView
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} progressBackgroundColor={colors.surface} />}
       >
-        <Column max={columns > 1 ? 1376 : READABLE_MAX}>
+        {/* The controls keep one reading column in every view and while a
+            week loads, so a chip never moves from under the finger that
+            tapped it; only the body below widens for the week grid. */}
+        <Column max={READABLE_MAX}>
           <View style={styles.header}>
             <Text style={styles.headerTitle}>{t('childSchedule.title', { name: selected.firstName })}</Text>
             <Text style={styles.headerSubtitle}>{t('childSchedule.body')}</Text>
@@ -251,7 +258,9 @@ export function ChildScheduleScreen(): React.JSX.Element {
               </TouchableOpacity>
             </View>
           ) : null}
+        </Column>
 
+        <Column max={bodyColumns > 1 ? 1376 : READABLE_MAX}>
           <View style={styles.body}>{body()}</View>
           <View style={styles.footerSpace} />
         </Column>
@@ -298,9 +307,9 @@ function EntryRow({ entry }: { entry: FamilyEntry }): React.JSX.Element {
       <View style={styles.titleRow}>
         <View style={[styles.dot, { backgroundColor: lesson.subjectColor ?? colors.primary }]} />
         <Text style={[styles.cardTitle, state === 'cancelled' && styles.cancelledText]}>{lesson.subject}</Text>
-        {state === 'cancelled' ? <Text style={styles.badgeCancelled}>{t('common.cancelled')}</Text> : null}
-        {state === 'substitute' ? <Text style={styles.badgeSubstitute}>{t('childSchedule.substitute')}</Text> : null}
       </View>
+      {state === 'cancelled' ? <Text style={styles.badgeCancelled}>{t('common.cancelled')}</Text> : null}
+      {state === 'substitute' ? <Text style={styles.badgeSubstitute}>{t('childSchedule.substitute')}</Text> : null}
       <Text style={styles.cardMeta}>{details.join(' · ')}</Text>
     </View>
   );
@@ -343,12 +352,16 @@ const useStyles = makeStyles((c) => ({
   cardTitleLunch: { color: c.lunchText, fontWeight: '600' },
   cardRast: { backgroundColor: c.breakSurface, borderColor: c.breakBorder },
   cardTitleRast: { color: c.breakText, fontWeight: '600' },
-  titleRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
-  dot: { width: 10, height: 10, borderRadius: 5 },
-  cardTitle: { color: c.text, fontWeight: '600' },
+  // The dot stays beside the subject's first line: in a day column of the
+  // week grid (about 175 pt of text) a long subject wraps beside its colour
+  // instead of dropping under it, and the badge has a line of its own, where
+  // it cannot push the title out of the card.
+  titleRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  dot: { width: 10, height: 10, borderRadius: 5, marginTop: 4 },
+  cardTitle: { color: c.text, fontWeight: '600', flexShrink: 1 },
   cancelledText: { color: c.textMuted, textDecorationLine: 'line-through' },
-  badgeCancelled: { color: c.danger, fontSize: 12, fontWeight: '700' },
-  badgeSubstitute: { color: c.warning, fontSize: 12, fontWeight: '700' },
+  badgeCancelled: { color: c.danger, fontSize: 12, fontWeight: '700', marginTop: 2 },
+  badgeSubstitute: { color: c.warning, fontSize: 12, fontWeight: '700', marginTop: 2 },
   cardMeta: { color: c.textMuted, fontSize: 12, marginTop: 2 },
   emptyTitle: { color: c.text, fontSize: 16, fontWeight: '700' },
   emptyBody: { color: c.textMuted, paddingHorizontal: 16, paddingBottom: 8 },

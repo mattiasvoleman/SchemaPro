@@ -130,7 +130,13 @@ export function GuardianHomeScreen(): React.JSX.Element {
 
   return (
     <SafeAreaView style={styles.container} edges={TAB_SCREEN_EDGES}>
+      {/* The keyboard insets the scroll and keeps the field typed in above it,
+          also on an iPad on its side, where the form is shorter than the
+          screen and could not otherwise be scrolled; a chip or the button
+          takes its tap while the keyboard is up. */}
       <ScrollView
+        automaticallyAdjustKeyboardInsets
+        keyboardShouldPersistTaps="handled"
         refreshControl={
           <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} progressBackgroundColor={colors.surface} />
         }
@@ -157,6 +163,7 @@ export function GuardianHomeScreen(): React.JSX.Element {
                   <TouchableOpacity
                     key={child.id}
                     accessibilityRole="button"
+                    accessibilityState={{ selected: selectedChild === child.id }}
                     onPress={() => setSelectedChild(child.id)}
                     style={[styles.chip, selectedChild === child.id && styles.chipActive]}
                   >
@@ -175,6 +182,7 @@ export function GuardianHomeScreen(): React.JSX.Element {
               <Text style={styles.label}>{t('guardian.dateLabel')}</Text>
               <TextInput
                 style={styles.input}
+                accessibilityLabel={t('guardian.dateLabel')}
                 value={reportDate}
                 onChangeText={setDate}
                 placeholder={t('guardian.datePlaceholder')}
@@ -188,6 +196,7 @@ export function GuardianHomeScreen(): React.JSX.Element {
                   <TouchableOpacity
                     key={value}
                     accessibilityRole="button"
+                    accessibilityState={{ selected: type === value }}
                     onPress={() => setType(value)}
                     style={[styles.chip, type === value && styles.chipActive]}
                   >

@@ -45,8 +45,11 @@ const ThemeContext = createContext<AppTheme>(THEMES.light);
  * to Appearance), and paints the native root view to match: the colour iOS
  * shows behind the keyboard and a rotating iPad, and that Android shows when
  * a view resizes. iOS keeps the last colour set here for the next launch
- * (ExpoSystemUI.backgroundColor in UserDefaults); app.json's backgroundColor
- * is only the very first launch's.
+ * (ExpoSystemUI.backgroundColor in UserDefaults), so app.json's
+ * backgroundColor is only its very first launch's. Android stores the colour
+ * but never reads it back: every Android window opens on its resource colour,
+ * which plugins/withNightWindowBackground.js gives per appearance, until this
+ * sets the colour again.
  */
 export function AppThemeProvider({ children }: { readonly children: React.ReactNode }): React.JSX.Element {
   const theme = THEMES[schemeOf(useColorScheme())];

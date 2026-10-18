@@ -42,6 +42,13 @@
             "backgroundColor": "#0f0f1a"
           }
         }
+      ],
+      [
+        "./plugins/withNightWindowBackground",
+        {
+          "light": "#f4f4f5",
+          "dark": "#0f0f1a"
+        }
       ]
     ],
     "ios": {

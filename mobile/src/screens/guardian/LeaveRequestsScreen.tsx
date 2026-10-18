@@ -119,7 +119,13 @@ export function LeaveRequestsScreen(): React.JSX.Element {
 
   return (
     <SafeAreaView style={styles.container} edges={TAB_SCREEN_EDGES}>
+      {/* The keyboard insets the scroll and keeps the field typed in above it,
+          also on an iPad on its side, where the form is shorter than the
+          screen and could not otherwise be scrolled; a chip or the button
+          takes its tap while the keyboard is up. */}
       <ScrollView
+        automaticallyAdjustKeyboardInsets
+        keyboardShouldPersistTaps="handled"
         refreshControl={
           <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} progressBackgroundColor={colors.surface} />
         }
@@ -138,6 +144,7 @@ export function LeaveRequestsScreen(): React.JSX.Element {
                 <TouchableOpacity
                   key={child.id}
                   accessibilityRole="button"
+                  accessibilityState={{ selected: selectedChild === child.id }}
                   onPress={() => setSelectedChild(child.id)}
                   style={[styles.chip, selectedChild === child.id && styles.chipActive]}
                 >
@@ -152,6 +159,7 @@ export function LeaveRequestsScreen(): React.JSX.Element {
             <Text style={styles.label}>{t('leave.from')}</Text>
             <TextInput
               style={styles.input}
+              accessibilityLabel={t('leave.from')}
               value={startDate}
               onChangeText={setStartDate}
               autoCapitalize="none"
@@ -160,6 +168,7 @@ export function LeaveRequestsScreen(): React.JSX.Element {
             <Text style={styles.label}>{t('leave.to')}</Text>
             <TextInput
               style={styles.input}
+              accessibilityLabel={t('leave.to')}
               value={endDate}
               onChangeText={setEndDate}
               autoCapitalize="none"
@@ -168,6 +177,7 @@ export function LeaveRequestsScreen(): React.JSX.Element {
             <Text style={styles.label}>{t('leave.reason')}</Text>
             <TextInput
               style={[styles.input, styles.multiline]}
+              accessibilityLabel={t('leave.reason')}
               value={reason}
               onChangeText={setReason}
               multiline

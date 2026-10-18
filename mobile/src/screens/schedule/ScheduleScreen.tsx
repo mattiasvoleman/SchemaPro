@@ -278,26 +278,32 @@ export function ScheduleScreen(): React.JSX.Element {
           }
           const item = entry.row;
           const cancelled = item.status === 'CANCELLED';
+          const subject = item.subjectName ?? t('common.lesson');
+          // A cancelled lesson cannot be opened, so it is not offered as one:
+          // a screen reader hears the subject and that it is cancelled.
           return (
             <TouchableOpacity
               style={[styles.card, cancelled && styles.cardCancelled]}
               onPress={() => void openLesson(item)}
               disabled={cancelled || openingId !== null}
               accessibilityRole="button"
-              accessibilityLabel={t('schedule.openA11y', { subject: item.subjectName ?? t('common.lesson') })}
+              accessibilityLabel={
+                cancelled ? `${subject}, ${t('common.cancelled')}` : t('schedule.openA11y', { subject })
+              }
             >
               <View style={styles.cardTime}>
                 <Text style={styles.cardTimeText}>{formatTime(item.startsAt)}</Text>
                 <Text style={styles.cardTimeSub}>{formatTime(item.endsAt)}</Text>
               </View>
               <View style={styles.cardBody}>
-                <Text style={styles.cardSubject} numberOfLines={1}>
-                  {item.subjectName ?? t('common.lesson')}
-                </Text>
+                <View style={styles.subjectRow}>
+                  <Text style={[styles.cardSubject, cancelled && styles.cancelledText]} numberOfLines={1}>
+                    {subject}
+                  </Text>
+                  {cancelled ? <Text style={styles.badgeCancelled}>{t('common.cancelled')}</Text> : null}
+                </View>
                 <Text style={styles.cardMeta} numberOfLines={1}>
-                  {cancelled
-                    ? `${item.roomName ?? t('common.noValue')}  ·  ${t('common.cancelled')}`
-                    : item.roomName ?? t('common.noValue')}
+                  {item.roomName ?? t('common.noValue')}
                 </Text>
               </View>
               {openingId === item.id ? (
@@ -383,7 +389,10 @@ const useStyles = makeStyles((c) => ({
     gap: 14,
   },
   // A cancelled lesson is still read: no fade (its meta line measured 1.7–3.3:1
-  // faded), the struck title in muted ink and the word on the badge say it.
+  // faded). The page's ground alone is about 1.1:1 against a card, so the
+  // struck subject in muted ink and the word beside it say it; the word is its
+  // own text, so a long subject or a large text size truncates the subject
+  // and never the word.
   cardCancelled: { backgroundColor: c.background },
   cardPass: {
     borderColor: c.warning,
@@ -415,11 +424,26 @@ const useStyles = makeStyles((c) => ({
   cardBody: {
     flex: 1,
   },
+  subjectRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 2,
+  },
   cardSubject: {
+    flexShrink: 1,
     fontSize: 16,
     fontWeight: '600',
     color: c.text,
-    marginBottom: 2,
+  },
+  cancelledText: {
+    color: c.textMuted,
+    textDecorationLine: 'line-through',
+  },
+  badgeCancelled: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: c.danger,
   },
   cardMeta: {
     fontSize: 13,

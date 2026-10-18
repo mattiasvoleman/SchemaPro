@@ -66,8 +66,11 @@ export default function LoginScreen(): React.JSX.Element {
 
           {/* ── Form ─────────────────────────────────────────────────────── */}
           <View style={styles.form}>
+            {/* The placeholder is the field's only visible label and goes
+                once something is typed, so the field names itself as well. */}
             <TextInput
               style={styles.input}
+              accessibilityLabel={t('login.email')}
               placeholder={t('login.email')}
               placeholderTextColor={colors.textMuted}
               value={email}
@@ -80,6 +83,7 @@ export default function LoginScreen(): React.JSX.Element {
             />
             <TextInput
               style={styles.input}
+              accessibilityLabel={t('login.password')}
               placeholder={t('login.password')}
               placeholderTextColor={colors.textMuted}
               value={password}

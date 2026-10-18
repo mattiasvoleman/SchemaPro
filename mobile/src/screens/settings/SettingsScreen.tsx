@@ -13,6 +13,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { TAB_SCREEN_EDGES } from '../tabScreenEdges';
 import { makeStyles, useAppTheme } from '../../theme/ThemeContext';
+import { over } from '../../theme/contrast';
+import { DISABLED_OPACITY } from '../../theme/tokens';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/LocaleContext';
 import { Column } from '../../layout/Column';
@@ -57,11 +59,18 @@ export function SettingsScreen(): React.JSX.Element {
   const styles = useStyles();
   // The track says a switch is there and which side is on: 3:1 against the
   // card on or off, and the thumb 3:1 against either (theme/contrast.test.ts).
-  // iOS keeps its white thumb; Android's takes the card.
-  const switchColours = {
-    trackColor: { false: colors.borderStrong, true: colors.primary },
-    ios_backgroundColor: colors.borderStrong,
-    thumbColor: Platform.OS === 'android' ? colors.surface : undefined,
+  // iOS keeps its white thumb; Android's takes the card. Android paints these
+  // colours as a filter that also drops the fade it gives a disabled switch
+  // (iOS fades its own), so there a locked switch's track is faded here, as
+  // DISABLED_OPACITY fades a button: a required type must not look tappable.
+  const switchColours = (disabled: boolean) => {
+    const track = (colour: string): string =>
+      disabled && Platform.OS === 'android' ? over(colour, DISABLED_OPACITY, colors.surface) : colour;
+    return {
+      trackColor: { false: track(colors.borderStrong), true: track(colors.primary) },
+      ios_backgroundColor: colors.borderStrong,
+      thumbColor: Platform.OS === 'android' ? colors.surface : undefined,
+    };
   };
   const { authState, logout } = useAuth();
   const { t, locale, setLocale } = useI18n();
@@ -197,7 +206,7 @@ export function SettingsScreen(): React.JSX.Element {
                   <ActivityIndicator color={colors.primary} />
                 ) : (
                   <Switch
-                    {...switchColours}
+                    {...switchColours(false)}
                     accessibilityLabel={t('settings.pushToggle')}
                     value={pushOn}
                     onValueChange={(value) => void togglePush(value)}
@@ -222,6 +231,7 @@ export function SettingsScreen(): React.JSX.Element {
             ) : (
               types.map((entry) => {
                 const hint = typeHint(entry);
+                const locked = entry.required || saving;
                 return (
                   <View key={entry.type} style={styles.row}>
                     <View style={styles.rowText}>
@@ -229,10 +239,10 @@ export function SettingsScreen(): React.JSX.Element {
                       {hint ? <Text style={styles.hint}>{hint}</Text> : null}
                     </View>
                     <Switch
-                      {...switchColours}
+                      {...switchColours(locked)}
                       accessibilityLabel={typeLabel(entry)}
                       value={entry.enabled}
-                      disabled={entry.required || saving}
+                      disabled={locked}
                       onValueChange={(value) => void chooseType(entry, value)}
                     />
                   </View>
