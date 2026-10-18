@@ -712,7 +712,7 @@ export function givenRolloverWorld(
               case 'create': {
                 const row: Row = { id: freshId(), ...(args['data'] as Row) };
                 // AcademicYears_numbering: a year without a numbering is given
-                // the one its start date allows (20261121091000).
+                // the one its start date allows (20261126091000).
                 if (name === 'academicYear' && row['gradeNumbering'] === undefined) {
                   const start = row['startDate'] instanceof Date ? row['startDate'].toISOString() : String(row['startDate']);
                   row['gradeNumbering'] = start < '2028-07-01' ? 'NIOARIG' : 'TIOARIG';

@@ -119,7 +119,7 @@ export interface RolloverWrites {
     graduatingGradeLevel: number;
     predecessorId: string;
     /**
-     * The new year's numbering (20261121091000). Only on a year starting from
+     * The new year's numbering (20261126091000). Only on a year starting from
      * 2028-07-01, where the database would otherwise fill it: an earlier year
      * is NIOARIG and writes, and hashes, what it always did.
      */

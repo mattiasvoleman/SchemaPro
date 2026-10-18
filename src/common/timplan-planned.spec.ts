@@ -589,7 +589,7 @@ describe('computePlannedCoverage', () => {
     });
 
     // Review reproduction (P2 review, lens data-api): StudentGroups allow åk
-    // 0–12, AcademicYearTimplans only 0–11 (åk 11 since 20261121090000, the
+    // 0–12, AcademicYearTimplans only 0–11 (åk 11 since 20261126090000, the
     // 2028 specialskola), so a notice for åk 12 would ask the admin to attach
     // a plan the dialog and the API cannot attach.
     it('asks for a plan for åk 11 in a tioårig year only, and never for åk 12, which no year can attach', () => {

@@ -95,7 +95,7 @@ export type ColumnRule =
   /** The request: the new year's name, dates and graduating grade. */
   | 'FROM_REQUEST'
   /**
-   * The new year's numbering (20261121091000): the source's, or TIOARIG when
+   * The new year's numbering (20261126091000): the source's, or TIOARIG when
    * the rollover crosses into HT 2028 and renumbers. Written only for a year
    * starting from 2028-07-01; an earlier one is left to the database's NIOARIG
    * and writes, and hashes, what it always did.

@@ -4699,7 +4699,7 @@ BEGIN
   EXCEPTION WHEN unique_violation THEN NULL;
   END;
 
-  -- The DTO's 0..11 (specialskolan's eleventh årskurs, 20261121090000), as a CHECK.
+  -- The DTO's 0..11 (specialskolan's eleventh årskurs, 20261126090000), as a CHECK.
   BEGIN
     INSERT INTO "AcademicYearTimplans" ("schoolId", "academicYearId", "gradeLevel", "localTimplanId", "updatedAt")
     VALUES (school, year, 12, spare, now());
@@ -7672,7 +7672,7 @@ END $$;
 -- 2028 rows. The column is the statute's like the rest of the row: a pupil and
 -- a guardian read it (their card's figures are judged by it), nobody writes
 -- it, and the figures are SFS 2025:729's — 7 424, 7 199 and 5 007, with no
--- cells; 20261121090000 adds specialskolan's 8 604 the same way.
+-- cells; 20261126090000 adds specialskolan's 8 604 the same way.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -25393,7 +25393,7 @@ END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
--- Section 190: specialskolans elfte årskurs (20261121090000).
+-- Section 190: specialskolans elfte årskurs (20261126090000).
 --
 -- Specialskolan's 2028 total is the statute's like the other three: SPECIAL-
 -- SKOLA, 8 604 h, HT2028, COHORTS_STARTING, no cells, no pool and no cap, and
@@ -25477,7 +25477,7 @@ END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
--- Section 161: ett läsår vet sin numrering (20261121091000).
+-- Section 191: ett läsår vet sin numrering (20261126091000).
 --
 -- AcademicYears."gradeNumbering" is NOT NULL, NIOARIG or TIOARIG, TIOARIG
 -- only from 2028-07-01, written once (GN409 after) by a trigger whose function

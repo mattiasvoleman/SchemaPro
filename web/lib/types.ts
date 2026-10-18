@@ -228,7 +228,7 @@ export interface AcademicYear {
    */
   graduatingGradeLevel: number | null;
   /**
-   * The numbering of the year's årskurser (20261121091000): NIOARIG today's,
+   * The numbering of the year's årskurser (20261126091000): NIOARIG today's,
    * TIOARIG the tioårig grundskola's from HT 2028. Written once. Absent from
    * a payload older than the column: read it as NIOARIG.
    */

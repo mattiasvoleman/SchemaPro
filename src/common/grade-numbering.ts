@@ -20,7 +20,7 @@
  *   NIOARIG  F  1  2 … 9  10   (specialskolan's 10; 11 is no årskurs)
  *   TIOARIG  1  2  3 … 10 11   (specialskolan's 11; there is no 0)
  *
- * A läsår stores its numbering (AcademicYears.gradeNumbering, 20261121091000).
+ * A läsår stores its numbering (AcademicYears.gradeNumbering, 20261126091000).
  * A lokal timplan's rows are in its lydelse's numbering (one applying from HT
  * 2028 is TIOARIG). School-wide spans — frames, lunch, raster, salsregler,
  * weekly årskursregler, behörigheter, salar, skolenheter — are stated in

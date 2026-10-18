@@ -13,7 +13,7 @@ import {
 
 /*
  * The year dialog's "Timplan per årskurs". gradeLevel mirrors the CHECK
- * AcademicYearTimplans_gradeLevel_is_sane (0..11, migration 20261121090000),
+ * AcademicYearTimplans_gradeLevel_is_sane (0..11, migration 20261126090000),
  * so the CHECK stays the PostgREST writer's line and this one names the field.
  */
 
