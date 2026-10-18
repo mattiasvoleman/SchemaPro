@@ -614,8 +614,13 @@ describe("/admin/integrations — the register", () => {
     renderPage();
     expect(await screen.findByRole("switch", { name: "Synka varje natt" })).toBeDisabled();
     expect(screen.getByRole("switch", { name: "Tillämpa säkra ändringar automatiskt" })).toBeDisabled();
-    // The keyboard reaches the field (inert takes only the pointer); Enter sends nothing.
+    // The fields are read-only and the selects disabled, so the source as
+    // saved stays on screen; Enter in a field sends nothing.
+    expect(screen.getByLabelText("Namn")).toHaveAttribute("readonly");
+    expect(screen.getByLabelText("Adress till registrets API")).toHaveAttribute("readonly");
+    expect(screen.getByRole("combobox", { name: "Inloggning" })).toBeDisabled();
     await user.type(screen.getByLabelText("Namn"), " 2{Enter}");
+    expect(screen.getByLabelText("Namn")).toHaveValue(SOURCE.name);
     expect(put).not.toHaveBeenCalled();
     expect(patch).not.toHaveBeenCalled();
     expect(post).not.toHaveBeenCalled();
@@ -634,9 +639,10 @@ describe("/admin/integrations — the register", () => {
       { id: "33333333-3333-4333-8333-333333333333", role: "STUDENT", firstName: "Cia", lastName: "Holm", email: "cia@skola.se", studentGroup: null },
     ];
     renderPage();
-    // The source as saved is the page's reading: its fields take no pointer, and Spara is hidden.
+    // The source as saved is the page's reading: a reader gets its fields
+    // read-only (the test below), and Spara is hidden.
     const form = (await screen.findByLabelText("Namn")).closest("form")!;
-    expect(form).toHaveAttribute("data-writes-inert", "INTEGRATIONER");
+    expect(form).not.toHaveAttribute("data-writes-inert");
     expect(within(form).getByRole("button", { name: "Spara" })).toHaveAttribute("data-writes", "INTEGRATIONER");
     // A credential: when it was set stays, the field and its buttons go.
     const secret = screen.getByLabelText("Klienthemlighet").closest("form")!;
