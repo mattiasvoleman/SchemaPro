@@ -1,6 +1,7 @@
 import { buildGroupConflictMap, buildPupilBufferMap, toPlacement, type GroupConflictMap, type PupilBufferMap } from "@/lib/conflicts";
 import { findIdleGaps, type GroupMembership } from "@/lib/gaps";
 import { buildGradeSpans, type GradeSpan } from "@/lib/grade-span";
+import type { GradeNumbering } from "@/lib/grade-numbering";
 import type { FrameTime } from "@/lib/frame-times";
 import type { AvailabilityConstraint, LunchSettings, MasterLesson, StudentGroupKind } from "@/lib/types";
 import { IDLE_MINIMUM_MINUTES, summarizeIdle, type IdleSummary } from "./idle";
@@ -32,6 +33,12 @@ export interface IdleInputs {
   frameTimes: readonly FrameTime[];
   lunch: LunchSettings | null;
   academicYearId: string;
+  /**
+   * The planned läsår's numbering. The year rules and ramtider are stated in
+   * NIOARIG, so a tioårig läsår's classes are read so (10A as the 9 a "7–9"
+   * rule reaches), as /admin/gaps reads them (grade-span.ts).
+   */
+  numbering?: GradeNumbering;
   /** The active teachers, whose håltimmar are counted. */
   teacherIds: readonly string[];
 }
@@ -66,7 +73,9 @@ export function idleContextOf(inputs: IdleInputs): IdleContext {
     inputs,
     studentGroupOf,
     groupConflicts: buildGroupConflictMap(studentGroupOf, [...inputs.memberships], groups),
-    gradeSpanOf: buildGradeSpans({ groups, membersByGroup, homeClassOf: studentGroupOf }),
+    // The planned year's groups only, as /admin/gaps builds them: a home class
+    // of another year would lend a group a grade in another numbering.
+    gradeSpanOf: buildGradeSpans({ groups: yearGroups, membersByGroup, homeClassOf: studentGroupOf, numbering: inputs.numbering }),
     pupilBuffers: buildPupilBufferMap([...inputs.requirements]),
     classIds,
     yearGroups,
