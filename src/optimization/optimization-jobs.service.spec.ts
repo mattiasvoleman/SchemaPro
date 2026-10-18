@@ -108,6 +108,51 @@ describe('OptimizationJobsService', () => {
       );
     });
 
+    it('refuses 409 CANDIDATES_RUNNING while the year has a live schemaförslag run, before any job row', async () => {
+      // The question is the candidate run's own: active and inside its lease
+      // and its half hour (yearHasActiveCandidateRun), under the caller's RLS.
+      tx.$queryRaw.mockImplementation(async (sql: { strings: string[] }) =>
+        sql.strings.join('?').includes('"ScheduleCandidateRuns"') ? [{ active: 1 }] : [],
+      );
+
+      const attempt = service.start(YEAR_ID, testUser());
+      await expect(attempt).rejects.toThrow(HttpException);
+      await expect(attempt).rejects.toMatchObject({
+        status: 409,
+        response: expect.objectContaining({ code: 'CANDIDATES_RUNNING' }),
+      });
+      const sql = (tx.$queryRaw.mock.calls[0][0] as { strings: string[]; values: unknown[] });
+      expect(sql.values).toEqual([YEAR_ID]);
+      expect(sql.strings.join('?')).toContain(`"heartbeatAt" + make_interval(secs => "leaseSeconds") >= now()`);
+      expect(tx.optimizationJob.create).not.toHaveBeenCalled();
+      expect(proxy.triggerScheduling).not.toHaveBeenCalled();
+    });
+
+    it('asks under the year’s start lock, which a candidate start takes too, so two clicks cannot pass beside each other', async () => {
+      const order: string[] = [];
+      tx.$executeRaw.mockImplementation(async (strings: readonly string[]) => {
+        order.push(strings.join('?'));
+        return 0;
+      });
+      tx.$queryRaw.mockImplementation(async () => {
+        order.push('check');
+        return [{ active: 0 }];
+      });
+
+      await service.start(YEAR_ID, testUser());
+
+      expect(order).toEqual([
+        "SET LOCAL lock_timeout = '5s'",
+        "SELECT pg_advisory_xact_lock(hashtext('grundschema-solve-start'), hashtext(?::uuid::text))",
+        'check',
+      ]);
+    });
+
+    it('starts beside no candidate run, or one past its lease', async () => {
+      tx.$queryRaw.mockResolvedValue([{ active: 0 }]);
+      await expect(service.start(YEAR_ID, testUser())).resolves.toEqual({ jobId: JOB_ID });
+    });
+
     it('records a null actor when the token has no userId', async () => {
       await service.start(YEAR_ID, testUser({ userId: undefined }));
 

@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { HttpStatus, RequestMethod } from '@nestjs/common';
 import { HTTP_CODE_METADATA, METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
+import { AREA_KEY } from '../auth/decorators/area.decorator';
 import { ROLES_KEY } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
 import { testUser } from '../../test/utils/prisma-mock';
@@ -11,6 +12,7 @@ import type { OptimizationJobsService } from './optimization-jobs.service';
 import type { OptimizationProxyService } from './optimization-proxy.service';
 import type { RoomOptimizationService } from './room-optimization.service';
 import type { StaffingProposalService } from './staffing-proposal.service';
+import type { ScheduleCandidatesService } from './schedule-candidates.service';
 
 const YEAR_ID = '44444444-4444-4444-8444-444444444444';
 const JOB_ID = '66666666-6666-4666-8666-666666666666';
@@ -20,6 +22,14 @@ describe('OptimizationController', () => {
   let jobs: { start: jest.Mock; get: jest.Mock; list: jest.Mock; refusalForReader: jest.Mock };
   let rooms: { propose: jest.Mock; apply: jest.Mock };
   let staffing: { propose: jest.Mock; apply: jest.Mock };
+  let candidates: {
+    start: jest.Mock;
+    overview: jest.Mock;
+    check: jest.Mock;
+    lessons: jest.Mock;
+    apply: jest.Mock;
+    discard: jest.Mock;
+  };
   let controller: OptimizationController;
 
   const dto = (
@@ -38,11 +48,20 @@ describe('OptimizationController', () => {
     };
     rooms = { propose: jest.fn(), apply: jest.fn() };
     staffing = { propose: jest.fn(), apply: jest.fn() };
+    candidates = {
+      start: jest.fn(),
+      overview: jest.fn(),
+      check: jest.fn(),
+      lessons: jest.fn(),
+      apply: jest.fn(),
+      discard: jest.fn(),
+    };
     controller = new OptimizationController(
       proxy as unknown as OptimizationProxyService,
       jobs as unknown as OptimizationJobsService,
       rooms as unknown as RoomOptimizationService,
       staffing as unknown as StaffingProposalService,
+      candidates as unknown as ScheduleCandidatesService,
     );
   });
 
@@ -293,6 +312,65 @@ describe('OptimizationController', () => {
       expect(Reflect.getMetadata(HTTP_CODE_METADATA, method)).toBe(HttpStatus.OK);
       // The room routes' limits: a proposal wakes the solver, an apply only the database.
       expect(Reflect.getMetadata('THROTTLER:LIMITdefault', method)).toBe(limit);
+    });
+  });
+
+  describe('schemaförslag', () => {
+    const RUN_ID = '77777777-7777-4777-8777-777777777777';
+
+    it('hands a start, a list, a check, the lessons, an apply and a discard to the candidate service with the caller', async () => {
+      const user = testUser();
+      const body = { academicYearId: YEAR_ID, count: 2 };
+      candidates.start.mockResolvedValue({ runId: RUN_ID });
+      await expect(controller.startCandidates(body, user)).resolves.toEqual({ runId: RUN_ID });
+      expect(candidates.start).toHaveBeenCalledWith(body, user);
+
+      candidates.overview.mockResolvedValue({ latest: null, batch: null, unplaced: null });
+      await controller.listCandidates(YEAR_ID, user);
+      expect(candidates.overview).toHaveBeenCalledWith(YEAR_ID, user);
+
+      await controller.checkCandidates(RUN_ID, user);
+      expect(candidates.check).toHaveBeenCalledWith(RUN_ID, user);
+
+      await controller.candidateLessons(JOB_ID, user);
+      expect(candidates.lessons).toHaveBeenCalledWith(JOB_ID, user);
+
+      candidates.apply.mockResolvedValue({ lessonsCreated: 3, versionId: RUN_ID });
+      await expect(controller.applyCandidate(JOB_ID, { expectedMode: 'DIRECT' }, user)).resolves.toEqual({
+        lessonsCreated: 3,
+        versionId: RUN_ID,
+      });
+      expect(candidates.apply).toHaveBeenCalledWith(JOB_ID, 'DIRECT', user);
+
+      await controller.discardCandidates(YEAR_ID, user);
+      expect(candidates.discard).toHaveBeenCalledWith(YEAR_ID, user);
+    });
+
+    it.each([
+      ['startCandidates', 'candidates', RequestMethod.POST, HttpStatus.ACCEPTED, 3],
+      ['listCandidates', 'candidates', RequestMethod.GET, undefined, undefined],
+      ['checkCandidates', 'candidates/runs/:runId/check', RequestMethod.GET, undefined, 10],
+      ['candidateLessons', 'candidates/:id/lessons', RequestMethod.GET, undefined, undefined],
+      ['applyCandidate', 'candidates/:id/apply', RequestMethod.POST, HttpStatus.OK, 10],
+      ['discardCandidates', 'candidates', RequestMethod.DELETE, HttpStatus.NO_CONTENT, undefined],
+    ] as const)('serves %s at %s, answering %s, at %s a minute', (handler, path, verb, code, limit) => {
+      const method = OptimizationController.prototype[handler];
+      expect(Reflect.getMetadata(PATH_METADATA, method)).toBe(path);
+      expect(Reflect.getMetadata(METHOD_METADATA, method)).toBe(verb);
+      expect(Reflect.getMetadata(HTTP_CODE_METADATA, method)).toBe(code);
+      expect(Reflect.getMetadata('THROTTLER:LIMITdefault', method)).toBe(limit);
+    });
+
+    it('holds the start and the discard to SCHEMALAGGNING, and the apply to the class\'s SCHEMALAGGNING and DRIFT', () => {
+      // An apply in DIRECT takes the replaced lessons off the calendar, as
+      // Generera does, so it needs DRIFT too; a run and a discard write only
+      // the candidate tables.
+      const areaOf = (handler: keyof OptimizationController) =>
+        Reflect.getMetadata(AREA_KEY, OptimizationController.prototype[handler]) ??
+        Reflect.getMetadata(AREA_KEY, OptimizationController);
+      expect(areaOf('startCandidates')).toEqual({ kind: 'area', areas: ['SCHEMALAGGNING'] });
+      expect(areaOf('discardCandidates')).toEqual({ kind: 'area', areas: ['SCHEMALAGGNING'] });
+      expect(areaOf('applyCandidate')).toEqual({ kind: 'area', areas: ['SCHEMALAGGNING', 'DRIFT'] });
     });
   });
 

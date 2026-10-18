@@ -128,6 +128,12 @@ describe('Route guard coverage (e2e)', () => {
     expect(of('TeacherEmploymentsController', 'upsert')).toEqual({ kind: 'decides' });
     expect(of('GallringController', 'decide')).toEqual({ kind: 'decides' });
     expect(of('PublicationsController', 'publish')).toEqual({ kind: 'area', areas: ['PUBLICERING', 'DRIFT'] });
+    // Schemaförslag: a run and a discard write the candidate tables alone;
+    // an apply replaces the draft as Generera does, which in DIRECT takes
+    // the replaced lessons off the calendar, so it holds the class's two.
+    expect(of('OptimizationController', 'startCandidates')).toEqual({ kind: 'area', areas: ['SCHEMALAGGNING'] });
+    expect(of('OptimizationController', 'discardCandidates')).toEqual({ kind: 'area', areas: ['SCHEMALAGGNING'] });
+    expect(of('OptimizationController', 'applyCandidate')).toEqual({ kind: 'area', areas: ['SCHEMALAGGNING', 'DRIFT'] });
   });
 
   it('keeps the public surface to the health probes, the public viewer and SS12000', () => {

@@ -218,6 +218,49 @@ export class EnvironmentVariables {
   GALLRING_BACKGROUND: string = 'on';
 
   /**
+   * Schemaförslag (src/optimization/schedule-candidates.service.ts): the solve
+   * budget, in seconds, of every candidate but the first, which runs under
+   * the engine's own like Generera. The engine accepts 5..600; the gateway
+   * holds it to two minutes, because a run of four is four of these one after
+   * another and must finish well inside the half hour after which the sweep
+   * gives a run up.
+   */
+  @IsInt()
+  @Min(5)
+  @Max(120)
+  CANDIDATE_MAX_SECONDS: number = 30;
+
+  /**
+   * How many candidate runs may be active at once, across every school the
+   * instance serves (app.schedule_candidate_runs_active()). Each is a
+   * sequence of solves on the one engine, which has no queue of its own, so
+   * the next school is told to wait (409 CANDIDATES_BUSY) instead.
+   */
+  @IsInt()
+  @Min(1)
+  @Max(10)
+  CANDIDATE_RUNS_MAX: number = 2;
+
+  /**
+   * CP-SAT's workers per candidate solve (the engine's search.workers). A
+   * Generera solve uses every core; a candidate leaves room for the school
+   * that presses Generera meanwhile.
+   */
+  @IsInt()
+  @Min(1)
+  @Max(16)
+  CANDIDATE_SOLVER_WORKERS: number = 4;
+
+  /**
+   * The quarter-hourly sweep of candidate runs (app.schedule_candidates_sweep):
+   * a run whose task is gone is marked FAILED, and runs older than a week are
+   * deleted. `on` unless set to `off`; the test setup turns it off. Every
+   * start sweeps first regardless, so a year is never held by a lost run.
+   */
+  @IsIn(['on', 'off'])
+  CANDIDATES_BACKGROUND: string = 'on';
+
+  /**
    * "Logga in med skolkonto" (src/sign-in, migration 20261020090000). `off`,
    * the default and what an unset variable means, keeps it inert: no school
    * can save a school-account row (409 SIGN_IN_NOT_AVAILABLE), so with no

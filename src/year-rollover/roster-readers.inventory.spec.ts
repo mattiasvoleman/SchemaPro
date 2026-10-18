@@ -404,6 +404,11 @@ describe('the roster-reader inventory', () => {
       // rank behörighet. They are admin routes over published lessons of the
       // running year, so a year two steps ahead answering R6's 409 there is
       // the same answer the old vikarie PATCH gives.
+      //
+      // Schemaförslag reaches a basis where Generera does: its start asks
+      // rostersOfYear as POST jobs does, and its check and apply rebuild
+      // Generera's fetch (prepareSchedule), so a year two steps ahead answers
+      // R6's 409 there too.
       expect(reached.map((entry) => entry.route).sort()).toEqual([
         'CalendarController.publish',
         'CalendarLessonsController.assignSubstitute',
@@ -418,10 +423,13 @@ describe('the roster-reader inventory', () => {
         'MasterLessonsController.create',
         'MasterLessonsController.moveBlockCard',
         'MasterLessonsController.update',
+        'OptimizationController.applyCandidate',
         'OptimizationController.applyRooms',
         'OptimizationController.applyStaffing',
+        'OptimizationController.checkCandidates',
         'OptimizationController.proposeRooms',
         'OptimizationController.proposeStaffing',
+        'OptimizationController.startCandidates',
         'OptimizationController.startJob',
         'OptimizationController.trigger',
         'PublicationsController.preview',

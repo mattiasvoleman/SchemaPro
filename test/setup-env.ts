@@ -47,5 +47,8 @@ process.env['SS12000_BACKGROUND'] = 'off';
 // The nightly gallring (src/gallring): no background tick in tests either; a
 // spec drives GallringJob.tick itself.
 process.env['GALLRING_BACKGROUND'] = 'off';
+// The schemaförslag sweep (src/optimization/schedule-candidates.service.ts):
+// no quarter-hourly tick either; a spec drives sweep() and tick() itself.
+process.env['CANDIDATES_BACKGROUND'] = 'off';
 process.env['SS12000_ALLOW_INSECURE_LOCAL'] = '1';
 process.env['INTEGRATION_SECRETS_KEY'] = Buffer.alloc(32, 7).toString('base64');

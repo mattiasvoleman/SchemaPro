@@ -2173,7 +2173,10 @@ model ScheduleCandidate {
   lunches      Json?
   metrics      Json?
   conflicts    Json?
+  /// The engine's summary of a candidate that found no timetable (e.g. PROBE_NOTHING_HELPED), and its values,
+  /// scalars only, as OptimizationJob keeps conflictSummaryCode/Params: what the page says stopped it.
   errorCode    String?
+  errorParams  Json?
   createdAt    DateTime @default(now()) @db.Timestamptz(6)
 
   run ScheduleCandidateRun @relation(fields: [runId, schoolId], references: [id, schoolId], onDelete: Cascade)

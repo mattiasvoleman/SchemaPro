@@ -80,6 +80,17 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *     (src/optimization/work-days.ts). Read with HR-läs it names the teacher
  *     and the days, read back from the post, and is recorded (EMPLOYMENT), as
  *     the run's own read of the limits it sends the engine is;
+ *   - schemaförslag (GET /optimization/candidates, its runs' check and a
+ *     candidate's lessons, 20261125090000): a candidate is a grundschema
+ *     nobody has applied yet, read only by the school's administrators,
+ *     who read the draft MasterLessons it would replace the same way and
+ *     have read every version of it (GET /schedule-versions/:id). It holds
+ *     ids and aggregates — requirement, room, class and teacher ids, the
+ *     slots, the moved and unplaced counts, a refusal's sentences — and no
+ *     pupil: the stored lessons, the lunches and the lessons response carry
+ *     no studentIds and no participants (schedule-candidates.service.spec.ts).
+ *     A row per poll of the page would record the timetable layer about
+ *     the people who already read it;
  *   - the publication check's timplan coverage (preview and publish): it
  *     judges by both layers and hands out group lines and the verdicts'
  *     sentences, and a pupil verdict's sentence ("En elev i 7A ...") names

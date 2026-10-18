@@ -1,4 +1,6 @@
 import { of } from 'rxjs';
+import { searchFor, type CallShape } from './candidate-variants';
+import type { ObjectiveWeights } from './interfaces/ai-engine-payload.interface';
 import { OptimizationProxyService } from './optimization-proxy.service';
 import { RoomOptimizationService } from './room-optimization.service';
 import type {
@@ -196,6 +198,13 @@ const RULES_FIELDS = [
   'maxLessonsPerDayPerGroup',
 ];
 
+/**
+ * A schemaförslag candidate's search (SearchOptions in schemas/schedule.py).
+ * Sent ONLY on a candidate's call: Generera's payload above has never carried
+ * it, and an engine older than the field refuses a request that does, whole.
+ */
+const SEARCH_FIELDS = ['maxSeconds', 'probes', 'seed', 'workers'];
+
 describe('AI engine wire contract', () => {
   /** The tx of the most recent buildPayload, for assertions about the QUERIES. */
   let lastTx: ReturnType<typeof createTxMock>;
@@ -208,6 +217,8 @@ describe('AI engine wire contract', () => {
     preservedLessons: Record<string, unknown>[] = [],
     moreRequirements: Record<string, unknown>[] = [],
     configure: (tx: ReturnType<typeof createTxMock>) => void = () => undefined,
+    /** A schemaförslag candidate's call instead of Generera's: the same fetch, then solveCandidate. */
+    candidate?: { weights: ObjectiveWeights | null; call: CallShape },
   ): Promise<Record<string, unknown>> => {
     const tx = createTxMock();
     lastTx = tx;
@@ -401,11 +412,18 @@ describe('AI engine wire contract', () => {
     configure(tx);
 
     lastPost = http.post;
-    lastResult = await new OptimizationProxyService(
-      prisma as never,
-      http as never,
-      config as never,
-    ).triggerScheduling('year-1', testUser());
+    const proxy = new OptimizationProxyService(prisma as never, http as never, config as never);
+    if (candidate) {
+      const prepared = await proxy.prepareSchedule(tx as never, 'year-1', testUser());
+      if (!prepared.ready) throw new Error('The contract world was refused before the engine.');
+      await proxy.solveCandidate(prepared, {
+        weights: candidate.weights,
+        search: searchFor(candidate.call, { maxSeconds: 30, workers: 4 }),
+        timeoutMs: 75_000,
+      });
+      return sent;
+    }
+    lastResult = await proxy.triggerScheduling('year-1', testUser());
 
     return sent;
   };
@@ -429,6 +447,35 @@ describe('AI engine wire contract', () => {
 
   it('sends exactly the top-level fields the engine declares', async () => {
     expect(Object.keys(await buildPayload()).sort()).toEqual(PAYLOAD_FIELDS);
+    // Generera's call keeps the module's timeout: no per-call one rides along.
+    expect(lastPost.mock.calls[0][2]).not.toHaveProperty('timeout');
+  });
+
+  it('sends a schemaförslag candidate Generera\'s fields plus search, and search exactly its four', async () => {
+    const payload = await buildPayload({}, [], [], () => undefined, {
+      weights: null,
+      call: { variant: 'TEACHER_GAPS', seed: 1, lead: false },
+    });
+    expect(Object.keys(payload).sort()).toEqual([...PAYLOAD_FIELDS, 'search'].sort());
+    expect(Object.keys(payload['search'] as object).sort()).toEqual(SEARCH_FIELDS);
+    expect(payload['search']).toEqual({ workers: 4, probes: false, maxSeconds: 30, seed: 1 });
+    // And waits for it exactly as long as the run said, on both timeouts.
+    expect(lastPost.mock.calls[0][2]).toMatchObject({ timeout: 75_000 });
+  });
+
+  it('sends the KEEP candidate Generera\'s request with the workers, the probes and the budget, and its weights when it has some', async () => {
+    const keep = await buildPayload({}, [], [], () => undefined, {
+      weights: null,
+      call: { variant: 'KEEP', seed: null, lead: true },
+    });
+    expect(keep['search']).toEqual({ workers: 4, probes: true, maxSeconds: 30 });
+    for (const field of Object.keys(keep['search'] as object)) expect(SEARCH_FIELDS).toContain(field);
+
+    const weighted = await buildPayload({}, [], [], () => undefined, {
+      weights: { spread: 9, disruption: 2 },
+      call: { variant: 'SPREAD', seed: 2, lead: false },
+    });
+    expect(Object.keys(weighted).sort()).toEqual([...PAYLOAD_FIELDS, 'search', 'weights'].sort());
   });
 
   it('sends exactly the placement fields the engine declares', async () => {

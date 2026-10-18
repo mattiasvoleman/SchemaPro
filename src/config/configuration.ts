@@ -68,6 +68,26 @@ export interface GallringConfig {
   background: boolean;
 }
 
+/** Schemaförslag (src/optimization/schedule-candidates.service.ts). */
+export interface CandidatesConfig {
+  /** CANDIDATE_MAX_SECONDS: the solve budget of every candidate, KEEP's included, 5..120 (30). */
+  maxSeconds: number;
+  /** CANDIDATE_RUNS_MAX: active runs across schools, 1..10 (2). */
+  runsMax: number;
+  /** CANDIDATE_SOLVER_WORKERS: CP-SAT workers per candidate solve, 1..16 (4). */
+  solverWorkers: number;
+  /** The quarter-hourly sweep (CANDIDATES_BACKGROUND, default on). */
+  background: boolean;
+}
+
+/** The defaults env.validation states, for a caller handed an environment without them. */
+export const DEFAULT_CANDIDATES_CONFIG: Readonly<CandidatesConfig> = {
+  maxSeconds: 30,
+  runsMax: 2,
+  solverWorkers: 4,
+  background: true,
+};
+
 export const DEFAULT_EXPO_PUSH_API_URL = 'https://exp.host/--/api/v2/push';
 
 export interface Configuration {
@@ -82,6 +102,7 @@ export interface Configuration {
   push: PushConfig;
   ss12000: Ss12000Config;
   gallring: GallringConfig;
+  candidates: CandidatesConfig;
 }
 
 /**
@@ -143,6 +164,12 @@ export function loadConfiguration(env: EnvironmentVariables): Configuration {
     },
     gallring: {
       background: env.GALLRING_BACKGROUND !== 'off',
+    },
+    candidates: {
+      maxSeconds: env.CANDIDATE_MAX_SECONDS ?? DEFAULT_CANDIDATES_CONFIG.maxSeconds,
+      runsMax: env.CANDIDATE_RUNS_MAX ?? DEFAULT_CANDIDATES_CONFIG.runsMax,
+      solverWorkers: env.CANDIDATE_SOLVER_WORKERS ?? DEFAULT_CANDIDATES_CONFIG.solverWorkers,
+      background: env.CANDIDATES_BACKGROUND !== 'off',
     },
   };
 }
