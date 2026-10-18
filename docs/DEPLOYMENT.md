@@ -426,6 +426,35 @@ Walk the full product loop once, in order:
   (400, `forbidNonWhitelisted`), and has no `/staffing/scb-file` (404). So
   the API goes out before, or with, the web: the migration, then the API,
   then the web.
+- **Lärarens dag**: 20261123090000 adds two nullable columns to
+  `TeacherWorkRules` (`maxTeachingMinutesPerDay`, the daily cap in minutes,
+  and `preferredFreeDayOfWeek`, the free-day wish), one to
+  `TeacherEmployments` (`maxTeachingDaysPerWeek`, deltid in days, HR data
+  like the tjänstgöringsgrad), their CHECKs, and the trigger
+  `TeacherWorkRules_day_is_planned`, which keeps the cap and the wish for an
+  administrator who writes planering (a teacher still writes their own lunch
+  and rest). 20261123090100 adds `OptimizationJobs."notes"` (the free-day
+  wishes a finished run could not keep) and moves every `OptimizationJobs`
+  policy to the API's role, because a stored refusal can now name a post's
+  days, which the API rewrites for an administrator without HR-läs and
+  PostgREST could not; no client reads runs directly. Prisma names every
+  column it reads, and the API reads all four, so both migrations go in
+  before the merge: the migrations first, then the merge. Both are additive,
+  change no row, and take their locks NOWAIT and together in a loop
+  (`TeacherWorkRules` and `TeacherEmployments` in the first,
+  `OptimizationJobs` in the second): no request queues behind them, and if
+  the tables are not free at once in 30 s each stops with nothing changed —
+  `prisma migrate resolve --rolled-back <name>`, then deploy again. The API
+  before the release names only the old columns, so it keeps working
+  between the migration and the deploy. The engine and the API deploy from
+  the same merge: the new fields reach the engine only once an administrator
+  has set a cap, a wish or a number of days, which nobody can do before the
+  new web is out, so the short window where the API is new and the engine
+  old sends nothing the old engine refuses. A PUT of a work rule or a post
+  that leaves the new fields out keeps them, so a web from before the
+  release clears nothing; the new web sends the new keys, which the API
+  before the release refuses (400, `forbidNonWhitelisted`), so the API goes
+  out before, or with, the web.
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).
   `GET /health/ready` adds three counts, never names: how many jobs this
