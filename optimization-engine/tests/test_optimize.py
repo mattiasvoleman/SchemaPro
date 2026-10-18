@@ -4064,6 +4064,7 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         AnonymousGroup,
         AnonymousRequirement,
         AnonymousRoomPreference,
+        AnonymousTeacherDayLimit,
         AnonymousTeacherWorkRule,
         FrameTime,
         LunchPlacement,
@@ -4085,6 +4086,7 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "lunchPlacements",
         "rasts",
         "teacherWorkRules",
+        "teacherDayLimits",
         "roomPreferences",
         "fixedLessons",
         "groupConflicts",
@@ -4110,6 +4112,11 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
     # Every value is optional because empty is the whole of "this rule does not
     # apply to this teacher" — a school that has filled in nobody is refused
     # nothing — and the lunch trio is all-or-nothing, which the model validates.
+    #
+    # Lärarens dag adds the cap and the free-day wish to the same row, both
+    # optional and sent only when set — the gateway's WORK_RULE_FIELDS stay
+    # what they were for a rule without them, so a school that has set neither
+    # sends today's bytes.
     assert _field_names(AnonymousTeacherWorkRule) == {
         "id",
         "teacherId",
@@ -4117,6 +4124,17 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "lunchStartTime",
         "lunchEndTime",
         "minDailyRestMinutes",
+        "maxTeachingMinutesPerDay",
+        "preferredFreeDay",
+    }
+    # Deltid in days, apart from the work rule because it is HR: the id is the
+    # POST's, which the gateway keeps its own map for (dayLimitAnonMap) and
+    # masks every WORK_DAYS sentence by on read. Sent as a key only when a
+    # post in the payload has a limit.
+    assert _field_names(AnonymousTeacherDayLimit) == {
+        "id",
+        "teacherId",
+        "maxTeachingDaysPerWeek",
     }
     # The group's years, so a serving and a frame can reach a MEAL — which has
     # no requirement to read a span off.

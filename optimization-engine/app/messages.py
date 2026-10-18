@@ -380,6 +380,85 @@ MESSAGES: dict[str, str] = {
         "6 {Saturday} 7 {Sunday} other {day {day}}} is one of the rules that cannot all hold at "
         "once. Shorten the rest, or free the end of that day or the start of the next one."
     ),
+    # Lärarens dag: the most minutes of teaching on one day, on the same row as
+    # the lunch and the rest and named by it. Every lesson the teacher is on
+    # counts, lead or co-teacher, generated or locked, in its own minutes.
+    "TEACHER_LESSON_LONGER_THAN_DAILY_CAP": (
+        "The teacher working-time rule {rule} allows at most {minutes} minutes of teaching a "
+        "day, and one of the teacher's lessons still to place is {lessonMinutes} minutes long on "
+        "its own. Raise the cap, or shorten or split the lesson."
+    ),
+    "TEACHER_DAILY_CAP_TOO_SMALL_FOR_WEEK": (
+        "The teacher working-time rule {rule} allows at most {minutes} minutes of teaching a "
+        "day, and the teacher has {weekMinutes} minutes of lessons still to place: more than "
+        "the {days, plural, one {# school day} other {# school days}} of the week hold at that "
+        "cap, once the lessons already locked are counted. Raise the cap, or give this teacher "
+        "fewer lessons."
+    ),
+    "TEACHER_DAILY_CAP_CANNOT_BE_KEPT": (
+        "The cap of {minutes} minutes of teaching a day that the teacher working-time rule "
+        "{rule} sets is one of the rules that cannot all hold at once on {day, select, "
+        "1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} "
+        "other {day {day}}}. Raise the cap, or free that day for the teacher's lessons."
+    ),
+    # Deltid in days, on the POST and not on the work rule: HR data. `limit` is
+    # the post's anonymous id, which the gateway keeps a map for. Every code
+    # here contains WORK_DAYS, and that is load-bearing: the gateway masks
+    # every such sentence on read for a reader without HR read access (its
+    # DAYS_BEARING list, and a spec that reads this catalogue's fixture), and
+    # stores none of them with the figure in.
+    "TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK": (
+        "The teacher's post {limit} allows teaching on at most {days, plural, one {# day} "
+        "other {# days}} a week, and the teacher has {weekMinutes} minutes of lessons still to "
+        "place: more than that many days can hold, with the hours the school teaches in, the "
+        "lessons already locked and any cap on the day. Allow more days on the post, or give "
+        "this teacher fewer lessons."
+    ),
+    "TEACHER_WORK_DAYS_CANNOT_BE_KEPT": (
+        "The teacher's post {limit} allows teaching on at most {days, plural, one {# day} "
+        "other {# days}} a week, and that limit is one of the rules that cannot all hold at "
+        "once. Allow more days on the post, or give this teacher fewer lessons."
+    ),
+    # Never sent by this engine: the GATEWAY's form of any WORK_DAYS sentence
+    # for a reader without HR read access, and the English it stores in place
+    # of one, so that no stored run carries the figure. Here because this is
+    # the one catalogue the web renders from. The precedent is
+    # STAFF_TEACHER_OVER_TARGET_HIDDEN below: the verdict and nothing that
+    # gives the post back.
+    "TEACHER_WORK_DAYS_HIDDEN": (
+        "A teacher's limit on how many days a week they teach is one of the reasons the "
+        "timetable could not be made. The limit is shown to the principal, a full administrator "
+        "and anyone with HR read access."
+    ),
+    # Sent by the GATEWAY after a run that worked: a wish the timetable did not
+    # keep, which is a note beside a result and never a refusal of one.
+    "TEACHER_FREE_DAY_WISH_NOT_KEPT": (
+        "The teacher working-time rule {rule} wishes {day, select, 1 {Mondays} 2 {Tuesdays} "
+        "3 {Wednesdays} 4 {Thursdays} 5 {Fridays} 6 {Saturdays} 7 {Sundays} other {day {day}}} "
+        "free, and the new timetable gives the teacher lessons that day. A wish is weighed "
+        "against the rest of the week and gives way where keeping it would cost more."
+    ),
+    # Sent by the GATEWAY beside a hand edit of the grundschema that breaks the
+    # cap or the days (master-lessons.service.ts): warnings, never refusals.
+    # `role` is the edited lesson's lead or its co-teacher, never a name, and
+    # `requirement` the edited lesson's own name as the distribution warnings
+    # carry it ("Idrott för 7A") — on a block card the member the teacher is
+    # on, which is what tells two of the card's teachers apart.
+    "TEACHER_DAY_TOO_LONG": (
+        "{role, select, CO_TEACHER {The co-teacher} other {The teacher}} of {requirement} "
+        "now teaches {minutes} minutes on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} "
+        "4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}}, more than the "
+        "{cap} minutes a day their working-time rule allows."
+    ),
+    "TEACHER_WEEK_TOO_MANY_DAYS": (
+        "{role, select, CO_TEACHER {The co-teacher} other {The teacher}} of {requirement} "
+        "now teaches on {days} days a week, more than the {max} their post allows."
+    ),
+    "TEACHER_WEEK_TOO_MANY_DAYS_HIDDEN": (
+        "{role, select, CO_TEACHER {The co-teacher} other {The teacher}} of {requirement} "
+        "now teaches on more days a week than their post allows. The days are shown to the "
+        "principal, a full administrator and anyone with HR read access."
+    ),
 
     # ---- Ämnesfördelning: how a requirement's lessons spread ------------
     #
@@ -537,6 +616,18 @@ MESSAGES: dict[str, str] = {
     ),
     "PROBE_SOLVED_WITHOUT_TEACHER_REST": (
         "With the teachers' own minimum rest between two teaching days switched off, a "
+        "timetable was found in {seconds} s."
+    ),
+    # Two more, and two for the reason above: a cap is a number on the work
+    # rule and the days are a number on the post, two screens and two people.
+    # The days' probe names no teacher and no figure, so it says that SOME
+    # post limits its days, which every reader may know; it is not WORK_DAYS.
+    "PROBE_SOLVED_WITHOUT_TEACHER_DAILY_CAP": (
+        "With the teachers' cap on minutes of teaching a day switched off, a timetable was "
+        "found in {seconds} s."
+    ),
+    "PROBE_SOLVED_WITHOUT_TEACHER_DAY_LIMITS": (
+        "With the posts' limits on how many days a week a teacher teaches switched off, a "
         "timetable was found in {seconds} s."
     ),
 

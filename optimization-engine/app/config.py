@@ -122,6 +122,33 @@ class Settings(BaseSettings):
         alias="WEIGHT_DATE_UNAVAILABLE",
         description="Soft penalty for placing weekly lessons where one-off dated absences fall.",
     )
+    # A teacher's wished free weekday, paid ONCE PER DAY the teacher teaches on
+    # it — not per lesson, because the wish is "no lessons that day" and the
+    # second lesson on a day already lost breaks nothing more.
+    #
+    # FORTY, AGAINST WHAT IT HAS TO BUY. Keeping a wish means moving every
+    # lesson the teacher has on that day to another, so the price is what the
+    # moves cost elsewhere: idle time is 2 per five-minute slot (24 an hour) on
+    # the same teacher, a second lesson of one requirement on a day 3 (spread),
+    # a lesson pulled off a preferred room 5, and a previous slot given up 8 —
+    # though not the teacher's own previous slots on the wished day, which the
+    # disruption term stops rewarding while the wish is in force. Forty
+    # outbids an hour and a half of the teacher's own idle time, or five other
+    # lessons moved off last term's slots, and gives way to two idle hours, or
+    # to a whole reshuffle of other people's weeks. That is the order a rektor
+    # states it in: a free Friday is worth a slightly looser Tuesday, and not
+    # worth a week of håltimmar. It is also what one
+    # PREFERRED_FREE row over a four-lesson day would cost at 10 a lesson, so
+    # a school that wrote the wish as a reservation before this existed is
+    # not suddenly paid a different price for the same sentence.
+    #
+    # Zero or below switches the wish off entirely, the disruption term's
+    # change with it, and builds nothing.
+    weight_free_day_wish: int = Field(
+        default=40,
+        alias="WEIGHT_FREE_DAY_WISH",
+        description="Penalty per day a teacher teaches on their wished free weekday.",
+    )
 
     @computed_field  # type: ignore[prop-decorator]
     @property

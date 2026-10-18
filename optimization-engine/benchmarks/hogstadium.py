@@ -14,6 +14,9 @@ phases measure on.
     python benchmarks/hogstadium.py --without-blocks
     python benchmarks/hogstadium.py --budget 90 --json
     python benchmarks/hogstadium.py --first-solution  # time to a first timetable
+    python benchmarks/hogstadium.py --teacher-day-rules [--first-solution]
+    python benchmarks/hogstadium.py --teacher-day-rules --infeasible-days
+    python benchmarks/hogstadium.py --teacher-day-rules --wish-disruption
 
 THE SHAPE. Three years (7–9) of six classes of 25 pupils. Per class and week,
 in lessons of 60 minutes unless named: matematik 3, svenska 3, engelska 2,
@@ -30,6 +33,16 @@ pupil are sent as groupConflicts, as the gateway derives them from rosters.
 
 The school is deterministic (fixed ids, no randomness), so a difference
 between two runs is the machine's or the solver's, never the input's.
+
+LÄRARENS DAG, opt in with --teacher-day-rules: caps, deltid days and free-day
+wishes on teachers whose real loads make each one bite (see TEACHER_DAY_RULES).
+Without the flag the week is byte for byte the one every earlier phase
+measured on. --infeasible-days adds a deltid post the week cannot hold and the
+pre-flight cannot see — two locked afternoons on a three-day post — which must
+come back INFEASIBLE, quickly, and never TIMEOUT. --wish-disruption measures
+the free-day wish against last term's timetable: one solve without the wishes
+seeds previousLessons, then the week is solved with them, once with the
+disruption term standing back on the wished days and once without.
 """
 
 from __future__ import annotations
@@ -52,7 +65,7 @@ os.environ.setdefault("ALLOWED_ORIGINS", "http://localhost")
 from ortools.sat.python import cp_model  # noqa: E402
 
 from app.config import Settings  # noqa: E402
-from app.schemas.schedule import OptimizeScheduleRequest  # noqa: E402
+from app.schemas.schedule import OptimizeScheduleRequest, PreviousLesson  # noqa: E402
 from app.solver.scheduler_solver import SchedulerSolver  # noqa: E402
 
 _NS = uuid.UUID("0b2c7a52-6f1e-4c3a-9d55-7e1f4a8c2b90")
@@ -105,13 +118,96 @@ ROOMS = (
 )
 
 
+#: Lärarens dag, per teacher: (cap in minutes a day, days a week, wished free
+#: ISO weekday), None where the teacher has none. Chosen off the school's own
+#: loads, so each rule binds and none makes the week impossible:
+#:   SL-0   18 × 90 = 1,620 min. A cap of 360 is four slöjd lessons a day, so
+#:          the week needs all five days where five a day would leave one
+#:          free — and minutes and lessons part company, which a count cap
+#:          could not say.
+#:   BL-0   21 × 60. 300 a day is five lessons, 25 a week.
+#:   MU-0   21 × 60. 360 a day and Fridays free: four days at six is 24.
+#:   TK-0   21 × 60 on four days of a post, Wednesdays wished free.
+#:   IDH-1  19 × 60 on four days.
+#:   TY-0   6 × 60, Tyska in all three språkval blocks, on two days of a post
+#:          and Fridays wished free — the deltid språklärare whose two days
+#:          every other språkval teacher, and every class's block, follows.
+#:   SV-0, EN-1  a wish each, Monday and Friday.
+TEACHER_DAY_RULES: dict[str, tuple[int | None, int | None, int | None]] = {
+    "teacher-SL-0": (360, None, None),
+    "teacher-BL-0": (300, None, None),
+    "teacher-MU-0": (360, None, 5),
+    "teacher-TK-0": (None, 4, 3),
+    "teacher-IDH-1": (None, 4, None),
+    "teacher-TY-0": (None, 2, 5),
+    "teacher-SV-0": (None, None, 1),
+    "teacher-EN-1": (None, None, 5),
+}
+
+
 def _uid(label: str) -> str:
     """A deterministic version-4 UUID for `label` (see solve_2000_students._uid)."""
     return str(uuid.UUID(int=uuid.uuid5(_NS, label).int, version=4))
 
 
-def build_request(*, blocks: bool = True) -> OptimizeScheduleRequest:
-    """The school's week; `blocks=False` sends the same rows with no blockId."""
+def _teacher_day_rows(
+    *, infeasible_days: bool,
+) -> tuple[list[dict[str, object]], list[dict[str, object]], list[dict[str, object]]]:
+    """Work rules, day limits and locked lessons for --teacher-day-rules.
+
+    WITH --infeasible-days, TK-0's post allows three days and two afternoons of
+    theirs are locked, Monday and Tuesday 12:00-16:00. The locked days are
+    teaching days whatever happens, so one more day is all the post leaves:
+    four hours on each locked morning and a day of eight is 16 lessons, against
+    21. The pre-flight counts the best three days the week has — three whole
+    days, 24 lessons — and lets it through, which is the point: only the model
+    can see that two of the three are the locked ones, and the linking rows are
+    what let it say so at once rather than search for the budget.
+    """
+    rules = []
+    limits = []
+    for teacher, (cap, days, wish) in TEACHER_DAY_RULES.items():
+        if infeasible_days and teacher == "teacher-TK-0":
+            days = 3
+        if cap is not None or wish is not None:
+            rules.append({
+                "id": _uid(f"work-rule-{teacher}"),
+                "teacherId": _uid(teacher),
+                **({"maxTeachingMinutesPerDay": cap} if cap is not None else {}),
+                **({"preferredFreeDay": wish} if wish is not None else {}),
+            })
+        if days is not None:
+            limits.append({
+                "id": _uid(f"post-{teacher}"),
+                "teacherId": _uid(teacher),
+                "maxTeachingDaysPerWeek": days,
+            })
+    locked = [
+        {
+            "id": _uid(f"locked-TK-0-{day}"),
+            "teacherId": _uid("teacher-TK-0"),
+            "studentGroupId": _uid(f"group-locked-TK-0-{day}"),
+            "dayOfWeek": day,
+            "startTime": "12:00:00",
+            "endTime": "16:00:00",
+        }
+        for day in (1, 2)
+    ] if infeasible_days else []
+    return rules, limits, locked
+
+
+def build_request(
+    *,
+    blocks: bool = True,
+    teacher_day_rules: bool = False,
+    infeasible_days: bool = False,
+) -> OptimizeScheduleRequest:
+    """The school's week; `blocks=False` sends the same rows with no blockId.
+
+    `teacher_day_rules` adds Lärarens dag's rows (TEACHER_DAY_RULES), and
+    `infeasible_days` the post the week cannot hold; without them the keys are
+    not sent at all, as the gateway does not send them.
+    """
     requirements: list[dict[str, object]] = []
     group_ids: dict[str, str] = {}
     memberships: list[set[str]] = []
@@ -229,7 +325,7 @@ def build_request(*, blocks: bool = True) -> OptimizeScheduleRequest:
         }
         for day in range(1, 6)
     ]
-    return OptimizeScheduleRequest.model_validate({
+    payload: dict[str, object] = {
         "requestId": _uid("request"),
         "academicYearId": _uid("year"),
         "requirements": requirements,
@@ -244,19 +340,77 @@ def build_request(*, blocks: bool = True) -> OptimizeScheduleRequest:
             "lunchMinutes": 30,
             "maxLessonsPerDayPerGroup": 7,
         },
-    })
+    }
+    if teacher_day_rules or infeasible_days:
+        work_rules, day_limits, locked = _teacher_day_rows(infeasible_days=infeasible_days)
+        payload["teacherWorkRules"] = work_rules
+        payload["teacherDayLimits"] = day_limits
+        if locked:
+            payload["fixedLessons"] = locked
+    return OptimizeScheduleRequest.model_validate(payload)
 
 
-def run(*, blocks: bool, budget: float) -> dict[str, object]:
+def teacher_day_counts(request: OptimizeScheduleRequest) -> dict[str, int]:
+    """How many caps, posts with days and wishes the week carries."""
+    return {
+        "teacherCaps": sum(
+            1 for rule in request.teacher_work_rules
+            if rule.max_teaching_minutes_per_day is not None
+        ),
+        "teacherDayLimits": len(request.teacher_day_limits),
+        "freeDayWishes": sum(
+            1 for rule in request.teacher_work_rules if rule.preferred_free_day is not None
+        ),
+    }
+
+
+def wishes_kept(request: OptimizeScheduleRequest, lessons) -> tuple[int, int]:
+    """(kept, wished): a wish is kept when the teacher has no lesson on the day,
+    generated or locked, as lead or co-teacher. A count, never a violation —
+    the wish is soft."""
+    teaching: dict[uuid.UUID, set[int]] = {}
+    by_requirement = {requirement.id: requirement for requirement in request.requirements}
+    for lesson in lessons:
+        requirement = by_requirement[lesson.requirement_id]
+        for teacher in {requirement.teacher_id, requirement.co_teacher_id} - {None}:
+            teaching.setdefault(teacher, set()).add(lesson.day_of_week)
+    for fixed in request.fixed_lessons:
+        for teacher in {fixed.teacher_id, fixed.co_teacher_id} - {None}:
+            teaching.setdefault(teacher, set()).add(fixed.day_of_week)
+    wished = [
+        (rule.teacher_id, rule.preferred_free_day)
+        for rule in request.teacher_work_rules
+        if rule.preferred_free_day is not None
+    ]
+    kept = sum(1 for teacher, day in wished if day not in teaching.get(teacher, set()))
+    return kept, len(wished)
+
+
+def _load() -> float:
+    """The one-minute load average, printed beside every number: on the shared
+    Mac a timing without it cannot be compared with anything."""
+    return round(os.getloadavg()[0], 1)
+
+
+def run(
+    *, blocks: bool, budget: float, teacher_day_rules: bool = False,
+    infeasible_days: bool = False,
+) -> dict[str, object]:
     from validate_schedule import validate
 
     settings = Settings(SOLVER_MAX_TIME_SECONDS=budget)  # type: ignore[call-arg]
     solver = SchedulerSolver(settings)
-    request = build_request(blocks=blocks)
+    request = build_request(
+        blocks=blocks, teacher_day_rules=teacher_day_rules, infeasible_days=infeasible_days,
+    )
+    load_before = _load()
     started = time.perf_counter()
     response = solver.solve(request)
     elapsed = time.perf_counter() - started
     problems = validate(solver._grid, request, response.lessons) if response.lessons else []
+    kept, wished = wishes_kept(request, response.lessons)
+    # No timetable keeps no wish: an empty week would read as every one kept.
+    kept = kept if response.lessons else 0
 
     # What the block is for: how many slots of 7A's week its språkval takes.
     # Five groups of two lessons each: two slots as a block, up to ten apart.
@@ -268,46 +422,129 @@ def run(*, blocks: bool, budget: float) -> dict[str, object]:
     }
     return {
         "blocks": blocks,
+        "teacherDayRules": teacher_day_rules,
+        "infeasibleDays": infeasible_days,
+        **teacher_day_counts(request),
         "status": response.status,
+        "conflictCodes": sorted({
+            detail.code for detail in (response.conflicts.conflicts if response.conflicts else [])
+        }),
         "lessons": len(response.lessons),
         "requested": sum(r.lessons_per_week for r in request.requirements),
         "requirements": len(request.requirements),
         "groupConflicts": len(request.group_conflicts),
         "estimatedVariables": solver._estimate_model_size(request),
         "sprakvalSlotsOfYear7": len(slots),
+        "wishesKept": kept,
+        "wishes": wished,
         "problems": len(problems),
         "firstProblems": problems[:5],
         "elapsedSeconds": round(elapsed, 2),
         "budgetSeconds": budget,
+        "loadAverage": [load_before, _load()],
     }
 
 
-def first_solution(*, blocks: bool, budget: float) -> dict[str, object]:
+def first_solution(
+    *, blocks: bool, budget: float, teacher_day_rules: bool = False,
+    infeasible_days: bool = False,
+) -> dict[str, object]:
     """Seconds to a first timetable in the satisfaction model, as phase 1a builds it.
 
     What a block costs or saves the search, without phase 2's improving: the
     full solve spends whatever budget it is given, so its wall clock says how
-    long the budget was, not how hard the week is.
+    long the budget was, not how hard the week is. The full model is built
+    beside it, never solved, for its size: what a rule adds to the objective's
+    model is a number the first solution cannot show.
     """
     solver = SchedulerSolver(Settings(SOLVER_MAX_TIME_SECONDS=budget))  # type: ignore[call-arg]
-    request = build_request(blocks=blocks)
+    request = build_request(
+        blocks=blocks, teacher_day_rules=teacher_day_rules, infeasible_days=infeasible_days,
+    )
     solver._validate_request(request)
+    full, *_ = solver._build_model(request, use_assumptions=False, include_objective=True)
     started = time.perf_counter()
     model, *_ = solver._build_model(request, use_assumptions=False, include_objective=False)
     built = time.perf_counter() - started
     cp = cp_model.CpSolver()
     cp.parameters.max_time_in_seconds = budget
     cp.parameters.stop_after_first_solution = True
+    load_before = _load()
     status = cp.StatusName(cp.Solve(model))
     return {
         "blocks": blocks,
+        "teacherDayRules": teacher_day_rules,
+        "infeasibleDays": infeasible_days,
+        **teacher_day_counts(request),
         "status": status,
         "buildSeconds": round(built, 2),
         "firstSolutionSeconds": round(cp.WallTime(), 2),
         "budgetSeconds": budget,
         "variables": len(model.Proto().variables),
         "constraints": len(model.Proto().constraints),
+        "fullVariables": len(full.Proto().variables),
+        "fullConstraints": len(full.Proto().constraints),
+        "estimatedVariables": solver._estimate_model_size(request),
+        "loadAverage": [load_before, _load()],
     }
+
+
+class _DisruptionBlindToWishes(SchedulerSolver):
+    """The solver as it would be without A6: the disruption term rewards last
+    term's slots on a wished day like any other. For the measurement only."""
+
+    def _add_disruption_objective(self, model, decisions, previous_lessons, weights, **_ignored):
+        return super()._add_disruption_objective(model, decisions, previous_lessons, weights)
+
+
+def wish_disruption(*, blocks: bool, budget: float) -> dict[str, object]:
+    """Wishes kept against last term's timetable, with and without A6.
+
+    Last term is this week solved with the caps and the posts but no wishes —
+    a school that sets its wishes after the timetable it already has. Its
+    lessons become previousLessons, and the week is solved again with the
+    wishes: once by the engine as it is, whose disruption term stops rewarding
+    a wishing teacher's slots on the wished day, and once by one whose
+    disruption term does not.
+    """
+    request = build_request(blocks=blocks, teacher_day_rules=True)
+    settings = Settings(SOLVER_MAX_TIME_SECONDS=budget)  # type: ignore[call-arg]
+    last_term = SchedulerSolver(
+        Settings(SOLVER_MAX_TIME_SECONDS=budget, WEIGHT_FREE_DAY_WISH=0),  # type: ignore[call-arg]
+    ).solve(request)
+    seeded = request.model_copy(update={
+        "previous_lessons": [
+            PreviousLesson(
+                requirement_id=lesson.requirement_id,
+                day_of_week=lesson.day_of_week,
+                start_time=lesson.start_time,
+            )
+            for lesson in last_term.lessons
+        ],
+    })
+    out: dict[str, object] = {
+        "lastTerm": last_term.status,
+        "lastTermWishesKept": wishes_kept(request, last_term.lessons)[0],
+        "wishes": teacher_day_counts(request)["freeDayWishes"],
+        "previousLessons": len(seeded.previous_lessons),
+    }
+    for label, solver in (
+        ("withA6", SchedulerSolver(settings)),
+        ("withoutA6", _DisruptionBlindToWishes(settings)),
+    ):
+        load_before = _load()
+        response = solver.solve(seeded)
+        moved = len(
+            {(l.requirement_id, l.day_of_week, l.start_time) for l in last_term.lessons}
+            - {(l.requirement_id, l.day_of_week, l.start_time) for l in response.lessons},
+        )
+        out[label] = {
+            "status": response.status,
+            "wishesKept": wishes_kept(seeded, response.lessons)[0],
+            "lessonsMoved": moved,
+            "loadAverage": [load_before, _load()],
+        }
+    return out
 
 
 def main() -> int:
@@ -318,25 +555,41 @@ def main() -> int:
                         help="send the same rows with no blockId")
     parser.add_argument("--first-solution", action="store_true",
                         help="time the satisfaction model to its first timetable only")
+    parser.add_argument("--teacher-day-rules", action="store_true",
+                        help="add the caps, deltid days and free-day wishes of TEACHER_DAY_RULES")
+    parser.add_argument("--infeasible-days", action="store_true",
+                        help="add a deltid post the week cannot hold; must answer INFEASIBLE")
+    parser.add_argument("--wish-disruption", action="store_true",
+                        help="wishes kept against last term's timetable, with and without A6")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
+    blocks = not args.without_blocks
+    rules = {"teacher_day_rules": args.teacher_day_rules, "infeasible_days": args.infeasible_days}
+    if args.wish_disruption:
+        print(json.dumps(wish_disruption(blocks=blocks, budget=args.budget), indent=2))
+        return 0
     if args.first_solution:
-        found = first_solution(blocks=not args.without_blocks, budget=args.budget)
+        found = first_solution(blocks=blocks, budget=args.budget, **rules)
         print(json.dumps(found, indent=None if not args.json else 2))
         return 0 if found["status"] in {"FEASIBLE", "OPTIMAL"} else 1
-    result = run(blocks=not args.without_blocks, budget=args.budget)
+    result = run(blocks=blocks, budget=args.budget, **rules)
     if args.json:
         print(json.dumps(result, indent=2))
     else:
         verdict = "VALID" if not result["problems"] else f"INVALID ({result['problems']})"
         print(
-            f"högstadium, {'with' if result['blocks'] else 'without'} blocks: "
+            f"högstadium, {'with' if result['blocks'] else 'without'} blocks"
+            f"{', teacher-day rules' if args.teacher_day_rules else ''}: "
             f"{result['status']}, {result['lessons']}/{result['requested']} lessons in "
-            f"{result['elapsedSeconds']} s (budget {result['budgetSeconds']} s), språkval "
-            f"åk 7 in {result['sprakvalSlotsOfYear7']} slots, {verdict}"
+            f"{result['elapsedSeconds']} s (budget {result['budgetSeconds']} s, load "
+            f"{result['loadAverage']}), språkval åk 7 in {result['sprakvalSlotsOfYear7']} "
+            f"slots, wishes kept {result['wishesKept']}/{result['wishes']}, {verdict}"
         )
         for problem in result["firstProblems"]:
             print(f"  - {problem}")
+    if args.infeasible_days:
+        # The point of the variant: a proof, not a timeout.
+        return 0 if result["status"] == "INFEASIBLE" else 1
     return 0 if result["lessons"] and not result["problems"] else 1
 
 
