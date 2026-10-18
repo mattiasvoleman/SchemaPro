@@ -22976,6 +22976,11 @@ BEGIN
 
   IF cardinality(bad) > 0 THEN
     RAISE EXCEPTION 'läsare: %', array_to_string(bad, '; ');
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
 -- Section 180: skolområdena och restiden står i katalogen som migreringen
 -- säger (Sites, SiteTravelTimes, Rooms."siteId", 20261124090000).
 --
