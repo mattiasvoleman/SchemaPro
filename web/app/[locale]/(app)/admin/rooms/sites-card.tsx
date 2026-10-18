@@ -20,6 +20,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { STAFFING_KEYS } from "@/lib/staffing-keys";
+import { useReadOnly } from "@/components/profile-context";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Pencil, Plus, Trash2 } from "lucide-react";
@@ -67,6 +68,10 @@ const fieldId = (key: string) => `site-travel-${key.replace("|", "-")}`;
 
 export function SitesCard() {
   const t = useTranslations("sites");
+  // Läsbehörighet: the sites and the minutes are read, not written. The
+  // buttons that write are marked for planering (data-writes); the minutes
+  // stay readable, and Enter in them saves nothing.
+  const readOnly = useReadOnly();
   const tCommon = useTranslations("common");
   const sites = useSites();
   // A site removed leaves its rooms on none, and the load's restid with them.
@@ -169,7 +174,7 @@ export function SitesCard() {
 
   const saveTravelTimes = async (event: FormEvent) => {
     event.preventDefault();
-    if (!dirty || invalidPairs.length > 0) return;
+    if (readOnly || !dirty || invalidPairs.length > 0) return;
     const times = pairs.flatMap(([a, b]) => {
       const minutes = minutesFromField(valueOf(a, b));
       return minutes === null || minutes === undefined ? [] : [{ siteIds: [a.id, b.id] as [string, string], minutes }];
@@ -193,7 +198,7 @@ export function SitesCard() {
       title={t("title")}
       description={t("description")}
       action={
-        <Button type="button" variant="outline" size="sm" onClick={startCreate} disabled={!sites.data}>
+        <Button data-writes="PLANERING" type="button" variant="outline" size="sm" onClick={startCreate} disabled={!sites.data}>
           <Plus aria-hidden="true" />
           {t("add")}
         </Button>
@@ -224,23 +229,26 @@ export function SitesCard() {
                   <TableCell className="font-medium">{site.name}</TableCell>
                   <TableCell className="text-right tabular-nums">{site.roomCount}</TableCell>
                   <TableCell className="text-right">
-                    <RowActions
-                      name={site.name}
-                      actions={[
-                        {
-                          label: tCommon("edit"),
-                          icon: Pencil,
-                          ariaLabel: tCommon("editNamed", { name: site.name }),
-                          onSelect: () => startEdit(site),
-                        },
-                        {
-                          label: tCommon("delete"),
-                          icon: Trash2,
-                          ariaLabel: tCommon("deleteNamed", { name: site.name }),
-                          onSelect: () => setDeleting(site),
-                        },
-                      ]}
-                    />
+                    {/* Both actions write: RowActions takes no attribute, so the wrapper carries it. */}
+                    <div data-writes="PLANERING" className="contents">
+                      <RowActions
+                        name={site.name}
+                        actions={[
+                          {
+                            label: tCommon("edit"),
+                            icon: Pencil,
+                            ariaLabel: tCommon("editNamed", { name: site.name }),
+                            onSelect: () => startEdit(site),
+                          },
+                          {
+                            label: tCommon("delete"),
+                            icon: Trash2,
+                            ariaLabel: tCommon("deleteNamed", { name: site.name }),
+                            onSelect: () => setDeleting(site),
+                          },
+                        ]}
+                      />
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -281,6 +289,7 @@ export function SitesCard() {
                           inputMode="numeric"
                           autoComplete="off"
                           maxLength={3}
+                          readOnly={readOnly}
                           value={value}
                           placeholder={t("minutesPlaceholder")}
                           onChange={(event) => setTyped((current) => ({ ...current, [key]: event.target.value }))}
@@ -291,7 +300,11 @@ export function SitesCard() {
                 })}
               </ul>
               <div className="flex justify-end">
-                <Button type="submit" disabled={!dirty || invalidPairs.length > 0 || saveTimes.isPending}>
+                <Button
+                  data-writes="PLANERING"
+                  type="submit"
+                  disabled={!dirty || invalidPairs.length > 0 || saveTimes.isPending}
+                >
                   {t("saveTravel")}
                 </Button>
               </div>

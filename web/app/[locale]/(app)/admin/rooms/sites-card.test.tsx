@@ -37,6 +37,8 @@ vi.mock("@tanstack/react-query", async () => ({
   useQueryClient: () => ({ invalidateQueries: vi.fn() }),
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+const profile = vi.hoisted(() => ({ readOnly: false }));
+vi.mock("@/components/profile-context", () => ({ useReadOnly: () => profile.readOnly }));
 vi.mock("next-intl", () => ({
   useTranslations: () => {
     const t = (key: string, values?: Record<string, unknown>) =>
@@ -53,6 +55,7 @@ const HALLEN = "30000000-0000-4000-8000-000000000003";
 beforeEach(() => {
   saveMock.mockReset().mockResolvedValue([]);
   state.data = undefined;
+  profile.readOnly = false;
 });
 
 describe("SitesCard", () => {
@@ -148,6 +151,40 @@ describe("SitesCard keeps what the admin typed", () => {
     rerender(<SitesCard />);
     expect(screen.getByLabelText("pairLabel(Norra|Hallen) (optional)")).toHaveValue("30");
     expect(screen.getByLabelText("pairLabel(Södra|Hallen) (optional)")).toHaveValue("25");
+  });
+});
+
+describe("Läsbehörighet: the card is read, not written", () => {
+  const writes = (element: HTMLElement) => element.closest("[data-writes]")?.getAttribute("data-writes");
+  const twoSites = () => ({
+    sites: [
+      { id: NORRA, name: "Norra", roomCount: 3 },
+      { id: SODRA, name: "Södra", roomCount: 2 },
+    ],
+    travelTimes: [{ siteAId: NORRA, siteBId: SODRA, minutes: 15 }],
+    roomsWithoutSite: 0,
+  });
+
+  it("marks Lägg till, each row's actions and Spara restider with planering", () => {
+    state.data = twoSites();
+    render(<SitesCard />);
+    expect(screen.getByRole("button", { name: "add" })).toHaveAttribute("data-writes", "PLANERING");
+    expect(writes(screen.getByRole("button", { name: "editNamed(Norra)" }))).toBe("PLANERING");
+    expect(writes(screen.getByRole("button", { name: "deleteNamed(Södra)" }))).toBe("PLANERING");
+    expect(screen.getByRole("button", { name: "saveTravel" })).toHaveAttribute("data-writes", "PLANERING");
+  });
+
+  it("keeps the minutes readable but unwritable for a profile that changes nothing, and Enter saves nothing", async () => {
+    profile.readOnly = true;
+    state.data = twoSites();
+    const user = userEvent.setup();
+    render(<SitesCard />);
+    const field = screen.getByLabelText("pairLabel(Norra|Södra) (optional)");
+    expect(field).toHaveValue("15");
+    expect(field).toHaveAttribute("readonly");
+    await user.type(field, "0{Enter}");
+    expect(field).toHaveValue("15");
+    expect(saveMock).not.toHaveBeenCalled();
   });
 });
 
