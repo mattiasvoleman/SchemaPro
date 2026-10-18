@@ -144,12 +144,19 @@ export function travelWarningsOf(
   }
 
   // Pupils: O is hidden when every pupil it and the target share goes to a
-  // lesson in between that runs every week the two do. Shared through a half
-  // alone (no pupil placed yet), nobody is known to go anywhere: kept.
+  // lesson in between that runs every week the two do. With no pupil known
+  // on both — a class not yet filled, planned before the pupil import — the
+  // groups they share stand for their pupils: O is hidden when one such
+  // lesson in between holds every group O and the target share, so a class
+  // with no roster walks from its own last lesson, as a filled one does.
+  // Shared through a half alone (no group and no pupil in common), nobody is
+  // known to go anywhere: kept.
   const pupilsHidden = (o: TravelDayLesson, between: readonly TravelDayLesson[]) => {
-    const walkers = [...o.pupils].filter((pupil) => target.pupils.has(pupil));
     const covering = between.filter((m) => weeksCover(m.weeks, o.weeks, target.weeks));
-    return walkers.length > 0 && walkers.every((pupil) => covering.some((m) => m.pupils.has(pupil)));
+    const walkers = [...o.pupils].filter((pupil) => target.pupils.has(pupil));
+    if (walkers.length > 0) return walkers.every((pupil) => covering.some((m) => m.pupils.has(pupil)));
+    const groups = o.groupIds.filter((group) => target.groupIds.includes(group));
+    return groups.length > 0 && covering.some((m) => groups.every((group) => m.groupIds.includes(group)));
   };
   const together = meeting.filter((other) => sharePupils(target, other, context.halvesPair));
   for (const breach of travelBreaches(map, target, together, pupilsHidden)) {
