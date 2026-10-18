@@ -10,13 +10,17 @@
  * the two halves of a form beside its list, the week grid's day columns, the
  * register's 44 pt targets. Each screen is drawn in light and in dark, which
  * runs every style factory of the theme, and every colour it draws has to
- * come from that appearance's palette.
+ * come from that appearance's palette. The data the screens are given holds
+ * the states that draw differently (a cancelled lesson, a required notice
+ * type), so those are drawn too, and what a screen reader is told about
+ * them is pinned with them.
  */
 import React from 'react';
-import { Dimensions, StyleSheet } from 'react-native';
+import { Dimensions, Platform, StyleSheet, Switch } from 'react-native';
 import TestRenderer, { act } from 'react-test-renderer';
 import { FORM_MAX, READABLE_MAX, REGISTER_MAX, TWO_COLUMN_MAX, columnLayout, sideBySide } from '../layout/responsive';
-import { PALETTES, type SchemeName } from '../theme/tokens';
+import { DISABLED_OPACITY, PALETTES, type SchemeName } from '../theme/tokens';
+import { over } from '../theme/contrast';
 import { translatorFor } from '../i18n';
 
 let mockScheme: 'light' | 'dark' = 'light';
@@ -100,8 +104,35 @@ jest.mock('../services/schedule', () => ({
       subject: { name: 'Svenska' },
       room: { name: 'A1' },
     },
+    {
+      kind: 'LESSON',
+      id: 'b',
+      date: '2026-10-19',
+      startsAt: '2026-10-19T09:20:00Z',
+      endsAt: '2026-10-19T10:00:00Z',
+      status: 'CANCELLED',
+      subject: { name: 'Engelska' },
+      room: { name: 'A2' },
+    },
   ]),
 }));
+// The teacher's schedule reads its lessons from the database itself: one to
+// open, and one the school has cancelled, which is drawn differently.
+jest.mock('../services/supabase', () => {
+  const lesson = (id: string, start: string, end: string, status: string, subject: string) => ({
+    lesson: {
+      id, date: '2026-10-19', startsAt: `2026-10-19T${start}:00Z`, endsAt: `2026-10-19T${end}:00Z`, status,
+      subject: { name: subject }, room: { name: 'B204' },
+    },
+  });
+  const answer = {
+    data: [lesson('a', '08:10', '09:00', 'SCHEDULED', 'Svenska'), lesson('b', '09:20', '10:00', 'CANCELLED', 'Samhällskunskap')],
+    error: null,
+  };
+  const query: Record<string, unknown> = { then: (resolve: (value: typeof answer) => unknown) => resolve(answer) };
+  for (const step of ['select', 'eq', 'gte', 'lte']) query[step] = () => query;
+  return { ...jest.requireActual('../services/supabase'), getSupabase: () => ({ from: () => query }) };
+});
 jest.mock('../services/children', () => ({
   ...jest.requireActual('../services/children'),
   fetchChildren: jest.fn(async () => [
@@ -152,7 +183,11 @@ jest.mock('../services/familySchedule', () => {
 });
 jest.mock('../services/notificationPreferences', () => ({
   ...jest.requireActual('../services/notificationPreferences'),
-  fetchPreferences: jest.fn(async () => [{ type: 'LESSON_CANCELLED', enabled: true, required: false }]),
+  // One the reader may turn off, and one the school requires: shown on and locked.
+  fetchPreferences: jest.fn(async () => [
+    { type: 'LESSON_CANCELLED', enabled: true, required: false },
+    { type: 'ABSENCE_UNREPORTED', enabled: true, required: true },
+  ]),
   savePreferences: jest.fn(),
 }));
 jest.mock('../services/pushRegistration', () => ({
@@ -466,6 +501,35 @@ describe("a child's week on a tablet", () => {
     await act(async () => tree.unmount());
   });
 
+  it('at 1366x1024 keeps a week with nothing on it, and a week that failed, under the controls', async () => {
+    const tree = await renderAt(1366, 1024, ChildScheduleScreen);
+    await press(tree, t('childSchedule.week'));
+    const answer = jest.mocked(fetchFamilySchedule).getMockImplementation()!;
+    // Höstlov: the week answers, with nothing on any day of it.
+    jest.mocked(fetchFamilySchedule).mockImplementationOnce(async (id, week) => ({
+      ...(await answer(id, week)),
+      week: { from: '2026-10-26', to: '2026-11-01', isoWeek: '2026-W44' },
+      lessons: [],
+      lunches: [],
+      rasts: [],
+    }));
+    await press(tree, '›');
+    expect(textNode(tree, t('childSchedule.weekLabel', { week: 44 }))).toBeTruthy();
+    // The body keeps the grid's width, so nothing jumps when a week with
+    // lessons answers; the sentence in it keeps the controls' column.
+    expect(columnCaps(tree)[1]).toBeGreaterThanOrEqual(1366);
+    expect(capAbove(textNode(tree, t('childSchedule.title', { name: 'Ella' })))).toBe(READABLE_MAX);
+    expect(capAbove(textNode(tree, t('childSchedule.emptyWeek')))).toBe(READABLE_MAX);
+
+    jest.mocked(fetchFamilySchedule).mockImplementationOnce(async () => {
+      throw new Error('offline');
+    });
+    await press(tree, '›');
+    expect(columnCaps(tree)[1]).toBeGreaterThanOrEqual(1366);
+    expect(capAbove(textNode(tree, t('childSchedule.loadError')))).toBe(READABLE_MAX);
+    await act(async () => tree.unmount());
+  });
+
   it("keeps a lesson's colour beside its subject in a day column, and gives the badge a line of its own", async () => {
     const tree = await renderAt(1180, 820, ChildScheduleScreen);
     await press(tree, t('childSchedule.week'));
@@ -521,6 +585,129 @@ describe('the theme around the screens', () => {
     for (const { primary, textMuted } of Object.values(PALETTES)) {
       expect(await barOf(primary, true)).toBe(primary);
       expect(await barOf(textMuted, false)).toBe('transparent');
+    }
+  });
+});
+
+describe('what a screen reader and a locked switch are told', () => {
+  beforeEach(() => {
+    mockScheme = 'light';
+  });
+
+  /** Whether a screen reader hears the button that holds `label` as the chosen one. */
+  const selectedOf = (tree: Tree, label: string): unknown => {
+    const node = textNode(tree, label);
+    const button = [node, ...ancestors(node)].find((n) => isHost(n) && n.props.accessibilityRole === 'button');
+    return button?.props.accessibilityState?.selected;
+  };
+
+  it.each([PHONE, [1366, 1024]] as const)(
+    'at %ix%i strikes a cancelled lesson through, says so in a word of its own and is told as cancelled',
+    async (width, height) => {
+      mockRole = 'TEACHER';
+      const tree = await renderAt(width, height, ScheduleScreen);
+      const subject = textNode(tree, 'Samhällskunskap');
+      expect(flat(subject)).toMatchObject({ textDecorationLine: 'line-through', color: PALETTES.light.textMuted });
+      expect(subject.props.numberOfLines).toBe(1);
+      // The word is not inside the subject's one line, so a long subject or a
+      // large text size truncates the subject and never the word.
+      expect(ancestors(textNode(tree, t('common.cancelled')))).not.toContain(subject);
+      const card = (node: Instance) => [node, ...ancestors(node)].find((n) => isHost(n) && n.props.accessibilityLabel !== undefined)!;
+      expect(card(subject).props.accessibilityLabel).toBe(`Samhällskunskap, ${t('common.cancelled')}`);
+      expect(card(subject).props.accessibilityState?.disabled).toBe(true);
+      // A lesson that goes ahead is offered to open, and not struck through.
+      const open = textNode(tree, 'Svenska');
+      expect(flat(open).textDecorationLine).toBeUndefined();
+      expect(card(open).props.accessibilityLabel).toBe(t('schedule.openA11y', { subject: 'Svenska' }));
+      await act(async () => tree.unmount());
+    },
+  );
+
+  it.each([
+    ['guardian home', GuardianHomeScreen, [['Ella Svensson', 'Liam Svensson'], [t('guardian.types.SICK'), t('guardian.types.APPOINTMENT'), t('guardian.types.OTHER')]]],
+    ['leave requests', LeaveRequestsScreen, [['Ella Svensson', 'Liam Svensson']]],
+    ['child schedule', ChildScheduleScreen, [['Ella', 'Liam'], [t('childSchedule.today'), t('childSchedule.week')]]],
+  ] as const)('%s tells which chip of each row is chosen, and follows a tap', async (_name, Screen, rows) => {
+    mockRole = 'GUARDIAN';
+    const tree = await renderAt(...PHONE, Screen);
+    for (const row of rows) {
+      expect(row.map((label) => selectedOf(tree, label))).toEqual(row.map((_, i) => i === 0));
+      await press(tree, row[row.length - 1]!);
+      expect(row.map((label) => selectedOf(tree, label))).toEqual(row.map((_, i) => i === row.length - 1));
+    }
+    await act(async () => tree.unmount());
+  });
+
+  it.each([
+    ['login', LoginScreen, 'TEACHER', [t('login.email'), t('login.password')]],
+    ['guardian home', GuardianHomeScreen, 'GUARDIAN', [t('guardian.dateLabel')]],
+    ['leave requests', LeaveRequestsScreen, 'GUARDIAN', [t('leave.from'), t('leave.to'), t('leave.reason')]],
+  ] as const)('%s names every field it draws', async (_name, Screen, role, labels) => {
+    mockRole = role;
+    const tree = await renderAt(...PHONE, Screen);
+    expect(tree.root.findAll((n) => isHostOf(n, 'TextInput')).map((n) => n.props.accessibilityLabel)).toEqual(labels);
+    await act(async () => tree.unmount());
+  });
+
+  it("keeps a tab's glyph out of what a screen reader reads, and at one size at every text size", async () => {
+    let tree!: Tree;
+    await act(async () => {
+      tree = TestRenderer.create(<TabGlyph glyph="◷" color={PALETTES.light.primary} focused />);
+    });
+    expect(tree.root.findAll(isHost)[0]!.props).toMatchObject({
+      accessible: false,
+      accessibilityElementsHidden: true,
+      importantForAccessibility: 'no-hide-descendants',
+    });
+    expect(tree.root.find((n) => isHostOf(n, 'Text')).props.allowFontScaling).toBe(false);
+    await act(async () => tree.unmount());
+  });
+
+  /** The settings switch named `label`. */
+  const switchFor = (tree: Tree, label: string): Instance =>
+    tree.root.find((n) => n.type === Switch && n.props.accessibilityLabel === label);
+  const REQUIRED = t('settings.types.ABSENCE_UNREPORTED');
+  const CHOSEN = t('settings.types.LESSON_CANCELLED');
+
+  it.each(['light', 'dark'] as const)("in %s on iOS, locks a required type's switch in the palette's own colours", async (scheme) => {
+    mockScheme = scheme;
+    mockRole = 'TEACHER';
+    const palette = PALETTES[scheme];
+    const tree = await renderAt(1366, 1024, SettingsScreen);
+    // UISwitch fades a disabled switch itself; faded here too, it would be faded twice.
+    expect(switchFor(tree, REQUIRED).props).toMatchObject({
+      disabled: true,
+      value: true,
+      trackColor: { false: palette.borderStrong, true: palette.primary },
+      ios_backgroundColor: palette.borderStrong,
+    });
+    expect(switchFor(tree, CHOSEN).props.trackColor).toEqual({ false: palette.borderStrong, true: palette.primary });
+    await act(async () => tree.unmount());
+  });
+
+  // Kept out of the palette test, which draws on iOS: this faded track is off
+  // the palette on purpose.
+  it.each(['light', 'dark'] as const)("in %s on Android, fades a locked switch's track as a disabled button fades, and no other", async (scheme) => {
+    mockScheme = scheme;
+    mockRole = 'TEACHER';
+    const palette = PALETTES[scheme];
+    const fade = (colour: string): string => over(colour, DISABLED_OPACITY, palette.surface);
+    const os = jest.replaceProperty(Platform, 'OS', 'android');
+    try {
+      const tree = await renderAt(1366, 1024, SettingsScreen);
+      expect(switchFor(tree, REQUIRED).props).toMatchObject({
+        disabled: true,
+        trackColor: { false: fade(palette.borderStrong), true: fade(palette.primary) },
+        thumbColor: palette.surface,
+      });
+      expect(switchFor(tree, CHOSEN).props).toMatchObject({
+        disabled: false,
+        trackColor: { false: palette.borderStrong, true: palette.primary },
+        thumbColor: palette.surface,
+      });
+      await act(async () => tree.unmount());
+    } finally {
+      os.restore();
     }
   });
 });

@@ -158,8 +158,18 @@ export function ChildScheduleScreen(): React.JSX.Element {
     );
   }
 
+  // Only the grid takes the week view's wide body. A sentence in its place (a
+  // week that failed, a week with nothing on it) keeps the reading column of
+  // the controls above it, so it lines up under them instead of starting at
+  // the window's edge; the spinner is centred either way.
   const body = (): React.ReactNode => {
-    if (error) return <Text style={styles.errorText}>{error}</Text>;
+    if (error) {
+      return (
+        <Column max={READABLE_MAX}>
+          <Text style={styles.errorText}>{error}</Text>
+        </Column>
+      );
+    }
     if (!shown) return <ActivityIndicator color={colors.primary} style={styles.spinner} />;
     if (view === 'today') {
       return todayDay ? (
@@ -169,7 +179,11 @@ export function ChildScheduleScreen(): React.JSX.Element {
       );
     }
     if (days.every((day) => day.entries.length === 0)) {
-      return <Text style={styles.emptyBody}>{t('childSchedule.emptyWeek')}</Text>;
+      return (
+        <Column max={READABLE_MAX}>
+          <Text style={styles.emptyBody}>{t('childSchedule.emptyWeek')}</Text>
+        </Column>
+      );
     }
     return (
       <View style={columns > 1 ? styles.grid : null}>

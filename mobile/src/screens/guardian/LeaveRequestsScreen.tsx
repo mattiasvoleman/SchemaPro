@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
+  Platform,
   RefreshControl,
   ScrollView,
   Text,
@@ -119,10 +121,15 @@ export function LeaveRequestsScreen(): React.JSX.Element {
 
   return (
     <SafeAreaView style={styles.container} edges={TAB_SCREEN_EDGES}>
-      {/* The keyboard insets the scroll and keeps the field typed in above it,
-          also on an iPad on its side, where the form is shorter than the
-          screen and could not otherwise be scrolled; a chip or the button
-          takes its tap while the keyboard is up. */}
+      {/* On iOS the keyboard insets the scroll and keeps the field typed in
+          above it, also on an iPad on its side, where the form is shorter
+          than the screen and could not otherwise be scrolled. Android ignores
+          that prop, and its edge-to-edge window does not shrink for the
+          keyboard, so there the view around the scroll gives up the
+          keyboard's height, as login does, and the scroll brings the field
+          into what is left. A chip or the button takes its tap while the
+          keyboard is up. */}
+      <KeyboardAvoidingView style={styles.keyboard} behavior={Platform.OS === 'android' ? 'height' : undefined}>
       <ScrollView
         automaticallyAdjustKeyboardInsets
         keyboardShouldPersistTaps="handled"
@@ -226,12 +233,14 @@ export function LeaveRequestsScreen(): React.JSX.Element {
           <View style={styles.footerSpace} />
         </Column>
       </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
 const useStyles = makeStyles((c) => ({
   container: { flex: 1, backgroundColor: c.background },
+  keyboard: { flex: 1 },
   center: { padding: 32, alignItems: 'center' },
   header: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 },
   headerTitle: { color: c.text, fontSize: 22, fontWeight: '700' },
