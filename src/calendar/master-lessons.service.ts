@@ -13,7 +13,7 @@ import type { LessonRecurrence } from '@prisma/client';
 import { RealtimeService } from '../realtime/realtime.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { enterGrundschemaWrite } from '../publication/publish-mode';
-import { lockYearForGrundschemaEdit } from '../optimization/regeneration-lock';
+import { lockYearForGrundschemaEdit, lockYearsOfLessonsForGrundschemaEdit } from '../optimization/regeneration-lock';
 import { propagateTemplateChange, reconcilableLessons } from './propagate-template';
 import { NotificationsService } from '../notifications/notifications.service';
 import { parseTimeString } from '../common/utils/time';
@@ -949,14 +949,9 @@ export class MasterLessonsService {
     }
     return this.prisma.withRls(user, async (tx) => {
       const mode = await enterGrundschemaWrite(tx, requireSchoolId(user));
-      // Which years the card is in, read without a lock, and their share of
-      // the regeneration lock before the rows are held (as on create).
-      const cardYears = await tx.masterLesson.findMany({
-        where: { id: { in: dto.lessonIds } },
-        select: { academicYearId: true },
-        distinct: ['academicYearId'],
-      });
-      await lockYearForGrundschemaEdit(tx, cardYears.map((row) => row.academicYearId));
+      // The card's years' share of the regeneration lock before the rows are
+      // held (as on create), the years read in the same statement.
+      await lockYearsOfLessonsForGrundschemaEdit(tx, dto.lessonIds);
       // The card's rows held to COMMIT before they are read, so the room,
       // teacher and weeks propagated below are the ones written, not ones a
       // concurrent PATCH has since replaced. NO KEY UPDATE: calendar lessons
