@@ -10,6 +10,7 @@ import {
   standardWeekWeight,
   strongestCoveringQualification,
   targetMinutesPerWeek,
+  type JudgedYear,
   type LoadDuty,
   type LoadEmployment,
   type LoadInput,
@@ -1040,5 +1041,127 @@ describe('strongestCoveringQualification', () => {
         YEAR,
       ),
     ).toBeNull();
+  });
+});
+
+/*
+ * Tioårig grundskola (SFS 2025:729). A behörighet is stated in the nine-year
+ * numbering for good (grade-numbering.ts): a tioårig läsår's årskurs is one
+ * higher than the same åldersband in a nioårig one, so its 10A is the 9 a
+ * "7–9" holds, its 8–10 the 7–9, and its 11 (specialskolan's) the NIOARIG 10
+ * the same "7–9" does not reach. The year carries its numbering only when it
+ * is tioårig; a nioårig year — the field absent or NIOARIG — is judged raw, as
+ * it always was. What the report names stays in the year's own numbering.
+ */
+describe('Tioårig grundskola: a behörighet is judged in NIOARIG through the year’s numbering', () => {
+  // The first tioårig läsår (TIOARIG_FROM is 2028-07-01).
+  const TIOARIG_YEAR: JudgedYear = { startDate: '2028-08-21', endDate: '2029-06-15', gradeNumbering: 'TIOARIG' };
+  const NIOARIG_YEAR: JudgedYear = { startDate: '2027-08-16', endDate: '2028-06-09', gradeNumbering: 'NIOARIG' };
+  const NINE_YEAR_AS_ALWAYS: JudgedYear = { startDate: '2027-08-16', endDate: '2028-06-09' };
+  const sevenToNine = qualification({ minGradeLevel: 7, maxGradeLevel: 9 });
+  const covers = (q: LoadQualification, min: number, max: number, year: JudgedYear) =>
+    qualificationCovers(q, { subjectId: MA, gradeSpan: { min, max } }, year);
+
+  describe('qualificationCovers', () => {
+    it('holds a tioårig 10A with a 7–9 behörighet, and the whole tioårig högstadium 8–10', () => {
+      expect(covers(sevenToNine, 10, 10, TIOARIG_YEAR)).toBe(true);
+      expect(covers(sevenToNine, 8, 10, TIOARIG_YEAR)).toBe(true);
+    });
+
+    it('does not hold the tioårig 11 (NIOARIG 10) or 7 (NIOARIG 6) with a 7–9 behörighet', () => {
+      expect(covers(sevenToNine, 11, 11, TIOARIG_YEAR)).toBe(false);
+      expect(covers(sevenToNine, 7, 7, TIOARIG_YEAR)).toBe(false);
+      expect(covers(sevenToNine, 9, 11, TIOARIG_YEAR)).toBe(false);
+    });
+
+    it('reads a tioårig lågstadium 2–4 as the NIOARIG 1–3, and its åk 1 as förskoleklassens åldersband', () => {
+      const oneToThree = qualification({ minGradeLevel: 1, maxGradeLevel: 3 });
+      const fToThree = qualification({ minGradeLevel: 0, maxGradeLevel: 3 });
+      expect(covers(oneToThree, 2, 4, TIOARIG_YEAR)).toBe(true);
+      // Tioårig åk 1 is NIOARIG F (toNioarig): a 1–3 does not reach it, an F–3 does.
+      expect(covers(oneToThree, 1, 1, TIOARIG_YEAR)).toBe(false);
+      expect(covers(fToThree, 1, 4, TIOARIG_YEAR)).toBe(true);
+    });
+
+    it('judges a nioårig year raw, the numbering stated or absent: its 10 is past a 7–9', () => {
+      for (const year of [NIOARIG_YEAR, NINE_YEAR_AS_ALWAYS]) {
+        expect(covers(sevenToNine, 9, 9, year)).toBe(true);
+        expect(covers(sevenToNine, 7, 9, year)).toBe(true);
+        expect(covers(sevenToNine, 10, 10, year)).toBe(false);
+        expect(covers(sevenToNine, 6, 6, year)).toBe(false);
+      }
+    });
+
+    it('still covers a span it cannot judge, and still reads the subject and validity against the year’s bounds', () => {
+      expect(qualificationCovers(sevenToNine, { subjectId: MA, gradeSpan: null }, TIOARIG_YEAR)).toBe(true);
+      // Expired the summer before the tioårig läsår: no span makes it valid.
+      expect(covers(qualification({ validTo: '2028-06-30' }), 10, 10, TIOARIG_YEAR)).toBe(false);
+      expect(
+        qualificationCovers(
+          qualification({ subjectId: NO }),
+          { subjectId: MA, gradeSpan: { min: 10, max: 10 } },
+          TIOARIG_YEAR,
+        ),
+      ).toBe(false);
+    });
+  });
+
+  describe('strongestCoveringQualification', () => {
+    it('picks among the rows that hold the tioårig span read in NIOARIG', () => {
+      const held = [
+        // NIOARIG 10–10: holds the tioårig 11 only, not the 10A's NIOARIG 9.
+        qualification({ kind: 'LEGITIMATION', minGradeLevel: 10, maxGradeLevel: 10 }),
+        qualification({ kind: 'TILLATEN', minGradeLevel: 7, maxGradeLevel: 9 }),
+        qualification({ kind: 'BEHORIG', minGradeLevel: 4, maxGradeLevel: 9 }),
+      ];
+      const tenA = { subjectId: MA, gradeSpan: { min: 10, max: 10 } };
+      expect(strongestCoveringQualification(held, ANNA, tenA, TIOARIG_YEAR)).toBe('BEHORIG');
+      // The same 10 in a nioårig year is specialskolan's 10: only the 10–10 row holds it.
+      expect(strongestCoveringQualification(held, ANNA, tenA, NINE_YEAR_AS_ALWAYS)).toBe('LEGITIMATION');
+      expect(strongestCoveringQualification(held, ANNA, tenA, NIOARIG_YEAR)).toBe('LEGITIMATION');
+    });
+
+    it('is null for the tioårig 11 against a 7–9, whoever else holds it', () => {
+      expect(
+        strongestCoveringQualification(
+          [sevenToNine, qualification({ userId: BO, minGradeLevel: 10, maxGradeLevel: 10 })],
+          ANNA,
+          { subjectId: MA, gradeSpan: { min: 11, max: 11 } },
+          TIOARIG_YEAR,
+        ),
+      ).toBeNull();
+    });
+  });
+
+  describe('buildTeacherLoadReport', () => {
+    const reportOn = (gradeSpan: { min: number; max: number }, year: JudgedYear) =>
+      report({
+        year,
+        requirements: [requirement({ id: 'req-x', gradeSpan, studentGroupId: 'g-x', groupName: `${gradeSpan.min}A` })],
+        qualifications: [sevenToNine],
+      });
+
+    it('flags no tioårig 10A taught under a 7–9 behörighet, and flags the 11 with its span as the year numbers it', () => {
+      expect(reportOn({ min: 10, max: 10 }, TIOARIG_YEAR).unqualifiedAssignments).toEqual([]);
+      expect(reportOn({ min: 11, max: 11 }, TIOARIG_YEAR).unqualifiedAssignments).toEqual([
+        expect.objectContaining({ userId: ANNA, role: 'TEACHER', groupName: '11A', gradeSpan: { min: 11, max: 11 } }),
+      ]);
+    });
+
+    it('flags the same 10A in a nioårig year, as it always did', () => {
+      expect(reportOn({ min: 10, max: 10 }, NINE_YEAR_AS_ALWAYS).unqualifiedAssignments).toEqual([
+        expect.objectContaining({ userId: ANNA, gradeSpan: { min: 10, max: 10 } }),
+      ]);
+      expect(reportOn({ min: 10, max: 10 }, NIOARIG_YEAR).unqualifiedAssignments).toHaveLength(1);
+    });
+
+    it('changes nothing but the behörighet: the minutes, the target and the status are the nioårig ones', () => {
+      const bounds = { startDate: '2028-08-21', endDate: '2029-06-15' };
+      const tioarig = reportOn({ min: 10, max: 10 }, { ...bounds, gradeNumbering: 'TIOARIG' });
+      const nioarig = reportOn({ min: 10, max: 10 }, bounds);
+      expect(tioarig.teachers).toEqual(nioarig.teachers);
+      expect(tioarig.unstaffedRequirements).toEqual(nioarig.unstaffedRequirements);
+      expect(nioarig.unqualifiedAssignments).toHaveLength(1);
+    });
   });
 });

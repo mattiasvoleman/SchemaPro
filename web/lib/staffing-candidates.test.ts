@@ -54,6 +54,53 @@ describe("candidateQualification", () => {
       kind: "BEHORIG",
     });
   });
+
+  /*
+   * A tioårig läsår. The requirements page hands over its yearBounds with the
+   * year's numbering on it, and a behörighet is stated in NIOARIG
+   * (grade-numbering.ts): the span the badge is asked about is the class's
+   * own, in the year's numbering, and the cover rule reads it over — so a
+   * tioårig 10A is the 9 Anna's 7–9 was written for, and a tioårig 7A the 6
+   * it never reached. The matrix's unqualified list asks the same rule.
+   */
+  describe("in a tioårig läsår", () => {
+    const BOUNDS = { startDate: "2028-08-14", endDate: "2029-06-08" };
+    const TIOARIG = { ...BOUNDS, gradeNumbering: "TIOARIG" as const };
+    const NIOARIG = { ...BOUNDS, gradeNumbering: "NIOARIG" as const };
+    const mellan = row({ kind: "LEGITIMATION", minGradeLevel: 1, maxGradeLevel: 6 });
+
+    it("badges a tioårig 10A by the 7–9 row, and a tioårig 7A by the 1–6 row", () => {
+      expect(candidateQualification([row(), mellan], "t-anna", "s-ma", { min: 10, max: 10 }, TIOARIG)).toEqual({
+        recorded: true,
+        kind: "BEHORIG",
+      });
+      expect(candidateQualification([row(), mellan], "t-anna", "s-ma", { min: 7, max: 7 }, TIOARIG)).toEqual({
+        recorded: true,
+        kind: "LEGITIMATION",
+      });
+    });
+
+    it("leaves a tioårig 10A unqualified for a teacher whose rows stop at 6", () => {
+      expect(candidateQualification([mellan], "t-anna", "s-ma", { min: 10, max: 10 }, TIOARIG)).toEqual({
+        recorded: true,
+        kind: null,
+      });
+    });
+
+    it("reads the same spans as they are in a nine-year läsår, numbered or not", () => {
+      // 10 is specialskolans åk 10 there, outside 7–9; 7 is inside it.
+      for (const year of [NIOARIG, BOUNDS]) {
+        expect(candidateQualification([row(), mellan], "t-anna", "s-ma", { min: 10, max: 10 }, year)).toEqual({
+          recorded: true,
+          kind: null,
+        });
+        expect(candidateQualification([row(), mellan], "t-anna", "s-ma", { min: 7, max: 7 }, year)).toEqual({
+          recorded: true,
+          kind: "BEHORIG",
+        });
+      }
+    });
+  });
 });
 
 describe("candidateRemaining", () => {

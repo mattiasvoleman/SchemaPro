@@ -1,7 +1,7 @@
 import type { PrismaClient, TeacherEmploymentForm } from '@prisma/client';
 import { gradeSpanOf, loadRosters } from '../optimization/room-eligibility';
 import { rostersOfYear, type RosterViewer } from '../year-rollover/projected-rosters';
-import { loadWeightOf, type GradeSpan, type LoadInput, type LoadModel } from './teacher-load';
+import { loadWeightOf, type GradeSpan, type JudgedYear, type LoadInput, type LoadModel } from './teacher-load';
 import type { LoadPeriod } from './employment-periods';
 import type { YearBounds } from './teaching-weeks';
 
@@ -73,10 +73,17 @@ export async function readLoadInput(
 ): Promise<LoadRead | null> {
   const yearRow = await tx.academicYear.findUnique({
     where: { id: academicYearId },
-    select: { startDate: true, endDate: true, isActive: true, predecessorId: true },
+    select: { startDate: true, endDate: true, isActive: true, predecessorId: true, gradeNumbering: true },
   });
   if (!yearRow) return null;
-  const year: YearBounds = { startDate: asDay(yearRow.startDate), endDate: asDay(yearRow.endDate) };
+  // The spans stay in the year's numbering (a lov is the year's own); a
+  // behörighet reads them in NIOARIG through the year's numbering
+  // (qualificationCovers), carried only when tioårig.
+  const year: JudgedYear = {
+    startDate: asDay(yearRow.startDate),
+    endDate: asDay(yearRow.endDate),
+    ...(yearRow.gradeNumbering === 'TIOARIG' ? { gradeNumbering: 'TIOARIG' as const } : {}),
+  };
 
   // One statement after another, not Promise.all: a transaction is one
   // connection, pg queues concurrent queries on it anyway (and deprecates

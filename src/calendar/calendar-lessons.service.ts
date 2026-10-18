@@ -11,6 +11,7 @@ import { PrismaService } from '../database/prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { attendanceSpan, lessonQualificationFindings } from '../staffing/staffing-enforcement';
+import { toNioarigSpan, type GradeNumbering } from '../common/grade-numbering';
 import type { RosterViewer } from '../year-rollover/projected-rosters';
 import { settleFindings, type StaffingWarning } from '../staffing/staffing-checks';
 import { requireSchoolId } from '../common/utils/request-context';
@@ -158,10 +159,10 @@ const lessonStudentIds = (lesson: LessonForAction): string[] =>
 function yearOfLessonGroup(
   tx: PrismaClient,
   studentGroupId: string,
-): Promise<{ id: string; isActive: boolean; predecessorId: string | null } | null> {
+): Promise<{ id: string; isActive: boolean; predecessorId: string | null; gradeNumbering: GradeNumbering } | null> {
   return tx.academicYear.findFirst({
     where: { studentGroups: { some: { id: studentGroupId } } },
-    select: { id: true, isActive: true, predecessorId: true },
+    select: { id: true, isActive: true, predecessorId: true, gradeNumbering: true },
   });
 }
 
@@ -470,6 +471,7 @@ export class CalendarLessonsService {
           await lessonQualificationFindings(tx, {
             schoolId: lesson.schoolId,
             academicYearId: year.id,
+            gradeNumbering: year.gradeNumbering,
             subjectId: lesson.subjectId,
             // The whole attendance, as the master-lesson PATCH asks it.
             groupIds: lessonGroupIds(lesson),
@@ -935,13 +937,18 @@ export class CalendarLessonsService {
     const year = await yearOfLessonGroup(tx, lesson.studentGroupId);
     if (!year) return null;
     // The derivation the assignment's own warning uses (attendanceSpan), so
-    // the badge here and the warning after the click read one span.
-    return attendanceSpan(tx, {
-      academicYearId: year.id,
-      groupIds: lessonGroupIds(lesson),
-      studentIds: lessonStudentIds(lesson),
-      rosters: { viewer, known: year },
-    });
+    // the badge here and the warning after the click read one span — in
+    // NIOARIG, as the behörigheter it is judged against are stated
+    // (grade-numbering.ts), and as the warning judges it.
+    return toNioarigSpan(
+      await attendanceSpan(tx, {
+        academicYearId: year.id,
+        groupIds: lessonGroupIds(lesson),
+        studentIds: lessonStudentIds(lesson),
+        rosters: { viewer, known: year },
+      }),
+      year.gradeNumbering ?? 'NIOARIG',
+    );
   }
 
   /** Of the active teachers named, those breaking no hard cover rule for the lesson. */
