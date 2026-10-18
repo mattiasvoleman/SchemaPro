@@ -11,8 +11,10 @@ import type { LessonStatusValue, PersonClosure, PersonDay, PersonLesson, Span } 
  *
  * One round of reads per day (D−1 to D+1 for the daily rest), never one per
  * candidate: the old picker's teacherHasClash in a loop was a statement per
- * teacher. Every read runs in the caller's withRls transaction, so a
- * candidate list is what the caller's role may see — an admin's.
+ * teacher. The one wider read is the ISO week's teaching dates, for the
+ * people whose post limits their days, and only when somebody's does. Every
+ * read runs in the caller's withRls transaction, so a candidate list is what
+ * the caller's role may see — an admin's.
  *
  * Model calls only (no $queryRaw), so the old per-lesson operations can use
  * these readers without moving any raw statement their specs queue.
@@ -117,6 +119,10 @@ export async function readPersonDays(tx: PrismaClient, options: DayReadOptions):
       absences: [],
       lunch: null,
       minDailyRestMinutes: null,
+      dailyCapMinutes: null,
+      maxTeachingDaysPerWeek: null,
+      weekTeachingDates: [],
+      preferredFreeDay: null,
       pool: { member: false, hasEmployment: false, windows: [] },
     });
   }
@@ -211,10 +217,21 @@ export async function readPersonDays(tx: PrismaClient, options: DayReadOptions):
     }
   }
 
+  // The cap and the wish of Lärarens dag (20261123090000) are columns of the
+  // same row, read in the same statement: a school that sets neither asks
+  // nothing more than it did.
   const rules =
     (await tx.teacherWorkRule.findMany({
       where: { userId: people },
-      select: { userId: true, lunchMinutes: true, lunchStartTime: true, lunchEndTime: true, minDailyRestMinutes: true },
+      select: {
+        userId: true,
+        lunchMinutes: true,
+        lunchStartTime: true,
+        lunchEndTime: true,
+        minDailyRestMinutes: true,
+        maxTeachingMinutesPerDay: true,
+        preferredFreeDayOfWeek: true,
+      },
     })) ?? [];
   for (const rule of rules) {
     const day = rule?.userId ? days.get(rule.userId) : undefined;
@@ -223,6 +240,8 @@ export async function readPersonDays(tx: PrismaClient, options: DayReadOptions):
       day.lunch = { minutes: rule.lunchMinutes, window: liftWindow(date, rule.lunchStartTime, rule.lunchEndTime, timezone) };
     }
     day.minDailyRestMinutes = rule.minDailyRestMinutes ?? null;
+    day.dailyCapMinutes = rule.maxTeachingMinutesPerDay ?? null;
+    day.preferredFreeDay = rule.preferredFreeDayOfWeek ?? null;
   }
 
   const absences = options.skipAbsences
@@ -267,6 +286,9 @@ export async function readPersonDays(tx: PrismaClient, options: DayReadOptions):
           contractKind: true,
           teachingTargetMinutesPerWeek: true,
           signature: true,
+          // Deltid in days (20261123090000), a column of the same post: the
+          // rule reads it, the LoadEmployment below never carries it.
+          maxTeachingDaysPerWeek: true,
         },
       })) ?? [];
     // The posts' periods, under the same arms as the posts, asked only when
@@ -278,6 +300,36 @@ export async function readPersonDays(tx: PrismaClient, options: DayReadOptions):
             orderBy: [{ userId: 'asc' }, { validFrom: 'asc' }],
           })) ?? [])
         : [];
+    // THE WEEK'S TEACHING DATES, ASKED ONLY OF A POST WITH A DAY LIMIT. The
+    // rows above cover D−1 to D+1, and a limit in days is the whole ISO week's,
+    // so the week is one more read — of exactly those people, and only when
+    // one exists: a school that sets no limit sends what it did, statement for
+    // statement (the adapter probe's check (z) pins it). Where one exists the
+    // read is two statements: the date is the lesson's and not the row's, and
+    // Prisma 7 sends the selected relation as a statement of its own (the
+    // probe's (ld-b) pins the pair). Every role on a
+    // lesson that holds its time, as src/common/teacher-day.ts counts, from
+    // the calendar as it stands: a part-timer whose Monday a cover decision
+    // took over while they were away does not teach that Monday any more.
+    const limited = rows.filter((row) => days.has(row?.userId) && (row.maxTeachingDaysPerWeek ?? null) !== null);
+    for (const row of limited) days.get(row.userId)!.maxTeachingDaysPerWeek = row.maxTeachingDaysPerWeek;
+    if (limited.length > 0) {
+      const week = isoWeekOf(date);
+      const taught =
+        (await tx.calendarLessonTeacher.findMany({
+          where: {
+            teacherId: { in: limited.map((row) => row.userId) },
+            calendarLesson: { status: { in: HOLDING }, date: { gte: dayDate(week.from), lte: dayDate(week.to) } },
+          },
+          select: { teacherId: true, calendarLesson: { select: { date: true } } },
+        })) ?? [];
+      const dates = new Map<string, Set<string>>();
+      for (const row of taught) {
+        if (!row?.calendarLesson?.date || !days.has(row.teacherId)) continue;
+        dates.set(row.teacherId, (dates.get(row.teacherId) ?? new Set<string>()).add(asDay(row.calendarLesson.date)));
+      }
+      for (const [userId, taughtOn] of dates) days.get(userId)!.weekTeachingDates = [...taughtOn].sort();
+    }
     for (const row of rows) {
       if (!row?.userId) continue;
       const periods = periodRows.filter((period) => period?.userId === row.userId).map(toLoadPeriod);

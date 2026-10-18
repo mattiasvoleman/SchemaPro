@@ -23,16 +23,53 @@
  *                      — a lunch already impossible is not the cover's fault
  *   DAILY_REST         the work rule's rest between days held before and
  *                      does not after, against the day before or after
+ *   DAILY_CAP          the work rule's cap on a day's teaching (Lärarens
+ *                      dag): the minutes the person teaches on the date with
+ *                      the cover, overlaps counted once, are more than it
+ *   WORK_DAYS          the post's deltid in days: the date is one of the ISO
+ *                      week they teach nothing on yet, and the week would
+ *                      then hold more teaching dates than the post allows
  *   POOL_NOT_DECLARED  a pool member without a post this year, and no window
  *                      they declared contains the whole lesson
  *
  * All rules are MONOTONE: taking an assignment away never breaks one, so any
  * subset of a valid day proposal is valid (day-proposal.spec.ts proves it).
  *
+ * THE CAP FIRES WHENEVER THE DAY ENDS OVER IT, unlike the lunch. A lunch the
+ * day had already made impossible is not the cover's to lose, so the lunch
+ * asks "held before, broken after"; a day already over its cap is made longer
+ * by every lesson put in it, and that is what the cap is there to stop. "Over
+ * after" only grows with the lessons, so it is monotone as it stands. What
+ * counts is src/common/teacher-day.ts's one definition: every lesson the
+ * person holds a row on that date, whatever the role, that holds its time,
+ * its own minutes start to end, two overlapping ones as their union.
+ *
+ * A NEW DAY IS JUDGED AGAINST THE STORED WEEK, not against the stored week
+ * and the proposal's own picks. Two picks on one date the person does not
+ * teach on would otherwise each find the date taught by the other and pass
+ * together, while either alone is refused: taking one away would break a
+ * rule, which the contract above forbids, and the pair would put a three-day
+ * post on a fourth day. The count includes the picks: a pick on another new
+ * date of the week is a day too.
+ *
+ * THE DAYS ARE HR DATA AND THE RULE IS NOT (Roller i skolan). The verdict is
+ * the same for every reader — an administrator who may not read the post
+ * would otherwise put a part-timer on their day off — and hardFindings never
+ * asks who is reading. Only the wording is: maskFindings and maskWarnings
+ * leave the figure out for a reader without HR-läs, the precedent of
+ * STAFF_TEACHER_OVER_TARGET_HIDDEN (src/staffing/staffing-checks.ts). What
+ * remains can be counted from the timetable everybody reads: a teacher seen
+ * on Monday to Wednesday and refused Thursday has a limit of three. That
+ * was weighed for the over-target verdict and accepted (4c65c4b7), and holds
+ * here: the rule cannot both bind and say nothing. The cap is the work rule's,
+ * which every member of staff reads, and keeps its minutes.
+ *
  * Times are epoch milliseconds, lifted from the school's wall clock by the
  * reader (publish-days.ts' coversTime does the same for publish), so this
  * module has no timezone in it.
  */
+
+import { unionMinutes } from '../common/teacher-day';
 
 export type HardRuleCode =
   | 'INACTIVE'
@@ -44,6 +81,10 @@ export type HardRuleCode =
   | 'BOOKED_ROOM'
   | 'LUNCH'
   | 'DAILY_REST'
+  | 'DAILY_CAP'
+  | 'WORK_DAYS'
+  /** Never from hardFindings: maskFindings' WORK_DAYS, without the figure. */
+  | 'WORK_DAYS_HIDDEN'
   | 'POOL_NOT_DECLARED';
 
 export interface RuleFinding {
@@ -92,6 +133,18 @@ export interface PersonDay {
   lunch: { minutes: number; window: Span } | null;
   /** Null = no rule. */
   minDailyRestMinutes: number | null;
+  /** The work rule's cap on a day's teaching, in minutes; null or absent = no cap. */
+  dailyCapMinutes?: number | null;
+  /** The post's deltid in days; null or absent = no limit. HR data (hr-visibility.ts). */
+  maxTeachingDaysPerWeek?: number | null;
+  /**
+   * The dates of the date's ISO week on which the person holds a lesson that
+   * holds its time, as the calendar stands (YYYY-MM-DD). Read only for a
+   * person with a day limit; absent is none.
+   */
+  weekTeachingDates?: readonly string[];
+  /** The ISO weekday the work rule wishes free: a ranking term, never a rule. */
+  preferredFreeDay?: number | null;
   pool: { member: boolean; hasEmployment: boolean; windows: Span[] };
 }
 
@@ -185,6 +238,30 @@ function restBroken(day: PersonDay, target: CoverTarget, lessons: readonly Perso
 }
 
 /**
+ * The minutes the person teaches on the cover's date with the cover in it:
+ * their lessons there that hold their time and the cover, as one union. A
+ * row of theirs on the covered lesson itself is the cover's span again, and
+ * the union counts it once.
+ */
+function teachingMinutesWith(target: CoverTarget, lessons: readonly PersonLesson[]): number {
+  const held = lessons.filter((lesson) => holdsTime(lesson) && lesson.date === target.date);
+  return unionMinutes([...held, target].map((span) => ({ startMinutes: span.start / MINUTE, endMinutes: span.end / MINUTE })));
+}
+
+function capBroken(day: PersonDay, target: CoverTarget, lessons: readonly PersonLesson[]): boolean {
+  const cap = day.dailyCapMinutes ?? null;
+  return cap !== null && teachingMinutesWith(target, lessons) > cap;
+}
+
+function daysBroken(day: PersonDay, target: CoverTarget, added: readonly PersonLesson[]): boolean {
+  const max = day.maxTeachingDaysPerWeek ?? null;
+  if (max === null) return false;
+  const stored = day.weekTeachingDates ?? [];
+  if (stored.includes(target.date)) return false;
+  return new Set([...stored, ...added.map((lesson) => lesson.date), target.date]).size > max;
+}
+
+/**
  * Every hard rule the person would break by covering `target`, in the order
  * of the header. `added` are lessons given to them earlier in the same day
  * proposal, counted as SCHEDULED.
@@ -212,6 +289,8 @@ export function hardFindings(
   if (lunchBroken(day, target, lessons)) findings.push({ code: 'LUNCH', params: { minutes: day.lunch!.minutes } });
   const rest = restBroken(day, target, lessons);
   if (rest) findings.push({ code: 'DAILY_REST', params: { side: rest, minutes: day.minDailyRestMinutes! } });
+  if (capBroken(day, target, lessons)) findings.push({ code: 'DAILY_CAP', params: { minutes: day.dailyCapMinutes! } });
+  if (daysBroken(day, target, added)) findings.push({ code: 'WORK_DAYS', params: { days: day.maxTeachingDaysPerWeek! } });
   if (
     day.pool.member &&
     !day.pool.hasEmployment &&
@@ -241,22 +320,38 @@ export function prefersFree(day: PersonDay, target: CoverTarget): boolean {
 export type CoverWarningCode =
   | 'COVER_BREAKS_LUNCH'
   | 'COVER_BREAKS_DAILY_REST'
+  | 'COVER_EXCEEDS_DAILY_CAP'
+  | 'COVER_BEYOND_WORK_DAYS'
+  /** Never from softWarnings: maskWarnings' COVER_BEYOND_WORK_DAYS, without the figure. */
+  | 'COVER_BEYOND_WORK_DAYS_HIDDEN'
   | 'COVER_TEACHER_UNAVAILABLE'
   | 'COVER_TEACHER_BOOKED'
   | 'COVER_POOL_NOT_DECLARED';
 
+/**
+ * The cap and the days stay warnings too, as the lunch and the rest do: the
+ * rektor at 07:45 with one free colleague may ask a part-timer in on their
+ * day off, and the teacher may agree. Neither is in the web's REFUSED_PICK.
+ */
 const WARNING_OF: Partial<Record<HardRuleCode, CoverWarningCode>> = {
   LUNCH: 'COVER_BREAKS_LUNCH',
   DAILY_REST: 'COVER_BREAKS_DAILY_REST',
+  DAILY_CAP: 'COVER_EXCEEDS_DAILY_CAP',
+  WORK_DAYS: 'COVER_BEYOND_WORK_DAYS',
   BUSY_DUTY: 'COVER_TEACHER_UNAVAILABLE',
   UNAVAILABLE: 'COVER_TEACHER_UNAVAILABLE',
   BOOKED_ROOM: 'COVER_TEACHER_BOOKED',
   POOL_NOT_DECLARED: 'COVER_POOL_NOT_DECLARED',
 };
 
-export function softWarnings(findings: readonly RuleFinding[]): { code: CoverWarningCode; params: Record<string, string | number> }[] {
+export interface SoftWarning {
+  code: CoverWarningCode;
+  params: Record<string, string | number>;
+}
+
+export function softWarnings(findings: readonly RuleFinding[]): SoftWarning[] {
   const seen = new Set<CoverWarningCode>();
-  const warnings: { code: CoverWarningCode; params: Record<string, string | number> }[] = [];
+  const warnings: SoftWarning[] = [];
   for (const finding of findings) {
     const code = WARNING_OF[finding.code];
     if (!code || seen.has(code)) continue;
@@ -264,6 +359,24 @@ export function softWarnings(findings: readonly RuleFinding[]): { code: CoverWar
     warnings.push({ code, params: finding.params });
   }
   return warnings;
+}
+
+/**
+ * The findings as a reader may be told them: WORK_DAYS without its figure
+ * for a reader without HR-läs (`showsHr`, hr-visibility.ts readsHr), every
+ * other finding as it is. The same verdict either way (the header).
+ */
+export function maskFindings(findings: readonly RuleFinding[], showsHr: boolean): RuleFinding[] {
+  return findings.map((finding) =>
+    !showsHr && finding.code === 'WORK_DAYS' ? { code: 'WORK_DAYS_HIDDEN', params: {} } : finding,
+  );
+}
+
+/** The warnings as a reader may be told them, by maskFindings' rule. */
+export function maskWarnings(warnings: readonly SoftWarning[], showsHr: boolean): SoftWarning[] {
+  return warnings.map((warning) =>
+    !showsHr && warning.code === 'COVER_BEYOND_WORK_DAYS' ? { code: 'COVER_BEYOND_WORK_DAYS_HIDDEN', params: {} } : warning,
+  );
 }
 
 function dedupe(findings: RuleFinding[]): RuleFinding[] {

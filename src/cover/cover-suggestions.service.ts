@@ -4,6 +4,7 @@ import type { CoverPoolPreference, PrismaClient, TeacherQualificationKind } from
 import { recordRead } from '../access-log/access-log';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { requireSchoolId } from '../common/utils/request-context';
+import { isoWeekday } from '../calendar/publish-days';
 import { PrismaService } from '../database/prisma.service';
 import { enterGrundschemaWrite } from '../publication/publish-mode';
 import { dayOf, dutyRunsOn } from '../staffing/duty-dates';
@@ -28,7 +29,16 @@ import {
 } from './cover-context';
 import { lockCoverDay, lockLessons, lockTeachers } from './cover-decisions';
 import { compareRanked, poolTier, rankCandidate, type RankReason } from './cover-rank';
-import { hardFindings, holdsTime, overlaps, prefersFree, type CoverTarget, type PersonLesson, type RuleFinding } from './cover-rules';
+import {
+  hardFindings,
+  holdsTime,
+  maskFindings,
+  overlaps,
+  prefersFree,
+  type CoverTarget,
+  type PersonLesson,
+  type RuleFinding,
+} from './cover-rules';
 import { CoverService, emptyEffects, merge, naming } from './cover.service';
 import { proposeDay, type DayProposal, type ProposalLesson } from './day-proposal';
 import type { ApplyDto } from './dto/cover.dto';
@@ -126,10 +136,15 @@ export class CoverSuggestionsService {
       const target = targetOf(lesson);
       const candidates: Candidate[] = [];
       const excluded: CandidatesResponse['excluded'] = [];
+      // Whom the post's deltid in days leaves out: the verdict is a term of
+      // their post whether its figure is shown or not (cover-rules.ts).
+      const outOfDays: string[] = [];
+      const showsHr = readsHr(user);
       for (const [userId, day] of [...read.days].sort(([a], [b]) => a.localeCompare(b))) {
         const findings = hardFindings(day, target);
         if (findings.length > 0) {
-          excluded.push({ userId, codes: findings });
+          excluded.push({ userId, codes: maskFindings(findings, showsHr) });
+          if (findings.some((finding) => finding.code === 'WORK_DAYS')) outOfDays.push(userId);
           continue;
         }
         candidates.push(this.candidateOf(lesson, userId, read, context, []));
@@ -137,10 +152,14 @@ export class CoverSuggestionsService {
       const ranked = (c: Candidate) => ({ ...c, tier: poolTier(c.kind, context.poolPreference), counter: { week: c.counter.weekLessons } });
       candidates.sort((a, b) => compareRanked(ranked(a), ranked(b)));
       // Each candidate's week against their tjänst and their cover counter
-      // (EMPLOYMENT), and who is left out as away (STAFF_ABSENCES, the code
-      // without the reason). The other exclusions are the timetable's and the
-      // pool's, not logged (src/access-log/access-log.ts).
-      await recordRead(tx, 'EMPLOYMENT', candidates.map((candidate) => candidate.userId), user.channel);
+      // (EMPLOYMENT), and whom their post's deltid in days leaves out
+      // (EMPLOYMENT too, to a reader shown the figure or not: "the post
+      // stops here" is the post's), and who is left out as away
+      // (STAFF_ABSENCES, the code without the reason). The other exclusions
+      // are the timetable's, the work rule's (which every member of staff
+      // reads, the cap among them) and the pool's, not logged
+      // (src/access-log/access-log.ts).
+      await recordRead(tx, 'EMPLOYMENT', [...candidates.map((candidate) => candidate.userId), ...outOfDays], user.channel);
       await recordRead(
         tx,
         'STAFF_ABSENCES',
@@ -204,6 +223,10 @@ export class CoverSuggestionsService {
         // The rules skip the lesson's own id when they look for an overlap,
         // so one person on two pairs of one lesson is refused here.
         if (earlier.some((pick) => pick.id === target.id)) throw proposalStale(item.lessonId);
+        // The cap and the deltid in days are judged here as everything else:
+        // the person's week read again under their lock, the earlier items as
+        // picks. A lesson put in on another day of the week since the
+        // proposal moves no basis (basisOf hashes the day); it lands here.
         if (hardFindings(day, target, earlier).length > 0) throw proposalStale(item.lessonId);
         given.set(item.userId, [...earlier, pickOf(target)]);
       }
@@ -330,6 +353,7 @@ export class CoverSuggestionsService {
       load: { weekMinutes, target: target_, tolerancePercent: context.policy.overAllocationTolerancePercent },
       poolPreference: context.poolPreference,
       prefersFree: prefersFree(day, target),
+      wishesFreeDay: day.preferredFreeDay === isoWeekday(lesson.date),
       names: {
         subject: context.subjectName.get(lesson.subjectId) ?? '',
         group: context.groupName.get(lesson.studentGroupId) ?? '',

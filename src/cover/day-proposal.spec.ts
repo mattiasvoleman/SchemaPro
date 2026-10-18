@@ -70,6 +70,26 @@ describe('Fördela dagen (greedy proposal)', () => {
     expect(assignment(proposal)).toEqual({ L1: 'A', L2: 'B' });
   });
 
+  it('re-checks the daily cap against the evolving day: a second lesson that would take A over it goes to B', () => {
+    const capped = person('A', { dailyCapMinutes: 90 });
+    const lessons = [lesson('L1', 9, 10, ['A', 'B']), lesson('L2', 11, 12, ['A', 'B'])];
+    const proposal = proposeDay(lessons, deps([capped, person('B')], { L1: { A: 50, B: 10 }, L2: { A: 50, B: 10 } }));
+    expect(assignment(proposal)).toEqual({ L1: 'A', L2: 'B' });
+  });
+
+  it('two lessons on a date a part-timer does not teach yet are one day: a post with room for it takes both', () => {
+    const partTime = person('A', { maxTeachingDaysPerWeek: 2, weekTeachingDates: ['2026-10-12'] });
+    const lessons = [lesson('L1', 9, 10, ['A', 'B']), lesson('L2', 11, 12, ['A', 'B'])];
+    const proposal = proposeDay(lessons, deps([partTime, person('B')], { L1: { A: 50, B: 10 }, L2: { A: 50, B: 10 } }));
+    expect(assignment(proposal)).toEqual({ L1: 'A', L2: 'A' });
+    // A post already at its limit takes neither.
+    const full = person('A', { maxTeachingDaysPerWeek: 1, weekTeachingDates: ['2026-10-12'] });
+    expect(assignment(proposeDay(lessons, deps([full, person('B')], { L1: { A: 50, B: 10 }, L2: { A: 50, B: 10 } })))).toEqual({
+      L1: 'B',
+      L2: 'B',
+    });
+  });
+
   it('the counter moves with each pick: A’s second cover scores below B', () => {
     const lessons = [lesson('L1', 8, 9, ['A', 'B']), lesson('L2', 10, 11, ['A', 'B'])];
     const proposal = proposeDay(lessons, deps([person('A'), person('B')], { L1: { A: 20, B: 18 }, L2: { A: 20, B: 18 } }, 5));
@@ -197,6 +217,20 @@ describe('Fördela dagen (greedy proposal)', () => {
           bookings: random() < 0.2 ? [{ start: t(13), end: t(14) }] : [],
         });
       });
+      // Lärarens dag, from a stream of its own (the days above are
+      // unchanged): a cap of one to three and a half hours, and a deltid of
+      // one to four days over a stored week that holds D or not and some of
+      // the other weekdays, so a cap binds on the evolving day, and a limit
+      // binds on some people and leaves room on others.
+      const rules = rng(seed + 20_002);
+      const otherDates = ['2026-10-12', '2026-10-13', '2026-10-15', '2026-10-16'];
+      for (const p of people) {
+        if (rules() < 0.4) p.dailyCapMinutes = 60 + 30 * Math.floor(rules() * 6);
+        if (rules() < 0.4) {
+          p.maxTeachingDaysPerWeek = 1 + Math.floor(rules() * 4);
+          p.weekTeachingDates = [...(rules() < 0.3 ? [D] : []), ...otherDates.filter(() => rules() < 0.5)];
+        }
+      }
       const lessons = Array.from({ length: 2 + Math.floor(random() * 9) }, (_, i) => {
         const start = 8 + Math.floor(random() * 16) / 2;
         const candidates = ids.filter(() => random() < 0.7);

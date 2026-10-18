@@ -156,6 +156,95 @@ describe('cover support', () => {
       expect(empty.calendarLessonTeacher.findMany).not.toHaveBeenCalled();
     });
 
+    describe('Lärarens dag', () => {
+      const post = (userId: string, extra: Record<string, unknown> = {}) => ({
+        userId,
+        employmentPercent: 60,
+        reductionPercent: 0,
+        contractKind: 'FERIE',
+        teachingTargetMinutesPerWeek: null,
+        signature: null,
+        ...extra,
+      });
+      /** The week's read is the one that asks for a status with the people. */
+      const isWeek = (query: { where: { teacherId?: unknown; calendarLesson?: { status?: unknown } } }) =>
+        Boolean(query.where.teacherId && query.where.calendarLesson?.status);
+
+      it('reads the cap and the wish with the lunch, the limit with the post, and the week only of a post with a limit', async () => {
+        const tx = createTxMock();
+        tx.user.findMany.mockResolvedValue([
+          { id: 'a', role: 'TEACHER', isActive: true },
+          { id: 'b', role: 'TEACHER', isActive: true },
+          { id: 'c', role: 'TEACHER', isActive: true },
+        ]);
+        tx.teacherWorkRule.findMany.mockResolvedValue([
+          { userId: 'a', lunchMinutes: null, lunchStartTime: null, lunchEndTime: null, minDailyRestMinutes: null, maxTeachingMinutesPerDay: 240, preferredFreeDayOfWeek: 5 },
+        ]);
+        // A post with a limit, one with none, one read before the column was
+        // (no key at all), and one of somebody not asked about.
+        tx.teacherEmployment.findMany.mockResolvedValue([
+          post('a', { maxTeachingDaysPerWeek: 3 }),
+          post('b', { maxTeachingDaysPerWeek: null }),
+          post('c'),
+          post('ghost', { maxTeachingDaysPerWeek: 2 }),
+        ]);
+        tx.calendarLessonTeacher.findMany.mockImplementation((query: Parameters<typeof isWeek>[0]) =>
+          Promise.resolve(
+            isWeek(query)
+              ? [
+                  { teacherId: 'a', calendarLesson: { date: new Date('2026-10-15T00:00:00Z') } },
+                  { teacherId: 'a', calendarLesson: { date: new Date('2026-10-12T00:00:00Z') } },
+                  { teacherId: 'a', calendarLesson: { date: new Date('2026-10-15T00:00:00Z') } },
+                  { teacherId: 'a', calendarLesson: null },
+                  { teacherId: 'ghost', calendarLesson: { date: new Date('2026-10-13T00:00:00Z') } },
+                ]
+              : [],
+          ),
+        );
+
+        const read = await readPersonDays(tx as never, { date: '2026-10-14', timezone: 'Europe/Stockholm', academicYearId: 'y' });
+
+        const a = read.days.get('a')!;
+        expect([a.dailyCapMinutes, a.preferredFreeDay, a.maxTeachingDaysPerWeek]).toEqual([240, 5, 3]);
+        // Once each, in date order, and nobody else's.
+        expect(a.weekTeachingDates).toEqual(['2026-10-12', '2026-10-15']);
+        for (const id of ['b', 'c']) {
+          const other = read.days.get(id)!;
+          expect([other.dailyCapMinutes, other.preferredFreeDay, other.maxTeachingDaysPerWeek, other.weekTeachingDates]).toEqual([null, null, null, []]);
+        }
+        // The rule reads the limit; the load never carries it.
+        expect(read.employments.get('a')).not.toHaveProperty('maxTeachingDaysPerWeek');
+        // Two columns more on the statements there were, and the week of the
+        // one post with a limit: the ISO week, every role, held lessons.
+        expect(tx.teacherWorkRule.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({ select: expect.objectContaining({ maxTeachingMinutesPerDay: true, preferredFreeDayOfWeek: true }) }),
+        );
+        expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({ select: expect.objectContaining({ maxTeachingDaysPerWeek: true }) }),
+        );
+        expect(tx.calendarLessonTeacher.findMany).toHaveBeenCalledTimes(2);
+        expect(tx.calendarLessonTeacher.findMany).toHaveBeenLastCalledWith({
+          where: {
+            teacherId: { in: ['a'] },
+            calendarLesson: {
+              status: { in: ['SCHEDULED', 'COMPLETED'] },
+              date: { gte: new Date('2026-10-12T00:00:00.000Z'), lte: new Date('2026-10-18T00:00:00.000Z') },
+            },
+          },
+          select: { teacherId: true, calendarLesson: { select: { date: true } } },
+        });
+      });
+
+      it('a school whose posts set no limit asks no week: the statements it sent before', async () => {
+        const tx = createTxMock();
+        tx.user.findMany.mockResolvedValue([{ id: 'b', role: 'TEACHER', isActive: true }, { id: 'c', role: 'TEACHER', isActive: true }]);
+        tx.teacherEmployment.findMany.mockResolvedValue([post('b', { maxTeachingDaysPerWeek: null }), post('c')]);
+        await readPersonDays(tx as never, { date: '2026-10-14', timezone: 'Europe/Stockholm', academicYearId: 'y' });
+        expect(tx.calendarLessonTeacher.findMany).toHaveBeenCalledTimes(1);
+        expect(isWeek(tx.calendarLessonTeacher.findMany.mock.calls[0][0])).toBe(false);
+      });
+    });
+
     it('keeps a teacher busy for an uppdrag’s time only on the days the uppdrag runs (Från and Till, both inclusive)', async () => {
       // Anna is 7B's mentor until the jullov; the same weekly row on a
       // Wednesday in March keeps nobody busy. The rastvakt from January keeps

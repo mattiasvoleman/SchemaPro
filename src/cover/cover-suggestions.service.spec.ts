@@ -265,6 +265,123 @@ describe('CoverSuggestionsService', () => {
     );
   });
 
+  describe('Lärarens dag', () => {
+    const planner = (hrRead: boolean) => testUser({ adminProfile: 'SCHEMALAGGARE', hrRead, channel: 'WEB' });
+    const isWeek = (query: { where: { teacherId?: unknown; calendarLesson?: { status?: unknown } } }) =>
+      Boolean(query.where.teacherId && query.where.calendarLesson?.status);
+    const rule = (userId: string, extra: Record<string, unknown>) => ({
+      userId,
+      lunchMinutes: null,
+      lunchStartTime: null,
+      lunchEndTime: null,
+      minDailyRestMinutes: null,
+      maxTeachingMinutesPerDay: null,
+      preferredFreeDayOfWeek: null,
+      ...extra,
+    });
+    /** S's post allows one teaching day a week, and S taught on Monday: the lesson's Wednesday would be a second. */
+    const oneDayPost = () => {
+      tx.teacherEmployment.findMany.mockResolvedValue([
+        { userId: S, employmentPercent: 20, reductionPercent: 0, contractKind: 'FERIE', teachingTargetMinutesPerWeek: 900, signature: null, maxTeachingDaysPerWeek: 1 },
+      ]);
+      const dayRows = tx.calendarLessonTeacher.findMany.getMockImplementation()!;
+      tx.calendarLessonTeacher.findMany.mockImplementation((query: Parameters<typeof isWeek>[0]) =>
+        isWeek(query) ? Promise.resolve([{ teacherId: S, calendarLesson: { date: new Date('2026-10-12T00:00:00Z') } }]) : dayRows(query),
+      );
+    };
+    const codesOf = (answer: { excluded: { userId: string; codes: unknown[] }[] }, userId: string) =>
+      answer.excluded.find((entry) => entry.userId === userId)?.codes;
+
+    it('the deltid in days excludes with its figure for a reader with HR-läs and without it for one without; logged as the post either way', async () => {
+      oneDayPost();
+      const full = await service.candidates(LESSON, testUser({ channel: 'WEB' }));
+      expect(codesOf(full, S)).toEqual([{ code: 'WORK_DAYS', params: { days: 1 } }]);
+      expect(full.candidates.map((c) => c.userId)).toEqual([P]);
+      expect(recordedReads(tx)).toEqual([
+        { kind: 'EMPLOYMENT', channel: 'WEB', ids: [P, S] },
+        { kind: 'STAFF_ABSENCES', channel: 'WEB', ids: [A] },
+      ]);
+
+      tx.$executeRaw.mockClear();
+      const hidden = await service.candidates(LESSON, planner(false));
+      expect(codesOf(hidden, S)).toEqual([{ code: 'WORK_DAYS_HIDDEN', params: {} }]);
+      expect(JSON.stringify(hidden)).not.toContain('"days"');
+      // The same verdict, and the same read of S's post behind it.
+      expect(hidden.candidates.map((c) => c.userId)).toEqual([P]);
+      expect(recordedReads(tx)[0]).toEqual({ kind: 'EMPLOYMENT', channel: 'WEB', ids: [P, S] });
+
+      expect(codesOf(await service.candidates(LESSON, planner(true)), S)).toEqual([{ code: 'WORK_DAYS', params: { days: 1 } }]);
+      // The week asked of S alone, the one post with a limit.
+      expect(tx.calendarLessonTeacher.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ teacherId: { in: [S] } }) }),
+      );
+    });
+
+    it('a school whose posts set no limit asks no week', async () => {
+      await service.candidates(LESSON, testUser());
+      expect(tx.calendarLessonTeacher.findMany.mock.calls.filter(([query]) => isWeek(query))).toEqual([]);
+    });
+
+    it('the daily cap excludes with its minutes for every reader (staff read the work rule) and is not logged', async () => {
+      // S's 08:00 lesson and the cover are 120 minutes; the cap is 90.
+      tx.teacherWorkRule.findMany.mockResolvedValue([rule(S, { maxTeachingMinutesPerDay: 90 })]);
+      const answer = await service.candidates(LESSON, planner(false));
+      expect(codesOf(answer, S)).toEqual([{ code: 'DAILY_CAP', params: { minutes: 90 } }]);
+      expect(recordedReads(tx)[0]).toEqual({ kind: 'EMPLOYMENT', channel: 'WEB', ids: [P] });
+    });
+
+    it('the free-day wish ranks down one who teaches nothing that Wednesday, not one who teaches then', async () => {
+      tx.teacherWorkRule.findMany.mockResolvedValue([rule(S, { preferredFreeDayOfWeek: 3 }), rule(P, { preferredFreeDayOfWeek: 3 })]);
+      const answer = await service.candidates(LESSON, testUser());
+      const reasons = (userId: string) => answer.candidates.find((c) => c.userId === userId)!.reasons;
+      expect(reasons(P)).toContainEqual({ code: 'FREE_DAY_WISH', params: {}, points: -10 });
+      expect(reasons(S).map((r) => r.code)).not.toContain('FREE_DAY_WISH');
+      // Thursday's wish is not Wednesday's.
+      tx.teacherWorkRule.findMany.mockResolvedValue([rule(P, { preferredFreeDayOfWeek: 4 })]);
+      const thursday = await service.candidates(LESSON, testUser());
+      expect(thursday.candidates.find((c) => c.userId === P)!.reasons.map((r) => r.code)).not.toContain('FREE_DAY_WISH');
+    });
+
+    it('the proposal leaves the limited post out without naming it, and apply refuses an item the limit now refuses', async () => {
+      oneDayPost();
+      tx.$queryRaw.mockResolvedValue([
+        {
+          absenceId: ABSENCE,
+          absentTeacherId: A,
+          lessonId: LESSON,
+          isLive: true,
+          decisionId: null,
+          decision: null,
+          decidedAt: null,
+          removedTeachers: null,
+          date: D,
+          startsAt: START,
+          endsAt: END,
+          subjectId: 'ma',
+          studentGroupId: '7a',
+          roomId: null,
+          lessonStatus: 'SCHEDULED',
+          cancelCause: null,
+          absenceStartsAt: new Date('2026-10-13T22:00:00Z'),
+          absenceEndsAt: new Date('2026-10-14T22:00:00Z'),
+          absenceStatus: 'ACTIVE',
+          teachers: [{ teacherId: A, role: 'LEAD' }],
+          extraGroupIds: [],
+          coveringSubstituteIds: [],
+        },
+      ]);
+      const proposal = await service.proposal(D, [], testUser({ channel: 'WEB' }));
+      expect(proposal.items.map((item) => item.userId)).toEqual([P]);
+      expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [P] }]);
+
+      const basis = await basisOf(tx as never, D, 'Europe/Stockholm');
+      await expect(
+        service.apply(D, { basis, items: [{ lessonId: LESSON, absenceId: ABSENCE, userId: S }] }, testUser()),
+      ).rejects.toMatchObject({ response: { code: 'COVER_PROPOSAL_STALE', params: { lessonId: LESSON } } });
+      expect(cover.decideInTransaction).not.toHaveBeenCalled();
+    });
+  });
+
   it('candidates under LAST_RESORT: the pool after every colleague, whatever the points', async () => {
     const answer = await service.candidates(LESSON, testUser());
     expect(answer.candidates.map((c) => c.kind)).toEqual(['STAFF', 'POOL']);

@@ -119,6 +119,24 @@ describe('cover ranking', () => {
     expect(ranked.reasons.find((reason) => reason.code === 'AT_EVENT')).toEqual({ code: 'AT_EVENT', params: { group: '9A' }, points: -20 });
   });
 
+  it('a free-day wish costs −10 on a day the candidate teaches nothing, and nothing once a lesson holds the day', () => {
+    const called = rankCandidate(base({ dayLessons: [], wishesFreeDay: true }));
+    expect(called.reasons).toEqual([
+      { code: 'NOT_ON_SITE', params: {}, points: -15 },
+      { code: 'FREE_DAY_WISH', params: {}, points: -10 },
+    ]);
+    expect(called.score).toBe(-25);
+    expect(points(base({ wishesFreeDay: true })).FREE_DAY_WISH).toBeUndefined();
+    expect(points(base({ dayLessons: [] })).FREE_DAY_WISH).toBeUndefined();
+    // Released by their own cancelled lesson: still a free day given up.
+    expect(points(base({ dayLessons: [], releasedGroup: '8B', wishesFreeDay: true }))).toMatchObject({ ON_SITE: 6, RELEASED: 8, FREE_DAY_WISH: -10 });
+  });
+
+  it('a wish brings a legitimerad colleague level with a behörig one at most, never under', () => {
+    const wishing = rankCandidate(base({ qualification: 'LEGITIMATION', dayLessons: [], wishesFreeDay: true }));
+    expect(wishing.score).toBe(rankCandidate(base({ qualification: 'BEHORIG', dayLessons: [] })).score);
+  });
+
   it('keeps the old picker’s order: behörighet first, then the class’s own teacher', () => {
     const legit = rankCandidate(base({ userId: 'a', qualification: 'LEGITIMATION' }));
     const primary = rankCandidate(base({ userId: 'b', teachesGroupSubject: true, teachesSubject: true }));

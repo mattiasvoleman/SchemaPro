@@ -1,5 +1,7 @@
 import request from 'supertest';
 import { todayInZone } from '../src/common/utils/time';
+import { isoWeekOf, shiftDay } from '../src/cover/cover-context';
+import { recordedReads } from './utils/recorded-reads';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
 
 /**
@@ -478,5 +480,118 @@ describe('Vikarieplanering (e2e)', () => {
       .send({ teacherId: SUB_ID, replacesTeacherId: 'not-a-uuid' })
       .expect(400);
     expect(JSON.stringify(replaced.body)).toContain('replacesTeacherId');
+  });
+
+  /*
+   * Lärarens dag: a part-timer's deltid in days is HR data. A schemaläggare
+   * without HR-läs runs the board (DRIFT) and is told that the post stops a
+   * cover — the rule is the same for every reader — but never by how many
+   * days, in the candidates, in a board decision's warnings or in the old
+   * PATCH's. With HR-läs the figure is there. Either way the post's read is
+   * in the läslogg.
+   */
+  describe('Lärarens dag: no deltid figure reaches an administrator without HR-läs', () => {
+    const planner = (hrRead: boolean) =>
+      asUser({ role: 'SCHOOL_ADMIN' as never, userId: ADMIN_ID, adminProfile: 'SCHEMALAGGARE' as never, hrRead });
+    // Three dates of FUTURE's ISO week other than FUTURE: the post allows three.
+    const taughtOn = () => {
+      const { from } = isoWeekOf(FUTURE);
+      return Array.from({ length: 7 }, (_, i) => shiftDay(from, i))
+        .filter((date) => date !== FUTURE)
+        .slice(0, 3);
+    };
+    const figure = /"days"|"WORK_DAYS"|"COVER_BEYOND_WORK_DAYS"/;
+
+    beforeEach(() => {
+      const { tx } = harness;
+      tx.academicYear.findFirst.mockResolvedValue({
+        id: 'year',
+        isActive: true,
+        predecessorId: null,
+        startDate: new Date(`${isoDay(-60)}T00:00:00.000Z`),
+        endDate: new Date(`${isoDay(200)}T00:00:00.000Z`),
+      });
+      tx.staffingPolicy.findUnique.mockResolvedValue({
+        qualificationMode: 'OFF',
+        overAllocationMode: 'OFF',
+        overAllocationTolerancePercent: 10,
+        fullTimeTeachingMinutesPerWeek: null,
+        unstaffedGeneration: 'ALLOW',
+      });
+      tx.calendarLesson.findMany.mockResolvedValue([
+        {
+          id: LESSON,
+          schoolId: SCHOOL,
+          date: new Date(`${FUTURE}T00:00:00.000Z`),
+          startsAt: at(FUTURE, 8),
+          endsAt: at(FUTURE, 9),
+          status: 'SCHEDULED',
+          subjectId: 'subj',
+          studentGroupId: 'grp',
+          roomId: null,
+          teachers: [{ teacherId: TEACHER_ID }],
+          extraGroups: [],
+          participants: [],
+        },
+      ]);
+      tx.user.findMany.mockResolvedValue([{ id: SUB_ID, role: 'TEACHER', isActive: true }]);
+      tx.teacherEmployment.findMany.mockResolvedValue([
+        { userId: SUB_ID, employmentPercent: 60, reductionPercent: 0, contractKind: 'FERIE', teachingTargetMinutesPerWeek: null, signature: null, maxTeachingDaysPerWeek: 3 },
+      ]);
+      // The week's read asks for the post's teacher and a status; the day's
+      // read for the teacher alone.
+      tx.calendarLessonTeacher.findMany.mockImplementation((query: { where?: { teacherId?: unknown; calendarLesson?: { status?: unknown } } }) =>
+        Promise.resolve(
+          query?.where?.teacherId && query.where.calendarLesson?.status
+            ? taughtOn().map((date) => ({ teacherId: SUB_ID, calendarLesson: { date: new Date(`${date}T00:00:00.000Z`) } }))
+            : [],
+        ),
+      );
+    });
+    // What the outer beforeEach does not set again goes back to the mock's
+    // own answers, so nothing after this block meets a part-timer.
+    afterEach(() => {
+      const { tx } = harness;
+      tx.academicYear.findFirst.mockReset();
+      tx.staffingPolicy.findUnique.mockReset();
+      tx.teacherEmployment.findMany.mockReset().mockResolvedValue([]);
+      tx.calendarLessonTeacher.findMany.mockReset().mockResolvedValue([]);
+    });
+
+    it('the candidates say the post stops the cover, and by how many days only to HR-läs', async () => {
+      const hidden = await request(http()).get(`/api/v1/cover/lessons/${LESSON}/candidates`).set('x-test-user', planner(false)).expect(200);
+      expect(hidden.body.excluded).toEqual([{ userId: SUB_ID, codes: [{ code: 'WORK_DAYS_HIDDEN', params: {} }] }]);
+      expect(JSON.stringify(hidden.body)).not.toMatch(figure);
+      expect(recordedReads(harness.tx)).toContainEqual(expect.objectContaining({ kind: 'EMPLOYMENT', ids: [SUB_ID] }));
+
+      const shown = await request(http()).get(`/api/v1/cover/lessons/${LESSON}/candidates`).set('x-test-user', planner(true)).expect(200);
+      expect(shown.body.excluded).toEqual([{ userId: SUB_ID, codes: [{ code: 'WORK_DAYS', params: { days: 3 } }] }]);
+    });
+
+    it('a manual pick on the board and through the old PATCH is warned without the figure, and the read recorded', async () => {
+      const decided = await request(http())
+        .post(`/api/v1/cover/lessons/${LESSON}/decision`)
+        .set('x-test-user', planner(false))
+        .send({ absenceId: ABSENCE, kind: 'SUBSTITUTE', substituteId: SUB_ID, expected: 'OPEN' })
+        .expect(200);
+      expect(decided.body.warnings).toEqual([{ code: 'COVER_BEYOND_WORK_DAYS_HIDDEN', params: {} }]);
+      expect(JSON.stringify(decided.body)).not.toMatch(figure);
+      expect(recordedReads(harness.tx)).toContainEqual(expect.objectContaining({ kind: 'EMPLOYMENT', ids: [SUB_ID] }));
+
+      const patched = await request(http())
+        .patch(`/api/v1/calendar-lessons/${LESSON}/substitute`)
+        .set('x-test-user', planner(false))
+        .send({ teacherId: SUB_ID })
+        .expect(200);
+      expect(patched.body.warnings).toEqual([{ code: 'COVER_BEYOND_WORK_DAYS_HIDDEN', params: {} }]);
+      expect(JSON.stringify(patched.body)).not.toMatch(figure);
+
+      const withHr = await request(http())
+        .patch(`/api/v1/calendar-lessons/${LESSON}/substitute`)
+        .set('x-test-user', planner(true))
+        .send({ teacherId: SUB_ID })
+        .expect(200);
+      expect(withHr.body.warnings).toEqual([{ code: 'COVER_BEYOND_WORK_DAYS', params: { days: 3 } }]);
+    });
   });
 });
