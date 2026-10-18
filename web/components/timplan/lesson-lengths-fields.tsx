@@ -6,6 +6,7 @@ import { Plus, X } from "lucide-react";
 import { MAX_DISTINCT_LENGTHS, lengthPartsOf, weeklyMinutesOf } from "@/lib/lesson-lengths";
 import { shapeFromDraft, type DraftPart } from "@/lib/lesson-lengths-text";
 import { useLengthsInWords } from "@/components/timplan/use-lengths-in-words";
+import { EXTRA_ROW_GRID } from "@/components/timplan/lesson-lengths-grid";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -36,10 +37,11 @@ import { Label } from "@/components/ui/label";
  * the remove button's width, and every extra field has a visible label of its
  * own. Removing a row unmounts the button pressed, so focus moves to "Lägg
  * till en längd" instead of falling out of the dialog.
+ *
+ * Both buttons are planering's (data-writes): a profile that does not write
+ * it, the läsare among them (Läsbehörighet), reads the lengths without them.
  */
 
-/** The grid an extra row uses, and the first pair while extra rows exist. */
-export const EXTRA_ROW_GRID = "grid grid-cols-[1fr_1fr_2.25rem] items-end gap-4";
 
 export function LessonLengthsFields({
   first,
@@ -111,6 +113,7 @@ export function LessonLengthsFields({
               type="button"
               size="icon"
               variant="ghost"
+              data-writes="PLANERING"
               aria-label={t("removeLength", { n })}
               onClick={() => {
                 setFocusIndex(null);
@@ -130,6 +133,7 @@ export function LessonLengthsFields({
           size="sm"
           variant="ghost"
           className="h-7 self-start px-2 text-xs"
+          data-writes="PLANERING"
           onClick={() => {
             setFocusIndex(extra.length);
             onChange([...extra, { lessons: "1", minutes: "" }]);
