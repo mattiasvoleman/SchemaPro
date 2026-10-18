@@ -180,6 +180,15 @@ export async function refreshRegistration(userId: string, locale: Locale): Promi
     const token = await deviceToken();
     if (!token) return 'UNSUPPORTED';
     await register(token, locale);
+    // The flag was read before the gateway and Expo were asked. A logout, a
+    // refusal at the role recheck or the switch turned off in the meantime
+    // dropped it and unregistered, perhaps before this register landed, so
+    // the row just written could outlive the person's choice: it is released
+    // at the next signed-in start instead, and the phone stops receiving now.
+    if (!(await isPushEnabledFor(userId))) {
+      await keepForRelease(token);
+      return 'OFF';
+    }
     return 'ENABLED';
   } catch {
     return 'FAILED';

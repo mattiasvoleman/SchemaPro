@@ -59,6 +59,7 @@ export const en: Messages = {
     USE_SCHOOL_APP: 'This app is for guardians. Staff and pupils log in with the {otherApp} app. Get it from the App Store or Google Play and log in there with the same account.',
     ROLE_NOT_SUPPORTED: 'This version of the app does not recognise your account. Update the app and try again.',
     APP_NOT_CONFIGURED: 'This version of the app was built wrongly and cannot log anyone in. Install it from the App Store or Google Play.',
+    SESSION_EXPIRED: 'Session expired. Please log in again.',
   },
   schedule: {
     title: 'My schedule',

@@ -22,7 +22,8 @@ const AuthContext = createContext<AuthContextValue | null>(null);
  * so the teacher is not forced to log in after every app restart.
  */
 export function AuthProvider({ children }: { readonly children: ReactNode }): React.JSX.Element {
-  const { authState, isLoading, error, login, loginWithSchoolAccount, logout, restoreSession, recheckProfile } = useSecureAuth();
+  const { authState, isLoading, error, login, loginWithSchoolAccount, logout, restoreSession, recheckProfile, watchSessionEnd } =
+    useSecureAuth();
   const online = useNetwork().networkState.isInternetReachable;
 
   useEffect(() => {
@@ -43,6 +44,15 @@ export function AuthProvider({ children }: { readonly children: ReactNode }): Re
     });
     return () => subscription.remove();
   }, [signedInAs, online, recheckProfile]);
+
+  // While signed in: a session the server ends (a sign-out on the web, a
+  // revoked or timed-out session) signs the app out once supabase-js's
+  // refresh is refused, a session admitted offline included once the network
+  // is back.
+  useEffect(() => {
+    if (!signedInAs) return;
+    return watchSessionEnd();
+  }, [signedInAs, watchSessionEnd]);
 
   return (
     <AuthContext.Provider value={{ authState, isLoading, error, login, loginWithSchoolAccount, logout }}>

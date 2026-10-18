@@ -19,11 +19,14 @@ describe('appRefusal', () => {
     expect(appRefusal('vardnadshavare', role)).toBe(vardnadshavare);
   });
 
-  it('starts each admitted role in its own shell', () => {
-    expect(homeOf('GUARDIAN').home).toBe('/(guardian)/children');
-    expect(homeOf('STUDENT').home).toBe('/(student)/schedule');
-    expect(homeOf('TEACHER').home).toBe('/(app)/schedule');
-    expect(homeOf('SCHOOL_ADMIN').notifications).toBe('/(app)/notifications');
+  // app/_layout.tsx routes by this alone: AuthGate's group and start, PushBridge's Notiser tab.
+  it.each([
+    ['GUARDIAN', { group: '(guardian)', home: '/(guardian)/children', notifications: '/(guardian)/notifications' }],
+    ['STUDENT', { group: '(student)', home: '/(student)/schedule', notifications: '/(student)/notifications' }],
+    ['TEACHER', { group: '(app)', home: '/(app)/schedule', notifications: '/(app)/notifications' }],
+    ['SCHOOL_ADMIN', { group: '(app)', home: '/(app)/schedule', notifications: '/(app)/notifications' }],
+  ])('starts %s in its own shell', (role, shell) => {
+    expect(homeOf(role)).toEqual(shell);
   });
 
   it('admits nobody in a build that does not say which app it is', () => {

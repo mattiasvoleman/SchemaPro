@@ -222,6 +222,34 @@ describe('consent is per person on a shared device', () => {
     (Notifications.getPermissionsAsync as jest.Mock).mockResolvedValue({ granted: false, canAskAgain: false });
     await expect(refreshRegistration(A, 'sv')).resolves.toBe('DENIED');
   });
+
+  it('releases a registration that landed after a logout or a refusal had already unregistered A', async () => {
+    // A start's refresh and the role recheck's refusal begin together: the
+    // flag is read, the logout unregisters, and only then does the register
+    // reach the gateway, under a bearer that still works.
+    await enablePush(A, 'sv');
+    (apiRequest as jest.Mock).mockClear();
+    (Notifications.getPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true, canAskAgain: true });
+    let loggedOut = false;
+    route = async (path) => {
+      if (path === '/api/v1/push/config') return { enabled: true };
+      if (path === '/api/v1/devices' && !loggedOut) {
+        loggedOut = true;
+        await unregisterOnLogout(A);
+      }
+      return undefined;
+    };
+    await expect(refreshRegistration(A, 'sv')).resolves.toBe('OFF');
+    expect(calls()).toEqual([
+      ['/api/v1/push/config', null],
+      ['/api/v1/devices', { token: TOKEN, platform: 'ANDROID', locale: 'sv' }],
+      ['/api/v1/devices/unregister', { token: TOKEN }],
+    ]);
+    // The row the register wrote goes at the next signed-in start; the phone stops now.
+    expect(mockStore.get('sp_push_release')).toBe(TOKEN);
+    expect(mockStore.has('sp_push_token')).toBe(false);
+    expect(Notifications.unregisterForNotificationsAsync).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('logout never leaves the device registered', () => {

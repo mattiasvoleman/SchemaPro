@@ -1,9 +1,11 @@
 import { AuthRetryableFetchError } from '@supabase/supabase-js';
+import { deviceOffline } from './network/deviceOffline';
 
 /**
  * Ending a session on this device must leave nothing for the next start to
  * restore, offline too: supabase-js returns before removing the stored
- * session when it cannot refresh an expired one (GoTrueClient _signOut).
+ * session when it cannot refresh an expired one (GoTrueClient _signOut), and
+ * a device that says it is offline is not kept waiting for it at all.
  */
 const mockStore = new Map<string, string>();
 jest.mock('expo-secure-store', () => ({
@@ -13,6 +15,7 @@ jest.mock('expo-secure-store', () => ({
   deleteItemAsync: jest.fn(async (key: string) => void mockStore.delete(key)),
 }));
 jest.mock('react-native-url-polyfill/auto', () => ({}));
+jest.mock('./network/deviceOffline', () => ({ deviceOffline: jest.fn(async () => false) }));
 const mockSignOut = jest.fn();
 jest.mock('@supabase/supabase-js', () => ({
   ...jest.requireActual('@supabase/supabase-js'),
@@ -34,6 +37,14 @@ it('removes the stored session itself when supabase-js could not reach Auth', as
   mockSignOut.mockResolvedValue({ error: new AuthRetryableFetchError('Network request failed', 0) });
   await endSessionHere('local');
   expect(mockSignOut).toHaveBeenCalledWith({ scope: 'local' });
+  expect([...mockStore.keys()].sort()).toEqual(['sp_locale', 'sp_sqlcipher_key']);
+});
+
+it('removes the stored session at once when the device says it is offline, and asks supabase-js nothing', async () => {
+  // signOut would sit in its refresh retries for up to about 25 s first.
+  (deviceOffline as jest.Mock).mockResolvedValueOnce(true);
+  await endSessionHere('global');
+  expect(mockSignOut).not.toHaveBeenCalled();
   expect([...mockStore.keys()].sort()).toEqual(['sp_locale', 'sp_sqlcipher_key']);
 });
 

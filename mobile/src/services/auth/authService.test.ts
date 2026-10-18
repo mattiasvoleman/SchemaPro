@@ -1,4 +1,4 @@
-import { AuthRetryableFetchError } from '@supabase/supabase-js';
+import { AuthApiError, AuthRetryableFetchError } from '@supabase/supabase-js';
 import * as Network from 'expo-network';
 import { endSessionHere, getSupabase } from '../supabase';
 import { currentApp } from '../../config/appIdentity';
@@ -40,6 +40,9 @@ jest.mock('./secureTokenStore', () => ({
  */
 
 const order: string[] = [];
+/** What the app has subscribed to supabase-js's auth events, as the test's own emitter. */
+const authListeners = new Set<(event: string) => void>();
+const emit = (event: string): void => authListeners.forEach((listener) => listener(event));
 
 function supabase(options: {
   signIn?: { data: { user: { id: string } | null }; error: { message: string; status?: number; code?: string } | null };
@@ -59,24 +62,40 @@ function supabase(options: {
   builder['maybeSingle'] = async () => ({ data: options.profile ?? null, error: null });
   const signInWithOAuth = jest.fn(async () => options.oauth);
   const exchangeCodeForSession = jest.fn(async () => options.exchange);
+  const getSession = jest.fn(async () => {
+    if (options.getSessionThrows) throw new Error('storage unreadable');
+    return { data: { session: options.session ?? null }, error: options.sessionError ?? null };
+  });
+  const unsubscribe = jest.fn();
   (getSupabase as jest.Mock).mockReturnValue({
     auth: {
       signInWithPassword: jest.fn(async () => options.signIn),
       signInWithOAuth,
       exchangeCodeForSession,
       signOut,
-      getSession: jest.fn(async () => {
-        if (options.getSessionThrows) throw new Error('storage unreadable');
-        return { data: { session: options.session ?? null }, error: options.sessionError ?? null };
+      getSession,
+      onAuthStateChange: jest.fn((listener: (event: string) => void) => {
+        authListeners.add(listener);
+        return {
+          data: {
+            subscription: {
+              unsubscribe: () => {
+                unsubscribe();
+                authListeners.delete(listener);
+              },
+            },
+          },
+        };
       }),
     },
     from,
   });
-  return { signOut, signInWithOAuth, exchangeCodeForSession, from };
+  return { signOut, signInWithOAuth, exchangeCodeForSession, from, getSession, unsubscribe };
 }
 
 beforeEach(() => {
   order.length = 0;
+  authListeners.clear();
   (Network.getNetworkStateAsync as jest.Mock).mockResolvedValue({ isConnected: true, isInternetReachable: true });
   (currentApp as jest.Mock).mockReturnValue('rastra');
   (endSessionHere as jest.Mock).mockImplementation(async (scope: string) => {
@@ -368,6 +387,19 @@ describe.each(['rastra', 'vardnadshavare'] as const)('the gate in %s', (app) => 
     await expect(AuthService.restoreSession()).rejects.toMatchObject({ code });
   });
 
+  it('counts a network the phone has not validated as offline, and one it cannot read as online', async () => {
+    (SecureTokenStore.getTeacherSession as jest.Mock).mockResolvedValue({ teacherId: 'u-1', role: own, authId: 'auth-1' });
+    // Android on a school Wi-Fi it could not confirm reaches the internet.
+    supabase({ getSessionThrows: true });
+    (Network.getNetworkStateAsync as jest.Mock).mockResolvedValue({ isConnected: true, isInternetReachable: false });
+    await expect(AuthService.restoreSession()).resolves.toEqual({ isAuthenticated: true, teacherId: 'u-1', role: own });
+    // Unknown never spares the question: supabase-js is asked.
+    const { getSession } = supabase({ session: { user: { id: 'auth-1' } } });
+    (Network.getNetworkStateAsync as jest.Mock).mockRejectedValue(new Error('ExpoNetwork unavailable'));
+    await expect(AuthService.restoreSession()).resolves.toEqual({ isAuthenticated: true, teacherId: 'u-1', role: own });
+    expect(getSession).toHaveBeenCalledTimes(1);
+  });
+
   it('opens a session offline whose access token is past its hour, from the cached profile', async () => {
     supabase({ session: null, sessionError: new AuthRetryableFetchError('Network request failed', 0) });
     (SecureTokenStore.getTeacherSession as jest.Mock).mockResolvedValue({ teacherId: 'u-1', role: own, authId: 'auth-1' });
@@ -384,17 +416,105 @@ describe.each(['rastra', 'vardnadshavare'] as const)('the gate in %s', (app) => 
       expect(SecureTokenStore.saveTeacherSession).toHaveBeenCalledWith('u-1', sibling, 'auth-1');
     }
     supabase({ session: { user: { id: 'auth-1' } }, profile: { id: 'u-1', role: wrong } });
+    (SecureTokenStore.getTeacherSession as jest.Mock).mockResolvedValue({ teacherId: 'u-1', role: own, authId: 'auth-1' });
+    order.length = 0;
     await expect(AuthService.recheckProfile(same)).rejects.toMatchObject({ code });
-    expect(endSessionHere).toHaveBeenCalledWith('local');
+    // As logout ends a session, for this device only: off the person's push
+    // while the bearer works, then the session, then the cache.
+    expect(order).toEqual(['unregister', 'endSessionHere:local', 'clearSession']);
+    expect(unregisterOnLogout).toHaveBeenCalledWith('u-1');
+    expect(clearCachedSchoolData).toHaveBeenCalled();
   });
 
-  it('leaves the session as it is when the profile cannot be read or is gone', async () => {
+  it('leaves the session as it is when the profile is gone or Auth cannot be reached', async () => {
     const same = { isAuthenticated: true, teacherId: 'u-1', role: own } as const;
     supabase({ session: { user: { id: 'auth-1' } }, profile: null });
     await expect(AuthService.recheckProfile(same)).resolves.toBe(same);
-    supabase({ session: null });
+    supabase({ session: null, sessionError: new AuthRetryableFetchError('Network request failed', 0) });
     await expect(AuthService.recheckProfile(same)).resolves.toBe(same);
     expect(endSessionHere).not.toHaveBeenCalled();
+    expect(SecureTokenStore.clearSession).not.toHaveBeenCalled();
+    expect(releaseOnSignedOut).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['none is stored', null],
+    ['Auth refused its refresh', new AuthApiError('Invalid Refresh Token: Refresh Token Not Found', 400, 'refresh_token_not_found')],
+  ])('signs out a session the server ended (%s): the cache goes, push is released, the queue stays', async (_case, sessionError) => {
+    const same = { isAuthenticated: true, teacherId: 'u-1', role: own } as const;
+    const { from } = supabase({ session: null, sessionError });
+    await expect(AuthService.recheckProfile(same)).rejects.toMatchObject({ code: 'SESSION_EXPIRED' });
+    expect(from).not.toHaveBeenCalled();
+    expect(SecureTokenStore.clearSession).toHaveBeenCalled();
+    expect(clearCachedSchoolData).toHaveBeenCalled();
+    expect(releaseOnSignedOut).toHaveBeenCalledTimes(1);
+    // Nothing left to revoke, and no bearer to unregister with.
+    expect(endSessionHere).not.toHaveBeenCalled();
+    expect(unregisterOnLogout).not.toHaveBeenCalled();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A session the server ends under a signed-in app (a sign-out on the web, a
+// revoked or timed-out session): supabase-js removes it at its refresh and
+// says SIGNED_OUT, and the app follows, offline-admitted sessions included.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('AuthService.onSessionEnded', () => {
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+  beforeEach(() => {
+    (releaseOnSignedOut as jest.Mock).mockClear();
+    (clearCachedSchoolData as jest.Mock).mockClear();
+    (SecureTokenStore.getTeacherSession as jest.Mock).mockResolvedValue({ teacherId: 'u-1', role: 'TEACHER', authId: 'auth-1' });
+  });
+
+  it('signs the app out once the device holds nothing of the session, and keeps the queue', async () => {
+    supabase({});
+    const ended = jest.fn(() => order.push('ended'));
+    (releaseOnSignedOut as jest.Mock).mockImplementationOnce(async () => {
+      order.push('release');
+    });
+    AuthService.onSessionEnded(ended);
+    emit('SIGNED_OUT');
+    await flush();
+    expect(order).toEqual(['clearSession', 'release', 'ended']);
+    // The roster cache goes; clearCachedSchoolData keeps the queue by design.
+    expect(clearCachedSchoolData).toHaveBeenCalledTimes(1);
+    expect(ended).toHaveBeenCalledTimes(1);
+    // supabase-js has removed the session: nothing to revoke, no bearer to unregister with.
+    expect(endSessionHere).not.toHaveBeenCalled();
+    expect(unregisterOnLogout).not.toHaveBeenCalled();
+  });
+
+  it('leaves the app’s own sign-out to its caller, and every other event alone', async () => {
+    supabase({});
+    const ended = jest.fn();
+    AuthService.onSessionEnded(ended);
+    // supabase-js says SIGNED_OUT inside the signOut the logout button makes.
+    (endSessionHere as jest.Mock).mockImplementationOnce(async () => emit('SIGNED_OUT'));
+    await AuthService.logout();
+    for (const event of ['INITIAL_SESSION', 'TOKEN_REFRESHED', 'SIGNED_IN', 'USER_UPDATED']) emit(event);
+    await flush();
+    expect(ended).not.toHaveBeenCalled();
+    expect(releaseOnSignedOut).not.toHaveBeenCalled();
+    expect(clearCachedSchoolData).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls nobody back once unsubscribed, and watches nothing in a build without a Supabase project', async () => {
+    const { unsubscribe } = supabase({});
+    const ended = jest.fn();
+    const stop = AuthService.onSessionEnded(ended);
+    emit('SIGNED_OUT');
+    stop();
+    await flush();
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+    expect(ended).not.toHaveBeenCalled();
+
+    (getSupabase as jest.Mock).mockImplementationOnce(() => {
+      throw new Error('[Supabase] EXPO_PUBLIC_SUPABASE_URL / EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY are not set.');
+    });
+    expect(() => AuthService.onSessionEnded(ended)()).not.toThrow();
   });
 });
 

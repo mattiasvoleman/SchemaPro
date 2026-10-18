@@ -1,7 +1,7 @@
 import * as Linking from 'expo-linking';
-import * as Network from 'expo-network';
 import { isAuthRetryableFetchError } from '@supabase/supabase-js';
 import { endSessionHere, getSupabase, storedSessionUserId } from '../supabase';
+import { deviceOffline } from '../network/deviceOffline';
 import { currentApp } from '../../config/appIdentity';
 import { appRefusal, isAppRefusal, type AppRefusal } from './appGate';
 import { clearCachedSchoolData } from '../database/localDatabase';
@@ -58,6 +58,8 @@ export type AuthErrorCode =
   | 'SSO_APP_UPDATE_NEEDED'
   /** The account's role belongs in the other app, or in neither (appGate). */
   | AppRefusal
+  /** The server ended the session under a signed-in app: revoked (a sign-out on the web is global), timed out, or the account closed. */
+  | 'SESSION_EXPIRED'
   | SchoolAccountRefusal;
 
 /**
@@ -139,25 +141,21 @@ function admitted(teacherId: string, role: string): AuthState {
   return { isAuthenticated: true, teacherId, role };
 }
 
-/**
- * Whether the device says it has no network. Unknown counts as online: the
- * question only spares an offline start a wait, it never decides who is in.
- */
-async function deviceOffline(): Promise<boolean> {
-  try {
-    const state = await Network.getNetworkStateAsync();
-    return state.isConnected === false || state.isInternetReachable === false;
-  } catch {
-    return false;
-  }
-}
-
 async function restore(): Promise<AuthState> {
   const stored = await SecureTokenStore.getTeacherSession();
   // Offline with a cached profile, the session is read from storage alone.
   // getSession() would first try to refresh an access token past its hour
   // and give up only after about 25 seconds, while the teacher waits to take
   // the register; the refresh happens once there is a network again.
+  //
+  // However old the stored session is: offline, nothing on the device can
+  // tell a session the server has ended from one it still honours. Only Auth
+  // can, when it answers the refresh. A limit by age would end good sessions
+  // too, by a rule of the app's rather than the school's Auth settings, and
+  // the sign-in it sends the teacher to needs the network that is missing.
+  // So the admission stays open until the network can tell, and closes then:
+  // an ended session's refresh is refused, supabase-js removes it, and
+  // onSessionEnded and recheckProfile sign the app out.
   const offline = stored !== null && (await deviceOffline());
   const { data, error } = offline
     ? { data: { session: null }, error: null }
@@ -196,6 +194,9 @@ async function restore(): Promise<AuthState> {
   return state;
 }
 
+/** Sign-outs the app is making now: the SIGNED_OUT each one causes is not a session the server ended (onSessionEnded). */
+let signingOut = 0;
+
 /**
  * Ends the session the app holds: this device off the person's push while
  * the bearer still works, the stored session (removed even offline), the
@@ -203,11 +204,29 @@ async function restore(): Promise<AuthState> {
  * (clearCachedSchoolData).
  */
 async function endSession(scope: 'local' | 'global'): Promise<void> {
-  const session = await SecureTokenStore.getTeacherSession();
-  if (session) await unregisterOnLogout(session.teacherId);
-  await endSessionHere(scope);
+  signingOut += 1;
+  try {
+    const session = await SecureTokenStore.getTeacherSession();
+    if (session) await unregisterOnLogout(session.teacherId);
+    await endSessionHere(scope);
+    await SecureTokenStore.clearSession();
+    await clearCachedSchoolData();
+  } finally {
+    signingOut -= 1;
+  }
+}
+
+/**
+ * A session the server ended: what endSession clears, less what needs the
+ * session. supabase-js has already removed it (or found none), so there is
+ * nothing to revoke and no bearer to take the device off push with: the
+ * token is kept for release at the next signed-in start and the phone stops
+ * receiving now (releaseOnSignedOut). Never the attendance queue.
+ */
+async function endedByServer(): Promise<void> {
   await SecureTokenStore.clearSession();
   await clearCachedSchoolData();
+  await releaseOnSignedOut();
 }
 
 export const AuthService = {
@@ -321,17 +340,63 @@ export const AuthService = {
   },
 
   /**
+   * While signed in: a session the server ended under the app. A sign-out on
+   * the web is global and revokes this device's refresh token too, the
+   * school can end a person's sessions, and an account can be closed.
+   * supabase-js finds out at its next refresh, removes the stored session
+   * and says SIGNED_OUT; without this the app would stay in the person's
+   * shell on the cached profile with no session behind it, every read empty
+   * and every mark held back. `ended` is called once the device holds
+   * nothing of the session, and never after the returned unsubscribe. The
+   * app's own sign-outs (endSession) say SIGNED_OUT too, and are their
+   * caller's to word.
+   */
+  onSessionEnded(ended: () => void): () => void {
+    let watching = true;
+    let subscription: { unsubscribe: () => void };
+    try {
+      subscription = getSupabase().auth.onAuthStateChange((event) => {
+        if (event !== 'SIGNED_OUT' || signingOut > 0) return;
+        // Not awaited: supabase-js awaits its listeners inside the call that
+        // found the session gone, and nothing here needs that call to wait.
+        void endedByServer()
+          .catch(() => undefined)
+          .then(() => {
+            if (watching) ended();
+          });
+      }).data.subscription;
+    } catch {
+      // A build without a Supabase project signs nobody in to watch.
+      return () => undefined;
+    }
+    return () => {
+      watching = false;
+      subscription.unsubscribe();
+    };
+  },
+
+  /**
    * After a signed-in start, once there is a network: the profile as the
    * school has it now. The role can change under a session (an
    * administrator's edit), and the token says nothing of it (the access-token
    * hook leaves the claims as they are). A role this app does not admit ends
    * the session here as at a start; a changed role it admits is cached and
-   * returned. Anything it cannot read leaves the session as it is.
+   * returned. A session that is gone (none stored, or its refresh refused)
+   * ends here as onSessionEnded ends it. Anything it cannot read leaves the
+   * session as it is.
    */
   async recheckProfile(current: AuthState): Promise<AuthState> {
     if (!current.isAuthenticated) return current;
-    const { data } = await getSupabase().auth.getSession();
-    if (!data.session) return current;
+    const { data, error } = await getSupabase().auth.getSession();
+    if (!data.session) {
+      // Auth could not be reached (and for a minute after such a refresh
+      // supabase-js gives the same answer from its cache): the session is
+      // still held, and the next recheck asks again. Anything else is a
+      // session gone: none stored, or its refresh refused and removed.
+      if (isAuthRetryableFetchError(error)) return current;
+      await endedByServer().catch(() => undefined);
+      throw new AuthError('SESSION_EXPIRED', error?.message ?? 'No session is stored.');
+    }
     let profile: ProfileRow | null;
     try {
       profile = await fetchProfile(data.session.user.id);

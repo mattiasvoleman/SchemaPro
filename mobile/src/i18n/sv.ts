@@ -63,6 +63,7 @@ export const sv = {
     USE_SCHOOL_APP: 'Den här appen är för vårdnadshavare. Personal och elever loggar in i appen {otherApp}. Hämta den i App Store eller Google Play och logga in där med samma konto.',
     ROLE_NOT_SUPPORTED: 'Den här versionen av appen känner inte igen ditt konto. Uppdatera appen och försök igen.',
     APP_NOT_CONFIGURED: 'Den här versionen av appen är felbyggd och kan inte logga in någon. Installera den från App Store eller Google Play.',
+    SESSION_EXPIRED: 'Sessionen har gått ut. Logga in igen.',
   },
   schedule: {
     title: 'Mitt schema',

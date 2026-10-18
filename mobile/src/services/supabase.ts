@@ -1,6 +1,7 @@
 import 'react-native-url-polyfill/auto';
 import * as SecureStore from 'expo-secure-store';
 import { createClient, isAuthRetryableFetchError, type SupabaseClient } from '@supabase/supabase-js';
+import { deviceOffline } from './network/deviceOffline';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Supabase client for the mobile app.
@@ -140,14 +141,24 @@ export async function storedSessionUserId(): Promise<string | null> {
  * refresh, fails and returns before it removes anything (GoTrueClient
  * _signOut): the session would come back at the next start with a network.
  * The stored session is then removed here; the server's refresh token is
- * left to expire.
+ * left to expire. When the device already says it is offline, signOut is not
+ * asked at all: its refresh retries take up to about 25 seconds, during which
+ * the tablet a teacher has just logged out of still holds her session, and
+ * the server cannot be reached anyway.
  */
 export async function endSessionHere(scope: 'local' | 'global'): Promise<void> {
-  const client = getSupabase();
-  const { error } = await client.auth.signOut({ scope });
-  if (error && isAuthRetryableFetchError(error) && SUPABASE_URL) {
-    const key = sessionKey(SUPABASE_URL);
-    await secureChunkedStorage.removeItem(key);
-    await secureChunkedStorage.removeItem(`${key}-code-verifier`);
+  if (await deviceOffline()) {
+    await removeStoredSession();
+    return;
   }
+  const { error } = await getSupabase().auth.signOut({ scope });
+  if (error && isAuthRetryableFetchError(error)) await removeStoredSession();
+}
+
+/** The stored session, its chunks and its PKCE verifier, without asking Auth. */
+async function removeStoredSession(): Promise<void> {
+  if (!SUPABASE_URL) return;
+  const key = sessionKey(SUPABASE_URL);
+  await secureChunkedStorage.removeItem(key);
+  await secureChunkedStorage.removeItem(`${key}-code-verifier`);
 }

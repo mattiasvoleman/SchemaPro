@@ -13,6 +13,8 @@ interface UseSecureAuthReturn {
   readonly logout: () => Promise<void>;
   readonly restoreSession: () => Promise<void>;
   readonly recheckProfile: (current: AuthState) => Promise<void>;
+  /** While signed in: signs the app out when the server ends the session; returns the unsubscribe. */
+  readonly watchSessionEnd: () => () => void;
 }
 
 const INITIAL_STATE: AuthState = {
@@ -94,5 +96,15 @@ export function useSecureAuth(): UseSecureAuthReturn {
     }
   }, []);
 
-  return { authState, isLoading, error, login, loginWithSchoolAccount, logout, restoreSession, recheckProfile };
+  /** A session the server ended (AuthService.onSessionEnded): signed out, and the login screen says why. */
+  const watchSessionEnd = useCallback(
+    (): (() => void) =>
+      AuthService.onSessionEnded(() => {
+        setAuthState(INITIAL_STATE);
+        setError('SESSION_EXPIRED');
+      }),
+    [],
+  );
+
+  return { authState, isLoading, error, login, loginWithSchoolAccount, logout, restoreSession, recheckProfile, watchSessionEnd };
 }

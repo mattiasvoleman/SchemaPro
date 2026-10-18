@@ -7,6 +7,7 @@ import { LocaleProvider, useI18n } from '../src/context/LocaleContext';
 import { NetworkProvider } from '../src/context/NetworkContext';
 import { SyncProvider } from '../src/context/SyncContext';
 import { AppThemeProvider, useAppTheme } from '../src/theme/ThemeContext';
+import { homeOf } from '../src/services/auth/appGate';
 import {
   ensureAndroidChannel,
   forgetTap,
@@ -25,12 +26,6 @@ Notifications.setNotificationHandler({
   }),
 });
 
-function notificationsRoute(role: string | null): '/(guardian)/notifications' | '/(student)/notifications' | '/(app)/notifications' {
-  if (role === 'GUARDIAN') return '/(guardian)/notifications';
-  if (role === 'STUDENT') return '/(student)/notifications';
-  return '/(app)/notifications';
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // AuthGate — redirects unauthenticated users to login and vice-versa.
 // Must be rendered inside <AuthProvider> so it can read auth state.
@@ -45,18 +40,7 @@ function AuthGate(): React.JSX.Element {
     if (isLoading) return;
 
     const inAuthGroup = segments[0] === '(auth)';
-    const homeGroup =
-      authState.role === 'GUARDIAN'
-        ? '(guardian)'
-        : authState.role === 'STUDENT'
-          ? '(student)'
-          : '(app)';
-    const homeRoute =
-      authState.role === 'GUARDIAN'
-        ? '/(guardian)/children'
-        : authState.role === 'STUDENT'
-          ? '/(student)/schedule'
-          : '/(app)/schedule';
+    const { group: homeGroup, home: homeRoute } = homeOf(authState.role);
 
     if (!authState.isAuthenticated && !inAuthGroup) {
       router.replace('/(auth)/login');
@@ -99,7 +83,7 @@ function PushBridge(): null {
 
   useEffect(() => {
     if (!userId) return;
-    const open = (): void => router.push(notificationsRoute(role));
+    const open = (): void => router.push(homeOf(role).notifications);
     const subscription = Notifications.addNotificationResponseReceivedListener(() => {
       forgetTap();
       open();
