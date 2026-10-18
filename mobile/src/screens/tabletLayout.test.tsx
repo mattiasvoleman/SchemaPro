@@ -638,6 +638,16 @@ describe('what a screen reader and a locked switch are told', () => {
     await act(async () => tree.unmount());
   });
 
+  it('centres the login title and subtitle under the tile, so a wrapped app name stays centred', async () => {
+    // "Rastra vårdnadshavare" at 28 pt wraps on a narrow phone or at a large
+    // text size; left-aligned, its lines would start off-centre under the tile.
+    const tree = await renderAt(...PHONE, LoginScreen);
+    for (const text of [t('login.title'), t('login.subtitle.rastra')]) {
+      expect(flat(textNode(tree, text)).textAlign).toBe('center');
+    }
+    await act(async () => tree.unmount());
+  });
+
   it.each([
     ['login', LoginScreen, 'TEACHER', [t('login.email'), t('login.password')]],
     ['guardian home', GuardianHomeScreen, 'GUARDIAN', [t('guardian.dateLabel')]],

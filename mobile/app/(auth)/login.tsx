@@ -179,15 +179,19 @@ const useStyles = makeStyles((c) => ({
     height: 72,
     marginBottom: 16,
   },
+  // Centred under the tile, as the disclaimer is: "Rastra vårdnadshavare"
+  // at this size wraps on a narrow phone or at a large font scale.
   title: {
     fontSize: 28,
     fontWeight: '800',
     color: c.text,
+    textAlign: 'center',
     marginBottom: 4,
   },
   subtitle: {
     fontSize: 14,
     color: c.textMuted,
+    textAlign: 'center',
     marginBottom: 40,
   },
   form: {
