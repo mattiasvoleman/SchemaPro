@@ -22977,3 +22977,598 @@ BEGIN
   END IF;
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 160: en lärares dagstak och önskade lediga dag sätts av den som
+-- planerar (TeacherWorkRules_day_is_planned, 20261123090000).
+--
+-- In the matrix school, whose one teacher (111) has a work rule. The cap
+-- ("maxTeachingMinutesPerDay") and the wish ("preferredFreeDayOfWeek") sit
+-- on the row the teacher writes through teacher_work_rules_teacher_own,
+-- which is FOR ALL, so row security alone would let the teacher raise or
+-- erase what the administrator set. The trigger refuses that with AR403,
+-- the token and the sentence areaRefusal (prisma-errors.ts) hands the web
+-- as a 403, and DETAIL area=PLANERING:
+--
+--   * each column refuses a value outside its range by its own named CHECK
+--     (prisma-errors.ts turns the name into a 400) and takes both its ends;
+--   * the cap and the wish the fixtures wrote as the owner, with no person
+--     signed in, are on the row;
+--   * the schemaläggare (PLANERING) sets, changes and removes both, by
+--     UPDATE, by the upsert the gateway writes and by DELETE, on the
+--     teacher's row and on a row of their own: the trigger asks the area,
+--     not whose row it is;
+--   * the teacher, as each API role, puts neither on a fresh row (INSERT or
+--     the upsert), changes or clears neither on the row they have (UPDATE or
+--     the upsert), and deletes no row holding one; and still writes their
+--     own lunch and rest with the two kept, restates either unchanged, and
+--     deletes their row once it holds neither;
+--   * THE UPSERT IS JUDGED AS THE UPDATE IT BECOMES. Postgres fires BEFORE
+--     INSERT on the proposed row before it finds the conflict, and the
+--     proposed row knows nothing of the stored one, so restating the cap
+--     must pass, leaving it out must keep it, and raising or clearing it
+--     must be refused; a fresh row carrying one is refused as the insert it
+--     is;
+--   * the expedition (PERSONAL, not PLANERING), which cannot touch the work
+--     rule itself, removes a teacher who holds a cap, and the foreign key's
+--     cascade takes the work rule along: the row is not the expedition's
+--     own, so the trigger does not ask;
+--   * neither the service principal nor the sync has an arm on the table:
+--     with either setting alone nothing is read or written. With the
+--     teacher's claims beside the setting the teacher's own arm admits the
+--     row and the trigger lets the change through on the setting, the shape
+--     it keeps for an arm a later migration gives either of them.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+SELECT set_config('app.test_rls160_planned',
+  'AR403|WORK_RULE_DAY_IS_PLANNED: dagstaket och den önskade lediga dagen sätts av en administratör som planerar|area=PLANERING|',
+  true);
+
+-- 'sqlstate|message|detail|constraint' of a statement's refusal, or 'none'.
+CREATE FUNCTION pg_temp.rls160_refusal(statement text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE st text; msg text; det text; con text;
+BEGIN
+  EXECUTE statement;
+  RETURN 'none';
+EXCEPTION WHEN OTHERS THEN
+  GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT, det = PG_EXCEPTION_DETAIL, con = CONSTRAINT_NAME;
+  RETURN st || '|' || msg || '|' || coalesce(det, '') || '|' || coalesce(con, '');
+END $$;
+
+-- The schemaläggare: the owner's values, the CHECKs, a row of their own, and
+-- the teacher's row taken away, so the teacher below starts with none.
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  planner uuid := app.current_user_id();
+  teacher uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000111');
+  got text;
+  c record;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR NOT app.current_user_may('PLANERING', true)
+     OR (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-roller-school' THEN
+    RAISE EXCEPTION 'day: expected the matrix school''s schemaläggare, who writes PLANERING';
+  END IF;
+  IF teacher IS NULL OR NOT EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = teacher) THEN
+    RAISE EXCEPTION 'day: the matrix school''s teacher or their work rule is missing; fixtures did not run';
+  END IF;
+
+  -- Written by the fixtures as the owner: no person, so the trigger let it be.
+  IF NOT EXISTS (SELECT 1 FROM "TeacherWorkRules"
+                  WHERE "userId" = teacher AND "maxTeachingMinutesPerDay" = 300 AND "preferredFreeDayOfWeek" = 5) THEN
+    RAISE EXCEPTION 'day: the cap and the wish the owner wrote are not on the teacher''s row: %',
+      (SELECT row_to_json(w) FROM "TeacherWorkRules" w WHERE "userId" = teacher);
+  END IF;
+
+  FOR c IN SELECT * FROM (VALUES
+      ('"maxTeachingMinutesPerDay" = 25', 'TeacherWorkRules_maxTeachingMinutesPerDay_check'),
+      ('"maxTeachingMinutesPerDay" = 725', 'TeacherWorkRules_maxTeachingMinutesPerDay_check'),
+      -- Inside the range, off the five-minute grid the engine plans on.
+      ('"maxTeachingMinutesPerDay" = 302', 'TeacherWorkRules_maxTeachingMinutesPerDay_check'),
+      ('"maxTeachingMinutesPerDay" = 0', 'TeacherWorkRules_maxTeachingMinutesPerDay_check'),
+      ('"preferredFreeDayOfWeek" = 0', 'TeacherWorkRules_preferredFreeDayOfWeek_check'),
+      ('"preferredFreeDayOfWeek" = 8', 'TeacherWorkRules_preferredFreeDayOfWeek_check')
+    ) AS t(assignment, constraint_name)
+  LOOP
+    got := pg_temp.rls160_refusal(format('UPDATE "TeacherWorkRules" SET %s WHERE "userId" = %L', c.assignment, teacher));
+    IF split_part(got, '|', 1) <> '23514' OR split_part(got, '|', 4) IS DISTINCT FROM c.constraint_name THEN
+      RAISE EXCEPTION 'day: % was answered "%", not by %', c.assignment, got, c.constraint_name;
+    END IF;
+  END LOOP;
+  UPDATE "TeacherWorkRules" SET "maxTeachingMinutesPerDay" = 30, "preferredFreeDayOfWeek" = 1 WHERE "userId" = teacher;
+  IF NOT FOUND THEN RAISE EXCEPTION 'day: the schemaläggare could not set the lowest cap and Monday'; END IF;
+  UPDATE "TeacherWorkRules" SET "maxTeachingMinutesPerDay" = 720, "preferredFreeDayOfWeek" = 7 WHERE "userId" = teacher;
+  IF NOT FOUND THEN RAISE EXCEPTION 'day: the schemaläggare could not set the highest cap and Sunday'; END IF;
+
+  -- A schemaläggare who teaches: their own row is theirs to plan.
+  INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "maxTeachingMinutesPerDay", "preferredFreeDayOfWeek", "updatedAt")
+  VALUES (school, planner, 240, 3, now());
+  UPDATE "TeacherWorkRules" SET "maxTeachingMinutesPerDay" = 360, "preferredFreeDayOfWeek" = NULL WHERE "userId" = planner;
+  IF NOT FOUND THEN RAISE EXCEPTION 'day: the schemaläggare could not change their own cap'; END IF;
+  DELETE FROM "TeacherWorkRules" WHERE "userId" = planner;
+  IF NOT FOUND THEN RAISE EXCEPTION 'day: the schemaläggare could not remove their own row holding a cap'; END IF;
+
+  DELETE FROM "TeacherWorkRules" WHERE "userId" = teacher;
+  IF NOT FOUND THEN RAISE EXCEPTION 'day: the schemaläggare could not remove the teacher''s row holding a cap'; END IF;
+  PERFORM set_config('app.test_rls160', json_build_object('school', school, 'teacher', teacher)::text, true);
+END $$;
+
+-- The teacher with no row, as each role: no fresh row carries either, and
+-- one without them is theirs to write and to delete.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000111')::text, true);
+DO $$
+DECLARE
+  t jsonb := current_setting('app.test_rls160')::jsonb;
+  school uuid := (t ->> 'school')::uuid;
+  me uuid := app.current_user_id();
+  planned text := current_setting('app.test_rls160_planned');
+  via text;
+  got text;
+  c record;
+BEGIN
+  IF me IS DISTINCT FROM (t ->> 'teacher')::uuid OR app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN
+    RAISE EXCEPTION 'day: expected the matrix school''s teacher, am % (%)', app.current_user_role(), me;
+  END IF;
+  FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    IF current_user <> via THEN RAISE EXCEPTION 'day: running as %, not %', current_user, via; END IF;
+    IF EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = me) THEN
+      RAISE EXCEPTION 'day: the teacher starts with a row as %', via;
+    END IF;
+    FOR c IN SELECT * FROM (VALUES
+        ('an INSERT carrying a cap',
+         'INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "maxTeachingMinutesPerDay", "updatedAt") VALUES (%2$L, %1$L, 300, now())'),
+        ('an INSERT carrying a wish',
+         'INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "preferredFreeDayOfWeek", "updatedAt") VALUES (%2$L, %1$L, 5, now())'),
+        ('an upsert carrying a cap',
+         'INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "maxTeachingMinutesPerDay", "updatedAt") VALUES (%2$L, %1$L, 300, now())
+          ON CONFLICT ("userId") DO UPDATE SET "maxTeachingMinutesPerDay" = EXCLUDED."maxTeachingMinutesPerDay", "updatedAt" = EXCLUDED."updatedAt"'),
+        ('an upsert carrying a wish',
+         'INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "preferredFreeDayOfWeek", "updatedAt") VALUES (%2$L, %1$L, 5, now())
+          ON CONFLICT ("userId") DO UPDATE SET "preferredFreeDayOfWeek" = EXCLUDED."preferredFreeDayOfWeek", "updatedAt" = EXCLUDED."updatedAt"')
+      ) AS x(what, statement)
+    LOOP
+      got := pg_temp.rls160_refusal(format(c.statement, me, school));
+      IF got IS DISTINCT FROM planned THEN
+        RAISE EXCEPTION 'day: % on a fresh row as % was answered "%"', c.what, via, got;
+      END IF;
+    END LOOP;
+
+    -- The lunch and the rest, as the gateway writes them: the upsert, here a
+    -- fresh row.
+    INSERT INTO "TeacherWorkRules"
+      ("schoolId", "userId", "lunchMinutes", "lunchStartTime", "lunchEndTime", "minDailyRestMinutes", "updatedAt")
+    VALUES (school, me, 30, '10:30', '13:30', 660, now())
+    ON CONFLICT ("userId") DO UPDATE SET "lunchMinutes" = EXCLUDED."lunchMinutes", "lunchStartTime" = EXCLUDED."lunchStartTime",
+      "lunchEndTime" = EXCLUDED."lunchEndTime", "minDailyRestMinutes" = EXCLUDED."minDailyRestMinutes", "updatedAt" = EXCLUDED."updatedAt";
+    IF NOT EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = me AND "lunchMinutes" = 30 AND "minDailyRestMinutes" = 660
+                      AND "maxTeachingMinutesPerDay" IS NULL AND "preferredFreeDayOfWeek" IS NULL) THEN
+      RAISE EXCEPTION 'day: the teacher could not write their own lunch and rest on a fresh row as %', via;
+    END IF;
+    DELETE FROM "TeacherWorkRules" WHERE "userId" = me;
+    IF NOT FOUND THEN RAISE EXCEPTION 'day: the teacher could not delete their own row holding neither as %', via; END IF;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+END $$;
+
+-- The schemaläggare plans the teacher's day through the gateway's upsert:
+-- first a fresh row, then the update it becomes.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+DO $$
+DECLARE
+  t jsonb := current_setting('app.test_rls160')::jsonb;
+  cap integer;
+  wish integer;
+BEGIN
+  FOREACH cap IN ARRAY ARRAY[240, 300] LOOP
+    wish := cap / 60;
+    INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "maxTeachingMinutesPerDay", "preferredFreeDayOfWeek", "updatedAt")
+    VALUES ((t ->> 'school')::uuid, (t ->> 'teacher')::uuid, cap, wish, now())
+    ON CONFLICT ("userId") DO UPDATE SET "maxTeachingMinutesPerDay" = EXCLUDED."maxTeachingMinutesPerDay",
+      "preferredFreeDayOfWeek" = EXCLUDED."preferredFreeDayOfWeek", "updatedAt" = EXCLUDED."updatedAt";
+    IF NOT EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = (t ->> 'teacher')::uuid
+                      AND "maxTeachingMinutesPerDay" = cap AND "preferredFreeDayOfWeek" = wish) THEN
+      RAISE EXCEPTION 'day: the schemaläggare''s upsert did not leave a cap of % and day %', cap, wish;
+    END IF;
+  END LOOP;
+END $$;
+
+-- The teacher with a cap of 300 and Friday, as each role.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000111')::text, true);
+DO $$
+DECLARE
+  t jsonb := current_setting('app.test_rls160')::jsonb;
+  school uuid := (t ->> 'school')::uuid;
+  me uuid := app.current_user_id();
+  planned text := current_setting('app.test_rls160_planned');
+  via text;
+  got text;
+  c record;
+BEGIN
+  FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    IF current_user <> via THEN RAISE EXCEPTION 'day: running as %, not %', current_user, via; END IF;
+    FOR c IN SELECT * FROM (VALUES
+        ('raising the cap', 'UPDATE "TeacherWorkRules" SET "maxTeachingMinutesPerDay" = 360 WHERE "userId" = %1$L'),
+        ('lowering the cap', 'UPDATE "TeacherWorkRules" SET "maxTeachingMinutesPerDay" = 240 WHERE "userId" = %1$L'),
+        ('clearing the cap', 'UPDATE "TeacherWorkRules" SET "maxTeachingMinutesPerDay" = NULL WHERE "userId" = %1$L'),
+        ('moving the wish', 'UPDATE "TeacherWorkRules" SET "preferredFreeDayOfWeek" = 3 WHERE "userId" = %1$L'),
+        ('clearing the wish', 'UPDATE "TeacherWorkRules" SET "preferredFreeDayOfWeek" = NULL WHERE "userId" = %1$L'),
+        ('deleting the row', 'DELETE FROM "TeacherWorkRules" WHERE "userId" = %1$L'),
+        ('an upsert raising the cap',
+         'INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "maxTeachingMinutesPerDay", "updatedAt") VALUES (%2$L, %1$L, 360, now())
+          ON CONFLICT ("userId") DO UPDATE SET "maxTeachingMinutesPerDay" = EXCLUDED."maxTeachingMinutesPerDay", "updatedAt" = EXCLUDED."updatedAt"'),
+        ('an upsert clearing the cap',
+         'INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "maxTeachingMinutesPerDay", "updatedAt") VALUES (%2$L, %1$L, NULL, now())
+          ON CONFLICT ("userId") DO UPDATE SET "maxTeachingMinutesPerDay" = EXCLUDED."maxTeachingMinutesPerDay", "updatedAt" = EXCLUDED."updatedAt"'),
+        ('an upsert moving the wish',
+         'INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "preferredFreeDayOfWeek", "updatedAt") VALUES (%2$L, %1$L, 3, now())
+          ON CONFLICT ("userId") DO UPDATE SET "preferredFreeDayOfWeek" = EXCLUDED."preferredFreeDayOfWeek", "updatedAt" = EXCLUDED."updatedAt"'),
+        ('an upsert clearing the wish',
+         'INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "preferredFreeDayOfWeek", "updatedAt") VALUES (%2$L, %1$L, NULL, now())
+          ON CONFLICT ("userId") DO UPDATE SET "preferredFreeDayOfWeek" = EXCLUDED."preferredFreeDayOfWeek", "updatedAt" = EXCLUDED."updatedAt"')
+      ) AS x(what, statement)
+    LOOP
+      got := pg_temp.rls160_refusal(format(c.statement, me, school));
+      IF got IS DISTINCT FROM planned THEN
+        RAISE EXCEPTION 'day: % as % was answered "%"', c.what, via, got;
+      END IF;
+    END LOOP;
+
+    -- A plain INSERT beside the stored row: the trigger leaves it to the
+    -- update it never becomes, and the unique key answers, never a write.
+    got := pg_temp.rls160_refusal(format(
+      'INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "maxTeachingMinutesPerDay", "updatedAt") VALUES (%L, %L, 360, now())',
+      school, me));
+    IF split_part(got, '|', 1) <> '23505' THEN
+      RAISE EXCEPTION 'day: an INSERT beside the stored row as % was answered "%", not by the unique key', via, got;
+    END IF;
+
+    -- What stays the teacher's: the lunch and the rest by UPDATE, with the
+    -- cap and the wish restated unchanged.
+    UPDATE "TeacherWorkRules"
+       SET "lunchMinutes" = 30, "lunchStartTime" = '10:30', "lunchEndTime" = '13:30', "minDailyRestMinutes" = 660,
+           "maxTeachingMinutesPerDay" = 300, "preferredFreeDayOfWeek" = 5, "updatedAt" = now()
+     WHERE "userId" = me;
+    IF NOT FOUND THEN RAISE EXCEPTION 'day: the teacher could not write their own lunch and rest as %', via; END IF;
+
+    -- The upsert restating both passes: its insert finds the stored row and
+    -- its update changes neither.
+    INSERT INTO "TeacherWorkRules"
+      ("schoolId", "userId", "maxTeachingMinutesPerDay", "preferredFreeDayOfWeek", "lunchMinutes", "lunchStartTime", "lunchEndTime", "updatedAt")
+    VALUES (school, me, 300, 5, 45, '11:00', '13:00', now())
+    ON CONFLICT ("userId") DO UPDATE SET "maxTeachingMinutesPerDay" = EXCLUDED."maxTeachingMinutesPerDay",
+      "preferredFreeDayOfWeek" = EXCLUDED."preferredFreeDayOfWeek", "lunchMinutes" = EXCLUDED."lunchMinutes",
+      "lunchStartTime" = EXCLUDED."lunchStartTime", "lunchEndTime" = EXCLUDED."lunchEndTime", "updatedAt" = EXCLUDED."updatedAt";
+    IF NOT EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = me AND "lunchMinutes" = 45) THEN
+      RAISE EXCEPTION 'day: the teacher''s upsert restating the cap and the wish wrote no lunch as %', via;
+    END IF;
+
+    -- And the upsert naming neither keeps both: what the gateway sends for a
+    -- teacher, who has the two removed from create and update alike.
+    INSERT INTO "TeacherWorkRules"
+      ("schoolId", "userId", "lunchMinutes", "lunchStartTime", "lunchEndTime", "minDailyRestMinutes", "updatedAt")
+    VALUES (school, me, 40, '11:00', '13:00', 600, now())
+    ON CONFLICT ("userId") DO UPDATE SET "lunchMinutes" = EXCLUDED."lunchMinutes", "lunchStartTime" = EXCLUDED."lunchStartTime",
+      "lunchEndTime" = EXCLUDED."lunchEndTime", "minDailyRestMinutes" = EXCLUDED."minDailyRestMinutes", "updatedAt" = EXCLUDED."updatedAt";
+    IF NOT EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = me AND "lunchMinutes" = 40 AND "minDailyRestMinutes" = 600
+                      AND "maxTeachingMinutesPerDay" = 300 AND "preferredFreeDayOfWeek" = 5) THEN
+      RAISE EXCEPTION 'day: the teacher''s upsert naming neither left %, not the cap and the wish kept, as %',
+        (SELECT row_to_json(w) FROM "TeacherWorkRules" w WHERE "userId" = me), via;
+    END IF;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+
+  -- The service principal and the sync. Alone, neither reads or writes a
+  -- work rule; beside the teacher's claims, the setting lets the cap through.
+  FOREACH via IN ARRAY ARRAY['app.service_school_id', 'app.sync_school_id'] LOOP
+    PERFORM set_config(via, school::text, true);
+    UPDATE "TeacherWorkRules" SET "maxTeachingMinutesPerDay" = 360 WHERE "userId" = me;
+    IF NOT FOUND THEN RAISE EXCEPTION 'day: with % beside the teacher, the cap was refused', via; END IF;
+    UPDATE "TeacherWorkRules" SET "maxTeachingMinutesPerDay" = 300 WHERE "userId" = me;
+    PERFORM set_config(via, '', true);
+  END LOOP;
+  PERFORM set_config('request.jwt.claims', '', true);
+  FOREACH via IN ARRAY ARRAY['app.service_school_id', 'app.sync_school_id'] LOOP
+    PERFORM set_config(via, school::text, true);
+    IF EXISTS (SELECT 1 FROM "TeacherWorkRules") THEN RAISE EXCEPTION 'day: % reads a work rule', via; END IF;
+    UPDATE "TeacherWorkRules" SET "updatedAt" = now();
+    IF FOUND THEN RAISE EXCEPTION 'day: % wrote a work rule', via; END IF;
+    PERFORM set_config(via, '', true);
+  END LOOP;
+END $$;
+
+-- The expedition takes on a teacher (PERSONAL), and the schemaläggare
+-- plans their day.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000108')::text, true);
+DO $$
+DECLARE
+  t jsonb := current_setting('app.test_rls160')::jsonb;
+  newcomer uuid;
+BEGIN
+  IF app.current_user_may('PLANERING', true) OR NOT app.current_user_may('PERSONAL', true) THEN
+    RAISE EXCEPTION 'day: expected the expedition (PERSONAL, not PLANERING)';
+  END IF;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES ((t ->> 'school')::uuid, 'rls160-newcomer@example.invalid', 'RLS160', 'Nykomling', 'TEACHER',
+          '00000000-0000-4000-8000-000000000160', true, now())
+  RETURNING id INTO newcomer;
+  PERFORM set_config('app.test_rls160', (t || jsonb_build_object('newcomer', newcomer))::text, true);
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+DO $$
+DECLARE
+  t jsonb := current_setting('app.test_rls160')::jsonb;
+BEGIN
+  INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "maxTeachingMinutesPerDay", "preferredFreeDayOfWeek", "updatedAt")
+  VALUES ((t ->> 'school')::uuid, (t ->> 'newcomer')::uuid, 240, 2, now());
+END $$;
+
+-- The expedition removes the newcomer, and the cascade takes the cap along.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000108')::text, true);
+DO $$
+DECLARE
+  t jsonb := current_setting('app.test_rls160')::jsonb;
+  newcomer uuid := (t ->> 'newcomer')::uuid;
+  got text;
+BEGIN
+  -- Not by writing the rule itself, which is the arm's to refuse (42501):
+  -- the trigger, asked first, lets the write on to the arm, since the row
+  -- is not the expedition's own.
+  got := pg_temp.rls160_refusal(format(
+    'UPDATE "TeacherWorkRules" SET "maxTeachingMinutesPerDay" = NULL WHERE "userId" = %L', newcomer));
+  IF split_part(got, '|', 1) <> '42501' OR got NOT LIKE '%row-level security%' THEN
+    RAISE EXCEPTION 'day: the expedition''s write of a cap was answered "%", not by row security', got;
+  END IF;
+  DELETE FROM "Users" WHERE id = newcomer;
+  IF NOT FOUND THEN RAISE EXCEPTION 'day: the expedition could not remove a teacher'; END IF;
+  IF EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = newcomer) THEN
+    RAISE EXCEPTION 'day: the removed teacher''s work rule is still there';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 161: en tjänsts undervisningsdagar är tjänstens (20261123090000).
+--
+-- TeacherEmployments."maxTeachingDaysPerWeek", deltid in days, is HR data
+-- beside the tjänstgöringsgrad, so it is 144's column again. In the läslogg
+-- school the admin, who decides, writes teacher 122's days through the
+-- API's role; the table refuses a figure outside 1–6 by the named CHECK
+-- (prisma-errors.ts turns the name into a 400) and takes both ends. The
+-- version a write of the days alone makes carries them, before and after:
+-- the log records the row as JSON, so the column is logged with no change
+-- to the trigger, and the gateway masks it for a reader without HR-läs
+-- (hr-visibility.ts). Teacher 122 reads their own days on the post and in
+-- its version, directly and through the API; teacher 126 reads nothing of
+-- 122's post or its versions either way, as 129 holds for the row.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000121')::text, true);
+SET LOCAL ROLE app_authenticated;
+DO $$
+DECLARE
+  teacher uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000122');
+  post uuid;
+  versions bigint;
+  refused text;
+  days integer;
+  logged record;
+BEGIN
+  IF NOT app.current_user_decides() THEN RAISE EXCEPTION 'days: the läslogg school''s admin does not decide'; END IF;
+  SELECT id INTO post FROM "TeacherEmployments" WHERE "userId" = teacher;
+  IF post IS NULL THEN RAISE EXCEPTION 'days: teacher 122 has no post to write'; END IF;
+  IF (SELECT "maxTeachingDaysPerWeek" FROM "TeacherEmployments" WHERE id = post) IS NOT NULL THEN
+    RAISE EXCEPTION 'days: teacher 122''s post starts with a days figure';
+  END IF;
+
+  FOREACH days IN ARRAY ARRAY[0, 7, -1] LOOP
+    BEGIN
+      UPDATE "TeacherEmployments" SET "maxTeachingDaysPerWeek" = days WHERE id = post;
+      RAISE EXCEPTION 'days: % days a week was written', days;
+    EXCEPTION WHEN check_violation THEN
+      GET STACKED DIAGNOSTICS refused = CONSTRAINT_NAME;
+      IF refused IS DISTINCT FROM 'TeacherEmployments_maxTeachingDaysPerWeek_check' THEN
+        RAISE EXCEPTION 'days: % days a week was refused by %', days, refused;
+      END IF;
+    END;
+  END LOOP;
+  FOREACH days IN ARRAY ARRAY[1, 6] LOOP
+    UPDATE "TeacherEmployments" SET "maxTeachingDaysPerWeek" = days WHERE id = post;
+    IF NOT FOUND THEN RAISE EXCEPTION 'days: the admin could not write % days a week', days; END IF;
+  END LOOP;
+  UPDATE "TeacherEmployments" SET "maxTeachingDaysPerWeek" = NULL WHERE id = post;
+
+  SELECT count(*) INTO versions FROM "TeacherEmploymentLogs" WHERE "entityId" = post;
+  UPDATE "TeacherEmployments" SET "maxTeachingDaysPerWeek" = 4 WHERE id = post;
+  IF NOT FOUND THEN RAISE EXCEPTION 'days: the admin could not write the days through the API'; END IF;
+  IF (SELECT count(*) FROM "TeacherEmploymentLogs" WHERE "entityId" = post) <> versions + 1 THEN
+    RAISE EXCEPTION 'days: a write of the days alone made % versions, not one',
+      (SELECT count(*) FROM "TeacherEmploymentLogs" WHERE "entityId" = post) - versions;
+  END IF;
+  SELECT action, before, after INTO logged FROM "TeacherEmploymentLogs"
+   WHERE "entityId" = post ORDER BY version DESC LIMIT 1;
+  IF logged.action IS DISTINCT FROM 'UPDATE'
+     OR (logged.after ->> 'maxTeachingDaysPerWeek')::int IS DISTINCT FROM 4
+     OR logged.before -> 'maxTeachingDaysPerWeek' IS DISTINCT FROM 'null'::jsonb THEN
+    RAISE EXCEPTION 'days: the version holds % → %', logged.before, logged.after;
+  END IF;
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000122')::text, true);
+DO $$
+DECLARE
+  via text;
+  got text;
+BEGIN
+  FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    IF current_user <> via THEN RAISE EXCEPTION 'days: running as %, not %', current_user, via; END IF;
+    SELECT string_agg(coalesce("maxTeachingDaysPerWeek"::text, '-'), ',') INTO got
+      FROM "TeacherEmployments" WHERE "userId" = app.current_user_id();
+    IF got IS DISTINCT FROM '4' THEN
+      RAISE EXCEPTION 'days: as % teacher 122 reads % of their own days', via, got;
+    END IF;
+    SELECT l.after ->> 'maxTeachingDaysPerWeek' INTO got FROM "TeacherEmploymentLogs" l
+     WHERE l."userId" = app.current_user_id() AND l.entity = 'EMPLOYMENT' ORDER BY l.version DESC LIMIT 1;
+    IF got IS DISTINCT FROM '4' THEN
+      RAISE EXCEPTION 'days: as % teacher 122 reads % in their own post''s latest version', via, got;
+    END IF;
+  END LOOP;
+END $$;
+
+SET LOCAL ROLE app_authenticated;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000126')::text, true);
+DO $$
+DECLARE
+  via text;
+  n bigint;
+BEGIN
+  FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    IF current_user <> via THEN RAISE EXCEPTION 'days: running as %, not %', current_user, via; END IF;
+    SELECT count(*) INTO n FROM "TeacherEmployments" WHERE "maxTeachingDaysPerWeek" IS NOT NULL;
+    IF n <> 0 THEN RAISE EXCEPTION 'days: as % teacher 126 reads % colleague''s days', via, n; END IF;
+    SELECT count(*) INTO n FROM "TeacherEmploymentLogs" WHERE "userId" <> app.current_user_id();
+    IF n <> 0 THEN RAISE EXCEPTION 'days: as % teacher 126 reads % versions of a colleague''s post', via, n; END IF;
+  END LOOP;
+END $$;
+SET LOCAL ROLE app_authenticated;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 162: generatorns körningar läses bara genom API:t
+-- (20261123090100).
+--
+-- A run's stored refusal can say whose deltid the week could not keep (the
+-- post, and the teachers in a field the gateway never answers with), which
+-- the gateway rewrites for a reader without HR-läs when it answers
+-- (src/optimization/optimization-jobs.service.ts); row security cannot
+-- rewrite a column, so no other door may open the row. The catalogue:
+-- OptimizationJobs has exactly the four administrator's arms, each the
+-- API's role's alone (the gateway's arms of section 128, for this table);
+-- no policy on another table reads it as the reader, and no function a
+-- signed-in user may call reads it as its caller, either of which would
+-- now answer empty. "notes", the wishes a finished run could not keep, is
+-- jsonb and nullable with no default, so every run before it reads null.
+--
+-- Then the matrix school's schemaläggare, who writes SCHEMALAGGNING. Through
+-- the API's role they read the school's run, start one and write its notes;
+-- as PostgREST's role, in the same transaction, they read no run, start
+-- none, and neither change, lock nor remove the one they just started;
+-- through the API's role again it is as they left it.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  got text;
+  col record;
+BEGIN
+  SELECT string_agg(policyname || ' ' || cmd || ' ' || roles::text, ', ' ORDER BY policyname) INTO got
+    FROM pg_policies WHERE schemaname = 'public' AND tablename = 'OptimizationJobs';
+  IF got IS DISTINCT FROM 'optimization_jobs_admin_delete DELETE {app_authenticated}, '
+                       || 'optimization_jobs_admin_insert INSERT {app_authenticated}, '
+                       || 'optimization_jobs_admin_select SELECT {app_authenticated}, '
+                       || 'optimization_jobs_admin_update UPDATE {app_authenticated}' THEN
+    RAISE EXCEPTION 'runs: OptimizationJobs'' arms are %, not the administrator''s four of the API''s role', got;
+  END IF;
+
+  SELECT string_agg(tablename || '.' || policyname, ', ') INTO got
+    FROM pg_policies
+   WHERE roles && ARRAY['authenticated', 'public']::name[]
+     AND (coalesce(qual, '') || ' ' || coalesce(with_check, '')) LIKE '%"OptimizationJobs"%';
+  IF got IS NOT NULL THEN
+    RAISE EXCEPTION 'runs: % reads the runs as the reader, who now reads none', got;
+  END IF;
+  SELECT string_agg(n.nspname || '.' || p.proname, ', ') INTO got
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname IN ('public', 'app', 'sign_in', 'auth')
+     AND NOT p.prosecdef
+     AND p.prosrc LIKE '%"OptimizationJobs"%'
+     AND (has_function_privilege('authenticated', p.oid, 'EXECUTE')
+          OR (EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') AND has_function_privilege('anon', p.oid, 'EXECUTE')));
+  IF got IS NOT NULL THEN
+    RAISE EXCEPTION 'runs: % reads the runs as its caller and a signed-in user may call it', got;
+  END IF;
+
+  SELECT format_type(a.atttypid, a.atttypmod) AS type, a.attnotnull, a.atthasdef INTO col
+    FROM pg_attribute a
+   WHERE a.attrelid = 'public."OptimizationJobs"'::regclass AND a.attname = 'notes' AND NOT a.attisdropped;
+  IF col.type IS DISTINCT FROM 'jsonb' OR col.attnotnull OR col.atthasdef THEN
+    RAISE EXCEPTION 'runs: "notes" is %, not a nullable jsonb with no default', coalesce(row_to_json(col)::text, 'missing');
+  END IF;
+END $$;
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  yr uuid;
+  run uuid;
+  seen bigint;
+  n bigint;
+  st text;
+  msg text;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR NOT app.current_user_may('SCHEMALAGGNING', true)
+     OR (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-roller-school' THEN
+    RAISE EXCEPTION 'runs: expected the matrix school''s schemaläggare, who writes SCHEMALAGGNING';
+  END IF;
+  SET LOCAL ROLE app_authenticated;
+  SELECT count(*) INTO seen FROM "OptimizationJobs";
+  IF seen = 0 THEN RAISE EXCEPTION 'runs: the schemaläggare reads no run through the API; fixtures did not run'; END IF;
+  IF EXISTS (SELECT 1 FROM "OptimizationJobs" WHERE notes IS NOT NULL) THEN
+    RAISE EXCEPTION 'runs: a run the fixtures planted has notes';
+  END IF;
+  SELECT id INTO yr FROM "AcademicYears" WHERE "schoolId" = school ORDER BY "isActive" DESC, id LIMIT 1;
+  INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", "actorId")
+  VALUES (school, yr, app.current_user_id()) RETURNING id INTO run;
+  IF (SELECT notes FROM "OptimizationJobs" WHERE id = run) IS NOT NULL THEN
+    RAISE EXCEPTION 'runs: a new run has notes before it has run';
+  END IF;
+  UPDATE "OptimizationJobs"
+     SET status = 'SUCCEEDED', "finishedAt" = now(),
+         notes = jsonb_build_array(jsonb_build_object('code', 'TEACHER_FREE_DAY_WISH_NOT_KEPT', 'category', 'AVAILABILITY',
+                                                      'params', jsonb_build_object('rule', gen_random_uuid(), 'day', 5)))
+   WHERE id = run;
+  IF NOT FOUND THEN RAISE EXCEPTION 'runs: the schemaläggare could not finish a run through the API'; END IF;
+
+  SET LOCAL ROLE authenticated;
+  IF current_user <> 'authenticated' THEN RAISE EXCEPTION 'runs: could not act as authenticated'; END IF;
+  SELECT count(*) INTO n FROM "OptimizationJobs";
+  IF n <> 0 THEN RAISE EXCEPTION 'runs: as PostgREST''s role the schemaläggare reads % run(s)', n; END IF;
+  BEGIN
+    INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId") VALUES (school, yr);
+    RAISE EXCEPTION 'runs: as PostgREST''s role the schemaläggare started a run';
+  EXCEPTION WHEN insufficient_privilege THEN
+    GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT;
+    IF msg NOT LIKE '%row-level security%' THEN
+      RAISE EXCEPTION 'runs: PostgREST''s start of a run was refused by "%", not by row security', msg;
+    END IF;
+  END;
+  -- No WHERE: a predicate on a column would also need a read arm, and a
+  -- write arm alone would hide behind it.
+  UPDATE "OptimizationJobs" SET "finishedAt" = now();
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'runs: as PostgREST''s role the schemaläggare changed % run(s)', n; END IF;
+  SELECT count(*) INTO n FROM (SELECT 1 FROM "OptimizationJobs" FOR UPDATE) locked;
+  IF n <> 0 THEN RAISE EXCEPTION 'runs: as PostgREST''s role the schemaläggare locked % run(s)', n; END IF;
+  DELETE FROM "OptimizationJobs";
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'runs: as PostgREST''s role the schemaläggare removed % run(s)', n; END IF;
+
+  SET LOCAL ROLE app_authenticated;
+  SELECT count(*) INTO n FROM "OptimizationJobs";
+  IF n <> seen + 1 THEN RAISE EXCEPTION 'runs: through the API the schemaläggare reads % runs, not %', n, seen + 1; END IF;
+  IF NOT EXISTS (SELECT 1 FROM "OptimizationJobs"
+                  WHERE id = run AND status = 'SUCCEEDED' AND notes -> 0 ->> 'code' = 'TEACHER_FREE_DAY_WISH_NOT_KEPT') THEN
+    RAISE EXCEPTION 'runs: the run the API finished is not as it was left';
+  END IF;
+END $$;
+SET LOCAL ROLE app_authenticated;
+ROLLBACK;

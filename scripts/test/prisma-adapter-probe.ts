@@ -39,6 +39,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma, type PrismaClient } from '@prisma/client';
@@ -79,6 +80,7 @@ import { readDeliveredRows, staffingCreditStatement } from '../../src/timplan/ti
 import type { DeliveredLineDetail } from '../../src/common/timplan-delivered';
 import {
   BLOCK_MEMBERS_DIFFER,
+  areaRefusal,
   classHalfRefusal,
   decidedTimplanRefusal,
   isTimplanInUseRefusal,
@@ -135,6 +137,13 @@ import { CoverSettingsService } from '../../src/cover/cover-settings.service';
 import { CoverSuggestionsService } from '../../src/cover/cover-suggestions.service';
 import { CoverReportsService } from '../../src/cover/cover-reports.service';
 import { readActiveStaffIds } from '../../src/staffing/staff-candidates';
+import { TeacherWorkRulesService, WORK_RULE_DAY_IS_PLANNED } from '../../src/resources/teacher-work-rules.service';
+import { OptimizationJobsService } from '../../src/optimization/optimization-jobs.service';
+import { TEACHER_WORK_DAYS_HIDDEN, WORK_DAYS_HIDDEN_MESSAGE, WorkDaysRefusal } from '../../src/optimization/work-days';
+import type {
+  AiEngineConflictDetail,
+  AiEngineScheduleResponse,
+} from '../../src/optimization/interfaces/ai-engine-payload.interface';
 
 /** Marks every row the probe writes that has a text column to mark. */
 const MARKER = 'prisma-adapter-probe';
@@ -4174,6 +4183,13 @@ async function runChecks(
       await count('give a timplanspost a teacher', () =>
         new TeachingRequirementsService(api).update(budget.requirement8a, { teacherId: budget.teachers[1] }, admin),
       );
+      // Last, since each writes a lesson: 7A on Thursday and on Friday at
+      // 10:00, where it meets nobody, once with a teacher and once without.
+      const created = { academicYearId: budget.yearId, subjectId: budget.subject, studentGroupId: budget.class7a, startTime: '10:00', endTime: '11:00' };
+      await count('POST a lesson with a teacher', () =>
+        lessons.create({ ...created, dayOfWeek: 4, teacherId: budget.teachers[3] }, admin),
+      );
+      await count('POST a lesson without a teacher', () => lessons.create({ ...created, dayOfWeek: 5 }, admin));
       // Counted at pg's Client.query, BEGIN, set_config and COMMIT included.
       // The same steps against the services of f5ff8da (a git archive of it,
       // run on the same database) sent 20, 21, 34, 21, 24, 7 and 22: the
@@ -4197,6 +4213,11 @@ async function runChecks(
           // publish), reads the absences (+1: SUBSTITUTE_IS_ABSENT and the
           // decision), the substitute's day for the cover warnings (+8) and
           // the class's name for the substitute's own notice (+1).
+          // +0 each since Lärarens dag (20261123090000), where no post limits
+          // its days, as here: the cap and the wished day are columns of the
+          // work-rule read above, the days a column of the post read, and the
+          // week's teaching dates are asked only of a post with a limit —
+          // two statements where one is, which (ld-b) counts.
           'assign a substitute': 34,
           // +1 each since Publicering: app.enter_grundschema_write, the shared
           // publication lock and the mode in one statement, first (below).
@@ -4214,6 +4235,13 @@ async function runChecks(
           // +1 each since Block i schemat: a lesson that moves asks which
           // parallel block it is in, with the other members' lessons, in one
           // joined statement (block-lessons.ts); this school has no block.
+          // +0 on all three since Lärarens dag (20261123090000): whether the
+          // school has a cap and the lesson's year a day limit is counted in
+          // the statement that reads the lesson's school (teacherDayCounts),
+          // and with neither, as here, the warning sends nothing. Where the
+          // gate is open the teachers' caps and their posts' limits are a
+          // statement each, and the week one more once a teacher has either
+          // ((ld-d)).
           'PATCH a drag': 23,
           'PATCH a drag back beside 8A': 27,
           'place a meal': 7,
@@ -4221,8 +4249,27 @@ async function runChecks(
           // so the load read asks for their periods (one indexed SELECT); a
           // year without a post asks nothing more.
           'give a timplanspost a teacher': 23,
+          // +1 since Lärarens dag (20261123090000) on a create that names a
+          // teacher, in a school without a cap, as here, and the one thing a
+          // create pays for it: the teachers' caps, one indexed SELECT,
+          // which is the gate and the rule at once. A create reads no row the
+          // school's caps could be counted in the way the PATCH counts them
+          // in the school's statement — the year has no relation to the work
+          // rules, and its school selected for a count would be the same +1
+          // on every create, teacher or not. The day limits are a `_count` in
+          // the year's read, +0. Pinned beside the budget spec's
+          // (projected-rosters.budget.spec.ts), and below as the one SELECT
+          // that the create without a teacher does not send.
+          'POST a lesson with a teacher': 17,
+          'POST a lesson without a teacher': 16,
         },
         JSON.stringify(sent, null, 1),
+      );
+      const caps = (name: string) => sent[name].filter((statement) => /^SELECT "public"\."TeacherWorkRules"/.test(statement));
+      assert.deepEqual(
+        [caps('POST a lesson with a teacher').length, caps('POST a lesson without a teacher').length],
+        [1, 0],
+        JSON.stringify({ with: sent['POST a lesson with a teacher'], without: sent['POST a lesson without a teacher'] }),
       );
       // The PATCH's first statement after BEGIN and the claims is the
       // publication lock with its argument, the school.
@@ -4230,10 +4277,14 @@ async function runChecks(
         const first = sent[name].find((statement) => !/^(BEGIN|SELECT set_config)/.test(statement));
         assert.match(String(first), /app\.enter_grundschema_write\(\$1::uuid\)/, `${name} began with ${first}`);
       }
-      // A drag reads no läsår row at all: no scan, no relation load.
+      // A drag reads no läsår row at all: no scan, no relation load. Nor, in
+      // a school without a cap or a day limit, a work rule or a post: the
+      // gate rides on the school's statement.
       for (const name of ['PATCH a drag', 'PATCH a drag back beside 8A']) {
         const years = sent[name].filter((statement) => /^SELECT "public"\."AcademicYears"/.test(statement));
         assert.deepEqual(years, [], `${name} read AcademicYears`);
+        const rules = sent[name].filter((statement) => /^SELECT "public"\."(TeacherWorkRules|TeacherEmployments)"/.test(statement));
+        assert.deepEqual(rules, [], `${name} read a work rule or a post`);
       }
     } finally {
       await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-budget'`, [MARKER]);
@@ -4586,6 +4637,7 @@ async function runChecks(
   await batchMoveChecks(owner, api);
   await viewerChecks(owner, api);
   await coverChecks(owner, api, open, appUrl);
+  await teacherDayChecks(owner, api);
   await familyPushChecks(owner, api, MARKER, check);
   await ss12000SyncChecks(owner, api, MARKER, check);
   await ss12000ProviderChecks(owner, api, MARKER, check);
@@ -5067,6 +5119,8 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   // SS12000-närvaro's school, likewise.
   await sweepSs12000NarvaroSchool(owner, MARKER);
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-vikarie'`, [MARKER]);
+  // Lärarens dag's school, whole, likewise.
+  await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-lararensdag'`, [MARKER]);
   // Duties first: each one's links cascade, and TeacherDutySlots_take_their_block
   // deletes the slot with its link (the service writes the slot's reason as the bare word "Uppdrag", so a
   // reason match could not find them, and must not: it would take the seed's).
@@ -5348,6 +5402,7 @@ interface BudgetSchool {
   class7a: string;
   calendarLesson: string;
   yearId: string;
+  subject: string;
 }
 
 /** (z)'s school, as the owner: the paths it counts write nothing it needs again. */
@@ -5435,17 +5490,22 @@ async function givenBudgetSchool(owner: Client): Promise<BudgetSchool> {
     class7a: g7a.id,
     calendarLesson: calendar.id,
     yearId: year.id,
+    subject: subject.id,
   };
 }
 
-/** Every statement pg sends while `body` runs, counted at Client.query: what reaches Postgres. */
-async function statementsDuring(body: () => Promise<unknown>): Promise<string[]> {
+/**
+ * Every statement pg sends while `body` runs, counted at Client.query: what
+ * reaches Postgres. Each cut to its first `width` characters, which name the
+ * statement; a check that asks about a clause further in widens it.
+ */
+async function statementsDuring(body: () => Promise<unknown>, width = 120): Promise<string[]> {
   const sent: string[] = [];
   const prototype = Client.prototype as unknown as { query: (...args: unknown[]) => unknown };
   const query = prototype.query;
   prototype.query = function (this: Client, ...args: unknown[]) {
     const text = typeof args[0] === 'string' ? args[0] : (args[0] as { text?: string } | undefined)?.text;
-    sent.push(String(text).replace(/\s+/g, ' ').trim().slice(0, 120));
+    sent.push(String(text).replace(/\s+/g, ' ').trim().slice(0, width));
     return query.apply(this, args);
   };
   try {
@@ -6067,6 +6127,652 @@ async function coverChecks(owner: Client, api: PrismaService, open: (url: string
     });
   } finally {
     await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-vikarie'`, [MARKER]);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Lärarens dag (20261123090000, 20261123090100): a teacher's cap on a day's
+// teaching and wished free day on the work rule, and deltid in days on the
+// post. What the unit specs mock and the RLS suite cannot reach is the layer
+// between: the CHECKs and the trigger as the adapter hands them to
+// prisma-errors.ts, Prisma's own upsert as the trigger judges it, and the
+// three readers that judge with the days for every reader and word them per
+// reader — the Vikarietavla (candidates and a manual pick), a hand edit of
+// the grundschema, and a generator run read back — with the Läslogg each
+// writes beside its answer. The readers are two schemaläggare who differ in
+// HR-läs alone, so nothing but that flag can explain a difference in what
+// they are told. In a school of its own, swept whole.
+// ---------------------------------------------------------------------------
+
+interface TeacherDayPerson {
+  id: string;
+  authId: string;
+}
+
+interface TeacherDaySchool {
+  schoolId: string;
+  yearId: string;
+  /** Full: decides, so writes posts, and reads HR. */
+  admin: AuthenticatedUser;
+  /** A schemaläggare without HR-läs: plans, places, covers; reads no post's days. */
+  planner: AuthenticatedUser;
+  /**
+   * Two more schemaläggare, one without HR-läs and one with, new for each
+   * check that reads the Läslogg: it is append-only, and a second read of
+   * one subject by one reader within the quarter-hour writes no row, so a
+   * reader carried over from an earlier check would hide the row this one
+   * is to prove.
+   */
+  readers: (label: string) => Promise<{ hidden: AuthenticatedUser; shown: AuthenticatedUser }>;
+  teacher: (who: TeacherDayPerson) => AuthenticatedUser;
+  /** The teacher away, on the lessons to cover. */
+  a: TeacherDayPerson;
+  /** Capped at 60 minutes a day by (ld-a); teaches the hour after the cover. */
+  capped: TeacherDayPerson;
+  /** A post limited to one day a week by (ld-a); teaches another day of the cover's week. */
+  limited: TeacherDayPerson;
+  /** A post and nothing else, until (ld-e) limits it to four days. */
+  free: TeacherDayPerson;
+  posts: { limited: string; free: string };
+  /** a's lessons 09–10 on a coming school day, and on a later day of its ISO week. */
+  x: string;
+  xLater: string;
+  /** Grundschema: capped's Tuesday 08–09 (beside their Monday 08–09), limited's Monday 11–12 (beside their 10–11). */
+  cappedTuesday: string;
+  limitedSecond: string;
+}
+
+async function givenTeacherDaySchool(owner: Client): Promise<TeacherDaySchool> {
+  await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-lararensdag'`, [MARKER]);
+  const one = async <T extends object>(sql: string, params: unknown[]): Promise<T> => (await owner.query<T>(sql, params)).rows[0]!;
+  const DAY = 24 * 60 * 60 * 1000;
+  const today = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
+  const dayAt = (offset: number) => new Date(today.getTime() + offset * DAY).toISOString().slice(0, 10);
+  // A weekday at least two days ahead, as (æ)'s, and two more weekdays of
+  // its ISO week: the one after it (the one before, on a Friday), which is
+  // at least tomorrow and so can still be covered, and a third the
+  // part-timer already teaches on, which may lie in the past — a held
+  // lesson counts as a taught day like any other.
+  let offset = 2;
+  while ([0, 6].includes(new Date(`${dayAt(offset)}T00:00:00.000Z`).getUTCDay())) offset++;
+  const day = dayAt(offset);
+  const weekday = new Date(`${day}T00:00:00.000Z`).getUTCDay();
+  const ofWeek = (isoDay: number) => dayAt(offset - weekday + isoDay);
+  const laterDay = ofWeek(weekday < 5 ? weekday + 1 : weekday - 1);
+  const taughtDay = [1, 2, 3, 4, 5].map(ofWeek).find((date) => date !== day && date !== laterDay)!;
+
+  const school = await one<{ id: string }>(
+    `INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ($1, $2, 'Europe/Stockholm', now()) RETURNING id`,
+    [`${MARKER} lärarens dag`, `${MARKER}-lararensdag`],
+  );
+  const person = (role: string, label: string, adminProfile: string | null = null, hrRead = false) =>
+    one<TeacherDayPerson>(
+      `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "hrRead", "authId", "isActive", "updatedAt")
+       VALUES ($1, $2, $3, 'Probe', $4::"UserRole", $5::"AdminProfile", $6, gen_random_uuid(), true, now()) RETURNING id, "authId"`,
+      [school.id, `${MARKER}-ld-${label.toLowerCase()}@example.invalid`, label, role, adminProfile, hrRead],
+    );
+  const admin = await person('SCHOOL_ADMIN', 'Rektor', 'FULL');
+  const planner = await person('SCHOOL_ADMIN', 'Planerare', 'SCHEMALAGGARE');
+  const a = await person('TEACHER', 'Borta');
+  const capped = await person('TEACHER', 'Tak');
+  const limited = await person('TEACHER', 'Deltid');
+  const free = await person('TEACHER', 'Ledig');
+  const year = await one<{ id: string }>(
+    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+     VALUES ($1, $2, $3::date, $4::date, true, now()) RETURNING id`,
+    [school.id, `${MARKER} lärarens dag`, dayAt(-60), dayAt(200)],
+  );
+  const group = (name: string, grade: number) =>
+    one<{ id: string }>(
+      `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+       VALUES ($1, $2, $3, 'CLASS', $4, now()) RETURNING id`,
+      [school.id, year.id, name, grade],
+    );
+  const class7a = await group('7A', 7);
+  const class8a = await group('8A', 8);
+  const ma = await one<{ id: string }>(
+    `INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES ($1, 'Matematik', now()) RETURNING id`,
+    [school.id],
+  );
+  const posts: Record<string, string> = {};
+  for (const who of [a, capped, limited, free]) {
+    const post = await one<{ id: string }>(
+      `INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt")
+       VALUES ($1, $2, $3, 100, now()) RETURNING id`,
+      [school.id, who.id, year.id],
+    );
+    posts[who.id] = post.id;
+  }
+  const lesson = async (date: string, start: string, end: string, groupId: string, lead: TeacherDayPerson) => {
+    const row = await one<{ id: string }>(
+      `INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "updatedAt")
+       VALUES ($1, $2, $3, $4::date, ($4::date + $5::time) AT TIME ZONE 'Europe/Stockholm', ($4::date + $6::time) AT TIME ZONE 'Europe/Stockholm', 'SCHEDULED', now())
+       RETURNING id`,
+      [school.id, ma.id, groupId, date, start, end],
+    );
+    await owner.query(
+      `INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES ($1, $2, $3, 'LEAD')`,
+      [school.id, row.id, lead.id],
+    );
+    return row.id;
+  };
+  const x = await lesson(day, '09:00', '10:00', class7a.id, a);
+  const xLater = await lesson(laterDay, '09:00', '10:00', class7a.id, a);
+  // The capped teacher's hour after the cover: an hour alone, two with it.
+  await lesson(day, '10:00', '11:00', class8a.id, capped);
+  // The part-timer's one day of the week, and it is not the cover's.
+  await lesson(taughtDay, '09:00', '10:00', class8a.id, limited);
+  const master = (groupId: string, teacher: TeacherDayPerson, dayOfWeek: number, start: string, end: string) =>
+    one<{ id: string }>(
+      `INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+       VALUES ($1, $2, $3, $4, $5, $6, $7::time, $8::time, now()) RETURNING id`,
+      [school.id, year.id, ma.id, groupId, teacher.id, dayOfWeek, start, end],
+    );
+  // The grundschema: the capped teacher an hour on Monday and an hour on
+  // Tuesday, each within the cap; the part-timer two hours on Monday, one
+  // day within their post's one.
+  await master(class7a.id, capped, 1, '08:00', '09:00');
+  const cappedTuesday = await master(class7a.id, capped, 2, '08:00', '09:00');
+  await master(class8a.id, limited, 1, '10:00', '11:00');
+  const limitedSecond = await master(class8a.id, limited, 1, '11:00', '12:00');
+  const principal = (who: TeacherDayPerson, role: Role, adminProfile?: 'FULL' | 'SCHEMALAGGARE', hrRead = false): AuthenticatedUser => ({
+    authId: who.authId,
+    userId: who.id,
+    schoolId: school.id,
+    role,
+    ...(adminProfile ? { adminProfile, hrRead } : {}),
+  });
+  return {
+    schoolId: school.id,
+    yearId: year.id,
+    admin: principal(admin, Role.SCHOOL_ADMIN, 'FULL'),
+    planner: principal(planner, Role.SCHOOL_ADMIN, 'SCHEMALAGGARE'),
+    readers: async (label) => ({
+      hidden: principal(await person('SCHOOL_ADMIN', `Planerare${label}`, 'SCHEMALAGGARE'), Role.SCHOOL_ADMIN, 'SCHEMALAGGARE'),
+      shown: principal(await person('SCHOOL_ADMIN', `Hrplanerare${label}`, 'SCHEMALAGGARE', true), Role.SCHOOL_ADMIN, 'SCHEMALAGGARE', true),
+    }),
+    teacher: (who) => principal(who, Role.TEACHER),
+    a,
+    capped,
+    limited,
+    free,
+    posts: { limited: posts[limited.id]!, free: posts[free.id]! },
+    x,
+    xLater,
+    cappedTuesday: cappedTuesday.id,
+    limitedSecond: limitedSecond.id,
+  };
+}
+
+async function teacherDayChecks(owner: Client, api: PrismaService): Promise<void> {
+  const school = await givenTeacherDaySchool(owner);
+  const realtime = {
+    notifyMasterTimetableChanged: () => undefined,
+    notifyLessonChanged: async () => undefined,
+    notifyLessonsChanged: async () => undefined,
+    notifyCoverBoardChanged: () => undefined,
+  } as unknown as RealtimeService;
+  const notifications = {
+    recipientsForLessons: async () => [],
+    notifyUsers: async () => undefined,
+  } as unknown as NotificationsService;
+  const calendar = new CalendarLessonsService(api, realtime, notifications);
+  const suggestions = new CoverSuggestionsService(api, new CoverService(api, realtime, notifications, calendar));
+  const rules = new TeacherWorkRulesService(api);
+  const posts = new TeacherEmploymentsService(api);
+  const refusalOf = async (work: Promise<unknown>): Promise<unknown> => {
+    try {
+      await work;
+    } catch (error) {
+      return error;
+    }
+    return assert.fail('the write was not refused');
+  };
+  const bodyOf = (error: unknown) =>
+    error instanceof HttpException ? (error.getResponse() as { message?: unknown; code?: unknown }) : { message: summarise(error) };
+  // Who an actor's EMPLOYMENT rows name, one sorted list per row: a row per
+  // read that named somebody new to the actor that quarter-hour.
+  const employmentReadBy = async (actor: AuthenticatedUser) =>
+    (
+      await owner.query<{ ids: string[] }>(
+        `SELECT ARRAY(SELECT x::text FROM unnest("subjectIds") x) AS ids FROM "PersonalDataAccess"
+          WHERE "schoolId" = $1 AND "actorId" = $2 AND kind = 'EMPLOYMENT' ORDER BY at`,
+        [school.schoolId, actor.userId],
+      )
+    ).rows.map((row) => [...row.ids].sort());
+  const reads = (sent: string[], table: string) => sent.filter((statement) => statement.startsWith(`SELECT "public"."${table}"`)).length;
+  const logs = (sent: string[]) => sent.filter((statement) => statement.includes('app.personal_data_read(')).length;
+
+  try {
+    await check('(ld-a) Lärarens dag on the work rule and the post through the real adapter: a CHECK past the DTO is a 400 naming its field, a planner without HR-läs sets the cap, and the teacher restates it but cannot change it — 403 WORK_RULE_DAY_IS_PLANNED from the service, and past it the trigger’s AR403 read as AREA_NOT_YOURS, on an update, Prisma’s own upsert, a delete and a fresh row', async () => {
+      const userId = school.capped.id;
+      // The CHECKs, reached past the DTO (the service is called without the
+      // pipe): each a 400 naming the field (prisma-errors.ts NAMED_CHECKS),
+      // never a 500 — the off-grid cap, one above twelve hours, a weekday 8.
+      for (const [dto, field] of [
+        [{ maxTeachingMinutesPerDay: 122 }, 'maxTeachingMinutesPerDay'],
+        [{ maxTeachingMinutesPerDay: 725 }, 'maxTeachingMinutesPerDay'],
+        [{ preferredFreeDayOfWeek: 8 }, 'preferredFreeDayOfWeek'],
+      ] as const) {
+        const error = await refusalOf(rules.upsert(userId, dto, school.planner));
+        assert.ok(error instanceof BadRequestException, `${JSON.stringify(dto)}: ${summarise(error)}`);
+        assert.match(String(bodyOf(error).message), new RegExp(`^${field}: `));
+      }
+      // And the post's days through its own service, by one who decides.
+      const tooMany = await refusalOf(
+        posts.upsert(school.limited.id, school.yearId, { employmentPercent: 100, maxTeachingDaysPerWeek: 7 }, school.admin),
+      );
+      assert.ok(tooMany instanceof BadRequestException, summarise(tooMany));
+      assert.match(String(bodyOf(tooMany).message), /^maxTeachingDaysPerWeek: /);
+      assert.deepEqual(
+        (await owner.query(`SELECT count(*)::int AS n FROM "TeacherWorkRules" WHERE "userId" = $1`, [userId])).rows,
+        [{ n: 0 }],
+        'a refused CHECK left a row behind',
+      );
+
+      // A planner without HR-läs sets the cap and the wish: planering's, not
+      // HR. One who decides sets the part-timer's day.
+      const set = await rules.upsert(userId, { maxTeachingMinutesPerDay: 60, preferredFreeDayOfWeek: 5 }, school.planner);
+      assert.deepEqual([set.maxTeachingMinutesPerDay, set.preferredFreeDayOfWeek], [60, 5]);
+      await posts.upsert(school.limited.id, school.yearId, { employmentPercent: 100, maxTeachingDaysPerWeek: 1 }, school.admin);
+
+      // The teacher's own save of their rest leaves both as they are, and a
+      // body restating them (the web sends the form whole) is no change.
+      const own = school.teacher(school.capped);
+      const rested = await rules.upsert(userId, { minDailyRestMinutes: 660 }, own);
+      assert.deepEqual([rested.minDailyRestMinutes, rested.maxTeachingMinutesPerDay, rested.preferredFreeDayOfWeek], [660, 60, 5]);
+      await rules.upsert(userId, { minDailyRestMinutes: 660, maxTeachingMinutesPerDay: 60, preferredFreeDayOfWeek: 5 }, own);
+      for (const dto of [{ maxTeachingMinutesPerDay: 90 }, { maxTeachingMinutesPerDay: null }, { preferredFreeDayOfWeek: 1 }]) {
+        const error = await refusalOf(rules.upsert(userId, dto, own));
+        assert.ok(error instanceof ForbiddenException, `${JSON.stringify(dto)}: ${summarise(error)}`);
+        assert.equal(bodyOf(error).code, WORK_RULE_DAY_IS_PLANNED);
+      }
+
+      // Past the service, straight through the adapter: the trigger's AR403,
+      // which areaRefusal reads as AREA_NOT_YOURS with the trigger's own
+      // sentence, and rethrowPrismaError answers 403 — not row security's
+      // 42501, whose sentence is the generic one.
+      const refusedByTrigger = async (who: AuthenticatedUser, write: (tx: PrismaClient) => Promise<unknown>) => {
+        const error = await refusalOf(api.withRls(who, write));
+        assert.equal(sqlStateOf(error), 'AR403', summarise(error));
+        assert.deepEqual(areaRefusal(error), {
+          code: 'AREA_NOT_YOURS',
+          message: 'dagstaket och den önskade lediga dagen sätts av en administratör som planerar',
+        });
+        const answered = await refusalOf(Promise.resolve().then(() => rethrowPrismaError(error)));
+        assert.ok(answered instanceof ForbiddenException, summarise(answered));
+        assert.equal(bodyOf(answered).code, 'AREA_NOT_YOURS');
+      };
+      await refusedByTrigger(own, (tx) => tx.teacherWorkRule.update({ where: { userId }, data: { maxTeachingMinutesPerDay: 90 } }));
+      await refusedByTrigger(own, (tx) => tx.teacherWorkRule.update({ where: { userId }, data: { preferredFreeDayOfWeek: null } }));
+      await refusedByTrigger(own, (tx) => tx.teacherWorkRule.delete({ where: { userId } }));
+      // Prisma's upsert is one INSERT … ON CONFLICT DO UPDATE, and the
+      // trigger judges it as the update it becomes (20261123090000): the
+      // teacher restating the cap passes, raising it is refused.
+      const upsert = (cap: number) => (tx: PrismaClient) =>
+        tx.teacherWorkRule.upsert({
+          where: { userId },
+          create: { schoolId: school.schoolId, userId, maxTeachingMinutesPerDay: cap, preferredFreeDayOfWeek: 5 },
+          update: { maxTeachingMinutesPerDay: cap, preferredFreeDayOfWeek: 5 },
+        });
+      const restated = await statementsDuring(() => api.withRls(own, upsert(60)), 2000);
+      assert.equal(
+        restated.filter((statement) => /^INSERT INTO "public"\."TeacherWorkRules" .* ON CONFLICT /.test(statement)).length,
+        1,
+        `Prisma's upsert is not the INSERT … ON CONFLICT the trigger's branch is for: ${JSON.stringify(restated)}`,
+      );
+      await refusedByTrigger(own, upsert(90));
+      // A fresh row carrying a cap, by a teacher who has none, is the insert it is.
+      await refusedByTrigger(school.teacher(school.free), (tx) =>
+        tx.teacherWorkRule.create({ data: { schoolId: school.schoolId, userId: school.free.id, maxTeachingMinutesPerDay: 60 } }),
+      );
+
+      // The teacher's DELETE through the service clears their rest and keeps the row, with its cap.
+      await rules.remove(userId, own);
+      assert.deepEqual(
+        (
+          await owner.query(
+            `SELECT "minDailyRestMinutes", "maxTeachingMinutesPerDay", "preferredFreeDayOfWeek" FROM "TeacherWorkRules" WHERE "userId" = $1`,
+            [userId],
+          )
+        ).rows,
+        [{ minDailyRestMinutes: null, maxTeachingMinutesPerDay: 60, preferredFreeDayOfWeek: 5 }],
+      );
+      assert.deepEqual(
+        (await owner.query(`SELECT count(*)::int AS n FROM "TeacherWorkRules" WHERE "userId" = $1`, [school.free.id])).rows,
+        [{ n: 0 }],
+      );
+    });
+
+    await check('(ld-b) the Vikarietavla’s candidates hold the cap and the deltid in days for every reader and word the days per reader: WORK_DAYS {days} with HR-läs, WORK_DAYS_HIDDEN and no figure without, the post’s verdict in the Läslogg (EMPLOYMENT) for both and the cap’s for neither, and the week’s teaching dates asked only while a post limits its days, in two statements', async () => {
+      const { hidden: planner, shown: plannerHr } = await school.readers('B');
+      type Candidates = Awaited<ReturnType<CoverSuggestionsService['candidates']>>;
+      const read = async (user: AuthenticatedUser) => {
+        let response!: Candidates;
+        const sent = await statementsDuring(async () => {
+          response = await suggestions.candidates(school.x, user);
+        });
+        return { response, sent };
+      };
+      const codesOf = (response: Candidates, who: TeacherDayPerson) => response.excluded.find((entry) => entry.userId === who.id)?.codes;
+      const offered = (response: Candidates) => response.candidates.map((candidate) => candidate.userId);
+
+      const hidden = await read(planner);
+      const shown = await read(plannerHr);
+      for (const { response } of [hidden, shown]) {
+        // The cap is the work rule's, which every member of staff reads: its minutes to both.
+        assert.deepEqual(codesOf(response, school.capped), [{ code: 'DAILY_CAP', params: { minutes: 60 } }]);
+        assert.ok(offered(response).includes(school.free.id), JSON.stringify(response));
+        assert.ok(!offered(response).includes(school.limited.id), JSON.stringify(response));
+      }
+      assert.deepEqual(codesOf(hidden.response, school.limited), [{ code: 'WORK_DAYS_HIDDEN', params: {} }]);
+      assert.deepEqual(codesOf(shown.response, school.limited), [{ code: 'WORK_DAYS', params: { days: 1 } }]);
+      assert.doesNotMatch(JSON.stringify(hidden.response), /"days"/);
+      // The candidates' week and counter, and the part-timer the post leaves
+      // out — to the reader shown the figure and to the one who is not —
+      // and never the capped teacher, whose exclusion is the timetable's.
+      // The reader is never their own subject (app.personal_data_read).
+      for (const [reader, { response }] of [
+        [planner, hidden],
+        [plannerHr, shown],
+      ] as const) {
+        assert.deepEqual(await employmentReadBy(reader), [
+          [...offered(response), school.limited.id].filter((id) => id !== reader.userId).sort(),
+        ]);
+      }
+
+      // The week's teaching dates are asked only of a post with a limit
+      // (cover-context.ts), so a school without one sends what it did — (z)
+      // counts that — and one with a limit pays for the read here. It is ONE
+      // READ OF TWO STATEMENTS: the limited teachers' rows of the week, and
+      // their lessons' dates, which the rows reach as a selected relation —
+      // a statement of its own under Prisma 7, as (z) says of a year's
+      // flags. The date is the lesson's and not the row's, so a model call
+      // cannot ask it in one. With the limit gone the part-timer is offered,
+      // and the read is exactly those two statements shorter.
+      await owner.query(`UPDATE "TeacherEmployments" SET "maxTeachingDaysPerWeek" = NULL WHERE id = $1`, [school.posts.limited]);
+      try {
+        const unlimited = await read(plannerHr);
+        assert.ok(offered(unlimited.response).includes(school.limited.id), JSON.stringify(unlimited.response));
+        assert.deepEqual(
+          [
+            shown.sent.length - unlimited.sent.length,
+            reads(shown.sent, 'CalendarLessonTeachers') - reads(unlimited.sent, 'CalendarLessonTeachers'),
+            reads(shown.sent, 'CalendarLessons') - reads(unlimited.sent, 'CalendarLessons'),
+          ],
+          [2, 1, 1],
+          JSON.stringify({ limited: shown.sent, unlimited: unlimited.sent }),
+        );
+      } finally {
+        await owner.query(`UPDATE "TeacherEmployments" SET "maxTeachingDaysPerWeek" = 1 WHERE id = $1`, [school.posts.limited]);
+      }
+    });
+
+    await check('(ld-c) a manual pick past the post’s days is a warning worded per reader — COVER_BEYOND_WORK_DAYS_HIDDEN without HR-läs, COVER_BEYOND_WORK_DAYS {days} with — and the post’s read in the Läslogg (EMPLOYMENT) either way', async () => {
+      const { hidden: planner, shown: plannerHr } = await school.readers('C');
+      const dayWarnings = (result: Awaited<ReturnType<CalendarLessonsService['assignSubstitute']>>) =>
+        result.warnings.filter((warning) => /WORK_DAYS|DAILY_CAP/.test(warning.code));
+      // The part-timer's second day: the cover's.
+      const toPlanner = await calendar.assignSubstitute(school.x, { teacherId: school.limited.id }, planner);
+      assert.deepEqual(dayWarnings(toPlanner), [{ code: 'COVER_BEYOND_WORK_DAYS_HIDDEN', params: {} }]);
+      // And a third, now that the cover has made the second one theirs.
+      const toHr = await calendar.assignSubstitute(school.xLater, { teacherId: school.limited.id }, plannerHr);
+      assert.deepEqual(dayWarnings(toHr), [{ code: 'COVER_BEYOND_WORK_DAYS', params: { days: 1 } }]);
+      assert.deepEqual(await employmentReadBy(planner), [[school.limited.id]]);
+      assert.deepEqual(await employmentReadBy(plannerHr), [[school.limited.id]]);
+      assert.deepEqual(
+        (
+          await owner.query<{ teacherId: string; role: string }>(
+            `SELECT "teacherId", role::text AS role FROM "CalendarLessonTeachers" WHERE "calendarLessonId" IN ($1, $2)`,
+            [school.x, school.xLater],
+          )
+        ).rows,
+        [
+          { teacherId: school.limited.id, role: 'SUBSTITUTE' },
+          { teacherId: school.limited.id, role: 'SUBSTITUTE' },
+        ],
+        'a warning stopped the pick',
+      );
+    });
+
+    await check('(ld-d) a hand edit of the grundschema past a cap warns TEACHER_DAY_TOO_LONG with its figures to any planner and records nothing; one past a post’s days warns TEACHER_WEEK_TOO_MANY_DAYS_HIDDEN without HR-läs and the figures with it, recorded (EMPLOYMENT) either way; and one back within both says nothing', async () => {
+      const { hidden: planner, shown: plannerHr } = await school.readers('D');
+      const lessons = new MasterLessonsService(api, realtime, notifications);
+      type Updated = Awaited<ReturnType<MasterLessonsService['update']>>;
+      const patch = async (id: string, dto: Parameters<MasterLessonsService['update']>[1], user: AuthenticatedUser) => {
+        let result!: Updated;
+        const sent = await statementsDuring(async () => {
+          result = await lessons.update(id, dto, user);
+        });
+        return { warnings: result.warnings, sent };
+      };
+
+      // Monday 08–09 and now 09–10: two hours on a cap of one.
+      const long = await patch(school.cappedTuesday, { dayOfWeek: 1, startTime: '09:00', endTime: '10:00' }, planner);
+      assert.deepEqual(long.warnings, [
+        { code: 'TEACHER_DAY_TOO_LONG', params: { role: 'LEAD', requirement: 'Matematik för 7A', day: 1, minutes: 120, cap: 60 } },
+      ]);
+      // The school has a cap and a day limit, so the gate is open: the
+      // teacher's cap and their post's limit, one statement each, and no
+      // Läslogg for a cap, which every member of staff reads. The lesson's
+      // name, which the PATCH's reads do not select, is one joined statement
+      // more, read because the warning names it.
+      assert.deepEqual(
+        [reads(long.sent, 'TeacherWorkRules'), reads(long.sent, 'TeacherEmployments'), logs(long.sent)],
+        [1, 1, 0],
+        JSON.stringify(long.sent),
+      );
+      assert.equal(long.sent.filter((statement) => /FROM "MasterLessons" m\s+JOIN "Subjects" s/.test(statement)).length, 1, JSON.stringify(long.sent));
+
+      // The part-timer's second lesson off Monday: a second day on a post of one.
+      const hidden = await patch(school.limitedSecond, { dayOfWeek: 2 }, planner);
+      assert.deepEqual(hidden.warnings, [
+        { code: 'TEACHER_WEEK_TOO_MANY_DAYS_HIDDEN', params: { role: 'LEAD', requirement: 'Matematik för 8A' } },
+      ]);
+      assert.equal(logs(hidden.sent), 1, JSON.stringify(hidden.sent));
+      const shown = await patch(school.limitedSecond, { dayOfWeek: 3 }, plannerHr);
+      assert.deepEqual(shown.warnings, [
+        { code: 'TEACHER_WEEK_TOO_MANY_DAYS', params: { role: 'LEAD', requirement: 'Matematik för 8A', days: 2, max: 1 } },
+      ]);
+      assert.deepEqual(await employmentReadBy(planner), [[school.limited.id]]);
+      assert.deepEqual(await employmentReadBy(plannerHr), [[school.limited.id]]);
+
+      // Back beside its first lesson: one day again, nothing to say or record.
+      const back = await patch(school.limitedSecond, { dayOfWeek: 1 }, plannerHr);
+      assert.deepEqual([back.warnings, logs(back.sent)], [[], 0]);
+    });
+
+    await check('(ld-e) a run refused over posts’ days, stored as the job store stores it, read through OptimizationJobsService: one TEACHER_WORK_DAYS_HIDDEN for two, no teacher, no figure and not one statement more without HR-läs; each post’s days read back, its teacher named and the read in the Läslogg with it; a post since cleared hidden again; the server-only teachers in no view; and the synchronous refusal said the same way', async () => {
+      const { hidden: planner, shown: plannerHr } = await school.readers('E');
+      await owner.query(`UPDATE "TeacherEmployments" SET "maxTeachingDaysPerWeek" = 4 WHERE id = $1`, [school.posts.free]);
+      const rule = (
+        await owner.query<{ id: string }>(`SELECT id FROM "TeacherWorkRules" WHERE "userId" = $1`, [school.capped.id])
+      ).rows[0]!.id;
+      const ids = { requirementIds: [], roomIds: [], constraintIds: [] };
+      // The engine's answer as OptimizationProxyService.realiseConflicts hands
+      // it to the store: a days sentence already without its figure, the
+      // English the hidden one, the post's teacher beside it (work-days.ts).
+      const days = (post: string, teacher: TeacherDayPerson): AiEngineConflictDetail => ({
+        category: 'TEACHER_OVERLAP',
+        code: 'TEACHER_WORK_DAYS_CANNOT_BE_KEPT',
+        params: { limit: post },
+        message: WORK_DAYS_HIDDEN_MESSAGE,
+        ...ids,
+        resourceIds: [teacher.id],
+        resourceNames: [],
+        subjectIds: [teacher.id],
+      });
+      const cap: AiEngineConflictDetail = {
+        category: 'TEACHER_OVERLAP',
+        code: 'TEACHER_DAILY_CAP_CANNOT_BE_KEPT',
+        params: { rule, minutes: 60, day: 1 },
+        message: 'The cap of 60 minutes of teaching a day …',
+        ...ids,
+        resourceIds: [rule],
+        resourceNames: [],
+      };
+      const refusal = () =>
+        new WorkDaysRefusal(
+          { message: WORK_DAYS_HIDDEN_MESSAGE, code: 'TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK', params: { limit: school.posts.limited, weekMinutes: 600 } },
+          400,
+          [school.limited.id],
+        );
+      const answers = [
+        async (): Promise<AiEngineScheduleResponse> =>
+          ({
+            requestId: randomUUID(),
+            status: 'INFEASIBLE',
+            lessons: [],
+            conflicts: {
+              summary: 'No timetable satisfies every rule.',
+              summaryCode: 'CONFLICT_CORE_SUMMARY',
+              summaryParams: {},
+              conflicts: [cap, days(school.posts.limited, school.limited), days(school.posts.free, school.free)],
+            },
+          }) as unknown as AiEngineScheduleResponse,
+        async (): Promise<AiEngineScheduleResponse> => {
+          throw refusal();
+        },
+      ];
+      const jobs = new OptimizationJobsService(
+        { triggerScheduling: () => answers.shift()!() } as unknown as OptimizationProxyService,
+        api,
+      );
+      // run() is what start() fires and does not await; called here on a
+      // PENDING row of the probe's, so the probe waits on the run's own
+      // writes and on no clock.
+      const run = async () => {
+        const job = await owner.query<{ id: string }>(
+          `INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", "actorId") VALUES ($1, $2, $3) RETURNING id`,
+          [school.schoolId, school.yearId, school.admin.userId],
+        );
+        await (jobs as unknown as { run: (jobId: string, yearId: string, user: AuthenticatedUser) => Promise<void> }).run(
+          job.rows[0]!.id,
+          school.yearId,
+          school.admin,
+        );
+        return job.rows[0]!.id;
+      };
+      const refused = await run();
+      const failed = await run();
+      // Stored as they came, with the teachers each days sentence is about
+      // kept beside it for the server — inside errorParams for a failed run,
+      // whose row has no column of its own for them.
+      const stored = (
+        await owner.query<{ status: string; conflicts: Array<{ code: string; params: object; subjectIds?: string[] }>; errorParams: object | null }>(
+          `SELECT status::text, conflicts, "errorParams" FROM "OptimizationJobs" WHERE id IN ($1, $2) ORDER BY "createdAt", id`,
+          [refused, failed],
+        )
+      ).rows;
+      const byStatus = new Map(stored.map((row) => [row.status, row]));
+      assert.deepEqual(
+        byStatus.get('SUCCEEDED')?.conflicts.map((conflict) => [conflict.code, conflict.params, conflict.subjectIds ?? null]),
+        [
+          ['TEACHER_DAILY_CAP_CANNOT_BE_KEPT', { rule, minutes: 60, day: 1 }, null],
+          ['TEACHER_WORK_DAYS_CANNOT_BE_KEPT', { limit: school.posts.limited }, [school.limited.id]],
+          ['TEACHER_WORK_DAYS_CANNOT_BE_KEPT', { limit: school.posts.free }, [school.free.id]],
+        ],
+        JSON.stringify(stored),
+      );
+      assert.deepEqual(byStatus.get('FAILED')?.errorParams, {
+        limit: school.posts.limited,
+        weekMinutes: 600,
+        subjectIds: [school.limited.id],
+      });
+
+      type View = Awaited<ReturnType<OptimizationJobsService['get']>>;
+      const readAs = async (user: AuthenticatedUser) => {
+        let one!: View;
+        let all!: View[];
+        const sent = await statementsDuring(async () => {
+          one = await jobs.get(refused, user);
+        });
+        const listed = await statementsDuring(async () => {
+          all = await jobs.list(school.yearId, user);
+        });
+        return { one, failed: all.find((job) => job.id === failed)!, sent, listed };
+      };
+      const capView = { category: 'TEACHER_OVERLAP', code: cap.code, params: cap.params, message: cap.message, resourceNames: [] };
+
+      const hidden = await readAs(planner);
+      assert.deepEqual(hidden.one.conflicts, [
+        capView,
+        { category: 'TEACHER_OVERLAP', code: TEACHER_WORK_DAYS_HIDDEN, params: {}, message: WORK_DAYS_HIDDEN_MESSAGE, resourceNames: [] },
+      ]);
+      assert.deepEqual([hidden.failed.errorCode, hidden.failed.errorParams, hidden.failed.error], [TEACHER_WORK_DAYS_HIDDEN, {}, WORK_DAYS_HIDDEN_MESSAGE]);
+      assert.deepEqual(
+        [hidden.failed.errorNames, hidden.failed.conflictSummaryNames, hidden.one.errorNames, hidden.one.conflictSummaryNames],
+        [[], [], [], []],
+      );
+      assert.doesNotMatch(JSON.stringify([hidden.one, hidden.failed]), /subjectIds|"limit"|"days"|Deltid|Ledig/);
+      // The Generera page's poll stays the one read it was: no post, no Läslogg.
+      for (const sent of [hidden.sent, hidden.listed]) {
+        assert.deepEqual([reads(sent, 'OptimizationJobs'), reads(sent, 'TeacherEmployments'), logs(sent)], [1, 0, 0], JSON.stringify(sent));
+      }
+      assert.deepEqual(await employmentReadBy(planner), []);
+
+      const shown = await readAs(plannerHr);
+      const daysView = (post: string, count: number, name: string) => ({
+        category: 'TEACHER_OVERLAP',
+        code: 'TEACHER_WORK_DAYS_CANNOT_BE_KEPT',
+        params: { limit: post, days: count },
+        message: WORK_DAYS_HIDDEN_MESSAGE,
+        resourceNames: [name],
+      });
+      assert.deepEqual(shown.one.conflicts, [
+        capView,
+        daysView(school.posts.limited, 1, 'Deltid Probe'),
+        daysView(school.posts.free, 4, 'Ledig Probe'),
+      ]);
+      assert.deepEqual(
+        [shown.failed.errorCode, shown.failed.errorParams],
+        ['TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK', { limit: school.posts.limited, weekMinutes: 600, days: 1 }],
+      );
+      // Whose post the failed run's pre-flight is about, named as a days
+      // conflict names its teacher; the refused run's summary is no days
+      // sentence and names nobody.
+      assert.deepEqual(
+        [shown.failed.errorNames, shown.failed.conflictSummaryNames, shown.one.errorNames, shown.one.conflictSummaryNames],
+        [['Deltid Probe'], [], [], []],
+      );
+      assert.doesNotMatch(JSON.stringify([shown.one, shown.failed]), /subjectIds/);
+      // A second transaction, and only for the reader shown a post's days: the posts, then the Läslogg.
+      for (const sent of [shown.sent, shown.listed]) {
+        assert.deepEqual([reads(sent, 'OptimizationJobs'), reads(sent, 'TeacherEmployments'), logs(sent)], [1, 1, 1], JSON.stringify(sent));
+      }
+      assert.deepEqual(await employmentReadBy(plannerHr), [[school.limited.id, school.free.id].sort()]);
+
+      // A post whose limit has since been cleared has no figure to read back:
+      // its sentence is the hidden one again, for this reader too.
+      await owner.query(`UPDATE "TeacherEmployments" SET "maxTeachingDaysPerWeek" = NULL WHERE id = $1`, [school.posts.free]);
+      const cleared = await jobs.get(refused, plannerHr);
+      assert.deepEqual(
+        cleared.conflicts.map((conflict) => [conflict.code, conflict.params]),
+        [
+          [cap.code, cap.params],
+          ['TEACHER_WORK_DAYS_CANNOT_BE_KEPT', { limit: school.posts.limited, days: 1 }],
+          [TEACHER_WORK_DAYS_HIDDEN, {}],
+        ],
+      );
+
+      // The synchronous trigger's refusal, worded by the same rule before it is thrown.
+      const said = async (user: AuthenticatedUser) => {
+        const error = (await jobs.refusalForReader(refusal(), school.yearId, user)) as HttpException;
+        return [error.getStatus(), error.getResponse()];
+      };
+      assert.deepEqual(await said(planner), [400, { message: WORK_DAYS_HIDDEN_MESSAGE, code: TEACHER_WORK_DAYS_HIDDEN, params: {} }]);
+      assert.deepEqual(await said(plannerHr), [
+        400,
+        {
+          message: WORK_DAYS_HIDDEN_MESSAGE,
+          code: 'TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK',
+          params: { limit: school.posts.limited, weekMinutes: 600, days: 1 },
+        },
+      ]);
+      assert.deepEqual(await employmentReadBy(planner), []);
+    });
+  } finally {
+    await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-lararensdag'`, [MARKER]);
   }
 }
 
