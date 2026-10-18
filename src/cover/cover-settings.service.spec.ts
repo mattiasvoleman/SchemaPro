@@ -27,12 +27,23 @@ describe('CoverSettingsService', () => {
   describe('reasons', () => {
     const row = { id: 'r1', builtin: 'SICK', label: null, sortOrder: 0, archivedAt: null };
 
-    it('an admin listing them ensures the built-ins first; a teacher only reads', async () => {
+    it('an admin who writes drift ensures the built-ins first; a teacher only reads', async () => {
       tx.teacherAbsenceReason.findMany.mockResolvedValue([row]);
+      tx.$queryRaw.mockResolvedValue([{ may: true }]);
       expect(await service.reasons(testUser())).toEqual([{ id: 'r1', builtin: 'SICK', label: null, sortOrder: 0, archived: false }]);
       expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
       await service.reasons(teacher);
       expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+    });
+
+    it('an admin the database refuses drift (a läsare) lists what exists and seeds nothing (Läsbehörighet)', async () => {
+      tx.teacherAbsenceReason.findMany.mockResolvedValue([row]);
+      tx.$queryRaw.mockResolvedValue([{ may: false }]);
+      const reader = testUser({ adminProfile: 'LASARE' });
+      expect(await service.reasons(reader)).toEqual([{ id: 'r1', builtin: 'SICK', label: null, sortOrder: 0, archived: false }]);
+      expect(tx.$executeRaw).not.toHaveBeenCalled();
+      // The question is the insert arm's own.
+      expect(String((tx.$queryRaw.mock.calls[0] as unknown[])[0])).toContain("app.current_user_may('DRIFT'");
     });
 
     it('a built-in is archived, never renamed; a label of the school’s own is', async () => {

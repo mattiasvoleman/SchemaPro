@@ -26,6 +26,7 @@ import { Role } from '../../src/auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
 import { areaRefusal } from '../../src/common/utils/prisma-errors';
 import type { PrismaService } from '../../src/database/prisma.service';
+import { CoverSettingsService } from '../../src/cover/cover-settings.service';
 import { TeacherEmploymentsService } from '../../src/staffing/teacher-employments.service';
 import type { SupabaseAdminService } from '../../src/users/supabase-admin.service';
 import { UsersService } from '../../src/users/users.service';
@@ -184,6 +185,18 @@ export async function adminAreaChecks(owner: Client, api: PrismaService, marker:
       assert.deepEqual([hidden?.employmentPercent, hidden?.signature], [null, 'PRB']);
       const [shown] = await posts.list(year.id, readerHr.principal);
       assert.equal(shown?.employmentPercent, 80);
+    });
+
+    await check('(ar-h) a läsare lists the absence reasons without seeding them; a planner who writes drift seeds the five built-ins (Läsbehörighet)', async () => {
+      const cover = new CoverSettingsService(api);
+      // Before anybody has seeded: an empty list, not the refused upsert.
+      assert.deepEqual(await cover.reasons(reader.principal), []);
+      const seeded = await cover.reasons(planner.principal);
+      assert.equal(seeded.filter((reason) => reason.builtin !== null).length, 5);
+      assert.deepEqual(
+        (await cover.reasons(reader.principal)).map((reason) => reason.id),
+        seeded.map((reason) => reason.id),
+      );
     });
   } finally {
     await sweepRollerSchool(owner, marker);
