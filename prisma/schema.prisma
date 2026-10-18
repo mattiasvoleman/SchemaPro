@@ -2138,6 +2138,9 @@ model ScheduleCandidateRun {
   heartbeatAt    DateTime                   @default(now()) @db.Timestamptz(6)
   /// 60..3600 (DB CHECK): twice the longest engine call the run makes.
   leaseSeconds   Int                        @default(600)
+  /// The latest an engine call the run has out can still be solving; cleared when the call returns. A run failed
+  /// while a call was out (the API restarting) keeps it and is counted by app.schedule_candidate_runs_active() until then.
+  engineBusyUntil DateTime?                 @db.Timestamptz(6)
   createdAt      DateTime                   @default(now()) @db.Timestamptz(6)
   startedAt      DateTime?                  @db.Timestamptz(6)
   finishedAt     DateTime?                  @db.Timestamptz(6)

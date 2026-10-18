@@ -180,6 +180,39 @@ describe('MasterLessonsService', () => {
     jest.useRealTimers();
   });
 
+  /*
+   * Schemaförslag (20261125090000): every hand edit takes its share of the
+   * year's regeneration lock, after the plain read that names the year and
+   * before its first row lock or write, so an edit beside an apply answers 409
+   * within 5 s and the two cannot deadlock.
+   */
+  const editLockCalls = () =>
+    (tx as unknown as { $executeRaw: jest.Mock }).$executeRaw.mock.calls.filter((call) =>
+      (call[0] as readonly string[]).join('?').includes('app.lock_years_for_grundschema_edit'),
+    );
+  const editLockOrder = () => {
+    const raw = (tx as unknown as { $executeRaw: jest.Mock }).$executeRaw;
+    const at = raw.mock.calls.findIndex((call) =>
+      (call[0] as readonly string[]).join('?').includes('app.lock_years_for_grundschema_edit'),
+    );
+    return raw.mock.invocationCallOrder[at]!;
+  };
+  /** 55P03 as @prisma/adapter-pg hands a lock_timeout over. */
+  const lockTimeout = () =>
+    new Prisma.PrismaClientKnownRequestError('canceling statement due to lock timeout', {
+      code: 'P2010',
+      clientVersion: '7',
+      meta: { driverAdapterError: { cause: { originalCode: '55P03' } } },
+    });
+  const failEditLock = () => {
+    const raw = (tx as unknown as { $executeRaw: jest.Mock }).$executeRaw;
+    const original = raw.getMockImplementation();
+    raw.mockImplementation(async (strings: readonly string[], ...values: unknown[]) => {
+      if (strings.join('?').includes('app.lock_years_for_grundschema_edit')) throw lockTimeout();
+      return original ? original(strings, ...values) : 0;
+    });
+  };
+
   /** The row shape LESSON_SELECT produces. Slot: Monday 10:00–11:00. */
   const lessonRecord = (overrides: Record<string, unknown> = {}) => ({
     id: LESSON_ID,
@@ -1979,6 +2012,23 @@ describe('MasterLessonsService', () => {
       tx.masterLesson.update.mockResolvedValue(lessonRecord(updatedOverrides));
     };
 
+    it('takes the year’s edit lock after reading the lesson and before writing it', async () => {
+      arrangeUpdate();
+      await service.update(LESSON_ID, { dayOfWeek: 2 }, testUser());
+      expect(editLockCalls().map((call) => call.slice(1))).toEqual([[[YEAR_ID]]]);
+      expect(editLockOrder()).toBeGreaterThan(tx.masterLesson.findUnique.mock.invocationCallOrder[0]!);
+      expect(editLockOrder()).toBeLessThan(tx.masterLesson.update.mock.invocationCallOrder[0]!);
+    });
+
+    it('answers 409 SCHEDULE_BUSY, writing nothing, while a rewrite of the year holds it past 5 s', async () => {
+      arrangeUpdate();
+      failEditLock();
+      const attempt = service.update(LESSON_ID, { dayOfWeek: 2 }, testUser());
+      await expect(attempt).rejects.toBeInstanceOf(ConflictException);
+      await expect(attempt).rejects.toMatchObject({ response: expect.objectContaining({ code: 'SCHEDULE_BUSY' }) });
+      expect(tx.masterLesson.update).not.toHaveBeenCalled();
+    });
+
     it('finds the buffer through the subject the stored lesson already has', async () => {
       // A PATCH never names a subject, so the buffer has to be found from the
       // row. Moving this idrott to 11:00–12:00 puts its own class's 09:00–10:00
@@ -2710,7 +2760,9 @@ describe('MasterLessonsService', () => {
       });
       // The new LEAD, unless the lesson has a vikarie or the new teacher is
       // already on it (staffing Fas 3, C5b): one guarded INSERT.
-      const insert = (tx as unknown as { $executeRaw: jest.Mock }).$executeRaw.mock.calls[0]!;
+      const insert = (tx as unknown as { $executeRaw: jest.Mock }).$executeRaw.mock.calls.find((call) =>
+        (call[0] as readonly string[]).join('?').includes('INSERT INTO "CalendarLessonTeachers"'),
+      )!;
       const sql = (insert[0] as readonly string[]).join('?');
       expect(sql).toContain('INSERT INTO "CalendarLessonTeachers"');
       expect(sql).toContain(`x."role" = 'SUBSTITUTE' OR x."teacherId" =`);
@@ -3664,6 +3716,21 @@ describe('MasterLessonsService', () => {
       );
       tx.calendarLesson.deleteMany.mockResolvedValue({ count: 3 });
     };
+
+    it('takes the year’s edit lock before it deletes anything, and answers 409 when a rewrite holds it', async () => {
+      arrangeRemove();
+      await service.remove(LESSON_ID, testUser());
+      expect(editLockCalls().map((call) => call.slice(1))).toEqual([[[YEAR_ID]]]);
+      expect(editLockOrder()).toBeLessThan(tx.calendarLesson.deleteMany.mock.invocationCallOrder[0]!);
+      expect(editLockOrder()).toBeLessThan(tx.masterLesson.delete.mock.invocationCallOrder[0]!);
+
+      tx.masterLesson.delete.mockClear();
+      failEditLock();
+      await expect(service.remove(LESSON_ID, testUser())).rejects.toMatchObject({
+        response: expect.objectContaining({ code: 'SCHEDULE_BUSY' }),
+      });
+      expect(tx.masterLesson.delete).not.toHaveBeenCalled();
+    });
 
     it('404s on an unknown lesson and deletes nothing', async () => {
       tx.masterLesson.findUnique.mockResolvedValue(null);

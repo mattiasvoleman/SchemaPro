@@ -422,6 +422,27 @@ describe("applying", () => {
     expect(apply.mutateAsync).not.toHaveBeenCalled();
   });
 
+  it("confirms nothing on the page-load counts when the dialog's re-read fails, and offers it again", async () => {
+    state.check = { ...CHECK, mode: "DIRECT", futureCalendarLessons: 12, coverAssignments: 3 };
+    const { rerender } = render(<CandidatesPage />);
+    const user = userEvent.setup();
+
+    await user.click(applyButton(1, "KEEP"));
+    expect(state.checkRefetch).toHaveBeenCalledTimes(1);
+    // The re-read fails (a 429 from the check's throttle, the network): the
+    // data in hand is still the page load's, and it must not be confirmed on.
+    state.checkFailed = true;
+    rerender(<CandidatesPage />);
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("scheduleCandidates.check.failed")).toBeInTheDocument();
+    expect(within(dialog).queryByText("scheduleCandidates.apply.futureLessons(12)")).toBeNull();
+    expect(within(dialog).getByRole("button", { name: "scheduleCandidates.apply.direct" })).toBeDisabled();
+
+    await user.click(within(dialog).getByRole("button", { name: "scheduleCandidates.check.retry" }));
+    expect(state.checkRefetch).toHaveBeenCalledTimes(2);
+    expect(apply.mutateAsync).not.toHaveBeenCalled();
+  });
+
   it("offers nothing to apply for a candidate without a timetable", () => {
     render(<CandidatesPage />);
     expect(screen.queryByRole("button", { name: /apply\.buttonLabel\(3/ })).toBeNull();

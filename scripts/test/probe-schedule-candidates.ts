@@ -23,9 +23,12 @@
  *         part it changed (draft, requirements, preserved), with nothing
  *         written; put back by content, the batch is applicable again;
  *   sc-f  a hand UPDATE of a generated lesson held open while an apply runs:
- *         the apply waits in its FOR UPDATE, then refuses; and the other way
- *         round, the edit waits for the apply and fails (P2025, a 404 over
- *         HTTP: its lesson was replaced); no edit is lost without an error;
+ *         the apply waits on the year's regeneration lock the edit holds a
+ *         share of (before any row), then refuses; the other way round, the
+ *         edit waits in its share of the lock for the apply and fails (P2025,
+ *         a 404 over HTTP: its lesson was replaced); behind an apply held past
+ *         5 s it answers 409 SCHEDULE_BUSY with nothing written; no edit is
+ *         lost without an error;
  *   sc-g  a version restore and an apply queue on the year lock, both ways
  *         round, and a restore that waits past 5 s answers SCHEDULE_BUSY;
  *   sc-h  a generate whose fetch predates an apply is GENERATE_STALE; a job's
@@ -38,14 +41,18 @@
  *         start that passed every check (23505 → CANDIDATES_RUNNING); the cap
  *         on live runs, whatever their school or year (CANDIDATES_BUSY);
  *   sc-k  no stored row, change-log entry, response or engine request names a
- *         pupil.
+ *         pupil;
+ *   sc-l  a run interrupted by a restart while its call is out frees its year
+ *         at once but keeps its place under CANDIDATE_RUNS_MAX until that
+ *         call could have ended (engineBusyUntil), and its task writes
+ *         nothing more.
  *
  * Interleavings are made the way the rest of the probe makes them: a holder
  * parked on a promise inside its transaction, the other side started, its wait
  * read from pg_stat_activity, then the holder released. The task of a run is
  * the service's own fire-and-forget; it is awaited by the service's registry
- * of runs in flight, not by a clock. One check waits a clock on purpose: the
- * 5 s lock_timeout of sc-g.
+ * of runs in flight, not by a clock. Two checks wait a clock on purpose: the
+ * 5 s lock_timeouts of sc-f (a hand edit) and sc-g (a restore).
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`, its pool
  * opener and the API's URL (a second pool, so a held transaction and the call
@@ -989,7 +996,7 @@ export async function scheduleCandidateChecks(
       console.log(`     sc-e: a lock changes ${JSON.stringify(lockedParts)}`);
     });
 
-    await check('(sc-f) a hand UPDATE held open makes the apply wait in its FOR UPDATE and refuse; an apply held open makes the edit wait and fail; no edit is lost without an error', async () => {
+    await check('(sc-f) a hand UPDATE held open makes the apply wait on the year lock and refuse; an apply held open makes the edit wait in its share of it and fail, or answer 409 past 5 s; no edit is lost without an error', async () => {
       const keep = (await candidateRows(staleBatch))[0]!;
 
       // 1. The edit first, parked before its COMMIT.
@@ -1001,7 +1008,7 @@ export async function scheduleCandidateChecks(
       const holderPid = await parked(held.reached, editing, 'the hand edit');
       const before = { versions: (await versionRows()).length, logs: (await regenerations()).length };
       const applying = settled(candidates.apply(keep.id, 'DIRECT', admin));
-      const wait = await waitingOn(owner, holderPid, /"MasterLessons"/, applying, 'the apply');
+      const wait = await waitingOn(owner, holderPid, /pg_advisory_xact_lock|"MasterLessons"/, applying, 'the apply');
       held.release();
       const [edited, applied] = await Promise.all([editing, applying]);
       assert.ok(edited.ok, `the held edit failed: ${edited.ok ? '' : describe(edited.error)}`);
@@ -1011,8 +1018,11 @@ export async function scheduleCandidateChecks(
       const row = await one<{ dayOfWeek: number }>(`SELECT "dayOfWeek" FROM "MasterLessons" WHERE id = $1`, [moved.id]);
       assert.equal(row.dayOfWeek, target, 'the hand edit is lost');
       assert.deepEqual({ versions: (await versionRows()).length, logs: (await regenerations()).length }, before, 'the refused apply wrote');
-      // Where it waited: its FOR UPDATE of the year's masters, before it read the basis.
-      assert.match(wait.statement, /FOR UPDATE$/, `the apply waited elsewhere: ${wait.statement}`);
+      // Where it waited: the year's regeneration lock, which the edit holds a
+      // share of — before the apply has locked a single row, so the two
+      // cannot deadlock.
+      assert.match(wait.statement, /grundschema-regenerate/, `the apply waited elsewhere: ${wait.statement}`);
+      assert.equal(wait.waitEvent, 'Lock/advisory', `the apply waited ${wait.waitEvent}`);
       console.log(`     sc-f: the apply waited ${wait.waitEvent} in: ${wait.query}`);
       await lessons.update(moved.id, { dayOfWeek: moved.dayOfWeek }, admin);
       assert.equal((await candidates.check(staleBatch, admin)).stale, false);
@@ -1025,7 +1035,7 @@ export async function scheduleCandidateChecks(
       const applyPid = await parked(snap.reached, holding, 'the apply');
       const victim = await generatedMaster(sv, g7a);
       const late = settled(lessonsOnSecond.update(victim.id, { dayOfWeek: await freeDayFor(victim.id) }, admin));
-      const editWait = await waitingOn(owner, applyPid, /"MasterLessons"/, late, 'the hand edit');
+      const editWait = await waitingOn(owner, applyPid, /lock_years_for_grundschema_edit|"MasterLessons"/, late, 'the hand edit');
       snap.release();
       const [applyOutcome, editOutcome] = await Promise.all([holding, late]);
       assert.ok(applyOutcome.ok, `the held apply failed: ${applyOutcome.ok ? '' : describe(applyOutcome.error)}`);
@@ -1034,8 +1044,31 @@ export async function scheduleCandidateChecks(
       assert.ok(!after.some((lesson) => lesson.id === victim.id), 'the edited lesson outlived the apply');
       const draft = after.filter((lesson) => lesson.isGenerated && !lesson.isLocked && lesson.pupils === 0);
       assert.deepEqual(sortedContent(draft), keep.lessons.map(asMasterContent).sort(), 'the applied draft is not the candidate');
-      assert.match(editWait.statement, /^UPDATE "public"\."MasterLessons"/, `the edit waited elsewhere: ${editWait.statement}`);
+      // In its share of the year lock, before it locked a row.
+      assert.match(editWait.statement, /lock_years_for_grundschema_edit/, `the edit waited elsewhere: ${editWait.statement}`);
       console.log(`     sc-f: the edit waited ${editWait.waitEvent} in: ${editWait.query}; it then failed with ${describe(editOutcome.error).slice(0, 120)}`);
+
+      // 3. An apply held past 5 s: the edit answers 409 SCHEDULE_BUSY in about
+      //    5 s, having written nothing, and the apply then commits whole.
+      const third = await runOf(2);
+      const long = snapshotParked(versions);
+      const longCandidates = new ScheduleCandidatesService(api, proxy, long.versions, realtime, configOf(2));
+      const longApply = settled(longCandidates.apply(third.rows[1]!.id, 'DIRECT', admin));
+      pendingReleases.push(long.release);
+      await parked(long.reached, longApply, 'the apply');
+      const target3 = await generatedMaster(sv, g7a);
+      const before3 = await one<{ dayOfWeek: number }>(`SELECT "dayOfWeek" FROM "MasterLessons" WHERE id = $1`, [target3.id]);
+      const startedAt = Date.now();
+      const busy = await refusedWith(lessonsOnSecond.update(target3.id, { dayOfWeek: await freeDayFor(target3.id) }, admin), 409, 'SCHEDULE_BUSY');
+      const waited = Date.now() - startedAt;
+      assert.ok(waited >= 4_900 && waited < 14_000, `the edit gave up after ${waited} ms`);
+      assert.match(String(busy.message ?? ''), /schemaförslag/, `the 409 does not say why: ${JSON.stringify(busy)}`);
+      const unchanged = await one<{ dayOfWeek: number }>(`SELECT "dayOfWeek" FROM "MasterLessons" WHERE id = $1`, [target3.id]);
+      assert.equal(unchanged.dayOfWeek, before3.dayOfWeek, 'the refused edit wrote');
+      long.release();
+      const longOutcome = await longApply;
+      assert.ok(longOutcome.ok, `the apply failed: ${longOutcome.ok ? '' : describe(longOutcome.error)}`);
+      console.log(`     sc-f: the edit behind a held apply answered ${busy.code} after ${waited} ms`);
     });
 
     await check('(sc-g) a version restore and an apply queue on the year lock both ways round, and a restore that waits past 5 s answers SCHEDULE_BUSY', async () => {
@@ -1198,12 +1231,20 @@ export async function scheduleCandidateChecks(
     });
 
     await check('(sc-j) the sweep abandons a run past its lease and frees the year; the partial index answers a start that passed every check; the cap across runs', async () => {
-      // A run whose instance "died": its task parked in the engine, its heartbeat an hour old.
+      // A run whose instance "died": its task parked in the engine, its heartbeat an hour old —
+      // and with it the deadline of the call it had out, which the task sets in the same
+      // statement (the heartbeat plus the call's timeout, well inside the lease).
       const solving = engine.park(isCandidateCall);
       pendingReleases.push(solving.release);
       const { runId } = await candidates.start({ academicYearId: year, count: 2 }, admin);
       await solving.arrived;
-      await owner.query(`UPDATE "ScheduleCandidateRuns" SET "heartbeatAt" = now() - interval '1 hour' WHERE id = $1`, [runId]);
+      await owner.query(
+        `UPDATE "ScheduleCandidateRuns"
+            SET "engineBusyUntil" = "engineBusyUntil" - ("heartbeatAt" - (now() - interval '1 hour')),
+                "heartbeatAt" = now() - interval '1 hour'
+          WHERE id = $1`,
+        [runId],
+      );
 
       // Shown as what the sweep will make it, and no longer counted as alive ...
       const shown = await candidates.overview(year, admin);
@@ -1277,6 +1318,55 @@ export async function scheduleCandidateChecks(
       } finally {
         await owner.query(`DELETE FROM "ScheduleCandidateRuns" WHERE "academicYearId" = $1`, [otherYear]);
       }
+    });
+
+    await check('(sc-l) a run interrupted while its call is out frees its year at once, keeps its place under CANDIDATE_RUNS_MAX until that call could have ended, and writes nothing more', async () => {
+      const activeNow = async () => {
+        const [row] = await api.withRls(admin, (tx) => tx.$queryRaw<{ n: number }[]>`SELECT app.schedule_candidate_runs_active() AS n`);
+        return Number(row?.n);
+      };
+      const idle = await activeNow();
+      // An instance of its own, so the shutdown hook ends only this run.
+      const restarting = new ScheduleCandidatesService(api, proxy, versions, realtime, configOf(idle + 2));
+      const solving = engine.park(isCandidateCall);
+      pendingReleases.push(solving.release);
+      const { runId } = await restarting.start({ academicYearId: year, count: 2 }, admin);
+      await solving.arrived;
+      const out = await runRow(runId);
+      assert.equal(out.status, 'RUNNING');
+      const busy = await one<{ until: Date | null; heartbeat: Date }>(
+        `SELECT "engineBusyUntil" AS until, "heartbeatAt" AS heartbeat FROM "ScheduleCandidateRuns" WHERE id = $1`,
+        [runId],
+      );
+      assert.ok(busy.until, 'the call out on the engine has no deadline');
+      // The lead's call: CANDIDATE_MAX_SECONDS 30 + 45 + the probe's 20.
+      assert.equal(Math.round((busy.until!.getTime() - busy.heartbeat.getTime()) / 1000), 95);
+
+      // The redeploy: SIGTERM runs the shutdown hook while the engine solves on.
+      await restarting.onModuleDestroy();
+      const interrupted = await runRow(runId);
+      assert.deepEqual([interrupted.status, interrupted.errorCode], ['FAILED', 'CANDIDATE_RUN_INTERRUPTED']);
+      // The year is free at once: Generera's question and the year's one active place.
+      assert.equal(await api.withRls(admin, (tx) => yearHasActiveCandidateRun(tx, year)), false);
+      // But the orphaned solve still counts under the cap: a cap with no room
+      // left beside it refuses a start anywhere.
+      assert.equal(await activeNow(), idle + 1, 'the interrupted run left the count while its call is out');
+      const capped = new ScheduleCandidatesService(api, proxy, versions, realtime, configOf(idle + 1));
+      await refusedWith(capped.start({ academicYearId: year, count: 2 }, admin), 409, 'CANDIDATES_BUSY');
+
+      // The engine answers; the orphaned task wakes to a run that is not its own.
+      solving.release();
+      for (let tries = 0; tries < 50; tries++) await sleep(20);
+      const after = await runRow(runId);
+      assert.deepEqual([after.status, after.errorCode, after.progress], ['FAILED', 'CANDIDATE_RUN_INTERRUPTED', 0]);
+      assert.equal((await candidateRows(runId)).length, 0, 'the interrupted task stored a candidate');
+
+      // Once the call could have ended, the place is free again.
+      await owner.query(`UPDATE "ScheduleCandidateRuns" SET "engineBusyUntil" = now() - interval '1 second' WHERE id = $1`, [runId]);
+      assert.equal(await activeNow(), idle);
+      const next = await runOf(2, capped);
+      assert.equal(next.row.status, 'SUCCEEDED');
+      console.log(`     sc-l: interrupted run counted until its call's deadline (95 s after the heartbeat); then a run of a cap of ${idle + 1} went through`);
     });
 
     await check('(sc-k) no stored candidate, run, REGENERATE entry, response or engine request names a pupil', async () => {

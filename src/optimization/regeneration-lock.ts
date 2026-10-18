@@ -21,8 +21,13 @@ import { isLockTimeout } from '../publication/publish-mode';
  * in the same transaction (a row a hand edit holds) are held to the same 5 s,
  * and a writer maps those to the same 409 — see isLockTimeout.
  *
- * Hand edits do not take this lock. What protects the apply from them is its
- * FOR UPDATE on the year's master rows and the asserts after its write.
+ * Hand edits of the grundschema (MasterLessonsService) take it SHARED, at
+ * most 5 s, before their first row lock (lockYearForGrundschemaEdit): edits
+ * run beside each other as before, and an edit meeting a rewrite in progress
+ * answers 409 SCHEDULE_BUSY within 5 s instead of waiting on the apply's row
+ * locks into its own 15 s and a 500. Both sides take the advisory lock before
+ * any row, so an apply and a hand edit cannot deadlock. The apply's FOR
+ * UPDATE on the year's master rows stays, for any writer that takes no lock.
  *
  * Every key built from a year hashes the uuid's canonical text
  * (`${id}::uuid::text`), not the string the caller holds: a request body may
@@ -125,6 +130,37 @@ export async function lockApplyYearKey(
     if (isLockTimeout(error)) throw scheduleBusy(SCHEDULE_BUSY);
     throw error;
   }
+}
+
+/**
+ * A hand edit's share of the year's regeneration lock (see the header): taken
+ * after the edit has read which year it touches and before it locks or writes
+ * any row. One statement, app.lock_years_for_grundschema_edit
+ * (20261125090000): the years in sorted order, waited for at most 5 s with
+ * the transaction's own lock_timeout put back after — then 409
+ * SCHEDULE_BUSY with a sentence that says why.
+ */
+export async function lockYearForGrundschemaEdit(
+  tx: PrismaClient,
+  academicYearIds: string | readonly string[],
+): Promise<void> {
+  const years = [...new Set(typeof academicYearIds === 'string' ? [academicYearIds] : academicYearIds)];
+  if (years.length === 0) return;
+  try {
+    await tx.$executeRaw`SELECT app.lock_years_for_grundschema_edit(${years}::uuid[])`;
+  } catch (error) {
+    if (isLockTimeout(error)) throw grundschemaBeingRewritten();
+    throw error;
+  }
+}
+
+/** A hand edit that met a rewrite of the year: what is rewriting it, and what to do. */
+export function grundschemaBeingRewritten(): ConflictException {
+  return new ConflictException({
+    message:
+      'Grundschemat skrivs om just nu: ett schemaförslag tillämpas, Generera sparar eller en version återställs. Försök igen om en stund.',
+    code: SCHEDULE_BUSY,
+  });
 }
 
 /**

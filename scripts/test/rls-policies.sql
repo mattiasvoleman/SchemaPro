@@ -24156,6 +24156,30 @@ BEGIN
   IF (SELECT provolatile FROM pg_proc WHERE oid = 'app.schedule_candidate_runs_active()'::regprocedure) <> 's' THEN
     RAISE EXCEPTION 'candidates catalogue: the count is not STABLE';
   END IF;
+
+  -- A hand edit's share of the regeneration lock: the caller's own
+  -- privileges (it reads and writes nothing), a pinned search_path, and the
+  -- API's EXECUTE alone.
+  f := to_regprocedure('app.lock_years_for_grundschema_edit(uuid[])');
+  IF f IS NULL THEN RAISE EXCEPTION 'candidates catalogue: app.lock_years_for_grundschema_edit(uuid[]) is missing'; END IF;
+  IF (SELECT prosecdef FROM pg_proc WHERE oid = f) THEN
+    RAISE EXCEPTION 'candidates catalogue: the edit lock runs as its owner, and needs nothing of the owner''s';
+  END IF;
+  IF NOT coalesce((SELECT 'search_path="public", "pg_temp"' = ANY (proconfig) OR 'search_path=public, pg_temp' = ANY (proconfig)
+                     FROM pg_proc WHERE oid = f), false) THEN
+    RAISE EXCEPTION 'candidates catalogue: the edit lock has no pinned search_path (%)', (SELECT proconfig FROM pg_proc WHERE oid = f);
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_proc pr, aclexplode(coalesce(pr.proacl, acldefault('f', pr.proowner))) a
+              WHERE pr.oid = f AND a.grantee = 0) THEN
+    RAISE EXCEPTION 'candidates catalogue: PUBLIC may call the edit lock';
+  END IF;
+  IF NOT has_function_privilege('app_authenticated', f, 'EXECUTE') THEN
+    RAISE EXCEPTION 'candidates catalogue: the API may not call the edit lock';
+  END IF;
+  FOREACH r IN ARRAY ARRAY['authenticated', 'anon', 'service_role'] LOOP
+    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+    IF has_function_privilege(r, f, 'EXECUTE') THEN RAISE EXCEPTION 'candidates catalogue: % may call the edit lock', r; END IF;
+  END LOOP;
   IF (SELECT count(*) FROM pg_proc, regexp_matches(prosrc, 'FOR UPDATE SKIP LOCKED', 'g')
        WHERE oid = 'app.schedule_candidates_sweep()'::regprocedure) <> 2 THEN
     RAISE EXCEPTION 'candidates catalogue: the sweep does not take both of its row sets FOR UPDATE SKIP LOCKED';
@@ -25166,9 +25190,13 @@ END $$;
 -- begun exactly half an hour ago, one with a lease of an hour and a 25
 -- minutes old heartbeat, and the primary school's fresh run are counted;
 -- finished runs, a run a millisecond past its lease or past half an hour,
--- and one whose lease of 60 s ran out are not. The count is the same asked
--- by the matrix school's FULL, by its teacher and with no principal, and
--- after a sweep, which marks exactly the runs it left out.
+-- and one whose lease of 60 s ran out are not. A run whose last engine call
+-- can still be solving (engineBusyUntil later than now) is counted whatever
+-- its status — one failed under its call, as a restart leaves it, and one
+-- past its lease — once each; one whose call ended a millisecond ago is not.
+-- The count is the same asked by the matrix school's FULL, by its teacher
+-- and with no principal, and after a sweep, which marks exactly the runs it
+-- left out.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -25179,14 +25207,15 @@ BEGIN
   PERFORM set_config('request.jwt.claims', CASE WHEN sub IS NULL THEN '' ELSE json_build_object('sub', sub)::text END, true);
 END $$;
 -- A run of the current principal's school in a year of its own.
-CREATE FUNCTION pg_temp.rls167_run(status text, heartbeat timestamptz, lease integer, created timestamptz)
+CREATE FUNCTION pg_temp.rls167_run(status text, heartbeat timestamptz, lease integer, created timestamptz,
+                                   busy timestamptz DEFAULT NULL)
 RETURNS uuid LANGUAGE plpgsql AS $$
 DECLARE yr uuid; run uuid;
 BEGIN
   INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
   VALUES (app.current_school_id(), 'RLS167 år ' || gen_random_uuid(), DATE '2075-08-15', DATE '2076-06-10', false, now()) RETURNING id INTO yr;
-  INSERT INTO "ScheduleCandidateRuns" ("schoolId", "academicYearId", status, requested, "heartbeatAt", "leaseSeconds", "createdAt")
-  VALUES (app.current_school_id(), yr, status::"ScheduleCandidateRunStatus", 2, heartbeat, lease, created)
+  INSERT INTO "ScheduleCandidateRuns" ("schoolId", "academicYearId", status, requested, "heartbeatAt", "leaseSeconds", "createdAt", "engineBusyUntil")
+  VALUES (app.current_school_id(), yr, status::"ScheduleCandidateRunStatus", 2, heartbeat, lease, created, busy)
   RETURNING id INTO run;
   RETURN run;
 END $$;
@@ -25212,7 +25241,11 @@ BEGIN
   PERFORM pg_temp.rls167_run('RUNNING', t - interval '600 seconds', 600, t - interval '20 minutes');
   PERFORM pg_temp.rls167_run('PENDING', t, 600, t - interval '30 minutes');
   PERFORM pg_temp.rls167_run('RUNNING', t - interval '25 minutes', 3600, t - interval '26 minutes');
+  -- Counted for the engine call still out: failed under it, and past its lease.
+  PERFORM pg_temp.rls167_run('FAILED', t, 600, t, t + interval '1 second');
+  PERFORM pg_temp.rls167_run('RUNNING', t - interval '600 seconds' - ms, 600, t - interval '20 minutes', t + interval '10 seconds');
   -- Not counted.
+  PERFORM pg_temp.rls167_run('FAILED', t, 600, t, t - ms);
   PERFORM pg_temp.rls167_run('SUCCEEDED', t, 600, t);
   PERFORM pg_temp.rls167_run('FAILED', t, 600, t);
   PERFORM pg_temp.rls167_run('RUNNING', t - interval '600 seconds' - ms, 600, t - interval '20 minutes');
@@ -25225,17 +25258,73 @@ BEGIN
   FOREACH sub IN ARRAY ARRAY['00000000-0000-4000-8000-000000000105', '00000000-0000-4000-8000-000000000111', NULL] LOOP
     PERFORM pg_temp.rls167_as(sub);
     n := app.schedule_candidate_runs_active();
-    IF n IS DISTINCT FROM before + 7 THEN
-      RAISE EXCEPTION 'active runs: asked by %, the count is %, expected % before and 7 more', coalesce(sub, 'no principal'), n, before;
+    IF n IS DISTINCT FROM before + 9 THEN
+      RAISE EXCEPTION 'active runs: asked by %, the count is %, expected % before and 9 more', coalesce(sub, 'no principal'), n, before;
     END IF;
   END LOOP;
 
-  -- The sweep marks what the count left out, and nothing it counted.
+  -- The sweep marks what the count left out, and nothing it counted (the run
+  -- past its lease it marks FAILED is counted on for its engine call).
   PERFORM app.schedule_candidates_sweep();
   n := app.schedule_candidate_runs_active();
-  IF n IS DISTINCT FROM before + 7 THEN RAISE EXCEPTION 'active runs: after a sweep the count is %, expected %', n, before + 7; END IF;
+  IF n IS DISTINCT FROM before + 9 THEN RAISE EXCEPTION 'active runs: after a sweep the count is %, expected %', n, before + 9; END IF;
   PERFORM pg_temp.rls167_as('00000000-0000-4000-8000-000000000105');
   SELECT count(*) INTO n FROM "ScheduleCandidateRuns" WHERE "schoolId" = m AND status IN ('PENDING', 'RUNNING', 'CANCELLING');
   IF n <> 6 THEN RAISE EXCEPTION 'active runs: the sweep left % of the matrix school''s runs active, the count counted 6', n; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 168: en handredigering tar sin del av läsårets omskrivningslås och
+-- lämnar sin lock_timeout som den var (app.lock_years_for_grundschema_edit).
+--
+-- MasterLessonsService takes it after the plain read that names a lesson's
+-- year and before its first row lock, so an edit meeting an apply, a
+-- Generera write or a restore (which take the same key exclusively in the
+-- gateway) answers 409 within 5 s, and an apply and an edit never deadlock.
+-- In one transaction: a call over two years, one of them twice and a NULL
+-- beside them, takes exactly two advisory locks, both SHARED and both on the
+-- gateway's keys — (hashtext('grundschema-regenerate'), hashtext(year)) — and
+-- the caller's lock_timeout is what it was before the call. That a held
+-- exclusive key makes it give up in 5 s with 55P03 is the probe's (sc-f),
+-- against the real services: one connection cannot hold both sides.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  y1 constant uuid := '00000000-0000-4000-8000-000000001681';
+  y2 constant uuid := '00000000-0000-4000-8000-000000001682';
+  before_locks integer;
+  after_locks integer;
+  key1 constant bigint := hashtext('grundschema-regenerate')::bigint & 4294967295;
+BEGIN
+  PERFORM set_config('lock_timeout', '7s', true);
+  SELECT count(*) INTO before_locks FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid();
+
+  PERFORM app.lock_years_for_grundschema_edit(ARRAY[y2, y1, y1, NULL]::uuid[]);
+
+  IF current_setting('lock_timeout') <> '7s' THEN
+    RAISE EXCEPTION 'edit lock: the caller''s lock_timeout is % after the call, it was 7s', current_setting('lock_timeout');
+  END IF;
+  SELECT count(*) INTO after_locks FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid();
+  IF after_locks - before_locks <> 2 THEN
+    RAISE EXCEPTION 'edit lock: two years took % advisory locks, expected one each', after_locks - before_locks;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid() AND mode <> 'ShareLock') THEN
+    RAISE EXCEPTION 'edit lock: it took an advisory lock exclusively, which would keep every other edit of the year out';
+  END IF;
+  IF (SELECT count(*) FROM pg_locks
+       WHERE locktype = 'advisory' AND pid = pg_backend_pid() AND mode = 'ShareLock' AND objsubid = 2
+         AND classid::bigint = key1
+         AND objid::bigint IN (hashtext(y1::text)::bigint & 4294967295, hashtext(y2::text)::bigint & 4294967295)) <> 2 THEN
+    RAISE EXCEPTION 'edit lock: its keys are not the gateway''s (hashtext(''grundschema-regenerate''), hashtext(year))';
+  END IF;
+
+  -- No year, no lock, and the setting untouched.
+  PERFORM app.lock_years_for_grundschema_edit(ARRAY[]::uuid[]);
+  IF current_setting('lock_timeout') <> '7s' THEN
+    RAISE EXCEPTION 'edit lock: an empty call left lock_timeout at %', current_setting('lock_timeout');
+  END IF;
 END $$;
 ROLLBACK;
