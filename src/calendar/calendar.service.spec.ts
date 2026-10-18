@@ -1370,6 +1370,104 @@ describe('CalendarService', () => {
       });
     });
 
+    /*
+     * A tioårig läsår (SFS 2025:729): a class's årskurs is one higher than the
+     * same åldersband in a nioårig one. The rasts are school-wide and stated in
+     * NIOARIG, so the class is read in NIOARIG before its rasts are chosen: a
+     * 10A is the 9 a "7–9" binds, a 7A the 6 of "F–6". A dated årskursregel and
+     * a lov are the läsår's own, entered for a day of it as its admin reads the
+     * classes, so they are compared as they stand — reading them over too would
+     * move a prao för åk 10 onto the nines.
+     */
+    describe('in a tioårig läsår', () => {
+      /** Projected by its select: a select without the numbering reads nioårig. */
+      const numbered = (gradeNumbering: 'NIOARIG' | 'TIOARIG') => arrangeYear({ gradeNumbering });
+
+      /** The two stadier's rasts, at different times so both can be told apart. */
+      const stageRasts = [
+        rastRow({ name: 'F–6', minGradeLevel: 0, maxGradeLevel: 6, start: '09:40', end: '10:00' }),
+        rastRow({ name: '7–9', minGradeLevel: 7, maxGradeLevel: 9, start: '10:20', end: '10:40' }),
+      ];
+
+      const rastsOf = (studentGroupId: string) =>
+        tx.calendarRast.create.mock.calls
+          .map(([call]) => (call as { data: { studentGroupId: string; name: string } }).data)
+          .filter((data) => data.studentGroupId === studentGroupId)
+          .map((data) => data.name);
+
+      /*
+       * Both edges of both stadier, from both sides of the reform. Specialskolan's
+       * last årskurs — 10 in the nioårig numbering, 11 in the tioårig — is in
+       * neither span and gets neither, in either.
+       */
+      it.each([
+        ['a tioårig 10A the 7–9 rast', 'TIOARIG', 10, ['7–9']],
+        ['a tioårig 8A the 7–9 rast, at its lower edge', 'TIOARIG', 8, ['7–9']],
+        ['a tioårig 7A the F–6 rast, at its upper edge', 'TIOARIG', 7, ['F–6']],
+        ['a tioårig 1A the F–6 rast, the förskoleklass åldersband', 'TIOARIG', 1, ['F–6']],
+        ['a tioårig åk 11 no rast of the two', 'TIOARIG', 11, []],
+        ['a nioårig 9A the 7–9 rast', 'NIOARIG', 9, ['7–9']],
+        ['a nioårig 7A the 7–9 rast, as it always was', 'NIOARIG', 7, ['7–9']],
+        ['a nioårig 6A the F–6 rast', 'NIOARIG', 6, ['F–6']],
+        ['a nioårig förskoleklass the F–6 rast', 'NIOARIG', 0, ['F–6']],
+        ['a nioårig åk 10 no rast of the two', 'NIOARIG', 10, []],
+      ])('publishes to %s', async (_label, gradeNumbering, gradeLevel, expected) => {
+        arrangePublish([template()], {
+          rasts: stageRasts,
+          groups: [{ id: GROUP_ID, gradeLevel, kind: 'CLASS' }],
+        });
+        numbered(gradeNumbering as 'NIOARIG' | 'TIOARIG');
+
+        await publishOneDay();
+
+        expect(rastsOf(GROUP_ID)).toEqual(expected);
+      });
+
+      /*
+       * The same closure for 8–10 and the same classes in both numberings: the
+       * closure is in the numbering of the läsår its day falls in, and so is the
+       * class. Read over into NIOARIG, the 8–10 would be 7–9 and take the 7A.
+       */
+      it.each([
+        ['closes a tioårig 10A', 'TIOARIG', 10, { created: 0, cancelled: 0, skipped: 1 }],
+        ['closes a tioårig 8A, at its lower edge', 'TIOARIG', 8, { created: 0, cancelled: 0, skipped: 1 }],
+        ['holds a tioårig 7A, which a closure read in NIOARIG would take', 'TIOARIG', 7, { created: 1, cancelled: 0, skipped: 0 }],
+        ['holds a tioårig åk 11, above it', 'TIOARIG', 11, { created: 1, cancelled: 0, skipped: 0 }],
+        ['closes a nioårig 10, as it always did', 'NIOARIG', 10, { created: 0, cancelled: 0, skipped: 1 }],
+        ['holds a nioårig 7A, as it always did', 'NIOARIG', 7, { created: 1, cancelled: 0, skipped: 0 }],
+      ])('reads a dated closure for åk 8–10 as the läsår numbers it: %s', async (_label, gradeNumbering, gradeLevel, expected) => {
+        arrangePublish([template()], {
+          closures: [
+            closure({ resourceType: 'GRADE_LEVEL', studentGroupId: null, minGradeLevel: 8, maxGradeLevel: 10 }),
+          ],
+          groups: [{ id: GROUP_ID, gradeLevel, kind: 'CLASS' }],
+        });
+        numbered(gradeNumbering as 'NIOARIG' | 'TIOARIG');
+
+        await expect(publishOneDay()).resolves.toMatchObject(expected);
+      });
+
+      it('sends a tioårig 10A home on its prao för åk 10, rast and all, and gives the 7A beside it the F–6 rast', async () => {
+        // The one walk asks both questions: the lov in the year's own
+        // numbering, the rast in NIOARIG. A 10A read as the 9 it is in NIOARIG
+        // would stay in school on its own prao and keep a rast; a 7A read as
+        // it stands would get the högstadium's.
+        arrangePublish([template()], {
+          rasts: stageRasts,
+          groups: [
+            { id: GROUP_ID, gradeLevel: 10, kind: 'CLASS' },
+            { id: EXTRA_GROUP_ID, gradeLevel: 7, kind: 'CLASS' },
+          ],
+          breaks: [schoolBreakFixture({ minGradeLevel: 10, maxGradeLevel: 10 })],
+        });
+        numbered('TIOARIG');
+
+        await expect(publishOneDay()).resolves.toMatchObject({ created: 0, skipped: 1 });
+        expect(rastsOf(GROUP_ID)).toEqual([]);
+        expect(rastsOf(EXTRA_GROUP_ID)).toEqual(['F–6']);
+      });
+    });
+
     it.each([
       ['00:00-00:00', time(0), time(0)],
       ['00:00-23:59', time(0), time(23, 59)],

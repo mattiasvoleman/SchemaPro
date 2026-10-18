@@ -1957,6 +1957,75 @@ describe("Timplan cell dialog candidates", () => {
 
       expect(state.rostersAskedFor.every((id) => id === null)).toBe(true);
     });
+
+    /*
+     * Next year tioårig while this year is not (SFS 2025:729). A behörighet is
+     * stated in NIOARIG, so a cell is judged through the numbering of the year
+     * in the picker — the one thing these two years do not share. Both own a
+     * "7A": this year's is the NIOARIG 7 Anna's 7–9 covers, next year's a new
+     * cohort, the NIOARIG 6 only Bo's 1–6 reaches. Pia's 8B rolls into next
+     * year's 10B, the NIOARIG 9, and takes her maths group Ma10 with her.
+     */
+    describe("when next year is tioårig", () => {
+      const tioarigNext = {
+        ...nextYear,
+        name: "2028/2029",
+        startDate: "2028-08-14",
+        endDate: "2029-06-08",
+        gradeNumbering: "TIOARIG",
+      };
+      const pia: PersonFixture = {
+        ...pupil,
+        id: "p-2",
+        firstName: "Pia",
+        email: "pia@example.test",
+        studentGroupId: "g-8b",
+      };
+
+      beforeEach(() => {
+        state.years = loaded([{ ...year, predecessorId: null }, tioarigNext] as never);
+        state.groups = loaded([
+          ...groups,
+          { id: "g-8b", academicYearId: "y1", name: "8B", kind: "CLASS", gradeLevel: 8 },
+          { id: "g-next-7a", academicYearId: "y2", name: "7A", kind: "CLASS", gradeLevel: 7 },
+          { id: "g-next-10b", academicYearId: "y2", name: "10B", kind: "CLASS", gradeLevel: 10 },
+          { id: "g-ma10", academicYearId: "y2", name: "Ma10", kind: "TEACHING_GROUP", gradeLevel: null },
+        ]);
+        state.people = loaded([anna, bo, cilla, pupil, pia]);
+        state.memberships = loaded([{ studentGroupId: "g-ma10", studentId: "p-2" }] as never);
+        state.rosters = {
+          academicYearId: "y2",
+          basis: "PROJECTED",
+          homeClasses: [{ studentId: "p-2", studentGroupId: "g-next-10b" }],
+          counts: { moved: 1, graduates: 0, unplaced: 0 },
+          membershipsOutOfDate: { missing: 0, stale: 0 },
+        };
+      });
+
+      it("judges next year's 7A in next year's numbering: Bo's 1–6 reaches it, Anna's 7–9 does not", async () => {
+        await openTeacherPicker("cellLabel(7A|Samhällsorientering)");
+
+        expect(optionNamed("Bo Lind")?.textContent).toContain("kindBEHORIG");
+        expect(optionNamed("Anna Svensson")?.textContent).toContain("candidateUnqualified");
+      });
+
+      it("judges this year's 7A beside it as the nine-year 7 it is", async () => {
+        window.history.replaceState(null, "", "/");
+        await openTeacherPicker("cellLabelPeriod(7A|Samhällsorientering|2|60|badgeOdd)");
+
+        expect(optionNamed("Anna Svensson")?.textContent).toContain("kindLEGITIMATION");
+        expect(optionNamed("Bo Lind")?.textContent).toContain("candidateUnqualified");
+      });
+
+      it("gives Ma10 the span of the 10B its member moves into, read as the NIOARIG 9", async () => {
+        // Raw, 10 is past Anna's 7–9; without the overlay Ma10 would be
+        // yearless and Bo's 1–6 would cover it too.
+        await openTeacherPicker("cellLabel(Ma10|Samhällsorientering)");
+
+        expect(optionNamed("Anna Svensson")?.textContent).toContain("kindLEGITIMATION");
+        expect(optionNamed("Bo Lind")?.textContent).toContain("candidateUnqualified");
+      });
+    });
   });
 
   /*

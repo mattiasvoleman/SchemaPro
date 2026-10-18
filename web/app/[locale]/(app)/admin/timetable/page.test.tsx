@@ -44,6 +44,9 @@ const state = vi.hoisted(() => ({
   yearsLoading: false,
   /** The year's timplansposter: only their blockId is read here (Block i schemat). */
   requirements: [] as unknown[],
+  /** GROUPS and PEOPLE unless a row adds to them; null between tests. */
+  groups: null as unknown[] | null,
+  people: null as unknown[] | null,
 }));
 
 /*
@@ -89,6 +92,7 @@ const planning = vi.hoisted(() => ({
     predecessorId: string | null;
     startDate: string;
     endDate: string;
+    gradeNumbering?: "NIOARIG" | "TIOARIG";
   },
   rosters: null as unknown,
 }));
@@ -140,8 +144,8 @@ vi.mock("@/lib/queries", () => ({
       isError: state.lessonsFailed,
     };
   },
-  useGroups: () => ({ data: GROUPS }),
-  usePeople: () => ({ data: PEOPLE }),
+  useGroups: () => ({ data: state.groups ?? GROUPS }),
+  usePeople: () => ({ data: state.people ?? PEOPLE }),
   useRooms: () => ({ data: ROOMS }),
   useSubjects: () => ({ data: SUBJECTS }),
   useRequirements: (yearId: string | null) => {
@@ -514,6 +518,8 @@ beforeEach(() => {
   state.askedFor = {};
   state.yearsLoading = false;
   state.requirements = [];
+  state.groups = null;
+  state.people = null;
   planning.successor = null;
   planning.rosters = null;
 });
@@ -2334,6 +2340,81 @@ describe("next year's grid, before its activation", () => {
     render(<TimetablePage />);
 
     expect(screen.queryByRole("group", { name: "planningYear.label" })).toBeNull();
+  });
+
+  /*
+   * Next year tioårig while this year is not (SFS 2025:729). A rast is
+   * school-wide and stated in NIOARIG (grade-numbering.ts), so a class's span
+   * is read through the numbering of the year ON SCREEN — the one thing the
+   * two years here do not share. And the spans are built from that year's
+   * groups only, as the gateway builds them (room-eligibility.ts
+   * gradeSpanOf): a pupil not yet moved has this year's class as home, and
+   * that class is no årskurs of next year's.
+   */
+  describe("when next year is tioårig", () => {
+    const TIOARIG_NEXT = {
+      ...NEXT,
+      name: "2028/29",
+      startDate: "2028-08-14",
+      endDate: "2029-06-08",
+      gradeNumbering: "TIOARIG" as const,
+    };
+    /** Next year's 7.1: a new cohort, the NIOARIG 6. This year's 7.1 is the NIOARIG 7. */
+    const NEXT_71 = { id: "g-next-71", academicYearId: "y-2", name: "7.1", kind: "CLASS", gradeLevel: 7 };
+
+    beforeEach(() => {
+      planning.successor = TIOARIG_NEXT;
+      state.groups = [...GROUPS, NEXT_71];
+    });
+
+    async function showTioarigYear() {
+      const user = userEvent.setup();
+      render(<TimetablePage />);
+      await user.click(screen.getByRole("button", { name: "planningYear.optionNext(2028/29)" }));
+    }
+
+    it("draws the 4–6 rast for next year's 7.1, the NIOARIG 6, and still not for this year's", async () => {
+      await showTioarigYear();
+      await filterTo("7.1");
+      expect(screen.getAllByText("Förmiddagsrast")).toHaveLength(5);
+
+      cleanup();
+      // This year's 7.1, a nine-year 7, whatever next year is numbered.
+      render(<TimetablePage />);
+      await filterTo("7.1");
+      expect(screen.queryByText("Förmiddagsrast")).toBeNull();
+    });
+
+    it("reads next year's 7.1 as the 7 it is when next year is numbered NIOARIG", async () => {
+      planning.successor = { ...TIOARIG_NEXT, gradeNumbering: "NIOARIG" };
+      await showTioarigYear();
+      await filterTo("7.1");
+      expect(screen.queryByText("Förmiddagsrast")).toBeNull();
+    });
+
+    it("lends 5ma1 no årskurs from this year's classes while the projection is on its way", async () => {
+      // Gus sits in this year's 7.1 and in next year's 5ma1. Read with this
+      // year's groups, his 7 would come out of the tioårig translation as 6
+      // and draw the 4–6 rast for a group next year has placed nobody in.
+      state.people = [...PEOPLE, pupil("p-gus", "Gus", "g-71")];
+      state.memberships = [
+        ...MEMBERSHIPS,
+        { studentId: "p-alva", studentGroupId: "g-next-5ma" },
+        { studentId: "p-gus", studentGroupId: "g-next-5ma" },
+      ];
+      planning.rosters = null;
+      await showTioarigYear();
+      await filterTo("5ma1");
+      expect(screen.queryByText("Förmiddagsrast")).toBeNull();
+
+      cleanup();
+      // The overlay arrives with Alva in next year's 5.1, the NIOARIG 4; Gus,
+      // not moved, still lends nothing.
+      planning.rosters = rostersWithAlvaIn("g-next-51");
+      await showTioarigYear();
+      await filterTo("5ma1");
+      expect(screen.getAllByText("Förmiddagsrast")).toHaveLength(5);
+    });
   });
 });
 

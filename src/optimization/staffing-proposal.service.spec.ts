@@ -111,6 +111,30 @@ const withAnnaHalfInSpring = (rows: Record<string, Row[]> = schoolRows()): Recor
 };
 
 /**
+ * The school in a läsår of either numbering (SFS 2025:729): a tioårig one is
+ * 2028/29, a nioårig one the 2026/27 it always was. G7A is an 8A, G8A the
+ * class whose årskurs is `grade` (Ma 8A's row, open, is that class's). Anna
+ * holds Ma 7–9, Bo Ma 10–10 — specialskolan's 10, in NIOARIG as every
+ * behörighet is stated.
+ */
+const numberedSchool = (gradeNumbering: 'NIOARIG' | 'TIOARIG', grade = 10): Record<string, Row[]> => {
+  const rows = schoolRows();
+  Object.assign(
+    rows['academicYear']![0]!,
+    gradeNumbering === 'TIOARIG'
+      ? { name: '2028/29', startDate: day('2028-08-21'), endDate: day('2029-06-15'), gradeNumbering }
+      : { gradeNumbering },
+  );
+  Object.assign(rows['studentGroup']!.find((group) => group['id'] === G7A)!, { name: '8A', gradeLevel: 8 });
+  Object.assign(rows['studentGroup']!.find((group) => group['id'] === G8A)!, { name: `${grade}A`, gradeLevel: grade });
+  rows['teacherSubjectQualification'] = [
+    { userId: ANNA, subjectId: MA, minGradeLevel: 7, maxGradeLevel: 9, kind: 'LEGITIMATION', validFrom: null, validTo: null },
+    { userId: BO, subjectId: MA, minGradeLevel: 10, maxGradeLevel: 10, kind: 'BEHORIG', validFrom: null, validTo: null },
+  ];
+  return rows;
+};
+
+/**
  * Anna leads Ma 7A (120); Eva, who has left, leads Sv 7A; Ma 8A and Sv 8A are
  * open, Sv 8A with Bo as its co-teacher; an odd-week row nobody teaches; and
  * Anna is both teachers of a 30-minute row nothing should touch.
@@ -1209,6 +1233,52 @@ describe('StaffingProposalService.propose', () => {
       }
     });
   });
+
+  /*
+   * A tioårig läsår (SFS 2025:729). The proposal reads its year through
+   * readLoadInput, so the input's year carries the numbering, and
+   * qualificationCovers reads every row's span in NIOARIG through it: Anna's
+   * "7–9" holds the tioårig 10A (NIOARIG 9), and Bo's "10–10" holds its 11,
+   * never its 10A. The eligibility sent and the reasons returned both read it
+   * so; a nioårig läsår is judged raw, as it always was.
+   */
+  describe('in a tioårig läsår', () => {
+    const ids = [ANNA, BO, CY, DAG, REKTOR];
+    const eligibleForMa = async (rows: Record<string, Row[]>) => {
+      const { service, sent } = setup(rows);
+      await service.propose(ask({ respectQualifications: true }), admin());
+      const payload = sent()[0]!;
+      const set = payload.eligibilitySets.find((s) => s.id === sentRow(payload, R_MA8, rows).eligibilitySetId);
+      // Back from the minted uuids to the staff they stand for, by the payload's order.
+      return (set?.teacherIds ?? []).map((minted) => ids[payload.teachers.findIndex((t) => t.id === minted)]);
+    };
+
+    it('sends the 7–9 holder as eligible for a tioårig 10A, and the 10–10 holder for its 11', async () => {
+      expect(await eligibleForMa(numberedSchool('TIOARIG'))).toEqual([ANNA]);
+      expect(await eligibleForMa(numberedSchool('TIOARIG', 11))).toEqual([BO]);
+    });
+
+    it('sends the 10–10 holder for a nioårig 10, as it always did', async () => {
+      expect(await eligibleForMa(numberedSchool('NIOARIG'))).toEqual([BO]);
+      // The numbering absent from the row reads nioårig too.
+      const absent = numberedSchool('NIOARIG');
+      delete absent['academicYear']![0]!['gradeNumbering'];
+      expect(await eligibleForMa(absent)).toEqual([BO]);
+    });
+
+    it('gives the lead change on a tioårig 10A the 7–9 behörighet as its reason, and none on a nioårig 10', async () => {
+      const reasonOf = async (rows: Record<string, Row[]>) => {
+        // Not respected: the stand-in hands every open row to Anna, the first with room.
+        const proposal = await setup(rows).service.propose(ask(), admin());
+        const ma = proposal.assignments.find((a) => a.requirementId === R_MA8)!;
+        expect(ma.toTeacherId).toBe(ANNA);
+        return ma.reasons.qualificationKind;
+      };
+      expect(await reasonOf(numberedSchool('TIOARIG'))).toBe('LEGITIMATION');
+      expect(await reasonOf(numberedSchool('TIOARIG', 11))).toBeNull();
+      expect(await reasonOf(numberedSchool('NIOARIG'))).toBeNull();
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1493,5 +1563,52 @@ describe('StaffingProposalService.apply', () => {
       { code: 'STAFF_TEACHER_OVER_TARGET', params: expect.objectContaining({ minutes: 360 }), userId: BO, requirementIds: [R_MA8] },
     ]);
     expect(leadOf(world, R_MA8)).toBe(BO);
+  });
+
+  /*
+   * A tioårig läsår under qualificationMode REFUSE: the apply judges the batch
+   * on the year it reads under the lock, its numbering on it, so the 7–9
+   * teacher put on a tioårig 10A is no refusal; the 11 is, named as the läsår
+   * numbers it. The same 10 in a nioårig läsår is refused, as it always was.
+   */
+  describe('in a tioårig läsår', () => {
+    const annaOnMa = async (rows: Record<string, Row[]>) => {
+      rows['staffingPolicy']![0]!['qualificationMode'] = 'REFUSE';
+      const { service, world, proposal } = await proposeThenApply(rows);
+      const applied = service.apply(
+        { academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: [{ requirementId: R_MA8, fromTeacherId: null, toTeacherId: ANNA }] },
+        admin(),
+      );
+      return { world, applied };
+    };
+
+    it('applies the 7–9 teacher on a tioårig 10A under REFUSE, warning of nothing', async () => {
+      const { world, applied } = await annaOnMa(numberedSchool('TIOARIG'));
+      await expect(applied).resolves.toMatchObject({ warnings: [] });
+      expect(leadOf(world, R_MA8)).toBe(ANNA);
+    });
+
+    it('refuses her on a tioårig 11, naming åk 11 and the row as the läsår names it', async () => {
+      const { world, applied } = await annaOnMa(numberedSchool('TIOARIG', 11));
+      await expect(applied).rejects.toBeInstanceOf(ConflictException);
+      await applied.catch((error: ConflictException) =>
+        expect(error.getResponse()).toEqual({
+          code: 'STAFF_TEACHER_NOT_QUALIFIED',
+          message: 'Matematik för 11A: Läraren saknar behörighet i Matematik för åk 11.',
+          params: { role: 'TEACHER', subject: 'Matematik', grades: '11', userId: ANNA, requirementId: R_MA8 },
+        }),
+      );
+      expect(leadOf(world, R_MA8)).toBeNull();
+      expect(world.rows['scheduleChangeLog']).toHaveLength(0);
+    });
+
+    it('refuses her on a nioårig 10, as it always did', async () => {
+      const { world, applied } = await annaOnMa(numberedSchool('NIOARIG'));
+      await expect(applied).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'STAFF_TEACHER_NOT_QUALIFIED', params: expect.objectContaining({ grades: '10' }) },
+      });
+      expect(leadOf(world, R_MA8)).toBeNull();
+    });
   });
 });

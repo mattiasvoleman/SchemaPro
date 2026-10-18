@@ -83,6 +83,9 @@ const THIS_YEAR = { id: "y-1", name: "2026/27", isActive: true, predecessorId: n
 const years = vi.hoisted(() => ({
   year: null as unknown,
   active: null as unknown,
+  /** Next year and the gateway's overlay for it: null unless a row plans next year. */
+  successor: null as unknown,
+  rosters: null as unknown,
   rostersFailed: false,
   isLoading: false,
   isError: false,
@@ -92,9 +95,9 @@ vi.mock("@/lib/planning-year", () => ({
   usePlanningYear: () => ({
     year: years.year,
     active: years.active,
-    successor: null,
+    successor: years.successor,
     choose: () => {},
-    rosters: null,
+    rosters: years.rosters,
     rostersFailed: years.rostersFailed,
   }),
 }));
@@ -329,6 +332,8 @@ beforeEach(() => {
   state.requirements = [];
   years.year = THIS_YEAR;
   years.active = THIS_YEAR;
+  years.successor = null;
+  years.rosters = null;
   years.rostersFailed = false;
   years.isLoading = false;
   years.isError = false;
@@ -772,6 +777,63 @@ describe("Gaps page — free time", () => {
       cleanup();
       years.year = { ...THIS_YEAR, gradeNumbering: "NIOARIG" };
       expect(await thursdayOf("10B")).toContain("17:00");
+    });
+
+    /*
+     * Next year planned before its activation, tioårig while this year is
+     * not. The spans are built from the shown year's groups only, as the
+     * gateway builds them (room-eligibility.ts gradeSpanOf): a pupil the
+     * activation does not move keeps this year's 8B as home class, and that
+     * class is no årskurs of next year's. Read with every group the school
+     * has, 8B's 8 would come out of the tioårig translation as 7 and frame
+     * Ma2 by a class it does not hold.
+     */
+    describe("next year, before its activation", () => {
+      const NEXT_YEAR = {
+        id: "y-2",
+        name: "2028/29",
+        isActive: false,
+        predecessorId: "y-1",
+        gradeNumbering: "TIOARIG",
+      };
+      const rostersMoving = (homeClasses: { studentId: string; studentGroupId: string }[]) => ({
+        academicYearId: "y-2",
+        basis: "PROJECTED",
+        homeClasses,
+        counts: { moved: homeClasses.length, graduates: 0, unplaced: 0 },
+        membershipsOutOfDate: { missing: 0, stale: 0 },
+      });
+
+      beforeEach(() => {
+        years.year = NEXT_YEAR;
+        years.successor = NEXT_YEAR;
+        state.groups = [
+          ...GROUPS,
+          // This year's 8B a year on: the NIOARIG 9 age band, numbered 10.
+          { id: "g2-10b", academicYearId: "y-2", name: "10B", kind: "CLASS", gradeLevel: 10 },
+          // Nils's maths group, carried at the rollover: no year of its own.
+          { id: "g2-ma", academicYearId: "y-2", name: "Ma2", kind: "TEACHING_GROUP", gradeLevel: null },
+        ];
+        state.memberships = [{ studentId: "s-2", studentGroupId: "g2-ma" }];
+        state.lessons = [
+          { ...lesson("n1", "g2-10b", "t-per", "r-b03", 3, "08:00", "09:00"), academicYearId: "y-2" },
+        ];
+        state.frameTimes = [FRAME_7_9];
+      });
+
+      it("frames Ma2 by the 10B its pupil moves into, and never by this year's 8B", async () => {
+        // 8B not yet linked to 10B: the activation moves nobody, so Nils's
+        // home class is this year's 8B and Ma2 has no year to be framed by.
+        years.rosters = rostersMoving([]);
+        expect(await thursdayOf("Ma2")).toContain("17:00");
+
+        cleanup();
+        // Linked: the gateway projects Nils into 10B, the 9 a "7–9" frame binds.
+        years.rosters = rostersMoving([{ studentId: "s-2", studentGroupId: "g2-10b" }]);
+        const framedDay = await thursdayOf("Ma2");
+        expect(framedDay).not.toContain("17:00");
+        expect(framedDay).toContain("15:00");
+      });
     });
   });
 

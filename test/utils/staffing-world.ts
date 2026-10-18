@@ -41,7 +41,8 @@ export interface WorldRequirement {
 export interface StaffingWorld {
   /** Null: the school has no policy row (the table's defaults apply). */
   policy?: Partial<WorldPolicy> | null;
-  year?: { id: string; startDate: Date; endDate: Date };
+  /** Without a numbering the läsår reads nioårig, as a year always did. */
+  year?: { id: string; startDate: Date; endDate: Date; gradeNumbering?: 'NIOARIG' | 'TIOARIG' };
   employments?: { id: string; userId: string; employmentPercent?: number; teachingTargetMinutesPerWeek?: number | null }[];
   requirements?: WorldRequirement[];
   qualifications?: { userId: string; subjectId: string; minGradeLevel: number; maxGradeLevel: number; kind?: 'LEGITIMATION' | 'BEHORIG' | 'TILLATEN'; validFrom?: Date | null; validTo?: Date | null }[];

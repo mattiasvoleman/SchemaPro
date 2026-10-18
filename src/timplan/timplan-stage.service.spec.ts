@@ -6,8 +6,10 @@ import { recordedReads } from '../../test/utils/recorded-reads';
 import fixture from '../common/__fixtures__/timplan-stage-cases.json';
 import { computePupilStages, type StageInput } from '../common/timplan-stage';
 import type { PrismaService } from '../database/prisma.service';
+import * as stageInput from './timplan-stage-input';
+import type { StageYearRead } from './timplan-stage-input';
 import { describeStageVerdict } from './timplan-stage-messages';
-import { TimplanStageService, statementRows } from './timplan-stage.service';
+import { TimplanStageService, computeStages, statementRows } from './timplan-stage.service';
 
 const YEAR_ID = '44444444-4444-4444-8444-444444444444';
 const PUPIL = 'e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1';
@@ -54,6 +56,86 @@ describe('TimplanStageService', () => {
       expect(answer).toMatchObject({ isActiveYear: true, classes: [], verdictCounts: [], publication: null });
       // The cohort notice still names the first reformed cohort.
       expect(answer.cohorts.map((row) => row.regime)).toEqual(['REFORMED_2028']);
+    });
+
+    /*
+     * A tioårig läsår (SFS 2025:729). A year's plan rows and the årskurser a
+     * plan is asked for are read in that year's numbering (planRowOfInput,
+     * attachableGrade), and the stage walks every year a pupil was enrolled
+     * in: each hands its rows over in its own numbering. The tioårig year says
+     * so; a nioårig one adds nothing, as before the reform.
+     */
+    describe('in a tioårig läsår', () => {
+      const PREVIOUS_ID = '43434343-4343-4343-8343-434343434343';
+      const CLASS_8A = 'c8c8c8c8-c8c8-4c8c-8c8c-c8c8c8c8c8c8';
+      const CLASS_10A = 'cacacaca-caca-4aca-8aca-cacacacacaca';
+      const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
+
+      let walk: jest.SpyInstance | undefined;
+      afterEach(() => walk?.mockRestore());
+
+      it('hands each year’s rows to the walk in that year’s own numbering: the nioårig 8A’s as before, the tioårig 10A’s as tioårig', async () => {
+        walk = jest.spyOn(stageInput, 'recordedBlocksOfYear');
+        tx.academicYear.findUnique.mockResolvedValue({
+          id: YEAR_ID,
+          startDate: day('2028-08-21'),
+          endDate: day('2029-06-15'),
+          isActive: true,
+          school: { timezone: 'Europe/Stockholm' },
+        });
+        const years: Record<string, unknown>[] = [
+          { id: PREVIOUS_ID, name: '2027/28', startDate: day('2027-08-16'), endDate: day('2028-06-09'), predecessorId: null, gradeNumbering: 'NIOARIG' },
+          { id: YEAR_ID, name: '2028/29', startDate: day('2028-08-21'), endDate: day('2029-06-15'), predecessorId: PREVIOUS_ID, gradeNumbering: 'TIOARIG' },
+        ];
+        // Projected by its select, as Prisma answers: a select without the
+        // numbering reads every year nioårig.
+        tx.academicYear.findMany.mockImplementation(async ({ select }: { select: Record<string, boolean> }) =>
+          years.map((row) => Object.fromEntries(Object.keys(select).filter((column) => select[column]).map((column) => [column, row[column]]))),
+        );
+        // The open row, then the history: 8A in the nioårig year and 10A in the
+        // tioårig one, the same åldersband a year on (övergångsbestämmelse 4).
+        tx.studentEnrollment.findMany
+          .mockResolvedValueOnce([{ studentId: PUPIL, studentGroupId: CLASS_10A, gradeLevel: 10 }])
+          .mockResolvedValueOnce([
+            {
+              studentId: PUPIL,
+              academicYearId: PREVIOUS_ID,
+              studentGroupId: CLASS_8A,
+              gradeLevel: 8,
+              validFrom: day('2027-08-16'),
+              validTo: day('2028-06-10'),
+              source: 'RECORDED',
+              createdAt: new Date('2027-08-16T06:00:00.000Z'),
+            },
+            {
+              studentId: PUPIL,
+              academicYearId: YEAR_ID,
+              studentGroupId: CLASS_10A,
+              gradeLevel: 10,
+              validFrom: day('2028-08-21'),
+              validTo: null,
+              source: 'RECORDED',
+              createdAt: new Date('2028-08-21T06:00:00.000Z'),
+            },
+          ]);
+        const classes = [
+          { id: CLASS_8A, name: '8A', kind: 'CLASS', gradeLevel: 8, academicYearId: PREVIOUS_ID },
+          { id: CLASS_10A, name: '10A', kind: 'CLASS', gradeLevel: 10, academicYearId: YEAR_ID },
+        ];
+        tx.studentGroup.findMany.mockImplementation(async ({ where }: { where: { academicYearId: string } }) =>
+          classes.filter((group) => group.academicYearId === where.academicYearId).map(({ academicYearId: _year, ...group }) => group),
+        );
+
+        await computeStages(tx as unknown as Prisma.TransactionClient, YEAR_ID, new Date('2028-10-02T08:00:00.000Z'), null);
+
+        const reads = walk.mock.calls.map(([read]) => read as StageYearRead);
+        expect(reads.map((read) => read.year.id)).toEqual([PREVIOUS_ID, YEAR_ID]);
+        expect(reads[0]!.planned).not.toHaveProperty('gradeNumbering');
+        expect(reads[1]!.planned).toHaveProperty('gradeNumbering', 'TIOARIG');
+        // The classes as each year numbers them: the numbering travels beside
+        // them and is applied once, where a plan row is read.
+        expect(reads.map((read) => read.planned.groups.map((group) => group.gradeLevel))).toEqual([[8], [10]]);
+      });
     });
   });
 

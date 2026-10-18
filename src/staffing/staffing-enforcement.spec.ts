@@ -1,10 +1,13 @@
 import { ConflictException } from '@nestjs/common';
 import type { PrismaClient } from '@prisma/client';
-import { createTxMock, type TxMock } from '../../test/utils/prisma-mock';
+import { createTxMock, testUser, type TxMock } from '../../test/utils/prisma-mock';
+import { WORLD_YEAR, givenStaffingWorld, type StaffingWorld } from '../../test/utils/staffing-world';
 import type { GradeNumbering } from '../common/grade-numbering';
 import {
+  RequirementImportChecks,
   STAFFING_FIELDS,
   enforceRequirementBatch,
+  enforceRequirementWrite,
   lessonQualificationFindings,
   mergeRequirement,
   readCheckPolicy,
@@ -304,5 +307,112 @@ describe('lessonQualificationFindings and the läsår’s numbering', () => {
     await expect(
       ask(G10, { window: { startDate: '2028-09-05', endDate: '2028-09-05' }, gradeNumbering: 'TIOARIG' }),
     ).resolves.toEqual([]);
+  });
+});
+
+/*
+ * A timplanspost write and a requirements file in a tioårig läsår (SFS
+ * 2025:729). Both judge on readLoadInput's year, which carries the numbering
+ * when it is tioårig, so under REFUSE a 7–9 teacher on a tioårig 10A is no
+ * refusal and her 11 is one, named as the läsår numbers it. A nioårig läsår —
+ * the numbering stored or absent — refuses its 10 as it always did.
+ */
+describe('enforceRequirementWrite and RequirementImportChecks and the läsår’s numbering', () => {
+  const ANNA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const MA = 'ma';
+  const G10 = 'g-10a';
+  const G11 = 'g-11a';
+  const TIOARIG: StaffingWorld['year'] = {
+    ...WORLD_YEAR,
+    startDate: new Date('2028-08-21T00:00:00.000Z'),
+    endDate: new Date('2029-06-15T00:00:00.000Z'),
+    gradeNumbering: 'TIOARIG',
+  };
+  const NIOARIG: StaffingWorld['year'] = { ...WORLD_YEAR, gradeNumbering: 'NIOARIG' };
+  let tx: TxMock;
+
+  beforeEach(() => {
+    tx = createTxMock();
+  });
+
+  // Behörighet only: the load question is OFF, so no post is locked or read.
+  const arrange = (year: StaffingWorld['year']) =>
+    givenStaffingWorld(tx, {
+      policy: { qualificationMode: 'REFUSE', overAllocationMode: 'OFF' },
+      year,
+      groups: [
+        { id: G10, name: '10A', gradeLevel: 10 },
+        { id: G11, name: '11A', gradeLevel: 11 },
+      ],
+      subjects: [{ id: MA, name: 'Matematik' }],
+      qualifications: [{ userId: ANNA, subjectId: MA, minGradeLevel: 7, maxGradeLevel: 9 }],
+    });
+  const create = (studentGroupId: string) =>
+    enforceRequirementWrite(tx as unknown as PrismaClient, {
+      viewer: testUser(),
+      showsPeriods: true,
+      schoolId: 'school',
+      academicYearId: WORLD_YEAR.id,
+      requirementId: null,
+      subjectId: MA,
+      studentGroupId,
+      before: null,
+      patch: { teacherId: ANNA, lessonsPerWeek: 2 },
+    });
+  const refusal = (grades: string) => ({
+    status: 409,
+    response: {
+      code: 'STAFF_TEACHER_NOT_QUALIFIED',
+      params: { role: 'TEACHER', subject: 'Matematik', grades },
+      message: `Läraren saknar behörighet i Matematik för åk ${grades}.`,
+    },
+  });
+
+  it('a timplanspost write passes the 7–9 teacher on a tioårig 10A under REFUSE, and refuses her on the 11 as åk 11', async () => {
+    arrange(TIOARIG);
+    await expect(create(G10)).resolves.toEqual([]);
+    await expect(create(G11)).rejects.toMatchObject(refusal('11'));
+  });
+
+  it('a timplanspost write in a nioårig läsår, the numbering stored or absent, refuses her 10 as åk 10', async () => {
+    for (const year of [NIOARIG, WORLD_YEAR]) {
+      arrange(year);
+      await expect(create(G10)).rejects.toMatchObject(refusal('10'));
+    }
+  });
+
+  it('a requirements file judges its rows on the same year: the tioårig 10A passes, the 11A is refused as åk 11', async () => {
+    const judged = async (year: StaffingWorld['year']) => {
+      arrange(year);
+      const checks = await RequirementImportChecks.open(tx as unknown as PrismaClient, {
+        viewer: testUser(),
+        showsPeriods: true,
+        schoolId: 'school',
+        academicYearId: WORLD_YEAR.id,
+        teacherIds: [ANNA],
+        groupIds: [G10, G11],
+      });
+      return (studentGroupId: string, groupName: string, rowNumber: number) =>
+        checks!.judge({
+          requirementId: null,
+          rowNumber,
+          subjectId: MA,
+          subjectName: 'Matematik',
+          studentGroupId,
+          groupName,
+          patch: { teacherId: ANNA },
+        }).findings;
+    };
+    const notQualified = (grades: string) => [
+      { code: 'STAFF_TEACHER_NOT_QUALIFIED', mode: 'REFUSE', userId: ANNA, params: { role: 'TEACHER', subject: 'Matematik', grades } },
+    ];
+
+    const tioarig = await judged(TIOARIG);
+    expect(tioarig(G10, '10A', 2)).toEqual([]);
+    expect(tioarig(G11, '11A', 3)).toEqual(notQualified('11'));
+
+    for (const year of [NIOARIG, WORLD_YEAR]) {
+      expect((await judged(year))(G10, '10A', 2)).toEqual(notQualified('10'));
+    }
   });
 });
