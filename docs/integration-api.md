@@ -114,7 +114,8 @@ switch knowing it:
   With the switch off neither field is sent and nothing can be told apart.
 * **That a hidden field changed, and when — never to what.** `meta.modified`
   is the post's `updatedAt`, which moves on every save of the post: a changed
-  nedsättning, riktmärke, note or avtalsform moves it while every field the
+  nedsättning, riktmärke, note, avtalsform or number of teaching days a week
+  (deltid in days, which the feed never sends) moves it while every field the
   feed sends stays the same. For a post split into stretches it is also the
   latest `updatedAt` of the post's periods, which moves the same way. A system
   polling the feed can see that something it is not shown changed on that
