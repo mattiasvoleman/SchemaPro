@@ -211,6 +211,7 @@ const anonymised = (real: School, turn = 0): BasisSource => {
     constraint: new Map<string, string>(),
     workRule: new Map<string, string>(),
     block: new Map<string, string>(),
+    dayLimit: new Map<string, string>(),
   };
   const anon = (map: Map<string, string>, id: string): string => {
     const known = map.get(id);
@@ -277,6 +278,20 @@ const anonymised = (real: School, turn = 0): BasisSource => {
       })),
       turn,
     ),
+    // Sent only when a post sets a limit: absent here unless a test adds one.
+    ...(p.teacherDayLimits !== undefined
+      ? {
+          teacherDayLimits: shuffled(
+            p.teacherDayLimits.map((limit) => ({
+              ...limit,
+              id: anon(maps.dayLimit, limit.id),
+              teacherId: anon(maps.teacher, limit.teacherId),
+              lockedWeekdays: shuffled(limit.lockedWeekdays.map((set) => shuffled(set, turn)), turn),
+            })),
+            turn,
+          ),
+        }
+      : {}),
     fixedLessons: shuffled(
       p.fixedLessons.map((lesson) => ({
         ...lesson,
@@ -411,6 +426,14 @@ describe('the candidate basis', () => {
     ['a sitting gets chairs', (s) => void (s.payload.lunchServings[0]!.seats = 120), ['rules']],
     ['a meal is placed by hand elsewhere', (s) => void (s.payload.lunchPlacements[0]!.dayOfWeek = 3), ['rules']],
     ['a teacher’s lunch rule changes', (s) => void (s.payload.teacherWorkRules[0]!.lunchMinutes = 40), ['rules']],
+    // Lärarens dag: the cap and the wish ride on the work rule, the days on the post.
+    ['a teacher gets a daily cap', (s) => void (s.payload.teacherWorkRules[0]!.maxTeachingMinutesPerDay = 300), ['rules']],
+    ['a teacher wishes Friday free', (s) => void (s.payload.teacherWorkRules[0]!.preferredFreeDay = 5), ['rules']],
+    [
+      'a post comes to limit its teacher’s days',
+      (s) => void (s.payload.teacherDayLimits = [{ id: 'post-bo', teacherId: 't-bo', maxTeachingDaysPerWeek: 3, lockedWeekdays: [[]] }]),
+      ['rules'],
+    ],
     ['the school’s lunch is longer', (s) => void (s.storedRules = { ...s.storedRules, lunchMinutes: 40 }), ['rules']],
     ['a class gets a pupil', (s) => void (s.payload.groups[0]!.lunchHeadcount = 25), ['rosters']],
     ['two groups come to share a pupil', (s) => void s.payload.groupConflicts.push(['grp-7a', 'grp-7b']), ['rosters']],
@@ -421,6 +444,19 @@ describe('the candidate basis', () => {
     edit(changed);
 
     expect(changedParts(before, partsOf(changed, 1))).toEqual(expected);
+  });
+
+  it('reads a post’s day limit in real ids, whatever its anonymous id, and moves with its days and its locked weekdays', () => {
+    const limited = (days: number, locked: number[][]) => {
+      const real = school();
+      real.payload.teacherDayLimits = [{ id: 'post-bo', teacherId: 't-bo', maxTeachingDaysPerWeek: days, lockedWeekdays: locked as never }];
+      return real;
+    };
+    expect(partsOf(limited(3, [[1, 2], [3]]), 1)).toEqual(partsOf(limited(3, [[1, 2], [3]])));
+    expect(changedParts(partsOf(limited(3, [[1]])), partsOf(limited(2, [[1]]), 1))).toEqual(['rules']);
+    // A lesson's weeks reach the basis through the weekdays it holds week by
+    // week, which a fixed lesson by itself does not carry.
+    expect(changedParts(partsOf(limited(3, [[1]])), partsOf(limited(3, [[1], [2]]), 1))).toEqual(['rules']);
   });
 
   it('reads a conflict pair either way round as one pair', () => {

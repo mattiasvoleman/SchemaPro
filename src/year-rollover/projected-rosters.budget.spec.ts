@@ -185,7 +185,7 @@ describe('the active year’s statement budget', () => {
     ]);
   });
 
-  it('the same drag where the new teacher has a cap and a day limit: 33 statements, three where a rule is', async () => {
+  it('the same drag where the new teacher has a cap and a day limit: 34 statements, three where a rule is (33 before Schemaförslag’s edit lock)', async () => {
     // What a school that sets Lärarens dag pays on a drag: the teachers' caps,
     // their posts' day limits for the lesson's year, and their week — after
     // the ämnesfördelning's read, before the change log. Anna's week holds
@@ -223,7 +223,7 @@ describe('the active year’s statement budget', () => {
     );
     expect(updated.warnings).toEqual([]);
     const statements = statementsOf(world.calls);
-    expect(statements).toHaveLength(33);
+    expect(statements).toHaveLength(34);
     expect(statements.slice(-5)).toEqual([
       '$queryRaw.$queryRaw',
       'teacherWorkRule.findMany',
@@ -233,7 +233,7 @@ describe('the active year’s statement budget', () => {
     ]);
   });
 
-  it('a master lesson created with a teacher, in a school without a rule: 14 statements, one of them the teacher’s cap', async () => {
+  it('a master lesson created with a teacher, in a school without a rule: 15 statements, one of them the teacher’s cap (14 before Schemaförslag’s edit lock)', async () => {
     const ROOM = '00000000-0000-4000-8000-0000000000e1';
     // THE ONE STATEMENT A CREATE PAYS FOR LÄRARENS DAG WHERE NO RULE IS SET,
     // pinned because it cannot be carried. A PATCH and a card move count the
@@ -275,6 +275,9 @@ describe('the active year’s statement budget', () => {
       // of day limits on the named teachers' posts, in one statement.
       '$queryRaw.$queryRaw',
       'academicYear.findUnique',
+      // Schemaförslag: the year's share of the regeneration lock, once the
+      // year row-level security shows is the caller's (lockYearForGrundschemaEdit).
+      '$executeRaw.$executeRaw',
       // The clash scan of the day.
       'masterLesson.findMany',
       'masterLesson.findMany › subject',

@@ -5359,8 +5359,9 @@ describe('OptimizationProxyService', () => {
           versions = { snapshotInTransaction: jest.fn().mockResolvedValue({ id: 'version-1' }) };
           createdCount = 2;
           tx.masterLesson.deleteMany.mockResolvedValue({ count: DRAFT.length });
-          // The preserved count for the log, and after the write the machine's
-          // own lessons, which must be exactly the ones just created.
+          // After the write, the machine's own lessons, which must be exactly
+          // the ones just created (the log's preserved count is the kept
+          // set's findMany, read after the delete).
           tx.masterLesson.count.mockImplementation(async ({ where }: Query = {}) =>
             where?.['NOT'] ? createdCount : 1,
           );

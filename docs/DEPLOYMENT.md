@@ -462,6 +462,28 @@ Walk the full product loop once, in order:
   clears nothing; the new web sends the new keys, which the API
   before the release refuses (400, `forbidNonWhitelisted`), so the API goes
   out before, or with, the web.
+- **Schemaförslag**: 20261125090000 adds `ScheduleCandidateRuns` and
+  `ScheduleCandidates` (a year's private candidates, read by the school's
+  administrators and written by Schemaläggning, every arm on the API's
+  role), their status enum, the partial unique index that keeps one active
+  run per year, and three functions: the sweep, the count of active runs
+  across schools, and `app.lock_years_for_grundschema_edit`, the hand
+  edit's share of the year's regeneration lock. It changes no row of a live
+  table and takes its locks (SHARE ROW EXCLUSIVE on `Schools` and
+  `AcademicYears`, which its keys reference) NOWAIT and together in a loop:
+  if they are not free at once in 30 s it stops with nothing changed —
+  `prisma migrate resolve --rolled-back
+  20261125090000_ett_schemaforslag_ar_privat_tills_det_tillampas`, then
+  deploy again. The API before the release reads neither table and keeps
+  working beside it, and the new API calls the lock function on every hand
+  edit, so the migration goes in first, then the merge. The engine and the
+  API deploy from the same merge, and only a candidate run sends the
+  optional `search` field: an engine from before the release refuses it,
+  which the run says as `ENGINE_LACKS_CANDIDATES` ("try again in a few
+  minutes"), while Generera sends nothing new. After the deploy the
+  engine's `/openapi.json` names `SearchOptions`. Set
+  `RAILWAY_DEPLOYMENT_DRAINING_SECONDS` (above); the `CANDIDATE_*` defaults
+  need no setting.
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).
   `GET /health/ready` adds three counts, never names: how many jobs this

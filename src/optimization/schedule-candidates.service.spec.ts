@@ -31,6 +31,7 @@ import {
   runViewOf,
   SCHEDULE_CANDIDATE_NOT_APPLICABLE,
   ScheduleCandidatesService,
+  storedConflictsOf,
   storedLessonsOf,
   storedLunchesOf,
   SWEEP_INTERVAL_MS,
@@ -38,6 +39,7 @@ import {
   yearHasActiveCandidateRun,
 } from './schedule-candidates.service';
 import { ENGINE_LACKS_CANDIDATES } from './optimization-proxy.service';
+import { TEACHER_WORK_DAYS_HIDDEN, WORK_DAYS_HIDDEN_MESSAGE, WorkDaysRefusal } from './work-days';
 import { SCHEDULE_CANDIDATE_BUSY, SCHEDULE_CANDIDATE_STALE } from './regeneration-lock';
 
 /*
@@ -618,6 +620,33 @@ describe('ScheduleCandidatesService', () => {
       expect(run.status).toBe('SUCCEEDED');
     });
 
+    it('stores a first candidate stopped by a post’s days with the hidden sentence, as its summary and in its list', async () => {
+      // A days-bearing summary is not something the engine writes today; the
+      // code holds it to the list's rule all the same, as realiseConflicts does.
+      const days = {
+        category: 'AVAILABILITY',
+        code: 'TEACHER_WORK_DAYS_CANNOT_BE_KEPT',
+        params: { limit: 'post-1' },
+        message: WORK_DAYS_HIDDEN_MESSAGE,
+        resourceIds: ['teacher-1'],
+        resourceNames: [],
+      };
+      proxy.solveCandidate.mockResolvedValueOnce(
+        solved({
+          status: 'INFEASIBLE',
+          lessons: [],
+          lunches: null,
+          conflicts: { summary: 's', summaryCode: 'TEACHER_WORK_DAYS_CANNOT_BE_KEPT', summaryParams: { limit: 'post-1' }, conflicts: [days] } as never,
+        }),
+      );
+      await startAndRun();
+      expect(stored[0]).toMatchObject({ errorCode: TEACHER_WORK_DAYS_HIDDEN, errorParams: Prisma.DbNull });
+      expect(stored[0]!['conflicts']).toEqual([
+        { category: 'AVAILABILITY', code: TEACHER_WORK_DAYS_HIDDEN, params: {}, message: WORK_DAYS_HIDDEN_MESSAGE, resourceNames: [] },
+      ]);
+      expect(JSON.stringify(stored[0])).not.toMatch(/post-1|teacher-1/);
+    });
+
     it.each(['INFEASIBLE', 'TIMEOUT'] as const)(
       'stops at a first candidate that is %s: stored with its conflicts, the run FAILED CANDIDATES_FIRST_FAILED, nothing superseded',
       async (status) => {
@@ -871,6 +900,23 @@ describe('ScheduleCandidatesService', () => {
       ...overrides,
     }) as never;
 
+    it('passes a stored sentence out field by field: nothing else a row carries goes with it', async () => {
+      tx.scheduleCandidateRun.findFirst.mockResolvedValueOnce(
+        row({
+          candidates: [
+            {
+              id: CANDIDATE, ordinal: 1, variant: 'KEEP', weights: null, solverStatus: 'INFEASIBLE', errorCode: null, metrics: null,
+              conflicts: [{ category: 'AVAILABILITY', code: 'X', params: { n: 1 }, message: 'm', resourceNames: ['Sal 1'], subjectIds: ['teacher-1'], resourceIds: ['r-1'] }],
+            },
+          ],
+        }),
+      );
+      const overview = await service.overview(YEAR, user, NOW);
+      expect(overview.latest!.candidates[0]!.conflicts).toEqual([
+        { category: 'AVAILABILITY', code: 'X', params: { n: 1 }, message: 'm', resourceNames: ['Sal 1'] },
+      ]);
+    });
+
     it('answers the newest run as the batch too when it SUCCEEDED, with the five figures, never the lessons', async () => {
       tx.scheduleCandidateRun.findFirst.mockResolvedValueOnce(row());
       const overview = await service.overview(YEAR, user, NOW);
@@ -972,7 +1018,7 @@ describe('ScheduleCandidatesService', () => {
       tx.scheduleCandidateRun.findUnique.mockResolvedValue({ academicYearId: YEAR, basis: BASIS, basisParts: PARTS });
     });
 
-    it('rebuilds the basis once in a transaction that writes nothing, and finds an unchanged batch fresh', async () => {
+    it('rebuilds the basis once in a transaction that writes no timetable, and finds an unchanged batch fresh', async () => {
       await expect(service.check(RUN, user)).resolves.toEqual({
         stale: false,
         changed: [],
@@ -981,7 +1027,12 @@ describe('ScheduleCandidatesService', () => {
         futureCalendarLessons: 0,
         coverAssignments: 0,
       });
-      expect(steps[0]).toBe('x:SET TRANSACTION READ ONLY');
+      // Not READ ONLY: the fetch writes its Läslogg row for the posts' day
+      // limits it reads (Lärarens dag), and a read-only transaction would
+      // refuse it. It writes nothing of the timetable.
+      expect(steps.some((step) => step.includes('READ ONLY'))).toBe(false);
+      expect(tx.masterLesson.deleteMany).not.toHaveBeenCalled();
+      expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
       expect(proxy.prepareSchedule).toHaveBeenCalledWith(tx, YEAR, user);
       expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function), { timeoutMs: 30_000 });
       expect(tx.calendarLesson.count).not.toHaveBeenCalled();
@@ -1295,5 +1346,45 @@ describe('the pieces', () => {
     expect(engineFailureOf(new Error('boom'))).toEqual({ message: 'boom', code: null, params: null });
     expect(engineFailureOf(new HttpException('Bad request', HttpStatus.BAD_REQUEST))).toEqual({ message: 'Bad request', code: null, params: null });
     expect(engineFailureOf(new HttpException({ message: 'x', code: 'not a code' }, 504))).toMatchObject({ code: CANDIDATE_ENGINE_TIMEOUT });
+  });
+
+  /*
+   * Lärarens dag (work-days.ts): a post's days are HR data. A candidate's page
+   * has no HR-läs path, so a sentence about them is kept as the one a reader
+   * without HR-läs is shown — for every reader, rektor too — and never with
+   * the post or the teacher it is about.
+   */
+  it('keeps a sentence about a post’s days as the hidden one, once, with no post and no teacher', () => {
+    const days = (category: string) => ({
+      category,
+      code: 'TEACHER_WORK_DAYS_CANNOT_BE_KEPT',
+      params: { limit: 'post-1', weekMinutes: 1500 },
+      message: WORK_DAYS_HIDDEN_MESSAGE,
+      resourceIds: ['teacher-1'],
+      resourceNames: [],
+      subjectIds: ['teacher-1'],
+    });
+    const stored = storedConflictsOf({
+      summary: 's',
+      conflicts: [
+        days('AVAILABILITY'),
+        { category: 'INSUFFICIENT_RESOURCES', code: 'X', params: { n: 1 }, message: 'm', resourceIds: ['r'], resourceNames: ['Sal 1'] },
+        days('AVAILABILITY'),
+      ],
+    } as unknown as AiEngineConflictAnalysis);
+    expect(stored).toEqual([
+      { category: 'AVAILABILITY', code: TEACHER_WORK_DAYS_HIDDEN, params: {}, message: WORK_DAYS_HIDDEN_MESSAGE, resourceNames: [] },
+      { category: 'INSUFFICIENT_RESOURCES', code: 'X', params: { n: 1 }, message: 'm', resourceNames: ['Sal 1'] },
+    ]);
+    expect(JSON.stringify(stored)).not.toMatch(/post-1|teacher-1|subjectIds/);
+  });
+
+  it('fails a run the engine refused over a post’s days with the hidden sentence, and keeps no post', () => {
+    const refusal = new WorkDaysRefusal(
+      { message: WORK_DAYS_HIDDEN_MESSAGE, code: 'TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK', params: { limit: 'post-1', weekMinutes: 1500 } },
+      400,
+      ['teacher-1'],
+    );
+    expect(engineFailureOf(refusal)).toEqual({ message: WORK_DAYS_HIDDEN_MESSAGE, code: TEACHER_WORK_DAYS_HIDDEN, params: null });
   });
 });

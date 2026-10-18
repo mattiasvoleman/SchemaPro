@@ -21,6 +21,7 @@ import { enterGrundschemaWrite, isLockTimeout, publishModeOf, type PublishMode }
 import { RealtimeService } from '../realtime/realtime.service';
 import { rostersOfYear } from '../year-rollover/projected-rosters';
 import { changedParts, type BasisParts } from './candidate-basis';
+import { TEACHER_WORK_DAYS_HIDDEN, WORK_DAYS_HIDDEN_MESSAGE, isDaysBearing } from './work-days';
 import { candidateMetricsOf, lessonCountOf, metricsViewOf, runUnplacedOf, type CandidateMetrics, type CandidateMetricsView, type RunUnplaced } from './candidate-metrics';
 import {
   callTimeoutMs,
@@ -394,21 +395,61 @@ function lunchesForStorage(lunches: readonly AiEngineLunch[]): AiEngineLunch[] {
   }));
 }
 
-/** What of a refusal a candidate keeps: what the job row keeps (StoredConflict), never the id arrays. */
-export function storedConflictsOf(analysis: AiEngineConflictAnalysis | null): StoredConflict[] {
-  return (analysis?.conflicts ?? []).map((conflict) => ({
-    category: conflict.category,
-    code: conflict.code,
-    params: conflict.params ?? {},
-    message: conflict.message,
-    resourceNames: conflict.resourceNames ?? [],
-  }));
+/**
+ * A sentence about a post's days (Lärarens dag), as a candidate keeps it: the
+ * hidden one, for every reader. The figure is HR data, and the job row keeps
+ * its sentence without it and decides per reader what is shown (work-days.ts,
+ * forReader); a candidate is read on a page that has no HR-läs path and
+ * writes no Läslogg row, so it keeps what a reader without HR-läs is shown —
+ * no figure, no post, no teacher — rektor included. Generera's page names
+ * them to whoever may read them.
+ */
+function hiddenDaysSentence(conflict: Pick<StoredConflict, 'category'>): StoredConflict {
+  return { category: conflict.category, code: TEACHER_WORK_DAYS_HIDDEN, params: {}, message: WORK_DAYS_HIDDEN_MESSAGE, resourceNames: [] };
 }
 
+/**
+ * What of a refusal a candidate keeps: what the job row keeps (StoredConflict),
+ * never the id arrays, and a days-bearing sentence hidden, once: two of them
+ * say nothing the first did not (forReader's rule).
+ */
+export function storedConflictsOf(analysis: AiEngineConflictAnalysis | null): StoredConflict[] {
+  let hidden = false;
+  return (analysis?.conflicts ?? []).flatMap((conflict): StoredConflict[] => {
+    if (isDaysBearing(conflict.code)) {
+      if (hidden) return [];
+      hidden = true;
+      return [hiddenDaysSentence(conflict)];
+    }
+    return [
+      {
+        category: conflict.category,
+        code: conflict.code,
+        params: conflict.params ?? {},
+        message: conflict.message,
+        resourceNames: conflict.resourceNames ?? [],
+      },
+    ];
+  });
+}
+
+/** A candidate's or a run's own code and values, a days-bearing one hidden as storedConflictsOf hides it. */
+function sentenceCodeOf(
+  code: unknown,
+  params: unknown,
+): { code: string | null; params: Record<string, string | number> | null } {
+  if (typeof code === 'string' && isDaysBearing(code)) return { code: TEACHER_WORK_DAYS_HIDDEN, params: null };
+  return { code: codeOrNull(code), params: scalarParams(params) };
+}
+
+/** The stored sentences as a view, field by field: nothing a row might carry beyond them goes out. */
 function conflictsViewOf(value: unknown): StoredConflict[] {
   if (!Array.isArray(value)) return [];
   return (value as Array<Partial<StoredConflict> & Pick<StoredConflict, 'category' | 'message'>>).map((conflict) => ({
-    ...conflict,
+    category: conflict.category,
+    ...(conflict.code !== undefined ? { code: conflict.code } : {}),
+    ...(conflict.params !== undefined ? { params: conflict.params } : {}),
+    message: conflict.message,
     resourceNames: conflict.resourceNames ?? [],
   }));
 }
@@ -439,12 +480,19 @@ export function engineFailureOf(error: unknown): RunFailure {
   return failure;
 }
 
-/** An HttpException's own message, code and values; anything else its message and no code. */
+/**
+ * An HttpException's own message, code and values; anything else its message
+ * and no code. The engine's refusal about a post's days (a WorkDaysRefusal)
+ * is kept as the hidden sentence: see hiddenDaysSentence.
+ */
 function failureOf(error: unknown): RunFailure {
   if (error instanceof HttpException) {
     const body = error.getResponse();
     if (typeof body === 'object' && body !== null) {
       const shape = body as { message?: unknown; code?: unknown; params?: unknown };
+      if (typeof shape.code === 'string' && isDaysBearing(shape.code)) {
+        return { message: WORK_DAYS_HIDDEN_MESSAGE, code: TEACHER_WORK_DAYS_HIDDEN, params: null };
+      }
       return {
         message: typeof shape.message === 'string' ? shape.message : error.message,
         code: codeOrNull(shape.code),
@@ -967,6 +1015,7 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
     firstFailed: boolean,
   ): Promise<'stored' | 'finished' | 'stopped'> {
     const applicable = APPLICABLE.has(status);
+    const summary = sentenceCodeOf(solution.conflicts?.summaryCode, solution.conflicts?.summaryParams);
     return this.prisma.withRls(user, async (tx) => {
       const current = await this.lockedStatus(tx, plan.runId);
       if (current !== 'RUNNING') {
@@ -986,12 +1035,10 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
           lunches: jsonOrDbNull(applicable && solution.lunches !== null ? lunchesForStorage(solution.lunches) : null),
           metrics: jsonOrDbNull(metrics),
           conflicts: storedConflictsOf(solution.conflicts) as unknown as Prisma.InputJsonValue,
-          errorCode: applicable || status === 'REJECTED' ? null : codeOrNull(solution.conflicts?.summaryCode),
+          errorCode: applicable || status === 'REJECTED' ? null : summary.code,
           // The summary's values, without which its sentence cannot be said
           // (a first candidate that ran out of time has a summary and no list).
-          errorParams: jsonOrDbNull(
-            applicable || status === 'REJECTED' ? null : scalarParams(solution.conflicts?.summaryParams),
-          ),
+          errorParams: jsonOrDbNull(applicable || status === 'REJECTED' ? null : summary.params),
         },
         select: { id: true },
       });
@@ -1176,17 +1223,19 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
 
   /**
    * The batch against today's draft, before an apply: one rebuild of the
-   * fetch, in a transaction that writes nothing, and the parts that differ.
-   * The mode is the school's now, which the apply must name back; in DIRECT
-   * the dated lessons the write would take off the calendar are counted by
-   * the write's own where-clause, and the vikarier booked on them.
+   * fetch, and the parts that differ. It writes nothing of the timetable; the
+   * one row the fetch may write is the Läslogg's, for the posts' day limits
+   * it reads to send (Lärarens dag, in the proxy's fetchAndAnonymize), so the
+   * transaction is not READ ONLY. The mode is the school's now, which the
+   * apply must name back; in DIRECT the dated lessons the write would take
+   * off the calendar are counted by the write's own where-clause, and the
+   * vikarier booked on them.
    */
   async check(runId: string, user: AuthenticatedUser): Promise<CandidateCheck> {
     const schoolId = requireSchoolId(user);
     return this.prisma.withRls(
       user,
       async (tx) => {
-        await tx.$executeRaw`SET TRANSACTION READ ONLY`;
         const run = await tx.scheduleCandidateRun.findUnique({
           where: { id: runId },
           select: { academicYearId: true, basis: true, basisParts: true, discardedAt: true },

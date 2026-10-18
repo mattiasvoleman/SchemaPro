@@ -3175,10 +3175,12 @@ export class OptimizationProxyService {
     }
     /*
      * What the delete left: the audit's count, and the kept half of the
-     * timetable the free-day wishes are read against. Read here, after the
-     * delete, and not carried from the fetch: the solver has been running in
-     * between, and a lesson placed by hand while it ran is kept now, as one
-     * unlocked while it ran is deleted now — neither as the fetch saw them.
+     * timetable the free-day wishes are read against — the timetable this
+     * write leaves, so it is read after the delete rather than carried from
+     * the fetch. For Generera the solver ran in between: a handmade lesson
+     * placed meanwhile is kept and read here, while a lesson that became the
+     * machine's or stopped being it never reaches this point (GENERATE_STALE,
+     * under the year lock). An apply rebuilt its fetch in this transaction.
      * (A hand edit through MasterLessonsService takes its share of the year's
      * regeneration lock before it writes, and this write holds that lock, so
      * none lands between this read and the commit.) One read for both, where a
