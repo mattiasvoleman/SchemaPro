@@ -1547,6 +1547,8 @@ describe('Planning surface (e2e)', () => {
       lunchStartTime: wallClock('10:30'),
       lunchEndTime: wallClock('13:30'),
       minDailyRestMinutes: 660,
+      maxTeachingMinutesPerDay: null as number | null,
+      preferredFreeDayOfWeek: null as number | null,
       createdAt: new Date('2026-09-01T00:00:00.000Z'),
       updatedAt: new Date('2026-09-01T00:00:00.000Z'),
     });
@@ -1616,13 +1618,134 @@ describe('Planning surface (e2e)', () => {
     });
 
     it('204s a delete of one’s own row', async () => {
+      // A teacher's delete names the condition the trigger holds it to: a
+      // row with no cap and no wish (20261123090000), which this one is.
+      harness.tx['teacherWorkRule']!['deleteMany']!.mockResolvedValue({ count: 1 });
+
       await request(http())
         .delete(`/api/v1/teacher-work-rules/${TEACHER_ID}`)
         .set('x-test-user', teacher())
         .expect(204);
 
-      expect(harness.tx['teacherWorkRule']!['delete']).toHaveBeenCalledWith({
-        where: { userId: TEACHER_ID },
+      expect(harness.tx['teacherWorkRule']!['deleteMany']).toHaveBeenCalledWith({
+        where: { userId: TEACHER_ID, maxTeachingMinutesPerDay: null, preferredFreeDayOfWeek: null },
+      });
+      expect(harness.tx['teacherWorkRule']!['update']).not.toHaveBeenCalled();
+    });
+
+    describe('lärarens dag: the daily cap and the wished free day (20261123090000)', () => {
+      it('an admin sets a colleague’s cap and wish, gets them back, and every reader lists them', async () => {
+        const stored = { ...storedRule(COLLEAGUE_ID), maxTeachingMinutesPerDay: 270, preferredFreeDayOfWeek: 5 };
+        harness.tx['teacherWorkRule']!['upsert']!.mockResolvedValue(stored);
+
+        const response = await request(http())
+          .put(`/api/v1/teacher-work-rules/${COLLEAGUE_ID}`)
+          .set('x-test-user', admin())
+          .send({
+            lunchMinutes: 30,
+            lunchStartTime: '10:30',
+            lunchEndTime: '13:30',
+            minDailyRestMinutes: 660,
+            maxTeachingMinutesPerDay: 270,
+            preferredFreeDayOfWeek: 5,
+          })
+          .expect(200);
+
+        expect(response.body).toMatchObject({ maxTeachingMinutesPerDay: 270, preferredFreeDayOfWeek: 5 });
+        expect(harness.tx['teacherWorkRule']!['upsert']).toHaveBeenCalledWith(
+          expect.objectContaining({
+            create: expect.objectContaining({ maxTeachingMinutesPerDay: 270, preferredFreeDayOfWeek: 5 }),
+            update: expect.objectContaining({ maxTeachingMinutesPerDay: 270, preferredFreeDayOfWeek: 5 }),
+          }),
+        );
+
+        harness.tx['teacherWorkRule']!['findMany']!.mockResolvedValue([stored]);
+        const list = await request(http()).get('/api/v1/teacher-work-rules').set('x-test-user', teacher()).expect(200);
+        expect(list.body).toEqual([expect.objectContaining({ maxTeachingMinutesPerDay: 270, preferredFreeDayOfWeek: 5 })]);
+      });
+
+      it('keeps the cap when an admin’s lunch save leaves it out', async () => {
+        harness.tx['teacherWorkRule']!['upsert']!.mockResolvedValue({ ...storedRule(COLLEAGUE_ID), maxTeachingMinutesPerDay: 270 });
+
+        await request(http())
+          .put(`/api/v1/teacher-work-rules/${COLLEAGUE_ID}`)
+          .set('x-test-user', admin())
+          .send({ minDailyRestMinutes: 660 })
+          .expect(200);
+
+        const [{ update }] = harness.tx['teacherWorkRule']!['upsert']!.mock.calls[0] as [{ update: Record<string, unknown> }];
+        expect('maxTeachingMinutesPerDay' in update).toBe(false);
+        expect('preferredFreeDayOfWeek' in update).toBe(false);
+      });
+
+      it('403s a teacher raising their own cap, saying who sets it, without writing', async () => {
+        harness.tx['teacherWorkRule']!['findUnique']!.mockResolvedValue({ maxTeachingMinutesPerDay: 270, preferredFreeDayOfWeek: null });
+
+        const response = await request(http())
+          .put(`/api/v1/teacher-work-rules/${TEACHER_ID}`)
+          .set('x-test-user', teacher())
+          .send({ minDailyRestMinutes: 660, maxTeachingMinutesPerDay: 300 })
+          .expect(403);
+
+        expect(response.body.code).toBe('WORK_RULE_DAY_IS_PLANNED');
+        expect(response.body.detail).toBe('Dagstaket och den önskade lediga dagen sätts av en administratör som planerar.');
+        expect(harness.tx['teacherWorkRule']!['upsert']).not.toHaveBeenCalled();
+      });
+
+      it('lets a teacher save their lunch restating the cap, and writes the lunch alone', async () => {
+        harness.tx['teacherWorkRule']!['findUnique']!.mockResolvedValue({ maxTeachingMinutesPerDay: 270, preferredFreeDayOfWeek: null });
+        harness.tx['teacherWorkRule']!['upsert']!.mockResolvedValue({ ...storedRule(TEACHER_ID), maxTeachingMinutesPerDay: 270 });
+
+        const response = await request(http())
+          .put(`/api/v1/teacher-work-rules/${TEACHER_ID}`)
+          .set('x-test-user', teacher())
+          .send({ minDailyRestMinutes: 600, maxTeachingMinutesPerDay: 270, preferredFreeDayOfWeek: null })
+          .expect(200);
+
+        expect(response.body.maxTeachingMinutesPerDay).toBe(270);
+        const [{ create, update }] = harness.tx['teacherWorkRule']!['upsert']!.mock.calls[0] as [
+          { create: Record<string, unknown>; update: Record<string, unknown> },
+        ];
+        for (const data of [create, update]) {
+          expect(Object.keys(data).filter((key) => key === 'maxTeachingMinutesPerDay' || key === 'preferredFreeDayOfWeek')).toEqual([]);
+        }
+      });
+
+      it('a teacher’s delete of their own row keeps the cap: their lunch and rest go, the row stays', async () => {
+        harness.tx['teacherWorkRule']!['deleteMany']!.mockResolvedValue({ count: 0 });
+        harness.tx['teacherWorkRule']!['update']!.mockResolvedValue({ ...storedRule(TEACHER_ID), maxTeachingMinutesPerDay: 270 });
+
+        await request(http())
+          .delete(`/api/v1/teacher-work-rules/${TEACHER_ID}`)
+          .set('x-test-user', teacher())
+          .expect(204);
+
+        expect(harness.tx['teacherWorkRule']!['update']).toHaveBeenCalledWith({
+          where: { userId: TEACHER_ID },
+          data: { lunchMinutes: null, lunchStartTime: null, lunchEndTime: null, minDailyRestMinutes: null },
+        });
+        expect(harness.tx['teacherWorkRule']!['delete']).not.toHaveBeenCalled();
+      });
+
+      it('an admin’s delete deletes, cap and wish with the row', async () => {
+        await request(http())
+          .delete(`/api/v1/teacher-work-rules/${COLLEAGUE_ID}`)
+          .set('x-test-user', admin())
+          .expect(204);
+
+        expect(harness.tx['teacherWorkRule']!['delete']).toHaveBeenCalledWith({ where: { userId: COLLEAGUE_ID } });
+        expect(harness.tx['teacherWorkRule']!['deleteMany']).not.toHaveBeenCalled();
+      });
+
+      it('400s a cap off the grid and a weekday that is none, before the table', async () => {
+        for (const body of [{ maxTeachingMinutesPerDay: 272 }, { maxTeachingMinutesPerDay: 25 }, { preferredFreeDayOfWeek: 8 }]) {
+          await request(http())
+            .put(`/api/v1/teacher-work-rules/${COLLEAGUE_ID}`)
+            .set('x-test-user', admin())
+            .send(body)
+            .expect(400);
+        }
+        expect(harness.tx['teacherWorkRule']!['upsert']).not.toHaveBeenCalled();
       });
     });
 
@@ -2147,6 +2270,47 @@ describe('Planning surface (e2e)', () => {
         );
       });
 
+      it('writes deltid in days and hands it to a reader with HR-läs only (20261123090000)', async () => {
+        givenLockedRows(USERS, [{ id: COLLEAGUE_ID, role: 'TEACHER' }]);
+        harness.tx['teacherEmployment']!['upsert']!.mockResolvedValue(storedEmployment(COLLEAGUE_ID, { maxTeachingDaysPerWeek: 4 }));
+
+        const saved = await request(http())
+          .put(`/api/v1/teacher-employments/${COLLEAGUE_ID}?academicYearId=${YEAR_ID}`)
+          .set('x-test-user', admin())
+          .send({ employmentPercent: 80, signature: 'KOL', maxTeachingDaysPerWeek: 4 })
+          .expect(200);
+        expect(saved.body.maxTeachingDaysPerWeek).toBe(4);
+        expect(harness.tx['teacherEmployment']!['upsert']).toHaveBeenCalledWith(
+          expect.objectContaining({ update: expect.objectContaining({ maxTeachingDaysPerWeek: 4 }) }),
+        );
+
+        harness.tx['teacherEmployment']!['findMany']!.mockResolvedValue([storedEmployment(COLLEAGUE_ID, { maxTeachingDaysPerWeek: 4 })]);
+        const hidden = await request(http())
+          .get(`/api/v1/teacher-employments?academicYearId=${YEAR_ID}`)
+          .set('x-test-user', asUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false } as never))
+          .expect(200);
+        expect(hidden.body[0]).toMatchObject({ maxTeachingDaysPerWeek: null, hrHidden: true, signature: 'KOL' });
+        const shown = await request(http())
+          .get(`/api/v1/teacher-employments?academicYearId=${YEAR_ID}`)
+          .set('x-test-user', asUser({ adminProfile: 'SCHEMALAGGARE', hrRead: true } as never))
+          .expect(200);
+        expect(shown.body[0]).toMatchObject({ maxTeachingDaysPerWeek: 4 });
+        expect(shown.body[0]).not.toHaveProperty('hrHidden');
+      });
+
+      it('400s deltid in days outside 1..6, before the table', async () => {
+        const queryRaw = givenLockedRows(USERS, [{ id: COLLEAGUE_ID, role: 'TEACHER' }]);
+        for (const days of [0, 7]) {
+          await request(http())
+            .put(`/api/v1/teacher-employments/${COLLEAGUE_ID}?academicYearId=${YEAR_ID}`)
+            .set('x-test-user', admin())
+            .send({ employmentPercent: 80, maxTeachingDaysPerWeek: days })
+            .expect(400);
+        }
+        expect(queryRaw).not.toHaveBeenCalled();
+        expect(harness.tx['teacherEmployment']!['upsert']).not.toHaveBeenCalled();
+      });
+
       it('a teacher reads their own post only — the service narrows, not RLS alone', async () => {
         harness.tx['teacherEmployment']!['findMany']!.mockResolvedValue([storedEmployment(TEACHER_ID)]);
 
@@ -2334,6 +2498,32 @@ describe('Planning surface (e2e)', () => {
           expect(harness.tx['teacherEmploymentLog']!['findMany']).toHaveBeenCalledWith(
             expect.objectContaining({ where: { userId: COLLEAGUE_ID, academicYearId: YEAR_ID } }),
           );
+        });
+
+        it('leaves deltid in days out of Historik for a reader without HR-läs, versions and all (20261123090000)', async () => {
+          const post = { id: 'e', userId: COLLEAGUE_ID, academicYearId: YEAR_ID, employmentPercent: 100 };
+          harness.tx['teacherEmploymentLog']!['findMany']!.mockResolvedValue([
+            version(3, { before: { ...post, maxTeachingDaysPerWeek: null }, after: { ...post, maxTeachingDaysPerWeek: 4 } }),
+            version(2, {
+              before: { ...post, maxTeachingDaysPerWeek: 4 },
+              after: { ...post, employmentPercent: 80, maxTeachingDaysPerWeek: 3 },
+            }),
+            version(1),
+          ]);
+          const hidden = await request(http())
+            .get(`/api/v1/teacher-employments/${COLLEAGUE_ID}/history?academicYearId=${YEAR_ID}`)
+            .set('x-test-user', asUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false } as never))
+            .expect(200);
+          expect(hidden.body.entries.map((entry: { version: number }) => entry.version)).toEqual([2, 1]);
+          expect(hidden.body.entries[0].changes).toEqual([{ field: 'employmentPercent', before: null, after: null, hrHidden: true }]);
+          expect(JSON.stringify(hidden.body)).not.toContain('maxTeachingDaysPerWeek');
+
+          const shown = await request(http())
+            .get(`/api/v1/teacher-employments/${COLLEAGUE_ID}/history?academicYearId=${YEAR_ID}`)
+            .set('x-test-user', asUser({ adminProfile: 'SCHEMALAGGARE', hrRead: true } as never))
+            .expect(200);
+          expect(shown.body.entries.map((entry: { version: number }) => entry.version)).toEqual([3, 2, 1]);
+          expect(shown.body.entries[0].changes).toEqual([{ field: 'maxTeachingDaysPerWeek', before: null, after: 4 }]);
         });
 
         it('a teacher reads their own and gets 403 for a colleague before anything is read', async () => {

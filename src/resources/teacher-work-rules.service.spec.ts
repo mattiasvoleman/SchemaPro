@@ -3,6 +3,8 @@ import {
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { Prisma } from '@prisma/client';
 import {
   createPrismaMock,
@@ -13,7 +15,11 @@ import {
 } from '../../test/utils/prisma-mock';
 import type { PrismaService } from '../database/prisma.service';
 import { Role } from '../auth/enums/role.enum';
-import { TeacherWorkRulesService } from './teacher-work-rules.service';
+import {
+  TeacherWorkRulesService,
+  WORK_RULE_DAY_IS_PLANNED,
+  WORK_RULE_DAY_IS_PLANNED_MESSAGE,
+} from './teacher-work-rules.service';
 import type { UpsertTeacherWorkRuleDto } from './dto/teacher-work-rule.dto';
 
 const SCHOOL_ID = '33333333-3333-4333-8333-333333333333';
@@ -55,6 +61,8 @@ describe('TeacherWorkRulesService', () => {
     lunchStartTime: new Date('1970-01-01T10:30:00.000Z'),
     lunchEndTime: new Date('1970-01-01T13:30:00.000Z'),
     minDailyRestMinutes: 660,
+    maxTeachingMinutesPerDay: null,
+    preferredFreeDayOfWeek: null,
     createdAt: new Date('2026-09-01T00:00:00.000Z'),
     updatedAt: new Date('2026-09-01T00:00:00.000Z'),
     ...overrides,
@@ -73,6 +81,8 @@ describe('TeacherWorkRulesService', () => {
           lunchStartTime: '10:30',
           lunchEndTime: '13:30',
           minDailyRestMinutes: 660,
+          maxTeachingMinutesPerDay: null,
+          preferredFreeDayOfWeek: null,
         },
       ]);
 
@@ -105,6 +115,18 @@ describe('TeacherWorkRulesService', () => {
       await expect(service.list(testUser())).resolves.toMatchObject([
         { lunchMinutes: null, lunchStartTime: null, lunchEndTime: null },
       ]);
+    });
+
+    it('hands every reader the daily cap and the wished free day, which are not HR (20261123090000)', async () => {
+      tx.teacherWorkRule.findMany.mockResolvedValue([
+        storedRow({ maxTeachingMinutesPerDay: 270, preferredFreeDayOfWeek: 5 }),
+      ]);
+
+      for (const user of [testUser({ adminProfile: 'EXPEDITION' }), testUser({ role: Role.TEACHER })]) {
+        await expect(service.list(user)).resolves.toMatchObject([
+          { maxTeachingMinutesPerDay: 270, preferredFreeDayOfWeek: 5 },
+        ]);
+      }
     });
 
     it('refuses a principal carrying no school', async () => {
@@ -368,6 +390,154 @@ describe('TeacherWorkRulesService', () => {
       });
     });
 
+    describe('Lärarens dag: the daily cap and the wished free day (20261123090000)', () => {
+      const teacher = () => testUser({ role: Role.TEACHER });
+      const call = () =>
+        tx.teacherWorkRule.upsert.mock.calls[0]?.[0] as {
+          create: Record<string, unknown>;
+          update: Record<string, unknown>;
+        };
+
+      it('writes both for an administrator who plans, on create and on update', async () => {
+        tx.teacherWorkRule.upsert.mockResolvedValue(
+          storedRow({ userId: COLLEAGUE, maxTeachingMinutesPerDay: 270, preferredFreeDayOfWeek: 5 }),
+        );
+
+        const answer = await service.upsert(
+          COLLEAGUE,
+          dto({ maxTeachingMinutesPerDay: 270, preferredFreeDayOfWeek: 5 }),
+          testUser({ adminProfile: 'SCHEMALAGGARE' }),
+        );
+
+        expect(call().update).toMatchObject({ maxTeachingMinutesPerDay: 270, preferredFreeDayOfWeek: 5 });
+        expect(call().create).toMatchObject({ maxTeachingMinutesPerDay: 270, preferredFreeDayOfWeek: 5 });
+        expect(answer).toMatchObject({ maxTeachingMinutesPerDay: 270, preferredFreeDayOfWeek: 5 });
+        // An administrator's write is not compared with the row: nothing is read first.
+        expect(tx.teacherWorkRule.findUnique).not.toHaveBeenCalled();
+      });
+
+      it('clears one sent as null and keeps the one a PUT leaves out, unlike the lunch and the rest', async () => {
+        /*
+         * The lunch dialog of a web from before them, open in a tab over the
+         * release, sends the four it knows. Replaced like those, the cap an
+         * administrator set would be gone on the next lunch save, with
+         * nothing on screen saying so.
+         */
+        tx.teacherWorkRule.upsert.mockResolvedValue(storedRow({ userId: COLLEAGUE }));
+
+        await service.upsert(COLLEAGUE, dto({ maxTeachingMinutesPerDay: null }), testUser());
+
+        expect(call().update).toEqual({
+          lunchMinutes: 30,
+          lunchStartTime: new Date('1970-01-01T10:30:00.000Z'),
+          lunchEndTime: new Date('1970-01-01T13:30:00.000Z'),
+          minDailyRestMinutes: 660,
+          maxTeachingMinutesPerDay: null,
+        });
+        expect('preferredFreeDayOfWeek' in call().create).toBe(false);
+      });
+
+      it('lets a teacher save their lunch without a statement about either, and keeps them', async () => {
+        tx.teacherWorkRule.upsert.mockResolvedValue(storedRow({ maxTeachingMinutesPerDay: 270 }));
+
+        const answer = await service.upsert(ME, dto(), teacher());
+
+        expect(tx.teacherWorkRule.findUnique).not.toHaveBeenCalled();
+        expect(Object.keys(call().update)).toEqual(['lunchMinutes', 'lunchStartTime', 'lunchEndTime', 'minDailyRestMinutes']);
+        expect(answer.maxTeachingMinutesPerDay).toBe(270);
+      });
+
+      it.each([
+        ['raising the cap', { maxTeachingMinutesPerDay: 300 }],
+        ['clearing the cap', { maxTeachingMinutesPerDay: null }],
+        ['moving the wish', { preferredFreeDayOfWeek: 3 }],
+        ['clearing the wish', { preferredFreeDayOfWeek: null }],
+        ['restating the cap and moving the wish', { maxTeachingMinutesPerDay: 270, preferredFreeDayOfWeek: 1 }],
+        ['moving the cap and restating the wish', { maxTeachingMinutesPerDay: 275, preferredFreeDayOfWeek: 5 }],
+      ])('refuses a teacher %s on their own row, with the code the web reads, before the write', async (_label, body) => {
+        tx.teacherWorkRule.findUnique.mockResolvedValue({ maxTeachingMinutesPerDay: 270, preferredFreeDayOfWeek: 5 });
+
+        const refusal = await service.upsert(ME, dto(body), teacher()).catch((error: unknown) => error);
+
+        expect(refusal).toBeInstanceOf(ForbiddenException);
+        expect((refusal as ForbiddenException).getResponse()).toEqual({
+          code: WORK_RULE_DAY_IS_PLANNED,
+          message: WORK_RULE_DAY_IS_PLANNED_MESSAGE,
+        });
+        expect(tx.teacherWorkRule.findUnique).toHaveBeenCalledWith({
+          where: { userId: ME },
+          select: { maxTeachingMinutesPerDay: true, preferredFreeDayOfWeek: true },
+        });
+        expect(tx.teacherWorkRule.upsert).not.toHaveBeenCalled();
+      });
+
+      it('refuses a teacher with no row a cap of their own, and takes a null as the nothing it is', async () => {
+        tx.teacherWorkRule.findUnique.mockResolvedValue(null);
+        await expect(
+          service.upsert(ME, dto({ maxTeachingMinutesPerDay: 600 }), teacher()),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+
+        tx.teacherWorkRule.upsert.mockResolvedValue(storedRow());
+        await service.upsert(ME, dto({ maxTeachingMinutesPerDay: null, preferredFreeDayOfWeek: null }), teacher());
+        expect(tx.teacherWorkRule.upsert).toHaveBeenCalledTimes(1);
+      });
+
+      it('lets a teacher restate both as the row holds them, and leaves them out of the write all the same', async () => {
+        /*
+         * The web sends the form whole, so a teacher's lunch save carries the
+         * cap the administrator set. That is no change, so no refusal — and
+         * still not written: create and update both leave the columns out, so
+         * the trigger never meets them from a teacher (amendment C3).
+         */
+        tx.teacherWorkRule.findUnique.mockResolvedValue({ maxTeachingMinutesPerDay: 270, preferredFreeDayOfWeek: 5 });
+        tx.teacherWorkRule.upsert.mockResolvedValue(storedRow({ maxTeachingMinutesPerDay: 270, preferredFreeDayOfWeek: 5 }));
+
+        await service.upsert(ME, dto({ maxTeachingMinutesPerDay: 270, preferredFreeDayOfWeek: 5 }), teacher());
+
+        for (const data of [call().create, call().update]) {
+          expect('maxTeachingMinutesPerDay' in data).toBe(false);
+          expect('preferredFreeDayOfWeek' in data).toBe(false);
+        }
+      });
+
+      it('asks the role before the profile: a teacher whose principal still names one is a teacher', async () => {
+        tx.teacherWorkRule.findUnique.mockResolvedValue(null);
+        await expect(
+          service.upsert(ME, dto({ maxTeachingMinutesPerDay: 300 }), testUser({ role: Role.TEACHER, adminProfile: 'FULL' })),
+        ).rejects.toMatchObject({ response: { code: WORK_RULE_DAY_IS_PLANNED } });
+        tx.teacherWorkRule.deleteMany.mockResolvedValue({ count: 1 });
+        await service.remove(ME, testUser({ role: Role.TEACHER, adminProfile: 'FULL' }));
+        expect(tx.teacherWorkRule.delete).not.toHaveBeenCalled();
+      });
+
+      it('holds an administrator to the same rule when the profile does not plan', async () => {
+        // RolesGuard stops such a write first (@Area on the controller); the
+        // service asks the profile itself, as the trigger asks current_user_may.
+        tx.teacherWorkRule.findUnique.mockResolvedValue(null);
+        await expect(
+          service.upsert(ME, dto({ preferredFreeDayOfWeek: 5 }), testUser({ adminProfile: 'EXPEDITION' })),
+        ).rejects.toMatchObject({ response: { code: WORK_RULE_DAY_IS_PLANNED } });
+        await expect(
+          service.upsert(ME, dto({ preferredFreeDayOfWeek: 5 }), testUser({ adminProfile: undefined })),
+        ).rejects.toMatchObject({ response: { code: WORK_RULE_DAY_IS_PLANNED } });
+      });
+
+      it("says what the table's trigger says, in the gateway's own sentence", () => {
+        // A direct write through PostgREST meets the trigger; the web meets
+        // this. One rule, so one sentence: the migration's, capitalised.
+        const migration = readFileSync(
+          join(
+            __dirname,
+            '../../prisma/migrations/20261123090000_en_larares_dag_har_ett_tak_dagar_och_en_onskad_ledig_dag/migration.sql',
+          ),
+          'utf8',
+        );
+        const raised = /'WORK_RULE_DAY_IS_PLANNED: ([^']+)'/.exec(migration)?.[1];
+        expect(raised).toBeDefined();
+        expect(WORK_RULE_DAY_IS_PLANNED_MESSAGE).toBe(`${raised![0]!.toUpperCase()}${raised!.slice(1)}.`);
+      });
+    });
+
     it('answers a refusal from the database with its HTTP meaning, not a raw Prisma error', async () => {
       tx.teacherWorkRule.upsert.mockRejectedValue(
         new Prisma.PrismaClientKnownRequestError('Simulated P2003', {
@@ -388,6 +558,51 @@ describe('TeacherWorkRulesService', () => {
 
       expect(tx.teacherWorkRule.delete).toHaveBeenCalledWith({
         where: { userId: ME },
+      });
+      // An administrator who plans takes the cap and the wish with it.
+      expect(tx.teacherWorkRule.deleteMany).not.toHaveBeenCalled();
+    });
+
+    describe('a teacher’s own, which may hold the administrator’s cap or wish (20261123090000)', () => {
+      const teacher = () => testUser({ role: Role.TEACHER });
+
+      it('deletes the row where it holds neither, in one statement that says so', async () => {
+        tx.teacherWorkRule.deleteMany.mockResolvedValue({ count: 1 });
+
+        await service.remove(ME, teacher());
+
+        expect(tx.teacherWorkRule.deleteMany).toHaveBeenCalledWith({
+          where: { userId: ME, maxTeachingMinutesPerDay: null, preferredFreeDayOfWeek: null },
+        });
+        expect(tx.teacherWorkRule.update).not.toHaveBeenCalled();
+        expect(tx.teacherWorkRule.delete).not.toHaveBeenCalled();
+      });
+
+      it('clears the lunch and the rest and keeps the row where it holds one', async () => {
+        // The trigger refuses the teacher a delete of such a row: "ingen
+        // arbetstidsregel" from the teacher is their lunch and rest.
+        tx.teacherWorkRule.deleteMany.mockResolvedValue({ count: 0 });
+        tx.teacherWorkRule.update.mockResolvedValue(storedRow({ maxTeachingMinutesPerDay: 270 }));
+
+        await service.remove(ME, teacher());
+
+        expect(tx.teacherWorkRule.update).toHaveBeenCalledWith({
+          where: { userId: ME },
+          data: { lunchMinutes: null, lunchStartTime: null, lunchEndTime: null, minDailyRestMinutes: null },
+        });
+        expect(tx.teacherWorkRule.delete).not.toHaveBeenCalled();
+      });
+
+      it('answers a row that is not there with the 404 the delete gave', async () => {
+        tx.teacherWorkRule.deleteMany.mockResolvedValue({ count: 0 });
+        tx.teacherWorkRule.update.mockRejectedValue(
+          new Prisma.PrismaClientKnownRequestError('Simulated P2025', {
+            code: 'P2025',
+            clientVersion: Prisma.prismaVersion.client,
+          }),
+        );
+
+        await expect(service.remove(ME, teacher())).rejects.toBeInstanceOf(NotFoundException);
       });
     });
 

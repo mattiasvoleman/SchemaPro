@@ -137,6 +137,16 @@ describe('TeacherEmploymentsService', () => {
       expect(shown).not.toHaveProperty('hrHidden');
     });
 
+    it('leaves deltid in days out for a planner without HR-läs, and hands it to one with it (20261123090000)', async () => {
+      tx.teacherEmployment.findMany.mockResolvedValue([storedRow({ maxTeachingDaysPerWeek: 4 })]);
+      const [hidden] = await service.list(YEAR_ID, testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false }));
+      expect(hidden).toMatchObject({ maxTeachingDaysPerWeek: null, hrHidden: true });
+      for (const principal of [testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: true }), testUser({ role: Role.TEACHER })]) {
+        const [shown] = await service.list(YEAR_ID, principal);
+        expect(shown).toMatchObject({ maxTeachingDaysPerWeek: 4 });
+      }
+    });
+
     it('answers a PUT by a reader without HR-läs with the post masked as the list would show it', async () => {
       // The row as Prisma returns it, with the SS12000 stretch key no answer carries (20261104090000).
       tx.teacherEmployment.upsert.mockResolvedValue(
@@ -259,6 +269,47 @@ describe('TeacherEmploymentsService', () => {
         testUser({ channel: 'WEB' }),
       );
       expect(recordedReads(tx)).toEqual([]);
+    });
+
+    describe('deltid in days (20261123090000)', () => {
+      const update = () => (tx.teacherEmployment.upsert.mock.calls[0] as [{ update: Record<string, unknown>; create: Record<string, unknown> }])[0];
+
+      it('writes the days when sent, on create and on update, and clears them sent as null', async () => {
+        tx.teacherEmployment.upsert.mockResolvedValue(storedRow({ maxTeachingDaysPerWeek: 4 }));
+        const answer = await service.upsert(COLLEAGUE, YEAR_ID, { employmentPercent: 80, maxTeachingDaysPerWeek: 4 }, testUser());
+        expect(update().update).toMatchObject({ maxTeachingDaysPerWeek: 4 });
+        expect(update().create).toMatchObject({ maxTeachingDaysPerWeek: 4 });
+        expect(answer).toMatchObject({ maxTeachingDaysPerWeek: 4 });
+
+        tx.teacherEmployment.upsert.mockClear();
+        await service.upsert(COLLEAGUE, YEAR_ID, { employmentPercent: 80, maxTeachingDaysPerWeek: null }, testUser());
+        expect(update().update).toMatchObject({ maxTeachingDaysPerWeek: null });
+      });
+
+      it('keeps the days a PUT leaves out, and records the read of them it hands back', async () => {
+        // The card from before the field, open over the release, clears nothing.
+        tx.teacherEmployment.upsert.mockResolvedValue(storedRow({ maxTeachingDaysPerWeek: 4 }));
+        await service.upsert(COLLEAGUE, YEAR_ID, { employmentPercent: 80 }, testUser({ channel: 'WEB' }));
+        expect('maxTeachingDaysPerWeek' in update().update).toBe(false);
+        expect('maxTeachingDaysPerWeek' in update().create).toBe(false);
+        expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [COLLEAGUE] }]);
+
+        // Sent, it is the caller's own echo: nothing recorded.
+        tx.$executeRaw.mockClear();
+        await service.upsert(COLLEAGUE, YEAR_ID, { employmentPercent: 80, maxTeachingDaysPerWeek: 4 }, testUser({ channel: 'WEB' }));
+        expect(recordedReads(tx)).toEqual([]);
+      });
+
+      it('answers a PUT by a reader without HR-läs without the days', async () => {
+        tx.teacherEmployment.upsert.mockResolvedValue(storedRow({ maxTeachingDaysPerWeek: 4 }));
+        const answer = await service.upsert(
+          COLLEAGUE,
+          YEAR_ID,
+          { employmentPercent: 80, maxTeachingDaysPerWeek: 4 },
+          testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false }),
+        );
+        expect(answer).toMatchObject({ maxTeachingDaysPerWeek: null, hrHidden: true });
+      });
     });
 
     it('turns an empty signature and note into null, not into an empty string', async () => {
@@ -610,6 +661,59 @@ describe('TeacherEmploymentsService', () => {
         { field: 'employmentForm', before: null, after: 'VISSTID' },
         { field: 'firstTeacherPercent', before: 10, after: 20 },
       ]);
+    });
+
+    describe('deltid in days in Historik (20261123090000)', () => {
+      const post = { id: 'emp-1', userId: COLLEAGUE, academicYearId: YEAR_ID, employmentPercent: 100, reductionPercent: 0 };
+      const hidden = () => service.history(COLLEAGUE, YEAR_ID, testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false }));
+      const shown = () => service.history(COLLEAGUE, YEAR_ID, testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: true }));
+
+      it('leaves out a version whose only change was the days, and says nothing of it, for a reader without HR-läs', async () => {
+        /*
+         * An "ändrad, dolt" on exactly the versions where the days moved would
+         * say which teacher has a limit; so would the version itself, standing
+         * there with no change in it.
+         */
+        tx.teacherEmploymentLog.findMany.mockResolvedValue([
+          logRow(3, { before: { ...post, maxTeachingDaysPerWeek: null }, after: { ...post, maxTeachingDaysPerWeek: 4 } }),
+          logRow(2, { before: { ...post, signature: 'A' }, after: { ...post, signature: 'B' } }),
+        ]);
+        expect((await hidden()).entries.map((entry) => entry.version)).toEqual([2]);
+        const answer = await shown();
+        expect(answer.entries.map((entry) => entry.version)).toEqual([3, 2]);
+        expect(answer.entries[0]!.changes).toEqual([{ field: 'maxTeachingDaysPerWeek', before: null, after: 4 }]);
+      });
+
+      it('keeps a version that changed the days and the tjänst %, with the days left out and the percentage said to have changed', async () => {
+        tx.teacherEmploymentLog.findMany.mockResolvedValue([
+          logRow(2, {
+            before: { ...post, maxTeachingDaysPerWeek: null },
+            after: { ...post, employmentPercent: 80, maxTeachingDaysPerWeek: 4 },
+          }),
+        ]);
+        expect((await hidden()).entries[0]!.changes).toEqual([
+          { field: 'employmentPercent', before: null, after: null, hrHidden: true },
+        ]);
+        expect((await shown()).entries[0]!.changes).toEqual([
+          { field: 'employmentPercent', before: 100, after: 80 },
+          { field: 'maxTeachingDaysPerWeek', before: null, after: 4 },
+        ]);
+      });
+
+      it('keeps a created post that carried the days, without them', async () => {
+        tx.teacherEmploymentLog.findMany.mockResolvedValue([
+          logRow(1, { action: 'CREATE', before: null, after: { ...post, signature: 'KOL', maxTeachingDaysPerWeek: 4 } }),
+        ]);
+        const [created] = (await hidden()).entries;
+        expect(created!.changes.map((change) => change.field)).toEqual(['employmentPercent', 'reductionPercent', 'signature']);
+        expect(JSON.stringify(created)).not.toContain('maxTeachingDaysPerWeek');
+        expect((await shown()).entries[0]!.changes).toContainEqual({ field: 'maxTeachingDaysPerWeek', before: null, after: 4 });
+      });
+
+      it('keeps a version that changed nothing at all, for every reader, as it always did', async () => {
+        tx.teacherEmploymentLog.findMany.mockResolvedValue([logRow(2, { before: post, after: post })]);
+        expect((await hidden()).entries.map((entry) => [entry.version, entry.changes])).toEqual([[2, []]]);
+      });
     });
 
     it('says when it left the oldest versions out', async () => {

@@ -121,6 +121,41 @@ describe('UpsertTeacherWorkRuleDto limits', () => {
     });
   });
 
+  describe('maxTeachingMinutesPerDay mirrors the table CHECK and teacher-day.ts, bound for bound (20261123090000)', () => {
+    it('accepts the ends of the range, and null as no cap', async () => {
+      await expect(failing({ ...base, maxTeachingMinutesPerDay: 30 })).resolves.toEqual([]);
+      await expect(failing({ ...base, maxTeachingMinutesPerDay: 720 })).resolves.toEqual([]);
+      await expect(failing({ ...base, maxTeachingMinutesPerDay: null })).resolves.toEqual([]);
+    });
+
+    it('refuses a cap that is a day without lessons and one that is no cap, at the number next to each bound', async () => {
+      await expect(failing({ ...base, maxTeachingMinutesPerDay: 25 })).resolves.toEqual(['maxTeachingMinutesPerDay']);
+      await expect(failing({ ...base, maxTeachingMinutesPerDay: 725 })).resolves.toEqual(['maxTeachingMinutesPerDay']);
+    });
+
+    it('refuses a cap off the five-minute grid, and one that is not whole minutes', async () => {
+      // 272 is inside 30..720; the CHECK refuses it too, as a bare 500.
+      await expect(failing({ ...base, maxTeachingMinutesPerDay: 272 })).resolves.toEqual(['maxTeachingMinutesPerDay']);
+      await expect(failing({ ...base, maxTeachingMinutesPerDay: 270.5 })).resolves.toEqual(['maxTeachingMinutesPerDay']);
+      await expect(failing({ ...base, maxTeachingMinutesPerDay: '270' })).resolves.toEqual(['maxTeachingMinutesPerDay']);
+    });
+  });
+
+  describe('preferredFreeDayOfWeek is an ISO weekday (20261123090000)', () => {
+    it('accepts måndag through söndag, and null as no wish', async () => {
+      await expect(failing({ ...base, preferredFreeDayOfWeek: 1 })).resolves.toEqual([]);
+      await expect(failing({ ...base, preferredFreeDayOfWeek: 7 })).resolves.toEqual([]);
+      await expect(failing({ ...base, preferredFreeDayOfWeek: null })).resolves.toEqual([]);
+    });
+
+    it('refuses a day that is no weekday, and a weekday by name', async () => {
+      await expect(failing({ ...base, preferredFreeDayOfWeek: 0 })).resolves.toEqual(['preferredFreeDayOfWeek']);
+      await expect(failing({ ...base, preferredFreeDayOfWeek: 8 })).resolves.toEqual(['preferredFreeDayOfWeek']);
+      await expect(failing({ ...base, preferredFreeDayOfWeek: 2.5 })).resolves.toEqual(['preferredFreeDayOfWeek']);
+      await expect(failing({ ...base, preferredFreeDayOfWeek: 'fredag' })).resolves.toEqual(['preferredFreeDayOfWeek']);
+    });
+  });
+
   it('says why in Swedish, because an admin reads these in the form', async () => {
     const errors = await validate(
       plainToInstance(UpsertTeacherWorkRuleDto, { ...base, lunchMinutes: 7 }),

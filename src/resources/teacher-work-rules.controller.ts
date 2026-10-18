@@ -35,6 +35,13 @@ import { UpsertTeacherWorkRuleDto } from './dto/teacher-work-rule.dto';
  * `teacher_work_rules_teacher_own` refuses it again in the database, for the
  * writers that never pass through here at all.
  *
+ * LÄRARENS DAG IS NOT THE TEACHER'S (20261123090000). The same row holds the
+ * daily cap and the wished free day, which an administrator who plans sets:
+ * a teacher's PUT that would change either is a 403 WORK_RULE_DAY_IS_PLANNED,
+ * and a teacher's DELETE of a row holding one clears their lunch and rest
+ * and keeps the row (TeacherWorkRulesService; the table's trigger holds the
+ * same for a write that does not come through here).
+ *
  * KEYED ON THE TEACHER, not on the row's id. The table holds one row per teacher
  * (`@@unique([userId])`), so PUT on the person is the whole write surface: there
  * is nothing to create a second of, and no id a form has any reason to hold.

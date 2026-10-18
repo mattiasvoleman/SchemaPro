@@ -531,6 +531,7 @@ export async function readSourceStaffing(tx: PrismaClient, yearId: string): Prom
       employmentForm: true,
       firstTeacherPercent: true,
       lecturerPercent: true,
+      maxTeachingDaysPerWeek: true,
     },
     orderBy: { id: 'asc' },
   });
@@ -591,6 +592,13 @@ export async function readSourceStaffing(tx: PrismaClient, yearId: string): Prom
       contractKind: row.contractKind,
       teachingTargetMinutesPerWeek: row.teachingTargetMinutesPerWeek,
       signature: row.signature,
+      // What the post states beside its figures, which no period changes:
+      // SCB's three (20261111090000) and deltid in days (20261123090000).
+      // Read above and handed on, or the plan carries none of them.
+      employmentForm: row.employmentForm,
+      firstTeacherPercent: row.firstTeacherPercent,
+      lecturerPercent: row.lecturerPercent,
+      maxTeachingDaysPerWeek: row.maxTeachingDaysPerWeek,
       periods: periodRows
         .filter((period) => period.employmentId === row.id)
         .map((period) => ({

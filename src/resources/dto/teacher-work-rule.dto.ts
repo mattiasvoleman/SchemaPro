@@ -1,4 +1,11 @@
 import { IsDivisibleBy, IsInt, IsOptional, Matches, Max, Min } from 'class-validator';
+import {
+  MAX_TEACHING_MINUTES_PER_DAY_MAX,
+  MAX_TEACHING_MINUTES_PER_DAY_MIN,
+  MAX_TEACHING_MINUTES_PER_DAY_STEP,
+  PREFERRED_FREE_DAY_MAX,
+  PREFERRED_FREE_DAY_MIN,
+} from '../../common/teacher-day';
 
 const TIME = /^\d{2}:\d{2}(:\d{2})?$/;
 
@@ -18,6 +25,11 @@ const TIME = /^\d{2}:\d{2}(:\d{2})?$/;
  * used to solve. The suggested values — 30 minutes inside 10:30-13:30, and 660
  * minutes of rest — are suggestions the form offers, not values this DTO or the
  * database supplies.
+ *
+ * BUT FOR LÄRARENS DAG (the daily cap and the wished free day, 20261123090000),
+ * where absent KEEPS what the row holds and null clears it: they are the
+ * administrator's, a teacher writes this row too, and a body from before them
+ * must not take them away. See the two fields.
  *
  * The bounds mirror the table's CHECK constraints exactly, and neither copy is
  * redundant. A school admin's own Supabase key can PATCH the table straight
@@ -78,4 +90,48 @@ export class UpsertTeacherWorkRuleDto {
       'Dygnsvilan kan vara högst 1320 minuter (22 timmar) — längre än så går inga två arbetsdagar efter varandra.',
   })
   minDailyRestMinutes?: number | null;
+
+  /**
+   * Lärarens dag (20261123090000): the most minutes of teaching the teacher
+   * has on one day, every lesson they are on counted start to end
+   * (src/common/teacher-day.ts). HARD, like the rules above.
+   *
+   * ABSENT KEEPS WHAT THE ROW HOLDS, null clears it, a value writes it —
+   * unlike the four above, which a PUT replaces. It came after them, and a
+   * web from before it, open in a tab over the release, would otherwise
+   * clear an administrator's cap on its next lunch save; so would a
+   * teacher's own PUT of their lunch, who may not touch it at all (the
+   * service refuses that, and the table's trigger again).
+   *
+   * 30..720 on the five-minute grid, the table's CHECK and the engine's: a
+   * cap below half an hour is a day nobody teaches, one above twelve hours
+   * is no cap, and a 7-minute step is one the solver's grid cannot meet.
+   */
+  @IsOptional()
+  @IsInt({ message: 'Dagstaket anges i hela minuter.' })
+  @Min(MAX_TEACHING_MINUTES_PER_DAY_MIN, {
+    message: `Ett dagstak under ${MAX_TEACHING_MINUTES_PER_DAY_MIN} minuter undervisning är en dag utan lektioner — lämna fältet tomt för ingen gräns.`,
+  })
+  @Max(MAX_TEACHING_MINUTES_PER_DAY_MAX, {
+    message: `Ett dagstak kan vara högst ${MAX_TEACHING_MINUTES_PER_DAY_MAX} minuter (12 timmar) undervisning.`,
+  })
+  @IsDivisibleBy(MAX_TEACHING_MINUTES_PER_DAY_STEP, {
+    message: `Dagstaket måste vara ett helt antal ${MAX_TEACHING_MINUTES_PER_DAY_STEP}-minutersintervall — schemaläggaren räknar i femminuterssteg.`,
+  })
+  maxTeachingMinutesPerDay?: number | null;
+
+  /**
+   * The weekday the teacher would rather have free, ISO 1 (måndag) .. 7.
+   * SOFT: the generator pays for a lesson on it and refuses no week over it.
+   * Absent keeps, null clears, as for the cap.
+   */
+  @IsOptional()
+  @IsInt({ message: 'Den önskade lediga dagen anges som en veckodag, 1 (måndag) till 7 (söndag).' })
+  @Min(PREFERRED_FREE_DAY_MIN, {
+    message: 'Den önskade lediga dagen anges som en veckodag, 1 (måndag) till 7 (söndag).',
+  })
+  @Max(PREFERRED_FREE_DAY_MAX, {
+    message: 'Den önskade lediga dagen anges som en veckodag, 1 (måndag) till 7 (söndag).',
+  })
+  preferredFreeDayOfWeek?: number | null;
 }
