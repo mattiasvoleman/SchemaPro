@@ -45,7 +45,13 @@
  *   sc-l  a run interrupted by a restart while its call is out frees its year
  *         at once but keeps its place under CANDIDATE_RUNS_MAX until that
  *         call could have ended (engineBusyUntil), and its task writes
- *         nothing more.
+ *         nothing more; "Ta bort förslagen" meanwhile takes its candidates
+ *         and hides it from the page and the check, keeps the place, and the
+ *         sweep deletes the row once the call could have ended;
+ *   sc-m  a run cancelled while its call is out, whose call then comes back
+ *         as the engine's own 503 (its solve thread running on), ends
+ *         CANDIDATE_RUN_CANCELLED and still counts under the cap until the
+ *         call's deadline; one whose engine answered frees its place.
  *
  * Interleavings are made the way the rest of the probe makes them: a holder
  * parked on a promise inside its transaction, the other side started, its wait
@@ -226,14 +232,17 @@ class EngineStub {
     this.script.push({ match, answer });
   }
 
-  /** The next matching call waits for `release`; `arrived` is its body. */
-  park(match: (body: EngineBody) => boolean): { arrived: Promise<EngineBody>; release: () => void } {
+  /** The next matching call waits for `release`, then answers `answer`; `arrived` is its body. */
+  park(
+    match: (body: EngineBody) => boolean,
+    answer: (body: EngineBody) => EngineAnswer = placed,
+  ): { arrived: Promise<EngineBody>; release: () => void } {
     const arrived = deferred<EngineBody>();
     const gate = deferred<void>();
     this.once(match, async (body) => {
       arrived.resolve(body);
       await gate.promise;
-      return placed(body);
+      return answer(body);
     });
     return { arrived: arrived.promise, release: () => gate.resolve() };
   }
@@ -255,6 +264,20 @@ class EngineStub {
 /** The engine unreachable: what axios throws for a refused connection. */
 function unreachable(): never {
   throw new AxiosError('connect ECONNREFUSED', 'ECONNREFUSED');
+}
+
+/**
+ * The engine's own timeout: run_solver's wait_for gives up on its solve
+ * thread at the budget plus 30 s and answers 503, while the thread solves on.
+ */
+function engineTimedOut(): never {
+  throw new AxiosError('Request failed with status code 503', 'ERR_BAD_RESPONSE', undefined, undefined, {
+    status: 503,
+    statusText: 'Service Unavailable',
+    headers: {},
+    config: {} as never,
+    data: { code: 'HTTP_503', message: 'Optimization timed out.' },
+  });
 }
 
 /** An engine older than `search`: its models forbid the field, and it says so in a 422. */
@@ -521,9 +544,11 @@ export async function scheduleCandidateChecks(
       createdById: string | null;
       startedAt: Date | null;
       finishedAt: Date | null;
+      engineBusyUntil: Date | null;
+      discardedAt: Date | null;
     }>(
       `SELECT id, status::text AS status, requested, progress, basis, "basisParts", weights, unplaced, error, "errorCode", "errorParams",
-              "appliedCandidateId", "appliedAt", "leaseSeconds", "createdById", "startedAt", "finishedAt"
+              "appliedCandidateId", "appliedAt", "leaseSeconds", "createdById", "startedAt", "finishedAt", "engineBusyUntil", "discardedAt"
          FROM "ScheduleCandidateRuns" WHERE id = $1`,
       [runId],
     );
@@ -1320,7 +1345,54 @@ export async function scheduleCandidateChecks(
       }
     });
 
-    await check('(sc-l) a run interrupted while its call is out frees its year at once, keeps its place under CANDIDATE_RUNS_MAX until that call could have ended, and writes nothing more', async () => {
+    await check('(sc-m) a run cancelled while its call is out keeps its place under the cap when that call comes back as the engine’s own 503, and frees it when the engine answered', async () => {
+      const activeNow = async () => {
+        const [row] = await api.withRls(admin, (tx) => tx.$queryRaw<{ n: number }[]>`SELECT app.schedule_candidate_runs_active() AS n`);
+        return Number(row?.n);
+      };
+      const idle = await activeNow();
+      const cancelThenAnswer = async (answer: (body: EngineBody) => EngineAnswer) => {
+        const solving = engine.park(isCandidateCall, answer);
+        pendingReleases.push(solving.release);
+        const { runId } = await candidates.start({ academicYearId: year, count: 2 }, admin);
+        await solving.arrived;
+        // "Avbryt" while the lead's call is out.
+        await candidates.discard(year, admin);
+        assert.equal((await runRow(runId)).status, 'CANCELLING');
+        assert.equal(await activeNow(), idle + 1);
+        solving.release();
+        return { runId, ended: await settle(runId) };
+      };
+
+      // The engine's own 503: its wait gave up, its solve thread did not.
+      const timedOut = await cancelThenAnswer(engineTimedOut);
+      assert.deepEqual([timedOut.ended.status, timedOut.ended.errorCode], ['FAILED', 'CANDIDATE_RUN_CANCELLED']);
+      assert.ok(timedOut.ended.engineBusyUntil, 'the cancelled run lost the deadline of a call that timed out');
+      assert.ok(timedOut.ended.engineBusyUntil!.getTime() > Date.now(), 'the deadline is already past');
+      assert.equal(await activeNow(), idle + 1, 'the cancelled run left the count while its solve runs on');
+      const capped = new ScheduleCandidatesService(api, proxy, versions, realtime, configOf(idle + 1));
+      await refusedWith(capped.start({ academicYearId: year, count: 2 }, admin), 409, 'CANDIDATES_BUSY');
+      // Shown as cancelled until a discard, which hides it and keeps the place.
+      assert.equal((await candidates.overview(year, admin)).latest?.run.id, timedOut.runId);
+      await candidates.discard(year, admin);
+      assert.equal((await candidates.overview(year, admin)).latest, null);
+      assert.ok((await runRow(timedOut.runId)).discardedAt);
+      assert.equal(await activeNow(), idle + 1);
+      await owner.query(`UPDATE "ScheduleCandidateRuns" SET "engineBusyUntil" = now() - interval '1 second' WHERE id = $1`, [timedOut.runId]);
+      assert.equal(await activeNow(), idle);
+      await candidates.sweep();
+      assert.equal(await runRow(timedOut.runId), undefined, 'the sweep left a discarded run whose call has ended');
+
+      // An engine that answered: nothing of the run is solving.
+      const answered = await cancelThenAnswer(placed);
+      assert.deepEqual([answered.ended.status, answered.ended.errorCode, answered.ended.engineBusyUntil], ['FAILED', 'CANDIDATE_RUN_CANCELLED', null]);
+      assert.equal(await activeNow(), idle);
+      await candidates.discard(year, admin);
+      assert.equal(await runRow(answered.runId), undefined, 'the discard kept a run with no call out');
+      console.log('     sc-m: a cancelled run whose call timed out counted until its deadline; one whose engine answered did not');
+    });
+
+    await check('(sc-l) a run interrupted while its call is out frees its year at once, keeps its place under CANDIDATE_RUNS_MAX until that call could have ended, and writes nothing more; a discard meanwhile hides it, and the sweep deletes it after', async () => {
       const activeNow = async () => {
         const [row] = await api.withRls(admin, (tx) => tx.$queryRaw<{ n: number }[]>`SELECT app.schedule_candidate_runs_active() AS n`);
         return Number(row?.n);
@@ -1328,19 +1400,22 @@ export async function scheduleCandidateChecks(
       const idle = await activeNow();
       // An instance of its own, so the shutdown hook ends only this run.
       const restarting = new ScheduleCandidatesService(api, proxy, versions, realtime, configOf(idle + 2));
+      // The first candidate is stored; the second call is out when the restart comes.
+      engine.once(isCandidateCall, async (body) => placed(body));
       const solving = engine.park(isCandidateCall);
       pendingReleases.push(solving.release);
       const { runId } = await restarting.start({ academicYearId: year, count: 2 }, admin);
       await solving.arrived;
       const out = await runRow(runId);
-      assert.equal(out.status, 'RUNNING');
+      assert.deepEqual([out.status, out.progress], ['RUNNING', 1]);
+      assert.equal((await candidateRows(runId)).length, 1);
       const busy = await one<{ until: Date | null; heartbeat: Date }>(
         `SELECT "engineBusyUntil" AS until, "heartbeatAt" AS heartbeat FROM "ScheduleCandidateRuns" WHERE id = $1`,
         [runId],
       );
       assert.ok(busy.until, 'the call out on the engine has no deadline');
-      // The lead's call: CANDIDATE_MAX_SECONDS 30 + 45 + the probe's 20.
-      assert.equal(Math.round((busy.until!.getTime() - busy.heartbeat.getTime()) / 1000), 95);
+      // The second call: CANDIDATE_MAX_SECONDS 30 + 45 (only the lead probes).
+      assert.equal(Math.round((busy.until!.getTime() - busy.heartbeat.getTime()) / 1000), 75);
 
       // The redeploy: SIGTERM runs the shutdown hook while the engine solves on.
       await restarting.onModuleDestroy();
@@ -1353,25 +1428,40 @@ export async function scheduleCandidateChecks(
       assert.equal(await activeNow(), idle + 1, 'the interrupted run left the count while its call is out');
       const capped = new ScheduleCandidatesService(api, proxy, versions, realtime, configOf(idle + 1));
       await refusedWith(capped.start({ academicYearId: year, count: 2 }, admin), 409, 'CANDIDATES_BUSY');
-      // "Ta bort förslagen" removes the year's finished runs, but not this one
-      // while its call is out: the row is its place under the cap.
+      assert.equal((await candidates.overview(year, admin)).latest?.run.id, runId, 'the page does not show the interrupted run');
+
+      // "Ta bort förslagen" while the call is out: the candidates go and the
+      // page no longer shows the run, but its row stays as its place under the cap.
       await capped.discard(year, admin);
-      assert.equal((await runRow(runId)).errorCode, 'CANDIDATE_RUN_INTERRUPTED', 'the discard removed a run whose call is out');
+      const discarded = await runRow(runId);
+      assert.ok(discarded, 'the discard deleted the place of a call still out');
+      assert.equal(discarded.errorCode, 'CANDIDATE_RUN_INTERRUPTED');
+      assert.ok(discarded.discardedAt, 'the discard did not mark the run it kept');
+      assert.equal((await candidateRows(runId)).length, 0, 'the discard left the kept run its candidates');
+      const page = await candidates.overview(year, admin);
+      assert.equal(page.latest, null, `the page still shows a run after the discard: ${page.latest?.run.id}`);
+      assert.equal(page.batch, null);
+      await refusedWith(candidates.check(runId, admin), 404, 'CANDIDATE_GONE');
       assert.equal(await activeNow(), idle + 1, 'the discard freed the place of a call still out');
+      // The sweep leaves it while the call can be solving.
+      await candidates.sweep();
+      assert.ok(await runRow(runId), 'the sweep deleted a discarded run whose call is out');
 
       // The engine answers; the orphaned task wakes to a run that is not its own.
       solving.release();
       for (let tries = 0; tries < 50; tries++) await sleep(20);
       const after = await runRow(runId);
-      assert.deepEqual([after.status, after.errorCode, after.progress], ['FAILED', 'CANDIDATE_RUN_INTERRUPTED', 0]);
+      assert.deepEqual([after.status, after.errorCode, after.progress], ['FAILED', 'CANDIDATE_RUN_INTERRUPTED', 1]);
       assert.equal((await candidateRows(runId)).length, 0, 'the interrupted task stored a candidate');
 
-      // Once the call could have ended, the place is free again.
+      // Once the call could have ended, the place is free again, and the sweep deletes the row.
       await owner.query(`UPDATE "ScheduleCandidateRuns" SET "engineBusyUntil" = now() - interval '1 second' WHERE id = $1`, [runId]);
       assert.equal(await activeNow(), idle);
+      await candidates.sweep();
+      assert.equal(await runRow(runId), undefined, 'the sweep left a discarded run whose call has ended');
       const next = await runOf(2, capped);
       assert.equal(next.row.status, 'SUCCEEDED');
-      console.log(`     sc-l: interrupted run counted until its call's deadline (95 s after the heartbeat); then a run of a cap of ${idle + 1} went through`);
+      console.log(`     sc-l: interrupted run counted until its call's deadline (75 s after the heartbeat), hidden by the discard, deleted by the sweep after; then a run of a cap of ${idle + 1} went through`);
     });
 
     await check('(sc-k) no stored candidate, run, REGENERATE entry, response or engine request names a pupil', async () => {

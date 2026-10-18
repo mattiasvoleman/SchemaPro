@@ -24199,7 +24199,8 @@ BEGIN
                            'ScheduleCandidateRuns_requested_is_one_to_four', 'ScheduleCandidateRuns_lease_is_bounded',
                            'ScheduleCandidateRuns_applied_together', 'ScheduleCandidateRuns_progress_is_of_the_requested',
                            'ScheduleCandidateRuns_basis_is_a_sha256', 'ScheduleCandidateRuns_error_is_short',
-                           'ScheduleCandidateRuns_errorCode_is_a_name', 'ScheduleCandidates_ordinal_is_one_to_four',
+                           'ScheduleCandidateRuns_errorCode_is_a_name', 'ScheduleCandidateRuns_discarded_is_finished',
+                           'ScheduleCandidates_ordinal_is_one_to_four',
                            'ScheduleCandidates_variant_is_a_name', 'ScheduleCandidates_seed_is_not_negative',
                            'ScheduleCandidates_solverStatus_is_known', 'ScheduleCandidates_lessons_is_a_list',
                            'ScheduleCandidates_errorCode_is_a_name'] LOOP
@@ -24747,7 +24748,9 @@ ROLLBACK;
 -- asked for; its basis is a lowercase sha256 in hex, all of it and nothing
 -- after; its lease is from a minute to an hour; a candidate is marked applied
 -- with its time or not at all; its error is at most 2 000 characters (not
--- bytes); an error code is a name of at most 64 characters. A candidate's
+-- bytes); an error code is a name of at most 64 characters; only a finished
+-- run is marked discarded, and a discarded one is never made active again
+-- (an active run hidden from the page would still hold the year). A candidate's
 -- ordinal is one to four; its variant a name of at most 32 characters; its
 -- seed none or not negative; its solver status one of the six the gateway
 -- writes; its lessons a JSON list; its error code a name. A name is refused
@@ -24841,6 +24844,30 @@ BEGIN
     IF got IS DISTINCT FROM want THEN wrong := wrong || format('run with %s: "%s", expected "%s"', c.what, got, want); END IF;
   END LOOP;
 
+  -- status, discardedAt, refused by
+  FOR c IN SELECT * FROM (VALUES
+    ('SUCCEEDED', now(), NULL::text),
+    ('FAILED', now(), NULL),
+    ('PENDING', NULL::timestamptz, NULL),
+    ('PENDING', now(), 'discarded_is_finished'),
+    ('RUNNING', now(), 'discarded_is_finished'),
+    ('CANCELLING', now(), 'discarded_is_finished')
+  ) AS t(status, discarded, refused_by) LOOP
+    got := pg_temp.rls164_try(format(
+      'INSERT INTO "ScheduleCandidateRuns" ("schoolId", "academicYearId", status, requested, "discardedAt")
+       VALUES (%L, %L, %L, 2, %L)', m, yr, c.status, c.discarded));
+    want := coalesce('23514:ScheduleCandidateRuns_' || c.refused_by, 'none');
+    IF got IS DISTINCT FROM want THEN
+      wrong := wrong || format('a %s run discarded %s: "%s", expected "%s"', c.status, coalesce(c.discarded::text, 'never'), got, want);
+    END IF;
+  END LOOP;
+  UPDATE "ScheduleCandidateRuns" SET "discardedAt" = now() WHERE id = run;
+  got := pg_temp.rls164_try(format('UPDATE "ScheduleCandidateRuns" SET status = ''RUNNING'' WHERE id = %L', run));
+  IF got IS DISTINCT FROM '23514:ScheduleCandidateRuns_discarded_is_finished' THEN
+    wrong := wrong || format('a discarded run made RUNNING again: "%s"', got);
+  END IF;
+  UPDATE "ScheduleCandidateRuns" SET "discardedAt" = NULL WHERE id = run;
+
   -- what, ordinal, variant, seed, solverStatus, lessons, errorCode, refused by
   FOR c IN SELECT * FROM (VALUES
     ('ordinal 0', 0, 'KEEP', NULL::int, 'OPTIMAL', '[]'::jsonb, NULL::text, 'ordinal_is_one_to_four'),
@@ -24923,7 +24950,11 @@ ROLLBACK;
 --   * a run created seven days and a millisecond ago is deleted with its
 --     candidates, applied or not, in either school, and one created exactly
 --     seven days ago is kept;
---   * the sweep returns 8 (five marked, three deleted), and 0 when called
+--   * a discarded run whose engine call ended a millisecond ago, or exactly
+--     now, or which has no call, is deleted (its candidate along, should one
+--     be left), in either school; one whose call ends a millisecond from now
+--     is kept, as is an undiscarded finished run whose call has ended;
+--   * the sweep returns 12 (five marked, seven deleted), and 0 when called
 --     again; a year whose run it marked takes a new run.
 --
 -- Only an owner's function sees both schools with no principal; section 160
@@ -24979,25 +25010,38 @@ BEGIN
     'finished', pg_temp.rls165_run('finished', 'SUCCEEDED', t - interval '1 day', 600, t - interval '2 days'),
     'week_old', pg_temp.rls165_run('week_old', 'FAILED', t - interval '7 days', 600, t - interval '7 days' - ms),
     'applied_old', pg_temp.rls165_run('applied_old', 'SUCCEEDED', t - interval '30 days', 600, t - interval '30 days'),
-    'exactly_week', pg_temp.rls165_run('exactly_week', 'SUCCEEDED', t - interval '7 days', 600, t - interval '7 days'));
+    'exactly_week', pg_temp.rls165_run('exactly_week', 'SUCCEEDED', t - interval '7 days', 600, t - interval '7 days'),
+    'discarded_ended', pg_temp.rls165_run('discarded_ended', 'FAILED', t, 600, t - interval '2 minutes'),
+    'discarded_ends_now', pg_temp.rls165_run('discarded_ends_now', 'FAILED', t, 600, t - interval '2 minutes'),
+    'discarded_no_call', pg_temp.rls165_run('discarded_no_call', 'FAILED', t, 600, t - interval '2 minutes'),
+    'discarded_out', pg_temp.rls165_run('discarded_out', 'FAILED', t, 600, t - interval '2 minutes'),
+    'call_ended', pg_temp.rls165_run('call_ended', 'FAILED', t, 600, t - interval '2 minutes'));
   INSERT INTO "ScheduleCandidates" ("runId", "schoolId", ordinal, variant, "solverStatus")
   SELECT (r ->> w.name)::uuid, app.current_school_id(), 1, 'KEEP', 'OPTIMAL'
-    FROM unnest(ARRAY['week_old', 'applied_old', 'exactly_week']) w(name);
+    FROM unnest(ARRAY['week_old', 'applied_old', 'exactly_week', 'discarded_ended']) w(name);
+  UPDATE "ScheduleCandidateRuns" c SET "discardedAt" = t - interval '1 minute', "engineBusyUntil" = x.busy
+    FROM (VALUES ('discarded_ended', t - ms), ('discarded_ends_now', t), ('discarded_no_call', NULL::timestamptz),
+                 ('discarded_out', t + ms)) x(name, busy)
+   WHERE c.id = (r ->> x.name)::uuid;
+  UPDATE "ScheduleCandidateRuns" SET "engineBusyUntil" = t - ms WHERE id = (r ->> 'call_ended')::uuid;
   UPDATE "ScheduleCandidateRuns" c SET "appliedCandidateId" = x.id, "appliedAt" = t - interval '29 days'
     FROM "ScheduleCandidates" x WHERE x."runId" = c.id AND c.id = (r ->> 'applied_old')::uuid;
 
   PERFORM pg_temp.rls165_as(other);
   r := r || jsonb_build_object(
     'other_stale', pg_temp.rls165_run('other_stale', 'RUNNING', t - interval '2 hours', 600, t - interval '3 hours'),
-    'other_old', pg_temp.rls165_run('other_old', 'FAILED', t - interval '8 days', 600, t - interval '8 days'));
+    'other_old', pg_temp.rls165_run('other_old', 'FAILED', t - interval '8 days', 600, t - interval '8 days'),
+    'other_discarded', pg_temp.rls165_run('other_discarded', 'SUCCEEDED', t, 600, t - interval '2 minutes'));
   INSERT INTO "ScheduleCandidates" ("runId", "schoolId", ordinal, variant, "solverStatus")
   VALUES ((r ->> 'other_old')::uuid, app.current_school_id(), 1, 'KEEP', 'OPTIMAL');
+  UPDATE "ScheduleCandidateRuns" SET "discardedAt" = t - interval '1 minute', "engineBusyUntil" = t - interval '1 minute'
+   WHERE id = (r ->> 'other_discarded')::uuid;
   PERFORM set_config('app.test_rls165', r::text, true);
 
   -- The sweep, with no principal.
   PERFORM pg_temp.rls165_as(NULL);
   n := app.schedule_candidates_sweep();
-  IF n IS DISTINCT FROM 8 THEN RAISE EXCEPTION 'sweep: it changed % rows, expected 5 marked and 3 deleted', n; END IF;
+  IF n IS DISTINCT FROM 12 THEN RAISE EXCEPTION 'sweep: it changed % rows, expected 5 marked and 7 deleted', n; END IF;
 
   -- What it did, as each school's administrator.
   FOR rec IN SELECT * FROM (VALUES
@@ -25013,8 +25057,14 @@ BEGIN
     ('week_old', 'GONE', '00000000-0000-4000-8000-000000000105'),
     ('applied_old', 'GONE', '00000000-0000-4000-8000-000000000105'),
     ('exactly_week', 'SUCCEEDED', '00000000-0000-4000-8000-000000000105'),
+    ('discarded_ended', 'GONE', '00000000-0000-4000-8000-000000000105'),
+    ('discarded_ends_now', 'GONE', '00000000-0000-4000-8000-000000000105'),
+    ('discarded_no_call', 'GONE', '00000000-0000-4000-8000-000000000105'),
+    ('discarded_out', 'FAILED', '00000000-0000-4000-8000-000000000105'),
+    ('call_ended', 'FAILED', '00000000-0000-4000-8000-000000000105'),
     ('other_stale', 'ABANDONED', other),
-    ('other_old', 'GONE', other)
+    ('other_old', 'GONE', other),
+    ('other_discarded', 'GONE', other)
   ) AS v(name, expected, sub) LOOP
     PERFORM pg_temp.rls165_as(rec.sub);
     IF rec.expected = 'GONE' THEN
@@ -25192,8 +25242,9 @@ END $$;
 -- finished runs, a run a millisecond past its lease or past half an hour,
 -- and one whose lease of 60 s ran out are not. A run whose last engine call
 -- can still be solving (engineBusyUntil later than now) is counted whatever
--- its status — one failed under its call, as a restart leaves it, and one
--- past its lease — once each; one whose call ended a millisecond ago is not.
+-- its status — one failed under its call, as a restart leaves it, one past
+-- its lease, and one a discard hid while its call was out — once each; one
+-- whose call ended a millisecond ago is not, discarded or not.
 -- The count is the same asked by the matrix school's FULL, by its teacher
 -- and with no principal, and after a sweep, which marks exactly the runs it
 -- left out.
@@ -25228,6 +25279,7 @@ DECLARE
   n integer;
   sub text;
   m uuid;
+  d uuid;
 BEGIN
   PERFORM pg_temp.rls167_as(NULL);
   before := app.schedule_candidate_runs_active();
@@ -25244,8 +25296,12 @@ BEGIN
   -- Counted for the engine call still out: failed under it, and past its lease.
   PERFORM pg_temp.rls167_run('FAILED', t, 600, t, t + interval '1 second');
   PERFORM pg_temp.rls167_run('RUNNING', t - interval '600 seconds' - ms, 600, t - interval '20 minutes', t + interval '10 seconds');
+  d := pg_temp.rls167_run('FAILED', t, 600, t, t + ms);
+  UPDATE "ScheduleCandidateRuns" SET "discardedAt" = t WHERE id = d;
   -- Not counted.
   PERFORM pg_temp.rls167_run('FAILED', t, 600, t, t - ms);
+  d := pg_temp.rls167_run('FAILED', t, 600, t, t - ms);
+  UPDATE "ScheduleCandidateRuns" SET "discardedAt" = t WHERE id = d;
   PERFORM pg_temp.rls167_run('SUCCEEDED', t, 600, t);
   PERFORM pg_temp.rls167_run('FAILED', t, 600, t);
   PERFORM pg_temp.rls167_run('RUNNING', t - interval '600 seconds' - ms, 600, t - interval '20 minutes');
@@ -25258,17 +25314,24 @@ BEGIN
   FOREACH sub IN ARRAY ARRAY['00000000-0000-4000-8000-000000000105', '00000000-0000-4000-8000-000000000111', NULL] LOOP
     PERFORM pg_temp.rls167_as(sub);
     n := app.schedule_candidate_runs_active();
-    IF n IS DISTINCT FROM before + 9 THEN
-      RAISE EXCEPTION 'active runs: asked by %, the count is %, expected % before and 9 more', coalesce(sub, 'no principal'), n, before;
+    IF n IS DISTINCT FROM before + 10 THEN
+      RAISE EXCEPTION 'active runs: asked by %, the count is %, expected % before and 10 more', coalesce(sub, 'no principal'), n, before;
     END IF;
   END LOOP;
 
   -- The sweep marks what the count left out, and nothing it counted (the run
-  -- past its lease it marks FAILED is counted on for its engine call).
+  -- past its lease it marks FAILED is counted on for its engine call); it
+  -- deletes the discarded run whose call ended, and keeps the one counted.
   PERFORM app.schedule_candidates_sweep();
   n := app.schedule_candidate_runs_active();
-  IF n IS DISTINCT FROM before + 9 THEN RAISE EXCEPTION 'active runs: after a sweep the count is %, expected %', n, before + 9; END IF;
+  IF n IS DISTINCT FROM before + 10 THEN RAISE EXCEPTION 'active runs: after a sweep the count is %, expected %', n, before + 10; END IF;
   PERFORM pg_temp.rls167_as('00000000-0000-4000-8000-000000000105');
+  IF EXISTS (SELECT 1 FROM "ScheduleCandidateRuns" WHERE id = d) THEN
+    RAISE EXCEPTION 'active runs: the sweep kept a discarded run whose call had ended';
+  END IF;
+  IF (SELECT count(*) FROM "ScheduleCandidateRuns" WHERE "schoolId" = m AND "discardedAt" IS NOT NULL) <> 1 THEN
+    RAISE EXCEPTION 'active runs: the sweep deleted the discarded run whose call is out';
+  END IF;
   SELECT count(*) INTO n FROM "ScheduleCandidateRuns" WHERE "schoolId" = m AND status IN ('PENDING', 'RUNNING', 'CANCELLING');
   IF n <> 6 THEN RAISE EXCEPTION 'active runs: the sweep left % of the matrix school''s runs active, the count counted 6', n; END IF;
 END $$;

@@ -187,7 +187,7 @@ export interface CandidateBatchView {
 }
 
 export interface CandidatesOverview {
-  /** The newest run of the year, any status, with what it has stored so far. */
+  /** The newest run of the year that no discard removed, any status, with what it has stored so far. */
   latest: CandidateBatchView | null;
   /** The newest SUCCEEDED run: the batch a comparison is made of. */
   batch: CandidateBatchView | null;
@@ -816,7 +816,7 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
    *     has the same hard constraints, so the others would find nothing
    *     either. An answer the demand guard refuses is stored REJECTED.
    *  4. Finished under the row lock: SUCCEEDED with at least one applicable
-   *     candidate (and the year's other finished runs deleted: one batch is
+   *     candidate (and the year's other finished runs removed: one batch is
    *     kept, and only a success replaces it), else CANDIDATES_NONE_APPLICABLE.
    */
   private async run(plan: RunPlan, user: AuthenticatedUser): Promise<void> {
@@ -1016,8 +1016,9 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
 
   /**
    * The end of a run whose every candidate was asked, under the row lock and
-   * only while it is RUNNING. A success deletes the year's other finished
-   * runs — one batch is kept, and a failed run never replaces it.
+   * only while it is RUNNING. A success removes the year's other finished
+   * runs (removeFinished) — one batch is kept, and a failed run never
+   * replaces it.
    */
   private async finish(plan: RunPlan, user: AuthenticatedUser, unplaced: RunUnplaced | null, succeeded: boolean): Promise<void> {
     await this.prisma.withRls(user, async (tx) => {
@@ -1049,17 +1050,16 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
           finishedAt: new Date(),
         },
       });
-      const { count } = await tx.scheduleCandidateRun.deleteMany({
-        where: { academicYearId: plan.academicYearId, id: { not: plan.runId }, status: { in: FINISHED }, ...noCallOut() },
-      });
+      const count = await removeFinished(tx, { academicYearId: plan.academicYearId, id: { not: plan.runId } });
       this.logger.log(`Candidate run succeeded [runId=${plan.runId}, superseded=${count}]`);
     });
   }
 
   /**
    * Fails the run, only while it is still the task's (PENDING or RUNNING); a
-   * run a DELETE set CANCELLING ends CANCELLED instead, and one already
-   * finished is left alone.
+   * run a DELETE or an apply set CANCELLING ends CANCELLED instead, and one
+   * already finished is left alone. keepEngineBusy holds in both: a call
+   * that timed out may still be solving, whoever cancelled the run.
    */
   private async fail(
     runId: string,
@@ -1081,7 +1081,7 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
           finishedAt: new Date(),
         },
       });
-      if (count === 0) await markCancelled(tx, runId);
+      if (count === 0) await markCancelled(tx, runId, options);
     });
   }
 
@@ -1098,12 +1098,17 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
   async overview(academicYearId: string, user: AuthenticatedUser, now: Date = new Date()): Promise<CandidatesOverview> {
     const { latest, batch } = await this.prisma.withRls(user, async (tx) => {
       const order = [{ createdAt: 'desc' as const }, { id: 'desc' as const }];
-      const newest = await tx.scheduleCandidateRun.findFirst({ where: { academicYearId }, orderBy: order, select: RUN_SELECT });
+      // A run a discard removed is not shown, whatever is left of its row.
+      const newest = await tx.scheduleCandidateRun.findFirst({
+        where: { academicYearId, discardedAt: null },
+        orderBy: order,
+        select: RUN_SELECT,
+      });
       const succeeded =
         newest?.status === 'SUCCEEDED'
           ? newest
           : await tx.scheduleCandidateRun.findFirst({
-              where: { academicYearId, status: 'SUCCEEDED' },
+              where: { academicYearId, status: 'SUCCEEDED', discardedAt: null },
               orderBy: order,
               select: RUN_SELECT,
             });
@@ -1184,9 +1189,9 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
         await tx.$executeRaw`SET TRANSACTION READ ONLY`;
         const run = await tx.scheduleCandidateRun.findUnique({
           where: { id: runId },
-          select: { academicYearId: true, basis: true, basisParts: true },
+          select: { academicYearId: true, basis: true, basisParts: true, discardedAt: true },
         });
-        if (!run) throw candidateGone();
+        if (!run || run.discardedAt) throw candidateGone();
         const mode = await publishModeOf(tx, schoolId);
         const prepared = await this.proxy.prepareSchedule(tx, run.academicYearId, user);
         if (!prepared.ready) {
@@ -1344,10 +1349,12 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
   // ---------------------------------------------------------------------------
 
   /**
-   * "Ta bort förslagen": the year's finished runs are deleted with their
-   * candidates; an active run is asked to stop (CANCELLING) and never
-   * deleted under its task, which stops at its next step and ends it
-   * CANDIDATE_RUN_CANCELLED — or, if the task is gone, the sweep does.
+   * "Ta bort förslagen": the year's finished runs are removed with their
+   * candidates (removeFinished: one whose engine call can still be solving
+   * keeps an empty, hidden row until the sweep deletes it); an active run is
+   * asked to stop (CANCELLING) and never deleted under its task, which stops
+   * at its next step and ends it CANDIDATE_RUN_CANCELLED — or, if the task
+   * is gone, the sweep does.
    */
   async discard(academicYearId: string, user: AuthenticatedUser): Promise<void> {
     requireSchoolId(user);
@@ -1356,10 +1363,7 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
         where: { academicYearId, status: { in: ['PENDING', 'RUNNING'] } },
         data: { status: 'CANCELLING' },
       });
-      // A run whose engine call can still be solving keeps its row (and its
-      // place under CANDIDATE_RUNS_MAX) until it could have ended; the next
-      // discard or the sweep removes it.
-      await tx.scheduleCandidateRun.deleteMany({ where: { academicYearId, status: { in: FINISHED }, ...noCallOut() } });
+      await removeFinished(tx, { academicYearId });
     });
   }
 }
@@ -1369,8 +1373,14 @@ function callOf(candidate: PlannedCandidate, index: number): CallShape {
   return { variant: candidate.variant, seed: candidate.seed, lead: index === 0 };
 }
 
-/** A run a DELETE set CANCELLING, ended now that its task has stopped. Touches no other status. */
-async function markCancelled(tx: PrismaClient, runId: string): Promise<void> {
+/**
+ * A run a DELETE or an apply set CANCELLING, ended now that its task has
+ * stopped. Touches no other status. The engine deadline is cleared — the
+ * task's last call returned, or it made none — unless that call timed out
+ * (fail's keepEngineBusy): then the solve may run on, and the run keeps its
+ * place under CANDIDATE_RUNS_MAX until it could have ended.
+ */
+async function markCancelled(tx: PrismaClient, runId: string, options: { keepEngineBusy?: boolean } = {}): Promise<void> {
   await tx.scheduleCandidateRun.updateMany({
     where: { id: runId, status: 'CANCELLING' },
     data: {
@@ -1378,15 +1388,39 @@ async function markCancelled(tx: PrismaClient, runId: string): Promise<void> {
       error: 'The run was cancelled before it finished.',
       errorCode: CANDIDATE_RUN_CANCELLED,
       errorParams: Prisma.DbNull,
-      engineBusyUntil: null,
+      ...(options.keepEngineBusy ? {} : { engineBusyUntil: null }),
       finishedAt: new Date(),
     },
   });
 }
 
 /** Rows no engine call of theirs can still be solving for: no deadline, or one passed. */
-function noCallOut(): Prisma.ScheduleCandidateRunWhereInput {
-  return { OR: [{ engineBusyUntil: null }, { engineBusyUntil: { lte: new Date() } }] };
+function noCallOut(now: Date): Prisma.ScheduleCandidateRunWhereInput {
+  return { OR: [{ engineBusyUntil: null }, { engineBusyUntil: { lte: now } }] };
+}
+
+/**
+ * Removes the finished runs `where` names: deleted with their candidates,
+ * except a run whose engine call can still be solving, whose row is its
+ * place under CANDIDATE_RUNS_MAX (app.schedule_candidate_runs_active). That
+ * one loses its candidates and is marked discardedAt: no overview shows it,
+ * no check or apply finds it, and the sweep deletes it once its call could
+ * have ended. One clock for both halves, so a row is in exactly one.
+ */
+async function removeFinished(tx: PrismaClient, where: Prisma.ScheduleCandidateRunWhereInput): Promise<number> {
+  const now = new Date();
+  const finished = { ...where, status: { in: FINISHED } };
+  const { count } = await tx.scheduleCandidateRun.deleteMany({ where: { ...finished, ...noCallOut(now) } });
+  const kept = await tx.scheduleCandidateRun.findMany({
+    where: { ...finished, engineBusyUntil: { gt: now } },
+    select: { id: true },
+  });
+  if (kept.length > 0) {
+    const ids = kept.map((run) => run.id);
+    await tx.scheduleCandidate.deleteMany({ where: { runId: { in: ids } } });
+    await tx.scheduleCandidateRun.updateMany({ where: { id: { in: ids }, discardedAt: null }, data: { discardedAt: now } });
+  }
+  return count;
 }
 
 /** A nullable Json column's value: the blob, or SQL NULL (never the JSON literal null). */

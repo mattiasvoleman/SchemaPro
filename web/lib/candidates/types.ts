@@ -110,7 +110,7 @@ export interface CandidatesUnplaced {
 
 /** GET candidates?academicYearId= */
 export interface CandidatesOverview {
-  /** The newest run, any status, with whatever candidates it has stored so far. */
+  /** The newest run no discard removed, any status, with whatever candidates it has stored so far. */
   latest: CandidateBatch | null;
   /** The newest SUCCEEDED run: the batch the comparison is made of. */
   batch: CandidateBatch | null;

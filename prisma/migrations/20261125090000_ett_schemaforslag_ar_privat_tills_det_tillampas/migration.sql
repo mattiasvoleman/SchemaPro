@@ -47,15 +47,16 @@
 --
 -- Working material, not a register: a candidate is stale the moment the
 -- draft changes, so it is not a gallring category (one would start as "ej
--- beslutat", kept for ever). When a run succeeds the gateway deletes the
--- year's other finished runs, so one batch is kept; a run that fails leaves
--- the batch before it. Applying a candidate marks it on its run
--- (appliedCandidateId, appliedAt) and keeps the batch.
+-- beslutat", kept for ever). When a run succeeds the gateway removes the
+-- year's other finished runs (as a discard does, below), so one batch is
+-- kept; a run that fails leaves the batch before it. Applying a candidate
+-- marks it on its run (appliedCandidateId, appliedAt) and keeps the batch.
 -- app.schedule_candidates_sweep() is the rest: an active run whose
 -- heartbeat is older than its lease, or which began more than half an hour
 -- ago, has lost the instance that ran it and is marked FAILED
 -- (CANDIDATE_RUN_ABANDONED), which frees the year for the next run; a run
--- older than seven days is deleted with its candidates. It skips rows
+-- older than seven days is deleted with its candidates, as is a discarded
+-- one (below) once its engine call could have ended. It skips rows
 -- another transaction holds, so it never waits on a school. The gateway
 -- calls it in a short transaction of its own before every run and every
 -- fifteen minutes; it is the owner's, and app_authenticated's EXECUTE is the
@@ -69,9 +70,13 @@
 -- it starts one, so the solver is never asked for more than a few at once.
 -- A run's task writes engineBusyUntil before every engine call (the latest
 -- the solve it asks for can still be running) and clears it when the call
--- returns; a run failed while a call was out — the API restarting — keeps
--- it, and is counted until then, since the engine solves on after the
--- caller is gone. The year is free at once all the same.
+-- returns; a run failed while a call was out — the API restarting, a call
+-- timed out, cancelled or not — keeps it, and is counted until then, since
+-- the engine solves on after the caller is gone. The year is free at once
+-- all the same. Such a row is the run's place under the cap, so a discard,
+-- or a newer batch, that meets it before then does not delete it: it
+-- deletes its candidates and sets discardedAt, no page shows the run, and
+-- the sweep deletes it once its call could have ended.
 --
 -- ## A hand edit beside a rewrite
 --
@@ -140,6 +145,7 @@ CREATE TABLE "ScheduleCandidateRuns" (
     "heartbeatAt"    TIMESTAMPTZ(6) NOT NULL DEFAULT now(),
     "leaseSeconds"   INTEGER NOT NULL DEFAULT 600,
     "engineBusyUntil" TIMESTAMPTZ(6),
+    "discardedAt"    TIMESTAMPTZ(6),
     "createdAt"      TIMESTAMPTZ(6) NOT NULL DEFAULT now(),
     "startedAt"      TIMESTAMPTZ(6),
     "finishedAt"     TIMESTAMPTZ(6),
@@ -153,7 +159,10 @@ CREATE TABLE "ScheduleCandidateRuns" (
     CONSTRAINT "ScheduleCandidateRuns_progress_is_of_the_requested" CHECK ("progress" BETWEEN 0 AND "requested"),
     CONSTRAINT "ScheduleCandidateRuns_basis_is_a_sha256" CHECK ("basis" IS NULL OR "basis" ~ '^[0-9a-f]{64}$'),
     CONSTRAINT "ScheduleCandidateRuns_error_is_short" CHECK ("error" IS NULL OR char_length("error") <= 2000),
-    CONSTRAINT "ScheduleCandidateRuns_errorCode_is_a_name" CHECK ("errorCode" IS NULL OR "errorCode" ~ '^[A-Z][A-Z0-9_]{0,63}$')
+    CONSTRAINT "ScheduleCandidateRuns_errorCode_is_a_name" CHECK ("errorCode" IS NULL OR "errorCode" ~ '^[A-Z][A-Z0-9_]{0,63}$'),
+    -- Only a finished run is removed: an active one hidden from the page
+    -- would still hold the year.
+    CONSTRAINT "ScheduleCandidateRuns_discarded_is_finished" CHECK ("discardedAt" IS NULL OR "status" IN ('SUCCEEDED', 'FAILED'))
 );
 
 CREATE UNIQUE INDEX "ScheduleCandidateRuns_one_active_per_year"
@@ -311,9 +320,12 @@ BEGIN
    WHERE r."id" = stale."id";
   GET DIAGNOSTICS abandoned = ROW_COUNT;
 
+  -- Older than seven days, or removed by a discard or a newer batch while
+  -- its engine call could still be solving and that call's time now past.
   WITH old AS (
     SELECT "id" FROM "ScheduleCandidateRuns"
      WHERE "createdAt" < now() - interval '7 days'
+        OR ("discardedAt" IS NOT NULL AND ("engineBusyUntil" IS NULL OR "engineBusyUntil" <= now()))
      FOR UPDATE SKIP LOCKED
   )
   DELETE FROM "ScheduleCandidateRuns" r
@@ -326,7 +338,7 @@ END
 $$;
 
 COMMENT ON FUNCTION app.schedule_candidates_sweep() IS
-  'Schemaförslag (20261125090000): marks an active run past its lease or 30 minutes old FAILED (CANDIDATE_RUN_ABANDONED) and deletes runs older than 7 days with their candidates, skipping rows another transaction holds; returns how many rows it changed. Takes no argument and reads nothing back.';
+  'Schemaförslag (20261125090000): marks an active run past its lease or 30 minutes old FAILED (CANDIDATE_RUN_ABANDONED) and deletes, with their candidates, runs older than 7 days and discarded runs whose engine call can no longer be solving, skipping rows another transaction holds; returns how many rows it changed. Takes no argument and reads nothing back.';
 
 CREATE FUNCTION app.schedule_candidate_runs_active() RETURNS integer
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$

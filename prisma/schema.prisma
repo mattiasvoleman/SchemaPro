@@ -2106,7 +2106,8 @@ model OptimizationJob {
 /// One request for candidates. Every administrator reads it; SCHEMALAGGNING
 /// writes it. One active (PENDING, RUNNING, CANCELLING) run per year, by a
 /// partial unique index; app.schedule_candidates_sweep() marks a run past its
-/// lease FAILED and deletes runs older than seven days.
+/// lease FAILED, and deletes runs older than seven days and removed runs
+/// (discardedAt) whose engine call could have ended.
 model ScheduleCandidateRun {
   id             String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   schoolId       String                     @db.Uuid
@@ -2138,9 +2139,13 @@ model ScheduleCandidateRun {
   heartbeatAt    DateTime                   @default(now()) @db.Timestamptz(6)
   /// 60..3600 (DB CHECK): twice the longest engine call the run makes.
   leaseSeconds   Int                        @default(600)
-  /// The latest an engine call the run has out can still be solving; cleared when the call returns. A run failed
-  /// while a call was out (the API restarting) keeps it and is counted by app.schedule_candidate_runs_active() until then.
+  /// The latest an engine call the run has out can still be solving; cleared when the call returns or never reached the
+  /// engine. A run that ended while a call may still be solving — the API restarting, or the call timing out, cancelled
+  /// or not — keeps it and is counted by app.schedule_candidate_runs_active() until then.
   engineBusyUntil DateTime?                 @db.Timestamptz(6)
+  /// Set when a discard or a newer batch removed a finished run whose call could still be solving: its candidates are
+  /// gone, no page shows it, and the sweep deletes it once engineBusyUntil has passed. Finished runs only (DB CHECK).
+  discardedAt    DateTime?                  @db.Timestamptz(6)
   createdAt      DateTime                   @default(now()) @db.Timestamptz(6)
   startedAt      DateTime?                  @db.Timestamptz(6)
   finishedAt     DateTime?                  @db.Timestamptz(6)
