@@ -172,6 +172,25 @@ describe('a lesson between two others hides the walk only where it stands', () =
   });
 });
 
+describe('a class with no pupils known walks from its own last lesson', () => {
+  it('Svenska, Matte, then Idrott a bus ride away: only the walk from Matte, not from Svenska', () => {
+    // 7A has no members yet (a new class, planned before the pupil import); Hallen is 60 minutes off.
+    const BUS: SiteMap = { ...MAP, minutes: new Map([[pairKey(NORRA, SODRA), 60]]) };
+    const idrott = lesson('idr', '09:30', '10:30', 's1', { subjectName: 'Idrott', groupIds: ['g7a'] });
+    const svenska = lesson('sv', '08:00', '08:40', 'n1', { subjectName: 'Svenska', groupIds: ['g7a'] });
+    const matte = lesson('ma', '08:45', '09:25', 'n2', { subjectName: 'Matte', groupIds: ['g7a'] });
+    expect(
+      travelWarningsOf(context({ map: BUS }), idrott, [svenska, matte]).map((w) => [w.params.party, w.params.name, w.params.other, w.params.gap]),
+    ).toEqual([['PUPILS', '7A', 'Matte', 5]]);
+    // The lesson in between hides only in the weeks it runs: odd weeks leave Svenska's walk on the even ones.
+    const oddMatte = { ...matte, weeks: { recurrence: 'ODD_WEEKS' as const, startDate: null, endDate: null } };
+    expect(travelWarningsOf(context({ map: BUS }), idrott, [svenska, oddMatte]).map((w) => w.params.other).sort()).toEqual([
+      'Matte',
+      'Svenska',
+    ]);
+  });
+});
+
 describe('weeksCover', () => {
   const w = (recurrence: TravelWeeks['recurrence'], startDate: string | null = null, endDate: string | null = null): TravelWeeks => ({
     recurrence,
