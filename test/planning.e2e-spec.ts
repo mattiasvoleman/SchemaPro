@@ -1727,13 +1727,80 @@ describe('Planning surface (e2e)', () => {
         expect(harness.tx['teacherWorkRule']!['delete']).not.toHaveBeenCalled();
       });
 
-      it('an admin’s delete deletes, cap and wish with the row', async () => {
+      /*
+       * A web from before the two fields reads a row holding only a cap as
+       * "Ingen arbetstidsregel" and sends a bare DELETE when its four fields
+       * are empty. So a bare DELETE keeps the cap and the wish whoever sends
+       * it, and only `?includeDay=true` — which the web of this release
+       * sends, its form holding both — lets a planner delete the row whole.
+       */
+      const planner = () => asUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false } as never);
+
+      it('a planner’s bare delete keeps the cap a colleague set: the lunch and rest go, the row stays', async () => {
+        harness.tx['teacherWorkRule']!['deleteMany']!.mockResolvedValue({ count: 0 });
+        harness.tx['teacherWorkRule']!['update']!.mockResolvedValue({ ...storedRule(COLLEAGUE_ID), maxTeachingMinutesPerDay: 270 });
+
         await request(http())
           .delete(`/api/v1/teacher-work-rules/${COLLEAGUE_ID}`)
+          .set('x-test-user', planner())
+          .expect(204);
+
+        expect(harness.tx['teacherWorkRule']!['deleteMany']).toHaveBeenCalledWith({
+          where: { userId: COLLEAGUE_ID, maxTeachingMinutesPerDay: null, preferredFreeDayOfWeek: null },
+        });
+        expect(harness.tx['teacherWorkRule']!['update']).toHaveBeenCalledWith({
+          where: { userId: COLLEAGUE_ID },
+          data: { lunchMinutes: null, lunchStartTime: null, lunchEndTime: null, minDailyRestMinutes: null },
+        });
+        expect(harness.tx['teacherWorkRule']!['delete']).not.toHaveBeenCalled();
+      });
+
+      it('and so does one that says includeDay=false', async () => {
+        harness.tx['teacherWorkRule']!['deleteMany']!.mockResolvedValue({ count: 1 });
+
+        await request(http())
+          .delete(`/api/v1/teacher-work-rules/${COLLEAGUE_ID}?includeDay=false`)
           .set('x-test-user', admin())
           .expect(204);
 
+        expect(harness.tx['teacherWorkRule']!['delete']).not.toHaveBeenCalled();
+        expect(harness.tx['teacherWorkRule']!['update']).not.toHaveBeenCalled();
+      });
+
+      it('a planner’s delete with includeDay=true deletes the row, cap and wish with it', async () => {
+        await request(http())
+          .delete(`/api/v1/teacher-work-rules/${COLLEAGUE_ID}?includeDay=true`)
+          .set('x-test-user', planner())
+          .expect(204);
+
         expect(harness.tx['teacherWorkRule']!['delete']).toHaveBeenCalledWith({ where: { userId: COLLEAGUE_ID } });
+        expect(harness.tx['teacherWorkRule']!['deleteMany']).not.toHaveBeenCalled();
+      });
+
+      it('a teacher’s delete with includeDay=true still keeps the cap: not refused, not obeyed', async () => {
+        harness.tx['teacherWorkRule']!['deleteMany']!.mockResolvedValue({ count: 0 });
+        harness.tx['teacherWorkRule']!['update']!.mockResolvedValue({ ...storedRule(TEACHER_ID), maxTeachingMinutesPerDay: 270 });
+
+        await request(http())
+          .delete(`/api/v1/teacher-work-rules/${TEACHER_ID}?includeDay=true`)
+          .set('x-test-user', teacher())
+          .expect(204);
+
+        expect(harness.tx['teacherWorkRule']!['delete']).not.toHaveBeenCalled();
+        expect(harness.tx['teacherWorkRule']!['update']).toHaveBeenCalledWith({
+          where: { userId: TEACHER_ID },
+          data: { lunchMinutes: null, lunchStartTime: null, lunchEndTime: null, minDailyRestMinutes: null },
+        });
+      });
+
+      it('400s an includeDay that is not a flag, and a query key it does not know, before the table', async () => {
+        for (const query of ['includeDay=yes', 'includeDay=1', 'everything=true']) {
+          await request(http())
+            .delete(`/api/v1/teacher-work-rules/${COLLEAGUE_ID}?${query}`)
+            .set('x-test-user', admin())
+            .expect(400);
+        }
+        expect(harness.tx['teacherWorkRule']!['delete']).not.toHaveBeenCalled();
         expect(harness.tx['teacherWorkRule']!['deleteMany']).not.toHaveBeenCalled();
       });
 

@@ -451,8 +451,10 @@ Walk the full product loop once, in order:
   has set a cap, a wish or a number of days, which nobody can do before the
   new web is out, so the short window where the API is new and the engine
   old sends nothing the old engine refuses. A PUT of a work rule or a post
-  that leaves the new fields out keeps them, so a web from before the
-  release clears nothing; the new web sends the new keys, which the API
+  that leaves the new fields out keeps them, and a DELETE of a work rule
+  keeps the cap and the wish unless it says `?includeDay=true` (which only
+  the new web sends), so a web from before the release, open in a tab,
+  clears nothing; the new web sends the new keys, which the API
   before the release refuses (400, `forbidNonWhitelisted`), so the API goes
   out before, or with, the web.
 - **Background jobs**: the SS12000 sync, the webhook notices, the push

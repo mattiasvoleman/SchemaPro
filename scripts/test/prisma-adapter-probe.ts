@@ -140,6 +140,7 @@ import { readActiveStaffIds } from '../../src/staffing/staff-candidates';
 import { TeacherWorkRulesService, WORK_RULE_DAY_IS_PLANNED } from '../../src/resources/teacher-work-rules.service';
 import { OptimizationJobsService } from '../../src/optimization/optimization-jobs.service';
 import { TEACHER_WORK_DAYS_HIDDEN, WORK_DAYS_HIDDEN_MESSAGE, WorkDaysRefusal } from '../../src/optimization/work-days';
+import { freeDayWishMessage, unkeptFreeDayWishes } from '../../src/optimization/free-day-wishes';
 import type {
   AiEngineConflictDetail,
   AiEngineScheduleResponse,
@@ -6344,7 +6345,7 @@ async function teacherDayChecks(owner: Client, api: PrismaService): Promise<void
   const logs = (sent: string[]) => sent.filter((statement) => statement.includes('app.personal_data_read(')).length;
 
   try {
-    await check('(ld-a) Lärarens dag on the work rule and the post through the real adapter: a CHECK past the DTO is a 400 naming its field, a planner without HR-läs sets the cap, and the teacher restates it but cannot change it — 403 WORK_RULE_DAY_IS_PLANNED from the service, and past it the trigger’s AR403 read as AREA_NOT_YOURS, on an update, Prisma’s own upsert, a delete and a fresh row', async () => {
+    await check('(ld-a) Lärarens dag on the work rule and the post through the real adapter: a CHECK past the DTO is a 400 naming its field, a planner without HR-läs sets the cap, and the teacher restates it but cannot change it — 403 WORK_RULE_DAY_IS_PLANNED from the service, and past it the trigger’s AR403 read as AREA_NOT_YOURS, on an update, Prisma’s own upsert, a delete and a fresh row; and a planner’s bare DELETE keeps the cap as the teacher’s does, the row going only with includeDay', async () => {
       const userId = school.capped.id;
       // The CHECKs, reached past the DTO (the service is called without the
       // pipe): each a 400 naming the field (prisma-errors.ts NAMED_CHECKS),
@@ -6442,6 +6443,28 @@ async function teacherDayChecks(owner: Client, api: PrismaService): Promise<void
         (await owner.query(`SELECT count(*)::int AS n FROM "TeacherWorkRules" WHERE "userId" = $1`, [school.free.id])).rows,
         [{ n: 0 }],
       );
+
+      // A planner's DELETE is the teacher's unless it asks for the day
+      // fields too: a web from before them deletes when its four are empty,
+      // and must not take a cap a colleague set. Bare, it clears the lunch
+      // and the rest and keeps the row with its cap — past RLS and the
+      // trigger, which let a planner do either; with includeDay the row goes.
+      const rowOf = async (teacher: string) =>
+        (
+          await owner.query(
+            `SELECT "lunchMinutes", "minDailyRestMinutes", "maxTeachingMinutesPerDay" FROM "TeacherWorkRules" WHERE "userId" = $1`,
+            [teacher],
+          )
+        ).rows;
+      await rules.upsert(
+        school.free.id,
+        { lunchMinutes: 30, lunchStartTime: '10:30', lunchEndTime: '13:30', minDailyRestMinutes: 660, maxTeachingMinutesPerDay: 120 },
+        school.planner,
+      );
+      await rules.remove(school.free.id, school.planner);
+      assert.deepEqual(await rowOf(school.free.id), [{ lunchMinutes: null, minDailyRestMinutes: null, maxTeachingMinutesPerDay: 120 }]);
+      await rules.remove(school.free.id, school.planner, true);
+      assert.deepEqual(await rowOf(school.free.id), []);
     });
 
     await check('(ld-b) the Vikarietavla’s candidates hold the cap and the deltid in days for every reader and word the days per reader: WORK_DAYS {days} with HR-läs, WORK_DAYS_HIDDEN and no figure without, the post’s verdict in the Läslogg (EMPLOYMENT) for both and the cap’s for neither, and the week’s teaching dates asked only while a post limits its days, in two statements', async () => {
@@ -6770,6 +6793,93 @@ async function teacherDayChecks(owner: Client, api: PrismaService): Promise<void
         },
       ]);
       assert.deepEqual(await employmentReadBy(planner), []);
+    });
+
+    await check('(ld-f) a run that broke a free-day wish, stored as the job store stores it and read through OptimizationJobsService: the day in the sentence, the teacher’s Users id kept beside it and in no view, the teacher named for a reader without HR-läs and one with, in one statement more and nothing in the Läslogg', async () => {
+      const { hidden: planner, shown: plannerHr } = await school.readers('F');
+      // (ld-e)'s runs go, so the year's history is this run alone: theirs
+      // would show the reader with HR-läs a post's days beside it.
+      await owner.query(`DELETE FROM "OptimizationJobs" WHERE "schoolId" = $1`, [school.schoolId]);
+      const rule = (
+        await owner.query<{ id: string }>(`SELECT id FROM "TeacherWorkRules" WHERE "userId" = $1`, [school.capped.id])
+      ).rows[0]!.id;
+      // The notes as the proxy makes them from what it wrote: the capped
+      // teacher wishes Fridays free (ld-a) and the timetable gives them one.
+      const notes = unkeptFreeDayWishes(
+        [{ ruleId: rule, userId: school.capped.id, day: 5 }],
+        [{ teacherId: school.capped.id, coTeacherId: null, dayOfWeek: 5 }],
+      );
+      const jobs = new OptimizationJobsService(
+        {
+          triggerScheduling: async () =>
+            ({ requestId: randomUUID(), status: 'OPTIMAL', lessons: [], conflicts: null, notes }) as unknown as AiEngineScheduleResponse,
+        } as unknown as OptimizationProxyService,
+        api,
+      );
+      const job = await owner.query<{ id: string }>(
+        `INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", "actorId") VALUES ($1, $2, $3) RETURNING id`,
+        [school.schoolId, school.yearId, school.admin.userId],
+      );
+      const id = job.rows[0]!.id;
+      await (jobs as unknown as { run: (jobId: string, yearId: string, user: AuthenticatedUser) => Promise<void> }).run(
+        id,
+        school.yearId,
+        school.admin,
+      );
+
+      // Stored with the teacher beside it, no name and no rule id.
+      assert.deepEqual(
+        (await owner.query<{ notes: unknown }>(`SELECT notes FROM "OptimizationJobs" WHERE id = $1`, [id])).rows[0]!.notes,
+        [
+          {
+            category: 'AVAILABILITY',
+            code: 'TEACHER_FREE_DAY_WISH_NOT_KEPT',
+            params: { day: 5 },
+            message: freeDayWishMessage(5),
+            resourceNames: [],
+            subjectIds: [school.capped.id],
+          },
+        ],
+      );
+
+      const noteView = {
+        category: 'AVAILABILITY',
+        code: 'TEACHER_FREE_DAY_WISH_NOT_KEPT',
+        params: { day: 5 },
+        message: freeDayWishMessage(5),
+        resourceNames: ['Tak Probe'],
+      };
+      for (const reader of [planner, plannerHr]) {
+        type View = Awaited<ReturnType<OptimizationJobsService['get']>>;
+        let one!: View;
+        let all!: View[];
+        const sent = await statementsDuring(async () => {
+          one = await jobs.get(id, reader);
+        });
+        const listed = await statementsDuring(async () => {
+          all = await jobs.list(school.yearId, reader);
+        });
+        const inList = all.find((view) => view.id === id)!;
+        assert.deepEqual([one.notes, inList.notes], [[noteView], [noteView]], JSON.stringify([one, inList]));
+        assert.doesNotMatch(JSON.stringify([one, inList]), new RegExp(`subjectIds|${school.capped.id}|${rule}`));
+        // The run, then the names: no post, and no Läslogg for a name.
+        for (const statements of [sent, listed]) {
+          assert.deepEqual(
+            [reads(statements, 'OptimizationJobs'), reads(statements, 'Users'), reads(statements, 'TeacherEmployments'), logs(statements)],
+            [1, 1, 0, 0],
+            JSON.stringify(statements),
+          );
+        }
+      }
+      assert.deepEqual(
+        (
+          await owner.query(`SELECT count(*)::int AS n FROM "PersonalDataAccess" WHERE "schoolId" = $1 AND "actorId" = ANY($2::uuid[])`, [
+            school.schoolId,
+            [planner.userId, plannerHr.userId],
+          ])
+        ).rows,
+        [{ n: 0 }],
+      );
     });
   } finally {
     await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-lararensdag'`, [MARKER]);

@@ -88,7 +88,17 @@ export function useTeacherWorkRuleActions() {
 
   const remove = useMutation({
     mutationFn: (userId: string) =>
-      api.delete(`/api/v1/teacher-work-rules/${userId}`),
+      // `includeDay=true`: THIS DELETE MEANS THE CAP AND THE WISH TOO. A bare
+      // DELETE from a planner keeps the day's two columns (20261123090000) and
+      // clears only the lunch and the rest, because a web from before them,
+      // open in a tab over the release, reads a row holding only a cap or a
+      // wish as "no rule" and sends DELETE when its four-field draft is empty
+      // — which would take away a cap a colleague set an hour ago with nothing
+      // on screen to say so. This dialog's draft holds all six fields
+      // (isEmptyDraft), so its empty draft is the reader clearing the cap and
+      // the wish as well, and it says so. A teacher's own DELETE ignores the
+      // flag: they never remove what an administrator set.
+      api.delete(`/api/v1/teacher-work-rules/${userId}?includeDay=true`),
     onSuccess: invalidate,
   });
 

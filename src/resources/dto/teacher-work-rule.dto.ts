@@ -1,4 +1,5 @@
-import { IsDivisibleBy, IsInt, IsOptional, Matches, Max, Min } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { IsBoolean, IsDivisibleBy, IsInt, IsOptional, Matches, Max, Min } from 'class-validator';
 import {
   MAX_TEACHING_MINUTES_PER_DAY_MAX,
   MAX_TEACHING_MINUTES_PER_DAY_MIN,
@@ -134,4 +135,30 @@ export class UpsertTeacherWorkRuleDto {
     message: 'Den önskade lediga dagen anges som en veckodag, 1 (måndag) till 7 (söndag).',
   })
   preferredFreeDayOfWeek?: number | null;
+}
+
+/** A query flag as a URL carries it: "true" or "false", nothing else (print.dto.ts's reading). */
+const flag = ({ value }: { value: unknown }) => (value === 'true' ? true : value === 'false' ? false : value);
+
+/**
+ * DELETE /teacher-work-rules/:userId's query.
+ *
+ * `includeDay=true` says the delete means the administrator's two fields
+ * too, the cap and the wished free day, and lets a writer who plans delete
+ * the row with them. Without it a DELETE takes the lunch and the rest and
+ * keeps those two, from every writer: a web from before Lärarens dag knows
+ * only the lunch and the rest, reads a row that holds only a cap as "Ingen
+ * arbetstidsregel", and sends a bare DELETE when its form is empty — so an
+ * administrator in a tab left open over the release would otherwise delete
+ * a cap or a wish a colleague set since, with nothing on screen to say so,
+ * as the absent-keeps rule on the PUT's two fields exists to prevent. The
+ * web of this release sends it, because its form holds both fields and an
+ * empty form there means they were cleared too. A teacher's DELETE ignores
+ * it: the two are not theirs to remove (TeacherWorkRulesService.remove).
+ */
+export class RemoveTeacherWorkRuleQueryDto {
+  @IsOptional()
+  @Transform(flag)
+  @IsBoolean({ message: "includeDay: 'true' eller 'false'." })
+  includeDay?: boolean;
 }
