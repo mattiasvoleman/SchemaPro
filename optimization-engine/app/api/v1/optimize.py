@@ -9,7 +9,7 @@ from app.config import Settings
 from app.dependencies import get_app_settings, verify_api_key
 from app.logging_config import get_logger
 from app.schemas.schedule import OptimizeScheduleRequest, OptimizeScheduleResponse
-from app.solver.scheduler_solver import SchedulerSolver
+from app.solver.scheduler_solver import SchedulerSolver, settings_for_search
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["optimization"])
@@ -24,7 +24,14 @@ async def run_solver(
     payload: OptimizeScheduleRequest,
     settings: Settings,
 ) -> OptimizeScheduleResponse:
-    """Run the CPU-bound solve off the event loop with a hard ceiling."""
+    """Run the CPU-bound solve off the event loop with a hard ceiling.
+
+    The ceiling is the REQUEST'S budget plus the headroom: a schemaförslag
+    candidate that asked for thirty seconds is answered 503 at sixty, not at
+    a Generera's ninety. `settings` is the app's and is never written to;
+    settings_for_search returns a copy when the request brings a budget.
+    """
+    settings = settings_for_search(settings, payload.search)
     solver = SchedulerSolver(settings)
     timeout = settings.solver_max_time_seconds + _SOLVE_BUILD_HEADROOM_SECONDS
     try:
@@ -59,6 +66,12 @@ async def optimize_schedule(
         requirement_count=len(payload.requirements),
         room_count=len(payload.rooms),
         constraint_count=len(payload.constraints),
+        # Only when sent, so a Generera's log line reads as it always has.
+        **(
+            {"search": payload.search.model_dump(exclude_none=True)}
+            if payload.search is not None
+            else {}
+        ),
     )
 
     response = await run_solver(payload, settings)

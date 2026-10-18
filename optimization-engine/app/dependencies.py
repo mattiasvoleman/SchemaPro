@@ -15,6 +15,10 @@ def get_app_settings(request: Request) -> Settings:
     than calling `get_settings()`. `create_app()` accepts an explicit Settings,
     and the lru_cached env-backed factory would silently shadow it — leaving the
     caller's solver budgets, grid geometry and objective weights unused.
+
+    The returned object is shared by every request in flight, so nothing may
+    write to it. A request with a budget of its own is solved on a copy: see
+    settings_for_search in app/solver/scheduler_solver.py.
     """
     return request.app.state.settings
 

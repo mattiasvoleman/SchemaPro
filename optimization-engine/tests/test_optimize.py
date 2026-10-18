@@ -4072,6 +4072,7 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         OptimizeScheduleRequest,
         Rast,
         ScheduleRules,
+        SearchOptions,
     )
 
     assert _field_names(OptimizeScheduleRequest) == {
@@ -4093,6 +4094,22 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "previousLessons",
         "weights",
         "rules",
+        # Optional, and sent only for a schemaförslag candidate: a Generera's
+        # request has never carried it and still does not. An engine older
+        # than this field answers it with a 422 whose one error is
+        # extra_forbidden at ['body', 'search'], which is the shape the
+        # gateway reads as ENGINE_LACKS_CANDIDATES.
+        "search",
+    }
+    # How a candidate's search is run, never what it searches for: the seed
+    # and the workers reach CP-SAT's parameters on the generation solves, the
+    # budget is min'd with the configured one, and probes false skips the
+    # explaining work a refusal pays for. See SearchOptions.
+    assert _field_names(SearchOptions) == {
+        "seed",
+        "maxSeconds",
+        "probes",
+        "workers",
     }
     # A rast, which is the whole declaration: nothing about it is chosen, so
     # unlike a serving it has no solved second half to carry back.
