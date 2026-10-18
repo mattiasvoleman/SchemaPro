@@ -35,6 +35,21 @@ describe("CsvExportButton", () => {
     expect(downloadCsv).toHaveBeenCalledWith("salstyper.csv", "FILINNEHÅLL");
   });
 
+  it("waits for a builder loaded at the click, and downloads nothing when it answers null", async () => {
+    // /admin/requirements loads its builder at the click; one that did not
+    // load has said why and answers null.
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <CsvExportButton exports={[{ kind: "roomTypes", build: async () => "SENT" }]} />,
+    );
+    await user.click(screen.getByRole("button", { name: "exportButton" }));
+    expect(downloadCsv).toHaveBeenCalledWith("salstyper.csv", "SENT");
+
+    rerender(<CsvExportButton exports={[{ kind: "roomTypes", build: async () => null }]} />);
+    await user.click(screen.getByRole("button", { name: "exportButton" }));
+    expect(downloadCsv).toHaveBeenCalledTimes(1);
+  });
+
   it("asks which file when a page exports several kinds", async () => {
     const user = userEvent.setup();
     render(

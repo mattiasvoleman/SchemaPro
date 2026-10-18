@@ -16,9 +16,10 @@ export interface CsvExport {
   /**
    * Called on click; returns the finished file contents — or a promise of
    * them, for a page that loads its builder at the click rather than with
-   * the route (/admin/requirements, at its bundle budget).
+   * the route (/admin/requirements, at its bundle budget). Null downloads
+   * nothing: the page has already said why (a builder that did not load).
    */
-  build: () => string | Promise<string>;
+  build: () => string | null | Promise<string | null>;
   /** Nothing to export — the entry is shown but disabled. */
   empty?: boolean;
 }
@@ -36,7 +37,10 @@ export interface CsvExport {
 export function CsvExportButton({ exports }: { exports: CsvExport[] }) {
   const t = useTranslations("csvImport");
 
-  const run = async (entry: CsvExport) => downloadCsv(CSV_TEMPLATES[entry.kind].filename, await entry.build());
+  const run = async (entry: CsvExport) => {
+    const file = await entry.build();
+    if (file !== null) downloadCsv(CSV_TEMPLATES[entry.kind].filename, file);
+  };
 
   if (exports.length === 1) {
     const only = exports[0]!;
