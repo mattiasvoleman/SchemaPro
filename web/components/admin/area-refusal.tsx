@@ -97,34 +97,44 @@ export function closedMenuStyle(closed: readonly ClosedPage[], menuLabel: string
 
 /**
  * Läsbehörighet: the notice above a page the profile reads but does not
- * change. It names the area and who changes it, so the reader knows whom to
- * ask; the page's write controls are hidden by readOnlyStyle below.
+ * change. It names each of the page's areas and who changes it, so the
+ * reader knows whom to ask; the page's write controls are hidden by
+ * readOnlyStyle below.
  *
- * A server component like AreaRefusal: the (app) layout renders one per area
- * the profile reads read-only, above every page, each hidden until the style
- * rule shows the one whose page is open. No code reaches the browser for it.
- * Static text, so no live role: it is the page's state, not news.
+ * A server component like AreaRefusal: the (app) layout renders one per set
+ * of areas the profile reads read-only, above every page, each hidden until
+ * the style rule shows the one whose page is open. No code reaches the
+ * browser for it. Static text, so no live role: it is the page's state, not
+ * news.
  */
-export function ReadOnlyNotice({ area, profile }: { area: AdminArea; profile: AdminProfile }) {
+export function ReadOnlyNotice({ areas, profile }: { areas: readonly AdminArea[]; profile: AdminProfile }) {
   const t = useTranslations("adminAreas");
   const locale = useLocale();
-  const writers = new Intl.ListFormat(locale, { type: "disjunction" }).format(
-    WRITER_ORDER.filter((writer) => profileWrites(writer, area)).map((writer) => t(`doer.${writer}`)),
-  );
+  const list = new Intl.ListFormat(locale, { type: "disjunction" });
+  const writersOf = (area: AdminArea) =>
+    list.format(WRITER_ORDER.filter((writer) => profileWrites(writer, area)).map((writer) => t(`doer.${writer}`)));
   return (
-    <div data-read-only={area} className="mb-4 print:hidden">
+    <div data-read-only={noticeKey(areas)} className="mb-4 print:hidden">
       <Notice role={null} title={t("readOnlyTitle")}>
-        {t("readOnlyBody", { profile: t(`profile.${profile}`), area: t(`area.${area}`), writers })}
+        {[
+          t("readOnlyBody", { profile: t(`profile.${profile}`) }),
+          ...areas.map((area) => t("readOnlyWriters", { area: t(`area.${area}`), writers: writersOf(area) })),
+        ].join(" ")}
       </Notice>
     </div>
   );
 }
 
-/** One ReadOnlyNotice per area the profile reads read-only, for the layout to put above the page. */
+/** The notice's name in the style rule: its areas, space-separated. */
+function noticeKey(areas: readonly AdminArea[]): string {
+  return areas.join(" ");
+}
+
+/** One ReadOnlyNotice per set of areas the profile reads read-only, for the layout to put above the page. */
 export function readOnlyNoticesFor(pages: readonly ReadOnlyPage[], profile: AdminProfile | null): React.ReactNode {
   if (profile === null || pages.length === 0) return null;
-  const areas = [...new Set(pages.map((page) => page.area))];
-  return areas.map((area) => <ReadOnlyNotice key={area} area={area} profile={profile} />);
+  const sets = new Map(pages.map((page) => [noticeKey(page.areas), page.areas]));
+  return [...sets].map(([key, areas]) => <ReadOnlyNotice key={key} areas={areas} profile={profile} />);
 }
 
 /**
@@ -157,11 +167,14 @@ export function readOnlyStyle(pages: readonly ReadOnlyPage[], profile: AdminProf
   const menu = `nav[aria-label="${menuLabel.replace(/["\\]/g, "\\$&")}"]`;
   // Hidden, and never printed: a printout is the page's reading, not its state.
   css += "[data-read-only]{display:none}@media print{[data-read-only]{display:none!important}}";
-  const byArea = new Map<AdminArea, string[]>();
-  for (const page of pages) byArea.set(page.area, [...(byArea.get(page.area) ?? []), page.path]);
-  for (const [area, paths] of byArea) {
+  const byNotice = new Map<string, string[]>();
+  for (const page of pages) {
+    const key = noticeKey(page.areas);
+    byNotice.set(key, [...(byNotice.get(key) ?? []), page.path]);
+  }
+  for (const [key, paths] of byNotice) {
     const current = `${menu} a[aria-current="page"]:is(${paths.map((path) => `[href$="${path}"]`).join(",")})`;
-    css += `body:has(${current}) [data-read-only="${area}"]{display:block}`;
+    css += `body:has(${current}) [data-read-only="${key}"]{display:block}`;
   }
   return css;
 }

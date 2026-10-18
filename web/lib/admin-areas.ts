@@ -170,18 +170,19 @@ export function closedPages(profile: AdminProfile | null | undefined): ClosedPag
     .map(([path, gate]) => ({ path, gate: gate as AdminArea | "DECIDES" }));
 }
 
-/** A page the profile reads but does not change, and the area its notice names. */
+/** A page the profile reads but does not change, and the areas its notice names, in order. */
 export interface ReadOnlyPage {
   path: string;
-  area: AdminArea;
+  areas: readonly AdminArea[];
 }
 
 /**
- * The area named on a page whose gate names none: /admin/people is the
- * register's, and its arbetstid and behörigheter, planering's, are hidden
- * from a profile that does not write them on the page itself.
+ * The areas named on a page whose gate names none. /admin/people holds the
+ * register, personal's, and beside it each teacher's arbetstid, behörigheter
+ * and uppdrag, planering's: a läsare reads both, so its notice names who
+ * changes each.
  */
-const NOTICE_AREAS: Readonly<Record<string, AdminArea>> = { "/admin/people": "PERSONAL" };
+const NOTICE_AREAS: Readonly<Record<string, readonly AdminArea[]>> = { "/admin/people": ["PERSONAL", "PLANERING"] };
 
 /**
  * The admin pages a profile opens read-only (Läsbehörighet): every page a
@@ -191,7 +192,9 @@ const NOTICE_AREAS: Readonly<Record<string, AdminArea>> = { "/admin/people": "PE
 export function readOnlyPages(profile: AdminProfile | null | undefined): ReadOnlyPage[] {
   if (profile == null || !READS_EVERY_PAGE.includes(profile)) return [];
   return Object.entries(PAGE_GATES).flatMap(([path, gate]) => {
-    const area = gate ?? NOTICE_AREAS[path];
-    return area !== undefined && area !== "DECIDES" && !profileWrites(profile, area) ? [{ path, area }] : [];
+    const areas = (gate === null ? (NOTICE_AREAS[path] ?? []) : gate === "DECIDES" ? [] : [gate]).filter(
+      (area) => !profileWrites(profile, area),
+    );
+    return areas.length > 0 ? [{ path, areas }] : [];
   });
 }

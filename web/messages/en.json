@@ -5228,7 +5228,8 @@
       "LASARE": "a reader"
     },
     "readOnlyTitle": "You can read but not change",
-    "readOnlyBody": "Your profile, {profile}, reads the page but changes nothing on it. {area} is changed by {writers}.",
+    "readOnlyBody": "Your profile, {profile}, reads the page but changes nothing on it.",
+    "readOnlyWriters": "The {area} area is changed by {writers}.",
     "gateTitle": "This page belongs to another area",
     "gateArea": "This page changes {area}. As {profile} you do not change that area. Ask the principal or an administrator who has it if something here needs changing.",
     "gateDecides": "This page is about the principal's decisions. As {profile} you do not make them. Ask the principal or a full administrator if something here needs changing.",
