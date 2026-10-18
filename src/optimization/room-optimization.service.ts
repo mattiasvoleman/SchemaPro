@@ -398,7 +398,7 @@ export class RoomOptimizationService {
   private async readYear(tx: PrismaClient, viewer: RosterViewer, academicYearId: string): Promise<YearState> {
     const year = await tx.academicYear.findUnique({
       where: { id: academicYearId },
-      select: { id: true, schoolId: true, isActive: true, predecessorId: true },
+      select: { id: true, schoolId: true, isActive: true, predecessorId: true, gradeNumbering: true },
     });
     // Without this, an unknown year reads as an empty timetable and the page
     // is told its rooms are already as good as they get.
@@ -456,6 +456,8 @@ export class RoomOptimizationService {
             studentIds: lesson.participants.map((entry) => entry.studentId),
           },
           lesson.subject,
+          // Rooms and salsregler are NIOARIG; the needs are read so.
+          year.gradeNumbering ?? 'NIOARIG',
         ),
       ]),
     );

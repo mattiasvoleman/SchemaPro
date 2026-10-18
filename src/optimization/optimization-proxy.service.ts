@@ -20,6 +20,8 @@ import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { isWriteConflict } from '../common/utils/prisma-errors';
 import { gradeSpanOf, loadRosters, roomNeedsOf } from './room-eligibility';
+import { fromNioarig, toNioarig, toNioarigSpan, type GradeNumbering } from '../common/grade-numbering';
+import { dayNumberingOf, yearNumberingOf } from '../common/year-numbering';
 import { coverLockedLessons } from './locked-coverage';
 import { judgeBlocks, partlyLockedRefusal } from './parallel-blocks';
 import { canonicalShape, lessonMinutesOf } from '../common/lesson-lengths';
@@ -144,6 +146,19 @@ const PRESERVED_FROM_REGENERATION = [
 
 /** The maps an engine refusal can name something through. */
 export interface AnonMaps {
+  /**
+   * The scheduled läsår's numbering. The payload states every class span in
+   * NIOARIG (grade-numbering.ts), so a refusal that echoes one in `grades`
+   * names it in the year's own numbering again (yearGrades). Absent is NIOARIG.
+   */
+  gradeNumbering?: GradeNumbering;
+  /**
+   * The numbering of the läsår a day falls in, for a dated årskursregel: sent
+   * in NIOARIG too, and stated in its own day's läsår (dayNumberingOf), so a
+   * refusal that echoes its span names it so again (yearGrades). Absent reads
+   * every day as NIOARIG.
+   */
+  numberingOnDay?: (day: string) => GradeNumbering;
   requirementAnonMap: Map<string, string>;
   roomAnonMap: Map<string, string>;
   groupAnonMap: Map<string, string>;
@@ -861,6 +876,9 @@ export class OptimizationProxyService {
     }
     const data = await this.fetchAndAnonymize(tx, academicYearId, schoolId, rosterBasis, user.channel);
     const anonMaps: AnonMaps = {
+      // The numberings a refusal's årskurser are named back in (yearGrades).
+      gradeNumbering: data.gradeNumbering,
+      numberingOnDay: data.numberingOnDay,
       requirementAnonMap: data.requirementAnonMap,
       roomAnonMap: data.roomAnonMap,
       groupAnonMap: data.groupAnonMap,
@@ -1287,7 +1305,7 @@ export class OptimizationProxyService {
         const realised = {
           ...detail,
           message: this.named(detail.message, maps),
-          params,
+          params: yearGrades(detail.code, params, maps),
           resourceIds,
           // Only the ones there IS a name for. A teacher is deliberately
           // absent — see nameById — so a reservation about one names the
@@ -1543,6 +1561,10 @@ export class OptimizationProxyService {
     requirementRows: RegenerationRequirementRow[];
     /** The preserved, non-parked masters as read, without their named pupils. */
     preservedRows: PreservedLessonRow[];
+    /** The läsår's numbering, for the refusals that echo a class span (yearGrades). */
+    gradeNumbering: GradeNumbering;
+    /** A day's läsår's numbering, for a dated årskursregel's echo (yearGrades). */
+    numberingOnDay: (day: string) => GradeNumbering;
   }> {
     // Anonymous-id lookup tables: realId → anonId.
     const teacherAnonMap = new Map<string, string>();
@@ -1803,9 +1825,15 @@ export class OptimizationProxyService {
     // Year span per scheduled group, for rooms limited to a stage and for the
     // frames, rasts and sittings that reach a stage. See gradeSpanOf for why it
     // is read off the pupils' home classes rather than off the group.
+    //
+    // In the nine-year numbering (grade-numbering.ts): frames, rasts, sittings,
+    // rooms and årskursregler are school-wide and stated that way for good,
+    // so a tioårig läsår's 10A is sent as the 9 a "7–9" frame binds, and the
+    // engine compares like with like. The engine contract does not change.
+    const numbering = await yearNumberingOf(tx, academicYearId);
     const gradeSpanByGroup = new Map<string, { min: number; max: number }>();
     for (const groupId of scheduledGroupIds) {
-      const span = gradeSpanOf(rosters, [groupId]);
+      const span = toNioarigSpan(gradeSpanOf(rosters, [groupId]), numbering);
       if (span) gradeSpanByGroup.set(groupId, span);
     }
     // A group the timplan names but whose year cannot be derived is bound by
@@ -1967,7 +1995,7 @@ export class OptimizationProxyService {
       // length as minutesPerLesson. Only a remainder of two or more lengths
       // carries the list, with its count and its longest as the scalars.
       const split = canonicalShape(remainingLengths);
-      const needs = roomNeedsOf(rosters, { groupIds: [r.studentGroupId] }, r.subject);
+      const needs = roomNeedsOf(rosters, { groupIds: [r.studentGroupId] }, r.subject, numbering);
       // Ämnesfördelning: the row's own rule or its subject's, each half sent
       // only when set — see AnonymousRequirement.maxLessonsPerDay. The locked
       // weekdays go with a rule and never without one, and they are EVERY
@@ -2281,6 +2309,13 @@ export class OptimizationProxyService {
       },
     });
 
+    // A dated årskursregel is stated in the numbering of the läsår its own day
+    // falls in. The read above has no date window, so last year's prao is
+    // here beside this year's, each read by its own läsår.
+    const numberingOnDay = rawConstraints.some((c) => c.resourceType === 'GRADE_LEVEL' && c.date)
+      ? await dayNumberingOf(tx, academicYearId)
+      : () => 'NIOARIG' as const;
+
     const constraints: AnonymousConstraint[] = rawConstraints.flatMap(
       (c): AnonymousConstraint[] => {
         const common = {
@@ -2303,12 +2338,18 @@ export class OptimizationProxyService {
         // to one rule per class here was the alternative: twelve classes across
         // five weekdays is sixty rows for what an admin wrote as one line, and
         // the payload is capped at five thousand.
+        //
+        // The group spans are sent in NIOARIG (gradeSpanByGroup). A weekly
+        // årskursregel is school-wide and NIOARIG already; a dated one (a
+        // prao day) is stated in the numbering of the läsår its day falls in
+        // (numberingOnDay) and is read into NIOARIG here.
         if (c.resourceType === 'GRADE_LEVEL') {
+          const stated = common.date === null ? 'NIOARIG' : numberingOnDay(common.date);
           return [
             {
               ...common,
-              minGradeLevel: c.minGradeLevel,
-              maxGradeLevel: c.maxGradeLevel,
+              minGradeLevel: toNioarig(c.minGradeLevel, stated),
+              maxGradeLevel: toNioarig(c.maxGradeLevel, stated),
             },
           ];
         }
@@ -2672,6 +2713,8 @@ export class OptimizationProxyService {
           ? []
           : [{ ruleId: rule.id, userId: rule.userId, day: rule.preferredFreeDayOfWeek }],
       ),
+      gradeNumbering: numbering,
+      numberingOnDay,
       // An empty object would send `rules: {}` and read as "rules were
       // considered and came to nothing", which the engine treats the same but
       // a reader of the payload would not.
@@ -2869,8 +2912,9 @@ export class OptimizationProxyService {
                   readable && body?.details && typeof body.details.code === 'string'
                     ? {
                         code: body.details.code,
-                        params: this.namedParams(
-                          (body.details.params ?? {}) as Record<string, string | number>,
+                        params: yearGrades(
+                          body.details.code,
+                          this.namedParams((body.details.params ?? {}) as Record<string, string | number>, maps),
                           maps,
                         ),
                       }
@@ -3421,4 +3465,44 @@ export class OptimizationProxyService {
     d.setUTCHours(h ?? 0, m ?? 0, s ?? 0, 0);
     return d;
   }
+}
+
+/**
+ * The refusals whose `grades` is the span of a timplanspost's or a group's
+ * classes — sent in NIOARIG (fetchAndAnonymize), so named back in the year's
+ * own numbering. Not a lunch serving's or a weekly reservation's span, which
+ * the school stated in NIOARIG and reads so (LUNCH_SERVING_CANNOT_FEED_STAGE);
+ * a dated årskursregel's is its own day's läsår's (yearGrades).
+ */
+const CLASS_SPAN_CODES = new Set([
+  'FRAME_NO_WINDOW_FOR_REQUIREMENT',
+  'MARGIN_NO_WINDOW_FOR_REQUIREMENT',
+  'RAST_NO_STRETCH_FOR_REQUIREMENT',
+  'ROOM_NONE_ELIGIBLE_FOR_REQUIREMENT',
+  'ROOM_LOCK_LEAVES_NO_ROOM',
+  'RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT',
+]);
+
+/**
+ * A refusal's params with the span in `grades` ("7", "7–9") in the numbering
+ * the school reads it in: a class span (CLASS_SPAN_CODES) in the scheduled
+ * läsår's, a dated årskursregel's (a reservation's params: kind GRADE_LEVEL
+ * and a date, INPUT_CONSTRAINT_TIME_OFF_GRID) in its own day's läsår's.
+ * Everything else is stated in NIOARIG and left as sent.
+ */
+export function yearGrades(
+  code: string | undefined,
+  params: Record<string, string | number>,
+  maps: Pick<AnonMaps, 'gradeNumbering' | 'numberingOnDay'>,
+): Record<string, string | number> {
+  const grades = params['grades'];
+  const date = params['date'];
+  if (!code || typeof grades !== 'string') return params;
+  const numbering = CLASS_SPAN_CODES.has(code)
+    ? maps.gradeNumbering
+    : params['kind'] === 'GRADE_LEVEL' && typeof date === 'string' && date !== ''
+      ? maps.numberingOnDay?.(date)
+      : undefined;
+  if (numbering !== 'TIOARIG') return params;
+  return { ...params, grades: grades.replace(/\d+/g, (grade) => String(fromNioarig(Number(grade), numbering))) };
 }

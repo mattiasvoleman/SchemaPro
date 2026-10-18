@@ -745,7 +745,100 @@ describe('RoomOptimizationService', () => {
         expect.anything(),
         { groupIds: [GROUP_7A], studentIds: [] },
         { requiredRoomTypeId: null },
+        // The year's numbering: a nine-year year's needs are read as they are.
+        'NIOARIG',
       );
+    });
+
+    describe('in a tioårig läsår (SFS 2025:729)', () => {
+      /** The year as the database holds it, with its numbering. */
+      const yearNumbered = (gradeNumbering: 'NIOARIG' | 'TIOARIG') =>
+        tx.academicYear.findUnique.mockImplementation(async ({ where, select }: Query = {}) => {
+          if (typeof where?.['id'] !== 'string') throw new Error('findUnique needs a unique where');
+          assertSelects(select);
+          return where['id'] === YEAR ? selected({ id: YEAR, schoolId: SCHOOL, gradeNumbering }, select) : null;
+        });
+      const LAB_TYPE = 'f0000000-0000-4000-8000-000000000001';
+      /** A lab for högstadiet, "7–9" as the school wrote it — nioårig for good. */
+      const highStageLab = (): RoomFixture => ({
+        id: EXTRA,
+        capacity: 30,
+        roomTypeId: LAB_TYPE,
+        minGradeLevel: 7,
+        maxGradeLevel: 9,
+        building: null,
+        floor: null,
+      });
+
+      it('sends a lesson’s years in the nioårig numbering its rooms and room rules are stated in', async () => {
+        /*
+         * 7A's åldersband is åk 10 from HT 2028. The lab still says 7–9 and
+         * the salsregel still says 7–9, so the lesson is sent as the 9 they
+         * take; the engine compares like with like and its contract does not
+         * change. The rooms and the rule leave as the school stated them.
+         */
+        yearNumbered('TIOARIG');
+        groups = [{ id: GROUP_7A, gradeLevel: 10 }];
+        rooms.push(highStageLab());
+        preferences = [wish('f2000000-0000-4000-8000-000000000001', { minGradeLevel: 7, maxGradeLevel: 9 })];
+        const needs = jest.spyOn(eligibility, 'roomNeedsOf');
+        engine();
+
+        await propose();
+
+        expect(sentLesson(ELIN_FIRST)).toMatchObject({ minGradeLevel: 9, maxGradeLevel: 9 });
+        expect(sent!.rooms[3]).toMatchObject({ minGradeLevel: 7, maxGradeLevel: 9 });
+        expect(sent!.roomPreferences[0]).toMatchObject({ minGradeLevel: 7, maxGradeLevel: 9 });
+        expect(needs).toHaveBeenCalledWith(
+          expect.anything(),
+          { groupIds: [GROUP_7A], studentIds: [] },
+          { requiredRoomTypeId: null },
+          'TIOARIG',
+        );
+      });
+
+      it('reads a tioårig åk 1 as the förskoleklass, and a class without a year as none', async () => {
+        yearNumbered('TIOARIG');
+        groups = [{ id: GROUP_7A, gradeLevel: 1 }];
+        engine();
+
+        await propose();
+
+        expect(sentLesson(ELIN_FIRST)).toMatchObject({ minGradeLevel: 0, maxGradeLevel: 0 });
+        // 7B carries no year at all: still none, not a guess one down.
+        expect(sentLesson(ALEX_FIRST)).toMatchObject({ minGradeLevel: null, maxGradeLevel: null });
+      });
+
+      it('sends a nioårig läsår’s years as they are', async () => {
+        yearNumbered('NIOARIG');
+        groups = [{ id: GROUP_7A, gradeLevel: 9 }];
+        rooms.push(highStageLab());
+        engine();
+
+        await propose();
+
+        expect(sentLesson(ELIN_FIRST)).toMatchObject({ minGradeLevel: 9, maxGradeLevel: 9 });
+        expect(sent!.rooms[3]).toMatchObject({ minGradeLevel: 7, maxGradeLevel: 9 });
+      });
+
+      it('applies a tioårig läsår’s proposal against the needs it was made from', async () => {
+        // propose and apply read the needs through one readYear, numbering and
+        // all, so the basis the page holds is the basis apply recomputes.
+        yearNumbered('TIOARIG');
+        groups = [
+          { id: GROUP_7A, gradeLevel: 10 },
+          { id: GROUP_7B, gradeLevel: 10 },
+        ];
+        engine(swap);
+        const proposal = await propose();
+
+        const result = await service.apply(
+          { academicYearId: YEAR, basis: proposal.basis, changes: proposal.changes },
+          user,
+        );
+
+        expect(result.updated).toBe(2);
+      });
     });
 
     it('sends only a room closed on a weekday, under the room’s token', async () => {

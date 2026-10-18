@@ -27,6 +27,7 @@ import {
   OptimizationProxyService,
   previousLessonsFrom,
   unplacedOf,
+  yearGrades,
   type AnonMaps,
   type CandidateApplyInput,
   type CandidateLesson,
@@ -36,6 +37,7 @@ import * as eligibility from './room-eligibility';
 import { WORK_DAYS_HIDDEN_MESSAGE, WorkDaysRefusal } from './work-days';
 import { recordedReads } from '../../test/utils/recorded-reads';
 import * as candidateBasis from './candidate-basis';
+import { toNioarig, type GradeNumbering } from '../common/grade-numbering';
 
 const ACADEMIC_YEAR = '44444444-4444-4444-8444-444444444444';
 /** One requirement, as the database holds it and as the engine sees it. */
@@ -1376,6 +1378,122 @@ describe('OptimizationProxyService', () => {
       });
     });
 
+    describe('in a tioårig läsår (SFS 2025:729)', () => {
+      /*
+       * The payload states every class span in the nioårig numbering the
+       * frames, raster and salar are stated in, so a refusal that echoes a
+       * timplanspost's span in `grades` echoes it one down. The school reads
+       * its own classes: 10A's row is "åk 10", not the 9 the engine compared.
+       */
+      const refusal = (code: string, params: Record<string, string | number>) => {
+        const refused = new AxiosError('boom');
+        refused.response = {
+          status: 400,
+          data: { message: 'The engine’s own sentence.', details: { code, params } },
+        } as never;
+        return refused;
+      };
+      const paramsOf = async (anonMaps: AnonMaps) =>
+        ((await call({}, anonMaps).catch((thrown: unknown) => thrown)) as HttpException).getResponse() as {
+          code?: string;
+          params?: Record<string, string | number>;
+        };
+
+      it('names a timplanspost’s span back in the läsår’s own numbering, its ids turned back too', async () => {
+        const anonRequirement = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
+        const realRequirement = 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb';
+        http.post.mockReturnValue(
+          throwError(() =>
+            refusal('FRAME_NO_WINDOW_FOR_REQUIREMENT', {
+              requirement: anonRequirement,
+              grades: '7–9',
+              minutes: 60,
+              remaining: 40,
+            }),
+          ),
+        );
+
+        const response = await paramsOf({
+          ...maps(),
+          gradeNumbering: 'TIOARIG',
+          requirementAnonMap: new Map([[realRequirement, anonRequirement]]),
+        });
+
+        expect(response).toMatchObject({
+          code: 'FRAME_NO_WINDOW_FOR_REQUIREMENT',
+          params: { requirement: realRequirement, grades: '8–10', minutes: 60, remaining: 40 },
+        });
+      });
+
+      it('leaves a lunch serving’s span as the school stated it', async () => {
+        // A sitting's "7–9" is the school's own nioårig row, never a class's.
+        http.post.mockReturnValue(
+          throwError(() => refusal('LUNCH_SERVING_CANNOT_FEED_STAGE', { grades: '7–9', seats: 60 })),
+        );
+
+        expect((await paramsOf({ ...maps(), gradeNumbering: 'TIOARIG' })).params).toEqual({
+          grades: '7–9',
+          seats: 60,
+        });
+      });
+
+      it.each<[string, GradeNumbering | undefined]>([
+        ['a nioårig läsår', 'NIOARIG'],
+        ['a läsår whose numbering nobody passed', undefined],
+      ])('leaves %s’s span as the engine said it', async (_label, gradeNumbering) => {
+        http.post.mockReturnValue(
+          throwError(() => refusal('ROOM_NONE_ELIGIBLE_FOR_REQUIREMENT', { grades: '7–9', roomType: 'any' })),
+        );
+
+        expect((await paramsOf({ ...maps(), gradeNumbering })).params).toEqual({
+          grades: '7–9',
+          roomType: 'any',
+        });
+      });
+
+      /** A reservation's params, as _constraint_params writes them. */
+      const reservation = (kind: string, date: string) => ({
+        constraint: 'c-1',
+        kind,
+        resource: '',
+        grades: '7–9',
+        day: date === '' ? 1 : 0,
+        date,
+        start: '08:00',
+        end: '09:07',
+        slotMinutes: 5,
+      });
+      /** 2028/29 tioårig, every other day nioårig. */
+      const numberingOnDay = (day: string): GradeNumbering =>
+        day >= '2028-07-01' && day <= '2029-06-30' ? 'TIOARIG' : 'NIOARIG';
+
+      it('names a dated årskursregel’s span back in its own day’s läsår', async () => {
+        // A prao for 8–10 on a day of the tioårig läsår was sent as 7–9; the
+        // refusal about its off-grid time names the row the admin wrote.
+        http.post.mockReturnValue(
+          throwError(() =>
+            refusal('INPUT_CONSTRAINT_TIME_OFF_GRID', reservation('GRADE_LEVEL', '2029-03-12')),
+          ),
+        );
+
+        expect(
+          (await paramsOf({ ...maps(), gradeNumbering: 'TIOARIG', numberingOnDay })).params,
+        ).toMatchObject({ kind: 'GRADE_LEVEL', date: '2029-03-12', grades: '8–10' });
+      });
+
+      it.each<[string, Record<string, string | number>]>([
+        ['a weekly årskursregel’s', reservation('GRADE_LEVEL', '')],
+        ['a dated årskursregel’s from a nioårig läsår', reservation('GRADE_LEVEL', '2028-03-13')],
+        ['a teacher’s reservation’s', reservation('TEACHER', '2029-03-12')],
+      ])('leaves %s span as the school stated it', async (_label, params) => {
+        http.post.mockReturnValue(throwError(() => refusal('INPUT_CONSTRAINT_TIME_OFF_GRID', params)));
+
+        expect(
+          (await paramsOf({ ...maps(), gradeNumbering: 'TIOARIG', numberingOnDay })).params,
+        ).toMatchObject({ grades: '7–9' });
+      });
+    });
+
     it('carries no code when the refusal’s details name none', async () => {
       // Without a name there is nothing to translate, and a code of undefined
       // would read to the screen as a sentence it has no words for.
@@ -1818,6 +1936,7 @@ describe('OptimizationProxyService', () => {
           expect.anything(),
           { groupIds: [GROUP_ID] },
           expect.anything(),
+          'NIOARIG',
         );
         expect(postedPayload().requirements[0].studentGroupSize).toBe(
           needs.mock.results[0]!.value.studentGroupSize,
@@ -5545,6 +5664,367 @@ describe('OptimizationProxyService', () => {
 
           expect(bodyOf(error)).toMatchObject({ code: 'SCHEDULE_CANDIDATE_BUSY' });
         });
+      });
+    });
+
+    // -----------------------------------------------------------------------
+    // En tioårig läsår (SFS 2025:729)
+    // -----------------------------------------------------------------------
+
+    describe('a tioårig läsår (SFS 2025:729)', () => {
+      /*
+       * From HT 2028 every class is numbered one up: the åldersband that was
+       * 9A is 10A. Frames, sittings, raster, salar and salsregler are
+       * school-wide and stated in the nioårig numbering for good, so the
+       * payload sends each class's span read into it (10A as 9) and the
+       * engine compares like with like. The engine contract does not change,
+       * and a nioårig läsår's payload is exactly what it was.
+       */
+      const TEACHING = '99999999-9999-4999-8999-999999999999';
+      const CLASS_8 = 'aaaa0008-9999-4999-8999-999999999999';
+      const CLASS_1 = 'aaaa0001-9999-4999-8999-999999999999';
+
+      /** The läsår as the database holds it, with its numbering: 2028/29. */
+      const SCHEDULED = {
+        id: ACADEMIC_YEAR,
+        isActive: true,
+        predecessorId: null,
+        startDate: new Date('2028-07-01T00:00:00.000Z'),
+        endDate: new Date('2029-06-30T00:00:00.000Z'),
+      };
+      /** And the school's earlier läsår, nioårig: 2027/28. */
+      const EARLIER = {
+        id: OTHER_YEAR,
+        isActive: false,
+        predecessorId: null,
+        startDate: new Date('2027-07-01T00:00:00.000Z'),
+        endDate: new Date('2028-06-30T00:00:00.000Z'),
+        gradeNumbering: 'NIOARIG' as const,
+      };
+      const yearNumbered = (gradeNumbering: GradeNumbering) => {
+        tx.academicYear.findUnique.mockImplementation(async ({ where, select }: Query = {}) => {
+          if (typeof where?.['id'] !== 'string') throw new Error('findUnique needs a unique where');
+          assertSelects(select);
+          return where['id'] === ACADEMIC_YEAR ? selected({ ...SCHEDULED, gradeNumbering }, select) : null;
+        });
+        tx.academicYear.findMany.mockImplementation(async ({ where, select }: Query = {}) => {
+          // The school's läsår, as dayNumberingOf asks for them.
+          expect(where).toEqual({ school: { academicYears: { some: { id: ACADEMIC_YEAR } } } });
+          assertSelects(select);
+          return [{ ...SCHEDULED, gradeNumbering }, EARLIER].map((row) => selected(row, select));
+        });
+      };
+      /** Högstadiet's rows as the school wrote them: "7–9", nioårig. */
+      const highStage = { minGradeLevel: 7, maxGradeLevel: 9 };
+      const arrangeHighStage = (gradeLevel: number) =>
+        arrange({
+          groups: [{ id: GROUP_ID, gradeLevel, kind: 'CLASS' }],
+          frames: [frame(highStage)],
+          servings: [serving(highStage)],
+          rasts: [rast(highStage)],
+          rooms: [{ id: ROOM_ID, capacity: 30, roomTypeId: 'room-type-lab', ...highStage }],
+          roomPreferences: [
+            {
+              id: 'pref-1',
+              subjectId: SUBJECT_ID,
+              kind: 'WISH',
+              ...highStage,
+              roomTypeId: null,
+              weight: 50,
+              rooms: [{ roomId: ROOM_ID }],
+            },
+          ],
+        });
+      /** Every school-wide span the payload carries: each as the school stated it. */
+      const schoolWideSpans = (payload: AiEngineScheduleRequest) => [
+        payload.frameTimes[0],
+        payload.lunchServings[0],
+        payload.rasts[0],
+        payload.rooms[0],
+        payload.roomPreferences[0],
+      ];
+
+      it('sends a class’s span in the nioårig numbering its frames, sittings and salar are stated in', async () => {
+        yearNumbered('TIOARIG');
+        arrangeHighStage(10);
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+        const payload = postedPayload();
+
+        // 10A is sent as the 9 a "7–9" frame binds — on the timplanspost and
+        // on the group that eats alike.
+        expect(payload.requirements[0]).toMatchObject({ minGradeLevel: 9, maxGradeLevel: 9 });
+        expect(payload.groups).toEqual([expect.objectContaining({ minGradeLevel: 9, maxGradeLevel: 9 })]);
+        for (const span of schoolWideSpans(payload)) {
+          expect(span).toMatchObject(highStage);
+        }
+      });
+
+      it('sends a nioårig läsår’s spans exactly as before', async () => {
+        yearNumbered('NIOARIG');
+        arrangeHighStage(9);
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+        const payload = postedPayload();
+
+        expect(payload.requirements[0]).toMatchObject({ minGradeLevel: 9, maxGradeLevel: 9 });
+        expect(payload.groups).toEqual([expect.objectContaining({ minGradeLevel: 9, maxGradeLevel: 9 })]);
+        for (const span of schoolWideSpans(payload)) {
+          expect(span).toMatchObject(highStage);
+        }
+      });
+
+      it('reads a teaching group over its members’ classes, and åk 1 as the förskoleklass it was', async () => {
+        /*
+         * A teaching group of 8B and 10A pupils spans nioårig 7–9; the new
+         * åk 1 is the åldersband an "F–3" (0–3) frame was written for.
+         */
+        const pupilOf = (n: number, studentGroupId: string) => ({
+          id: `00000000-0000-4000-8000-90000000${String(n).padStart(4, '0')}`,
+          studentGroupId,
+        });
+        yearNumbered('TIOARIG');
+        arrange({
+          requirements: [
+            requirement({ studentGroupId: TEACHING }),
+            requirement({ id: '88888888-8888-4888-8888-888888888801', studentGroupId: CLASS_1 }),
+          ],
+          homeMembers: [pupilOf(1, GROUP_ID), pupilOf(2, CLASS_8), pupilOf(3, CLASS_1)],
+          teachingMembers: [
+            { studentId: pupilOf(1, GROUP_ID).id, studentGroupId: TEACHING },
+            { studentId: pupilOf(2, CLASS_8).id, studentGroupId: TEACHING },
+          ],
+          groups: [
+            { id: GROUP_ID, gradeLevel: 10, kind: 'CLASS' },
+            { id: CLASS_8, gradeLevel: 8, kind: 'CLASS' },
+            { id: CLASS_1, gradeLevel: 1, kind: 'CLASS' },
+            { id: TEACHING, gradeLevel: null, kind: 'TEACHING_GROUP' },
+          ],
+        });
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+        const [teaching, firstGrade] = postedPayload().requirements;
+
+        expect(teaching).toMatchObject({ minGradeLevel: 7, maxGradeLevel: 9 });
+        expect(firstGrade).toMatchObject({ minGradeLevel: 0, maxGradeLevel: 0 });
+      });
+
+      it('sends a weekly årskursregel as stored and reads a dated one over from the läsår’s numbering', async () => {
+        /*
+         * A weekly rule is school-wide and nioårig already: "7–9 closed on
+         * Monday mornings" means högstadiet in any läsår. A dated one — a prao
+         * day, a studiedag — the admin wrote for that day in the classes as the
+         * läsår numbers them, so 8–10's prao is sent as the 7–9 the groups'
+         * spans are in. Twelve is "and above" in both.
+         */
+        yearNumbered('TIOARIG');
+        arrange({
+          groups: [{ id: GROUP_ID, gradeLevel: 10, kind: 'CLASS' }],
+          constraints: [
+            constraintRow({ id: 'c-weekly', resourceType: 'GRADE_LEVEL', minGradeLevel: 7, maxGradeLevel: 9 }),
+            constraintRow({
+              id: 'c-prao',
+              resourceType: 'GRADE_LEVEL',
+              minGradeLevel: 8,
+              maxGradeLevel: 10,
+              dayOfWeek: null,
+              date: new Date('2029-03-12T00:00:00.000Z'),
+            }),
+            constraintRow({
+              id: 'c-studiedag',
+              resourceType: 'GRADE_LEVEL',
+              minGradeLevel: 1,
+              maxGradeLevel: 12,
+              dayOfWeek: null,
+              date: new Date('2029-04-03T00:00:00.000Z'),
+            }),
+          ],
+        });
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+        const spans = postedPayload().constraints.map((c) => [c.date, c.minGradeLevel, c.maxGradeLevel]);
+
+        expect(spans).toEqual([
+          [null, 7, 9],
+          ['2029-03-12', 7, 9],
+          ['2029-04-03', 0, 12],
+        ]);
+      });
+
+      it('reads each dated årskursregel by the läsår its own day falls in', async () => {
+        /*
+         * The read has no date window: last spring's prao, written for 7–9 in
+         * the nioårig läsår it fell in, is in the payload beside this year's,
+         * written for 8–10. Each is read by its own day's läsår, so both reach
+         * the engine as the 7–9 they mean — not last year's as 6–8.
+         */
+        yearNumbered('TIOARIG');
+        arrange({
+          groups: [{ id: GROUP_ID, gradeLevel: 10, kind: 'CLASS' }],
+          constraints: [
+            constraintRow({
+              id: 'c-last-prao',
+              resourceType: 'GRADE_LEVEL',
+              minGradeLevel: 7,
+              maxGradeLevel: 9,
+              dayOfWeek: null,
+              date: new Date('2028-03-13T00:00:00.000Z'),
+            }),
+            constraintRow({
+              id: 'c-this-prao',
+              resourceType: 'GRADE_LEVEL',
+              minGradeLevel: 8,
+              maxGradeLevel: 10,
+              dayOfWeek: null,
+              date: new Date('2029-03-12T00:00:00.000Z'),
+            }),
+            constraintRow({
+              id: 'c-outside',
+              resourceType: 'GRADE_LEVEL',
+              minGradeLevel: 4,
+              maxGradeLevel: 6,
+              dayOfWeek: null,
+              date: new Date('2031-01-15T00:00:00.000Z'),
+            }),
+          ],
+        });
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+        const spans = postedPayload().constraints.map((c) => [c.date, c.minGradeLevel, c.maxGradeLevel]);
+
+        // A day no läsår of the school holds is nioårig: as written.
+        expect(spans).toEqual([
+          ['2028-03-13', 7, 9],
+          ['2029-03-12', 7, 9],
+          ['2031-01-15', 4, 6],
+        ]);
+      });
+
+      it('sends a nioårig läsår’s dated årskursregel as stored', async () => {
+        yearNumbered('NIOARIG');
+        arrange({
+          groups: [{ id: GROUP_ID, gradeLevel: 9, kind: 'CLASS' }],
+          constraints: [
+            constraintRow({
+              resourceType: 'GRADE_LEVEL',
+              minGradeLevel: 7,
+              maxGradeLevel: 9,
+              dayOfWeek: null,
+              date: new Date('2028-03-13T00:00:00.000Z'),
+            }),
+          ],
+        });
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        expect(postedPayload().constraints[0]).toMatchObject({
+          date: '2028-03-13',
+          minGradeLevel: 7,
+          maxGradeLevel: 9,
+        });
+      });
+
+      /** An engine that refuses the payload by name, about its first timplanspost. */
+      const refuseFirstRequirement = (code: string, grades: (payload: any) => string) =>
+        http.post.mockImplementation((_url: string, payload: any) =>
+          throwError(() => {
+            const refused = new AxiosError('boom');
+            refused.response = {
+              status: 400,
+              data: {
+                message: `No room fits requirement ${payload.requirements[0].id}.`,
+                details: {
+                  code,
+                  params: {
+                    requirement: payload.requirements[0].id,
+                    groupSize: 24,
+                    roomType: 'any',
+                    grades: grades(payload),
+                  },
+                },
+              },
+            } as never;
+            return refused;
+          }),
+        );
+      const refusedParams = async () =>
+        (
+          (await service.triggerScheduling(ACADEMIC_YEAR, testUser()).catch((thrown: unknown) => thrown)) as HttpException
+        ).getResponse() as { code: string; params: Record<string, string | number> };
+
+      it.each<[GradeNumbering, number, string]>([
+        ['TIOARIG', 10, '10'],
+        ['NIOARIG', 9, '9'],
+      ])('names a refused timplanspost’s årskurs as a %s läsår numbers it', async (numbering, gradeLevel, said) => {
+        /*
+         * The engine echoes the span it was sent. Through the run itself, so
+         * the läsår's numbering is the one fetchAndAnonymize read and handed
+         * to the relay, not one a test put in a map: "Kemi för 10A (åk 10)",
+         * never "Kemi för 10A (åk 9)".
+         */
+        yearNumbered(numbering);
+        arrange({
+          requirements: [requirement({ subject: { name: 'Kemi', requiredRoomTypeId: 'room-type-lab' } })],
+          groups: [{ id: GROUP_ID, gradeLevel, kind: 'CLASS', name: `${gradeLevel}A` }],
+        });
+        refuseFirstRequirement('ROOM_NONE_ELIGIBLE_FOR_REQUIREMENT', (payload) =>
+          String(payload.requirements[0].minGradeLevel),
+        );
+
+        // The English message names the row by its real id (deanonymise);
+        // only the params are named for the Swedish sentence.
+        expect(await refusedParams()).toEqual({
+          message: `No room fits requirement ${REQ_ID}.`,
+          code: 'ROOM_NONE_ELIGIBLE_FOR_REQUIREMENT',
+          params: { requirement: `Kemi för ${gradeLevel}A`, groupSize: 24, roomType: 'any', grades: said },
+        });
+      });
+
+      it('names a class span back on a conflict too, and leaves a sitting’s as stated', async () => {
+        // The INFEASIBLE route reads its conflicts through the same yearGrades
+        // as the 4xx relay above.
+        yearNumbered('TIOARIG');
+        arrange({ groups: [{ id: GROUP_ID, gradeLevel: 10, kind: 'CLASS' }] });
+        answerWithConflicts((payload) => ({
+          summary: 'blocked',
+          summaryCode: 'CONFLICT_CORE_SUMMARY',
+          summaryParams: {},
+          conflicts: [
+            {
+              category: 'AVAILABILITY',
+              code: 'RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT',
+              params: { grades: String(payload.groups[0].minGradeLevel), minutes: 60 },
+              message: 'A rast demands a lesson.',
+              requirementIds: [],
+              roomIds: [],
+              constraintIds: [],
+              resourceIds: [],
+            },
+            {
+              category: 'AVAILABILITY',
+              code: 'LUNCH_SERVING_CANNOT_FEED_STAGE',
+              params: { grades: '7–9', seats: 60 },
+              message: 'A sitting cannot feed its stage.',
+              requirementIds: [],
+              roomIds: [],
+              constraintIds: [],
+              resourceIds: [],
+            },
+          ],
+        }));
+
+        const { conflicts } = (await service.triggerScheduling(ACADEMIC_YEAR, testUser())).conflicts!;
+
+        expect(conflicts.map((detail) => detail.params)).toEqual([
+          { grades: '10', minutes: 60 },
+          { grades: '7–9', seats: 60 },
+        ]);
       });
     });
   });
