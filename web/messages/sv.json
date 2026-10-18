@@ -1295,6 +1295,7 @@
     "versionRestore": "Återställ",
     "versionSaved": "Versionen sparades",
     "versionRestored": "{count} lektioner återställdes från versionen",
+    "versionRestoreBusy": "Grundschemat skrivs om just nu (Generera, ett schemaförslag eller en annan återställning). Försök igen om en stund.",
     "versionsEmpty": "Inga versioner ännu. Spara en innan du gör stora ändringar.",
     "suggestTitle": "Platsen är upptagen — här är närmaste lediga",
     "suggestBody": "Dessa placeringar är konfliktfria för lektionens klass, lärare och sal.",
@@ -5435,5 +5436,258 @@
     "whatLog": "En vårdnadshavares prenumeration skrivs i läsloggen som en läsning av barnets veckoschema, en gång per dag som kalendern hämtar den.",
     "stopBodyUnknown": "Alla gruppens prenumerationer slutar fungera direkt. Slår du på det igen får var och en skapa en ny.",
     "countLoading": "Räknar prenumerationerna…"
+  },
+  "scheduleCandidates": {
+    "section": {
+      "title": "Schemaförslag",
+      "description": "Ta fram två till fyra alternativa grundscheman, vart och ett med sin egen tyngdpunkt, och jämför dem innan du väljer. Inget publiceras, och utkastet ändras först när du tillämpar ett förslag.",
+      "retention": "Förslag sparas i 7 dagar.",
+      "count": "Antal förslag",
+      "start": "Ta fram förslag",
+      "starting": "Startar…",
+      "started": "Förslagen tas fram. Du kan lämna sidan under tiden.",
+      "compare": "Jämför förslagen",
+      "blockedGenerating": "Generera kör för läsåret just nu. Förslag går att ta fram när körningen är klar.",
+      "blockedPrerequisites": "Förslag kan tas fram när förutsättningarna ovan är uppfyllda.",
+      "loadFailed": "Förslagen kunde inte hämtas",
+      "loadFailedHint": "Generera och grundschemat påverkas inte. Ladda om sidan för att se förslagen."
+    },
+    "status": {
+      "none": "Inga förslag för läsåret.",
+      "PENDING": "Förslagen väntar på att starta.",
+      "RUNNING": "Tar fram förslag: {done} av {total} klara.",
+      "CANCELLING": "Förslagen avbryts.",
+      "SUCCEEDED": "{count, plural, one {# förslag klart} other {# förslag klara}} {date}.",
+      "applied": "Förslag {ordinal} är tillämpat.",
+      "FAILED": "Förslagen misslyckades {date}:"
+    },
+    "generateBlocked": "Schemaförslag tas fram för läsåret just nu. Generera går att starta när de är klara.",
+    "generateBlockedLink": "Se förslagen",
+    "jobErrors": {
+      "GENERATE_STALE": "Grundschemat ändrades medan körningen pågick — en lektion låstes eller togs bort, eller ett schemaförslag tillämpades — så körningen skrev ingenting. Generera igen.",
+      "SCHEDULE_BUSY": "Grundschemat skrevs av någon annan samtidigt, så körningen sparades inte. Försök igen om en stund.",
+      "CANDIDATES_RUNNING": "Schemaförslag tas fram för läsåret just nu. Generera går att starta när de är klara."
+    },
+    "page": {
+      "title": "Schemaförslag",
+      "subtitle": "Jämför förslagen med grundschemat som det ser ut nu och tillämpa det som passar bäst",
+      "back": "Till Generera schema",
+      "loadFailed": "Förslagen kunde inte hämtas",
+      "loadFailedHint": "Utkastet och grundschemat är orörda. Ladda om sidan.",
+      "refetchFailedHint": "Det som visas är förslagen som de senast hämtades. Ladda om sidan för att se om något har ändrats.",
+      "noYear": "Det finns inget aktivt läsår, så det finns inga förslag att visa.",
+      "emptyTitle": "Inga förslag ännu",
+      "emptyBody": "Ta fram förslag från Generera schema. De sparas i 7 dagar.",
+      "emptyAction": "Till Generera schema"
+    },
+    "candidateName": "Förslag {ordinal}: {label}",
+    "variant": {
+      "KEEP": "Behåll mest",
+      "TEACHER_GAPS": "Färre håltimmar för lärarna",
+      "SPREAD": "Jämnare veckor",
+      "FREE": "Friare placering",
+      "unknown": "Förslag {ordinal}"
+    },
+    "solver": {
+      "INFEASIBLE": "Inget giltigt schema",
+      "TIMEOUT": "Tiden tog slut",
+      "REJECTED": "Förkastat: stämde inte med timplanen",
+      "unknown": "Inget schema"
+    },
+    "parts": {
+      "requirements": "timplanen",
+      "preserved": "de låsta och handlagda lektionerna",
+      "draft": "utkastets lektioner",
+      "rooms": "salarna",
+      "rules": "skolans regler",
+      "rosters": "klasserna och grupperna"
+    },
+    "runErrors": {
+      "CANDIDATE_RUN_CANCELLED": "Förslagen avbröts innan de var klara.",
+      "CANDIDATE_ENGINE_TIMEOUT": "Schemamotorn svarade inte i tid. Försök igen om en stund.",
+      "CANDIDATE_ENGINE_FAILED": "Schemamotorn svarade med ett fel. Försök igen om en stund.",
+      "ENGINE_LACKS_CANDIDATES": "Schemamotorn är äldre än resten av tjänsten och kan inte ta fram förslag ännu. Försök igen om några minuter.",
+      "CANDIDATES_FIRST_FAILED": "Det första förslaget fick inget schema, och de andra hade mött samma hinder. Det som stoppade det står nedan.",
+      "CANDIDATES_FIRST_FAILED_UNNAMED": "Det första förslaget fick inget schema, och de andra hade mött samma hinder.",
+      "CANDIDATES_FIRST_TIMEOUT": "Det första förslaget hann inte bli klart inom tiden, så de andra togs inte fram.",
+      "CANDIDATES_NONE_APPLICABLE": "Inget av förslagen gav ett schema som går att tillämpa.",
+      "CANDIDATE_RUN_INTERRUPTED": "Tjänsten startades om medan förslagen togs fram. Ta fram dem igen.",
+      "CANDIDATE_RUN_ABANDONED": "Förslagen slutade svara och har avbrutits. Ta fram dem igen.",
+      "generic": "Förslagen kunde inte tas fram."
+    },
+    "refusal": {
+      "title": "Förslagen kan inte tillämpas just nu",
+      "STAFF_UNSTAFFED_REQUIREMENTS": "Timplansposter saknar lärare, och skolans inställning vägrar då generera. Bemanna posterna i tjänstefördelningen innan ett förslag tillämpas.",
+      "BLOCK_PARTLY_LOCKED_SUMMARY": "Ett parallellt block är delvis låst. Lås upp dess lektioner, eller lås alla, innan ett förslag tillämpas.",
+      "other": "Grundschemat går inte att generera som det ser ut nu, så inget förslag kan tillämpas."
+    },
+    "errors": {
+      "CANDIDATES_RUNNING": "Förslag tas redan fram för läsåret. Vänta tills de är klara.",
+      "GENERATE_RUNNING": "Generera kör för läsåret just nu. Försök igen när körningen är klar.",
+      "CANDIDATES_BUSY": "Många skolor tar fram förslag just nu. Försök igen om några minuter.",
+      "CANDIDATES_NEED_A_DRAFT": "Generera ett första schema, sedan kan du ta fram förslag utifrån det.",
+      "SCHEDULE_BUSY": "Grundschemat skrivs om just nu. Försök igen om en stund.",
+      "REFRESH_GONE": "Förslagen som skulle uppdateras finns inte längre. Ta fram nya från Generera schema.",
+      "PUBLISH_MODE_CHANGED": "Skolans publiceringsläge har ändrats sedan sidan lästes. Öppna Tillämpa igen och läs vad som gäller nu.",
+      "PUBLISH_IN_PROGRESS": "Schemat publiceras just nu. Försök igen om en stund.",
+      "SCHEDULE_CANDIDATE_BUSY": "Grundschemat ändras av någon annan just nu. Försök igen om en stund.",
+      "SCHEDULE_CANDIDATE_NOT_APPLICABLE": "Förslaget går inte att tillämpa: körningen är inte klar, eller förslaget fick inget schema.",
+      "SCHEDULE_CANDIDATE_STALE": "Grundschemat har ändrats sedan förslagen togs fram. Uppdatera förslagen och jämför igen.",
+      "SCHEDULE_CANDIDATE_STALE_PARTS": "Grundschemat har ändrats sedan förslagen togs fram: {parts}. Uppdatera förslagen och jämför igen.",
+      "CANDIDATE_GONE": "Förslaget finns inte längre. Det kan ha tagits bort eller ersatts av nyare förslag.",
+      "TOO_MANY": "För många försök på kort tid. Vänta en minut och försök igen.",
+      "generic": "Något gick fel. Försök igen."
+    },
+    "progress": {
+      "title": "Förslagen tas fram",
+      "count": "{done} av {total} klara",
+      "pending": "Väntar på att starta…",
+      "cancelling": "Avbryter…",
+      "label": "Förslag klara",
+      "hint": "Varje förslag får en halv minut, lika lång tid för alla så att de går att jämföra. Sidan uppdateras av sig själv, och du kan lämna den under tiden.",
+      "cancel": "Avbryt"
+    },
+    "failed": {
+      "title": "Förslagen kunde inte tas fram {date}",
+      "cancelledTitle": "Förslagen avbröts",
+      "conflicts": "Det som stoppade det första förslaget",
+      "olderBatch": "Jämförelsen nedan gäller förslagen från {date}.",
+      "again": "Ta fram förslag igen från Generera schema"
+    },
+    "batch": {
+      "made": "Framtagna {date}.",
+      "madeBy": "Framtagna {date} av {name}."
+    },
+    "applied": {
+      "title": "{name} är tillämpat",
+      "body": "Det tillämpades {date}. Grundschemat bygger nu på förslaget, så de här förslagen jämförs mot ett schema de inte togs fram från — uppdatera dem för att jämföra igen.",
+      "version": "En version sparades först: ”{name}”. Den finns under Versioner i schemat.",
+      "versionsLink": "Öppna schemat",
+      "publishingLink": "Till Publicering",
+      "toast": "Förslag {ordinal} är tillämpat: {count, plural, one {# lektion} other {# lektioner}} i grundschemat"
+    },
+    "check": {
+      "checking": "Kontrollerar förslagen mot grundschemat…",
+      "failed": "Det gick inte att kontrollera om förslagen fortfarande stämmer",
+      "failedHint": "Förslagen går inte att tillämpa förrän kontrollen har lyckats.",
+      "retry": "Kontrollera igen"
+    },
+    "stale": {
+      "title": "Grundschemat har ändrats sedan förslagen togs fram",
+      "body": "Ändrat sedan dess: {parts}. Förslagen bygger på det som gällde då och kan inte tillämpas förrän de är uppdaterade.",
+      "bodyUnnamed": "Förslagen bygger på det som gällde då och kan inte tillämpas förrän de är uppdaterade.",
+      "refresh": "Uppdatera förslagen",
+      "refreshing": "Uppdaterar…",
+      "refreshStarted": "Förslagen räknas om utifrån dagens grundschema."
+    },
+    "table": {
+      "title": "Jämförelse",
+      "caption": "Förslagen jämförda med grundschemat som det ser ut nu. Under varje värde står skillnaden mot nuvarande.",
+      "measure": "Mått",
+      "current": "Nuvarande",
+      "currentDraft": "Nuvarande utkast",
+      "currentSchedule": "Nuvarande schema",
+      "candidate": "Förslag {ordinal}",
+      "sameAs": "Samma som förslag {ordinal}",
+      "applied": "Tillämpat"
+    },
+    "row": {
+      "unplaced": "Oplacerat",
+      "unplacedHint": "Timplansrader som inte får hela sin tid",
+      "moved": "Flyttade lektioner",
+      "movedHint": "Av utkastets genererade lektioner",
+      "rooms": "Salsbyten",
+      "roomsHint": "Kvar på samma tid, i en annan sal",
+      "teachers": "Lärarnas håltimmar",
+      "teachersHint": "Alla lärares minuter i en vanlig vecka",
+      "pupils": "Elevernas håltimmar",
+      "pupilsHint": "Minuter per elev i en vanlig vecka",
+      "apply": "Tillämpa"
+    },
+    "cell": {
+      "minutes": "{minutes} min",
+      "perPupil": "{minutes} min per elev",
+      "teachersDetail": "{count, plural, one {# lärare} other {# lärare}} med håltimmar · värst {worst} min",
+      "pupilsDetail": "{count, plural, one {# klass} other {# klasser}} med håltimmar · värst {worst} min",
+      "delta": "{delta} mot nuvarande",
+      "unplaced": "{lines, plural, =0 {Allt placerat} one {# rad · {minutes} min i veckan} other {# rader · {minutes} min i veckan}}",
+      "lines": "{count, plural, one {# rad} other {# rader}}",
+      "movedOf": "{moved} av {of}",
+      "notApplicable": "Ej tillämpligt",
+      "computing": "Räknar…",
+      "failed": "Kunde inte räknas"
+    },
+    "apply": {
+      "button": "Tillämpa",
+      "buttonLabel": "Tillämpa förslag {ordinal}: {label}",
+      "blockedRunning": "Förslag tas fram för läsåret just nu. De här går att tillämpa när körningen är klar.",
+      "titleDraft": "Tillämpa förslag {ordinal}: {label}?",
+      "bodyDraft": "Utkastets genererade lektioner ersätts med förslagets, på samma sätt som när du genererar. Låsta och handlagda lektioner står kvar. En version sparas först, så du kan gå tillbaka under Versioner. Inget publiceras.",
+      "titleDirect": "Tillämpa förslag {ordinal}: {label} i direktläge?",
+      "bodyDirect": "Skolan publicerar direkt, så förslaget ändrar också kalendern: de kommande lektioner det ersätter tas bort ur kalendern och kommer tillbaka först vid nästa publicering. En version sparas först.",
+      "futureLessons": "{count, plural, =0 {Inga kommande lektioner tas bort ur kalendern} one {# kommande lektion tas bort ur kalendern} other {# kommande lektioner tas bort ur kalendern}}",
+      "coverAssignments": "{count, plural, =0 {Inga vikarietilldelningar berörs} one {# vikarietilldelning på dem försvinner} other {# vikarietilldelningar på dem försvinner}}",
+      "switchFirstHint": "I utkastläge ändras bara utkastet, och kalendern först när du publicerar.",
+      "switchFirst": "Byt till utkastläge först",
+      "direct": "Tillämpa direkt",
+      "confirm": "Tillämpa",
+      "applying": "Tillämpar…"
+    },
+    "review": {
+      "title": "Granska ett förslag",
+      "hint": "Vem som får det sämre, och vilka lektioner som flyttas.",
+      "pick": "Förslag"
+    },
+    "worse": {
+      "title": "Blir sämre för",
+      "hint": "Lärarna vars håltimmar ökar mest mot nuvarande, i minuter en vanlig vecka.",
+      "row": "{name}: {before} → {after} min",
+      "none": "Ingen lärare får fler håltimmar.",
+      "failed": "Håltimmarna kunde inte räknas, eftersom något av det de räknas från inte kunde hämtas."
+    },
+    "moved": {
+      "title": "Flyttade lektioner",
+      "caption": "{name}: {count, plural, one {# skillnad} other {# skillnader}} mot utkastet",
+      "none": "Förslaget behåller alla utkastets lektioner där de står.",
+      "class": "Klass",
+      "subject": "Ämne",
+      "from": "Från",
+      "to": "Till",
+      "room": "Sal",
+      "kindROOM": "Samma tid, ny sal",
+      "kindADDED": "Ny lektion",
+      "kindREMOVED": "Tas bort",
+      "noRoom": "Ingen sal",
+      "slot": "{day} {start}–{end}",
+      "showAll": "Visa alla {count}",
+      "showFewer": "Visa färre",
+      "failed": "Förslagets lektioner kunde inte hämtas",
+      "failedHint": "Ladda om sidan. Förslaget och utkastet är orörda."
+    },
+    "week": {
+      "title": "Veckan i {name}",
+      "hint": "En vecka av förslaget som den skulle se ut, för en klass, en grupp, en lärare eller en sal.",
+      "kind": "Visa",
+      "kindGROUP": "Klass eller grupp",
+      "classes": "Klasser",
+      "teachingGroups": "Undervisningsgrupper",
+      "kindTEACHER": "Lärare",
+      "kindROOM": "Sal",
+      "week": "Vecka",
+      "odd": "Vecka {week} (udda)",
+      "even": "Vecka {week} (jämn)",
+      "noTargets": "Det finns inget att visa."
+    },
+    "discard": {
+      "button": "Ta bort förslagen",
+      "title": "Ta bort förslagen?",
+      "body": "Läsårets förslag tas bort. Utkastet och grundschemat ändras inte.",
+      "confirm": "Ta bort",
+      "titleActive": "Avbryt förslagen?",
+      "bodyActive": "Förslagen som tas fram avbryts, och läsårets tidigare förslag tas bort. Utkastet och grundschemat ändras inte.",
+      "confirmActive": "Avbryt förslagen",
+      "done": "Förslagen är borttagna.",
+      "cancelled": "Förslagen avbryts."
+    }
   }
 }

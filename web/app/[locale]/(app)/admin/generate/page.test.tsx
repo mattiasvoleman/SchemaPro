@@ -1,7 +1,9 @@
-import { cleanup, render as renderPlain, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render as renderPlain, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { toast } from "sonner";
+import { ApiError } from "@/lib/api";
 import GeneratePage from "./page";
 
 /**
@@ -47,6 +49,8 @@ const state = vi.hoisted(() => ({
   /** The year each year-keyed read was asked for, in order. */
   requirementsFor: [] as (string | null)[],
   historyFor: [] as (string | null)[],
+  /** GET candidates?academicYearId= as useScheduleCandidates answers; undefined = none read. */
+  candidates: undefined as unknown,
 }));
 
 const ACTIVE = {
@@ -74,6 +78,9 @@ vi.mock("@/lib/api", async (importOriginal) => ({
 }));
 
 const noMutation = { mutateAsync: vi.fn(), isPending: false };
+/** The two reads the page asks to be made again: the year's history, the candidates overview. */
+const historyRefetch = vi.hoisted(() => vi.fn());
+const candidatesRefetch = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/queries", () => ({
   useAcademicYears: () => ({
@@ -95,8 +102,8 @@ vi.mock("@/lib/queries", () => ({
     state.historyFor.push(yearId);
     // Disabled without a year, as the real hook is: never asked, never failed.
     return yearId === null
-      ? { data: undefined, isLoading: false, isError: false }
-      : { data: state.history, isLoading: false, isError: state.historyFailed };
+      ? { data: undefined, isLoading: false, isError: false, refetch: historyRefetch }
+      : { data: state.history, isLoading: false, isError: state.historyFailed, refetch: historyRefetch };
   },
   useLunchSettings: () => ({ data: null }),
 }));
@@ -107,6 +114,17 @@ vi.mock("@/lib/staffing-queries", () => ({
     state.dutiesFor.push(yearId);
     return { data: state.duties };
   },
+}));
+
+/*
+ * Schemaförslag's hooks, page-local (./use-schedule-candidates). Mocked so
+ * the gateway spy above sees only the reads this file is about; the
+ * section's own behaviour is candidates-section.test.tsx's. Here the newest
+ * run matters only for whether Generera waits for it.
+ */
+vi.mock("./use-schedule-candidates", () => ({
+  useScheduleCandidates: () => ({ data: state.candidates, isLoading: false, isError: false, refetch: candidatesRefetch }),
+  useStartCandidates: () => noMutation,
 }));
 
 vi.mock("@/i18n/navigation", () => ({
@@ -152,6 +170,8 @@ const pupil = (id: string, studentGroupId: string) => ({
 beforeEach(() => {
   cleanup();
   apiGet.mockReset();
+  historyRefetch.mockReset();
+  candidatesRefetch.mockReset();
   state.years = [ACTIVE];
   state.yearsLoading = false;
   state.yearsFailed = false;
@@ -165,6 +185,7 @@ beforeEach(() => {
   state.duties = [];
   state.dutiesFor = [];
   state.untranslated = [];
+  state.candidates = undefined;
   state.groups = [
     { id: "g-41", academicYearId: "y-1", name: "4.1", kind: "CLASS", gradeLevel: 4 },
     { id: "g-sl1", academicYearId: "y-1", name: "4sl1", kind: "TEACHING_GROUP", gradeLevel: null },
@@ -958,5 +979,148 @@ describe("the run history's state ladder", () => {
     const notice = within(historySection()).getByRole("alert");
     expect(within(notice).getByText("common.refetchFailedHint")).toBeTruthy();
     expect(within(historySection()).getByText("generate.lessonsGenerated(120)")).toBeTruthy();
+  });
+});
+
+describe("Schemaförslag beside Generera (design §6)", () => {
+  const runButton = () => screen.getByRole("button", { name: "generate.run" });
+  const candidateRun = (status: string) => ({
+    latest: {
+      run: {
+        id: "run-1", status, requested: 3, progress: 1, createdAt: "2026-10-17T08:00:00.000Z", startedAt: null,
+        finishedAt: null, error: null, errorCode: null, errorParams: null, createdById: null, createdByName: null,
+        appliedCandidateId: null, appliedAt: null, refreshOfId: null,
+      },
+      candidates: [],
+    },
+    batch: null,
+    unplaced: null,
+  });
+
+  beforeEach(() => {
+    state.people.push({ ...pupil("t-1", "g-41"), role: "TEACHER", studentGroupId: null });
+  });
+
+  it("waits with Generera while a candidate run of the year is active, and says why beside it", () => {
+    state.candidates = candidateRun("RUNNING");
+    render(<GeneratePage />);
+
+    const button = runButton();
+    expect(button).toBeDisabled();
+    const reason = document.getElementById(button.getAttribute("aria-describedby") ?? "");
+    expect(reason?.textContent).toContain("scheduleCandidates.generateBlocked");
+    expect(within(reason!).getByRole("link", { name: "scheduleCandidates.generateBlockedLink" })).toHaveAttribute(
+      "href",
+      "#candidates",
+    );
+  });
+
+  it("lets Generera run once the candidate run has finished", () => {
+    state.candidates = candidateRun("FAILED");
+    render(<GeneratePage />);
+
+    expect(runButton()).toBeEnabled();
+    expect(runButton().getAttribute("aria-describedby")).toBeNull();
+  });
+
+  it("keeps the proposals waiting while a Generera job of the year runs, saying so", () => {
+    state.history = [
+      { id: "job-other", status: "RUNNING", solverStatus: null, lessonsGenerated: 0, createdAt: new Date().toISOString() },
+    ];
+    render(<GeneratePage />);
+
+    const start = screen.getByRole("button", { name: "scheduleCandidates.section.start" });
+    expect(start).toBeDisabled();
+    expect(document.getElementById(start.getAttribute("aria-describedby") ?? "")?.textContent).toBe(
+      "scheduleCandidates.section.blockedGenerating",
+    );
+  });
+
+  /*
+   * Nothing else reads the history again while the page stays open (no
+   * focus refetch in this app), so the page polls it itself while such a
+   * job runs, and judges the 15 minutes against a clock the poll moves.
+   */
+  describe("once that job ends, without a reload", () => {
+    const start = () => screen.getByRole("button", { name: "scheduleCandidates.section.start" });
+    beforeEach(() => vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] }));
+    afterEach(() => vi.useRealTimers());
+
+    it("reads the history again and lets the proposals start when the job has finished", () => {
+      const running = { id: "job-other", status: "RUNNING", solverStatus: null, lessonsGenerated: 0, createdAt: new Date().toISOString() };
+      state.history = [running];
+      historyRefetch.mockImplementation(async () => {
+        state.history = [{ ...running, status: "SUCCEEDED", solverStatus: "OPTIMAL", lessonsGenerated: 12 }];
+      });
+      render(<GeneratePage />);
+      expect(start()).toBeDisabled();
+      expect(historyRefetch).not.toHaveBeenCalled();
+
+      act(() => vi.advanceTimersByTime(5000));
+      expect(historyRefetch).toHaveBeenCalledTimes(1);
+      expect(start()).toBeEnabled();
+      expect(screen.getByText("generate.historyStatus.OPTIMAL")).toBeInTheDocument();
+
+      // Nothing runs any more, so nothing is polled.
+      act(() => vi.advanceTimersByTime(30_000));
+      expect(historyRefetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("lets them start when a job the history still calls running passes the gateway's 15 minutes", () => {
+      state.history = [
+        {
+          id: "job-lost", status: "RUNNING", solverStatus: null, lessonsGenerated: 0,
+          createdAt: new Date(Date.now() - 15 * 60 * 1000 + 3000).toISOString(),
+        },
+      ];
+      render(<GeneratePage />);
+      expect(start()).toBeDisabled();
+
+      act(() => vi.advanceTimersByTime(5000));
+      expect(start()).toBeEnabled();
+    });
+  });
+
+  it("reads the history again once its own job has ended, so the list does not keep it waiting", () => {
+    state.job = {
+      id: "job-own", status: "SUCCEEDED", solverStatus: "OPTIMAL", lessonsGenerated: 12, conflicts: [],
+      createdAt: "2026-10-17T08:00:00.000Z",
+    };
+    render(<GeneratePage />);
+
+    expect(historyRefetch).toHaveBeenCalled();
+  });
+
+  it("reads the overview again when Generera is refused for a run started elsewhere", async () => {
+    // Started in another tab since this page read the overview: until it is
+    // read again, the section says there is no run and Generera stays enabled.
+    noMutation.mutateAsync.mockRejectedValueOnce(new ApiError(409, "Candidates are running.", "CANDIDATES_RUNNING"));
+    render(<GeneratePage />);
+    await userEvent.setup().click(runButton());
+
+    expect(toast.error).toHaveBeenCalledWith("scheduleCandidates.jobErrors.CANDIDATES_RUNNING");
+    expect(candidatesRefetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not wait for a job the gateway no longer counts as running (older than 15 minutes)", () => {
+    state.history = [
+      { id: "job-lost", status: "RUNNING", solverStatus: null, lessonsGenerated: 0, createdAt: "2026-01-01T08:00:00.000Z" },
+    ];
+    render(<GeneratePage />);
+
+    expect(screen.getByRole("button", { name: "scheduleCandidates.section.start" })).toBeEnabled();
+  });
+
+  it.each(["GENERATE_STALE", "SCHEDULE_BUSY"])("says in its own words why a job stopped before writing (%s)", (code) => {
+    // The gateway's codes, not the engine's: engineMessages has no sentence
+    // for them, so without these the admin would read the English.
+    state.job = {
+      id: "job-8", status: "FAILED", solverStatus: null, error: "The draft changed during the run.", errorCode: code,
+      errorParams: null, conflicts: [], createdAt: "2026-10-17T08:00:00.000Z",
+    };
+    render(<GeneratePage />);
+
+    expect(screen.getByText(`scheduleCandidates.jobErrors.${code}`)).toBeInTheDocument();
+    expect(screen.queryByText("The draft changed during the run.")).toBeNull();
   });
 });
