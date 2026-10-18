@@ -96,6 +96,7 @@ const state = vi.hoisted(() => ({
   overview: undefined as unknown,
   check: undefined as unknown,
   checkFetching: false,
+  checkPaused: false,
   checkRefetch: vi.fn(),
   checkFailed: false,
   lessons: {} as Record<string, unknown>,
@@ -162,6 +163,7 @@ vi.mock("./use-candidate-details", () => ({
     isLoading: false,
     isError: state.checkFailed,
     isFetching: state.checkFetching,
+    fetchStatus: state.checkFetching ? "fetching" : state.checkPaused ? "paused" : "idle",
     refetch: state.checkRefetch,
   }),
   useCandidateLessons: (() => {
@@ -212,6 +214,7 @@ beforeEach(() => {
   state.overview = { latest: BATCH, batch: BATCH, unplaced: { lines: 0, minutes: 0, draftLines: 1, draftMinutes: 40 } };
   state.check = CHECK;
   state.checkFetching = false;
+  state.checkPaused = false;
   state.checkRefetch = vi.fn();
   state.checkFailed = false;
   state.origin = DRAFT;
@@ -441,6 +444,33 @@ describe("applying", () => {
     await user.click(within(dialog).getByRole("button", { name: "scheduleCandidates.check.retry" }));
     expect(state.checkRefetch).toHaveBeenCalledTimes(2);
     expect(apply.mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("holds the confirm while the re-read is paused offline, not fetching and not failed", async () => {
+    state.check = { ...CHECK, mode: "DIRECT", futureCalendarLessons: 12, coverAssignments: 3 };
+    const { rerender } = render(<CandidatesPage />);
+    const user = userEvent.setup();
+
+    await user.click(applyButton(1, "KEEP"));
+    state.checkPaused = true;
+    rerender(<CandidatesPage />);
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("scheduleCandidates.apply.checking")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "scheduleCandidates.apply.direct" })).toBeDisabled();
+  });
+
+  it("hands focus to the reason, not to <body>, when the dialog closes over a Tillämpa the failed re-read disabled", async () => {
+    const { rerender } = render(<CandidatesPage />);
+    const user = userEvent.setup();
+
+    await user.click(applyButton(2, "TEACHER_GAPS"));
+    state.checkFailed = true;
+    rerender(<CandidatesPage />);
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "common.cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(applyButton(2, "TEACHER_GAPS")).toBeDisabled();
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement?.textContent).toContain("scheduleCandidates.check.failed");
   });
 
   it("offers nothing to apply for a candidate without a timetable", () => {

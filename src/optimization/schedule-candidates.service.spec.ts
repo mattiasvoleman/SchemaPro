@@ -466,13 +466,22 @@ describe('ScheduleCandidatesService', () => {
         expect.objectContaining({ data: expect.objectContaining({ status: 'SUCCEEDED', engineBusyUntil: null }) }),
       );
 
-      // A failed call has returned: nothing of the run is solving.
-      proxy.solveCandidate.mockRejectedValueOnce(new ServiceUnavailableException('The AI engine did not respond in time.'));
+      // An engine that answered — a refusal, a crash — is solving nothing for the run.
+      proxy.solveCandidate.mockRejectedValueOnce(new HttpException('The AI engine returned an error.', 500));
       run = { status: 'PENDING', progress: 0, basis: null, basisParts: null };
       await startAndRun(dto({ count: 2 }));
       expect(tx.scheduleCandidateRun.updateMany).toHaveBeenLastCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ status: 'FAILED', engineBusyUntil: null }) }),
       );
+
+      // A timeout (the gateway's, or the engine's 503, whose wait does not
+      // stop its solve thread) keeps the call's deadline.
+      proxy.solveCandidate.mockRejectedValueOnce(new ServiceUnavailableException('The AI engine did not respond in time.'));
+      run = { status: 'PENDING', progress: 0, basis: null, basisParts: null };
+      await startAndRun(dto({ count: 2 }));
+      const timedOut = tx.scheduleCandidateRun.updateMany.mock.calls.at(-1)![0] as { data: Record<string, unknown> };
+      expect(timedOut.data).toMatchObject({ status: 'FAILED', errorCode: 'CANDIDATE_ENGINE_TIMEOUT' });
+      expect(timedOut.data).not.toHaveProperty('engineBusyUntil');
     });
 
     it('bumps the heartbeat by compare-and-set before the fetch and before every call, and only while PENDING or RUNNING', async () => {
@@ -494,7 +503,8 @@ describe('ScheduleCandidatesService', () => {
       expect(store).toBeGreaterThan(-1);
       expect(steps[store + 1]).toContain('"progress" = "progress" + 1, "heartbeatAt" = now()');
       expect(tx.scheduleCandidateRun.deleteMany).toHaveBeenCalledWith({
-        where: { academicYearId: YEAR, id: { not: RUN }, status: { in: ['SUCCEEDED', 'FAILED'] } },
+        // Never a run whose engine call can still be solving (its cap place).
+        where: { academicYearId: YEAR, id: { not: RUN }, status: { in: ['SUCCEEDED', 'FAILED'] }, OR: [{ engineBusyUntil: null }, { engineBusyUntil: { lte: expect.any(Date) } }] },
       });
     });
 
@@ -1152,7 +1162,7 @@ describe('ScheduleCandidatesService', () => {
         data: { status: 'CANCELLING' },
       });
       expect(tx.scheduleCandidateRun.deleteMany).toHaveBeenCalledWith({
-        where: { academicYearId: YEAR, status: { in: ['SUCCEEDED', 'FAILED'] } },
+        where: { academicYearId: YEAR, status: { in: ['SUCCEEDED', 'FAILED'] }, OR: [{ engineBusyUntil: null }, { engineBusyUntil: { lte: expect.any(Date) } }] },
       });
       expect(run.status).toBe('CANCELLING');
     });

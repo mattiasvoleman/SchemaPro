@@ -30,6 +30,8 @@ export interface ApplyDialogProps {
    */
   checkFailed: boolean;
   onRetryCheck: () => void;
+  /** Where focus goes on close when the opener can no longer take it. */
+  onCloseAutoFocus?: (event: Event) => void;
   pending: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirm: () => void;
@@ -60,6 +62,7 @@ export function ApplyDialog({
   checking,
   checkFailed,
   onRetryCheck,
+  onCloseAutoFocus,
   pending,
   onOpenChange,
   onConfirm,
@@ -77,6 +80,7 @@ export function ApplyDialog({
       <DialogContent
         className="max-w-lg"
         closeDisabled={pending}
+        onCloseAutoFocus={onCloseAutoFocus}
         onEscapeKeyDown={(event) => {
           if (pending) event.preventDefault();
         }}

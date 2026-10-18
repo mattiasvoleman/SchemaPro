@@ -466,6 +466,13 @@ describe('MasterLessonsService', () => {
       );
     };
 
+    it('locks no year row-level security has not shown: a year it does not see is 404 without the edit lock', async () => {
+      tx.academicYear.findUnique.mockResolvedValue(null);
+      await expect(service.create(createDto(), testUser())).rejects.toThrow(NotFoundException);
+      expect(editLockCalls()).toEqual([]);
+      expect(tx.masterLesson.create).not.toHaveBeenCalled();
+    });
+
     it('runs under withRls for the calling principal and maps the created row', async () => {
       arrangeCreate();
       const user = testUser();
