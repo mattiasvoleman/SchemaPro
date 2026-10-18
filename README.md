@@ -1,4 +1,10 @@
-# SchemaPro
+# Rastra
+
+Rastra (formerly SchemaPro, renamed 2026-10-17) is the product: **Rastra Schema**
+in Swedish and **Rastra timetable** in English for the web app and everything
+but the mobile apps, which are **Rastra** and **Rastra vårdnadshavare**. The
+repository, packages, code identifiers, database, environment variables, API
+paths and storage keys keep the old name; see PRODUCT.md.
 
 AI-driven school scheduling & attendance platform. A school admin sets up the
 catalog (subjects, rooms, groups, teachers), defines the curriculum demand and

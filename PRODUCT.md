@@ -45,7 +45,7 @@ Design work optimises for this person first (decided 2026-10-11).
 
 ## Product Purpose
 
-SchemaPro runs a Swedish school's whole planning chain and its school day in one place:
+Rastra runs a Swedish school's whole planning chain and its school day in one place:
 1. The **lokal timplan** in minutes per week, checked against the hours skolförordningen guarantees.
 2. **Tjänstefördelning** in minutes against each teacher's riktmärke, with behörighet as data.
 3. A **grundschema** that the engine computes to keep every hard rule.
@@ -54,7 +54,7 @@ SchemaPro runs a Swedish school's whole planning chain and its school day in one
 6. **Rolling it all forward** into the next läsår every June.
 
 What success means:
-- A school can stop using Skola24 and run its whole year on SchemaPro.
+- A school can stop using Skola24 and run its whole year on Rastra.
 - The schemaläggare trusts the generator, because every refusal names its cause.
 - Teachers and families see the published truth without calling the school.
 
@@ -62,7 +62,7 @@ The owner's engineering thresholds (brief of 2026-08-05: LCP, bundle size, solve
 
 ## Positioning
 
-**Stance:** SchemaPro replaces Skola24 end to end (decided 2026-10-11). It covers the full chain from timplan to the school day. It is not a scheduling engine that feeds someone else's platform, which was the July stance and is now retired.
+**Stance:** Rastra replaces Skola24 end to end (decided 2026-10-11). It covers the full chain from timplan to the school day. It is not a scheduling engine that feeds someone else's platform, which was the July stance and is now retired.
 
 **What a neighbouring product could not truthfully claim** (from vendor pages read 2026-10-05/06, see the Gap Analysis & Roadmap document):
 - **The generator explains itself.** It never answers just "infeasible". It names the cause in the school's own words with the numbers involved, ends with a remedy, ranks causes and probes which rule to relax. The comparison rates this ahead of Skola24, Untis, aSc and Lectio.
@@ -110,13 +110,13 @@ The *grundschema* is the weekly template. The *kalender* holds dated lessons. At
 **Tenancy and time:** one school per tenant, in the Europe/Stockholm timezone. A guardian with children at two schools logs in to each separately.
 
 **Neighbouring systems:**
-- SS12000 2.1: SchemaPro pulls the roster from IST or Edlevo through a reviewed diff, and provides the published schedule to systems such as Vklass.
+- SS12000 2.1: Rastra pulls the roster from IST or Edlevo through a reviewed diff, and provides the published schedule to systems such as Vklass.
 - Hosting: Supabase (EU region recommended), with the API and engine on Railway and the web on Vercel.
 - E-mail goes through Resend. Push goes through Expo and stays off until the school has a DPA covering it.
 
 ## Capabilities and Constraints
 
-**Scope.** SchemaPro covers:
+**Scope.** Rastra covers:
 - grundskola F–9;
 - anpassad grundskola, by ämnen and by ämnesområden;
 - specialskola F–10;
@@ -164,7 +164,7 @@ English labels exist for all of them. A test enforces "Curriculum entries" as th
 
 ## Brand Commitments
 
-**Name.** The name is **SchemaPro**: one word, written exactly so, with the genitive *SchemaPros*. No logo, wordmark, favicon or app icon exists. The stock calendar icon on the web and the letters "SP" in the app are placeholders.
+**Name.** The product is **Rastra** (decided 2026-10-17; formerly SchemaPro). The web app and every other application but the mobile apps (Schemavisaren, the guardian and pupil web, the admin) is **Rastra Schema** in Swedish, with the genitive *Rastra Schemas*, and **Rastra timetable** in English, the international name. The mobile apps are **Rastra** for staff and pupils and **Rastra vårdnadshavare** for guardians. The repository, packages, code identifiers, database, environment variables, API paths, storage keys and the hosting projects keep the old name, and so does everything a stored id or an integration derives from: the `X-SchemaPro-*` webhook headers, the ICS UIDs and the SS12000 id namespace. No logo, wordmark, favicon or app icon exists. The stock calendar icon on the web and the letters "SP" in the app are placeholders.
 
 **Voice.** Swedish first, in the du-form: plain, declarative and procedural. The copy:
 - explains why a rule exists;
@@ -188,7 +188,7 @@ The manuals are ordered by workflow, not by feature, and end steps with *Kontrol
   - `docs/manual/anvandarmanual.html` (utgåva 1.0, for rektor and schemaläggare);
   - `docs/manual/lararmanual.html` (1.0);
   - `docs/manual/vardnadshavarmanual.html` (1.1);
-  - the PDFs, `docs/SchemaPro-*.pdf`.
+  - the PDFs, `docs/Rastra-Schema-*.pdf`.
 
   They contain no screenshots or images, and no English version exists.
 - **Competitive research** with dated sources: the Gap Analysis & Roadmap document of 2026-10-05/06.

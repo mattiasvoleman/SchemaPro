@@ -1,6 +1,6 @@
-# SchemaPro — Deployment Runbook
+# Rastra — Deployment Runbook
 
-Step-by-step guide for taking SchemaPro from this repository to a running
+Step-by-step guide for taking Rastra (formerly SchemaPro) from this repository to a running
 production pilot. Written for the reference stack: **Supabase** (Auth +
 Postgres), the **NestJS API** and **Python solver** on a container host, and
 the **Next.js web app** on Vercel or any Node host.
@@ -12,6 +12,33 @@ verification (step 9).
 > covers the same deployment in plain language, with every click spelled out
 > and a "check it worked" after each step. This runbook assumes you already
 > know your way around Postgres, containers and DNS.
+
+> **The name (2026-10-17).** The product is Rastra: **Rastra Schema** in
+> Swedish and **Rastra timetable** in English for the web app, the manuals,
+> the e-mails and the API's messages; **Rastra** and **Rastra vårdnadshavare**
+> for the mobile apps, which ship later as new store apps (§8.1). Until they
+> do, the app on people's phones is still "SchemaPro", and no push or e-mail
+> names an app. The repository, packages,
+> database, environment variables, API paths, storage keys, the webhook's
+> `X-SchemaPro-*` headers, the calendar feed's UIDs and the hosting projects
+> (Railway, Supabase, Vercel) keep the old name, and so do the sending domain
+> `schemapro.app` and any host name with schemapro in it, which people still
+> see. What a person sees but the repository does not hold is renamed by
+> hand, once:
+>
+> - **`EMAIL_FROM`** on the API: the display name, e.g.
+>   `Rastra Schema <noreply@schemapro.app>`. The code's default says so, but
+>   only when the variable is unset: `deploy/docker-compose.prod.yml` passes
+>   it through as an empty string, so set it there too.
+> - **Supabase Auth** (Authentication → Emails): the subjects and texts of
+>   the *Invite user*, *Reset password* and *Magic link* templates, and the
+>   SMTP sender name, where they name the product.
+> - **Microsoft Entra ID** (§11): the app registration's display name, which
+>   staff see when they consent and sign in, and **Google**'s OAuth consent
+>   screen name. A kommun that has already consented may keep seeing the old
+>   name in its own tenant until it consents again.
+> - The PDFs of the manuals are `docs/Rastra-Schema-*.pdf`; a link to the old
+>   `SchemaPro-*.pdf` names needs the new one.
 
 ---
 
@@ -301,9 +328,14 @@ production changes before the last step.
    the EAS project's id (the `expo-notifications` config plugin needs a new
    binary; remote push does not work in Expo Go on Android). Without the id
    the app reports push as unavailable and registers nothing. The same build
-   carries the app's new display name, "SchemaPro" (it was "SchemaPro
-   Teacher"); the slug, bundle identifier and Android package are unchanged,
-   so it installs as an update of the existing app.
+   carries the display name `mobile/app.json` gives it, today "SchemaPro"
+   (it was "SchemaPro Teacher"); the slug, bundle identifier and Android
+   package are unchanged, so it installs as an update of the existing app.
+   The renamed apps, Rastra and Rastra vårdnadshavare, come later with new
+   bundle identifiers (`se.rastra.app`, `se.rastra.vardnadshavare`). They are
+   new store apps that people install beside the old one, each with its own
+   FCM and APNs setup and its own push tokens, and this step is rewritten
+   when they land. Until then no text the API sends names an app.
 4. **The API**: `PUSH_NOTIFICATIONS=expo` (plus `EXPO_ACCESS_TOKEN` if enhanced
    push security is on). The receipt checker starts with it: every five
    minutes, in-process, safe across instances (each ticket is claimed with
@@ -352,7 +384,7 @@ Walk the full product loop once, in order:
 
 - **Backups**: enable Supabase PITR/daily backups. The database is the only
   stateful component — API, solver and web are stateless.
-- **Gallring cannot be undone in SchemaPro.** A school's retention periods
+- **Gallring cannot be undone in Rastra.** A school's retention periods
   (`/admin/dataskydd`) delete attendance, absence reports, leave requests,
   notices and logs older than the period, null old absence reasons, and
   pseudonymise people who left, every night from 03:00 local time. Each
@@ -533,10 +565,10 @@ issues any token, at sign-in and at every refresh, the hook:
 - refuses the refresh of a school-account session whose sign-in at the
   provider is more than **24 hours** old (`sso_reauth_required`). Auth never
   asks Entra or Google again at a refresh, so without this a person the
-  kommun disables in Entra ID or Workspace would keep their SchemaPro session
+  kommun disables in Entra ID or Workspace would keep their Rastra session
   for as long as their app kept refreshing it. With it they are out within a
   day: the next sign-in goes through the provider, which refuses them. For an
-  immediate stop, deactivate the person in SchemaPro as well (People).
+  immediate stop, deactivate the person in Rastra as well (People).
 
 Each school sets this up itself on **/admin/integrations → Inloggning**: the
 provider, the e-mail domains `/login` offers it for, the organisation (Entra
@@ -557,12 +589,12 @@ every save that turns it on or keeps it on:
   domain lists that domain itself, and from then on no school can switch it
   to another provider.
 
-"Who can sign in" is an active teacher or admin whom SchemaPro has invited
+"Who can sign in" is an active teacher or admin whom Rastra has invited
 (`"invitedAt"` set), and the admin saving. A catalogue entry nobody invited
 has no login to lose and is not counted. The check reads the address
-SchemaPro holds for each person (`"Users".email`), not their login's own, and
+Rastra holds for each person (`"Users".email`), not their login's own, and
 runs when the row is saved. So it misses staff invited or reactivated after
-the save, and anyone whose address changed in SchemaPro while their login
+the save, and anyone whose address changed in Rastra while their login
 kept the old one, which is what an SS12000 e-mail change does until the
 person is invited again, before the save as much as after it. Those are
 cases for 11.7.
@@ -582,7 +614,7 @@ the collision for the operator), because it would leave the other school's
 domain with no answer at `/login`, and an SSO-only school's staff with no
 way in.
 
-**Decision: one multi-tenant Entra app for every kommun.** SchemaPro has one
+**Decision: one multi-tenant Entra app for every kommun.** Rastra has one
 Entra app registration that accepts any organisation's accounts; each
 kommun's Entra administrator consents to it, and the hook pins every school
 to its own tenant id. The alternative, an app registration per kommun pinned
@@ -659,10 +691,10 @@ operator sets `"ssoOnlyForStaff"` to false as in 11.7 ("locked out").
 1. Authentication → Hooks → *Customize Access Token (JWT) Claims* → type
    *Postgres*, schema `sign_in`, function `custom_access_token_hook` →
    enable. The migration already grants `supabase_auth_admin` USAGE on
-   `sign_in` (and on nothing else of SchemaPro's) and EXECUTE on the hook and
+   `sign_in` (and on nothing else of Rastra's) and EXECUTE on the hook and
    the two functions it calls, and no API role may execute them; if the
    dashboard offers to apply grants, they are harmless.
-2. Check it at once, as a person who has a SchemaPro profile (a teacher or a
+2. Check it at once, as a person who has a Rastra profile (a teacher or a
    school admin, not a bootstrap login without one: for such a login the
    hook stops before the code everyone else goes through). Sign in with a
    password and get a token, then refresh once: reload a signed-in page
@@ -698,7 +730,7 @@ instead of letting it wait.
 
 ### 11.3 Microsoft Entra ID
 
-In the Microsoft Entra admin center of the tenant that owns SchemaPro's app:
+In the Microsoft Entra admin center of the tenant that owns Rastra's app:
 
 1. App registrations → New registration. Supported account types: *Accounts
    in any organizational directory (Any Microsoft Entra ID tenant —
@@ -726,14 +758,14 @@ In the Microsoft Entra admin center of the tenant that owns SchemaPro's app:
 
 For each kommun (or school) that wants it:
 
-1. Its Entra administrator grants admin consent to SchemaPro's app, for
+1. Its Entra administrator grants admin consent to Rastra's app, for
    example by opening
-   `https://login.microsoftonline.com/<their-tenant-id>/adminconsent?client_id=<SchemaPro's client id>`.
+   `https://login.microsoftonline.com/<their-tenant-id>/adminconsent?client_id=<Rastra's client id>`.
 2. Its staff's addresses in Entra (the `mail` attribute) must be the
    addresses the school invited them with. A person whose Entra address
    differs is told at `/login` that their school account's address was never
    invited. Either the Entra administrator corrects `mail` to the invited
-   address, or, for a person who should keep their Entra address, SchemaPro
+   address, or, for a person who should keep their Entra address, Rastra
    gets that address (from the school's SS12000 source, or from an operator
    as 11.7 describes, since a school admin cannot edit an invited person's
    address) and the school invites the person again. If their existing login
@@ -769,7 +801,7 @@ For each kommun (or school) that wants it:
 3. Supabase dashboard → Authentication → Sign In / Providers → Google:
    enable, Client ID, Client Secret.
 4. Per school: if its Workspace restricts third-party apps, the Workspace
-   administrator trusts SchemaPro's client ID (Security → Access and data
+   administrator trusts Rastra's client ID (Security → Access and data
    control → API controls). The school's admin saves the Workspace's primary
    domain (the `hd` Google sends) on Inloggning.
 
@@ -813,12 +845,12 @@ fails at Auth, before any provider.
   above; until it is, the hook refuses them.
 - **A member of staff on a domain the school has not listed, while *Kräv
   skolkonto för personal* is on.** The gateway checks the domains when the
-  row is saved, against the address SchemaPro holds for each person, not
+  row is saved, against the address Rastra holds for each person, not
   their login's own. So it misses:
   - someone invited after the save, for example with a kommun address;
   - someone the SS12000 sync reactivates after the save;
   - an SS12000 e-mail change the admin applied to an invited person
-    (`PERSON_EMAIL_CHANGE_INVITED`), before the save or after it. SchemaPro
+    (`PERSON_EMAIL_CHANGE_INVITED`), before the save or after it. Rastra
     then shows the new address, but until the school invites the person
     again the login keeps the one they were invited with, and that is the
     address they type at `/login` and the one the school account links by. The check counts the new address, so the
@@ -834,7 +866,7 @@ fails at Auth, before any provider.
   the owner in the SQL editor, sets the person's `email` in `"Users"`. Then
   the school's admin sends the invitation again (the envelope on the
   person's row), before requiring the school account. That moves the login
-  to the address SchemaPro holds, with its password and linked school
+  to the address Rastra holds, with its password and linked school
   accounts: a person who never used the first invitation gets it again at
   the new address, and one who did gets no e-mail and signs in with the new
   address; the admin's receipt says so, and the admin tells them. If another

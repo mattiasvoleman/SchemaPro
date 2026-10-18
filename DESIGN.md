@@ -1,5 +1,5 @@
 ---
-name: SchemaPro
+name: Rastra Schema
 description: The signed-in web app of a Swedish school's planning chain and school day, one working pattern on every page.
 colors:
   background: "hsl(0 0% 100%)"
@@ -209,7 +209,7 @@ components:
     width: "32rem"
 ---
 
-# Design System: SchemaPro
+# Design System: Rastra Schema
 
 ## Overview
 
@@ -309,7 +309,7 @@ Radius is derived from `--radius` (10px): `rounded-lg` (10px) for cards, table f
 ## Components
 
 ### Page header
-- One `PageHeader` per route: h1 (also the tab title "{title} · SchemaPro" via DocumentTitle), optional one-sentence `subtitle` with no trailing period, optional `meta` row of Badges, optional `intro` (foreground, `max-w-prose`) for longer explanation, optional `back` link rendered above the h1 as a ghost small button with ArrowLeft and a named destination ("Till tjänstefördelningen", never "Tillbaka"), hidden in print.
+- One `PageHeader` per route: h1 (also the tab title "{title} · Rastra Schema" via DocumentTitle), optional one-sentence `subtitle` with no trailing period, optional `meta` row of Badges, optional `intro` (foreground, `max-w-prose`) for longer explanation, optional `back` link rendered above the h1 as a ghost small button with ArrowLeft and a named destination ("Till tjänstefördelningen", never "Tillbaka"), hidden in print.
 - **Actions**, left to right: the scope selector (`YearSelect`, a Radix Select `w-44`, skeleton of the same size while loading, nothing when the school has no years); outline secondary actions with a leading icon; at most one primary action. Beyond four, the rest go behind a ghost `MoreHorizontal` icon menu with an aria-label. Actions centre on a title+subtitle pair and top-align when `meta` or `intro` makes the block tall.
 - **NextStep:** a ghost small "Nästa steg: {name}" link with ArrowRight along the manual's chain, at the page end or in the actions; it never competes with the primary.
 
@@ -362,7 +362,7 @@ Radius is derived from `--radius` (10px): `rounded-lg` (10px) for cards, table f
 - **Lazy dialogs:** dialogs are `React.lazy` with `Suspense fallback={null}`, mounted on first open, inside `DialogLoadBoundary`. If a chunk fails to load, the boundary hands the error to the page and remounts under a new key so the next open retries. Optional cards on budget-tight routes lazy-load with a fallback that renders nothing.
 
 ### Navigation
-- The sidebar has a 4rem brand row (an 8×8 primary tile with CalendarRange, "SchemaPro" and the school name). The admin menu is grouped by the manual's four phases: an unlabelled Översikt, then Grunddata, Planering, Schemaläggning and Drift, then an unlabelled Integrationer last.
+- The sidebar has a 4rem brand row (an 8×8 primary tile with CalendarRange, "Rastra Schema" and the school name). The admin menu is grouped by the manual's four phases: an unlabelled Översikt, then Grunddata, Planering, Schemaläggning and Drift, then an unlabelled Integrationer last.
 - Items are `rounded-md px-2.5 py-2 text-sm font-medium` with a size-4 icon. The active item is `sidebar-accent` with `aria-current="page"`; hover is `sidebar-accent/50`. Group labels are xs, semibold, uppercase, `tracking-wider` and full muted-foreground (at 70% they failed contrast).
 - **Shared icons:** several entries borrow another entry's lucide icon (GraduationCap for Kom igång and Läsår; CalendarRange for Ramtider and Publicering; CalendarClock for Dagsplanering and Vikarietavla; CalendarOff for Lov and Avbokning; MapPin for Salar and Lokalbokningar). The shell is billed on every route, so a new nav entry reuses an icon already in the shell and says which one it borrows in a comment.
 - **Mobile drawer:** a hand-written modal (not Radix, for the shell's byte budget) with `aria-modal`, focus moved to its close button, Tab wrapped inside, Escape to close, and focus returned to the hamburger.
