@@ -560,5 +560,2844 @@
    "term": "bilaga 1",
    "tioarig": false
   }
+ ],
+ "gradeSpans": [
+  {
+   "numbering": "NIOARIG",
+   "min": 0,
+   "max": 0,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 0
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 0,
+   "max": 1,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 1
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 0,
+   "max": 2,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 2
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 0,
+   "max": 3,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 3
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 0,
+   "max": 4,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 4
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 0,
+   "max": 5,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 5
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 0,
+   "max": 6,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 6
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 0,
+   "max": 7,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 7
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 0,
+   "max": 8,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 8
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 0,
+   "max": 9,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 9
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 0,
+   "max": 10,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 10
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 0,
+   "max": 11,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 11
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 0,
+   "max": 12,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 12
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 1,
+   "max": 1,
+   "toNioarigSpan": {
+    "min": 1,
+    "max": 1
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 1,
+   "max": 2,
+   "toNioarigSpan": {
+    "min": 1,
+    "max": 2
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 1,
+   "max": 3,
+   "toNioarigSpan": {
+    "min": 1,
+    "max": 3
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 1,
+   "max": 4,
+   "toNioarigSpan": {
+    "min": 1,
+    "max": 4
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 1,
+   "max": 5,
+   "toNioarigSpan": {
+    "min": 1,
+    "max": 5
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 1,
+   "max": 6,
+   "toNioarigSpan": {
+    "min": 1,
+    "max": 6
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 1,
+   "max": 7,
+   "toNioarigSpan": {
+    "min": 1,
+    "max": 7
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 1,
+   "max": 8,
+   "toNioarigSpan": {
+    "min": 1,
+    "max": 8
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 1,
+   "max": 9,
+   "toNioarigSpan": {
+    "min": 1,
+    "max": 9
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 1,
+   "max": 10,
+   "toNioarigSpan": {
+    "min": 1,
+    "max": 10
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 1,
+   "max": 11,
+   "toNioarigSpan": {
+    "min": 1,
+    "max": 11
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 1,
+   "max": 12,
+   "toNioarigSpan": {
+    "min": 1,
+    "max": 12
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 2,
+   "max": 2,
+   "toNioarigSpan": {
+    "min": 2,
+    "max": 2
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 2,
+   "max": 3,
+   "toNioarigSpan": {
+    "min": 2,
+    "max": 3
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 2,
+   "max": 4,
+   "toNioarigSpan": {
+    "min": 2,
+    "max": 4
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 2,
+   "max": 5,
+   "toNioarigSpan": {
+    "min": 2,
+    "max": 5
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 2,
+   "max": 6,
+   "toNioarigSpan": {
+    "min": 2,
+    "max": 6
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 2,
+   "max": 7,
+   "toNioarigSpan": {
+    "min": 2,
+    "max": 7
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 2,
+   "max": 8,
+   "toNioarigSpan": {
+    "min": 2,
+    "max": 8
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 2,
+   "max": 9,
+   "toNioarigSpan": {
+    "min": 2,
+    "max": 9
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 2,
+   "max": 10,
+   "toNioarigSpan": {
+    "min": 2,
+    "max": 10
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 2,
+   "max": 11,
+   "toNioarigSpan": {
+    "min": 2,
+    "max": 11
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 2,
+   "max": 12,
+   "toNioarigSpan": {
+    "min": 2,
+    "max": 12
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 3,
+   "max": 3,
+   "toNioarigSpan": {
+    "min": 3,
+    "max": 3
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 3,
+   "max": 4,
+   "toNioarigSpan": {
+    "min": 3,
+    "max": 4
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 3,
+   "max": 5,
+   "toNioarigSpan": {
+    "min": 3,
+    "max": 5
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 3,
+   "max": 6,
+   "toNioarigSpan": {
+    "min": 3,
+    "max": 6
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 3,
+   "max": 7,
+   "toNioarigSpan": {
+    "min": 3,
+    "max": 7
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 3,
+   "max": 8,
+   "toNioarigSpan": {
+    "min": 3,
+    "max": 8
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 3,
+   "max": 9,
+   "toNioarigSpan": {
+    "min": 3,
+    "max": 9
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 3,
+   "max": 10,
+   "toNioarigSpan": {
+    "min": 3,
+    "max": 10
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 3,
+   "max": 11,
+   "toNioarigSpan": {
+    "min": 3,
+    "max": 11
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 3,
+   "max": 12,
+   "toNioarigSpan": {
+    "min": 3,
+    "max": 12
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 4,
+   "max": 4,
+   "toNioarigSpan": {
+    "min": 4,
+    "max": 4
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 4,
+   "max": 5,
+   "toNioarigSpan": {
+    "min": 4,
+    "max": 5
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 4,
+   "max": 6,
+   "toNioarigSpan": {
+    "min": 4,
+    "max": 6
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 4,
+   "max": 7,
+   "toNioarigSpan": {
+    "min": 4,
+    "max": 7
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 4,
+   "max": 8,
+   "toNioarigSpan": {
+    "min": 4,
+    "max": 8
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 4,
+   "max": 9,
+   "toNioarigSpan": {
+    "min": 4,
+    "max": 9
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 4,
+   "max": 10,
+   "toNioarigSpan": {
+    "min": 4,
+    "max": 10
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 4,
+   "max": 11,
+   "toNioarigSpan": {
+    "min": 4,
+    "max": 11
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 4,
+   "max": 12,
+   "toNioarigSpan": {
+    "min": 4,
+    "max": 12
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 5,
+   "max": 5,
+   "toNioarigSpan": {
+    "min": 5,
+    "max": 5
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 5,
+   "max": 6,
+   "toNioarigSpan": {
+    "min": 5,
+    "max": 6
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 5,
+   "max": 7,
+   "toNioarigSpan": {
+    "min": 5,
+    "max": 7
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 5,
+   "max": 8,
+   "toNioarigSpan": {
+    "min": 5,
+    "max": 8
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 5,
+   "max": 9,
+   "toNioarigSpan": {
+    "min": 5,
+    "max": 9
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 5,
+   "max": 10,
+   "toNioarigSpan": {
+    "min": 5,
+    "max": 10
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 5,
+   "max": 11,
+   "toNioarigSpan": {
+    "min": 5,
+    "max": 11
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 5,
+   "max": 12,
+   "toNioarigSpan": {
+    "min": 5,
+    "max": 12
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 6,
+   "max": 6,
+   "toNioarigSpan": {
+    "min": 6,
+    "max": 6
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 6,
+   "max": 7,
+   "toNioarigSpan": {
+    "min": 6,
+    "max": 7
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 6,
+   "max": 8,
+   "toNioarigSpan": {
+    "min": 6,
+    "max": 8
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 6,
+   "max": 9,
+   "toNioarigSpan": {
+    "min": 6,
+    "max": 9
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 6,
+   "max": 10,
+   "toNioarigSpan": {
+    "min": 6,
+    "max": 10
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 6,
+   "max": 11,
+   "toNioarigSpan": {
+    "min": 6,
+    "max": 11
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 6,
+   "max": 12,
+   "toNioarigSpan": {
+    "min": 6,
+    "max": 12
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 7,
+   "max": 7,
+   "toNioarigSpan": {
+    "min": 7,
+    "max": 7
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 7,
+   "max": 8,
+   "toNioarigSpan": {
+    "min": 7,
+    "max": 8
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 7,
+   "max": 9,
+   "toNioarigSpan": {
+    "min": 7,
+    "max": 9
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 7,
+   "max": 10,
+   "toNioarigSpan": {
+    "min": 7,
+    "max": 10
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 7,
+   "max": 11,
+   "toNioarigSpan": {
+    "min": 7,
+    "max": 11
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 7,
+   "max": 12,
+   "toNioarigSpan": {
+    "min": 7,
+    "max": 12
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 8,
+   "max": 8,
+   "toNioarigSpan": {
+    "min": 8,
+    "max": 8
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 8,
+   "max": 9,
+   "toNioarigSpan": {
+    "min": 8,
+    "max": 9
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 8,
+   "max": 10,
+   "toNioarigSpan": {
+    "min": 8,
+    "max": 10
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 8,
+   "max": 11,
+   "toNioarigSpan": {
+    "min": 8,
+    "max": 11
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 8,
+   "max": 12,
+   "toNioarigSpan": {
+    "min": 8,
+    "max": 12
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 9,
+   "max": 9,
+   "toNioarigSpan": {
+    "min": 9,
+    "max": 9
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 9,
+   "max": 10,
+   "toNioarigSpan": {
+    "min": 9,
+    "max": 10
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 9,
+   "max": 11,
+   "toNioarigSpan": {
+    "min": 9,
+    "max": 11
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 9,
+   "max": 12,
+   "toNioarigSpan": {
+    "min": 9,
+    "max": 12
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 10,
+   "max": 10,
+   "toNioarigSpan": {
+    "min": 10,
+    "max": 10
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 10,
+   "max": 11,
+   "toNioarigSpan": {
+    "min": 10,
+    "max": 11
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 10,
+   "max": 12,
+   "toNioarigSpan": {
+    "min": 10,
+    "max": 12
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 11,
+   "max": 11,
+   "toNioarigSpan": {
+    "min": 11,
+    "max": 11
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 11,
+   "max": 12,
+   "toNioarigSpan": {
+    "min": 11,
+    "max": 12
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "min": 12,
+   "max": 12,
+   "toNioarigSpan": {
+    "min": 12,
+    "max": 12
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 0,
+   "max": 0,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 0
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 0,
+   "max": 1,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 0
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 0,
+   "max": 2,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 1
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 0,
+   "max": 3,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 2
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 0,
+   "max": 4,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 3
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 0,
+   "max": 5,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 4
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 0,
+   "max": 6,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 5
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 0,
+   "max": 7,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 6
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 0,
+   "max": 8,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 7
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 0,
+   "max": 9,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 8
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 0,
+   "max": 10,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 9
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 0,
+   "max": 11,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 10
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 0,
+   "max": 12,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 12
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 1,
+   "max": 1,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 0
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 1,
+   "max": 2,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 1
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 1,
+   "max": 3,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 2
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 1,
+   "max": 4,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 3
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 1,
+   "max": 5,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 4
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 1,
+   "max": 6,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 5
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 1,
+   "max": 7,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 6
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 1,
+   "max": 8,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 7
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 1,
+   "max": 9,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 8
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 1,
+   "max": 10,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 9
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 1,
+   "max": 11,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 10
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 1,
+   "max": 12,
+   "toNioarigSpan": {
+    "min": 0,
+    "max": 12
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 2,
+   "max": 2,
+   "toNioarigSpan": {
+    "min": 1,
+    "max": 1
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 2,
+   "max": 3,
+   "toNioarigSpan": {
+    "min": 1,
+    "max": 2
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 2,
+   "max": 4,
+   "toNioarigSpan": {
+    "min": 1,
+    "max": 3
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 2,
+   "max": 5,
+   "toNioarigSpan": {
+    "min": 1,
+    "max": 4
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 2,
+   "max": 6,
+   "toNioarigSpan": {
+    "min": 1,
+    "max": 5
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 2,
+   "max": 7,
+   "toNioarigSpan": {
+    "min": 1,
+    "max": 6
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 2,
+   "max": 8,
+   "toNioarigSpan": {
+    "min": 1,
+    "max": 7
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 2,
+   "max": 9,
+   "toNioarigSpan": {
+    "min": 1,
+    "max": 8
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 2,
+   "max": 10,
+   "toNioarigSpan": {
+    "min": 1,
+    "max": 9
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 2,
+   "max": 11,
+   "toNioarigSpan": {
+    "min": 1,
+    "max": 10
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 2,
+   "max": 12,
+   "toNioarigSpan": {
+    "min": 1,
+    "max": 12
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 3,
+   "max": 3,
+   "toNioarigSpan": {
+    "min": 2,
+    "max": 2
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 3,
+   "max": 4,
+   "toNioarigSpan": {
+    "min": 2,
+    "max": 3
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 3,
+   "max": 5,
+   "toNioarigSpan": {
+    "min": 2,
+    "max": 4
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 3,
+   "max": 6,
+   "toNioarigSpan": {
+    "min": 2,
+    "max": 5
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 3,
+   "max": 7,
+   "toNioarigSpan": {
+    "min": 2,
+    "max": 6
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 3,
+   "max": 8,
+   "toNioarigSpan": {
+    "min": 2,
+    "max": 7
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 3,
+   "max": 9,
+   "toNioarigSpan": {
+    "min": 2,
+    "max": 8
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 3,
+   "max": 10,
+   "toNioarigSpan": {
+    "min": 2,
+    "max": 9
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 3,
+   "max": 11,
+   "toNioarigSpan": {
+    "min": 2,
+    "max": 10
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 3,
+   "max": 12,
+   "toNioarigSpan": {
+    "min": 2,
+    "max": 12
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 4,
+   "max": 4,
+   "toNioarigSpan": {
+    "min": 3,
+    "max": 3
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 4,
+   "max": 5,
+   "toNioarigSpan": {
+    "min": 3,
+    "max": 4
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 4,
+   "max": 6,
+   "toNioarigSpan": {
+    "min": 3,
+    "max": 5
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 4,
+   "max": 7,
+   "toNioarigSpan": {
+    "min": 3,
+    "max": 6
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 4,
+   "max": 8,
+   "toNioarigSpan": {
+    "min": 3,
+    "max": 7
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 4,
+   "max": 9,
+   "toNioarigSpan": {
+    "min": 3,
+    "max": 8
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 4,
+   "max": 10,
+   "toNioarigSpan": {
+    "min": 3,
+    "max": 9
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 4,
+   "max": 11,
+   "toNioarigSpan": {
+    "min": 3,
+    "max": 10
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 4,
+   "max": 12,
+   "toNioarigSpan": {
+    "min": 3,
+    "max": 12
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 5,
+   "max": 5,
+   "toNioarigSpan": {
+    "min": 4,
+    "max": 4
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 5,
+   "max": 6,
+   "toNioarigSpan": {
+    "min": 4,
+    "max": 5
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 5,
+   "max": 7,
+   "toNioarigSpan": {
+    "min": 4,
+    "max": 6
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 5,
+   "max": 8,
+   "toNioarigSpan": {
+    "min": 4,
+    "max": 7
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 5,
+   "max": 9,
+   "toNioarigSpan": {
+    "min": 4,
+    "max": 8
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 5,
+   "max": 10,
+   "toNioarigSpan": {
+    "min": 4,
+    "max": 9
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 5,
+   "max": 11,
+   "toNioarigSpan": {
+    "min": 4,
+    "max": 10
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 5,
+   "max": 12,
+   "toNioarigSpan": {
+    "min": 4,
+    "max": 12
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 6,
+   "max": 6,
+   "toNioarigSpan": {
+    "min": 5,
+    "max": 5
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 6,
+   "max": 7,
+   "toNioarigSpan": {
+    "min": 5,
+    "max": 6
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 6,
+   "max": 8,
+   "toNioarigSpan": {
+    "min": 5,
+    "max": 7
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 6,
+   "max": 9,
+   "toNioarigSpan": {
+    "min": 5,
+    "max": 8
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 6,
+   "max": 10,
+   "toNioarigSpan": {
+    "min": 5,
+    "max": 9
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 6,
+   "max": 11,
+   "toNioarigSpan": {
+    "min": 5,
+    "max": 10
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 6,
+   "max": 12,
+   "toNioarigSpan": {
+    "min": 5,
+    "max": 12
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 7,
+   "max": 7,
+   "toNioarigSpan": {
+    "min": 6,
+    "max": 6
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 7,
+   "max": 8,
+   "toNioarigSpan": {
+    "min": 6,
+    "max": 7
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 7,
+   "max": 9,
+   "toNioarigSpan": {
+    "min": 6,
+    "max": 8
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 7,
+   "max": 10,
+   "toNioarigSpan": {
+    "min": 6,
+    "max": 9
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 7,
+   "max": 11,
+   "toNioarigSpan": {
+    "min": 6,
+    "max": 10
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 7,
+   "max": 12,
+   "toNioarigSpan": {
+    "min": 6,
+    "max": 12
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 8,
+   "max": 8,
+   "toNioarigSpan": {
+    "min": 7,
+    "max": 7
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 8,
+   "max": 9,
+   "toNioarigSpan": {
+    "min": 7,
+    "max": 8
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 8,
+   "max": 10,
+   "toNioarigSpan": {
+    "min": 7,
+    "max": 9
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 8,
+   "max": 11,
+   "toNioarigSpan": {
+    "min": 7,
+    "max": 10
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 8,
+   "max": 12,
+   "toNioarigSpan": {
+    "min": 7,
+    "max": 12
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 9,
+   "max": 9,
+   "toNioarigSpan": {
+    "min": 8,
+    "max": 8
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 9,
+   "max": 10,
+   "toNioarigSpan": {
+    "min": 8,
+    "max": 9
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 9,
+   "max": 11,
+   "toNioarigSpan": {
+    "min": 8,
+    "max": 10
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 9,
+   "max": 12,
+   "toNioarigSpan": {
+    "min": 8,
+    "max": 12
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 10,
+   "max": 10,
+   "toNioarigSpan": {
+    "min": 9,
+    "max": 9
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 10,
+   "max": 11,
+   "toNioarigSpan": {
+    "min": 9,
+    "max": 10
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 10,
+   "max": 12,
+   "toNioarigSpan": {
+    "min": 9,
+    "max": 12
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 11,
+   "max": 11,
+   "toNioarigSpan": {
+    "min": 10,
+    "max": 10
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 11,
+   "max": 12,
+   "toNioarigSpan": {
+    "min": 10,
+    "max": 12
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "min": 12,
+   "max": 12,
+   "toNioarigSpan": {
+    "min": 12,
+    "max": 12
+   }
+  }
+ ],
+ "unitSpans": [
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": null,
+   "gradeTo": null,
+   "unitSpanIn": null
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 0,
+   "gradeTo": 0,
+   "unitSpanIn": {
+    "gradeFrom": 0,
+    "gradeTo": 0
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 0,
+   "gradeTo": 1,
+   "unitSpanIn": {
+    "gradeFrom": 0,
+    "gradeTo": 1
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 0,
+   "gradeTo": 2,
+   "unitSpanIn": {
+    "gradeFrom": 0,
+    "gradeTo": 2
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 0,
+   "gradeTo": 3,
+   "unitSpanIn": {
+    "gradeFrom": 0,
+    "gradeTo": 3
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 0,
+   "gradeTo": 4,
+   "unitSpanIn": {
+    "gradeFrom": 0,
+    "gradeTo": 4
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 0,
+   "gradeTo": 5,
+   "unitSpanIn": {
+    "gradeFrom": 0,
+    "gradeTo": 5
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 0,
+   "gradeTo": 6,
+   "unitSpanIn": {
+    "gradeFrom": 0,
+    "gradeTo": 6
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 0,
+   "gradeTo": 7,
+   "unitSpanIn": {
+    "gradeFrom": 0,
+    "gradeTo": 7
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 0,
+   "gradeTo": 8,
+   "unitSpanIn": {
+    "gradeFrom": 0,
+    "gradeTo": 8
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 0,
+   "gradeTo": 9,
+   "unitSpanIn": {
+    "gradeFrom": 0,
+    "gradeTo": 9
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 0,
+   "gradeTo": 10,
+   "unitSpanIn": {
+    "gradeFrom": 0,
+    "gradeTo": 10
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 1,
+   "gradeTo": 1,
+   "unitSpanIn": {
+    "gradeFrom": 1,
+    "gradeTo": 1
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 1,
+   "gradeTo": 2,
+   "unitSpanIn": {
+    "gradeFrom": 1,
+    "gradeTo": 2
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 1,
+   "gradeTo": 3,
+   "unitSpanIn": {
+    "gradeFrom": 1,
+    "gradeTo": 3
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 1,
+   "gradeTo": 4,
+   "unitSpanIn": {
+    "gradeFrom": 1,
+    "gradeTo": 4
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 1,
+   "gradeTo": 5,
+   "unitSpanIn": {
+    "gradeFrom": 1,
+    "gradeTo": 5
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 1,
+   "gradeTo": 6,
+   "unitSpanIn": {
+    "gradeFrom": 1,
+    "gradeTo": 6
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 1,
+   "gradeTo": 7,
+   "unitSpanIn": {
+    "gradeFrom": 1,
+    "gradeTo": 7
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 1,
+   "gradeTo": 8,
+   "unitSpanIn": {
+    "gradeFrom": 1,
+    "gradeTo": 8
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 1,
+   "gradeTo": 9,
+   "unitSpanIn": {
+    "gradeFrom": 1,
+    "gradeTo": 9
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 1,
+   "gradeTo": 10,
+   "unitSpanIn": {
+    "gradeFrom": 1,
+    "gradeTo": 10
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 2,
+   "gradeTo": 2,
+   "unitSpanIn": {
+    "gradeFrom": 2,
+    "gradeTo": 2
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 2,
+   "gradeTo": 3,
+   "unitSpanIn": {
+    "gradeFrom": 2,
+    "gradeTo": 3
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 2,
+   "gradeTo": 4,
+   "unitSpanIn": {
+    "gradeFrom": 2,
+    "gradeTo": 4
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 2,
+   "gradeTo": 5,
+   "unitSpanIn": {
+    "gradeFrom": 2,
+    "gradeTo": 5
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 2,
+   "gradeTo": 6,
+   "unitSpanIn": {
+    "gradeFrom": 2,
+    "gradeTo": 6
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 2,
+   "gradeTo": 7,
+   "unitSpanIn": {
+    "gradeFrom": 2,
+    "gradeTo": 7
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 2,
+   "gradeTo": 8,
+   "unitSpanIn": {
+    "gradeFrom": 2,
+    "gradeTo": 8
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 2,
+   "gradeTo": 9,
+   "unitSpanIn": {
+    "gradeFrom": 2,
+    "gradeTo": 9
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 2,
+   "gradeTo": 10,
+   "unitSpanIn": {
+    "gradeFrom": 2,
+    "gradeTo": 10
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 3,
+   "gradeTo": 3,
+   "unitSpanIn": {
+    "gradeFrom": 3,
+    "gradeTo": 3
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 3,
+   "gradeTo": 4,
+   "unitSpanIn": {
+    "gradeFrom": 3,
+    "gradeTo": 4
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 3,
+   "gradeTo": 5,
+   "unitSpanIn": {
+    "gradeFrom": 3,
+    "gradeTo": 5
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 3,
+   "gradeTo": 6,
+   "unitSpanIn": {
+    "gradeFrom": 3,
+    "gradeTo": 6
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 3,
+   "gradeTo": 7,
+   "unitSpanIn": {
+    "gradeFrom": 3,
+    "gradeTo": 7
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 3,
+   "gradeTo": 8,
+   "unitSpanIn": {
+    "gradeFrom": 3,
+    "gradeTo": 8
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 3,
+   "gradeTo": 9,
+   "unitSpanIn": {
+    "gradeFrom": 3,
+    "gradeTo": 9
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 3,
+   "gradeTo": 10,
+   "unitSpanIn": {
+    "gradeFrom": 3,
+    "gradeTo": 10
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 4,
+   "gradeTo": 4,
+   "unitSpanIn": {
+    "gradeFrom": 4,
+    "gradeTo": 4
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 4,
+   "gradeTo": 5,
+   "unitSpanIn": {
+    "gradeFrom": 4,
+    "gradeTo": 5
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 4,
+   "gradeTo": 6,
+   "unitSpanIn": {
+    "gradeFrom": 4,
+    "gradeTo": 6
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 4,
+   "gradeTo": 7,
+   "unitSpanIn": {
+    "gradeFrom": 4,
+    "gradeTo": 7
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 4,
+   "gradeTo": 8,
+   "unitSpanIn": {
+    "gradeFrom": 4,
+    "gradeTo": 8
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 4,
+   "gradeTo": 9,
+   "unitSpanIn": {
+    "gradeFrom": 4,
+    "gradeTo": 9
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 4,
+   "gradeTo": 10,
+   "unitSpanIn": {
+    "gradeFrom": 4,
+    "gradeTo": 10
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 5,
+   "gradeTo": 5,
+   "unitSpanIn": {
+    "gradeFrom": 5,
+    "gradeTo": 5
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 5,
+   "gradeTo": 6,
+   "unitSpanIn": {
+    "gradeFrom": 5,
+    "gradeTo": 6
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 5,
+   "gradeTo": 7,
+   "unitSpanIn": {
+    "gradeFrom": 5,
+    "gradeTo": 7
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 5,
+   "gradeTo": 8,
+   "unitSpanIn": {
+    "gradeFrom": 5,
+    "gradeTo": 8
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 5,
+   "gradeTo": 9,
+   "unitSpanIn": {
+    "gradeFrom": 5,
+    "gradeTo": 9
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 5,
+   "gradeTo": 10,
+   "unitSpanIn": {
+    "gradeFrom": 5,
+    "gradeTo": 10
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 6,
+   "gradeTo": 6,
+   "unitSpanIn": {
+    "gradeFrom": 6,
+    "gradeTo": 6
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 6,
+   "gradeTo": 7,
+   "unitSpanIn": {
+    "gradeFrom": 6,
+    "gradeTo": 7
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 6,
+   "gradeTo": 8,
+   "unitSpanIn": {
+    "gradeFrom": 6,
+    "gradeTo": 8
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 6,
+   "gradeTo": 9,
+   "unitSpanIn": {
+    "gradeFrom": 6,
+    "gradeTo": 9
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 6,
+   "gradeTo": 10,
+   "unitSpanIn": {
+    "gradeFrom": 6,
+    "gradeTo": 10
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 7,
+   "gradeTo": 7,
+   "unitSpanIn": {
+    "gradeFrom": 7,
+    "gradeTo": 7
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 7,
+   "gradeTo": 8,
+   "unitSpanIn": {
+    "gradeFrom": 7,
+    "gradeTo": 8
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 7,
+   "gradeTo": 9,
+   "unitSpanIn": {
+    "gradeFrom": 7,
+    "gradeTo": 9
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 7,
+   "gradeTo": 10,
+   "unitSpanIn": {
+    "gradeFrom": 7,
+    "gradeTo": 10
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 8,
+   "gradeTo": 8,
+   "unitSpanIn": {
+    "gradeFrom": 8,
+    "gradeTo": 8
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 8,
+   "gradeTo": 9,
+   "unitSpanIn": {
+    "gradeFrom": 8,
+    "gradeTo": 9
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 8,
+   "gradeTo": 10,
+   "unitSpanIn": {
+    "gradeFrom": 8,
+    "gradeTo": 10
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 9,
+   "gradeTo": 9,
+   "unitSpanIn": {
+    "gradeFrom": 9,
+    "gradeTo": 9
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 9,
+   "gradeTo": 10,
+   "unitSpanIn": {
+    "gradeFrom": 9,
+    "gradeTo": 10
+   }
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeFrom": 10,
+   "gradeTo": 10,
+   "unitSpanIn": {
+    "gradeFrom": 10,
+    "gradeTo": 10
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": null,
+   "gradeTo": null,
+   "unitSpanIn": null
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 0,
+   "gradeTo": 0,
+   "unitSpanIn": null
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 0,
+   "gradeTo": 1,
+   "unitSpanIn": {
+    "gradeFrom": 1,
+    "gradeTo": 2
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 0,
+   "gradeTo": 2,
+   "unitSpanIn": {
+    "gradeFrom": 1,
+    "gradeTo": 3
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 0,
+   "gradeTo": 3,
+   "unitSpanIn": {
+    "gradeFrom": 1,
+    "gradeTo": 4
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 0,
+   "gradeTo": 4,
+   "unitSpanIn": {
+    "gradeFrom": 1,
+    "gradeTo": 5
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 0,
+   "gradeTo": 5,
+   "unitSpanIn": {
+    "gradeFrom": 1,
+    "gradeTo": 6
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 0,
+   "gradeTo": 6,
+   "unitSpanIn": {
+    "gradeFrom": 1,
+    "gradeTo": 7
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 0,
+   "gradeTo": 7,
+   "unitSpanIn": {
+    "gradeFrom": 1,
+    "gradeTo": 8
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 0,
+   "gradeTo": 8,
+   "unitSpanIn": {
+    "gradeFrom": 1,
+    "gradeTo": 9
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 0,
+   "gradeTo": 9,
+   "unitSpanIn": {
+    "gradeFrom": 1,
+    "gradeTo": 10
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 0,
+   "gradeTo": 10,
+   "unitSpanIn": {
+    "gradeFrom": 1,
+    "gradeTo": 11
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 1,
+   "gradeTo": 1,
+   "unitSpanIn": {
+    "gradeFrom": 1,
+    "gradeTo": 2
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 1,
+   "gradeTo": 2,
+   "unitSpanIn": {
+    "gradeFrom": 1,
+    "gradeTo": 3
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 1,
+   "gradeTo": 3,
+   "unitSpanIn": {
+    "gradeFrom": 1,
+    "gradeTo": 4
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 1,
+   "gradeTo": 4,
+   "unitSpanIn": {
+    "gradeFrom": 1,
+    "gradeTo": 5
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 1,
+   "gradeTo": 5,
+   "unitSpanIn": {
+    "gradeFrom": 1,
+    "gradeTo": 6
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 1,
+   "gradeTo": 6,
+   "unitSpanIn": {
+    "gradeFrom": 1,
+    "gradeTo": 7
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 1,
+   "gradeTo": 7,
+   "unitSpanIn": {
+    "gradeFrom": 1,
+    "gradeTo": 8
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 1,
+   "gradeTo": 8,
+   "unitSpanIn": {
+    "gradeFrom": 1,
+    "gradeTo": 9
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 1,
+   "gradeTo": 9,
+   "unitSpanIn": {
+    "gradeFrom": 1,
+    "gradeTo": 10
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 1,
+   "gradeTo": 10,
+   "unitSpanIn": {
+    "gradeFrom": 1,
+    "gradeTo": 11
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 2,
+   "gradeTo": 2,
+   "unitSpanIn": {
+    "gradeFrom": 3,
+    "gradeTo": 3
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 2,
+   "gradeTo": 3,
+   "unitSpanIn": {
+    "gradeFrom": 3,
+    "gradeTo": 4
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 2,
+   "gradeTo": 4,
+   "unitSpanIn": {
+    "gradeFrom": 3,
+    "gradeTo": 5
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 2,
+   "gradeTo": 5,
+   "unitSpanIn": {
+    "gradeFrom": 3,
+    "gradeTo": 6
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 2,
+   "gradeTo": 6,
+   "unitSpanIn": {
+    "gradeFrom": 3,
+    "gradeTo": 7
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 2,
+   "gradeTo": 7,
+   "unitSpanIn": {
+    "gradeFrom": 3,
+    "gradeTo": 8
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 2,
+   "gradeTo": 8,
+   "unitSpanIn": {
+    "gradeFrom": 3,
+    "gradeTo": 9
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 2,
+   "gradeTo": 9,
+   "unitSpanIn": {
+    "gradeFrom": 3,
+    "gradeTo": 10
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 2,
+   "gradeTo": 10,
+   "unitSpanIn": {
+    "gradeFrom": 3,
+    "gradeTo": 11
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 3,
+   "gradeTo": 3,
+   "unitSpanIn": {
+    "gradeFrom": 4,
+    "gradeTo": 4
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 3,
+   "gradeTo": 4,
+   "unitSpanIn": {
+    "gradeFrom": 4,
+    "gradeTo": 5
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 3,
+   "gradeTo": 5,
+   "unitSpanIn": {
+    "gradeFrom": 4,
+    "gradeTo": 6
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 3,
+   "gradeTo": 6,
+   "unitSpanIn": {
+    "gradeFrom": 4,
+    "gradeTo": 7
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 3,
+   "gradeTo": 7,
+   "unitSpanIn": {
+    "gradeFrom": 4,
+    "gradeTo": 8
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 3,
+   "gradeTo": 8,
+   "unitSpanIn": {
+    "gradeFrom": 4,
+    "gradeTo": 9
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 3,
+   "gradeTo": 9,
+   "unitSpanIn": {
+    "gradeFrom": 4,
+    "gradeTo": 10
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 3,
+   "gradeTo": 10,
+   "unitSpanIn": {
+    "gradeFrom": 4,
+    "gradeTo": 11
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 4,
+   "gradeTo": 4,
+   "unitSpanIn": {
+    "gradeFrom": 5,
+    "gradeTo": 5
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 4,
+   "gradeTo": 5,
+   "unitSpanIn": {
+    "gradeFrom": 5,
+    "gradeTo": 6
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 4,
+   "gradeTo": 6,
+   "unitSpanIn": {
+    "gradeFrom": 5,
+    "gradeTo": 7
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 4,
+   "gradeTo": 7,
+   "unitSpanIn": {
+    "gradeFrom": 5,
+    "gradeTo": 8
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 4,
+   "gradeTo": 8,
+   "unitSpanIn": {
+    "gradeFrom": 5,
+    "gradeTo": 9
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 4,
+   "gradeTo": 9,
+   "unitSpanIn": {
+    "gradeFrom": 5,
+    "gradeTo": 10
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 4,
+   "gradeTo": 10,
+   "unitSpanIn": {
+    "gradeFrom": 5,
+    "gradeTo": 11
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 5,
+   "gradeTo": 5,
+   "unitSpanIn": {
+    "gradeFrom": 6,
+    "gradeTo": 6
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 5,
+   "gradeTo": 6,
+   "unitSpanIn": {
+    "gradeFrom": 6,
+    "gradeTo": 7
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 5,
+   "gradeTo": 7,
+   "unitSpanIn": {
+    "gradeFrom": 6,
+    "gradeTo": 8
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 5,
+   "gradeTo": 8,
+   "unitSpanIn": {
+    "gradeFrom": 6,
+    "gradeTo": 9
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 5,
+   "gradeTo": 9,
+   "unitSpanIn": {
+    "gradeFrom": 6,
+    "gradeTo": 10
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 5,
+   "gradeTo": 10,
+   "unitSpanIn": {
+    "gradeFrom": 6,
+    "gradeTo": 11
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 6,
+   "gradeTo": 6,
+   "unitSpanIn": {
+    "gradeFrom": 7,
+    "gradeTo": 7
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 6,
+   "gradeTo": 7,
+   "unitSpanIn": {
+    "gradeFrom": 7,
+    "gradeTo": 8
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 6,
+   "gradeTo": 8,
+   "unitSpanIn": {
+    "gradeFrom": 7,
+    "gradeTo": 9
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 6,
+   "gradeTo": 9,
+   "unitSpanIn": {
+    "gradeFrom": 7,
+    "gradeTo": 10
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 6,
+   "gradeTo": 10,
+   "unitSpanIn": {
+    "gradeFrom": 7,
+    "gradeTo": 11
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 7,
+   "gradeTo": 7,
+   "unitSpanIn": {
+    "gradeFrom": 8,
+    "gradeTo": 8
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 7,
+   "gradeTo": 8,
+   "unitSpanIn": {
+    "gradeFrom": 8,
+    "gradeTo": 9
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 7,
+   "gradeTo": 9,
+   "unitSpanIn": {
+    "gradeFrom": 8,
+    "gradeTo": 10
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 7,
+   "gradeTo": 10,
+   "unitSpanIn": {
+    "gradeFrom": 8,
+    "gradeTo": 11
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 8,
+   "gradeTo": 8,
+   "unitSpanIn": {
+    "gradeFrom": 9,
+    "gradeTo": 9
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 8,
+   "gradeTo": 9,
+   "unitSpanIn": {
+    "gradeFrom": 9,
+    "gradeTo": 10
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 8,
+   "gradeTo": 10,
+   "unitSpanIn": {
+    "gradeFrom": 9,
+    "gradeTo": 11
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 9,
+   "gradeTo": 9,
+   "unitSpanIn": {
+    "gradeFrom": 10,
+    "gradeTo": 10
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 9,
+   "gradeTo": 10,
+   "unitSpanIn": {
+    "gradeFrom": 10,
+    "gradeTo": 11
+   }
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeFrom": 10,
+   "gradeTo": 10,
+   "unitSpanIn": {
+    "gradeFrom": 11,
+    "gradeTo": 11
+   }
+  }
  ]
 }
