@@ -1,7 +1,7 @@
 import {
   Injectable,
   Logger,
-  OnModuleDestroy,
+  OnApplicationShutdown,
   OnModuleInit,
 } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
@@ -135,7 +135,7 @@ function runAfterCommit(scope: CommitScope): void {
 @Injectable()
 export class PrismaService
   extends PrismaClient
-  implements OnModuleInit, OnModuleDestroy
+  implements OnModuleInit, OnApplicationShutdown
 {
   private readonly logger = new Logger(PrismaService.name);
 
@@ -218,7 +218,16 @@ export class PrismaService
     }
   }
 
-  async onModuleDestroy(): Promise<void> {
+  /**
+   * The last thing a shutdown does. Not onModuleDestroy: Nest runs those
+   * before it closes the HTTP server, and $disconnect rolls back every
+   * interactive transaction still open, so a request in flight at SIGTERM
+   * (an apply, a Generera write) would fail instead of finishing inside the
+   * platform's drain. Shutdown hooks run after the server has closed, which
+   * waits for those requests; the modules' own destroy hooks, which may still
+   * write (a schemaförslag run marked interrupted), run before both.
+   */
+  async onApplicationShutdown(): Promise<void> {
     await this.$disconnect();
     this.logger.log('Prisma disconnected.');
   }

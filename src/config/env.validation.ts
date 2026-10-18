@@ -219,8 +219,9 @@ export class EnvironmentVariables {
 
   /**
    * Schemaförslag (src/optimization/schedule-candidates.service.ts): the solve
-   * budget, in seconds, of every candidate but the first, which runs under
-   * the engine's own like Generera. The engine accepts 5..600; the gateway
+   * budget, in seconds, of every candidate, KEEP's included, so the emphases
+   * are compared at one budget (the engine takes the smaller of this and its
+   * own SOLVER_MAX_TIME_SECONDS). The engine accepts 5..600; the gateway
    * holds it to two minutes, because a run of four is four of these one after
    * another and must finish well inside the half hour after which the sweep
    * gives a run up.

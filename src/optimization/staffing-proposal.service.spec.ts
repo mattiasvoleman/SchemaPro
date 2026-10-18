@@ -1296,7 +1296,11 @@ describe('StaffingProposalService.apply', () => {
     const calls = world.calls.slice(start);
     const order = calls.map((call) => (call.sql ? call.sql.slice(0, 60) : `${call.model}.${call.method}`));
     const at = (needle: string) => order.findIndex((entry) => entry.includes(needle));
-    expect(at('pg_advisory_xact_lock')).toBe(0);
+    // The year's key first, waited for at most 5 s (a schemaförslag apply
+    // holds it too) and the lock_timeout put back after it.
+    expect(at("current_setting('lock_timeout')")).toBe(0);
+    expect(at("set_config('lock_timeout', '5s'")).toBe(1);
+    expect(at('pg_advisory_xact_lock')).toBe(2);
     expect(at('teacherEmployment.findMany')).toBeGreaterThan(at('pg_advisory_xact_lock'));
     const employmentLock = calls.findIndex((call) => call.sql?.includes('"TeacherEmployments"'));
     const rowLock = calls.findIndex((call) => call.sql?.includes('"TeachingRequirements"'));

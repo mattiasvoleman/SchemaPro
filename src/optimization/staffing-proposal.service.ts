@@ -60,6 +60,7 @@ import {
   type StaffWeights,
 } from './interfaces/staffing.interface';
 import { OptimizationProxyService, requirementName, type AnonMaps } from './optimization-proxy.service';
+import { lockApplyYearKey } from './regeneration-lock';
 
 /** The engine's route; see optimization-engine/app/api/v1/staffing.py. */
 export const STAFF_PATH = '/api/v1/staff';
@@ -569,7 +570,8 @@ export class StaffingProposalService {
     }
 
     const result = await this.prisma.withRls(user, async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('staffing-proposal'), hashtext(${dto.academicYearId}::uuid::text))`;
+      // At most 5 s: a schemaförslag apply holds this key too (regeneration-lock.ts).
+      await lockApplyYearKey(tx, 'staffing-proposal', dto.academicYearId);
       const people = [
         ...new Set(
           dto.changes.flatMap((change) => [change.fromTeacherId, change.toTeacherId]).filter((id): id is string => id !== null),
