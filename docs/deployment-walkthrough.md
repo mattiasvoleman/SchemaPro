@@ -555,11 +555,12 @@ Honest limits, so you know when to get help:
 - **A custom web address** (`schema.yourschool.se` instead of the Vercel one).
   Both Vercel and Railway support it under Settings → Domains, but it needs
   changes to your school's DNS records.
-- **The mobile app.** It is not in the App Store or on Google Play yet.
-  Getting it onto phones takes developer accounts with Apple and Google,
+- **The mobile apps.** Rastra, for staff and pupils, and Rastra
+  vårdnadshavare, for guardians, are not in the App Store or on Google Play
+  yet. Getting them onto phones takes developer accounts with Apple and Google,
   registered for your organisation (which takes weeks, so start early), an
-  Expo account, and a new build for every change to the app: unlike the web
-  app, it does not update itself when GitHub changes. See `DEPLOYMENT.md`
+  Expo account, and a new build for every change to the apps: unlike the web
+  app, they do not update themselves when GitHub changes. See `DEPLOYMENT.md`
   section 12.
 - **Restoring from a backup.** Straightforward in the Supabase dashboard, but
   if you are doing it under pressure you want someone experienced beside you.

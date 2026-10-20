@@ -136,7 +136,7 @@ Out of scope are gymnasium (there is no Course entity), förskola, fritids and g
   - teacher daily caps;
   - A/B weeks. It reserves alternating lessons every week, and the manual tells schools to lock them.
 - The app is in Swedish and English only.
-- The mobile app has no admin. It has not been distributed: the build profiles and the runbook exist (`mobile/eas.json`, `docs/DEPLOYMENT.md` §12), but there is no EAS project yet, no build has reached a tester, and push has never reached a real device.
+- The mobile apps, Rastra for staff and pupils and Rastra vårdnadshavare for guardians, have no admin. They have not been distributed: the build profiles and the runbook exist (`mobile/eas.json`, `docs/DEPLOYMENT.md` §12), but there is no EAS project yet, no build of them has reached a tester, and push has never reached a real device.
 
 **Terms.** Keep the Swedish domain words in Swedish copy, without glossing:
 - **Timplan** is the school's lokal timplan in minutes per week per subject and årskurs, a huvudman decision.

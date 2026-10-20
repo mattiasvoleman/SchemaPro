@@ -16,9 +16,11 @@ verification (step 9).
 > **The name (2026-10-17).** The product is Rastra: **Rastra Schema** in
 > Swedish and **Rastra timetable** in English for the web app, the manuals,
 > the e-mails and the API's messages; **Rastra** and **Rastra vårdnadshavare**
-> for the mobile apps, which ship later as new store apps (§8.1). Until they
-> do, the app on people's phones is still "SchemaPro", and no push or e-mail
-> names an app. The repository, packages,
+> for the mobile apps, which this repository builds as two new store apps
+> (§12): Rastra (`se.rastra.app`) and Rastra vårdnadshavare
+> (`se.rastra.vardnadshavare`). Neither is distributed yet, and a tester's
+> earlier SchemaPro build is a different app on the phone (§12). No push or
+> e-mail names an app. The repository, packages,
 > database, environment variables, API paths, storage keys, the webhook's
 > `X-SchemaPro-*` headers, the calendar feed's UIDs and the hosting projects
 > (Railway, Supabase, Vercel) keep the old name, and so do the sending domain
@@ -379,7 +381,8 @@ production changes before the last step.
    without the id reports push as unavailable and registers nothing, and one
    without `google-services.json` gets no token on Android. Try push end to
    end in both apps on a test stack first (§12.6), and have the builds on
-   people's phones before step 4.
+   people's phones before step 4. No text the API sends names an app, so one
+   server serves both.
 4. **The API**: `PUSH_NOTIFICATIONS=expo` (plus `EXPO_ACCESS_TOKEN` if enhanced
    push security is on). The receipt checker starts with it: every five
    minutes, in-process, safe across instances (each ticket is claimed with
