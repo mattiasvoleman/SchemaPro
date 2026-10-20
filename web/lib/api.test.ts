@@ -115,6 +115,22 @@ describe("api client", () => {
     await expect(api.delete("/lessons/1")).resolves.toBeUndefined();
   });
 
+  it("resolves undefined for a 200 with an empty body, which is how Nest answers a handler that returns null", async () => {
+    // GET /staffing-policy for a school that has never saved its row. Taking
+    // this for a failed read kept the card's Spara off for good.
+    fetchMock.mockResolvedValue(new Response("", { status: 200 }));
+    const { api } = await loadApi();
+    await expect(api.get("/api/v1/staffing-policy")).resolves.toBeUndefined();
+  });
+
+  it("still parses a JSON null, and rejects a body that is not JSON", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(null));
+    fetchMock.mockResolvedValueOnce(new Response("<html>", { status: 200 }));
+    const { api } = await loadApi();
+    await expect(api.get("/a")).resolves.toBeNull();
+    await expect(api.get("/b")).rejects.toThrow(SyntaxError);
+  });
+
   it("rejects with a 401 ApiError before fetching when there is no session", async () => {
     getSessionMock.mockResolvedValue({ data: { session: null } });
     const { api, ApiError } = await loadApi();
