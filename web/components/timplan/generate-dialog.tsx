@@ -41,8 +41,12 @@
 //
 // SPRÅKVAL AS A BLOCK. Once a preview has said which årskurser the year
 // follows this plan in, each M2 language of those årskurser offers a choice
-// of the year's teaching groups. A language given a group is posted on it,
-// and every such row of an årskurs goes into the block "Språkval åk 7", whose
+// of the year's teaching groups — as many as read it, 7sp1, 7sp2 and 7sp3 for
+// one Spanska, each added with its own button and shown with one that takes
+// it off again (LanguageGroupsField below). A group reads one language, so a
+// group chosen anywhere leaves every select. A
+// language given groups is posted on each of them, and every such row of an
+// årskurs goes into the block "Språkval åk 7", whose
 // lessons the generator places at the same times. Those rows have one shape —
 // the line's — so they offer no edit, and a changed choice throws the preview
 // away like a changed length. With no group chosen the request carries no
@@ -53,6 +57,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
+import { X } from "lucide-react";
 import { Link } from "@/i18n/navigation";
 import { useGroups, useRequirements } from "@/lib/queries";
 import { useGenerateRequirements } from "@/lib/timplan-queries";
@@ -113,6 +118,8 @@ export interface GenerateDialogProps {
 const grade = (t: (key: string, values?: Record<string, string>) => string, value: number) =>
   t("grade", { grade: String(value) });
 
+const byId = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
 export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId, entries, subjects }: GenerateDialogProps) {
   const t = useTranslations("timplan.generate");
   const tCommon = useTranslations("common");
@@ -120,8 +127,9 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId,
   // Derived, not frozen at mount, as in the year dialog: the years may
   // arrive after the dialog opened.
   const [chosenYearId, setChosenYearId] = useState<string | null>(null);
-  // Språkval: "grade:subject" → the teaching group chosen for it, of this year.
-  const [languageChoice, setLanguageChoice] = useState<Map<string, string>>(new Map());
+  // Språkval: "grade:subject" → the teaching groups chosen for it, of this year,
+  // in the order they were added. A language may have several (8sp1, 8sp2, 8sp3).
+  const [languageChoice, setLanguageChoice] = useState<Map<string, string[]>>(new Map());
   const setYearId = (id: string) => {
     setChosenYearId(id);
     setLanguageChoice(new Map());
@@ -167,12 +175,29 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId,
   const teachingGroups = (groups.data ?? []).filter(
     (group) => group.academicYearId === yearId && group.kind === "TEACHING_GROUP",
   );
-  const languageGroups: GenerateLanguageGroup[] = [...languageChoice]
-    .filter(([, groupId]) => groupId !== "")
-    .map(([key, studentGroupId]) => {
+  const teachingName = new Map(teachingGroups.map((group) => [group.id, group.name]));
+  // The groups the year still has: one deleted elsewhere since it was chosen
+  // drops out here, rather than going to the gateway as a bare id.
+  const chosenOf = (key: string) => (languageChoice.get(key) ?? []).filter((id) => teachingName.has(id));
+  // Sorted, so the request — and the key a preview is matched on below —
+  // depends on which groups are chosen, not on the order they were added in.
+  const languageGroups: GenerateLanguageGroup[] = [...languageChoice.keys()]
+    .flatMap((key) => {
       const [gradeLevel, subjectId] = key.split(":");
-      return { gradeLevel: Number(gradeLevel), subjectId: subjectId!, studentGroupId };
-    });
+      return chosenOf(key).map((studentGroupId) => ({ gradeLevel: Number(gradeLevel), subjectId: subjectId!, studentGroupId }));
+    })
+    .sort(
+      (a, b) =>
+        a.gradeLevel - b.gradeLevel || byId(a.subjectId, b.subjectId) || byId(a.studentGroupId, b.studentGroupId),
+    );
+  // A group reads one language: once chosen anywhere, no other select offers it.
+  const chosenGroups = new Set(languageGroups.map((choice) => choice.studentGroupId));
+  const setLanguageGroups = (key: string, groupIds: string[]) => {
+    const next = new Map(languageChoice);
+    if (groupIds.length > 0) next.set(key, groupIds);
+    else next.delete(key);
+    setLanguageChoice(next);
+  };
   const languagesKey = JSON.stringify(languageGroups);
   const withLanguages = languageGroups.length > 0 ? { languageGroups } : {};
   const [edits, setEdits] = useState<Map<string, RowEdit>>(new Map());
@@ -373,28 +398,15 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId,
                   {shownLanguages.map((language) => {
                     const key = `${language.gradeLevel}:${language.subjectId}`;
                     return (
-                      <div key={key} className="space-y-1">
-                        <Label htmlFor={`generate-language-${key}`}>
-                          {t("languageLabel", { subject: language.subjectName, grade: String(language.gradeLevel) })}
-                        </Label>
-                        <NativeSelect
-                          id={`generate-language-${key}`}
-                          value={languageChoice.get(key) ?? ""}
-                          disabled={generate.isPending}
-                          onChange={(event) => {
-                            const next = new Map(languageChoice);
-                            next.set(key, event.target.value);
-                            setLanguageChoice(next);
-                          }}
-                        >
-                          <option value="">{t("languageNone")}</option>
-                          {teachingGroups.map((group) => (
-                            <option key={group.id} value={group.id}>
-                              {group.name}
-                            </option>
-                          ))}
-                        </NativeSelect>
-                      </div>
+                      <LanguageGroupsField
+                        key={key}
+                        id={`generate-language-${key}`}
+                        label={t("languageLabel", { subject: language.subjectName, grade: String(language.gradeLevel) })}
+                        chosen={chosenOf(key).map((id) => ({ id, name: teachingName.get(id)! }))}
+                        available={teachingGroups.filter((group) => !chosenGroups.has(group.id))}
+                        disabled={generate.isPending}
+                        onChange={(groupIds) => setLanguageGroups(key, groupIds)}
+                      />
                     );
                   })}
                 </div>
@@ -437,6 +449,123 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId,
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+interface LanguageGroupsFieldProps {
+  id: string;
+  label: string;
+  /** The groups chosen for the language, in the order they were added. */
+  chosen: readonly { id: string; name: string }[];
+  /** The year's teaching groups that no language has. */
+  available: readonly { id: string; name: string }[];
+  disabled: boolean;
+  onChange: (groupIds: string[]) => void;
+}
+
+/**
+ * One språkval language's groups: the chosen ones, each with a button that
+ * takes it off, and a select with "Lägg till" for one more.
+ *
+ * THE BUTTON ADDS, NOT THE SELECT. Chrome, Edge and Firefox on Windows fire
+ * change on every ↑/↓ of a closed select, so a select that added on change
+ * would add each group the admin only looked at. The select holds a choice
+ * and the button commits it; focus then goes back to the select for the
+ * next. Taking a group off moves focus to the next group's button, else the
+ * previous one's, else the select, since the button that had it is gone. A
+ * polite live region says what was added or taken off.
+ */
+function LanguageGroupsField({ id, label, chosen, available, disabled, onChange }: LanguageGroupsFieldProps) {
+  const t = useTranslations("timplan.generate");
+  const [pending, setPending] = useState("");
+  const [announcement, setAnnouncement] = useState("");
+  const selectRef = useRef<HTMLSelectElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+  // A group's id, or "" for the select.
+  const [focusNext, setFocusNext] = useState<string | null>(null);
+  useEffect(() => {
+    if (focusNext === null) return;
+    const button = Array.from(listRef.current?.querySelectorAll<HTMLElement>("[data-group]") ?? []).find(
+      (element) => element.dataset.group === focusNext,
+    );
+    (button ?? selectRef.current)?.focus();
+    setFocusNext(null);
+  }, [focusNext, chosen]);
+
+  // A choice another language has taken since is no choice any more.
+  const pick = available.some((group) => group.id === pending) ? pending : "";
+  const add = () => {
+    const group = available.find((candidate) => candidate.id === pick);
+    if (!group) return;
+    onChange([...chosen.map((entry) => entry.id), group.id]);
+    setPending("");
+    setAnnouncement(t("languageAdded", { group: group.name, language: label }));
+    setFocusNext("");
+  };
+  const remove = (index: number) => {
+    const group = chosen[index]!;
+    const neighbour = chosen[index + 1] ?? chosen[index - 1];
+    onChange(chosen.filter((entry) => entry.id !== group.id).map((entry) => entry.id));
+    setAnnouncement(t("languageRemoved", { group: group.name, language: label }));
+    setFocusNext(neighbour?.id ?? "");
+  };
+
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      {chosen.length > 0 ? (
+        // role="list": Safari drops a list's role, and so its name, once
+        // Tailwind's preflight has taken the bullets away.
+        <ul ref={listRef} role="list" className="flex flex-wrap gap-1.5" aria-label={t("languageChosen", { language: label })}>
+          {chosen.map((group, index) => (
+            <li key={group.id}>
+              <Badge variant="secondary" className="gap-1 py-0.5 pr-1 font-normal">
+                {group.name}
+                <button
+                  type="button"
+                  data-group={group.id}
+                  className="rounded-sm p-0.5 text-muted-foreground hover:bg-background hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none"
+                  aria-label={t("languageRemove", { group: group.name, language: label })}
+                  disabled={disabled}
+                  onClick={() => remove(index)}
+                >
+                  <X className="size-3" aria-hidden="true" />
+                </button>
+              </Badge>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <div className="flex gap-2">
+        <NativeSelect
+          ref={selectRef}
+          id={id}
+          value={pick}
+          disabled={disabled}
+          onChange={(event) => setPending(event.target.value)}
+        >
+          <option value="">{t("languagePick")}</option>
+          {available.map((group) => (
+            <option key={group.id} value={group.id}>
+              {group.name}
+            </option>
+          ))}
+        </NativeSelect>
+        <Button
+          type="button"
+          variant="outline"
+          className="shrink-0"
+          aria-label={t("languageAdd", { language: label })}
+          disabled={disabled || pick === ""}
+          onClick={add}
+        >
+          {t("languageAddShort")}
+        </Button>
+      </div>
+      <p className="sr-only" aria-live="polite">
+        {announcement}
+      </p>
+    </div>
   );
 }
 
