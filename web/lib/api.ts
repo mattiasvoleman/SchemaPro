@@ -100,7 +100,12 @@ async function request<T>(
   if (response.status === 204) {
     return undefined as T;
   }
-  return (await response.json()) as T;
+  // A handler that returns null — GET /staffing-policy for a school that has
+  // never saved its row — leaves Nest's Express adapter a 200 with no body at
+  // all, not the JSON `null`. response.json() throws on that, and the reader
+  // would take "nothing saved yet" for "could not be read".
+  const text = await response.text();
+  return (text === "" ? undefined : JSON.parse(text)) as T;
 }
 
 export const api = {
