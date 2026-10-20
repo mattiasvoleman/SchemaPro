@@ -34,9 +34,10 @@ import {
  *                  across classes, and which pupil reads which language is
  *                  exactly the decision the plan cannot make. Every M2 entry
  *                  is skipped as ALTERNATIVE on the class. The språkval
- *                  groups are the school's to name — `languageGroups`, one
- *                  teaching group per language and årskurs — and then the line
- *                  is posted on THEM, as a block (below).
+ *                  groups are the school's to name — `languageGroups`, one or
+ *                  more teaching groups per language and årskurs (8sp1, 8sp2
+ *                  and 8sp3 all read Spanska) — and then the line is posted
+ *                  on THEM, as a block (below).
  *   SV_SVA         one subject on the class: the one with the HIGHEST target
  *                  (the line's target, so the class meets it), on a tie the
  *                  first by name — Svenska before Svenska som andraspråk. The
@@ -62,7 +63,10 @@ import {
  * M2 AS A BLOCK (Parallella block). A teaching group named for a language of
  * årskurs g gets that language's row, and every row of g goes into one block,
  * "Språkval åk g", whose lessons the generator places at the same times — so
- * språkval takes one slot of 7A's week per lesson, not one per language. The
+ * språkval takes one slot of 7A's week per lesson, not one per language or
+ * per group. A language read by three groups is three rows of the block, one
+ * per group, each to get its own teacher and room. A group reads one
+ * language: naming it twice is refused, for the same language or another. The
  * members of a block have the same lessons (the database refuses anything
  * else, TB409), so every row of g gets ONE shape: the line's target as the
  * coverage reads it, its highest entry, laid out by the rule the dialog
@@ -396,7 +400,8 @@ export function proposeRequirements(input: GenerateInput): Proposal {
  * The språkval rows: each named group's language at the line's one shape, in
  * its årskurs' block. Checked row by row with the row named, as overrides are:
  * a subject that is no M2 of the plan, an årskurs the year does not attach to
- * this plan or whose line has no minutes, a language or a group named twice.
+ * this plan or whose line has no minutes, a group named twice. A language may
+ * be named for several groups.
  */
 function proposeLanguageBlocks(
   input: GenerateInput,
@@ -407,8 +412,8 @@ function proposeLanguageBlocks(
 ): { rows: ProposedRow[]; skipped: SkippedRow[]; blocks: ProposedBlock[]; keys: Set<string> } {
   const choices = input.languageGroups ?? [];
   const byGrade = new Map<number, GenerateLanguageGroup[]>();
-  const languages = new Set<string>();
-  const groups = new Set<string>();
+  // Group id → the choice it was first named in.
+  const groups = new Map<string, GenerateLanguageGroup>();
   for (const [index, choice] of choices.entries()) {
     const at = `languageGroups: rad ${index + 1}`;
     if (alternativeOf(choice.subjectId) !== 'M2') {
@@ -428,15 +433,15 @@ function proposeLanguageBlocks(
         `${at}: timplanen ger ${subjectName(choice.subjectId)} ingen tid i åk ${choice.gradeLevel}.`,
       );
     }
-    const language = `${choice.gradeLevel}:${choice.subjectId}`;
-    if (languages.has(language)) {
-      throw new BadRequestException(`${at}: ${subjectName(choice.subjectId)} i åk ${choice.gradeLevel} har redan en grupp.`);
+    // Named for the same language, another årskurs or another language alike:
+    // the sentence names the one it was first named for.
+    const named = groups.get(choice.studentGroupId);
+    if (named) {
+      throw new BadRequestException(
+        `${at}: ${choice.groupName} är redan vald för ${subjectName(named.subjectId)} i åk ${named.gradeLevel}.`,
+      );
     }
-    if (groups.has(choice.studentGroupId)) {
-      throw new BadRequestException(`${at}: ${choice.groupName} läser redan ett annat språk.`);
-    }
-    languages.add(language);
-    groups.add(choice.studentGroupId);
+    groups.set(choice.studentGroupId, choice);
     byGrade.set(choice.gradeLevel, [...(byGrade.get(choice.gradeLevel) ?? []), choice]);
   }
 

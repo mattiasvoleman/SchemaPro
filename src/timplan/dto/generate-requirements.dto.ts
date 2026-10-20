@@ -114,8 +114,10 @@ export class GenerateRequirementsDto {
   overrides?: GenerateOverrideDto[];
 
   /**
-   * Språkval: the teaching group that reads each M2 language of an årskurs.
-   * Omitted or empty, M2 is skipped on every class as it always was.
+   * Språkval: the teaching groups that read each M2 language of an årskurs,
+   * one entry per group — a language may have several (8sp1, 8sp2, 8sp3), a
+   * group one language. Omitted or empty, M2 is skipped on every class as it
+   * always was.
    */
   @IsOptional()
   @IsArray({ message: 'languageGroups: grupperna anges som en lista.' })
