@@ -488,6 +488,12 @@ describe("GenerateDialog: språkval as a block", () => {
       />,
     );
 
+  /** Picks a group in the language's select and commits it with Lägg till. */
+  const choose = async (user: ReturnType<typeof userEvent.setup>, language: string, groupId: string) => {
+    await user.selectOptions(await screen.findByLabelText(`languageLabel(${language})`), groupId);
+    await user.click(screen.getByRole("button", { name: `languageAdd(languageLabel(${language}))` }));
+  };
+
   beforeEach(() => {
     state.groups = [
       { id: "g-7a", academicYearId: "y-1", name: "7A", kind: "CLASS", gradeLevel: 7 },
@@ -499,7 +505,7 @@ describe("GenerateDialog: språkval as a block", () => {
       const base = answer(body);
       const rows = (body.languageGroups ?? []).map((choice) => ({
         studentGroupId: choice.studentGroupId,
-        groupName: choice.studentGroupId === "g-ty7" ? "Ty7" : "Sp7",
+        groupName: state.groups.find((group) => group.id === choice.studentGroupId)?.name ?? choice.studentGroupId,
         subjectId: choice.subjectId,
         subjectName: choice.subjectId === "s-de" ? "Tyska" : "Spanska",
         gradeLevel: 7,
@@ -533,15 +539,15 @@ describe("GenerateDialog: språkval as a block", () => {
     expect(screen.queryByLabelText("languageLabel(Tyska|9)")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("languageLabel(Franska|7)")).not.toBeInTheDocument();
     const options = within(screen.getByLabelText("languageLabel(Tyska|7)")).getAllByRole("option");
-    expect(options.map((option) => option.textContent)).toEqual(["languageNone", "Ty7", "Sp7"]);
+    expect(options.map((option) => option.textContent)).toEqual(["languagePick", "Ty7", "Sp7"]);
   });
 
   it("asks a new preview with the groups chosen, shows the block on its rows without an edit, and applies them", async () => {
     const user = userEvent.setup();
     renderWithPlan();
     await user.click(screen.getByRole("button", { name: "preview" }));
-    await user.selectOptions(await screen.findByLabelText("languageLabel(Tyska|7)"), "g-ty7");
-    await user.selectOptions(screen.getByLabelText("languageLabel(Spanska|7)"), "g-sp7");
+    await choose(user, "Tyska|7", "g-ty7");
+    await choose(user, "Spanska|7", "g-sp7");
     // The preview on screen was asked without them.
     expect(screen.getByRole("button", { name: /^apply/ })).toBeDisabled();
 
@@ -564,12 +570,154 @@ describe("GenerateDialog: språkval as a block", () => {
     expect(await screen.findByText("resultBlocks(Språkval åk 7)")).toBeInTheDocument();
   });
 
+  describe("several groups for one language", () => {
+    beforeEach(() => {
+      state.groups = [
+        ...state.groups,
+        { id: "g-sp7b", academicYearId: "y-1", name: "7sp2", kind: "TEACHING_GROUP", gradeLevel: 7 },
+        { id: "g-sp7c", academicYearId: "y-1", name: "7sp3", kind: "TEACHING_GROUP", gradeLevel: 7 },
+      ];
+    });
+
+    it("adds each with Lägg till, lists them, and offers a chosen group to no other language", async () => {
+      const user = userEvent.setup();
+      renderWithPlan();
+      await user.click(screen.getByRole("button", { name: "preview" }));
+      await choose(user, "Spanska|7", "g-sp7");
+      await choose(user, "Spanska|7", "g-sp7b");
+      await choose(user, "Spanska|7", "g-sp7c");
+
+      const chosen = screen.getByRole("list", { name: "languageChosen(languageLabel(Spanska|7))" });
+      expect(within(chosen).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["Sp7", "7sp2", "7sp3"]);
+      // Focus is back on the select, on its prompt, for the next group.
+      const spanska = screen.getByLabelText("languageLabel(Spanska|7)");
+      expect(spanska).toHaveFocus();
+      expect(spanska).toHaveValue("");
+      expect(screen.getByText("languageAdded(7sp3|languageLabel(Spanska|7))")).toBeInTheDocument();
+      expect(within(spanska).getAllByRole("option").map((option) => option.textContent)).toEqual(["languagePick", "Ty7"]);
+      // A group reads one language: Tyska no longer offers the Spanska groups.
+      expect(
+        within(screen.getByLabelText("languageLabel(Tyska|7)")).getAllByRole("option").map((option) => option.textContent),
+      ).toEqual(["languagePick", "Ty7"]);
+
+      await user.click(screen.getByRole("button", { name: "preview" }));
+      expect(state.generate.mutateAsync).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          dryRun: true,
+          languageGroups: [
+            { gradeLevel: 7, subjectId: "s-es", studentGroupId: "g-sp7" },
+            { gradeLevel: 7, subjectId: "s-es", studentGroupId: "g-sp7b" },
+            { gradeLevel: 7, subjectId: "s-es", studentGroupId: "g-sp7c" },
+          ],
+        }),
+      );
+      // Three rows of one language in the block, counted as three groups.
+      for (const name of ["Sp7", "7sp2", "7sp3"]) {
+        const row = await screen.findByRole("row", { name: new RegExp(`${name}.*Spanska`) });
+        expect(within(row).getByText("Språkval åk 7")).toBeInTheDocument();
+      }
+      expect(screen.getByRole("status")).toHaveTextContent("summaryLanguages(3|3|Språkval åk 7)");
+    });
+
+    it("adds nothing when a group is only picked, so arrowing through the select adds nothing", async () => {
+      const user = userEvent.setup();
+      renderWithPlan();
+      await user.click(screen.getByRole("button", { name: "preview" }));
+      const add = screen.getByRole("button", { name: "languageAdd(languageLabel(Spanska|7))" });
+      expect(add).toBeDisabled();
+
+      await user.selectOptions(screen.getByLabelText("languageLabel(Spanska|7)"), "g-sp7");
+      await user.selectOptions(screen.getByLabelText("languageLabel(Spanska|7)"), "g-sp7b");
+      expect(screen.queryByRole("list", { name: /^languageChosen/ })).toBeNull();
+      expect(add).toBeEnabled();
+      // Nothing chosen, so the preview on screen still holds.
+      expect(screen.getByRole("button", { name: /^apply/ })).toBeEnabled();
+    });
+
+    it("takes a group off, moving focus to the next group, else the previous, else the select", async () => {
+      const user = userEvent.setup();
+      renderWithPlan();
+      await user.click(screen.getByRole("button", { name: "preview" }));
+      await choose(user, "Spanska|7", "g-sp7");
+      await choose(user, "Spanska|7", "g-sp7b");
+      await choose(user, "Spanska|7", "g-sp7c");
+      const chosen = screen.getByRole("list", { name: "languageChosen(languageLabel(Spanska|7))" });
+
+      await user.click(screen.getByRole("button", { name: "languageRemove(7sp2|languageLabel(Spanska|7))" }));
+      expect(within(chosen).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["Sp7", "7sp3"]);
+      expect(screen.getByRole("button", { name: "languageRemove(7sp3|languageLabel(Spanska|7))" })).toHaveFocus();
+      expect(screen.getByText("languageRemoved(7sp2|languageLabel(Spanska|7))")).toBeInTheDocument();
+      // Offered again, to every language.
+      expect(within(screen.getByLabelText("languageLabel(Tyska|7)")).getByRole("option", { name: "7sp2" })).toBeInTheDocument();
+
+      await user.keyboard("{Enter}");
+      expect(screen.getByRole("button", { name: "languageRemove(Sp7|languageLabel(Spanska|7))" })).toHaveFocus();
+      await user.keyboard("{Enter}");
+      expect(screen.queryByRole("list", { name: /^languageChosen/ })).toBeNull();
+      expect(screen.getByLabelText("languageLabel(Spanska|7)")).toHaveFocus();
+    });
+
+    it("keeps the preview when the same groups are chosen again in another order", async () => {
+      const user = userEvent.setup();
+      renderWithPlan();
+      await user.click(screen.getByRole("button", { name: "preview" }));
+      await choose(user, "Spanska|7", "g-sp7");
+      await choose(user, "Spanska|7", "g-sp7b");
+      await user.click(screen.getByRole("button", { name: "preview" }));
+      await screen.findByRole("row", { name: /7sp2/ });
+
+      await user.click(screen.getByRole("button", { name: "languageRemove(Sp7|languageLabel(Spanska|7))" }));
+      expect(screen.getByRole("button", { name: /^apply/ })).toBeDisabled();
+      await choose(user, "Spanska|7", "g-sp7");
+      // [7sp2, Sp7] is the set the preview was asked for: it holds.
+      expect(screen.getByRole("button", { name: /^apply/ })).toBeEnabled();
+      await user.click(screen.getByRole("button", { name: /^apply/ }));
+      expect(state.generate.mutateAsync).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          dryRun: false,
+          languageGroups: [
+            { gradeLevel: 7, subjectId: "s-es", studentGroupId: "g-sp7" },
+            { gradeLevel: 7, subjectId: "s-es", studentGroupId: "g-sp7b" },
+          ],
+        }),
+      );
+    });
+
+    it("drops a chosen group the year no longer has, and sends no languageGroups once the last is gone", async () => {
+      const user = userEvent.setup();
+      const view = renderWithPlan();
+      await user.click(screen.getByRole("button", { name: "preview" }));
+      await choose(user, "Spanska|7", "g-sp7b");
+      expect(screen.getByRole("list", { name: "languageChosen(languageLabel(Spanska|7))" })).toHaveTextContent("7sp2");
+
+      // Deleted elsewhere; the groups query refetches.
+      state.groups = state.groups.filter((group) => group.id !== "g-sp7b");
+      view.rerender(
+        <GenerateDialog
+          open
+          onOpenChange={() => {}}
+          plan={PLAN}
+          years={YEARS}
+          initialYearId={null}
+          entries={entries}
+          subjects={subjects}
+        />,
+      );
+      expect(screen.queryByRole("list", { name: /^languageChosen/ })).toBeNull();
+      // Back to what the preview on screen was asked with, so it holds again.
+      await user.click(screen.getByRole("button", { name: /^apply/ }));
+      expect(state.generate.mutateAsync).toHaveBeenLastCalledWith(
+        expect.not.objectContaining({ languageGroups: expect.anything() }),
+      );
+    });
+  });
+
   it("counts the classes' rows and the språkval rows apart: a language group is no class", async () => {
     const user = userEvent.setup();
     renderWithPlan();
     await user.click(screen.getByRole("button", { name: "preview" }));
-    await user.selectOptions(await screen.findByLabelText("languageLabel(Tyska|7)"), "g-ty7");
-    await user.selectOptions(screen.getByLabelText("languageLabel(Spanska|7)"), "g-sp7");
+    await choose(user, "Tyska|7", "g-ty7");
+    await choose(user, "Spanska|7", "g-sp7");
     await user.click(screen.getByRole("button", { name: "preview" }));
 
     await screen.findByRole("row", { name: /Ty7/ });
