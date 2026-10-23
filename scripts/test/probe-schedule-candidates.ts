@@ -1544,11 +1544,23 @@ export async function scheduleCandidateChecks(
         [s, year, JSON.stringify(draftNotes)],
       );
       assert.equal((await jobs.get(generated.id, admin)).supersededBy, null, 'an apply from before the run is said to replace it');
+      // And one still solving when the apply lands: started before it, its
+      // own write (and finishedAt) after it, as when an apply that passed its
+      // check before the run began commits first. Its notes are its own.
+      const overlapping = await one<{ id: string }>(
+        `INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", status, "solverStatus", notes, "createdAt", "finishedAt")
+         VALUES ($1, $2, 'SUCCEEDED', 'OPTIMAL', $3::jsonb, now() - interval '1 minute', now() + interval '1 hour') RETURNING id`,
+        [s, year, JSON.stringify(draftNotes)],
+      );
 
       // The apply writes TEACHER_GAPS; what it leaves is read off the masters.
       const chosen = stored.find((row) => row.variant === 'TEACHER_GAPS')!;
       const { mode } = await candidates.check(runId, admin);
-      responses.push(await candidates.apply(chosen.id, mode, admin));
+      const applied = await candidates.apply(chosen.id, mode, admin);
+      responses.push(applied);
+      // The apply's entry keeps the safety version it saved, for a restore to be matched against.
+      const entry = (await regenerations()).at(-1)!;
+      assert.deepEqual([entry.after['source'], entry.after['safetyVersionId']], ['CANDIDATE', applied.versionId]);
       const after = (await yearMasters()).filter((row) => !row.isParked);
       assert.deepEqual(said(chosen.notes), broken(after), 'the applied candidate’s wishes are not those of the week it wrote');
       // And every candidate's, over the lessons the apply kept.
@@ -1586,6 +1598,13 @@ export async function scheduleCandidateChecks(
         [chosen.ordinal, 'TEACHER_GAPS', 'string'],
         `the run does not name the candidate applied over it: ${JSON.stringify(card.supersededBy)}`,
       );
+      assert.equal(card.supersededBy?.runId, runId);
+      assert.equal((await jobs.get(overlapping.id, admin)).supersededBy, null, 'an apply before the run’s own write hides its notes');
+
+      // Back to "Före schemaförslag 2" under Versioner: the run's timetable is
+      // the year's again, so its notes say true again.
+      await versions.restore(applied.versionId, admin);
+      assert.equal((await jobs.get(generated.id, admin)).supersededBy, null, 'a restore of the apply’s safety version does not undo it');
 
       // The overview names whose wish it is, for every reader, and no id leaves.
       const page = await candidates.overview(year, admin);

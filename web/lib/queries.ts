@@ -913,9 +913,11 @@ export interface OptimizationJob {
    * The schemaförslag applied over the year since this run, newest first,
    * from the year's change log: its notes describe a timetable that has been
    * replaced. Null when none was; absent from the history and an older
-   * gateway. Ordinal and variant are null for an entry that does not say.
+   * gateway. Ordinal and variant are null for an entry that does not say;
+   * runId is the candidate's run, which the comparison shows only while it
+   * is the year's batch.
    */
-  supersededBy?: { appliedAt: string; ordinal: number | null; variant: string | null } | null;
+  supersededBy?: { appliedAt: string; ordinal: number | null; variant: string | null; runId: string | null } | null;
   createdAt: string;
   finishedAt: string | null;
 }

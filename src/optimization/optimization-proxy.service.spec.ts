@@ -5616,7 +5616,7 @@ describe('OptimizationProxyService', () => {
           expect(tx.teachingRequirement.findMany.mock.calls.length).toBe(reads);
         });
 
-        it('logs the apply as a regeneration that says which candidate it was', async () => {
+        it('logs the apply as a regeneration that says which candidate it was, and the safety version a restore undoes it by', async () => {
           await apply(await prepareForApply());
 
           expect(tx.scheduleChangeLog.create).toHaveBeenCalledWith({
@@ -5632,6 +5632,8 @@ describe('OptimizationProxyService', () => {
                 ordinal: 2,
                 variant: 'TEACHER_GAPS',
                 metrics: { moved: 3 },
+                // The version saved first, so a RESTORE of it is known to undo this.
+                safetyVersionId: 'version-1',
                 solverStatus: 'OPTIMAL',
                 lessonsCreated: 2,
                 unlockedReplaced: 2,

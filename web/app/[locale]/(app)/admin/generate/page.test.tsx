@@ -707,18 +707,34 @@ describe("wishes a finished run could not keep", () => {
    * comparison, which says which wishes it breaks.
    */
   describe("after a schemaförslag was applied", () => {
-    const superseded = (ordinal: number | null, variant: string | null) =>
-      laid({ notes: [WISH], finishedAt: "2026-10-17T10:01:00.000Z", supersededBy: { appliedAt: "2026-10-17T10:05:00.000Z", ordinal, variant } });
+    const superseded = (ordinal: number | null, variant: string | null, runId: string | null = "run-1") =>
+      laid({
+        notes: [WISH],
+        finishedAt: "2026-10-17T10:01:00.000Z",
+        supersededBy: { appliedAt: "2026-10-17T10:05:00.000Z", ordinal, variant, runId },
+      });
+    /** The year's batch as the overview answers it: the applied candidate's run, or a newer one. */
+    const batchOf = (runId: string) => {
+      const batch = {
+        run: {
+          id: runId, status: "SUCCEEDED", requested: 2, progress: 2, createdAt: "2026-10-17T09:00:00.000Z",
+          startedAt: "2026-10-17T09:00:01.000Z", finishedAt: "2026-10-17T09:02:00.000Z", error: null, errorCode: null,
+          errorParams: null, createdById: "u-1", createdByName: null, appliedCandidateId: null, appliedAt: null, refreshOfId: null,
+        },
+        candidates: [],
+      };
+      return { latest: batch, batch, unplaced: null };
+    };
+    const notesSection = () => screen.getByRole("region", { name: "generate.notesTitle" });
 
-    it("names the candidate and points to the comparison in place of the run's list, with no batch left to say so", () => {
-      // "Ta bort förslagen", a newer batch or the week's sweep took the
-      // applied run: the overview no longer knows, and the card still does.
+    it("names the candidate in place of the run's list, and points to the comparison while it still has the candidate", () => {
       state.job = superseded(2, "TEACHER_GAPS");
-      state.candidates = { latest: null, batch: null, unplaced: null };
+      state.candidates = batchOf("run-1");
       render(<GeneratePage />);
 
-      const section = screen.getByRole("region", { name: "generate.notesTitle" });
+      const section = notesSection();
       expect(within(section).getByText(/^generate\.notesSuperseded\(2\|scheduleCandidates\.variant\.TEACHER_GAPS\)/)).toBeInTheDocument();
+      expect(within(section).getByText(/generate\.notesSupersededCompare/)).toBeInTheDocument();
       expect(within(section).getByRole("link", { name: "generate.notesSupersededLink" })).toHaveAttribute(
         "href",
         "/admin/generate/candidates#comparison",
@@ -729,8 +745,32 @@ describe("wishes a finished run could not keep", () => {
       expect(within(section).queryByText("generate.notesHint")).toBeNull();
     });
 
+    it("still names it, with no link, when the candidate's run is gone or replaced by a newer batch", () => {
+      // "Ta bort förslagen", a newer batch or the week's sweep took the
+      // applied run: the comparison would show other candidates, or none.
+      for (const overview of [{ latest: null, batch: null, unplaced: null }, batchOf("run-2")]) {
+        state.job = superseded(2, "TEACHER_GAPS");
+        state.candidates = overview;
+        const { unmount } = render(<GeneratePage />);
+        const section = notesSection();
+        expect(within(section).getByText(/^generate\.notesSuperseded\(2\|/)).toBeInTheDocument();
+        expect(within(section).queryByRole("link")).toBeNull();
+        expect(within(section).queryByText(/notesSupersededCompare/)).toBeNull();
+        expect(within(section).queryByText(SENTENCE)).toBeNull();
+        unmount();
+      }
+    });
+
+    it("names a candidate of an emphasis this build does not know by its number alone", () => {
+      state.job = superseded(2, "NEW_EMPHASIS");
+      render(<GeneratePage />);
+
+      expect(screen.getByText(/^generate\.notesSupersededPlain\(2\)/)).toBeInTheDocument();
+      expect(screen.queryByText(/variant\.unknown/)).toBeNull();
+    });
+
     it("says a candidate was applied, without a name, when the log does not say which", () => {
-      state.job = superseded(null, null);
+      state.job = superseded(null, null, null);
       render(<GeneratePage />);
 
       expect(screen.getByText(/^generate\.notesSupersededUnnamed/)).toBeInTheDocument();
