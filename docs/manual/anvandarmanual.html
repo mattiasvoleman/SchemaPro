@@ -668,6 +668,13 @@
     elever, så blocket godtas.
   </p>
   <p>
+    Ska halvorna byta ämne vid terminsskiftet, så att 7A:1 har textilslöjd på
+    hösten och trä- och metallslöjd på våren och 7A:2 tvärtom, gör
+    <span class="ui">Dela terminsvis i halvklass</span> på klassens post allt
+    på en gång: halvorna, de fyra posterna och ett block per termin (se
+    <em>Terminsvis halvklass</em> i 4.2).
+  </p>
+  <p>
     Klicka <span class="ui">Placera elever</span> på klassens rad eller på
     någon av halvornas. Dialogen listar klassens elever med en rullista per
     elev: <span class="ui">Ingen halva</span>, 7A:1 eller 7A:2.
@@ -1639,6 +1646,87 @@
       samma lärare och samma grupp direkt; genereringen vägrar blocket med
       dess namn i alla tre fallen. Svenska som andraspråk bredvid klassens
       svenska är ännu inte ett block, eftersom SvA-eleverna också går i klassen.
+    </p>
+  </div>
+  <h4 id="terminsvis-halvklass">Terminsvis halvklass</h4>
+  <p>
+    Slöjd läses ofta så att halva klassen har textilslöjd medan andra halvan
+    har trä- och metallslöjd, och halvorna byter vid terminsskiftet. Öppna
+    klassens post, till exempel <em>7A · Slöjd</em>, och tryck
+    <span class="ui">Dela terminsvis i halvklass</span> under
+    <span class="ui">Veckor</span>. Knappen finns på en klass post som gäller
+    hela läsåret och inte ligger i ett block.
+  </p>
+  <p>
+    Välj vilket ämne varje halva läser på hösten. På våren läser den det
+    ämne som den andra halvan läste på hösten. Halvorna byter alltså mellan
+    två ämnen, eftersom en grupp har en timplanspost per ämne. Har skolan
+    bara ämnet <em>Slöjd</em> lägger du först till exempelvis
+    <em>Textilslöjd</em> och <em>Trä- och metallslöjd</em> under
+    <span class="path">Grunddata › Ämnen</span> (3.2). Ge dem var sin salstyp,
+    så hamnar varje halva i rätt sal, och slöjdens nationella kod. Dialogen
+    föreslår ämnen vars namn säger textil eller trä och metall. Välj sedan
+    lärare för varje ämne, om du vet vilka de är, och dagen då vårterminen
+    börjar. Halvorna har lektion samtidigt, så ämnena behöver två olika
+    lärare. Rastra Schema föreslår första måndagen i januari. Innan något
+    sparas visar dialogen de fyra posterna i en tabell.
+  </p>
+  <p>
+    <span class="ui">Dela terminsvis</span> gör allt i ett steg:
+  </p>
+  <ul>
+    <li>Klassen delas i två halvor (3.4), om den inte redan är delad. Halvorna
+      heter <em>7A:1</em> och <em>7A:2</em> om du inte ger dem andra namn.
+      Har klassen redan två halvor används de.</li>
+    <li>Fyra poster skapas: 7A:1 läser det första ämnet på hösten och det
+      andra på våren, och 7A:2 läser tvärtom. Höstens poster gäller från
+      läsårets början till och med dagen före vårterminen. Vårens gäller från
+      den dagen till läsårets slut. Varje post får klassens lektioner,
+      längder, ombyte och veckor (udda/jämna).</li>
+    <li>Höstens två poster läggs i ett parallellt block, till exempel
+      <em>Slöjd 7A HT</em>, och vårens poster i ett annat, till exempel
+      <em>Slöjd 7A VT</em>. Halvorna har då lektion samtidigt, och klassen
+      har aldrig slöjd två gånger.</li>
+    <li>Klassens post tas bort. Dess lärare räknas inte längre. De nya
+      posternas lärare prövas mot tjänstefördelningens inställningar (4.3),
+      som när du sparar en post. Läraren i textilslöjd belastas för halva 1
+      på hösten och halva 2 på våren, alltså lika mycket som för en post
+      som gäller hela året. Lektioner som redan ligger i grundschemat för
+      klassens post ligger kvar tills du genererar igen. En låst lektion
+      ligger kvar tills du låser upp den eller tar bort den.</li>
+  </ul>
+  <p>
+    I vissa fall sparas ingenting:
+  </p>
+  <ul>
+    <li>en halva har redan en post i något av ämnena;</li>
+    <li>läsåret har redan ett block med något av namnen;</li>
+    <li>tjänstefördelningen vägrar en av lärarna;</li>
+    <li>klassen har bara en halva kvar.</li>
+  </ul>
+  <p>
+    Dialogen säger då vad som hindrar. Du kan ändra och försöka igen. När
+    posterna finns placerar du eleverna i halvorna (3.4). Det kan också vänta
+    tills efter genereringen.
+  </p>
+  <div class="warn">
+    <span class="label">Samma tider båda terminerna</span>
+    <p>
+      Genereringen planerar en vecka i taget. Den vet inte att höstens och
+      vårens block aldrig går samma vecka. Därför ger den varje block egna
+      tider och håller dem lediga hela året. Klassen har då slöjdtid två
+      gånger i veckan, och den ena tiden står tom varje termin. Ska halvorna
+      ha samma tider hela året gör du så här:
+    </p>
+    <ol>
+      <li>Generera.</li>
+      <li>I grundschemat drar du vårens blockkort till höstens tider (5.3).
+        Flytten godtas, eftersom lektioner som aldrig går samma vecka inte
+        krockar.</li>
+      <li>Lås båda blocken.</li>
+    </ol>
+    <p>
+      Vid nästa generering ligger de låsta blocken kvar där de är.
     </p>
   </div>
   <div class="note">
