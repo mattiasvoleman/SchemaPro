@@ -412,21 +412,44 @@ describe('TeachingBlocksService', () => {
         ],
       ]);
 
-      // A change this block already has still puts the drifted block back on it.
+      // A change this block already has (its split lessons re-sent as they
+      // are, which writes nothing on its own) still puts the drifted block
+      // back on it.
       tx.teachingRequirement.updateMany.mockClear();
       tx.$queryRaw = jest
         .fn()
         .mockResolvedValueOnce([{ id: BLOCK }, { id: OTHER_BLOCK }])
         .mockResolvedValue([{ id: BLOCK, academicYearId: YEAR, name: 'Slöjd 7A HT' }]);
-      await service.update(BLOCK, { lessonsPerWeek: 2 }, admin);
+      tx.teachingRequirement.findMany.mockImplementation(async ({ select }: { select: Record<string, unknown> }) =>
+        'lessonsPerWeek' in select
+          ? [member(firstId, { blockId: OTHER_BLOCK }), member(TY, { minutesPerLesson: 80, lessonLengths: [80, 40] })]
+          : [{ id: TY }],
+      );
+      await service.update(BLOCK, { lessonsPerWeek: 2, minutesPerLesson: 80 }, admin);
       expect(tx.teachingRequirement.updateMany.mock.calls).toEqual([
         [
           {
             where: { blockId: { in: [BLOCK, OTHER_BLOCK] } },
-            data: { lessonsPerWeek: 2, minutesPerLesson: 60, lessonLengths: [] },
+            data: { lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] },
           },
         ],
       ]);
+      // And with the two alike, the same request writes nothing.
+      tx.teachingRequirement.updateMany.mockClear();
+      tx.$queryRaw = jest
+        .fn()
+        .mockResolvedValueOnce([{ id: BLOCK }, { id: OTHER_BLOCK }])
+        .mockResolvedValue([{ id: BLOCK, academicYearId: YEAR, name: 'Slöjd 7A HT' }]);
+      tx.teachingRequirement.findMany.mockImplementation(async ({ select }: { select: Record<string, unknown> }) =>
+        'lessonsPerWeek' in select
+          ? [
+              member(firstId, { blockId: OTHER_BLOCK, minutesPerLesson: 80, lessonLengths: [80, 40] }),
+              member(TY, { minutesPerLesson: 80, lessonLengths: [80, 40] }),
+            ]
+          : [{ id: TY }],
+      );
+      await service.update(BLOCK, { lessonsPerWeek: 2, minutesPerLesson: 80 }, admin);
+      expect(tx.teachingRequirement.updateMany).not.toHaveBeenCalled();
 
       tx.teachingRequirement.updateMany.mockClear();
       tx.$queryRaw = jest
