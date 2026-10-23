@@ -4016,29 +4016,34 @@ describe('OptimizationProxyService', () => {
       });
     });
 
-    it.each([
-      ['a class', { id: GROUP_ID, gradeLevel: 7, kind: 'CLASS', name: '7A' }],
-      [
-        'a teaching group',
-        { id: '77777777-7777-4777-8777-777777777777', gradeLevel: null, kind: 'TEACHING_GROUP', name: 'Spanska 7' },
-      ],
-    ])('names %s whose daily maximum is in the core by the name the school gave it', async (_label, group) => {
+    it('names every group of the daily maximum’s one line by the name the school gave it', async () => {
       /*
        * The school rules' maximum applies to every class and teaching group on
-       * its own, and the engine names the one it binds by the requirement's
-       * anonymous group id: in the values, in resourceIds and in its English.
-       * Each comes back as the group the school knows.
+       * its own, and the engine says it on one line for every group it holds
+       * back, naming them by their anonymous ids in resourceIds: a class and a
+       * teaching group here. Each comes back as the group the school knows,
+       * and the values, which name no group, as they were sent.
        */
+      const TEACHING_GROUP = '77777777-7777-4777-8777-777777777777';
       arrange({
-        requirements: [requirement({ studentGroupId: group.id })],
-        groups: [{ id: GROUP_ID, gradeLevel: 7, kind: 'CLASS', name: '7A' }, group],
+        requirements: [
+          requirement(),
+          requirement({ id: '88888888-8888-4888-8888-888888888888', studentGroupId: TEACHING_GROUP }),
+        ],
+        groups: [
+          { id: GROUP_ID, gradeLevel: 7, kind: 'CLASS', name: '7A' },
+          { id: TEACHING_GROUP, gradeLevel: null, kind: 'TEACHING_GROUP', name: 'Spanska 7' },
+        ],
         teachingMembers: [
-          { studentId: '00000000-0000-4000-8000-900000000000', studentGroupId: group.id },
+          { studentId: '00000000-0000-4000-8000-900000000000', studentGroupId: TEACHING_GROUP },
         ],
       });
-      http.post.mockImplementation((_url: string, payload: any) => {
-        const anonymous = payload.requirements[0].studentGroupId as string;
-        return of({
+      const message =
+        'The school rules allow at most 2 lessons a day for each class and teaching group. ' +
+        'That maximum is what makes the week impossible: without it, a timetable exists that ' +
+        'keeps every other rule, and in it the groups named here have more lessons than that on some day.';
+      http.post.mockImplementation((_url: string, payload: any) =>
+        of({
           data: {
             requestId: payload.requestId,
             status: 'INFEASIBLE',
@@ -4051,30 +4056,30 @@ describe('OptimizationProxyService', () => {
                 {
                   category: 'REQUIREMENT_DEMAND',
                   code: 'GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT',
-                  params: { group: anonymous, maxPerDay: 2, lessons: 5 },
-                  message: `Student group ${anonymous} may have at most 2 lessons a day under the school rules and has 5 lessons to place this week.`,
+                  params: { maxPerDay: 2, measured: 1 },
+                  message,
                   requirementIds: [],
                   roomIds: [],
                   constraintIds: [],
-                  resourceIds: [anonymous],
+                  resourceIds: payload.requirements.map((row: any) => row.studentGroupId),
                 },
               ],
             },
           },
-        });
-      });
+        }),
+      );
 
       const result = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
 
-      expect(result.conflicts?.conflicts[0]).toEqual(
+      expect(result.conflicts?.conflicts).toEqual([
         expect.objectContaining({
           code: 'GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT',
-          params: { group: group.name, maxPerDay: 2, lessons: 5 },
-          message: `Student group ${group.name} may have at most 2 lessons a day under the school rules and has 5 lessons to place this week.`,
-          resourceIds: [group.id],
-          resourceNames: [group.name],
+          params: { maxPerDay: 2, measured: 1 },
+          message,
+          resourceIds: [GROUP_ID, TEACHING_GROUP],
+          resourceNames: ['7A', 'Spanska 7'],
         }),
-      );
+      ]);
     });
 
     it('names a timplan row by its subject and group, and a room type by its name', async () => {

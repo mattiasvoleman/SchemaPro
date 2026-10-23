@@ -164,6 +164,23 @@ def _how_far_it_narrows(
     return key
 
 
+def no_core_analysis() -> ConflictAnalysis:
+    """The answer to a proof that rests on no assumption: a labelled guess.
+
+    Also what is left when every line of a core turns out to be no part of
+    the answer (SchedulerSolver._daily_maximum_verdict).
+    """
+    return ConflictAnalysis(
+        summary_code="CONFLICT_NO_CORE",
+        conflicts=[
+            ConflictDetail(
+                category="INSUFFICIENT_RESOURCES",
+                code="CONFLICT_NO_CORE_GUESS",
+            ),
+        ],
+    )
+
+
 def build_conflict_analysis(
     solver: cp_model.CpSolver,
     registry: AssumptionRegistry,
@@ -173,15 +190,7 @@ def build_conflict_analysis(
     records = registry.resolve(core_indices)
 
     if not records:
-        return ConflictAnalysis(
-            summary_code="CONFLICT_NO_CORE",
-            conflicts=[
-                ConflictDetail(
-                    category="INSUFFICIENT_RESOURCES",
-                    code="CONFLICT_NO_CORE_GUESS",
-                ),
-            ],
-        )
+        return no_core_analysis()
 
     # One cause, one line. Several builders register per lesson instance rather
     # than per cause — _add_capacity_constraints does it once for every lesson

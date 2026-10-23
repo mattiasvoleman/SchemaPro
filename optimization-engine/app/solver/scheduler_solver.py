@@ -50,7 +50,11 @@ from app.schemas.schedule import (
 logger = logging.getLogger(__name__)
 
 
-from app.solver.conflict_analyzer import AssumptionRegistry, build_conflict_analysis
+from app.solver.conflict_analyzer import (
+    AssumptionRegistry,
+    build_conflict_analysis,
+    no_core_analysis,
+)
 from app.solver.room_allocator import (
     RoomPlan,
     add_room_allocation,
@@ -1854,6 +1858,11 @@ class SchedulerSolver:
         )
         if status == cp_model.INFEASIBLE:
             conflicts = build_conflict_analysis(solver, registry)
+            # Before the blocks below: a core the maximum alone filled is a
+            # core with nothing to say once its line goes.
+            if conflicts is not None:
+                left = None if deadline is None else deadline - time.monotonic()
+                conflicts = self._daily_maximum_verdict(request, conflicts, seconds_left=left)
         # A PROOF WITH NOTHING TO SAY, ON A WEEK WITH BLOCKS. A block is the
         # one rule a school writes to make its week NARROWER, so a refusal that
         # names nothing while blocks are in force sends the school looking
@@ -4616,6 +4625,114 @@ class SchedulerSolver:
             cp_model.Domain(0, self._grid.horizon),
         )
 
+    def _daily_maximum_verdict(
+        self,
+        request: OptimizeScheduleRequest,
+        conflicts: ConflictAnalysis,
+        *,
+        seconds_left: float | None = None,
+    ) -> ConflictAnalysis:
+        """Keep the class daily maximum in a refusal only where it is the difference.
+
+        THE CORE NAMES IT WHATEVER THE CAUSE. CP-SAT's sufficient set on these
+        models is close to all or nothing — the review of #182 found every
+        assumption in it in 376 of 376 capped impossible fuzz weeks, and 486 of
+        486 on the högstadium week — and nearly every class has more lessons
+        than the maximum, so a literal per class put the maximum into nearly
+        every refusal. On hogstadium.py --teacher-day-rules --infeasible-days,
+        whose cause is a post, it was 18 lines of "Raise Max lessons per day"
+        on a week that stays impossible with no maximum at all.
+
+        SO IT IS MEASURED, as the blocks are. The week is solved once more
+        without the maximum, every other rule in force, on the satisfaction
+        model and the probe's budget:
+        - still impossible: the maximum is no part of the answer, and its line
+          goes. A core that was nothing else is then CONFLICT_NO_CORE;
+        - a timetable: the maximum is what makes the week impossible, and the
+          line says so (`measured` 1) and names the groups that timetable
+          gives more than the maximum on some day. Lifting it for those alone
+          is enough, which is the one thing the timetable proves; it does not
+          prove each of them needs it;
+        - nothing inside the budget, or no budget: the line stays as the core
+          gave it, every capped group in it and `measured` 0, since the
+          maximum may matter and nothing says it does not.
+        One solve for all the groups and not one per group, for
+        _blocks_verdict's reason.
+        """
+        lines = {
+            id(detail) for detail in conflicts.conflicts
+            if detail.code == "GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT"
+        }
+        rules = request.rules
+        if not lines or rules is None or rules.max_lessons_per_day_per_group is None:
+            return conflicts
+        budget = self._settings.solver_probe_seconds
+        if seconds_left is not None:
+            budget = min(budget, seconds_left)
+        if budget < self.MIN_PHASE_SECONDS:
+            return conflicts
+        without = request.model_copy(
+            update={"rules": rules.model_copy(update={"max_lessons_per_day_per_group": None})},
+        )
+        try:
+            model, _, decisions, _, _ = self._build_model(
+                without, use_assumptions=False, include_objective=False,
+            )
+        except InvalidScheduleInputError:
+            return conflicts
+        probe = cp_model.CpSolver()
+        probe.parameters.max_time_in_seconds = budget
+        status = _solve_guarded(
+            probe, model, what="the daily maximum probe", request_id=request.request_id,
+        )
+        if status == cp_model.INFEASIBLE:
+            rest = [detail for detail in conflicts.conflicts if id(detail) not in lines]
+            if not rest:
+                return no_core_analysis()
+            return conflicts.model_copy(update={"conflicts": rest})
+        if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            return conflicts
+
+        cap = rules.max_lessons_per_day_per_group
+        per_day = Counter(
+            (
+                decision.lesson.requirement.student_group_id,
+                probe.Value(decision.start) // self._grid.slots_per_day,
+            )
+            for decision in decisions
+        )
+        over = {group_id for (group_id, _day), count in per_day.items() if count > cap}
+
+        def measured(line: ConflictDetail) -> ConflictDetail:
+            # Every group the timetable breaks the maximum for, the core's
+            # first and in its order: lifting it for all of them is what the
+            # timetable proves enough, and a capped group the core happened
+            # to leave out is one of them like the rest. All of the core's
+            # is the fallback for a timetable that, against the proof that
+            # the week is impossible with the maximum, breaks it for none.
+            named = [group_id for group_id in line.resource_ids if group_id in over]
+            named += sorted(over.difference(line.resource_ids), key=str)
+            # Built again rather than copied: the message is rendered from
+            # the values once, when the detail is made.
+            return ConflictDetail(
+                category=line.category,
+                code=line.code,
+                params={**line.params, "measured": 1},
+                requirement_ids=line.requirement_ids,
+                room_ids=line.room_ids,
+                constraint_ids=line.constraint_ids,
+                resource_ids=named or line.resource_ids,
+            )
+
+        return conflicts.model_copy(
+            update={
+                "conflicts": [
+                    measured(detail) if id(detail) in lines else detail
+                    for detail in conflicts.conflicts
+                ],
+            },
+        )
+
     def _blocks_verdict(
         self, request: OptimizeScheduleRequest, *, seconds_left: float | None = None,
     ) -> ConflictAnalysis | None:
@@ -6937,12 +7054,18 @@ class SchedulerSolver:
                 if len(group) <= max_per_day:
                     continue
                 # ONE LITERAL PER GROUP, the way distribution has one per
-                # requirement: the maximum is one row on the school rules,
-                # and the group is what the school opens to see why it
-                # binds. Posted bare it named nothing — a week it alone made
+                # requirement: the maximum binds each group on its own.
+                # Posted bare it named nothing — a week it alone made
                 # impossible (five lessons on two open days, two a day) came
                 # back CONFLICT_NO_CORE, and the school read a guess about
                 # rooms and teacher time for a rule it can raise in one field.
+                #
+                # THE SAME VALUES FOR EVERY GROUP, so the core's groups merge
+                # into one line naming them in resource_ids
+                # (build_conflict_analysis): the maximum is one field on the
+                # school rules, and a line per class said it eighteen times.
+                # Whether the line is said at all is _daily_maximum_verdict's
+                # to measure, and `measured` its to set.
                 daily_literal = registry.register(
                     model,
                     name=f"groupdailymax_{group_id}",
@@ -6951,11 +7074,7 @@ class SchedulerSolver:
                     # its days take at the maximum.
                     category="REQUIREMENT_DEMAND",
                     code="GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT",
-                    params={
-                        "group": str(group_id),
-                        "maxPerDay": max_per_day,
-                        "lessons": len(group),
-                    },
+                    params={"maxPerDay": max_per_day, "measured": 0},
                     resource_ids=[group_id],
                 )
                 days = [self._day_var(model, d, day_vars) for d in group]

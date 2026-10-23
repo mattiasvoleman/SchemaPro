@@ -241,15 +241,19 @@ MESSAGES: dict[str, str] = {
         "{demandMinutes} minutes a week and the week offers {capacityMinutes}."
     ),
     # The school rules' "Max lessons per day", which applies to every class and
-    # teaching group on its own: `group` is the anonymous id the gateway names,
-    # `lessons` the group's lessons this run places. The days are not in the
-    # sentence because the core cannot say which rule closed them.
+    # teaching group on its own. One line for every group the core holds, the
+    # groups in resourceIds, which the gateway names and the page lists.
+    # `measured` is 1 when solving the week without the maximum found a
+    # timetable (SchedulerSolver._daily_maximum_verdict): the groups named are
+    # then the ones that timetable gives more than the maximum on some day.
     "GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT": (
-        "Student group {group} may have at most {maxPerDay, plural, one {# lesson} other "
-        "{# lessons}} a day under the school rules and has {lessons, plural, one {# lesson} "
-        "other {# lessons}} to place this week. That maximum is one of the rules that cannot all "
-        "hold at once. Raise Max lessons per day under School rules, or free more days for the "
-        "group's lessons."
+        "The school rules allow at most {maxPerDay, plural, one {# lesson} other {# lessons}} a "
+        "day for each class and teaching group. {measured, select, 1 {That maximum is what "
+        "makes the week impossible: without it, a timetable exists that keeps every other rule, "
+        "and in it the groups named here have more lessons than that on some day.} other {That "
+        "maximum is one of the rules that cannot all hold at once for the groups named here; "
+        "there was no time left to measure whether it alone is the difference.}} Raise Max "
+        "lessons per day under School rules, or free more days for those groups' lessons."
     ),
     "LUNCH_BREAK_IS_THE_DIFFERENCE": (
         "The {lunchMinutes}-minute lunch break is what leaves no room: without it the week would "
