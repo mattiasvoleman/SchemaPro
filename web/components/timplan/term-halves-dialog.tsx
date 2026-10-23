@@ -169,8 +169,11 @@ function TermHalvesForm({
 
   const [pair, setPair] = useState<[string, string]>(() => guessTermSubjects(subjects));
   const [teacherOf, setTeacherOf] = useState<[string, string]>(["", ""]);
-  // The class's co-teacher follows the first subject until the admin says otherwise.
-  const [coTeacherOf, setCoTeacherOf] = useState<[string, string]>([requirement.coTeacherId ?? "", ""]);
+  // The class's co-teacher follows the first subject until the admin says
+  // otherwise — when they are still an active teacher the list can show. One
+  // who is not is said below and sent as none, never as an id no select shows.
+  const carriedCoTeacher = teachers.find((teacher) => teacher.id === requirement.coTeacherId) ?? null;
+  const [coTeacherOf, setCoTeacherOf] = useState<[string, string]>([carriedCoTeacher?.id ?? "", ""]);
   const [springStart, setSpringStart] = useState(() => proposedSpringStart(year));
   const [halfNames, setHalfNames] = useState([`${className.slice(0, 58)}:1`, `${className.slice(0, 58)}:2`]);
   const [blockNames, setBlockNames] = useState([
@@ -371,12 +374,9 @@ function TermHalvesForm({
         )}
         {requirement.coTeacherId ? (
           <p className="text-sm text-foreground sm:col-span-2">
-            {t("coTeacherCarried", {
-              name: (() => {
-                const person = teachers.find((teacher) => teacher.id === requirement.coTeacherId);
-                return person ? teacherName(person) : t("coTeacherUnknown");
-              })(),
-            })}
+            {carriedCoTeacher
+              ? t("coTeacherCarried", { name: teacherName(carriedCoTeacher) })
+              : t("coTeacherInactive")}
           </p>
         ) : null}
         <FormField id="term-spring-start" label={t("springStart")} hint={t("springStartHint")} error={problems.spring}>

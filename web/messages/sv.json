@@ -709,7 +709,7 @@
       "coTeacherOf": "Medlärare i {subject}",
       "coTeacherSame": "Läraren kan inte också vara medlärare i samma ämne.",
       "coTeacherCarried": "Klassens post har medläraren {name}. Hen följer det första ämnet om du inte väljer något annat, och kan inte följa båda, eftersom halvorna har lektion samtidigt.",
-      "coTeacherUnknown": "en medlärare som inte längre är aktiv",
+      "coTeacherInactive": "Klassens post har en medlärare som inte längre är aktiv. Hen följer inte med till de nya posterna.",
       "subjectFallback": "ämne {n}",
       "teachersSame": "Halvorna har lektion samtidigt, så samma person kan inte vara lärare eller medlärare i båda ämnena. Välj olika personer.",
       "springStart": "Vårterminen börjar",

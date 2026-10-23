@@ -709,7 +709,7 @@
       "coTeacherOf": "Co-teacher of {subject}",
       "coTeacherSame": "The teacher cannot also be the co-teacher in the same subject.",
       "coTeacherCarried": "The class's entry has the co-teacher {name}. They follow the first subject unless you choose otherwise, and cannot follow both, because the halves have lessons at the same time.",
-      "coTeacherUnknown": "a co-teacher who is no longer active",
+      "coTeacherInactive": "The class's entry has a co-teacher who is no longer active. They do not follow to the new entries.",
       "subjectFallback": "subject {n}",
       "teachersSame": "The halves have lessons at the same time, so the same person cannot be teacher or co-teacher in both subjects. Choose different people.",
       "springStart": "Spring term starts",
