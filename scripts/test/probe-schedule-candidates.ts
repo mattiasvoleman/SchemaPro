@@ -51,7 +51,13 @@
  *   sc-m  a run cancelled while its call is out, whose call then comes back
  *         as the engine's own 503 (its solve thread running on), ends
  *         CANDIDATE_RUN_CANCELLED and still counts under the cap until the
- *         call's deadline; one whose engine answered frees its place.
+ *         call's deadline; one whose engine answered frees its place;
+ *   sc-n  with a free-day wish on each teacher's work rule (20261127090000),
+ *         the run stores the wishes the draft breaks and each candidate's,
+ *         and they are exactly the wishes the week an apply then writes
+ *         breaks — read off the masters by the probe's own count, and by
+ *         Generera's notes over the same week; the overview names whose
+ *         wish each is and gives out no Users id.
  *
  * Interleavings are made the way the rest of the probe makes them: a holder
  * parked on a promise inside its transaction, the other side started, its wait
@@ -1462,6 +1468,127 @@ export async function scheduleCandidateChecks(
       const next = await runOf(2, capped);
       assert.equal(next.row.status, 'SUCCEEDED');
       console.log(`     sc-l: interrupted run counted until its call's deadline (75 s after the heartbeat), hidden by the discard, deleted by the sweep after; then a run of a cap of ${idle + 1} went through`);
+    });
+
+    await check('(sc-n) the draft and every candidate are stored with the free-day wishes they break, which are those of the week an apply writes, and the overview names whose they are', async () => {
+      type Week = Array<{ teacherId: string | null; coTeacherId: string | null; dayOfWeek: number }>;
+      const yearMasters = () =>
+        all<{ id: string; teacherId: string | null; coTeacherId: string | null; dayOfWeek: number; isParked: boolean; isGenerated: boolean; isLocked: boolean; pupils: number; groups: number }>(
+          `SELECT m.id, m."teacherId", m."coTeacherId", m."dayOfWeek", m."isParked", m."isGenerated", m."isLocked",
+                  (SELECT count(*)::int FROM "MasterLessonStudents" p WHERE p."masterLessonId" = m.id) AS pupils,
+                  (SELECT count(*)::int FROM "MasterLessonGroups" g WHERE g."masterLessonId" = m.id) AS groups
+             FROM "MasterLessons" m WHERE m."academicYearId" = $1`,
+          [year],
+        );
+      const busyDays = (week: Week, teacherId: string) =>
+        new Set(week.filter((row) => row.teacherId === teacherId || row.coTeacherId === teacherId).map((row) => row.dayOfWeek));
+
+      // Each teacher wishes free a day the draft gives them lessons, and that
+      // TEACHER_GAPS — every lesson two days on (placed) — and the lessons
+      // every candidate keeps leave free: KEEP breaks it, TEACHER_GAPS keeps it.
+      const before = await yearMasters();
+      const live = before.filter((row) => !row.isParked);
+      const kept = live.filter((row) => !row.isGenerated || row.isLocked || row.pupils > 0 || row.groups > 0);
+      const replaced = live.filter((row) => !kept.includes(row));
+      const shifted = (days: Set<number>) => new Set([...days].map((day) => ((day - 1 + 2) % 5) + 1));
+      const wishOf = (teacherId: string) =>
+        [...busyDays(replaced, teacherId)].find(
+          (day) => !shifted(busyDays(replaced, teacherId)).has(day) && !busyDays(kept, teacherId).has(day),
+        );
+      const wishes = [
+        { userId: t1.id, day: wishOf(t1.id) },
+        { userId: t2.id, day: wishOf(t2.id) },
+      ];
+      assert.ok(wishes.some((wish) => wish.day !== undefined), `no day tells the candidates apart: ${JSON.stringify(live)}`);
+      await owner.query(`DELETE FROM "TeacherWorkRules" WHERE "userId" = ANY($1)`, [[t1.id, t2.id]]);
+      for (const wish of wishes) {
+        await owner.query(
+          `INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "preferredFreeDayOfWeek", "updatedAt") VALUES ($1, $2, $3, now())`,
+          [s, wish.userId, wish.day ?? 5],
+        );
+      }
+      const rules = await all<{ id: string; userId: string; day: number }>(
+        `SELECT id, "userId", "preferredFreeDayOfWeek" AS day FROM "TeacherWorkRules" WHERE "userId" = ANY($1)`,
+        [[t1.id, t2.id]],
+      );
+      /** The probe's own count: a wish is broken by any lesson of the teacher's, led or co-taught, on its day. */
+      const broken = (week: Week) =>
+        rules
+          .filter((rule) => busyDays(week, rule.userId).has(rule.day))
+          .sort((a, b) => a.day - b.day || a.id.localeCompare(b.id))
+          .map((rule) => ['TEACHER_FREE_DAY_WISH_NOT_KEPT', rule.day, [rule.userId]]);
+      const said = (notes: unknown) =>
+        ((notes ?? []) as Array<{ code: string; params: { day: number }; subjectIds: string[] }>).map((note) => [note.code, note.params.day, note.subjectIds]);
+
+      const { runId, row: run } = await runOf(2);
+      assert.equal(run.status, 'SUCCEEDED', `the run ended ${run.status} ${run.errorCode}`);
+      const stored = await all<{ id: string; ordinal: number; variant: string; notes: unknown; lessons: Array<{ requirementId: string; dayOfWeek: number }> }>(
+        `SELECT id, ordinal, variant, notes, lessons FROM "ScheduleCandidates" WHERE "runId" = $1 ORDER BY ordinal`,
+        [runId],
+      );
+      const { draftNotes } = await one<{ draftNotes: unknown }>(`SELECT "draftNotes" FROM "ScheduleCandidateRuns" WHERE id = $1`, [runId]);
+      seenRows.push(...stored, { draftNotes });
+      assert.ok(Array.isArray(draftNotes) && stored.every((row) => Array.isArray(row.notes)), 'a measured list was not stored');
+      assert.deepEqual(said(draftNotes), broken(live), 'the draft’s wishes are not the draft’s week');
+      assert.notDeepEqual(said(stored[0]!.notes), said(stored[1]!.notes), 'KEEP and TEACHER_GAPS break the same wishes: the check proves nothing');
+
+      // The apply writes TEACHER_GAPS; what it leaves is read off the masters.
+      const chosen = stored.find((row) => row.variant === 'TEACHER_GAPS')!;
+      const { mode } = await candidates.check(runId, admin);
+      responses.push(await candidates.apply(chosen.id, mode, admin));
+      const after = (await yearMasters()).filter((row) => !row.isParked);
+      assert.deepEqual(said(chosen.notes), broken(after), 'the applied candidate’s wishes are not those of the week it wrote');
+      // And every candidate's, over the lessons the apply kept.
+      const teachersOf = new Map(
+        (
+          await all<{ id: string; teacherId: string | null; coTeacherId: string | null }>(
+            `SELECT id, "teacherId", "coTeacherId" FROM "TeachingRequirements" WHERE "academicYearId" = $1`,
+            [year],
+          )
+        ).map((row) => [row.id, row]),
+      );
+      const keptAfter = after.filter((row) => before.some((old) => old.id === row.id));
+      for (const candidate of stored) {
+        const week: Week = [
+          ...keptAfter,
+          ...candidate.lessons.map((lesson) => ({ ...teachersOf.get(lesson.requirementId)!, dayOfWeek: lesson.dayOfWeek })),
+        ];
+        assert.deepEqual(said(candidate.notes), broken(week), `candidate ${candidate.ordinal}’s wishes are not its week’s`);
+      }
+
+      // Generera over the week the apply left (the stub lays every lesson
+      // again where it stands) says the same wishes by its own read.
+      const regenerated = await proxy.triggerScheduling(year, admin);
+      const again = (await yearMasters()).filter((row) => !row.isParked);
+      const byTeacherAndDay = (week: Week) => week.map((row) => `${row.teacherId}|${row.coTeacherId}|${row.dayOfWeek}`).sort();
+      assert.deepEqual(byTeacherAndDay(again), byTeacherAndDay(after), 'Generera laid another week: the comparison below proves nothing');
+      assert.deepEqual(said(regenerated.notes), said(chosen.notes), 'Generera and the candidate disagree about one week');
+
+      // The overview names whose wish it is, for every reader, and no id leaves.
+      const page = await candidates.overview(year, admin);
+      responses.push(page);
+      const nameOf = new Map([
+        [t1.id, 't1 Förslag'],
+        [t2.id, 't2 Förslag'],
+      ]);
+      const named = (notes: Array<{ params?: Record<string, string | number>; resourceNames: string[] }> | null | undefined) =>
+        (notes ?? []).map((note) => [note.params?.['day'], note.resourceNames]);
+      const namedAs = (notes: unknown) => said(notes).map(([, day, ids]) => [day, (ids as string[]).map((id) => nameOf.get(id))]);
+      assert.equal(page.batch?.run.id, runId);
+      assert.deepEqual(named(page.draftNotes), namedAs(draftNotes));
+      assert.deepEqual(
+        page.batch!.candidates.map((candidate) => named(candidate.notes)),
+        stored.map((row) => namedAs(row.notes)),
+      );
+      const text = JSON.stringify(page);
+      for (const leak of ['subjectIds', t1.id, t2.id, ...rules.map((rule) => rule.id)]) {
+        assert.ok(!text.includes(leak), `the overview gives out ${leak}`);
+      }
+      await owner.query(`DELETE FROM "TeacherWorkRules" WHERE "userId" = ANY($1)`, [[t1.id, t2.id]]);
+      console.log(
+        `     sc-n: wishes on days ${rules.map((rule) => rule.day).join(', ')}; the draft breaks ${said(draftNotes).length}, ` +
+          `KEEP ${said(stored[0]!.notes).length}, TEACHER_GAPS ${said(chosen.notes).length}, as the week the apply wrote and Generera say`,
+      );
     });
 
     await check('(sc-k) no stored candidate, run, REGENERATE entry, response or engine request names a pupil', async () => {
