@@ -588,9 +588,15 @@ describe('StudentGroupsService — Halvklasser', () => {
 
     it('holds the class, then makes two halves named after it, in its year and årskurs', async () => {
       tx.studentGroup.findUnique.mockResolvedValue(theClass());
-      tx.studentGroup.createManyAndReturn.mockResolvedValue([{ id: H1 }, { id: H2 }]);
+      tx.studentGroup.createManyAndReturn.mockResolvedValue([
+        { id: H1, name: '7A:1' },
+        { id: H2, name: '7A:2' },
+      ]);
 
-      await expect(service.split(GROUP_ID, {}, testUser())).resolves.toEqual([{ id: H1 }, { id: H2 }]);
+      await expect(service.split(GROUP_ID, {}, testUser())).resolves.toEqual([
+        { id: H1, name: '7A:1' },
+        { id: H2, name: '7A:2' },
+      ]);
 
       const [held] = (tx.$queryRaw as jest.Mock).mock.calls[0] as [string[]];
       expect(held.join('?')).toContain('FOR NO KEY UPDATE');
@@ -611,12 +617,28 @@ describe('StudentGroupsService — Halvklasser', () => {
 
     it('takes the school’s names, trimmed', async () => {
       tx.studentGroup.findUnique.mockResolvedValue(theClass());
+      tx.studentGroup.createManyAndReturn.mockResolvedValue([
+        { id: H1, name: 'Grupp A' },
+        { id: H2, name: 'Grupp B' },
+      ]);
 
       await service.split(GROUP_ID, { names: [' Grupp A ', 'Grupp B'] }, testUser());
 
       expect(tx.studentGroup.createManyAndReturn).toHaveBeenCalledWith({
         data: [expect.objectContaining({ name: 'Grupp A' }), expect.objectContaining({ name: 'Grupp B' })],
       });
+    });
+
+    it('answers the halves in the order they were named, whatever order the insert returns them in', async () => {
+      tx.studentGroup.findUnique.mockResolvedValue(theClass());
+      tx.studentGroup.createManyAndReturn.mockResolvedValue([
+        { id: H2, name: 'Grupp B' },
+        { id: H1, name: 'Grupp A' },
+      ]);
+
+      const halves = await service.split(GROUP_ID, { names: ['Grupp A', 'Grupp B'] }, testUser());
+
+      expect(halves.map((half) => half.id)).toEqual([H1, H2]);
     });
 
     it.each([

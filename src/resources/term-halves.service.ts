@@ -54,6 +54,14 @@ export interface TermHalvesResponse {
   removedRequirementId: string;
   /** The staffing policy's WARNs, each with the new post it is about. */
   warnings: BlockStaffingWarning[];
+  /**
+   * The subjects that do not carry the class's post's national code (or
+   * every chosen one, when that post has none): Skapa timplansposter will
+   * not see that the halves read the class's line in them, and the plan's
+   * national rows will not count them toward it. Said, not refused — a
+   * school may mean it — and empty when the codes agree.
+   */
+  codeWarnings: { subjectId: string; subjectName: string; nationalCode: string | null; lineNationalCode: string | null }[];
 }
 
 /** A WARN about a post not written yet, by its place among the four. */
@@ -179,7 +187,7 @@ export class TermHalvesService {
         const source = await tx.teachingRequirement.findUnique({
           where: { id: requirementId },
           include: {
-            subject: { select: { name: true } },
+            subject: { select: { name: true, nationalCode: true } },
             block: { select: { name: true } },
             studentGroup: {
               select: {
@@ -256,9 +264,21 @@ export class TermHalvesService {
 
         const subjects = await tx.subject.findMany({
           where: { id: { in: [first.subjectId, second.subjectId] } },
-          select: { id: true, name: true },
+          select: { id: true, name: true, nationalCode: true },
         });
         const subjectName = new Map(subjects.map((subject) => [subject.id, subject.name]));
+        // The class's line as Skapa timplansposter and the plan's national
+        // rows read it: the post's subject, or another with its code.
+        const lineCode = source.subject.nationalCode ?? null;
+        const codeWarnings = subjects
+          .filter((subject) => subject.id !== source.subjectId && (lineCode === null || subject.nationalCode !== lineCode))
+          .sort((a, b) => (a.id === first.subjectId ? -1 : b.id === first.subjectId ? 1 : 0))
+          .map((subject) => ({
+            subjectId: subject.id,
+            subjectName: subject.name,
+            nationalCode: subject.nationalCode ?? null,
+            lineNationalCode: lineCode,
+          }));
         if (!subjectName.has(first.subjectId) || !subjectName.has(second.subjectId)) {
           throw new BadRequestException('subjects: ett av ämnena finns inte i skolan.');
         }
@@ -413,6 +433,7 @@ export class TermHalvesService {
           })),
           requirements: rows.map(requirementResponse),
           removedRequirementId: source.id,
+          codeWarnings,
           warnings: warnings.map(({ index, ...warning }) => ({ ...warning, requirementId: rows[index]!.id })),
         };
       });
