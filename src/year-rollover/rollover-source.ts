@@ -85,6 +85,8 @@ export interface SourceRequirement {
 export interface SourceBlock {
   id: string;
   name: string;
+  /** The block whose times it takes (a term split's spring on its autumn), or null. */
+  sameTimesAsBlockId: string | null;
 }
 
 export interface SourceBreak {
@@ -260,7 +262,7 @@ export async function readRolloverSource(
     blockIds.length > 0
       ? await tx.teachingBlock.findMany({
           where: { id: { in: blockIds } },
-          select: { id: true, name: true },
+          select: { id: true, name: true, sameTimesAsBlockId: true },
           orderBy: { id: 'asc' },
         })
       : [];
@@ -461,7 +463,11 @@ export async function readRolloverSource(
       endDate: row.endDate ? asDay(row.endDate) : null,
       blockId: row.blockId ?? null,
     })),
-    blocks: (blocks ?? []).map((block) => ({ id: block.id, name: block.name })),
+    blocks: (blocks ?? []).map((block) => ({
+      id: block.id,
+      name: block.name,
+      sameTimesAsBlockId: block.sameTimesAsBlockId ?? null,
+    })),
     breaks: (breaks ?? []).map((row) => ({
       ...row,
       startDate: asDay(row.startDate),

@@ -144,6 +144,14 @@ export const ROLLOVER_STEPS: Record<RolloverStepName, (context: StepContext) => 
       if (!id) throw new Error('Rollover: a created block did not come back.');
       context.blockIdByKey.set(block.key, id);
     }
+    // A block on another's times names that block's copy, once both exist.
+    for (const block of context.writes.blocks) {
+      if (!block.sameTimesAsKey) continue;
+      await context.tx.teachingBlock.update({
+        where: { id: blockOf(context, block.key) },
+        data: { sameTimesAsBlockId: blockOf(context, block.sameTimesAsKey) },
+      });
+    }
   },
 
   async requirements(context) {

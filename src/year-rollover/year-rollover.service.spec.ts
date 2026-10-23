@@ -786,6 +786,11 @@ describe('YearRolloverService — rollover execute', () => {
               blockRules.push(rule);
             }
             checked++;
+          } else if (rule === 'MAP_SAME_TIMES_BLOCK') {
+            // Never in the create: written once every copy exists, and only
+            // for a block on another's times (the test of the link below).
+            expect({ ...at, written: column in row }).toEqual({ ...at, written: false });
+            checked++;
           } else if (rule === 'PROMOTE_BLOCK_NAME') {
             // The create's data carries no id; the block it made is found by
             // the name it was written with, and judged by the rows it holds.
@@ -858,6 +863,67 @@ describe('YearRolloverService — rollover execute', () => {
       ['Språkval åk 8 (2)', ['Matematik för 8A', 'Matematik för 9A']],
       ['Språkval åk 8 (3)', ['Matematik för 7A']],
     ]);
+  });
+
+  it('keeps a block on another block’s times on that block’s copy, on each side', async () => {
+    const rows = withBlock(defaultRolloverRows());
+    // A term split's spring block over 7A's Matematik, on the times of
+    // Språkval åk 7 (Svenska för 7A, Matematik för Ma7).
+    const spring = '00000000-0000-4000-8000-0000000000b3';
+    rows['teachingBlock']!.push({
+      id: spring,
+      schoolId: IDS.school,
+      academicYearId: IDS.yearA,
+      name: 'Slöjd 7A VT',
+      sameTimesAsBlockId: BLOCK_ID,
+    });
+    for (const requirement of rows['teachingRequirement']!) {
+      if (requirement['studentGroupId'] === IDS.g7a && requirement['subjectId'] === IDS.ma) requirement['blockId'] = spring;
+    }
+    const { world, service } = setup(rows);
+    const { result } = await previewAndExecute(world, service, {
+      ...OPTIONS,
+      groups: [{ sourceGroupId: IDS.g7a, outcome: 'INTAKE' }],
+    });
+    const target = result.academicYear.id;
+    const copies = world.rows['teachingBlock']!.filter((block) => block['academicYearId'] === target);
+    const nameOf = (id: unknown) => copies.find((block) => block['id'] === id)?.['name'] ?? null;
+
+    expect(
+      copies.map((block) => [block['name'], nameOf(block['sameTimesAsBlockId'] ?? null)]).sort(([a], [b]) => String(a).localeCompare(String(b), 'sv')),
+    ).toEqual([
+      // The intake twins' side, 7A's: on that side's copy.
+      ['Slöjd 7A VT', 'Språkval åk 7'],
+      // The successor side, 8A's: the spring on the promoted block.
+      ['Slöjd 8A VT', 'Språkval åk 8'],
+      ['Språkval åk 7', null],
+      ['Språkval åk 8', null],
+    ]);
+  });
+
+  it('places a block on its own when the block whose times it took is not carried', async () => {
+    const rows = defaultRolloverRows();
+    // The autumn block holds 9A's rows only, which graduate.
+    const autumn = '00000000-0000-4000-8000-0000000000b4';
+    const spring = '00000000-0000-4000-8000-0000000000b5';
+    rows['teachingBlock'] = [
+      { id: autumn, schoolId: IDS.school, academicYearId: IDS.yearA, name: 'Slöjd 9A HT', sameTimesAsBlockId: null },
+      { id: spring, schoolId: IDS.school, academicYearId: IDS.yearA, name: 'Slöjd 8A VT', sameTimesAsBlockId: autumn },
+    ];
+    for (const requirement of rows['teachingRequirement']!) {
+      if (requirement['studentGroupId'] === IDS.g9a) requirement['blockId'] = autumn;
+      if (requirement['studentGroupId'] === IDS.g8a) requirement['blockId'] = spring;
+    }
+    const { world, service } = setup(rows);
+    const { result } = await previewAndExecute(world, service, OPTIONS);
+    const target = result.academicYear.id;
+
+    expect(
+      world.rows['teachingBlock']!
+        .filter((block) => block['academicYearId'] === target)
+        .map((block) => [block['name'], block['sameTimesAsBlockId'] ?? null]),
+    ).toEqual([['Slöjd 9A VT', null]]);
+    expect(world.calls.some((call) => call.model === 'teachingBlock' && call.method === 'update')).toBe(false);
   });
 
   it('names the block by the rows it carries: a member that graduates leaves it', async () => {

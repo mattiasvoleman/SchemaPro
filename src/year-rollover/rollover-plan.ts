@@ -180,9 +180,12 @@ export interface RolloverWrites {
    * The parallel blocks carried, one copy per block and side: the rows
    * carried to the successor groups, keyed by the source block's id, and
    * those carried to intake twins, keyed `intake:<id>`. A copy holding no
-   * carried row is not written. See planBlocks.
+   * carried row is not written. `sameTimesAsKey`: the copy, on the same
+   * side, of the block whose times the source block takes, when that block
+   * is carried too; absent otherwise, so a school without such a block
+   * writes, and hashes, what it always did. See planBlocks.
    */
-  blocks: { key: string; sourceBlockId: string; name: string }[];
+  blocks: { key: string; sourceBlockId: string; name: string; sameTimesAsKey?: string }[];
   breaks: {
     sourceBreakId: string;
     name: string;
@@ -1072,6 +1075,11 @@ export function hashWrites(writes: RolloverWrites): string {
  * NAMES ARE UNIQUE IN THE NEW YEAR: successor copies first, then intake ones,
  * each by name and then by source id, and a name another copy already took
  * gets " (2)", " (3)" …, cut to the 80 characters a block name may have.
+ *
+ * A BLOCK ON ANOTHER'S TIMES stays on it: a term split's spring copy names the
+ * autumn copy on its own side (sameTimesAsKey), when the autumn is carried
+ * there too. One carried without the other takes no times: placed on its
+ * own, as a block whose named block is deleted is.
  */
 function planBlocks(
   source: RolloverSource,
@@ -1120,11 +1128,20 @@ function planBlocks(
       (a.sourceBlockId < b.sourceBlockId ? -1 : a.sourceBlockId > b.sourceBlockId ? 1 : 0),
   );
   const taken = new Set<string>();
-  return copies.map(({ key, sourceBlockId, name }) => {
+  const sameTimesAs = new Map(source.blocks.map((block) => [block.id, block.sameTimesAsBlockId ?? null]));
+  const keys = new Set(copies.map((copy) => copy.key));
+  return copies.map(({ key, sourceBlockId, name, intake }) => {
     let unique = name;
     for (let n = 2; taken.has(unique); n++) unique = withSuffix(name, ` (${n})`);
     taken.add(unique);
-    return { key, sourceBlockId, name: unique };
+    const named = sameTimesAs.get(sourceBlockId) ?? null;
+    const sameTimesAsKey = named === null ? null : intake ? intakeKey(named) : named;
+    return {
+      key,
+      sourceBlockId,
+      name: unique,
+      ...(sameTimesAsKey !== null && keys.has(sameTimesAsKey) ? { sameTimesAsKey } : {}),
+    };
   });
 }
 
