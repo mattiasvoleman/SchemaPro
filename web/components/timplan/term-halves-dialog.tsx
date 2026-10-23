@@ -15,9 +15,14 @@
 // the namespace in state (see requirements-target.tsx for why not React.lazy).
 //
 // WHAT IT ASKS. Which subject each half reads in the autumn (the spring is
-// the swap), who teaches each subject, the day the spring term starts, and
-// the names of the halves (only when the class has none) and of the two
-// blocks. What it will write is drawn as a table of the four posts before
+// the swap), who teaches each subject and who co-teaches it, the day the
+// spring term starts, and the names of the halves (only when the class has
+// none) and of the two blocks. The class's co-teacher starts on the first
+// subject: the halves are at the same times, so nobody can be on both, and
+// the gateway refuses a person on both rather than drop one unseen. A class
+// that has its halves sends them in the order drawn here (halfIds), so the
+// preview's first half is the one the gateway writes first, whatever the
+// database's collation makes of the names. What it will write is drawn as a table of the four posts before
 // anything is sent. A staffing REFUSE is the cell dialog's notice; anything
 // else the gateway refuses is said in the dialog in its own Swedish, so the
 // admin can change a name or a subject without losing the rest.
@@ -149,12 +154,13 @@ function TermHalvesForm({
   const subjectName = useMemo(() => new Map(subjects.map((subject) => [subject.id, subject.name])), [subjects]);
   const postSubject = subjectName.get(requirement.subjectId) ?? "";
   const postName = `${className} · ${postSubject}`;
+  // In the locale's order; whichever it is, the request names it (halfIds).
   const halves = useMemo(
     () =>
       groups
         .filter((group) => group.halfOfId === requirement.studentGroupId)
-        .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
-    [groups, requirement.studentGroupId],
+        .sort((a, b) => a.name.localeCompare(b.name, locale) || (a.id < b.id ? -1 : 1)),
+    [groups, requirement.studentGroupId, locale],
   );
   const sortedSubjects = useMemo(
     () => [...subjects].sort((a, b) => a.name.localeCompare(b.name, locale)),
@@ -163,6 +169,8 @@ function TermHalvesForm({
 
   const [pair, setPair] = useState<[string, string]>(() => guessTermSubjects(subjects));
   const [teacherOf, setTeacherOf] = useState<[string, string]>(["", ""]);
+  // The class's co-teacher follows the first subject until the admin says otherwise.
+  const [coTeacherOf, setCoTeacherOf] = useState<[string, string]>([requirement.coTeacherId ?? "", ""]);
   const [springStart, setSpringStart] = useState(() => proposedSpringStart(year));
   const [halfNames, setHalfNames] = useState([`${className.slice(0, 58)}:1`, `${className.slice(0, 58)}:2`]);
   const [blockNames, setBlockNames] = useState([
@@ -185,7 +193,13 @@ function TermHalvesForm({
     subjects: pair[0] === "" || pair[1] === "" ? t("subjectsMissing") : pair[0] === pair[1] ? t("subjectsSame") : null,
     // The halves are at the same times, and the generator refuses a block
     // whose posts share a teacher.
-    teachers: teacherOf[0] !== "" && teacherOf[0] === teacherOf[1] ? t("teachersSame") : null,
+    teachers: (() => {
+      const first = new Set([teacherOf[0], coTeacherOf[0]].filter((id) => id !== ""));
+      return [teacherOf[1], coTeacherOf[1]].some((id) => id !== "" && first.has(id)) ? t("teachersSame") : null;
+    })(),
+    coTeachers: [0, 1].some((index) => coTeacherOf[index] !== "" && coTeacherOf[index] === teacherOf[index])
+      ? t("coTeacherSame")
+      : null,
     spring: springFits ? null : t("springOutside"),
     halves:
       splitting &&
@@ -211,9 +225,14 @@ function TermHalvesForm({
     setFailed(null);
     try {
       const answer = await api.post<SplitAnswer>(`/api/v1/teaching-requirements/${requirement.id}/term-halves`, {
-        subjects: pair.map((subjectId, index) => ({ subjectId, teacherId: teacherOf[index] || null })),
+        // Both always stated: an omitted co-teacher would be the class's.
+        subjects: pair.map((subjectId, index) => ({
+          subjectId,
+          teacherId: teacherOf[index] || null,
+          coTeacherId: coTeacherOf[index] || null,
+        })),
         springStartDate: springStart,
-        ...(splitting ? { halfNames: halfLabels } : {}),
+        ...(splitting ? { halfNames: halfLabels } : { halfIds: halves.map((half) => half.id) }),
         blockNames: trimmedBlocks,
       });
       for (const queryKey of [
@@ -265,7 +284,12 @@ function TermHalvesForm({
       <DialogHeader>
         <DialogTitle>{t("title", { post: postName })}</DialogTitle>
         <DialogDescription>
-          {t("description", { post: postName, lessons: lengthsInWords(lengthPartsOf(requirement)) })}
+          {t("description", {
+            post: postName,
+            lessons: lengthsInWords(lengthPartsOf(requirement)),
+            teacherPercent: requirement.teacherLoadPercent ?? 100,
+            coTeacherPercent: requirement.coTeacherLoadPercent ?? 100,
+          })}
         </DialogDescription>
       </DialogHeader>
 
@@ -307,37 +331,54 @@ function TermHalvesForm({
             )}
           </FormField>
         ))}
-        {[0, 1].map((index) => (
-          <FormField
-            key={index}
-            id={`term-teacher-${index}`}
-            label={t("teacherOf", { subject: subjectName.get(pair[index]!) ?? t("subjectFallback", { n: index + 1 }) })}
-            optional
-            error={index === 1 ? problems.teachers : null}
-          >
-            {(control) => (
-              <Select
-                value={teacherOf[index] || NONE}
-                onValueChange={(value) => {
-                  const id = value === NONE ? "" : value;
-                  setTeacherOf(index === 0 ? [id, teacherOf[1]] : [teacherOf[0], id]);
-                }}
+        {(["teacher", "coTeacher"] as const).flatMap((role) =>
+          [0, 1].map((index) => {
+            const people = role === "teacher" ? teacherOf : coTeacherOf;
+            const setPeople = role === "teacher" ? setTeacherOf : setCoTeacherOf;
+            const subject = subjectName.get(pair[index]!) ?? t("subjectFallback", { n: index + 1 });
+            return (
+              <FormField
+                key={`${role}-${index}`}
+                id={`term-${role}-${index}`}
+                label={t(role === "teacher" ? "teacherOf" : "coTeacherOf", { subject })}
+                optional
+                error={index === 1 ? (role === "teacher" ? problems.teachers : problems.coTeachers) : null}
               >
-                <SelectTrigger {...control}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={NONE}>{tCommon("notAssigned")}</SelectItem>
-                  {teachers.map((teacher) => (
-                    <SelectItem key={teacher.id} value={teacher.id}>
-                      {teacherName(teacher)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-          </FormField>
-        ))}
+                {(control) => (
+                  <Select
+                    value={people[index] || NONE}
+                    onValueChange={(value) => {
+                      const id = value === NONE ? "" : value;
+                      setPeople(index === 0 ? [id, people[1]] : [people[0], id]);
+                    }}
+                  >
+                    <SelectTrigger {...control}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NONE}>{tCommon("notAssigned")}</SelectItem>
+                      {teachers.map((teacher) => (
+                        <SelectItem key={teacher.id} value={teacher.id}>
+                          {teacherName(teacher)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </FormField>
+            );
+          }),
+        )}
+        {requirement.coTeacherId ? (
+          <p className="text-sm text-foreground sm:col-span-2">
+            {t("coTeacherCarried", {
+              name: (() => {
+                const person = teachers.find((teacher) => teacher.id === requirement.coTeacherId);
+                return person ? teacherName(person) : t("coTeacherUnknown");
+              })(),
+            })}
+          </p>
+        ) : null}
         <FormField id="term-spring-start" label={t("springStart")} hint={t("springStartHint")} error={problems.spring}>
           <DateField
             value={springStart}

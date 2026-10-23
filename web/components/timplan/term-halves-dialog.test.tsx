@@ -71,6 +71,7 @@ const subjects = [
 const teachers = [
   { id: "t-anna", firstName: "Anna", lastName: "Ek" },
   { id: "t-bo", firstName: "Bo", lastName: "Al" },
+  { id: "t-cecilia", firstName: "Cecilia", lastName: "Ås" },
 ];
 const classOnly = [{ id: "g-7a", name: "7A", halfOfId: null }];
 const withHalves = [
@@ -149,6 +150,8 @@ describe("TermHalvesDialog", () => {
     renderDialog();
 
     expect(screen.getByRole("dialog", { name: "title(7A · Slöjd)" })).toBeInTheDocument();
+    // What is carried over is said: the lessons and both percentages.
+    expect(screen.getByText("description(7A · Slöjd|lengthPart(2|60)|100|100)")).toBeInTheDocument();
     expect(within(screen.getByRole("table")).getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual([
       "halfColumn",
       "autumnUntil(3 januari)",
@@ -172,8 +175,8 @@ describe("TermHalvesDialog", () => {
 
     expect(state.post).toHaveBeenCalledWith("/api/v1/teaching-requirements/r-sl/term-halves", {
       subjects: [
-        { subjectId: "s-tx", teacherId: "t-anna" },
-        { subjectId: "s-tm", teacherId: null },
+        { subjectId: "s-tx", teacherId: "t-anna", coTeacherId: null },
+        { subjectId: "s-tm", teacherId: null, coTeacherId: null },
       ],
       springStartDate: "2027-01-04",
       halfNames: ["7A:1", "7A:2"],
@@ -198,7 +201,7 @@ describe("TermHalvesDialog", () => {
     ]);
   });
 
-  it("uses the halves the class has, by name, and sends no names for them", async () => {
+  it("uses the halves the class has, by name, and sends them in the order it drew, not their names", async () => {
     const { user } = renderDialog({ groups: withHalves });
 
     expect(screen.getByText("halvesExist(7A:1|7A:2)")).toBeInTheDocument();
@@ -206,6 +209,36 @@ describe("TermHalvesDialog", () => {
     await user.click(submit());
 
     expect(state.post.mock.calls[0]![1]).not.toHaveProperty("halfNames");
+    expect(state.post.mock.calls[0]![1]).toEqual(expect.objectContaining({ halfIds: ["h-1", "h-2"] }));
+  });
+
+  it("names the first half as the locale sorts it, and sends that one first, where code units would sort otherwise", async () => {
+    // "7A:2" < "7a:1" by code unit; Swedish puts 7a:1 first.
+    const { user } = renderDialog({
+      groups: [...classOnly, { id: "h-2", name: "7A:2", halfOfId: "g-7a" }, { id: "h-1", name: "7a:1", halfOfId: "g-7a" }],
+    });
+
+    expect(plan().map((row) => row[0])).toEqual(["7a:1", "7A:2"]);
+    await user.click(submit());
+
+    expect(state.post.mock.calls[0]![1]).toEqual(expect.objectContaining({ halfIds: ["h-1", "h-2"] }));
+  });
+
+  it("starts the class's co-teacher on the first subject, says so, and sends whom each subject has", async () => {
+    const { user } = renderDialog({ requirement: post({ coTeacherId: "t-cecilia" }) });
+
+    expect(screen.getByText("coTeacherCarried(Cecilia Ås)")).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: /^coTeacherOf\(Textilslöjd\)/ })).toHaveTextContent("Cecilia Ås");
+    await user.click(submit());
+
+    expect(state.post.mock.calls[0]![1]).toEqual(
+      expect.objectContaining({
+        subjects: [
+          { subjectId: "s-tx", teacherId: null, coTeacherId: "t-cecilia" },
+          { subjectId: "s-tm", teacherId: null, coTeacherId: null },
+        ],
+      }),
+    );
   });
 
   it("names the halves as typed, trimmed", async () => {
@@ -234,6 +267,18 @@ describe("TermHalvesDialog", () => {
     ["an empty half name", async (user: ReturnType<typeof userEvent.setup>) => {
       await user.clear(screen.getByLabelText("halfName(2)"));
     }, "halfNamesInvalid"],
+    ["one co-teacher for both subjects", async (user: ReturnType<typeof userEvent.setup>) => {
+      for (const subject of ["Textilslöjd", "Trä- och metallslöjd"]) {
+        await user.click(screen.getByRole("combobox", { name: new RegExp(`^coTeacherOf\\(${subject}\\)`) }));
+        await user.click(screen.getByRole("option", { name: "Cecilia Ås" }));
+      }
+    }, "teachersSame"],
+    ["a teacher who is the subject's co-teacher too", async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.click(screen.getByRole("combobox", { name: /^teacherOf\(Textilslöjd\)/ }));
+      await user.click(screen.getByRole("option", { name: "Anna Ek" }));
+      await user.click(screen.getByRole("combobox", { name: /^coTeacherOf\(Textilslöjd\)/ }));
+      await user.click(screen.getByRole("option", { name: "Anna Ek" }));
+    }, "coTeacherSame"],
     ["one teacher for both subjects", async (user: ReturnType<typeof userEvent.setup>) => {
       for (const subject of ["Textilslöjd", "Trä- och metallslöjd"]) {
         await user.click(screen.getByRole("combobox", { name: new RegExp(`^teacherOf\\(${subject}\\)`) }));
