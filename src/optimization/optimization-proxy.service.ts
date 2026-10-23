@@ -288,6 +288,10 @@ interface PreservedLessonRow {
   id: string;
   subjectId: string;
   studentGroupId: string;
+  /** The two adults and the weekday: what the free-day wishes are read against (timetableWith). */
+  teacherId: string | null;
+  coTeacherId: string | null;
+  dayOfWeek: number;
   startTime: Date;
   endTime: Date;
   recurrence: LessonRecurrence;
@@ -346,6 +350,13 @@ export interface PreparedSchedule {
   anonMaps: AnonMaps;
   /** Every free-day wish of the school's teachers, in real ids, for Generera's notes. Never sent. */
   freeDayWishes: FreeDayWish[];
+  /**
+   * The preserved, non-parked masters as this fetch read them, by teacher and
+   * weekday: the half of a candidate's timetable every candidate keeps, which
+   * a schemaförslag reads the wishes against (timetableWith). Generera reads
+   * its own after its delete instead (RegenerationWritten).
+   */
+  keptTimetable: TeachersOnDay[];
   /** groupId → children who eat AS this group, for the stored sittings. */
   headcountByGroup: Map<string, number>;
   /** The demand sent, in real ids: what an answer must place exactly. */
@@ -1003,6 +1014,11 @@ export class OptimizationProxyService {
       storedRules: data.storedRules,
       anonMaps,
       freeDayWishes: data.freeDayWishes,
+      keptTimetable: data.preservedRows.map((row) => ({
+        teacherId: row.teacherId,
+        coTeacherId: row.coTeacherId,
+        dayOfWeek: row.dayOfWeek,
+      })),
       headcountByGroup: data.headcountByGroup,
       // Every sent entry's anonymous id came out of the map, so each has a
       // real one; the fallback can only be reached by a broken map, and then
@@ -2706,8 +2722,10 @@ export class OptimizationProxyService {
       // The free-day wishes, for what the finished timetable is read against
       // (unkeptFreeDayWishes): every rule that states one, sent to the engine
       // or not — a teacher who teaches nothing keeps theirs trivially. The
-      // lessons regeneration keeps are NOT taken from here: they are read by
-      // persistMasterLessons, after its delete, as the timetable it leaves.
+      // lessons Generera's regeneration keeps are NOT taken from here: they
+      // are read by persistMasterLessons, after its delete, as the timetable
+      // it leaves. A schemaförslag, which writes nothing, reads them from
+      // preservedRows (keptTimetable), which the basis holds still to apply.
       freeDayWishes: rawWorkRules.flatMap((rule): FreeDayWish[] =>
         rule.preferredFreeDayOfWeek === null
           ? []
@@ -2739,6 +2757,9 @@ export class OptimizationProxyService {
         id: lesson.id,
         subjectId: lesson.subjectId,
         studentGroupId: lesson.studentGroupId,
+        teacherId: lesson.teacherId ?? null,
+        coTeacherId: lesson.coTeacherId ?? null,
+        dayOfWeek: lesson.dayOfWeek,
         startTime: lesson.startTime,
         endTime: lesson.endTime,
         recurrence: lesson.recurrence,

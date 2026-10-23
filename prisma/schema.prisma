@@ -2141,6 +2141,9 @@ model ScheduleCandidateRun {
   weights        Json?
   /// Unplaced demand, the same for every applicable candidate in practice: {lines, minutes, draftLines, draftMinutes}.
   unplaced       Json?
+  /// The free-day wishes the draft the run was solved from breaks, as a candidate's notes say its own: the comparison's
+  /// first column. Written when the run succeeds; null otherwise and on every run before 20261127090000 (DB CHECK: a list).
+  draftNotes     Json?
   /// The run this one refreshed ("Uppdatera förslagen"); no key, the old run is deleted when this one succeeds.
   refreshOfId    String?                    @db.Uuid
   /// The candidate applied from this run, and when (both or neither, DB CHECK).
@@ -2195,6 +2198,10 @@ model ScheduleCandidate {
   lunches      Json?
   metrics      Json?
   conflicts    Json?
+  /// The free-day wishes the candidate's timetable breaks, beside the lessons every candidate keeps, in the shape of
+  /// OptimizationJob.notes (the teacher's Users id server-only, named when read). Null on a candidate with no timetable
+  /// and on every candidate before 20261127090000; [] when every wish is kept (DB CHECK: a list).
+  notes        Json?
   /// The engine's summary of a candidate that found no timetable (e.g. PROBE_NOTHING_HELPED), and its values,
   /// scalars only, as OptimizationJob keeps conflictSummaryCode/Params: what the page says stopped it.
   errorCode    String?

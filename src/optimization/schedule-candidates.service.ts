@@ -22,6 +22,7 @@ import { RealtimeService } from '../realtime/realtime.service';
 import { rostersOfYear } from '../year-rollover/projected-rosters';
 import { changedParts, type BasisParts } from './candidate-basis';
 import { TEACHER_WORK_DAYS_HIDDEN, WORK_DAYS_HIDDEN_MESSAGE, isDaysBearing } from './work-days';
+import { timetableWith, unkeptFreeDayWishes } from './free-day-wishes';
 import { candidateMetricsOf, lessonCountOf, metricsViewOf, runUnplacedOf, type CandidateMetrics, type CandidateMetricsView, type RunUnplaced } from './candidate-metrics';
 import {
   callTimeoutMs,
@@ -38,11 +39,19 @@ import {
 import type { StartCandidatesDto } from './dto/schedule-candidates.dto';
 import type {
   AiEngineConflictAnalysis,
+  AiEngineConflictDetail,
   AiEngineLunch,
   DayOfWeek,
   ObjectiveWeights,
 } from './interfaces/ai-engine-payload.interface';
-import type { StoredConflict } from './optimization-jobs.service';
+import {
+  namesOf,
+  notedTeachersOf,
+  notesViewOf,
+  storedOf,
+  type ConflictView,
+  type StoredConflict,
+} from './stored-conflicts';
 import {
   calendarSweepWhere,
   draftMastersWhere,
@@ -180,6 +189,13 @@ export interface CandidateView {
   /** Null unless OPTIMAL or FEASIBLE. */
   metrics: CandidateMetricsView | null;
   conflicts: StoredConflict[];
+  /**
+   * The free-day wishes the candidate's timetable breaks (free-day-wishes.ts),
+   * as Generera's notes: the teacher named beside each for every reader. Null
+   * when it was not measured — a candidate with no timetable, or one stored
+   * before 20261127090000; empty when every wish is kept.
+   */
+  notes: ConflictView[] | null;
 }
 
 export interface CandidateBatchView {
@@ -194,6 +210,12 @@ export interface CandidatesOverview {
   batch: CandidateBatchView | null;
   /** The batch's unplaced figure beside the draft's, as measured when it was stored. */
   unplaced: RunUnplaced | null;
+  /**
+   * The free-day wishes the draft the batch was solved from breaks, measured
+   * when it was stored, as each candidate's notes are: the comparison's first
+   * column. Null when there is no batch or it was stored before 20261127090000.
+   */
+  draftNotes: ConflictView[] | null;
 }
 
 export interface CandidateCheck {
@@ -522,6 +544,7 @@ const RUN_SELECT = {
   heartbeatAt: true,
   leaseSeconds: true,
   unplaced: true,
+  draftNotes: true,
   // Never the lessons: a page that polls every two seconds while a run is
   // going needs the figures, and a candidate's lessons are read once each.
   candidates: {
@@ -536,6 +559,7 @@ const RUN_SELECT = {
       errorParams: true,
       metrics: true,
       conflicts: true,
+      notes: true,
     },
   },
 } satisfies Prisma.ScheduleCandidateRunSelect;
@@ -862,10 +886,14 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
    *     same engine. Candidate 1 INFEASIBLE or TIMEOUT is stored, with its
    *     conflicts, and ends the run CANDIDATES_FIRST_FAILED: every variant
    *     has the same hard constraints, so the others would find nothing
-   *     either. An answer the demand guard refuses is stored REJECTED.
+   *     either. An answer the demand guard refuses is stored REJECTED. An
+   *     applicable candidate is stored with its metrics and the free-day
+   *     wishes its timetable breaks (free-day-wishes.ts), both read off the
+   *     run's one fetch.
    *  4. Finished under the row lock: SUCCEEDED with at least one applicable
    *     candidate (and the year's other finished runs removed: one batch is
-   *     kept, and only a success replaces it), else CANDIDATES_NONE_APPLICABLE.
+   *     kept, and only a success replaces it) and the draft's broken wishes
+   *     beside its unplaced figure, else CANDIDATES_NONE_APPLICABLE.
    */
   private async run(plan: RunPlan, user: AuthenticatedUser): Promise<void> {
     const { runId, academicYearId } = plan;
@@ -888,6 +916,13 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
       if (!(await this.heartbeat(runId, user, { basis: prepared.basis, parts: prepared.basisParts }))) {
         return await this.stopped(runId, user);
       }
+      // The comparison's first column: the draft the run is solved from, its
+      // kept lessons and its own, a parked lesson occupying no day — the
+      // timetable Generera's notes would describe had it written this draft.
+      const draftNotes = unkeptFreeDayWishes(prepared.freeDayWishes, [
+        ...prepared.keptTimetable,
+        ...prepared.draftLessons.filter((lesson) => !lesson.isParked),
+      ]);
 
       const applicable: Array<{ ordinal: number; lessons: CandidateLesson[]; metrics: CandidateMetrics }> = [];
       for (const [index, candidate] of plan.candidates.entries()) {
@@ -928,13 +963,25 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
               earlier: applicable,
             })
           : null;
+        // What applying it would leave, read as Generera reads what it wrote.
+        const notes = APPLICABLE.has(status)
+          ? unkeptFreeDayWishes(
+              prepared.freeDayWishes,
+              timetableWith(prepared.keptTimetable, prepared.requirementRows, solution.lessons),
+            )
+          : null;
         const firstFailed = index === 0 && (status === 'INFEASIBLE' || status === 'TIMEOUT');
-        const outcome = await this.store(plan, user, candidate, solution, status, metrics, firstFailed);
+        const outcome = await this.store(plan, user, candidate, solution, status, { metrics, notes }, firstFailed);
         if (outcome !== 'stored') return;
         if (metrics) applicable.push({ ordinal: candidate.ordinal, lessons: solution.lessons, metrics });
       }
 
-      await this.finish(plan, user, runUnplacedOf(prepared.coverage, applicable[0]?.metrics.unplaced ?? null), applicable.length > 0);
+      await this.finish(
+        plan,
+        user,
+        { unplaced: runUnplacedOf(prepared.coverage, applicable[0]?.metrics.unplaced ?? null), draftNotes },
+        applicable.length > 0,
+      );
     } catch (error) {
       this.logger.warn(`Candidate run failed [runId=${runId}, ${errorName(error)}]`);
       await this.fail(runId, user, failureOf(error)).catch(() => undefined);
@@ -1003,7 +1050,8 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
    * only while the run is RUNNING, with the progress and the heartbeat. The
    * first candidate's INFEASIBLE or TIMEOUT also ends the run, in the same
    * transaction, so the page never shows a stored refusal under a run that
-   * still claims to be working.
+   * still claims to be working. What was `measured` is null for a candidate
+   * with no timetable: no lesson to count a move in, and no wish to break.
    */
   private async store(
     plan: RunPlan,
@@ -1011,7 +1059,7 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
     candidate: PlannedCandidate,
     solution: CandidateSolution,
     status: string,
-    metrics: CandidateMetrics | null,
+    measured: { metrics: CandidateMetrics | null; notes: AiEngineConflictDetail[] | null },
     firstFailed: boolean,
   ): Promise<'stored' | 'finished' | 'stopped'> {
     const applicable = APPLICABLE.has(status);
@@ -1033,8 +1081,11 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
           solverStatus: status,
           lessons: (applicable ? lessonsForStorage(solution.lessons) : []) as unknown as Prisma.InputJsonValue,
           lunches: jsonOrDbNull(applicable && solution.lunches !== null ? lunchesForStorage(solution.lunches) : null),
-          metrics: jsonOrDbNull(metrics),
+          metrics: jsonOrDbNull(measured.metrics),
           conflicts: storedConflictsOf(solution.conflicts) as unknown as Prisma.InputJsonValue,
+          // As the job row keeps its notes: the teacher's Users id beside each,
+          // for the read that names them, and never a name.
+          notes: jsonOrDbNull(measured.notes?.map(storedOf) ?? null),
           errorCode: applicable || status === 'REJECTED' ? null : summary.code,
           // The summary's values, without which its sentence cannot be said
           // (a first candidate that ran out of time has a summary and no list).
@@ -1065,9 +1116,15 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
    * The end of a run whose every candidate was asked, under the row lock and
    * only while it is RUNNING. A success removes the year's other finished
    * runs (removeFinished) — one batch is kept, and a failed run never
-   * replaces it.
+   * replaces it. The draft's figures are kept on a success only, beside the
+   * candidates they are read against.
    */
-  private async finish(plan: RunPlan, user: AuthenticatedUser, unplaced: RunUnplaced | null, succeeded: boolean): Promise<void> {
+  private async finish(
+    plan: RunPlan,
+    user: AuthenticatedUser,
+    draft: { unplaced: RunUnplaced | null; draftNotes: AiEngineConflictDetail[] },
+    succeeded: boolean,
+  ): Promise<void> {
     await this.prisma.withRls(user, async (tx) => {
       const current = await this.lockedStatus(tx, plan.runId);
       if (current !== 'RUNNING') {
@@ -1092,7 +1149,8 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
         where: { id: plan.runId },
         data: {
           status: 'SUCCEEDED',
-          unplaced: jsonOrDbNull(unplaced),
+          unplaced: jsonOrDbNull(draft.unplaced),
+          draftNotes: draft.draftNotes.map(storedOf) as unknown as Prisma.InputJsonValue,
           engineBusyUntil: null,
           finishedAt: new Date(),
         },
@@ -1141,9 +1199,16 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
    * polls this every two seconds while a run is going. A run whose heartbeat
    * is past its lease is shown as what the sweep will make it, FAILED
    * CANDIDATE_RUN_ABANDONED, so a page never polls a dead run for ever.
+   *
+   * The teachers whose free-day wish a candidate or the draft breaks are
+   * named here, for every reader, as Generera's run names them
+   * (OptimizationJobsService): one more read, of Users by id, only when a
+   * stored note is about somebody, and no Läslogg row — a name beside the
+   * work rule's wish, which every member of staff reads, not the post's
+   * days (access-log.ts, NOT RECORDED).
    */
   async overview(academicYearId: string, user: AuthenticatedUser, now: Date = new Date()): Promise<CandidatesOverview> {
-    const { latest, batch } = await this.prisma.withRls(user, async (tx) => {
+    const { latest, batch, names } = await this.prisma.withRls(user, async (tx) => {
       const order = [{ createdAt: 'desc' as const }, { id: 'desc' as const }];
       // A run a discard removed is not shown, whatever is left of its row.
       const newest = await tx.scheduleCandidateRun.findFirst({
@@ -1159,12 +1224,23 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
               orderBy: order,
               select: RUN_SELECT,
             });
-      return { latest: newest, batch: succeeded };
+      const noted = new Set<string>();
+      for (const run of [newest, succeeded]) {
+        if (!run) continue;
+        for (const id of notedTeachersOf(run.draftNotes)) noted.add(id);
+        for (const candidate of run.candidates) for (const id of notedTeachersOf(candidate.notes)) noted.add(id);
+      }
+      const people =
+        noted.size === 0
+          ? []
+          : await tx.user.findMany({ where: { id: { in: [...noted] } }, select: { id: true, firstName: true, lastName: true } });
+      return { latest: newest, batch: succeeded, names: namesOf(people) };
     });
     return {
-      latest: latest ? batchViewOf(latest, now) : null,
-      batch: batch ? batchViewOf(batch, now) : null,
+      latest: latest ? batchViewOf(latest, now, names) : null,
+      batch: batch ? batchViewOf(batch, now, names) : null,
       unplaced: batch ? unplacedViewOf(batch.unplaced) : null,
+      draftNotes: batch ? measuredNotesOf(batch.draftNotes, names) : null,
     };
   }
 
@@ -1538,7 +1614,7 @@ function candidateGone(): NotFoundException {
  * is shown FAILED CANDIDATE_RUN_ABANDONED, finished when its lease ran out —
  * what the sweep will write — so a dead task never keeps a page polling.
  */
-export function runViewOf(row: Omit<RunRow, 'candidates' | 'unplaced'>, now: Date): CandidateRunView {
+export function runViewOf(row: Omit<RunRow, 'candidates' | 'unplaced' | 'draftNotes'>, now: Date): CandidateRunView {
   const leaseEnds = row.heartbeatAt.getTime() + row.leaseSeconds * 1000;
   const abandoned =
     ACTIVE.includes(row.status) && (leaseEnds < now.getTime() || row.createdAt.getTime() < now.getTime() - RUN_MAX_AGE_MS);
@@ -1561,7 +1637,17 @@ export function runViewOf(row: Omit<RunRow, 'candidates' | 'unplaced'>, now: Dat
   };
 }
 
-function batchViewOf(row: RunRow, now: Date): CandidateBatchView {
+/**
+ * Stored notes as their reader is shown them (stored-conflicts.ts), or null
+ * when nothing was measured: the column is null on a candidate with no
+ * timetable and on every row stored before it existed, and a hand-edited
+ * value that is not a list says nothing either.
+ */
+function measuredNotesOf(stored: unknown, names: ReadonlyMap<string, string>): ConflictView[] | null {
+  return Array.isArray(stored) ? notesViewOf(stored, names) : null;
+}
+
+function batchViewOf(row: RunRow, now: Date, names: ReadonlyMap<string, string>): CandidateBatchView {
   return {
     run: runViewOf(row, now),
     candidates: row.candidates.map((candidate) => {
@@ -1577,6 +1663,7 @@ function batchViewOf(row: RunRow, now: Date): CandidateBatchView {
         errorParams: scalarParams(candidate.errorParams),
         metrics: applicable ? metricsViewOf(candidate.metrics) : null,
         conflicts: conflictsViewOf(candidate.conflicts),
+        notes: applicable ? measuredNotesOf(candidate.notes, names) : null,
       };
     }),
   };

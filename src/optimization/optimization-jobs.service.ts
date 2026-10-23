@@ -7,7 +7,6 @@ import { readsHr } from '../staffing/hr-visibility';
 import { OptimizationProxyService } from './optimization-proxy.service';
 import type {
   AiEngineConflictAnalysis,
-  AiEngineConflictDetail,
   ObjectiveWeights,
   ScheduleRules,
 } from './interfaces/ai-engine-payload.interface';
@@ -22,25 +21,18 @@ import {
   type StoredSentence,
 } from './work-days';
 import { candidatesRunning, yearHasActiveCandidateRun } from './schedule-candidates.service';
+import {
+  asParams,
+  conflictView,
+  entriesOf,
+  namesOf,
+  notedTeachersOf,
+  notesViewOf,
+  storedOf,
+  subjectsOf,
+  type ConflictView,
+} from './stored-conflicts';
 import { lockYearForSolveStart, SCHEDULE_BUSY } from './regeneration-lock';
-
-/**
- * A stored params blob, read back as the scalars the engine promised.
- *
- * Prisma hands a Json column back as `unknown`, and the column is written by
- * this service alone — but a hand-edited row must not put an object where a
- * message expects a number, because next-intl renders that as [object Object]
- * in the middle of a school's refusal. Anything that is not a scalar is
- * dropped, and the sentence falls back to the engine's English.
- */
-function asParams(value: unknown): Record<string, string | number> | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const params: Record<string, string | number> = {};
-  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-    if (typeof entry === 'string' || typeof entry === 'number') params[key] = entry;
-  }
-  return params;
-}
 
 /**
  * What a failed run has to say for itself.
@@ -88,22 +80,6 @@ function refusalOf(error: unknown): {
   };
 }
 
-/**
- * The teachers a stored params blob, or a stored conflict or note, is about,
- * from its server-only key.
- *
- * A run's row has one column per part of a refusal and none for whose post
- * the summary or the error names, so those ride inside their own params blob
- * under `subjectIds` — an array, which asParams drops, so it never reaches a
- * reader. A conflict and a note keep them beside their params instead
- * (StoredConflict). Only strings: a hand-edited row with anything else in the
- * list must not reach a read as a teacher.
- */
-function subjectsOf(stored: unknown): string[] {
-  const ids = (stored as { subjectIds?: unknown } | null | undefined)?.subjectIds;
-  return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [];
-}
-
 /** A params blob to store, with its teachers kept beside the figures when it has any. */
 function storedParams(
   params: Record<string, string | number> | null | undefined,
@@ -115,57 +91,10 @@ function storedParams(
   ) as Prisma.InputJsonValue;
 }
 
+export type { ConflictView, StoredConflict } from './stored-conflicts';
+
 export type JobStatus = 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED';
 export type SolverStatus = 'OPTIMAL' | 'FEASIBLE' | 'INFEASIBLE' | 'TIMEOUT';
-
-/**
- * What of a refusal the job row keeps: the category, the sentence, and the
- * names of the groups the sentence is about. Not the id arrays — they are
- * meaningless once the run is over, and were meaningless before too, when
- * they were the engine's anonymous ones.
- */
-export interface StoredConflict {
-  category: AiEngineConflictDetail['category'];
-  /**
-   * The sentence's name and values, so the screen renders it in the reader's
-   * language. Optional because a row written before the engine named its
-   * sentences has neither, and the screen then shows `message` — the same
-   * path a sentence takes when the web has no translation for it yet.
-   */
-  code?: string;
-  params?: Record<string, string | number>;
-  message: string;
-  resourceNames: string[];
-  /**
-   * SERVER-ONLY: whose post a days-bearing sentence names, as Users ids
-   * (work-days.ts). Kept, unlike the id arrays, because the sentence was
-   * stored without its figure and the post is where a reader with HR-läs is
-   * shown it from; never in a view (conflictView is a whitelist). On a note,
-   * whose free-day wish it was (free-day-wishes.ts), named when it is read.
-   */
-  subjectIds?: string[];
-}
-
-/** One conflict-shaped entry of the engine's answer, as the job row keeps it. */
-function storedOf(detail: AiEngineConflictDetail): StoredConflict {
-  return {
-    category: detail.category,
-    code: detail.code,
-    params: detail.params ?? {},
-    message: detail.message,
-    resourceNames: detail.resourceNames ?? [],
-    ...(detail.subjectIds && detail.subjectIds.length > 0 ? { subjectIds: detail.subjectIds } : {}),
-  };
-}
-
-/** One sentence as a reader is shown it: StoredConflict's whitelist. */
-export interface ConflictView {
-  category: AiEngineConflictDetail['category'];
-  code?: string;
-  params?: Record<string, string | number>;
-  message: string;
-  resourceNames: string[];
-}
 
 export interface OptimizationJobView {
   id: string;
@@ -242,30 +171,6 @@ interface JobRow {
   finishedAt: Date | null;
 }
 
-/** A stored conflict-shaped entry, through the whitelist and nothing else. */
-function conflictView(entry: Partial<StoredConflict>): ConflictView {
-  const params = asParams(entry.params);
-  return {
-    category: entry.category as ConflictView['category'],
-    ...(typeof entry.code === 'string' ? { code: entry.code } : {}),
-    ...(params !== null ? { params } : {}),
-    message: entry.message as string,
-    // Rows written before names were kept carry none; read as an empty
-    // list rather than as undefined, which the page would have to guard.
-    resourceNames: entry.resourceNames ?? [],
-  };
-}
-
-/** Users rows as the names a view puts beside a sentence: first and last, as the days sentence's. */
-function namesOf(rows: ReadonlyArray<{ id: string; firstName: string; lastName: string }>): ReadonlyMap<string, string> {
-  return new Map(rows.map((row) => [row.id, `${row.firstName} ${row.lastName}`]));
-}
-
-/** A stored list of conflict-shaped entries; anything but a list is none. */
-function entriesOf(value: unknown): Partial<StoredConflict>[] {
-  return Array.isArray(value) ? (value as Partial<StoredConflict>[]) : [];
-}
-
 /**
  * Every days-bearing sentence of a run, with whom it is about: what a reader
  * with HR-läs needs read back from the posts before the run can be shown.
@@ -310,7 +215,7 @@ function sentenceOf(
 
 /** The teachers the notes of these runs are about: whom their view names. */
 function notedOf(jobs: readonly JobRow[]): string[] {
-  return [...new Set(jobs.flatMap((job) => entriesOf(job.notes).flatMap(subjectsOf)))];
+  return [...new Set(jobs.flatMap((job) => notedTeachersOf(job.notes)))];
 }
 
 const NO_NAMES: ReadonlyMap<string, string> = new Map();
@@ -384,11 +289,7 @@ export function jobView(
       conflicts,
       // Whose wish it was, beside the sentence as a conflict's classes are:
       // the name the school gives the teacher now, never a stored copy.
-      notes: entriesOf(job.notes).map((entry) => {
-        const note = conflictView(entry);
-        const named = subjectsOf(entry).flatMap((id) => names.get(id) ?? []);
-        return { ...note, resourceNames: [...note.resourceNames, ...named] };
-      }),
+      notes: notesViewOf(job.notes, names),
       error: failure.message,
       createdAt: job.createdAt.toISOString(),
       finishedAt: job.finishedAt ? job.finishedAt.toISOString() : null,
