@@ -530,17 +530,18 @@ def _solve_guarded(
     Generera came back a 500. Lärarens dag met it in production code —
     CP-SAT 9.15.6755's presolve threw `IndexError:
     absl::container_internal::raw_hash_map<>::at` on two constant-bound
-    weighted rows over the same one-hot day literals — and fixed its own
-    rows (see NEVER AGAINST A CONSTANT in _add_teacher_day_constraints). The
-    older builders' constant-bound rows were never fuzzed, and the next such
-    row needs nobody to find it first.
+    weighted rows over the same one-hot day literals — and this guard's fuzz
+    then found the same throw from three builders' caps on a day, which now
+    stand on day totals that presolve does not throw on (_day_totals, where
+    the upstream bug is named). The next such row needs nobody to find it
+    first.
 
     ONCE MORE WITHOUT PRESOLVE. The crash seen is presolve's, and a search
     without presolve works on the model exactly as built: the same
-    constraints, so the same verdicts, found more slowly. On that week, its
-    two rows put back in the constant form, phase 1a's model throws with
+    constraints, so the same verdicts, found more slowly. A week of that
+    shape written straight in CP-SAT, the old rows and all, throws with
     presolve and is proved INFEASIBLE without it (test_solve_guard.py keeps
-    the week). The retry gets what the first attempt left of the solver's
+    it). The retry gets what the first attempt left of the solver's
     own time limit, never a second one: run_solver answers 503 at the budget
     plus thirty seconds, and a slice paid twice would trade the 500 for that.
 
@@ -2379,7 +2380,10 @@ class SchedulerSolver:
                                                shared the year
             (1 + D)L + GD   rules              day var per lesson, on-day
                             + GD if locks      boolean per lesson-day, one lunch
-                            + 1 if seats       start per group-day. G counts
+                            + 1 if seats       start per group-day, and with a
+                            + G'D if a max     daily maximum a count per day of
+                                               each group with more lessons
+                                               than it (G'). G counts
                                                every group that eats — the ones
                                                with lessons plus the ones only
                                                `groups` names, since a class
@@ -2422,11 +2426,12 @@ class SchedulerSolver:
                                                above 600 pairs
             2P              disruption         per previous lesson
             (D + 1)L_r      distribution       per requirement with a rule: a
-            + D + 2                            day literal per lesson and day, the
+            + 2D + 2                           day literal per lesson and day, the
                                                lesson's own day variable where the
                                                spread did not build it, a `used`
-                                               flag per day and the two rule
-                                               literals. Zero without a rule
+                                               flag and a count per day, and the
+                                               two rule literals. Zero without a
+                                               rule
             RD(2L + G) + G  rast ordering      an `inside` and a `late` flag per
                                                lesson, and a `still_here`
                                                literal per class, for every day
@@ -2437,15 +2442,16 @@ class SchedulerSolver:
                                                asks; the minutes a rast reserves
                                                cost no variables at all
             (D + 1)L_t      teacher's day      per teacher whose row caps the
-            + D + DC + 1                       day or whose post limits the
+            + 2D + DC + 1                      day or whose post limits the
             + W                                days, and who has a lesson: a
                                                day literal per lesson and day,
                                                the lesson's own day variable, a
-                                               `works` per day, a cap literal
-                                               per day and capping row (C of
-                                               them) and the days literal; and
-                                               one `works` per free-day wish (W)
-                                               whose teacher has a lesson. Zero
+                                               `works` and the minutes per day,
+                                               a cap literal per day and
+                                               capping row (C of them) and the
+                                               days literal; and one `works`
+                                               per free-day wish (W) whose
+                                               teacher has a lesson. Zero
                                                without a rule
 
         NO TERM FOR THE PADDED INTERVALS, and that is a measurement rather than
@@ -2549,6 +2555,14 @@ class SchedulerSolver:
             _lunch_group_ids(
                 request.groups, _group_ids_with_lessons(request.requirements),
             ),
+        )
+        # The daily maximum's count per day (_day_totals), for each group with
+        # more lessons than the maximum: the builder's own skip.
+        max_per_day = request.rules.max_lessons_per_day_per_group if request.rules else None
+        daily_count_vars = (
+            day_count * sum(1 for count in lessons_by_group.values() if count > max_per_day)
+            if max_per_day is not None
+            else 0
         )
         # One literal per group-day whose lunch a locked lesson narrows, at its
         # worst case. Nothing is charged for a payload with no locked lessons,
@@ -2663,7 +2677,7 @@ class SchedulerSolver:
         # The day variable is charged again although the spread usually built
         # it, for the reason the idle term above gives for its own overlap.
         distribution_vars = sum(
-            (day_count + 1) * requirement.lessons_per_week + day_count + 2
+            (day_count + 1) * requirement.lessons_per_week + 2 * day_count + 2
             for requirement in request.requirements
             if requirement.max_lessons_per_day is not None
             or requirement.min_days_between is not None
@@ -2685,7 +2699,7 @@ class SchedulerSolver:
             if rule.max_teaching_minutes_per_day is not None
         } | {limit.teacher_id for limit in request.teacher_day_limits}
         teacher_day_vars = sum(
-            (day_count + 1) * lessons_by_teacher[teacher_id] + day_count
+            (day_count + 1) * lessons_by_teacher[teacher_id] + 2 * day_count
             for teacher_id in ruled
             if lessons_by_teacher.get(teacher_id, 0) > 0
         )
@@ -2707,6 +2721,7 @@ class SchedulerSolver:
             + room_class_vars
             + affected_vars
             + (1 + day_count) * total_lessons
+            + daily_count_vars
             + day_count * lunch_groups
             + lunch_lock_vars
             + lunch_closure_vars
@@ -6222,6 +6237,9 @@ class SchedulerSolver:
         builds by reification, said once per lesson instead of twice per day.
         The rules are then sums and clauses over those literals: a day's lessons
         at most its cap, and for two days closer than the rule allows, not both.
+        The cap bounds a count per day, the counts summing to the lessons, and
+        never the day's sum itself, which CP-SAT's presolve threw on
+        (_day_totals).
         A pairwise `day_i != day_j` would cover "one a day" with no literal at
         all, but nothing else: N = 2, a day next to a locked lesson and the
         refusal's own counting all want the per-day view.
@@ -6316,10 +6334,21 @@ class SchedulerSolver:
                     params={"requirement": str(requirement_id), "maxPerDay": per_day},
                     requirement_ids=[requirement_id],
                 )
+                # A count per day under the cap, and never `Σ distday ≤ cap`:
+                # see _day_totals. The counts are bare, as definitions are;
+                # the cap on them hangs on the literal.
+                counts = _day_totals(
+                    model,
+                    f"distcount_{requirement_id}",
+                    {
+                        day_index: sum(literals[day_index] for literals in on_day)
+                        for day_index in range(len(weekdays))
+                    },
+                    dict.fromkeys(range(len(weekdays)), len(group)),
+                    len(group),
+                )
                 for day_index, cap in caps.items():
-                    model.Add(
-                        sum(literals[day_index] for literals in on_day) <= cap,
-                    ).OnlyEnforceIf(per_day_literal)
+                    model.Add(counts[day_index] <= cap).OnlyEnforceIf(per_day_literal)
 
             if near or shut:
                 apart_literal = registry.register(
@@ -6905,6 +6934,7 @@ class SchedulerSolver:
                 if len(group) <= max_per_day:
                     continue
                 days = [self._day_var(model, d, day_vars) for d in group]
+                on_days: dict[int, cp_model.LinearExpr] = {}
                 for day_index in range(day_count):
                     on_day: list[cp_model.IntVar] = []
                     for k, decision in enumerate(group):
@@ -6914,7 +6944,13 @@ class SchedulerSolver:
                         model.Add(days[k] == day_index).OnlyEnforceIf(b)
                         model.Add(days[k] != day_index).OnlyEnforceIf(b.Not())
                         on_day.append(b)
-                    model.Add(sum(on_day) <= max_per_day)
+                    on_days[day_index] = sum(on_day)
+                # The maximum is each day's domain, and never `Σ on_day ≤
+                # max`: see _day_totals.
+                _day_totals(
+                    model, f"ondaycount_{group_id}", on_days,
+                    dict.fromkeys(on_days, max_per_day), len(group),
+                )
 
         # --- Guaranteed lunch break per student group per day ---------------
         if _lunch_window_is_set(rules):
@@ -7872,9 +7908,9 @@ class SchedulerSolver:
         every week the list is that one set, and the model is the one the
         union built.
 
-        THE LINKING CONSTRAINT IS THE ONE BARE LINE, AND IT IS SAFE BARE. For a
-        teacher with a days limit, every day's minutes are at most the room
-        the day has for them times `works`: `Σ minutes·x ≤ C·works`, C being
+        THE LINKING CONSTRAINT IS THE ONE BARE RULE LINE, AND IT IS SAFE BARE.
+        For a teacher with a days limit, every day's minutes are at most the
+        room the day has for them times `works`: `minutes ≤ C·works`, C being
         the slots any of the teacher's lessons could occupy that day less what
         their locked lessons take (_teaching_room). That is implied by the
         teacher's NoOverlap and the locked lessons' own avoidance, both bare,
@@ -7889,26 +7925,34 @@ class SchedulerSolver:
         is impossible because its two locked afternoons hold less than the
         week does.
 
-        NEVER AGAINST A CONSTANT, a locked day included. A locked day's rows —
-        the cap's under its literal, the linking one bare — are `≤ R·works`
-        and not `≤ R`, though the lock makes it a teaching day either way:
-        `works` is 1 whenever a term of the sum is not 0, so the bound is the
-        same and the LP row no weaker. (The rest rule's `works` is its
-        lessons' maximum, so a lock does not force it to 1 either.) The
-        constant form is what CP-SAT 9.15.6755's
+        ON THE DAY'S MINUTES, NEVER ON THEIR SUM. Each row bounds the day's
+        total of the teacher's minutes, a variable equal to `Σ minutes·x` with
+        the week's minutes the sum of the days' (_day_totals, bare: a
+        definition and the lessons' own one day each, which refuse nothing).
+        Two `Σ minutes·x ≤ R` rows on two days are what CP-SAT 9.15.6755's
         presolve threw an IndexError on (absl raw_hash_map::at, out of Solve,
-        a 500 to the school): two `Σ minutes·x ≤ R` rows on two locked days,
-        once a limit the locks fill has closed every other day and each
-        lesson's day literals are down to those two — phase 1 pins every
-        literal, so a row under one is as constant there as a bare one. The
-        review's fuzz found it in 3 weeks of about 1,000 from the linking
-        row, and with that row dropped once in 1,500 from the cap's, each a
-        week that should have named the post (test_teacher_day.py keeps
-        both). Dropping the locked days' rows is not the cure either: side
-        by side at a load of 237-300 on the högstadium week's impossible
-        post, INFEASIBLE in 14.6 s times `works`, 16.2 s against the
-        constant, and TIMEOUT on the 90 s budget with the linking rows of
-        the locked days left out.
+        a 500 to the school), once each lesson's day literals were down to
+        those two — phase 1 pins every literal, so a row under one is as
+        constant there as a bare one. The review's fuzz found it in 3 weeks
+        of about 1,000 from the linking row, and with that row dropped once in
+        1,500 from the cap's, each a week that should have named the post
+        (test_teacher_day.py keeps both).
+
+        AND TIMES `works`, a locked day included, though that was the first
+        cure and is not the cure. A locked day's rows — the cap's under its
+        literal, the linking one bare — are `≤ R·works` and not `≤ R`, though
+        the lock makes it a teaching day either way: `works` is 1 whenever a
+        term of the sum is not 0, so the bound is the same and the LP row no
+        weaker, and one row sees the cap and the days limit together. (The
+        rest rule's `works` is its lessons' maximum, so a lock does not force
+        it to 1 either.) It ended the throws above, but not the cause: where a
+        week's minutes force both days to be worked, presolve fixes `works`
+        to 1 and the row is `≤ R` again, and the guard's fuzz found one such
+        week in 5,865 (test_solve_guard.py keeps it). Dropping the locked
+        days' rows is no cure either: side by side at a load of 237-300 on
+        the högstadium week's impossible post, INFEASIBLE in 14.6 s times
+        `works`, 16.2 s against the constant, and TIMEOUT on the 90 s budget
+        with the linking rows of the locked days left out.
 
         `works` IS NOT FREE. Each lesson on the day implies it, and it is at
         most their sum, so it is true exactly when the teacher teaches there;
@@ -7988,11 +8032,33 @@ class SchedulerSolver:
                     teacher_days, literals,
                 )
 
-            def taught(day_index: int) -> cp_model.LinearExpr:
-                return sum(
-                    decision.duration * slot_minutes * on(decision, day_index)
-                    for decision in reaching[day_index]
-                )
+            minutes: dict[int, cp_model.IntVar] = {}
+
+            def taught(day_index: int) -> cp_model.IntVar:
+                # The day's minutes, one total per day the teacher's lessons
+                # reach and the week's minutes their sum (_day_totals), built
+                # with the first row that reads one: rows on these, and never
+                # on `Σ minutes·x`, are what presolve no longer throws on.
+                if not minutes:
+                    days = [index for index in range(len(weekdays)) if reaching[index]]
+                    minutes.update(_day_totals(
+                        model,
+                        f"ldminutes_{teacher_id}",
+                        {
+                            index: sum(
+                                decision.duration * slot_minutes * on(decision, index)
+                                for decision in reaching[index]
+                            )
+                            for index in days
+                        },
+                        {
+                            index: sum(decision.duration for decision in reaching[index])
+                            * slot_minutes
+                            for index in days
+                        },
+                        sum(decision.duration for decision in group) * slot_minutes,
+                    ))
+                return minutes[day_index]
 
             for rule in rules:
                 cap = rule.max_teaching_minutes_per_day
@@ -8015,10 +8081,10 @@ class SchedulerSolver:
                         # literal in _add_teacher_lunch.
                         resource_ids=[rule.id],
                     )
-                    # Times the day's `works`, a locked day's too, which is
-                    # what lets one LP row see the cap and the days limit
-                    # together — and never against a constant: see the
-                    # docstring's CP-SAT paragraph.
+                    # On the day's minutes and times its `works`, a locked
+                    # day's too: one LP row sees the cap and the days limit
+                    # together, and presolve gets no sum against a number to
+                    # throw on — the docstring's two CP-SAT paragraphs.
                     model.Add(
                         taught(day_index) <= residual * works(day_index),
                     ).OnlyEnforceIf(literal)
@@ -9118,6 +9184,72 @@ def _day_reach(
             last = min(high, (day_index + 1) * slots_per_day - 1)
             reach[day_index].append((first, last + duration))
     return dict(reach)
+
+
+def _day_totals(
+    model: cp_model.CpModel,
+    name: str,
+    on_days: dict[int, cp_model.LinearExpr],
+    most: dict[int, int],
+    week: int,
+) -> dict[int, cp_model.IntVar]:
+    """A variable per day equal to what lands there, and the days summing to the week.
+
+    How a cap on a day is posted, by every builder that caps what a day takes:
+    `total_d == Σ on day d`, `total_d` in [0, most_d], and `Σ_d total_d ==
+    week`. The cap is then a bound on `total_d` — its domain, or a row on it
+    under the rule's literal — and never the day's sum against a number.
+
+    THE SUM AGAINST A NUMBER IS WHAT CP-SAT 9.15.6755 THREW ON. Once presolve
+    has narrowed a set of lessons to two days, a lesson's literal for one day
+    is the negation of its literal for the other, and the two days' rows
+    `Σ x ≤ a` and `Σ x ≤ b` turn into one row over one set of literals, bounded
+    above and below. Where those bounds cannot both hold — the lessons need
+    more than the two days take — presolve's duplicate pass is the step that
+    proves the week impossible, the symmetry detection right after it runs on
+    the model it has just proved infeasible, and Solve raises IndexError
+    (absl raw_hash_map::at): google/or-tools#5494, fixed upstream in fb65967
+    and in no release yet. The guard's fuzz found it in 25 of 5,865 accepted
+    weeks, from three builders (_add_rules_constraints,
+    _add_distribution_constraints and _add_teacher_day_constraints), and each
+    of those weeks was then proved again without presolve.
+
+    THE WEEK ROW REFUSES IT FIRST. Its terms are the day totals, so presolve's
+    bound propagation reads off it what the duplicate pass would have found
+    later — two days that take a and b hold a + b, and a week of more is
+    refused there — and two days' rows can no longer turn into one, since each
+    has its own total in it. Where the old rows threw, every build now answers
+    INFEASIBLE out of presolve (tests/test_solve_guard.py keeps the weeks).
+
+    NOTHING IS LOOSER AND NOTHING IS FREE. A total is its sum by definition,
+    so a bound on it is the bound on the sum, row for row in the LP. The week
+    row is "each lesson lands on exactly one day" added up: a one-hot's LP
+    holds it already, and a reified literal per day held nothing of the kind,
+    so the LP is as strong or stronger. Every total is fixed once the
+    literals under it are, so none is a free variable — a few thousand of
+    those once flipped a solvable model to UNKNOWN (_build_model).
+
+    MEASURED side by side with the sum rows (benchmarks/hogstadium.py, one
+    loaded host): the impossible post (--teacher-day-rules
+    --infeasible-days) INFEASIBLE in 5.5-6.0 s against 18.6-19.8 s, and on
+    one worker refuted by presolve alone; the first timetable no slower,
+    within the portfolio's own spread — 22 runs each on the plain week, means
+    9.3 s against 9.2 s, though the no-LP worker that sometimes won there no
+    longer does — and even with the caps and posts on, or with a subject's
+    days on every class.
+
+    `on_days` maps every day a lesson can land on to that day's sum, and
+    `most` gives each day's domain; a day missing from `on_days` must be one
+    no lesson reaches, or the week row would be wrong.
+    """
+    totals = {
+        day_index: model.NewIntVar(0, most[day_index], f"{name}_{day_index}")
+        for day_index in on_days
+    }
+    for day_index, landed in on_days.items():
+        model.Add(totals[day_index] == landed)
+    model.Add(sum(totals.values()) == week)
+    return totals
 
 
 def _blocks_of(

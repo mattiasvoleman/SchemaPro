@@ -2,15 +2,16 @@
 
 CP-SAT 9.15.6755's presolve threw `IndexError:
 absl::container_internal::raw_hash_map<>::at` out of Solve on a model it had
-accepted, and the school's Generera came back a 500. Lärarens dag fixed the
-rows that set it off; _solve_guarded is what keeps the next such row from
-reaching a school the same way.
+accepted, and the school's Generera came back a 500. The builders no longer
+post the rows that set it off (_day_totals); _solve_guarded is what keeps the
+next such row from reaching a school the same way.
 
 TWO KINDS OF THROW. The injected one — CpSolver.Solve patched to raise what
 9.15 raised — decides exactly which solve throws, so every path a caller
 takes on a failed solve can be walked. The real one is that crash itself,
-kept: the Lärarens dag week with its two locked-day rows put back in the
-constant form, which 9.15.6755's presolve still throws on today.
+kept: a week of the shape the fuzz found, written straight in CP-SAT with
+the rows the builders used to post, which 9.15.6755's presolve still throws
+on today.
 """
 
 from __future__ import annotations
@@ -30,7 +31,12 @@ from app.config import Settings
 from app.exceptions import InvalidScheduleInputError
 from app.main import create_app
 from app.schemas.schedule import OptimizeScheduleRequest
-from app.solver.scheduler_solver import SchedulerSolver, SolverCrashedError, _solve_guarded
+from app.solver.scheduler_solver import (
+    SchedulerSolver,
+    SolverCrashedError,
+    _day_totals,
+    _solve_guarded,
+)
 
 API_KEY = "test-api-key-000000000000000000000000"
 #: The id an injected throw quotes, as a CP-SAT message quoting a variable would.
@@ -534,87 +540,52 @@ def test_through_the_api_that_crash_is_the_500_it_always_was(
 # The crash itself
 # ---------------------------------------------------------------------------
 
-TEACHER = str(uuid4())
-#: Lärarens dag's locked days in the week below, as day indexes: Monday and Thursday.
-LOCKED_DAYS = (0, 3)
-FIVE_SHORT_DAYS = {"SCHEDULE_DAYS": "1,2,3,4,5", "SCHEDULE_DAY_END_MINUTES": 720}
 
+def _add_the_old_rows(model: cp_model.CpModel, *, on_day_totals: bool = False) -> None:
+    """A week of the shape the fuzz found, straight in CP-SAT and beside
+    whatever `model` already holds: one room over two days of sixty slots, a
+    lesson of another class in a block with the first of five lessons of one
+    class, and those five at most two a day. Impossible by count.
 
-def _the_lararens_dag_week() -> OptimizeScheduleRequest:
-    """test_teacher_day.py's test_a_post_the_locked_days_fill_is_refused_by_name_and_never_raises.
-
-    A post of two days whose locked lessons hold Monday and Thursday, with
-    430 minutes of room on them against the teacher's 480: INFEASIBLE, by
-    the post."""
-    block = str(uuid4())
-    idrott = {
-        "subjectId": str(uuid4()), "lessonsPerWeek": 4, "minutesPerLesson": 80,
-        "lessonLengths": [80, 60, 30, 30], "studentGroupSize": 20, "blockId": block,
-    }
-
-    def locked(start: str, end: str, day_of_week: int) -> dict[str, object]:
-        return {
-            "id": str(uuid4()), "teacherId": TEACHER, "studentGroupId": str(uuid4()),
-            "dayOfWeek": day_of_week, "startTime": start, "endTime": end,
-        }
-
-    return OptimizeScheduleRequest.model_validate({
-        "requestId": str(uuid4()),
-        "academicYearId": str(uuid4()),
-        "requirements": [
-            {**idrott, "id": str(uuid4()), "studentGroupId": str(uuid4()), "teacherId": TEACHER},
-            {
-                "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": str(uuid4()),
-                "teacherId": TEACHER, "lessonsPerWeek": 4, "minutesPerLesson": 80,
-                "lessonLengths": [80, 80, 60, 60], "studentGroupSize": 20,
-            },
-            {**idrott, "id": str(uuid4()), "studentGroupId": str(uuid4()), "teacherId": str(uuid4())},
-        ],
-        "rooms": [{"id": str(uuid4()), "capacity": 30} for _ in range(3)],
-        "fixedLessons": [locked("07:30:00", "08:10:00", 1), locked("08:20:00", "09:00:00", 4)],
-        "teacherDayLimits": [
-            {
-                "id": str(uuid4()), "teacherId": TEACHER, "maxTeachingDaysPerWeek": 2,
-                "lockedWeekdays": [[1, 4]],
-            },
-        ],
-    })
-
-
-def _put_the_constant_back(model: cp_model.CpModel) -> int:
-    """Rewrite each locked day's linking row `Σ minutes·x − R·works ≤ 0` as
-    the `Σ minutes·x ≤ R` it was before Lärarens dag's fix. Returns how many."""
-    proto = model.Proto()
-    names = [variable.name for variable in proto.variables]
-    works = {names.index(f"ldworks_{TEACHER}_{day}") for day in LOCKED_DAYS}
-    rewritten = 0
-    for constraint in proto.constraints:
-        if not constraint.has_linear() or constraint.enforcement_literal:
-            continue
-        row = constraint.linear
-        terms = list(zip(row.vars, row.coeffs))
-        room = [-coeff for var, coeff in terms if var in works and coeff < 0]
-        if not room or list(row.domain)[-1] != 0:
-            continue
-        lower = row.domain[0]
-        row.vars.clear()
-        row.coeffs.clear()
-        row.domain.clear()
-        for var, coeff in terms:
-            if var not in works:
-                row.vars.append(var)
-                row.coeffs.append(coeff)
-        row.domain.extend([lower, room[0]])
-        rewritten += 1
-    return rewritten
+    The two days' rows as the builders posted them, `Σ on_day ≤ 2`, are what
+    9.15.6755's presolve throws on: its duplicate pass makes one row of the
+    two, bounded both ways, and proves the week impossible, and the symmetry
+    detection after it runs on the impossible model (google/or-tools#5494,
+    fixed after 9.15). `on_day_totals` posts the same cap as the builders do
+    now (_day_totals). The block's literal is pinned, as phase 1 pins every
+    rule's."""
+    on_grid = cp_model.Domain.FromValues(range(0, 120, 6))
+    starts = [model.NewIntVarFromDomain(on_grid, f"old_start_{i}") for i in range(7)]
+    model.AddNoOverlap([
+        model.NewFixedSizeIntervalVar(start, 6, f"old_lesson_{i}") for i, start in enumerate(starts)
+    ])
+    together = model.NewBoolVar("old_block")
+    model.AddBoolAnd([together])
+    model.Add(starts[0] == starts[5]).OnlyEnforceIf(together)
+    days = []
+    for i in range(5):
+        day = model.NewIntVar(0, 1, f"old_day_{i}")
+        model.AddDivisionEquality(day, starts[i], 60)
+        days.append(day)
+    on_days = {}
+    for day_index in (0, 1):
+        on_day = []
+        for i, day in enumerate(days):
+            on = model.NewBoolVar(f"old_on_{day_index}_{i}")
+            model.Add(day == day_index).OnlyEnforceIf(on)
+            model.Add(day != day_index).OnlyEnforceIf(on.Not())
+            on_day.append(on)
+        on_days[day_index] = sum(on_day)
+    if on_day_totals:
+        _day_totals(model, "old_count", on_days, dict.fromkeys(on_days, 2), len(days))
+    else:
+        for on_day_sum in on_days.values():
+            model.Add(on_day_sum <= 2)
 
 
 def _the_crashing_model() -> cp_model.CpModel:
-    solver = SchedulerSolver(_settings(SOLVER_PROBE_SECONDS=0, **FIVE_SHORT_DAYS))
-    model, *_rest = solver._build_model(
-        _the_lararens_dag_week(), use_assumptions=False, include_objective=False,
-    )
-    assert _put_the_constant_back(model) == len(LOCKED_DAYS)
+    model = cp_model.CpModel()
+    _add_the_old_rows(model)
     return model
 
 
@@ -628,24 +599,35 @@ def test_cp_sat_s_own_presolve_crash_is_answered_and_not_raised() -> None:
     assert _guarded(_solver(10.0), _the_crashing_model(), "phase 1a") == cp_model.INFEASIBLE
 
 
+def test_the_same_week_on_day_totals_is_refused_by_presolve() -> None:
+    """The cure on the witness itself: the same lessons and the same cap, a
+    count per day with the counts summing to the five. Presolve refutes the
+    week on that sum, and nothing throws."""
+    model = cp_model.CpModel()
+    _add_the_old_rows(model, on_day_totals=True)
+    solver = _solver(10.0)
+    solver.parameters.stop_after_presolve = True
+
+    assert solver.Solve(model) == cp_model.INFEASIBLE
+
+
 def test_a_build_that_crashes_presolve_is_refused_by_solve_and_not_a_500(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The same rows, put back in every model solve() builds: the week is
-    still refused, now on the proof phase 1a finds without presolve."""
+    """The old rows, added beside every model solve() builds for a week that
+    has a timetable: each build now throws in presolve, and the week is
+    refused on the proof phase 1a finds without it."""
     build = SchedulerSolver._build_model
 
-    def constant_build(self, request, **kwargs):  # type: ignore[no-untyped-def]  # noqa: ANN001, ANN202
+    def crashing_build(self, request, **kwargs):  # type: ignore[no-untyped-def]  # noqa: ANN001, ANN202
         built = build(self, request, **kwargs)
-        _put_the_constant_back(built[0])
+        _add_the_old_rows(built[0])
         return built
 
-    monkeypatch.setattr(SchedulerSolver, "_build_model", constant_build)
+    monkeypatch.setattr(SchedulerSolver, "_build_model", crashing_build)
 
     with caplog.at_level(logging.WARNING, logger=LOGGER):
-        response = SchedulerSolver(
-            _settings(SOLVER_PROBE_SECONDS=0, **FIVE_SHORT_DAYS),
-        ).solve(_the_lararens_dag_week())
+        response = _solve(_payload(), SOLVER_PROBE_SECONDS=0)
 
     assert response.status == "INFEASIBLE"
     assert any(
@@ -667,6 +649,12 @@ def test_a_build_that_crashes_presolve_is_refused_by_solve_and_not_a_500(
 # Every one also holds a parallel block, has its lessons' days narrowed to two
 # or three, and is impossible by count. No rest or lunch row threw on its
 # own in 2,400 weeks without the two count rows.
+#
+# The three builders now cap a count or the minutes per day, the days summing
+# to the week (_day_totals), and presolve refutes each of these weeks on that
+# sum instead of throwing; the guard's retry without presolve, which on a
+# large school may not finish where presolve's proof was instant, is no
+# longer what answers them.
 
 
 def _id(n: int) -> str:
@@ -736,8 +724,9 @@ def _a_subject_s_per_day_cap() -> tuple[dict[str, object], dict[str, object]]:
 def _a_teacher_s_cap_on_forced_days() -> tuple[dict[str, object], dict[str, object]]:
     """Teacher 6 has 535 minutes on the two days the frames leave them and a
     cap of 265 a day, so both days must be worked: presolve fixes `works` to
-    1, and `≤ 265·works` is `≤ 265` again. NEVER AGAINST A CONSTANT is not
-    enough on its own."""
+    1, and `≤ 265·works` was `≤ 265` again: times `works` alone was not the
+    cure. A cap on each day's minutes, the days' minutes summing to the
+    week's 535, is."""
     grade = {"minGradeLevel": 7, "maxGradeLevel": 7}
 
     def closed(grade_level: int, day: int) -> dict[str, object]:
@@ -779,16 +768,21 @@ def test_a_week_the_fuzz_found_is_refused_by_name_and_not_a_500(
     week: Callable[[], tuple[dict[str, object], dict[str, object]]],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Accepted by the pre-flights, thrown on by a bare Solve — the witness,
-    as above — and refused by solve() with the causes named."""
+    """Accepted by the pre-flights, proved impossible by a bare Solve's
+    presolve — which threw on all three before the day totals — and refused
+    by solve() with the causes named, the guard never called on."""
     settings, payload = week()
     request = OptimizeScheduleRequest.model_validate(payload)
     solver = SchedulerSolver(_settings(SOLVER_PROBE_SECONDS=0, **settings))
     solver._validate_request(request)
-    model, *_rest = solver._build_model(request, use_assumptions=False, include_objective=False)
-
-    with pytest.raises(IndexError, match="raw_hash_map"):
-        _solver(10.0).Solve(model)
+    for kwargs in (
+        {"use_assumptions": False, "include_objective": False},
+        {"use_assumptions": False, "include_objective": True},
+    ):
+        model, *_rest = solver._build_model(request, **kwargs)
+        presolve_only = _solver(10.0)
+        presolve_only.parameters.stop_after_presolve = True
+        assert presolve_only.Solve(model) == cp_model.INFEASIBLE, kwargs
 
     with caplog.at_level(logging.WARNING, logger=LOGGER):
         response = solver.solve(request)
@@ -796,4 +790,4 @@ def test_a_week_the_fuzz_found_is_refused_by_name_and_not_a_500(
     assert response.status == "INFEASIBLE"
     assert response.conflicts is not None
     assert response.conflicts.summary_code == "CONFLICT_CORE_SUMMARY"
-    assert any("IndexError in phase 1a" in record.getMessage() for record in caplog.records)
+    assert not [record for record in caplog.records if "cp-sat raised" in record.getMessage()]
