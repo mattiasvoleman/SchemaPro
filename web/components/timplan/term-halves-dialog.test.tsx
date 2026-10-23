@@ -224,6 +224,22 @@ describe("TermHalvesDialog", () => {
     expect(state.post.mock.calls[0]![1]).toEqual(expect.objectContaining({ halfIds: ["h-1", "h-2"] }));
   });
 
+  it("says a co-teacher who is no longer active does not follow, and sends none rather than an id no select shows", async () => {
+    const { user } = renderDialog({ requirement: post({ coTeacherId: "t-gone" }) });
+
+    expect(screen.getByText("coTeacherInactive")).toBeInTheDocument();
+    await user.click(submit());
+
+    expect(state.post.mock.calls[0]![1]).toEqual(
+      expect.objectContaining({
+        subjects: [
+          { subjectId: "s-tx", teacherId: null, coTeacherId: null },
+          { subjectId: "s-tm", teacherId: null, coTeacherId: null },
+        ],
+      }),
+    );
+  });
+
   it("starts the class's co-teacher on the first subject, says so, and sends whom each subject has", async () => {
     const { user } = renderDialog({ requirement: post({ coTeacherId: "t-cecilia" }) });
 
