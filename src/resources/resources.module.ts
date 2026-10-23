@@ -17,6 +17,7 @@ import { TeachingRequirementsController } from './teaching-requirements.controll
 import { TeachingRequirementsService } from './teaching-requirements.service';
 import { TeachingBlocksController } from './teaching-blocks.controller';
 import { TeachingBlocksService } from './teaching-blocks.service';
+import { TermHalvesService } from './term-halves.service';
 import { AvailabilityConstraintsController } from './availability-constraints.controller';
 import { AvailabilityConstraintsService } from './availability-constraints.service';
 import { FrameTimesController } from './frame-times.controller';
@@ -81,6 +82,7 @@ import { NationalTimplansService } from './national-timplans.service';
     StudentGroupsService,
     TeachingRequirementsService,
     TeachingBlocksService,
+    TermHalvesService,
     AvailabilityConstraintsService,
     FrameTimesService,
     LunchServingsService,

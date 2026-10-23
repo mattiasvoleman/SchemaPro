@@ -460,6 +460,112 @@ describe('Planning surface (e2e)', () => {
         .expect(201);
     });
 
+    // Dela terminsvis i halvklass, round-tripped as the admin, so the handler
+    // and not only the guard is covered: 7A's slöjd replaced by four posts on
+    // two new halves, in one block per term.
+    it('splits a class’s post by term into its halves', async () => {
+      const POST = '17171717-1717-4717-8717-171717171717';
+      const TEXTIL = '18181818-1818-4818-8818-181818181818';
+      const TRA = '19191919-1919-4919-8919-191919191919';
+      // Once each, so nothing here answers for a later test.
+      harness.tx['teachingRequirement']!['findUnique']!
+        .mockResolvedValueOnce({ studentGroupId: GROUP_ID })
+        .mockResolvedValueOnce({
+          id: POST,
+          academicYearId: YEAR_ID,
+          subjectId: SUBJECT_ID,
+          studentGroupId: GROUP_ID,
+          teacherId: null,
+          coTeacherId: null,
+          lessonsPerWeek: 2,
+          minutesPerLesson: 60,
+          lessonLengths: [],
+          minutesBefore: 0,
+          minutesAfter: 0,
+          ownDistribution: false,
+          maxLessonsPerDay: null,
+          minDaysBetween: null,
+          blockId: null,
+          recurrence: 'ALL_WEEKS',
+          startDate: null,
+          endDate: null,
+          subject: { name: 'Slöjd' },
+          block: null,
+          studentGroup: { id: GROUP_ID, name: '7A', kind: 'CLASS', halves: [] },
+        });
+      // The class's lock answers nothing; the year's bounds answer the year.
+      // Removed again by afterEach.
+      Object.assign(harness.tx, {
+        $queryRaw: jest.fn(async (strings: TemplateStringsArray) =>
+          strings.join('?').includes('"AcademicYears"')
+            ? [{ startDate: new Date('2026-08-17T00:00:00Z'), endDate: new Date('2027-06-11T00:00:00Z') }]
+            : [],
+        ),
+      });
+      harness.tx['subject']!['findMany']!.mockResolvedValueOnce([
+        { id: TEXTIL, name: 'Textilslöjd' },
+        { id: TRA, name: 'Trä- och metallslöjd' },
+      ]);
+      harness.tx['studentGroup']!['findUnique']!.mockResolvedValueOnce({
+        name: '7A',
+        kind: 'CLASS',
+        academicYearId: YEAR_ID,
+        gradeLevel: 7,
+        _count: { halves: 0 },
+      });
+      // No name taken, no half with either subject (an earlier test's rows
+      // would otherwise answer).
+      harness.tx['studentGroup']!['findMany']!.mockResolvedValueOnce([]);
+      harness.tx['teachingRequirement']!['findMany']!.mockResolvedValueOnce([]);
+      harness.tx['teachingBlock']!['findMany']!.mockResolvedValueOnce([]);
+      harness.tx['studentGroup']!['createManyAndReturn']!.mockResolvedValueOnce([
+        { id: 'h1', name: '7A:1' },
+        { id: 'h2', name: '7A:2' },
+      ]);
+      harness.tx['teachingRequirement']!['deleteMany']!.mockResolvedValueOnce({ count: 1 });
+      harness.tx['teachingBlock']!['create']!
+        .mockResolvedValueOnce({ id: 'ht', name: 'Slöjd 7A HT' })
+        .mockResolvedValueOnce({ id: 'vt', name: 'Slöjd 7A VT' });
+      harness.tx['teachingRequirement']!['createManyAndReturn']!.mockImplementationOnce(
+        async ({ data }: { data: Record<string, unknown>[] }) => data.map((row, index) => ({ ...row, id: `r${index}` })),
+      );
+
+      const response = await request(http())
+        .post(`/api/v1/teaching-requirements/${POST}/term-halves`)
+        .set('x-test-user', admin())
+        .send({ subjects: [{ subjectId: TEXTIL }, { subjectId: TRA }], springStartDate: '2027-01-11' })
+        .expect(201);
+
+      expect(response.body.removedRequirementId).toBe(POST);
+      expect(response.body.blocks).toEqual([
+        { id: 'ht', name: 'Slöjd 7A HT', requirementIds: ['r0', 'r2'] },
+        { id: 'vt', name: 'Slöjd 7A VT', requirementIds: ['r1', 'r3'] },
+      ]);
+      // The dates as the plain days they are, not as instants.
+      expect(
+        response.body.requirements.map((row: { startDate: string | null; endDate: string | null }) => [row.startDate, row.endDate]),
+      ).toEqual([
+        [null, '2027-01-10'],
+        ['2027-01-11', null],
+        [null, '2027-01-10'],
+        ['2027-01-11', null],
+      ]);
+    });
+
+    it('refuses a term split without two subjects before the service runs', async () => {
+      await request(http())
+        .post(`/api/v1/teaching-requirements/${SUBJECT_ID}/term-halves`)
+        .set('x-test-user', admin())
+        .send({ subjects: [{ subjectId: SUBJECT_ID }], springStartDate: '2027-01-11' })
+        .expect(400);
+      await request(http())
+        .post(`/api/v1/teaching-requirements/${SUBJECT_ID}/term-halves`)
+        .set('x-test-user', admin())
+        .send({ subjects: [{ subjectId: 'textil' }, { subjectId: SUBJECT_ID }], springStartDate: '2027-02-30' })
+        .expect(400);
+      expect(harness.tx['teachingRequirement']!['findUnique']).not.toHaveBeenCalled();
+    });
+
     it('rejects a period date that no calendar has', async () => {
       // 2026 is not a leap year, and April has 30 days. Both shapes are
       // /^\d{4}-\d{2}-\d{2}$/ and both were accepted before, then rolled over
@@ -6176,6 +6282,8 @@ describe('Planning surface (e2e)', () => {
       ['POST', `/api/v1/student-groups/${GROUP_ID}/halves`],
       ['PUT', `/api/v1/student-groups/${GROUP_ID}/halves/members`],
       ['POST', '/api/v1/teaching-requirements'],
+      // Dela terminsvis i halvklass: a post replaced by four, halves and blocks.
+      ['POST', `/api/v1/teaching-requirements/${SUBJECT_ID}/term-halves`],
       ['POST', '/api/v1/availability-constraints'],
       // Both verbs for ramtider. The GET is the one that would go missing in a
       // refactor: a decorator dropped from the class leaves the writes guarded
