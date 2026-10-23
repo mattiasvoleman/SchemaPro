@@ -130,10 +130,13 @@ describe('TermHalvesService', () => {
       { id: HALF_2, name: '7A:2' },
     ]);
     tx.teachingRequirement.deleteMany.mockResolvedValue({ count: 1 });
-    tx.teachingBlock.create.mockImplementation(async ({ data }: { data: { name: string } }) => ({
-      id: data.name.endsWith('HT') ? AUTUMN : SPRING,
-      name: data.name,
-    }));
+    tx.teachingBlock.create.mockImplementation(
+      async ({ data }: { data: { name: string; sameTimesAsBlockId: string | null } }) => ({
+        id: data.name.endsWith('HT') ? AUTUMN : SPRING,
+        name: data.name,
+        sameTimesAsBlockId: data.sameTimesAsBlockId,
+      }),
+    );
     tx.teachingRequirement.createManyAndReturn.mockImplementation(
       async ({ data }: { data: Record<string, unknown>[] }) =>
         // Answered in another order than asked, as RETURNING may.
@@ -163,9 +166,11 @@ describe('TermHalvesService', () => {
           expect.objectContaining({ name: '7A:2', kind: 'TEACHING_GROUP', halfOfId: CLASS, gradeLevel: 7 }),
         ],
       });
+      // The spring's block takes the autumn's times: the generator writes
+      // each spring post at the autumn post's in its subject (same-times.ts).
       expect(tx.teachingBlock.create.mock.calls.map(([args]) => (args as { data: unknown }).data)).toEqual([
-        { schoolId: admin.schoolId, academicYearId: YEAR, name: 'Slöjd 7A HT' },
-        { schoolId: admin.schoolId, academicYearId: YEAR, name: 'Slöjd 7A VT' },
+        { schoolId: admin.schoolId, academicYearId: YEAR, name: 'Slöjd 7A HT', sameTimesAsBlockId: null },
+        { schoolId: admin.schoolId, academicYearId: YEAR, name: 'Slöjd 7A VT', sameTimesAsBlockId: AUTUMN },
       ]);
 
       const [{ data }] = tx.teachingRequirement.createManyAndReturn.mock.calls[0] as [{ data: Record<string, unknown>[] }];
@@ -226,8 +231,8 @@ describe('TermHalvesService', () => {
         ['created-3', HALF_2, TEXTIL, '2027-01-11', null],
       ]);
       expect(result.blocks).toEqual([
-        { id: AUTUMN, name: 'Slöjd 7A HT', requirementIds: ['created-0', 'created-2'] },
-        { id: SPRING, name: 'Slöjd 7A VT', requirementIds: ['created-1', 'created-3'] },
+        { id: AUTUMN, name: 'Slöjd 7A HT', sameTimesAsBlockId: null, requirementIds: ['created-0', 'created-2'] },
+        { id: SPRING, name: 'Slöjd 7A VT', sameTimesAsBlockId: AUTUMN, requirementIds: ['created-1', 'created-3'] },
       ]);
       expect(result.warnings).toEqual([]);
     });

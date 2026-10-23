@@ -1703,12 +1703,24 @@ model TeachingBlock {
   academicYearId String   @db.Uuid
   /// Trimmed, 1..80 characters by CHECK (TeachingBlocks_name_is_sane).
   name           String
+  /// The block whose times this one takes: a term split's spring block names
+  /// its autumn block, and the generator writes each spring post at the times
+  /// of the autumn post in its subject (same-times.ts). Null, the default, is
+  /// a block placed on its own. Of the block's own year and school by the
+  /// composite key; never itself, and one block per named block (CHECK and a
+  /// unique index). Deleting the named block clears this column only — ON
+  /// DELETE SET NULL ("sameTimesAsBlockId"), which the SetNull below cannot
+  /// say and the migration does. See 20261128090000.
+  sameTimesAsBlockId String? @unique @db.Uuid
   createdAt      DateTime @default(now()) @db.Timestamptz(6)
   updatedAt      DateTime @updatedAt @db.Timestamptz(6)
 
   school       School                @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   academicYear AcademicYear          @relation(fields: [academicYearId, schoolId], references: [id, schoolId], onDelete: Cascade)
   requirements TeachingRequirement[]
+  sameTimesAs  TeachingBlock?        @relation("SameTimes", fields: [sameTimesAsBlockId, academicYearId, schoolId], references: [id, academicYearId, schoolId], onDelete: SetNull, onUpdate: NoAction)
+  /// The block on this one's times, if any (the unique index makes it one).
+  sameTimes    TeachingBlock[]       @relation("SameTimes")
 
   @@unique([schoolId, academicYearId, name])
   /// The target TeachingRequirement's block key needs: a block OF ITS OWN YEAR.
