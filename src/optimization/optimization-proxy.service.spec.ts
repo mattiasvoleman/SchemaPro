@@ -1460,6 +1460,11 @@ describe('OptimizationProxyService', () => {
           { grades: '7–9', minutes: 60, before: 10, after: 0, changeover: 5, remaining: 55 },
         ],
         ['RAST_NO_STRETCH_FOR_REQUIREMENT', { grades: '7–9', minutes: 60, remaining: 40 }],
+        [
+          'RAST_MARGIN_NO_STRETCH_FOR_REQUIREMENT',
+          { grades: '7–9', minutes: 90, before: 10, after: 0, changeover: 0, remaining: 80 },
+        ],
+        ['LESSON_NO_START_FOR_REQUIREMENT', { grades: '7–9', minutes: 60 }],
         ['ROOM_LOCK_LEAVES_NO_ROOM', { grades: '7–9' }],
         [
           'RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT',
@@ -6168,6 +6173,8 @@ describe('OptimizationProxyService', () => {
           'FRAME_NO_WINDOW_FOR_REQUIREMENT',
           'MARGIN_NO_WINDOW_FOR_REQUIREMENT',
           'RAST_NO_STRETCH_FOR_REQUIREMENT',
+          'RAST_MARGIN_NO_STRETCH_FOR_REQUIREMENT',
+          'LESSON_NO_START_FOR_REQUIREMENT',
           'ROOM_NONE_ELIGIBLE_FOR_REQUIREMENT',
           'ROOM_LOCK_LEAVES_NO_ROOM',
           'RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT',

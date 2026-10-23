@@ -737,6 +737,30 @@ MESSAGES: dict[str, str] = {
         "lessons need an unbroken stretch, and the longest any day still offers is {remaining} "
         "minutes. Shorten a rast, widen the frame time, or split the lesson."
     ),
+    # Its own code for the reason the margins' is: neither sentence above is true
+    # of the week. Its window holds the lesson and its margins, and its rasts
+    # leave a stretch longer than the lesson; it is the stretch at the day's edge,
+    # less the margin that may not run past it, that is too short. Told only of
+    # its rasts, a school measures 125 minutes where the sentence says 110.
+    "RAST_MARGIN_NO_STRETCH_FOR_REQUIREMENT": (
+        "The rasts and the time around the lessons of requirement {requirement} "
+        "({grades, select, any {years unknown} other {years {grades}}}) together leave them no "
+        "stretch to run in: its {minutes}-minute lessons take {before} minutes before and "
+        "{after} minutes after for the pupils, {changeover, select, 0 {with no changeover "
+        "between lessons} other {plus {changeover} minutes of changeover between lessons}}, "
+        "none of which may run past the start or end of the day, and the longest stretch the "
+        "rasts then leave any day for the lesson itself is {remaining} minutes. Shorten the "
+        "lessons, shorten those margins or a rast, or widen the frame time."
+    ),
+    # The builder's backstop (_start_domains), for a domain emptied by a
+    # composition no refusal above names. Generic because it has to be: it is
+    # only ever said when the specific sentence is missing.
+    "LESSON_NO_START_FOR_REQUIREMENT": (
+        "The {minutes}-minute lessons of requirement {requirement} "
+        "({grades, select, any {years unknown} other {years {grades}}}) have no start left on "
+        "any day: the frame times, the rasts and the time around the lessons for the pupils "
+        "leave them nowhere to begin. Shorten the lessons, or widen what they have to fit inside."
+    ),
     "RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT": (
         "The break at {rast} on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} "
         "4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}} asks for a lesson "

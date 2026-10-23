@@ -2889,33 +2889,84 @@ class SchedulerSolver:
             # single assumption literal, and an empty conflict core erases every
             # other cause in the payload; the school is handed
             # INSUFFICIENT_RESOURCES for a sentence it wrote itself.
+            #
+            # ONLY THE DAYS THE FRAMES LEAVE OPEN. A day the frames close is
+            # absent from day_windows, and this loop used to read it with a
+            # default of the whole day — so the one day whose rasts left room
+            # was counted although no lesson could ever start on it. A fuzz of
+            # the engine found the week: six days 08:00-10:00, a 70-minute
+            # year-8 lesson, a year-8 frame closing Monday and a Monday rast
+            # that leaves 08:50-10:00 there, while every other day's longest
+            # stretch is 60 minutes. Accepted here, the builder made an empty
+            # domain, CP-SAT answered MODEL_INVALID and the school read a 500
+            # quoting a variable named after the requirement's id. A stage no
+            # frame reaches has every day there, whole, so a school without
+            # frames is asked what it always was.
+            #
+            # AND WITH THE MARGINS, in a second reading of the same days. The
+            # builder clips each open day by the margins first and lets the
+            # rasts cut what is left, so a stretch the rasts leave at the day's
+            # edge can be longer than the lesson and still too short once the
+            # pupils' buffer or the corridor has taken its minutes there: the
+            # fuzz's other week was 08:00-12:00, a 120-minute lesson with 15
+            # minutes after it and a rast 09:45-09:55, whose 125 minutes after
+            # the rast hold 110 for the lesson. Neither check alone refuses
+            # it — the window holds the margins, the stretch holds the lesson —
+            # and the composition is the empty domain all the same. Read
+            # without margins, `with_margins` IS `widest`, so a week with none
+            # is asked exactly what it always was.
             if request.rasts:
                 span = span_of(requirement)
                 windows = day_windows(request.frame_times, span, self._grid)
                 widest = 0
-                for day_index, day_of_week in enumerate(self._grid.schedule_days):
-                    open_slot, close_slot = windows.get(
-                        day_index, (0, self._grid.slots_per_day),
+                with_margins = 0
+                for day_index, (open_slot, close_slot) in sorted(windows.items()):
+                    blocks = blocks_for(
+                        request.rasts, span, self._grid.schedule_days[day_index], self._grid,
                     )
-                    blocks = blocks_for(request.rasts, span, day_of_week, self._grid)
                     widest = max(
                         widest,
                         _widest_free_run(open_slot, close_slot, blocks),
                     )
-                if widest < duration_slots:
-                    grades = (
-                        "any"
-                        if requirement.min_grade_level is None
-                        else _grade_span_text(
-                            requirement.min_grade_level, requirement.max_grade_level,
-                        )
+                    # _start_domains' clip, down to the rounding, for the reason
+                    # the margins' refusal above gives for sharing it.
+                    with_margins = max(
+                        with_margins,
+                        _widest_free_run(
+                            max(open_slot, lead),
+                            min(close_slot, self._grid.slots_per_day - changeover - trail),
+                            blocks,
+                        ),
                     )
+                grades = (
+                    "any"
+                    if requirement.min_grade_level is None
+                    else _grade_span_text(
+                        requirement.min_grade_level, requirement.max_grade_level,
+                    )
+                )
+                if widest < duration_slots:
                     remaining = widest * self._grid.slot_minutes
                     raise InvalidScheduleInputError.of("RAST_NO_STRETCH_FOR_REQUIREMENT", {
                         "requirement": str(requirement.id),
                         "grades": grades,
                         "minutes": requirement.minutes_per_lesson,
                         "remaining": remaining,
+                    })
+                # Its own sentence, as the margins have one beside the frames'.
+                # Folded into the one above, that sentence would tell the school
+                # its rasts leave 110 minutes where it can measure 125, and send
+                # it to shorten a rast when the fifteen minutes after the lesson
+                # are the other half of the cause.
+                if with_margins < duration_slots:
+                    raise InvalidScheduleInputError.of("RAST_MARGIN_NO_STRETCH_FOR_REQUIREMENT", {
+                        "requirement": str(requirement.id),
+                        "grades": grades,
+                        "minutes": requirement.minutes_per_lesson,
+                        "before": lead * self._grid.slot_minutes,
+                        "after": trail * self._grid.slot_minutes,
+                        "changeover": changeover * self._grid.slot_minutes,
+                        "remaining": with_margins * self._grid.slot_minutes,
                     })
 
             grades = (
@@ -5213,11 +5264,49 @@ class SchedulerSolver:
                 start_domain = start_domain.intersection_with(
                     self._rast_free_starts(rasts, span, duration),
                 )
+            # A BACKSTOP, NOT A PRE-FLIGHT. Everything above is the school's own
+            # rows — frames, margins, rasts — so a domain they empty is a week
+            # to refuse with the requirement named, never a model to hand
+            # CP-SAT: an empty domain is not an INFEASIBLE but MODEL_INVALID,
+            # which solve() raises as SolverBuildError and the school reads as
+            # a 500 quoting `start_<requirement id>_0`. _validate_request
+            # refuses every composition of the three by its own sentence
+            # first, and a fuzz found two it once let through, so this sentence
+            # is the generic one for the next rule that narrows a domain
+            # without a refusal of its own. The warning is how we hear of it.
+            if start_domain.is_empty():
+                minutes = duration * self._grid.slot_minutes
+                logger.warning(
+                    "a %d-minute lesson reached the builder with no start; "
+                    "_validate_request has no refusal for what emptied it",
+                    minutes,
+                )
+                raise InvalidScheduleInputError.of("LESSON_NO_START_FOR_REQUIREMENT", {
+                    "requirement": str(requirement.id),
+                    "grades": (
+                        "any"
+                        if requirement.min_grade_level is None
+                        else _grade_span_text(
+                            requirement.min_grade_level, requirement.max_grade_level,
+                        )
+                    ),
+                    "minutes": minutes,
+                })
             # ON THE WEEK'S STEP, last. Every bound and hole above is cut on the
             # grid the school wrote it on, and only the starts between the
             # step's multiples go — none of which a timetable needs, and every
             # bound above is itself a multiple. _start_step says why.
             start_domain = _on_lattice(start_domain, lattice)
+            # And the step can therefore never empty a domain the rows left
+            # starts in. If it does, a constant is missing from _start_step's
+            # gcd — our bug, not the school's, so a 500, and one whose message
+            # names no requirement.
+            if start_domain.is_empty():
+                msg = (
+                    f"the week's start step left a {duration}-slot lesson no start "
+                    "its rows allow; _start_step is missing a constant"
+                )
+                raise SolverBuildError(msg)
             domains[duration] = start_domain
         return domains
 
