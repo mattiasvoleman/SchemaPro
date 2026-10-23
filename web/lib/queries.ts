@@ -909,6 +909,13 @@ export interface OptimizationJob {
    * a run. Empty or absent on the same terms.
    */
   errorNames?: string[];
+  /**
+   * The schemaförslag applied over the year since this run, newest first,
+   * from the year's change log: its notes describe a timetable that has been
+   * replaced. Null when none was; absent from the history and an older
+   * gateway. Ordinal and variant are null for an entry that does not say.
+   */
+  supersededBy?: { appliedAt: string; ordinal: number | null; variant: string | null } | null;
   createdAt: string;
   finishedAt: string | null;
 }

@@ -129,8 +129,24 @@ export interface OptimizationJobView {
    * a run — on the same terms as conflictSummaryNames.
    */
   errorNames: string[];
+  /**
+   * The schemaförslag applied over the year since this run — the newest —
+   * whose timetable its notes no longer describe, as the apply's own
+   * REGENERATE entry names it; null when none was. Read by GET jobs/:id for a
+   * succeeded run with notes, the one card that shows them; null in the
+   * history, which shows no notes.
+   */
+  supersededBy: SupersedingCandidate | null;
   createdAt: string;
   finishedAt: string | null;
+}
+
+/** A candidate applied over a run's timetable (ScheduleCandidatesService.apply's REGENERATE entry). */
+export interface SupersedingCandidate {
+  appliedAt: string;
+  /** Null for an entry that does not say (written by hand): a candidate was applied, and which is unknown. */
+  ordinal: number | null;
+  variant: string | null;
 }
 
 const JOB_SELECT = {
@@ -291,6 +307,7 @@ export function jobView(
       // the name the school gives the teacher now, never a stored copy.
       notes: notesViewOf(job.notes, names),
       error: failure.message,
+      supersededBy: null,
       createdAt: job.createdAt.toISOString(),
       finishedAt: job.finishedAt ? job.finishedAt.toISOString() : null,
     },
@@ -381,7 +398,48 @@ export class OptimizationJobsService {
       throw new NotFoundException('Optimization job not found.');
     }
     const [view] = await this.forReader([job], user);
-    return view!;
+    if (view!.status !== 'SUCCEEDED' || view!.notes.length === 0) return view!;
+    return { ...view!, supersededBy: await this.supersedingCandidate(job, user) };
+  }
+
+  /**
+   * The newest schemaförslag applied over the year since the run, from the
+   * year's change log: the apply writes a REGENERATE entry with source
+   * CANDIDATE and the candidate's ordinal and variant. The log keeps it
+   * whatever becomes of the candidate's run — a newer batch, a discard and
+   * the seven-day sweep all delete the run, and with it the appliedAt the
+   * candidates overview had — so the notes a page shows for the run are
+   * never those of a timetable that has since been replaced.
+   *
+   * Since the run was CREATED, not since it finished: both are the
+   * database's clock (the entry's and the job's defaults), where finishedAt
+   * is the API's, and no apply lands while the run is solving (an apply is
+   * refused beside a Generera job, GENERATE_RUNNING). Generera's own entry
+   * has no source. A second statement, read only for a succeeded run with
+   * notes, so the reads the page polls while a run goes stay one. Every
+   * administrator reads the log (its select arm), as they read the run.
+   */
+  private async supersedingCandidate(job: JobRow, user: AuthenticatedUser): Promise<SupersedingCandidate | null> {
+    const entry = await this.prisma.queryWithRls(user, (db) =>
+      db.scheduleChangeLog.findFirst({
+        where: {
+          academicYearId: job.academicYearId,
+          action: 'REGENERATE',
+          createdAt: { gt: job.createdAt },
+          after: { path: ['source'], equals: 'CANDIDATE' },
+        },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        select: { createdAt: true, after: true },
+      }),
+    );
+    if (!entry) return null;
+    const after = (entry.after ?? {}) as { ordinal?: unknown; variant?: unknown };
+    return {
+      appliedAt: entry.createdAt.toISOString(),
+      // A hand-edited entry without them still says a candidate was applied.
+      ordinal: typeof after.ordinal === 'number' && Number.isInteger(after.ordinal) ? after.ordinal : null,
+      variant: typeof after.variant === 'string' ? after.variant : null,
+    };
   }
 
   /** Latest runs for an academic year (run history for the Generate page). */

@@ -547,9 +547,12 @@ describe('OptimizationJobsService', () => {
         errorCode: null,
         errorParams: null,
         errorNames: [],
+        // No notes, so no change log read: nothing to say they were replaced.
+        supersededBy: null,
         createdAt: '2026-08-07T10:00:00.000Z',
         finishedAt: '2026-08-07T10:00:42.000Z',
       });
+      expect(tx.scheduleChangeLog.findFirst).not.toHaveBeenCalled();
     });
 
     it('drops a stored value that is not a scalar rather than rendering it', async () => {
@@ -664,6 +667,7 @@ describe('OptimizationJobsService', () => {
           errorCode: null,
           errorParams: null,
           errorNames: [],
+          supersededBy: null,
           createdAt: '2026-08-07T09:00:00.000Z',
           finishedAt: null,
         },
@@ -1174,7 +1178,7 @@ describe('OptimizationJobsService', () => {
       const wishRun = (overrides: Record<string, unknown> = {}) =>
         row({ solverStatus: 'OPTIMAL', conflicts: [], notes: [wishNote()], ...overrides });
 
-      it('names the teacher for a reader without HR-läs, in one statement more and no Läslogg', async () => {
+      it('names the teacher for a reader without HR-läs, in a statement more for the names and one for the log, and no Läslogg', async () => {
         tx.optimizationJob.findUnique.mockResolvedValue(wishRun());
         tx.user.findMany.mockResolvedValue([evasName]);
 
@@ -1190,7 +1194,8 @@ describe('OptimizationJobsService', () => {
           },
         ]);
         expect(JSON.stringify(view)).not.toMatch(/subjectIds|22222222-dddd/);
-        expect(prisma.queryWithRls).toHaveBeenCalledTimes(2);
+        // The run, the names, and the change log (supersededBy below).
+        expect(prisma.queryWithRls).toHaveBeenCalledTimes(3);
         expect(prisma.withRls).not.toHaveBeenCalled();
         expect(tx.user.findMany).toHaveBeenCalledWith({
           where: { id: { in: [EVA] } },
@@ -1220,8 +1225,9 @@ describe('OptimizationJobsService', () => {
 
         expect(view.notes[0]!.resourceNames).toEqual(['Eva Ek']);
         expect(view.conflicts[0]).toMatchObject({ params: { limit: POST, days: 3 }, resourceNames: ['Eva Ek'] });
-        // The run's read, then one transaction for the posts and the names.
-        expect(prisma.queryWithRls).toHaveBeenCalledTimes(1);
+        // The run's read and the change log's, and one transaction for the
+        // posts and the names.
+        expect(prisma.queryWithRls).toHaveBeenCalledTimes(2);
         expect(prisma.withRls).toHaveBeenCalledTimes(1);
         // The Läslogg names her for the post's days, not for the name.
         expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [EVA] }]);
@@ -1260,6 +1266,65 @@ describe('OptimizationJobsService', () => {
         ]);
         expect(tx.user.findMany).toHaveBeenCalledTimes(1);
         expect(tx.user.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: { in: [EVA, OLLE] } } }));
+      });
+
+      /*
+       * A schemaförslag applied over the year since the run replaced the
+       * timetable the notes describe. The apply's REGENERATE entry says so for
+       * as long as the log keeps it, whatever becomes of the candidate's run.
+       */
+      describe('a candidate applied since', () => {
+        const applied = (after: Record<string, unknown>) => ({ createdAt: new Date('2026-11-23T11:00:00.000Z'), after });
+
+        it('names the newest candidate applied over the year since the run was created', async () => {
+          tx.optimizationJob.findUnique.mockResolvedValue(wishRun());
+          tx.scheduleChangeLog.findFirst.mockResolvedValue(
+            applied({ source: 'CANDIDATE', runId: 'run-1', ordinal: 2, variant: 'TEACHER_GAPS', metrics: { moved: 3 } }),
+          );
+
+          const view = await service.get(JOB_ID, noHr());
+
+          expect(view.supersededBy).toEqual({ appliedAt: '2026-11-23T11:00:00.000Z', ordinal: 2, variant: 'TEACHER_GAPS' });
+          // The database's clock on both sides: the run's createdAt, not its finishedAt.
+          expect(tx.scheduleChangeLog.findFirst).toHaveBeenCalledWith({
+            where: {
+              academicYearId: YEAR_ID,
+              action: 'REGENERATE',
+              createdAt: { gt: wishRun().createdAt },
+              after: { path: ['source'], equals: 'CANDIDATE' },
+            },
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            select: { createdAt: true, after: true },
+          });
+        });
+
+        it('says none when the log has no candidate since', async () => {
+          tx.optimizationJob.findUnique.mockResolvedValue(wishRun());
+          tx.scheduleChangeLog.findFirst.mockResolvedValue(null);
+
+          await expect(service.get(JOB_ID, noHr())).resolves.toMatchObject({ supersededBy: null });
+        });
+
+        it('says a candidate was applied, unnamed, for an entry that does not say which', async () => {
+          tx.optimizationJob.findUnique.mockResolvedValue(wishRun());
+          tx.scheduleChangeLog.findFirst.mockResolvedValue(applied({ source: 'CANDIDATE', ordinal: '2', variant: 7 }));
+
+          await expect(service.get(JOB_ID, noHr())).resolves.toMatchObject({
+            supersededBy: { appliedAt: '2026-11-23T11:00:00.000Z', ordinal: null, variant: null },
+          });
+        });
+
+        it('reads no log for a run without notes or one that did not succeed, nor for the history', async () => {
+          tx.optimizationJob.findUnique.mockResolvedValue(wishRun({ notes: null }));
+          await service.get(JOB_ID, noHr());
+          tx.optimizationJob.findUnique.mockResolvedValue(wishRun({ status: 'FAILED', solverStatus: null }));
+          await service.get(JOB_ID, noHr());
+          tx.optimizationJob.findMany.mockResolvedValue([wishRun()]);
+          const history = await service.list(YEAR_ID, noHr());
+
+          expect(history[0]!.supersededBy).toBeNull();
+          expect(tx.scheduleChangeLog.findFirst).not.toHaveBeenCalled();
+        });
       });
 
       it('names nobody a read does not find: a teacher RLS hides, or gone', async () => {

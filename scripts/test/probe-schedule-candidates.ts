@@ -57,7 +57,10 @@
  *         and they are exactly the wishes the week an apply then writes
  *         breaks — read off the masters by the probe's own count, and by
  *         Generera's notes over the same week; the overview names whose
- *         wish each is and gives out no Users id.
+ *         wish each is and gives out no Users id; and a finished Generera
+ *         run of the year names the applied candidate from the change log
+ *         (supersededBy), not an apply from before it, and past Generera's
+ *         own newer entry.
  *
  * Interleavings are made the way the rest of the probe makes them: a holder
  * parked on a promise inside its transaction, the other side started, its wait
@@ -1532,6 +1535,16 @@ export async function scheduleCandidateChecks(
       assert.deepEqual(said(draftNotes), broken(live), 'the draft’s wishes are not the draft’s week');
       assert.notDeepEqual(said(stored[0]!.notes), said(stored[1]!.notes), 'KEEP and TEACHER_GAPS break the same wishes: the check proves nothing');
 
+      // A finished Generera run of the year with a broken wish, as the job
+      // store keeps one: the earlier applies of this probe came before it,
+      // so nothing has replaced its timetable yet.
+      const generated = await one<{ id: string }>(
+        `INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", status, "solverStatus", notes, "finishedAt")
+         VALUES ($1, $2, 'SUCCEEDED', 'OPTIMAL', $3::jsonb, now()) RETURNING id`,
+        [s, year, JSON.stringify(draftNotes)],
+      );
+      assert.equal((await jobs.get(generated.id, admin)).supersededBy, null, 'an apply from before the run is said to replace it');
+
       // The apply writes TEACHER_GAPS; what it leaves is read off the masters.
       const chosen = stored.find((row) => row.variant === 'TEACHER_GAPS')!;
       const { mode } = await candidates.check(runId, admin);
@@ -1563,6 +1576,16 @@ export async function scheduleCandidateChecks(
       const byTeacherAndDay = (week: Week) => week.map((row) => `${row.teacherId}|${row.coTeacherId}|${row.dayOfWeek}`).sort();
       assert.deepEqual(byTeacherAndDay(again), byTeacherAndDay(after), 'Generera laid another week: the comparison below proves nothing');
       assert.deepEqual(said(regenerated.notes), said(chosen.notes), 'Generera and the candidate disagree about one week');
+
+      // The run's card now names the apply, from the change log, past the
+      // newer REGENERATE entry Generera just wrote, which has no source.
+      const card = await jobs.get(generated.id, admin);
+      responses.push(card);
+      assert.deepEqual(
+        [card.supersededBy?.ordinal, card.supersededBy?.variant, typeof card.supersededBy?.appliedAt],
+        [chosen.ordinal, 'TEACHER_GAPS', 'string'],
+        `the run does not name the candidate applied over it: ${JSON.stringify(card.supersededBy)}`,
+      );
 
       // The overview names whose wish it is, for every reader, and no id leaves.
       const page = await candidates.overview(year, admin);
