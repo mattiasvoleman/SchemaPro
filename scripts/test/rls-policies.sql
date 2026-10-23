@@ -23989,7 +23989,7 @@ END $$;
 SET LOCAL ROLE app_authenticated;
 ROLLBACK;
 
--- Section 170: schemaförslag, katalogen (20261125090000).
+-- Section 170: schemaförslag, katalogen (20261125090000, 20261127090000).
 --
 -- What sections 171-178 prove by acting, read from the catalogue, where a
 -- later migration that loosens one shows up even on a path no section walks.
@@ -24009,8 +24009,9 @@ ROLLBACK;
 -- tenant keys) and each cascades, so a school, a year or a run takes its
 -- rows along; neither table has a key to anything else, so no live table is
 -- in its locks. One active run per year is a partial unique index, every
--- CHECK is in place and validated, and the statuses are the five the
--- gateway writes.
+-- CHECK is in place and validated — the free-day wishes' two of
+-- 20261127090000 among them, which added columns and no grant — and the
+-- statuses are the five the gateway writes.
 -- ---------------------------------------------------------------------------
 
 DO $$
@@ -24200,10 +24201,11 @@ BEGIN
                            'ScheduleCandidateRuns_applied_together', 'ScheduleCandidateRuns_progress_is_of_the_requested',
                            'ScheduleCandidateRuns_basis_is_a_sha256', 'ScheduleCandidateRuns_error_is_short',
                            'ScheduleCandidateRuns_errorCode_is_a_name', 'ScheduleCandidateRuns_discarded_is_finished',
+                           'ScheduleCandidateRuns_draftNotes_is_a_list',
                            'ScheduleCandidates_ordinal_is_one_to_four',
                            'ScheduleCandidates_variant_is_a_name', 'ScheduleCandidates_seed_is_not_negative',
                            'ScheduleCandidates_solverStatus_is_known', 'ScheduleCandidates_lessons_is_a_list',
-                           'ScheduleCandidates_errorCode_is_a_name'] LOOP
+                           'ScheduleCandidates_errorCode_is_a_name', 'ScheduleCandidates_notes_is_a_list'] LOOP
     IF NOT EXISTS (SELECT 1 FROM pg_constraint
                     WHERE conrelid IN ('"ScheduleCandidateRuns"'::regclass, '"ScheduleCandidates"'::regclass)
                       AND conname = c AND convalidated) THEN
@@ -24741,7 +24743,7 @@ ROLLBACK;
 
 -- ---------------------------------------------------------------------------
 -- Section 174: varje CHECK släpper in och vägrar vid sina gränser
--- (20261125090000).
+-- (20261125090000, 20261127090000).
 --
 -- As FULL in the matrix school, one row at a time, each undone at once: a
 -- run asks for one to four candidates; its progress is from none to what it
@@ -24753,7 +24755,9 @@ ROLLBACK;
 -- (an active run hidden from the page would still hold the year). A candidate's
 -- ordinal is one to four; its variant a name of at most 32 characters; its
 -- seed none or not negative; its solver status one of the six the gateway
--- writes; its lessons a JSON list; its error code a name. A name is refused
+-- writes; its lessons a JSON list; its error code a name. The free-day
+-- wishes a candidate breaks, and the draft's on its run, are none or a JSON
+-- list, and JSON's own null is not none. A name is refused
 -- with only its first letter in lowercase and with only its last, so that
 -- either character class loosened shows. Each refusal is 23514 by the
 -- constraint's own name, and each case touches that constraint alone, so a
@@ -24918,6 +24922,28 @@ BEGIN
   got := pg_temp.rls174_try(format(
     'INSERT INTO "ScheduleCandidates" ("runId", "schoolId", ordinal, variant, "solverStatus", lessons) VALUES (%L, %L, 1, ''KEEP'', ''OPTIMAL'', NULL)', run, m));
   IF split_part(got, ':', 1) <> '23502' THEN wrong := wrong || format('candidate with no lessons: "%s"', got); END IF;
+
+  -- The free-day wishes: a candidate's notes, and the draft's on a run.
+  -- what, notes, refused by (the constraint's name after the column)
+  FOR c IN SELECT * FROM (VALUES
+    ('no notes', NULL::jsonb, NULL::text),
+    ('an empty list', '[]', NULL),
+    ('a list of notes', '[{"code": "TEACHER_FREE_DAY_WISH_NOT_KEPT", "params": {"day": 3}, "subjectIds": ["00000000-0000-4000-8000-000000000105"]}]', NULL),
+    ('notes in an object', '{}', 'is_a_list'),
+    ('notes in a string', '"[]"', 'is_a_list'),
+    ('notes as JSON null', 'null', 'is_a_list')
+  ) AS t(what, notes, refused_by) LOOP
+    got := pg_temp.rls174_try(format(
+      'INSERT INTO "ScheduleCandidates" ("runId", "schoolId", ordinal, variant, "solverStatus", notes)
+       VALUES (%L, %L, 1, ''KEEP'', ''OPTIMAL'', %L)', run, m, c.notes));
+    want := coalesce('23514:ScheduleCandidates_notes_' || c.refused_by, 'none');
+    IF got IS DISTINCT FROM want THEN wrong := wrong || format('candidate with %s: "%s", expected "%s"', c.what, got, want); END IF;
+    got := pg_temp.rls174_try(format(
+      'INSERT INTO "ScheduleCandidateRuns" ("schoolId", "academicYearId", status, requested, progress, "draftNotes")
+       VALUES (%L, %L, ''SUCCEEDED'', 2, 2, %L)', m, yr, c.notes));
+    want := coalesce('23514:ScheduleCandidateRuns_draftNotes_' || c.refused_by, 'none');
+    IF got IS DISTINCT FROM want THEN wrong := wrong || format('run with %s for its draft: "%s", expected "%s"', c.what, got, want); END IF;
+  END LOOP;
 
   IF cardinality(wrong) > 0 THEN
     RAISE EXCEPTION 'candidate checks: %', array_to_string(wrong, '; ');
