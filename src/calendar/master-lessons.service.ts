@@ -235,6 +235,8 @@ export interface MoveBlockCardResult {
    * now, with the owner each had before: what an undo leaves behind (`leave`).
    */
   joined: { id: string; isGenerated: boolean }[];
+  /** The lessons of a block on the same times that moved with the card: what an undo takes back (`follow`). */
+  followed: string[];
 }
 
 /** A block locked or unlocked (lockBlock): the lessons whose lock changed. */
@@ -945,11 +947,13 @@ export class MasterLessonsService {
    * A BLOCK ON ANOTHER'S TIMES MOVES WITH IT (same-times.ts): a term split's
    * spring card at the autumn card's day and clock — in its own weeks, one
    * lesson per post of its block — is moved with it, judged by the same clash
-   * check and answered among `lessons`, so the generator's "the spring at the
-   * autumn's times" holds after a hand edit too. A card that does not stand
-   * there whole stays where it is; the block it leaves is the school's to put
-   * back, as a block split by hand is. Its lessons keep their owners and no
-   * lesson of its block joins it.
+   * check and answered among `lessons` and by id in `followed`, so the
+   * generator's "the spring at the autumn's times" holds after a hand edit
+   * too. A card that does not stand there whole stays where it is; the block
+   * it leaves is the school's to put back, as a block split by hand is. Its
+   * lessons keep their owners and no lesson of its block joins it. An undo
+   * names what the move took (`follow`): a move that took nothing must not
+   * take the other card back with it from where it landed beside it.
    */
   async moveBlockCard(dto: MoveBlockCardDto, user: AuthenticatedUser): Promise<MoveBlockCardResult> {
     const startTime = parseTimeString(dto.startTime);
@@ -1075,18 +1079,33 @@ export class MasterLessonsService {
       const wholeThere =
         standingThere.length === linkedPosts.length &&
         new Set(standingThere.map((lesson) => `${lesson.studentGroupId}:${lesson.subjectId}`)).size === linkedPosts.length;
+      // Named by an undo: exactly what its move took, or the card is stale.
+      const follow = dto.follow;
+      if (
+        follow !== undefined &&
+        follow.length > 0 &&
+        (!wholeThere || follow.length !== standingThere.length || standingThere.some((lesson) => !follow.includes(lesson.id)))
+      ) {
+        throw blockCardStale();
+      }
       let followers: typeof lessons = [];
-      if (wholeThere && standingThere.length > 0) {
+      if (wholeThere && standingThere.length > 0 && (follow === undefined || follow.length > 0)) {
         const followerIds = standingThere.map((lesson) => lesson.id);
         await tx.$queryRaw`
           SELECT 1 FROM "MasterLessons" WHERE "id" = ANY(${followerIds}::uuid[]) FOR NO KEY UPDATE`;
         followers = await tx.masterLesson.findMany({ where: { id: { in: followerIds } }, select, orderBy: { id: 'asc' } });
-        // One slot, its own weeks: a card, as it stood when it was locked.
+        // One slot at the card's day and clock, its own weeks: a card, as it
+        // stood once it was locked.
         const slot = followers[0] ? slotOf(followers[0]) : null;
+        const atOrigin = (lesson: (typeof lessons)[number]) =>
+          lesson.dayOfWeek === origin.dayOfWeek &&
+          toHHMM(lesson.startTime) === origin.startTime &&
+          toHHMM(lesson.endTime) === origin.endTime;
         if (
           followers.length !== followerIds.length ||
-          followers.some((lesson) => lesson.isParked || !sameSlot(slotOf(lesson), slot!))
+          followers.some((lesson) => lesson.isParked || !atOrigin(lesson) || !sameSlot(slotOf(lesson), slot!))
         ) {
+          if (follow !== undefined) throw blockCardStale();
           followers = [];
         }
       }
@@ -1285,6 +1304,7 @@ export class MasterLessonsService {
         removedCalendarLessons,
         warnings,
         joined: besideLanding.map((sibling) => ({ id: sibling.id, isGenerated: sibling.isGenerated })),
+        followed: followers.map((lesson) => lesson.id),
       };
     });
   }

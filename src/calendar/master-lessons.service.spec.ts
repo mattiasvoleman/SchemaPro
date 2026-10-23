@@ -4441,8 +4441,8 @@ describe('MasterLessonsService', () => {
           franskaLesson({ id: VT_A, studentGroupId: GROUP_ID, studentGroup: { name: 'Ty7' }, ...springWeeks }),
           tyska({ id: VT_B, studentGroupId: FR_GROUP, studentGroup: { name: 'Fr7' }, ...springWeeks }),
         ];
-        const arrangeTerms = (spring: Row[]) => {
-          arrangeCard([tyska(autumn), franskaLesson(autumn), ...spring], spring);
+        const arrangeTerms = (spring: Row[], locked: Row[] = spring) => {
+          arrangeCard([tyska(autumn), franskaLesson(autumn), ...locked], spring);
           tx.teachingBlock.findUnique.mockResolvedValue({ sameTimesAsBlockId: null, sameTimes: [{ id: SPRING_BLOCK }] });
           tx.teachingRequirement.findMany.mockImplementation((query: Query = {}) =>
             Promise.resolve(
@@ -4482,6 +4482,7 @@ describe('MasterLessonsService', () => {
             [VT_A, 2, '09:00'],
             [VT_B, 2, '09:00'],
           ]);
+          expect(result.followed).toEqual([VT_A, VT_B]);
           expect(tx.scheduleChangeLog.create).toHaveBeenCalledTimes(4);
           // The clash scan leaves all four out of where they stood.
           const scan = (tx.masterLesson.findMany.mock.calls as Array<[Query]>).find(
@@ -4511,6 +4512,41 @@ describe('MasterLessonsService', () => {
 
           expect(tx.masterLesson.updateMany).toHaveBeenCalledTimes(1);
           expect(result.lessons.map((lesson) => lesson.id)).toEqual([LESSON_ID, FR_LESSON]);
+          expect(result.followed).toEqual([]);
+        });
+
+        it('lets an undo take back exactly what its move took: none, when the spring card was not taken', async () => {
+          // The autumn card landed beside the spring card, which stayed; its
+          // undo moves the autumn card back and leaves the spring card be.
+          arrangeTerms(springCard);
+
+          const result = await move({ follow: [] });
+
+          expect(tx.masterLesson.updateMany).toHaveBeenCalledTimes(1);
+          expect(result.followed).toEqual([]);
+        });
+
+        it('lets an undo take back the spring card its move took, and refuses one that no longer stands there whole', async () => {
+          arrangeTerms(springCard);
+          expect((await move({ follow: [VT_A, VT_B] })).followed).toEqual([VT_A, VT_B]);
+
+          arrangeTerms([springCard[0]!]);
+          await expect(move({ follow: [VT_A, VT_B] })).rejects.toMatchObject({ response: { code: 'BLOCK_CARD_STALE' } });
+          arrangeTerms(springCard);
+          await expect(move({ follow: [VT_A] })).rejects.toMatchObject({ response: { code: 'BLOCK_CARD_STALE' } });
+        });
+
+        it('takes no spring card that moved between its read and its lock, and an undo naming it is stale', async () => {
+          // Read at Monday 10:00, then found on Thursday once locked.
+          const movedSince = springCard.map((lesson) => ({ ...lesson, dayOfWeek: 4 }));
+          arrangeTerms(springCard, movedSince);
+
+          const result = await move();
+          expect(result.followed).toEqual([]);
+          expect(tx.masterLesson.updateMany).toHaveBeenCalledTimes(1);
+
+          arrangeTerms(springCard, movedSince);
+          await expect(move({ follow: [VT_A, VT_B] })).rejects.toMatchObject({ response: { code: 'BLOCK_CARD_STALE' } });
         });
       });
 

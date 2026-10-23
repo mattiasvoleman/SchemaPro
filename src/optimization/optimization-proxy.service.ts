@@ -345,8 +345,20 @@ export interface PreparedRefusal {
   academicYearId: string;
   /** INFEASIBLE with no lessons and the refusal realised, as triggerScheduling answers it. */
   refusal: AiEngineScheduleResponse;
-  /** STAFF_UNSTAFFED_REQUIREMENTS or BLOCK_PARTLY_LOCKED_SUMMARY: the refusal's summary code. */
+  /**
+   * STAFF_UNSTAFFED_REQUIREMENTS or BLOCK_PARTLY_LOCKED_SUMMARY: the
+   * refusal's summary code; or one of two blocks on the same times that no
+   * longer fit together (BLOCK_SAME_TIMES_DIFFER, BLOCK_SAME_TIMES_TEACHERS,
+   * BLOCK_MEMBERS_SHARE_TEACHER), which also carries `error`.
+   */
   refusalCode: string;
+  /**
+   * The 400 the engine answers a block it cannot hold with, for a refusal
+   * that is one: Generera throws it once its transaction has committed, so
+   * the run fails with the sentence's code and values as the engine's own
+   * block refusals do. A schemaförslag reads the code and the summary.
+   */
+  error?: HttpException;
 }
 
 /** One fetch, ready to be solved once or several times, and written from. */
@@ -846,6 +858,12 @@ export class OptimizationProxyService {
       this.prepareSchedule(tx, academicYearId, user, { requestId }),
     );
     if (!prepared.ready) {
+      if (prepared.error) {
+        this.logger.warn(
+          `Optimization refused before the engine: two blocks on the same times no longer fit together (${prepared.refusalCode}) [requestId=${requestId}, academicYearId=${academicYearId}]`,
+        );
+        throw prepared.error;
+      }
       if (prepared.refusalCode === STAFF_UNSTAFFED_REQUIREMENTS) {
         this.logger.warn(
           `Optimization refused before the engine: ${prepared.refusal.conflicts?.summaryParams?.count ?? 0} requirement(s) without a teacher [requestId=${requestId}, academicYearId=${academicYearId}]`,
@@ -1005,7 +1023,30 @@ export class OptimizationProxyService {
     }
     // Two blocks on the same times that no longer fit together: refused as
     // the engine refuses a block it cannot hold, nothing solved or written.
-    if (data.sameTimesRefusal) throw data.sameTimesRefusal;
+    // Returned, as the refusals above are, so the transaction commits what it
+    // read (the Läslogg's row) and a schemaförslag's check and apply answer
+    // with the code; Generera throws the 400.
+    if (data.sameTimesRefusal) {
+      const body = data.sameTimesRefusal.getResponse() as {
+        message: string;
+        code: string;
+        params: Record<string, string | number>;
+      };
+      return {
+        ready: false,
+        requestId,
+        academicYearId,
+        refusal: {
+          requestId,
+          status: 'INFEASIBLE',
+          lessons: [],
+          lunches: [],
+          conflicts: { summary: body.message, summaryCode: body.code, summaryParams: body.params, conflicts: [] },
+        },
+        refusalCode: body.code,
+        error: data.sameTimesRefusal,
+      };
+    }
 
     // The draft's own lessons: the machine-owned masters a regeneration
     // replaces (the complement of PRESERVED_FROM_REGENERATION, parked ones
@@ -2104,8 +2145,8 @@ export class OptimizationProxyService {
      * not; each follower post is written at the times of its leader post in
      * the same subject once the answer is back (mirrorLessons). Whether they
      * still fit together is judged here, and a pair that does not refuses the
-     * run by name (sameTimesRefusal, thrown by prepareSchedule after the
-     * partly locked blocks, which answer first).
+     * run by name (sameTimesRefusal, which prepareSchedule answers after
+     * the partly locked blocks, which answer first).
      */
     const mirrors: Mirror[] = [];
     const mirroredIds = new Set<string>();

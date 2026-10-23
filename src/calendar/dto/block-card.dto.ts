@@ -70,6 +70,21 @@ export class MoveBlockCardDto {
   @ValidateNested({ each: true })
   @Type(() => LeftLessonDto)
   leave?: LeftLessonDto[];
+
+  /**
+   * The lessons of a block on the same times (a term split's spring card)
+   * that move with this card: exactly these, standing whole at the card's day
+   * and clock, or the card is stale; none when empty. The undo of a card move
+   * names the move's `followed`, so it takes back what the move took and
+   * nothing the move left. Absent: the other block's card standing whole at
+   * the card's day and clock.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @ArrayUnique()
+  @IsUUID('4', { each: true })
+  follow?: string[];
 }
 
 /**
