@@ -19,13 +19,24 @@ import type { ScheduleVersionsService } from '../calendar/schedule-versions.serv
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { isWriteConflict } from '../common/utils/prisma-errors';
-import { gradeSpanOf, loadRosters, roomNeedsOf } from './room-eligibility';
+import { gradeSpanOf, loadRosters, roomNeedsOf, type RoomNeeds } from './room-eligibility';
 import { fromNioarig, toNioarig, toNioarigSpan, type GradeNumbering } from '../common/grade-numbering';
 import { dayNumberingOf, yearNumberingOf } from '../common/year-numbering';
 import { coverLockedLessons } from './locked-coverage';
 import { judgeBlocks, partlyLockedRefusal } from './parallel-blocks';
+import {
+  BLOCK_MEMBERS_SHARE_TEACHER,
+  BLOCK_SAME_TIMES_DIFFER,
+  mirrorLessons,
+  planMirror,
+  sameTimesLinks,
+  type Mirror,
+  type MirrorPlan,
+  type SameTimesLink,
+  type SameTimesRow,
+} from './same-times';
 import { canonicalShape, lessonMinutesOf } from '../common/lesson-lengths';
-import { effectiveDistribution, hasDistributionRule } from '../common/subject-distribution';
+import { effectiveDistribution, hasDistributionRule, type DistributionRule } from '../common/subject-distribution';
 import { minutesOf } from '../common/solver-grid';
 import { lockedWeekdaySets, type YearSpan } from '../common/teacher-day';
 import { computeScheduledCoverage, type ScheduledLessonInput } from '../common/timplan-scheduled';
@@ -41,6 +52,7 @@ import {
   preservedPartOf,
   type BasisParts,
   type DraftContent,
+  type MirroredRow,
 } from './candidate-basis';
 import {
   generateStale,
@@ -359,8 +371,19 @@ export interface PreparedSchedule {
   keptTimetable: TeachersOnDay[];
   /** groupId → children who eat AS this group, for the stored sittings. */
   headcountByGroup: Map<string, number>;
-  /** The demand sent, in real ids: what an answer must place exactly. */
+  /**
+   * The demand sent, in real ids, and each mirrored post's beside its leader
+   * post's: what an answer must place exactly once mirrorLessons has written
+   * the followers' lessons.
+   */
   demand: RegenerationDemand[];
+  /**
+   * The posts of a block on another block's times, each with the post whose
+   * times it takes (same-times.ts): an answer's lessons are mirrored through
+   * these before they are judged, stored or written. Empty for a school with
+   * no such block.
+   */
+  mirrors: Mirror[];
   /** The timplansposter as this fetch read them; an apply stamps its lessons from these. */
   requirementRows: RegenerationRequirementRow[];
   /** sha256 hex over the six parts (candidate-basis.ts). */
@@ -658,6 +681,59 @@ function checkAgainstDemand(
 }
 
 /**
+ * The demand sent, in real ids, and each mirrored post's beside it: the
+ * lessons its leader post was sent with, which an answer places once for the
+ * leader and mirrorLessons once more for each follower. Every sent entry's
+ * anonymous id came out of the map, so each has a real one; the fallback can
+ * only be reached by a broken map, and then names nothing an answer could
+ * match, which refuses the answer.
+ */
+function demandOf(
+  sent: readonly AnonymousRequirement[],
+  realRequirement: ReadonlyMap<string, string>,
+  mirrors: readonly Mirror[],
+): RegenerationDemand[] {
+  const demand: RegenerationDemand[] = sent.map((requirement) => ({
+    requirementId: realRequirement.get(requirement.id) ?? `unsent:${requirement.id}`,
+    lessonsPerWeek: requirement.lessonsPerWeek,
+    ...(requirement.lessonLengths ? { lessonLengths: requirement.lessonLengths } : {}),
+  }));
+  const byId = new Map(demand.map((entry) => [entry.requirementId, entry]));
+  for (const mirror of mirrors) {
+    const leader = byId.get(mirror.leaderId);
+    if (leader) demand.push({ ...leader, requirementId: mirror.followerId });
+  }
+  return demand;
+}
+
+/**
+ * The mirrored posts as the basis reads them: which post's times each takes,
+ * and what it is written with — its group and teachers — none of which the
+ * payload carries for a post it does not send.
+ */
+function mirroredRowsOf(
+  mirrors: readonly Mirror[],
+  rows: readonly RegenerationRequirementRow[],
+): MirroredRow[] {
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  return mirrors.flatMap((mirror) => {
+    const row = byId.get(mirror.followerId);
+    return row
+      ? [
+          {
+            id: row.id,
+            mirrorOf: mirror.leaderId,
+            subjectId: row.subjectId,
+            studentGroupId: row.studentGroupId,
+            teacherId: row.teacherId,
+            coTeacherId: row.coTeacherId,
+          },
+        ]
+      : [];
+  });
+}
+
+/**
  * The engine's lessons in real ids. An unknown requirement id becomes null —
  * kept, so the guard counts it — and an unknown room no room, as persist has
  * always read it.
@@ -812,16 +888,18 @@ export class OptimizationProxyService {
     }
 
     // Step 3: Persist the master-lesson output, translating anon ids back.
-    // `requirements` rides along as the demand the response is checked against
-    // before anything is deleted, and the draft's ids as what the fetch saw —
-    // see persistMasterLessons.
+    // The demand rides along as what the response is checked against before
+    // anything is deleted, the mirrors as the posts written at their leader
+    // posts' times, and the draft's ids as what the fetch saw — see
+    // persistMasterLessons.
     const written = await this.prisma.withRls(user, (tx) =>
       this.persistMasterLessons(
         tx,
         academicYearId,
         user,
         response,
-        payload.requirements,
+        prepared.demand,
+        prepared.mirrors,
         anonMaps.requirementAnonMap,
         anonMaps.roomAnonMap,
         realisedLunches,
@@ -925,6 +1003,9 @@ export class OptimizationProxyService {
         refusalCode: data.blockRefusal.summaryCode,
       };
     }
+    // Two blocks on the same times that no longer fit together: refused as
+    // the engine refuses a block it cannot hold, nothing solved or written.
+    if (data.sameTimesRefusal) throw data.sameTimesRefusal;
 
     // The draft's own lessons: the machine-owned masters a regeneration
     // replaces (the complement of PRESERVED_FROM_REGENERATION, parked ones
@@ -1006,6 +1087,7 @@ export class OptimizationProxyService {
         ],
         storedRules: data.storedRules,
         draftLessons,
+        mirrors: mirroredRowsOf(data.mirrors, data.requirementRows),
       }),
     );
 
@@ -1025,14 +1107,8 @@ export class OptimizationProxyService {
         dayOfWeek: row.dayOfWeek,
       })),
       headcountByGroup: data.headcountByGroup,
-      // Every sent entry's anonymous id came out of the map, so each has a
-      // real one; the fallback can only be reached by a broken map, and then
-      // names nothing an answer could match, which refuses the answer.
-      demand: data.requirements.map((requirement) => ({
-        requirementId: realRequirement.get(requirement.id) ?? `unsent:${requirement.id}`,
-        lessonsPerWeek: requirement.lessonsPerWeek,
-        ...(requirement.lessonLengths ? { lessonLengths: requirement.lessonLengths } : {}),
-      })),
+      demand: demandOf(data.requirements, realRequirement, data.mirrors),
+      mirrors: data.mirrors,
       requirementRows: data.requirementRows,
       basis: basisOf(basisParts),
       basisParts,
@@ -1145,7 +1221,10 @@ export class OptimizationProxyService {
       return { status: response.status, lessons: [], lunches: null, conflicts };
     }
 
-    const resolved = resolveLessons(response.lessons, anonMaps.requirementAnonMap, anonMaps.roomAnonMap);
+    const resolved = mirrorLessons(
+      resolveLessons(response.lessons, anonMaps.requirementAnonMap, anonMaps.roomAnonMap),
+      prepared.mirrors,
+    );
     const verdict = checkAgainstDemand(
       resolved,
       prepared.demand,
@@ -1567,6 +1646,10 @@ export class OptimizationProxyService {
     blockAnonMap: Map<string, string>;
     /** BLOCK_PARTLY_LOCKED, in anonymous ids, or null to go on. */
     blockRefusal: AiEngineConflictAnalysis | null;
+    /** The follower posts written at their leader posts' times, in real ids (same-times.ts). */
+    mirrors: Mirror[];
+    /** Two blocks on the same times that no longer fit together, named; null to go on. */
+    sameTimesRefusal: HttpException | null;
     storedRules: ScheduleRules | null;
     /** Every free-day wish of the school's teachers, in real ids. Never sent. */
     freeDayWishes: FreeDayWish[];
@@ -1788,15 +1871,21 @@ export class OptimizationProxyService {
     // A block is named by the name the school gave it ("Språkval åk 7"), like a
     // class. Read only when a row of the year is in one, so a school that has
     // written no block asks the database nothing more than it did.
+    //
+    // And the block each takes the times of (same-times.ts), read with it: a
+    // spring block on its autumn block's times is a link only while both hold
+    // a row of the year.
     const blockIds = [
       ...new Set(rawRequirements.flatMap((r) => (r.blockId ? [r.blockId] : []))),
     ];
+    let links: SameTimesLink[] = [];
     if (blockIds.length > 0) {
       const blocks = await tx.teachingBlock.findMany({
         where: { id: { in: blockIds } },
-        select: { id: true, name: true },
+        select: { id: true, name: true, sameTimesAsBlockId: true },
       });
       for (const block of blocks) nameById.set(block.id, block.name);
+      links = sameTimesLinks(blocks.map((block) => ({ id: block.id, sameTimesAsBlockId: block.sameTimesAsBlockId ?? null })));
     }
     const homeClassIds = allGroups
       .filter((group) => group.kind === 'CLASS')
@@ -2006,9 +2095,44 @@ export class OptimizationProxyService {
       rawRequirements,
       (id) => remainingOf.get(id)?.length ?? 0,
       (id) => preservedByDemand.get(demandOf.get(id) ?? '')?.length ?? 0,
+      links,
     );
 
+    /*
+     * Two blocks on the same times, both with every lesson to place
+     * (blocks.mirrored): the leader's posts are sent and the follower's are
+     * not; each follower post is written at the times of its leader post in
+     * the same subject once the answer is back (mirrorLessons). Whether they
+     * still fit together is judged here, and a pair that does not refuses the
+     * run by name (sameTimesRefusal, thrown by prepareSchedule after the
+     * partly locked blocks, which answer first).
+     */
+    const mirrors: Mirror[] = [];
+    const mirroredIds = new Set<string>();
+    const leaderPlans = new Map<string, MirrorPlan>();
+    let sameTimesRefusal: HttpException | null = null;
+    const followerIds = new Set(links.map((link) => link.followerBlockId));
+    const rowById = new Map(rawRequirements.map((r) => [r.id, r]));
+    for (const link of blocks.mirrored.values()) {
+      const membersOf = (blockId: string) => rawRequirements.filter((r) => r.blockId === blockId);
+      const followers = membersOf(link.followerBlockId);
+      const judgement = planMirror(
+        membersOf(link.leaderBlockId).map(sameTimesRowOf),
+        followers.map(sameTimesRowOf),
+        followerIds.has(link.leaderBlockId),
+      );
+      if (!judgement.ok) {
+        sameTimesRefusal ??= sameTimesRefusalOf(judgement, link, nameById);
+        continue;
+      }
+      mirrors.push(...judgement.plan.mirrors);
+      for (const follower of followers) mirroredIds.add(follower.id);
+      for (const leaderId of judgement.plan.adults.keys()) leaderPlans.set(leaderId, judgement.plan);
+    }
+
     const requirements: AnonymousRequirement[] = rawRequirements.flatMap((r) => {
+      // A mirrored post is written at its leader post's times, never sent.
+      if (mirroredIds.has(r.id)) return [];
       const remainingLengths = remainingOf.get(r.id) ?? [];
       const remaining = remainingLengths.length;
       if (remaining <= 0) return [];
@@ -2016,14 +2140,28 @@ export class OptimizationProxyService {
       // length as minutesPerLesson. Only a remainder of two or more lengths
       // carries the list, with its count and its longest as the scalars.
       const split = canonicalShape(remainingLengths);
-      const needs = roomNeedsOf(rosters, { groupIds: [r.studentGroupId] }, r.subject, numbering);
+      // A leader post holds its follower's lessons too (same-times.ts): the
+      // room the larger of its half and the follower's in its subject needs,
+      // the longer buffers of its own group's two posts, the stricter rule,
+      // and the follower's teachers the leader block lacks in an empty place.
+      const plan = leaderPlans.get(r.id);
+      const bySubject = plan ? rowById.get(plan.sameSubject.get(r.id) ?? '') : undefined;
+      const byGroup = plan ? rowById.get(plan.sameGroup.get(r.id) ?? '') : undefined;
+      const adults = plan?.adults.get(r.id) ?? { teacherId: r.teacherId, coTeacherId: r.coTeacherId };
+      const needs = widerNeeds(
+        roomNeedsOf(rosters, { groupIds: [r.studentGroupId] }, r.subject, numbering),
+        bySubject ? roomNeedsOf(rosters, { groupIds: [bySubject.studentGroupId] }, bySubject.subject, numbering) : null,
+      );
       // Ämnesfördelning: the row's own rule or its subject's, each half sent
       // only when set — see AnonymousRequirement.maxLessonsPerDay. The locked
       // weekdays go with a rule and never without one, and they are EVERY
       // preserved lesson of the row, not only the ones that cancel demand
       // above: a lesson locked on odd weeks is still on Monday in the weeks it
       // runs, and the engine, which has no weeks, has to count it there.
-      const rule = effectiveDistribution(r, r.subject);
+      const rule = stricterRule(
+        effectiveDistribution(r, r.subject),
+        bySubject ? effectiveDistribution(bySubject, bySubject.subject) : null,
+      );
       const lockedDays = hasDistributionRule(rule)
         ? (preservedByDemand.get(`${r.studentGroupId}:${r.subjectId}`) ?? [])
             .map((lesson) => lesson.dayOfWeek as DayOfWeek)
@@ -2034,7 +2172,7 @@ export class OptimizationProxyService {
           id: anonId(requirementAnonMap, r.id),
           subjectId: anonId(subjectAnonMap, r.subjectId),
           studentGroupId: anonId(groupAnonMap, r.studentGroupId),
-          teacherId: r.teacherId ? anonId(teacherAnonMap, r.teacherId) : null,
+          teacherId: adults.teacherId ? anonId(teacherAnonMap, adults.teacherId) : null,
           lessonsPerWeek: remaining,
           // The longest REMAINING length: r.minutesPerLesson for a uniform
           // requirement, as before, and 40 for 1 × 80 + 1 × 40 with the 80
@@ -2044,8 +2182,8 @@ export class OptimizationProxyService {
           // Forwarded as they stand, beside the length and not folded into it:
           // the engine has to place 60 minutes of teaching and keep the class
           // clear for 90, and a sum would lose which of the two it was told.
-          minutesBefore: r.minutesBefore,
-          minutesAfter: r.minutesAfter,
+          minutesBefore: byGroup ? Math.max(r.minutesBefore, byGroup.minutesBefore) : r.minutesBefore,
+          minutesAfter: byGroup ? Math.max(r.minutesAfter, byGroup.minutesAfter) : r.minutesAfter,
           ...(rule.maxLessonsPerDay !== null ? { maxLessonsPerDay: rule.maxLessonsPerDay } : {}),
           ...(rule.minDaysBetween !== null ? { minDaysBetween: rule.minDaysBetween } : {}),
           ...(lockedDays.length > 0 ? { lockedDays } : {}),
@@ -2061,7 +2199,7 @@ export class OptimizationProxyService {
           requiredRoomType: needs.requiredRoomTypeId
             ? anonId(roomTypeAnonMap, needs.requiredRoomTypeId)
             : null,
-          coTeacherId: r.coTeacherId ? anonId(teacherAnonMap, r.coTeacherId) : null,
+          coTeacherId: adults.coTeacherId ? anonId(teacherAnonMap, adults.coTeacherId) : null,
         },
       ];
     });
@@ -2686,16 +2824,24 @@ export class OptimizationProxyService {
     // A block whose lessons are partly locked, in the ids the payload uses, so
     // it reaches the school through realiseConflicts as the engine's own
     // refusals do. Every member is named, sent or not.
+    // And two blocks on the same times one of which the school placed, the
+    // two named, under the same summary.
     const blockRefusal =
-      blocks.partlyLocked.length === 0
+      blocks.partlyLocked.length === 0 && blocks.lockedApart.length === 0
         ? null
-        : partlyLockedRefusal(
-            blocks.partlyLocked.map((block) => ({
+        : partlyLockedRefusal([
+            ...blocks.partlyLocked.map((block) => ({
               block: anonId(blockAnonMap, block.blockId),
               members: block.memberIds.map((id) => anonId(requirementAnonMap, id)),
               locked: block.locked,
             })),
-          );
+            ...blocks.lockedApart.map((pair) => ({
+              block: anonId(blockAnonMap, pair.blockId),
+              other: anonId(blockAnonMap, pair.otherBlockId),
+              members: pair.memberIds.map((id) => anonId(requirementAnonMap, id)),
+              locked: pair.locked,
+            })),
+          ]);
 
     return {
       requirements,
@@ -2724,6 +2870,8 @@ export class OptimizationProxyService {
       nameById,
       blockAnonMap,
       blockRefusal,
+      mirrors,
+      sameTimesRefusal,
       // The free-day wishes, for what the finished timetable is read against
       // (unkeptFreeDayWishes): every rule that states one, sent to the engine
       // or not — a teacher who teaches nothing keeps theirs trivially. The
@@ -2986,7 +3134,10 @@ export class OptimizationProxyService {
     academicYearId: string,
     user: AuthenticatedUser,
     response: AiEngineScheduleResponse,
-    requirements: AnonymousRequirement[],
+    /** What the answer must place, in real ids, the mirrored posts' included (prepareSchedule). */
+    demand: readonly RegenerationDemand[],
+    /** The posts written at their leader posts' times (same-times.ts). */
+    mirrors: readonly Mirror[],
     requirementAnonMap: Map<string, string>,
     roomAnonMap: Map<string, string>,
     /**
@@ -3061,22 +3212,16 @@ export class OptimizationProxyService {
         },
       });
 
-      // The demand in real ids, as the shared write checks it. Every sent id
-      // came out of this map; one that did not would name nothing an answer can
-      // match, and refuse the answer.
-      const realRequirement = reversed(requirementAnonMap);
+      // The answer in real ids, each mirrored post's lessons written beside
+      // its leader post's, judged against the demand by the shared write.
       const written = await this.writeRegeneration(tx, {
         schoolId: user.schoolId,
         academicYearId,
         actorId: user.userId ?? null,
         mode,
         solverStatus: response.status,
-        lessons: resolveLessons(response.lessons, requirementAnonMap, roomAnonMap),
-        demand: requirements.map((r) => ({
-          requirementId: realRequirement.get(r.id) ?? `unsent:${r.id}`,
-          lessonsPerWeek: r.lessonsPerWeek,
-          ...(r.lessonLengths ? { lessonLengths: r.lessonLengths } : {}),
-        })),
+        lessons: mirrorLessons(resolveLessons(response.lessons, requirementAnonMap, roomAnonMap), mirrors),
+        demand,
         requirementRows,
         lunches,
         headcountByGroup,
@@ -3491,6 +3636,102 @@ export class OptimizationProxyService {
     d.setUTCHours(h ?? 0, m ?? 0, s ?? 0, 0);
     return d;
   }
+}
+
+/** A timplanspost as same-times.ts plans it. */
+function sameTimesRowOf(row: {
+  id: string;
+  subjectId: string;
+  studentGroupId: string;
+  teacherId: string | null;
+  coTeacherId: string | null;
+  lessonsPerWeek: number;
+  minutesPerLesson: number;
+  lessonLengths: number[];
+  recurrence: LessonRecurrence;
+  startDate: Date | null;
+  endDate: Date | null;
+}): SameTimesRow {
+  return {
+    id: row.id,
+    subjectId: row.subjectId,
+    studentGroupId: row.studentGroupId,
+    teacherId: row.teacherId ?? null,
+    coTeacherId: row.coTeacherId ?? null,
+    lessonsPerWeek: row.lessonsPerWeek,
+    minutesPerLesson: row.minutesPerLesson,
+    lessonLengths: row.lessonLengths ?? [],
+    recurrence: row.recurrence,
+    startDate: row.startDate ?? null,
+    endDate: row.endDate ?? null,
+  };
+}
+
+/**
+ * A pair of blocks on the same times that planMirror refused, as the engine
+ * refuses a block it cannot hold (a 400 with the sentence's code and values,
+ * which a run stores and the page says in Swedish), named by the names the
+ * school gave them: the follower is `block`, the block whose times it takes
+ * `other`. The English is the catalogue's (optimization-engine/app/
+ * messages.py), rendered here because the engine never sees the pair.
+ */
+function sameTimesRefusalOf(
+  judgement: Exclude<ReturnType<typeof planMirror>, { ok: true }>,
+  link: SameTimesLink,
+  nameById: ReadonlyMap<string, string>,
+): HttpException {
+  const name = (id: string): string => nameById.get(id) ?? id;
+  const block = name(link.followerBlockId);
+  const other = name(link.leaderBlockId);
+  if (judgement.code === BLOCK_MEMBERS_SHARE_TEACHER) {
+    const params = { block, requirement: name(judgement.requirementId), other: name(judgement.otherId) };
+    return new HttpException(
+      {
+        message:
+          `${block}: ${params.requirement} and ${params.other} have the same teacher, who cannot teach both at the ` +
+          'same time. Give one of them another teacher, or take it out of the block.',
+        code: judgement.code,
+        params,
+      },
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+  const message =
+    judgement.code === BLOCK_SAME_TIMES_DIFFER
+      ? `${block} takes the times of ${other}, and the two no longer fit together: they need the same subjects ` +
+        'for the same groups, with the same lessons, in weeks that never meet. Make them match again, or delete ' +
+        `${block} to place its lessons at times of their own.`
+      : `${block} takes the times of ${other}, and has more teachers that ${other} does not than the entries of ` +
+        `${other} have room for beside their own. Give the entries of ${block} the teachers of ${other}, or take a ` +
+        `co-teacher off ${other}.`;
+  return new HttpException({ message, code: judgement.code, params: { block, other } }, HttpStatus.BAD_REQUEST);
+}
+
+/**
+ * The room a lesson of both posts needs: the larger group, and both spans.
+ * Null (no follower) is the post's own needs.
+ */
+function widerNeeds(own: RoomNeeds, other: RoomNeeds | null): RoomNeeds {
+  if (other === null) return own;
+  const bound = (a: number | null, b: number | null, pick: (x: number, y: number) => number) =>
+    a === null ? b : b === null ? a : pick(a, b);
+  return {
+    studentGroupSize: Math.max(own.studentGroupSize, other.studentGroupSize),
+    minGradeLevel: bound(own.minGradeLevel, other.minGradeLevel, Math.min),
+    maxGradeLevel: bound(own.maxGradeLevel, other.maxGradeLevel, Math.max),
+    requiredRoomTypeId: own.requiredRoomTypeId,
+  };
+}
+
+/** The stricter of two ämnesfördelningar, each half on its own; null is no second rule. */
+function stricterRule(own: DistributionRule, other: DistributionRule | null): DistributionRule {
+  if (other === null) return own;
+  const bound = (a: number | null, b: number | null, pick: (x: number, y: number) => number) =>
+    a === null ? b : b === null ? a : pick(a, b);
+  return {
+    maxLessonsPerDay: bound(own.maxLessonsPerDay, other.maxLessonsPerDay, Math.min),
+    minDaysBetween: bound(own.minDaysBetween, other.minDaysBetween, Math.max),
+  };
 }
 
 /**

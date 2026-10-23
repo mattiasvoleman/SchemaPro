@@ -230,8 +230,10 @@ describe('OptimizationProxyService', () => {
     {
       user = testUser(),
       /** The demand the engine was sent, which its answer must match. */
-      requirements = [] as { id: string; lessonsPerWeek: number }[],
+      requirements = [] as { id: string; lessonsPerWeek: number; lessonLengths?: number[] }[],
       requirementAnonMap = new Map<string, string>(),
+      /** The posts written at a sent post's times (same-times.ts), in real ids. */
+      mirrors = [] as { leaderId: string; followerId: string }[],
       /** Sittings carrying REAL group ids, as realiseLunches hands them over. */
       lunches = [] as AiEngineLunch[],
       headcountByGroup = new Map<string, number>(),
@@ -250,7 +252,8 @@ describe('OptimizationProxyService', () => {
           academicYearId: string,
           user: unknown,
           response: AiEngineScheduleResponse,
-          requirements: { id: string; lessonsPerWeek: number }[],
+          demand: { requirementId: string; lessonsPerWeek: number; lessonLengths?: number[] }[],
+          mirrors: { leaderId: string; followerId: string }[],
           requirementAnonMap: Map<string, string>,
           roomAnonMap: Map<string, string>,
           lunches: AiEngineLunch[],
@@ -263,7 +266,20 @@ describe('OptimizationProxyService', () => {
       ACADEMIC_YEAR,
       user,
       { status: 'FEASIBLE', lessons: [], ...response } as AiEngineScheduleResponse,
-      requirements,
+      // The demand in real ids, as prepareSchedule hands it over, with each
+      // mirrored post's beside its leader's.
+      [
+        ...requirements.map((requirement) => ({
+          requirementId: [...requirementAnonMap].find(([, anon]) => anon === requirement.id)?.[0] ?? `unsent:${requirement.id}`,
+          lessonsPerWeek: requirement.lessonsPerWeek,
+          ...(requirement.lessonLengths ? { lessonLengths: requirement.lessonLengths } : {}),
+        })),
+        ...mirrors.flatMap((mirror) => {
+          const leader = requirements.find((requirement) => requirementAnonMap.get(mirror.leaderId) === requirement.id);
+          return leader ? [{ requirementId: mirror.followerId, lessonsPerWeek: leader.lessonsPerWeek }] : [];
+        }),
+      ],
+      mirrors,
       requirementAnonMap,
       new Map(),
       lunches,
@@ -3044,6 +3060,320 @@ describe('OptimizationProxyService', () => {
       await service.triggerScheduling(ACADEMIC_YEAR, testUser());
 
       expect(postedPayload().groupConflicts).toEqual([]);
+    });
+
+    describe('a term split: the spring block on the autumn block’s times (same-times.ts)', () => {
+      // 7A's slöjd split by term: in the autumn 7A:1 reads textilslöjd with
+      // Tove and 7A:2 trä- och metallslöjd with Tor, in the spring the swap.
+      const H1 = '7a000001-0000-4000-8000-000000000001';
+      const H2 = '7a000002-0000-4000-8000-000000000002';
+      const TX = 'cccccccc-0001-4000-8000-000000000001';
+      const TR = 'cccccccc-0002-4000-8000-000000000002';
+      const TOVE = 'dddddddd-0001-4000-8000-000000000001';
+      const TOR = 'dddddddd-0002-4000-8000-000000000002';
+      const TEA = 'dddddddd-0003-4000-8000-000000000003';
+      const HT = 'bbbbbbbb-0001-4000-8000-000000000001';
+      const VT = 'bbbbbbbb-0002-4000-8000-000000000002';
+      const A1 = 'eeeeeeee-0001-4000-8000-000000000001';
+      const A2 = 'eeeeeeee-0002-4000-8000-000000000002';
+      const S1 = 'eeeeeeee-0003-4000-8000-000000000003';
+      const S2 = 'eeeeeeee-0004-4000-8000-000000000004';
+      const autumnEnd = new Date('2027-01-10T00:00:00.000Z');
+      const springStart = new Date('2027-01-11T00:00:00.000Z');
+      const pupil = (n: number) => `aaaaaaa${n}-0000-4000-8000-00000000000${n}`;
+      const slojd = (id: string, subjectId: string, studentGroupId: string, term: 'HT' | 'VT', teacherId: string | null, overrides: Row = {}) =>
+        requirement({
+          id,
+          subjectId,
+          studentGroupId,
+          teacherId,
+          lessonsPerWeek: 2,
+          blockId: term === 'HT' ? HT : VT,
+          startDate: term === 'HT' ? null : springStart,
+          endDate: term === 'HT' ? autumnEnd : null,
+          subject: subjectId === TX
+            ? { requiredRoomTypeId: 'room-type-textil', name: 'Textilslöjd' }
+            : { requiredRoomTypeId: 'room-type-tra', name: 'Trä- och metallslöjd' },
+          ...overrides,
+        });
+      const arrangeTerms = (spring: { s1?: Row; s2?: Row } = {}, overrides: Arrangement = {}) => {
+        arrange({
+          requirements: [
+            slojd(A1, TX, H1, 'HT', TOVE),
+            slojd(A2, TR, H2, 'HT', TOR),
+            slojd(S1, TR, H1, 'VT', TOR, spring.s1),
+            slojd(S2, TX, H2, 'VT', TOVE, spring.s2),
+          ],
+          groups: [
+            { id: GROUP_ID, gradeLevel: 7, kind: 'CLASS', halfOfId: null, name: '7A' },
+            { id: H1, gradeLevel: 7, kind: 'TEACHING_GROUP', halfOfId: GROUP_ID, name: '7A:1' },
+            { id: H2, gradeLevel: 7, kind: 'TEACHING_GROUP', halfOfId: GROUP_ID, name: '7A:2' },
+          ],
+          // Two pupils in 7A:1 and three in 7A:2.
+          homeMembers: [1, 2, 3, 4, 5].map((n) => ({ id: pupil(n), studentGroupId: GROUP_ID })),
+          teachingMembers: [
+            ...[1, 2].map((n) => ({ studentId: pupil(n), studentGroupId: H1 })),
+            ...[3, 4, 5].map((n) => ({ studentId: pupil(n), studentGroupId: H2 })),
+          ],
+          ...overrides,
+        });
+        tx.teachingBlock.findMany.mockResolvedValue([
+          { id: HT, name: 'Slöjd 7A HT', sameTimesAsBlockId: null },
+          { id: VT, name: 'Slöjd 7A VT', sameTimesAsBlockId: HT },
+        ]);
+      };
+      const prepare = () => service.prepareSchedule(tx as unknown as PrismaClient, ACADEMIC_YEAR, testUser());
+      const ready = async (): Promise<PreparedSchedule> => {
+        const result = await prepare();
+        if (!result.ready) throw new Error(`refused: ${result.refusalCode}`);
+        return result;
+      };
+      /** An engine placing the k-th requirement it was sent on weekday k + 1, in the k-th room. */
+      const engineByDay = () =>
+        http.post.mockImplementation((_url: string, payload: any) =>
+          of({
+            data: {
+              requestId: payload.requestId,
+              status: 'OPTIMAL',
+              lessons: payload.requirements.flatMap((r: any, k: number) =>
+                Array.from({ length: r.lessonsPerWeek }, (_, n) => ({
+                  requirementId: r.id,
+                  roomId: payload.rooms[k]?.id ?? null,
+                  dayOfWeek: k + 1,
+                  startTime: `0${8 + n}:00:00`,
+                  endTime: `0${8 + n}:50:00`,
+                })),
+              ),
+              conflicts: null,
+            },
+          }),
+        );
+      const textilsal = { id: '55555555-0001-4000-8000-000000000001', capacity: 16, roomTypeId: 'room-type-textil' };
+      const trasal = { id: '55555555-0002-4000-8000-000000000002', capacity: 16, roomTypeId: 'room-type-tra' };
+
+      it('sends the autumn block alone, each post sized for the larger half, and asks for the spring in the demand', async () => {
+        arrangeTerms();
+
+        const prepared = await ready();
+
+        const real = new Map([...prepared.anonMaps.requirementAnonMap].map(([realId, anonId]) => [anonId, realId]));
+        const sent = prepared.payload.requirements;
+        expect(sent.map((r) => real.get(r.id))).toEqual([A1, A2]);
+        expect(new Set(sent.map((r) => r.blockId)).size).toBe(1);
+        expect(sent[0]!.blockId).toEqual(expect.any(String));
+        // 7A:1 has two pupils and 7A:2 three: the textilsal holds either half.
+        expect(sent.map((r) => r.studentGroupSize)).toEqual([3, 3]);
+        // The halves swap and the teachers stay: nobody new at the block's times.
+        expect(sent.map((r) => r.coTeacherId)).toEqual([null, null]);
+        expect(prepared.mirrors).toEqual([
+          { leaderId: A2, followerId: S1 },
+          { leaderId: A1, followerId: S2 },
+        ]);
+        expect(prepared.demand).toEqual([
+          { requirementId: A1, lessonsPerWeek: 2 },
+          { requirementId: A2, lessonsPerWeek: 2 },
+          { requirementId: S1, lessonsPerWeek: 2 },
+          { requirementId: S2, lessonsPerWeek: 2 },
+        ]);
+      });
+
+      it('sends each autumn post with the longer buffers of its half and the stricter rule of its subject', async () => {
+        // 7A:1's spring trä needs ten minutes of ombyte before it; 7A:2's
+        // spring textil at most one lesson a day.
+        arrangeTerms({
+          s1: { minutesBefore: 10, minutesAfter: 0 },
+          s2: { ownDistribution: true, maxLessonsPerDay: 1, minDaysBetween: null },
+        });
+
+        const prepared = await ready();
+
+        const [a1, a2] = prepared.payload.requirements;
+        // a1 is 7A:1's autumn textil: 7A:1's buffers, textil's rule.
+        expect([a1!.minutesBefore, a1!.minutesAfter, a1!.maxLessonsPerDay]).toEqual([10, 0, 1]);
+        // a2 is 7A:2's autumn trä: neither.
+        expect([a2!.minutesBefore, a2!.maxLessonsPerDay]).toEqual([0, undefined]);
+      });
+
+      it('writes each spring post at the times and room of the autumn post in its subject, with its own half, teacher and weeks', async () => {
+        arrangeTerms({}, { rooms: [textilsal, trasal] });
+        engineByDay();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        const rows = written().map((row) => [
+          row.studentGroupId, row.subjectId, row.teacherId, row.roomId, row.dayOfWeek,
+          (row.startTime as Date).toISOString().slice(11, 16), row.startDate, row.endDate,
+        ]);
+        expect(rows).toEqual([
+          [H1, TX, TOVE, textilsal.id, 1, '08:00', null, autumnEnd],
+          [H1, TX, TOVE, textilsal.id, 1, '09:00', null, autumnEnd],
+          [H2, TR, TOR, trasal.id, 2, '08:00', null, autumnEnd],
+          [H2, TR, TOR, trasal.id, 2, '09:00', null, autumnEnd],
+          // Textil in the spring, on 7A:2, where and when textil was in the autumn.
+          [H2, TX, TOVE, textilsal.id, 1, '08:00', springStart, null],
+          [H2, TX, TOVE, textilsal.id, 1, '09:00', springStart, null],
+          [H1, TR, TOR, trasal.id, 2, '08:00', springStart, null],
+          [H1, TR, TOR, trasal.id, 2, '09:00', springStart, null],
+        ]);
+      });
+
+      it('holds a spring teacher the autumn lacks at the block’s times, beside the autumn post in the subject', async () => {
+        const workRule = {
+          id: '77777777-0001-4000-8000-000000000001',
+          userId: TEA,
+          lunchMinutes: 30,
+          lunchStartTime: new Date('1970-01-01T10:30:00.000Z'),
+          lunchEndTime: new Date('1970-01-01T13:30:00.000Z'),
+          minDailyRestMinutes: 660,
+          maxTeachingMinutesPerDay: null,
+          preferredFreeDayOfWeek: null,
+        };
+        arrangeTerms({ s2: { teacherId: TEA } }, { workRules: [workRule] });
+        engineByDay();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        const payload = postedPayload();
+        // Textilslöjd's autumn post carries Tea, the spring's textil teacher.
+        expect(payload.requirements[0]!.coTeacherId).toEqual(payload.teacherWorkRules[0]!.teacherId);
+        expect(JSON.stringify(payload)).not.toContain(TEA);
+        expect(written().filter((row) => row.subjectId === TX && row.studentGroupId === H2).map((row) => row.teacherId)).toEqual([TEA, TEA]);
+      });
+
+      it('refuses two blocks that no longer fit together by their names, before the engine, and writes nothing', async () => {
+        arrangeTerms({ s1: { lessonsPerWeek: 3 }, s2: { lessonsPerWeek: 3 } });
+
+        const error = await prepare().catch((thrown: unknown) => thrown);
+
+        expect((error as HttpException).getStatus()).toBe(400);
+        expect(bodyOf(error)).toEqual({
+          code: 'BLOCK_SAME_TIMES_DIFFER',
+          params: { block: 'Slöjd 7A VT', other: 'Slöjd 7A HT' },
+          message: expect.stringMatching(/^Slöjd 7A VT takes the times of Slöjd 7A HT, and the two no longer fit together/),
+        });
+
+        arrangeTerms({ s1: { lessonsPerWeek: 3 }, s2: { lessonsPerWeek: 3 } });
+        await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).rejects.toBeInstanceOf(HttpException);
+        expect(http.post).not.toHaveBeenCalled();
+        expect(tx.masterLesson.deleteMany).not.toHaveBeenCalled();
+      });
+
+      it('refuses one teacher on both spring posts as the engine refuses a block, naming the posts', async () => {
+        arrangeTerms({ s1: { coTeacherId: TOVE } });
+
+        const error = await prepare().catch((thrown: unknown) => thrown);
+
+        expect(bodyOf(error)).toMatchObject({
+          code: 'BLOCK_MEMBERS_SHARE_TEACHER',
+          params: { block: 'Slöjd 7A VT', requirement: 'Trä- och metallslöjd för 7A:1', other: 'Textilslöjd för 7A:2' },
+        });
+      });
+
+      it('refuses spring teachers the autumn posts have no room for', async () => {
+        arrangeTerms({ s1: { teacherId: TEA }, s2: { teacherId: 'dddddddd-0004-4000-8000-000000000004', coTeacherId: 'dddddddd-0005-4000-8000-000000000005' } });
+
+        const error = await prepare().catch((thrown: unknown) => thrown);
+
+        expect(bodyOf(error)).toMatchObject({ code: 'BLOCK_SAME_TIMES_TEACHERS', params: { block: 'Slöjd 7A VT', other: 'Slöjd 7A HT' } });
+      });
+
+      it('refuses an autumn locked while the spring has all its lessons to place, the two named under the partly locked summary', async () => {
+        const locked = (id: string, subjectId: string, studentGroupId: string, dayOfWeek: number) =>
+          lockedLesson({ id, subjectId, studentGroupId, dayOfWeek, endDate: autumnEnd });
+        arrangeTerms({}, {
+          lockedLessons: [
+            locked('l1', TX, H1, 1), locked('l2', TX, H1, 2), locked('l3', TR, H2, 1), locked('l4', TR, H2, 2),
+          ],
+        });
+
+        const result = await prepare();
+
+        expect(result).toMatchObject({ ready: false, refusalCode: 'BLOCK_PARTLY_LOCKED_SUMMARY' });
+        const conflicts = !result.ready ? result.refusal.conflicts : null;
+        expect(conflicts?.conflicts.map((detail) => [detail.code, detail.params, detail.resourceNames])).toEqual([
+          ['BLOCK_SAME_TIMES_PARTLY_LOCKED', { block: 'Slöjd 7A HT', other: 'Slöjd 7A VT', locked: 4 }, ['Slöjd 7A HT', 'Slöjd 7A VT']],
+        ]);
+        expect(http.post).not.toHaveBeenCalled();
+      });
+
+      it('places neither block when the school locked both', async () => {
+        const locked = (id: string, subjectId: string, studentGroupId: string, term: 'HT' | 'VT', dayOfWeek: number) =>
+          lockedLesson({
+            id, subjectId, studentGroupId, dayOfWeek,
+            startDate: term === 'HT' ? null : springStart,
+            endDate: term === 'HT' ? autumnEnd : null,
+          });
+        arrangeTerms({}, {
+          lockedLessons: [
+            locked('l1', TX, H1, 'HT', 1), locked('l2', TX, H1, 'HT', 2), locked('l3', TR, H2, 'HT', 1), locked('l4', TR, H2, 'HT', 2),
+            locked('l5', TR, H1, 'VT', 1), locked('l6', TR, H1, 'VT', 2), locked('l7', TX, H2, 'VT', 1), locked('l8', TX, H2, 'VT', 2),
+          ],
+        });
+
+        const prepared = await ready();
+
+        expect([prepared.payload.requirements, prepared.demand, prepared.mirrors]).toEqual([[], [], []]);
+      });
+
+      it('mirrors the spring in a schemaförslag candidate too, and its basis sees what the spring posts are written with', async () => {
+        arrangeTerms({}, { rooms: [textilsal, trasal] });
+        engineByDay();
+        const prepared = await ready();
+
+        const solution = await service.solveCandidate(prepared, { timeoutMs: 1000 });
+
+        expect(solution.rejected).toBeUndefined();
+        expect(solution.lessons.filter((lesson) => lesson.requirementId === S2)).toEqual([
+          { requirementId: S2, roomId: textilsal.id, dayOfWeek: 1, startTime: '08:00', endTime: '08:50' },
+          { requirementId: S2, roomId: textilsal.id, dayOfWeek: 1, startTime: '09:00', endTime: '09:50' },
+        ]);
+        // A spring post's teacher the payload does not carry (Tove teaches the
+        // autumn textil either way) still makes a stored candidate stale.
+        arrangeTerms({ s2: { teacherId: null } }, { rooms: [textilsal, trasal] });
+        const changed = await ready();
+        expect(changed.payload.requirements.map((r) => r.teacherId === null)).toEqual([false, false]);
+        expect(candidateBasis.changedParts(prepared.basisParts, changed.basisParts)).toEqual(['requirements']);
+      });
+
+      it('applies a stored candidate with its spring lessons, and refuses one without them', async () => {
+        arrangeTerms({}, { rooms: [textilsal, trasal] });
+        engineByDay();
+        const prepared = await ready();
+        const solution = await service.solveCandidate(prepared, { timeoutMs: 1000 });
+        tx.masterLesson.deleteMany.mockResolvedValue({ count: 0 });
+        tx.masterLesson.count.mockImplementation(async ({ where }: Query = {}) => (where?.['NOT'] ? 8 : 0));
+        const input: CandidateApplyInput = {
+          user: testUser({ schoolId: THIS_SCHOOL, userId: 'admin-1' }),
+          prepared,
+          mode: 'DIRECT',
+          lessons: solution.lessons,
+          lunches: null,
+          solverStatus: 'OPTIMAL',
+          snapshot: { versions: { snapshotInTransaction: jest.fn().mockResolvedValue({ id: 'version-1' }) }, name: 'Före schemaförslag 1' },
+          after: { source: 'CANDIDATE', runId: 'run-1', ordinal: 1 },
+        };
+
+        await service.applyCandidateWrite(tx as unknown as PrismaClient, input);
+
+        expect(written().map((row) => [row.studentGroupId, row.subjectId, row.dayOfWeek, row.startDate])).toEqual(
+          expect.arrayContaining([
+            [H2, TX, 1, springStart],
+            [H1, TR, 2, springStart],
+          ]),
+        );
+        expect(written()).toHaveLength(8);
+
+        // A candidate stored without the spring is not the answer the demand asks for.
+        tx.masterLesson.createMany.mockClear();
+        const refusal = await service
+          .applyCandidateWrite(tx as unknown as PrismaClient, {
+            ...input,
+            lessons: solution.lessons.filter((lesson) => lesson.requirementId !== S1),
+          })
+          .catch((thrown: unknown) => thrown);
+        expect(bodyOf(refusal)).toMatchObject({ code: 'SCHEDULE_CANDIDATE_STALE' });
+        expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
+      });
     });
 
     describe('soft room wishes', () => {

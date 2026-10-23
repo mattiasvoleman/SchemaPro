@@ -558,6 +558,28 @@ MESSAGES: dict[str, str] = {
         "while the rest of it is still to be placed. Unlock the block's lessons and move any moved "
         "by hand back with the block, or lock all of them."
     ),
+    # Sent by the GATEWAY too, about a block on another block's times
+    # (TeachingBlocks.sameTimesAsBlockId, a term split's spring on its
+    # autumn): this engine is sent only the block whose times are taken, and
+    # the gateway writes the other's lessons at its times. `block` is the
+    # block placed by hand, `other` the one still to place; both are names.
+    "BLOCK_SAME_TIMES_PARTLY_LOCKED": (
+        "{block} has {locked, plural, one {# lesson} other {# lessons}} locked or placed by hand, "
+        "while {other}, which takes the same times in other weeks, still has all of its lessons "
+        "to place. Lock the two blocks together, or unlock {block}."
+    ),
+    # Refused by the gateway before this engine is called, as a 400 like the
+    # block sentences above. `block` takes the times of `other`.
+    "BLOCK_SAME_TIMES_DIFFER": (
+        "{block} takes the times of {other}, and the two no longer fit together: they need the "
+        "same subjects for the same groups, with the same lessons, in weeks that never meet. Make "
+        "them match again, or delete {block} to place its lessons at times of their own."
+    ),
+    "BLOCK_SAME_TIMES_TEACHERS": (
+        "{block} takes the times of {other}, and has more teachers that {other} does not than the "
+        "entries of {other} have room for beside their own. Give the entries of {block} the "
+        "teachers of {other}, or take a co-teacher off {other}."
+    ),
     # Sent by the GATEWAY beside a hand edit that moved one member of a block
     # away from the others (master-lessons.service.ts, block-lessons.ts): a
     # warning, never a refusal. The lesson is the school's from then on, which
