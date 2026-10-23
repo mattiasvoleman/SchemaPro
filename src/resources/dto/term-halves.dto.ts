@@ -21,6 +21,15 @@ export class TermSubjectDto {
   @IsOptional()
   @IsUUID('4', { message: 'subjects: läraren anges med sitt id.' })
   teacherId?: string | null;
+
+  /**
+   * The subject's co-teacher. Omitted carries the class's post's co-teacher
+   * over; null is none. A person on both subjects is refused, so a class's
+   * co-teacher has to be named for one of them.
+   */
+  @IsOptional()
+  @IsUUID('4', { message: 'subjects: medläraren anges med sitt id.' })
+  coTeacherId?: string | null;
 }
 
 /**
@@ -29,8 +38,9 @@ export class TermSubjectDto {
  * half's subject in the autumn and the second half's in the spring,
  * `subjects[1]` the other way round; the spring term starts on
  * `springStartDate`. `halfNames` names the halves when the class has none yet
- * ("7A:1", "7A:2" if omitted), and `blockNames` the two parallel blocks, the
- * autumn's first (named after the post if omitted).
+ * ("7A:1", "7A:2" if omitted), `halfIds` orders the halves it has, and
+ * `blockNames` names the two parallel blocks, the autumn's first (named after
+ * the post if omitted).
  */
 export class SplitByTermDto {
   @IsArray({ message: 'subjects: två ämnen, ett för varje halva på hösten.' })
@@ -51,6 +61,17 @@ export class SplitByTermDto {
   @IsNotEmpty({ each: true })
   @MaxLength(60, { each: true })
   halfNames?: string[];
+
+  /**
+   * The class's two halves, the first half first, when it has them: the
+   * order the client drew. Omitted, the halves are taken by name.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(2)
+  @ArrayMaxSize(2)
+  @IsUUID('4', { each: true, message: 'halfIds: varje halva anges med sitt id.' })
+  halfIds?: string[];
 
   @IsOptional()
   @IsArray()

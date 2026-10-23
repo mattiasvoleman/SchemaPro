@@ -469,7 +469,7 @@ describe('Planning surface (e2e)', () => {
       const TRA = '19191919-1919-4919-8919-191919191919';
       // Once each, so nothing here answers for a later test.
       harness.tx['teachingRequirement']!['findUnique']!
-        .mockResolvedValueOnce({ studentGroupId: GROUP_ID })
+        .mockResolvedValueOnce({ studentGroupId: GROUP_ID, academicYearId: YEAR_ID })
         .mockResolvedValueOnce({
           id: POST,
           academicYearId: YEAR_ID,
@@ -477,6 +477,8 @@ describe('Planning surface (e2e)', () => {
           studentGroupId: GROUP_ID,
           teacherId: null,
           coTeacherId: null,
+          teacherLoadPercent: 100,
+          coTeacherLoadPercent: 100,
           lessonsPerWeek: 2,
           minutesPerLesson: 60,
           lessonLengths: [],
@@ -489,6 +491,7 @@ describe('Planning surface (e2e)', () => {
           recurrence: 'ALL_WEEKS',
           startDate: null,
           endDate: null,
+          updatedAt: new Date('2026-10-20T08:00:00Z'),
           subject: { name: 'Slöjd' },
           block: null,
           studentGroup: { id: GROUP_ID, name: '7A', kind: 'CLASS', halves: [] },
@@ -552,17 +555,22 @@ describe('Planning surface (e2e)', () => {
       ]);
     });
 
-    it('refuses a term split without two subjects before the service runs', async () => {
-      await request(http())
+    // Each body breaks one rule and is otherwise valid, so each 400 is that
+    // rule's and no other's: the pipe answers before the service reads.
+    const TERM_SPLIT = { subjects: [{ subjectId: SUBJECT_ID }, { subjectId: GROUP_ID }], springStartDate: '2027-01-11' };
+    it.each([
+      ['one subject', { ...TERM_SPLIT, subjects: [{ subjectId: SUBJECT_ID }] }, 'subjects'],
+      ['a subject that is no id', { ...TERM_SPLIT, subjects: [{ subjectId: 'textil' }, { subjectId: SUBJECT_ID }] }, 'subjects'],
+      ['a co-teacher that is no id', { ...TERM_SPLIT, subjects: [{ subjectId: SUBJECT_ID, coTeacherId: 'Cecilia' }, { subjectId: GROUP_ID }] }, 'subjects'],
+      ['a spring start no calendar has', { ...TERM_SPLIT, springStartDate: '2027-02-30' }, 'springStartDate'],
+      ['three half ids', { ...TERM_SPLIT, halfIds: [SUBJECT_ID, GROUP_ID, YEAR_ID] }, 'halfIds'],
+    ])('refuses a term split with %s before the service runs', async (_, body, field) => {
+      const response = await request(http())
         .post(`/api/v1/teaching-requirements/${SUBJECT_ID}/term-halves`)
         .set('x-test-user', admin())
-        .send({ subjects: [{ subjectId: SUBJECT_ID }], springStartDate: '2027-01-11' })
+        .send(body)
         .expect(400);
-      await request(http())
-        .post(`/api/v1/teaching-requirements/${SUBJECT_ID}/term-halves`)
-        .set('x-test-user', admin())
-        .send({ subjects: [{ subjectId: 'textil' }, { subjectId: SUBJECT_ID }], springStartDate: '2027-02-30' })
-        .expect(400);
+      expect(JSON.stringify(response.body)).toContain(field);
       expect(harness.tx['teachingRequirement']!['findUnique']).not.toHaveBeenCalled();
     });
 

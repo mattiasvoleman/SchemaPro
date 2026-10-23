@@ -96,7 +96,8 @@ import type { SupabaseAdminService } from '../../src/users/supabase-admin.servic
 import { TeacherDutiesService } from '../../src/staffing/teacher-duties.service';
 import { attendanceSpan, lockEmploymentsOf } from '../../src/staffing/staffing-enforcement';
 import { TeachingRequirementsService } from '../../src/resources/teaching-requirements.service';
-import { TeachingBlocksService } from '../../src/resources/teaching-blocks.service';
+import { TEACHING_BLOCK_NAME_TAKEN, TeachingBlocksService } from '../../src/resources/teaching-blocks.service';
+import { TermHalvesService } from '../../src/resources/term-halves.service';
 import { OptimizationProxyService } from '../../src/optimization/optimization-proxy.service';
 import { YearRolloverService } from '../../src/year-rollover/year-rollover.service';
 import { StaffingRolloverService } from '../../src/year-rollover/staffing-rollover.service';
@@ -2440,6 +2441,103 @@ async function runChecks(
       // The year takes its classes and their halves with it.
       await years.remove(year.id, admin);
       await other.$disconnect();
+    }
+  });
+
+  await check('(u2e) a class post split by term writes two halves, two blocks TB409 holds and four dated posts, and a refusal after the halves were made leaves nothing', async () => {
+    const requirements = new TeachingRequirementsService(api);
+    const subjects = new SubjectsService(api);
+    const years = new AcademicYearsService(api);
+    const termHalves = new TermHalvesService(api);
+    const year = await years.create(
+      { name: `${MARKER} termin`, startDate: '2099-08-17', endDate: '2100-06-11' } as never,
+      admin,
+    );
+    try {
+      const [slojd, textil, tra] = [
+        await subjects.create({ name: `${MARKER} th-slöjd` } as never, admin),
+        await subjects.create({ name: `${MARKER} th-textil` } as never, admin),
+        await subjects.create({ name: `${MARKER} th-trä` } as never, admin),
+      ];
+      const klass = (
+        await owner.query<{ id: string }>(
+          `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+           VALUES ($1, $2, $3 || ' th-7A', 'CLASS', 7, now()) RETURNING id`,
+          [fixture.schoolId, year.id, MARKER],
+        )
+      ).rows[0].id;
+      const post = await requirements.create(
+        { academicYearId: year.id, subjectId: slojd.id, studentGroupId: klass, lessonsPerWeek: 2, minutesPerLesson: 60, recurrence: 'ODD_WEEKS' } as never,
+        admin,
+      );
+      const body = (names: [string, string]) => ({
+        subjects: [{ subjectId: textil.id }, { subjectId: tra.id }],
+        springStartDate: '2100-01-04',
+        blockNames: names.map((name) => `${MARKER} ${name}`),
+      });
+      const halvesOf = async () =>
+        (await owner.query<{ n: number }>('SELECT count(*)::int AS n FROM "StudentGroups" WHERE "halfOfId" = $1', [klass])).rows[0].n;
+
+      // Refused after the class was split in this transaction (the block
+      // name is checked after the halves are made): the rollback takes the
+      // halves too, and the class's post stays.
+      await owner.query(
+        `INSERT INTO "TeachingBlocks" ("schoolId", "academicYearId", name, "updatedAt") VALUES ($1, $2, $3 || ' th-VT', now())`,
+        [fixture.schoolId, year.id, MARKER],
+      );
+      await assert.rejects(termHalves.split(post.id, body(['th-HT', 'th-VT']), admin), (error: unknown) => {
+        assert.ok(error instanceof ConflictException, summarise(error));
+        assert.equal((error.getResponse() as { code?: string }).code, TEACHING_BLOCK_NAME_TAKEN);
+        return true;
+      });
+      assert.equal(await halvesOf(), 0, 'the refused split left halves behind');
+      assert.equal(
+        (await owner.query('SELECT 1 FROM "TeachingRequirements" WHERE id = $1', [post.id])).rowCount,
+        1,
+        'the refused split removed the class’s post',
+      );
+
+      // The split: under RLS, through the real triggers and keys.
+      const result = await termHalves.split(post.id, body(['th-höst', 'th-vår']), admin);
+      assert.equal(result.createdHalves, true);
+      assert.equal(await halvesOf(), 2);
+      assert.equal(
+        (await owner.query('SELECT 1 FROM "TeachingRequirements" WHERE id = $1', [post.id])).rowCount,
+        0,
+        'the class’s post outlived the split',
+      );
+      const members = (
+        await owner.query<{ block: string; subject: string; startDate: string | null; endDate: string | null; recurrence: string }>(
+          `SELECT b.name AS block, s.name AS subject, r."startDate"::text AS "startDate", r."endDate"::text AS "endDate", r.recurrence::text AS recurrence
+           FROM "TeachingRequirements" r JOIN "TeachingBlocks" b ON b.id = r."blockId" JOIN "Subjects" s ON s.id = r."subjectId"
+           WHERE b."academicYearId" = $1 ORDER BY b.name, s.name`,
+          [year.id],
+        )
+      ).rows;
+      assert.deepEqual(
+        members.map((row) => [row.block.replace(`${MARKER} `, ''), row.subject.replace(`${MARKER} `, ''), row.startDate, row.endDate, row.recurrence]),
+        [
+          ['th-höst', 'th-textil', null, '2100-01-03', 'ODD_WEEKS'],
+          ['th-höst', 'th-trä', null, '2100-01-03', 'ODD_WEEKS'],
+          ['th-vår', 'th-textil', '2100-01-04', null, 'ODD_WEEKS'],
+          ['th-vår', 'th-trä', '2100-01-04', null, 'ODD_WEEKS'],
+        ],
+      );
+
+      // TB409 holds the blocks it accepted: one member's end moved alone is refused.
+      try {
+        await api.withRls(admin, (tx) =>
+          tx.teachingRequirement.update({ where: { id: result.requirements[0]!.id }, data: { endDate: new Date('2099-12-20T00:00:00Z') } }),
+        );
+        assert.fail('a member of a term block took other weeks alone');
+      } catch (error) {
+        assert.equal(sqlStateOf(error), 'TB409', summarise(error));
+      }
+      // The class's post is gone: a second split of it is a 404.
+      await assert.rejects(termHalves.split(post.id, body(['th-x', 'th-y']), admin), NotFoundException);
+    } finally {
+      // The year takes its classes, halves, posts and blocks with it.
+      await years.remove(year.id, admin);
     }
   });
 

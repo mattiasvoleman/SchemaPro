@@ -10,7 +10,8 @@ import type { PrismaService } from '../database/prisma.service';
 import { WRITE_CONFLICT } from '../common/utils/prisma-errors';
 import { RequirementImportChecks } from '../staffing/staffing-enforcement';
 import type { StaffingFinding } from '../staffing/staffing-checks';
-import { CLASS_ALREADY_SPLIT, NOT_A_CLASS } from './student-groups.service';
+import { SAME_TEACHER_TWICE } from '../staffing/staffing-enforcement';
+import { CLASS_ALREADY_SPLIT, NOT_A_CLASS, NOT_THE_CLASS_HALVES } from './student-groups.service';
 import { TEACHING_BLOCK_NAME_TAKEN } from './teaching-blocks.service';
 import {
   CLASS_HAS_ONE_HALF,
@@ -41,6 +42,7 @@ const TEXTIL = '66666666-6666-4666-8666-666666666666';
 const TRA = '77777777-7777-4777-8777-777777777777';
 const ANNA = '88888888-8888-4888-8888-888888888881';
 const BO = '88888888-8888-4888-8888-888888888882';
+const CECILIA = '88888888-8888-4888-8888-888888888883';
 const AUTUMN = '99999999-9999-4999-8999-999999999991';
 const SPRING = '99999999-9999-4999-8999-999999999992';
 
@@ -69,6 +71,7 @@ const source = (overrides: Record<string, unknown> = {}) => ({
   recurrence: 'ALL_WEEKS',
   startDate: null,
   endDate: null,
+  updatedAt: new Date('2026-10-20T08:00:00.000Z'),
   subject: { name: 'Slöjd' },
   block: null,
   studentGroup: { id: CLASS, name: '7A', kind: 'CLASS', halves: [] },
@@ -99,7 +102,7 @@ describe('TermHalvesService', () => {
   /** The post as both reads find it: the locate, then the read under the lock. */
   const givenPost = (row: ReturnType<typeof source> | null) => {
     tx.teachingRequirement.findUnique.mockImplementation(async ({ select }: { select?: unknown }) =>
-      row === null ? null : select ? { studentGroupId: row.studentGroupId } : row,
+      row === null ? null : select ? { studentGroupId: row.studentGroupId, academicYearId: row.academicYearId } : row,
     );
   };
 
@@ -144,10 +147,15 @@ describe('TermHalvesService', () => {
     it('splits the class, writes one block per term and four posts that swap the subjects, and removes the class’s post', async () => {
       const result = await service.split(POST, DTO, admin);
 
-      // The class row is locked before anything is asked of it.
-      const [lock] = tx.$queryRaw.mock.calls[0] as [TemplateStringsArray, string];
-      expect(lock.join('?')).toContain('FOR NO KEY UPDATE');
-      expect(tx.$queryRaw.mock.calls[0]![1]).toBe(CLASS);
+      // The year FOR SHARE, then the class FOR NO KEY UPDATE: year
+      // activation takes the year before the year's groups, and the other
+      // order could wait on it in a cycle.
+      const raw = tx.$queryRaw.mock.calls.map(([strings, id]) => [(strings as TemplateStringsArray).join('?'), id]);
+      expect(raw[0]![0]).toContain('"AcademicYears"');
+      expect(raw[0]![0]).toContain('FOR SHARE');
+      expect(raw[0]![1]).toBe(YEAR);
+      expect(raw[1]![0]).toContain('FOR NO KEY UPDATE');
+      expect(raw[1]![1]).toBe(CLASS);
 
       expect(tx.studentGroup.createManyAndReturn).toHaveBeenCalledWith({
         data: [
@@ -182,11 +190,16 @@ describe('TermHalvesService', () => {
             maxLessonsPerDay: 1,
             minDaysBetween: null,
             recurrence: 'ALL_WEEKS',
+            coTeacherId: null,
+            teacherLoadPercent: 100,
+            coTeacherLoadPercent: 100,
           }),
         );
       }
 
-      // Removed only as it was read: the class's, in no block, without dates.
+      // Removed only as it was read: the class's, in no block, without
+      // dates, and unwritten since (updatedAt), so a PATCH of its weeks,
+      // lengths or teacher in between is a 409, not lost.
       expect(tx.teachingRequirement.deleteMany).toHaveBeenCalledWith({
         where: {
           id: POST,
@@ -196,6 +209,7 @@ describe('TermHalvesService', () => {
           endDate: null,
           lessonsPerWeek: 2,
           minutesPerLesson: 80,
+          updatedAt: new Date('2026-10-20T08:00:00.000Z'),
         },
       });
 
@@ -278,6 +292,56 @@ describe('TermHalvesService', () => {
     );
   });
 
+  it('takes the class’s halves in the order the request names them, whatever their names sort as', async () => {
+    givenPost(
+      source({
+        studentGroup: {
+          id: CLASS,
+          name: '7A',
+          kind: 'CLASS',
+          halves: [
+            { id: HALF_1, name: '7A:1' },
+            { id: HALF_2, name: '7A:2' },
+          ],
+        },
+      }),
+    );
+
+    const result = await service.split(POST, { ...DTO, halfIds: [HALF_2, HALF_1] }, admin);
+
+    expect(result.halves.map((half) => half.id)).toEqual([HALF_2, HALF_1]);
+    const [{ data }] = tx.teachingRequirement.createManyAndReturn.mock.calls[0] as [{ data: Record<string, unknown>[] }];
+    // The first half named reads the first subject in the autumn.
+    expect(data[0]).toEqual(expect.objectContaining({ studentGroupId: HALF_2, subjectId: TEXTIL, endDate: day('2027-01-10') }));
+  });
+
+  it('carries the co-teachers the request names, and the class’s load percentages, to every post', async () => {
+    givenPost(source({ coTeacherId: CECILIA, teacherLoadPercent: 120, coTeacherLoadPercent: 80 }));
+
+    await service.split(
+      POST,
+      { ...DTO, subjects: [{ subjectId: TEXTIL, teacherId: ANNA, coTeacherId: CECILIA }, { subjectId: TRA, teacherId: BO, coTeacherId: null }] },
+      admin,
+    );
+
+    const [{ data }] = tx.teachingRequirement.createManyAndReturn.mock.calls[0] as [{ data: Record<string, unknown>[] }];
+    expect(data.map((row) => [row.subjectId, row.teacherId, row.coTeacherId, row.teacherLoadPercent, row.coTeacherLoadPercent])).toEqual([
+      [TEXTIL, ANNA, CECILIA, 120, 80],
+      [TRA, BO, null, 120, 80],
+      [TRA, BO, null, 120, 80],
+      [TEXTIL, ANNA, CECILIA, 120, 80],
+    ]);
+  });
+
+  it('carries the class’s co-teacher to the subject the request leaves it to, when the other names none', async () => {
+    givenPost(source({ coTeacherId: CECILIA }));
+
+    await service.split(POST, { ...DTO, subjects: [{ subjectId: TEXTIL, teacherId: ANNA }, { subjectId: TRA, teacherId: BO, coTeacherId: null }] }, admin);
+
+    const [{ data }] = tx.teachingRequirement.createManyAndReturn.mock.calls[0] as [{ data: Record<string, unknown>[] }];
+    expect(data.map((row) => row.coTeacherId)).toEqual([CECILIA, null, null, CECILIA]);
+  });
+
   describe('refuses, before anything is written', () => {
     const nothingWritten = () => {
       expect(tx.teachingRequirement.deleteMany).not.toHaveBeenCalled();
@@ -295,13 +359,66 @@ describe('TermHalvesService', () => {
       expect(prisma.withRls).not.toHaveBeenCalled();
     });
 
-    it('one teacher for both subjects, whose two posts each block would hold at the same times', async () => {
+    it.each([
+      ['one teacher for both subjects', { teacherId: ANNA }, { teacherId: ANNA }],
+      ['one subject’s teacher as the other’s co-teacher', { teacherId: ANNA }, { teacherId: BO, coTeacherId: ANNA }],
+      ['one co-teacher for both subjects', { teacherId: ANNA, coTeacherId: CECILIA }, { teacherId: BO, coTeacherId: CECILIA }],
+    ])('%s, whom each block would need at two posts at once', async (_, one, two) => {
       const error = await service
-        .split(POST, { ...DTO, subjects: [{ subjectId: TEXTIL, teacherId: ANNA }, { subjectId: TRA, teacherId: ANNA }] }, admin)
+        .split(POST, { ...DTO, subjects: [{ subjectId: TEXTIL, ...one }, { subjectId: TRA, ...two }] }, admin)
         .catch((e: unknown) => e);
 
       expect(error).toBeInstanceOf(BadRequestException);
       expect((error as BadRequestException).getResponse()).toEqual(expect.objectContaining({ code: TERM_TEACHER_TWICE }));
+      nothingWritten();
+    });
+
+    it('a teacher who is their own co-teacher, without opening a transaction', async () => {
+      await expect(
+        service.split(POST, { ...DTO, subjects: [{ subjectId: TEXTIL, teacherId: ANNA, coTeacherId: ANNA }, { subjectId: TRA }] }, admin),
+      ).rejects.toThrow(SAME_TEACHER_TWICE);
+      expect(prisma.withRls).not.toHaveBeenCalled();
+    });
+
+    it('the class’s co-teacher, carried to both subjects when the request names none, and says which to choose', async () => {
+      givenPost(source({ coTeacherId: CECILIA }));
+
+      const error = await service.split(POST, DTO, admin).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect((error as BadRequestException).getResponse()).toEqual({
+        message: expect.stringMatching(/Slöjd för 7A har en medlärare: välj vilket av ämnena hen följer, eller inget\.$/),
+        code: TERM_TEACHER_TWICE,
+      });
+      nothingWritten();
+    });
+
+    it('halves the request names that are not the class’s two, or halves the class no longer has', async () => {
+      givenPost(source({ studentGroup: { id: CLASS, name: '7A', kind: 'CLASS', halves: [{ id: HALF_1, name: '7A:1' }, { id: HALF_2, name: '7A:2' }] } }));
+      for (const halfIds of [[HALF_1, POST], [HALF_1, HALF_1]]) {
+        const error = await service.split(POST, { ...DTO, halfIds }, admin).catch((e: unknown) => e);
+        expect((error as ConflictException).getResponse()).toEqual(expect.objectContaining({ code: NOT_THE_CLASS_HALVES }));
+      }
+      givenPost(source());
+      const gone = await service.split(POST, { ...DTO, halfIds: [HALF_1, HALF_2] }, admin).catch((e: unknown) => e);
+      expect((gone as ConflictException).getResponse()).toEqual(expect.objectContaining({ code: NOT_THE_CLASS_HALVES }));
+      expect(tx.studentGroup.createManyAndReturn).not.toHaveBeenCalled();
+      nothingWritten();
+    });
+
+    it('new half names for a class that has its halves since the request was drawn', async () => {
+      givenPost(source({ studentGroup: { id: CLASS, name: '7A', kind: 'CLASS', halves: [{ id: HALF_1, name: '7A:1' }, { id: HALF_2, name: '7A:2' }] } }));
+
+      const error = await service.split(POST, { ...DTO, halfNames: ['A', 'B'] }, admin).catch((e: unknown) => e);
+
+      expect((error as ConflictException).getResponse()).toEqual(expect.objectContaining({ code: CLASS_ALREADY_SPLIT }));
+      nothingWritten();
+    });
+
+    it('both half ids and half names', async () => {
+      await expect(
+        service.split(POST, { ...DTO, halfIds: [HALF_1, HALF_2], halfNames: ['A', 'B'] }, admin),
+      ).rejects.toThrow(BadRequestException);
       expect(prisma.withRls).not.toHaveBeenCalled();
     });
 
@@ -454,7 +571,7 @@ describe('TermHalvesService', () => {
         expect.objectContaining({ requirementId: POST, patch: { teacherId: null, coTeacherId: null } }),
       );
       expect(judge.mock.calls.slice(1).map(([args]) => [args.studentGroupId, args.subjectId, args.patch])).toEqual([
-        [HALF_1, TEXTIL, expect.objectContaining({ teacherId: ANNA, lessonsPerWeek: 2, lessonLengths: [80, 40], startDate: null, endDate: '2027-01-10' })],
+        [HALF_1, TEXTIL, expect.objectContaining({ teacherId: ANNA, coTeacherId: null, teacherLoadPercent: 100, coTeacherLoadPercent: 100, lessonsPerWeek: 2, lessonLengths: [80, 40], startDate: null, endDate: '2027-01-10' })],
         [HALF_1, TRA, expect.objectContaining({ teacherId: BO, startDate: '2027-01-11', endDate: null })],
         [HALF_2, TRA, expect.objectContaining({ teacherId: BO, startDate: null, endDate: '2027-01-10' })],
         [HALF_2, TEXTIL, expect.objectContaining({ teacherId: ANNA, startDate: '2027-01-11', endDate: null })],
@@ -464,6 +581,27 @@ describe('TermHalvesService', () => {
       expect(judge.mock.invocationCallOrder.at(-1)!).toBeLessThan(
         tx.teachingRequirement.deleteMany.mock.invocationCallOrder[0]!,
       );
+    });
+
+    it('charges each post’s teacher and co-teacher at the class’s percentages, and asks about the co-teacher too', async () => {
+      givenPost(source({ coTeacherId: CECILIA, teacherLoadPercent: 120, coTeacherLoadPercent: 80 }));
+      const { judge } = givenChecks(() => []);
+
+      await service.split(
+        POST,
+        { ...DTO, subjects: [{ subjectId: TEXTIL, teacherId: null, coTeacherId: CECILIA }, { subjectId: TRA, teacherId: BO, coTeacherId: null }] },
+        admin,
+      );
+
+      expect(openChecks).toHaveBeenCalledWith(tx, expect.objectContaining({ teacherIds: [CECILIA, BO] }));
+      // The class's post's teachers first, then all four: a post with only a
+      // co-teacher is asked about as well.
+      expect(judge.mock.calls.slice(1).map(([args]) => [args.subjectId, args.patch])).toEqual([
+        [TEXTIL, expect.objectContaining({ teacherId: null, coTeacherId: CECILIA, teacherLoadPercent: 120, coTeacherLoadPercent: 80 })],
+        [TRA, expect.objectContaining({ teacherId: BO, coTeacherId: null, teacherLoadPercent: 120, coTeacherLoadPercent: 80 })],
+        [TRA, expect.objectContaining({ teacherId: BO, coTeacherId: null })],
+        [TEXTIL, expect.objectContaining({ teacherId: null, coTeacherId: CECILIA })],
+      ]);
     });
 
     it('refuses with a 409 naming the half’s post, and writes nothing', async () => {
