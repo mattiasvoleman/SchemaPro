@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import {
@@ -502,21 +503,34 @@ export default function GeneratePage() {
    */
   const notes = job?.notes ?? [];
   /**
-   * A schemaförslag applied after this run finished: the grundschema is the
-   * candidate's now, and the notes describe a timetable that is gone — a
-   * list nobody can act on, under a hint to move lessons that were
-   * replaced. They give way to a line naming the candidate and pointing to
-   * the comparison, which says which wishes it breaks. The card lives only
-   * as long as this visit's run, so the year's one batch is enough to know
-   * (a newer batch replaces it only after another run is started); the
-   * overview is read again when the tab is.
+   * A schemaförslag applied over the year since this run: the grundschema is
+   * the candidate's now, and the notes describe a timetable that is gone — a
+   * list nobody can act on, under a hint to move lessons that were replaced.
+   * They give way to a line naming the candidate and pointing to the
+   * comparison, which says which wishes it breaks. The gateway reads it from
+   * the year's change log, which keeps the apply whatever becomes of the
+   * candidate's run — a newer batch or "Ta bort förslagen" deletes the run,
+   * and with it the overview's appliedAt.
    */
-  const appliedSince = useMemo(() => {
-    const batch = candidatesQuery.data?.batch;
-    if (!job?.finishedAt || !batch?.run.appliedAt) return null;
-    if (Date.parse(batch.run.appliedAt) <= Date.parse(job.finishedAt)) return null;
-    return batch.candidates.find((candidate) => candidate.id === batch.run.appliedCandidateId) ?? null;
-  }, [job?.finishedAt, candidatesQuery.data?.batch]);
+  const appliedSince = job?.supersededBy ?? null;
+  /*
+   * A candidate is applied on its own page, often in another tab, and this
+   * app reads nothing again on focus (app-providers.tsx) nor polls a finished
+   * run. So while the card shows wishes, coming back to the tab reads the run
+   * again, and the gateway says whether one was applied since.
+   */
+  const queryClient = useQueryClient();
+  const watchingWishes = job?.status === "SUCCEEDED" && notes.length > 0 && appliedSince === null;
+  useEffect(() => {
+    if (!watchingWishes || jobId === null) return undefined;
+    const reread = () => {
+      if (document.visibilityState === "visible") {
+        void queryClient.invalidateQueries({ queryKey: ["optimizationJob", jobId] });
+      }
+    };
+    document.addEventListener("visibilitychange", reread);
+    return () => document.removeEventListener("visibilitychange", reread);
+  }, [watchingWishes, jobId, queryClient]);
   /**
    * Whose post a days refusal is about, for a reader with HR-läs (Lärarens
    * dag): the sentence's `limit` is a post's id, which no screen resolves, so
@@ -958,10 +972,12 @@ export default function GeneratePage() {
                 {t("notesTitle")}
               </h3>
               <p className="max-w-prose text-sm text-muted-foreground">
-                {t("notesSuperseded", {
-                  ordinal: appliedSince.ordinal,
-                  label: variantLabel(tCandidates, appliedSince),
-                })}{" "}
+                {appliedSince.ordinal !== null && appliedSince.variant !== null
+                  ? t("notesSuperseded", {
+                      ordinal: appliedSince.ordinal,
+                      label: variantLabel(tCandidates, { ordinal: appliedSince.ordinal, variant: appliedSince.variant }),
+                    })
+                  : t("notesSupersededUnnamed")}{" "}
                 <Link href={`${candidatesHref(year ?? null)}#comparison`} className="font-medium text-foreground underline underline-offset-4">
                   {t("notesSupersededLink")}
                 </Link>

@@ -1252,6 +1252,7 @@
     "notesTitle": "Önskemål som inte gick att hålla",
     "notesHint": "Schemat är lagt. De här önskemålen vägdes mot veckans regler och fick ge vika. Flytta lektioner för hand om något av dem är viktigare.",
     "notesSuperseded": "Förslag {ordinal} – {label} har tillämpats sedan körningen, så önskemålen körningen inte kunde hålla gäller inte längre schemat. Jämförelsen visar vilka önskemål förslaget inte håller.",
+    "notesSupersededUnnamed": "Ett schemaförslag har tillämpats sedan körningen, så önskemålen körningen inte kunde hålla gäller inte längre schemat. Jämförelsen visar vilka önskemål förslaget inte håller.",
     "notesSupersededLink": "Till jämförelsen",
     "viewTimetable": "Granska schemat",
     "warnings": "Varningar",

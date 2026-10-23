@@ -1252,6 +1252,7 @@
     "notesTitle": "Wishes that could not be kept",
     "notesHint": "The timetable has been laid. These wishes were weighed against the week's rules and gave way. Move lessons by hand if one of them matters more.",
     "notesSuperseded": "Proposal {ordinal} – {label} has been applied since the run, so the wishes the run could not keep no longer describe the timetable. The comparison shows which wishes the proposal does not keep.",
+    "notesSupersededUnnamed": "A proposal has been applied since the run, so the wishes the run could not keep no longer describe the timetable. The comparison shows which wishes the proposal does not keep.",
     "notesSupersededLink": "Go to the comparison",
     "viewTimetable": "Review the timetable",
     "warnings": "Warnings",

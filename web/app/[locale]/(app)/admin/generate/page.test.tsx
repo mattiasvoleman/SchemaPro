@@ -700,32 +700,21 @@ describe("wishes a finished run could not keep", () => {
   });
 
   /*
-   * A schemaförslag applied after the run replaced the timetable the notes
-   * describe: the list gives way to a line naming the candidate, and a link
-   * to the comparison, which says which wishes it breaks.
+   * A schemaförslag applied over the year since the run replaced the
+   * timetable the notes describe. The gateway reads it from the change log
+   * (supersededBy), which keeps it whatever becomes of the candidate's run:
+   * the list gives way to a line naming the candidate, and a link to the
+   * comparison, which says which wishes it breaks.
    */
   describe("after a schemaförslag was applied", () => {
-    const candidate = (ordinal: number, variant: string) => ({
-      id: `c-${ordinal}`, ordinal, variant, weights: null, solverStatus: "OPTIMAL", lessonCount: 40, errorCode: null,
-      errorParams: null, metrics: null, conflicts: [],
-    });
-    const overview = (appliedAt: string | null) => {
-      const batch = {
-        run: {
-          id: "run-1", status: "SUCCEEDED", requested: 2, progress: 2, createdAt: "2026-10-17T09:00:00.000Z",
-          startedAt: "2026-10-17T09:00:01.000Z", finishedAt: "2026-10-17T09:02:00.000Z", error: null, errorCode: null,
-          errorParams: null, createdById: "u-1", createdByName: null, appliedCandidateId: appliedAt ? "c-2" : null,
-          appliedAt, refreshOfId: null,
-        },
-        candidates: [candidate(1, "KEEP"), candidate(2, "TEACHER_GAPS")],
-      };
-      return { latest: batch, batch, unplaced: null };
-    };
-    const finished = laid({ notes: [WISH], finishedAt: "2026-10-17T10:01:00.000Z" });
+    const superseded = (ordinal: number | null, variant: string | null) =>
+      laid({ notes: [WISH], finishedAt: "2026-10-17T10:01:00.000Z", supersededBy: { appliedAt: "2026-10-17T10:05:00.000Z", ordinal, variant } });
 
-    it("names the candidate and points to the comparison in place of the run's list when it was applied after the run", () => {
-      state.job = finished;
-      state.candidates = overview("2026-10-17T10:05:00.000Z");
+    it("names the candidate and points to the comparison in place of the run's list, with no batch left to say so", () => {
+      // "Ta bort förslagen", a newer batch or the week's sweep took the
+      // applied run: the overview no longer knows, and the card still does.
+      state.job = superseded(2, "TEACHER_GAPS");
+      state.candidates = { latest: null, batch: null, unplaced: null };
       render(<GeneratePage />);
 
       const section = screen.getByRole("region", { name: "generate.notesTitle" });
@@ -740,18 +729,53 @@ describe("wishes a finished run could not keep", () => {
       expect(within(section).queryByText("generate.notesHint")).toBeNull();
     });
 
-    it("keeps the run's list when the candidate was applied before the run finished, or none was", () => {
-      state.job = finished;
-      state.candidates = overview("2026-10-17T09:30:00.000Z");
+    it("says a candidate was applied, without a name, when the log does not say which", () => {
+      state.job = superseded(null, null);
+      render(<GeneratePage />);
+
+      expect(screen.getByText(/^generate\.notesSupersededUnnamed/)).toBeInTheDocument();
+      expect(screen.queryByText(SENTENCE)).toBeNull();
+    });
+
+    it("reads the run again when the tab comes back while its card lists wishes, and not once a candidate has replaced them", async () => {
+      // A run started here: the card belongs to this visit's job.
+      state.people.push({ ...pupil("t-1", "g-41"), role: "TEACHER", studentGroupId: null });
+      const invalidate = vi.spyOn(QueryClient.prototype, "invalidateQueries");
+      const startHere = async () => {
+        noMutation.mutateAsync.mockResolvedValueOnce({ jobId: "job-n" });
+        await userEvent.setup().click(screen.getByRole("button", { name: "generate.run" }));
+        await screen.findByRole("region", { name: "generate.notesTitle" });
+      };
+      try {
+        state.job = laid({ notes: [WISH], supersededBy: null });
+        const { unmount } = render(<GeneratePage />);
+        await startHere();
+        invalidate.mockClear();
+        document.dispatchEvent(new Event("visibilitychange"));
+        expect(invalidate).toHaveBeenCalledWith({ queryKey: ["optimizationJob", "job-n"] });
+        unmount();
+
+        state.job = superseded(2, "TEACHER_GAPS");
+        render(<GeneratePage />);
+        await startHere();
+        invalidate.mockClear();
+        document.dispatchEvent(new Event("visibilitychange"));
+        expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ["optimizationJob", "job-n"] });
+      } finally {
+        invalidate.mockRestore();
+      }
+    });
+
+    it("keeps the run's list when the gateway says none was applied since, or is older than the field", () => {
+      state.job = laid({ notes: [WISH], supersededBy: null });
       const { unmount } = render(<GeneratePage />);
       expect(screen.getByText(SENTENCE)).toBeInTheDocument();
       expect(screen.queryByText(/generate\.notesSuperseded/)).toBeNull();
       unmount();
 
-      state.candidates = overview(null);
+      state.job = laid({ notes: [WISH] });
       render(<GeneratePage />);
       expect(screen.getByText(SENTENCE)).toBeInTheDocument();
-      expect(screen.queryByText(/generate\.notesSuperseded/)).toBeNull();
     });
   });
 
