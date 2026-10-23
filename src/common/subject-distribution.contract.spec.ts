@@ -24,9 +24,11 @@ import {
  * replay src/common/__fixtures__/subject-distribution-cases.json.
  *
  * The fixture was GENERATED from this implementation (the script is in the
- * commit message); never edit the JSON by hand. Its constants are asserted
- * here against the module, and the module's against the DTOs and the CHECKs
- * of 20261019090000 by their own specs.
+ * message of the commit that last changed it); never edit the JSON by hand.
+ * The cases with dates and parities pin the ISO-week reading; the haystack
+ * they were picked from is subject-distribution.spec.ts. The fixture's
+ * constants are asserted here against the module, and the module's against
+ * the DTOs and the CHECKs of 20261019090000 by their own specs.
  */
 
 interface FixtureCase {

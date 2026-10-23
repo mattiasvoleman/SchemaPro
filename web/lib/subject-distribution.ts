@@ -8,10 +8,16 @@
  * Read the gateway module for the rule; what is said there holds here line
  * for line. In short: at most `maxLessonsPerDay` lessons of a timplanspost on
  * one weekday, and two weekdays that both hold one at least `minDaysBetween`
- * apart (2 is "inte dagar i följd"), counted in the weeks the lessons actually
- * run — an odd-week and an even-week lesson on one Monday never meet.
+ * apart (2 is "inte dagar i följd"), counted in the ISO weeks the lessons
+ * actually run, as publishing puts them in the calendar — an odd-week and an
+ * even-week lesson on one Monday never meet, and windows that share a date
+ * meet only if both lessons run in one week.
  *
- * PURE. Dates are "YYYY-MM-DD", which compare as strings.
+ * The week reading is the gateway’s, written out here (weeksOf below):
+ * teacher-day.ts’s weeksOf and calendar/lesson-recurrence.ts’s runsOn.
+ *
+ * PURE. Dates are "YYYY-MM-DD", read as midnight UTC as the gateway reads a
+ * @db.Date.
  */
 
 /** Bounds shared by the DTOs, the CHECKs (20261019090000) and the engine. */
@@ -65,7 +71,7 @@ export type DistributionBreach =
   | {
       kind: "PER_DAY";
       dayOfWeek: number;
-      /** The most of them that meet in one week. */
+      /** The most of them that run in one week. */
       count: number;
       maxLessonsPerDay: number;
       /** Every lesson on that weekday, sorted. */
@@ -80,41 +86,76 @@ export type DistributionBreach =
       lessonIds: string[];
     };
 
-/** Whether two lessons can run in the same week. Absent recurrence is ALL_WEEKS. */
-export function canMeet(a: DistributionLesson, b: DistributionLesson): boolean {
-  const first = a.recurrence ?? "ALL_WEEKS";
-  const second = b.recurrence ?? "ALL_WEEKS";
-  if (first !== "ALL_WEEKS" && second !== "ALL_WEEKS" && first !== second) return false;
-  if (a.endDate && b.startDate && a.endDate < b.startDate) return false;
-  if (b.endDate && a.startDate && b.endDate < a.startDate) return false;
-  return true;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** "YYYY-MM-DD" as the midnight UTC the gateway reads it as, in milliseconds. */
+const parseDay = (value: string): number => Date.parse(`${value}T00:00:00.000Z`);
+
+/** The ISO weekday of a midnight UTC. */
+const weekdayOf = (time: number): number => new Date(time).getUTCDay() || 7;
+
+/** The Monday of the ISO week holding `time`. */
+const mondayOf = (time: number): number => time - (weekdayOf(time) - 1) * DAY_MS;
+
+/**
+ * Whether the ISO week that starts on `monday` is odd. Its Thursday decides
+ * the year it belongs to, and its number is one more than the whole weeks
+ * from that year’s 1 January to the Thursday.
+ */
+function oddWeek(monday: number): boolean {
+  const thursday = monday + 3 * DAY_MS;
+  const newYear = Date.UTC(new Date(thursday).getUTCFullYear(), 0, 1);
+  return Math.floor((thursday - newYear) / (7 * DAY_MS)) % 2 === 0;
 }
 
 /**
- * The most of these lessons that run in one week.
- *
- * Per parity, then per date: lessons of one parity (ALL counts in both) whose
- * windows pairwise overlap share a date — intervals on a line do — so the
- * answer is the most windows that hold one start date, tried at every start.
+ * Whether the lesson runs in the week that starts on `monday`: the gateway’s
+ * runsOn on the lesson’s own weekday’s date of that week.
  */
-function mostInOneWeek(lessons: DistributionLesson[]): number {
-  let best = 0;
-  for (const parity of ["ODD_WEEKS", "EVEN_WEEKS"] as const) {
-    const running = lessons.filter((lesson) => {
-      const recurrence = lesson.recurrence ?? "ALL_WEEKS";
-      return recurrence === "ALL_WEEKS" || recurrence === parity;
-    });
-    // An open start is the first date there is, which no string undercuts.
-    const starts = running.map((lesson) => lesson.startDate ?? "");
-    for (const date of starts) {
-      const holding = running.filter(
-        (lesson) =>
-          (lesson.startDate ?? "") <= date && (lesson.endDate == null || lesson.endDate >= date),
-      ).length;
-      best = Math.max(best, holding);
-    }
+function runsInWeek(lesson: DistributionLesson, monday: number): boolean {
+  const date = monday + (lesson.dayOfWeek - 1) * DAY_MS;
+  if (lesson.startDate && date < parseDay(lesson.startDate)) return false;
+  if (lesson.endDate && date > parseDay(lesson.endDate)) return false;
+  const recurrence = lesson.recurrence ?? "ALL_WEEKS";
+  return recurrence === "ALL_WEEKS" || (recurrence === "ODD_WEEKS") === oddWeek(monday);
+}
+
+/** The Monday of the week of the lesson’s first own date on or after `date`. */
+const firstWeekFrom = (lesson: DistributionLesson, date: number): number =>
+  mondayOf(date + ((lesson.dayOfWeek - weekdayOf(date) + 7) % 7) * DAY_MS);
+
+/**
+ * The lessons that run together, one set per week, in weeks enough that
+ * every set any week holds is one of them: src/common/teacher-day.ts’s
+ * weeksOf without a läsår, whose header proves it. Three weeks in a row from
+ * three weeks before the earliest date, from the week each lesson comes in
+ * and from the week it goes out — three, because week 53 and the week 1 after
+ * it are both odd — or an odd and an even week when no lesson has a date.
+ * The weeks it goes out change no breach (the gateway’s header says why, and
+ * the oracle test cannot tell them missing); they are kept so that both
+ * halves read the same weeks.
+ */
+function weeksOf(lessons: readonly DistributionLesson[]): DistributionLesson[][] {
+  const mondays = new Set<number>();
+  const take = (monday: number) => {
+    for (let week = 0; week < 3; week++) mondays.add(monday + 7 * week * DAY_MS);
+  };
+  const dates = lessons
+    .flatMap((lesson) => [lesson.startDate, lesson.endDate])
+    .filter((date): date is string => !!date)
+    .sort();
+  if (dates.length === 0) {
+    // 2024’s week 1, odd, and the week after it.
+    mondays.add(parseDay("2024-01-01"));
+    mondays.add(parseDay("2024-01-08"));
+  } else {
+    take(mondayOf(parseDay(dates[0]!)) - 21 * DAY_MS);
   }
-  return best;
+  for (const lesson of lessons) {
+    if (lesson.startDate) take(firstWeekFrom(lesson, parseDay(lesson.startDate)));
+    if (lesson.endDate) take(firstWeekFrom(lesson, parseDay(lesson.endDate) + DAY_MS));
+  }
+  return [...mondays].map((monday) => lessons.filter((lesson) => runsInWeek(lesson, monday)));
 }
 
 /**
@@ -138,11 +179,13 @@ export function distributionBreaches(
   }
   const days = [...byDay.keys()].sort((a, b) => a - b);
   const idsOf = (rows: DistributionLesson[]): string[] => rows.map((row) => row.id).sort();
+  // Week by week, the weekday of each lesson that runs: every set any week holds.
+  const weeks = weeksOf(lessons).map((week) => week.map((lesson) => lesson.dayOfWeek));
 
   if (rule.maxLessonsPerDay !== null) {
     for (const day of days) {
       const onDay = byDay.get(day)!;
-      const count = mostInOneWeek(onDay);
+      const count = Math.max(...weeks.map((week) => week.filter((held) => held === day).length));
       if (count > rule.maxLessonsPerDay) {
         breaches.push({
           kind: "PER_DAY",
@@ -161,16 +204,13 @@ export function distributionBreaches(
         const first = days[i]!;
         const second = days[j]!;
         if (second - first >= rule.minDaysBetween) continue;
-        const firstLessons = byDay.get(first)!;
-        const secondLessons = byDay.get(second)!;
-        const meet = firstLessons.some((a) => secondLessons.some((b) => canMeet(a, b)));
-        if (!meet) continue;
+        if (!weeks.some((week) => week.includes(first) && week.includes(second))) continue;
         breaches.push({
           kind: "DAYS_APART",
           firstDay: first,
           secondDay: second,
           minDaysBetween: rule.minDaysBetween,
-          lessonIds: idsOf([...firstLessons, ...secondLessons]),
+          lessonIds: idsOf([...byDay.get(first)!, ...byDay.get(second)!]),
         });
       }
     }
