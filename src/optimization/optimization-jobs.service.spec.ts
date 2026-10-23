@@ -1275,27 +1275,46 @@ describe('OptimizationJobsService', () => {
        */
       describe('a candidate applied since', () => {
         const applied = (after: Record<string, unknown>) => ({ createdAt: new Date('2026-11-23T11:00:00.000Z'), after });
+        const VERSION = '99999999-9999-4999-8999-999999999999';
+        const candidateEntry = () =>
+          applied({ source: 'CANDIDATE', runId: 'run-1', ordinal: 2, variant: 'TEACHER_GAPS', metrics: { moved: 3 }, safetyVersionId: VERSION });
 
-        it('names the newest candidate applied over the year since the run was created', async () => {
+        it('names the newest candidate applied over the year since the run finished, and its run', async () => {
           tx.optimizationJob.findUnique.mockResolvedValue(wishRun());
-          tx.scheduleChangeLog.findFirst.mockResolvedValue(
-            applied({ source: 'CANDIDATE', runId: 'run-1', ordinal: 2, variant: 'TEACHER_GAPS', metrics: { moved: 3 } }),
-          );
+          tx.scheduleChangeLog.findFirst.mockResolvedValueOnce(candidateEntry()).mockResolvedValueOnce(null);
 
           const view = await service.get(JOB_ID, noHr());
 
-          expect(view.supersededBy).toEqual({ appliedAt: '2026-11-23T11:00:00.000Z', ordinal: 2, variant: 'TEACHER_GAPS' });
-          // The database's clock on both sides: the run's createdAt, not its finishedAt.
-          expect(tx.scheduleChangeLog.findFirst).toHaveBeenCalledWith({
+          expect(view.supersededBy).toEqual({ appliedAt: '2026-11-23T11:00:00.000Z', ordinal: 2, variant: 'TEACHER_GAPS', runId: 'run-1' });
+          // Since it FINISHED: an apply that passed its check before the run
+          // began, and wrote before the run's own write, is older than that.
+          expect(tx.scheduleChangeLog.findFirst).toHaveBeenNthCalledWith(1, {
             where: {
               academicYearId: YEAR_ID,
               action: 'REGENERATE',
-              createdAt: { gt: wishRun().createdAt },
+              createdAt: { gt: wishRun().finishedAt },
               after: { path: ['source'], equals: 'CANDIDATE' },
             },
             orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
             select: { createdAt: true, after: true },
           });
+          // And whether the apply's safety version was restored after it.
+          expect(tx.scheduleChangeLog.findFirst).toHaveBeenNthCalledWith(2, {
+            where: {
+              academicYearId: YEAR_ID,
+              action: 'RESTORE',
+              createdAt: { gt: new Date('2026-11-23T11:00:00.000Z') },
+              after: { path: ['versionId'], equals: VERSION },
+            },
+            select: { id: true },
+          });
+        });
+
+        it('says none once the apply’s safety version is restored: the run’s timetable is back', async () => {
+          tx.optimizationJob.findUnique.mockResolvedValue(wishRun());
+          tx.scheduleChangeLog.findFirst.mockResolvedValueOnce(candidateEntry()).mockResolvedValueOnce({ id: 'restore-1' });
+
+          await expect(service.get(JOB_ID, noHr())).resolves.toMatchObject({ supersededBy: null });
         });
 
         it('says none when the log has no candidate since', async () => {
@@ -1303,18 +1322,21 @@ describe('OptimizationJobsService', () => {
           tx.scheduleChangeLog.findFirst.mockResolvedValue(null);
 
           await expect(service.get(JOB_ID, noHr())).resolves.toMatchObject({ supersededBy: null });
+          expect(tx.scheduleChangeLog.findFirst).toHaveBeenCalledTimes(1);
         });
 
-        it('says a candidate was applied, unnamed, for an entry that does not say which', async () => {
+        it('says a candidate was applied, unnamed, for an entry that does not say which, and asks for no restore of it', async () => {
           tx.optimizationJob.findUnique.mockResolvedValue(wishRun());
-          tx.scheduleChangeLog.findFirst.mockResolvedValue(applied({ source: 'CANDIDATE', ordinal: '2', variant: 7 }));
+          tx.scheduleChangeLog.findFirst.mockResolvedValueOnce(applied({ source: 'CANDIDATE', ordinal: '2', variant: 7, runId: 3 }));
 
           await expect(service.get(JOB_ID, noHr())).resolves.toMatchObject({
-            supersededBy: { appliedAt: '2026-11-23T11:00:00.000Z', ordinal: null, variant: null },
+            supersededBy: { appliedAt: '2026-11-23T11:00:00.000Z', ordinal: null, variant: null, runId: null },
           });
+          // An apply logged before the safety version's id was kept: nothing to match.
+          expect(tx.scheduleChangeLog.findFirst).toHaveBeenCalledTimes(1);
         });
 
-        it('reads no log for a run without notes or one that did not succeed, nor for the history', async () => {
+        it('reads no log for a run without notes, one that did not succeed, nor for the history', async () => {
           tx.optimizationJob.findUnique.mockResolvedValue(wishRun({ notes: null }));
           await service.get(JOB_ID, noHr());
           tx.optimizationJob.findUnique.mockResolvedValue(wishRun({ status: 'FAILED', solverStatus: null }));

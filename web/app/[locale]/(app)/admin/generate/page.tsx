@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { Link } from "@/i18n/navigation";
 import { ApiError } from "@/lib/api";
-import { isActiveRun, variantLabel } from "@/lib/candidates/labels";
+import { isActiveRun, VARIANT_KEYS, variantLabel } from "@/lib/candidates/labels";
 import { engineMessage, type MessageLookup } from "@/lib/engine-message";
 import {
   useAcademicYears,
@@ -506,13 +506,32 @@ export default function GeneratePage() {
    * A schemaförslag applied over the year since this run: the grundschema is
    * the candidate's now, and the notes describe a timetable that is gone — a
    * list nobody can act on, under a hint to move lessons that were replaced.
-   * They give way to a line naming the candidate and pointing to the
-   * comparison, which says which wishes it breaks. The gateway reads it from
-   * the year's change log, which keeps the apply whatever becomes of the
-   * candidate's run — a newer batch or "Ta bort förslagen" deletes the run,
-   * and with it the overview's appliedAt.
+   * They give way to a line naming the candidate, and while the comparison
+   * still has it, pointing there for which wishes it breaks. The gateway reads
+   * it from the year's change log, which keeps the apply whatever becomes of
+   * the candidate's run — a newer batch or "Ta bort förslagen" deletes the
+   * run, and with it the overview's appliedAt — and drops it again when the
+   * apply's safety version is restored.
    */
   const appliedSince = job?.supersededBy ?? null;
+  /** The candidate by its name, its emphasis only when this build knows it ("Förslag 2", not "Förslag 2 – Förslag 2"). */
+  const supersededText = !appliedSince
+    ? ""
+    : appliedSince.ordinal === null || appliedSince.variant === null
+      ? t("notesSupersededUnnamed")
+      : VARIANT_KEYS[appliedSince.variant]
+        ? t("notesSuperseded", {
+            ordinal: appliedSince.ordinal,
+            label: variantLabel(tCandidates, { ordinal: appliedSince.ordinal, variant: appliedSince.variant }),
+          })
+        : t("notesSupersededPlain", { ordinal: appliedSince.ordinal });
+  /**
+   * The comparison still shows the applied candidate only while its run is
+   * the year's batch: a newer batch, a discard or the sweep deletes it, and
+   * the page would then open on other candidates or none. No link then.
+   */
+  const comparisonHasIt =
+    appliedSince !== null && appliedSince.runId !== null && candidatesQuery.data?.batch?.run.id === appliedSince.runId;
   /*
    * A candidate is applied on its own page, often in another tab, and this
    * app reads nothing again on focus (app-providers.tsx) nor polls a finished
@@ -972,15 +991,19 @@ export default function GeneratePage() {
                 {t("notesTitle")}
               </h3>
               <p className="max-w-prose text-sm text-muted-foreground">
-                {appliedSince.ordinal !== null && appliedSince.variant !== null
-                  ? t("notesSuperseded", {
-                      ordinal: appliedSince.ordinal,
-                      label: variantLabel(tCandidates, { ordinal: appliedSince.ordinal, variant: appliedSince.variant }),
-                    })
-                  : t("notesSupersededUnnamed")}{" "}
-                <Link href={`${candidatesHref(year ?? null)}#comparison`} className="font-medium text-foreground underline underline-offset-4">
-                  {t("notesSupersededLink")}
-                </Link>
+                {supersededText}
+                {comparisonHasIt ? (
+                  <>
+                    {" "}
+                    {t("notesSupersededCompare")}{" "}
+                    <Link
+                      href={`${candidatesHref(year ?? null)}#comparison`}
+                      className="font-medium text-foreground underline underline-offset-4"
+                    >
+                      {t("notesSupersededLink")}
+                    </Link>
+                  </>
+                ) : null}
               </p>
             </section>
           ) : job.status === "SUCCEEDED" && notes.length > 0 ? (

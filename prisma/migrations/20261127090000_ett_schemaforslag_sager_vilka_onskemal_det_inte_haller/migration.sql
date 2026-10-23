@@ -33,8 +33,10 @@
 -- succeeds; null on every other run and on every run before this.
 --
 -- Both are lists or null (a CHECK each), like the candidate's lessons. No
--- grant changes: the API's role holds its table grants on every column, a
--- candidate is still written once (no UPDATE), and no other role reads
+-- grant changes, and table grants reach a new column: the API's role holds
+-- its grants on every column, a candidate is still written once (no
+-- UPDATE), service_role keeps the SELECT on both tables it has had since
+-- 20261125090000 and so reads the new columns too, and no other role reads
 -- either table.
 --
 -- ## Beside the live API
@@ -47,8 +49,11 @@
 -- run goes, and a run's task holds its row while it stores a candidate.
 -- Both locks are taken in one statement, NOWAIT, all or nothing, again 50 ms
 -- later while a request holds one, and after 30 s the migration stops with
--- nothing done and can be rerun (policy-migration-lock-order). The checks
--- read the tables under the lock; they hold a week of runs at most.
+-- nothing done (policy-migration-lock-order). Prisma then records it as
+-- failed (P3009), and `prisma migrate resolve --rolled-back
+-- 20261127090000_ett_schemaforslag_sager_vilka_onskemal_det_inte_haller`
+-- comes before it is run again. The checks read the tables under the lock;
+-- they hold a week of runs at most.
 
 DO $$
 DECLARE

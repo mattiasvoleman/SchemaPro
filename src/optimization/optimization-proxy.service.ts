@@ -414,7 +414,12 @@ export interface CandidateApplyInput {
   solverStatus: string;
   /** The safety version, taken first in the same transaction ("Före schemaförslag …"). */
   snapshot: { versions: Pick<ScheduleVersionsService, 'snapshotInTransaction'>; name: string };
-  /** Merged into the REGENERATE entry's after: source, runId, ordinal, variant, metrics. */
+  /**
+   * Merged into the REGENERATE entry's after: source, runId, ordinal, variant,
+   * metrics. The safety version's id is added here as safetyVersionId, so a
+   * later RESTORE of it is known to undo this apply (OptimizationJobsService's
+   * supersededBy).
+   */
   after: Prisma.InputJsonObject;
 }
 
@@ -1212,7 +1217,7 @@ export class OptimizationProxyService {
         lunches: input.lunches,
         headcountByGroup: prepared.headcountByGroup,
         scope: { kind: 'IDS', ids: prepared.draftIds },
-        after: input.after,
+        after: { ...input.after, safetyVersionId: version.id },
         // A basis that matched cannot meet either; if one is met anyway, the
         // draft is not what the basis says it is.
         refusals: {
