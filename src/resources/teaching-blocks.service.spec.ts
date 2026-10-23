@@ -366,8 +366,14 @@ describe('TeachingBlocksService', () => {
       const membersRead = tx.teachingRequirement.findMany.mock.calls.find(([args]) => 'lessonsPerWeek' in args.select);
       expect(membersRead![0]).toMatchObject({ where: { blockId: { in: [BLOCK, OTHER_BLOCK] } } });
       expect(order).toEqual([`judge ${TY}`, `apply ${TY}`, `judge ${FR}`, `apply ${FR}`, `judge ${SP}`, `apply ${SP}`]);
+      // The whole shape, to both blocks.
       expect(tx.teachingRequirement.updateMany.mock.calls).toEqual([
-        [{ where: { blockId: { in: [BLOCK, OTHER_BLOCK] } }, data: { lessonsPerWeek: 3 } }],
+        [
+          {
+            where: { blockId: { in: [BLOCK, OTHER_BLOCK] } },
+            data: { lessonsPerWeek: 3, minutesPerLesson: 60, lessonLengths: [] },
+          },
+        ],
       ]);
       // The block answered is the one asked about.
       expect(block).toMatchObject({ id: BLOCK, name: 'Slöjd 7A HT' });
@@ -378,13 +384,16 @@ describe('TeachingBlocksService', () => {
       );
     });
 
-    it('merges over the block’s own lessons, and refuses a block with no posts of its own', async () => {
+    it('merges over the block’s own lessons and writes the whole shape over a block that drifted, and refuses a block with no posts of its own', async () => {
       tx.$queryRaw = jest
         .fn()
         .mockResolvedValueOnce([{ id: BLOCK }, { id: OTHER_BLOCK }])
         .mockResolvedValue([{ id: BLOCK, academicYearId: YEAR, name: 'Slöjd 7A HT' }]);
-      // The other block's post sorts first and has split lengths; this block's
-      // are uniform, and 3 × 60 is merged over them.
+      // The other block's post sorts first and has drifted to split lengths
+      // (taken out, changed, put back); this block's are uniform, and 3 × 60
+      // is merged over them. A write of {lessonsPerWeek: 3} alone would leave
+      // the other post 3 lessons long over [80, 40], which the canonical
+      // CHECK refuses.
       const firstId = '00000000-0000-4000-8000-000000000001';
       tx.teachingRequirement.findMany.mockImplementation(async ({ select }: { select: Record<string, unknown> }) =>
         'lessonsPerWeek' in select
@@ -395,7 +404,28 @@ describe('TeachingBlocksService', () => {
 
       await service.update(BLOCK, { lessonsPerWeek: 3 }, admin);
       expect(tx.teachingRequirement.updateMany.mock.calls).toEqual([
-        [{ where: { blockId: { in: [BLOCK, OTHER_BLOCK] } }, data: { lessonsPerWeek: 3 } }],
+        [
+          {
+            where: { blockId: { in: [BLOCK, OTHER_BLOCK] } },
+            data: { lessonsPerWeek: 3, minutesPerLesson: 60, lessonLengths: [] },
+          },
+        ],
+      ]);
+
+      // A change this block already has still puts the drifted block back on it.
+      tx.teachingRequirement.updateMany.mockClear();
+      tx.$queryRaw = jest
+        .fn()
+        .mockResolvedValueOnce([{ id: BLOCK }, { id: OTHER_BLOCK }])
+        .mockResolvedValue([{ id: BLOCK, academicYearId: YEAR, name: 'Slöjd 7A HT' }]);
+      await service.update(BLOCK, { lessonsPerWeek: 2 }, admin);
+      expect(tx.teachingRequirement.updateMany.mock.calls).toEqual([
+        [
+          {
+            where: { blockId: { in: [BLOCK, OTHER_BLOCK] } },
+            data: { lessonsPerWeek: 2, minutesPerLesson: 60, lessonLengths: [] },
+          },
+        ],
       ]);
 
       tx.teachingRequirement.updateMany.mockClear();

@@ -30,7 +30,11 @@ import { weeksCanOverlap } from '../calendar/lesson-recurrence';
  *    More than the leader's posts have room for is refused
  *    (BLOCK_SAME_TIMES_TEACHERS); two of the follower's posts with one
  *    teacher are refused as the engine refuses a block's
- *    (BLOCK_MEMBERS_SHARE_TEACHER).
+ *    (BLOCK_MEMBERS_SHARE_TEACHER). THE COST, STATED: the engine has no
+ *    weeks, so such a teacher is held at those times all year, and Lärarens
+ *    dag (the daily cap, deltid in days, a free-day wish) counts the lessons
+ *    in the autumn too. For a part-timer that can make the week harder to
+ *    lay, or impossible; the manual says so (4.2).
  *  - Its ROOM NEEDS, buffers and ämnesfördelning are folded into the leader
  *    post's by the proxy: the larger half, the longer buffer on each group, the
  *    stricter rule (see fetchAndAnonymize).

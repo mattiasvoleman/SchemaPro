@@ -323,10 +323,33 @@ async function setLessons(
   }
   const resolved = mergeLessonShape(own, dto);
   const warnings = await judgeMembers(tx, user, members, resolved.shape);
-  if (Object.keys(resolved.write).length > 0) {
-    await tx.teachingRequirement.updateMany({ where: { blockId: { in: [...blockIds] } }, data: resolved.write });
+  // With a block on the same times, the whole shape goes to both: the change
+  // was merged over this block's posts, and the other's may have drifted (a
+  // post taken out, changed and put back), so a partial write could land on
+  // a shape it was never merged over and break the canonical CHECK. Written
+  // also when only the other block differs, which puts it back on this one.
+  const linked = blockIds.length > 1;
+  const drifted = linked && members.some((member) => !hasShape(member, resolved.shape));
+  if (Object.keys(resolved.write).length > 0 || drifted) {
+    await tx.teachingRequirement.updateMany({
+      where: { blockId: { in: [...blockIds] } },
+      data: linked ? { ...resolved.shape } : resolved.write,
+    });
   }
   return warnings;
+}
+
+/** Whether a post already has the shape: its count, its longest and its lengths. */
+function hasShape(
+  post: { lessonsPerWeek: number; minutesPerLesson: number; lessonLengths: number[] },
+  shape: { lessonsPerWeek: number; minutesPerLesson: number; lessonLengths: readonly number[] },
+): boolean {
+  return (
+    post.lessonsPerWeek === shape.lessonsPerWeek &&
+    post.minutesPerLesson === shape.minutesPerLesson &&
+    post.lessonLengths.length === shape.lessonLengths.length &&
+    post.lessonLengths.every((minutes, index) => minutes === shape.lessonLengths[index])
+  );
 }
 
 /** setLessons' staffing judgement, member by member with the earlier ones counted. */

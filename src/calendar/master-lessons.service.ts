@@ -44,6 +44,7 @@ import {
 } from '../common/subject-distribution';
 import { requirementName } from '../optimization/optimization-proxy.service';
 import { BLOCK_SPLIT, blockMoveOf, readLessonBlock, sameSlot, type BlockSlot } from './block-lessons';
+import { isWriteConflict, writeConflict } from '../common/utils/prisma-errors';
 import { groupsOfPupils, halfPairs, type GroupHalf } from '../common/class-halves';
 import {
   hasTeacherDayRule,
@@ -954,6 +955,12 @@ export class MasterLessonsService {
    * lessons keep their owners and no lesson of its block joins it. An undo
    * names what the move took (`follow`): a move that took nothing must not
    * take the other card back with it from where it landed beside it.
+   *
+   * The card's lessons are locked before they are read, and the other card's
+   * once they are found, so two administrators dragging the autumn's card
+   * and the spring's at the same moment lock them in opposite orders.
+   * Postgres aborts one (40P01): it is the 409 WRITE_CONFLICT a deadlock is
+   * everywhere else, with nothing written, and the other move goes through.
    */
   async moveBlockCard(dto: MoveBlockCardDto, user: AuthenticatedUser): Promise<MoveBlockCardResult> {
     const startTime = parseTimeString(dto.startTime);
@@ -961,6 +968,20 @@ export class MasterLessonsService {
     if (toMinutes(startTime) >= toMinutes(endTime)) {
       throw new BadRequestException('startTime must be before endTime.');
     }
+    try {
+      return await this.moveBlockCardIn(dto, user, startTime, endTime);
+    } catch (error) {
+      if (isWriteConflict(error)) throw writeConflict();
+      throw error;
+    }
+  }
+
+  private moveBlockCardIn(
+    dto: MoveBlockCardDto,
+    user: AuthenticatedUser,
+    startTime: Date,
+    endTime: Date,
+  ): Promise<MoveBlockCardResult> {
     return this.prisma.withRls(user, async (tx) => {
       const mode = await enterGrundschemaWrite(tx, requireSchoolId(user));
       // The card's years' share of the regeneration lock before the rows are
