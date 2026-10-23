@@ -30,6 +30,9 @@ vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
   api: { post: state.post },
 }));
+vi.mock("@/i18n/navigation", () => ({
+  Link: ({ href, children }: { href: string; children: React.ReactNode }) => <a href={href}>{children}</a>,
+}));
 vi.mock("sonner", () => ({ toast: { success: state.success, warning: state.warning, error: state.error } }));
 vi.mock("next-intl", () => ({
   useLocale: () => "sv",
@@ -63,10 +66,10 @@ const post = (extra: Partial<TeachingRequirement> = {}) =>
     ...extra,
   }) as TeachingRequirement;
 const subjects = [
-  { id: "s-sl", name: "Slöjd" },
-  { id: "s-tm", name: "Trä- och metallslöjd" },
-  { id: "s-tx", name: "Textilslöjd" },
-  { id: "s-ma", name: "Matematik" },
+  { id: "s-sl", name: "Slöjd", nationalCode: "SL" },
+  { id: "s-tm", name: "Trä- och metallslöjd", nationalCode: "SL" },
+  { id: "s-tx", name: "Textilslöjd", nationalCode: "SL" },
+  { id: "s-ma", name: "Matematik", nationalCode: "MA" },
 ];
 const teachers = [
   { id: "t-anna", firstName: "Anna", lastName: "Ek" },
@@ -162,6 +165,8 @@ describe("TermHalvesDialog", () => {
       ["7A:2", "Trä- och metallslöjd", "Textilslöjd"],
     ]);
     expect(screen.getByText("replaces(7A · Slöjd)")).toBeInTheDocument();
+    // Both subjects carry slöjd's code: nothing to say about it.
+    expect(screen.queryByText("codeTitle")).toBeNull();
     expect(screen.getByText("generatorNote")).toBeInTheDocument();
     expect(submit().disabled).toBe(false);
   });
@@ -240,6 +245,38 @@ describe("TermHalvesDialog", () => {
     );
   });
 
+  it("preselects the class's co-teacher once the teacher list arrives after the dialog opened", async () => {
+    const client = new QueryClient();
+    const props = {
+      requirement: post({ coTeacherId: "t-cecilia" }),
+      groups: classOnly,
+      subjects,
+      year: YEAR,
+      onClose: vi.fn(),
+    };
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <TermHalvesDialog {...props} teachers={[]} />
+      </QueryClientProvider>,
+    );
+    // Not "inactive" while the list is still on its way.
+    expect(screen.queryByText("coTeacherInactive")).toBeNull();
+
+    rerender(
+      <QueryClientProvider client={client}>
+        <TermHalvesDialog {...props} teachers={teachers} />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText("coTeacherCarried(Cecilia Ås)")).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: /^coTeacherOf\(Textilslöjd\)/ })).toHaveTextContent("Cecilia Ås");
+    // And it is what is sent.
+    await userEvent.setup().click(submit());
+    expect(state.post.mock.calls[0]![1]).toEqual(
+      expect.objectContaining({ subjects: [expect.objectContaining({ coTeacherId: "t-cecilia" }), expect.objectContaining({ coTeacherId: null })] }),
+    );
+  });
+
   it("starts the class's co-teacher on the first subject, says so, and sends whom each subject has", async () => {
     const { user } = renderDialog({ requirement: post({ coTeacherId: "t-cecilia" }) });
 
@@ -310,10 +347,31 @@ describe("TermHalvesDialog", () => {
     expect(submit().disabled).toBe(true);
   });
 
-  it("says so when the school has neither slöjd subject, and waits for two to be chosen", () => {
-    renderDialog({ subjects: [{ id: "s-sl", name: "Slöjd" }] });
+  it("names a chosen subject without the post's national code before the split, with the way to Ämnen, and splits all the same", async () => {
+    const { user } = renderDialog({
+      subjects: subjects.map((subject) => (subject.id === "s-tm" ? { ...subject, nationalCode: null } : subject)),
+    });
 
-    expect(screen.getByText("noSubjects")).toBeInTheDocument();
+    expect(screen.getByText("codeTitle")).toBeInTheDocument();
+    expect(screen.getByText("codeDiffers(Trä- och metallslöjd|Slöjd|SL)")).toBeInTheDocument();
+    expect(screen.queryByText(/codeDiffers\(Textilslöjd/)).toBeNull();
+    expect(screen.getByRole("link", { name: "codeAction" })).toHaveAttribute("href", "/admin/subjects");
+    expect(submit().disabled).toBe(false);
+    await user.click(submit());
+    expect(state.post).toHaveBeenCalledTimes(1);
+  });
+
+  it("names every chosen subject when the post's own subject has no national code", () => {
+    renderDialog({ subjects: subjects.map((subject) => ({ ...subject, nationalCode: null })) });
+
+    expect(screen.getByText("codeMissingOnPost(Textilslöjd|Slöjd)")).toBeInTheDocument();
+    expect(screen.getByText("codeMissingOnPost(Trä- och metallslöjd|Slöjd)")).toBeInTheDocument();
+  });
+
+  it("says so when the school has neither slöjd subject, and waits for two to be chosen", () => {
+    renderDialog({ subjects: [{ id: "s-sl", name: "Slöjd", nationalCode: "SL" }] });
+
+    expect(screen.getByText("noSubjects(Slöjd)")).toBeInTheDocument();
     expect(screen.getByText("subjectsMissing")).toBeInTheDocument();
     expect(submit().disabled).toBe(true);
   });

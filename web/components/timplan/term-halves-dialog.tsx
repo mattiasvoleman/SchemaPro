@@ -31,6 +31,13 @@
 // read slöjd twice. The guesses below preselect a school's "Textilslöjd" /
 // "Syslöjd" and "Trä- och metallslöjd"; a school with only "Slöjd" adds the
 // two subjects under Ämnen first, which the dialog says when it finds neither.
+//
+// THE NATIONAL CODE. Skapa timplansposter knows the halves read the class's
+// line only by the post's subject or its national code, and the plan's
+// national rows count a subject by its code. The Ämnen form leaves a new
+// subject without one, so a chosen subject whose code is not the post's is
+// named before the split, with the way to Ämnen; the split itself goes on
+// (the gateway answers the same in codeWarnings).
 
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -57,6 +64,7 @@ import { DateField } from "@/components/ui/date-field";
 import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
+import { Link } from "@/i18n/navigation";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 /** A block's name, as TeachingBlocks_name_is_sane holds it. */
@@ -71,7 +79,7 @@ export interface TermHalvesDialogProps {
   requirement: TeachingRequirement | null;
   /** The year's groups: the class and its halves are found among them. */
   groups: readonly { id: string; name: string; halfOfId?: string | null }[];
-  subjects: readonly { id: string; name: string }[];
+  subjects: readonly { id: string; name: string; nationalCode?: string | null }[];
   teachers: readonly { id: string; firstName: string; lastName: string }[];
   /** The läsår's own days, YYYY-MM-DD. */
   year: { startDate: string; endDate: string } | null;
@@ -174,6 +182,14 @@ function TermHalvesForm({
   // who is not is said below and sent as none, never as an id no select shows.
   const carriedCoTeacher = teachers.find((teacher) => teacher.id === requirement.coTeacherId) ?? null;
   const [coTeacherOf, setCoTeacherOf] = useState<[string, string]>([carriedCoTeacher?.id ?? "", ""]);
+  // A teacher list that arrives after the dialog opened: the class's
+  // co-teacher is preselected then, once. Before it nobody could be chosen,
+  // so nothing the admin did is overwritten.
+  const [coTeacherSettled, setCoTeacherSettled] = useState(carriedCoTeacher !== null || teachers.length > 0);
+  if (!coTeacherSettled && teachers.length > 0) {
+    setCoTeacherSettled(true);
+    if (carriedCoTeacher) setCoTeacherOf([carriedCoTeacher.id, coTeacherOf[1]]);
+  }
   const [springStart, setSpringStart] = useState(() => proposedSpringStart(year));
   const [halfNames, setHalfNames] = useState([`${className.slice(0, 58)}:1`, `${className.slice(0, 58)}:2`]);
   const [blockNames, setBlockNames] = useState([
@@ -217,6 +233,14 @@ function TermHalvesForm({
   const ready = !Object.values(problems).some((problem) => problem !== null) && halves.length !== 1;
   // Neither slöjd subject found: the school has one "Slöjd" and adds the two first.
   const none = guessTermSubjects(subjects).every((id) => id === "");
+  // The chosen subjects that do not carry the post's national code (any,
+  // when the post's subject has none) — the post's own subject always counts.
+  const postCode = subjects.find((subject) => subject.id === requirement.subjectId)?.nationalCode ?? null;
+  const uncoded = pair
+    .filter((id, index) => id !== "" && id !== requirement.subjectId && pair.indexOf(id) === index)
+    .map((id) => subjects.find((subject) => subject.id === id))
+    .filter((subject): subject is (typeof subjects)[number] => subject !== undefined)
+    .filter((subject) => postCode === null || (subject.nationalCode ?? null) !== postCode);
 
   /** Half h reads pair[(h + term) % 2]: the spring is the autumn swapped. */
   const subjectAt = (half: number, term: number) => subjectName.get(pair[(half + term) % 2]!) ?? "–";
@@ -296,7 +320,11 @@ function TermHalvesForm({
         </DialogDescription>
       </DialogHeader>
 
-      {none ? <Notice tone="warning" role={null}>{t("noSubjects")}</Notice> : null}
+      {none ? (
+        <Notice tone="warning" role={null}>
+          {t("noSubjects", { subject: postSubject })}
+        </Notice>
+      ) : null}
       {halves.length === 1 ? (
         <Notice tone="warning" role={null}>
           {t("oneHalf", { group: className, half: halves[0]!.name })}
@@ -315,6 +343,7 @@ function TermHalvesForm({
               <Select
                 value={pair[half] || NONE}
                 onValueChange={(value) => {
+                  if (value === "") return; // no item has "": see the teachers' select below
                   const id = value === NONE ? "" : value;
                   setPair(half === 0 ? [id, pair[1]] : [pair[0], id]);
                 }}
@@ -351,6 +380,11 @@ function TermHalvesForm({
                   <Select
                     value={people[index] || NONE}
                     onValueChange={(value) => {
+                      // Radix's hidden <select> reports "" when its value
+                      // arrives in the same render as its first options (a
+                      // teacher list that came after the dialog opened), and
+                      // no item here has that value: it is no choice.
+                      if (value === "") return;
                       const id = value === NONE ? "" : value;
                       setPeople(index === 0 ? [id, people[1]] : [people[0], id]);
                     }}
@@ -372,7 +406,7 @@ function TermHalvesForm({
             );
           }),
         )}
-        {requirement.coTeacherId ? (
+        {requirement.coTeacherId && coTeacherSettled ? (
           <p className="text-sm text-foreground sm:col-span-2">
             {carriedCoTeacher
               ? t("coTeacherCarried", { name: teacherName(carriedCoTeacher) })
@@ -459,6 +493,29 @@ function TermHalvesForm({
           </tbody>
         </table>
       </div>
+
+      {uncoded.length > 0 ? (
+        <Notice
+          tone="warning"
+          role={null}
+          title={t("codeTitle")}
+          action={
+            <Button asChild variant="outline" size="sm">
+              <Link href="/admin/subjects">{t("codeAction")}</Link>
+            </Button>
+          }
+        >
+          <ul className="space-y-1">
+            {uncoded.map((subject) => (
+              <li key={subject.id}>
+                {postCode === null
+                  ? t("codeMissingOnPost", { subject: subject.name, post: postSubject })
+                  : t("codeDiffers", { subject: subject.name, post: postSubject, code: postCode })}
+              </li>
+            ))}
+          </ul>
+        </Notice>
+      ) : null}
 
       <p className="text-sm text-foreground">{t("replaces", { post: postName })}</p>
       <Notice role={null}>{t("generatorNote")}</Notice>
