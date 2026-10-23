@@ -272,6 +272,8 @@ const loadTargetModule = () => import("@/components/timplan/requirements-target"
 /** Parallella block, loaded on the first press of "Block" as Mål mode is. */
 type BlocksModule = typeof import("@/components/timplan/teaching-blocks");
 const loadBlocksModule = () => import("@/components/timplan/teaching-blocks");
+/** Dela terminsvis i halvklass, loaded on the first press in a class post's dialog. */
+type TermHalvesModule = typeof import("@/components/timplan/term-halves-dialog");
 
 /**
  * Whether a pupil buffer field holds something the API will take: an integer
@@ -603,6 +605,8 @@ export default function RequirementsPage() {
   }, [blocksMode, blocksModule, tCommon]);
   const reader = useReadOnly();
   const [cell, setCell] = useState<CellTarget | null>(null);
+  /** The class post being split by term, with the dialog's module once fetched. */
+  const [termHalves, setTermHalves] = useState<{ module: TermHalvesModule; post: TeachingRequirement } | null>(null);
   /** Ta bort asks first: a ConfirmDialog over the cell dialog, named after the cell. */
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [form, setForm] = useState<CellForm>({
@@ -1844,6 +1848,27 @@ export default function RequirementsPage() {
                 onChange={(next) => setForm({ ...form, ...next })}
               />
             </Suspense>
+            {/* A class's post for the whole year can become four on its halves, the subjects swapping at the spring term. */}
+            {cell?.existing && !cell.existing.blockId && !cell.existing.startDate && !cell.existing.endDate &&
+            groupOf(cell.groupId)?.kind === "CLASS" ? (
+              <Button
+                data-writes="PLANERING"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  const post = cell.existing!;
+                  import("@/components/timplan/term-halves-dialog").then(
+                    (module) => {
+                      setCell(null);
+                      setTermHalves({ module, post });
+                    },
+                    () => toast.error(tCommon("error")),
+                  );
+                }}
+              >
+                {t("termHalves.action")}
+              </Button>
+            ) : null}
             {cell ? (
               <fieldset className="space-y-3 rounded-md border px-3 py-2">
                 <legend className="px-1 text-sm font-medium">{tDistribution("title")}</legend>
@@ -2021,6 +2046,17 @@ export default function RequirementsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {termHalves ? (
+        <termHalves.module.TermHalvesDialog
+          requirement={termHalves.post}
+          groups={yearGroups}
+          subjects={subjects ?? []}
+          teachers={teachers}
+          year={yearBounds}
+          onClose={() => setTermHalves(null)}
+        />
+      ) : null}
 
       {/* Over the cell dialog, not instead of it: Avbryt returns to the post as it was. */}
       <ConfirmDialog

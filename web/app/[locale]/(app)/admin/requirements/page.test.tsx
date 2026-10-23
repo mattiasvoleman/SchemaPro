@@ -444,6 +444,30 @@ vi.mock("@/components/timplan/teaching-blocks", () => ({
   ),
 }));
 
+// Dela terminsvis i halvklass: the module fetched on the press, replaced by a
+// stand-in saying what the page handed it. Its own behaviour is
+// term-halves-dialog.test.tsx's.
+vi.mock("@/components/timplan/term-halves-dialog", () => ({
+  TermHalvesDialog: ({
+    requirement,
+    groups,
+    year,
+    onClose,
+  }: {
+    requirement: { id: string };
+    groups: unknown[];
+    year: { startDate: string } | null;
+    onClose: () => void;
+  }) => (
+    <section aria-label="term-halves">
+      {`${requirement.id}: ${groups.length} groups from ${year?.startDate}`}
+      <button type="button" onClick={onClose}>
+        close-term-halves
+      </button>
+    </section>
+  ),
+}));
+
 vi.mock("next-intl", () => ({
   // DateField reads the active locale for its month and weekday names.
   useLocale: () => "sv",
@@ -2562,5 +2586,57 @@ describe("Timplansposter under Läsbehörighet", () => {
     expect(screen.getByRole("dialog").querySelector("fieldset")).toBeDisabled();
     // Avbryt, outside the fields, still closes it.
     expect(dialog.getByRole("button", { name: "cancel" })).toBeEnabled();
+  });
+});
+
+describe("Dela terminsvis i halvklass", () => {
+  const SO_CELL = "cellLabelPeriod(7A|Samhällsorientering|2|60|badgeOdd)";
+
+  it("offers a class's post for the whole year the split, and opens it in place of the post's dialog", async () => {
+    render(<RequirementsPage />);
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText(SO_CELL));
+
+    const action = screen.getByRole("button", { name: "termHalves.action" });
+    // It writes: hidden from a profile that does not write planering.
+    expect(action).toHaveAttribute("data-writes", "PLANERING");
+    await user.click(action);
+
+    const host = await screen.findByRole("region", { name: "term-halves" });
+    expect(host).toHaveTextContent("r-so: 2 groups from 2026-08-17");
+    // The post's dialog is closed: the split replaces the post it was opened from.
+    expect(screen.queryByRole("button", { name: "save" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "close-term-halves" }));
+    expect(screen.queryByRole("region", { name: "term-halves" })).toBeNull();
+  });
+
+  it.each([
+    ["a period of its own", { startDate: "2027-01-11" }],
+    ["a block", { blockId: "b-1" }],
+  ])("does not offer it for a post with %s", async (_, extra) => {
+    state.requirements = loaded(
+      requirements.map((row) => (row.id === "r-so" ? ({ ...row, ...extra } as RequirementFixture) : row)),
+    );
+    render(<RequirementsPage />);
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText(/^cellLabelPeriod\(7A\|Samhällsorientering/));
+
+    expect(screen.getByRole("button", { name: "save" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "termHalves.action" })).toBeNull();
+  });
+
+  it("does not offer it for a teaching group's post, or for an empty cell", async () => {
+    state.requirements = loaded([
+      ...requirements,
+      { ...requirements[0]!, id: "r-ma", studentGroupId: "g-ma71", recurrence: "ALL_WEEKS" },
+    ]);
+    render(<RequirementsPage />);
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText(/^cellLabel\w*\(Ma71\|Samhällsorientering/));
+    expect(screen.queryByRole("button", { name: "termHalves.action" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "cancel" }));
+
+    await user.click(screen.getByLabelText("cellLabel(7A|Bild)"));
+    expect(screen.queryByRole("button", { name: "termHalves.action" })).toBeNull();
   });
 });
