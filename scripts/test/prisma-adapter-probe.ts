@@ -2611,6 +2611,54 @@ async function runChecks(
         [3, 3, 3, 3],
       );
 
+      // In the grundschema the two blocks are one for a lock and a card move.
+      // A card per block at Monday 08:00, each lesson in its post's weeks, as
+      // the generator writes them; "Lås blocket" from the spring's side locks
+      // all four, and the autumn's card dragged to Tuesday takes the spring's.
+      const placedIds = new Map<string, string>();
+      for (const row of result.requirements) {
+        const placed = await owner.query<{ id: string }>(
+          `INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "dayOfWeek", "startTime", "endTime",
+                                        recurrence, "startDate", "endDate", "isGenerated", "updatedAt")
+           VALUES ($1, $2, $3, $4, 1, '08:00', '09:00', $5::"LessonRecurrence", $6::date, $7::date, true, now()) RETURNING id`,
+          [fixture.schoolId, year.id, row.subjectId, row.studentGroupId, row.recurrence, row.startDate, row.endDate],
+        );
+        placedIds.set(row.id, placed.rows[0].id);
+      }
+      const lessonsOf = (posts: string[]) => posts.map((id) => placedIds.get(id)!).sort();
+      const [autumnLessons, springLessons] = [lessonsOf(autumnPosts), lessonsOf(springPosts)];
+      const grundschema = new MasterLessonsService(
+        api,
+        { notifyMasterTimetableChanged: () => undefined } as unknown as RealtimeService,
+        {} as NotificationsService,
+      );
+      const placedNow = async () =>
+        (
+          await owner.query<{ id: string; at: string; locked: boolean }>(
+            `SELECT id, "dayOfWeek" || ' ' || to_char("startTime", 'HH24:MI') AS at, "isLocked" AS locked
+             FROM "MasterLessons" WHERE id = ANY($1::uuid[]) ORDER BY id`,
+            [[...autumnLessons, ...springLessons]],
+          )
+        ).rows;
+      const locked = await grundschema.lockBlock({ blockId: spring!.id, isLocked: true }, admin);
+      assert.deepEqual([...locked.lessonIds].sort(), [...autumnLessons, ...springLessons].sort());
+      assert.ok((await placedNow()).every((row) => row.locked), 'a lock from the spring’s side missed the autumn’s lessons');
+      await grundschema.lockBlock({ blockId: autumn!.id, isLocked: false }, admin);
+      assert.ok((await placedNow()).every((row) => !row.locked), 'an unlock from the autumn’s side missed the spring’s lessons');
+
+      const moved = await grundschema.moveBlockCard(
+        { lessonIds: autumnLessons, dayOfWeek: 2, startTime: '10:00', endTime: '11:00' } as never,
+        admin,
+      );
+      assert.deepEqual([...moved.followed].sort(), springLessons);
+      assert.deepEqual(new Set((await placedNow()).map((row) => row.at)), new Set(['2 10:00']));
+      // Its undo names what the move took, and takes it back.
+      await grundschema.moveBlockCard(
+        { lessonIds: autumnLessons, dayOfWeek: 1, startTime: '08:00', endTime: '09:00', follow: moved.followed } as never,
+        admin,
+      );
+      assert.deepEqual(new Set((await placedNow()).map((row) => row.at)), new Set(['1 08:00']));
+
       // Deleting the autumn's block leaves the spring's on its own, and whole.
       await new TeachingBlocksService(api).remove(autumn!.id, admin);
       assert.deepEqual(await links(), [['th-vår', null]]);

@@ -55,9 +55,10 @@
 -- post joining a block locks its block's row in the TB409 trigger. The lock is
 -- taken NOWAIT, again 50 ms later while a request holds it, and after 30 s the
 -- migration stops with nothing done (policy-migration-lock-order). Prisma
--- then records it as failed (P3009), and `prisma migrate resolve
--- --rolled-back 20261128090000_ett_block_kan_ligga_pa_ett_annat_blocks_tider`
--- comes before it is run again. The table holds a school's handful of blocks.
+-- then records it as failed (P3018, and P3009 at every deploy after), and
+-- `prisma migrate resolve --rolled-back
+-- 20261128090000_ett_block_kan_ligga_pa_ett_annat_blocks_tider` comes before
+-- it is run again. The table holds a school's handful of blocks.
 
 DO $$
 DECLARE

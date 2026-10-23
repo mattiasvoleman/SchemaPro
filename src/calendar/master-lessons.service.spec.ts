@@ -4515,6 +4515,28 @@ describe('MasterLessonsService', () => {
           expect(result.followed).toEqual([]);
         });
 
+        it('answers a deadlock with the spring card’s other mover as the 409 a write conflict is, writing nothing', async () => {
+          arrangeTerms(springCard);
+          // Somebody dragging the spring card holds its lessons and waits on
+          // this card's: Postgres aborts this transaction when it asks for the
+          // spring card's lock.
+          const raw = tx.$queryRaw as jest.Mock;
+          const answer = raw.getMockImplementation()!;
+          raw.mockImplementation((strings: unknown, ...values: unknown[]) =>
+            Array.isArray(strings) && strings.join('?').includes('FOR NO KEY UPDATE') && (values[0] as string[]).includes(VT_A)
+              ? Promise.reject(
+                  new Prisma.PrismaClientKnownRequestError('Transaction failed due to a write conflict or a deadlock', {
+                    code: 'P2034',
+                    clientVersion: Prisma.prismaVersion.client,
+                  }),
+                )
+              : answer(strings, ...values),
+          );
+
+          await expect(move()).rejects.toMatchObject({ status: 409, response: { code: 'WRITE_CONFLICT' } });
+          expect(tx.masterLesson.updateMany).not.toHaveBeenCalled();
+        });
+
         it('lets an undo take back exactly what its move took: none, when the spring card was not taken', async () => {
           // The autumn card landed beside the spring card, which stayed; its
           // undo moves the autumn card back and leaves the spring card be.
