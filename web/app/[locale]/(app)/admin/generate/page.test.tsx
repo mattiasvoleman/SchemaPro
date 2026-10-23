@@ -699,6 +699,62 @@ describe("wishes a finished run could not keep", () => {
     expect(screen.queryByText("generate.notesTitle")).toBeNull();
   });
 
+  /*
+   * A schemaförslag applied after the run replaced the timetable the notes
+   * describe: the list gives way to a line naming the candidate, and a link
+   * to the comparison, which says which wishes it breaks.
+   */
+  describe("after a schemaförslag was applied", () => {
+    const candidate = (ordinal: number, variant: string) => ({
+      id: `c-${ordinal}`, ordinal, variant, weights: null, solverStatus: "OPTIMAL", lessonCount: 40, errorCode: null,
+      errorParams: null, metrics: null, conflicts: [],
+    });
+    const overview = (appliedAt: string | null) => {
+      const batch = {
+        run: {
+          id: "run-1", status: "SUCCEEDED", requested: 2, progress: 2, createdAt: "2026-10-17T09:00:00.000Z",
+          startedAt: "2026-10-17T09:00:01.000Z", finishedAt: "2026-10-17T09:02:00.000Z", error: null, errorCode: null,
+          errorParams: null, createdById: "u-1", createdByName: null, appliedCandidateId: appliedAt ? "c-2" : null,
+          appliedAt, refreshOfId: null,
+        },
+        candidates: [candidate(1, "KEEP"), candidate(2, "TEACHER_GAPS")],
+      };
+      return { latest: batch, batch, unplaced: null };
+    };
+    const finished = laid({ notes: [WISH], finishedAt: "2026-10-17T10:01:00.000Z" });
+
+    it("names the candidate and points to the comparison in place of the run's list when it was applied after the run", () => {
+      state.job = finished;
+      state.candidates = overview("2026-10-17T10:05:00.000Z");
+      render(<GeneratePage />);
+
+      const section = screen.getByRole("region", { name: "generate.notesTitle" });
+      expect(within(section).getByText(/^generate\.notesSuperseded\(2\|scheduleCandidates\.variant\.TEACHER_GAPS\)/)).toBeInTheDocument();
+      expect(within(section).getByRole("link", { name: "generate.notesSupersededLink" })).toHaveAttribute(
+        "href",
+        "/admin/generate/candidates#comparison",
+      );
+      // Neither the run's wishes nor the hint to move its lessons by hand.
+      expect(within(section).queryByText(SENTENCE)).toBeNull();
+      expect(within(section).queryByText("Eva Ek")).toBeNull();
+      expect(within(section).queryByText("generate.notesHint")).toBeNull();
+    });
+
+    it("keeps the run's list when the candidate was applied before the run finished, or none was", () => {
+      state.job = finished;
+      state.candidates = overview("2026-10-17T09:30:00.000Z");
+      const { unmount } = render(<GeneratePage />);
+      expect(screen.getByText(SENTENCE)).toBeInTheDocument();
+      expect(screen.queryByText(/generate\.notesSuperseded/)).toBeNull();
+      unmount();
+
+      state.candidates = overview(null);
+      render(<GeneratePage />);
+      expect(screen.getByText(SENTENCE)).toBeInTheDocument();
+      expect(screen.queryByText(/generate\.notesSuperseded/)).toBeNull();
+    });
+  });
+
   it("says nothing of wishes on a run that failed", () => {
     state.job = laid({
       status: "FAILED",

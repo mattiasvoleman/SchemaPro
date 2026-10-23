@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { Link } from "@/i18n/navigation";
 import { ApiError } from "@/lib/api";
-import { isActiveRun } from "@/lib/candidates/labels";
+import { isActiveRun, variantLabel } from "@/lib/candidates/labels";
 import { engineMessage, type MessageLookup } from "@/lib/engine-message";
 import {
   useAcademicYears,
@@ -51,7 +51,7 @@ import {
   PlanningYearPicker,
   ProjectedRostersBanner,
 } from "@/components/schedule/planning-year";
-import { CandidatesSection } from "./candidates-section";
+import { CandidatesSection, candidatesHref } from "./candidates-section";
 import { useScheduleCandidates } from "./use-schedule-candidates";
 
 /**
@@ -502,6 +502,22 @@ export default function GeneratePage() {
    */
   const notes = job?.notes ?? [];
   /**
+   * A schemaförslag applied after this run finished: the grundschema is the
+   * candidate's now, and the notes describe a timetable that is gone — a
+   * list nobody can act on, under a hint to move lessons that were
+   * replaced. They give way to a line naming the candidate and pointing to
+   * the comparison, which says which wishes it breaks. The card lives only
+   * as long as this visit's run, so the year's one batch is enough to know
+   * (a newer batch replaces it only after another run is started); the
+   * overview is read again when the tab is.
+   */
+  const appliedSince = useMemo(() => {
+    const batch = candidatesQuery.data?.batch;
+    if (!job?.finishedAt || !batch?.run.appliedAt) return null;
+    if (Date.parse(batch.run.appliedAt) <= Date.parse(job.finishedAt)) return null;
+    return batch.candidates.find((candidate) => candidate.id === batch.run.appliedCandidateId) ?? null;
+  }, [job?.finishedAt, candidatesQuery.data?.batch]);
+  /**
    * Whose post a days refusal is about, for a reader with HR-läs (Lärarens
    * dag): the sentence's `limit` is a post's id, which no screen resolves, so
    * the gateway names the teachers beside it, and they are drawn under the
@@ -936,7 +952,22 @@ export default function GeneratePage() {
             through engineText, so it reads in the reader's language and
             falls back to the gateway's English like every refusal above.
           */}
-          {job.status === "SUCCEEDED" && notes.length > 0 ? (
+          {job.status === "SUCCEEDED" && notes.length > 0 && appliedSince ? (
+            <section aria-labelledby="last-run-notes" className="space-y-2">
+              <h3 id="last-run-notes" className="text-sm font-semibold">
+                {t("notesTitle")}
+              </h3>
+              <p className="max-w-prose text-sm text-muted-foreground">
+                {t("notesSuperseded", {
+                  ordinal: appliedSince.ordinal,
+                  label: variantLabel(tCandidates, appliedSince),
+                })}{" "}
+                <Link href={`${candidatesHref(year ?? null)}#comparison`} className="font-medium text-foreground underline underline-offset-4">
+                  {t("notesSupersededLink")}
+                </Link>
+              </p>
+            </section>
+          ) : job.status === "SUCCEEDED" && notes.length > 0 ? (
             <section aria-labelledby="last-run-notes" className="space-y-2">
               <h3 id="last-run-notes" className="text-sm font-semibold">
                 {t("notesTitle")}

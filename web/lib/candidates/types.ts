@@ -88,6 +88,14 @@ export interface CandidateView {
   errorParams: Record<string, string | number> | null;
   metrics: CandidateMetrics | null;
   conflicts: CandidateConflict[];
+  /**
+   * The free-day wishes the candidate's timetable breaks (Lärarens dag), one
+   * per teacher, said as Generera's notes: TEACHER_FREE_DAY_WISH_NOT_KEPT
+   * with the weekday, the teacher named in resourceNames. Null when it was
+   * not measured (no timetable, or stored before the gateway measured it);
+   * empty when every wish is kept. Absent from an older gateway.
+   */
+  notes?: CandidateConflict[] | null;
 }
 
 export interface CandidateBatch {
@@ -115,6 +123,8 @@ export interface CandidatesOverview {
   /** The newest SUCCEEDED run: the batch the comparison is made of. */
   batch: CandidateBatch | null;
   unplaced: CandidatesUnplaced | null;
+  /** The same for the draft the batch was solved from: the comparison's first column. */
+  draftNotes?: CandidateConflict[] | null;
 }
 
 export type PublishMode = "DRAFT" | "DIRECT";

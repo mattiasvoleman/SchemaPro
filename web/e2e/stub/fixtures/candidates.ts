@@ -14,8 +14,8 @@ import { KIND, uid } from "../sessions";
 import { stockholmInstant, TODAY } from "./calendar";
 import { CALENDAR_LESSON_TEACHERS_WITH_COVER, CALENDAR_LESSONS_WITH_COVER } from "./cover-world";
 import { ago } from "./misc-school";
-import { ATTENDANCE_RECORDS } from "./school-days";
-import { ADMIN, MASTER_LESSONS, REQUIREMENTS, ROOMS } from "./world";
+import { ATTENDANCE_RECORDS, TEACHER_WORK_RULES } from "./school-days";
+import { ADMIN, MASTER_LESSONS, REQUIREMENTS, ROOMS, TEACHER_LIST } from "./world";
 
 /**
  * Schemaförslag at Exempelskolan (design §3 and §6): yesterday's batch of
@@ -158,6 +158,36 @@ function unplacedOf(week: ReadonlyArray<Pick<CandidateLesson, "studentGroupId" |
   return { lines, minutes };
 }
 
+/**
+ * The free-day wishes a week breaks (Lärarens dag), as the gateway stores
+ * them when it stores the batch and names them when the page reads it: a
+ * teacher whose wished weekday has a lesson of theirs, led or co-taught, by
+ * weekday and then rule (unkeptFreeDayWishes). At Exempelskolan that is Bo,
+ * who wishes Wednesdays free (school-days.ts).
+ */
+function notesOf(week: ReadonlyArray<Pick<CandidateLesson, "teacherId" | "coTeacherId" | "dayOfWeek">>): CandidateConflict[] {
+  const names = new Map(TEACHER_LIST.map((teacher) => [teacher.id, `${teacher.firstName} ${teacher.lastName}`]));
+  return TEACHER_WORK_RULES.flatMap((rule) => {
+    const day = rule.preferredFreeDayOfWeek;
+    if (day === null) return [];
+    const busy = week.some(
+      (lesson) => lesson.dayOfWeek === day && (lesson.teacherId === rule.userId || lesson.coTeacherId === rule.userId),
+    );
+    return busy ? [{ rule: rule.id, day, name: names.get(rule.userId) }] : [];
+  })
+    .sort((a, b) => a.day - b.day || a.rule.localeCompare(b.rule))
+    .map(({ day, name }) => ({
+      category: "AVAILABILITY",
+      code: "TEACHER_FREE_DAY_WISH_NOT_KEPT",
+      params: { day },
+      message: "A teacher wishes this weekday free, and the new timetable gives them lessons that day.",
+      resourceNames: name ? [name] : [],
+    }));
+}
+
+/** What the draft breaks: the grundschema as it stands, a parked lesson occupying no day. */
+const DRAFT_NOTES = notesOf(MASTER_LESSONS.filter((lesson) => !lesson.isParked));
+
 // --- The candidates -----------------------------------------------------------------------
 
 /** The generate page's profile as it stands until somebody changes it: the engine's defaults. */
@@ -230,6 +260,8 @@ function solved(n: number, ordinal: number, variant: string, overrides: Record<s
     errorParams: null,
     metrics: metricsOf(lessons),
     conflicts: [],
+    // Beside the lessons every candidate keeps, as an apply would leave them.
+    notes: notesOf([...KEPT.filter((lesson) => !lesson.isParked), ...lessons]),
   };
 }
 
@@ -319,6 +351,7 @@ export const FAILED: CandidateBatch = {
       errorParams: null,
       metrics: null,
       conflicts: [TOO_MUCH_FOR_7A],
+      notes: null,
     },
   ],
 };
@@ -352,6 +385,7 @@ export const TIMED_OUT: CandidateBatch = {
       errorParams: { budget: 60, rules: 3, slice: 8 },
       metrics: null,
       conflicts: [],
+      notes: null,
     },
   ],
 };
@@ -368,14 +402,14 @@ export const SAFETY_VERSION_ID = id(9641);
 export function overviewOf(scenario: string | null): CandidatesOverview {
   switch (scenario) {
     case SCENARIOS.running:
-      return { latest: RUNNING, batch: BATCH, unplaced: UNPLACED };
+      return { latest: RUNNING, batch: BATCH, unplaced: UNPLACED, draftNotes: DRAFT_NOTES };
     case SCENARIOS.failed:
       // The school's first run: there has never been a batch to fall back on.
-      return { latest: FAILED, batch: null, unplaced: null };
+      return { latest: FAILED, batch: null, unplaced: null, draftNotes: null };
     case SCENARIOS.timedOut:
-      return { latest: TIMED_OUT, batch: null, unplaced: null };
+      return { latest: TIMED_OUT, batch: null, unplaced: null, draftNotes: null };
     default:
-      return { latest: BATCH, batch: BATCH, unplaced: UNPLACED };
+      return { latest: BATCH, batch: BATCH, unplaced: UNPLACED, draftNotes: DRAFT_NOTES };
   }
 }
 

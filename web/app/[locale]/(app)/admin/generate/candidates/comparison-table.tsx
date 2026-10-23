@@ -8,7 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { IdleComparison, IdleSummary } from "@/lib/candidates/idle";
 import { isApplicable, signed, solverKey, variantLabel } from "@/lib/candidates/labels";
-import type { CandidateView, CandidatesUnplaced, PublishMode } from "@/lib/candidates/types";
+import type { CandidateConflict, CandidateView, CandidatesUnplaced, PublishMode } from "@/lib/candidates/types";
 
 /** Where the håltimmar stand: being computed, impossible (a read failed), or measured. */
 export type IdleState = { status: "loading" } | { status: "failed" } | ({ status: "ready" } & IdleComparison);
@@ -18,6 +18,8 @@ export interface ComparisonTableProps {
   /** The mode /check reported: it names the current column. Null until it has answered. */
   mode: PublishMode | null;
   unplaced: CandidatesUnplaced | null;
+  /** The free-day wishes the draft the batch was solved from breaks; null when not measured. */
+  draftNotes: readonly CandidateConflict[] | null;
   idle: IdleState;
   /** Candidates whose lessons could not be read: their håltimmar cannot be measured. */
   lessonsFailed: ReadonlySet<string>;
@@ -43,6 +45,7 @@ export function ComparisonTable({
   candidates,
   mode,
   unplaced,
+  draftNotes,
   idle,
   lessonsFailed,
   appliedId,
@@ -110,6 +113,33 @@ export function ComparisonTable({
           {t("cell.delta", { delta: signed(summary.pupils.minutesPerPupil - current.pupils.minutesPerPupil, pupilMinutes) })}
         </Line>
       ) : null}
+    </>
+  );
+
+  /*
+   * Önskad ledig dag (Lärarens dag): whose wished weekday the timetable
+   * gives lessons, one line per teacher, named by the gateway when the page
+   * is read. A count like every other row, with its difference against the
+   * draft, and the names under it — the reason a school would pick another
+   * candidate is who, not how many.
+   */
+  const unmeasured = <span className="text-muted-foreground">{t("cell.notMeasured")}</span>;
+  const wishes = (notes: readonly CandidateConflict[], current: readonly CandidateConflict[] | null) => (
+    <>
+      <Line>{t("cell.wishes", { count: notes.length })}</Line>
+      {current ? (
+        <Line muted>
+          {t("cell.delta", { delta: signed(notes.length - current.length, (value) => t("cell.teacherCount", { count: value })) })}
+        </Line>
+      ) : null}
+      {notes.map((note, index) => (
+        <Line key={index} muted>
+          {t("cell.wish", {
+            name: note.resourceNames && note.resourceNames.length > 0 ? note.resourceNames.join(", ") : t("cell.wishNobody"),
+            day: Number(note.params?.["day"] ?? 0),
+          })}
+        </Line>
+      ))}
     </>
   );
 
@@ -211,6 +241,18 @@ export function ComparisonTable({
           {candidates.map((candidate) => (
             <TableCell key={candidate.id} className="align-top">
               {idleCell(candidate, teachers)}
+            </TableCell>
+          ))}
+        </TableRow>
+        <TableRow>
+          <TableHead scope="row" className={rowHead}>
+            {t("row.wishes")}
+            <Line muted>{t("row.wishesHint")}</Line>
+          </TableHead>
+          <TableCell className="align-top">{draftNotes ? wishes(draftNotes, null) : unmeasured}</TableCell>
+          {candidates.map((candidate) => (
+            <TableCell key={candidate.id} className="align-top">
+              {!isApplicable(candidate) ? notApplicable : candidate.notes ? wishes(candidate.notes, draftNotes) : unmeasured}
             </TableCell>
           ))}
         </TableRow>

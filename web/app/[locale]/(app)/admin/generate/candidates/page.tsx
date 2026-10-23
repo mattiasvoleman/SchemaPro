@@ -531,6 +531,15 @@ export default function CandidatesPage() {
     const summary = first?.errorCode ? engineText({ code: first.errorCode, params: first.errorParams, message: "" }) : "";
     const conflicts = run.candidates.flatMap((candidate) => candidate.conflicts ?? []);
     const listed = summary !== "" || conflicts.length > 0;
+    /*
+     * A post's days (Lärarens dag) are hidden on this page for every reader,
+     * rektor included: the gateway keeps the sentence without its teacher or
+     * figure, and nothing here reads the post back. The sentence says who may
+     * see the days; this says where — the post, and Generera's own answer.
+     */
+    const daysHidden = [run.run.errorCode, first?.errorCode, ...conflicts.map((conflict) => conflict.code)].includes(
+      "TEACHER_WORK_DAYS_HIDDEN",
+    );
     return (
       <Notice
         tone={cancelled ? "neutral" : "destructive"}
@@ -560,6 +569,7 @@ export default function CandidatesPage() {
               ) : null}
             </section>
           ) : null}
+          {daysHidden ? <p>{t("failed.daysWhere")}</p> : null}
           {batch ? (
             <p>{t("failed.olderBatch", { date: dateOf(batch.run.finishedAt ?? batch.run.createdAt) })}</p>
           ) : (
@@ -649,6 +659,7 @@ export default function CandidatesPage() {
                 candidates={candidates}
                 mode={check?.mode ?? null}
                 unplaced={overview?.unplaced ?? null}
+                draftNotes={overview?.draftNotes ?? null}
                 idle={idle}
                 lessonsFailed={lessons.failed}
                 appliedId={batch.run.appliedCandidateId}
