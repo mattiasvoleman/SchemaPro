@@ -4426,6 +4426,94 @@ describe('MasterLessonsService', () => {
         expect(tx.scheduleChangeLog.create).not.toHaveBeenCalled();
       });
 
+      describe('a block on the same times (a term split: the spring on the autumn)', () => {
+        const SPRING_BLOCK = '1d1d1d1d-1d1d-4d1d-8d1d-1d1d1d1d1d1d';
+        const VT_A = '1e1e1e1e-1e1e-4e1e-8e1e-1e1e1e1e1e1e';
+        const VT_B = '1f1f1f1f-1f1f-4f1f-8f1f-1f1f1f1f1f1f';
+        const autumn = { endDate: new Date('2027-01-10T00:00:00Z') };
+        const springWeeks = { startDate: new Date('2027-01-11T00:00:00Z') };
+        // The spring swaps the subjects on the same groups, at the autumn card's day and clock.
+        const springPosts = [
+          { studentGroupId: GROUP_ID, subjectId: FR_SUBJECT },
+          { studentGroupId: FR_GROUP, subjectId: SUBJECT_ID },
+        ];
+        const springCard = [
+          franskaLesson({ id: VT_A, studentGroupId: GROUP_ID, studentGroup: { name: 'Ty7' }, ...springWeeks }),
+          tyska({ id: VT_B, studentGroupId: FR_GROUP, studentGroup: { name: 'Fr7' }, ...springWeeks }),
+        ];
+        const arrangeTerms = (spring: Row[]) => {
+          arrangeCard([tyska(autumn), franskaLesson(autumn), ...spring], spring);
+          tx.teachingBlock.findUnique.mockResolvedValue({ sameTimesAsBlockId: null, sameTimes: [{ id: SPRING_BLOCK }] });
+          tx.teachingRequirement.findMany.mockImplementation((query: Query = {}) =>
+            Promise.resolve(
+              query.select && 'blockId' in query.select
+                ? posts
+                : query.where?.blockId === SPRING_BLOCK
+                  ? springPosts
+                  : [],
+            ),
+          );
+          tx.masterLesson.updateMany.mockImplementation((query: Query) =>
+            Promise.resolve({ count: ((query.where?.id as Row | undefined)?.in as unknown[] | undefined)?.length ?? 0 }),
+          );
+        };
+
+        it('moves the spring card at the same day and clock with it, in its own weeks, judged as one move', async () => {
+          arrangeTerms(springCard);
+
+          const result = await move();
+
+          expect(tx.masterLesson.updateMany).toHaveBeenCalledWith({
+            where: {
+              id: { in: [VT_A, VT_B] },
+              dayOfWeek: 1,
+              startTime: t('10:00'),
+              endTime: t('11:00'),
+              recurrence: 'ALL_WEEKS',
+              startDate: springWeeks.startDate,
+              endDate: null,
+              isParked: false,
+            },
+            data: { dayOfWeek: 2, startTime: t('09:00'), endTime: t('10:00') },
+          });
+          expect(result.lessons.map((lesson) => [lesson.id, lesson.dayOfWeek, lesson.startTime])).toEqual([
+            [LESSON_ID, 2, '09:00'],
+            [FR_LESSON, 2, '09:00'],
+            [VT_A, 2, '09:00'],
+            [VT_B, 2, '09:00'],
+          ]);
+          expect(tx.scheduleChangeLog.create).toHaveBeenCalledTimes(4);
+          // The clash scan leaves all four out of where they stood.
+          const scan = (tx.masterLesson.findMany.mock.calls as Array<[Query]>).find(
+            ([query]) => query.where && 'id' in query.where && 'notIn' in (query.where.id as Row),
+          )![0];
+          expect(scan.where!.id).toEqual({ notIn: [LESSON_ID, FR_LESSON, VT_A, VT_B] });
+        });
+
+        it('refuses the whole move when a spring lesson would clash at the new slot', async () => {
+          arrangeTerms(springCard);
+          // Another class's lesson in Tyska's room on Tuesday 09:00, in the spring only.
+          const day = (tx.masterLesson.findMany.getMockImplementation() as (query: Query) => Promise<Row[]>);
+          tx.masterLesson.findMany.mockImplementation((query: Query = {}) =>
+            query.where && 'dayOfWeek' in query.where && query.where.dayOfWeek === 2
+              ? answerRows([otherLesson({ dayOfWeek: 2, roomId: ROOM_ID, startTime: t('09:00'), endTime: t('10:00'), ...springWeeks })])(query)
+              : day(query),
+          );
+
+          await expect(move()).rejects.toThrow(/Tyska för Fr7: Room is already booked/);
+          expect(tx.masterLesson.updateMany).not.toHaveBeenCalled();
+        });
+
+        it('leaves a spring card that does not stand there whole', async () => {
+          arrangeTerms([springCard[0]!]);
+
+          const result = await move();
+
+          expect(tx.masterLesson.updateMany).toHaveBeenCalledTimes(1);
+          expect(result.lessons.map((lesson) => lesson.id)).toEqual([LESSON_ID, FR_LESSON]);
+        });
+      });
+
       describe('Lärarens dag', () => {
         /** The school as the card's read counts it: caps, and day limits of the year. */
         const school = (caps: number, days = 0) => ({
@@ -4625,7 +4713,7 @@ describe('MasterLessonsService', () => {
         // On the tray: no placement to keep, and counted.
         lessonRecord({ id: CAL_LESSON_ID, isParked: true }),
       ];
-      const arrangeLock = () => {
+      const arrangeLock = (linked: Row = {}) => {
         tx.teachingBlock.findUnique.mockResolvedValue({
           id: BLOCK_ID,
           schoolId: SCHOOL_ID,
@@ -4634,9 +4722,30 @@ describe('MasterLessonsService', () => {
             { studentGroupId: GROUP_ID, subjectId: SUBJECT_ID },
             { studentGroupId: FR_GROUP, subjectId: FR_SUBJECT },
           ],
+          sameTimesAs: null,
+          sameTimes: [],
+          ...linked,
         });
         tx.masterLesson.findMany.mockImplementation(answerRows(lessons));
       };
+
+      it('locks a block on the same times with it, either way round: the generation takes the two as one', async () => {
+        const SPRING_GROUP = '1b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b';
+        const SPRING_SUBJECT = '1c1c1c1c-1c1c-4c1c-8c1c-1c1c1c1c1c1c';
+        const spring = { requirements: [{ studentGroupId: SPRING_GROUP, subjectId: SPRING_SUBJECT }] };
+        for (const linked of [{ sameTimes: [spring] }, { sameTimesAs: spring }]) {
+          arrangeLock(linked);
+          tx.masterLesson.findMany.mockClear();
+
+          await service.lockBlock({ blockId: BLOCK_ID, isLocked: true }, testUser());
+
+          expect((tx.masterLesson.findMany.mock.calls[0] as [Query])[0].where!.OR).toEqual([
+            { studentGroupId: GROUP_ID, subjectId: SUBJECT_ID },
+            { studentGroupId: FR_GROUP, subjectId: FR_SUBJECT },
+            { studentGroupId: SPRING_GROUP, subjectId: SPRING_SUBJECT },
+          ]);
+        }
+      });
 
       it('locks every lesson of the block not already locked, in one statement, and answers those', async () => {
         arrangeLock();
