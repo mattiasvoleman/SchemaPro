@@ -1277,6 +1277,173 @@
           }
         }
       ]
+    },
+    {
+      "name": "an autumn Monday is no part of the spring's three under two a day",
+      "rule": {
+        "maxLessonsPerDay": 2,
+        "minDaysBetween": null
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": "2026-12-20"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "c",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": "2027-01-08",
+          "endDate": null
+        },
+        {
+          "id": "d",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": "2027-01-08",
+          "endDate": null
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "PER_DAY",
+          "dayOfWeek": 1,
+          "count": 3,
+          "maxLessonsPerDay": 2,
+          "lessonIds": [
+            "b",
+            "c",
+            "d"
+          ]
+        }
+      ],
+      "warnings": [
+        {
+          "code": "DISTRIBUTION_TOO_MANY_ON_DAY",
+          "params": {
+            "requirement": "Idrott för 7A",
+            "day": 1,
+            "count": 3,
+            "maxPerDay": 2
+          }
+        }
+      ]
+    },
+    {
+      "name": "an odd-week Monday is no part of the even weeks' two",
+      "rule": {
+        "maxLessonsPerDay": 1,
+        "minDaysBetween": null
+      },
+      "lessons": [
+        {
+          "id": "x",
+          "dayOfWeek": 1,
+          "recurrence": "ODD_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "e1",
+          "dayOfWeek": 1,
+          "recurrence": "EVEN_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "e2",
+          "dayOfWeek": 1,
+          "recurrence": "EVEN_WEEKS",
+          "startDate": null,
+          "endDate": null
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "PER_DAY",
+          "dayOfWeek": 1,
+          "count": 2,
+          "maxLessonsPerDay": 1,
+          "lessonIds": [
+            "e1",
+            "e2"
+          ]
+        }
+      ],
+      "warnings": [
+        {
+          "code": "DISTRIBUTION_TOO_MANY_ON_DAY",
+          "params": {
+            "requirement": "Idrott för 7A",
+            "day": 1,
+            "count": 2,
+            "maxPerDay": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "an odd-week Monday is no part of the even weeks' Monday and Tuesday",
+      "rule": {
+        "maxLessonsPerDay": null,
+        "minDaysBetween": 2
+      },
+      "lessons": [
+        {
+          "id": "x",
+          "dayOfWeek": 1,
+          "recurrence": "ODD_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "m",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "t",
+          "dayOfWeek": 2,
+          "recurrence": "EVEN_WEEKS",
+          "startDate": null,
+          "endDate": null
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "DAYS_APART",
+          "firstDay": 1,
+          "secondDay": 2,
+          "minDaysBetween": 2,
+          "lessonIds": [
+            "m",
+            "t"
+          ]
+        }
+      ],
+      "warnings": [
+        {
+          "code": "DISTRIBUTION_DAYS_TOO_CLOSE",
+          "params": {
+            "requirement": "Idrott för 7A",
+            "firstDay": 1,
+            "secondDay": 2,
+            "minDaysBetween": 2
+          }
+        }
+      ]
     }
   ],
   "effective": [

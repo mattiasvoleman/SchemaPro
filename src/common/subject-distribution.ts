@@ -97,7 +97,7 @@ export type DistributionBreach =
       /** The most of them that run in one week. */
       count: number;
       maxLessonsPerDay: number;
-      /** Every lesson on that weekday, sorted. */
+      /** The weekday's lessons that run in a week over the cap, sorted. */
       lessonIds: string[];
     }
   | {
@@ -105,7 +105,7 @@ export type DistributionBreach =
       firstDay: number;
       secondDay: number;
       minDaysBetween: number;
-      /** Every lesson on either weekday, sorted. */
+      /** The two weekdays' lessons that run in a week holding both, sorted. */
       lessonIds: string[];
     };
 
@@ -116,53 +116,79 @@ export type DistributionBreach =
  * `lessons` are that post's lessons and nobody else's — the caller picks them
  * by (läsår, class, subject), the post's own key, and leaves out a parked
  * lesson, which occupies nothing.
+ *
+ * The lessons a breach names are those that run in a week over the rule, as
+ * teacherDayBreaches names them (teacher-day.ts): a Monday lesson that runs
+ * only in weeks under the cap is on the weekday and no part of the breach.
+ *
+ * `about`, when given, are the lessons a hand edit just wrote, and only the
+ * weeks that hold one of them on the breach's own weekdays count — for the
+ * cap, a week that holds one on that weekday; for a pair, a week that holds
+ * one on either day — both for the figure and for the lessons named, as
+ * teacherDayBreaches asks it: a breach says what the edit made, and a week
+ * the edit is no part of — the spring's Mondays beside an autumn lesson, the
+ * even weeks beside an odd-week one — is not its to repeat. A breach is then
+ * always about one of them.
  */
 export function distributionBreaches(
   rule: DistributionRule,
   lessons: readonly DistributionLesson[],
+  about?: ReadonlySet<string>,
 ): DistributionBreach[] {
+  const counted = (held: readonly DistributionLesson[]) =>
+    about === undefined || held.some((lesson) => about.has(lesson.id));
   const breaches: DistributionBreach[] = [];
-  const byDay = new Map<number, DistributionLesson[]>();
-  for (const lesson of lessons) {
-    const onDay = byDay.get(lesson.dayOfWeek);
-    if (onDay) onDay.push(lesson);
-    else byDay.set(lesson.dayOfWeek, [lesson]);
-  }
-  const days = [...byDay.keys()].sort((a, b) => a - b);
-  const idsOf = (rows: DistributionLesson[]): string[] => rows.map((row) => row.id).sort();
-  // Week by week, the weekday of each lesson that runs: every set any week holds.
-  const weeks = weeksOf(lessons).map((week) => week.map((lesson) => lesson.dayOfWeek));
+  const days = [...new Set(lessons.map((lesson) => lesson.dayOfWeek))].sort((a, b) => a - b);
+  // Week by week, the lessons that run: every set any week holds.
+  const weeks = weeksOf(lessons);
 
-  if (rule.maxLessonsPerDay !== null) {
+  const cap = rule.maxLessonsPerDay;
+  if (cap !== null) {
     for (const day of days) {
-      const onDay = byDay.get(day)!;
-      const count = Math.max(...weeks.map((week) => week.filter((held) => held === day).length));
-      if (count > rule.maxLessonsPerDay) {
+      let most = 0;
+      const over = new Set<string>();
+      for (const week of weeks) {
+        const onDay = week.filter((lesson) => lesson.dayOfWeek === day);
+        if (!counted(onDay)) continue;
+        most = Math.max(most, onDay.length);
+        if (onDay.length > cap) for (const lesson of onDay) over.add(lesson.id);
+      }
+      if (most > cap) {
         breaches.push({
           kind: 'PER_DAY',
           dayOfWeek: day,
-          count,
-          maxLessonsPerDay: rule.maxLessonsPerDay,
-          lessonIds: idsOf(onDay),
+          count: most,
+          maxLessonsPerDay: cap,
+          lessonIds: [...over].sort(),
         });
       }
     }
   }
 
-  if (rule.minDaysBetween !== null) {
+  const apart = rule.minDaysBetween;
+  if (apart !== null) {
     for (let i = 0; i < days.length; i++) {
       for (let j = i + 1; j < days.length; j++) {
         const first = days[i]!;
         const second = days[j]!;
-        if (second - first >= rule.minDaysBetween) continue;
-        if (!weeks.some((week) => week.includes(first) && week.includes(second))) continue;
-        breaches.push({
-          kind: 'DAYS_APART',
-          firstDay: first,
-          secondDay: second,
-          minDaysBetween: rule.minDaysBetween,
-          lessonIds: idsOf([...byDay.get(first)!, ...byDay.get(second)!]),
-        });
+        if (second - first >= apart) continue;
+        const over = new Set<string>();
+        for (const week of weeks) {
+          const onDays = week.filter((lesson) => lesson.dayOfWeek === first || lesson.dayOfWeek === second);
+          if (!counted(onDays)) continue;
+          const holdsBoth =
+            onDays.some((lesson) => lesson.dayOfWeek === first) && onDays.some((lesson) => lesson.dayOfWeek === second);
+          if (holdsBoth) for (const lesson of onDays) over.add(lesson.id);
+        }
+        if (over.size > 0) {
+          breaches.push({
+            kind: 'DAYS_APART',
+            firstDay: first,
+            secondDay: second,
+            minDaysBetween: apart,
+            lessonIds: [...over].sort(),
+          });
+        }
       }
     }
   }

@@ -25,8 +25,10 @@ import {
  *
  * The fixture was GENERATED from this implementation (the script is in the
  * message of the commit that last changed it); never edit the JSON by hand.
- * The cases with dates and parities pin the ISO-week reading; the haystack
- * they were picked from is subject-distribution.spec.ts. The fixture's
+ * The cases with dates and parities pin the ISO-week reading and the lessons
+ * a breach names; the haystack they were picked from is
+ * subject-distribution.spec.ts. No case asks about a lesson (`about`): only
+ * the gateway's hand-edit warning does, and that spec covers it. The fixture's
  * constants are asserted here against the module, and the module's against
  * the DTOs and the CHECKs of 20261019090000 by their own specs.
  */
