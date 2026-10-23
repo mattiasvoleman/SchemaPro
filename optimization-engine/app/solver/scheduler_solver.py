@@ -504,10 +504,25 @@ def _without_ids(error: Exception) -> str:
     return _UUID_TEXT.sub("<id>", str(error))[:200]
 
 
+class SolverCrashedError(RuntimeError):
+    """CP-SAT threw out of phase 1b, with presolve and without.
+
+    NOT an OptimizationEngineError, deliberately: main.py answers those with
+    the exception's own text, and this one's is CP-SAT's internals, nothing a
+    school can read. It reaches unhandled_exception_handler, the 500 it was
+    before _solve_guarded, with its text already stripped of ids.
+    """
+
+
 def _solve_guarded(
-    solver: cp_model.CpSolver, model: cp_model.CpModel, *, what: str,
+    solver: cp_model.CpSolver,
+    model: cp_model.CpModel,
+    *,
+    what: str,
+    request_id: UUID,
+    degrade: bool = True,
 ) -> cp_model.CpSolverStatus:
-    """solver.Solve(model), which answers with a status and never with an exception.
+    """solver.Solve(model), retried once without presolve when CP-SAT throws.
 
     EVERY Solve in this module goes through here. CP-SAT can throw out of
     Solve on a model it accepts, and nothing above the call caught it: the
@@ -529,14 +544,22 @@ def _solve_guarded(
     own time limit, never a second one: run_solver answers 503 at the budget
     plus thirty seconds, and a slice paid twice would trade the 500 for that.
 
-    UNKNOWN WHEN THE RETRY THROWS TOO, or no time is left for it: the status
-    that says the solve decided nothing, which is what every caller here
-    already reads as a solve that ran out of time. Phase 1a hands over to the
-    cleared clone, a phase 1b with nothing becomes the TIMEOUT, a phase 2
-    with nothing returns phase 1's timetable, the explanation leaves the
-    proved INFEASIBLE unexplained, a probe finds nothing and the lunch stage
-    leaves the full model to decide. A guard around solve() as a whole would
-    instead have thrown away a timetable phase 1 had already found.
+    UNKNOWN WHEN THE RETRY THROWS TOO, or no time is left for it, wherever
+    the caller has something truer to say than the throw. UNKNOWN is the
+    status of a solve that decided nothing, and every such caller already
+    reads it so: phase 1a hands over to the cleared clone, a phase 2 with
+    nothing returns phase 1's timetable, the explanation leaves the proved
+    INFEASIBLE unexplained, a probe finds nothing and the lunch stage leaves
+    the full model to decide. A guard around solve() as a whole would have
+    thrown away a timetable phase 1 had already found.
+
+    RAISED IN PHASE 1B (degrade=False), the last solve that can find a
+    timetable. Its UNKNOWN becomes the TIMEOUT, and a TIMEOUT tells the
+    school that its week did not fit in the budget and that a longer one may
+    help. A crash is neither: a deterministic one came back TIMEOUT after
+    0.00 s, under probes that reported nothing helped because they had
+    crashed too. So it is raised as SolverCrashedError — a 500, as before
+    this guard, an ERROR in the log, and no probe run.
 
     ANY EXCEPTION BUT OUR OWN. OR-Tools turns a C++ exception into whatever
     Python type its binding maps it to — IndexError for absl's out_of_range,
@@ -544,44 +567,53 @@ def _solve_guarded(
     the crash already fixed. An OptimizationEngineError carries a meaning its
     own handler gives the school, and passes through.
 
-    THE LOG NAMES THE SOLVE AND THE EXCEPTION, never an id: the exception's
-    text is logged with every UUID taken out.
+    THE LOG NAMES THE SOLVE, THE REQUEST AND THE EXCEPTION, never one of the
+    school's ids. The request as _timeout_diagnosis writes it,
+    [requestId=…]: this runs on run_solver's thread through the stdlib
+    logger, which merges no structlog context, and two schemaförslag
+    candidates solving side by side must be told apart when a retry that
+    succeeded leaves this line as its only trace. The exception's text with
+    every UUID taken out: the model's variable names carry the payload's.
     """
+    # Outside the try: an OR-Tools without the deprecated alias must fail
+    # loudly, not turn every solve into a TIMEOUT.
+    solve = solver.Solve
     limit = solver.parameters.max_time_in_seconds
     started = time.monotonic()
     try:
-        return solver.Solve(model)
+        return solve(model)
     except OptimizationEngineError:
         raise
     except Exception as error:
-        first = error
+        last = error
+    how = "with no time left to retry"
     left = limit - (time.monotonic() - started)
-    if left <= 0:
-        logger.error(
-            "cp-sat raised %s in %s (%s) with no time left to retry; the solve decided nothing",
-            type(first).__name__, what, _without_ids(first),
+    if left > 0:
+        logger.warning(
+            "cp-sat raised %s in %s [requestId=%s] (%s); solving once more without presolve",
+            type(last).__name__, what, request_id, _without_ids(last),
         )
-        return cp_model.UNKNOWN
-    logger.warning(
-        "cp-sat raised %s in %s (%s); solving once more without presolve",
-        type(first).__name__, what, _without_ids(first),
+        presolve = solver.parameters.cp_model_presolve
+        solver.parameters.cp_model_presolve = False
+        solver.parameters.max_time_in_seconds = left
+        try:
+            return solve(model)
+        except OptimizationEngineError:
+            raise
+        except Exception as error:
+            last = error
+            how = "again without presolve"
+        finally:
+            solver.parameters.cp_model_presolve = presolve
+            solver.parameters.max_time_in_seconds = limit
+    said = (
+        f"cp-sat raised {type(last).__name__} in {what} {how} "
+        f"[requestId={request_id}] ({_without_ids(last)})"
     )
-    presolve = solver.parameters.cp_model_presolve
-    solver.parameters.cp_model_presolve = False
-    solver.parameters.max_time_in_seconds = left
-    try:
-        return solver.Solve(model)
-    except OptimizationEngineError:
-        raise
-    except Exception as error:
-        logger.error(
-            "cp-sat raised %s in %s again without presolve (%s); the solve decided nothing",
-            type(error).__name__, what, _without_ids(error),
-        )
-        return cp_model.UNKNOWN
-    finally:
-        solver.parameters.cp_model_presolve = presolve
-        solver.parameters.max_time_in_seconds = limit
+    if not degrade:
+        raise SolverCrashedError(said) from None
+    logger.error("%s; the solve decided nothing", said)
+    return cp_model.UNKNOWN
 
 
 class SchedulerSolver:
@@ -1430,7 +1462,9 @@ class SchedulerSolver:
         stage = self._build_lunch_stage(request, narrowings)
         solver = self._lunch_stage_solver(self.LUNCH_STAGE_CAP_SECONDS)
         started = time.monotonic()
-        code = _solve_guarded(solver, stage.pinned(set()), what="the lunch stage")
+        code = _solve_guarded(
+            solver, stage.pinned(set()), what="the lunch stage", request_id=request.request_id,
+        )
         logger.info(
             "lunch stage: %s in %.2fs over %d lunch starts",
             solver.StatusName(code), time.monotonic() - started, len(stage.starts),
@@ -1623,7 +1657,10 @@ class SchedulerSolver:
             if remaining <= 0:
                 return None
             solver = self._lunch_stage_solver(remaining)
-            code = _solve_guarded(solver, stage.pinned(relaxed | extra), what="the lunch naming")
+            code = _solve_guarded(
+                solver, stage.pinned(relaxed | extra),
+                what="the lunch naming", request_id=request.request_id,
+            )
             if code == cp_model.INFEASIBLE:
                 return True
             if code in (cp_model.OPTIMAL, cp_model.FEASIBLE):
@@ -1811,7 +1848,10 @@ class SchedulerSolver:
             self._settings.solver_max_time_seconds, self.EXPLAIN_CAP_SECONDS,
         )
         conflicts = None
-        if _solve_guarded(solver, model, what="the explanation") == cp_model.INFEASIBLE:
+        status = _solve_guarded(
+            solver, model, what="the explanation", request_id=request.request_id,
+        )
+        if status == cp_model.INFEASIBLE:
             conflicts = build_conflict_analysis(solver, registry)
         # A PROOF WITH NOTHING TO SAY, ON A WEEK WITH BLOCKS. A block is the
         # one rule a school writes to make its week NARROWER, so a refusal that
@@ -1959,7 +1999,9 @@ class SchedulerSolver:
         phase1 = self._generation_solver(
             request, min(total_budget, self.CLEAN_SAT_CAP_SECONDS),
         )
-        phase1_code = _solve_guarded(phase1, feas_model, what="phase 1a")
+        phase1_code = _solve_guarded(
+            phase1, feas_model, what="phase 1a", request_id=request.request_id,
+        )
 
         # MODEL_INVALID is a bug in model construction, not a property of the
         # school's data — surface it as a server error instead of dressing it
@@ -2015,7 +2057,12 @@ class SchedulerSolver:
             clone_model = model.Clone()
             clone_model.ClearObjective()
             phase1b = self._generation_solver(request, remaining)
-            phase1b_code = _solve_guarded(phase1b, clone_model, what="phase 1b")
+            # Raised, not degraded, when both attempts throw: its UNKNOWN
+            # would be the TIMEOUT below. See _solve_guarded.
+            phase1b_code = _solve_guarded(
+                phase1b, clone_model, what="phase 1b", request_id=request.request_id,
+                degrade=False,
+            )
 
             if phase1b_code == cp_model.MODEL_INVALID:
                 msg = f"CP-SAT rejected the generated model: {clone_model.Validate()}"
@@ -2084,7 +2131,9 @@ class SchedulerSolver:
                 return _phase1_response()
 
         phase2 = self._generation_solver(request, remaining)
-        phase2_code = _solve_guarded(phase2, model, what="phase 2")
+        phase2_code = _solve_guarded(
+            phase2, model, what="phase 2", request_id=request.request_id,
+        )
         if phase2_code == cp_model.MODEL_INVALID:
             msg = f"CP-SAT rejected the generated model: {model.Validate()}"
             raise SolverBuildError(msg)
@@ -2166,7 +2215,9 @@ class SchedulerSolver:
             min(seconds * self.HINT_COMPLETION_SHARE, self.HINT_COMPLETION_CAP_SECONDS),
         )
         completion.parameters.fix_variables_to_their_hinted_value = True
-        code = _solve_guarded(completion, model, what="the hint completion")
+        code = _solve_guarded(
+            completion, model, what="the hint completion", request_id=request.request_id,
+        )
         if code not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             logger.info("hint completion: %s, phase 2 keeps the partial hint", completion.StatusName(code))
             return False
@@ -4531,9 +4582,10 @@ class SchedulerSolver:
         probe = cp_model.CpSolver()
         probe.parameters.max_time_in_seconds = budget
         started = time.perf_counter()
-        if _solve_guarded(probe, feas_model, what="the blocks probe") not in (
-            cp_model.OPTIMAL, cp_model.FEASIBLE,
-        ):
+        status = _solve_guarded(
+            probe, feas_model, what="the blocks probe", request_id=request.request_id,
+        )
+        if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             return None
         return ConflictAnalysis(
             summary_code="BLOCK_PROBE_SUMMARY",
@@ -4596,9 +4648,10 @@ class SchedulerSolver:
             probe = cp_model.CpSolver()
             probe.parameters.max_time_in_seconds = slice_seconds
             started = time.perf_counter()
-            if _solve_guarded(probe, feas_model, what="the timeout probe") in (
-                cp_model.OPTIMAL, cp_model.FEASIBLE,
-            ):
+            status = _solve_guarded(
+                probe, feas_model, what="the timeout probe", request_id=request.request_id,
+            )
+            if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
                 found.append((code, time.perf_counter() - started))
 
         budget = round(self._settings.solver_max_time_seconds)

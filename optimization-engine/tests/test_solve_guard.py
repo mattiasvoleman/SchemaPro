@@ -1,4 +1,4 @@
-"""The guard around every CP-SAT Solve: a throw is retried, then a status, never a 500.
+"""The guard around every CP-SAT Solve: a throw is retried, then an answer that does not lie.
 
 CP-SAT 9.15.6755's presolve threw `IndexError:
 absl::container_internal::raw_hash_map<>::at` out of Solve on a model it had
@@ -30,34 +30,38 @@ from app.config import Settings
 from app.exceptions import InvalidScheduleInputError
 from app.main import create_app
 from app.schemas.schedule import OptimizeScheduleRequest
-from app.solver.scheduler_solver import SchedulerSolver, _solve_guarded
+from app.solver.scheduler_solver import SchedulerSolver, SolverCrashedError, _solve_guarded
 
 API_KEY = "test-api-key-000000000000000000000000"
 #: The id an injected throw quotes, as a CP-SAT message quoting a variable would.
 QUOTED = str(uuid4())
+#: The request a direct call to the guard is made for.
+REQUEST = uuid4()
 REAL_SOLVE = cp_model.CpSolver.Solve
+LOGGER = "app.solver.scheduler_solver"
 
 
 def _throwing(
     monkeypatch: pytest.MonkeyPatch,
     when: Callable[[cp_model.CpSolver, cp_model.CpModel], bool],
     *,
-    error: Exception | None = None,
     before: float = 0.0,
 ) -> list[dict[str, float | bool]]:
     """CpSolver.Solve, made to throw whenever `when` says so and to solve for
     real otherwise. Returns every call, with the presolve and the time limit
-    it ran under. `before` is wall-clock the throw spends first."""
+    it ran under and when it began. `before` is wall-clock a throw spends
+    first."""
     calls: list[dict[str, float | bool]] = []
 
     def solve(self, model, solution_callback=None):  # type: ignore[no-untyped-def]  # noqa: ANN001, ANN202
         calls.append({
             "presolve": self.parameters.cp_model_presolve,
             "seconds": self.parameters.max_time_in_seconds,
+            "at": time.monotonic(),
         })
         if when(self, model):
             time.sleep(before)
-            raise error or IndexError(f"absl::container_internal::raw_hash_map<>::at {QUOTED}")
+            raise IndexError(f"absl::container_internal::raw_hash_map<>::at {QUOTED}")
         return REAL_SOLVE(self, model, solution_callback)
 
     monkeypatch.setattr(cp_model.CpSolver, "Solve", solve)
@@ -85,6 +89,10 @@ def _solver(seconds: float = 5.0) -> cp_model.CpSolver:
     return solver
 
 
+def _guarded(solver: cp_model.CpSolver, model: cp_model.CpModel, what: str, **kwargs: object):  # type: ignore[no-untyped-def]  # noqa: ANN202
+    return _solve_guarded(solver, model, what=what, request_id=REQUEST, **kwargs)  # type: ignore[arg-type]
+
+
 # ---------------------------------------------------------------------------
 # _solve_guarded itself
 # ---------------------------------------------------------------------------
@@ -97,8 +105,8 @@ def test_a_throw_from_presolve_is_solved_once_more_without_it(
     model, x = _small_model()
     solver = _solver()
 
-    with caplog.at_level(logging.WARNING, logger="app.solver.scheduler_solver"):
-        code = _solve_guarded(solver, model, what="phase 1a")
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        code = _guarded(solver, model, "phase 1a")
 
     assert code == cp_model.OPTIMAL
     assert solver.Value(x) >= 3
@@ -108,35 +116,37 @@ def test_a_throw_from_presolve_is_solved_once_more_without_it(
     assert solver.parameters.max_time_in_seconds == 5.0
     [record] = caplog.records
     assert record.levelno == logging.WARNING
-    assert "IndexError" in record.getMessage()
-    assert "phase 1a" in record.getMessage()
+    assert "IndexError in phase 1a" in record.getMessage()
     assert "raw_hash_map" in record.getMessage()
 
 
-def test_the_log_names_the_exception_and_never_an_id(
+def test_the_log_names_the_request_and_never_the_school_s_ids(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """The request as _timeout_diagnosis writes it, so two candidates solving
+    side by side are told apart; the exception's ids taken out."""
     _throwing(monkeypatch, _always)
     model, _x = _small_model()
 
-    with caplog.at_level(logging.WARNING, logger="app.solver.scheduler_solver"):
-        _solve_guarded(_solver(), model, what="phase 2")
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        _guarded(_solver(), model, "phase 2")
 
     assert len(caplog.records) == 2
     for record in caplog.records:
+        assert f"[requestId={REQUEST}]" in record.getMessage()
         assert QUOTED not in record.getMessage()
         assert "<id>" in record.getMessage()
 
 
-def test_a_throw_without_presolve_too_is_unknown_and_never_an_exception(
+def test_a_throw_without_presolve_too_is_unknown_where_the_caller_can_say_more(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
     calls = _throwing(monkeypatch, _always)
     model, _x = _small_model()
     solver = _solver()
 
-    with caplog.at_level(logging.WARNING, logger="app.solver.scheduler_solver"):
-        code = _solve_guarded(solver, model, what="phase 1b")
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        code = _guarded(solver, model, "phase 2")
 
     assert code == cp_model.UNKNOWN
     assert [call["presolve"] for call in calls] == [True, False]
@@ -146,6 +156,29 @@ def test_a_throw_without_presolve_too_is_unknown_and_never_an_exception(
     assert "again without presolve" in caplog.records[1].getMessage()
 
 
+@pytest.mark.parametrize("before", [0.0, 0.25], ids=["retried", "no time to retry"])
+def test_a_solve_that_must_not_degrade_raises_what_threw_without_its_ids(
+    monkeypatch: pytest.MonkeyPatch, before: float,
+) -> None:
+    """Phase 1b's: its UNKNOWN would tell the school its week needs a longer
+    budget, which a crash does not."""
+    calls = _throwing(monkeypatch, _always, before=before)
+    model, _x = _small_model()
+    solver = _solver(0.2)
+
+    with pytest.raises(SolverCrashedError) as raised:
+        _guarded(solver, model, "phase 1b", degrade=False)
+
+    text = str(raised.value)
+    assert "IndexError in phase 1b" in text
+    assert f"[requestId={REQUEST}]" in text
+    assert QUOTED not in text
+    # Not chained: the traceback main.py logs would print the original's text.
+    assert raised.value.__suppress_context__
+    assert len(calls) == (2 if before == 0.0 else 1)
+    assert solver.parameters.cp_model_presolve is True
+
+
 def test_the_retry_gets_what_the_first_attempt_left_of_the_limit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -153,7 +186,7 @@ def test_the_retry_gets_what_the_first_attempt_left_of_the_limit(
     calls = _throwing(monkeypatch, _with_presolve, before=0.3)
     model, _x = _small_model()
 
-    assert _solve_guarded(_solver(5.0), model, what="phase 2") == cp_model.OPTIMAL
+    assert _guarded(_solver(5.0), model, "phase 2") == cp_model.OPTIMAL
 
     assert calls[0]["seconds"] == 5.0
     assert 0 < calls[1]["seconds"] <= 4.7
@@ -165,8 +198,8 @@ def test_a_throw_that_spent_the_whole_limit_is_not_retried(
     calls = _throwing(monkeypatch, _with_presolve, before=0.25)
     model, _x = _small_model()
 
-    with caplog.at_level(logging.WARNING, logger="app.solver.scheduler_solver"):
-        code = _solve_guarded(_solver(0.2), model, what="the timeout probe")
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        code = _guarded(_solver(0.2), model, "the timeout probe")
 
     assert code == cp_model.UNKNOWN
     assert len(calls) == 1
@@ -194,21 +227,32 @@ def test_our_own_refusal_passes_through_unretried(
     model, _x = _small_model()
 
     with pytest.raises(InvalidScheduleInputError) as raised:
-        _solve_guarded(_solver(), model, what="phase 1a")
+        _guarded(_solver(), model, "phase 1a")
 
     assert raised.value is ours
     assert len(attempts) == (1 if throws_on == "the first attempt" else 2)
 
 
-def test_no_solve_in_the_scheduler_bypasses_the_guard() -> None:
-    """Nine solves go through the guard today — the lunch stage and its
-    naming, phases 1a, 1b and 2, the hint completion, the explanation and the
-    two probes — and the tests above walk only the ones a payload reaches
-    cheaply. A Solve written tomorrow is the one nobody fuzzed."""
-    import app.solver.scheduler_solver as module
+def test_a_solver_without_the_solve_alias_fails_loudly() -> None:
+    """Solve is OR-Tools' deprecated alias of solve. An upgrade that removes
+    it must break every call here, not be caught and turn every solve into
+    a TIMEOUT."""
 
-    tree = ast.parse(Path(module.__file__).read_text())
-    outside: list[int] = []
+    class WithoutTheAlias:
+        parameters = cp_model.CpSolver().parameters
+
+    model, _x = _small_model()
+
+    with pytest.raises(AttributeError):
+        _guarded(WithoutTheAlias(), model, "phase 1a")  # type: ignore[arg-type]
+
+
+def _unguarded_solves(source: str) -> list[int]:
+    """The lines of every CP-SAT solve outside _solve_guarded: Solve and
+    solve, their solution-callback forms, on a name or on a call's result.
+    SchedulerSolver(...).solve is the scheduler's own method, not CP-SAT's."""
+    names = {"Solve", "solve", "SolveWithSolutionCallback", "solve_with_solution_callback"}
+    lines: list[int] = []
 
     def visit(node: ast.AST, inside_guard: bool) -> None:
         if isinstance(node, ast.FunctionDef) and node.name == "_solve_guarded":
@@ -216,17 +260,47 @@ def test_no_solve_in_the_scheduler_bypasses_the_guard() -> None:
         if (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
-            and node.func.attr in {"Solve", "solve"}
+            and node.func.attr in names
             and not inside_guard
-            # SchedulerSolver(scoped).solve(request): the method, not CP-SAT's.
-            and not (isinstance(node.func.value, ast.Call))
+            and not (
+                isinstance(node.func.value, ast.Call)
+                and isinstance(node.func.value.func, ast.Name)
+                and node.func.value.func.id == "SchedulerSolver"
+            )
         ):
-            outside.append(node.lineno)
+            lines.append(node.lineno)
         for child in ast.iter_child_nodes(node):
             visit(child, inside_guard)
 
-    visit(tree, inside_guard=False)
-    assert outside == [], f"CpSolver.Solve called outside _solve_guarded on lines {outside}"
+    visit(ast.parse(source), inside_guard=False)
+    return lines
+
+
+def test_the_inventory_finds_every_form_of_solve() -> None:
+    source = "\n".join([
+        "def _solve_guarded(solver, model):",
+        "    return solver.Solve(model)",
+        "def f(self, m, s, cb, scoped, request):",
+        "    s.Solve(m)",
+        "    self._lunch_stage_solver(3.0).Solve(m)",
+        "    cp_model.CpSolver().Solve(m)",
+        "    s.SolveWithSolutionCallback(m, cb)",
+        "    s.solve(m)",
+        "    return SchedulerSolver(scoped).solve(request)",
+    ])
+
+    assert _unguarded_solves(source) == [4, 5, 6, 7, 8]
+
+
+def test_no_solve_in_the_scheduler_bypasses_the_guard() -> None:
+    """Nine solves go through the guard today — the lunch stage and its
+    naming, phases 1a, 1b and 2, the hint completion, the explanation and the
+    two probes. A Solve written tomorrow is the one nobody fuzzed."""
+    import app.solver.scheduler_solver as module
+
+    lines = _unguarded_solves(Path(module.__file__).read_text())
+
+    assert lines == [], f"CP-SAT solved outside _solve_guarded on lines {lines}"
 
 
 # ---------------------------------------------------------------------------
@@ -246,7 +320,9 @@ def _settings(**overrides: object) -> Settings:
     )
 
 
-def _payload(lessons_per_week: int = 2, minutes_per_lesson: int = 60) -> dict[str, object]:
+def _payload(
+    lessons_per_week: int = 2, minutes_per_lesson: int = 60, **requirement: object,
+) -> dict[str, object]:
     return {
         "requestId": str(uuid4()),
         "academicYearId": str(uuid4()),
@@ -259,10 +335,34 @@ def _payload(lessons_per_week: int = 2, minutes_per_lesson: int = 60) -> dict[st
                 "lessonsPerWeek": lessons_per_week,
                 "minutesPerLesson": minutes_per_lesson,
                 "studentGroupSize": 24,
+                **requirement,
             },
         ],
         "rooms": [{"id": str(uuid4()), "capacity": 30}],
         "constraints": [],
+    }
+
+
+def _lunch_payload() -> dict[str, object]:
+    """Two classes of 30 and a hall of 60 that seats them both at 11:00: the
+    lunch stage runs, and a timetable exists."""
+    groups = [str(uuid4()), str(uuid4())]
+    return {
+        **_payload(),
+        "requirements": [
+            {
+                "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": group,
+                "teacherId": str(uuid4()), "lessonsPerWeek": 1, "minutesPerLesson": 60,
+                "studentGroupSize": 30,
+            }
+            for group in groups
+        ],
+        "groups": [{"id": group, "lunchHeadcount": 30} for group in groups],
+        "rooms": [{"id": str(uuid4()), "capacity": 30} for _ in groups],
+        "rules": {
+            "lunchStartTime": "11:00:00", "lunchEndTime": "12:00:00", "lunchMinutes": 60,
+            "diningSeats": 60,
+        },
     }
 
 
@@ -285,6 +385,25 @@ def test_a_week_whose_every_presolve_throws_still_gets_its_timetable(
     assert [call["presolve"] for call in calls] == [True, False, True, False]
 
 
+def test_no_solve_runs_past_the_request_s_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Across a whole solve(), with a throw that costs time in both phases:
+    every limit a Solve is given ends inside the budget phase 1a started.
+    A retry paid from a fresh limit would end past it."""
+    budget = 4.0
+    calls = _throwing(monkeypatch, _with_presolve, before=0.5)
+
+    response = _solve(_payload(), SOLVER_MAX_TIME_SECONDS=budget)
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert len(calls) == 4
+    start = calls[0]["at"]
+    for call in calls:
+        assert call["at"] - start + call["seconds"] <= budget + 0.05, calls
+    # The throws' own half-seconds came off what followed them.
+    assert calls[1]["seconds"] <= budget - 0.5
+    assert calls[3]["seconds"] <= budget - 1.0
+
+
 def test_a_phase_2_that_throws_twice_returns_phase_1_s_timetable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -297,6 +416,72 @@ def test_a_phase_2_that_throws_twice_returns_phase_1_s_timetable(
 
     assert response.status == "FEASIBLE"
     assert len(response.lessons) == 2
+
+
+def test_a_lunch_stage_that_throws_twice_leaves_the_week_to_the_full_model(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The stage's solver is the one that asks for the full linearization.
+    calls = _throwing(
+        monkeypatch, lambda solver, _model: solver.parameters.linearization_level == 2,
+    )
+
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        response = _solve(_lunch_payload())
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert len(response.lessons) == 2
+    assert len(response.lunches) == 10
+    assert [call["presolve"] for call in calls[:2]] == [True, False]
+    assert ["the lunch stage" in record.getMessage() for record in caplog.records] == [True, True]
+
+
+def test_a_hint_completion_that_throws_twice_leaves_phase_2_its_partial_hint(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Only a request with `search` completes its hint; a schemaförslag
+    candidate whose completion throws is still solved."""
+    _throwing(
+        monkeypatch,
+        lambda solver, _model: solver.parameters.fix_variables_to_their_hinted_value,
+    )
+
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        response = _solve({**_payload(), "search": {"seed": 7}})
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert len(response.lessons) == 2
+    assert [
+        "the hint completion" in record.getMessage()
+        for record in caplog.records if record.levelno >= logging.WARNING
+    ] == [True, True]
+
+
+def test_a_timeout_probe_that_throws_twice_finds_nothing(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Phases 1a and 1b run out of time for real, and the one rule the week
+    can be probed without — its ten minutes before each lesson — is probed
+    by a solve that throws. The TIMEOUT stands, with the probe's verdict
+    that nothing helped: a probe is a measurement, never a proof."""
+    seen: list[str] = []
+
+    def solve(self, model, solution_callback=None):  # type: ignore[no-untyped-def]  # noqa: ANN001, ANN202, ARG001
+        seen.append("solve")
+        if len(seen) <= 2:
+            return cp_model.UNKNOWN
+        raise IndexError("absl::container_internal::raw_hash_map<>::at")
+
+    monkeypatch.setattr(cp_model.CpSolver, "Solve", solve)
+
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        response = _solve(_payload(minutesBefore=10))
+
+    assert response.status == "TIMEOUT"
+    assert response.conflicts is not None
+    assert response.conflicts.summary_code == "PROBE_NOTHING_HELPED"
+    assert len(seen) == 4
+    assert any("the timeout probe" in record.getMessage() for record in caplog.records)
 
 
 def test_a_proved_week_whose_explanation_throws_is_an_unexplained_infeasible(
@@ -314,23 +499,35 @@ def test_a_proved_week_whose_explanation_throws_is_an_unexplained_infeasible(
     assert response.conflicts is None
 
 
-def test_a_week_whose_every_solve_throws_is_a_timeout_and_never_a_500(
+def test_a_week_whose_every_solve_throws_raises_and_runs_no_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Through the API, as the gateway sees it. Nothing was decided, and
-    TIMEOUT is the status that says so: the school is told to try again,
-    not that its week is impossible, and not "An unexpected error occurred"."""
+    """Phase 1a throws twice and hands over; phase 1b throws twice, and with
+    nothing left to find a timetable the crash is raised rather than read as
+    a TIMEOUT. The week carries a rule the TIMEOUT probe would relax, and no
+    probe is run: four solves in all."""
+    calls = _throwing(monkeypatch, _always)
+
+    with pytest.raises(SolverCrashedError, match="IndexError in phase 1b again without presolve"):
+        _solve(_payload(minutesBefore=10))
+
+    assert [call["presolve"] for call in calls] == [True, False, True, False]
+
+
+def test_through_the_api_that_crash_is_the_500_it_always_was(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """As the gateway sees it: the generic 500, never a TIMEOUT that would
+    send the school to raise its budget for a week that crashed in 0.00 s."""
     _throwing(monkeypatch, _always)
-    client = TestClient(create_app(_settings()))
+    client = TestClient(create_app(_settings()), raise_server_exceptions=False)
 
     response = client.post(
-        "/api/v1/optimize", json=_payload(), headers={"X-API-Key": API_KEY},
+        "/api/v1/optimize", json=_payload(minutesBefore=10), headers={"X-API-Key": API_KEY},
     )
 
-    assert response.status_code == 200
-    body = response.json()
-    assert body["status"] == "TIMEOUT"
-    assert body["lessons"] == []
+    assert response.status_code == 500
+    assert response.json()["code"] == "INTERNAL_SERVER_ERROR"
 
 
 # ---------------------------------------------------------------------------
@@ -428,9 +625,7 @@ def test_cp_sat_s_own_presolve_crash_is_answered_and_not_raised() -> None:
     with pytest.raises(IndexError, match="raw_hash_map"):
         _solver(10.0).Solve(_the_crashing_model())
 
-    assert _solve_guarded(_solver(10.0), _the_crashing_model(), what="phase 1a") == (
-        cp_model.INFEASIBLE
-    )
+    assert _guarded(_solver(10.0), _the_crashing_model(), "phase 1a") == cp_model.INFEASIBLE
 
 
 def test_a_build_that_crashes_presolve_is_refused_by_solve_and_not_a_500(
@@ -447,7 +642,7 @@ def test_a_build_that_crashes_presolve_is_refused_by_solve_and_not_a_500(
 
     monkeypatch.setattr(SchedulerSolver, "_build_model", constant_build)
 
-    with caplog.at_level(logging.WARNING, logger="app.solver.scheduler_solver"):
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
         response = SchedulerSolver(
             _settings(SOLVER_PROBE_SECONDS=0, **FIVE_SHORT_DAYS),
         ).solve(_the_lararens_dag_week())
