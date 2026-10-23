@@ -136,6 +136,20 @@ export type BasisPayload = Pick<
   | 'groupConflicts'
 >;
 
+/**
+ * A post written at another post's times rather than sent (same-times.ts),
+ * by what it is written with: the payload carries nothing of it.
+ */
+export interface MirroredRow {
+  id: string;
+  /** The sent post whose times it takes. */
+  mirrorOf: string;
+  subjectId: string;
+  studentGroupId: string;
+  teacherId: string | null;
+  coTeacherId: string | null;
+}
+
 export interface BasisSource {
   payload: BasisPayload;
   /**
@@ -148,6 +162,11 @@ export interface BasisSource {
   storedRules: ScheduleRules | null;
   /** The non-preserved masters, the lessons a regeneration replaces. */
   draftLessons: readonly DraftContent[];
+  /**
+   * The posts of a block on another block's times. Absent or empty for a
+   * school with none, whose `requirements` part is then what it always was.
+   */
+  mirrors?: readonly MirroredRow[];
 }
 
 /** The six parts' content, in real ids, before hashing. */
@@ -253,17 +272,25 @@ export function basisInputsOf(source: BasisSource): BasisInputs {
 
   return {
     // As sent, every field, so a field the engine is sent later is covered the
-    // day it is added; only the ids are turned back.
-    requirements: payload.requirements.map((requirement) => ({
-      ...requirement,
-      id: realOf(requirement.id),
-      subjectId: realOf(requirement.subjectId),
-      studentGroupId: realOf(requirement.studentGroupId),
-      teacherId: realOrNull(requirement.teacherId),
-      coTeacherId: realOrNull(requirement.coTeacherId),
-      requiredRoomType: realOrNull(requirement.requiredRoomType),
-      ...(requirement.blockId !== undefined ? { blockId: realOf(requirement.blockId) } : {}),
-    })),
+    // day it is added; only the ids are turned back. And beside them the
+    // posts written at a sent post's times, which an apply writes with their
+    // own group and teachers: a teacher changed on one since the run puts
+    // that teacher at the candidate's times unasked, so it makes the run
+    // stale. Only when there are any, so the part of a school without a
+    // block on another's times hashes what it always did.
+    requirements: [
+      ...payload.requirements.map((requirement) => ({
+        ...requirement,
+        id: realOf(requirement.id),
+        subjectId: realOf(requirement.subjectId),
+        studentGroupId: realOf(requirement.studentGroupId),
+        teacherId: realOrNull(requirement.teacherId),
+        coTeacherId: realOrNull(requirement.coTeacherId),
+        requiredRoomType: realOrNull(requirement.requiredRoomType),
+        ...(requirement.blockId !== undefined ? { blockId: realOf(requirement.blockId) } : {}),
+      })),
+      ...(source.mirrors ?? []).map((row) => ({ ...row })),
+    ],
     preserved: payload.fixedLessons.map((lesson) => fixedLessonContent(lesson, realOf)),
     draft: {
       previousLessons: payload.previousLessons.map((lesson) => ({

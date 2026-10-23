@@ -1584,6 +1584,25 @@ describe('RoomOptimizationService', () => {
       expect(rows[0]!.roomId).toBe(ROOM_10);
     });
 
+    it('lets an autumn lesson and a spring lesson at the same time share a room (a term split’s two blocks)', async () => {
+      // The generator writes the spring block at the autumn block's times
+      // (same-times.ts); the two never meet, here as on the grid.
+      rows[0]!.endDate = new Date('2027-01-10T00:00:00.000Z');
+      rows[2]!.startDate = new Date('2027-01-11T00:00:00.000Z');
+      const basis = await basisNow();
+
+      await service.apply(
+        {
+          academicYearId: YEAR,
+          basis,
+          changes: [{ lessonId: ELIN_FIRST, fromRoomId: ROOM_1, toRoomId: ROOM_10 }],
+        },
+        user,
+      );
+
+      expect(rows[0]!.roomId).toBe(ROOM_10);
+    });
+
     it('lets a lesson take a room the minute the last one leaves it', async () => {
       // Half-open: 08:00-09:00 and 09:00-10:00 do not overlap.
       rows.push(

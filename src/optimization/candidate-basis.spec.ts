@@ -490,6 +490,27 @@ describe('the candidate basis', () => {
     expect(() => basisInputsOf(source)).toThrow('no real counterpart');
   });
 
+  it('reads the posts written at a sent post’s times into the requirements part, and a school with none as before', () => {
+    const source = anonymised(school());
+    const before = basisPartsOf(basisInputsOf(source));
+    // No block on another's times: the part a release before them hashed.
+    expect(basisPartsOf(basisInputsOf({ ...source, mirrors: [] }))).toEqual(before);
+
+    const spring = {
+      id: 'spring-post',
+      mirrorOf: 'autumn-post',
+      subjectId: 'textil',
+      studentGroupId: '7A:2',
+      teacherId: 'tove',
+      coTeacherId: null,
+    };
+    const mirrored = basisPartsOf(basisInputsOf({ ...source, mirrors: [spring] }));
+    expect(changedParts(before, mirrored)).toEqual(['requirements']);
+    // Its teacher, which the payload need not carry, is part of it.
+    const otherTeacher = basisPartsOf(basisInputsOf({ ...source, mirrors: [{ ...spring, teacherId: 'tea' }] }));
+    expect(changedParts(mirrored, otherTeacher)).toEqual(['requirements']);
+  });
+
   it('names every part changed against a stored value that is not a parts object', () => {
     const current = partsOf(school());
     expect(changedParts(null, current)).toEqual([...BASIS_PARTS]);
