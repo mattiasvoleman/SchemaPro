@@ -80,6 +80,13 @@ export type ColumnRule =
    * " (3)" … after a name another carried block already took.
    */
   | 'PROMOTE_BLOCK_NAME'
+  /**
+   * The copy, on the same side, of the block whose times the source block
+   * takes (a term split's spring on its autumn), when that block is carried
+   * too; null otherwise. Written after every copy exists, and only for a
+   * block on another's times. See rollover-plan.ts.
+   */
+  | 'MAP_SAME_TIMES_BLOCK'
   /** The source row's own id: the predecessor link. */
   | 'SOURCE_ID'
   /** The source grade + 1 (null stays null; CARRY and INTAKE keep it). */
@@ -318,6 +325,7 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
       schoolId: 'COPY',
       academicYearId: 'TARGET_YEAR',
       name: 'PROMOTE_BLOCK_NAME',
+      sameTimesAsBlockId: 'MAP_SAME_TIMES_BLOCK',
       ...timestamps,
     },
   },
