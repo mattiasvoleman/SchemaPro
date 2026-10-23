@@ -59,6 +59,13 @@
       "reason": "Same situation and same surface as GHSA-w3rx-r6r6-pgpr (JXL/HEIF parsers): fixed only in image-size 2.0.3+, outside metro's ^1.x range. Remove when metro moves to image-size 2.",
       "addedAt": "2026-08-09",
       "expires": "2026-11-09"
+    },
+    {
+      "id": "GHSA-mrhx-c7xc-m3w5",
+      "package": "zod",
+      "reason": "No patched release in the range that can be installed: zod is fixed only in 4.6.6, a new major, and the one package that pulls zod in, @expo/cli (Expo's development and build CLI), declares zod ^3.25.76 in every release up to the newest, 58.1.14 (checked 2026-10-23). The SDK 57 CLI on claude/appbygget does the same. No app code imports zod and the app bundle does not contain it; the CLI validates the developer's own config and command-line input on the developer's machine or in EAS Build, so an attacker-sized collection never reaches it. Remove when @expo/cli moves to zod 4.6.6+; re-check with `npm view @expo/cli@latest dependencies.zod`.",
+      "addedAt": "2026-10-23",
+      "expires": "2026-11-20"
     }
   ]
 }
