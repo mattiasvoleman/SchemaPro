@@ -211,6 +211,27 @@ def _build(
     )
 
 
+def _minutes_defined(payload: dict[str, object], day_index: int) -> list[int]:
+    """The lessons' minutes in the bare row that defines TEACHER's total for
+    the day (_day_totals): `minutes − Σ minutes·x = 0`, read back as the
+    lengths, sorted. Exactly one such row, or the reading is wrong."""
+    _solver, (model, *_rest) = _build(payload)
+    proto = model.Proto()
+    names = [variable.name for variable in proto.variables]
+    minutes = names.index(f"ldminutes_{TEACHER}_{day_index}")
+    rows = [
+        constraint.linear
+        for constraint in proto.constraints
+        if constraint.has_linear() and not constraint.enforcement_literal
+        and minutes in constraint.linear.vars
+        and any(names[var].startswith("ldon_") for var in constraint.linear.vars)
+    ]
+    assert len(rows) == 1
+    assert list(rows[0].domain) == [0, 0]
+    coeffs = dict(zip(rows[0].vars, rows[0].coeffs))
+    return sorted(-coeff * coeffs[minutes] for var, coeff in coeffs.items() if var != minutes)
+
+
 def _pin(solver, model, decisions, placements: list[tuple[int, str]]) -> None:
     slots_per_day = solver._grid.slots_per_day
     for decision, (day_index, hhmm) in zip(decisions, placements):
@@ -540,9 +561,10 @@ class TestTheDailyCap:
 
     def test_a_locked_day_s_row_is_times_its_works_and_never_a_constant(self) -> None:
         """The lock makes Monday a teaching day whatever the solver does, and
-        the cap's row there is still `Σ minutes·x ≤ 60·works`, not `≤ 60`:
-        the same bound, and the constant form is what CP-SAT's presolve threw
-        on (the regression below)."""
+        the cap's row there is still `minutes ≤ 60·works`, not `≤ 60`: the
+        same bound. And it bounds Monday's total of minutes, never `Σ
+        minutes·x` itself, which presolve threw on against a number (the
+        regressions below, and _day_totals)."""
         locked = _payload(
             rules=[_rule(maxTeachingMinutesPerDay=120)],
             fixed_lessons=[_locked("11:00:00", "12:00:00", 1)],
@@ -551,20 +573,20 @@ class TestTheDailyCap:
         proto = model.Proto()
         names = [variable.name for variable in proto.variables]
         works = names.index(f"ldworks_{TEACHER}_0")
+        minutes = names.index(f"ldminutes_{TEACHER}_0")
         on_monday = {
             index for index, name in enumerate(names)
             if name.startswith(f"ldon_{REQUIREMENT}_") and name.endswith("_0")
         }
 
-        rows = [
+        capped = [
             dict(zip(constraint.linear.vars, constraint.linear.coeffs))
             for constraint in proto.constraints
             if constraint.has_linear() and constraint.enforcement_literal
-            and on_monday & set(constraint.linear.vars)
+            and (on_monday | {minutes}) & set(constraint.linear.vars)
         ]
-        assert len(rows) == 1
-        assert rows[0][works] == -60
-        assert sorted(value for index, value in rows[0].items() if index != works) == [60] * 4
+        assert capped == [{minutes: 1, works: -60}]
+        assert _minutes_defined(locked, 0) == [60] * 4
 
     def test_a_cap_on_the_days_the_locks_fill_is_refused_by_name_and_never_raises(self) -> None:
         """The cap's half of the presolve crash, found by the fuzz once the
@@ -948,8 +970,8 @@ class TestTheLinkingRow:
         works = f"ldworks_{TEACHER}_0"
         rows = self._bare_rows(five, works)
         linking = [coeffs for coeffs, upper in rows if coeffs[works] == -240 and upper == 0]
-        assert len(linking) == 1
-        assert sorted(value for key, value in linking[0].items() if key != works) == [60] * 5
+        assert linking == [{works: -240, f"ldminutes_{TEACHER}_0": 1}]
+        assert _minutes_defined(five, 0) == [60] * 5
 
     def test_a_day_that_holds_them_all_gets_none(self) -> None:
         works = f"ldworks_{TEACHER}_0"
@@ -988,8 +1010,8 @@ class TestTheLinkingRow:
         works = f"ldworks_{TEACHER}_1"
         rows = self._bare_rows(locked, works)
         linking = [coeffs for coeffs, upper in rows if coeffs[works] == -180 and upper == 0]
-        assert len(linking) == 1
-        assert sorted(value for key, value in linking[0].items() if key != works) == [60] * 5
+        assert linking == [{works: -180, f"ldminutes_{TEACHER}_1": 1}]
+        assert _minutes_defined(locked, 1) == [60] * 5
 
     def test_a_post_the_locked_days_fill_is_refused_by_name_and_never_raises(self) -> None:
         """The week CP-SAT 9.15.6755's presolve threw an IndexError out of
@@ -1682,9 +1704,10 @@ def test_the_estimate_still_bounds_the_model_it_predicts() -> None:
 def test_the_estimate_charges_each_rule_its_own_term() -> None:
     """The arithmetic of the term, pinned: four lessons on three days.
 
-    A teacher with a cap or a limit: (D + 1) per lesson and D for `works`,
-    22 with the cap's D literals; the limit's one literal, the wish's one
-    `works`. Each rule on its own payload, against the same week without it."""
+    A teacher with a cap or a limit: (D + 1) per lesson, D for `works` and D
+    for the day's minutes, 25 with the cap's D literals; the limit's one
+    literal, the wish's one `works`. Each rule on its own payload, against
+    the same week without it."""
     solver = SchedulerSolver(_settings())
 
     def extra(**rules: object) -> int:
@@ -1692,12 +1715,12 @@ def test_the_estimate_charges_each_rule_its_own_term() -> None:
             solver._estimate_model_size(_request(_payload()))
         )
 
-    assert extra(rules=[_rule(maxTeachingMinutesPerDay=120)]) == 4 * 4 + 3 + 3
-    assert extra(limits=[_limit(2)]) == 4 * 4 + 3 + 1
+    assert extra(rules=[_rule(maxTeachingMinutesPerDay=120)]) == 4 * 4 + 3 + 3 + 3
+    assert extra(limits=[_limit(2)]) == 4 * 4 + 3 + 3 + 1
     assert extra(rules=[_rule(preferredFreeDay=1)]) == 1
     assert extra(
         rules=[_rule(maxTeachingMinutesPerDay=120, preferredFreeDay=1)], limits=[_limit(2)],
-    ) == 4 * 4 + 3 + 3 + 1 + 1
+    ) == 4 * 4 + 3 + 3 + 3 + 1 + 1
     assert extra(rules=[_rule(teacherId=str(uuid4()), maxTeachingMinutesPerDay=120)]) == 0
     assert extra(limits=[_limit(2, teacher=str(uuid4()))]) == 0
 
