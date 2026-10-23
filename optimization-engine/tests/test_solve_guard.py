@@ -21,7 +21,7 @@ import logging
 import time
 from collections.abc import Callable
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -791,3 +791,24 @@ def test_a_week_the_fuzz_found_is_refused_by_name_and_not_a_500(
     assert response.conflicts is not None
     assert response.conflicts.summary_code == "CONFLICT_CORE_SUMMARY"
     assert not [record for record in caplog.records if "cp-sat raised" in record.getMessage()]
+
+
+def test_the_class_s_daily_maximum_week_names_the_maximum() -> None:
+    """The maximum is one of that week's causes, and its own literal now says
+    so beside the block and the post. Before, it was each day's domain — bare
+    — and could be in no core at all."""
+    settings, payload = _a_class_s_daily_maximum()
+    solver = SchedulerSolver(_settings(SOLVER_PROBE_SECONDS=0, **settings))
+
+    response = solver.solve(OptimizeScheduleRequest.model_validate(payload))
+
+    assert response.status == "INFEASIBLE"
+    assert response.conflicts is not None
+    assert response.conflicts.summary_code == "CONFLICT_CORE_SUMMARY"
+    named = [
+        detail for detail in response.conflicts.conflicts
+        if detail.code == "GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT"
+    ]
+    assert [(detail.params, detail.resource_ids) for detail in named] == [
+        ({"group": _id(10), "maxPerDay": 2, "lessons": 5}, [UUID(_id(10))]),
+    ], [detail.code for detail in response.conflicts.conflicts]
