@@ -20,18 +20,28 @@
  * Weekdays are ISO numbers and the week does not wrap — Friday and Monday are
  * four days apart.
  *
- * IN THE WEEKS A LESSON ACTUALLY RUNS. A lesson every odd week and another
- * every even week, both on Monday, are one Monday lesson in any week a school
- * has, and a warning that counted two would be wrong for exactly the A/B-week
- * schools that lock such pairs by hand. So two lessons count together only
- * when they can meet in one week: their parities allow it (ALL with either,
- * ODD with ODD, EVEN with EVEN) and their date windows overlap — the same
- * reading as the clash check's weeksCanOverlap. The engine has no weeks at
- * all and counts every locked lesson; its reading is the stricter one, which
- * is the safe direction for a generator and would be the noisy one here.
+ * IN THE WEEKS A LESSON ACTUALLY RUNS, ISO week by ISO week, as publishing
+ * puts it in the calendar and as Lärarens dag reads it: teacher-day.ts's
+ * weeksOf, whose header proves that its weeks hold every set of lessons that
+ * any week holds. A lesson runs in a week when it runs on its own weekday's
+ * date of that week by calendar/lesson-recurrence.ts's runsOn — the week's
+ * parity, and that date inside its window. A lesson every odd week and
+ * another every even week, both on Monday, are one Monday lesson in any week
+ * a school has, and a warning that counted two would be wrong for exactly the
+ * A/B-week schools that lock such pairs by hand. Windows that share a date
+ * are not enough to meet: two Monday lessons whose windows share only a
+ * Friday never share a Monday, and an even-week lesson that ends in an odd
+ * week never meets one that starts in that week. Nor are they needed: a
+ * Monday lesson that ends on the Monday and a Tuesday lesson that starts on
+ * the Tuesday share no date and are taught in one week, on days in a row.
+ * The engine has no weeks at all and counts every locked lesson; its reading
+ * is the stricter one, which is the safe direction for a generator and would
+ * be the noisy one here.
  *
- * PURE. Dates are 'YYYY-MM-DD', which compare as strings.
+ * PURE. Dates are 'YYYY-MM-DD', read as the midnight UTC a @db.Date column
+ * holds, which is what runsOn is asked about.
  */
+import { weeksOf } from './teacher-day';
 
 /** Bounds shared by the DTOs, the CHECKs (20261019090000) and the engine. */
 export const MAX_LESSONS_PER_DAY_MIN = 1;
@@ -84,7 +94,7 @@ export type DistributionBreach =
   | {
       kind: 'PER_DAY';
       dayOfWeek: number;
-      /** The most of them that meet in one week. */
+      /** The most of them that run in one week. */
       count: number;
       maxLessonsPerDay: number;
       /** Every lesson on that weekday, sorted. */
@@ -98,43 +108,6 @@ export type DistributionBreach =
       /** Every lesson on either weekday, sorted. */
       lessonIds: string[];
     };
-
-/** Whether two lessons can run in the same week. Absent recurrence is ALL_WEEKS. */
-export function canMeet(a: DistributionLesson, b: DistributionLesson): boolean {
-  const first = a.recurrence ?? 'ALL_WEEKS';
-  const second = b.recurrence ?? 'ALL_WEEKS';
-  if (first !== 'ALL_WEEKS' && second !== 'ALL_WEEKS' && first !== second) return false;
-  if (a.endDate && b.startDate && a.endDate < b.startDate) return false;
-  if (b.endDate && a.startDate && b.endDate < a.startDate) return false;
-  return true;
-}
-
-/**
- * The most of these lessons that run in one week.
- *
- * Per parity, then per date: lessons of one parity (ALL counts in both) whose
- * windows pairwise overlap share a date — intervals on a line do — so the
- * answer is the most windows that hold one start date, tried at every start.
- */
-function mostInOneWeek(lessons: DistributionLesson[]): number {
-  let best = 0;
-  for (const parity of ['ODD_WEEKS', 'EVEN_WEEKS'] as const) {
-    const running = lessons.filter((lesson) => {
-      const recurrence = lesson.recurrence ?? 'ALL_WEEKS';
-      return recurrence === 'ALL_WEEKS' || recurrence === parity;
-    });
-    // An open start is the first date there is, which no string undercuts.
-    const starts = running.map((lesson) => lesson.startDate ?? '');
-    for (const date of starts) {
-      const holding = running.filter(
-        (lesson) =>
-          (lesson.startDate ?? '') <= date && (lesson.endDate == null || lesson.endDate >= date),
-      ).length;
-      best = Math.max(best, holding);
-    }
-  }
-  return best;
-}
 
 /**
  * Every way one timplanspost's lessons break its rule, in weekday order: the
@@ -157,11 +130,13 @@ export function distributionBreaches(
   }
   const days = [...byDay.keys()].sort((a, b) => a - b);
   const idsOf = (rows: DistributionLesson[]): string[] => rows.map((row) => row.id).sort();
+  // Week by week, the weekday of each lesson that runs: every set any week holds.
+  const weeks = weeksOf(lessons).map((week) => week.map((lesson) => lesson.dayOfWeek));
 
   if (rule.maxLessonsPerDay !== null) {
     for (const day of days) {
       const onDay = byDay.get(day)!;
-      const count = mostInOneWeek(onDay);
+      const count = Math.max(...weeks.map((week) => week.filter((held) => held === day).length));
       if (count > rule.maxLessonsPerDay) {
         breaches.push({
           kind: 'PER_DAY',
@@ -180,16 +155,13 @@ export function distributionBreaches(
         const first = days[i]!;
         const second = days[j]!;
         if (second - first >= rule.minDaysBetween) continue;
-        const firstLessons = byDay.get(first)!;
-        const secondLessons = byDay.get(second)!;
-        const meet = firstLessons.some((a) => secondLessons.some((b) => canMeet(a, b)));
-        if (!meet) continue;
+        if (!weeks.some((week) => week.includes(first) && week.includes(second))) continue;
         breaches.push({
           kind: 'DAYS_APART',
           firstDay: first,
           secondDay: second,
           minDaysBetween: rule.minDaysBetween,
-          lessonIds: idsOf([...firstLessons, ...secondLessons]),
+          lessonIds: idsOf([...byDay.get(first)!, ...byDay.get(second)!]),
         });
       }
     }

@@ -165,13 +165,16 @@ export interface YearSpan {
   endDate: string;
 }
 
+/** What the weeks are read from: a lesson's weekday, parity and window. */
+export type WeekLesson = Pick<TeachingLesson, 'dayOfWeek' | 'recurrence' | 'startDate' | 'endDate'>;
+
 /**
  * Whether the lesson runs in the ISO week that starts on `monday`: whether it
  * runs on its own weekday's date of that week, by the rule publishing
  * materialises it with (runsOn). The date is in the same ISO week as the
  * Monday, so its parity is the week's.
  */
-function runsInWeek(lesson: TeachingLesson, monday: Date): boolean {
+function runsInWeek(lesson: WeekLesson, monday: Date): boolean {
   return runsOn(
     {
       recurrence: lesson.recurrence,
@@ -183,7 +186,7 @@ function runsInWeek(lesson: TeachingLesson, monday: Date): boolean {
 }
 
 /** The Monday of the week of the lesson's first own date on or after `date`. */
-const firstWeekFrom = (lesson: TeachingLesson, date: Date): Date =>
+const firstWeekFrom = (lesson: WeekLesson, date: Date): Date =>
   mondayOf(addDays(date, (lesson.dayOfWeek - (date.getUTCDay() || 7) + 7) % 7));
 
 /**
@@ -215,6 +218,10 @@ const firstWeekFrom = (lesson: TeachingLesson, date: Date): Date =>
  * teacherDayBreaches reads the same figures and names the same lessons with
  * them as without: the weeks around a start already held a superset of each.
  *
+ * Ämnesfördelning reads its weeks here too (subject-distribution.ts): its
+ * lessons per weekday and its pairs of weekdays held also only grow with the
+ * set, so the same weeks are enough for it.
+ *
  * WITH A YEAR, ONLY ITS WEEKS. A null date is the läsår's own bound — the
  * one runsOn materialises a lesson to — so a week before the year starts or
  * after it ends is no week the school has, and is left out: every week kept
@@ -223,7 +230,7 @@ const firstWeekFrom = (lesson: TeachingLesson, date: Date): Date =>
  * every lesson open at its start already runs; an event before the year is
  * that stretch's, and one after it ends nothing the year holds.
  */
-function weeksOf(lessons: readonly TeachingLesson[], year?: YearSpan): TeachingLesson[][] {
+export function weeksOf<L extends WeekLesson>(lessons: readonly L[], year?: YearSpan): L[][] {
   const mondays = new Map<number, Date>();
   const take = (monday: Date) => {
     for (let week = 0; week < 3; week++) {
