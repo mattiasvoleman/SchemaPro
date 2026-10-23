@@ -2535,6 +2535,89 @@ async function runChecks(
       }
       // The class's post is gone: a second split of it is a 404.
       await assert.rejects(termHalves.split(post.id, body(['th-x', 'th-y']), admin), NotFoundException);
+
+      // The spring's block takes the autumn's times (same-times.ts,
+      // 20261128090000): the split names it, and the key, the check and the
+      // unique index hold the link — not itself, one block on a block's
+      // times, a block of the same year.
+      const [autumn, spring] = result.blocks;
+      const links = async () =>
+        (
+          await owner.query<{ name: string; takes: string | null }>(
+            `SELECT b.name, a.name AS takes FROM "TeachingBlocks" b LEFT JOIN "TeachingBlocks" a ON a.id = b."sameTimesAsBlockId"
+             WHERE b.id = ANY($1::uuid[]) ORDER BY b.name`,
+            [[autumn!.id, spring!.id]],
+          )
+        ).rows.map((row) => [row.name.replace(`${MARKER} `, ''), row.takes?.replace(`${MARKER} `, '') ?? null]);
+      assert.deepEqual(await links(), [['th-höst', null], ['th-vår', 'th-höst']]);
+      assert.equal(spring!.sameTimesAsBlockId, autumn!.id);
+      const refusedAs = async (state: string, sql: string, params: unknown[]) =>
+        assert.rejects(owner.query(sql, params), (error: unknown) => {
+          assert.equal((error as { code?: string }).code, state, summarise(error));
+          return true;
+        });
+      await refusedAs('23514', 'UPDATE "TeachingBlocks" SET "sameTimesAsBlockId" = id WHERE id = $1', [autumn!.id]);
+      await refusedAs(
+        '23505',
+        `INSERT INTO "TeachingBlocks" ("schoolId", "academicYearId", name, "sameTimesAsBlockId", "updatedAt") VALUES ($1, $2, $3 || ' th-tredje', $4, now())`,
+        [fixture.schoolId, year.id, MARKER, autumn!.id],
+      );
+      await refusedAs(
+        '23503',
+        `INSERT INTO "TeachingBlocks" ("schoolId", "academicYearId", name, "sameTimesAsBlockId", "updatedAt") VALUES ($1, $2, $3 || ' th-annat-år', $4, now())`,
+        // The spring's block, which no block names yet: only the year refuses.
+        [fixture.schoolId, fixture.activeYearId, MARKER, spring!.id],
+      );
+
+      // The generator's fetch sends the autumn's two posts and writes the
+      // spring's at their times: under RLS, through the real reads (the fetch
+      // alone, as (w2) reads it, since the four posts have no teacher).
+      const proxy = new OptimizationProxyService(
+        api,
+        { post: () => { throw new Error('the engine was called'); } } as never,
+        { getOrThrow: () => ({ baseUrl: 'http://engine.invalid', apiKey: 'k'.repeat(32), timeoutMs: 1 }) } as never,
+      );
+      const fetched = await api.withRls(admin, async (tx) =>
+        (
+          proxy as unknown as {
+            fetchAndAnonymize: (...args: unknown[]) => Promise<{
+              requirements: { id: string; blockId?: string }[];
+              requirementAnonMap: Map<string, string>;
+              mirrors: { leaderId: string; followerId: string }[];
+              sameTimesRefusal: unknown;
+            }>;
+          }
+        ).fetchAndAnonymize(tx, year.id, fixture.schoolId, await rostersOfYear(tx, admin, year.id)),
+      );
+      const autumnPosts = result.requirements.filter((row) => row.blockId === autumn!.id).map((row) => row.id).sort();
+      const springPosts = result.requirements.filter((row) => row.blockId === spring!.id).map((row) => row.id).sort();
+      const realOf = new Map([...fetched.requirementAnonMap].map(([realId, anonId]) => [anonId, realId]));
+      assert.deepEqual(fetched.requirements.map((row) => realOf.get(row.id)).sort(), autumnPosts);
+      assert.equal(new Set(fetched.requirements.map((row) => row.blockId)).size, 1, 'the autumn posts went as two blocks');
+      assert.deepEqual(fetched.mirrors.map((mirror) => mirror.leaderId).sort(), autumnPosts);
+      assert.deepEqual(fetched.mirrors.map((mirror) => mirror.followerId).sort(), springPosts);
+      assert.equal(fetched.sameTimesRefusal, null);
+
+      // Ändra lektioner on the autumn's block changes the spring's too, in one
+      // statement the two blocks' triggers both accept.
+      await new TeachingBlocksService(api).update(autumn!.id, { lessonsPerWeek: 3 } as never, admin);
+      assert.deepEqual(
+        (
+          await owner.query<{ n: number }>(
+            'SELECT "lessonsPerWeek" AS n FROM "TeachingRequirements" WHERE "blockId" = ANY($1::uuid[]) ORDER BY id',
+            [[autumn!.id, spring!.id]],
+          )
+        ).rows.map((row) => row.n),
+        [3, 3, 3, 3],
+      );
+
+      // Deleting the autumn's block leaves the spring's on its own, and whole.
+      await new TeachingBlocksService(api).remove(autumn!.id, admin);
+      assert.deepEqual(await links(), [['th-vår', null]]);
+      assert.equal(
+        (await owner.query('SELECT 1 FROM "TeachingRequirements" WHERE "blockId" = $1', [spring!.id])).rowCount,
+        2,
+      );
     } finally {
       // The year takes its classes, halves, posts and blocks with it.
       await years.remove(year.id, admin);
@@ -7735,6 +7818,8 @@ async function mealChecks(owner: Client, api: PrismaService): Promise<void> {
           school.yearId,
           school.admin,
           { status: 'OPTIMAL', lessons: [] },
+          // No demand and no post written at another's times.
+          [],
           [],
           new Map(),
           new Map(),
