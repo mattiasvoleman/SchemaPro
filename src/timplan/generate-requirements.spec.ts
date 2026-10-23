@@ -98,6 +98,94 @@ describe('proposeRequirements', () => {
     expect(rows.some((row) => row.studentGroupId === A7 && row.subjectId === MA)).toBe(false);
   });
 
+  describe('a line the class’s halves read (Dela terminsvis i halvklass)', () => {
+    const SL = 'd5d5d5d5-d5d5-4d5d-8d5d-d5d5d5d5d5d5';
+    const TX = 'd6d6d6d6-d6d6-4d6d-8d6d-d6d6d6d6d6d6';
+    const TM = 'd7d7d7d7-d7d7-4d7d-8d7d-d7d7d7d7d7d7';
+    const KE = 'd8d8d8d8-d8d8-4d8d-8d8d-d8d8d8d8d8d8';
+    const BI = 'd9d9d9d9-d9d9-4d9d-8d9d-d9d9d9d9d9d9';
+    const split = (over: Partial<GenerateInput> = {}): GenerateInput =>
+      input({
+        entries: [
+          { subjectId: SL, gradeLevel: 7, minutesPerWeek: 90 },
+          { subjectId: KE, gradeLevel: 7, minutesPerWeek: 60 },
+          { subjectId: MA, gradeLevel: 7, minutesPerWeek: 180 },
+        ],
+        subjectNames: new Map([
+          [SL, 'Slöjd'],
+          [TX, 'Textilslöjd'],
+          [TM, 'Trä- och metallslöjd'],
+          [KE, 'Kemi'],
+          [BI, 'Biologi'],
+          [MA, 'Matematik'],
+        ]),
+        nationalCodes: new Map([
+          [SL, 'SL'],
+          [TX, 'SL'],
+          [TM, 'SL'],
+          [KE, 'KE'],
+          [BI, 'BI'],
+          [MA, 'MA'],
+        ]),
+        // 7A after the split: Textilslöjd and Trä- och metallslöjd on both
+        // halves, and a Biologi post on 7A:1 that fills no other line.
+        halfPosts: [
+          { classId: A7, halfName: '7A:2', subjectId: TX },
+          { classId: A7, halfName: '7A:1', subjectId: TX },
+          { classId: A7, halfName: '7A:1', subjectId: TM },
+          { classId: A7, halfName: '7A:2', subjectId: TM },
+          { classId: A7, halfName: '7A:1', subjectId: BI },
+        ],
+        ...over,
+      });
+
+    it('skips the class’s Slöjd, which its halves read as Textilslöjd and Trä- och metallslöjd, naming the halves', () => {
+      const { rows, skipped } = proposeRequirements(split());
+
+      expect(skipped).toEqual([
+        {
+          studentGroupId: A7,
+          groupName: '7A',
+          subjectId: SL,
+          subjectName: 'Slöjd',
+          gradeLevel: 7,
+          reason: 'HALVES',
+          alternativeCode: null,
+          alternativeTo: null,
+          halves: ['7A:1', '7A:2'],
+        },
+      ]);
+      // 7A still gets every other line, Kemi too (Biologi is another code),
+      // and 7B, which has no halves, gets Slöjd.
+      expect(rows.map((row) => `${row.groupName} ${row.subjectName}`)).toEqual([
+        '7A Kemi',
+        '7A Matematik',
+        '7B Kemi',
+        '7B Matematik',
+        '7B Slöjd',
+      ]);
+    });
+
+    it('skips an entry a half has in the very subject', () => {
+      const { skipped } = proposeRequirements(split({ halfPosts: [{ classId: A7, halfName: '7A:2', subjectId: KE }] }));
+
+      expect(skipped.map((row) => [row.subjectName, row.reason, row.halves])).toEqual([['Kemi', 'HALVES', ['7A:2']]]);
+    });
+
+    it('says EXISTS, not HALVES, for a pair the class has itself', () => {
+      const { skipped } = proposeRequirements(split({ existing: [{ studentGroupId: A7, subjectId: SL }] }));
+
+      expect(skipped.map((row) => [row.subjectName, row.reason])).toEqual([['Slöjd', 'EXISTS']]);
+    });
+
+    it('answers as before for a school that splits no class', () => {
+      const without = proposeRequirements(split({ halfPosts: undefined }));
+
+      expect(without.skipped).toEqual([]);
+      expect(without.rows.map((row) => `${row.groupName} ${row.subjectName}`)).toContain('7A Slöjd');
+    });
+  });
+
   it('caps a row at 40 lessons and says so, rather than writing a row the engine refuses', () => {
     const { rows } = proposeRequirements(
       input({ entries: [{ subjectId: MA, gradeLevel: 7, minutesPerWeek: 1200 }], minutesPerLesson: 15, classes: [{ id: A7, name: '7A', gradeLevel: 7 }] }),

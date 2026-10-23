@@ -56,7 +56,7 @@
 // offer "Gör enhetlig", which a block's rows do not.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { X } from "lucide-react";
 import { Link } from "@/i18n/navigation";
 import { useGroups, useRequirements } from "@/lib/queries";
@@ -583,6 +583,7 @@ interface PreviewBodyProps {
 
 function PreviewBody({ preview, edits, classCount, length, yearName, planName, onEdit, onReset }: PreviewBodyProps) {
   const t = useTranslations("timplan.generate");
+  const locale = useLocale();
 
   // Rows whose shape SPLIT changed and the admin has not made uniform: what
   // the footer's sentence describes. The note counts only those that offer
@@ -757,6 +758,12 @@ function PreviewBody({ preview, edits, classCount, length, yearName, planName, o
               <li key={rowKey(row)}>
                 {row.reason === "EXISTS"
                   ? t("skippedRow", { group: row.groupName, subject: row.subjectName })
+                  : row.reason === "HALVES"
+                    ? t("skippedHalves", {
+                        group: row.groupName,
+                        subject: row.subjectName,
+                        halves: new Intl.ListFormat(locale, { type: "conjunction" }).format(row.halves ?? []),
+                      })
                   : row.alternativeTo === null
                     ? t("skippedLanguage", { group: row.groupName, subject: row.subjectName })
                     : t("skippedAlternative", {

@@ -108,11 +108,17 @@ export interface GenerateSkippedRow {
   subjectId: string;
   subjectName: string;
   gradeLevel: number;
-  /** EXISTS: the class has the pair. ALTERNATIVE: språkval, or the SV_SVA subject the class does not get. */
-  reason: "EXISTS" | "ALTERNATIVE";
+  /**
+   * EXISTS: the class has the pair. ALTERNATIVE: språkval, or the SV_SVA
+   * subject the class does not get. HALVES: the class's halves read the line
+   * (Dela terminsvis i halvklass).
+   */
+  reason: "EXISTS" | "ALTERNATIVE" | "HALVES";
   alternativeCode: string | null;
   /** ALTERNATIVE in SV_SVA: the subject of the line the class has or gets. */
   alternativeTo: string | null;
+  /** Only on HALVES: the halves that read the line, by name. */
+  halves?: string[];
 }
 
 /** Mirror of GenerateRequirementsResponse (src/timplan/timplan-requirements.service.ts). */

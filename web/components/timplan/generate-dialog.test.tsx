@@ -39,6 +39,7 @@ vi.mock("@/i18n/navigation", () => ({
   Link: ({ href, children }: { href: string; children: React.ReactNode }) => <a href={href}>{children}</a>,
 }));
 vi.mock("next-intl", () => ({
+  useLocale: () => "sv",
   useTranslations: () => (key: string, values?: Record<string, unknown>) =>
     values ? `${key}(${Object.values(values).join("|")})` : key,
 }));
@@ -207,6 +208,37 @@ describe("GenerateDialog", () => {
     expect(screen.getByText("skippedTitle(3)")).toBeInTheDocument();
     expect(screen.getByText("skippedLanguage(7A|Spanska)")).toBeInTheDocument();
     expect(screen.getByText("skippedAlternative(7A|Svenska som andraspråk|Svenska)")).toBeInTheDocument();
+  });
+
+  it("says a line the class's halves read is skipped, naming the halves, and does not count it as existing", async () => {
+    state.generate.mutateAsync = vi.fn(async (body: GenerateBody & { planId: string }) => {
+      const base = answer(body);
+      return {
+        ...base,
+        skipped: [
+          ...base.skipped,
+          {
+            studentGroupId: "g-7a",
+            groupName: "7A",
+            gradeLevel: 7,
+            subjectId: "s-sl",
+            subjectName: "Slöjd",
+            reason: "HALVES" as const,
+            alternativeCode: null,
+            alternativeTo: null,
+            halves: ["7A:1", "7A:2"],
+          },
+        ],
+      };
+    });
+    const user = userEvent.setup();
+    renderDialog();
+    await user.click(screen.getByRole("button", { name: "preview" }));
+
+    expect(await screen.findByText("skippedTitle(2)")).toBeInTheDocument();
+    expect(screen.getByText("skippedHalves(7A|Slöjd|7A:1 och 7A:2)")).toBeInTheDocument();
+    // Only the pair the class has is "already existing".
+    expect(screen.getByText("summary(2|1|1|grade(7))")).toBeInTheDocument();
   });
 
   it("throws the preview away when the length changes", async () => {
