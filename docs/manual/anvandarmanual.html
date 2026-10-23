@@ -1707,7 +1707,8 @@
     <li>Höstens två poster läggs i ett parallellt block, till exempel
       <em>Slöjd 7A HT</em>, och vårens poster i ett annat, till exempel
       <em>Slöjd 7A VT</em>. Halvorna har då lektion samtidigt, och klassen
-      har aldrig slöjd två gånger.</li>
+      har aldrig slöjd två gånger. Vårens block läggs på höstens tider (se
+      nedan).</li>
     <li>Klassens post tas bort. Dess lärare och medlärare räknas inte längre.
       De nya posternas lärare och medlärare prövas mot tjänstefördelningens
       inställningar (4.3),
@@ -1733,24 +1734,39 @@
     posterna finns placerar du eleverna i halvorna (3.4). Det kan också vänta
     tills efter genereringen.
   </p>
-  <div class="warn">
+  <div class="note">
     <span class="label">Samma tider båda terminerna</span>
     <p>
-      Genereringen planerar en vecka i taget. Den vet inte att höstens och
-      vårens block aldrig går samma vecka. Därför ger den varje block egna
-      tider och håller dem lediga hela året. Klassen har då slöjdtid två
-      gånger i veckan, och den ena tiden står tom varje termin. Ska halvorna
-      ha samma tider hela året gör du så här:
+      Vårens block ligger på höstens tider. Genereringen lägger höstens block
+      och ger varje vårpost samma tider och sal som höstens post i samma ämne.
+      Har 7A:1 textilslöjd i textilsalen på måndag kl. 9 på hösten, har 7A:2
+      textilslöjd där på måndag kl. 9 på våren. Klassen har alltså slöjd på
+      samma tider hela året, och ingen tid står tom någon termin. Är läraren i
+      ett ämne en annan på våren än på hösten hålls också vårens lärare ledig
+      på de tiderna. Det gäller även schemaförslag (5.9).
     </p>
-    <ol>
-      <li>Generera.</li>
-      <li>I grundschemat drar du vårens blockkort till höstens tider (5.3).
-        Flytten godtas, eftersom lektioner som aldrig går samma vecka inte
-        krockar.</li>
-      <li>Lås båda blocken.</li>
-    </ol>
     <p>
-      Vid nästa generering ligger de låsta blocken kvar där de är.
+      De två blocken hör ihop i grundschemat (5.3). Låser du det ena blocket
+      låses båda, och låser du upp det låses båda upp. Drar du höstens
+      blockkort följer vårens kort på samma tid med, och tvärtom.
+      <span class="ui">Ändra lektioner</span> på det ena blocket ändrar båda.
+    </p>
+    <p>
+      Genereringen vägrar, med blockens namn, när de två inte längre passar
+      ihop:
+    </p>
+    <ul>
+      <li>det ena blocket är låst eller lagt för hand och det andra inte: lås
+        eller lås upp båda;</li>
+      <li>blocken har inte längre samma ämnen för samma halvor, samma
+        lektioner, eller terminer som inte överlappar;</li>
+      <li>samma lärare finns i båda vårposterna;</li>
+      <li>vårens poster har fler nya lärare än höstens poster har plats för
+        som lärare och medlärare.</li>
+    </ul>
+    <p>
+      Tar du bort det ena blocket får det andra egna tider igen. Vid
+      läsårsrullningen följer kopplingen med till nästa läsårs block.
     </p>
   </div>
   <div class="note">
@@ -2678,6 +2694,8 @@
       eller lagts för hand medan resten ska läggas, vägras genereringen innan
       motorn startar, med blockets namn: lås upp blockets lektioner eller lås
       alla. Ett block där varje lektion är låst står kvar som du lagt det.
+      Vårens och höstens block efter en terminsvis delning bedöms tillsammans
+      (se <em>Terminsvis halvklass</em> i 4.2).
     </p>
     <p>
       Allt motorn säger står på svenska, med skolans egna namn: klassen, salen,
@@ -2800,6 +2818,8 @@
     går att ångra, och blocket är fortfarande genereringens, så nästa
     generering lägger det igen. Landar kortet där en av blockets lektioner
     redan står, följer den med kortet, och ett ångra lämnar den där den stod.
+    Efter en terminsvis delning (4.2) står höstens och vårens kort på samma
+    tid, och drar du det ena följer det andra med, var och ett i sina veckor.
     Kortet parkeras inte. Parkera en lektion i taget, från dess dialog.
   </p>
   <p>
@@ -2898,7 +2918,8 @@
     blockets kort blir din. Nästa generering säger då att blocket är delvis
     låst. Flytta lektionen tillbaka med blocket och lås upp det som är låst,
     eller lås hela blocket. Drar du blockets kort flyttas alla dess lektioner
-    i den tiden, och blocket är fortfarande genereringens.
+    i den tiden, och blocket är fortfarande genereringens. Höstens och vårens
+    block efter en terminsvis delning (4.2) låses och låses upp tillsammans.
   </p>
 
   <h3 id="s54"><span class="num">5.4</span>Salsoptimering</h3>
