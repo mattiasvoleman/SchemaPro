@@ -1174,6 +1174,76 @@ describe('MasterLessonsService', () => {
         });
       });
 
+      // The weeks the new lesson runs in, not every week the post has: the
+      // breach and its figure are asked of those (distributionBreaches' about).
+      const AUTUMN = { endDate: new Date('2026-12-20T00:00:00.000Z') };
+      const SPRING = { startDate: new Date('2027-01-08T00:00:00.000Z') };
+
+      it('an autumn-only Monday is told the autumn’s two, not the spring’s three', async () => {
+        arrangeCreate();
+        arrangeDistribution({ subject: { maxLessonsPerDay: 1 } }, [
+          { id: LESSON_ID, dayOfWeek: 1, ...AUTUMN },
+          MONDAY_AFTERNOON,
+          { id: 'spring-1', dayOfWeek: 1, ...SPRING },
+          { id: 'spring-2', dayOfWeek: 1, ...SPRING },
+        ]);
+
+        const created = await service.create(createDto({ endDate: '2026-12-20' }), testUser());
+
+        expect(created.warnings).toEqual([
+          {
+            code: 'DISTRIBUTION_TOO_MANY_ON_DAY',
+            params: { requirement: 'Idrott för 7A', day: 1, count: 2, maxPerDay: 1 },
+          },
+        ]);
+      });
+
+      it('an autumn-only Monday says nothing under two a day, which only the spring breaks', async () => {
+        arrangeCreate();
+        arrangeDistribution({ subject: { maxLessonsPerDay: 2 } }, [
+          { id: LESSON_ID, dayOfWeek: 1, ...AUTUMN },
+          MONDAY_AFTERNOON,
+          { id: 'spring-1', dayOfWeek: 1, ...SPRING },
+          { id: 'spring-2', dayOfWeek: 1, ...SPRING },
+        ]);
+
+        await expect(
+          service.create(createDto({ endDate: '2026-12-20' }), testUser()),
+        ).resolves.toMatchObject({ warnings: [] });
+      });
+
+      it('an odd-week Monday says nothing about the even weeks’ two', async () => {
+        arrangeCreate();
+        arrangeDistribution({ subject: { maxLessonsPerDay: 1 } }, [
+          { id: LESSON_ID, dayOfWeek: 1, recurrence: 'ODD_WEEKS' },
+          { id: 'even-1', dayOfWeek: 1, recurrence: 'EVEN_WEEKS' },
+          { id: 'even-2', dayOfWeek: 1, recurrence: 'EVEN_WEEKS' },
+        ]);
+
+        await expect(
+          service.create(createDto({ recurrence: 'ODD_WEEKS' }), testUser()),
+        ).resolves.toMatchObject({ warnings: [] });
+      });
+
+      it('an even-week Monday beside them is told the even weeks’ three', async () => {
+        arrangeCreate();
+        arrangeDistribution({ subject: { maxLessonsPerDay: 1 } }, [
+          { id: LESSON_ID, dayOfWeek: 1, recurrence: 'EVEN_WEEKS' },
+          { id: 'odd-1', dayOfWeek: 1, recurrence: 'ODD_WEEKS' },
+          { id: 'even-1', dayOfWeek: 1, recurrence: 'EVEN_WEEKS' },
+          { id: 'even-2', dayOfWeek: 1, recurrence: 'EVEN_WEEKS' },
+        ]);
+
+        const created = await service.create(createDto({ recurrence: 'EVEN_WEEKS' }), testUser());
+
+        expect(created.warnings).toEqual([
+          {
+            code: 'DISTRIBUTION_TOO_MANY_ON_DAY',
+            params: { requirement: 'Idrott för 7A', day: 1, count: 3, maxPerDay: 1 },
+          },
+        ]);
+      });
+
       it('holds the post to its own rule rather than its subject’s', async () => {
         arrangeCreate();
         arrangeDistribution(
@@ -2797,6 +2867,41 @@ describe('MasterLessonsService', () => {
           {
             code: 'DISTRIBUTION_DAYS_TOO_CLOSE',
             params: { requirement: 'Idrott för 7A', firstDay: 2, secondDay: 3, minDaysBetween: 2 },
+          },
+        ]);
+      });
+
+      it('an odd-week lesson moved to Monday is not told the even weeks’ Monday and Tuesday', async () => {
+        // Under "not on consecutive days" the even weeks were over before the
+        // edit; the lesson runs only in odd weeks, which hold no Tuesday.
+        arrangeUpdate({ dayOfWeek: 4, recurrence: 'ODD_WEEKS' }, { dayOfWeek: 1, recurrence: 'ODD_WEEKS' });
+        const postRead = arrangeDistribution({ subject: { minDaysBetween: 2 } }, [
+          { id: LESSON_ID, dayOfWeek: 1, recurrence: 'ODD_WEEKS' },
+          { id: 'monday', dayOfWeek: 1 },
+          { id: 'even-tuesday', dayOfWeek: 2, recurrence: 'EVEN_WEEKS' },
+        ]);
+
+        await expect(service.update(LESSON_ID, { dayOfWeek: 1 }, testUser())).resolves.toMatchObject({
+          warnings: [],
+        });
+        // Asked, and answered from the odd weeks.
+        expect(postRead.mock.calls.filter(([strings]) => isPostRead(strings))).toHaveLength(1);
+      });
+
+      it('moved to an even week, it is', async () => {
+        arrangeUpdate({ recurrence: 'ODD_WEEKS' }, { dayOfWeek: 1, recurrence: 'EVEN_WEEKS' });
+        arrangeDistribution({ subject: { minDaysBetween: 2 } }, [
+          { id: LESSON_ID, dayOfWeek: 1, recurrence: 'EVEN_WEEKS' },
+          { id: 'monday', dayOfWeek: 1 },
+          { id: 'even-tuesday', dayOfWeek: 2, recurrence: 'EVEN_WEEKS' },
+        ]);
+
+        const updated = await service.update(LESSON_ID, { recurrence: 'EVEN_WEEKS' }, testUser());
+
+        expect(updated.warnings).toEqual([
+          {
+            code: 'DISTRIBUTION_DAYS_TOO_CLOSE',
+            params: { requirement: 'Idrott för 7A', firstDay: 1, secondDay: 2, minDaysBetween: 2 },
           },
         ]);
       });

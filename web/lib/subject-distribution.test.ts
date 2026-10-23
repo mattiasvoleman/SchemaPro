@@ -46,23 +46,28 @@ function everyWeek(lessons: readonly DistributionLesson[]): DistributionLesson[]
   return weeks;
 }
 
-/** The breaches as the gateway module’s header states them, read off every week. */
+/**
+ * The breaches as the gateway module’s header states them, read off every
+ * week: those over the rule, and the lessons they run.
+ */
 function oracle(rule: DistributionRule, lessons: readonly DistributionLesson[]): DistributionBreach[] {
   const weeks = everyWeek(lessons);
   const days = [...new Set(lessons.map((lesson) => lesson.dayOfWeek))].sort((a, b) => a - b);
-  const on = (weekday: number) => lessons.filter((lesson) => lesson.dayOfWeek === weekday).map((lesson) => lesson.id);
-  const holds = (week: DistributionLesson[], weekday: number) => week.some((lesson) => lesson.dayOfWeek === weekday);
+  const holds = (held: DistributionLesson[], weekday: number) => held.some((lesson) => lesson.dayOfWeek === weekday);
+  const ids = (held: DistributionLesson[][]) => [...new Set(held.flat().map((lesson) => lesson.id))].sort();
   const breaches: DistributionBreach[] = [];
   if (rule.maxLessonsPerDay !== null) {
+    const cap = rule.maxLessonsPerDay;
     for (const weekday of days) {
-      const count = Math.max(...weeks.map((week) => week.filter((lesson) => lesson.dayOfWeek === weekday).length));
-      if (count > rule.maxLessonsPerDay) {
+      const onDay = weeks.map((week) => week.filter((lesson) => lesson.dayOfWeek === weekday));
+      const count = Math.max(...onDay.map((held) => held.length));
+      if (count > cap) {
         breaches.push({
           kind: "PER_DAY",
           dayOfWeek: weekday,
           count,
-          maxLessonsPerDay: rule.maxLessonsPerDay,
-          lessonIds: on(weekday).sort(),
+          maxLessonsPerDay: cap,
+          lessonIds: ids(onDay.filter((held) => held.length > cap)),
         });
       }
     }
@@ -71,13 +76,16 @@ function oracle(rule: DistributionRule, lessons: readonly DistributionLesson[]):
     for (const first of days) {
       for (const second of days) {
         if (second <= first || second - first >= rule.minDaysBetween) continue;
-        if (!weeks.some((week) => holds(week, first) && holds(week, second))) continue;
+        const both = weeks
+          .map((week) => week.filter((lesson) => lesson.dayOfWeek === first || lesson.dayOfWeek === second))
+          .filter((held) => holds(held, first) && holds(held, second));
+        if (both.length === 0) continue;
         breaches.push({
           kind: "DAYS_APART",
           firstDay: first,
           secondDay: second,
           minDaysBetween: rule.minDaysBetween,
-          lessonIds: [...on(first), ...on(second)].sort(),
+          lessonIds: ids(both),
         });
       }
     }

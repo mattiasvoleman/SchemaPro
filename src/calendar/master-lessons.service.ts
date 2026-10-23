@@ -1405,9 +1405,12 @@ export class MasterLessonsService {
    * how a lesson answers a post everywhere else (the optimiser's subtraction,
    * coverage). The week it is asked of is that post's lessons as they stand
    * after the write, every one but a parked one, which occupies nothing; and
-   * a lesson on the tray breaks nothing itself. Only breaches that include THIS
-   * lesson are reported: a Monday the school had already doubled before the
-   * edit is the subject dialog's to list, not this save's to repeat.
+   * a lesson on the tray breaks nothing itself. Only the weeks THIS lesson
+   * runs in are asked about (distributionBreaches' `about`), for the verdict
+   * and for its figure, as Lärarens dag asks about the edited lessons': a
+   * Monday the school had already doubled before the edit, the spring's three
+   * Mondays beside an autumn-only lesson, or the even weeks' two beside an
+   * odd-week one, is the subject dialog's to list, not this save's to repeat.
    *
    * ONE STATEMENT FOR A SCHOOL WITHOUT A RULE, which is every school today:
    * the post, its subject's default and the two names it would be called by
@@ -1457,6 +1460,7 @@ export class MasterLessonsService {
       select: { id: true, dayOfWeek: true, recurrence: true, startDate: true, endDate: true },
     });
     const name = requirementName(post.subjectName, post.groupName);
+    // Every breach asked about the lesson takes it in.
     return distributionBreaches(
       rule,
       week.map((row) => ({
@@ -1466,9 +1470,8 @@ export class MasterLessonsService {
         startDate: toDateStringOrNull(row.startDate),
         endDate: toDateStringOrNull(row.endDate),
       })),
-    )
-      .filter((breach) => breach.lessonIds.includes(lesson.id))
-      .map((breach) => distributionWarning(breach, name));
+      new Set([lesson.id]),
+    ).map((breach) => distributionWarning(breach, name));
   }
 
   /**
@@ -1483,15 +1486,14 @@ export class MasterLessonsService {
    * is common/teacher-day.ts, which the Vikarietavla counts with too and the
    * generator's checker replays. Only the weeks an edited lesson runs in are
    * asked about (teacherDayBreaches' `about`), for the verdict and for its
-   * figure, as the ämnesfördelning reports only what includes the edited
-   * lesson: a Tuesday the school had already made too long, or the odd
-   * weeks' Monday beside the even weeks' the edit made, is not this save's
-   * to repeat. A warning and never a 409, like the ämnesfördelning: a school
-   * that gives a teacher a long day by hand has decided to. And the only one
-   * there is: the generator keeps the rule for every lesson it places, but
-   * takes a lesson placed by hand as a fact and never refuses a week over
-   * what such lessons break alone, so a breach made here is said here or
-   * nowhere.
+   * figure, as the ämnesfördelning asks about the edited lesson's weeks: a
+   * Tuesday the school had already made too long, or the odd weeks' Monday
+   * beside the even weeks' the edit made, is not this save's to repeat. A
+   * warning and never a 409, like the ämnesfördelning: a school that gives a
+   * teacher a long day by hand has decided to. And the only one there is:
+   * the generator keeps the rule for every lesson it places, but takes a
+   * lesson placed by hand as a fact and never refuses a week over what such
+   * lessons break alone, so a breach made here is said here or nowhere.
    *
    * ONE WARNING PER BREACH, about the edited lesson the teacher is on: the
    * one they lead when they lead one (LEAD), else one they are medlärare on,
