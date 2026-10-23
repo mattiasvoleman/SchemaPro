@@ -736,7 +736,7 @@
       "codeDiffers": "{subject} har inte samma nationella kod som {post} ({code}). Skapa timplansposter ser då inte att halvorna läser klassens {post}, och timplanens nationella rader räknar inte {subject} som {code}.",
       "codeMissingOnPost": "{post} har ingen nationell kod, så Skapa timplansposter ser inte att halvornas {subject} läses i stället för klassens {post}. Ge ämnena samma nationella kod.",
       "codeAction": "Öppna Ämnen",
-      "generatorNote": "Vårens block läggs på höstens tider, så halvorna har lektion samtidigt hela året: genereringen ger varje vårpost tiderna och salen som höstens post i samma ämne fick. Låser eller flyttar du det ena blocket i grundschemat följer det andra med (se manualen, 4.2).",
+      "generatorNote": "Vårens block läggs på höstens tider, så halvorna har lektion samtidigt hela året: genereringen ger varje vårpost tiderna och salen som höstens post i samma ämne fick. Låser du det ena blocket med Lås blocket, eller drar dess kort, i grundschemat följer det andra med (se manualen, 4.2).",
       "failedTitle": "Inget sparades",
       "submit": "Dela terminsvis",
       "done": "{post} delades terminsvis i {first} och {second}."
