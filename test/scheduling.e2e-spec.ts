@@ -599,6 +599,14 @@ describe('Scheduling surface (e2e)', () => {
             .send({ lessonIds, dayOfWeek: 2, startTime: '09:00', endTime: '10:00' })
             .expect(400);
         }
+        // An undo's `follow` names lessons by id, each once.
+        for (const follow of [['not-a-uuid'], [FR_LESSON, FR_LESSON], 'all']) {
+          await request(http())
+            .patch('/api/v1/master-lessons/block-card')
+            .set('x-test-user', admin())
+            .send({ lessonIds: [LESSON_ID, FR_LESSON], dayOfWeek: 2, startTime: '09:00', endTime: '10:00', follow })
+            .expect(400);
+        }
         expect(harness.tx['masterLesson']!['updateMany']).not.toHaveBeenCalled();
       });
 

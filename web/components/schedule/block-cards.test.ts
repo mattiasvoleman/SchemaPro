@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MasterLesson, TeachingRequirement } from "@/lib/types";
-import { cardsOf } from "./block-cards";
+import { cardsOf, moveBackOf } from "./block-cards";
 
 /**
  * Which lessons are one card (Block i schemat). Språkval åk 7 holds Tyska för
@@ -114,5 +114,24 @@ describe("cardsOf", () => {
 
     expect(cards.size).toBe(0);
     expect(apart.size).toBe(0);
+  });
+});
+
+describe("moveBackOf", () => {
+  const from = { lessonIds: ["ty", "fr"], dayOfWeek: 1, startTime: "10:00", endTime: "11:00" };
+
+  it("takes back exactly the other term's card the move took, and none when it took none", () => {
+    expect(moveBackOf(from, { propagatedLessons: 0, joined: [], followed: ["vt1", "vt2"] })).toEqual({
+      ...from,
+      follow: ["vt1", "vt2"],
+    });
+    // The spring card stood where the autumn card landed: the undo leaves it there.
+    expect(moveBackOf(from, { propagatedLessons: 0, joined: [], followed: [] })).toEqual({ ...from, follow: [] });
+  });
+
+  it("leaves behind what the card took in, and sends an older API the body it always got", () => {
+    const joined = [{ id: "sp", isGenerated: false }];
+    expect(moveBackOf(from, { propagatedLessons: 0, joined })).toEqual({ ...from, leave: joined });
+    expect(moveBackOf(from, { propagatedLessons: 0 })).toEqual(from);
   });
 });

@@ -70,6 +70,22 @@ export interface SavedWrite {
   warnings?: StaffingWarning[];
   /** PATCH block-card: the block's lessons the card landed beside, with the owner each had. */
   joined?: { id: string; isGenerated: boolean }[];
+  /** PATCH block-card: the lessons of a block on the same times that moved with the card. */
+  followed?: string[];
+}
+
+/**
+ * A card move's undo: back where it stood, leaving behind what it took in
+ * where it landed (`joined`) and taking back exactly the other term's card it
+ * moved (`followed`), so a move that took none does not take one back. An
+ * API older than `followed` gets the body it always got.
+ */
+export function moveBackOf<T extends object>(from: T, result: SavedWrite): T & { leave?: SavedWrite["joined"]; follow?: string[] } {
+  return {
+    ...from,
+    ...(result.joined && result.joined.length > 0 ? { leave: result.joined } : {}),
+    ...(result.followed ? { follow: result.followed } : {}),
+  };
 }
 
 /** A lesson's PATCH as it answers: the write, and the lesson as written. */
@@ -305,15 +321,14 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
       };
       const from = { lessonIds, dayOfWeek: lead.dayOfWeek, startTime: clock(lead.startTime), endTime: clock(lead.endTime) };
       try {
-        const result = await patchCard(to);
-        // What the card took in where it landed: its undo leaves it there,
-        // with the owner it had, or the card would be stale for good.
-        let joined = result.joined ?? [];
+        // What the card took in where it landed, and the other term's card
+        // it took along: its undo leaves the one and takes back the other.
+        let result = await patchCard(to);
         acts.current.history.push({
           label: "block-move",
-          undo: async () => void (await patchCard(joined.length > 0 ? { ...from, leave: joined } : from)),
+          undo: async () => void (await patchCard(moveBackOf(from, result))),
           redo: async () => {
-            joined = (await patchCard(to)).joined ?? [];
+            result = await patchCard(to);
           },
         });
         acts.current.announce(result);

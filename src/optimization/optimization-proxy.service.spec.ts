@@ -3240,20 +3240,34 @@ describe('OptimizationProxyService', () => {
         expect(written().filter((row) => row.subjectId === TX && row.studentGroupId === H2).map((row) => row.teacherId)).toEqual([TEA, TEA]);
       });
 
+      /** The refusal prepareSchedule answers, and the 400 Generera throws for it. */
+      const refusedWith = async () => {
+        const result = await prepare();
+        if (result.ready) throw new Error('not refused');
+        return result;
+      };
+
       it('refuses two blocks that no longer fit together by their names, before the engine, and writes nothing', async () => {
         arrangeTerms({ s1: { lessonsPerWeek: 3 }, s2: { lessonsPerWeek: 3 } });
 
-        const error = await prepare().catch((thrown: unknown) => thrown);
+        // Answered as the refusals before it are, so a schemaförslag's check
+        // and apply read its code, and the fetch's transaction commits.
+        const refused = await refusedWith();
+        expect(refused.refusalCode).toBe('BLOCK_SAME_TIMES_DIFFER');
+        expect(refused.refusal.conflicts).toMatchObject({
+          summaryCode: 'BLOCK_SAME_TIMES_DIFFER',
+          summaryParams: { block: 'Slöjd 7A VT', other: 'Slöjd 7A HT' },
+        });
 
+        // Generera throws it as the engine's 400 for a block it cannot hold.
+        arrangeTerms({ s1: { lessonsPerWeek: 3 }, s2: { lessonsPerWeek: 3 } });
+        const error = await service.triggerScheduling(ACADEMIC_YEAR, testUser()).catch((thrown: unknown) => thrown);
         expect((error as HttpException).getStatus()).toBe(400);
         expect(bodyOf(error)).toEqual({
           code: 'BLOCK_SAME_TIMES_DIFFER',
           params: { block: 'Slöjd 7A VT', other: 'Slöjd 7A HT' },
           message: expect.stringMatching(/^Slöjd 7A VT takes the times of Slöjd 7A HT, and the two no longer fit together/),
         });
-
-        arrangeTerms({ s1: { lessonsPerWeek: 3 }, s2: { lessonsPerWeek: 3 } });
-        await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).rejects.toBeInstanceOf(HttpException);
         expect(http.post).not.toHaveBeenCalled();
         expect(tx.masterLesson.deleteMany).not.toHaveBeenCalled();
       });
@@ -3261,9 +3275,10 @@ describe('OptimizationProxyService', () => {
       it('refuses one teacher on both spring posts as the engine refuses a block, naming the posts', async () => {
         arrangeTerms({ s1: { coTeacherId: TOVE } });
 
-        const error = await prepare().catch((thrown: unknown) => thrown);
+        const refused = await refusedWith();
 
-        expect(bodyOf(error)).toMatchObject({
+        expect(refused.refusalCode).toBe('BLOCK_MEMBERS_SHARE_TEACHER');
+        expect(bodyOf(refused.error)).toMatchObject({
           code: 'BLOCK_MEMBERS_SHARE_TEACHER',
           params: { block: 'Slöjd 7A VT', requirement: 'Trä- och metallslöjd för 7A:1', other: 'Textilslöjd för 7A:2' },
         });
@@ -3272,9 +3287,9 @@ describe('OptimizationProxyService', () => {
       it('refuses spring teachers the autumn posts have no room for', async () => {
         arrangeTerms({ s1: { teacherId: TEA }, s2: { teacherId: 'dddddddd-0004-4000-8000-000000000004', coTeacherId: 'dddddddd-0005-4000-8000-000000000005' } });
 
-        const error = await prepare().catch((thrown: unknown) => thrown);
+        const refused = await refusedWith();
 
-        expect(bodyOf(error)).toMatchObject({ code: 'BLOCK_SAME_TIMES_TEACHERS', params: { block: 'Slöjd 7A VT', other: 'Slöjd 7A HT' } });
+        expect(bodyOf(refused.error)).toMatchObject({ code: 'BLOCK_SAME_TIMES_TEACHERS', params: { block: 'Slöjd 7A VT', other: 'Slöjd 7A HT' } });
       });
 
       it('refuses an autumn locked while the spring has all its lessons to place, the two named under the partly locked summary', async () => {

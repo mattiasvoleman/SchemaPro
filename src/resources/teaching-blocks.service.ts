@@ -311,13 +311,17 @@ async function setLessons(
       lessonsPerWeek: true,
       minutesPerLesson: true,
       lessonLengths: true,
+      blockId: true,
     },
     orderBy: { id: 'asc' },
   });
-  if (members.length === 0) {
+  // Merged over the block's own shape: the one asked about has posts, or
+  // there are no lessons of its to change, whatever the other block holds.
+  const own = members.find((member) => member.blockId === blockIds[0]);
+  if (!own) {
     throw new BadRequestException('lessonsPerWeek: blocket har inga poster att ändra lektionerna på.');
   }
-  const resolved = mergeLessonShape(members[0]!, dto);
+  const resolved = mergeLessonShape(own, dto);
   const warnings = await judgeMembers(tx, user, members, resolved.shape);
   if (Object.keys(resolved.write).length > 0) {
     await tx.teachingRequirement.updateMany({ where: { blockId: { in: [...blockIds] } }, data: resolved.write });

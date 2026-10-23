@@ -288,6 +288,7 @@ describe('TeachingBlocksService', () => {
       lessonsPerWeek: 2,
       minutesPerLesson: 60,
       lessonLengths: [],
+      blockId: BLOCK,
       ...extra,
     });
 
@@ -355,7 +356,7 @@ describe('TeachingBlocksService', () => {
         .mockResolvedValue([{ id: BLOCK, academicYearId: YEAR, name: 'Slöjd 7A HT' }]);
       tx.teachingRequirement.findMany.mockImplementation(async ({ select }: { select: Record<string, unknown> }) =>
         'lessonsPerWeek' in select
-          ? [member(TY, { teacherId: 't-anna' }), member(FR, { teacherId: 't-bo' }), member(SP, { teacherId: 't-anna' })]
+          ? [member(TY, { teacherId: 't-anna' }), member(FR, { teacherId: 't-bo' }), member(SP, { teacherId: 't-anna', blockId: OTHER_BLOCK })]
           : [{ id: TY }, { id: FR }],
       );
       const { order } = checksAnswering({});
@@ -375,6 +376,38 @@ describe('TeachingBlocksService', () => {
         'SELECT "id" FROM "TeachingBlocks" WHERE "id" = ?::uuid OR "sameTimesAsBlockId" = ?::uuid ' +
           'OR "id" = (SELECT "sameTimesAsBlockId" FROM "TeachingBlocks" WHERE "id" = ?::uuid) ORDER BY "id" FOR UPDATE',
       );
+    });
+
+    it('merges over the block’s own lessons, and refuses a block with no posts of its own', async () => {
+      tx.$queryRaw = jest
+        .fn()
+        .mockResolvedValueOnce([{ id: BLOCK }, { id: OTHER_BLOCK }])
+        .mockResolvedValue([{ id: BLOCK, academicYearId: YEAR, name: 'Slöjd 7A HT' }]);
+      // The other block's post sorts first and has split lengths; this block's
+      // are uniform, and 3 × 60 is merged over them.
+      const firstId = '00000000-0000-4000-8000-000000000001';
+      tx.teachingRequirement.findMany.mockImplementation(async ({ select }: { select: Record<string, unknown> }) =>
+        'lessonsPerWeek' in select
+          ? [member(firstId, { blockId: OTHER_BLOCK, minutesPerLesson: 80, lessonLengths: [80, 40] }), member(TY)]
+          : [{ id: TY }],
+      );
+      checksAnswering({});
+
+      await service.update(BLOCK, { lessonsPerWeek: 3 }, admin);
+      expect(tx.teachingRequirement.updateMany.mock.calls).toEqual([
+        [{ where: { blockId: { in: [BLOCK, OTHER_BLOCK] } }, data: { lessonsPerWeek: 3 } }],
+      ]);
+
+      tx.teachingRequirement.updateMany.mockClear();
+      tx.$queryRaw = jest
+        .fn()
+        .mockResolvedValueOnce([{ id: BLOCK }, { id: OTHER_BLOCK }])
+        .mockResolvedValue([{ id: BLOCK, academicYearId: YEAR, name: 'Slöjd 7A HT' }]);
+      tx.teachingRequirement.findMany.mockImplementation(async ({ select }: { select: Record<string, unknown> }) =>
+        'lessonsPerWeek' in select ? [member(SP, { blockId: OTHER_BLOCK })] : [],
+      );
+      await expect(service.update(BLOCK, { lessonsPerWeek: 3 }, admin)).rejects.toThrow('blocket har inga poster');
+      expect(tx.teachingRequirement.updateMany).not.toHaveBeenCalled();
     });
 
     it('refuses with the member named and its id, and writes nothing', async () => {
