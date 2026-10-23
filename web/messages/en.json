@@ -736,7 +736,7 @@
       "codeDiffers": "{subject} does not have the same national code as {post} ({code}). Create curriculum entries will then not see that the halves take the class's {post}, and the curriculum's national rows will not count {subject} as {code}.",
       "codeMissingOnPost": "{post} has no national code, so Create curriculum entries will not see that the halves' {subject} is taken instead of the class's {post}. Give the subjects the same national code.",
       "codeAction": "Open Subjects",
-      "generatorNote": "The spring block takes the autumn block's times, so the halves have their lessons at the same times all year: generation gives each spring entry the times and room the autumn entry in its subject got. Lock or move one block in the master timetable and the other follows (see the manual, 4.2).",
+      "generatorNote": "The spring block takes the autumn block's times, so the halves have their lessons at the same times all year: generation gives each spring entry the times and room the autumn entry in its subject got. Lock one block with Lock block, or drag its card, in the master timetable and the other follows (see the manual, 4.2).",
       "failedTitle": "Nothing was saved",
       "submit": "Split by term",
       "done": "{post} was split by term into {first} and {second}."
