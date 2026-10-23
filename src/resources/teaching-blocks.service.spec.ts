@@ -198,6 +198,7 @@ describe('TeachingBlocksService', () => {
       expect(sql.replace(/\s+/g, ' ').trim()).toBe(
         'SELECT "id", "academicYearId", "name" FROM "TeachingBlocks" WHERE "id" = ?::uuid FOR UPDATE',
       );
+      expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
       expect(tx.teachingBlock.update).not.toHaveBeenCalled();
     });
 
@@ -338,11 +339,42 @@ describe('TeachingBlocksService', () => {
         patch: { lessonsPerWeek: 3, minutesPerLesson: 40, lessonLengths: [] },
       });
       expect(tx.teachingRequirement.updateMany.mock.calls).toEqual([
-        [{ where: { blockId: BLOCK }, data: { lessonsPerWeek: 3, minutesPerLesson: 40 } }],
+        [{ where: { blockId: { in: [BLOCK] } }, data: { lessonsPerWeek: 3, minutesPerLesson: 40 } }],
       ]);
       expect(block.warnings).toEqual([
         { code: 'STAFF_TEACHER_OVER_TARGET', params: overTarget('WARN').params, requirementId: FR },
       ]);
+    });
+
+    it('changes the lessons of a block on its times with it, judged and written as one', async () => {
+      // The spring block of a term split, locked with this one (the autumn)
+      // in id order before this one's own read.
+      tx.$queryRaw = jest
+        .fn()
+        .mockResolvedValueOnce([{ id: BLOCK }, { id: OTHER_BLOCK }])
+        .mockResolvedValue([{ id: BLOCK, academicYearId: YEAR, name: 'Slöjd 7A HT' }]);
+      tx.teachingRequirement.findMany.mockImplementation(async ({ select }: { select: Record<string, unknown> }) =>
+        'lessonsPerWeek' in select
+          ? [member(TY, { teacherId: 't-anna' }), member(FR, { teacherId: 't-bo' }), member(SP, { teacherId: 't-anna' })]
+          : [{ id: TY }, { id: FR }],
+      );
+      const { order } = checksAnswering({});
+
+      const block = await service.update(BLOCK, { lessonsPerWeek: 3 }, admin);
+
+      const membersRead = tx.teachingRequirement.findMany.mock.calls.find(([args]) => 'lessonsPerWeek' in args.select);
+      expect(membersRead![0]).toMatchObject({ where: { blockId: { in: [BLOCK, OTHER_BLOCK] } } });
+      expect(order).toEqual([`judge ${TY}`, `apply ${TY}`, `judge ${FR}`, `apply ${FR}`, `judge ${SP}`, `apply ${SP}`]);
+      expect(tx.teachingRequirement.updateMany.mock.calls).toEqual([
+        [{ where: { blockId: { in: [BLOCK, OTHER_BLOCK] } }, data: { lessonsPerWeek: 3 } }],
+      ]);
+      // The block answered is the one asked about.
+      expect(block).toMatchObject({ id: BLOCK, name: 'Slöjd 7A HT' });
+      const pair = ((tx.$queryRaw as jest.Mock).mock.calls[0][0] as readonly string[]).join('?');
+      expect(pair.replace(/\s+/g, ' ').trim()).toBe(
+        'SELECT "id" FROM "TeachingBlocks" WHERE "id" = ?::uuid OR "sameTimesAsBlockId" = ?::uuid ' +
+          'OR "id" = (SELECT "sameTimesAsBlockId" FROM "TeachingBlocks" WHERE "id" = ?::uuid) ORDER BY "id" FOR UPDATE',
+      );
     });
 
     it('refuses with the member named and its id, and writes nothing', async () => {

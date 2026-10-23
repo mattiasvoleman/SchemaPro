@@ -79,7 +79,10 @@ const NAME_MAX = 80;
  * lessons leave the others'. The new lessons are merged over the members'
  * shape by the timplanspost's own merge, every member's teachers are judged by
  * the staffing policy with the members before it counted, and one UPDATE
- * writes them all.
+ * writes them all. A block on another's times (TeachingBlocks.
+ * "sameTimesAsBlockId", a term split's spring on its autumn) and that block
+ * change together: the generator writes the one's lessons at the other's
+ * times, which needs the same lessons on both (same-times.ts).
  *
  * WHAT IS LEFT TO THE GENERATOR: members that share a teacher or pupils, and
  * a block whose lessons are partly locked. Rosters, teachers and locks change
@@ -116,7 +119,11 @@ export class TeachingBlocksService {
    * A rename, a new membership, or both. The block's row is read FOR UPDATE
    * first and held to COMMIT, so two PATCHes of one block run one after the
    * other: each writes the membership it was asked for over the one the other
-   * left, never a mix of the two.
+   * left, never a mix of the two. A change of lessons also writes the block
+   * on the same times (setLessons), and the trigger locks each block it
+   * writes a member of: so it takes the two rows first, in id order, and two
+   * such PATCHes from either end of the pair queue rather than wait on each
+   * other.
    */
   async update(
     id: string,
@@ -130,6 +137,7 @@ export class TeachingBlocksService {
     for (const minutes of dto.lessonLengths ?? []) assertLessonLengthFitsTheGrid(minutes);
     try {
       return await this.prisma.withRls(user, async (tx) => {
+        const sameTimes = touchesLessonShape(dto) ? await lockSameTimes(tx, id) : [];
         const [locked] = await tx.$queryRaw<{ id: string; academicYearId: string; name: string }[]>`
           SELECT "id", "academicYearId", "name" FROM "TeachingBlocks" WHERE "id" = ${id}::uuid FOR UPDATE`;
         if (!locked) {
@@ -147,7 +155,7 @@ export class TeachingBlocksService {
           dto.requirementIds === undefined
             ? await membersOf(tx, id)
             : await setMembers(tx, block, dto.requirementIds);
-        const warnings = touchesLessonShape(dto) ? await setLessons(tx, user, id, dto) : null;
+        const warnings = touchesLessonShape(dto) ? await setLessons(tx, user, [id, ...sameTimes], dto) : null;
         return {
           id: block.id,
           academicYearId: block.academicYearId,
@@ -179,6 +187,20 @@ export function blockName(raw: string): string {
     throw new BadRequestException(`name: blocket behöver ett namn på högst ${NAME_MAX} tecken.`);
   }
   return name;
+}
+
+/**
+ * The block and the block on its times, or whose times it takes, locked FOR
+ * UPDATE in id order: the ids of the other one (none for a block on its own).
+ */
+async function lockSameTimes(tx: PrismaClient, blockId: string): Promise<string[]> {
+  const rows = await tx.$queryRaw<{ id: string }[]>`
+    SELECT "id" FROM "TeachingBlocks"
+     WHERE "id" = ${blockId}::uuid
+        OR "sameTimesAsBlockId" = ${blockId}::uuid
+        OR "id" = (SELECT "sameTimesAsBlockId" FROM "TeachingBlocks" WHERE "id" = ${blockId}::uuid)
+     ORDER BY "id" FOR UPDATE`;
+  return rows.map((row) => row.id).filter((id) => id !== blockId);
 }
 
 async function membersOf(tx: PrismaClient, blockId: string): Promise<string[]> {
@@ -257,7 +279,8 @@ async function setMembers(
 }
 
 /**
- * The block's lessons, every member at once.
+ * The block's lessons, every member at once — and the members of a block on
+ * the same times (`blockIds` after the first), which have the block's shape.
  *
  * The members have one shape (the trigger holds it), so the PATCH is merged
  * over the first member's and the same write fits every member. Each member's
@@ -273,11 +296,11 @@ async function setMembers(
 async function setLessons(
   tx: PrismaClient,
   user: AuthenticatedUser,
-  blockId: string,
+  blockIds: readonly string[],
   dto: UpdateTeachingBlockDto,
 ): Promise<BlockStaffingWarning[]> {
   const members = await tx.teachingRequirement.findMany({
-    where: { blockId },
+    where: { blockId: { in: [...blockIds] } },
     select: {
       id: true,
       academicYearId: true,
@@ -297,7 +320,7 @@ async function setLessons(
   const resolved = mergeLessonShape(members[0]!, dto);
   const warnings = await judgeMembers(tx, user, members, resolved.shape);
   if (Object.keys(resolved.write).length > 0) {
-    await tx.teachingRequirement.updateMany({ where: { blockId }, data: resolved.write });
+    await tx.teachingRequirement.updateMany({ where: { blockId: { in: [...blockIds] } }, data: resolved.write });
   }
   return warnings;
 }

@@ -608,6 +608,9 @@ describe('Scheduling surface (e2e)', () => {
           schoolId: '33333333-3333-4333-8333-333333333333',
           academicYearId: YEAR_ID,
           requirements: [{ studentGroupId: GROUP_ID, subjectId: SUBJECT_ID }],
+          // On no other block's times, and none on its.
+          sameTimesAs: null,
+          sameTimes: [],
         });
         harness.tx['masterLesson']!['findMany']!.mockResolvedValue([member(LESSON_ID, GROUP_ID, 'Ty7')]);
         harness.tx['masterLesson']!['updateMany']!.mockResolvedValue({ count: 1 });

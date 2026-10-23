@@ -219,6 +219,7 @@ export interface UpdateMasterLessonResult extends MasterLessonResult {
 
 /** A block card moved as one (moveBlockCard): every member, as written. */
 export interface MoveBlockCardResult {
+  /** The card's lessons, and the card of a block on the same times that moved with it. */
   lessons: MasterLessonResult[];
   /** Future calendar lessons moved along with the members, summed. */
   propagatedLessons: number;
@@ -940,6 +941,15 @@ export class MasterLessonsService {
    * Then per member what the PATCH does after its write: the published
    * calendar, the ämnesfördelning on a new day, the change log, and one
    * notice per member whose published lessons moved.
+   *
+   * A BLOCK ON ANOTHER'S TIMES MOVES WITH IT (same-times.ts): a term split's
+   * spring card at the autumn card's day and clock — in its own weeks, one
+   * lesson per post of its block — is moved with it, judged by the same clash
+   * check and answered among `lessons`, so the generator's "the spring at the
+   * autumn's times" holds after a hand edit too. A card that does not stand
+   * there whole stays where it is; the block it leaves is the school's to put
+   * back, as a block split by hand is. Its lessons keep their owners and no
+   * lesson of its block joins it.
    */
   async moveBlockCard(dto: MoveBlockCardDto, user: AuthenticatedUser): Promise<MoveBlockCardResult> {
     const startTime = parseTimeString(dto.startTime);
@@ -959,32 +969,33 @@ export class MasterLessonsService {
       // one (prisma.service.ts, Isolation).
       await tx.$queryRaw`
         SELECT 1 FROM "MasterLessons" WHERE "id" = ANY(${dto.lessonIds}::uuid[]) FOR NO KEY UPDATE`;
-      const lessons = await tx.masterLesson.findMany({
-        where: { id: { in: dto.lessonIds } },
-        select: {
-          ...LESSON_SELECT,
-          isGenerated: true,
-          subject: { select: { name: true } },
-          studentGroup: { select: { name: true } },
-          school: {
-            select: {
-              id: true,
-              timezone: true,
-              // As in update(): whether the year is one R1 or R2 settles, and
-              // Lärarens dag's gate.
-              _count: {
-                select: {
-                  academicYears: {
-                    where: { AND: [SETTLED_CURRENT, { masterLessons: { some: { id: dto.lessonIds[0] } } }] },
-                  },
-                  ...teacherDayCounts(dto.lessonIds[0]!),
-                  // As in update(): no travel figure, no walk asked about.
-                  siteTravelTimes: true,
+      const select = {
+        ...LESSON_SELECT,
+        isGenerated: true,
+        subject: { select: { name: true } },
+        studentGroup: { select: { name: true } },
+        school: {
+          select: {
+            id: true,
+            timezone: true,
+            // As in update(): whether the year is one R1 or R2 settles, and
+            // Lärarens dag's gate.
+            _count: {
+              select: {
+                academicYears: {
+                  where: { AND: [SETTLED_CURRENT, { masterLessons: { some: { id: dto.lessonIds[0] } } }] },
                 },
+                ...teacherDayCounts(dto.lessonIds[0]!),
+                // As in update(): no travel figure, no walk asked about.
+                siteTravelTimes: true,
               },
             },
           },
         },
+      } satisfies Prisma.MasterLessonSelect;
+      const lessons = await tx.masterLesson.findMany({
+        where: { id: { in: dto.lessonIds } },
+        select,
         orderBy: { id: 'asc' },
       });
       // A lesson gone since the page read it is a stale card, not a 404.
@@ -1034,12 +1045,60 @@ export class MasterLessonsService {
         throw blockCardStale();
       }
 
+      // The block on this one's times, or whose times it takes: its card at
+      // the same day and clock, whole, moves too (see above).
+      const linked = await tx.teachingBlock.findUnique({
+        where: { id: blockId },
+        select: { sameTimesAsBlockId: true, sameTimes: { select: { id: true } } },
+      });
+      const linkedId = linked?.sameTimesAsBlockId ?? linked?.sameTimes[0]?.id ?? null;
+      const linkedPosts = linkedId
+        ? await tx.teachingRequirement.findMany({
+            where: { blockId: linkedId },
+            select: { studentGroupId: true, subjectId: true },
+          })
+        : [];
+      const standingThere =
+        linkedPosts.length === 0
+          ? []
+          : await tx.masterLesson.findMany({
+              where: {
+                academicYearId: leader.academicYearId,
+                isParked: false,
+                dayOfWeek: leader.dayOfWeek,
+                startTime: leader.startTime,
+                endTime: leader.endTime,
+                OR: linkedPosts.map((post) => ({ studentGroupId: post.studentGroupId, subjectId: post.subjectId })),
+              },
+              select: { id: true, studentGroupId: true, subjectId: true },
+            });
+      const wholeThere =
+        standingThere.length === linkedPosts.length &&
+        new Set(standingThere.map((lesson) => `${lesson.studentGroupId}:${lesson.subjectId}`)).size === linkedPosts.length;
+      let followers: typeof lessons = [];
+      if (wholeThere && standingThere.length > 0) {
+        const followerIds = standingThere.map((lesson) => lesson.id);
+        await tx.$queryRaw`
+          SELECT 1 FROM "MasterLessons" WHERE "id" = ANY(${followerIds}::uuid[]) FOR NO KEY UPDATE`;
+        followers = await tx.masterLesson.findMany({ where: { id: { in: followerIds } }, select, orderBy: { id: 'asc' } });
+        // One slot, its own weeks: a card, as it stood when it was locked.
+        const slot = followers[0] ? slotOf(followers[0]) : null;
+        if (
+          followers.length !== followerIds.length ||
+          followers.some((lesson) => lesson.isParked || !sameSlot(slotOf(lesson), slot!))
+        ) {
+          followers = [];
+        }
+      }
+      const moving = [...lessons, ...followers];
+      const movingIds = moving.map((lesson) => lesson.id);
+
       const rosters = await rostersOfYear(tx, user, leader.academicYearId, {
         settledCurrent: leader.school._count.academicYears > 0,
       });
-      const placed: DayLesson[] = lessons.map((lesson) => ({ ...lesson, startTime, endTime }));
+      const placed: DayLesson[] = moving.map((lesson) => ({ ...lesson, startTime, endTime }));
       const refusals: string[] = [];
-      for (const [index, lesson] of lessons.entries()) {
+      for (const [index, lesson] of moving.entries()) {
         const conflicts = await this.findConflicts(
           tx,
           rosters,
@@ -1062,7 +1121,7 @@ export class MasterLessonsService {
             startDate: lesson.startDate,
             endDate: lesson.endDate,
           },
-          { excludeIds: dto.lessonIds, alongside: placed.slice(index + 1) },
+          { excludeIds: movingIds, alongside: placed.slice(index + 1) },
         );
         const name = requirementName(lesson.subject.name, lesson.studentGroup.name);
         refusals.push(...conflicts.map((conflict) => `${name}: ${conflict.message}`));
@@ -1085,6 +1144,23 @@ export class MasterLessonsService {
         data: { dayOfWeek: dto.dayOfWeek, startTime, endTime },
       });
       if (count !== lessons.length) throw blockCardStale();
+      const follower = followers[0];
+      if (follower) {
+        const { count: followed } = await tx.masterLesson.updateMany({
+          where: {
+            id: { in: followers.map((lesson) => lesson.id) },
+            dayOfWeek: follower.dayOfWeek,
+            startTime: follower.startTime,
+            endTime: follower.endTime,
+            recurrence: follower.recurrence,
+            startDate: follower.startDate,
+            endDate: follower.endDate,
+            isParked: false,
+          },
+          data: { dayOfWeek: dto.dayOfWeek, startTime, endTime },
+        });
+        if (followed !== followers.length) throw blockCardStale();
+      }
       // Lessons of the block the card lands beside — a member moved there
       // alone before — join it, as a single lesson moved onto a card does: the
       // card's owner, when its lessons agree on one. Without it the block
@@ -1128,7 +1204,7 @@ export class MasterLessonsService {
       const movedMembers: LessonRecord[] = [];
       const results: MasterLessonResult[] = [];
       const notices: { lesson: (typeof lessons)[number]; after: MasterLessonResult }[] = [];
-      for (const lesson of lessons) {
+      for (const lesson of moving) {
         const updated = { ...lesson, dayOfWeek: dto.dayOfWeek, startTime, endTime };
         const { moved, removed } =
           dto.propagate === false || mode === 'DRAFT'
@@ -1168,13 +1244,13 @@ export class MasterLessonsService {
             user,
             teacherDayGateOf(leader.school._count),
             leader.academicYearId,
-            lessons.map((lesson) => ({
+            moving.map((lesson) => ({
               id: lesson.id,
               teacherId: lesson.teacherId,
               coTeacherId: lesson.coTeacherId,
               requirement: requirementName(lesson.subject.name, lesson.studentGroup.name),
             })),
-            lessons.flatMap((lesson) => [lesson.teacherId, lesson.coTeacherId]),
+            moving.flatMap((lesson) => [lesson.teacherId, lesson.coTeacherId]),
           )),
         );
       }
@@ -1182,7 +1258,7 @@ export class MasterLessonsService {
       warnings.push(...(await this.travelWarnings(tx, rosters, sites, movedMembers)));
 
       this.logger.log(
-        `Block card moved [block=${blockId}, lessons=${lessons.length}, propagated=${propagatedLessons}, removed=${removedCalendarLessons}]`,
+        `Block card moved [block=${blockId}, lessons=${lessons.length}, followed=${followers.length}, propagated=${propagatedLessons}, removed=${removedCalendarLessons}]`,
       );
       this.announce(leader.school.id, mode);
       // As update() tells a class its published lessons moved: one notice per
@@ -1220,6 +1296,10 @@ export class MasterLessonsService {
    * WHOLE BLOCKS, because the generation refuses a block with some lessons
    * locked while the rest are still to place (BLOCK_PARTLY_LOCKED): a lock on
    * one card of a block would only move the refusal to the next generation.
+   * And a block on another's times takes that block with it, either way
+   * round: the generation writes the one at the other's times and refuses
+   * the two with only one locked (BLOCK_SAME_TIMES_PARTLY_LOCKED), so a term
+   * split's autumn and spring are locked as one.
    * The placed lessons only: a lesson on the tray is no placement to keep,
    * and while one is there its post still has a lesson to place, which the
    * answer's `parked` says.
@@ -1231,24 +1311,32 @@ export class MasterLessonsService {
   async lockBlock(dto: LockBlockDto, user: AuthenticatedUser): Promise<LockBlockResult> {
     return this.prisma.withRls(user, async (tx) => {
       const mode = await enterGrundschemaWrite(tx, requireSchoolId(user));
+      const posts = { select: { studentGroupId: true, subjectId: true } } as const;
       const block = await tx.teachingBlock.findUnique({
         where: { id: dto.blockId },
         select: {
           id: true,
           schoolId: true,
           academicYearId: true,
-          requirements: { select: { studentGroupId: true, subjectId: true } },
+          requirements: posts,
+          sameTimesAs: { select: { requirements: posts } },
+          sameTimes: { select: { requirements: posts } },
         },
       });
       if (!block) throw new NotFoundException('Blocket finns inte.');
       await lockYearForGrundschemaEdit(tx, block.academicYearId);
+      const members = [
+        ...block.requirements,
+        ...(block.sameTimesAs?.requirements ?? []),
+        ...block.sameTimes.flatMap((linked) => linked.requirements),
+      ];
       const all =
-        block.requirements.length === 0
+        members.length === 0
           ? []
           : await tx.masterLesson.findMany({
               where: {
                 academicYearId: block.academicYearId,
-                OR: block.requirements.map((post) => ({
+                OR: members.map((post) => ({
                   studentGroupId: post.studentGroupId,
                   subjectId: post.subjectId,
                 })),
