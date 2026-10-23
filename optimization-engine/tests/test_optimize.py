@@ -6621,6 +6621,10 @@ def test_a_margin_the_rasts_stretch_cannot_also_hold_is_a_400_not_a_500(
     assert (params["minutes"], params["before"], params["after"]) == (120, 0, after)
     assert (params["changeover"], params["remaining"]) == (changeover, 110)
     assert "start_" not in response.text
+    # The frame time is a lever only where a frame narrows the day, and the
+    # changeover's frame here runs the whole configured day: nothing to widen.
+    assert params["framed"] == 0
+    assert "frame time" not in body["message"]
 
 
 def test_the_pre_flight_refuses_exactly_the_weeks_whose_domain_is_empty() -> None:
@@ -6748,6 +6752,9 @@ def test_a_changing_room_before_the_first_stretch_is_refused_on_the_real_day() -
     assert error.value.code == "RAST_MARGIN_NO_STRETCH_FOR_REQUIREMENT"
     assert (error.value.params["before"], error.value.params["remaining"]) == (10, 80)
     assert "10 minutes before" in str(error.value)
+    # Here a frame closes the day at 11:00, and widening it is a way out.
+    assert error.value.params["framed"] == 1
+    assert "or widen the frame time" in str(error.value)
 
     response = SchedulerSolver(_settings()).solve(OptimizeScheduleRequest.model_validate(week(0)))
     assert response.status in {"OPTIMAL", "FEASIBLE"}
