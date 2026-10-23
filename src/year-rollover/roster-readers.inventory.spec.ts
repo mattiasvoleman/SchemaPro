@@ -382,7 +382,9 @@ describe('the roster-reader inventory', () => {
       // week's pupils as a single lesson's drag does, so it answers it where
       // the drag would. A parallel block's lessons (TeachingBlocksController.update)
       // are judged member by member as a timplanspost's are, so a lesson edit
-      // of a block answers it where the post's own PATCH would. StaffingLoadController.unstaffed reads the load input like
+      // of a block answers it where the post's own PATCH would, and so are
+      // the four posts "Dela terminsvis i halvklass" writes
+      // (TeachingRequirementsController.splitByTerm). StaffingLoadController.unstaffed reads the load input like
       // the report it is opened from, and .delivered (staffing Fas 3) reads
       // it for the planned column of the reconciliation. The staffing
       // proposal (Fas 4) reads it for every row's grade span, in propose and
@@ -441,6 +443,7 @@ describe('the roster-reader inventory', () => {
         'StaffingLoadController.unstaffed',
         'TeachingBlocksController.update',
         'TeachingRequirementsController.create',
+        'TeachingRequirementsController.splitByTerm',
         'TeachingRequirementsController.update',
         'TimplanCoverageController.get',
         'YearRolloverController.rosters',

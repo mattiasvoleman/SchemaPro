@@ -173,7 +173,7 @@ export class TeachingBlocksService {
 }
 
 /** The name as stored: trimmed, 1..80 characters, or a 400 naming the field. */
-function blockName(raw: string): string {
+export function blockName(raw: string): string {
   const name = raw.trim();
   if (name.length < 1 || name.length > NAME_MAX) {
     throw new BadRequestException(`name: blocket behöver ett namn på högst ${NAME_MAX} tecken.`);

@@ -74,6 +74,79 @@ function pupilsNotInClass(count: number, className: string): BadRequestException
   });
 }
 
+/**
+ * The class row FOR NO KEY UPDATE, the lock "Dela klassen" takes before it
+ * asks whether the class has halves: two splits of one class at the same
+ * moment would make four halves, and the second waits here and then finds
+ * the halves the first made. NO KEY, so the halves' own foreign key (KEY
+ * SHARE on the class) never waits on it. Also taken by "Dela terminsvis i
+ * halvklass" (term-halves.service.ts), which splits the class when it has no
+ * halves yet.
+ */
+export async function lockClassForSplit(tx: Prisma.TransactionClient, classId: string): Promise<void> {
+  await tx.$queryRaw`SELECT 1 FROM "StudentGroups" WHERE "id" = ${classId}::uuid FOR NO KEY UPDATE`;
+}
+
+/**
+ * "Dela klassen" under lockClassForSplit: the class's two halves, named
+ * "7A:1" and "7A:2" unless `names` gives others, with the refusals the
+ * split route answers (NOT_A_CLASS, CLASS_ALREADY_SPLIT, GROUP_NAME_TAKEN).
+ * The names are asked of the year case-insensitively, as the importers and
+ * the rollover read a name.
+ */
+export async function splitLockedClass(
+  tx: Prisma.TransactionClient,
+  schoolId: string,
+  classId: string,
+  requestedNames: readonly string[] | undefined,
+): Promise<StudentGroup[]> {
+  const theClass = await tx.studentGroup.findUnique({
+    where: { id: classId },
+    select: {
+      name: true,
+      kind: true,
+      academicYearId: true,
+      gradeLevel: true,
+      _count: { select: { halves: true } },
+    },
+  });
+  if (!theClass) throw new NotFoundException('Student group not found.');
+  if (theClass.kind !== 'CLASS') {
+    throw new BadRequestException({ message: 'Bara en klass kan delas i halvor.', code: NOT_A_CLASS });
+  }
+  if (theClass._count.halves > 0) {
+    throw new ConflictException({ message: `${theClass.name} är redan delad i halvor.`, code: CLASS_ALREADY_SPLIT });
+  }
+  const names = (requestedNames ?? [`${theClass.name}:1`, `${theClass.name}:2`]).map((name) => name.trim());
+  if (names.some((name) => name.length === 0) || new Set(names.map((name) => name.toLowerCase())).size !== names.length) {
+    throw new BadRequestException('names: två olika namn, ett för varje halva.');
+  }
+  const taken = await tx.studentGroup.findMany({
+    where: {
+      academicYearId: theClass.academicYearId,
+      OR: names.map((name) => ({ name: { equals: name, mode: 'insensitive' as const } })),
+    },
+    select: { name: true },
+    orderBy: { name: 'asc' },
+  });
+  if (taken.length > 0) {
+    throw new ConflictException({
+      message: `Läsåret har redan en grupp som heter ${taken.map((group) => group.name).join(' och ')}.`,
+      code: GROUP_NAME_TAKEN,
+    });
+  }
+  return tx.studentGroup.createManyAndReturn({
+    data: names.map((name) => ({
+      schoolId,
+      academicYearId: theClass.academicYearId,
+      name,
+      kind: 'TEACHING_GROUP' as const,
+      gradeLevel: theClass.gradeLevel,
+      halfOfId: classId,
+    })),
+  });
+}
+
 export interface GroupMember {
   id: string;
   firstName: string;
@@ -259,52 +332,8 @@ export class StudentGroupsService {
     const schoolId = requireSchoolId(user);
     try {
       return await this.prisma.withRls(user, async (tx) => {
-        await tx.$queryRaw`SELECT 1 FROM "StudentGroups" WHERE "id" = ${classId}::uuid FOR NO KEY UPDATE`;
-        const theClass = await tx.studentGroup.findUnique({
-          where: { id: classId },
-          select: {
-            name: true,
-            kind: true,
-            academicYearId: true,
-            gradeLevel: true,
-            _count: { select: { halves: true } },
-          },
-        });
-        if (!theClass) throw new NotFoundException('Student group not found.');
-        if (theClass.kind !== 'CLASS') {
-          throw new BadRequestException({ message: 'Bara en klass kan delas i halvor.', code: NOT_A_CLASS });
-        }
-        if (theClass._count.halves > 0) {
-          throw new ConflictException({ message: `${theClass.name} är redan delad i halvor.`, code: CLASS_ALREADY_SPLIT });
-        }
-        const names = (dto.names ?? [`${theClass.name}:1`, `${theClass.name}:2`]).map((name) => name.trim());
-        if (names.some((name) => name.length === 0) || new Set(names.map((name) => name.toLowerCase())).size !== names.length) {
-          throw new BadRequestException('names: två olika namn, ett för varje halva.');
-        }
-        const taken = await tx.studentGroup.findMany({
-          where: {
-            academicYearId: theClass.academicYearId,
-            OR: names.map((name) => ({ name: { equals: name, mode: 'insensitive' as const } })),
-          },
-          select: { name: true },
-          orderBy: { name: 'asc' },
-        });
-        if (taken.length > 0) {
-          throw new ConflictException({
-            message: `Läsåret har redan en grupp som heter ${taken.map((group) => group.name).join(' och ')}.`,
-            code: GROUP_NAME_TAKEN,
-          });
-        }
-        return tx.studentGroup.createManyAndReturn({
-          data: names.map((name) => ({
-            schoolId,
-            academicYearId: theClass.academicYearId,
-            name,
-            kind: 'TEACHING_GROUP' as const,
-            gradeLevel: theClass.gradeLevel,
-            halfOfId: classId,
-          })),
-        });
+        await lockClassForSplit(tx, classId);
+        return splitLockedClass(tx, schoolId, classId, dto.names);
       });
     } catch (error) {
       if (error instanceof HttpException) throw error;

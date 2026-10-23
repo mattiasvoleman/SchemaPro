@@ -77,6 +77,19 @@ export type StaffedRequirementResponse = TeachingRequirementResponse & {
   warnings: StaffingWarning[];
 };
 
+/** A stored row as the API states it; see TeachingRequirementsService.toResponse. */
+export function requirementResponse(row: TeachingRequirement): TeachingRequirementResponse {
+  // A uniform row leaves without the list, so every response a school that
+  // never splits receives is the one it received before the column existed.
+  const { lessonLengths, ...rest } = row;
+  return {
+    ...rest,
+    ...(isMixed(row) ? { lessonLengths } : {}),
+    startDate: row.startDate ? row.startDate.toISOString().slice(0, 10) : null,
+    endDate: row.endDate ? row.endDate.toISOString().slice(0, 10) : null,
+  };
+}
+
 @Injectable()
 export class TeachingRequirementsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -431,15 +444,7 @@ export class TeachingRequirementsService {
    * whole change exists to remove, reintroduced one layer down.
    */
   private toResponse(row: TeachingRequirement): TeachingRequirementResponse {
-    // A uniform row leaves without the list, so every response a school that
-    // never splits receives is the one it received before the column existed.
-    const { lessonLengths, ...rest } = row;
-    return {
-      ...rest,
-      ...(isMixed(row) ? { lessonLengths } : {}),
-      startDate: row.startDate ? row.startDate.toISOString().slice(0, 10) : null,
-      endDate: row.endDate ? row.endDate.toISOString().slice(0, 10) : null,
-    };
+    return requirementResponse(row);
   }
 
   /**

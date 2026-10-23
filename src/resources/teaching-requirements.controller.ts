@@ -18,17 +18,22 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { TeachingRequirementsService } from './teaching-requirements.service';
+import { TermHalvesService } from './term-halves.service';
 import {
   CreateTeachingRequirementDto,
   UpdateTeachingRequirementDto,
 } from './dto/teaching-requirement.dto';
+import { SplitByTermDto } from './dto/term-halves.dto';
 
 @Controller('api/v1/teaching-requirements')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SCHOOL_ADMIN)
 @Area('PLANERING')
 export class TeachingRequirementsController {
-  constructor(private readonly requirements: TeachingRequirementsService) {}
+  constructor(
+    private readonly requirements: TeachingRequirementsService,
+    private readonly termHalves: TermHalvesService,
+  ) {}
 
   @Post()
   create(
@@ -45,6 +50,20 @@ export class TeachingRequirementsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.requirements.update(id, dto, user);
+  }
+
+  /**
+   * "Dela terminsvis i halvklass": the class's post replaced by four on its
+   * two halves, the two subjects swapping at the spring term, in one block
+   * per term (term-halves.service.ts).
+   */
+  @Post(':id/term-halves')
+  splitByTerm(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body() dto: SplitByTermDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.termHalves.split(id, dto, user);
   }
 
   @Delete(':id')
