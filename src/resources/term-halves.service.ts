@@ -46,8 +46,11 @@ export interface TermHalvesResponse {
   halves: { id: string; name: string }[];
   /** Whether this request split the class (false: it had its halves). */
   createdHalves: boolean;
-  /** The autumn's block first, each with its two posts. */
-  blocks: { id: string; name: string; requirementIds: string[] }[];
+  /**
+   * The autumn's block first, each with its two posts; the spring's names
+   * the autumn's as the block whose times it takes.
+   */
+  blocks: { id: string; name: string; sameTimesAsBlockId: string | null; requirementIds: string[] }[];
   /** The four posts: the first half's autumn and spring, then the second's. */
   requirements: TeachingRequirementResponse[];
   /** The class's post, which the four replace. */
@@ -92,9 +95,15 @@ const asDay = (date: Date): string => date.toISOString().slice(0, 10);
  * the second half's second, and the spring's block the swap. Each block puts
  * its two halves at the same times, which is what keeps the class's week from
  * holding slöjd twice: two halves of one class never share a pupil, so the
- * block is always one the generator accepts. The generator plans one week
- * and has no terms, so it gives each block its own times and holds both all
- * year — the manual says so and how to put the spring on the autumn's times.
+ * block is always one the generator accepts.
+ *
+ * THE SPRING ON THE AUTUMN'S TIMES. The generator plans one week and has no
+ * terms, so two blocks would each get their own times, both held all year,
+ * and one of them empty each term. The spring's block names the autumn's
+ * (TeachingBlocks."sameTimesAsBlockId"): the generator places the autumn's
+ * block and writes each spring post at the times of the autumn post in its
+ * subject, which is its room's subject and, the halves swapping, usually its
+ * teacher's (same-times.ts). A lock or a card move takes the two together.
  *
  * THE FOUR POSTS CARRY THE CLASS'S POST OVER: its lessons (count, lengths,
  * ombyte, its own distribution, its weeks) and how much of it counts for the
@@ -386,12 +395,13 @@ export class TermHalvesService {
         });
         if (count !== 1) throw writeConflict();
 
-        const blocks: { id: string; name: string }[] = [];
+        // The autumn's first, so the spring's can name it.
+        const blocks: { id: string; name: string; sameTimesAsBlockId: string | null }[] = [];
         for (const name of names) {
           blocks.push(
             await tx.teachingBlock.create({
-              data: { schoolId, academicYearId: source.academicYearId, name },
-              select: { id: true, name: true },
+              data: { schoolId, academicYearId: source.academicYearId, name, sameTimesAsBlockId: blocks[0]?.id ?? null },
+              select: { id: true, name: true, sameTimesAsBlockId: true },
             }),
           );
         }
