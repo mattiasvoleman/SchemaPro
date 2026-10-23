@@ -64,6 +64,9 @@ test.describe("Schemaförslag", () => {
     // The browser's own figures arrived: no cell is still computing.
     await expect(table.getByText("Räknar…")).toHaveCount(0);
     await expect(table.getByRole("rowheader", { name: /^Lärarnas håltimmar/ })).toBeVisible();
+    // Bo's wished Wednesday, broken by the draft and by every candidate, named in each column.
+    await expect(table.getByRole("rowheader", { name: /^Önskad ledig dag som inte hålls/ })).toBeVisible();
+    await expect(table.getByText("Bo Ek · onsdagar", { exact: true })).toHaveCount(4);
     await expect(applyButtons(page)).toHaveCount(3);
     for (const button of await applyButtons(page).all()) await expect(button).toBeEnabled();
     // The review: the moved list and the week of the first class.

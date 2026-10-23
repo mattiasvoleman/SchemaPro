@@ -285,6 +285,65 @@ describe("the comparison table", () => {
     expect(pupilCells[2]).toContain("scheduleCandidates.cell.delta(±scheduleCandidates.cell.minutes(0))");
   });
 
+  /*
+   * Önskad ledig dag: the gateway measured each candidate and the draft when
+   * it stored them, and names the teachers; the page counts them, says the
+   * difference from the draft, and lists whom and which weekday.
+   */
+  describe("the free-day wishes", () => {
+    const wish = (day: number, names: string[]) => ({
+      category: "AVAILABILITY",
+      code: "TEACHER_FREE_DAY_WISH_NOT_KEPT",
+      params: { day },
+      message: "A teacher wishes … free",
+      resourceNames: names,
+    });
+    const wishesRow = () =>
+      [...within(table()).getByRole("rowheader", { name: /scheduleCandidates\.row\.wishes/ }).closest("tr")!.querySelectorAll("td")].map(
+        (cell) => cell.textContent,
+      );
+
+    it("counts each candidate's against the draft's, and names the teacher and the weekday under it", () => {
+      state.overview = {
+        latest: BATCH,
+        batch: {
+          ...BATCH,
+          candidates: [
+            candidate(1, "KEEP", { notes: [wish(1, ["Anna Ek"])] }),
+            candidate(2, "TEACHER_GAPS", { notes: [] }),
+            candidate(3, "SPREAD", { solverStatus: "TIMEOUT", metrics: null, notes: null }),
+          ],
+        },
+        unplaced: null,
+        draftNotes: [wish(1, ["Anna Ek"]), wish(5, [])],
+      };
+      render(<CandidatesPage />);
+
+      expect(wishesRow()).toEqual([
+        // A teacher no longer in the school is "a teacher", not a blank.
+        "scheduleCandidates.cell.wishes(2)scheduleCandidates.cell.wish(Anna Ek|1)scheduleCandidates.cell.wish(scheduleCandidates.cell.wishNobody|5)",
+        "scheduleCandidates.cell.wishes(1)scheduleCandidates.cell.delta(−scheduleCandidates.cell.teacherCount(1))scheduleCandidates.cell.wish(Anna Ek|1)",
+        "scheduleCandidates.cell.wishes(0)scheduleCandidates.cell.delta(−scheduleCandidates.cell.teacherCount(2))",
+        "scheduleCandidates.cell.notApplicable",
+      ]);
+    });
+
+    it("says not measured for a batch stored before the gateway measured them, and no difference without the draft's", () => {
+      state.overview = {
+        latest: BATCH,
+        batch: { ...BATCH, candidates: [candidate(1, "KEEP"), candidate(2, "TEACHER_GAPS", { notes: [wish(3, ["Bo Ek"])] })] },
+        unplaced: null,
+      };
+      render(<CandidatesPage />);
+
+      expect(wishesRow()).toEqual([
+        "scheduleCandidates.cell.notMeasured",
+        "scheduleCandidates.cell.notMeasured",
+        "scheduleCandidates.cell.wishes(1)scheduleCandidates.cell.wish(Bo Ek|3)",
+      ]);
+    });
+  });
+
   it("says a duplicate is the same as an earlier proposal", () => {
     state.overview = {
       latest: null,
@@ -625,6 +684,40 @@ describe("a run that is not a batch", () => {
       "href",
       "/admin/generate#candidates",
     );
+  });
+
+  it("says where a post's days are shown when a hidden days sentence stopped the first candidate, and only then", () => {
+    const stoppedBy = (code: string) => ({
+      latest: latest({ status: "FAILED", errorCode: "CANDIDATES_FIRST_FAILED" }, [
+        candidate(1, "KEEP", {
+          solverStatus: "INFEASIBLE",
+          metrics: null,
+          conflicts: [{ category: "AVAILABILITY", code, params: {}, message: "m", resourceNames: [] }],
+        }),
+      ]),
+      batch: null,
+      unplaced: null,
+    });
+    state.overview = stoppedBy("TEACHER_WORK_DAYS_HIDDEN");
+    const { unmount } = render(<CandidatesPage />);
+    expect(screen.getByText(/^engineMessages\.TEACHER_WORK_DAYS_HIDDEN/)).toBeInTheDocument();
+    expect(screen.getByText("scheduleCandidates.failed.daysWhere")).toBeInTheDocument();
+    unmount();
+
+    state.overview = stoppedBy("LUNCH_SEATS_CAP");
+    render(<CandidatesPage />);
+    expect(screen.queryByText("scheduleCandidates.failed.daysWhere")).toBeNull();
+  });
+
+  it("says where a post's days are shown when the run itself failed on them", () => {
+    state.overview = {
+      latest: latest({ status: "FAILED", errorCode: "TEACHER_WORK_DAYS_HIDDEN" }, []),
+      batch: null,
+      unplaced: null,
+    };
+    render(<CandidatesPage />);
+
+    expect(screen.getByText("scheduleCandidates.failed.daysWhere")).toBeInTheDocument();
   });
 
   it("says the engine's summary of the first candidate's week above its causes", () => {
