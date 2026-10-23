@@ -19,8 +19,17 @@ export const MAX_BODY_SIZE = '1mb';
  * would otherwise run with different limits than production — which is exactly
  * how an oversized-import bug reached a live school while the suite stayed
  * green.
+ *
+ * NO COMPRESSED REQUEST BODIES (`inflate: false`). No client of this API sends
+ * one: the web and the app post plain JSON, and the integrations' imports are
+ * plain JSON or form bodies. body-parser's inflate path is where
+ * GHSA-27r3-jxmh-p828 lives (trailing bytes after a compressed body exhaust
+ * the server), so a body with Content-Encoding gzip, deflate or br is refused
+ * with 415 before anything decompresses it, whatever body-parser version runs.
+ * Responses are unaffected: this concerns what the API reads, not what it
+ * sends.
  */
 export function configureBodyParsers(app: NestExpressApplication): void {
-  app.useBodyParser('json', { limit: MAX_BODY_SIZE });
-  app.useBodyParser('urlencoded', { limit: MAX_BODY_SIZE, extended: true });
+  app.useBodyParser('json', { limit: MAX_BODY_SIZE, inflate: false });
+  app.useBodyParser('urlencoded', { limit: MAX_BODY_SIZE, extended: true, inflate: false });
 }
