@@ -1152,7 +1152,11 @@
     aldrig som klassposter — vilken elev som läser vilket språk avgör
     språkvalsgrupperna. Av svenska och svenska som andraspråk får klassen ett
     ämne, det med flest minuter i planen (vid lika svenska), och inget alls om
-    den redan har något av dem. De överhoppade står i listan med skälet.
+    den redan har något av dem. En klass vars halvor (3.4) redan har poster i
+    ämnet, eller i ämnen med samma nationella kod, får ingen post i det. Efter
+    <span class="ui">Dela terminsvis i halvklass</span> (4.2) läser 7A:1 och
+    7A:2 textilslöjd och trä- och metallslöjd, och 7A får alltså ingen ny
+    slöjdpost. De överhoppade står i listan med skälet.
   </p>
 
   <h4>Täckning</h4>
@@ -1666,10 +1670,13 @@
     <span class="path">Grunddata › Ämnen</span> (3.2). Ge dem var sin salstyp,
     så hamnar varje halva i rätt sal, och slöjdens nationella kod. Dialogen
     föreslår ämnen vars namn säger textil eller trä och metall. Välj sedan
-    lärare för varje ämne, om du vet vilka de är, och dagen då vårterminen
-    börjar. Halvorna har lektion samtidigt, så ämnena behöver två olika
-    lärare. Rastra Schema föreslår första måndagen i januari. Innan något
-    sparas visar dialogen de fyra posterna i en tabell.
+    lärare och medlärare för varje ämne, om du vet vilka de är, och dagen då
+    vårterminen börjar. Rastra Schema föreslår första måndagen i januari.
+    Halvorna har lektion samtidigt, så samma person kan inte vara lärare
+    eller medlärare i båda ämnena. Har klassens post en medlärare står hen
+    förvald i det första ämnet; flytta hen till det andra eller ta bort hen
+    om hen ska göra något annat. Innan något sparas visar dialogen de fyra
+    posterna i en tabell.
   </p>
   <p>
     <span class="ui">Dela terminsvis</span> gör allt i ett steg:
@@ -1682,13 +1689,17 @@
       andra på våren, och 7A:2 läser tvärtom. Höstens poster gäller från
       läsårets början till och med dagen före vårterminen. Vårens gäller från
       den dagen till läsårets slut. Varje post får klassens lektioner,
-      längder, ombyte och veckor (udda/jämna).</li>
+      längder, ombyte, egen fördelning och veckor (udda/jämna), och räknas
+      för lärare och medlärare med samma procent som klassens post
+      (<span class="ui">Räknas för lärare (%)</span> och
+      <span class="ui">Räknas för medlärare (%)</span>).</li>
     <li>Höstens två poster läggs i ett parallellt block, till exempel
       <em>Slöjd 7A HT</em>, och vårens poster i ett annat, till exempel
       <em>Slöjd 7A VT</em>. Halvorna har då lektion samtidigt, och klassen
       har aldrig slöjd två gånger.</li>
-    <li>Klassens post tas bort. Dess lärare räknas inte längre. De nya
-      posternas lärare prövas mot tjänstefördelningens inställningar (4.3),
+    <li>Klassens post tas bort. Dess lärare och medlärare räknas inte längre.
+      De nya posternas lärare och medlärare prövas mot tjänstefördelningens
+      inställningar (4.3),
       som när du sparar en post. Läraren i textilslöjd belastas för halva 1
       på hösten och halva 2 på våren, alltså lika mycket som för en post
       som gäller hela året. Lektioner som redan ligger i grundschemat för
@@ -1700,9 +1711,11 @@
   </p>
   <ul>
     <li>en halva har redan en post i något av ämnena;</li>
+    <li>samma person är lärare eller medlärare i båda ämnena;</li>
     <li>läsåret har redan ett block med något av namnen;</li>
     <li>tjänstefördelningen vägrar en av lärarna;</li>
-    <li>klassen har bara en halva kvar.</li>
+    <li>klassen har bara en halva kvar;</li>
+    <li>klassens post eller halvor har ändrats sedan dialogen öppnades.</li>
   </ul>
   <p>
     Dialogen säger då vad som hindrar. Du kan ändra och försöka igen. När
