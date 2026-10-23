@@ -135,7 +135,7 @@ export async function splitLockedClass(
       code: GROUP_NAME_TAKEN,
     });
   }
-  return tx.studentGroup.createManyAndReturn({
+  const created = await tx.studentGroup.createManyAndReturn({
     data: names.map((name) => ({
       schoolId,
       academicYearId: theClass.academicYearId,
@@ -145,6 +145,9 @@ export async function splitLockedClass(
       halfOfId: classId,
     })),
   });
+  // In the order the names were given, which RETURNING does not promise:
+  // a caller pairing the first half with the first subject reads it so.
+  return names.map((name) => created.find((half) => half.name === name)!);
 }
 
 export interface GroupMember {

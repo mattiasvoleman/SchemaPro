@@ -233,6 +233,10 @@ describe('TermHalvesService', () => {
     });
 
     it('names the halves and the blocks as asked, trimmed', async () => {
+      tx.studentGroup.createManyAndReturn.mockResolvedValue([
+        { id: HALF_1, name: '7A grupp 1' },
+        { id: HALF_2, name: '7A grupp 2' },
+      ]);
       const result = await service.split(
         POST,
         { ...DTO, halfNames: [' 7A grupp 1', '7A grupp 2 '], blockNames: [' Slöjd 7A höst ', 'Slöjd 7A vår'] },
@@ -243,6 +247,19 @@ describe('TermHalvesService', () => {
         data: [expect.objectContaining({ name: '7A grupp 1' }), expect.objectContaining({ name: '7A grupp 2' })],
       });
       expect(result.blocks.map((block) => block.name)).toEqual(['Slöjd 7A höst', 'Slöjd 7A vår']);
+    });
+
+    it('pairs the new halves with the subjects by the names asked for, not by the order the insert returns them in', async () => {
+      tx.studentGroup.createManyAndReturn.mockResolvedValue([
+        { id: HALF_2, name: '7A:2' },
+        { id: HALF_1, name: '7A:1' },
+      ]);
+
+      const result = await service.split(POST, DTO, admin);
+
+      expect(result.halves.map((half) => half.id)).toEqual([HALF_1, HALF_2]);
+      const [{ data }] = tx.teachingRequirement.createManyAndReturn.mock.calls[0] as [{ data: Record<string, unknown>[] }];
+      expect(data[0]).toEqual(expect.objectContaining({ studentGroupId: HALF_1, subjectId: TEXTIL, endDate: day('2027-01-10') }));
     });
 
     it('copies the weeks of a post on odd weeks to all four, so each block’s two posts agree', async () => {
@@ -342,6 +359,45 @@ describe('TermHalvesService', () => {
     expect(data.map((row) => row.coTeacherId)).toEqual([CECILIA, null, null, CECILIA]);
   });
 
+  describe('the national code (Skapa timplansposter and the plan’s national rows)', () => {
+    const coded = (codes: Record<string, string | null>) =>
+      tx.subject.findMany.mockResolvedValue([
+        { id: TEXTIL, name: 'Textilslöjd', nationalCode: codes[TEXTIL] ?? null },
+        { id: TRA, name: 'Trä- och metallslöjd', nationalCode: codes[TRA] ?? null },
+      ]);
+
+    it('says nothing when both subjects carry the class’s post’s code', async () => {
+      givenPost(source({ subject: { name: 'Slöjd', nationalCode: 'SL' } }));
+      coded({ [TEXTIL]: 'SL', [TRA]: 'SL' });
+
+      expect((await service.split(POST, DTO, admin)).codeWarnings).toEqual([]);
+    });
+
+    it('names a subject without the code, and splits all the same', async () => {
+      givenPost(source({ subject: { name: 'Slöjd', nationalCode: 'SL' } }));
+      coded({ [TEXTIL]: 'SL', [TRA]: null });
+
+      const result = await service.split(POST, DTO, admin);
+
+      expect(result.codeWarnings).toEqual([
+        { subjectId: TRA, subjectName: 'Trä- och metallslöjd', nationalCode: null, lineNationalCode: 'SL' },
+      ]);
+      expect(tx.teachingRequirement.createManyAndReturn).toHaveBeenCalled();
+    });
+
+    it('names every chosen subject when the class’s post has no code, but not the post’s own subject', async () => {
+      givenPost(source({ subject: { name: 'Slöjd', nationalCode: null } }));
+      tx.subject.findMany.mockResolvedValue([
+        { id: TRA, name: 'Trä- och metallslöjd', nationalCode: null },
+        { id: SLOJD, name: 'Slöjd', nationalCode: null },
+      ]);
+
+      const result = await service.split(POST, { ...DTO, subjects: [{ subjectId: SLOJD }, { subjectId: TRA }] }, admin);
+
+      expect(result.codeWarnings.map((warning) => warning.subjectId)).toEqual([TRA]);
+    });
+  });
+
   describe('refuses, before anything is written', () => {
     const nothingWritten = () => {
       expect(tx.teachingRequirement.deleteMany).not.toHaveBeenCalled();
@@ -378,6 +434,18 @@ describe('TermHalvesService', () => {
         service.split(POST, { ...DTO, subjects: [{ subjectId: TEXTIL, teacherId: ANNA, coTeacherId: ANNA }, { subjectId: TRA }] }, admin),
       ).rejects.toThrow(SAME_TEACHER_TWICE);
       expect(prisma.withRls).not.toHaveBeenCalled();
+    });
+
+    it('the class’s co-teacher, carried to a subject whose teacher the request makes them', async () => {
+      givenPost(source({ coTeacherId: CECILIA }));
+
+      const error = await service
+        .split(POST, { ...DTO, subjects: [{ subjectId: TEXTIL, teacherId: CECILIA }, { subjectId: TRA, teacherId: BO, coTeacherId: null }] }, admin)
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect((error as BadRequestException).message).toMatch(/^subjects: Slöjd för 7A har läraren som medlärare i ämne 1\./);
+      nothingWritten();
     });
 
     it('the class’s co-teacher, carried to both subjects when the request names none, and says which to choose', async () => {
