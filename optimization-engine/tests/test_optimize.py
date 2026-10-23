@@ -6459,6 +6459,358 @@ def test_the_longest_stretch_is_measured_unbroken_not_summed() -> None:
         solver.solve(request)
 
 
+# ---------------------------------------------------------------------------
+# THE RAST CHECK READS THE DAYS THE MODEL READS, AND THEIR MARGINS.
+#
+# Two weeks a fuzz of the engine found among 5,865 it built. Every pre-flight
+# accepted them, the builder made a lesson an empty start domain, CP-SAT
+# answered MODEL_INVALID, and the school read a 500 SOLVER_BUILD_ERROR whose
+# message quoted `start_<requirement id>_0`. In the first a frame closes the
+# only day whose rasts leave room, and the rast check read the closed day as a
+# whole one. In the second the stretch the rast leaves at the day's edge holds
+# the lesson but not the margin after it, and neither check alone counted both.
+# ---------------------------------------------------------------------------
+
+
+def _fuzz_week(minutes: int, *, minutes_after: int = 0) -> dict[str, object]:
+    """One year-8 requirement, one room, ids as the fuzz's shrunk weeks wrote them."""
+    return {
+        "requestId": "00000000-0000-4000-8000-000000000001",
+        "academicYearId": "00000000-0000-4000-8000-000000000002",
+        "requirements": [
+            {
+                "id": "00000000-0000-4000-8000-000000000003",
+                "subjectId": "00000000-0000-4000-8000-000000000004",
+                "studentGroupId": "00000000-0000-4000-8000-000000000005",
+                "teacherId": "00000000-0000-4000-8000-000000000006",
+                "lessonsPerWeek": 1,
+                "minutesPerLesson": minutes,
+                "minutesAfter": minutes_after,
+                "studentGroupSize": 24,
+                "minGradeLevel": 8,
+                "maxGradeLevel": 8,
+            }
+        ],
+        "rooms": [{"id": "00000000-0000-4000-8000-000000000007", "capacity": 30}],
+    }
+
+
+def _week_a_frame_closes_the_only_roomy_day(*, close_monday: bool = True) -> dict[str, object]:
+    """Fuzz week mixed/100080, shrunk, on six days of 08:00-10:00.
+
+    The every-day rast 08:40-09:00 leaves 40 and 60 minutes, so no day holds a
+    70-minute lesson except Monday, whose own rast 08:30-08:50 replaces it and
+    leaves 08:50-10:00. A year-8 frame ending before the day begins closes
+    Monday for year 8.
+    """
+    payload = _fuzz_week(70)
+    payload["rasts"] = [
+        _rast("08:30", "08:50", day=1, grades=(7, 9)),
+        _rast("08:40", "09:00", grades=(7, 9)),
+    ]
+    payload["frameTimes"] = (
+        [{
+            "minGradeLevel": 8,
+            "maxGradeLevel": 8,
+            "dayOfWeek": 1,
+            "startTime": "06:00:00",
+            "endTime": "07:00:00",
+        }]
+        if close_monday
+        else []
+    )
+    return payload
+
+
+def _short_day_client(days: str, end_minutes: int) -> TestClient:
+    return TestClient(create_app(_settings(
+        SCHEDULE_DAYS=days,
+        SCHEDULE_DAY_START_MINUTES=480,
+        SCHEDULE_DAY_END_MINUTES=end_minutes,
+    )))
+
+
+def test_a_frame_closing_the_only_day_a_rast_leaves_room_on_is_a_400_not_a_500() -> None:
+    """The closed day is not a whole day, and the sentence counts only open ones.
+
+    RAST_NO_STRETCH_FOR_REQUIREMENT and not a new code: what it says is true of
+    the days the frames leave — their longest stretch is 60 minutes — and the
+    frame time is already among the levers it names.
+    """
+    response = _short_day_client("1,2,3,4,5,6", 600).post(
+        "/api/v1/optimize",
+        json=_week_a_frame_closes_the_only_roomy_day(),
+        headers={"X-API-Key": API_KEY},
+    )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["code"] == "INVALID_SCHEDULE_INPUT"
+    assert body["details"]["code"] == "RAST_NO_STRETCH_FOR_REQUIREMENT"
+    params = body["details"]["params"]
+    assert (params["grades"], params["minutes"], params["remaining"]) == ("8", 70, 60)
+    # The requirement rides in params, where the gateway names it back; the
+    # builder's variable never reaches a body again.
+    assert params["requirement"] == "00000000-0000-4000-8000-000000000003"
+    assert "start_" not in response.text
+
+
+def test_the_same_week_with_monday_open_is_not_refused() -> None:
+    """The control: Monday's 08:50-10:00 holds the lesson once no frame closes it.
+
+    So the refusal above is the frame's closed day and nothing else — the rast
+    check still counts the day a rast row of its own leaves room on.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(
+        SCHEDULE_DAYS="1,2,3,4,5,6",
+        SCHEDULE_DAY_START_MINUTES=480,
+        SCHEDULE_DAY_END_MINUTES=600,
+    ))
+    response = solver.solve(OptimizeScheduleRequest.model_validate(
+        _week_a_frame_closes_the_only_roomy_day(close_monday=False),
+    ))
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert [(lesson.day_of_week, lesson.start_time) for lesson in response.lessons] == [
+        (1, "08:50:00"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("after", "changeover"),
+    [(15, 0), (0, 15)],
+    ids=["the pupils' minutes after", "the frame's changeover"],
+)
+def test_a_margin_the_rasts_stretch_cannot_also_hold_is_a_400_not_a_500(
+    after: int, changeover: int,
+) -> None:
+    """Fuzz week dist-nocount/400153: neither half refuses it, the two together do.
+
+    08:00-12:00 on three days, a 120-minute lesson with 15 minutes after it and
+    a rast 09:45-09:55. The window holds the lesson and its margin (08:00-11:45
+    is 225 minutes), and 09:55-12:00 holds the lesson (125 minutes) — but the
+    margin may not run past the day's end, so that stretch holds 110 minutes for
+    the lesson, and 08:00-09:45 holds 105.
+
+    The fuzz's week took the fifteen minutes from the pupils' own buffer; a
+    frame's changeover is clipped at the same edge, and is the same week.
+    """
+    payload = _fuzz_week(120, minutes_after=after)
+    payload["rasts"] = [_rast("09:45", "09:55", grades=(7, 9))]
+    if changeover:
+        payload["frameTimes"] = [{
+            "minGradeLevel": 8,
+            "maxGradeLevel": 8,
+            "dayOfWeek": None,
+            "startTime": "08:00:00",
+            "endTime": "12:00:00",
+            "changeoverMinutes": changeover,
+        }]
+
+    response = _short_day_client("1,2,3", 720).post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["details"]["code"] == "RAST_MARGIN_NO_STRETCH_FOR_REQUIREMENT"
+    params = body["details"]["params"]
+    assert (params["minutes"], params["before"], params["after"]) == (120, 0, after)
+    assert (params["changeover"], params["remaining"]) == (changeover, 110)
+    assert "start_" not in response.text
+
+
+def test_the_pre_flight_refuses_exactly_the_weeks_whose_domain_is_empty() -> None:
+    """The property both fuzz weeks broke, held over seeded weeks of their kind.
+
+    One requirement each, with frames that close days or narrow them,
+    day-specific rasts that shadow every-day ones, the pupils' margins, a
+    frame's changeover, split lengths and days of two to ten hours. For every
+    week, _validate_request's frame, margin and rast refusals must coincide
+    with an empty domain in _start_domains: a week accepted with an empty one
+    is the 500 back, and a refusal over a domain with starts in it refuses a
+    week that would have built. On the engine before this check, 55 of 4,000
+    such weeks were accepted with an empty domain.
+
+    A new rule that narrows the start domain belongs in this generator, so the
+    property keeps asking about it.
+    """
+    import random
+
+    from app.exceptions import InvalidScheduleInputError
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver, _start_lattice, _start_step
+
+    domain_codes = {
+        "FRAME_NO_WINDOW_FOR_REQUIREMENT",
+        "MARGIN_NO_WINDOW_FOR_REQUIREMENT",
+        "RAST_NO_STRETCH_FOR_REQUIREMENT",
+        "RAST_MARGIN_NO_STRETCH_FOR_REQUIREMENT",
+    }
+
+    def clock(minutes: int) -> str:
+        return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+    def frame(rng: random.Random, day_minutes: int) -> dict[str, object]:
+        if rng.random() < 0.3:
+            start, end = 6 * 60, 7 * 60  # before the day: closes it for the stage
+        else:
+            start = 480 + rng.randrange(0, day_minutes // 2, 5)
+            end = start + rng.randrange(30, day_minutes, 5)
+        return {
+            "minGradeLevel": rng.choice([7, 8]),
+            "maxGradeLevel": rng.choice([8, 9]),
+            "dayOfWeek": rng.choice([None, 1, 2, 3, 4, 5, 6]),
+            "startTime": f"{clock(start)}:00",
+            "endTime": f"{clock(end)}:00",
+            "changeoverMinutes": rng.choice([0, 0, 0, 5, 10]),
+        }
+
+    def rast(rng: random.Random, day_minutes: int) -> dict[str, object]:
+        start = 480 + rng.randrange(0, day_minutes, 5)
+        end = start + rng.choice([5, 10, 15, 20, 30])
+        return _rast(clock(start), clock(end), day=rng.choice([None, None, 1, 2, 3]), grades=(7, 9))
+
+    seen: dict[str, int] = {}
+    for seed in range(300):
+        rng = random.Random(seed)
+        day_minutes = rng.choice([120, 180, 240, 600])
+        minutes = rng.choice([30, 45, 60, 70, 80, 90, 100, 120])
+        payload = _fuzz_week(minutes, minutes_after=rng.choice([0, 0, 3, 5, 10, 15]))
+        requirement = payload["requirements"][0]  # type: ignore[index]
+        requirement["minutesBefore"] = rng.choice([0, 0, 5, 7, 10, 15])
+        if rng.random() < 0.2:
+            requirement["lessonsPerWeek"] = 2
+            requirement["lessonLengths"] = [minutes, 30]
+        payload["frameTimes"] = [frame(rng, day_minutes) for _ in range(rng.choice([0, 0, 1, 2, 3]))]
+        payload["rasts"] = [rast(rng, day_minutes) for _ in range(rng.choice([1, 1, 2, 3]))]
+        solver = SchedulerSolver(_settings(
+            SCHEDULE_DAYS=rng.choice(["1,2,3", "1,2,3,4,5", "1,2,3,4,5,6"]),
+            SCHEDULE_DAY_START_MINUTES=480,
+            SCHEDULE_DAY_END_MINUTES=480 + day_minutes,
+        ))
+        request = OptimizeScheduleRequest.model_validate(payload)
+
+        try:
+            solver._validate_request(request)
+            verdict = "accepted"
+        except InvalidScheduleInputError as error:
+            verdict = error.code
+        try:
+            lattice = _start_lattice(_start_step(request, solver._grid), solver._grid.horizon)
+            domains = solver._start_domains(
+                request.requirements[0], request.frame_times, request.rasts, lattice,
+            )
+            # Read here too, so the property does not lean on the backstop it
+            # also covers.
+            empty = any(domain.is_empty() for domain in domains.values())
+        except InvalidScheduleInputError as error:
+            assert error.code == "LESSON_NO_START_FOR_REQUIREMENT"
+            empty = True
+
+        if verdict in domain_codes:
+            assert empty, f"seed {seed}: {verdict} refused a week whose domain has starts"
+        else:
+            assert not empty, f"seed {seed}: {verdict} with an empty start domain"
+        seen[verdict] = seen.get(verdict, 0) + 1
+
+    # And the generator reaches every kind of answer, or it proves nothing.
+    assert seen.keys() >= domain_codes | {"accepted"}, seen
+
+
+def test_a_changing_room_before_the_first_stretch_is_refused_on_the_real_day() -> None:
+    """The same composition on the configured 08:00-18:00 day, at its other edge.
+
+    Ninety minutes of idrott with ten minutes of changing before, a rast at
+    09:30-09:45 and a frame closing at 11:00: 08:00-09:30 holds the lesson but
+    the changing may not start before the day does, and 09:45-11:00 is 75
+    minutes. Without the changing the same week solves at 08:00, so the margin
+    is the half the sentence must name.
+    """
+    from app.exceptions import InvalidScheduleInputError
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    def week(before: int) -> dict[str, object]:
+        payload = _rast_payload(
+            [_rast("09:30", "09:45")], lessons_per_week=1, minutes_per_lesson=90,
+        )
+        payload["frameTimes"][0]["endTime"] = "11:00:00"  # type: ignore[index]
+        payload["requirements"][0]["minutesBefore"] = before  # type: ignore[index]
+        return payload
+
+    with pytest.raises(InvalidScheduleInputError) as error:
+        SchedulerSolver(_settings()).solve(OptimizeScheduleRequest.model_validate(week(10)))
+
+    assert error.value.code == "RAST_MARGIN_NO_STRETCH_FOR_REQUIREMENT"
+    assert (error.value.params["before"], error.value.params["remaining"]) == (10, 80)
+    assert "10 minutes before" in str(error.value)
+
+    response = SchedulerSolver(_settings()).solve(OptimizeScheduleRequest.model_validate(week(0)))
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert [lesson.start_time for lesson in response.lessons] == ["08:00:00"]
+
+
+def test_the_builder_refuses_an_empty_domain_by_name_rather_than_build_it() -> None:
+    """The backstop, reached the only way it can be now: past _validate_request.
+
+    The first fuzz week handed straight to the builder, as the next rule that
+    narrows a domain without a refusal of its own would hand it one. The
+    requirement and its length are named; no variable is built on nothing.
+    """
+    from app.exceptions import InvalidScheduleInputError
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(
+        SCHEDULE_DAYS="1,2,3,4,5,6",
+        SCHEDULE_DAY_START_MINUTES=480,
+        SCHEDULE_DAY_END_MINUTES=600,
+    ))
+    request = OptimizeScheduleRequest.model_validate(_week_a_frame_closes_the_only_roomy_day())
+    model = cp_model.CpModel()
+
+    with pytest.raises(InvalidScheduleInputError) as error:
+        solver._create_lesson_decisions(
+            model, request.requirements, len(request.rooms), request.frame_times,
+            request.rasts, step=1,
+        )
+
+    assert error.value.code == "LESSON_NO_START_FOR_REQUIREMENT"
+    assert error.value.params == {
+        "requirement": "00000000-0000-4000-8000-000000000003",
+        "grades": "8",
+        "minutes": 70,
+    }
+    assert not model.Proto().variables
+
+
+def test_a_step_that_empties_a_domain_is_our_500_and_names_no_requirement() -> None:
+    """The other emptiness, which is never the school's: the week's start step.
+
+    Every bound a start meets is a multiple of the step, so a domain the rows
+    leave starts in keeps one on it (_start_step proves it). A step that does
+    empty one has lost a constant, and that is a SolverBuildError — whose
+    message, unlike the CP-SAT text it replaces, carries no requirement id.
+    """
+    from app.exceptions import SolverBuildError
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    request = OptimizeScheduleRequest.model_validate(_fuzz_week(60))
+    requirement = request.requirements[0]
+    beyond_the_week = cp_model.Domain.FromValues([solver._grid.horizon + 1])
+
+    with pytest.raises(SolverBuildError) as error:
+        solver._start_domains(requirement, [], [], beyond_the_week)
+
+    assert str(requirement.id) not in str(error.value)
+
+
 def test_a_rast_leaves_the_meal_alone() -> None:
     """A lunchrast IS a rast, and the engine must not push the meal out of one.
 
