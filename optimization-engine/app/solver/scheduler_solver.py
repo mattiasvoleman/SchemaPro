@@ -2381,9 +2381,10 @@ class SchedulerSolver:
             (1 + D)L + GD   rules              day var per lesson, on-day
                             + GD if locks      boolean per lesson-day, one lunch
                             + 1 if seats       start per group-day, and with a
-                            + G'D if a max     daily maximum a count per day of
-                                               each group with more lessons
-                                               than it (G'). G counts
+                            + G'(D + 1)        daily maximum a count per day of
+                              if a max         each group with more lessons
+                                               than it (G') and the literal
+                                               its maximum hangs on. G counts
                                                every group that eats — the ones
                                                with lessons plus the ones only
                                                `groups` names, since a class
@@ -2556,11 +2557,13 @@ class SchedulerSolver:
                 request.groups, _group_ids_with_lessons(request.requirements),
             ),
         )
-        # The daily maximum's count per day (_day_totals), for each group with
-        # more lessons than the maximum: the builder's own skip.
+        # The daily maximum's count per day (_day_totals) and the literal the
+        # maximum hangs on, for each group with more lessons than the maximum:
+        # the builder's own skip.
         max_per_day = request.rules.max_lessons_per_day_per_group if request.rules else None
         daily_count_vars = (
-            day_count * sum(1 for count in lessons_by_group.values() if count > max_per_day)
+            (day_count + 1)
+            * sum(1 for count in lessons_by_group.values() if count > max_per_day)
             if max_per_day is not None
             else 0
         )
@@ -6933,6 +6936,28 @@ class SchedulerSolver:
             for group_id, group in by_group.items():
                 if len(group) <= max_per_day:
                     continue
+                # ONE LITERAL PER GROUP, the way distribution has one per
+                # requirement: the maximum is one row on the school rules,
+                # and the group is what the school opens to see why it
+                # binds. Posted bare it named nothing — a week it alone made
+                # impossible (five lessons on two open days, two a day) came
+                # back CONFLICT_NO_CORE, and the school read a guess about
+                # rooms and teacher time for a rule it can raise in one field.
+                daily_literal = registry.register(
+                    model,
+                    name=f"groupdailymax_{group_id}",
+                    # "För många lektioner", as DEMAND_CLIQUE_HOURS_SHORT
+                    # files a class's week: the class has more lessons than
+                    # its days take at the maximum.
+                    category="REQUIREMENT_DEMAND",
+                    code="GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT",
+                    params={
+                        "group": str(group_id),
+                        "maxPerDay": max_per_day,
+                        "lessons": len(group),
+                    },
+                    resource_ids=[group_id],
+                )
                 days = [self._day_var(model, d, day_vars) for d in group]
                 on_days: dict[int, cp_model.LinearExpr] = {}
                 for day_index in range(day_count):
@@ -6945,12 +6970,19 @@ class SchedulerSolver:
                         model.Add(days[k] != day_index).OnlyEnforceIf(b.Not())
                         on_day.append(b)
                     on_days[day_index] = sum(on_day)
-                # The maximum is each day's domain, and never `Σ on_day ≤
-                # max`: see _day_totals.
-                _day_totals(
+                # A count per day under the maximum, and never `Σ on_day ≤
+                # max`: see _day_totals. The counts and their week are bare,
+                # as definitions are, so their domain is the group's lessons
+                # and not the maximum; the maximum on them hangs on the
+                # literal. Phase 1 pins the literal true, so presolve still
+                # refutes on the week row the weeks it once threw on
+                # (test_solve_guard.py keeps them).
+                counts = _day_totals(
                     model, f"ondaycount_{group_id}", on_days,
-                    dict.fromkeys(on_days, max_per_day), len(group),
+                    dict.fromkeys(on_days, len(group)), len(group),
                 )
+                for count in counts.values():
+                    model.Add(count <= max_per_day).OnlyEnforceIf(daily_literal)
 
         # --- Guaranteed lunch break per student group per day ---------------
         if _lunch_window_is_set(rules):
@@ -9197,8 +9229,14 @@ def _day_totals(
 
     How a cap on a day is posted, by every builder that caps what a day takes:
     `total_d == Σ on day d`, `total_d` in [0, most_d], and `Σ_d total_d ==
-    week`. The cap is then a bound on `total_d` — its domain, or a row on it
-    under the rule's literal — and never the day's sum against a number.
+    week`. The cap is then a row on `total_d` under the rule's literal, and
+    never the day's sum against a number — nor the domain, which is what the
+    day could hold at all and so a definition like the rest. A domain is
+    posted bare, and a bare rule proves a week impossible without touching an
+    assumption: the core comes back empty and names no cause. The class daily
+    maximum was a domain once: of 557 impossible weeks from the guard's fuzz
+    generator, 40 came back with an empty core, and on its literal 4 do, none
+    of them a week with the maximum in it.
 
     THE SUM AGAINST A NUMBER IS WHAT CP-SAT 9.15.6755 THREW ON. Once presolve
     has narrowed a set of lessons to two days, a lesson's literal for one day
@@ -9239,8 +9277,8 @@ def _day_totals(
     days on every class.
 
     `on_days` maps every day a lesson can land on to that day's sum, and
-    `most` gives each day's domain; a day missing from `on_days` must be one
-    no lesson reaches, or the week row would be wrong.
+    `most` gives each day's domain, never a rule's cap; a day missing from
+    `on_days` must be one no lesson reaches, or the week row would be wrong.
     """
     totals = {
         day_index: model.NewIntVar(0, most[day_index], f"{name}_{day_index}")

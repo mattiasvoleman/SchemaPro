@@ -4016,6 +4016,67 @@ describe('OptimizationProxyService', () => {
       });
     });
 
+    it.each([
+      ['a class', { id: GROUP_ID, gradeLevel: 7, kind: 'CLASS', name: '7A' }],
+      [
+        'a teaching group',
+        { id: '77777777-7777-4777-8777-777777777777', gradeLevel: null, kind: 'TEACHING_GROUP', name: 'Spanska 7' },
+      ],
+    ])('names %s whose daily maximum is in the core by the name the school gave it', async (_label, group) => {
+      /*
+       * The school rules' maximum applies to every class and teaching group on
+       * its own, and the engine names the one it binds by the requirement's
+       * anonymous group id: in the values, in resourceIds and in its English.
+       * Each comes back as the group the school knows.
+       */
+      arrange({
+        requirements: [requirement({ studentGroupId: group.id })],
+        groups: [{ id: GROUP_ID, gradeLevel: 7, kind: 'CLASS', name: '7A' }, group],
+        teachingMembers: [
+          { studentId: '00000000-0000-4000-8000-900000000000', studentGroupId: group.id },
+        ],
+      });
+      http.post.mockImplementation((_url: string, payload: any) => {
+        const anonymous = payload.requirements[0].studentGroupId as string;
+        return of({
+          data: {
+            requestId: payload.requestId,
+            status: 'INFEASIBLE',
+            lessons: [],
+            conflicts: {
+              summary: 'No timetable satisfies every rule.',
+              summaryCode: 'CONFLICT_CORE_SUMMARY',
+              summaryParams: {},
+              conflicts: [
+                {
+                  category: 'REQUIREMENT_DEMAND',
+                  code: 'GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT',
+                  params: { group: anonymous, maxPerDay: 2, lessons: 5 },
+                  message: `Student group ${anonymous} may have at most 2 lessons a day under the school rules and has 5 lessons to place this week.`,
+                  requirementIds: [],
+                  roomIds: [],
+                  constraintIds: [],
+                  resourceIds: [anonymous],
+                },
+              ],
+            },
+          },
+        });
+      });
+
+      const result = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(result.conflicts?.conflicts[0]).toEqual(
+        expect.objectContaining({
+          code: 'GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT',
+          params: { group: group.name, maxPerDay: 2, lessons: 5 },
+          message: `Student group ${group.name} may have at most 2 lessons a day under the school rules and has 5 lessons to place this week.`,
+          resourceIds: [group.id],
+          resourceNames: [group.name],
+        }),
+      );
+    });
+
     it('names a timplan row by its subject and group, and a room type by its name', async () => {
       // A refusal that said "Timplansposten 8f2c…" named something a rektor
       // could not look up. A timplan row carries no name of its own, so it is

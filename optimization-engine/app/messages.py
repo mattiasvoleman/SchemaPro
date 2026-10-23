@@ -240,6 +240,17 @@ MESSAGES: dict[str, str] = {
         "Lessons of {requirements, plural, one {# requirement} other {# requirements}} need "
         "{demandMinutes} minutes a week and the week offers {capacityMinutes}."
     ),
+    # The school rules' "Max lessons per day", which applies to every class and
+    # teaching group on its own: `group` is the anonymous id the gateway names,
+    # `lessons` the group's lessons this run places. The days are not in the
+    # sentence because the core cannot say which rule closed them.
+    "GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT": (
+        "Student group {group} may have at most {maxPerDay, plural, one {# lesson} other "
+        "{# lessons}} a day under the school rules and has {lessons, plural, one {# lesson} "
+        "other {# lessons}} to place this week. That maximum is one of the rules that cannot all "
+        "hold at once. Raise Max lessons per day under School rules, or free more days for the "
+        "group's lessons."
+    ),
     "LUNCH_BREAK_IS_THE_DIFFERENCE": (
         "The {lunchMinutes}-minute lunch break is what leaves no room: without it the week would "
         "hold these lessons ({freeMinutes} minutes free)."

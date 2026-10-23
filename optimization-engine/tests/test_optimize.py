@@ -2386,6 +2386,176 @@ def test_a_per_day_lesson_cap_and_a_seat_limit_hold_at_the_same_time() -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# The class daily maximum under its own literal
+# ---------------------------------------------------------------------------
+#
+# The school rules' "Max lessons per day" was posted bare: a bound on each
+# day's count with no literal under it. A week it alone made impossible was
+# then proved so without touching an assumption, the core came back empty,
+# and the school read CONFLICT_NO_CORE_GUESS — rooms and teacher time — for a
+# rule it can raise in one field.
+
+#: Five lessons for one class, at most two a day.
+_DAILY_MAXIMUM = 2
+_DAILY_MAXIMUM_LESSONS = 5
+
+
+def _daily_maximum_week(*, frames: bool) -> tuple[dict[str, object], str]:
+    """One class's five lessons from two teachers, under the daily maximum.
+
+    With `frames` the frame times close Wednesday to Friday for year 7, as a
+    school's own would, and the week is the default 08:00-18:00 one; without,
+    the week itself has the days. Two days at two a day hold four lessons
+    either way, and three days would hold all five.
+    """
+    group = str(uuid4())
+    years = {"minGradeLevel": 7, "maxGradeLevel": 7}
+    payload: dict[str, object] = {
+        "requestId": str(uuid4()),
+        "academicYearId": str(uuid4()),
+        "requirements": [
+            {
+                "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": group,
+                "teacherId": str(uuid4()), "lessonsPerWeek": lessons, "minutesPerLesson": 60,
+                "studentGroupSize": 24, **years,
+            }
+            for lessons in (3, _DAILY_MAXIMUM_LESSONS - 3)
+        ],
+        "groups": [{"id": group, "lunchHeadcount": 24, **years}],
+        "rooms": [{"id": str(uuid4()), "capacity": 30}],
+        "rules": {"maxLessonsPerDayPerGroup": _DAILY_MAXIMUM},
+    }
+    if frames:
+        payload["frameTimes"] = [
+            {**years, "dayOfWeek": day, "startTime": "06:00:00", "endTime": "07:00:00"}
+            for day in (3, 4, 5)
+        ]
+    return payload, group
+
+
+@pytest.mark.parametrize(
+    ("frames", "days", "open_days"),
+    [(False, "1,2", "1,2,3"), (True, "1,2,3,4,5", None)],
+    ids=["a two-day week", "frame times that leave Monday and Tuesday"],
+)
+def test_a_week_the_class_daily_maximum_alone_makes_impossible_names_it(
+    frames: bool, days: str, open_days: str | None,
+) -> None:
+    """The example week: five lessons, two days, at most two a day.
+
+    Through the API, because the code, its values and the class's id are
+    what the gateway reads. Before the literal the same week came back
+    CONFLICT_NO_CORE with the guess as its only line.
+    """
+    payload, group = _daily_maximum_week(frames=frames)
+    headers = {"X-API-Key": API_KEY}
+    client = TestClient(create_app(_settings(SCHEDULE_DAYS=days, SOLVER_PROBE_SECONDS=0)))
+
+    body = client.post("/api/v1/optimize", json=payload, headers=headers).json()
+
+    assert body["status"] == "INFEASIBLE", body
+    assert body["conflicts"]["summaryCode"] == "CONFLICT_CORE_SUMMARY", body["conflicts"]
+    named = [
+        conflict for conflict in body["conflicts"]["conflicts"]
+        if conflict["code"] == "GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT"
+    ]
+    assert len(named) == 1, [conflict["code"] for conflict in body["conflicts"]["conflicts"]]
+    assert named[0]["category"] == "REQUIREMENT_DEMAND"
+    assert named[0]["params"] == {
+        "group": group, "maxPerDay": _DAILY_MAXIMUM, "lessons": _DAILY_MAXIMUM_LESSONS,
+    }
+    assert named[0]["resourceIds"] == [group]
+    assert named[0]["message"].startswith(
+        f"Student group {group} may have at most 2 lessons a day under the school rules "
+        "and has 5 lessons to place this week.",
+    )
+
+    # The control: a third day holds the fifth lesson, so the maximum and
+    # nothing else of the week is what the refusal is about.
+    if open_days is None:
+        payload["frameTimes"] = payload["frameTimes"][1:]  # type: ignore[index]
+        opened = client
+    else:
+        opened = TestClient(create_app(_settings(SCHEDULE_DAYS=open_days)))
+    solved = opened.post("/api/v1/optimize", json=payload, headers=headers).json()
+    assert solved["status"] in {"OPTIMAL", "FEASIBLE"}, solved.get("conflicts")
+
+
+def test_the_class_daily_maximum_hangs_on_its_literal_and_the_counts_are_bare() -> None:
+    """What a core can only suggest, asked of the model directly.
+
+    The literal pinned false lifts the maximum and the week solves; pinned
+    true it does not. And the day counts carry the group's lessons as their
+    domain, not the maximum: a domain is posted bare, and a maximum there
+    would prove the week impossible with no literal in the proof again.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload, group = _daily_maximum_week(frames=False)
+    solver = SchedulerSolver(_settings(SCHEDULE_DAYS="1,2", SOLVER_MAX_TIME_SECONDS=10.0))
+    request = OptimizeScheduleRequest.model_validate(payload)
+
+    def solved_with(maximum: bool) -> int:
+        model, registry, *_ = solver._build_model(
+            request, use_assumptions=True, include_objective=False,
+        )
+        model.ClearAssumptions()
+        daily = [
+            record for record in registry._records
+            if record.code == "GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT"
+        ]
+        assert [str(record.resource_ids[0]) for record in daily] == [group]
+        for record in registry._records:
+            on = maximum or record.code != "GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT"
+            model.Add(record.literal == int(on))
+        counts = [
+            variable for variable in model.Proto().variables
+            if variable.name.startswith(f"ondaycount_{group}_")
+        ]
+        assert [list(variable.domain) for variable in counts] == (
+            [[0, _DAILY_MAXIMUM_LESSONS]] * 2
+        )
+        cp = cp_model.CpSolver()
+        cp.parameters.num_workers = 1
+        cp.parameters.max_time_in_seconds = 10.0
+        return cp.Solve(model)
+
+    assert solved_with(maximum=True) == cp_model.INFEASIBLE
+    assert solved_with(maximum=False) in {cp_model.OPTIMAL, cp_model.FEASIBLE}
+
+
+def test_the_estimate_charges_the_daily_maximum_s_literal() -> None:
+    """One literal per group the maximum can bind, beside its day counts.
+
+    Three classes on the five-day week: two with more lessons than the
+    maximum and one with fewer, which the builder skips and the estimate
+    must not charge. The (1 + D)L day terms are charged with or without the
+    rule, so the maximum's own share is exactly G'(D + 1).
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    payload = _dining_payload([24, 24, 24], lessons_per_week=3)
+    payload["requirements"][2]["lessonsPerWeek"] = 2  # type: ignore[index]
+    payload["rules"] = None
+    ruleless = OptimizeScheduleRequest.model_validate(payload)
+    payload["rules"] = {"maxLessonsPerDayPerGroup": 2}
+    capped = OptimizeScheduleRequest.model_validate(payload)
+
+    capped_groups, days = 2, 5
+    assert solver._estimate_model_size(capped) - solver._estimate_model_size(ruleless) == (
+        capped_groups * (days + 1)
+    )
+    model, registry, *_ = solver._build_model(capped, use_assumptions=False)
+    assert sum(
+        1 for record in registry._records if record.code == "GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT"
+    ) == capped_groups
+    assert solver._estimate_model_size(capped) >= len(model.Proto().variables)
+
+
 def test_a_feasible_solve_leaves_the_assumptions_field_empty() -> None:
     """The fast path must not populate CpModel.assumptions.
 
