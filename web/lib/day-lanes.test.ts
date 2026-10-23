@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { layoutClusters, layoutDay } from "@/lib/day-lanes";
+import { layoutDay } from "@/lib/day-lanes";
+import { layoutClusters } from "@/lib/day-clusters";
 
 const at = (start: string, end: string, name: string) => {
   const minutes = (time: string) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3));

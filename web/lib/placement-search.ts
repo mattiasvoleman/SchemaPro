@@ -9,7 +9,7 @@
 // it. The page reaches these through components/schedule/lesson-dialogs.ts, the
 // chunk it fetches right after mounting, so they cost the route nothing.
 
-import type { AvailabilityConstraint } from "@/lib/types";
+import type { AvailabilityConstraint, MasterLesson, TeachingRequirement } from "@/lib/types";
 import {
   groupsOf,
   overlaps,
@@ -292,4 +292,62 @@ export function findOpenSlots(options: {
   }
 
   return [...primaryMatches, ...fallbackMatches].slice(0, limit);
+}
+
+/**
+ * Lägg till's slot finder: the open slots for the lesson being added, from its
+ * classes and pupils, the subject's teachers on the timplan and the length
+ * the dialog holds.
+ *
+ * The timplan's teachers for these classes are tried first and the subject's
+ * other teachers after; a length the dialog does not hold yet is an hour, and
+ * the weekend is searched only at a school that teaches on one. Here rather
+ * than in the page, so that it arrives with the search it feeds.
+ */
+export function openSlotsFor(
+  draft: {
+    subjectId: string;
+    studentGroupId: string;
+    extraGroupIds: string[];
+    studentIds: string[];
+    startTime: string;
+    endTime: string;
+  },
+  context: {
+    requirements: TeachingRequirement[];
+    lessons: MasterLesson[];
+    studentGroupOf: Map<string, string | null>;
+    placements: Placement[];
+    constraints: AvailabilityConstraint[];
+  },
+): OpenSlotMatch[] {
+  const groupIds = [draft.studentGroupId, ...draft.extraGroupIds];
+
+  const subjectRequirements = context.requirements.filter(
+    (requirement) => requirement.subjectId === draft.subjectId,
+  );
+  const primaryTeacherIds = subjectRequirements
+    .filter((requirement) => groupIds.includes(requirement.studentGroupId))
+    .flatMap((requirement) => [requirement.teacherId, requirement.coTeacherId])
+    .filter((id): id is string => Boolean(id));
+  const fallbackTeacherIds = subjectRequirements
+    .flatMap((requirement) => [requirement.teacherId, requirement.coTeacherId])
+    .filter((id): id is string => Boolean(id));
+
+  const startMin = draft.startTime ? timeToMinutes(draft.startTime) : 0;
+  const endMin = draft.endTime ? timeToMinutes(draft.endTime) : 0;
+  const duration = endMin > startMin ? endMin - startMin : 60;
+  const hasWeekend = context.lessons.some((lesson) => lesson.dayOfWeek > 5);
+
+  return findOpenSlots({
+    studentGroupIds: groupIds,
+    participantStudentIds: draft.studentIds,
+    studentGroupOf: context.studentGroupOf,
+    durationMinutes: duration,
+    primaryTeacherIds,
+    fallbackTeacherIds,
+    placements: context.placements,
+    constraints: context.constraints,
+    days: hasWeekend ? [1, 2, 3, 4, 5, 6, 7] : [1, 2, 3, 4, 5],
+  });
 }

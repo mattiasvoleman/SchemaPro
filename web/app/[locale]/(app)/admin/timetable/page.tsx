@@ -8,8 +8,6 @@ import {
   CalendarDays,
   Download,
   History,
-  Lock,
-  LockOpen,
   FileText,
   Footprints,
   MoreHorizontal,
@@ -21,7 +19,6 @@ import {
   UtensilsCrossed,
   Undo2,
   Upload,
-  X,
 } from "lucide-react";
 import {
   useAcademicYears,
@@ -45,9 +42,9 @@ import {
   useRasts,
 } from "@/lib/queries";
 /*
- * The two exports are imported where they are pressed, not here. Neither is
- * needed to SHOW the week — the school asks for a file — and between them they
- * are 264 lines this route pays for on load. lib/pdf.ts already reasons this
+ * The two exports are imported where they are pressed, not here, and so are
+ * the rows this page feeds them (./timetable-exports.ts). Neither is needed to
+ * SHOW the week — the school asks for a file. lib/pdf.ts already reasons this
  * way about jspdf inside its own export function; this moves the wrapper the
  * same distance.
  */
@@ -80,7 +77,9 @@ import { FilterPicker } from "@/components/schedule/filter-picker";
  * decimal. React is in every route already, so lazy() costs nothing on top.
  * No lazy component is reachable during SSR: every *Used latch below
  * (confirm, edit, create, suggest, versions, rooms, publish) is false at first
- * render, and each lazy dialog is mounted only behind its latch.
+ * render, and each lazy dialog is mounted only behind its latch. The
+ * selection's bar is drawn once the lessons are read, which they are not at
+ * first render either.
  */
 const RoomOptimizationDialog = lazy(() =>
   import("@/components/schedule/room-optimization-dialog").then((module) => ({
@@ -149,6 +148,15 @@ const lazyLessonTime = () =>
     })),
   );
 let LessonTimePanel = lazyLessonTime();
+/*
+ * The selection's bar (components/schedule/selection-bar.tsx), from the lesson
+ * dialogs' chunk but with a lazy() of its own: a dialog that fails to load
+ * remakes lazyLessonDialogs, and a bar on screen would go with it. Made again
+ * after its own failed fetch, for the reason lazyLessonDialogs is.
+ */
+const lazySelectionBar = () =>
+  lazy(() => loadLessonDialogs().then((module) => ({ default: module.SelectionBar })));
+let SelectionBar = lazySelectionBar();
 import { DialogLoadBoundary } from "@/components/schedule/dialog-load-boundary";
 import type { CreateDraft } from "@/components/schedule/create-lesson-dialog";
 import type { LessonEditDraft } from "@/components/schedule/lesson-edit-dialog";
@@ -479,6 +487,15 @@ export default function TimetablePage() {
     SuggestPlacementsDialog,
   } = lazyDialogs;
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
+  /*
+   * How often the selection's bar failed to arrive. It is drawn, empty, as
+   * soon as the lessons are read, so its code is in hand before the first
+   * selection and that one shows the bar at once: a lazy() that renders for
+   * the first time suspends, and React then holds the bar back up to 300 ms.
+   * After a failure it is drawn only with a selection, so the next selection
+   * fetches again and nothing retries behind the school's back.
+   */
+  const [barFailures, setBarFailures] = useState(0);
 
   /**
    * Change what is on screen and the selection goes with it.
@@ -1507,73 +1524,6 @@ export default function TimetablePage() {
       .map((id) => lessonById.get(id))
       .filter((lesson): lesson is MasterLesson => Boolean(lesson));
 
-  const bulkSetLock = async (isLocked: boolean) => {
-    // A card's whole block: the generation refuses a block locked in part.
-    const targets = selectedLessons(true).filter((lesson) => lesson.isLocked !== isLocked);
-    if (targets.length === 0) return;
-    try {
-      for (const lesson of targets) {
-        await updateLesson.mutateAsync({ id: lesson.id, isLocked, propagate: false });
-      }
-      history.push({
-        label: "bulk-lock",
-        undo: async () => {
-          for (const lesson of targets) {
-            await updateLesson.mutateAsync({
-              id: lesson.id,
-              isLocked: !isLocked,
-              propagate: false,
-            });
-          }
-        },
-        redo: async () => {
-          for (const lesson of targets) {
-            await updateLesson.mutateAsync({ id: lesson.id, isLocked, propagate: false });
-          }
-        },
-      });
-      toast.success(t("bulkDone", { count: targets.length }));
-    } catch (error) {
-      showError(error);
-    }
-  };
-
-  const bulkDelete = async () => {
-    const targets = selectedLessons();
-    if (targets.length === 0) return;
-    try {
-      // The SAME fields undoableDelete restores, and for the reason its own
-      // comment gives twelve lines up: without them undo quietly turns an
-      // odd-week lesson into a weekly one. This path carried nine of the
-      // fourteen, so a bulk undo also dropped the extra classes and the
-      // individually named pupils — silently, on the lessons most likely to
-      // have them.
-      const inputs: CreateMasterLessonInput[] = targets.map(restorableInput);
-      const refs = targets.map((lesson) => ({ id: lesson.id }));
-      for (const lesson of targets) {
-        await deleteLesson.mutateAsync(lesson.id);
-      }
-      history.push({
-        label: "bulk-delete",
-        undo: async () => {
-          for (let i = 0; i < inputs.length; i++) {
-            const again = await createLesson.mutateAsync(inputs[i]);
-            refs[i].id = again.id;
-          }
-        },
-        redo: async () => {
-          for (const ref of refs) {
-            await deleteLesson.mutateAsync(ref.id);
-          }
-        },
-      });
-      setSelectedIds(new Set());
-      toast.success(t("bulkDeleted", { count: targets.length }));
-    } catch (error) {
-      showError(error);
-    }
-  };
-
   // -------------------------------------------------------------------
   // Versions
   // -------------------------------------------------------------------
@@ -1817,37 +1767,15 @@ export default function TimetablePage() {
    */
   const runSlotSearch = () => {
     if (!creating || !creating.subjectId || !creating.studentGroupId) return;
-    const groupIds = [creating.studentGroupId, ...creating.extraGroupIds];
-
-    const subjectRequirements = (requirements ?? []).filter(
-      (requirement) => requirement.subjectId === creating.subjectId,
-    );
-    const primaryTeacherIds = subjectRequirements
-      .filter((requirement) => groupIds.includes(requirement.studentGroupId))
-      .flatMap((requirement) => [requirement.teacherId, requirement.coTeacherId])
-      .filter((id): id is string => Boolean(id));
-    const fallbackTeacherIds = subjectRequirements
-      .flatMap((requirement) => [requirement.teacherId, requirement.coTeacherId])
-      .filter((id): id is string => Boolean(id));
-
-    const startMin = creating.startTime ? timeToMinutes(creating.startTime) : 0;
-    const endMin = creating.endTime ? timeToMinutes(creating.endTime) : 0;
-    const duration = endMin > startMin ? endMin - startMin : 60;
-    const hasWeekend = (lessons ?? []).some((lesson) => lesson.dayOfWeek > 5);
-
     // Pressed inside Lägg till, whose chunk carries the search: loaded by now.
-    loadLessonDialogs().then(({ findOpenSlots }) => {
+    loadLessonDialogs().then(({ openSlotsFor }) => {
       setSlotMatches(
-        findOpenSlots({
-          studentGroupIds: groupIds,
-          participantStudentIds: creating.studentIds,
+        openSlotsFor(creating, {
+          requirements: requirements ?? [],
+          lessons: lessons ?? [],
           studentGroupOf,
-          durationMinutes: duration,
-          primaryTeacherIds,
-          fallbackTeacherIds,
           placements,
           constraints: constraints ?? [],
-          days: hasWeekend ? [1, 2, 3, 4, 5, 6, 7] : [1, 2, 3, 4, 5],
         }),
       );
     }, showError);
@@ -1885,103 +1813,27 @@ export default function TimetablePage() {
   // Export
   // -------------------------------------------------------------------
 
-
-  /** "Utkast – ej publicerat" when the grid is an unpublished draft (lib/publication-draft-notice.ts). */
-  const draftNotice = async (): Promise<string | null> => {
-    if (!shownYear) return null;
-    const { draftPendingFor } = await import("@/lib/publication-draft-notice");
-    return (await draftPendingFor(shownYear.id)) ? t("draftExportNotice") : null;
-  };
-
-  const doExportIcs = async () => {
-    if (!shownYear) return;
-    const [{ buildIcs, downloadIcs }, notice] = await Promise.all([import("@/lib/ics"), draftNotice()]);
-    const ics = buildIcs(
-      filtered.map((lesson) => {
-        const teacher = lesson.teacherId ? teacherById.get(lesson.teacherId) : null;
-        return {
-          id: lesson.id,
-          dayOfWeek: lesson.dayOfWeek,
-          startTime: toHHMM(lesson.startTime),
-          endTime: toHHMM(lesson.endTime),
-          summary: [
-            subjectById.get(lesson.subjectId)?.name ?? "",
-            groupLabel(lesson),
-          ]
-            .filter(Boolean)
-            .join(" — "),
-          location: lesson.roomId
-            ? (roomById.get(lesson.roomId)?.name ?? undefined)
-            : undefined,
-          // The fraction belongs here too. A calendar entry is one block on a
-          // phone whether four pupils or fourteen are in it, and the subscriber
-          // cannot see the grid's badge.
-          description:
-            [
-              teacher ? `${teacher.firstName} ${teacher.lastName}` : null,
-              shareLabelOf(lesson)
-                ? t("sharePupils", {
-                    attending: audienceByLesson.get(lesson.id)!.attending,
-                    total: audienceByLesson.get(lesson.id)!.cohortSize,
-                    group: onlyGroup ? (groupById.get(onlyGroup)?.name ?? "") : "",
-                  })
-                : null,
-            ]
-              .filter(Boolean)
-              .join(" · ") || undefined,
-          // Without these a subscriber sees slöjd every week when it runs
-          // every other, and a spring course all through the autumn.
-          recurrence: lesson.recurrence,
-          startDate: lesson.startDate,
-          endDate: lesson.endDate,
-        };
-      }),
-      {
-        calendarName: notice ? `${t("title")} (${notice})` : t("title"),
-        yearStart: shownYear.startDate,
-        yearEnd: shownYear.endDate,
-      },
-    );
-    downloadIcs("timetable.ics", ics);
-    toast.success(t("icsExported", { count: filtered.length }));
-  };
-
-  const doExportPdf = async () => {
-    const [{ exportTimetablePdf }, notice] = await Promise.all([import("@/lib/pdf"), draftNotice()]);
-    await exportTimetablePdf({
-      title: t("title"),
-      subtitle: [shownYear?.name, notice].filter(Boolean).join(" · ") || undefined,
-      dayNames: [1, 2, 3, 4, 5, 6, 7].map((day) => tDays(String(day))),
-      columnLabels: {
-        time: t("editStart"),
-        subject: t("addSubject"),
-        group: t("addGroup"),
-        teacher: t("editTeacher"),
-        room: t("editRoom"),
-      },
-      lessons: filtered.map((lesson) => {
-        const teacher = lesson.teacherId ? teacherById.get(lesson.teacherId) : null;
-        const coTeacher = lesson.coTeacherId
-          ? teacherById.get(lesson.coTeacherId)
-          : null;
-        return {
-          dayOfWeek: lesson.dayOfWeek,
-          startTime: toHHMM(lesson.startTime),
-          endTime: toHHMM(lesson.endTime),
-          subject: subjectById.get(lesson.subjectId)?.name ?? "",
-          group: [groupLabel(lesson), shareLabelOf(lesson)]
-            .filter(Boolean)
-            .join(" "),
-          teacher: [
-            teacher ? `${teacher.firstName[0]}. ${teacher.lastName}` : null,
-            coTeacher ? `${coTeacher.firstName[0]}. ${coTeacher.lastName}` : null,
-          ]
-            .filter(Boolean)
-            .join(" + "),
-          room: lesson.roomId ? (roomById.get(lesson.roomId)?.name ?? "") : "",
-        };
-      }),
-    });
+  /** ICS or PDF of what the filters show, built where it is fetched: ./timetable-exports.ts. */
+  const doExport = async (kind: "exportIcs" | "exportPdf") => {
+    try {
+      const files = await import("./timetable-exports");
+      await files[kind]({
+        t,
+        tDays,
+        year: shownYear,
+        lessons: filtered,
+        subjectById,
+        teacherById,
+        roomById,
+        groupLabel,
+        shareLabelOf,
+        audienceByLesson,
+        onlyGroupName: onlyGroup ? (groupById.get(onlyGroup)?.name ?? "") : "",
+      });
+    } catch (error) {
+      // A file chunk that did not arrive, or a PDF that could not be drawn.
+      showError(error);
+    }
   };
 
   const conflictCount = conflictMap.size;
@@ -2070,14 +1922,14 @@ export default function TimetablePage() {
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   disabled={!shownYear || filtered.length === 0}
-                  onSelect={fromMenu(() => void doExportIcs())}
+                  onSelect={fromMenu(() => void doExport("exportIcs"))}
                 >
                   <Download />
                   {t("exportIcs")}
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   disabled={!shownYear || filtered.length === 0}
-                  onSelect={fromMenu(() => void doExportPdf())}
+                  onSelect={fromMenu(() => void doExport("exportPdf"))}
                 >
                   <FileText />
                   {t("exportPdf")}
@@ -2337,28 +2189,38 @@ export default function TimetablePage() {
         <Notice>{t("placeLunchHint", { minutes: lunchSettings?.lunchMinutes ?? 0 })}</Notice>
       ) : null}
 
-      {selectedIds.size > 0 ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-md border bg-accent/40 px-3 py-2">
-          <span className="text-sm font-medium">
-            {t("bulkSelected", { count: selectedLessons().length })}
-          </span>
-          <Button size="sm" variant="outline" onClick={() => void bulkSetLock(true)} data-writes="SCHEMALAGGNING DRIFT">
-            <Lock />
-            {t("bulkLock")}
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => void bulkSetLock(false)} data-writes="SCHEMALAGGNING DRIFT">
-            <LockOpen />
-            {t("bulkUnlock")}
-          </Button>
-          <Button size="sm" variant="destructive" onClick={() => void bulkDelete()} data-writes="SCHEMALAGGNING DRIFT">
-            <Trash2 />
-            {t("bulkDelete")}
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}>
-            <X />
-            {t("bulkClear")}
-          </Button>
-        </div>
+      {/* Drawn from the lesson dialogs' chunk (see barFailures). A chunk that
+          does not arrive lets a selection go, says so once, and is fetched
+          again at the next selection. */}
+      {lessons && (barFailures === 0 || selectedIds.size > 0) ? (
+        <DialogLoadBoundary
+          key={`selection-${barFailures}`}
+          onError={() => {
+            SelectionBar = lazySelectionBar();
+            setBarFailures((failures) => failures + 1);
+            if (selectedIds.size === 0) return;
+            toast.error(t("selectionReleased"));
+            setSelectedIds(new Set());
+          }}
+        >
+          <Suspense fallback={null}>
+            <SelectionBar
+              shown={selectedIds.size > 0}
+              selectedLessons={selectedLessons}
+              updateLesson={updateLesson}
+              deleteLesson={deleteLesson}
+              createLesson={createLesson}
+              history={history}
+              showError={showError}
+              onClear={() => setSelectedIds(new Set())}
+              // Handed in rather than imported there: every admin page with a
+              // delete button shares this icon, and taking it out of this
+              // route's first load re-sliced their chunks (/admin/people
+              // +1.4KB, /admin/lunch-servings +1.1KB, measured 2026-10-23).
+              deleteIcon={<Trash2 />}
+            />
+          </Suspense>
+        </DialogLoadBoundary>
       ) : null}
 
       {/*

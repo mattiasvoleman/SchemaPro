@@ -270,6 +270,7 @@ const toasts = vi.hoisted(() => ({
   success: vi.fn(),
   error: vi.fn(),
   warning: vi.fn(),
+  info: vi.fn(),
 }));
 vi.mock("sonner", () => ({ toast: toasts }));
 
@@ -288,6 +289,46 @@ vi.mock("@/components/schedule/lesson-edit-dialog", async (importOriginal) => {
     LessonEditDialog: (props: Parameters<typeof real.LessonEditDialog>[0]) => {
       if (lessonDialogsLoad.fail) throw new Error("Failed to load chunk lesson-dialogs");
       return createElement(real.LessonEditDialog, props);
+    },
+  };
+});
+
+/*
+ * The selection's bar as it really is, unless a row says its chunk did not
+ * arrive: then it throws while it renders, as lazy() does with a fetch that
+ * failed. Every draw is noted, so a row can see that the bar was in hand
+ * before anything was selected.
+ */
+const selectionBarLoad = vi.hoisted(() => ({ fail: false, draws: [] as boolean[] }));
+vi.mock("@/components/schedule/selection-bar", async (importOriginal) => {
+  const { createElement } = await import("react");
+  const real = await importOriginal<typeof import("@/components/schedule/selection-bar")>();
+  return {
+    ...real,
+    SelectionBar: (props: Parameters<typeof real.SelectionBar>[0]) => {
+      selectionBarLoad.draws.push(props.shown);
+      if (selectionBarLoad.fail) throw new Error("Failed to load chunk lesson-dialogs");
+      return createElement(real.SelectionBar, props);
+    },
+  };
+});
+
+/* The two exports as they really are, unless a row says their chunk did not arrive. */
+const exportsLoad = vi.hoisted(() => ({ fail: false }));
+vi.mock("./timetable-exports", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./timetable-exports")>();
+  const arrive = () => {
+    if (exportsLoad.fail) throw new Error("Failed to load chunk timetable-exports");
+  };
+  return {
+    ...real,
+    exportIcs: async (input: Parameters<typeof real.exportIcs>[0]) => {
+      arrive();
+      return real.exportIcs(input);
+    },
+    exportPdf: async (input: Parameters<typeof real.exportPdf>[0]) => {
+      arrive();
+      return real.exportPdf(input);
     },
   };
 });
@@ -1448,6 +1489,127 @@ describe("a lesson dialog whose code does not arrive", () => {
     openSlojd();
     expect((await screen.findByRole("dialog")).textContent).toContain("Slöjd · 5.1 · K. Ek");
     expect(toasts.error).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the selection's bar", () => {
+  beforeEach(() => {
+    selectionBarLoad.draws = [];
+    toasts.error.mockClear();
+    toasts.success.mockClear();
+    noMutation.mutateAsync.mockReset().mockResolvedValue({ id: "x" });
+  });
+  afterEach(() => {
+    selectionBarLoad.fail = false;
+  });
+
+  const selectSlojd = (container: HTMLElement) =>
+    fireEvent.keyDown(container.querySelector('[data-lesson-id="l-slojd"]')!, {
+      key: "Enter",
+      shiftKey: true,
+    });
+
+  it("is in hand before anything is selected, so the first selection shows it at once", async () => {
+    const { container } = render(<TimetablePage />);
+    // Drawn, empty, as soon as the lessons are read: its code has arrived.
+    await waitFor(() => expect(selectionBarLoad.draws).toContain(false));
+
+    selectSlojd(container);
+    // In the same commit as the selection: nothing suspends, nothing waits.
+    expect(screen.getByText("timetable.bulkSelected(1)")).toBeInTheDocument();
+  });
+
+  it("lets a selection go once when its code does not arrive, and fetches it again at the next one", async () => {
+    selectionBarLoad.fail = true;
+    const { container } = render(<TimetablePage />);
+    // The first fetch fails with nothing selected: nobody lost anything, so
+    // nothing is said.
+    await waitFor(() => expect(selectionBarLoad.draws.length).toBeGreaterThan(0));
+    expect(toasts.error).not.toHaveBeenCalled();
+
+    // The next selection fetches again, fails again, and lets the selection go.
+    const drawn = selectionBarLoad.draws.length;
+    selectSlojd(container);
+    await waitFor(() => expect(toasts.error).toHaveBeenCalledWith("timetable.selectionReleased"));
+    expect(selectionBarLoad.draws.length).toBeGreaterThan(drawn);
+    expect(screen.queryByText(/timetable\.bulkSelected/)).toBeNull();
+
+    // The connection is back: the next selection shows the bar, and the one
+    // failure was said once.
+    selectionBarLoad.fail = false;
+    selectSlojd(container);
+    expect(await screen.findByText("timetable.bulkSelected(1)")).toBeInTheDocument();
+    expect(toasts.error).toHaveBeenCalledTimes(1);
+  });
+
+  it("undoes and redoes a bulk lock and a bulk delete, and lets a deleted selection go", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<TimetablePage />);
+    selectSlojd(container);
+    await user.click(await screen.findByRole("button", { name: "timetable.bulkLock" }));
+    await waitFor(() =>
+      expect(noMutation.mutateAsync).toHaveBeenCalledWith({ id: "l-slojd", isLocked: true, propagate: false }),
+    );
+    expect(toasts.success).toHaveBeenCalledWith("timetable.bulkDone(1)");
+
+    noMutation.mutateAsync.mockClear();
+    await user.click(screen.getByRole("button", { name: "timetable.undo" }));
+    await waitFor(() =>
+      expect(noMutation.mutateAsync).toHaveBeenCalledWith({ id: "l-slojd", isLocked: false, propagate: false }),
+    );
+    noMutation.mutateAsync.mockClear();
+    await user.click(screen.getByRole("button", { name: "timetable.redo" }));
+    await waitFor(() =>
+      expect(noMutation.mutateAsync).toHaveBeenCalledWith({ id: "l-slojd", isLocked: true, propagate: false }),
+    );
+
+    // Ta bort: the selection goes with the lessons it named.
+    noMutation.mutateAsync.mockClear();
+    await user.click(screen.getByRole("button", { name: "timetable.bulkDelete" }));
+    await waitFor(() => expect(noMutation.mutateAsync).toHaveBeenCalledWith("l-slojd"));
+    await waitFor(() => expect(screen.queryByText(/timetable\.bulkSelected/)).toBeNull());
+    expect(toasts.success).toHaveBeenCalledWith("timetable.bulkDeleted(1)");
+
+    // Undo puts the lesson back with the fields a restore keeps; redo deletes
+    // the lesson undo made.
+    noMutation.mutateAsync.mockClear();
+    await user.click(screen.getByRole("button", { name: "timetable.undo" }));
+    await waitFor(() =>
+      expect(noMutation.mutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          academicYearId: "y-1",
+          subjectId: "s-sl",
+          studentGroupId: "g-51",
+          dayOfWeek: 1,
+          startTime: "11:00",
+          endTime: "12:00",
+          recurrence: "ALL_WEEKS",
+        }),
+      ),
+    );
+    noMutation.mutateAsync.mockClear();
+    await user.click(screen.getByRole("button", { name: "timetable.redo" }));
+    await waitFor(() => expect(noMutation.mutateAsync).toHaveBeenCalledWith("x"));
+  });
+});
+
+describe("an export whose code does not arrive", () => {
+  afterEach(() => {
+    exportsLoad.fail = false;
+  });
+
+  it("says so in a toast and keeps the page", async () => {
+    exportsLoad.fail = true;
+    toasts.error.mockClear();
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+
+    await fromMoreMenu(user, "timetable.exportIcs");
+    await waitFor(() =>
+      expect(toasts.error).toHaveBeenCalledWith("Failed to load chunk timetable-exports"),
+    );
+    expect(buildIcs).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "timetable.publish" })).toBeInTheDocument();
   });
 });
 

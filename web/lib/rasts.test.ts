@@ -3,9 +3,9 @@ import {
   crossesARast,
   rastsFor,
   rastWindows,
-  teacherRastBands,
   type Rast,
 } from "./rasts";
+import { teacherRastBands } from "./teacher-rast-bands";
 
 // ---------------------------------------------------------------------------
 // A school with the ordinary Swedish day: three rasts for the middle stage, and
