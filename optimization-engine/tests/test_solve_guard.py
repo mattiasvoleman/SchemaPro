@@ -651,3 +651,149 @@ def test_a_build_that_crashes_presolve_is_refused_by_solve_and_not_a_500(
     assert any(
         "IndexError in phase 1a" in record.getMessage() for record in caplog.records
     )
+
+
+# ---------------------------------------------------------------------------
+# What the fuzz of the older rows found
+# ---------------------------------------------------------------------------
+#
+# A generator that piled the rest, lunch, distribution and Lärarens dag rows
+# onto one teacher's few open days ran 6,600 weeks on 2026-10-23; 5,865 passed
+# _validate_request, and 25 of those made 9.15.6755's presolve throw the same
+# IndexError. Three row families, each kept here by its smallest week:
+# a class's daily maximum (21 of the 25), a subject's per-day cap (3), and
+# Lärarens dag's own cap once presolve has fixed `works` to 1 (1), which is
+# the constant form again. Each one was a 500 on the engine before the guard.
+# Every one also holds a parallel block, has its lessons' days narrowed to two
+# or three, and is impossible by count. No rest or lunch row threw on its
+# own in 2,400 weeks without the two count rows.
+
+
+def _id(n: int) -> str:
+    return f"00000000-0000-4000-8000-{n:012d}"
+
+
+def _requirement(
+    n: int, group: int, teacher: int, lessons: int, minutes: int, **rest: object,
+) -> dict[str, object]:
+    return {
+        "id": _id(n), "subjectId": _id(n + 1), "studentGroupId": _id(group),
+        "teacherId": _id(teacher), "lessonsPerWeek": lessons, "minutesPerLesson": minutes,
+        "studentGroupSize": 24, **rest,
+    }
+
+
+def _lock(n: int, teacher: int, day: int, start: str, end: str) -> dict[str, object]:
+    return {
+        "id": _id(n), "teacherId": _id(teacher), "studentGroupId": _id(n + 1),
+        "dayOfWeek": day, "startTime": start, "endTime": end,
+    }
+
+
+def _a_class_s_daily_maximum() -> tuple[dict[str, object], dict[str, object]]:
+    """Class 10 has five lessons, at most two a day, and its teacher a post of
+    two days, the two their locks hold."""
+    return {"SCHEDULE_DAY_START_MINUTES": 480, "SCHEDULE_DAY_END_MINUTES": 1080}, {
+        "requestId": _id(1), "academicYearId": _id(2),
+        "requirements": [
+            _requirement(3, 5, 6, 2, 30, blockId=_id(7)),
+            _requirement(8, 10, 11, 2, 30, blockId=_id(7)),
+            _requirement(12, 10, 11, 3, 30),
+        ],
+        "rooms": [{"id": _id(14), "capacity": 30}],
+        "fixedLessons": [
+            _lock(15, 11, 3, "11:05:00", "12:05:00"), _lock(17, 11, 5, "08:50:00", "09:50:00"),
+        ],
+        "teacherDayLimits": [
+            {"id": _id(19), "teacherId": _id(11), "maxTeachingDaysPerWeek": 2, "lockedWeekdays": [[3, 5]]},
+        ],
+        "rules": {"maxLessonsPerDayPerGroup": 2},
+    }
+
+
+def _a_subject_s_per_day_cap() -> tuple[dict[str, object], dict[str, object]]:
+    """Five lessons of a subject capped at two a day, from a teacher on a
+    one-day post whose locks hold three days."""
+    return {"SCHEDULE_DAY_START_MINUTES": 480, "SCHEDULE_DAY_END_MINUTES": 720}, {
+        "requestId": _id(1), "academicYearId": _id(2),
+        "requirements": [
+            _requirement(3, 5, 6, 1, 30, blockId=_id(7)),
+            _requirement(8, 10, 11, 1, 30, blockId=_id(7)),
+            _requirement(12, 5, 11, 5, 30, maxLessonsPerDay=2, lockedDays=[1, 1]),
+        ],
+        "rooms": [{"id": _id(14), "capacity": 30}],
+        "fixedLessons": [
+            _lock(15, 11, 1, "09:00:00", "09:45:00"),
+            _lock(17, 11, 5, "09:15:00", "10:35:00"),
+            _lock(19, 11, 3, "09:35:00", "10:15:00"),
+        ],
+        "teacherDayLimits": [
+            {"id": _id(21), "teacherId": _id(11), "maxTeachingDaysPerWeek": 1, "lockedWeekdays": [[1, 3, 5]]},
+        ],
+    }
+
+
+def _a_teacher_s_cap_on_forced_days() -> tuple[dict[str, object], dict[str, object]]:
+    """Teacher 6 has 535 minutes on the two days the frames leave them and a
+    cap of 265 a day, so both days must be worked: presolve fixes `works` to
+    1, and `≤ 265·works` is `≤ 265` again. NEVER AGAINST A CONSTANT is not
+    enough on its own."""
+    grade = {"minGradeLevel": 7, "maxGradeLevel": 7}
+
+    def closed(grade_level: int, day: int) -> dict[str, object]:
+        return {
+            "minGradeLevel": grade_level, "maxGradeLevel": grade_level, "dayOfWeek": day,
+            "startTime": "06:00:00", "endTime": "07:00:00",
+        }
+
+    return {
+        "SCHEDULE_DAYS": "1,2,3,4,5,6",
+        "SCHEDULE_DAY_START_MINUTES": 480,
+        "SCHEDULE_DAY_END_MINUTES": 840,
+    }, {
+        "requestId": _id(1), "academicYearId": _id(2),
+        "requirements": [
+            _requirement(3, 5, 6, 3, 100, lessonLengths=[100, 30, 60], **grade),
+            _requirement(7, 9, 10, 3, 70, lessonLengths=[60, 70, 45], blockId=_id(11), **grade),
+            _requirement(
+                12, 14, 15, 3, 70, lessonLengths=[60, 70, 45], coTeacherId=_id(6),
+                blockId=_id(11), minDaysBetween=2, lockedDays=[3],
+                minGradeLevel=8, maxGradeLevel=8,
+            ),
+            _requirement(16, 5, 6, 4, 60, lessonLengths=[60, 40, 40, 30], **grade),
+        ],
+        "rooms": [{"id": _id(18), "capacity": 30}],
+        "teacherWorkRules": [
+            {"id": _id(19), "teacherId": _id(6), "maxTeachingMinutesPerDay": 265},
+        ],
+        "frameTimes": [closed(8, 5), closed(7, 1), closed(7, 3), closed(7, 4), closed(7, 5)],
+    }
+
+
+@pytest.mark.parametrize(
+    "week",
+    [_a_class_s_daily_maximum, _a_subject_s_per_day_cap, _a_teacher_s_cap_on_forced_days],
+    ids=["a class's daily maximum", "a subject's per-day cap", "a teacher's cap on forced days"],
+)
+def test_a_week_the_fuzz_found_is_refused_by_name_and_not_a_500(
+    week: Callable[[], tuple[dict[str, object], dict[str, object]]],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Accepted by the pre-flights, thrown on by a bare Solve — the witness,
+    as above — and refused by solve() with the causes named."""
+    settings, payload = week()
+    request = OptimizeScheduleRequest.model_validate(payload)
+    solver = SchedulerSolver(_settings(SOLVER_PROBE_SECONDS=0, **settings))
+    solver._validate_request(request)
+    model, *_rest = solver._build_model(request, use_assumptions=False, include_objective=False)
+
+    with pytest.raises(IndexError, match="raw_hash_map"):
+        _solver(10.0).Solve(model)
+
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        response = solver.solve(request)
+
+    assert response.status == "INFEASIBLE"
+    assert response.conflicts is not None
+    assert response.conflicts.summary_code == "CONFLICT_CORE_SUMMARY"
+    assert any("IndexError in phase 1a" in record.getMessage() for record in caplog.records)
