@@ -1,5 +1,5 @@
 import { Fragment, type ReactNode } from "react";
-import { layoutClusters } from "@/lib/day-lanes";
+import { layoutClusters } from "@/lib/day-clusters";
 import { placement, shownDays, timed, weekSpan } from "@/lib/public-timetable";
 import { weekNumberOf, type SheetDocument, type SheetLesson } from "@/lib/print-sheet";
 

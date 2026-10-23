@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AvailabilityConstraint, MasterLesson } from "@/lib/types";
+import type { AvailabilityConstraint, MasterLesson, TeachingRequirement } from "@/lib/types";
 import {
   buildGroupConflictMap,
   buildPupilBufferMap,
@@ -15,7 +15,7 @@ import {
 } from "./conflicts";
 // The two free-time searches moved to their own module (see its header); the
 // tests below still exercise them against the same placements.
-import { findOpenSlots, suggestPlacements } from "./placement-search";
+import { findOpenSlots, openSlotsFor, suggestPlacements } from "./placement-search";
 
 // ---------------------------------------------------------------------------
 // Factories. Placements default to the SAME slot (Monday 09:00–10:00) so that
@@ -2100,6 +2100,79 @@ describe("findOpenSlots", () => {
         dayEndMinutes: 600,
       }),
     ).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// openSlotsFor — Lägg till's slot finder
+// ---------------------------------------------------------------------------
+
+describe("openSlotsFor", () => {
+  const requirement = (
+    studentGroupId: string,
+    teacherId: string | null,
+    coTeacherId: string | null = null,
+    subjectId = "sv",
+  ) =>
+    ({ id: `r-${studentGroupId}-${subjectId}`, subjectId, studentGroupId, teacherId, coTeacherId }) as TeachingRequirement;
+  // Svenska for 7A with 7B along, as Lägg till holds it before any time is set.
+  const draft = {
+    subjectId: "sv",
+    studentGroupId: "gA",
+    extraGroupIds: ["gB"],
+    studentIds: [] as string[],
+    startTime: "",
+    endTime: "",
+  };
+  const context = {
+    requirements: [
+      requirement("gA", "t1", "t2"),
+      // The subject's teacher of another class: offered when t1 and t2 are not free.
+      requirement("gC", "t3"),
+      // Another subject's teacher of these classes teaches nothing of this lesson.
+      requirement("gA", "t9", null, "ma"),
+    ],
+    lessons: [] as MasterLesson[],
+    studentGroupOf: new Map<string, string | null>(),
+    placements: [] as Placement[],
+    constraints: [] as AvailabilityConstraint[],
+  };
+  const away = (userId: string, days: number[]) =>
+    days.map((dayOfWeek) =>
+      makeConstraint({ id: `${userId}-${dayOfWeek}`, userId, dayOfWeek, startTime: "00:00", endTime: "23:59" }),
+    );
+
+  it("offers the timplan's teacher of these classes first, for an hour when the dialog holds no times", () => {
+    expect(openSlotsFor(draft, context)[0]).toEqual({
+      dayOfWeek: 1,
+      startMinutes: 480,
+      endMinutes: 540,
+      teacherId: "t1",
+      isFallback: false,
+    });
+  });
+
+  it("takes the length the dialog holds", () => {
+    const [first] = openSlotsFor({ ...draft, startTime: "10:00", endTime: "11:20" }, context);
+    expect(first!.endMinutes - first!.startMinutes).toBe(80);
+  });
+
+  it("keeps the extra class free too", () => {
+    const busy = makePlacement({ id: "x", dayOfWeek: 1, startMinutes: 480, endMinutes: 540, studentGroupId: "gB" });
+    expect(openSlotsFor(draft, { ...context, placements: [busy] })[0]!.startMinutes).toBe(540);
+  });
+
+  it("falls back to the subject's other teachers, and searches a weekend only at a school that teaches on one", () => {
+    const constraints = [...away("t1", [1, 2, 3, 4, 5, 6, 7]), ...away("t2", [1, 2, 3, 4, 5, 6, 7]), ...away("t3", [1, 2, 3, 4, 5])];
+    // t3 is free only at the weekend, and this school teaches none.
+    expect(openSlotsFor(draft, { ...context, constraints })).toEqual([]);
+
+    const lessons = [makeLesson({ dayOfWeek: 6 })];
+    expect(openSlotsFor(draft, { ...context, constraints, lessons })[0]).toMatchObject({
+      dayOfWeek: 6,
+      teacherId: "t3",
+      isFallback: true,
+    });
   });
 });
 

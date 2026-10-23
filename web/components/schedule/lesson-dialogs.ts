@@ -32,4 +32,7 @@ export {
   SharedMoveDialog,
   SuggestPlacementsDialog,
 } from "@/components/schedule/placement-dialogs";
-export { findOpenSlots, suggestPlacements } from "@/lib/placement-search";
+export { openSlotsFor, suggestPlacements } from "@/lib/placement-search";
+// The selection's bar rides along too: the page draws it, empty, once its
+// lessons are read, so it is in hand before the first selection.
+export { SelectionBar } from "@/components/schedule/selection-bar";

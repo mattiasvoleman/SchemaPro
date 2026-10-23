@@ -11,7 +11,7 @@ import {
   useTeacherLessons,
 } from "@/lib/queries";
 import { calendarLessonToGrid, calendarRastToBand } from "@/lib/lesson-mapper";
-import { teacherRastBands } from "@/lib/rasts";
+import { teacherRastBands } from "@/lib/teacher-rast-bands";
 import { sheetFromGrid } from "@/lib/print-sheet";
 import { addDays, startOfIsoWeek, toDateString } from "@/lib/utils";
 import { Page } from "@/components/layout/page";

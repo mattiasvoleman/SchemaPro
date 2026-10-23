@@ -1318,6 +1318,7 @@
     "bulkClear": "Clear",
     "bulkDone": "{count} lessons updated",
     "bulkDeleted": "{count} lessons deleted",
+    "selectionReleased": "The bar for the selected lessons could not be loaded, so the selection was released. Select again to try once more.",
     "viewCombined": "Combined view",
     "viewByTeacher": "By teacher",
     "viewByRoom": "By room",

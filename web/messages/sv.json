@@ -1318,6 +1318,7 @@
     "bulkClear": "Rensa",
     "bulkDone": "{count} lektioner uppdaterades",
     "bulkDeleted": "{count} lektioner togs bort",
+    "selectionReleased": "Raden för de markerade lektionerna kunde inte hämtas, så markeringen släpptes. Markera igen för att försöka på nytt.",
     "viewCombined": "Kombinerad vy",
     "viewByTeacher": "Per lärare",
     "viewByRoom": "Per sal",
