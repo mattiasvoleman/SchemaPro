@@ -972,6 +972,204 @@ solve slightly — presolve runs on one thread and is counted as if on all of
 them — and under this load the four workers did not get equal shares. The
 candidates' wall-clock behaviour on an idle host is not measured here.
 
+### Schemaförslag after Lärarens dag: thirty seconds still holds
+
+The thirty seconds above were chosen before Lärarens dag (#160) gave the
+solver teachers' daily caps, posts with a number of days and wished free days,
+and day limits make the search harder: to a first timetable, cold, one seed in
+three was still searching at 240 s on the posts alone (the comment above the
+days probe in `scheduler_solver.py`). So the candidate budget was measured
+again on the högstadium week (`benchmarks/hogstadium.py`: 450 pupils, 26
+teachers, 423 lessons, språkval and elevens val in blocks), without and with
+`--teacher-day-rules` (three caps, three posts, five wished free days, each
+binding and none impossible), on 2026-10-20 and 2026-10-23 at main ea5bad52,
+whose engine is the engine of b6a5c21a.
+
+THE PROCEDURE is the gateway's. The draft is Generera's solve of the week, on
+the engine's weights, sixty seconds on every core and no `search`. It is
+FEASIBLE with 423 of 423 lessons and valid both ways:
+
+- without the rules: objective 462, 510 håltimmar;
+- with the rules: objective 1,052, 1,620 håltimmar, 4 of 5 wishes kept.
+
+Phase 1a took 10.2 s and 8.9 s cold. Each candidate is the week with the
+draft's lessons as `previousLessons`, the variant's overrides and seed, and
+the gateway's `search`: `maxSeconds` 30, four workers, the probes on KEEP
+only. The engine is configured as production (SOLVER_MAX_TIME_SECONDS 60,
+probe 20). Three arms:
+
+- **off**: no rules, and the draft without them;
+- **on**: the rules, and the draft solved with them;
+- **late**: the rules, warm-started from the draft without them. This is a
+  school that sets caps, days and wishes after Generera has written its
+  timetable and then asks for förslag.
+
+The arms run in pairs: per repetition and variant, the two arms of a round
+start at the same moment with four workers each on the 8-core Mac, three
+repetitions a round. The driver was a scratch wrapper around
+`SchedulerSolver.solve` that times each stage and reuses
+`candidate_variants.py`'s metrics and its `_CpuClock`. That benchmark builds
+only the bench school, so the command is not in the repository.
+
+**Every candidate is applicable.** 120 of 120 candidates came back with phase
+2's timetable, FEASIBLE or OPTIMAL, and every one valid under
+`validate_schedule.py`, which checks the caps and the posts:
+
+- at 30 s: 48 on the wall clock and 48 on the CPU clock;
+- at 60 s: 24 on the CPU clock, where the three FREE candidates without the
+  rules were OPTIMAL.
+
+None returned phase 1's fallback, none timed out, and none came near its
+deadline.
+
+**Where the thirty seconds go.** Wall clock, load 14–54, mean [range] over
+all four variants:
+
+| 30 s, wall clock | off (12) | on (24) | late (12) |
+| :--- | ---: | ---: | ---: |
+| validation and lunch stage | 0.02 | 0.02 | 0.02 |
+| the two model builds | 0.24 | 0.27 | 0.26 |
+| phase 1a, warm | 2.45 [2.23–2.97] | 2.54 [2.27–3.15] | 2.60 [2.47–3.13] |
+| `_complete_the_hint`: its solve / the whole step | 0.07 / 0.14 | 0.06 / 0.13 | 0.06 / 0.13 |
+| phase 2 | 27.4 | 27.3 | 27.3 |
+| the call | 30.29 [30.25–30.38] | 30.32 [30.28–30.41] | 30.32 [30.28–30.33] |
+
+- **The rules cost almost nothing per call.** Lärarens dag adds 0.1 s to phase
+  1 and 0.03 s to the builds. A draft that breaks the rules is repaired in the
+  same 2.6 s.
+- **The cold search never reaches a candidate.** That is the search day limits
+  make hard. A run refuses without a draft (CANDIDATES_NEED_A_DRAFT), and the
+  draft's lessons are hinted into phase 1.
+- **A call costs 0.3 s beyond its budget.** The engine's own ceiling is the
+  budget plus 30 s, and the gateway's is the budget plus 45 s, plus 20 s for
+  the lead.
+
+**The lead's probe split.** The probe runs only after a TIMEOUT, which no
+candidate reached. So it was called directly, on the lead's request and under
+the lead's scoped settings (probe = min(20, `maxSeconds`/2)), on the CPU clock:
+
+| lead's probe | relaxations | slice | cost, idle-host s |
+| :--- | :--- | ---: | ---: |
+| off, `maxSeconds` 30 | blocks, lunch | 7.5 s | 9.2 |
+| on, `maxSeconds` 30 | blocks, the posts' days, the caps, lunch | 3.75 s | 13.5 |
+| off, `maxSeconds` 60 | blocks, lunch | 10 s | 11.6 |
+| on, `maxSeconds` 60 | blocks, the posts' days, the caps, lunch | 5 s | 17.3 |
+
+- **The time fits.** A lead that times out at thirty answers in about
+  30 + 13.5 + 0.3 ≈ 44 s, inside the engine's sixty and the gateway's
+  ninety-five.
+- **The split costs the answer instead.** This week has a timetable, yet in
+  every probe only the lunch relaxation found one inside its slice. The
+  slices without the blocks, the posts' days or the caps ran out, because a
+  slice of 3.75 s is less than this week's cold first timetable.
+- **So on a school this size a TIMEOUT is unlikely to name a post or a cap.**
+  A probe can only name a rule whose relaxed week it solves within its
+  slice, and a week without its post is about this week.
+
+**On a full four cores the emphases still do what their labels say.** The
+table is on the CPU clock: each solve stops at `limit × workers`
+CPU-seconds, the seconds an idle four-core host takes, at load 40–270. With
+the rules, it holds six runs (two rounds paired with off and with late), and
+three otherwise:
+
+| 30 s, CPU clock | moved % | apart from KEEP % | håltimmar | teacher idle min | day variance | same-day pairs | wishes kept |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| off: draft | — | — | 510 | 870 | 0.643 | 2 | — |
+| off: KEEP | 2.9 [1.9–3.5] | — | 160 [120–240] | 390 | 0.629 | 3 | — |
+| off: TEACHER_GAPS | 12.5 [12.1–12.8] | 13.0 | **40** [0–60] | 90 | 0.605 | 4 | — |
+| off: SPREAD | 11.6 [10.6–12.5] | 12.1 | 10 | 60 | **0.557** | **1** | — |
+| off: FREE | 73.1 | 73.0 | 0 | 0 | 0.468 | 0 | — |
+| on: draft | — | — | 1,620 | 2,100 | 0.668 | 14 | 4 of 5 |
+| on: KEEP | 3.5 [3.1–4.5] | — | 1,320 [1,260–1,380] | 1,685 | 0.636 | 15 | 5.0 |
+| on: TEACHER_GAPS | 16.3 [14.2–18.7] | 16.8 | **900** [810–1,050] | 1,175 | 0.578 | 13 | 4.8 |
+| on: SPREAD | 12.7 [7.8–16.3] | 12.7 | 1,095 | 1,385 | **0.595** | **7** | 5.0 |
+| on: FREE | 72.9 | 72.8 | 485 | 680 | 0.606 | 6 | 5.0 |
+
+Run by run, against the KEEP of the same run:
+
+- **Moved %.** Every non-KEEP margin clears 3 points: 9 of 9 without the
+  rules, 18 of 18 with them.
+- **TEACHER_GAPS.** It leaves fewer håltimmar and fewer idle minutes than KEEP
+  in 3 of 3 runs without the rules and 6 of 6 with them.
+- **SPREAD.** It has fewer same-day pairs in 3 of 3 and 6 of 6, and the lower
+  day variance in 3 of 3 and 5 of 6.
+
+**The comparison needs CPU, not more clock.** On the wall-clock rounds the
+host gave each candidate about 77 CPU-seconds [65–83], two and a half of its
+four cores. There "Färre håltimmar för lärarna" still beat KEEP in 3 of 3 runs
+without the rules, but in only 2 of 6 with them (4 of 6 on idle minutes). With
+the rules, each emphasis needs more search to pull away from the draft than
+without. Sixty seconds on the CPU clock (three runs each) is not the fix:
+
+| 60 s, CPU clock | moved % | apart from KEEP % | håltimmar | teacher idle min | day variance | same-day pairs | objective |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| off: KEEP | 4.3 [4.0–4.5] | — | 70 [60–90] | 210 | 0.635 | 3 | 321 |
+| off: TEACHER_GAPS | 13.6 | 13.9 | **0** | 0 | 0.588 | 2 | 171 |
+| off: SPREAD | 11.9 | 12.7 | 0 | 20 | **0.557** | **0** | 176 |
+| off: FREE | 72.5 | 72.5 | 0 | 0 | 0.504 | 0 | 0 |
+| on: KEEP | 6.5 [4.5–8.5] | — | 900 [600–1,200] | 1,220 | 0.638 | 17 | 842 |
+| on: TEACHER_GAPS | 19.7 | 20.4 | **750** [360–1,050] | 940 | 0.579 | 13 | 1,791 |
+| on: SPREAD | 17.6 | 18.7 | 800 | 1,030 | **0.599** | **6** | 705 |
+| on: FREE | 81.8 | 82.3 | 150 [0–450] | 200 | 0.490 | 2 | 97 |
+
+What sixty seconds changes:
+
+- **Every candidate improves.** KEEP's objective falls 10 % both ways, and
+  TEACHER_GAPS' falls 18 % with the rules.
+- **KEEP improves as much as the emphases.** With the rules, KEEP goes from
+  1,320 to 900 håltimmar and TEACHER_GAPS from 900 to 750, and TEACHER_GAPS
+  beats KEEP in 2 of 3 runs.
+- **Every run costs twice as long.** Three candidates take 91 s at thirty and
+  181 s at sixty.
+- **The rules make the week look worse; they do not make it unsolvable.**
+  FREE gets the week with the rules down to 150 håltimmar. The candidates
+  that are held near a draft of 1,620 håltimmar keep most of them.
+
+**From a draft without the rules** (the late arm, CPU clock, three runs):
+
+- **Every candidate is applicable and valid.** But KEEP has to move 17.7 %
+  [16.8–18.2] of the draft to honour the rules.
+- **The emphases separate less.** TEACHER_GAPS beats KEEP on håltimmar in 2 of
+  3 runs (1,880 against 1,730 on average, KEEP ranging 1,020–2,160), and on
+  the wall clock in 1 of 3. SPREAD's margins hold in 3 of 3.
+- **Fewer wishes are kept.** Every emphasis keeps 3 of the 5 wishes (FREE
+  2.7). From a draft that honours them the candidates keep 4.7–5 of 5, and
+  the same week's cold Generera keeps 4.
+- **Sixty seconds was not measured on this arm.** So whether it buys the
+  wishes back is open. A school that sets wishes after its timetable exists
+  gets fewer of them from a förslag run than from a fresh Generera.
+
+**So `CANDIDATE_MAX_SECONDS` stays at 30.**
+
+- **The status holds.** Every candidate is applicable at thirty with the rules
+  on, in every arm.
+- **The overhead is small.** The time beyond the budget is 0.3 s, and the
+  lead's worst case stays inside both deadlines.
+- **The emphases hold.** On a full four cores each one does what its label
+  says.
+- **What moves the comparison under the rules is the CPU a candidate gets.**
+  At 77 CPU-seconds TEACHER_GAPS beat KEEP in 2 of 6 runs, at 120 in 6 of 6,
+  and at 240 KEEP had closed in (2 of 3).
+- **A longer default would not help.** It would not buy back what a starved
+  host withholds as surely as it doubles every run, and on an idle host it
+  lets KEEP catch up.
+- **The figure to watch is the cores a candidate gets on Railway.** That is
+  `CANDIDATE_SOLVER_WORKERS` and the engine's real cores, not the budget.
+
+A default above sixty would also not be what it says. The gateway accepts
+`CANDIDATE_MAX_SECONDS` up to 120. The engine caps a request's `maxSeconds` at
+its own SOLVER_MAX_TIME_SECONDS (`settings_for_search`: only ever smaller),
+which is 60 by default. Meanwhile the gateway's call timeout and lease are
+computed from the uncapped figure.
+
+Caveats: one school and one draft per arm, three runs a row. The host has six
+performance and two efficiency cores, and nothing kept the two arms of a
+pair on the same kind. The CPU clock flatters presolve, as above. The
+wall-clock rounds were at load 14–54 rather than idle, and that is what the
+77 CPU-seconds describe. The sixty-second wall-clock round was dropped: by
+then load was 150–240, and its candidates got 93–144 CPU-seconds, hardly more
+than the thirty-second rounds' 77.
+
 ### Corrections to earlier entries in this document
 
 - An earlier revision said the complexity guard was "pessimistic … not the
