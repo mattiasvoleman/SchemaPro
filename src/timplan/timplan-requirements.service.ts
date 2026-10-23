@@ -162,7 +162,21 @@ export class TimplanRequirementsService {
                 where: { academicYearId: dto.academicYearId, studentGroupId: { in: groupIds } },
                 select: { studentGroupId: true, subjectId: true },
               });
-        const subjectIds = [...new Set(plan.entries.map((entry) => entry.subjectId))];
+        // The posts on the classes' halves: a line a class's halves read is
+        // the class's already (generate-requirements.ts, HALVES).
+        const halfPosts =
+          classes.length === 0
+            ? []
+            : await tx.teachingRequirement.findMany({
+                where: {
+                  academicYearId: dto.academicYearId,
+                  studentGroup: { halfOfId: { in: classes.map((group) => group.id) } },
+                },
+                select: { subjectId: true, studentGroup: { select: { name: true, halfOfId: true } } },
+              });
+        const subjectIds = [
+          ...new Set([...plan.entries.map((entry) => entry.subjectId), ...halfPosts.map((post) => post.subjectId)]),
+        ];
         const subjects =
           subjectIds.length === 0
             ? []
@@ -180,6 +194,11 @@ export class TimplanRequirementsService {
           subjectNames: new Map(subjects.map((subject) => [subject.id, subject.name])),
           nationalCodes: new Map(subjects.map((subject) => [subject.id, subject.nationalCode])),
           existing,
+          halfPosts: halfPosts.map((post) => ({
+            classId: post.studentGroup.halfOfId!,
+            halfName: post.studentGroup.name,
+            subjectId: post.subjectId,
+          })),
           minutesPerLesson: dto.minutesPerLesson,
           remainder: dto.remainder ?? 'ROUND_UP',
           overrides: dto.overrides ?? [],

@@ -18,7 +18,8 @@ import {
  * WHAT IS PROPOSED. For every CLASS group of the year whose årskurs the year
  * attaches to THIS plan, and every entry of the plan for that årskurs with
  * minutesPerWeek > 0, a row (group, subject) — unless the year already has a
- * requirement for that pair, in which case it is SKIPPED and named. Untis'
+ * requirement for that pair, in which case it is SKIPPED and named, or the
+ * class's halves already read the line (below). Untis'
  * "Create lessons" semantics: only missing rows are created; nothing is ever
  * updated or deleted, no teacher is set (staffing is the next step, and a
  * row without a teacher meets no staffing check), and teaching groups are
@@ -45,6 +46,17 @@ import {
  *                  gets; SvA is then a teaching group for its readers. If the
  *                  class already has either subject, the line is the
  *                  class's already: nothing more is proposed in it.
+ *
+ * A LINE THE CLASS'S HALVES READ IS THE CLASS'S. A class split into halves
+ * whose posts are on the halves — "Dela terminsvis i halvklass" leaves 7A:1
+ * and 7A:2 with Textilslöjd and Trä- och metallslöjd and removes 7A's
+ * Slöjd — has its line read already, by its pupils, through the halves.
+ * Proposing Slöjd on 7A again would put the subject twice on every pupil,
+ * which the coverage reads as OVER, and the preview has no way to drop a
+ * row. So an entry is SKIPPED as HALVES, naming the halves, when a half of
+ * the class has a post in the entry's subject or in a subject with the same
+ * national code (Textilslöjd and Trä- och metallslöjd count toward SL as
+ * Slöjd does; Biologi does not fill Kemi's line, since their codes differ).
  *
  * HOW, ROUND_UP (the rule an omitted `remainder` keeps). lessonsPerWeek =
  * ceil(minutes / L) at the chosen lesson length L, so the row never falls short
@@ -200,6 +212,11 @@ export interface GenerateInput {
   nationalCodes: ReadonlyMap<string, string | null>;
   /** (group, subject) pairs the year already has a requirement for. */
   existing: { studentGroupId: string; subjectId: string }[];
+  /**
+   * The posts on the classes' halves: the class, the half's name and the
+   * subject. Their subjects' national codes are in `nationalCodes`.
+   */
+  halfPosts?: { classId: string; halfName: string; subjectId: string }[];
   minutesPerLesson: number;
   /** SPLIT or ROUND_UP; omitted is ROUND_UP, the rule generate always had. */
   remainder?: RemainderMode;
@@ -231,8 +248,8 @@ export interface ProposedRow {
   blockName?: string;
 }
 
-/** EXISTS: the class has the pair already. ALTERNATIVE: see the header. */
-export type SkipReason = 'EXISTS' | 'ALTERNATIVE';
+/** EXISTS: the class has the pair already. ALTERNATIVE and HALVES: see the header. */
+export type SkipReason = 'EXISTS' | 'ALTERNATIVE' | 'HALVES';
 
 export interface SkippedRow {
   studentGroupId: string;
@@ -245,6 +262,8 @@ export interface SkippedRow {
   alternativeCode: string | null;
   /** ALTERNATIVE in SV_SVA: the subject of the line the class has or gets. */
   alternativeTo: string | null;
+  /** Only on HALVES: the halves that read the line, by name. */
+  halves?: string[];
 }
 
 /** A block the proposal posts rows in: one per årskurs with språkval groups. */
@@ -297,6 +316,28 @@ export function proposeRequirements(input: GenerateInput): Proposal {
     .filter((group) => group.gradeLevel !== null && grades.has(group.gradeLevel))
     .sort((a, b) => byName(a.name, b.name) || (a.id < b.id ? -1 : 1));
 
+  // Per class, the subjects and national codes its halves' posts read, and
+  // which half reads each: see A LINE THE CLASS'S HALVES READ in the header.
+  const halfLines = new Map<string, Map<string, Set<string>>>();
+  for (const post of input.halfPosts ?? []) {
+    const lines = halfLines.get(post.classId) ?? new Map<string, Set<string>>();
+    const code = input.nationalCodes.get(post.subjectId) ?? null;
+    for (const line of [`subject:${post.subjectId}`, ...(code !== null ? [`code:${code}`] : [])]) {
+      lines.set(line, (lines.get(line) ?? new Set()).add(post.halfName));
+    }
+    halfLines.set(post.classId, lines);
+  }
+  const halvesReading = (classId: string, subjectId: string): string[] => {
+    const lines = halfLines.get(classId);
+    if (!lines) return [];
+    const code = input.nationalCodes.get(subjectId) ?? null;
+    const names = new Set([
+      ...(lines.get(`subject:${subjectId}`) ?? []),
+      ...(code !== null ? (lines.get(`code:${code}`) ?? []) : []),
+    ]);
+    return [...names].sort(byName);
+  };
+
   const rows: ProposedRow[] = [];
   const skipped: SkippedRow[] = [];
   const known = new Set<string>();
@@ -337,6 +378,11 @@ export function proposeRequirements(input: GenerateInput): Proposal {
       };
       if (existing.has(key)) {
         skipped.push({ ...where, reason: 'EXISTS', alternativeCode, alternativeTo: null });
+        continue;
+      }
+      const halves = halvesReading(group.id, entry.subjectId);
+      if (halves.length > 0) {
+        skipped.push({ ...where, reason: 'HALVES', alternativeCode, alternativeTo: null, halves });
         continue;
       }
       if (alternativeCode !== null) {

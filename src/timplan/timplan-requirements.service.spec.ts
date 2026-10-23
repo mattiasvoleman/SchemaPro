@@ -332,14 +332,57 @@ describe('TimplanRequirementsService', () => {
   });
 
   it('is idempotent: a second apply finds both rows and writes nothing', async () => {
-    tx.teachingRequirement.findMany.mockResolvedValue([
-      { studentGroupId: A7, subjectId: MA },
-      { studentGroupId: A7, subjectId: SV },
-    ]);
+    // The class's own pairs; its halves have none.
+    tx.teachingRequirement.findMany.mockImplementation(async ({ where }: { where: { studentGroup?: unknown } }) =>
+      where.studentGroup
+        ? []
+        : [
+            { studentGroupId: A7, subjectId: MA },
+            { studentGroupId: A7, subjectId: SV },
+          ],
+    );
     const answer = await service.generate(PLAN_ID, dto(false), testUser());
     expect(answer).toMatchObject({ created: 0, rows: [] });
     expect(answer.skipped).toHaveLength(2);
     expect(tx.teachingRequirement.createManyAndReturn).not.toHaveBeenCalled();
+  });
+
+  it('reads the posts on the classes’ halves, and skips a line they read as HALVES, naming the halves', async () => {
+    const SL = 'd5d5d5d5-d5d5-4d5d-8d5d-d5d5d5d5d5d5';
+    const TX = 'd6d6d6d6-d6d6-4d6d-8d6d-d6d6d6d6d6d6';
+    tx.localTimplan.findUnique.mockResolvedValue({
+      id: PLAN_ID,
+      name: 'Grundskolan 2027',
+      status: 'DECIDED',
+      entries: [
+        { subjectId: MA, gradeLevel: 7, minutesPerWeek: 180 },
+        { subjectId: SL, gradeLevel: 7, minutesPerWeek: 90 },
+      ],
+      nationalVersion: { appliesFromCohortTerm: 'HT2024' },
+    });
+    tx.teachingRequirement.findMany.mockImplementation(async ({ where }: { where: { studentGroup?: unknown } }) =>
+      where.studentGroup ? [{ subjectId: TX, studentGroup: { name: '7A:1', halfOfId: A7 } }] : [],
+    );
+    tx.subject.findMany.mockResolvedValue([
+      { id: MA, name: 'Matematik', nationalCode: 'MA' },
+      { id: SL, name: 'Slöjd', nationalCode: 'SL' },
+      { id: TX, name: 'Textilslöjd', nationalCode: 'SL' },
+    ]);
+
+    const answer = await service.generate(PLAN_ID, dto(true), testUser());
+
+    expect(tx.teachingRequirement.findMany).toHaveBeenCalledWith({
+      where: { academicYearId: YEAR_ID, studentGroup: { halfOfId: { in: [A7] } } },
+      select: { subjectId: true, studentGroup: { select: { name: true, halfOfId: true } } },
+    });
+    // The halves' subject is read for its national code, beside the plan's.
+    expect(tx.subject.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: [MA, SL, TX] } } }),
+    );
+    expect(answer.rows.map((row) => row.subjectName)).toEqual(['Matematik']);
+    expect(answer.skipped).toEqual([
+      expect.objectContaining({ subjectId: SL, reason: 'HALVES', halves: ['7A:1'] }),
+    ]);
   });
 
   it('404s a plan or a year RLS hides', async () => {

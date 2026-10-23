@@ -965,6 +965,7 @@
       "skippedLanguage": "{group} · {subject} — modern language, taught in a language group",
       "skippedAlternative": "{group} · {subject} — alternative to {other}, taught in a group for the pupils who read it",
       "skippedRow": "{group} · {subject} — already has a curriculum entry",
+      "skippedHalves": "{group} · {subject} — already taken in the halves {halves}",
       "surplusHint": "The number of lessons is rounded up so the entry reaches the target; the difference is shown in minutes per week, e.g. 175 min as 3 × 60 = +5.",
       "invalidRows": "Some rows hold a value that cannot be saved: 1–40 lessons and 15–240 minutes in steps of 5.",
       "apply": "{count, plural, =0 {Create} one {Create # entry} other {Create # entries}}",
