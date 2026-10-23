@@ -1177,6 +1177,8 @@ describe('OptimizationJobsService', () => {
     describe('a note about a free-day wish', () => {
       const wishRun = (overrides: Record<string, unknown> = {}) =>
         row({ solverStatus: 'OPTIMAL', conflicts: [], notes: [wishNote()], ...overrides });
+      // The year's log since the run: empty unless a test says otherwise.
+      beforeEach(() => tx.scheduleChangeLog.findMany.mockResolvedValue([]));
 
       it('names the teacher for a reader without HR-läs, in a statement more for the names and one for the log, and no Läslogg', async () => {
         tx.optimizationJob.findUnique.mockResolvedValue(wishRun());
@@ -1274,66 +1276,91 @@ describe('OptimizationJobsService', () => {
        * as long as the log keeps it, whatever becomes of the candidate's run.
        */
       describe('a candidate applied since', () => {
-        const applied = (after: Record<string, unknown>) => ({ createdAt: new Date('2026-11-23T11:00:00.000Z'), after });
-        const VERSION = '99999999-9999-4999-8999-999999999999';
-        const candidateEntry = () =>
-          applied({ source: 'CANDIDATE', runId: 'run-1', ordinal: 2, variant: 'TEACHER_GAPS', metrics: { moved: 3 }, safetyVersionId: VERSION });
-
-        it('names the newest candidate applied over the year since the run finished, and its run', async () => {
+        const at = (minute: number) => new Date(`2026-11-23T11:${String(minute).padStart(2, '0')}:00.000Z`);
+        const V1 = '99999999-9999-4999-8999-999999999991';
+        const V2 = '99999999-9999-4999-8999-999999999992';
+        /** An apply's REGENERATE entry, as ScheduleCandidatesService.apply writes it, with its safety version. */
+        const apply = (minute: number, ordinal: number, safetyVersionId?: string) => ({
+          action: 'REGENERATE',
+          createdAt: at(minute),
+          after: {
+            source: 'CANDIDATE', runId: `run-${ordinal}`, ordinal, variant: 'TEACHER_GAPS', metrics: {},
+            ...(safetyVersionId ? { safetyVersionId } : {}),
+          },
+        });
+        /** A version restore's entry (ScheduleVersionsService.restore); the draft discard's names no version. */
+        const restore = (minute: number, versionId?: string) => ({
+          action: 'RESTORE',
+          createdAt: at(minute),
+          after: versionId ? { versionId, versionName: 'Före schemaförslag', restoredLessons: 40 } : { discardedDraft: true },
+        });
+        const read = async (...events: unknown[]) => {
           tx.optimizationJob.findUnique.mockResolvedValue(wishRun());
-          tx.scheduleChangeLog.findFirst.mockResolvedValueOnce(candidateEntry()).mockResolvedValueOnce(null);
+          tx.scheduleChangeLog.findMany.mockResolvedValue(events);
+          return (await service.get(JOB_ID, noHr())).supersededBy;
+        };
 
-          const view = await service.get(JOB_ID, noHr());
-
-          expect(view.supersededBy).toEqual({ appliedAt: '2026-11-23T11:00:00.000Z', ordinal: 2, variant: 'TEACHER_GAPS', runId: 'run-1' });
-          // Since it FINISHED: an apply that passed its check before the run
-          // began, and wrote before the run's own write, is older than that.
-          expect(tx.scheduleChangeLog.findFirst).toHaveBeenNthCalledWith(1, {
+        it('names the newest candidate applied since the run finished, in one read of the year’s applies and restores', async () => {
+          await expect(read(apply(10, 1, V1), apply(20, 2, V2))).resolves.toEqual({
+            appliedAt: at(20).toISOString(),
+            ordinal: 2,
+            variant: 'TEACHER_GAPS',
+            runId: 'run-2',
+          });
+          expect(tx.scheduleChangeLog.findMany).toHaveBeenCalledTimes(1);
+          expect(tx.scheduleChangeLog.findMany).toHaveBeenCalledWith({
             where: {
               academicYearId: YEAR_ID,
-              action: 'REGENERATE',
+              // Since it FINISHED: an apply that passed its check before the run
+              // began, and wrote before the run's own write, is older than that.
               createdAt: { gt: wishRun().finishedAt },
-              after: { path: ['source'], equals: 'CANDIDATE' },
+              OR: [{ action: 'REGENERATE', after: { path: ['source'], equals: 'CANDIDATE' } }, { action: 'RESTORE' }],
             },
-            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-            select: { createdAt: true, after: true },
-          });
-          // And whether the apply's safety version was restored after it.
-          expect(tx.scheduleChangeLog.findFirst).toHaveBeenNthCalledWith(2, {
-            where: {
-              academicYearId: YEAR_ID,
-              action: 'RESTORE',
-              createdAt: { gt: new Date('2026-11-23T11:00:00.000Z') },
-              after: { path: ['versionId'], equals: VERSION },
-            },
-            select: { id: true },
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+            select: { action: true, createdAt: true, after: true },
           });
         });
 
-        it('says none once the apply’s safety version is restored: the run’s timetable is back', async () => {
-          tx.optimizationJob.findUnique.mockResolvedValue(wishRun());
-          tx.scheduleChangeLog.findFirst.mockResolvedValueOnce(candidateEntry()).mockResolvedValueOnce({ id: 'restore-1' });
-
-          await expect(service.get(JOB_ID, noHr())).resolves.toMatchObject({ supersededBy: null });
+        it('says none when an apply is undone by its own safety version: the run’s timetable is back', async () => {
+          await expect(read(apply(10, 1, V1), restore(15, V1))).resolves.toBeNull();
         });
 
-        it('says none when the log has no candidate since', async () => {
-          tx.optimizationJob.findUnique.mockResolvedValue(wishRun());
-          tx.scheduleChangeLog.findFirst.mockResolvedValue(null);
-
-          await expect(service.get(JOB_ID, noHr())).resolves.toMatchObject({ supersededBy: null });
-          expect(tx.scheduleChangeLog.findFirst).toHaveBeenCalledTimes(1);
+        it('says none when the first apply’s safety version is restored after a second apply', async () => {
+          await expect(read(apply(10, 1, V1), apply(20, 2, V2), restore(25, V1))).resolves.toBeNull();
         });
 
-        it('says a candidate was applied, unnamed, for an entry that does not say which, and asks for no restore of it', async () => {
-          tx.optimizationJob.findUnique.mockResolvedValue(wishRun());
-          tx.scheduleChangeLog.findFirst.mockResolvedValueOnce(applied({ source: 'CANDIDATE', ordinal: '2', variant: 7, runId: 3 }));
+        it('stays replaced when the second apply’s safety version is restored: that brings back the first candidate', async () => {
+          await expect(read(apply(10, 1, V1), apply(20, 2, V2), restore(25, V2))).resolves.toMatchObject({ ordinal: 2, runId: 'run-2' });
+        });
 
-          await expect(service.get(JOB_ID, noHr())).resolves.toMatchObject({
-            supersededBy: { appliedAt: '2026-11-23T11:00:00.000Z', ordinal: null, variant: null, runId: null },
-          });
-          // An apply logged before the safety version's id was kept: nothing to match.
-          expect(tx.scheduleChangeLog.findFirst).toHaveBeenCalledTimes(1);
+        it('says none when an apply made after the run came back is undone by its own version', async () => {
+          // Apply, back to the run, apply again: the second safety version holds the run too.
+          await expect(read(apply(10, 1, V1), restore(15, V1), apply(20, 2, V2), restore(25, V2))).resolves.toBeNull();
+        });
+
+        it('stays replaced after a restore of another version, a later one after the right one, or a draft discard', async () => {
+          await expect(read(apply(10, 1, V1), restore(15, '88888888-8888-4888-8888-888888888888'))).resolves.toMatchObject({ ordinal: 1 });
+          await expect(read(apply(10, 1, V1), restore(15, V1), restore(16, '88888888-8888-4888-8888-888888888888'))).resolves.toMatchObject({ ordinal: 1 });
+          await expect(read(apply(10, 1, V1), restore(15))).resolves.toMatchObject({ ordinal: 1 });
+        });
+
+        it('stays replaced when the run’s timetable was already gone before the apply saved its version', async () => {
+          // A restore of something else before the apply: its safety version is not the run's.
+          await expect(read(restore(5, V2), apply(10, 1, V1), restore(15, V1))).resolves.toMatchObject({ ordinal: 1 });
+        });
+
+        it('stays replaced, unrestorable, for an apply logged without its safety version', async () => {
+          await expect(read(apply(10, 1), restore(15, V1))).resolves.toMatchObject({ ordinal: 1 });
+        });
+
+        it('says none when the log has no apply since, restores alone included', async () => {
+          await expect(read()).resolves.toBeNull();
+          await expect(read(restore(15, V1))).resolves.toBeNull();
+        });
+
+        it('says a candidate was applied, unnamed, for an entry that does not say which', async () => {
+          const unnamed = { action: 'REGENERATE', createdAt: at(20), after: { source: 'CANDIDATE', ordinal: '2', variant: 7, runId: 3 } };
+          await expect(read(unnamed)).resolves.toEqual({ appliedAt: at(20).toISOString(), ordinal: null, variant: null, runId: null });
         });
 
         it('reads no log for a run without notes, one that did not succeed, nor for the history', async () => {
@@ -1345,7 +1372,7 @@ describe('OptimizationJobsService', () => {
           const history = await service.list(YEAR_ID, noHr());
 
           expect(history[0]!.supersededBy).toBeNull();
-          expect(tx.scheduleChangeLog.findFirst).not.toHaveBeenCalled();
+          expect(tx.scheduleChangeLog.findMany).not.toHaveBeenCalled();
         });
       });
 

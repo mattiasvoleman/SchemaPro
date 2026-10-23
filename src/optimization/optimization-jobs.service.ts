@@ -430,56 +430,62 @@ export class OptimizationJobsService {
    * after createdAt and before the run's write, and would hide notes that
    * are right. Generera's own entry has no source.
    *
-   * UNDONE BY A RESTORE OF ITS SAFETY VERSION. Going back to "Före
-   * schemaförslag N" (Versioner, a RESTORE entry naming that version) puts
-   * back the timetable the apply replaced — the run's, with whatever was
-   * hand-edited before the apply, as it stood when the card showed it — so
-   * the notes say true again, and none is returned. A restore of any other
-   * version leaves the candidate's apply as the reason they do not (which is
-   * still so), and an apply logged before the safety version's id was kept
-   * cannot be matched to its restore.
+   * UNDONE BY A RESTORE THAT PUTS THE RUN'S TIMETABLE BACK. The year's
+   * applies and restores since the run finished are walked in order. The
+   * run's timetable is the year's at first. An apply saves it as its safety
+   * version ("Före schemaförslag N") only while it still is, and then
+   * replaces it. A restore makes it the year's again only when the version
+   * restored is one of those. So two applies and then "Före schemaförslag"
+   * of the second bring back the first candidate, not the run, and the
+   * notes stay replaced. A restore of the first apply's version, even after
+   * the second, brings the run back. So does an apply after such a restore
+   * that is undone by its own version. A restore of anything else, and a
+   * RESTORE that names no version (discarding the draft), leaves the run's
+   * timetable gone. An apply logged before the safety version's id was kept
+   * can never be undone this way. The run's own hand edits and later
+   * Generera runs are not walked: the card never tracked those.
    *
-   * One or two more statements, read only for a succeeded run with notes, so
-   * the reads the page polls while a run goes stay one. Every administrator
-   * reads the log (its select arm), as they read the run.
+   * One read, of the year's entries of those two kinds since the run — a
+   * handful a year, each one an administrator's deliberate act — and only
+   * for a succeeded run with notes, so the reads the page polls while a run
+   * goes stay one. Every administrator reads the log (its select arm), as
+   * they read the run.
    */
   private async supersedingCandidate(job: JobRow, user: AuthenticatedUser): Promise<SupersedingCandidate | null> {
     if (job.finishedAt === null) return null;
-    const entry = await this.prisma.queryWithRls(user, (db) =>
-      db.scheduleChangeLog.findFirst({
+    const finishedAt = job.finishedAt;
+    const events = await this.prisma.queryWithRls(user, (db) =>
+      db.scheduleChangeLog.findMany({
         where: {
           academicYearId: job.academicYearId,
-          action: 'REGENERATE',
-          createdAt: { gt: job.finishedAt as Date },
-          after: { path: ['source'], equals: 'CANDIDATE' },
+          createdAt: { gt: finishedAt },
+          OR: [{ action: 'REGENERATE', after: { path: ['source'], equals: 'CANDIDATE' } }, { action: 'RESTORE' }],
         },
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        select: { createdAt: true, after: true },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        select: { action: true, createdAt: true, after: true },
       }),
     );
-    if (!entry) return null;
-    const after = (entry.after ?? {}) as { ordinal?: unknown; variant?: unknown; runId?: unknown; safetyVersionId?: unknown };
-    if (typeof after.safetyVersionId === 'string') {
-      const safetyVersionId = after.safetyVersionId;
-      const undone = await this.prisma.queryWithRls(user, (db) =>
-        db.scheduleChangeLog.findFirst({
-          where: {
-            academicYearId: job.academicYearId,
-            action: 'RESTORE',
-            createdAt: { gt: entry.createdAt },
-            after: { path: ['versionId'], equals: safetyVersionId },
-          },
-          select: { id: true },
-        }),
-      );
-      if (undone) return null;
+    let current = true;
+    const holdingTheRun = new Set<string>();
+    let last: (typeof events)[number] | null = null;
+    for (const event of events) {
+      const after = (event.after ?? {}) as { safetyVersionId?: unknown; versionId?: unknown };
+      if (event.action === 'REGENERATE') {
+        if (current && typeof after.safetyVersionId === 'string') holdingTheRun.add(after.safetyVersionId);
+        current = false;
+        last = event;
+      } else {
+        current = typeof after.versionId === 'string' && holdingTheRun.has(after.versionId);
+      }
     }
+    if (last === null || current) return null;
+    const applied = (last.after ?? {}) as { ordinal?: unknown; variant?: unknown; runId?: unknown };
     return {
-      appliedAt: entry.createdAt.toISOString(),
+      appliedAt: last.createdAt.toISOString(),
       // A hand-edited entry without them still says a candidate was applied.
-      ordinal: typeof after.ordinal === 'number' && Number.isInteger(after.ordinal) ? after.ordinal : null,
-      variant: typeof after.variant === 'string' ? after.variant : null,
-      runId: typeof after.runId === 'string' ? after.runId : null,
+      ordinal: typeof applied.ordinal === 'number' && Number.isInteger(applied.ordinal) ? applied.ordinal : null,
+      variant: typeof applied.variant === 'string' ? applied.variant : null,
+      runId: typeof applied.runId === 'string' ? applied.runId : null,
     };
   }
 
