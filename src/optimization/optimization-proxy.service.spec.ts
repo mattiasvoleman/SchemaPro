@@ -1462,7 +1462,7 @@ describe('OptimizationProxyService', () => {
         ['RAST_NO_STRETCH_FOR_REQUIREMENT', { grades: '7–9', minutes: 60, remaining: 40 }],
         [
           'RAST_MARGIN_NO_STRETCH_FOR_REQUIREMENT',
-          { grades: '7–9', minutes: 90, before: 10, after: 0, changeover: 0, remaining: 80 },
+          { grades: '7–9', minutes: 90, before: 10, after: 0, changeover: 0, remaining: 80, framed: 1 },
         ],
         ['LESSON_NO_START_FOR_REQUIREMENT', { grades: '7–9', minutes: 60 }],
         ['ROOM_LOCK_LEAVES_NO_ROOM', { grades: '7–9' }],

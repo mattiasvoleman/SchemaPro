@@ -742,6 +742,11 @@ MESSAGES: dict[str, str] = {
     # leave a stretch longer than the lesson; it is the stretch at the day's edge,
     # less the margin that may not run past it, that is too short. Told only of
     # its rasts, a school measures 125 minutes where the sentence says 110.
+    #
+    # The frame time is offered only where a frame narrows the stage's days
+    # (`framed`): the edge the margin meets is the configured day's, which no
+    # school row moves, and a school with no frame would be sent to a screen
+    # with nothing on it to widen.
     "RAST_MARGIN_NO_STRETCH_FOR_REQUIREMENT": (
         "The rasts and the time around the lessons of requirement {requirement} "
         "({grades, select, any {years unknown} other {years {grades}}}) together leave them no "
@@ -749,8 +754,9 @@ MESSAGES: dict[str, str] = {
         "{after} minutes after for the pupils, {changeover, select, 0 {with no changeover "
         "between lessons} other {plus {changeover} minutes of changeover between lessons}}, "
         "none of which may run past the start or end of the day, and the longest stretch the "
-        "rasts then leave any day for the lesson itself is {remaining} minutes. Shorten the "
-        "lessons, shorten those margins or a rast, or widen the frame time."
+        "rasts then leave any day for the lesson itself is {remaining} minutes. "
+        "{framed, select, 0 {Shorten the lessons, or shorten those margins or a rast.} "
+        "other {Shorten the lessons, shorten those margins or a rast, or widen the frame time.}}"
     ),
     # The builder's backstop (_start_domains), for a domain emptied by a
     # composition no refusal above names. Generic because it has to be: it is
