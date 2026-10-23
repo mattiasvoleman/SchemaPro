@@ -135,7 +135,9 @@ switch knowing it:
 
 `POST /ss12000/v1/import/persons` with
 `{ "persons": [{ "givenName", "familyName", "email", "groupDisplayName", "responsibleEmails": [] }] }`
-(max 2000/call).
+(max 2000/call). The body is plain JSON of at most 1 MB and is not compressed:
+a body sent with `Content-Encoding` (gzip, deflate, br) is refused with 415
+before it is read.
 
 Semantics — **update-only for identity safety**: persons are matched by email
 within the school; names, class membership (classes auto-created in the
@@ -243,6 +245,10 @@ address. Past either limit the answer is 429 `TOO_MANY_REQUESTS` with
   changing under the object. A phone number, an invitation or a nedsättning
   moves nothing. An object unchanged since the migration is dated by its own
   `updatedAt`.
+* **Request bodies.** A lookup's body is plain JSON of at most 1 MB, not
+  compressed. A body sent with `Content-Encoding` (gzip, deflate, br) is
+  refused with 415 before it is read: the gateway does not inflate request
+  bodies.
 * **Errors.** S1's `Error {code, message}`. A 404 has no body. 400 codes are
   `INVALID_FILTER`, `INVALID_ID`, `INVALID_PAGE_TOKEN`,
   `SORTKEY_NOT_SUPPORTED` and `INVALID_BODY`. 403 is `SCOPE_MISSING`, or

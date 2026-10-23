@@ -13,6 +13,13 @@
       "reason": "No patched release exists: <=1.1.3 is marked vulnerable and 1.1.3 is the newest version (checked 2026-10-06). sprintf-js is reached only through jest's reporters and formats those tools' own diagnostic strings; nothing user-supplied is formatted through it. Remove when upstream ships a fix.",
       "addedAt": "2026-10-06",
       "expires": "2026-11-20"
+    },
+    {
+      "id": "GHSA-27r3-jxmh-p828",
+      "package": "body-parser",
+      "reason": "Mitigated in code, bump pending the seven-day rule. The advisory (published 2026-10-23) is a DoS in body-parser's inflate path: trailing bytes after a compressed request body. configureBodyParsers (src/common/http-defaults.ts) sets inflate: false on both parsers, so a body with Content-Encoding is refused with 415 before anything decompresses it (src/common/http-defaults.spec.ts proves gzip and deflate never reach a handler). The only patched 2.x release, body-parser 2.4.0, was published 2026-10-22; the repository installs versions at least seven days old, so it is bumped on 2026-10-29 or later. This entry expires before the bump can be forgotten.",
+      "addedAt": "2026-10-24",
+      "expires": "2026-10-31"
     }
   ],
   "web": [
