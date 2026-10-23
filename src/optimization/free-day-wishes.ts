@@ -24,8 +24,14 @@ import type { AiEngineConflictDetail } from './interfaces/ai-engine-payload.inte
  * Staff-readable: the wish is on the work rule, beside the lunch and the rest,
  * and not on the post. Nothing here is masked.
  *
+ * A SCHEMAFÖRSLAG IS READ THE SAME WAY, before anything is written: each
+ * candidate's timetable (timetableWith) and the draft it was solved from,
+ * measured when the run stores them (ScheduleCandidatesService), so the
+ * comparison says which wishes each candidate breaks beside the draft's.
+ *
  * WHOSE WISH IT IS IS THE TEACHER'S NAME, put beside the note when the run is
- * read (OptimizationJobsService, for every reader) and never into it. The
+ * read (OptimizationJobsService, ScheduleCandidatesService, for every reader,
+ * through stored-conflicts.ts's notesViewOf) and never into it. The
  * sentence says the day and nothing else: it named the work rule's id once,
  * as the lunch and rest sentences do, and no screen resolves a work rule's id
  * to a person, so a school read which wish broke and not whose. A name stored
@@ -51,6 +57,32 @@ export interface TeachersOnDay {
   teacherId: string | null;
   coTeacherId: string | null;
   dayOfWeek: number;
+}
+
+/**
+ * The timetable a schemaförslag would leave, by teacher and weekday: the
+ * lessons every candidate keeps (`kept`, the fetch's preserved, non-parked
+ * lessons) and the candidate's own, each with its timplanspost's two adults —
+ * exactly as the apply stamps a lesson it writes (writeRegeneration), so the
+ * wishes a candidate is said to break are the ones its apply would. A lesson
+ * whose post is not among `rows` is left out: the demand guard refuses an
+ * answer with one before it is stored.
+ */
+export function timetableWith(
+  kept: readonly TeachersOnDay[],
+  rows: readonly { id: string; teacherId: string | null; coTeacherId: string | null }[],
+  lessons: readonly { requirementId: string; dayOfWeek: number }[],
+): TeachersOnDay[] {
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  return [
+    ...kept,
+    ...lessons.flatMap((lesson): TeachersOnDay[] => {
+      const row = byId.get(lesson.requirementId);
+      return row === undefined
+        ? []
+        : [{ teacherId: row.teacherId, coTeacherId: row.coTeacherId, dayOfWeek: lesson.dayOfWeek }];
+    }),
+  ];
 }
 
 const WEEKDAYS: Record<number, string> = {

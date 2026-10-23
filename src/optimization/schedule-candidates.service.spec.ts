@@ -1,6 +1,7 @@
 import { ConflictException, HttpException, HttpStatus, ServiceUnavailableException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { createPrismaMock, createTxMock, testUser, type PrismaMock, type TxMock } from '../../test/utils/prisma-mock';
+import { recordedReads } from '../../test/utils/recorded-reads';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import type { ScheduleVersionsService } from '../calendar/schedule-versions.service';
 import type { PrismaService } from '../database/prisma.service';
@@ -8,6 +9,7 @@ import type { JobRunner } from '../jobs/job-runner';
 import type { RealtimeService } from '../realtime/realtime.service';
 import { BASIS_PARTS, type BasisParts } from './candidate-basis';
 import type { StartCandidatesDto } from './dto/schedule-candidates.dto';
+import { TEACHER_FREE_DAY_WISH_NOT_KEPT, freeDayWishMessage } from './free-day-wishes';
 import type { AiEngineConflictAnalysis } from './interfaces/ai-engine-payload.interface';
 import type { CandidateSolution, OptimizationProxyService, PreparedSchedule } from './optimization-proxy.service';
 import {
@@ -61,6 +63,7 @@ const MA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const SV = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const ROOM = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const TEACHER = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+const OTHER_TEACHER = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
 const BASIS = 'a'.repeat(64);
 const PARTS: BasisParts = Object.fromEntries(BASIS_PARTS.map((part, i) => [part, String(i).repeat(64)])) as BasisParts;
 
@@ -73,6 +76,7 @@ interface RunState {
   errorCode?: string | null;
   errorParams?: unknown;
   unplaced?: unknown;
+  draftNotes?: unknown;
   appliedCandidateId?: string | null;
 }
 
@@ -124,6 +128,8 @@ describe('ScheduleCandidatesService', () => {
         previousLessons: [{ requirementId: 'anon-ma', dayOfWeek: 1, startTime: '08:00:00' }],
       },
       storedRules: null,
+      freeDayWishes: [],
+      keptTimetable: [],
       anonMaps: {
         requirementAnonMap: new Map([
           ['req-ma', 'anon-ma'],
@@ -620,6 +626,88 @@ describe('ScheduleCandidatesService', () => {
       expect(run.status).toBe('SUCCEEDED');
     });
 
+    /*
+     * Önskad ledig dag: a candidate's timetable is its own lessons with their
+     * posts' teachers, beside what every candidate keeps; the draft's is its
+     * own lessons beside the same. Each is read as Generera reads what it
+     * wrote (unkeptFreeDayWishes), when it is stored.
+     */
+    describe('the free-day wishes', () => {
+      const wishes = [
+        { ruleId: 'rule-teacher', userId: TEACHER, day: 1 },
+        { ruleId: 'rule-other', userId: OTHER_TEACHER, day: 3 },
+      ];
+      /** As the job row keeps a note: the teacher's id kept for the server, no name and no rule id. */
+      const note = (userId: string, day: number) => ({
+        category: 'AVAILABILITY',
+        code: TEACHER_FREE_DAY_WISH_NOT_KEPT,
+        params: { day },
+        message: freeDayWishMessage(day),
+        resourceNames: [],
+        subjectIds: [userId],
+      });
+
+      it('stores each applicable candidate’s broken wishes, the kept lessons’ among them, and none for one with no timetable', async () => {
+        proxy.prepareSchedule.mockResolvedValue(
+          prepared({
+            freeDayWishes: wishes,
+            // A locked lesson the other teacher co-teaches on their wished
+            // Wednesday: every candidate keeps it, so every one breaks it.
+            keptTimetable: [{ teacherId: null, coTeacherId: OTHER_TEACHER, dayOfWeek: 3 }],
+          }),
+        );
+        proxy.solveCandidate
+          // Ma, the teacher's post, on her wished Monday.
+          .mockResolvedValueOnce(solved())
+          // Ma on Tuesday, and Sv (nobody's) on Monday: her Monday is free.
+          .mockResolvedValueOnce(
+            solved({
+              lessons: [
+                { requirementId: 'req-ma', roomId: ROOM, dayOfWeek: 2, startTime: '08:00', endTime: '09:00' },
+                { requirementId: 'req-sv', roomId: null, dayOfWeek: 1, startTime: '10:00', endTime: '11:00' },
+              ],
+            }),
+          )
+          .mockResolvedValueOnce(solved({ status: 'TIMEOUT', lessons: [], lunches: null, conflicts: conflictAnalysis }));
+        await startAndRun(dto({ count: 3 }));
+
+        expect(stored.map((row) => row['notes'])).toEqual([
+          [note(TEACHER, 1), note(OTHER_TEACHER, 3)],
+          [note(OTHER_TEACHER, 3)],
+          Prisma.DbNull,
+        ]);
+        // The draft: her Ma on Monday (m-1), and the kept lesson.
+        expect(run.draftNotes).toEqual([note(TEACHER, 1), note(OTHER_TEACHER, 3)]);
+        expect(run.status).toBe('SUCCEEDED');
+      });
+
+      it('stores an empty list when every wish is kept, and lets a parked lesson of the draft occupy no day', async () => {
+        proxy.prepareSchedule.mockResolvedValue(
+          prepared({
+            freeDayWishes: wishes,
+            draftLessons: prepared().draftLessons.map((lesson) => ({ ...lesson, isParked: lesson.id === 'm-1' })),
+          }),
+        );
+        proxy.solveCandidate.mockResolvedValue(
+          solved({ lessons: [{ requirementId: 'req-ma', roomId: ROOM, dayOfWeek: 4, startTime: '08:00', endTime: '09:00' }] }),
+        );
+        await startAndRun(dto({ count: 2 }));
+
+        expect(stored.map((row) => row['notes'])).toEqual([[], []]);
+        expect(run.draftNotes).toEqual([]);
+      });
+
+      it('keeps the draft’s off a run that ends with nothing to apply', async () => {
+        proxy.prepareSchedule.mockResolvedValue(prepared({ freeDayWishes: wishes }));
+        proxy.solveCandidate.mockResolvedValue(solved({ rejected: true }));
+        await startAndRun(dto({ count: 2 }));
+
+        expect(run.errorCode).toBe(CANDIDATES_NONE_APPLICABLE);
+        expect(run.draftNotes).toBeUndefined();
+        expect(stored.map((row) => row['notes'])).toEqual([Prisma.DbNull, Prisma.DbNull]);
+      });
+    });
+
     it('stores a first candidate stopped by a post’s days with the hidden sentence, as its summary and in its list', async () => {
       // A days-bearing summary is not something the engine writes today; the
       // code holds it to the list's rule all the same, as realiseConflicts does.
@@ -943,10 +1031,14 @@ describe('ScheduleCandidatesService', () => {
         refreshOfId: null,
       });
       expect(overview.latest!.candidates).toEqual([
-        { id: CANDIDATE, ordinal: 1, variant: 'KEEP', weights: null, solverStatus: 'OPTIMAL', lessonCount: 2, errorCode: null, errorParams: null, metrics: { moved: 1, movedOf: 2, roomChanges: 0, kept: 1, sameAs: null }, conflicts: [] },
+        // A row from before the wishes were measured: not measured, not "none".
+        { id: CANDIDATE, ordinal: 1, variant: 'KEEP', weights: null, solverStatus: 'OPTIMAL', lessonCount: 2, errorCode: null, errorParams: null, metrics: { moved: 1, movedOf: 2, roomChanges: 0, kept: 1, sameAs: null }, conflicts: [], notes: null },
         // The summary's values, scalars only: what its sentence substitutes.
-        { id: 'c2', ordinal: 2, variant: 'TEACHER_GAPS', weights: { disruption: 2, teacherGap: 8 }, solverStatus: 'TIMEOUT', lessonCount: 0, errorCode: 'CONFLICT_CORE_SUMMARY', errorParams: { count: 1 }, metrics: null, conflicts: [{ category: 'INSUFFICIENT_RESOURCES', message: 'm', resourceNames: [] }] },
+        { id: 'c2', ordinal: 2, variant: 'TEACHER_GAPS', weights: { disruption: 2, teacherGap: 8 }, solverStatus: 'TIMEOUT', lessonCount: 0, errorCode: 'CONFLICT_CORE_SUMMARY', errorParams: { count: 1 }, metrics: null, conflicts: [{ category: 'INSUFFICIENT_RESOURCES', message: 'm', resourceNames: [] }], notes: null },
       ]);
+      expect(overview.draftNotes).toBeNull();
+      // Nobody to name, so no read of Users.
+      expect(tx.user.findMany).not.toHaveBeenCalled();
     });
 
     it('answers a running newest run beside the previous batch, and nothing for a year without runs', async () => {
@@ -963,7 +1055,90 @@ describe('ScheduleCandidatesService', () => {
       );
 
       tx.scheduleCandidateRun.findFirst.mockResolvedValue(null);
-      await expect(service.overview(YEAR, user, NOW)).resolves.toEqual({ latest: null, batch: null, unplaced: null });
+      await expect(service.overview(YEAR, user, NOW)).resolves.toEqual({ latest: null, batch: null, unplaced: null, draftNotes: null });
+    });
+
+    describe('the free-day wishes', () => {
+      const wish = (userId: string, day: number, extra: Record<string, unknown> = {}) => ({
+        category: 'AVAILABILITY',
+        code: 'TEACHER_FREE_DAY_WISH_NOT_KEPT',
+        params: { day },
+        message: 'A teacher wishes Mondays free …',
+        resourceNames: [],
+        subjectIds: [userId],
+        ...extra,
+      });
+      const shown = (day: number, names: string[]) => ({
+        category: 'AVAILABILITY',
+        code: 'TEACHER_FREE_DAY_WISH_NOT_KEPT',
+        params: { day },
+        message: 'A teacher wishes Mondays free …',
+        resourceNames: names,
+      });
+      const keep = { id: CANDIDATE, ordinal: 1, variant: 'KEEP', weights: null, solverStatus: 'OPTIMAL', errorCode: null, metrics: { moved: 0, movedOf: 2, kept: 2, roomChanges: 0, sameAs: null, lessonCount: 2 }, conflicts: [] };
+
+      it('names the teachers of the draft’s and every candidate’s notes for every reader, in one read of Users, and keeps their ids on the server', async () => {
+        tx.scheduleCandidateRun.findFirst.mockResolvedValueOnce(
+          row({
+            draftNotes: [wish(TEACHER, 1), wish(OTHER_TEACHER, 3)],
+            candidates: [
+              { ...keep, notes: [wish(TEACHER, 1, { resourceIds: ['rule-1'], extra: 'kept' })] },
+              { ...keep, id: 'c2', ordinal: 2, variant: 'TEACHER_GAPS', notes: [] },
+            ],
+          }),
+        );
+        // The other teacher is gone, or RLS hides them: named by nobody.
+        tx.user.findMany.mockResolvedValue([{ id: TEACHER, firstName: 'Eva', lastName: 'Ek' }]);
+
+        const overview = await service.overview(YEAR, user, NOW);
+
+        expect(overview.draftNotes).toEqual([shown(1, ['Eva Ek']), shown(3, [])]);
+        expect(overview.batch!.candidates.map((candidate) => candidate.notes)).toEqual([[shown(1, ['Eva Ek'])], []]);
+        expect(overview.latest).toEqual(overview.batch);
+        // Each teacher once, though the newest run is the batch too.
+        expect(tx.user.findMany).toHaveBeenCalledTimes(1);
+        expect(tx.user.findMany).toHaveBeenCalledWith({
+          where: { id: { in: [TEACHER, OTHER_TEACHER] } },
+          select: { id: true, firstName: true, lastName: true },
+        });
+        expect(JSON.stringify(overview)).not.toMatch(new RegExp(`subjectIds|rule-1|extra|${TEACHER}|${OTHER_TEACHER}`));
+        // A name beside a staff-readable wish is not recorded (access-log.ts).
+        expect(recordedReads(tx)).toEqual([]);
+      });
+
+      it('names the previous batch’s teachers beside a running run, and shows no wish of a candidate with no timetable', async () => {
+        tx.scheduleCandidateRun.findFirst
+          .mockResolvedValueOnce(row({ id: 'new', status: 'RUNNING', progress: 0, finishedAt: null, heartbeatAt: NOW, unplaced: null, candidates: [] }))
+          .mockResolvedValueOnce(
+            row({
+              draftNotes: [],
+              candidates: [
+                { ...keep, notes: [wish(TEACHER, 1)] },
+                // A hand-edited row: a TIMEOUT has no timetable, whatever it holds.
+                { ...keep, id: 'c2', ordinal: 2, solverStatus: 'TIMEOUT', metrics: null, notes: [wish(OTHER_TEACHER, 3)] },
+              ],
+            }),
+          );
+        tx.user.findMany.mockResolvedValue([{ id: TEACHER, firstName: 'Eva', lastName: 'Ek' }]);
+
+        const overview = await service.overview(YEAR, user, NOW);
+
+        expect(overview.latest!.candidates).toEqual([]);
+        expect(overview.draftNotes).toEqual([]);
+        expect(overview.batch!.candidates.map((candidate) => candidate.notes)).toEqual([[shown(1, ['Eva Ek'])], null]);
+      });
+
+      it('reads a notes column that is not a list as not measured', async () => {
+        tx.scheduleCandidateRun.findFirst.mockResolvedValueOnce(
+          row({ draftNotes: { unexpected: 'shape' }, candidates: [{ ...keep, notes: 'not a list' }] }),
+        );
+
+        const overview = await service.overview(YEAR, user, NOW);
+
+        expect(overview.draftNotes).toBeNull();
+        expect(overview.batch!.candidates[0]!.notes).toBeNull();
+        expect(tx.user.findMany).not.toHaveBeenCalled();
+      });
     });
 
     it('shows an active run past its lease, or older than half an hour, as FAILED CANDIDATE_RUN_ABANDONED', () => {

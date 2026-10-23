@@ -173,6 +173,15 @@ describe('Schemaförslag (e2e)', () => {
   });
 
   describe('GET /api/v1/optimization/candidates', () => {
+    const BO = '33333333-3333-4333-8333-333333333303';
+    const wish = {
+      category: 'AVAILABILITY',
+      code: 'TEACHER_FREE_DAY_WISH_NOT_KEPT',
+      params: { day: 3 },
+      message: 'A teacher wishes Wednesdays free …',
+      resourceNames: [],
+      subjectIds: [BO],
+    };
     const runRow = {
       id: RUN_ID,
       status: 'SUCCEEDED',
@@ -191,6 +200,9 @@ describe('Schemaförslag (e2e)', () => {
       heartbeatAt: new Date('2026-10-17T08:03:00.000Z'),
       leaseSeconds: 250,
       unplaced: { lines: 0, minutes: 0, draftLines: 1, draftMinutes: 60 },
+      // A free-day wish the draft and the candidate break (Lärarens dag), as
+      // the run stores it: the teacher's Users id kept for the server.
+      draftNotes: [wish],
       candidates: [
         {
           id: CANDIDATE_ID,
@@ -201,12 +213,21 @@ describe('Schemaförslag (e2e)', () => {
           errorCode: null,
           metrics: { moved: 3, movedOf: 40, kept: 37, roomChanges: 1, sameAs: null, lessonCount: 40, unplaced: { lines: 0, minutes: 0 } },
           conflicts: [],
+          notes: [wish],
         },
       ],
+    };
+    const shownWish = {
+      category: 'AVAILABILITY',
+      code: 'TEACHER_FREE_DAY_WISH_NOT_KEPT',
+      params: { day: 3 },
+      message: 'A teacher wishes Wednesdays free …',
+      resourceNames: ['Bo Ek'],
     };
 
     it('answers the newest run and batch with the five figures, and lets every administrator read it', async () => {
       harness.tx['scheduleCandidateRun']!['findFirst']!.mockResolvedValue(runRow);
+      harness.tx['user']!['findMany']!.mockResolvedValue([{ id: BO, firstName: 'Bo', lastName: 'Ek' }]);
       // The läsare (Läsbehörighet) reads them like every administrator.
       for (const profile of ['FULL', 'EXPEDITION', 'LASARE']) {
         const response = await request(http())
@@ -227,7 +248,11 @@ describe('Schemaförslag (e2e)', () => {
           errorParams: null,
           metrics: { moved: 3, movedOf: 40, roomChanges: 1, kept: 37, sameAs: null },
           conflicts: [],
+          notes: [shownWish],
         });
+        // Whose wish, named for every reader; the id stays on the server.
+        expect(response.body.draftNotes).toEqual([shownWish]);
+        expect(response.text).not.toMatch(new RegExp(`subjectIds|${BO}`));
       }
     });
 

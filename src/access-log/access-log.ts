@@ -91,7 +91,11 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *     no studentIds and no participants (schedule-candidates.service.spec.ts).
  *     Nor a post's days: a sentence about them is stored as the hidden one
  *     (TEACHER_WORK_DAYS_HIDDEN, no figure, no post, no teacher) for every
- *     reader, so nothing HR is shown. What IS recorded is each rebuild of
+ *     reader, so nothing HR is shown. The one name it gives is a teacher's
+ *     beside a free-day wish a candidate or the draft breaks
+ *     (20261127090000), read when the page is read, as a generator run's
+ *     notes name them: the wish is on the work rule every member of staff
+ *     reads (below), not on the post. What IS recorded is each rebuild of
  *     the fetch reading the posts' day limits it sends the engine — the
  *     run, the check before an apply and the apply itself — by the
  *     fetch's own recordRead (EMPLOYMENT), as Generera's is. A row per poll

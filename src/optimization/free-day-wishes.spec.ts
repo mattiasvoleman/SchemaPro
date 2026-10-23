@@ -1,6 +1,7 @@
 import {
   TEACHER_FREE_DAY_WISH_NOT_KEPT,
   freeDayWishMessage,
+  timetableWith,
   unkeptFreeDayWishes,
   type FreeDayWish,
   type TeachersOnDay,
@@ -85,6 +86,35 @@ describe('unkeptFreeDayWishes', () => {
       [{ day: 3 }, [RULE_EVA], [EVA]],
       [{ day: 3 }, [RULE_OLLE], [OLLE]],
     ]);
+  });
+});
+
+describe('timetableWith', () => {
+  const rows = [
+    { id: 'req-ma', teacherId: EVA, coTeacherId: OLLE },
+    { id: 'req-sv', teacherId: null, coTeacherId: null },
+  ];
+
+  it('is the kept lessons and each solved lesson with its post’s two adults, as the apply stamps them', () => {
+    expect(
+      timetableWith([lesson({ dayOfWeek: 2 })], rows, [
+        { requirementId: 'req-ma', dayOfWeek: 5 },
+        { requirementId: 'req-sv', dayOfWeek: 1 },
+      ]),
+    ).toEqual([
+      { teacherId: OLLE, coTeacherId: null, dayOfWeek: 2 },
+      { teacherId: EVA, coTeacherId: OLLE, dayOfWeek: 5 },
+      { teacherId: null, coTeacherId: null, dayOfWeek: 1 },
+    ]);
+  });
+
+  it('leaves out a lesson whose post it was not given, which the demand guard refuses before it is stored', () => {
+    expect(timetableWith([], rows, [{ requirementId: 'req-gone', dayOfWeek: 5 }])).toEqual([]);
+  });
+
+  it('breaks Olle’s wish by a lesson he co-teaches only through the post, as unkeptFreeDayWishes reads it', () => {
+    const timetable = timetableWith([], rows, [{ requirementId: 'req-ma', dayOfWeek: 3 }]);
+    expect(unkeptFreeDayWishes([wish({ userId: OLLE, ruleId: RULE_OLLE, day: 3 })], timetable)).toHaveLength(1);
   });
 });
 
