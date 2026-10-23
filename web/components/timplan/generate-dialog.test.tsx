@@ -236,7 +236,7 @@ describe("GenerateDialog", () => {
     await user.click(screen.getByRole("button", { name: "preview" }));
 
     expect(await screen.findByText("skippedTitle(2)")).toBeInTheDocument();
-    expect(screen.getByText("skippedHalves(7A|Slöjd|7A:1 och 7A:2)")).toBeInTheDocument();
+    expect(screen.getByText("skippedHalves(7A|Slöjd|2|7A:1 och 7A:2)")).toBeInTheDocument();
     // Only the pair the class has is "already existing".
     expect(screen.getByText("summary(2|1|1|grade(7))")).toBeInTheDocument();
   });

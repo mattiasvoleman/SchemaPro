@@ -762,6 +762,7 @@ function PreviewBody({ preview, edits, classCount, length, yearName, planName, o
                     ? t("skippedHalves", {
                         group: row.groupName,
                         subject: row.subjectName,
+                        count: (row.halves ?? []).length,
                         halves: new Intl.ListFormat(locale, { type: "conjunction" }).format(row.halves ?? []),
                       })
                   : row.alternativeTo === null
