@@ -27775,3 +27775,70 @@ BEGIN
   IF n <> 0 THEN RAISE EXCEPTION 'shares fit: a deleted post left % shares', n; END IF;
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 208: en inloggning med rader på två skolor läser och skriver bara
+-- den valda skolans lärarandelar (20261205090000, ovanpå Flera skolor per
+-- inloggning, 20261204090000).
+--
+-- The four arms ask app.current_school_id(), app.current_user_role() and
+-- app.current_user_may(), which answer for the row the request names. The
+-- fixtures' …0240 is FULL at A and LASARE in the roller school, …0241 the
+-- other way round; the roller school's post carries one share. For each login
+-- and each school named by the gateway's setting: the roller school's shares
+-- are read only with the roller school named, and written only where the
+-- named row writes planering — never across to the school not named.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_rls208_a', :'school_a', true);
+DO $$
+DECLARE
+  a uuid := current_setting('app.test_rls208_a')::uuid;
+  m uuid;
+  r record;
+  n bigint;
+  wrote boolean;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+  PERFORM set_config('app.chosen_school_id', '', true);
+  PERFORM set_config('request.headers', '', true);
+  m := app.current_school_id();
+  IF m IS NULL OR m = a THEN
+    RAISE EXCEPTION 'shares 208: the roller school''s administrator resolves to %; fixtures did not run', m;
+  END IF;
+  SELECT count(*) INTO n FROM "TeachingRequirementShares" WHERE "schoolId" = m;
+  IF n <> 1 THEN RAISE EXCEPTION 'shares 208: the roller school has % shares, not its one', n; END IF;
+
+  FOR r IN
+    SELECT * FROM (VALUES
+      ('fe000000-0000-4000-8000-000000000240', m, 1, false, '208 FULL at A, LASARE in the roller school, which is named: reads its share, writes none'),
+      ('fe000000-0000-4000-8000-000000000240', a, 0, false, '208 the same login with A named: the roller school''s share is no share of its'),
+      ('fe000000-0000-4000-8000-000000000241', m, 1, true,  '208 LASARE at A, FULL in the roller school, which is named: writes its share'),
+      ('fe000000-0000-4000-8000-000000000241', a, 0, false, '208 the same login with A named: neither reads nor writes the roller school''s share')
+    ) v(sub, school, sees, writes, label)
+  LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', r.sub, 'role', 'authenticated')::text, true);
+    PERFORM set_config('app.chosen_school_id', r.school::text, true);
+    IF app.current_school_id() IS DISTINCT FROM r.school THEN
+      RAISE EXCEPTION '%: the login resolves to %', r.label, app.current_school_id();
+    END IF;
+    SELECT count(*) INTO n FROM "TeachingRequirementShares" WHERE "schoolId" = m;
+    IF n <> r.sees THEN RAISE EXCEPTION '%: reads % of the roller school''s shares', r.label, n; END IF;
+    -- A write that touches no column the trigger reads, undone either way.
+    wrote := false;
+    BEGIN
+      UPDATE "TeachingRequirementShares" SET "updatedAt" = "updatedAt" WHERE "schoolId" = m;
+      GET DIAGNOSTICS n = ROW_COUNT;
+      wrote := n > 0;
+      RAISE EXCEPTION 'undone' USING ERRCODE = 'RL208';
+    EXCEPTION
+      WHEN SQLSTATE 'RL208' THEN NULL;
+      WHEN insufficient_privilege THEN wrote := false;
+    END;
+    IF wrote IS DISTINCT FROM r.writes THEN
+      RAISE EXCEPTION '%: wrote the roller school''s share: %', r.label, wrote;
+    END IF;
+  END LOOP;
+END $$;
+ROLLBACK;
