@@ -172,12 +172,14 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
     }
     const body = await readBody(request);
     const scenario = request.headers["x-stub-scenario"];
+    const school = request.headers["x-school-id"];
     const result = match.route.handler({
       person: personForToken(bearer(request)),
       params: match.params,
       query: url.searchParams,
       body,
       scenario: typeof scenario === "string" && scenario !== "" ? scenario : null,
+      school: typeof school === "string" && school !== "" ? school.toLowerCase() : null,
     });
     if (result instanceof Reply) {
       if (result.options.miss) {

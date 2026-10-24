@@ -119,6 +119,23 @@ describe("useTimetableRealtime", () => {
     });
   });
 
+  it("names the page's school in the handshake, for a session with more than one (Flera skolor)", async () => {
+    const meta = document.createElement("meta");
+    meta.name = "rastra-school";
+    meta.content = "33333333-3333-4333-8333-333333333333";
+    document.head.append(meta);
+    try {
+      const { io } = await setup();
+      await waitFor(() => expect(io).toHaveBeenCalledTimes(1));
+      expect(io).toHaveBeenCalledWith("https://api.test", {
+        transports: ["websocket"],
+        auth: { token: "tok-1", school: "33333333-3333-4333-8333-333333333333" },
+      });
+    } finally {
+      meta.remove();
+    }
+  });
+
   it("does nothing when NEXT_PUBLIC_API_BASE_URL is unset", async () => {
     const { io, getSession, view } = await setup({ apiUrl: undefined });
 

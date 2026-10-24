@@ -3,7 +3,7 @@ import { gateOfPath } from "../lib/admin-areas";
 import { APP_ROUTES, PAGES, STALE_QUERIES } from "./app-routes";
 import { DESKTOP, PHONE, scanBothSchemes, setScheme, type Violation } from "./axe";
 import { freezeClock, settle, signIn, signInAs, watchStubMisses } from "./signed-in";
-import { READER, STUB_ORIGIN } from "./stub/sessions";
+import { MULTI_GUARDIAN, READER, STUB_ORIGIN } from "./stub/sessions";
 
 /**
  * Violations the suite lets through, each with the reason it is not fixed
@@ -166,3 +166,40 @@ for (const route of APP_ROUTES.filter((entry) => entry.page.startsWith("/admin")
     expect((await scanBothSchemes(page, "desktop", true, (violations) => unexplained(violations, route.page))).join("\n")).toBe("");
   });
 }
+
+/*
+ * Flera skolor per inloggning: a guardian with children at two schools. The
+ * sidebar's school name is the switcher, a <details> with a form; /guardian
+ * names the children at the other school with a button that switches there.
+ * Axe runs with the switcher open, and the switch itself is a full page load
+ * that leaves the browser's choice in its cookie.
+ */
+test("a guardian at two schools: the switcher and the other school's children", async ({ page, context, baseURL }) => {
+  test.slow();
+  await signInAs(context, MULTI_GUARDIAN, baseURL!);
+  await freezeClock(page);
+  const misses = watchStubMisses(page);
+  await page.setViewportSize(DESKTOP);
+  await setScheme(page, "light", false);
+  await page.goto("/sv/guardian");
+  await settle(page);
+  expect.soft(misses, "the backend stub could not answer these reads").toEqual([]);
+
+  const card = page.getByRole("region", { name: "Barn på andra skolor" });
+  await expect(card.getByText("Olle Granlund")).toBeVisible();
+  await expect(card.getByRole("button", { name: "Byt till Granskolan" })).toBeVisible();
+  // The page names its school to the browser's clients.
+  await expect(page.locator('meta[name="rastra-school"]')).toHaveAttribute("content", /^[0-9a-f-]{36}$/);
+
+  const sidebar = page.locator("aside").first();
+  await sidebar.locator("summary").click();
+  await expect(sidebar.getByRole("button", { name: /Granskolan/ })).toBeEnabled();
+  await expect(sidebar.getByRole("button", { name: /Exempelskolan/ })).toBeDisabled();
+  const results = await scanBothSchemes(page, "desktop", true, (violations) => unexplained(violations, "/guardian"));
+  expect(results.join("\n"), "WCAG 2.1 AA violations").toBe("");
+
+  await sidebar.getByRole("button", { name: /Granskolan/ }).click();
+  await page.waitForURL(/\/sv\/guardian$/);
+  const cookie = (await context.cookies()).find((one) => one.name === "rastra_school");
+  expect(cookie?.value, "the switch is remembered in the browser").toMatch(/^[0-9a-f-]{36}$/);
+});

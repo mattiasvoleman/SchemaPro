@@ -102,6 +102,21 @@ export const READER: SignedInPerson = {
 };
 
 /**
+ * Flera skolor per inloggning: a guardian with children at two schools. At
+ * the fixture school she is Sara, with Sara's row and children; her other
+ * school is Granskolan (world.ts SECOND_SCHOOL), where she has one child. A
+ * login of its own, so every other suite sees the one-school Sara it always
+ * saw.
+ */
+export const MULTI_GUARDIAN: SignedInPerson = {
+  persona: "guardian",
+  role: "GUARDIAN",
+  authId: uid(KIND.auth, 6),
+  userId: PEOPLE.guardian.userId,
+  email: "sara.tva.skolor@exempelskolan.example",
+};
+
+/**
  * Someone signed in whom no school knows: an auth user with no Users row, so
  * the (app) layout sends them to /no-profile — the one way to reach that page.
  * Their persona is a pupil's, but no page reads anything for them.
@@ -140,7 +155,14 @@ export function authUser(person: SignedInPerson) {
     aud: "authenticated",
     role: "authenticated",
     email: person.email,
-    app_metadata: { provider: "email", providers: ["email"] },
+    // The gateway marks a login that rows at two schools hold
+    // (SupabaseAdminService.markSeveralSchools); only such a login's pages
+    // ask the gateway for its schools (lib/auth.ts).
+    app_metadata: {
+      provider: "email",
+      providers: ["email"],
+      ...(person.authId === MULTI_GUARDIAN.authId ? { rastraSeveralSchools: true } : {}),
+    },
     user_metadata: {},
     created_at: "2026-08-01T08:00:00.000Z",
   };
@@ -151,7 +173,7 @@ export function personForToken(token: string | null | undefined): SignedInPerson
   if (!token) return null;
   try {
     const payload = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString()) as { sub?: string };
-    return [...Object.values(PEOPLE), READER, ORPHAN].find((person) => person.authId === payload.sub) ?? null;
+    return [...Object.values(PEOPLE), READER, MULTI_GUARDIAN, ORPHAN].find((person) => person.authId === payload.sub) ?? null;
   } catch {
     return null;
   }

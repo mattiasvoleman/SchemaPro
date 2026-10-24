@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import type { Socket } from "socket.io-client";
 import { useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/utils/supabase/client";
+import { pageSchool } from "@/lib/school-choice";
 import { ALL_COVER, COVER_KEYS } from "@/lib/cover-keys";
 import { windowsOverlap } from "@/lib/cover-view";
 
@@ -24,6 +25,12 @@ import { windowsOverlap } from "@/lib/cover-view";
  * every two minutes as well (cover-queries.ts), so a socket that never
  * connects costs freshness, not correctness.
  */
+
+/** The page's school, for a socket of a session with more than one (lib/school-choice.ts). */
+const socketSchool = (): { school?: string } => {
+  const school = pageSchool();
+  return school ? { school } : {};
+};
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
 
@@ -70,7 +77,7 @@ export function useCoverRealtime(range: { from: string; to: string }): void {
       const { io } = await import("socket.io-client");
       if (cancelled) return;
 
-      socket = io(API_BASE_URL, { transports: ["websocket"], auth: { token } });
+      socket = io(API_BASE_URL, { transports: ["websocket"], auth: { token, ...socketSchool() } });
       for (const event of [COVER_BOARD_UPDATED_EVENT, MASTER_TIMETABLE_UPDATED_EVENT]) {
         socket.on(event, (payload: unknown) => {
           if (shouldRefetch(event, payload, current.current)) {

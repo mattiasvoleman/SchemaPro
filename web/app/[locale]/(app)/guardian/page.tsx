@@ -14,7 +14,7 @@ import {
 } from "@/lib/guardian-queries";
 import { lastLeaveDay, leaveRequestError } from "@/lib/leave-errors";
 import { LEAVE_STATUS_VARIANT } from "@/lib/status-variants";
-import type { AbsenceReport, AbsenceReportType } from "@/lib/types";
+import type { AbsenceReport, AbsenceReportType, MySchool } from "@/lib/types";
 import { toDateString } from "@/lib/utils";
 import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
@@ -64,6 +64,19 @@ const ChildSchedule = lazy(() =>
 );
 
 /*
+ * Flera skolor per inloggning: the children at the guardian's other schools,
+ * with the button that switches there. Only a guardian with another school
+ * fetches it, and a chunk that does not arrive renders nothing: the
+ * children at this school are what the page is for.
+ */
+const OtherSchools = lazy<React.ComponentType<{ schools: MySchool[] }>>(() =>
+  import("@/components/guardian/other-schools").then(
+    (module) => ({ default: module.OtherSchools }),
+    () => ({ default: () => null }),
+  ),
+);
+
+/*
  * The confirmation before a report is taken back, fetched on its first open:
  * /guardian is the heaviest route of its tier, and Radix Dialog is in none of
  * its chunks. A chunk that does not arrive is said in a toast, and the next
@@ -82,7 +95,9 @@ export default function GuardianPage() {
   const t = useTranslations("guardian");
   const tCommon = useTranslations("common");
   const locale = useLocale();
-  const { profile, school } = useProfile();
+  const { profile, school, schools = [] } = useProfile();
+  // The guardian's other schools, whose children the card below names.
+  const otherSchools = schools.filter((one) => !one.current && one.role === "GUARDIAN");
   // Only a guardian is asked for children: the gateway answers the read for
   // a guardian alone, and refuses any other role that opens this page. That
   // role sees "no children", as it did when the read was PostgREST's and
@@ -204,7 +219,16 @@ export default function GuardianPage() {
     setConfirmOpen(true);
   };
 
-  const header = <PageHeader title={t("title")} subtitle={t("subtitle")} />;
+  const header = (
+    <>
+      <PageHeader title={t("title")} subtitle={t("subtitle")} />
+      {otherSchools.length > 0 ? (
+        <Suspense fallback={null}>
+          <OtherSchools schools={otherSchools} />
+        </Suspense>
+      ) : null}
+    </>
+  );
 
   if (isLoading) {
     return (

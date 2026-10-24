@@ -1798,6 +1798,12 @@ export interface InvitationResult {
    * still answer.
    */
   loginMoved?: boolean;
+  /**
+   * True when the login is another school's too (Flera skolor per
+   * inloggning): the person signs in as before and finds this school in
+   * their switcher. Optional while a gateway without it may still answer.
+   */
+  sharedLogin?: boolean;
 }
 
 /** Result of inviting a selection. */

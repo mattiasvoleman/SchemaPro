@@ -207,7 +207,12 @@ interface AppShellProps {
   role: UserRole;
   userName: string;
   email: string;
-  schoolName: string;
+  /**
+   * The school's name, or for a login with several schools the switcher
+   * the (app) layout renders on the server (components/layout/school-switcher.tsx):
+   * a node, so that nothing of it is code in this module's chunk.
+   */
+  schoolName: React.ReactNode;
   children: React.ReactNode;
 }
 

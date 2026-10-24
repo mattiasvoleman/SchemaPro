@@ -267,4 +267,82 @@ describe("api client", () => {
     expect(error.status).toBe(418);
     expect(error.message).toBe("teapot");
   });
+
+  /*
+   * Flera skolor per inloggning: a page of a session with more than one
+   * school names its school to the gateway (lib/school-choice.ts), and a
+   * school no longer the person's draws the page again.
+   */
+  describe("the school a request is about", () => {
+    const A = "33333333-3333-4333-8333-333333333333";
+    const B = "44444444-4444-4444-8444-444444444444";
+    const nameThePage = (school: string) => {
+      const meta = document.createElement("meta");
+      meta.name = "rastra-school";
+      meta.content = school;
+      document.head.append(meta);
+    };
+    const withReload = () => {
+      const reload = vi.fn();
+      const original = window.location;
+      Object.defineProperty(window, "location", { configurable: true, value: { ...original, reload } });
+      return { reload, restore: () => Object.defineProperty(window, "location", { configurable: true, value: original }) };
+    };
+
+    afterEach(() => {
+      document.head.querySelectorAll('meta[name="rastra-school"]').forEach((meta) => meta.remove());
+    });
+
+    it("names the page's school, and another of the person's when a read asks for it", async () => {
+      nameThePage(A);
+      fetchMock.mockImplementation(async () => jsonResponse([]));
+      const { api } = await loadApi();
+
+      await api.get("/api/v1/family/children");
+      await api.get("/api/v1/family/children", { school: B });
+      await api.post("/lessons", {});
+
+      const headers = fetchMock.mock.calls.map((call) => (call[1] as RequestInit).headers as Record<string, string>);
+      expect(headers.map((h) => h["x-school-id"])).toEqual([A, B, A]);
+    });
+
+    it("reloads the page on SCHOOL_NOT_AVAILABLE, and only on a page that names a school", async () => {
+      const { reload, restore } = withReload();
+      try {
+        fetchMock.mockImplementation(async () =>
+          problemResponse(403, "Forbidden", "Du har ingen aktiv roll på den skolan just nu.", "/x", "SCHOOL_NOT_AVAILABLE"),
+        );
+        const { api } = await loadApi();
+        await expect(api.get("/x")).rejects.toMatchObject({ code: "SCHOOL_NOT_AVAILABLE" });
+        expect(reload).not.toHaveBeenCalled();
+        nameThePage(A);
+        await expect(api.get("/x")).rejects.toMatchObject({ code: "SCHOOL_NOT_AVAILABLE" });
+        expect(reload).toHaveBeenCalledTimes(1);
+        fetchMock.mockImplementation(async () => problemResponse(403, "Forbidden", "Nej.", "/x", "AREA_NOT_YOURS"));
+        await expect(api.get("/x")).rejects.toMatchObject({ code: "AREA_NOT_YOURS" });
+        expect(reload).toHaveBeenCalledTimes(1);
+      } finally {
+        restore();
+      }
+    });
+
+    it("does not reload when a read at another of the person's schools is refused, only when the page's own is", async () => {
+      // The guardian's card asks each other school (lib/api `school`); one the
+      // hook closed answers SCHOOL_NOT_AVAILABLE, and a reload would ask it again.
+      const { reload, restore } = withReload();
+      try {
+        fetchMock.mockImplementation(async () =>
+          problemResponse(403, "Forbidden", "Du har ingen aktiv roll på den skolan just nu.", "/x", "SCHOOL_NOT_AVAILABLE"),
+        );
+        const { api } = await loadApi();
+        nameThePage(A);
+        await expect(api.get("/x", { school: B })).rejects.toMatchObject({ code: "SCHOOL_NOT_AVAILABLE", status: 403 });
+        expect(reload).not.toHaveBeenCalled();
+        await expect(api.get("/x", { school: A })).rejects.toMatchObject({ code: "SCHOOL_NOT_AVAILABLE" });
+        expect(reload).toHaveBeenCalledTimes(1);
+      } finally {
+        restore();
+      }
+    });
+  });
 });

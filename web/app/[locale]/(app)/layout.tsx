@@ -3,6 +3,8 @@ import { getTranslations } from "next-intl/server";
 import { redirect } from "@/i18n/navigation";
 import { getSession } from "@/lib/auth";
 import { AppShell } from "@/components/layout/app-shell";
+import { SchoolSwitcher } from "@/components/layout/school-switcher";
+import { SCHOOL_META } from "@/lib/school-choice";
 import { AppProviders } from "@/components/app-providers";
 import { ClosedPageGate, ProfileProvider } from "@/components/profile-context";
 import { READS_EVERY_PAGE, closedPages, readOnlyPages } from "@/lib/admin-areas";
@@ -29,7 +31,7 @@ export default async function AppLayout({
     return null;
   }
 
-  const { profile, school } = session;
+  const { profile, school, schools, namedSchool } = session;
   const t = await getTranslations("common");
   const tNav = await getTranslations("nav");
   // Roller i skolan: the admin pages this profile does not use, worked out
@@ -61,13 +63,19 @@ export default async function AppLayout({
           school={school}
           readOnly={changesNothing}
           closed={closedPagesFor(closed, profile.adminProfile ?? null, locale)}
+          schools={schools}
+          namedSchool={namedSchool}
         >
+          {/* Flera skolor per inloggning: the school this page is for, which
+              the browser's clients name to the gateway and PostgREST
+              (lib/school-choice.ts). Only for a session with more than one. */}
+          {namedSchool ? <meta name={SCHOOL_META} content={namedSchool} /> : null}
           {style ? <style dangerouslySetInnerHTML={{ __html: style }} /> : null}
           <AppShell
             role={profile.role}
             userName={`${profile.firstName} ${profile.lastName}`}
             email={profile.email}
-            schoolName={school?.name ?? ""}
+            schoolName={<SchoolSwitcher schools={schools} currentName={school?.name ?? ""} locale={locale} />}
           >
             <ClosedPageGate>
               {admin ? readOnlyNoticesFor(readOnly, adminProfile) : null}
