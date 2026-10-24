@@ -46,6 +46,18 @@
 --     arbetstid at most schools; a school that counts its rastaktivitet as
 --     undervisning says so on that area, not for every place at once.
 --
+-- The span is NIOARIG, as every school-wide span is (rasts, sittings,
+-- frames; src/common/grade-numbering.ts): a tioårig läsår's classes are read
+-- in it before they meet the area.
+--
+-- AN AREA SPANS THE YEARS, AND SO DOES A CHANGE TO IT. A changed span, need
+-- or countsAsTeaching is read for every läsår's passes on the area, the
+-- closed ones too, and a deleted area takes its passes in every läsår with
+-- it (the page says how many). That is the price of an area the school
+-- writes once; a per-year copy would ask the school to type its yard again
+-- every August. The figures a closed year handed out (SCB, a printed
+-- uppdragsbeskrivning) are not stored, so nothing already given is changed.
+--
 -- ## A pass has its own time, and its own dates
 --
 -- A pass names the area, a weekday 1..7, a start and an end in whole minutes
@@ -232,6 +244,9 @@ CREATE TABLE "SupervisionShifts" (
     CONSTRAINT "SupervisionShifts_pkey" PRIMARY KEY ("id"),
     CONSTRAINT "SupervisionShifts_day_is_iso" CHECK ("dayOfWeek" BETWEEN 1 AND 7),
     CONSTRAINT "SupervisionShifts_window_is_ordered" CHECK ("endTime" > "startTime"),
+    -- TIME admits 24:00:00, which a client reads back as the next day's
+    -- 00:00: a pass is inside one day.
+    CONSTRAINT "SupervisionShifts_within_the_day" CHECK ("endTime" < TIME '24:00'),
     CONSTRAINT "SupervisionShifts_whole_minutes" CHECK (
         EXTRACT(SECOND FROM "startTime") = 0 AND EXTRACT(SECOND FROM "endTime") = 0
     ),

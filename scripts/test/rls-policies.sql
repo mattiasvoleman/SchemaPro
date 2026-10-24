@@ -27942,6 +27942,7 @@ BEGIN
       'SupervisionAreas_guards_range|>= 0|<= 10',
       'SupervisionShifts_day_is_iso|>= 1|<= 7',
       'SupervisionShifts_window_is_ordered|"endTime" > "startTime"|"endTime" > "startTime"',
+      'SupervisionShifts_within_the_day|"endTime" < |24:00',
       'SupervisionShifts_whole_minutes|SECOND|SECOND',
       'SupervisionShifts_dates_are_ordered|"validTo" >= "validFrom"|"validTo" >= "validFrom"',
       'SupervisionShifts_note_is_short|btrim|200'])
@@ -28240,7 +28241,7 @@ BEGIN
     EXCEPTION WHEN check_violation THEN NULL;
     END;
   END LOOP;
-  FOREACH st IN ARRAY ARRAY['10:20|10:20', '10:20|10:00', '10:00:30|10:20', '10:00|10:20:01'] LOOP
+  FOREACH st IN ARRAY ARRAY['10:20|10:20', '10:20|10:00', '10:00:30|10:20', '10:00|10:20:01', '23:00|24:00'] LOOP
     BEGIN
       INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime")
       VALUES (app.current_school_id(), yr, garden, bo, 4, split_part(st, '|', 1)::time, split_part(st, '|', 2)::time);
