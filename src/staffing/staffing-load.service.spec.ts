@@ -84,8 +84,19 @@ describe('StaffingLoadService', () => {
     // The year's flags ride on the same read, for the roster basis.
     expect(tx.academicYear.findUnique).toHaveBeenCalledWith({
       where: { id: YEAR_ID },
-      select: { startDate: true, endDate: true, isActive: true, predecessorId: true, gradeNumbering: true },
+      select: {
+        startDate: true,
+        endDate: true,
+        isActive: true,
+        predecessorId: true,
+        gradeNumbering: true,
+        // The rastvaktspass the reader may read, counted in the same statement.
+        _count: { select: { supervisionShifts: true } },
+      },
     });
+    // A year without a pass asks nothing more for the rastvaktsschema.
+    expect(tx.$queryRaw).not.toHaveBeenCalled();
+    expect(report.supervision).toBeNull();
     expect(tx.staffingPolicy.findUnique).toHaveBeenCalledWith({ where: { schoolId: SCHOOL_ID } });
     expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith({ where: { academicYearId: YEAR_ID } });
     expect(report).toMatchObject({
@@ -454,6 +465,68 @@ describe('StaffingLoadService', () => {
     expect(shown).not.toHaveProperty('maxTeachingDaysPerWeek');
   });
 
+  describe('rastvakt (Rastvaktsschema)', () => {
+    const t = (hhmm: string) => new Date(`1970-01-01T${hhmm}:00.000Z`);
+    const PASS_ONLY = '55555555-5555-4555-8555-555555555555';
+    /** ME: a Rastvakt uppdrag of 60, and two passes — the yard, and a rastaktivitet the school counts. */
+    const arrangeSchedule = () => {
+      tx.academicYear.findUnique.mockResolvedValue({
+        startDate: new Date('2026-08-17T00:00:00.000Z'),
+        endDate: new Date('2027-06-11T00:00:00.000Z'),
+        _count: { supervisionShifts: 3 },
+      });
+      tx.teacherDuty.findMany.mockResolvedValue([
+        { userId: ME, kind: 'RASTVAKT', minutesPerWeek: 60, countsAsTeaching: false, validFrom: null, validTo: null },
+        { userId: ME, kind: 'MENTORSKAP', minutesPerWeek: 90, countsAsTeaching: false, validFrom: null, validTo: null },
+        { userId: COLLEAGUE, kind: 'RASTVAKT', minutesPerWeek: 40, countsAsTeaching: false, validFrom: null, validTo: null },
+      ]);
+      tx.$queryRaw.mockResolvedValue([
+        { userId: ME, startTime: t('10:00'), endTime: t('10:20'), validFrom: null, validTo: null, countsAsTeaching: false },
+        { userId: ME, startTime: t('12:00'), endTime: t('12:30'), validFrom: null, validTo: null, countsAsTeaching: true },
+        // A teacher with a pass and nothing else has a row, as one with an uppdrag does.
+        { userId: PASS_ONLY, startTime: t('10:00'), endTime: t('10:20'), validFrom: null, validTo: null, countsAsTeaching: false },
+      ]);
+    };
+
+    it('charges each pass as an uppdrag, the ram no longer counted, and states the passes on their own line', async () => {
+      arrangeSchedule();
+      const report = await service.load(YEAR_ID, 'planned', testUser());
+      // One statement for the passes, with their areas.
+      expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+      const [strings, ...values] = tx.$queryRaw.mock.calls[0]! as [readonly string[], ...unknown[]];
+      expect(strings.join('?')).toMatch(/FROM "SupervisionShifts" s\s+JOIN "SupervisionAreas" a/);
+      expect(values).toEqual([YEAR_ID]);
+      const mine = report.teachers.find((row) => row.userId === ME)!;
+      // 90 mentorskap + 20 + 30 of passes; the Rastvakt uppdrag is the ram, not counted.
+      expect(mine).toMatchObject({ dutyMinutesPerWeek: 140, countedDutyMinutesPerWeek: 30, countedMinutesPerWeek: 600 + 30 });
+      // COLLEAGUE has no pass: their uppdrag counts as it always did.
+      expect(report.teachers.find((row) => row.userId === COLLEAGUE)).toMatchObject({ dutyMinutesPerWeek: 40 });
+      expect(report.teachers.find((row) => row.userId === PASS_ONLY)).toMatchObject({ dutyMinutesPerWeek: 20, countedDutyMinutesPerWeek: 0 });
+      expect(report.supervision).toEqual({
+        teachers: [
+          expect.objectContaining({ userId: ME, shiftCount: 2, minutesPerWeek: 50, countedMinutesPerWeek: 30, ramMinutesPerWeek: 60, ramCountedMinutesPerWeek: 0 }),
+          expect.objectContaining({ userId: PASS_ONLY, shiftCount: 1, minutesPerWeek: 20, ramMinutesPerWeek: null }),
+        ],
+      });
+    });
+
+    it('answers a teacher their own line alone', async () => {
+      arrangeSchedule();
+      const own = await service.load(YEAR_ID, 'planned', testUser({ role: Role.TEACHER }));
+      expect(own.supervision?.teachers.map((row) => row.userId)).toEqual([ME]);
+    });
+
+    it('reads the same passes under horizon=scheduled', async () => {
+      arrangeSchedule();
+      tx.masterLesson.findMany.mockResolvedValue([]);
+      const report = await service.load(YEAR_ID, 'scheduled', testUser());
+      expect(report.supervision?.teachers.map((row) => [row.userId, row.minutesPerWeek])).toEqual([
+        [ME, 50],
+        [PASS_ONLY, 20],
+      ]);
+    });
+  });
+
   it('reads the year’s uppdrag and the rows’ percentages into the report', async () => {
     tx.teachingRequirement.findMany.mockResolvedValue([
       requirementRow({ coTeacherId: COLLEAGUE, coTeacherLoadPercent: 50 }),
@@ -467,7 +540,7 @@ describe('StaffingLoadService', () => {
 
     expect(tx.teacherDuty.findMany).toHaveBeenCalledWith({
       where: { academicYearId: YEAR_ID },
-      select: { userId: true, minutesPerWeek: true, countsAsTeaching: true, validFrom: true, validTo: true },
+      select: { userId: true, kind: true, minutesPerWeek: true, countsAsTeaching: true, validFrom: true, validTo: true },
     });
     expect(report.teachers.find((row) => row.userId === ME)).toMatchObject({
       assignedMinutesPerWeek: 600,

@@ -4,6 +4,7 @@ import { rostersOfYear, type RosterViewer } from '../year-rollover/projected-ros
 import { loadWeightOf, type GradeSpan, type JudgedYear, type LoadInput, type LoadModel } from './teacher-load';
 import type { LoadPeriod } from './employment-periods';
 import type { YearBounds } from './teaching-weeks';
+import { supervisionOfTeachers, withSupervision, type LoadShift, type TeacherSupervision } from '../supervision/supervision-load';
 
 const asDay = (value: Date): string => value.toISOString().slice(0, 10);
 const asDayOrNull = (value: Date | null): string | null => (value === null ? null : asDay(value));
@@ -36,6 +37,12 @@ export interface LoadRead {
    * the same row version its omfattning comes from. Undefined without a post.
    */
   scbPostOf(userId: string): ScbPostFields | undefined;
+  /**
+   * Each teacher's rastvakt in the year's rastvaktsschema (Rastvaktsschema,
+   * supervision-load.ts), for the teachers with a pass the reader may read;
+   * null when they may read none. The passes are already in input.duties.
+   */
+  supervision: TeacherSupervision[] | null;
 }
 
 export interface ScbPostFields {
@@ -73,7 +80,16 @@ export async function readLoadInput(
 ): Promise<LoadRead | null> {
   const yearRow = await tx.academicYear.findUnique({
     where: { id: academicYearId },
-    select: { startDate: true, endDate: true, isActive: true, predecessorId: true, gradeNumbering: true },
+    select: {
+      startDate: true,
+      endDate: true,
+      isActive: true,
+      predecessorId: true,
+      gradeNumbering: true,
+      // The rastvaktsschema's passes the reader may read, counted in this
+      // statement: a year without one asks nothing more (below).
+      _count: { select: { supervisionShifts: true } },
+    },
   });
   if (!yearRow) return null;
   // The spans stay in the year's numbering (a lov is the year's own); a
@@ -184,8 +200,21 @@ export async function readLoadInput(
   // their row needs.
   const duties = await tx.teacherDuty.findMany({
     where: { academicYearId },
-    select: { userId: true, minutesPerWeek: true, countsAsTeaching: true, validFrom: true, validTo: true },
+    select: { userId: true, kind: true, minutesPerWeek: true, countsAsTeaching: true, validFrom: true, validTo: true },
   });
+  // The year's rastvaktspass (20261202090000), with whether their area counts
+  // as teaching: one statement, and only when the year has a pass the reader
+  // may read — a TEACHER their own, as for the uppdrag.
+  const shiftRows =
+    (yearRow._count?.supervisionShifts ?? 0) > 0
+      ? await tx.$queryRaw<{ userId: string; startTime: Date; endTime: Date; validFrom: Date | null; validTo: Date | null; countsAsTeaching: boolean }[]>`
+          SELECT s."userId", s."startTime", s."endTime", s."validFrom", s."validTo", a."countsAsTeaching"
+          FROM "SupervisionShifts" s
+          JOIN "SupervisionAreas" a ON a."id" = s."areaId" AND a."schoolId" = s."schoolId"
+          WHERE s."academicYearId" = ${academicYearId}::uuid
+          ORDER BY s."id"
+        `
+      : [];
   const yearGroups = await tx.studentGroup.findMany({
     where: { academicYearId },
     select: { id: true, gradeLevel: true, name: true },
@@ -226,6 +255,30 @@ export async function readLoadInput(
       : null;
   const spanOf = (groupIds: string[], studentIds: string[] = []): GradeSpan | null =>
     rosters ? gradeSpanOf(rosters, groupIds, studentIds) : null;
+
+  const kindedDuties = duties.map((row) => ({
+    userId: row.userId,
+    kind: row.kind,
+    minutesPerWeek: row.minutesPerWeek,
+    countsAsTeaching: row.countsAsTeaching,
+    // Only when dated: an undated duty's input is the object it always was.
+    ...(row.validFrom ? { validFrom: asDay(row.validFrom) } : {}),
+    ...(row.validTo ? { validTo: asDay(row.validTo) } : {}),
+  }));
+  const shifts: LoadShift[] = shiftRows.map((row) => ({
+    userId: row.userId,
+    start: row.startTime.getUTCHours() * 60 + row.startTime.getUTCMinutes(),
+    end: row.endTime.getUTCHours() * 60 + row.endTime.getUTCMinutes(),
+    validFrom: asDayOrNull(row.validFrom),
+    validTo: asDayOrNull(row.validTo),
+    countsAsTeaching: row.countsAsTeaching,
+  }));
+  const closures = breaks.map((row) => ({
+    startDate: asDay(row.startDate),
+    endDate: asDay(row.endDate),
+    minGradeLevel: row.minGradeLevel,
+    maxGradeLevel: row.maxGradeLevel,
+  }));
 
   const input: LoadInput = {
     year,
@@ -284,20 +337,11 @@ export async function readLoadInput(
       validFrom: asDayOrNull(row.validFrom),
       validTo: asDayOrNull(row.validTo),
     })),
-    closures: breaks.map((row) => ({
-      startDate: asDay(row.startDate),
-      endDate: asDay(row.endDate),
-      minGradeLevel: row.minGradeLevel,
-      maxGradeLevel: row.maxGradeLevel,
-    })),
-    duties: duties.map((row) => ({
-      userId: row.userId,
-      minutesPerWeek: row.minutesPerWeek,
-      countsAsTeaching: row.countsAsTeaching,
-      // Only when dated: an undated duty's input is the object it always was.
-      ...(row.validFrom ? { validFrom: asDay(row.validFrom) } : {}),
-      ...(row.validTo ? { validTo: asDay(row.validTo) } : {}),
-    })),
+    closures,
+    // The uppdrag with the rastvaktsschema in them (supervision-load.ts): each
+    // pass an uppdrag, and a RASTVAKT uppdrag counted only on the dates its
+    // teacher has no pass. Without a pass, the uppdrag as they always were.
+    duties: withSupervision(kindedDuties, shifts, year),
     inactiveUserIds: (inactive ?? []).map((row) => row.id),
   };
   return {
@@ -308,6 +352,7 @@ export async function readLoadInput(
     loadModel,
     weightOf,
     scbPostOf: (userId) => scbPosts.get(userId),
+    supervision: shifts.length > 0 ? supervisionOfTeachers(kindedDuties, shifts, year, closures) : null,
   };
 }
 

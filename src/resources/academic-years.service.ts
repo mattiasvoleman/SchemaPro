@@ -448,7 +448,33 @@ export class AcademicYearsService {
       },
     });
 
-    if (stranded === 0 && strandedBreaks === 0 && strandedDuties === 0 && strandedPeriods === 0) return;
+    /*
+     * A rastvaktspass's Från and Till (20261202090000) likewise: one outside
+     * its year would count weeks of no year in the load and in which breaks
+     * are watched, and SupervisionService reads the bounds FOR SHARE before
+     * it writes one.
+     */
+    const strandedShifts = await tx.supervisionShift.count({
+      where: {
+        academicYearId: id,
+        OR: [
+          { validFrom: { lt: startDate } },
+          { validFrom: { gt: endDate } },
+          { validTo: { lt: startDate } },
+          { validTo: { gt: endDate } },
+        ],
+      },
+    });
+
+    if (
+      stranded === 0 &&
+      strandedBreaks === 0 &&
+      strandedDuties === 0 &&
+      strandedPeriods === 0 &&
+      strandedShifts === 0
+    ) {
+      return;
+    }
 
     const asDate = (value: Date): string => value.toISOString().slice(0, 10);
     const parts: string[] = [];
@@ -465,6 +491,9 @@ export class AcademicYearsService {
     }
     if (strandedPeriods > 0) {
       parts.push(`${strandedPeriods} employment period${strandedPeriods === 1 ? '' : 's'}`);
+    }
+    if (strandedShifts > 0) {
+      parts.push(`${strandedShifts} rastvaktspass`);
     }
     throw new BadRequestException(
       `${parts.join(parts.length > 2 ? ', ' : ' and ')} would fall outside the new academic year ` +
