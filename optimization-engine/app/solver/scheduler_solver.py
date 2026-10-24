@@ -4632,7 +4632,7 @@ class SchedulerSolver:
         *,
         seconds_left: float | None = None,
     ) -> ConflictAnalysis:
-        """Keep the class daily maximum in a refusal only where it is the difference.
+        """Keep the class daily maximum in a refusal only where it is a cause.
 
         THE CORE NAMES IT WHATEVER THE CAUSE. CP-SAT's sufficient set on these
         models is close to all or nothing — the review of #182 found every
@@ -4643,34 +4643,83 @@ class SchedulerSolver:
         whose cause is a post, it was 18 lines of "Raise Max lessons per day"
         on a week that stays impossible with no maximum at all.
 
-        SO IT IS MEASURED, as the blocks are. The week is solved once more
-        without the maximum, every other rule in force, on the satisfaction
-        model and the probe's budget:
-        - still impossible: the maximum is no part of the answer, and its line
-          goes. A core that was nothing else is then CONFLICT_NO_CORE;
-        - a timetable: the maximum is what makes the week impossible, and the
-          line says so (`measured` 1) and names the groups that timetable
-          gives more than the maximum on some day. Lifting it for those alone
-          is enough, which is the one thing the timetable proves; it does not
-          prove each of them needs it;
-        - nothing inside the budget, or no budget: the line stays as the core
-          gave it, every capped group in it and `measured` 0, since the
-          maximum may matter and nothing says it does not.
+        SO IT IS MEASURED, as the blocks are: the week is solved once more
+        without the maximum, every other rule in force, on the probe's budget
+        and never more than the solve has left.
+        - A timetable: the maximum is what makes the week impossible
+          (`measured` 1). The line names the groups that timetable gives more
+          than the maximum on some day: lifting it for those alone is enough,
+          which is the one thing the timetable proves; it does not prove each
+          of them needs it.
+        - Still impossible: the maximum is not needed for the proof, which
+          does not make it no cause. A class of eleven lessons under one a day
+          on a five-day week is impossible whatever else the week holds, and a
+          school told only of its blocks and rooms fixes those and is refused
+          again for the maximum (dist/500057 of the fuzz). So the maximum is
+          counted on its own (_held_back_by_the_maximum): a group whose
+          lessons the days open to it cannot hold at the maximum keeps the
+          line, `measured` 2, and is named. No group counted out, the line
+          goes; a core that was nothing else is then CONFLICT_NO_CORE.
+        - Nothing inside the budget, no budget, or a probe that could not be
+          built or solved: the line stays as the core gave it, every capped
+          group in it and `measured` 0, since the maximum may matter and
+          nothing says it does not.
+
+        COUNTED AND NOT SOLVED, the second time, because a solve cannot tell
+        the cause apart at a price a refusal can pay. The maximum's literals as
+        the only assumptions answer "impossible" on 66 of the 120 fuzz weeks
+        that get this far, and 45 of those are impossible with no assumption
+        at all — the fixed part of the model, days and frames and locks and
+        overlaps, refuses them alone — so the answer names the maximum where
+        nothing about it is the matter. Telling those apart takes a timetable
+        with every other rule lifted, which on the högstadium post week took
+        15 s on all of the host's cores, and which the single-threaded
+        assumption solve did not find in 30 s. The count names all 21 weeks
+        where the maximum alone is the matter and the rest of the week is not,
+        none of the 54 where the maximum alone is possible, and of the 45 only
+        21, saying of each only what is true there too.
+
+        A line measured to be a cause leads the refusal: it is the one line
+        on it that was checked, and the reading order puts first what an
+        administrator can check (conflict_analyzer._how_far_it_narrows).
         One solve for all the groups and not one per group, for
         _blocks_verdict's reason.
         """
-        lines = {
-            id(detail) for detail in conflicts.conflicts
-            if detail.code == "GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT"
-        }
+        line = next(
+            (
+                detail for detail in conflicts.conflicts
+                if detail.code == "GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT"
+            ),
+            None,
+        )
         rules = request.rules
-        if not lines or rules is None or rules.max_lessons_per_day_per_group is None:
+        if line is None or rules is None or rules.max_lessons_per_day_per_group is None:
             return conflicts
+        cap = rules.max_lessons_per_day_per_group
         budget = self._settings.solver_probe_seconds
         if seconds_left is not None:
             budget = min(budget, seconds_left)
         if budget < self.MIN_PHASE_SECONDS:
             return conflicts
+        others = [detail for detail in conflicts.conflicts if detail is not line]
+
+        def said(measured: int, groups: list[UUID]) -> ConflictAnalysis:
+            # The core's groups first and in its order, then any the
+            # measurement adds. Built again rather than copied: the message
+            # is rendered from the values once, when the detail is made.
+            named = [group_id for group_id in line.resource_ids if group_id in groups]
+            named += sorted(set(groups).difference(line.resource_ids), key=str)
+            measured_line = ConflictDetail(
+                category=line.category,
+                code=line.code,
+                params={**line.params, "measured": measured},
+                requirement_ids=line.requirement_ids,
+                room_ids=line.room_ids,
+                constraint_ids=line.constraint_ids,
+                resource_ids=named or line.resource_ids,
+            )
+            return conflicts.model_copy(update={"conflicts": [measured_line, *others]})
+
         without = request.model_copy(
             update={"rules": rules.model_copy(update={"max_lessons_per_day_per_group": None})},
         )
@@ -4685,53 +4734,77 @@ class SchedulerSolver:
         status = _solve_guarded(
             probe, model, what="the daily maximum probe", request_id=request.request_id,
         )
-        if status == cp_model.INFEASIBLE:
-            rest = [detail for detail in conflicts.conflicts if id(detail) not in lines]
-            if not rest:
-                return no_core_analysis()
-            return conflicts.model_copy(update={"conflicts": rest})
-        if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            per_day = Counter(
+                (
+                    decision.lesson.requirement.student_group_id,
+                    probe.Value(decision.start) // self._grid.slots_per_day,
+                )
+                for decision in decisions
+            )
+            return said(1, [group_id for (group_id, _day), count in per_day.items() if count > cap])
+        if status != cp_model.INFEASIBLE:
             return conflicts
+        held_back = self._held_back_by_the_maximum(decisions, cap)
+        if held_back:
+            return said(2, held_back)
+        if not others:
+            return no_core_analysis()
+        return conflicts.model_copy(update={"conflicts": others})
 
-        cap = rules.max_lessons_per_day_per_group
-        per_day = Counter(
-            (
-                decision.lesson.requirement.student_group_id,
-                probe.Value(decision.start) // self._grid.slots_per_day,
-            )
-            for decision in decisions
-        )
-        over = {group_id for (group_id, _day), count in per_day.items() if count > cap}
+    def _held_back_by_the_maximum(
+        self, decisions: list[LessonDecision], cap: int,
+    ) -> list[UUID]:
+        """The groups whose lessons the days open to them cannot hold at `cap`.
 
-        def measured(line: ConflictDetail) -> ConflictDetail:
-            # Every group the timetable breaks the maximum for, the core's
-            # first and in its order: lifting it for all of them is what the
-            # timetable proves enough, and a capped group the core happened
-            # to leave out is one of them like the rest. All of the core's
-            # is the fallback for a timetable that, against the proof that
-            # the week is impossible with the maximum, breaks it for none.
-            named = [group_id for group_id in line.resource_ids if group_id in over]
-            named += sorted(over.difference(line.resource_ids), key=str)
-            # Built again rather than copied: the message is rendered from
-            # the values once, when the detail is made.
-            return ConflictDetail(
-                category=line.category,
-                code=line.code,
-                params={**line.params, "measured": 1},
-                requirement_ids=line.requirement_ids,
-                room_ids=line.room_ids,
-                constraint_ids=line.constraint_ids,
-                resource_ids=named or line.resource_ids,
-            )
-
-        return conflicts.model_copy(
-            update={
-                "conflicts": [
-                    measured(detail) if id(detail) in lines else detail
-                    for detail in conflicts.conflicts
-                ],
-            },
-        )
+        Arithmetic, and sound with every rule but the maximum set aside: each
+        bound below is the fixed part of the model, which no literal lifts. A
+        lesson lands on a day its starts reach (_day_reach: frames, margins,
+        rasts, the school's days), and a group's lessons never overlap
+        (_add_group_no_overlap, posted bare). So a day takes at most `cap` of
+        a group's lessons, at most the ones that reach it, and at most as many
+        of the shortest of those as fit end to end in the time they can reach
+        there — a frame that leaves Tuesday one hour leaves it one lesson of
+        an hour. Where the days' bounds sum to fewer than the group's lessons,
+        no timetable keeps the maximum for it. The margins around a lesson
+        are left out of the time it takes, which only lets more through.
+        """
+        by_group: dict[UUID, list[LessonDecision]] = defaultdict(list)
+        for decision in decisions:
+            by_group[decision.lesson.requirement.student_group_id].append(decision)
+        slots_per_day = self._grid.slots_per_day
+        whole_day = {
+            day_index: [(day_index * slots_per_day, (day_index + 1) * slots_per_day)]
+            for day_index in range(len(self._grid.schedule_days))
+        }
+        held_back = []
+        for group_id, group in by_group.items():
+            if len(group) <= cap:
+                continue
+            durations: dict[int, list[int]] = defaultdict(list)
+            spans: dict[int, list[tuple[int, int]]] = defaultdict(list)
+            for decision in group:
+                reach = (
+                    _day_reach(decision.starts, decision.duration, slots_per_day)
+                    if decision.starts is not None
+                    else whole_day
+                )
+                for day_index, ranges in reach.items():
+                    durations[day_index].append(decision.duration)
+                    spans[day_index].extend(ranges)
+            room = 0
+            for day_index, lengths in durations.items():
+                time_there = _covered(spans[day_index])
+                fits = 0
+                for length in sorted(lengths):
+                    if time_there < length:
+                        break
+                    time_there -= length
+                    fits += 1
+                room += min(cap, fits)
+            if room < len(group):
+                held_back.append(group_id)
+        return held_back
 
     def _blocks_verdict(
         self, request: OptimizeScheduleRequest, *, seconds_left: float | None = None,
@@ -9335,6 +9408,18 @@ def _day_reach(
             last = min(high, (day_index + 1) * slots_per_day - 1)
             reach[day_index].append((first, last + duration))
     return dict(reach)
+
+
+def _covered(spans: list[tuple[int, int]]) -> int:
+    """The slots the half-open [a, b) spans cover between them, overlaps once."""
+    covered = 0
+    reach = -1
+    for low, high in sorted(spans):
+        low = max(low, reach)
+        if high > low:
+            covered += high - low
+            reach = high
+    return covered
 
 
 def _day_totals(

@@ -820,3 +820,91 @@ def test_the_class_s_daily_maximum_week_names_the_post_and_not_the_maximum() -> 
         "TEACHER_WORK_DAYS_CANNOT_BE_KEPT": [UUID(_id(19))],
     }
     assert codes(0)["GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT"] == [UUID(_id(10))]
+
+
+def _dist_500057() -> tuple[dict[str, object], dict[str, object]]:
+    """The review's week: class 10 has eleven lessons under at most one a day
+    on a five-day week, and the week is impossible without the maximum too —
+    a post of two days, a teacher's daily cap, a block and the rest."""
+    years = {7: {"minGradeLevel": 7, "maxGradeLevel": 7}, 8: {"minGradeLevel": 8, "maxGradeLevel": 8}}
+
+    def frame(day: int, start: str, end: str) -> dict[str, object]:
+        return {**years[8], "dayOfWeek": day, "startTime": start, "endTime": end}
+
+    return {"SCHEDULE_DAY_START_MINUTES": 480, "SCHEDULE_DAY_END_MINUTES": 720}, {
+        "requestId": _id(1), "academicYearId": _id(2),
+        "requirements": [
+            _requirement(
+                3, 5, 6, 2, 120, **years[8], lessonLengths=[120, 60], blockId=_id(7),
+                maxLessonsPerDay=2, lockedDays=[1, 6],
+            ),
+            _requirement(
+                8, 10, 11, 2, 120, **years[7], lessonLengths=[120, 60], minutesAfter=10,
+                blockId=_id(7), maxLessonsPerDay=1, minDaysBetween=4, lockedDays=[],
+            ),
+            _requirement(
+                12, 10, 11, 4, 40, **years[7], studentGroupSize=16,
+                lessonLengths=[30, 30, 40, 40], maxLessonsPerDay=2, lockedDays=[1, 2, 2],
+            ),
+            _requirement(
+                14, 10, 11, 2, 50, **years[7], studentGroupSize=16, minutesBefore=5,
+                maxLessonsPerDay=1, minDaysBetween=2,
+            ),
+            _requirement(16, 10, 18, 3, 120, **years[7], lessonLengths=[60, 30, 120]),
+        ],
+        "rooms": [{"id": _id(19), "capacity": 30}],
+        "fixedLessons": [
+            _lock(20, 11, 2, "10:57:00", "11:37:00"),
+            _lock(22, 11, 2, "09:40:00", "10:00:00"),
+            {
+                "id": _id(24), "teacherId": None, "studentGroupId": _id(10), "dayOfWeek": 4,
+                "startTime": "07:30:00", "endTime": "08:30:00",
+            },
+            {
+                "id": _id(25), "teacherId": _id(26), "studentGroupId": _id(5), "dayOfWeek": 4,
+                "startTime": "08:53:00", "endTime": "10:13:00",
+            },
+        ],
+        "teacherWorkRules": [
+            {"id": _id(27), "teacherId": _id(11), "maxTeachingMinutesPerDay": 220, "preferredFreeDay": 2},
+        ],
+        "teacherDayLimits": [
+            {"id": _id(28), "teacherId": _id(11), "maxTeachingDaysPerWeek": 2, "lockedWeekdays": [[2]]},
+        ],
+        "frameTimes": [
+            frame(3, "06:00:00", "07:00:00"), frame(4, "06:00:00", "07:00:00"),
+            frame(5, "08:30:00", "11:30:00"),
+        ],
+        "groups": [
+            {"id": _id(10), "lunchHeadcount": 24, **years[7]},
+            {"id": _id(29), "lunchHeadcount": 20, **years[7]},
+            {"id": _id(5), "lunchHeadcount": 24, **years[8]},
+            {"id": _id(30), "lunchHeadcount": 30, "minGradeLevel": 9, "maxGradeLevel": 9},
+        ],
+        "groupConflicts": [[_id(10), _id(29)]],
+        "rules": {"maxLessonsPerDayPerGroup": 1},
+    }
+
+
+def test_a_maximum_impossible_on_its_own_leads_the_refusal_of_a_week_with_other_causes() -> None:
+    """dist/500057. Without the maximum the week is still impossible, and the
+    verdict's first form dropped the line for that: the school was told of its
+    blocks, rooms and teacher caps, would fix them, and only then hear of the
+    maximum. Eleven lessons do not fit five days at one a day whatever else
+    holds, so the line stays, first and `measured` 2, naming class 10."""
+    settings, payload = _dist_500057()
+    request = OptimizeScheduleRequest.model_validate(payload)
+    SchedulerSolver(_settings(**settings))._validate_request(request)
+
+    response = SchedulerSolver(_settings(SOLVER_PROBE_SECONDS=5, **settings)).solve(request)
+
+    assert response.status == "INFEASIBLE"
+    assert response.conflicts is not None
+    assert response.conflicts.summary_code == "CONFLICT_CORE_SUMMARY"
+    first = response.conflicts.conflicts[0]
+    assert (first.code, first.params, first.resource_ids) == (
+        "GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT", {"maxPerDay": 1, "measured": 2}, [UUID(_id(10))],
+    )
+    assert "TEACHER_DAILY_CAP_CANNOT_BE_KEPT" in {
+        detail.code for detail in response.conflicts.conflicts
+    }

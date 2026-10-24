@@ -2482,6 +2482,8 @@ def test_a_week_the_class_daily_maximum_alone_makes_impossible_names_it(
     assert body["conflicts"]["summaryCode"] == "CONFLICT_CORE_SUMMARY", body["conflicts"]
     named = _daily_maximum_lines(body)
     assert len(named) == 1, [conflict["code"] for conflict in body["conflicts"]["conflicts"]]
+    # Measured, so first: the one line on the refusal that was checked.
+    assert body["conflicts"]["conflicts"][0] == named[0]
     assert named[0]["category"] == "REQUIREMENT_DEMAND"
     assert named[0]["params"] == {"maxPerDay": _DAILY_MAXIMUM, "measured": 1}
     assert named[0]["resourceIds"] == [group]
@@ -2602,8 +2604,8 @@ def test_a_week_impossible_without_the_maximum_too_says_nothing_of_it() -> None:
     codes, named = lines(0)
     assert [line["params"] for line in named] == [{"maxPerDay": 3, "measured": 0}], codes
     assert named[0]["message"].endswith(
-        "there was no time left to measure whether it alone is the difference. Raise Max "
-        "lessons per day under School rules, or free more days for those groups' lessons.",
+        "whether it alone is the difference could not be measured. Raise Max lessons per day "
+        "under School rules, or free more days for those groups' lessons.",
     )
 
 
@@ -2659,6 +2661,201 @@ def test_the_verdict_spends_only_what_the_solve_has_left() -> None:
     assert short.conflicts[0].params == {"maxPerDay": _DAILY_MAXIMUM, "measured": 0}
     measured = solver._daily_maximum_verdict(request, core, seconds_left=5)
     assert measured.conflicts[0].params == {"maxPerDay": _DAILY_MAXIMUM, "measured": 1}
+
+
+def _crowded_deltid_week() -> tuple[dict[str, object], str]:
+    """The post week, and a class of sixteen lessons under its three a day."""
+    payload = _deltid_week()
+    crowded = str(uuid4())
+    payload["requirements"].append({  # type: ignore[union-attr]
+        "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": crowded,
+        "teacherId": str(uuid4()), "lessonsPerWeek": 16, "minutesPerLesson": 60,
+        "studentGroupSize": 24,
+    })
+    payload["rooms"].append({"id": str(uuid4()), "capacity": 30})  # type: ignore[union-attr]
+    return payload, crowded
+
+
+def test_a_maximum_the_days_cannot_hold_is_named_though_the_week_has_other_causes() -> None:
+    """The review's dist/500057, small and by count.
+
+    The post week, and beside it a class of sixteen lessons under at most
+    three a day on a five-day week: fifteen. The week stays impossible
+    without the maximum — the post — so the maximum is not needed for the
+    proof; it is impossible on its own all the same, and a refusal that left
+    it out would send the school to the post and refuse it again for the
+    maximum. Named first, `measured` 2, and only the class the count holds to
+    it: the post's class of ten fits three a day on five days.
+    """
+    payload, crowded = _crowded_deltid_week()
+    client = TestClient(create_app(_settings(
+        SCHEDULE_DAY_END_MINUTES=960, SOLVER_PROBE_SECONDS=5,
+    )))
+
+    body = client.post("/api/v1/optimize", json=payload, headers=_HEADERS).json()
+
+    lines = body["conflicts"]["conflicts"]
+    assert body["conflicts"]["summaryCode"] == "CONFLICT_CORE_SUMMARY"
+    assert lines[0]["code"] == "GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT", [line["code"] for line in lines]
+    assert lines[0]["params"] == {"maxPerDay": 3, "measured": 2}
+    assert lines[0]["resourceIds"] == [crowded]
+    assert "That maximum makes the week impossible on its own" in lines[0]["message"]
+    assert "TEACHER_WORK_DAYS_CANNOT_BE_KEPT" in [line["code"] for line in lines]
+
+
+def _alone_week() -> tuple[dict[str, object], str, str]:
+    """A maximum impossible on its own where counting days cannot tell, and a post.
+
+    Class A (year 7) has four lessons under at most two a day on a two-day
+    week, and year 7's frame leaves Tuesday 08:00-09:00: one lesson there and
+    two on Monday. Four lessons on two days at two each passes a count of
+    days; the hour the frame leaves is what holds A back. Class B (year 8) is
+    the post week's: its teacher's post is one day, Monday's afternoon is
+    locked, and four 75-minute lessons do not fit the morning, so the week is
+    impossible without the maximum too.
+    """
+    group_a, group_b, teacher = str(uuid4()), str(uuid4()), str(uuid4())
+
+    def requirement(group: str, teacher_id: str, minutes: int, grade: int) -> dict[str, object]:
+        return {
+            "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": group,
+            "teacherId": teacher_id, "lessonsPerWeek": 4, "minutesPerLesson": minutes,
+            "studentGroupSize": 24, "minGradeLevel": grade, "maxGradeLevel": grade,
+        }
+
+    return {
+        "requestId": str(uuid4()),
+        "academicYearId": str(uuid4()),
+        "requirements": [
+            requirement(group_a, str(uuid4()), 60, 7), requirement(group_b, teacher, 75, 8),
+        ],
+        "groups": [
+            {"id": group, "lunchHeadcount": 24, "minGradeLevel": grade, "maxGradeLevel": grade}
+            for group, grade in ((group_a, 7), (group_b, 8))
+        ],
+        "rooms": [{"id": str(uuid4()), "capacity": 30} for _ in range(2)],
+        "frameTimes": [{
+            "minGradeLevel": 7, "maxGradeLevel": 7, "dayOfWeek": 2,
+            "startTime": "08:00:00", "endTime": "09:00:00",
+        }],
+        "fixedLessons": [{
+            "id": str(uuid4()), "teacherId": teacher, "studentGroupId": str(uuid4()),
+            "dayOfWeek": 1, "startTime": "12:00:00", "endTime": "16:00:00",
+        }],
+        "teacherDayLimits": [{
+            "id": str(uuid4()), "teacherId": teacher, "maxTeachingDaysPerWeek": 1,
+            "lockedWeekdays": [[1]],
+        }],
+        "rules": {"maxLessonsPerDayPerGroup": 2},
+    }, group_a, group_b
+
+
+def test_a_maximum_the_frame_s_hour_cannot_hold_is_named_by_the_time_it_leaves() -> None:
+    """Counted in time as well as days: Tuesday's hour holds one of A's
+    lessons, Monday two, and four do not fit — A is named, and not B, whose
+    two whole days hold its four at two a day though its maximum is in the
+    explanation's core like every capped group's. Unmeasured, both are."""
+    payload, group_a, group_b = _alone_week()
+
+    def first(probe_seconds: float) -> dict:  # type: ignore[type-arg]
+        client = TestClient(create_app(_settings(
+            SCHEDULE_DAYS="1,2", SCHEDULE_DAY_END_MINUTES=960, SOLVER_PROBE_SECONDS=probe_seconds,
+        )))
+        body = client.post("/api/v1/optimize", json=payload, headers=_HEADERS).json()
+        assert body["conflicts"]["summaryCode"] == "CONFLICT_CORE_SUMMARY", body["conflicts"]
+        return _daily_maximum_lines(body)[0]
+
+    measured = first(5)
+    assert (measured["params"], measured["resourceIds"]) == (
+        {"maxPerDay": 2, "measured": 2}, [group_a],
+    )
+    unmeasured = first(0)
+    assert (unmeasured["params"], sorted(unmeasured["resourceIds"])) == (
+        {"maxPerDay": 2, "measured": 0}, sorted([group_a, group_b]),
+    )
+
+
+def test_a_probe_that_cannot_answer_leaves_the_line_unmeasured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """UNKNOWN is no verdict: neither a timetable nor a proof, so the line
+    stays as the core gave it, `measured` 0. The example week's probe would
+    find a timetable, and is made to answer nothing — and read as a proof,
+    its count would have said `measured` 2."""
+    unknown = "the daily maximum probe"
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver import scheduler_solver
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    real = scheduler_solver._solve_guarded
+
+    def guarded(solver, model, *, what: str, **rest):  # type: ignore[no-untyped-def]
+        if what == unknown:
+            return cp_model.UNKNOWN
+        return real(solver, model, what=what, **rest)
+
+    monkeypatch.setattr(scheduler_solver, "_solve_guarded", guarded)
+    payload = _daily_maximum_week(frames=False)[0]
+    solver = SchedulerSolver(_settings(SOLVER_PROBE_SECONDS=5, SCHEDULE_DAYS="1,2"))
+
+    response = solver.solve(OptimizeScheduleRequest.model_validate(payload))
+
+    assert response.conflicts is not None
+    named = [
+        detail for detail in response.conflicts.conflicts
+        if detail.code == "GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT"
+    ]
+    assert [detail.params["measured"] for detail in named] == [0]
+
+
+def test_the_explanation_hands_the_verdict_what_its_deadline_leaves() -> None:
+    """Wired through _explain_infeasible as the blocks verdict is: past the
+    deadline nothing is measured; with a minute left the example week is."""
+    import time
+
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload, _groups = _daily_maximum_week(frames=False)
+    request = OptimizeScheduleRequest.model_validate(payload)
+    solver = SchedulerSolver(_settings(SCHEDULE_DAYS="1,2", SOLVER_PROBE_SECONDS=5))
+
+    def measured(deadline: float) -> list[int | str | float]:
+        response = solver._explain_infeasible(request, deadline=deadline)
+        assert response.conflicts is not None
+        return [
+            detail.params["measured"] for detail in response.conflicts.conflicts
+            if detail.code == "GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT"
+        ]
+
+    assert measured(time.monotonic()) == [0]
+    assert measured(time.monotonic() + 60) == [1]
+
+
+def test_a_group_the_core_left_out_is_named_when_the_timetable_breaks_it_too() -> None:
+    """The core is sufficient, not complete: one that held only the first of
+    two five-lesson classes still gets both on the measured line, since the
+    timetable without the maximum gives each of them three on a day."""
+    from app.schemas.schedule import ConflictAnalysis, ConflictDetail, OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload, groups = _daily_maximum_week(frames=False, classes=2)
+    request = OptimizeScheduleRequest.model_validate(payload)
+    solver = SchedulerSolver(_settings(SCHEDULE_DAYS="1,2", SOLVER_PROBE_SECONDS=5))
+    core = ConflictAnalysis(
+        summary_code="CONFLICT_CORE_SUMMARY",
+        conflicts=[ConflictDetail(
+            category="REQUIREMENT_DEMAND",
+            code="GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT",
+            params={"maxPerDay": _DAILY_MAXIMUM, "measured": 0},
+            resource_ids=[groups[0]],
+        )],
+    )
+
+    verdict = solver._daily_maximum_verdict(request, core)
+
+    assert verdict.conflicts[0].params["measured"] == 1
+    assert [str(group) for group in verdict.conflicts[0].resource_ids] == groups
 
 
 def test_the_class_daily_maximum_hangs_on_its_literal_and_the_counts_are_bare() -> None:
