@@ -39,6 +39,12 @@ export const REQUIREMENT_HAS_PERIOD = 'REQUIREMENT_HAS_PERIOD';
 export const SPRING_START_OUTSIDE_YEAR = 'SPRING_START_OUTSIDE_YEAR';
 export const CLASS_HAS_ONE_HALF = 'CLASS_HAS_ONE_HALF';
 export const HALF_HAS_SUBJECT = 'HALF_HAS_SUBJECT';
+/**
+ * The class's post splits its lessons between teachers (delade lektioner).
+ * The halves' four posts are staffed per subject, and a share has no half or
+ * term to go to, so the split is refused rather than the shares dropped.
+ */
+export const TERM_SPLIT_HAS_SHARES = 'TERM_SPLIT_HAS_SHARES';
 
 /** What the split wrote: the halves, the two blocks and the four posts. */
 export interface TermHalvesResponse {
@@ -198,6 +204,9 @@ export class TermHalvesService {
           include: {
             subject: { select: { name: true, nationalCode: true } },
             block: { select: { name: true } },
+            // Delade lektioner: whether the post has a share, counted in
+            // this statement.
+            _count: { select: { shares: true } },
             studentGroup: {
               select: {
                 id: true,
@@ -231,6 +240,14 @@ export class TermHalvesService {
           throw new BadRequestException({
             message: `${postName} gäller redan bara en del av läsåret. Ta bort postens datum först.`,
             code: REQUIREMENT_HAS_PERIOD,
+          });
+        }
+        if (source._count.shares > 0) {
+          throw new ConflictException({
+            message:
+              `${postName} delar sina lektioner mellan lärare. Ta bort delningen i postens dialog först, ` +
+              'och välj sedan lärare för varje ämne här.',
+            code: TERM_SPLIT_HAS_SHARES,
           });
         }
 
@@ -391,6 +408,10 @@ export class TermHalvesService {
             // Any write to the post since it was read moves this, whatever
             // the write was: a recurrence, a length, a teacher.
             updatedAt: source.updatedAt,
+            // A share is written to its own table and moves no updatedAt: one
+            // saved since the read makes the split a 409 too, not a share
+            // removed with the post.
+            shares: { none: {} },
           },
         });
         if (count !== 1) throw writeConflict();
@@ -511,6 +532,8 @@ export class TermHalvesService {
         subjectName: stored.subjectName,
         studentGroupId: stored.studentGroupId,
         groupName: stored.groupName,
+        // Every teacher off the source: the post goes, and its lessons are
+        // the halves' from here on. A shared post is refused above.
         patch: { teacherId: null, coTeacherId: null },
       });
       checks.apply(after);

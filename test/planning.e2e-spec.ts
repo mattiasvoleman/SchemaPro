@@ -495,6 +495,8 @@ describe('Planning surface (e2e)', () => {
           subject: { name: 'Slöjd' },
           block: null,
           studentGroup: { id: GROUP_ID, name: '7A', kind: 'CLASS', halves: [] },
+          // Delade lektioner: a post with no share, as the read counts it.
+          _count: { shares: 0 },
         });
       // The class's lock answers nothing; the year's bounds answer the year.
       // Removed again by afterEach.

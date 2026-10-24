@@ -19,6 +19,7 @@ import {
   REQUIREMENT_HAS_PERIOD,
   REQUIREMENT_IN_A_BLOCK,
   SPRING_START_OUTSIDE_YEAR,
+  TERM_SPLIT_HAS_SHARES,
   TERM_SUBJECTS_SAME,
   TERM_TEACHER_TWICE,
   TermHalvesService,
@@ -75,6 +76,7 @@ const source = (overrides: Record<string, unknown> = {}) => ({
   subject: { name: 'Slöjd' },
   block: null,
   studentGroup: { id: CLASS, name: '7A', kind: 'CLASS', halves: [] },
+  _count: { shares: 0 },
   ...overrides,
 });
 
@@ -204,7 +206,8 @@ describe('TermHalvesService', () => {
 
       // Removed only as it was read: the class's, in no block, without
       // dates, and unwritten since (updatedAt), so a PATCH of its weeks,
-      // lengths or teacher in between is a 409, not lost.
+      // lengths or teacher in between is a 409, not lost — and still with
+      // no share, which is written to its own table and moves no updatedAt.
       expect(tx.teachingRequirement.deleteMany).toHaveBeenCalledWith({
         where: {
           id: POST,
@@ -215,6 +218,7 @@ describe('TermHalvesService', () => {
           lessonsPerWeek: 2,
           minutesPerLesson: 80,
           updatedAt: new Date('2026-10-20T08:00:00.000Z'),
+          shares: { none: {} },
         },
       });
 
@@ -507,6 +511,9 @@ describe('TermHalvesService', () => {
       ['a post in a block', { blockId: AUTUMN, block: { name: 'Slöjd åk 7' } }, ConflictException, REQUIREMENT_IN_A_BLOCK],
       ['a post that already ends', { endDate: day('2027-01-10') }, BadRequestException, REQUIREMENT_HAS_PERIOD],
       ['a post that starts later', { startDate: day('2027-01-11') }, BadRequestException, REQUIREMENT_HAS_PERIOD],
+      // Delade lektioner: the shares have no half or term to go to, and are
+      // not dropped with the post.
+      ['a post whose lessons are split between teachers', { _count: { shares: 1 } }, ConflictException, TERM_SPLIT_HAS_SHARES],
       [
         'a class with one half left',
         { studentGroup: { id: CLASS, name: '7A', kind: 'CLASS', halves: [{ id: HALF_1, name: '7A:1' }] } },
@@ -521,6 +528,22 @@ describe('TermHalvesService', () => {
       expect(error).toBeInstanceOf(type);
       expect((error as ConflictException).getResponse()).toEqual(expect.objectContaining({ code }));
       expect(tx.studentGroup.createManyAndReturn).not.toHaveBeenCalled();
+      nothingWritten();
+    });
+
+    it('names a shared post and says to remove its shares first', async () => {
+      givenPost(source({ _count: { shares: 2 } }));
+
+      const error = await service.split(POST, DTO, admin).catch((e: unknown) => e);
+
+      expect((error as ConflictException).getResponse()).toEqual({
+        message:
+          'Slöjd för 7A delar sina lektioner mellan lärare. Ta bort delningen i postens dialog först, ' +
+          'och välj sedan lärare för varje ämne här.',
+        code: TERM_SPLIT_HAS_SHARES,
+      });
+      // Before the staffing judge, which would have asked about its teachers.
+      expect(openChecks).not.toHaveBeenCalled();
       nothingWritten();
     });
 
