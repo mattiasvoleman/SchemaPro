@@ -15,6 +15,7 @@ import {
 import { lockingRead, rawSql, transactionsOf, type LockedTable } from '../../test/utils/locking-read';
 import type { PrismaService } from '../database/prisma.service';
 import type { NotificationsService } from '../notifications/notifications.service';
+import { zonedTimeToUtc } from '../common/utils/time';
 import { SchoolBreaksService } from './school-breaks.service';
 import type {
   CreateSchoolBreakDto,
@@ -25,10 +26,12 @@ const SCHOOL_ID = '33333333-3333-4333-8333-333333333333';
 const YEAR_ID = '99999999-9999-4999-8999-999999999999';
 const BREAK_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 
-/** Frozen "now", so "future lessons only" means the same thing every run. */
+/** Frozen "now" — 10:00 in Stockholm — so "not yet begun" means the same
+ *  thing every run. */
 const NOW = new Date('2027-02-10T09:00:00.000Z');
-/** A real zone, not UTC: the purge's "today" is the school's day, and a zone
- *  that is always +00:00 cannot show an off-by-a-day. */
+/** A real zone, not UTC: a lesson's start is its local day and clock, as
+ *  publish builds it, and a zone that is always +00:00 cannot show a lesson
+ *  whose UTC day is not its own. */
 const SCHOOL_TIMEZONE = 'Europe/Stockholm';
 
 /** The läsår every range in these tests is measured against. */
@@ -138,7 +141,10 @@ const storedBreak = (overrides: Record<string, unknown> = {}) => ({
 
 interface FixtureLesson {
   id: string;
+  /** The school's local day, as the DATE column holds it. */
   date: string;
+  /** Its local clock; `startsAt` is the two read in the school's zone. */
+  time: string;
   status: string;
   hasAttendance: boolean;
   gradeLevel: number | null;
@@ -147,6 +153,7 @@ interface FixtureLesson {
 const lesson = (overrides: Partial<FixtureLesson>): FixtureLesson => ({
   id: 'lesson',
   date: '2027-02-23',
+  time: '08:00',
   status: 'SCHEDULED',
   hasAttendance: false,
   gradeLevel: 8,
@@ -169,6 +176,14 @@ function matches(
           throw new Error(`Unhandled date condition: ${Object.keys(rest)}`);
         }
         keep &&= date(row.date) >= gte && date(row.date) <= lte;
+        break;
+      }
+      case 'startsAt': {
+        const { gt, ...rest } = condition as { gt: Date } & Record<string, unknown>;
+        if (Object.keys(rest).length > 0 || !(gt instanceof Date)) {
+          throw new Error(`Unhandled startsAt condition: ${JSON.stringify(condition)}`);
+        }
+        keep &&= zonedTimeToUtc(row.date, row.time, SCHOOL_TIMEZONE) > gt;
         break;
       }
       case 'status':
@@ -228,13 +243,6 @@ describe('SchoolBreaksService', () => {
     );
     Object.assign(tx, { $queryRaw: queryRaw });
     tx.calendarLesson.deleteMany.mockResolvedValue({ count: 0 });
-    // The purge reads the school to learn its timezone, because "today" has to
-    // be the school's day and not the server's — an hour after midnight in
-    // Stockholm the UTC day is still yesterday, and this number decides which
-    // lessons may be deleted.
-    tx.school.findUnique.mockImplementation(
-      byId(SCHOOL_ID, { id: SCHOOL_ID, name: 'Ekbackeskolan', timezone: SCHOOL_TIMEZONE }),
-    );
   });
 
   /** The läsår, stored where the read of the bounds finds it by its own id. */
@@ -528,7 +536,7 @@ describe('SchoolBreaksService', () => {
       ]);
     });
 
-    it('trims a lov that started before today instead of rewriting the past', async () => {
+    it('leaves what has begun of a lov that started before today, and takes the rest', async () => {
       tx.schoolBreak.create.mockResolvedValue(
         storedBreak({
           startDate: date('2027-02-08'),
@@ -536,26 +544,62 @@ describe('SchoolBreaksService', () => {
         }),
       );
       const beforeToday = lesson({ id: 'before-today', date: '2027-02-09' });
-      const today = lesson({ id: 'today', date: '2027-02-10' });
+      const thisMorning = lesson({ id: 'this-morning', date: '2027-02-10', time: '08:00' });
+      const thisAfternoon = lesson({ id: 'this-afternoon', date: '2027-02-10', time: '13:00' });
       const afterToday = lesson({ id: 'after-today', date: '2027-02-11' });
-      givenCalendar([beforeToday, today, afterToday]);
+      givenCalendar([beforeToday, thisMorning, thisAfternoon, afterToday]);
 
       const result = await service.create(
         dto({ startDate: '2027-02-08', endDate: '2027-02-12' }),
         testUser(),
       );
 
-      // Today counts as future — the lessons have not been taught yet.
+      // It is 10:00. The past stays by the instant, not by the day: this
+      // morning's lesson has been held like yesterday's, and the lov does not
+      // unhold it.
       expect(result.removedCalendarLessons).toBe(2);
-      expect(survivors.map((row) => row.id)).toEqual(['before-today']);
+      expect(survivors.map((row) => row.id)).toEqual(['before-today', 'this-morning']);
     });
 
-    it("uses the SCHOOL's today, not the server's, when it trims", async () => {
+    it('keeps the lessons a studiedag entered at 14:00 for today finds held, and takes the ones to come', async () => {
       /*
-       * 23:30 UTC on the 10th is 00:30 on the 11th in Stockholm. Rounding
-       * `new Date()` down in UTC therefore says "today is the 10th" — a day the
-       * school has already taught in full — and the purge would take its
-       * lessons while the comment above it promises the past is left alone.
+       * Asked by the school's today, this purge took the 08:00 lesson too —
+       * its lektionslogg with it (ON DELETE CASCADE) and its minutes out of
+       * genomförd tid, which counts a lesson once it has ended. Nothing would
+       * have doubled had it stayed: publish skips a lov's days, so no publish
+       * writes the morning back.
+       */
+      jest.setSystemTime(new Date('2027-02-10T13:00:00.000Z'));
+      tx.schoolBreak.create.mockResolvedValue(
+        storedBreak({
+          name: 'Studiedag',
+          kind: 'STAFF_DAY',
+          startDate: date('2027-02-10'),
+          endDate: date('2027-02-10'),
+        }),
+      );
+      const held = lesson({ id: '08:00', date: '2027-02-10', time: '08:00' });
+      const underWay = lesson({ id: '13:40', date: '2027-02-10', time: '13:40' });
+      const toCome = lesson({ id: '15:00', date: '2027-02-10', time: '15:00' });
+      givenCalendar([held, underWay, toCome]);
+
+      const result = await service.create(
+        dto({ name: 'Studiedag', kind: 'STAFF_DAY', startDate: '2027-02-10', endDate: '2027-02-10' }),
+        testUser(),
+      );
+
+      // A lesson under way is being held, and stays with the held one.
+      expect(result.removedCalendarLessons).toBe(1);
+      expect(survivors.map((row) => row.id)).toEqual(['08:00', '13:40']);
+    });
+
+    it('leaves yesterday alone at 00:30, while the UTC day is still yesterday', async () => {
+      /*
+       * 23:30 UTC on the 10th is 00:30 on the 11th in Stockholm. A purge that
+       * rounded `new Date()` down in UTC said "today is the 10th" — a day the
+       * school has already taught in full — and took its lessons. Every one of
+       * them started before now, so asking by instant leaves them whatever
+       * the day is called where the server is.
        *
        * The window is an hour or two after local midnight, every night, which
        * is exactly when a bulk job or a tired administrator is plausible.
@@ -567,9 +611,10 @@ describe('SchoolBreaksService', () => {
           endDate: date('2027-02-12'),
         }),
       );
-      const alreadyTaught = lesson({ id: 'the-10th', date: '2027-02-10' });
-      const stillToCome = lesson({ id: 'the-11th', date: '2027-02-11' });
-      givenCalendar([alreadyTaught, stillToCome]);
+      const yesterdayMorning = lesson({ id: 'the-10th-08:00', date: '2027-02-10', time: '08:00' });
+      const yesterdayEvening = lesson({ id: 'the-10th-18:00', date: '2027-02-10', time: '18:00' });
+      const stillToCome = lesson({ id: 'the-11th-08:00', date: '2027-02-11', time: '08:00' });
+      givenCalendar([yesterdayMorning, yesterdayEvening, stillToCome]);
 
       const result = await service.create(
         dto({ startDate: '2027-02-08', endDate: '2027-02-12' }),
@@ -577,29 +622,7 @@ describe('SchoolBreaksService', () => {
       );
 
       expect(result.removedCalendarLessons).toBe(1);
-      expect(survivors.map((row) => row.id)).toEqual(['the-10th']);
-    });
-
-    it('purges nothing when the school itself cannot be read', async () => {
-      // Unreachable for a caller's own school, and the recoverable half if it
-      // ever happens: a lesson left standing on a lov day is visible in the
-      // calendar the admin is already looking at.
-      tx.school.findUnique.mockResolvedValue(null);
-      tx.schoolBreak.create.mockResolvedValue(
-        storedBreak({
-          startDate: date('2027-02-15'),
-          endDate: date('2027-02-19'),
-        }),
-      );
-      givenCalendar([lesson({ id: 'inside', date: '2027-02-16' })]);
-
-      const result = await service.create(
-        dto({ startDate: '2027-02-15', endDate: '2027-02-19' }),
-        testUser(),
-      );
-
-      expect(result.removedCalendarLessons).toBe(0);
-      expect(tx.calendarLesson.deleteMany).not.toHaveBeenCalled();
+      expect(survivors.map((row) => row.id)).toEqual(['the-10th-08:00', 'the-10th-18:00']);
     });
 
     it('removes nothing at all for a lov that is entirely behind us', async () => {

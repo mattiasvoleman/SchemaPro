@@ -6,7 +6,7 @@ import { tellNewMentors } from '../family/leave-notices';
 import { NotificationsService } from '../notifications/notifications.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
-import { parseDateString, todayInZone } from '../common/utils/time';
+import { parseDateString } from '../common/utils/time';
 import { readYearBoundsForShare } from './academic-year-bounds';
 import type {
   CreateSchoolBreakDto,
@@ -127,7 +127,7 @@ export class SchoolBreaksService {
           },
         });
 
-        const removedCalendarLessons = await this.removeLessonsInside(tx, created, schoolId);
+        const removedCalendarLessons = await this.removeLessonsInside(tx, created);
         if (this.notifications) await tellNewMentors(this.notifications, tx, schoolId);
         return { ...this.toResponse(created), removedCalendarLessons };
       });
@@ -222,14 +222,7 @@ export class SchoolBreaksService {
         // The row Prisma hands back, not a merge of dto and `existing`: the
         // purge must run against what the table now holds, and one of those
         // two is a reconstruction that can drift from it.
-        const removedCalendarLessons = await this.removeLessonsInside(
-          tx,
-          updated,
-          // The row's own school, not the caller's: the same value under RLS,
-          // and taking it from the row keeps the purge measured against what
-          // the table holds rather than against the request.
-          updated.schoolId,
-        );
+        const removedCalendarLessons = await this.removeLessonsInside(tx, updated);
         const daysMove =
           startDate !== undefined ||
           endDate !== undefined ||
@@ -260,18 +253,38 @@ export class SchoolBreaksService {
   /**
    * The published lessons the break now says should not exist, thrown away.
    *
-   * THE PROTECTION RULE IS COPIED, NOT INVENTED. Future, still `SCHEDULED`, no
-   * attendance recorded — the same three conditions master-lessons.service.ts
-   * uses when a template is deleted and optimization-proxy.service.ts uses
-   * when a regeneration replaces one. A lesson that has already happened, been
-   * cancelled or rescheduled by hand, or had a register taken against it is a
-   * record of what happened, and a lov entered in March must not rewrite
-   * February. Diverging here would mean a lesson that survives one path and
-   * not another, which is the kind of difference nobody finds until a
+   * THE PROTECTION RULE IS COPIED, NOT INVENTED. Not yet begun, still
+   * `SCHEDULED`, no attendance recorded — reconcilableLessons
+   * (propagate-template.ts), which master-lessons.service.ts asks when a
+   * template is deleted. A lesson that has begun, been cancelled or
+   * rescheduled by hand, or had a register taken against it is a record of
+   * what happened, and a lov entered in March must not rewrite February.
+   * Diverging here would mean a lesson that survives one path and not
+   * another, which is the kind of difference nobody finds until a
    * frånvarorapport comes out empty.
    *
-   * `date` is compared against midnight UTC, which is what a DATE column holds
-   * — the same arithmetic both of those callers do, for the same reason.
+   * "Has begun" is an instant, `startsAt > now`, for reconcilableLessons'
+   * reason: a day is the wrong grain. Asked by the school's today, a
+   * studiedag entered at 14:00 for today took the 08:00 lesson the class had
+   * already had — its lektionslogg with it (ON DELETE CASCADE) and its
+   * minutes out of the timplan's genomförd tid, which counts a lesson once
+   * it has ended. The lov does not unhold it. A lesson under way is being
+   * held and stays with the rest.
+   *
+   * The regeneration's calendar sweep (optimization-proxy.service.ts) asks by
+   * day on purpose, and the difference is not one this path should copy: the
+   * publish that follows a regeneration writes whole days back from the
+   * school's today, so a sweep that spared this morning would double it. A
+   * lov writes nothing back — publish skips its days (publishSkips answers
+   * BREAK, publish-days.ts) — so the lesson spared here is the only copy, and
+   * nothing comes to double it.
+   *
+   * `date` bounds the purge to the lov's own days and nothing else. It is
+   * compared against midnight UTC, which is what a DATE column holds, and is
+   * the school's local day, which is what a lov's range is stated in. The
+   * past needs no bound of its own: `startsAt` already leaves it, and a lov
+   * that lies entirely behind us matches nothing, which is the right answer
+   * and not an edge case to special-case.
    *
    * No `academicYearId` filter, and it is not an omission — but the reason is
    * not the one it first looks like.
@@ -295,36 +308,12 @@ export class SchoolBreaksService {
       SchoolBreak,
       'startDate' | 'endDate' | 'minGradeLevel' | 'maxGradeLevel'
     >,
-    schoolId: string,
   ): Promise<number> {
-    const school = await tx.school.findUnique({
-      where: { id: schoolId },
-      select: { timezone: true },
-    });
-    // Unreachable in practice — a caller's own school is always readable to
-    // them — and if it ever happens, purging NOTHING is the recoverable half.
-    // A lesson wrongly left standing sits visibly on a lov day in the calendar
-    // the admin is already looking at; a lesson wrongly deleted looks exactly
-    // like one that was never scheduled.
-    if (!school) return 0;
-
-    // The SCHOOL's today, not the server's. `new Date()` rounded down in UTC is
-    // yesterday in Stockholm for the hour or two after local midnight, and this
-    // number decides what may be deleted — so for that window the trim below
-    // would have handed back a day the school had already taught and let the
-    // purge take its lessons, which is the one thing the next comment promises
-    // it does not do.
-    const today = todayInZone(school.timezone);
-    // A lov that starts in the past is trimmed to today rather than skipped:
-    // the days that have already been taught stay, the remaining ones go. When
-    // the whole range is behind us `gte` exceeds `lte` and nothing matches,
-    // which is the right answer, not an edge case to special-case.
-    const from = breakRow.startDate > today ? breakRow.startDate : today;
-
     const { count } = await tx.calendarLesson.deleteMany({
       where: {
-        date: { gte: from, lte: breakRow.endDate },
+        date: { gte: breakRow.startDate, lte: breakRow.endDate },
         status: 'SCHEDULED',
+        startsAt: { gt: new Date() },
         attendanceRecords: { none: {} },
         ...this.gradeLevelFilter(breakRow),
       },

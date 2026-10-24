@@ -629,11 +629,11 @@ export function calendarSweepWhere(
 
 /**
  * The first day a DIRECT regeneration sweeps, its lessons and its meals alike:
- * the SCHOOL's today, as a lov's purge has it (SchoolBreaksService). It was
- * midnight UTC, and for the hour or two after local midnight that is yesterday
- * in Stockholm: a regeneration then took yesterday's lessons that had no
- * attendance — lessons already held, the lektionslogg written for them, the
- * minutes the timplan's genomförd tid counts — and yesterday's meals with them.
+ * the SCHOOL's today. It was midnight UTC, and for the hour or two after local
+ * midnight that is yesterday in Stockholm: a regeneration then took yesterday's
+ * lessons that had no attendance — lessons already held, the lektionslogg
+ * written for them, the minutes the timplan's genomförd tid counts — and
+ * yesterday's meals with them.
  *
  * A day and not an instant, so today goes whole, its lessons already held
  * among them. reconcilableLessons (propagate-template.ts) asks by instant and
@@ -646,7 +646,9 @@ export function calendarSweepWhere(
  * morning: each class's morning twice, once as held and once as the new
  * timetable has it, and the genomförd tid counting both. The sweep clears the
  * days the publish fills, and no part of one. What that costs, this morning's
- * lessons without attendance and their logs, the manual says (6.11).
+ * lessons without attendance and their logs, the manual says (6.11). A lov's
+ * purge (SchoolBreaksService) asks by instant for the opposite reason: publish
+ * skips a lov's days, so nothing writes back what it keeps.
  *
  * The timezone is read in the caller's transaction by schoolTimezone, as the
  * vikarie and lektionslogg paths read it, Stockholm for a school the caller
