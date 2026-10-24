@@ -60,7 +60,7 @@ describe('withSupervision', () => {
     ]);
   });
 
-  it('keeps the RASTVAKT uppdrag on the dates no pass of the teacher runs', () => {
+  it('keeps the RASTVAKT uppdrag in the weeks no pass of the teacher runs', () => {
     const fromWeek3 = ANNA.map((row) => ({ ...row, validFrom: '2026-09-21' }));
     const until = [shift('anna', '10:00', '10:20', { validTo: '2026-09-13' }), shift('anna', '12:00', '12:30', { validFrom: '2026-09-28' })];
     expect(withSupervision([DUTIES[0]!], fromWeek3, YEAR).slice(0, 1)).toEqual([
@@ -70,14 +70,32 @@ describe('withSupervision', () => {
     expect(withSupervision([DUTIES[0]!], until, YEAR).slice(0, 1)).toEqual([
       { userId: 'anna', minutesPerWeek: 60, countsAsTeaching: false, validFrom: '2026-09-14', validTo: '2026-09-27' },
     ]);
-    // A dated uppdrag inside the passes' dates is gone; one reaching past them keeps its tail.
+    // A dated uppdrag inside the passes' weeks is gone; one reaching past them
+    // keeps its tail from the Monday after the last pass's week.
     expect(
       withSupervision(
         [duty('anna', 'RASTVAKT', 60, { validFrom: '2026-09-14', validTo: '2026-10-02' })],
         [shift('anna', '10:00', '10:20', { validTo: '2026-09-25' })],
         YEAR,
       ).slice(0, 1),
-    ).toEqual([{ userId: 'anna', minutesPerWeek: 60, countsAsTeaching: false, validFrom: '2026-09-26', validTo: '2026-10-02' }]);
+    ).toEqual([{ userId: 'anna', minutesPerWeek: 60, countsAsTeaching: false, validFrom: '2026-09-28', validTo: '2026-10-02' }]);
+  });
+
+  it('never charges a week both the ram and a pass: a Friday Till or a one-day pass takes its whole week', () => {
+    const year = { startDate: '2026-08-17', endDate: '2027-06-11' };
+    const ram = [duty('anna', 'RASTVAKT', 60)];
+    const charged = (shifts: LoadShift[]) =>
+      buildTeacherLoadReport({ ...input(withSupervision(ram, shifts, year)), year }).teachers.find((row) => row.userId === 'anna')!;
+    // Autumn passes until the last day before jullov, a Friday: the ram runs from the Monday after.
+    const autumn = charged([shift('anna', '10:00', '11:00', { validTo: '2026-12-18' })]);
+    expect(autumn.dutyMinutesPerWeek).toBe(60);
+    expect(autumn.dutyPeakMinutesPerWeek).toBe(60);
+    // One Wednesday: that week is the pass's, every other the ram's.
+    const once = charged([shift('anna', '10:00', '10:20', { validFrom: '2026-09-02', validTo: '2026-09-02' })]);
+    expect(once.dutyPeakMinutesPerWeek).toBe(60);
+    expect(once.dutyMinutesPerWeek).toBeLessThanOrEqual(60);
+    const [line] = supervisionOfTeachers(ram, [shift('anna', '10:00', '10:20', { validFrom: '2026-09-02', validTo: '2026-09-02' })], year, []);
+    expect(line!.ramCountedMinutesPerWeek).toBeLessThanOrEqual(line!.ramMinutesPerWeek!);
   });
 
   it('feeds the report: the passes are uppdrag, and only the counted area meets the target', () => {

@@ -1179,6 +1179,34 @@ describe('UsersService', () => {
       expect(tx.user.update).not.toHaveBeenCalled();
     });
 
+    it('refuses a demotion on rastvaktspass, and says where they are planned', async () => {
+      // lockStaffRow's other half (Rastvaktsschema, 20261202090000): a pupil
+      // left on the schedule would watch a break and be charged it.
+      storeUser({ role: UserRole.TEACHER, studentGroupId: null });
+      tx.teacherEmployment.count.mockResolvedValue(0);
+      tx.teacherSubjectQualification.count.mockResolvedValue(0);
+      tx.teacherDuty.count.mockResolvedValue(0);
+      tx.supervisionShift.count.mockResolvedValue(2);
+
+      await expect(
+        service.update(USER_ID, { role: UserRole.STUDENT }, testUser()),
+      ).rejects.toThrow(
+        new ConflictException(
+          'Personen kan inte bli elev: 2 rastvaktspass finns registrerade. Ta bort dem under Rastvaktsschema först.',
+        ),
+      );
+      expect(tx.supervisionShift.count).toHaveBeenCalledWith({ where: { userId: USER_ID } });
+      tx.teacherDuty.count.mockResolvedValue(1);
+      await expect(
+        service.update(USER_ID, { role: UserRole.STUDENT }, testUser()),
+      ).rejects.toThrow(
+        new ConflictException(
+          'Personen kan inte bli elev: 1 uppdrag och 2 rastvaktspass finns registrerade. Ta bort dem under Personer och Rastvaktsschema först.',
+        ),
+      );
+      expect(tx.user.update).not.toHaveBeenCalled();
+    });
+
     it('names only the rows that exist when a rektor becomes a guardian', async () => {
       storeUser({ role: UserRole.SCHOOL_ADMIN, studentGroupId: null });
       tx.teacherEmployment.count.mockResolvedValue(0);

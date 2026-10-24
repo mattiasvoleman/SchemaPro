@@ -7,6 +7,7 @@ import {
 import { Prisma, type PrismaClient, type SupervisionArea, type SupervisionShift } from '@prisma/client';
 import { recordRead } from '../access-log/access-log';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+import { toNioarig, toNioarigSpan, type GradeNumbering } from '../common/grade-numbering';
 import { carriesSeconds, minutesOf } from '../common/solver-grid';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
@@ -154,12 +155,17 @@ function assertSpan(min: number | null, max: number | null): void {
   }
 }
 
-/** Whole minutes, start before end: the pass's time as the table holds it. */
+/** Whole minutes of one day, start before end: the pass's time as the table holds it. */
 function assertWindow(startTime: string, endTime: string): void {
   for (const [field, value] of [
     ['startTime', startTime],
     ['endTime', endTime],
   ] as const) {
+    // The DTO's pattern admits 24:00 and 99:99, which parseTimeString would
+    // carry past midnight; a pass is inside one day, 00:00 to 23:59.
+    if (!/^([01]\d|2[0-3]):[0-5]\d(:\d{2})?$/.test(value)) {
+      throw new BadRequestException(`${field}: anges som ett klockslag mellan 00:00 och 23:59.`);
+    }
     if (carriesSeconds(value)) throw new BadRequestException(`${field}: anges i hela minuter.`);
   }
   if (minutesOf(endTime) <= minutesOf(startTime)) {
@@ -169,10 +175,23 @@ function assertWindow(startTime: string, endTime: string): void {
   }
 }
 
-/** Från not after Till, and both inside the läsår (null bounds are the year's). */
-function assertDates(year: YearBounds | null, validFrom: Date | null, validTo: Date | null): void {
+/**
+ * Från not after Till, both inside the läsår (null bounds are the year's),
+ * and the pass's weekday between them: a Monday pass dated Tuesday to Friday
+ * would be charged a week it never runs in.
+ */
+function assertDates(year: YearBounds | null, validFrom: Date | null, validTo: Date | null, dayOfWeek: number): void {
   if (validFrom && validTo && validTo < validFrom) {
     throw new BadRequestException(`validTo: Till (${asDay(validTo)}) ligger före Från (${asDay(validFrom)}).`);
+  }
+  if (validFrom && validTo) {
+    const first = validFrom.getUTCDay() === 0 ? 7 : validFrom.getUTCDay();
+    const offset = (dayOfWeek - first + 7) % 7;
+    if (validFrom.getTime() + offset * 24 * 60 * 60 * 1000 > validTo.getTime()) {
+      throw new BadRequestException(
+        `validTo: ingen ${WEEKDAY[dayOfWeek]} ligger mellan ${asDay(validFrom)} och ${asDay(validTo)}, så passet skulle aldrig gå.`,
+      );
+    }
   }
   if (!year) return;
   for (const [field, value] of [
@@ -340,7 +359,7 @@ export class SupervisionService {
     assertWindow(dto.startTime, dto.endTime);
     const validFrom = dateOrNull(dto.validFrom);
     const validTo = dateOrNull(dto.validTo);
-    assertDates(null, validFrom, validTo);
+    assertDates(null, validFrom, validTo, dto.dayOfWeek);
     const note = dto.note?.trim() || null;
     try {
       return await this.prisma.withRls(user, async (tx) => {
@@ -349,7 +368,7 @@ export class SupervisionService {
         await lockStaffRow(tx, dto.userId, 'rastvaktspass');
         const year = await readYearBoundsForShare(tx, dto.academicYearId);
         if (!year) throw new NotFoundException({ message: 'Läsåret finns inte.', code: SUPERVISION_YEAR_NOT_FOUND });
-        assertDates(year, validFrom, validTo);
+        assertDates(year, validFrom, validTo, dto.dayOfWeek);
         await this.assertArea(tx, dto.areaId);
         if ((await tx.supervisionShift.count({ where: { academicYearId: dto.academicYearId } })) >= MAX_SHIFTS_PER_YEAR) {
           throw new ConflictException({
@@ -393,17 +412,18 @@ export class SupervisionService {
         assertWindow(startTime, endTime);
         const validFrom = dto.validFrom !== undefined ? dateOrNull(dto.validFrom) : locked.validFrom;
         const validTo = dto.validTo !== undefined ? dateOrNull(dto.validTo) : locked.validTo;
-        assertDates(null, validFrom, validTo);
+        const dayOfWeek = dto.dayOfWeek ?? locked.dayOfWeek;
+        assertDates(null, validFrom, validTo, dayOfWeek);
         const userId = dto.userId ?? locked.userId;
         await lockStaffRow(tx, userId, 'rastvaktspass');
         if (dto.validFrom !== undefined || dto.validTo !== undefined) {
-          assertDates(await readYearBoundsForShare(tx, locked.academicYearId), validFrom, validTo);
+          assertDates(await readYearBoundsForShare(tx, locked.academicYearId), validFrom, validTo, dayOfWeek);
         }
         if (dto.areaId !== undefined && dto.areaId !== locked.areaId) await this.assertArea(tx, dto.areaId);
         const candidate = {
           academicYearId: locked.academicYearId,
           userId,
-          dayOfWeek: dto.dayOfWeek ?? locked.dayOfWeek,
+          dayOfWeek,
           startTime: parseTimeString(startTime),
           endTime: parseTimeString(endTime),
           validFrom,
@@ -507,7 +527,7 @@ export class SupervisionService {
     return this.prisma.withRls(user, async (tx) => {
       const yearRow = await tx.academicYear.findUnique({
         where: { id: academicYearId },
-        select: { startDate: true, endDate: true },
+        select: { startDate: true, endDate: true, gradeNumbering: true },
       });
       if (!yearRow) throw new NotFoundException({ message: 'Läsåret finns inte.', code: SUPERVISION_YEAR_NOT_FOUND });
       const year = { startDate: asDay(yearRow.startDate), endDate: asDay(yearRow.endDate) };
@@ -534,17 +554,44 @@ export class SupervisionService {
             select: { minGradeLevel: true, maxGradeLevel: true, dayOfWeek: true, startTime: true, endTime: true },
           })
         : [];
+      // Areas, rasts and sittings are school-wide spans in NIOARIG
+      // (grade-numbering.ts); a tioårig läsår's classes and lov, stated in the
+      // year's own numbering, are read in it before they meet them.
+      const numbering: GradeNumbering = yearRow.gradeNumbering ?? 'NIOARIG';
       const closures = (
         await tx.schoolBreak.findMany({
           where: { academicYearId },
           select: { startDate: true, endDate: true, minGradeLevel: true, maxGradeLevel: true },
         })
-      ).map((row) => ({ ...row, startDate: asDay(row.startDate), endDate: asDay(row.endDate) }));
+      ).map((row) => {
+        const span =
+          row.minGradeLevel === null || row.maxGradeLevel === null
+            ? null
+            : toNioarigSpan({ min: row.minGradeLevel, max: row.maxGradeLevel }, numbering);
+        return {
+          startDate: asDay(row.startDate),
+          endDate: asDay(row.endDate),
+          minGradeLevel: span?.min ?? row.minGradeLevel,
+          maxGradeLevel: span?.max ?? row.maxGradeLevel,
+        };
+      });
       const grades = await tx.studentGroup.findMany({
         where: { academicYearId, gradeLevel: { not: null } },
         select: { gradeLevel: true },
         distinct: ['gradeLevel'],
       });
+      // A deactivated teacher's passes stay on the schedule and watch nothing:
+      // the register deactivates a leaver, and the break is unwatched from then.
+      const inactive = new Set(
+        shifts.length > 0
+          ? (
+              await tx.user.findMany({
+                where: { id: { in: [...new Set(shifts.map((row) => row.userId))] }, isActive: false },
+                select: { id: true },
+              })
+            ).map((row) => row.id)
+          : [],
+      );
       const duties = await tx.teacherDuty.findMany({
         where: { academicYearId, kind: 'RASTVAKT' },
         select: { userId: true, kind: true, minutesPerWeek: true, countsAsTeaching: true, validFrom: true, validTo: true },
@@ -571,7 +618,11 @@ export class SupervisionService {
           end: minutesOfTime(row.endTime),
         })),
         lunch: lunch?.lunchEnabled ? { start: minutesOfTime(lunch.lunchStartTime), end: minutesOfTime(lunch.lunchEndTime) } : null,
-        grades: grades.map((row) => row.gradeLevel).filter((grade): grade is number => grade !== null),
+        grades: [
+          ...new Set(
+            grades.map((row) => toNioarig(row.gradeLevel, numbering)).filter((grade): grade is number => grade !== null),
+          ),
+        ],
         shifts: shifts.map((row) => ({
           id: row.id,
           areaId: row.areaId,
@@ -580,6 +631,7 @@ export class SupervisionService {
           end: minutesOfTime(row.endTime),
           validFrom: dayOrNull(row.validFrom),
           validTo: dayOrNull(row.validTo),
+          inactive: inactive.has(row.userId),
         })),
       });
       const loadShifts = shifts.map((row) => ({

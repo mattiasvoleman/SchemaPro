@@ -176,8 +176,18 @@ describe('Rastvaktsschema (e2e)', () => {
       needed: 1,
       shiftIds: [SHIFT],
     });
-    // Monday after the jullov, and Tuesday to Friday all year.
-    expect(rota.body.gaps[0]).toMatchObject({ dayOfWeek: 1, from: '2026-12-19', to: '2027-06-11', fewest: 0, shortFrom: '10:00', shortTo: '10:20' });
+    // Mondays after the pass's Till (a Friday), the first and the last of them;
+    // Tuesday to Friday all year.
+    expect(rota.body.gaps[0]).toMatchObject({
+      dayOfWeek: 1,
+      from: '2026-12-21',
+      to: '2027-06-07',
+      fromYearStart: false,
+      toYearEnd: true,
+      fewest: 0,
+      shortFrom: '10:00',
+      shortTo: '10:20',
+    });
     expect(rota.body.gaps).toHaveLength(5);
     expect(rota.body.teachers).toEqual([expect.objectContaining({ userId: ANNA, shiftCount: 1, ramMinutesPerWeek: null })]);
 
@@ -195,6 +205,13 @@ describe('Rastvaktsschema (e2e)', () => {
       await request(server).post('/api/v1/supervision-shifts').set('x-test-user', asUser({})).send(body).expect(400);
     }
     await request(server).get('/api/v1/supervision-rota?academicYearId=nope').set('x-test-user', asUser({})).expect(400);
+    // Null where the table holds NOT NULL: a 400 naming the field, not a 500 from the service.
+    await request(server).patch(`/api/v1/supervision-areas/${GARDEN}`).set('x-test-user', asUser({})).send({ name: null }).expect(400);
+    for (const field of ['areaId', 'userId', 'dayOfWeek', 'startTime', 'endTime']) {
+      await request(server).patch(`/api/v1/supervision-shifts/${SHIFT}`).set('x-test-user', asUser({})).send({ [field]: null }).expect(400);
+    }
+    expect(harness.tx['supervisionArea']!['update']).not.toHaveBeenCalled();
+    expect(harness.tx['supervisionShift']!['update']).not.toHaveBeenCalled();
     expect(harness.tx['supervisionArea']!['create']).not.toHaveBeenCalled();
     expect(harness.tx['supervisionShift']!['create']).not.toHaveBeenCalled();
   });
