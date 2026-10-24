@@ -1452,14 +1452,9 @@ class SchedulerSolver:
         look up. So each line names that teacher's requirements, which the
         page shows as "Matematik för 7B", the way the unstaffed refusal does.
         """
-        week_minutes: dict[UUID, int] = {}
-        requirements_of: dict[UUID, list[AnonymousRequirement]] = {}
-        for requirement in request.requirements:
-            for teacher_id in dict.fromkeys(_teachers_of(requirement)):
-                week_minutes[teacher_id] = (
-                    week_minutes.get(teacher_id, 0) + sum(requirement.lesson_minutes())
-                )
-                requirements_of.setdefault(teacher_id, []).append(requirement)
+        # Per lesson (_teacher_week): a split post charges each lead their own
+        # lessons only, so Bertil's one of the three is never read as all three.
+        week_minutes, _longest, requirements_of = _teacher_week(request.requirements)
         if not week_minutes:
             return None
 
@@ -3292,10 +3287,13 @@ class SchedulerSolver:
         spread_pairs = 0
         for requirement in request.requirements:
             count = requirement.lessons_per_week
-            for teacher_id in (requirement.teacher_id, requirement.co_teacher_id):
-                if teacher_id is not None:
+            # Per lesson, because a split post's lessons are not all one
+            # teacher's (_teachers_at); an unsplit one counts `count` for its
+            # lead and its co-teacher, as it always did.
+            for lesson_index in range(count):
+                for teacher_id in _teachers_at(requirement, lesson_index):
                     lessons_by_teacher[teacher_id] = (
-                        lessons_by_teacher.get(teacher_id, 0) + count
+                        lessons_by_teacher.get(teacher_id, 0) + 1
                     )
             lessons_by_group[requirement.student_group_id] = (
                 lessons_by_group.get(requirement.student_group_id, 0) + count
@@ -4372,9 +4370,12 @@ class SchedulerSolver:
         # Closed ranges per day, in day-relative slots, from every recurring
         # UNAVAILABLE row that reaches every lesson of the requirement. A ROOM
         # row reaches a lesson only through the room it is given, so it never
-        # closes a day for the requirement.
+        # closes a day for the requirement; and a TEACHER row only when the
+        # teacher is on every lesson (_teachers_on_every_lesson) — a split
+        # post's Friday that Bertil does not work is still Anna's Friday, and
+        # the day stays open, which is the direction an upper bound may err.
         closed: dict[int, list[tuple[int, int]]] = defaultdict(list)
-        teachers = _teachers_of(requirement)
+        teachers = _teachers_on_every_lesson(requirement)
         for constraint in request.constraints:
             if constraint.kind != "UNAVAILABLE" or constraint.date is not None:
                 continue
@@ -4450,17 +4451,20 @@ class SchedulerSolver:
         if not rules:
             return
 
+        # Per lesson: a split post's lessons are each their own lead's
+        # (_teachers_at), and Bertil's one 40 is not Anna's shortest lesson.
+        # An unsplit post adds its lessons_per_week and its shortest lesson to
+        # its lead and its co-teacher, as the per-requirement count did.
         lessons_by_teacher: dict[UUID, int] = {}
         shortest_by_teacher: dict[UUID, int] = {}
         for requirement in request.requirements:
-            duration = self._grid.minutes_to_slots(requirement.shortest_lesson_minutes())
-            for teacher_id in _teachers_of(requirement):
-                lessons_by_teacher[teacher_id] = (
-                    lessons_by_teacher.get(teacher_id, 0) + requirement.lessons_per_week
-                )
-                shortest_by_teacher[teacher_id] = min(
-                    shortest_by_teacher.get(teacher_id, duration), duration,
-                )
+            for lesson_index, minutes in enumerate(requirement.lesson_minutes()):
+                duration = self._grid.minutes_to_slots(minutes)
+                for teacher_id in _teachers_at(requirement, lesson_index):
+                    lessons_by_teacher[teacher_id] = lessons_by_teacher.get(teacher_id, 0) + 1
+                    shortest_by_teacher[teacher_id] = min(
+                        shortest_by_teacher.get(teacher_id, duration), duration,
+                    )
 
         slots_per_day = self._grid.slots_per_day
         day_count = len(self._grid.schedule_days)
@@ -4614,7 +4618,7 @@ class SchedulerSolver:
 
         ON THE MINUTES STILL TO PLACE. A teacher's week here is what the solver
         has to put somewhere — the generated lessons they are on, as lead or
-        co-teacher, each requirement once — and what is locked is a fact that
+        co-teacher, each lesson once — and what is locked is a fact that
         only takes room away: from the cap on its own weekday, from the day it
         sits on. A teacher whose whole week is hand-placed has nothing to
         place, and is refused nothing, as the builder skips them.
@@ -4660,18 +4664,13 @@ class SchedulerSolver:
         if not capped and not limits:
             return
 
-        week_minutes: dict[UUID, int] = {}
-        longest: dict[UUID, int] = {}
-        requirements_of: dict[UUID, list[AnonymousRequirement]] = {}
-        for requirement in request.requirements:
-            for teacher_id in dict.fromkeys(_teachers_of(requirement)):
-                week_minutes[teacher_id] = (
-                    week_minutes.get(teacher_id, 0) + sum(requirement.lesson_minutes())
-                )
-                longest[teacher_id] = max(
-                    longest.get(teacher_id, 0), requirement.minutes_per_lesson,
-                )
-                requirements_of.setdefault(teacher_id, []).append(requirement)
+        # PER LESSON, each lesson once per person on it (_teachers_at as a
+        # set): a split post's lessons are each their own lead's, so Bertil's
+        # week holds his one lesson of the three and its length, never Anna's
+        # two. An unsplit post gives its lead and its co-teacher every lesson,
+        # which is the sum, the longest and the list the per-requirement
+        # reading made (_teacher_week).
+        week_minutes, longest, requirements_of = _teacher_week(request.requirements)
 
         weekdays = self._grid.schedule_days
         lock_minutes, _lock_days = _teacher_locks(request.fixed_lessons)
@@ -4814,6 +4813,7 @@ class SchedulerSolver:
         request: OptimizeScheduleRequest,
         requirement: AnonymousRequirement,
         day_index: int,
+        teachers: tuple[UUID, ...] | None = None,
     ) -> list[tuple[int, int]]:
         """Day-local ranges a reservation provably keeps this requirement out of.
 
@@ -4850,7 +4850,20 @@ class SchedulerSolver:
         them, which is the point: a teacher's row reaches the requirements that
         teacher carries, a group's row reaches its own, and a year's row
         reaches every requirement whose years OVERLAP it.
+
+        A TEACHER'S ROW REACHES A LESSON, NOT A ROW, once a post is split:
+        Bertil's Friday keeps out his lesson of the three and leaves Anna's
+        two where they were. `teachers` names the lesson's own
+        (_lesson_teachers) for the one caller that asks about a lesson, the
+        rast ordering's flag. Left out, the question is about the requirement
+        — the pre-flight's — and only a teacher on EVERY lesson counts
+        (_teachers_on_every_lesson): counting Bertil's row against the whole
+        row would shrink what the week holds and refuse a week that has a
+        timetable. For a post one person leads both readings are its lead and
+        its co-teacher, as they always were.
         """
+        if teachers is None:
+            teachers = _teachers_on_every_lesson(requirement)
         blocked: list[tuple[int, int]] = []
         day_of_week = self._grid.schedule_days[day_index]
         for constraint in request.constraints:
@@ -4859,9 +4872,7 @@ class SchedulerSolver:
             if constraint.day_of_week not in (None, day_of_week):
                 continue
             if constraint.resource_kind == "TEACHER":
-                reaches = constraint.resource_id in (
-                    requirement.teacher_id, requirement.co_teacher_id,
-                )
+                reaches = constraint.resource_id in teachers
             elif constraint.resource_kind == "STUDENT_GROUP":
                 reaches = requirement.student_group_id == constraint.resource_id
             elif constraint.resource_kind == "GRADE_LEVEL":
@@ -4976,6 +4987,9 @@ class SchedulerSolver:
                 # is free and whose lessons are short enough answers it for the
                 # whole class. Measuring the shortest lesson alone would close a
                 # day whose maths teacher is away and whose music teacher is not.
+                # A split post's lead being away closes nothing here either: a
+                # reservation counts against a requirement only where it
+                # reaches every lesson of it (_reserved_ranges).
                 if any(
                     self._room_in_stretch(
                         self._reserved_ranges(request, requirement, day_index), room, first,
@@ -5262,17 +5276,22 @@ class SchedulerSolver:
             if group.min_grade_level is not None and group.max_grade_level is not None
         }
 
-        # One read per (requirement, day) for the whole build: the same
-        # requirement is looked at once per class that shares its pupils, once
-        # per day, once per asking break.
-        cache: dict[tuple[UUID, int], list[tuple[int, int]]] = {}
+        # One read per (requirement, teachers, day) for the whole build: the
+        # same requirement is looked at once per class that shares its pupils,
+        # once per day, once per asking break. The teachers are the LESSON's
+        # (_lesson_teachers), so a split post's lessons are each kept out of
+        # what reaches their own lead; an unsplit post's lessons all share one
+        # key, and the reads are the ones the requirement always made.
+        cache: dict[tuple[UUID, tuple[UUID, ...], int], list[tuple[int, int]]] = {}
 
-        def reserved(
-            requirement: AnonymousRequirement, day_index: int,
-        ) -> list[tuple[int, int]]:
-            key = (requirement.id, day_index)
+        def reserved(decision: LessonDecision, day_index: int) -> list[tuple[int, int]]:
+            requirement = decision.lesson.requirement
+            teachers = _lesson_teachers(decision.lesson)
+            key = (requirement.id, teachers, day_index)
             if key not in cache:
-                cache[key] = self._reserved_ranges(request, requirement, day_index)
+                cache[key] = self._reserved_ranges(
+                    request, requirement, day_index, teachers,
+                )
             return cache[key]
 
         for group in request.groups:
@@ -5316,7 +5335,7 @@ class SchedulerSolver:
                     # subject, and a room measured across the class would close
                     # it for all of them.
                     if decision.duration > self._room_in_stretch(
-                        reserved(decision.lesson.requirement, day_index), room, first,
+                        reserved(decision, day_index), room, first,
                     ):
                         continue
                     flag = model.NewBoolVar(
@@ -5686,9 +5705,11 @@ class SchedulerSolver:
                 decision.lead + decision.duration + decision.changeover + decision.trail,
                 f"pupils_{k}",
             ))
-            requirement = decision.lesson.requirement
+            # The lesson's own teachers, as _add_fixed_lesson_constraints reads
+            # them: a lock of Bertil's keeps his lesson of a split post off it
+            # and none of Anna's.
             lessons.append((
-                {tid for tid in (requirement.teacher_id, requirement.co_teacher_id) if tid},
+                set(_lesson_teachers(decision.lesson)),
                 model.NewFixedSizeIntervalVar(
                     start, decision.duration + decision.changeover, f"lesson_{k}",
                 ),
@@ -6552,13 +6573,17 @@ class SchedulerSolver:
         undressed. Reading the pupils' interval here would forbid the very thing
         a school does on purpose: idrottsläraren taking the next class in the
         hall while the last one is still in the changing room.
+
+        PER LESSON (_lesson_teachers): a split post's lesson is in its own
+        lead's family and the co-teacher's, and in no other lead's — Bertil's
+        one lesson of Matematik för 7A may clash with nothing of Bertil's, and
+        Anna's two are free to sit beside it. A post one person leads puts
+        every lesson in the lead's family and the co-teacher's, as before.
         """
         grouped: dict[UUID, list[LessonDecision]] = {}
         for decision in decisions:
-            requirement = decision.lesson.requirement
-            for teacher_id in (requirement.teacher_id, requirement.co_teacher_id):
-                if teacher_id is not None:
-                    grouped.setdefault(teacher_id, []).append(decision)
+            for teacher_id in _lesson_teachers(decision.lesson):
+                grouped.setdefault(teacher_id, []).append(decision)
 
         for teacher_decisions in grouped.values():
             if len(teacher_decisions) > 1:
@@ -6745,12 +6770,12 @@ class SchedulerSolver:
         affected: list[tuple[LessonDecision, cp_model.IntVar | None]] = []
 
         if constraint.resource_kind == "TEACHER":
+            # The lessons the teacher is ON (_lesson_teachers), which for a
+            # split post is their own lessons of it and not the colleague's:
+            # Bertil's Friday off keeps his one lesson off Friday and leaves
+            # Anna's two free to take it, hard row and wish alike.
             for decision in decisions:
-                requirement = decision.lesson.requirement
-                if constraint.resource_id in (
-                    requirement.teacher_id,
-                    requirement.co_teacher_id,
-                ):
+                if constraint.resource_id in _lesson_teachers(decision.lesson):
                     affected.append((decision, None))
             return affected
 
@@ -6851,11 +6876,9 @@ class SchedulerSolver:
                 fixed_teachers = {
                     tid for tid in (fixed.teacher_id, fixed.co_teacher_id) if tid
                 }
-                own_teachers = {
-                    tid
-                    for tid in (requirement.teacher_id, requirement.co_teacher_id)
-                    if tid
-                }
+                # The LESSON's teachers: a lock of Bertil's is in the way of
+                # his lesson of a split post and of none of Anna's.
+                own_teachers = set(_lesson_teachers(decision.lesson))
                 shares_teacher = bool(fixed_teachers & own_teachers)
                 fixed_groups = {fixed.student_group_id, *fixed.extra_group_ids}
                 own_group = requirement.student_group_id
@@ -7225,6 +7248,14 @@ class SchedulerSolver:
         START searching, which last term's week still is — and every other
         requirement's slots on that day keep their reward.
 
+        PER LESSON, where a post is split: the slot is kept, for the reward,
+        only by a lesson none of whose teachers wishes the weekday free. Anna's
+        two lessons may still hold last term's Friday when Bertil wishes his
+        Fridays free; his one lesson earns nothing there, and a slot only his
+        lessons could keep is no term at all. A post one person leads has the
+        same teachers on every lesson, so either every lesson keeps the slot
+        or none does — the requirement-wide reading, slot for slot.
+
         None or empty is the term as it always was, slot for slot.
         """
         if weights.disruption <= 0 or not previous_lessons:
@@ -7238,12 +7269,16 @@ class SchedulerSolver:
 
         for index, previous in enumerate(previous_lessons):
             candidates = by_requirement.get(previous.requirement_id)
+            if candidates and wished_free:
+                candidates = [
+                    decision
+                    for decision in candidates
+                    if not any(
+                        (teacher_id, previous.day_of_week) in wished_free
+                        for teacher_id in _lesson_teachers(decision.lesson)
+                    )
+                ]
             if not candidates:
-                continue
-            if wished_free and any(
-                (teacher_id, previous.day_of_week) in wished_free
-                for teacher_id in _teachers_of(candidates[0].lesson.requirement)
-            ):
                 continue
             try:
                 start_slot = self._grid.parse_hhmmss(previous.start_time)
@@ -7549,12 +7584,12 @@ class SchedulerSolver:
         if weights.teacher_gap <= 0:
             return []
 
+        # A teacher's day is the lessons they are on (_lesson_teachers): a
+        # split post's lesson is in its own lead's span and not the other's.
         by_teacher: dict[UUID, list[LessonDecision]] = {}
         for decision in decisions:
-            requirement = decision.lesson.requirement
-            for teacher_id in (requirement.teacher_id, requirement.co_teacher_id):
-                if teacher_id is not None:
-                    by_teacher.setdefault(teacher_id, []).append(decision)
+            for teacher_id in _lesson_teachers(decision.lesson):
+                by_teacher.setdefault(teacher_id, []).append(decision)
 
         protected = self._protected_windows(constraints)
         penalties: list[cp_model.LinearExpr] = []
@@ -8602,9 +8637,13 @@ class SchedulerSolver:
         if not work_rules:
             return
 
+        # Every decision once per time the teacher is named on the LESSON
+        # (_lesson_teachers) — a split post's lesson is its own lead's lunch
+        # and rest to keep, not the colleague's — and _teacher_day_on reads
+        # the positions of this very list.
         by_teacher: dict[UUID, list[LessonDecision]] = {}
         for decision in decisions:
-            for teacher_id in _teachers_of(decision.lesson.requirement):
+            for teacher_id in _lesson_teachers(decision.lesson):
                 by_teacher.setdefault(teacher_id, []).append(decision)
 
         locked_busy = self._teacher_busy_from_locks(fixed_lessons)
@@ -9123,8 +9162,10 @@ class SchedulerSolver:
         school had before.
 
         A CO-TAUGHT LESSON IS FULL TEACHING FOR BOTH, as everywhere a teacher
-        rule reads the week (_teachers_of), and a legacy row naming one person
-        as both lead and co-teacher is one lesson for them, not two.
+        rule reads the week (_lesson_teachers), and a legacy row naming one
+        person as both lead and co-teacher is one lesson for them, not two. A
+        split post's lesson is its own lead's minutes and day, and never the
+        other lead's: Bertil's cap counts his one lesson of the three.
         """
         capped = [
             rule for rule in work_rules if rule.max_teaching_minutes_per_day is not None
@@ -9302,11 +9343,13 @@ class SchedulerSolver:
         weighted sum the lesson's `day_` variable — the channelling the
         distribution rule uses, on the same day variable the spread reads.
         """
+        # The same walk _add_teacher_work_constraints made, lesson by lesson
+        # (_lesson_teachers), or the positions belong to another list.
         position: dict[str, int] = {}
         for index, decision in enumerate(
             decision
             for decision in decisions
-            for named in _teachers_of(decision.lesson.requirement)
+            for named in _lesson_teachers(decision.lesson)
             if named == teacher_id
         ):
             position.setdefault(decision.lesson.key(), index)
@@ -9704,13 +9747,23 @@ class SchedulerSolver:
             day_of_week, start_slot = self._grid.decode_absolute(absolute_start)
             start_time, end_time = self._grid.format_hhmmss(start_slot, decision.duration)
             room_idx = room_by_key[decision.lesson.key()]
+            requirement = decision.lesson.requirement
             lessons.append(
                 ScheduledLesson(
-                    requirement_id=decision.lesson.requirement.id,
+                    requirement_id=requirement.id,
                     room_id=rooms[room_idx].id,
                     day_of_week=day_of_week,  # type: ignore[arg-type]
                     start_time=start_time,
                     end_time=end_time,
+                    # Delade lektioner: which lead this placement is, and only
+                    # for a split post — every other lesson leaves it None,
+                    # which the response omits, so a school without a split
+                    # gets the bytes it always got.
+                    teacher_id=(
+                        requirement.lesson_teacher(decision.lesson.lesson_index)
+                        if requirement.lesson_teacher_ids is not None
+                        else None
+                    ),
                 ),
             )
         return lessons
@@ -10203,18 +10256,118 @@ def _night_pad_slots(grid: TimeGrid, day_index: int) -> int:
 
 
 def _teachers_of(requirement: AnonymousRequirement) -> tuple[UUID, ...]:
-    """Everyone who teaches this requirement: the lead and the co-teacher.
+    """Everyone who teaches this requirement: every lead and the co-teacher.
 
     Its own reader because every teacher-keyed rule in this module has to make
     the same union, and a rule that read `teacher_id` alone would let a
     co-taught school out of it: a co-taught lesson is teaching for both of
     them, and both are owed the lunch and the rest it takes away.
+
+    THE ROW, NOT A LESSON. A split post (lessonTeacherIds) is taught by every
+    lead it names, so the union is those leads in lesson order, each once,
+    then the co-teacher — for the readers that ask whether a teacher is on the
+    row at all: two members of a block sharing anybody, a rule that reaches
+    no lesson, the TIMEOUT line's count. A reader that asks about A LESSON —
+    who is in its no-overlap, whose day it fills — reads _lesson_teachers:
+    Bertil leading one lesson of three is not on the other two. A post one
+    person leads is the pair it always was, a legacy row naming one person
+    twice included.
     """
-    return tuple(
+    if requirement.lesson_teacher_ids is None:
+        return tuple(
+            teacher_id
+            for teacher_id in (requirement.teacher_id, requirement.co_teacher_id)
+            if teacher_id is not None
+        )
+    return tuple(dict.fromkeys(
         teacher_id
-        for teacher_id in (requirement.teacher_id, requirement.co_teacher_id)
+        for teacher_id in (*requirement.lesson_teacher_ids, requirement.co_teacher_id)
         if teacher_id is not None
-    )
+    ))
+
+
+def _teachers_at(requirement: AnonymousRequirement, lesson_index: int) -> tuple[UUID, ...]:
+    """Who teaches lesson `lesson_index` of the requirement: its lead, then the co-teacher.
+
+    LEAD FIRST AND NEITHER DROPPED FOR BEING THE OTHER, which is the pair
+    every teacher-keyed builder read off the requirement before a post could
+    be split — (teacher_id, co_teacher_id), the Nones left out, a legacy row
+    naming one person twice twice. So for a post one person leads every
+    lesson answers exactly that, and every family, sum and walk built from it
+    is built in the order it always was; only a split post's lessons differ,
+    each by its own lead (AnonymousRequirement.lesson_teacher). A lesson the
+    list gives nobody is the co-teacher's alone, or nobody's — and a teacher
+    whose only lesson that was simply has none, so no family is built empty.
+    """
+    lead = requirement.lesson_teacher(lesson_index)
+    co_teacher = requirement.co_teacher_id
+    if lead is None:
+        return () if co_teacher is None else (co_teacher,)
+    return (lead,) if co_teacher is None else (lead, co_teacher)
+
+
+def _lesson_teachers(lesson: LessonInstance) -> tuple[UUID, ...]:
+    """The teachers ON this lesson, lead first — see _teachers_at."""
+    return _teachers_at(lesson.requirement, lesson.lesson_index)
+
+
+def _teachers_on_every_lesson(requirement: AnonymousRequirement) -> tuple[UUID, ...]:
+    """The teachers on every lesson of the requirement, for a check that reads the row.
+
+    A pre-flight that asks one question per requirement — is this day shut
+    to it, is this stretch reserved away from it — may only count a teacher's
+    row against the requirement when it reaches every lesson, or it refuses
+    a week the per-lesson model would place: Bertil's Friday off is not a
+    Friday shut to Anna's lessons. For a post one person leads that is
+    everybody on it (_teachers_of). For a split post it is the co-teacher
+    alone: the list names two different leads, so no lead is on every lesson.
+    """
+    if requirement.lesson_teacher_ids is None:
+        return _teachers_of(requirement)
+    return () if requirement.co_teacher_id is None else (requirement.co_teacher_id,)
+
+
+def _teacher_week(
+    requirements: list[AnonymousRequirement],
+) -> tuple[dict[UUID, int], dict[UUID, int], dict[UUID, list[AnonymousRequirement]]]:
+    """Teacher -> their week's minutes, their longest lesson, and their requirements.
+
+    PER LESSON, each lesson once per person on it (_teachers_at as a set), the
+    one reading of a teacher's week the pre-flights share: the days and cap
+    check (_verify_teacher_day_rules) and the hours verdict
+    (_teacher_hours_verdict). A split post's lessons are each their own
+    lead's, so a lead of one of its three is charged that one and its length.
+    Each requirement is listed once per teacher it reaches, in the payload's
+    order, for _teacher_rooms, which reads the requirement's every length —
+    for a lead of some of a split post's lessons a wider room than theirs,
+    which can only make a refusal rarer, never a feasible week refused.
+
+    An unsplit requirement gives its lead and its co-teacher every lesson:
+    the sum, the longest and the list the per-requirement reading made, in the
+    same insertion order, so a payload with no split reads the dicts it read.
+    """
+    week_minutes: dict[UUID, int] = {}
+    longest: dict[UUID, int] = {}
+    requirements_of: dict[UUID, list[AnonymousRequirement]] = {}
+    for requirement in requirements:
+        if requirement.lesson_teacher_ids is None:
+            for teacher_id in dict.fromkeys(_teachers_of(requirement)):
+                week_minutes[teacher_id] = (
+                    week_minutes.get(teacher_id, 0) + sum(requirement.lesson_minutes())
+                )
+                longest[teacher_id] = max(
+                    longest.get(teacher_id, 0), requirement.minutes_per_lesson,
+                )
+                requirements_of.setdefault(teacher_id, []).append(requirement)
+            continue
+        for lesson_index, minutes in enumerate(requirement.lesson_minutes()):
+            for teacher_id in dict.fromkeys(_teachers_at(requirement, lesson_index)):
+                week_minutes[teacher_id] = week_minutes.get(teacher_id, 0) + minutes
+                longest[teacher_id] = max(longest.get(teacher_id, 0), minutes)
+                listed = requirements_of.setdefault(teacher_id, [])
+                if not listed or listed[-1] is not requirement:
+                    listed.append(requirement)
+    return week_minutes, longest, requirements_of
 
 
 def _lessons_by_teacher(
@@ -10222,14 +10375,14 @@ def _lessons_by_teacher(
 ) -> dict[UUID, list[LessonDecision]]:
     """Teacher -> the lessons they are on, each lesson once.
 
-    `_teachers_of` AS A SET, which is the difference from the older readers:
-    a legacy row naming one person as both lead and co-teacher is one lesson
-    for that person, and a cap that counted its minutes twice would refuse a
-    day nobody teaches longer than the cap.
+    `_lesson_teachers` AS A SET, which is the difference from the older
+    readers: a legacy row naming one person as both lead and co-teacher is one
+    lesson for that person, and a cap that counted its minutes twice would
+    refuse a day nobody teaches longer than the cap.
     """
     by_teacher: dict[UUID, list[LessonDecision]] = {}
     for decision in decisions:
-        for teacher_id in dict.fromkeys(_teachers_of(decision.lesson.requirement)):
+        for teacher_id in dict.fromkeys(_lesson_teachers(decision.lesson)):
             by_teacher.setdefault(teacher_id, []).append(decision)
     return by_teacher
 
