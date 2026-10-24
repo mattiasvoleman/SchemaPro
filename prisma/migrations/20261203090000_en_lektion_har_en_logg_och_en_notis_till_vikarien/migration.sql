@@ -108,16 +108,28 @@
 --   lesson_substitute_notes_teacher_insert / _update / _delete
 --       REGULAR only. The substitute reads the note and does not answer it:
 --       an answer is a message, and messages stay in the lärplattform.
---   lesson_substitute_notes_admin_select
---       every SCHOOL_ADMIN of the school, who books the substitute.
---   lesson_logs_admin_* / lesson_substitute_notes_admin_insert/_update/_delete
+--   lesson_logs_admin_insert / _update / _delete
 --       the school's SCHOOL_ADMIN who writes DRIFT
 --       (app.current_user_may('DRIFT', true)), as CalendarLessons: rektor
 --       removes a log that should not stand. The update arm asks it in WITH
 --       CHECK only, so a row lock for a read keeps working for every
 --       administrator (RLS section 106 c). TABLE_WRITE_GATES in
 --       src/auth/admin-areas.ts says the same, and RLS section 116 runs
---       every profile against both tables.
+--       every profile against the table.
+--
+-- No administrator reads a note, nor writes one. A note may name a pupil and
+-- why ("Kalle går ut 10.15 till specialpedagogen"); it is no gallring kind,
+-- and a read of it has no subject the läslogg could record. So it is read by
+-- the people it was written to and by, the lesson's teachers, and nobody
+-- else: not rektor, not a läsare. What the school's administrators need of
+-- it is that it exists — the cover board marks a lesson whose teacher left
+-- one, the booking's e-mail says there is one, a publish names a lesson that
+-- would take one with it — and app.substitute_noted_lessons(lessons) answers
+-- exactly that and no more: which of the given lessons of the caller's
+-- school have a note, to a SCHOOL_ADMIN alone. SECURITY DEFINER, STABLE,
+-- search_path pinned, EXECUTE to app_authenticated alone. A lesson removed
+-- by a publish still takes its note with it (the key's cascade, which row
+-- security does not stop).
 --
 -- ## Beside the live API: every lock at once, or none
 --
@@ -266,6 +278,23 @@ COMMENT ON FUNCTION app.lesson_teacher_role(uuid) IS
   'Lektionslogg (20261203090000): REGULAR when the calling TEACHER is the lesson''s own teacher (a CalendarLessonTeachers row other than SUBSTITUTE, or the absent teacher of a cover decision on it; never the master lesson''s, which in a DRAFT school is the unpublished draft), SUBSTITUTE when only its substitute, NULL otherwise and for every other role or school.';
 
 -- ---------------------------------------------------------------------------
+-- app.substitute_noted_lessons: that a note exists, to the school's
+-- administrators, never what it says. See the preamble.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION app.substitute_noted_lessons(p_lessons uuid[]) RETURNS SETOF uuid
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+  SELECT n."calendarLessonId"
+    FROM "LessonSubstituteNotes" n
+   WHERE n."calendarLessonId" = ANY (p_lessons)
+     AND n."schoolId" = app.current_school_id()
+     AND app.current_user_role() = 'SCHOOL_ADMIN'
+$$;
+
+COMMENT ON FUNCTION app.substitute_noted_lessons(uuid[]) IS
+  'Lektionslogg (20261203090000): which of the given calendar lessons of the caller''s school have a note to the substitute, to a SCHOOL_ADMIN alone and nobody else; never the note, which no administrator reads.';
+
+-- ---------------------------------------------------------------------------
 -- Who wrote it: the claims' user, whatever the writer sends. See the preamble.
 -- ---------------------------------------------------------------------------
 
@@ -355,13 +384,8 @@ BEGIN
              AND (select app.current_user_role()) = 'SCHOOL_ADMIN'
              AND (select app.current_user_may('DRIFT', true)));
 
-  -- LessonSubstituteNotes: the lesson's teachers and the school's
-  -- administrators read; the lesson's own teacher and DRIFT write. No
-  -- STUDENT or GUARDIAN arm.
-  CREATE POLICY "lesson_substitute_notes_admin_select" ON "LessonSubstituteNotes"
-      FOR SELECT TO "app_authenticated"
-      USING ("schoolId" = (select app.current_school_id())
-             AND (select app.current_user_role()) = 'SCHOOL_ADMIN');
+  -- LessonSubstituteNotes: the lesson's teachers read; the lesson's own
+  -- teacher writes. No arm for an administrator, a STUDENT or a GUARDIAN.
   CREATE POLICY "lesson_substitute_notes_teacher_select" ON "LessonSubstituteNotes"
       FOR SELECT TO "app_authenticated"
       USING ("schoolId" = (select app.current_school_id())
@@ -385,24 +409,6 @@ BEGIN
       USING ("schoolId" = (select app.current_school_id())
              AND (select app.current_user_role()) = 'TEACHER'
              AND app.lesson_teacher_role("calendarLessonId") = 'REGULAR');
-  CREATE POLICY "lesson_substitute_notes_admin_insert" ON "LessonSubstituteNotes"
-      FOR INSERT TO "app_authenticated"
-      WITH CHECK ("schoolId" = (select app.current_school_id())
-                  AND (select app.current_user_role()) = 'SCHOOL_ADMIN'
-                  AND (select app.current_user_may('DRIFT', true)));
-  -- USING does not ask the area (section 106 c).
-  CREATE POLICY "lesson_substitute_notes_admin_update" ON "LessonSubstituteNotes"
-      FOR UPDATE TO "app_authenticated"
-      USING ("schoolId" = (select app.current_school_id())
-             AND (select app.current_user_role()) = 'SCHOOL_ADMIN')
-      WITH CHECK ("schoolId" = (select app.current_school_id())
-                  AND (select app.current_user_role()) = 'SCHOOL_ADMIN'
-                  AND (select app.current_user_may('DRIFT', true)));
-  CREATE POLICY "lesson_substitute_notes_admin_delete" ON "LessonSubstituteNotes"
-      FOR DELETE TO "app_authenticated"
-      USING ("schoolId" = (select app.current_school_id())
-             AND (select app.current_user_role()) = 'SCHOOL_ADMIN'
-             AND (select app.current_user_may('DRIFT', true)));
 END
 $$;
 
@@ -416,10 +422,12 @@ BEGIN
       EXECUTE format('REVOKE ALL ON "LessonLogs" FROM %I', r);
       EXECUTE format('REVOKE ALL ON "LessonSubstituteNotes" FROM %I', r);
       EXECUTE format('REVOKE ALL ON FUNCTION app.lesson_teacher_role(uuid) FROM %I', r);
+      EXECUTE format('REVOKE ALL ON FUNCTION app.substitute_noted_lessons(uuid[]) FROM %I', r);
       EXECUTE format('REVOKE ALL ON FUNCTION app.lesson_text_written_by() FROM %I', r);
     END IF;
   END LOOP;
   REVOKE ALL ON FUNCTION app.lesson_teacher_role(uuid) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION app.substitute_noted_lessons(uuid[]) FROM PUBLIC;
   -- A trigger function is called by its trigger, which asks no EXECUTE; nobody calls it.
   REVOKE ALL ON FUNCTION app.lesson_text_written_by() FROM PUBLIC;
 
@@ -427,6 +435,7 @@ BEGIN
     GRANT SELECT, INSERT, UPDATE, DELETE ON "LessonLogs" TO "app_authenticated";
     GRANT SELECT, INSERT, UPDATE, DELETE ON "LessonSubstituteNotes" TO "app_authenticated";
     GRANT EXECUTE ON FUNCTION app.lesson_teacher_role(uuid) TO "app_authenticated";
+    GRANT EXECUTE ON FUNCTION app.substitute_noted_lessons(uuid[]) TO "app_authenticated";
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
     GRANT SELECT ON "LessonLogs" TO "service_role";
@@ -436,7 +445,7 @@ END
 $$;
 
 -- ---------------------------------------------------------------------------
--- LESSON_LOG_REACH: the sixteen arms above and no other, every one for the
+-- LESSON_LOG_REACH: the twelve arms above and no other, every one for the
 -- API's role; none for a PostgREST role, the service or the sync principal;
 -- and no arm on the notes names a pupil or a guardian.
 -- ---------------------------------------------------------------------------
@@ -464,21 +473,17 @@ BEGIN
                     ('LessonLogs', 'lesson_logs_admin_insert', 'INSERT'),
                     ('LessonLogs', 'lesson_logs_admin_update', 'UPDATE'),
                     ('LessonLogs', 'lesson_logs_admin_delete', 'DELETE'),
-                    ('LessonSubstituteNotes', 'lesson_substitute_notes_admin_select', 'SELECT'),
                     ('LessonSubstituteNotes', 'lesson_substitute_notes_teacher_select', 'SELECT'),
                     ('LessonSubstituteNotes', 'lesson_substitute_notes_teacher_insert', 'INSERT'),
                     ('LessonSubstituteNotes', 'lesson_substitute_notes_teacher_update', 'UPDATE'),
-                    ('LessonSubstituteNotes', 'lesson_substitute_notes_teacher_delete', 'DELETE'),
-                    ('LessonSubstituteNotes', 'lesson_substitute_notes_admin_insert', 'INSERT'),
-                    ('LessonSubstituteNotes', 'lesson_substitute_notes_admin_update', 'UPDATE'),
-                    ('LessonSubstituteNotes', 'lesson_substitute_notes_admin_delete', 'DELETE')));
+                    ('LessonSubstituteNotes', 'lesson_substitute_notes_teacher_delete', 'DELETE')));
   IF bad IS NOT NULL THEN
-    RAISE EXCEPTION 'LESSON_LOG_REACH: these arms reach LessonLogs or LessonSubstituteNotes beyond the sixteen of 20261203090000: %', bad;
+    RAISE EXCEPTION 'LESSON_LOG_REACH: these arms reach LessonLogs or LessonSubstituteNotes beyond the twelve of 20261203090000: %', bad;
   END IF;
   SELECT count(*) INTO arms FROM pg_policies
    WHERE schemaname = 'public' AND tablename IN ('LessonLogs', 'LessonSubstituteNotes');
-  IF arms <> 16 THEN
-    RAISE EXCEPTION 'LESSON_LOG_REACH: LessonLogs and LessonSubstituteNotes have % arms, not the sixteen above', arms;
+  IF arms <> 12 THEN
+    RAISE EXCEPTION 'LESSON_LOG_REACH: LessonLogs and LessonSubstituteNotes have % arms, not the twelve above', arms;
   END IF;
   SELECT string_agg(p.policyname, ', ') INTO bad
     FROM pg_policies p

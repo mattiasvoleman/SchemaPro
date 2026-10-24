@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import type { NotificationsService } from '../notifications/notifications.service';
+import { substituteNotedLessons } from '../lesson-log/substitute-noted';
 import type { PendingNotice } from './cover-decisions';
 
 /**
@@ -86,19 +87,15 @@ export async function readNoticeLessons(tx: PrismaClient, lessonIds: readonly st
       where: { id: { in: ids } },
       select: { id: true, startsAt: true, studentGroupId: true, roomId: true, subjectId: true },
     })) ?? [];
-  const [subjects, groups, rooms, notes] = await Promise.all([
+  const [subjects, groups, rooms, noted] = await Promise.all([
     tx.subject.findMany({ where: { id: { in: lessons.map((l) => l.subjectId) } }, select: { id: true, name: true } }),
     tx.studentGroup.findMany({ where: { id: { in: lessons.map((l) => l.studentGroupId) } }, select: { id: true, name: true } }),
     tx.room.findMany({
       where: { id: { in: lessons.flatMap((l) => (l.roomId ? [l.roomId] : [])) } },
       select: { id: true, name: true },
     }),
-    tx.lessonSubstituteNote.findMany({
-      where: { calendarLessonId: { in: lessons.map((l) => l.id) } },
-      select: { calendarLessonId: true },
-    }),
+    substituteNotedLessons(tx, lessons.map((l) => l.id)),
   ]);
-  const noted = new Set((notes ?? []).map((row) => row.calendarLessonId));
   const name = (rows: { id: string; name: string }[] | undefined) => new Map((rows ?? []).map((row) => [row.id, row.name]));
   const subjectName = name(subjects);
   const groupName = name(groups);

@@ -1542,6 +1542,7 @@ DECLARE
   c uuid;
   d uuid;
   e uuid;
+  f uuid;
   p1 uuid;
   p2 uuid;
   g1 uuid;
@@ -1582,6 +1583,8 @@ BEGIN
   VALUES (s1, 'lektionslogg-d@example.invalid', 'Logg', 'Frånvarande', 'TEACHER', '00000000-0000-4000-8000-000000001309', true, now()) RETURNING id INTO d;
   INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
   VALUES (s1, 'lektionslogg-e@example.invalid', 'Logg', 'Grundschema', 'TEACHER', '00000000-0000-4000-8000-000000001310', true, now()) RETURNING id INTO e;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'lektionslogg-f@example.invalid', 'Logg', 'Medlärare', 'TEACHER', '00000000-0000-4000-8000-000000001312', true, now()) RETURNING id INTO f;
   INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
   VALUES (s1, 'lektionslogg-p1@example.invalid', 'Logg', 'Elev Ett', 'STUDENT', '00000000-0000-4000-8000-000000001304', true, k, now()) RETURNING id INTO p1;
   INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
@@ -1595,7 +1598,7 @@ BEGIN
 
   INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "dayOfWeek", "startTime", "endTime", "updatedAt")
   VALUES (s1, y, subj, k2, e, 2, '09:00', '10:00', now()) RETURNING id INTO m2;
-  -- L1: 7A's, A its teacher and B its substitute.
+  -- L1: 7A's, A its teacher, F its co-teacher (ASSISTANT) and B its substitute.
   INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
   VALUES (s1, subj, k, current_date + 1, (current_date + 1) + time '07:00', (current_date + 1) + time '08:00', 'LL-1', now()) RETURNING id INTO l1;
   -- L2: 7B's, of a master lesson the grundschema gives E; the published lesson has only B, its substitute.
@@ -1608,7 +1611,8 @@ BEGIN
   INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
   VALUES (s1, subj, tg, current_date + 4, (current_date + 4) + time '07:00', (current_date + 4) + time '08:00', 'LL-4', now()) RETURNING id INTO l4;
   INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES
-    (s1, l1, a, 'LEAD'), (s1, l1, b, 'SUBSTITUTE'), (s1, l2, b, 'SUBSTITUTE'), (s1, l3, b, 'SUBSTITUTE'), (s1, l4, a, 'LEAD');
+    (s1, l1, a, 'LEAD'), (s1, l1, f, 'ASSISTANT'), (s1, l1, b, 'SUBSTITUTE'), (s1, l2, b, 'SUBSTITUTE'), (s1, l3, b, 'SUBSTITUTE'),
+    (s1, l4, a, 'LEAD');
   INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt")
   VALUES (s1, d, (current_date + 3) + time '00:00', (current_date + 4) + time '00:00') RETURNING id INTO abs;
   INSERT INTO "TeacherAbsenceCovers" ("schoolId", "absenceId", "calendarLessonId", "absentTeacherId", decision, "substituteId", "removedTeachers")
@@ -1642,9 +1646,10 @@ BEGIN
   INSERT INTO "LessonSubstituteNotes" ("schoolId", "calendarLessonId", body) VALUES (s2, l9, 'LL annan notis');
 END $$;
 
--- The matrix school's lesson log and note (Lektionslogg, 20261203090000), so the role
--- matrix (section 116) has a row of each to probe. A block of its own: on a database that
--- ran main's fixtures, the school's block has already returned.
+-- The matrix school's lesson log and note (Lektionslogg, 20261203090000): the log so the
+-- role matrix (section 116) has a row to probe, the note so section 232 can show that no
+-- administrator of any profile reads it. A block of its own: on a database that ran main's
+-- fixtures, the school's block has already returned.
 DO $$
 DECLARE
   m uuid;

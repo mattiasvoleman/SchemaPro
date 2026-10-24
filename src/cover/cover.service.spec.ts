@@ -8,6 +8,10 @@ import { CalendarLessonsService } from '../calendar/calendar-lessons.service';
 import { CoverService } from './cover.service';
 import { SUPERVISED_STUDY_NOTE } from './cover-decisions';
 
+/** A call of app.substitute_noted_lessons (src/lesson-log/substitute-noted.ts). */
+const noteQuery = (statement: unknown) =>
+  ((statement as { strings?: string[] }).strings ?? []).join('?').includes('app.substitute_noted_lessons(');
+
 const SCHOOL = '33333333-3333-4333-8333-333333333333';
 const LESSON = '44444444-4444-4444-8444-444444444444';
 const LESSON_B = '45454545-4545-4545-8545-454545454545';
@@ -577,7 +581,7 @@ describe('CoverService', () => {
   });
 
   it('the board maps the pairs, the summary and the absences’ periods — never a reason', async () => {
-    tx.$queryRaw.mockResolvedValue([
+    const rows = [
       {
         absenceId: ABSENCE,
         absentTeacherId: A,
@@ -602,19 +606,23 @@ describe('CoverService', () => {
         extraGroupIds: [],
         coveringSubstituteIds: [],
       },
-    ]);
+    ];
+    // The board's pairs, and app.substitute_noted_lessons's answer that the
+    // lesson has a note (Lektionslogg).
+    tx.$queryRaw.mockImplementation((statement: unknown) =>
+      Promise.resolve(noteQuery(statement) ? [{ id: LESSON }] : rows),
+    );
     tx.teacherAbsence.findMany.mockResolvedValue([
       { id: ABSENCE, userId: A, startsAt: new Date('2026-10-13T22:00:00.000Z'), endsAt: new Date('2026-10-14T22:00:00.000Z') },
     ]);
-    tx.lessonSubstituteNote.findMany.mockResolvedValue([{ calendarLessonId: LESSON }]);
     const board = await cover.board('2026-10-14', '2026-10-14', testUser({ channel: 'WEB' }));
     expect(board.summary).toEqual({ open: 1, covered: 0, cancelled: 0, handled: 0, passedOpen: 0 });
     // Lektionslogg: that the lesson's own teacher left a note, never the note.
     expect(board.notedLessonIds).toEqual([LESSON]);
-    expect(tx.lessonSubstituteNote.findMany).toHaveBeenCalledWith({
-      where: { calendarLessonId: { in: [LESSON] } },
-      select: { calendarLessonId: true },
-    });
+    const asked = tx.$queryRaw.mock.calls.find(([statement]) => noteQuery(statement));
+    expect((asked![0] as { values: unknown[] }).values).toEqual([[LESSON]]);
+    // The administrator's own read of the notes would find none (no arm).
+    expect(tx.lessonSubstituteNote.findMany).not.toHaveBeenCalled();
     // Who is away, without why, recorded once with the reader's channel.
     expect(recordedReads(tx)).toEqual([{ kind: 'STAFF_ABSENCES', channel: 'WEB', ids: [A] }]);
     expect(board.absences).toEqual([
@@ -632,7 +640,7 @@ describe('CoverService', () => {
     const empty = await cover.board('2026-10-14', '2026-10-14', testUser());
     expect(recordedReads(tx)).toEqual([]);
     expect(empty.notedLessonIds).toEqual([]);
-    expect(tx.lessonSubstituteNote.findMany).not.toHaveBeenCalled();
+    expect(tx.$queryRaw.mock.calls.some(([statement]) => noteQuery(statement))).toBe(false);
     tx.$queryRaw.mockResolvedValue([
       {
         absenceId: ABSENCE,

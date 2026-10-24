@@ -6,7 +6,8 @@ import { asUser, createTestApp, type TestHarness } from './utils/test-app';
  * send and refuse what they must not. Who may read and write which row is
  * the database's (RLS sections 230–235, the adapter probe's (ll-*)); here,
  * which roles reach which route, what the DTOs refuse before a service runs,
- * and that an administrator's write is DRIFT's.
+ * that an administrator's write of a log is DRIFT's, and that no
+ * administrator writes a note.
  */
 
 const SCHOOL_ID = '33333333-3333-4333-8333-333333333333';
@@ -62,7 +63,10 @@ describe('Lektionslogg (e2e)', () => {
   it('opens a lesson for its teacher and an administrator, never for a pupil or a guardian', async () => {
     const page = await request(http()).get(`/api/v1/lesson-logs/lessons/${LESSON_ID}`).set('x-test-user', as('TEACHER')).expect(200);
     expect(page.body).toMatchObject({ role: 'REGULAR', may: { writeLog: true, readNote: true, writeNote: true }, log: null, note: null });
-    await request(http()).get(`/api/v1/lesson-logs/lessons/${LESSON_ID}`).set('x-test-user', as('SCHOOL_ADMIN')).expect(200);
+    // An administrator opens it with the log, and never the note.
+    const admin = await request(http()).get(`/api/v1/lesson-logs/lessons/${LESSON_ID}`).set('x-test-user', as('SCHOOL_ADMIN')).expect(200);
+    expect(admin.body).toMatchObject({ role: 'ADMIN', may: { readNote: false, writeNote: false }, note: null });
+    expect(harness.tx.lessonSubstituteNote.findUnique).toHaveBeenCalledTimes(1);
     for (const who of ['STUDENT', 'GUARDIAN']) {
       await request(http()).get(`/api/v1/lesson-logs/lessons/${LESSON_ID}`).set('x-test-user', as(who)).expect(403);
     }
@@ -111,7 +115,7 @@ describe('Lektionslogg (e2e)', () => {
     expect(harness.tx.lessonSubstituteNote.create).not.toHaveBeenCalled();
   });
 
-  it('holds an administrator’s writes to DRIFT: the läsare, who writes no area, is refused; the expedition writes', async () => {
+  it('holds an administrator’s log writes to DRIFT: the läsare, who writes no area, is refused; the expedition writes', async () => {
     const reader = await request(http())
       .put(`/api/v1/lesson-logs/lessons/${LESSON_ID}`)
       .set('x-test-user', as('SCHOOL_ADMIN', { adminProfile: 'LASARE' }))
@@ -119,15 +123,22 @@ describe('Lektionslogg (e2e)', () => {
       .expect(403);
     expect(reader.body).toMatchObject({ code: 'AREA_NOT_YOURS' });
     await request(http())
-      .put(`/api/v1/lesson-logs/lessons/${LESSON_ID}/substitute-note`)
-      .set('x-test-user', as('SCHOOL_ADMIN', { adminProfile: 'LASARE' }))
-      .send({ body: 'x' })
-      .expect(403);
-    await request(http())
       .put(`/api/v1/lesson-logs/lessons/${LESSON_ID}`)
       .set('x-test-user', as('SCHOOL_ADMIN', { adminProfile: 'EXPEDITION' }))
       .send({ topic: 'Bråk' })
       .expect(200);
+  });
+
+  it('lets no administrator write a note, whatever the profile writes: the route is a teacher’s', async () => {
+    for (const adminProfile of ['FULL', 'REKTOR', 'EXPEDITION', 'LASARE']) {
+      await request(http())
+        .put(`/api/v1/lesson-logs/lessons/${LESSON_ID}/substitute-note`)
+        .set('x-test-user', as('SCHOOL_ADMIN', { adminProfile }))
+        .send({ body: 'x' })
+        .expect(403);
+    }
+    expect(harness.tx.lessonSubstituteNote.create).not.toHaveBeenCalled();
+    expect(harness.tx.lessonSubstituteNote.update).not.toHaveBeenCalled();
   });
 
   it('lists the caller’s own lessons for a pupil and a teacher, not for a guardian or an administrator, and refuses a bad range', async () => {

@@ -8,9 +8,11 @@
  *         LessonLogService; the row names the writer whatever the gateway
  *         sent (the database stamps it), and the page reads it back; a save
  *         against a log changed since is 409; the substitute writes the log
- *         and reads the note but may not write it; a colleague reads the log
- *         and neither writes nor sees the note; the läsare reads both and
- *         may change neither;
+ *         and reads the note but may not write it; a co-teacher (ASSISTANT)
+ *         is one of the lesson's own teachers and writes the note; a
+ *         colleague reads the log and neither writes nor sees the note; no
+ *         administrator reads the note or writes one, the läsare no more than
+ *         the one who writes drift, and their own read of the table is empty;
  *   ll-b  a pupil's own lessons over a week come by the one roster reader:
  *         their class's lesson and their teaching group's, not another
  *         class's, and never a note; a teacher's come with the notes of the
@@ -22,7 +24,9 @@
  *         lesson with the one pupil of the class on it, counted; a teaching
  *         group's holds its own; neither carries the note;
  *   ll-e  the substitute's booking reads that a note exists (cover-notices)
- *         and the cover board names the noted lessons, as the administrator.
+ *         and the cover board names the noted lessons, as the administrator
+ *         and as the läsare (app.substitute_noted_lessons); to a teacher the
+ *         function says nothing.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -40,6 +44,7 @@ import type { PrismaService } from '../../src/database/prisma.service';
 import { FamilyScheduleService } from '../../src/family/family-schedule.service';
 import { ClassBookService } from '../../src/lesson-log/class-book.service';
 import { LessonLogService } from '../../src/lesson-log/lesson-log.service';
+import { substituteNotedLessons } from '../../src/lesson-log/substitute-noted';
 import type { NotificationsService } from '../../src/notifications/notifications.service';
 import type { RealtimeService } from '../../src/realtime/realtime.service';
 
@@ -102,6 +107,7 @@ export async function lessonLogChecks(owner: Client, api: PrismaService, marker:
     const teacher = await person('TEACHER', 'Anna');
     const substitute = await person('TEACHER', 'Bo');
     const colleague = await person('TEACHER', 'Cecilia');
+    const coTeacher = await person('TEACHER', 'Dag');
     const pupil = await person('STUDENT', 'Ella', k7a);
     const other = await person('STUDENT', 'Frans', k7b);
     const guardian = await person('GUARDIAN', 'Sara');
@@ -126,8 +132,8 @@ export async function lessonLogChecks(owner: Client, api: PrismaService, marker:
     const language = await lesson(2, spanish);
     await owner.query(
       `INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES
-         ($1, $2, $3, 'LEAD'), ($1, $2, $4, 'SUBSTITUTE'), ($1, $5, $3, 'LEAD'), ($1, $6, $3, 'LEAD')`,
-      [s, own, teacher.userId, substitute.userId, theirs, language],
+         ($1, $2, $3, 'LEAD'), ($1, $2, $7, 'ASSISTANT'), ($1, $2, $4, 'SUBSTITUTE'), ($1, $5, $3, 'LEAD'), ($1, $6, $3, 'LEAD')`,
+      [s, own, teacher.userId, substitute.userId, theirs, language, coTeacher.userId],
     );
 
     const logs = new LessonLogService(api);
@@ -151,14 +157,28 @@ export async function lessonLogChecks(owner: Client, api: PrismaService, marker:
       assert.equal(byTheSubstitute.log?.writtenBy, 'Bo Probe');
       await assert.rejects(logs.putNote(own, { body: 'Tack!' }, substitute), ForbiddenException);
 
+      // A co-teacher (ASSISTANT) is one of the lesson's own teachers: reads and writes the note.
+      const asCoTeacher = await logs.lesson(own, coTeacher);
+      assert.deepEqual([asCoTeacher.role, asCoTeacher.may], ['REGULAR', { writeLog: true, readNote: true, writeNote: true }]);
+      const byTheCoTeacher = await logs.putNote(own, { body: 'Planeringen ligger i lärplattformen.', basis: asCoTeacher.note!.updatedAt }, coTeacher);
+      assert.equal(byTheCoTeacher.note?.writtenBy, 'Dag Probe');
+
       const asColleague = await logs.lesson(own, colleague);
       assert.deepEqual([asColleague.role, asColleague.may, asColleague.note], ['COLLEAGUE', { writeLog: false, readNote: false, writeNote: false }, null]);
       assert.equal(asColleague.log?.homework, 'Uppgift 4.1–4.3');
       await assert.rejects(logs.putLog(own, { topic: 'x' }, colleague), ForbiddenException);
 
+      // No administrator reads the note or writes one: the läsare no more than
+      // the one who writes drift, and the table itself is empty to them.
       const asReader = await logs.lesson(own, reader);
-      assert.deepEqual([asReader.role, asReader.may], ['ADMIN', { writeLog: false, readNote: true, writeNote: false }]);
-      assert.equal(asReader.note?.body, 'Planeringen ligger i lärplattformen.');
+      assert.deepEqual([asReader.role, asReader.may, asReader.note], ['ADMIN', { writeLog: false, readNote: false, writeNote: false }, null]);
+      const asAdmin = await logs.lesson(own, admin);
+      assert.deepEqual([asAdmin.role, asAdmin.may, asAdmin.note], ['ADMIN', { writeLog: true, readNote: false, writeNote: false }, null]);
+      for (const caller of [admin, reader]) {
+        await assert.rejects(logs.putNote(own, { body: 'Från expeditionen' }, caller), ForbiddenException);
+        const seen = await api.withRls(caller, (tx) => (tx as unknown as PrismaClient).lessonSubstituteNote.findMany({ select: { body: true } }));
+        assert.deepEqual(seen, []);
+      }
 
       // The administrator who writes drift: their write is theirs, and both empty removes the log.
       const byAdmin = await logs.putLog(theirs, { topic: 'Rektors rad' }, admin);
@@ -220,6 +240,7 @@ export async function lessonLogChecks(owner: Client, api: PrismaService, marker:
       assert.equal(book.pupils, 1);
       assert.deepEqual(book.lessons[0]!.teachers, [
         { name: 'Anna Probe', substitute: false },
+        { name: 'Dag Probe', substitute: false },
         { name: 'Bo Probe', substitute: true },
       ]);
       assert.ok(!JSON.stringify(book).includes('lärplattformen'), 'the klassbok carries a note');
@@ -230,6 +251,11 @@ export async function lessonLogChecks(owner: Client, api: PrismaService, marker:
     await check('(ll-e) the booking reads that a note exists, and the cover board names the noted lessons', async () => {
       const notices = await api.withRls(admin, (tx) => readNoticeLessons(tx as unknown as PrismaClient, [own, theirs]));
       assert.deepEqual([notices.get(own)?.noted, notices.get(theirs)?.noted], [true, false]);
+      const toReader = await api.withRls(reader, (tx) => substituteNotedLessons(tx as unknown as PrismaClient, [own, theirs, language]));
+      assert.deepEqual([...toReader].sort(), [own, language].sort());
+      // To a teacher, even the lesson's own, the function says nothing: they read the note itself.
+      const toTeacher = await api.withRls(teacher, (tx) => substituteNotedLessons(tx as unknown as PrismaClient, [own, theirs, language]));
+      assert.equal(toTeacher.size, 0);
       // The teacher is away that Monday, so the board has the Monday lesson.
       await owner.query(
         `INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt")

@@ -37,7 +37,9 @@ import {
  *                                    period, throttled like the print set
  *
  * A guardian reads the log in the family's week (GET family/schedule). An
- * administrator's write is DRIFT's, as the calendar's.
+ * administrator's write of a log is DRIFT's, as the calendar's. The note is
+ * the lesson's own teacher's to write and its teachers' to read; no
+ * administrator does either (the cover board says that one exists).
  */
 @Controller('api/v1/lesson-logs')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -89,7 +91,7 @@ export class LessonLogController {
   }
 
   @Put('lessons/:id/substitute-note')
-  @Roles(Role.TEACHER, Role.SCHOOL_ADMIN)
+  @Roles(Role.TEACHER)
   @Throttle({ default: { limit: 60, ttl: 60_000 } })
   putNote(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,

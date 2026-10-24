@@ -35,6 +35,7 @@ import { recordRead } from '../access-log/access-log';
 import { readsHr } from '../staffing/hr-visibility';
 import { readSiteMap, travelBreaches } from '../common/site-travel';
 import { coverEmail, coverMeta, withdrawnEmail, withdrawnMeta, type NoticeLesson } from '../cover/cover-notices';
+import { substituteNotedLessons } from '../lesson-log/substitute-noted';
 import { scopeOf } from './lesson-roster';
 import { lessonEmail, type LessonNoticeType } from './lesson-notices';
 import type {
@@ -678,17 +679,14 @@ export class CalendarLessonsService {
       : null;
     // Whether the lesson's own teacher left the substitute a note (Lektionslogg):
     // the booking's e-mail says there is one, never what it says.
-    const note = await tx.lessonSubstituteNote.findUnique({
-      where: { calendarLessonId: lesson.id },
-      select: { id: true },
-    });
+    const noted = await substituteNotedLessons(tx, [lesson.id]);
     const details: NoticeLesson = {
       id: lesson.id,
       startsAt: lesson.startsAt,
       subjectName: lesson.subject.name,
       groupName: group?.name ?? '',
       roomName: room?.name ?? '—',
-      noted: note !== null && note !== undefined,
+      noted: noted.has(lesson.id),
     };
     for (const notice of notices) {
       await this.notifications.notifyUsers(tx, {

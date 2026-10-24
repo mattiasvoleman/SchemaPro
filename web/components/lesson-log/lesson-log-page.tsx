@@ -38,9 +38,10 @@ import { Textarea } from "@/components/ui/textarea";
  *   beside it. The lesson's own teacher and its substitute write it; any
  *   other teacher of the school reads it, as the klassbok does.
  *
- *   NOTIS TILL VIKARIEN, which only the substitute and the school's
- *   administrators read. The lesson's own teacher writes it, before the
- *   absence or after; the substitute reads it here and does not answer it.
+ *   NOTIS TILL VIKARIEN, which only the lesson's teachers and its
+ *   substitute read; no administrator does (the cover board says that one
+ *   exists). The lesson's own teacher writes it, before the absence or
+ *   after; the substitute reads it here and does not answer it.
  *
  * Nobody is told that either was written, and nothing can be answered here:
  * messages between school and home stay in the school's lärplattform, which

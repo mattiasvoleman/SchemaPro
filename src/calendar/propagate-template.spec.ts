@@ -5,8 +5,8 @@ import { breakDaysOf, closuresByDateOf, type PublishDaysContext } from './publis
 import { PUBLISH_NOTE_TEACHER_UNAVAILABLE } from './calendar.service';
 
 const NOW = new Date('2026-10-12T06:00:00.000Z'); // Monday 08:00 in Stockholm
-/** A row with no lesson log and no note to the substitute (Lektionslogg). */
-const NO_LOG = { lessonLogs: 0, substituteNotes: 0 };
+/** A row with no lesson log (Lektionslogg); a note to the substitute is app.substitute_noted_lessons's answer. */
+const NO_LOG = { lessonLogs: 0 };
 const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
 const time = (h: number, m = 0) => new Date(Date.UTC(1970, 0, 1, h, m));
 const OLD_ROOM = 'room-old';
@@ -118,10 +118,12 @@ describe('propagateTemplateChange', () => {
 
   it("'publish' names a removed row that only carried a lesson log or a note to the substitute (Lektionslogg)", async () => {
     tx.calendarLesson.findMany.mockResolvedValue([
-      { id: 'homework', date: day('2026-10-27'), roomId: OLD_ROOM, note: null, teachers: [], _count: { lessonLogs: 1, substituteNotes: 0 } },
-      { id: 'note', date: day('2026-10-28'), roomId: OLD_ROOM, note: null, teachers: [], _count: { lessonLogs: 0, substituteNotes: 1 } },
+      { id: 'homework', date: day('2026-10-27'), roomId: OLD_ROOM, note: null, teachers: [], _count: { lessonLogs: 1 } },
+      { id: 'note', date: day('2026-10-28'), roomId: OLD_ROOM, note: null, teachers: [], _count: NO_LOG },
       { id: 'nothing', date: day('2026-10-29'), roomId: OLD_ROOM, note: null, teachers: [], _count: NO_LOG },
     ]);
+    // The publisher learns that 'note' has a note, and nothing of what it says.
+    tx.$queryRaw.mockResolvedValue([{ id: 'note' }]);
     const result = await run(
       'publish',
       landing({ breakDays: breakDaysOf([{ startDate: day('2026-10-26'), endDate: day('2026-10-30'), minGradeLevel: null, maxGradeLevel: null }], '2026-10-01', '2026-12-31') }),
@@ -131,6 +133,23 @@ describe('propagateTemplateChange', () => {
       { calendarLessonId: 'homework', date: '2026-10-27', substitute: false, roomChanged: false, note: false, lessonLog: true },
       { calendarLessonId: 'note', date: '2026-10-28', substitute: false, roomChanged: false, note: false, lessonLog: true },
     ]);
+    // Asked once, for the rows about to go, before they go.
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    const [asked] = tx.$queryRaw.mock.calls[0] as [{ strings: string[]; values: unknown[] }];
+    expect([asked.strings.join('?'), asked.values]).toEqual([
+      'SELECT id FROM app.substitute_noted_lessons(?::uuid[]) AS id',
+      [['homework', 'note', 'nothing']],
+    ]);
+    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(tx.calendarLesson.deleteMany.mock.invocationCallOrder[0]!);
+  });
+
+  it("'publish' asks no note when no row goes", async () => {
+    tx.calendarLesson.findMany.mockResolvedValue([
+      { id: 'stays', date: day('2026-10-13'), roomId: OLD_ROOM, note: null, teachers: [], _count: NO_LOG },
+    ]);
+    await run('publish', landing({}));
+    expect(tx.calendarLesson.deleteMany).not.toHaveBeenCalled();
+    expect(tx.$queryRaw).not.toHaveBeenCalled();
   });
 
   it("'publish' writes a row that lands on the teacher's closure CANCELLED, as materialisation would", async () => {

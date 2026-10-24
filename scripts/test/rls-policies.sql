@@ -19658,7 +19658,6 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('LeaveDelegationDecisions', '{DECIDES}', '{}', '{}', '{}'),
   ('LeaveRequests', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
   ('LessonLogs', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
-  ('LessonSubstituteNotes', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
   ('LocalTimplanEntries', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('LocalTimplans', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('LunchServings', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
@@ -25617,15 +25616,16 @@ ROLLBACK;
 -- Section 230: lektionsloggen och notisen till vikarien står i katalogen som
 -- migreringen säger (LessonLogs, LessonSubstituteNotes, 20261203090000).
 --
--- Row security on both tables, not forced; exactly the sixteen arms, all TO
--- app_authenticated; no arm on the notes names a pupil or a guardian, and
--- the family's arm on the logs asks the caller's own lessons; the note's
--- teacher writes ask REGULAR, the log's any teacher of the lesson; PostgREST's
--- authenticated and anon hold nothing; service_role reads and writes nothing
--- more; app.lesson_teacher_role is SECURITY DEFINER, STABLE, its search_path
--- pinned, and the API's alone; the writer is stamped by a trigger on both
--- tables, whose function nobody may call; the checks are there and
--- validated; the keys are composite with the school.
+-- Row security on both tables, not forced; exactly the twelve arms (eight on
+-- the logs, four on the notes), all TO app_authenticated; no arm on the notes
+-- names a pupil, a guardian or an administrator, and the family's arm on the
+-- logs asks the caller's own lessons; the note's teacher writes ask REGULAR,
+-- the log's any teacher of the lesson; PostgREST's authenticated and anon
+-- hold nothing; service_role reads and writes nothing more;
+-- app.lesson_teacher_role and app.substitute_noted_lessons are SECURITY
+-- DEFINER, STABLE, their search_path pinned, and the API's alone; the writer
+-- is stamped by a trigger on both tables, whose function nobody may call; the
+-- checks are there and validated; the keys are composite with the school.
 -- ---------------------------------------------------------------------------
 
 DO $$
@@ -25642,7 +25642,7 @@ BEGIN
       RAISE EXCEPTION 'lesson log: row security on % is off, or forced on the owner', t;
     END IF;
     SELECT count(*) INTO n FROM pg_policies WHERE schemaname = 'public' AND tablename = t;
-    IF n <> 8 OR EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = t
+    IF (t = 'LessonLogs' AND n <> 8) OR (t = 'LessonSubstituteNotes' AND n <> 4) OR EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = t
                            AND (roles <> '{app_authenticated}' OR permissive <> 'PERMISSIVE')) THEN
       RAISE EXCEPTION 'lesson log: % has % arms, or one not a permissive arm TO app_authenticated', t, n;
     END IF;
@@ -25701,12 +25701,13 @@ BEGIN
     END IF;
   END LOOP;
 
-  -- Who reaches which table: no pupil or guardian on the notes; the family on
-  -- the logs only through a lesson it can read; the note's teacher writes are
-  -- REGULAR's, the log's any teacher's of the lesson.
+  -- Who reaches which table: no pupil, guardian or administrator on the
+  -- notes; the family on the logs only through a lesson it can read; the
+  -- note's teacher writes are REGULAR's, the log's any teacher's of the lesson.
   IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'LessonSubstituteNotes'
-               AND (coalesce(qual, '') || coalesce(with_check, '')) ~ '(STUDENT|GUARDIAN)') THEN
-    RAISE EXCEPTION 'lesson log: an arm on the notes names a pupil or a guardian';
+               AND ((coalesce(qual, '') || coalesce(with_check, '')) ~ '(STUDENT|GUARDIAN|SCHOOL_ADMIN|current_user_may)'
+                    OR (coalesce(qual, '') || coalesce(with_check, '')) !~ '''TEACHER''')) THEN
+    RAISE EXCEPTION 'lesson log: an arm on the notes names a pupil, a guardian or an administrator, or is not a teacher''s';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'LessonLogs' AND policyname = 'lesson_logs_family_select'
                    AND cmd = 'SELECT' AND qual LIKE '%STUDENT%' AND qual LIKE '%GUARDIAN%' AND qual LIKE '%EXISTS%'
@@ -25724,20 +25725,29 @@ BEGIN
     RAISE EXCEPTION 'lesson log: the log''s teacher writes are not the lesson''s teachers''';
   END IF;
 
-  -- The function.
-  fn := 'app.lesson_teacher_role(uuid)'::regprocedure;
-  IF NOT (SELECT prosecdef AND provolatile = 's' AND proconfig::text LIKE '%search_path=%' FROM pg_proc WHERE oid = fn) THEN
-    RAISE EXCEPTION 'lesson log: app.lesson_teacher_role is not SECURITY DEFINER, STABLE and with its search_path pinned';
-  END IF;
-  IF NOT has_function_privilege('app_authenticated', fn, 'EXECUTE') THEN
-    RAISE EXCEPTION 'lesson log: the API may not ask app.lesson_teacher_role';
-  END IF;
-  FOREACH r IN ARRAY ARRAY['authenticated', 'anon', 'service_role'] LOOP
-    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
-    IF has_function_privilege(r, fn, 'EXECUTE') THEN RAISE EXCEPTION 'lesson log: % may ask app.lesson_teacher_role', r; END IF;
+  -- The functions.
+  FOREACH fn IN ARRAY ARRAY['app.lesson_teacher_role(uuid)'::regprocedure, 'app.substitute_noted_lessons(uuid[])'::regprocedure] LOOP
+    IF NOT (SELECT prosecdef AND provolatile = 's' AND proconfig::text LIKE '%search_path=%' FROM pg_proc WHERE oid = fn) THEN
+      RAISE EXCEPTION 'lesson log: % is not SECURITY DEFINER, STABLE and with its search_path pinned', fn;
+    END IF;
+    IF NOT has_function_privilege('app_authenticated', fn, 'EXECUTE') THEN
+      RAISE EXCEPTION 'lesson log: the API may not ask %', fn;
+    END IF;
+    FOREACH r IN ARRAY ARRAY['authenticated', 'anon', 'service_role'] LOOP
+      CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+      IF has_function_privilege(r, fn, 'EXECUTE') THEN RAISE EXCEPTION 'lesson log: % may ask %', r, fn; END IF;
+    END LOOP;
   END LOOP;
+  -- The existence function answers ids, and only to the school's administrators.
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE oid = 'app.substitute_noted_lessons(uuid[])'::regprocedure
+                   AND proretset AND prorettype = 'uuid'::regtype
+                   AND prosrc LIKE '%current_school_id()%' AND prosrc LIKE '%''SCHOOL_ADMIN''%'
+                   AND prosrc NOT LIKE '%body%') THEN
+    RAISE EXCEPTION 'lesson log: app.substitute_noted_lessons is not a set of lesson ids of the caller''s school, to SCHOOL_ADMIN alone';
+  END IF;
   IF EXISTS (SELECT 1 FROM pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) x
-              WHERE p.oid IN (fn, 'app.lesson_text_written_by()'::regprocedure) AND x.grantee = 0) THEN
+              WHERE p.oid IN ('app.lesson_teacher_role(uuid)'::regprocedure, 'app.substitute_noted_lessons(uuid[])'::regprocedure,
+                              'app.lesson_text_written_by()'::regprocedure) AND x.grantee = 0) THEN
     RAISE EXCEPTION 'lesson log: PUBLIC may call a function of 20261203090000';
   END IF;
   FOREACH r IN ARRAY ARRAY['authenticated', 'anon', 'service_role', 'app_authenticated'] LOOP
@@ -25857,21 +25867,33 @@ ROLLBACK;
 
 -- ---------------------------------------------------------------------------
 -- Section 232: notisen till vikarien läses av lektionens egen lärare, dess
--- vikarie och skolans administratörer, aldrig av en kollega, en elev eller en
--- vårdnadshavare, inte ens för en lektion de ser (20261203090000).
+-- medlärare och dess vikarie, aldrig av en administratör — vilken profil som
+-- helst, läsaren också —, en kollega, en elev eller en vårdnadshavare, inte
+-- ens för en lektion de ser. Skolans administratörer får veta att det finns
+-- en, genom app.substitute_noted_lessons, för sin egen skolas lektioner och
+-- ingen annan, och inget om vad den säger (20261203090000).
 -- ---------------------------------------------------------------------------
 
 BEGIN;
 SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001311')::text, true);
 SELECT set_config('app.test_ll_l9', (SELECT id::text FROM "CalendarLessons" WHERE note = 'LL-9'), true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+SELECT set_config('app.test_ll_roller_lesson', (SELECT "calendarLessonId"::text FROM "LessonLogs" WHERE topic = 'Roller ämne'), true);
+SELECT set_config('app.test_ll_roller_admins',
+                  (SELECT string_agg("authId"::text, ',' ORDER BY "authId") FROM "Users" WHERE role = 'SCHOOL_ADMIN'), true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001300')::text, true);
+SELECT set_config('app.test_ll_lessons',
+                  (SELECT string_agg(id::text, ',' ORDER BY note) FROM "CalendarLessons" WHERE note IN ('LL-1', 'LL-2', 'LL-3', 'LL-4')), true);
 DO $$
 DECLARE
   seen text;
   n bigint;
   cases constant text[][] := ARRAY[
-    ['00000000-0000-4000-8000-000000001300', 'ett,tre,två'],  -- the administrator
-    ['00000000-0000-4000-8000-000000001308', 'ett,tre,två'],  -- the läsare
+    ['00000000-0000-4000-8000-000000001300', NULL],           -- the administrator who writes drift
+    ['00000000-0000-4000-8000-000000001308', NULL],           -- the läsare
+    ['00000000-0000-4000-8000-000000001311', NULL],           -- the other school's administrator
     ['00000000-0000-4000-8000-000000001301', 'ett'],          -- A: L1's own teacher (and L4's, which has none)
+    ['00000000-0000-4000-8000-000000001312', 'ett'],          -- F: L1's co-teacher (ASSISTANT)
     ['00000000-0000-4000-8000-000000001302', 'ett,tre,två'],  -- B: the substitute on L1, L2 and L3
     ['00000000-0000-4000-8000-000000001309', 'tre'],          -- D: absent, the cover decision on L3 names them
     ['00000000-0000-4000-8000-000000001310', NULL],           -- E: L2's master's teacher in the grundschema, not on the published lesson
@@ -25897,11 +25919,73 @@ BEGIN
     RAISE EXCEPTION 'lesson log: P1 does not read L1, so the note''s refusal proves nothing';
   END IF;
 END $$;
+
+-- What the administrators learn instead: which lessons have a note.
+DO $$
+DECLARE
+  l constant uuid[] := string_to_array(current_setting('app.test_ll_lessons'), ',')::uuid[]
+                       || current_setting('app.test_ll_l9')::uuid;
+  roller_lesson constant uuid := current_setting('app.test_ll_roller_lesson')::uuid;
+  asks constant text[][] := ARRAY[
+    -- authId, the lessons with a note among L1–L4 and L9
+    ['00000000-0000-4000-8000-000000001300', 'ett,tre,två'],
+    ['00000000-0000-4000-8000-000000001308', 'ett,tre,två'],  -- the läsare sees the board, so the mark too
+    ['00000000-0000-4000-8000-000000001311', 'annan'],        -- the other school's administrator: their own alone
+    ['00000000-0000-4000-8000-000000001301', NULL],           -- a teacher, even of L1: they read the note itself
+    ['00000000-0000-4000-8000-000000001302', NULL],
+    ['00000000-0000-4000-8000-000000001303', NULL],
+    ['00000000-0000-4000-8000-000000001304', NULL],
+    ['00000000-0000-4000-8000-000000001305', NULL]];
+  i int;
+  got text;
+  who text;
+  n bigint;
+BEGIN
+  IF array_length(l, 1) <> 5 OR roller_lesson IS NULL THEN
+    RAISE EXCEPTION 'lesson log: the fixture lessons did not resolve';
+  END IF;
+  FOR i IN 1 .. array_length(asks, 1) LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', asks[i][1])::text, true);
+    SELECT string_agg(label, ',' ORDER BY label) INTO got
+      FROM (SELECT CASE x WHEN l[1] THEN 'ett' WHEN l[2] THEN 'två' WHEN l[3] THEN 'tre' WHEN l[4] THEN 'fyra'
+                          WHEN l[5] THEN 'annan' ELSE x::text END AS label
+              FROM app.substitute_noted_lessons(l) AS x) q;
+    IF got IS DISTINCT FROM asks[i][2] THEN
+      RAISE EXCEPTION 'lesson log: app.substitute_noted_lessons answers % (%) %, not %', asks[i][1], app.current_user_role(), got, asks[i][2];
+    END IF;
+  END LOOP;
+  -- Only what is asked, once each; nothing for nothing, and nothing with no principal.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001300')::text, true);
+  SELECT count(*) INTO n FROM app.substitute_noted_lessons(ARRAY[l[1], l[1], l[4]]);
+  IF n <> 1 THEN RAISE EXCEPTION 'lesson log: asked L1 twice and L4, app.substitute_noted_lessons answered % rows', n; END IF;
+  SELECT count(*) INTO n FROM app.substitute_noted_lessons('{}'::uuid[]);
+  IF n <> 0 THEN RAISE EXCEPTION 'lesson log: asked nothing, app.substitute_noted_lessons answered % rows', n; END IF;
+  PERFORM set_config('request.jwt.claims', '', true);
+  SELECT count(*) INTO n FROM app.substitute_noted_lessons(l);
+  IF n <> 0 THEN RAISE EXCEPTION 'lesson log: app.substitute_noted_lessons answered % rows with no principal', n; END IF;
+
+  -- Every administrator's profile of the matrix school, the läsare's too:
+  -- none reads the note on its lesson, every one learns that it is there.
+  FOREACH who IN ARRAY string_to_array(current_setting('app.test_ll_roller_admins'), ',') LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', who)::text, true);
+    SELECT count(*) INTO n FROM "LessonSubstituteNotes";
+    IF n <> 0 THEN
+      RAISE EXCEPTION 'lesson log: the matrix school''s administrator % reads % notes', who, n;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM app.substitute_noted_lessons(ARRAY[roller_lesson]) AS x WHERE x = roller_lesson) THEN
+      RAISE EXCEPTION 'lesson log: the matrix school''s administrator % is not told its lesson has a note', who;
+    END IF;
+  END LOOP;
+  IF array_length(string_to_array(current_setting('app.test_ll_roller_admins'), ','), 1) < 5 THEN
+    RAISE EXCEPTION 'lesson log: the matrix school has % administrators, not one of each profile',
+      array_length(string_to_array(current_setting('app.test_ll_roller_admins'), ','), 1);
+  END IF;
+END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
--- Section 233: loggen skrivs av lektionens lärare och dess vikarie och av den
--- frånvarande som täckningsbeslutet gällde; aldrig av grundschemats lärare som
+-- Section 233: loggen skrivs av lektionens lärare, dess medlärare och dess
+-- vikarie och av den frånvarande som täckningsbeslutet gällde; aldrig av grundschemats lärare som
 -- inte står på den publicerade lektionen (ett opublicerat utkast), en kollega,
 -- en elev eller en vårdnadshavare; av den administratör som skriver drift,
 -- inte av läsaren. Skribenten är alltid den inloggade, vad som än skickas, och
@@ -25956,6 +26040,18 @@ BEGIN
     RAISE EXCEPTION 'lesson log: A wrote a log for L3, whose teacher A is not';
   EXCEPTION WHEN insufficient_privilege THEN NULL;
   END;
+
+  -- F, L1's co-teacher (ASSISTANT): one of its own teachers, and writes it,
+  -- named as the writer. A writes it back, so the row is A's again for the
+  -- writer's removal below.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001312')::text, true);
+  UPDATE "LessonLogs" SET homework = 'Medlärarens läxa' WHERE "calendarLessonId" = l1 RETURNING "writtenById" INTO writer;
+  IF writer IS DISTINCT FROM app.current_user_id() THEN RAISE EXCEPTION 'lesson log: L1''s co-teacher did not update its log as the writer'; END IF;
+  UPDATE "LessonLogs" SET topic = 'x' WHERE "calendarLessonId" IN (l2, l4);
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'lesson log: L1''s co-teacher updated % logs of lessons not theirs', n; END IF;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001301')::text, true);
+  UPDATE "LessonLogs" SET homework = 'Läxa ett' WHERE "calendarLessonId" = l1;
 
   -- B, the substitute on L2: writes its log too.
   PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001302')::text, true);
@@ -26044,10 +26140,14 @@ BEGIN
     RAISE EXCEPTION 'lesson log: a log of this school stands on another school''s lesson';
   EXCEPTION WHEN foreign_key_violation THEN NULL;
   END;
+  -- A note on another school's lesson never reaches the key: no administrator
+  -- writes notes, and app.lesson_teacher_role is NULL for another school's
+  -- lesson, so every arm refuses first. The composite key behind it is
+  -- section 230's to show.
   BEGIN
     INSERT INTO "LessonSubstituteNotes" ("schoolId", "calendarLessonId", body) VALUES (school, current_setting('app.test_ll_l9b')::uuid, 'x');
     RAISE EXCEPTION 'lesson log: a note of this school stands on another school''s lesson';
-  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
   END;
 
   -- Deleting a writer empties the writer; the deleting administrator is not stamped in.
@@ -26062,11 +26162,11 @@ END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
--- Section 234: notisen skrivs av lektionens egen lärare — på lektionen eller
--- frånvarande enligt ett täckningsbeslut — och av den administratör som
--- skriver drift; aldrig av vikarien, grundschemats lärare som inte står på
--- den publicerade lektionen, en kollega, en elev eller en vårdnadshavare
--- (20261203090000).
+-- Section 234: notisen skrivs av lektionens egen lärare — på lektionen, som
+-- dess medlärare eller frånvarande enligt ett täckningsbeslut; aldrig av en
+-- administratör (den som skriver drift lika lite som läsaren), vikarien,
+-- grundschemats lärare som inte står på den publicerade lektionen, en
+-- kollega, en elev eller en vårdnadshavare (20261203090000).
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -26098,6 +26198,17 @@ BEGIN
   UPDATE "LessonSubstituteNotes" SET body = 'x' WHERE "calendarLessonId" IN (l2, l3);
   GET DIAGNOSTICS n = ROW_COUNT;
   IF n <> 0 THEN RAISE EXCEPTION 'lesson log: A updated % notes of lessons not theirs', n; END IF;
+
+  -- F, L1's co-teacher (ASSISTANT), is one of its own teachers: writes L1's, and no other.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001312')::text, true);
+  UPDATE "LessonSubstituteNotes" SET body = 'Från medläraren' WHERE "calendarLessonId" = l1;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'lesson log: L1''s co-teacher updated % of its notes', n; END IF;
+  BEGIN
+    INSERT INTO "LessonSubstituteNotes" ("schoolId", "calendarLessonId", body) VALUES (school, l4, 'Medlärarens');
+    RAISE EXCEPTION 'lesson log: L1''s co-teacher wrote a note on L4, whose teacher F is not';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
 
   -- E, on L2's master in the grundschema only, neither reads nor writes L2's; D writes L3's.
   PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001310')::text, true);
@@ -26144,15 +26255,25 @@ BEGIN
     END;
   END LOOP;
 
-  -- The administrator who writes drift writes; the läsare does not.
-  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001300')::text, true);
-  INSERT INTO "LessonSubstituteNotes" ("schoolId", "calendarLessonId", body) VALUES (school, l4, 'Från expeditionen');
-  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001308')::text, true);
-  BEGIN
-    UPDATE "LessonSubstituteNotes" SET body = 'x' WHERE "calendarLessonId" = l4;
-    RAISE EXCEPTION 'lesson log: the läsare updated a note';
-  EXCEPTION WHEN insufficient_privilege THEN NULL;
-  END;
+  -- No administrator writes one: not the one who writes drift, not the läsare.
+  FOREACH who IN ARRAY ARRAY['00000000-0000-4000-8000-000000001300', '00000000-0000-4000-8000-000000001308'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', who)::text, true);
+    UPDATE "LessonSubstituteNotes" SET body = 'Från expeditionen';
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'lesson log: the administrator % updated % notes', who, n; END IF;
+    DELETE FROM "LessonSubstituteNotes";
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'lesson log: the administrator % removed % notes', who, n; END IF;
+    BEGIN
+      INSERT INTO "LessonSubstituteNotes" ("schoolId", "calendarLessonId", body) VALUES (school, l4, 'Från expeditionen');
+      RAISE EXCEPTION 'lesson log: the administrator % wrote a note', who;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+  END LOOP;
+  -- And the notes stand: B, the substitute, still reads all three.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001302')::text, true);
+  SELECT count(*) INTO n FROM "LessonSubstituteNotes";
+  IF n <> 3 THEN RAISE EXCEPTION 'lesson log: after the administrators'' tries the substitute reads % notes', n; END IF;
 END $$;
 ROLLBACK;
 
@@ -26182,6 +26303,8 @@ DECLARE
   answers constant text[][] := ARRAY[
     -- authId, L1, L2, L3, L4
     ['00000000-0000-4000-8000-000000001301', 'REGULAR', NULL, NULL, 'REGULAR'],
+    -- F: L1's co-teacher (ASSISTANT), one of its own teachers.
+    ['00000000-0000-4000-8000-000000001312', 'REGULAR', NULL, NULL, NULL],
     ['00000000-0000-4000-8000-000000001302', 'SUBSTITUTE', 'SUBSTITUTE', 'SUBSTITUTE', NULL],
     ['00000000-0000-4000-8000-000000001303', NULL, NULL, NULL, NULL],
     ['00000000-0000-4000-8000-000000001309', NULL, NULL, 'REGULAR', NULL],
@@ -26210,7 +26333,8 @@ BEGIN
   PERFORM set_config('request.jwt.claims', '', true);
   IF app.lesson_teacher_role(l1) IS NOT NULL THEN RAISE EXCEPTION 'lesson log: app.lesson_teacher_role answers with no principal'; END IF;
 
-  -- The checks, at their edges, as the administrator: the log's on L3 (which has none), the note's on L4.
+  -- The checks, at their edges: the log's as the administrator on L3 (which
+  -- has none), the note's as A, L4's own teacher, on L4.
   PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001300')::text, true);
   cases := ARRAY[
     ['topic', repeat('x', 200), NULL],
@@ -26243,6 +26367,7 @@ BEGIN
       END IF;
     END;
   END LOOP;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001301')::text, true);
   FOREACH v IN ARRAY ARRAY[repeat('x', 2000), repeat('x', 2001), ' x', '', 'Rad ett' || chr(10) || 'rad två'] LOOP
     BEGIN
       INSERT INTO "LessonSubstituteNotes" ("schoolId", "calendarLessonId", body) VALUES (school, l4, v);
@@ -26258,7 +26383,7 @@ BEGIN
     END;
   END LOOP;
 
-  -- One per lesson.
+  -- One per lesson (A, L1's own teacher, writes both of L1's).
   BEGIN
     INSERT INTO "LessonLogs" ("schoolId", "calendarLessonId", topic) VALUES (school, l1, 'En till');
     RAISE EXCEPTION 'lesson log: a lesson took a second log';
@@ -26270,10 +26395,17 @@ BEGIN
   EXCEPTION WHEN unique_violation THEN NULL;
   END;
 
-  -- With the lesson: the administrator who writes drift removes L1, and its log and note go.
+  -- With the lesson: the administrator who writes drift removes L1, and its
+  -- log and note go. The administrator reads no note, and nobody's row
+  -- security reaches a note whose lesson is gone, so the existence function
+  -- (which reads the table itself) is what says the note is gone.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001300')::text, true);
+  IF NOT EXISTS (SELECT 1 FROM app.substitute_noted_lessons(ARRAY[l1])) THEN
+    RAISE EXCEPTION 'lesson log: L1 has no note before it is removed, so its going proves nothing';
+  END IF;
   DELETE FROM "CalendarLessons" WHERE id = l1;
   IF EXISTS (SELECT 1 FROM "LessonLogs" WHERE "calendarLessonId" = l1)
-     OR EXISTS (SELECT 1 FROM "LessonSubstituteNotes" WHERE "calendarLessonId" = l1) THEN
+     OR EXISTS (SELECT 1 FROM app.substitute_noted_lessons(ARRAY[l1])) THEN
     RAISE EXCEPTION 'lesson log: L1''s log or note outlived the lesson';
   END IF;
 END $$;

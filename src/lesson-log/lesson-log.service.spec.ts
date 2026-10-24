@@ -121,12 +121,15 @@ describe('LessonLogService', () => {
       expect(tx.lessonSubstituteNote.findUnique).not.toHaveBeenCalled();
     });
 
-    it('lets an administrator who writes DRIFT change both; a läsare reads both and changes neither', async () => {
+    it('lets an administrator who writes DRIFT change the log; a läsare reads it; neither reads or writes the note', async () => {
+      tx.lessonSubstituteNote.findUnique.mockResolvedValue({ body: 'Kalle går ut 10.15', updatedAt: EDITED, writtenBy: null });
       const full = await service.lesson(LESSON, admin);
-      expect([full.role, full.may]).toEqual(['ADMIN', { writeLog: true, readNote: true, writeNote: true }]);
+      expect([full.role, full.may, full.note]).toEqual(['ADMIN', { writeLog: true, readNote: false, writeNote: false }, null]);
       const read = await service.lesson(LESSON, reader);
-      expect([read.role, read.may]).toEqual(['ADMIN', { writeLog: false, readNote: true, writeNote: false }]);
-      // An administrator is no teacher of the lesson; the function is not asked.
+      expect([read.role, read.may, read.note]).toEqual(['ADMIN', { writeLog: false, readNote: false, writeNote: false }, null]);
+      // The note is not even asked for, and an administrator is no teacher of
+      // the lesson, so the function is not asked either.
+      expect(tx.lessonSubstituteNote.findUnique).not.toHaveBeenCalled();
       expect(tx.$queryRaw.mock.calls.some(([statement]) => sqlOf(statement).includes('lesson_teacher_role'))).toBe(false);
     });
 
@@ -297,10 +300,17 @@ describe('LessonLogService', () => {
       });
     });
 
-    it('lets an administrator write it without asking whose lesson it is (the guard held DRIFT)', async () => {
-      tx.lessonSubstituteNote.create.mockResolvedValue({ body: 'x', updatedAt: EDITED, writtenBy: null });
-      await expect(service.putNote(LESSON, { body: 'x' }, admin)).resolves.toMatchObject({ note: { body: 'x' } });
-      expect(tx.$queryRaw.mock.calls.some(([statement]) => sqlOf(statement).includes('lesson_teacher_role'))).toBe(false);
+    it('refuses an administrator, who is no teacher of the lesson, whatever the profile writes', async () => {
+      // The route admits TEACHER alone; behind it the function answers NULL
+      // for every other role, and the database has no administrator's arm.
+      teacherRole = null;
+      for (const caller of [admin, reader]) {
+        await expect(service.putNote(LESSON, { body: 'x' }, caller)).rejects.toMatchObject({
+          constructor: ForbiddenException,
+          response: { code: SUBSTITUTE_NOTE_NOT_YOURS },
+        });
+      }
+      expect(tx.lessonSubstituteNote.create).not.toHaveBeenCalled();
     });
   });
 
