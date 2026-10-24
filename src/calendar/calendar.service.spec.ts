@@ -15,6 +15,7 @@ import {
   CalendarService,
   PUBLISH_NOTE_ROOM_UNAVAILABLE,
   PUBLISH_NOTE_TEACHER_UNAVAILABLE,
+  publishWindow,
 } from './calendar.service';
 
 const NOW = new Date('2026-08-12T08:00:00.000Z'); // a Wednesday
@@ -1577,6 +1578,24 @@ describe('CalendarService', () => {
       });
     });
 
+    it("defaults the window to the school's today, not UTC's, just after local midnight", async () => {
+      arrangePublish();
+      arrangeYear({ school: { timezone: 'Europe/Stockholm' } });
+      // 00:30 on Tuesday 18 August in Stockholm, and still Monday 17 in UTC:
+      // the Monday is yesterday, already held, and is not written again.
+      jest.setSystemTime(new Date('2026-08-17T22:30:00.000Z'));
+
+      await expect(
+        service.publish(dto({ fromDate: undefined, toDate: undefined }), testUser()),
+      ).resolves.toEqual({
+        created: 2,
+        cancelled: 0,
+        skipped: 0,
+        fromDate: '2026-08-18',
+        toDate: '2026-08-31',
+      });
+    });
+
     it('rejects an inverted window without loading the timetable', async () => {
       arrangeYear();
 
@@ -1677,5 +1696,42 @@ describe('CalendarService', () => {
 
       expect(tx.calendarLesson.create.mock.calls[0][0].data.teachers).toBeUndefined();
     });
+  });
+});
+
+describe('publishWindow', () => {
+  const year = (timezone: string) => ({
+    startDate: new Date('2026-08-01T00:00:00.000Z'),
+    endDate: new Date('2027-06-30T00:00:00.000Z'),
+    timezone,
+  });
+  const fromDateAt = (instant: string, timezone = 'Europe/Stockholm') =>
+    publishWindow(year(timezone), {}, new Date(instant)).fromDate;
+
+  it("starts at 00:30 in Stockholm's summer time on the school's day, which UTC has not reached", () => {
+    // CEST is UTC+2: 00:30 on 12 August is 22:30Z on the 11th.
+    expect(fromDateAt('2026-08-11T22:30:00.000Z')).toBe('2026-08-12');
+  });
+
+  it("starts at 00:30 in Stockholm's winter time on the school's day, which UTC has not reached", () => {
+    // CET is UTC+1: 00:30 on 12 November is 23:30Z on the 11th.
+    expect(fromDateAt('2026-11-11T23:30:00.000Z')).toBe('2026-11-12');
+  });
+
+  it.each([
+    ['summer', '2026-08-11T21:30:00.000Z', '2026-08-11'],
+    ['winter', '2026-11-11T22:30:00.000Z', '2026-11-11'],
+  ])('starts at 23:30 in Stockholm (%s) on that same day, where UTC already is', (_, instant, day) => {
+    expect(fromDateAt(instant)).toBe(day);
+  });
+
+  it("reads the school's own timezone, not Stockholm's", () => {
+    expect(fromDateAt('2026-08-11T22:30:00.000Z', 'UTC')).toBe('2026-08-11');
+  });
+
+  it('leaves a start the caller sent as it is, at any hour', () => {
+    expect(
+      publishWindow(year('Europe/Stockholm'), { fromDate: '2026-08-11' }, new Date('2026-08-11T22:30:00.000Z')),
+    ).toEqual({ fromDate: '2026-08-11', toDate: '2027-06-30' });
   });
 });

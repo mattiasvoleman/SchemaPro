@@ -159,6 +159,19 @@ describe('PublicationsService (DIRECT)', () => {
     expect(outcome.publication.validFrom).toBe('2026-10-12');
   });
 
+  it("starts a dateless publish on the school's today, which UTC has not reached at 00:30", async () => {
+    // 00:30 on Monday 12 October in Stockholm (CEST), still Sunday 11 in UTC.
+    jest.setSystemTime(new Date('2026-10-11T22:30:00Z'));
+    const outcome = await service.publish({ academicYearId: YEAR_ID }, testUser());
+    expect(calendar.materialise).toHaveBeenCalledWith(tx, SCHOOL_ID, {
+      academicYearId: YEAR_ID,
+      fromDate: '2026-10-12',
+      toDate: '2027-06-11',
+    });
+    expect(created()).toEqual([expect.objectContaining({ kind: 'PUBLISH', validFrom: day('2026-10-12') })]);
+    expect(outcome.publication.validFrom).toBe('2026-10-12');
+  });
+
   it('asks for "Publicera ändå" when a check warns, and logs nothing until it is given', async () => {
     tx.masterLesson.findMany.mockResolvedValue([lesson({ roomId: null })]);
     const error = await service.publish({ academicYearId: YEAR_ID }, testUser()).catch((e: unknown) => e);
