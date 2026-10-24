@@ -242,6 +242,48 @@ describe("the guardian's Schema card", () => {
   });
 });
 
+/*
+ * "Today" for a report or a leave is the child's school's day as the gateway
+ * said it (schoolToday, removable), not the browser's: in New York at 20:00
+ * Stockholm is already on tomorrow, in Bangkok at 03:00 still on yesterday.
+ * The days below are far from any browser's today, so the page can only have
+ * them from the gateway.
+ */
+describe("the school's day, not the browser's", () => {
+  const report = (id: string, date: string, removable?: boolean) => ({
+    id, studentId: "c-1", reportedById: "g-1", date, startTime: null, endTime: null, type: "SICK", note: null,
+    createdAt: "2026-10-01T08:00:00Z", ...(removable === undefined ? {} : { removable }),
+  });
+
+  it("starts the report and the leave on the child's school's today, and offers no day before it", () => {
+    state.children = [{ ...state.children[0]!, schoolToday: "2099-03-02" }, state.children[1]!];
+    render(<GuardianPage />);
+    const day = document.getElementById("absence-date") as HTMLInputElement;
+    const start = document.getElementById("leave-start") as HTMLInputElement;
+    expect([day.value, day.dataset["min"]]).toEqual(["2099-03-02", "2099-03-02"]);
+    expect([start.value, start.dataset["min"]]).toEqual(["2099-03-02", "2099-03-02"]);
+    expect((document.getElementById("leave-end") as HTMLInputElement).value).toBe("2099-03-02");
+  });
+
+  it("offers a withdrawal exactly where the gateway says one is possible", () => {
+    // Every browser calls 2099 future and 2000 past; the gateway says the opposite.
+    state.reports = [
+      report("r-future", "2099-03-02", false),
+      report("r-past", "2000-01-03", true),
+      report("r-past-too", "2000-01-04", true),
+    ];
+    render(<GuardianPage />);
+    expect(screen.getAllByRole("button", { name: "guardian.deleteReportNamed" })).toHaveLength(2);
+  });
+
+  it("decides by the child's today when an older gateway says nothing", () => {
+    state.children = [{ ...state.children[0]!, schoolToday: "2099-03-02" }, state.children[1]!];
+    state.reports = [report("r-today", "2099-03-02"), report("r-before", "2099-03-01")];
+    render(<GuardianPage />);
+    expect(screen.getAllByRole("button", { name: "guardian.deleteReportNamed" })).toHaveLength(1);
+  });
+});
+
 describe("the guardian's delete confirmation", () => {
   it("says in the reader's language that it could not be opened when its chunk does not arrive", async () => {
     state.reports = [

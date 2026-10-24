@@ -50,6 +50,12 @@ export interface GuardianChild {
   lastName: string;
   isActive: boolean;
   studentGroupId: string | null;
+  /**
+   * The day the child's school is on (YYYY-MM-DD): "today" for a report or
+   * a leave about this child, whatever the browser's zone. Absent from a
+   * gateway older than the field.
+   */
+  schoolToday?: string;
 }
 
 /**

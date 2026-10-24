@@ -609,6 +609,8 @@ export interface AbsenceReport {
   type: AbsenceReportType;
   note: string | null;
   createdAt: string;
+  /** The gateway's own withdrawal rule, in the school's day; absent from a gateway older than the field. */
+  removable?: boolean;
 }
 
 export interface LeaveRequest {
