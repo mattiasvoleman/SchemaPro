@@ -171,6 +171,34 @@ describe("DutiesCard", () => {
     expect(within(row).getByText("dutyTimesAllYear")).toBeInTheDocument();
   });
 
+  it("marks the Rastvakt uppdrag as the ram where the teacher has passes, and totals the rest beside the passes", () => {
+    duties.data = [mentor, rastvakt];
+    // Passes in the spring: the ram still counts 30 min/v of the autumn's weeks.
+    const passes = { userId: "t-anna", shiftCount: 2, minutesPerWeek: 50, countedMinutesPerWeek: 0, peakMinutesPerWeek: 50, hoursPerYear: 31.7, ramMinutesPerWeek: 60, ramCountedMinutesPerWeek: 30 };
+    const { unmount } = render(
+      <DutiesCard
+        teacher={teacher}
+        academicYearId="y1"
+        academicYearName="2026/2027"
+        subjects={[]}
+        groups={[{ id: "g-7b", name: "7B" }]}
+        supervision={passes}
+      />,
+    );
+    const row = screen.getByText("Rastvakt").closest("li")!;
+    expect(within(row).getByText("dutyRamBadge")).toBeInTheDocument();
+    expect(within(row).getByText("dutyRamHint")).toBeInTheDocument();
+    // 90 of mentorskap; the Rastvakt uppdrag's 60 are the ram, of which 30 still count, the passes' 50 on their own.
+    expect(screen.getByText("dutiesTotalBesideSupervision(90|1|30|2|50)")).toBeInTheDocument();
+    unmount();
+    // Where the card does not know the passes (the people page), every minute
+    // counts as typed, and the Rastvakt uppdrag still says what passes would do.
+    renderCard();
+    expect(screen.queryByText("dutyRamBadge")).toBeNull();
+    expect(screen.getByText("dutyRamHint")).toBeInTheDocument();
+    expect(screen.getByText("dutiesTotal(150|2)")).toBeInTheDocument();
+  });
+
   it("says the generator holds the times all läsår only for an uppdrag both dated and timed", () => {
     duties.data = [
       mentor,

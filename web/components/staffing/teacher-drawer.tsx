@@ -159,6 +159,7 @@ export function TeacherDrawer({
           academicYearName={academicYearName}
           subjects={subjects}
           groups={groups}
+          supervision={supervision}
         />
 
         <TeacherRequirementsCard

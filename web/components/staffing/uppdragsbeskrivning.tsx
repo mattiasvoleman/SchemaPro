@@ -62,7 +62,11 @@ export interface UppdragsbeskrivningProps {
  * more: the teaching table comes from the timplansposter, which the history
  * does not log, so the stamp names the undervisning as the tjänstefördelning
  * on the day printed. While the history is still being read, Skriv ut waits;
- * a history that could not be read is said so, never as "no version".
+ * a history that could not be read is said so, never as "no version". A
+ * teacher's rastvaktspass are versioned by nothing either, and move the
+ * uppdrag hours (the Rastvakt uppdrag is then their ram): where they have
+ * any, the stamp says the rastvakt is the rastvaktsschema's on the day
+ * printed, and Övriga uppdrag states the passes.
  *
  * PRINT. Tailwind's print: variants; the app shell's sidebar and header are
  * print:hidden, the page is A4 with 15 mm margins (globals.css), sections
@@ -98,6 +102,9 @@ export function Uppdragsbeskrivning({
   const factor = loadModel === "FACTOR";
   const timeTotal = assignments.reduce((sum, row) => sum + row.timeMinutesPerWeek, 0);
   const ticked = tickedBoxes(duties);
+  // Passes in the rastvaktsschema: an uppdrag of their own beside the list,
+  // the Rastvakt uppdrag their ram, and nothing the history versions.
+  const passes = supervision && supervision.shiftCount > 0 ? supervision : null;
   const day = new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", timeZone: "UTC" });
   const dayOf = (value: string) => day.format(new Date(`${value}T00:00:00Z`));
 
@@ -286,9 +293,9 @@ export function Uppdragsbeskrivning({
             </li>
           ))}
         </ul>
-        {duties.length === 0 ? (
+        {duties.length === 0 && !passes ? (
           <p>{t("noDuties")}</p>
-        ) : (
+        ) : duties.length === 0 ? null : (
           <ul className="divide-y divide-dashed">
             {duties.map((duty) => {
               const about = [
@@ -300,6 +307,7 @@ export function Uppdragsbeskrivning({
                   <span>
                     <span className="font-medium">{duty.label}</span> · {tStaffing(`dutyKind${duty.kind}`)}
                     {about.length > 0 ? ` · ${about.join(" · ")}` : ""}
+                    {passes && duty.kind === "RASTVAKT" ? ` · ${t("dutyRam")}` : ""}
                     {/* The dates and times a protokoll has to state: a
                         mentorskap until the jullov is not the year's. */}
                     {dutyPeriodLine(tStaffing, duty) ? (
@@ -319,6 +327,7 @@ export function Uppdragsbeskrivning({
             })}
           </ul>
         )}
+        {passes ? <p>{t("supervisionLine", { shifts: passes.shiftCount, minutes: passes.minutesPerWeek })}</p> : null}
       </section>
 
       <AnnualCard annual={load.annual} loadModel={loadModel} headingLevel="h2" travel={travel} supervision={supervision} />
@@ -407,6 +416,9 @@ export function Uppdragsbeskrivning({
                     date: formatStamp(version.createdAt, timeZone),
                   })
                 : t("stampNoVersion", { printed: printedOn })}
+          {/* The passes change the hours above and write no version: the
+              stamp says they are the schedule's on the day printed. */}
+          {passes && version !== "loading" ? ` · ${t("stampSupervision")}` : null}
         </p>
         <div className="grid grid-cols-3 gap-6">
           {(["signRektor", "signTeacher", "signDate"] as const).map((key) => (

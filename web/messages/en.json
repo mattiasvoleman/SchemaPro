@@ -2806,7 +2806,9 @@
       "from": "from {date}",
       "to": "through {date}",
       "fromTo": "{from} – {to}",
-      "passTime": "{start}–{end}"
+      "passTime": "{start}–{end}",
+      "inactiveFrom": "{name} (inactive from {date})",
+      "duringLesson": "During a lesson: {lessons}"
     },
     "areas": {
       "title": "Supervision areas",
@@ -2860,7 +2862,8 @@
         "SUPERVISION_AREA_LIMIT": "A school has at most 100 supervision areas.",
         "SUPERVISION_SITE_NOT_FOUND": "The site no longer exists. Reload the page.",
         "SUPERVISION_AREA_NOT_FOUND": "The area no longer exists. Reload the page."
-      }
+      },
+      "nameHint": "The name is unique across the school, sites included. Write Playground north, for instance."
     },
     "shift": {
       "addTitle": "New shift",
@@ -2885,14 +2888,16 @@
       "faults": {
         "areaMissing": "Choose an area.",
         "teacherMissing": "Choose a teacher.",
-        "timeMissing": "Enter when the shift starts and ends.",
         "endBeforeStart": "The shift must end after it starts.",
         "toBeforeFrom": "The end date is before the start date.",
-        "outsideYear": "The dates must lie within the school year ({from} – {to}).",
         "noteTooLong": "The note can be at most 200 characters.",
         "clash": "The teacher is already on duty in {area} on {day} {start}–{end}. A teacher supervises one place at a time.",
         "dateInvalid": "Enter a date that exists, or leave the field empty for the school year’s own bound.",
-        "noWeekday": "The weekday does not fall between the dates, so the shift would never run."
+        "noWeekday": "No {day} falls between {from} and {to}, so the shift would never run.",
+        "startMissing": "Enter when the shift starts.",
+        "endMissing": "Enter when the shift ends.",
+        "fromOutsideYear": "The start date must lie within the school year ({from} – {to}).",
+        "toOutsideYear": "The end date must lie within the school year ({from} – {to})."
       },
       "errors": {
         "SUPERVISION_SHIFT_CLASH": "The teacher already has a shift sharing a minute with this one that day. A teacher supervises one place at a time.",
@@ -2900,21 +2905,30 @@
         "SUPERVISION_AREA_NOT_FOUND": "The area no longer exists. Reload the page.",
         "SUPERVISION_SHIFT_NOT_FOUND": "The shift no longer exists. Reload the page.",
         "SUPERVISION_YEAR_NOT_FOUND": "The school year no longer exists. Reload the page.",
-        "notFound": "The teacher, the area or the shift no longer exists. Reload the page."
-      }
+        "notFound": "The teacher, the area or the shift no longer exists. Reload the page.",
+        "SUPERVISION_TEACHER_INACTIVE": "The teacher is deactivated and cannot be given a shift. Choose another teacher."
+      },
+      "firstRun": "The shift runs first on {date}.",
+      "lastRun": "The shift runs last on {date}.",
+      "lessonClashTitle": "The shift falls during one of the teacher's lessons",
+      "lessonClashSavedTitle": "The shift is saved, but it falls during one of the teacher's lessons",
+      "lessonClashItem": "{subject} with {group}, {day} {start}–{end}",
+      "lessonClashBody": "The generator and the substitute suggestions do not know about supervision shifts yet: the generator may place lessons in the shift's time, and the suggestions may propose the teacher then. Move the shift or the lesson. Also keep the times in the teacher's Break duty, so the generator keeps them free.",
+      "inactiveNotice": "{name} was deactivated on {date}. The shift covers the break until the day before. If the break needs someone after that, add a shift for another teacher from {date}.",
+      "inactiveNoticeNever": "{name} was deactivated on {date}, before the shift began, so the shift covers nothing."
     },
     "teachers": {
       "title": "Teachers' supervision",
-      "description": "The shifts' minutes per week beside the budget in the teacher's Break supervision duty. Shifts count as duties in staffing, and the Break supervision duty counts only in weeks the teacher has no shift.",
-      "caption": "Every teacher with shifts or the Break supervision duty this school year",
+      "description": "The shifts' minutes per week beside the budget in the teacher's Break duty. Shifts count as duties in staffing, and the Break duty counts only in weeks the teacher has no shift.",
+      "caption": "Every teacher with shifts or the Break duty this school year",
       "columns": {
         "teacher": "Teacher",
         "shifts": "Shifts",
         "minutes": "Min/week",
-        "ram": "Budget (Break supervision duty)",
+        "ram": "Budget (Break duty)",
         "versus": "Against the budget"
       },
-      "empty": "No teacher has shifts or the Break supervision duty this school year.",
+      "empty": "No teacher has shifts or the Break duty this school year.",
       "noRam": "No budget",
       "over": "{minutes} min over",
       "under": "{minutes} min left",
@@ -3383,7 +3397,7 @@
       "travelValue": "{hours} h ({minutes} min/wk)",
       "supervisionHours": "Of which break supervision in the rota",
       "supervisionValue": "{hours} h ({minutes} min/wk)",
-      "supervisionRam": "The Break supervision duty ({ram} min/wk) is the budget the rota is planned against. It counts only in weeks the teacher has no shift ({counted} min/wk).",
+      "supervisionRam": "The Break duty ({ram} min/wk) is the budget the rota is planned against. It counts only in weeks the teacher has no shift ({counted} min/wk).",
       "regulated": "Regulated working time",
       "annualHours": "Annual working time",
       "unregulated": "Other working time (annual − regulated)",
@@ -3551,7 +3565,10 @@
     "removeEmploymentTitle": "Remove the post of {name} for {year}?",
     "removeEmploymentBody": "The employment rate, reduction and contract for the year are removed, and the teacher counts without a target until a post is saved again. Curriculum entries and duties stay.",
     "dutiesLoadFailedHint": "Nothing has changed in the duties. Reload the page to try again.",
-    "sharesFailed": "The teacher shares could not be read, so lessons another teacher takes of an entry are missing from the cards and the groups. Reload the page."
+    "sharesFailed": "The teacher shares could not be read, so lessons another teacher takes of an entry are missing from the cards and the groups. Reload the page.",
+    "dutyRamHint": "If the teacher has shifts in the supervision rota, the duty is a budget: it counts only in weeks the teacher has no shift.",
+    "dutyRamBadge": "Budget",
+    "dutiesTotalBesideSupervision": "{count, plural, one {# duty} other {# duties}}, {minutes} min/wk in all besides the Break duty, which counts {ramMinutes} min/wk in the weeks the teacher has no shift. Break duty by the supervision rota: {shifts, plural, one {# shift} other {# shifts}}, {shiftMinutes} min/wk."
   },
   "myStaffing": {
     "title": "My workload",
@@ -4427,7 +4444,10 @@
     "noOwnPostHint": "The school leadership has not entered a post or teaching for you that school year.",
     "loadFailedHint": "Reload the page in a moment. Nothing in the post has changed.",
     "backAdmin": "To staffing",
-    "backTeacher": "To My workload"
+    "backTeacher": "To My workload",
+    "stampSupervision": "Break duty as the supervision rota stood on the day printed; shifts have no version in the history.",
+    "supervisionLine": "Break duty by the supervision rota: {shifts, plural, one {# shift} other {# shifts}}, {minutes} min/wk.",
+    "dutyRam": "budget for the supervision rota, counts in weeks the teacher has no shift"
   },
   "publishing": {
     "title": "Publishing",

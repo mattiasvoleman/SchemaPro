@@ -48,6 +48,27 @@ const renderPage = (overrides: Partial<React.ComponentProps<typeof Uppdragsbeskr
   );
 
 describe("Uppdragsbeskrivning", () => {
+  it("states a teacher's passes beside the uppdrag, the Rastvakt uppdrag their ram, and a stamp that versions no pass", () => {
+    const rastvakt: TeacherDuty = { ...mentor, id: "d2", kind: "RASTVAKT", label: "Rastvakt", minutesPerWeek: 60, studentGroupId: null };
+    const passes = { userId: "t-anna", shiftCount: 2, minutesPerWeek: 50, countedMinutesPerWeek: 0, peakMinutesPerWeek: 50, hoursPerYear: 31.7, ramMinutesPerWeek: 60, ramCountedMinutesPerWeek: 0 };
+    const { unmount } = renderPage({ duties: [mentor, rastvakt], supervision: passes });
+    expect(screen.getByText("uppdrag.supervisionLine(2|50)")).toBeInTheDocument();
+    expect(screen.getByText(/staffing\.dutyKindRASTVAKT · uppdrag\.dutyRam/)).toBeInTheDocument();
+    expect(screen.getByText(/uppdrag\.stamp\(.*· uppdrag\.stampSupervision/)).toBeInTheDocument();
+    expect(screen.getByText("staffing.annual.supervisionHours")).toBeInTheDocument();
+    unmount();
+    // Passes and no uppdrag: the passes are the uppdrag, not "none registered".
+    const { unmount: second } = renderPage({ duties: [], supervision: passes });
+    expect(screen.queryByText("uppdrag.noDuties")).not.toBeInTheDocument();
+    expect(screen.getByText("uppdrag.supervisionLine(2|50)")).toBeInTheDocument();
+    second();
+    // Without passes nothing of it: the Rastvakt uppdrag counts as it always did.
+    renderPage({ duties: [rastvakt] });
+    expect(screen.queryByText(/uppdrag\.supervisionLine/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/uppdrag\.dutyRam/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/uppdrag\.stampSupervision/)).not.toBeInTheDocument();
+  });
+
   it("heads the paper with the post as the load row states it, and blanks for rektor and arbetslag", () => {
     renderPage();
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("uppdrag.title");

@@ -5,6 +5,7 @@ import { MyUppdragsbeskrivning } from "./my-uppdragsbeskrivning";
 
 const state = vi.hoisted(() => ({
   teachers: [] as unknown[],
+  supervision: null as unknown,
   loadArgs: [] as unknown[],
   dutyArgs: [] as unknown[][],
   historyArgs: [] as unknown[][],
@@ -26,7 +27,7 @@ vi.mock("@/lib/queries", () => ({
 vi.mock("@/lib/staffing-queries", () => ({
   useStaffingLoad: (yearId: unknown) => {
     state.loadArgs.push(yearId);
-    return { data: { loadModel: "MINUTES", teachers: state.teachers }, isLoading: false, isError: false };
+    return { data: { loadModel: "MINUTES", teachers: state.teachers, supervision: state.supervision }, isLoading: false, isError: false };
   },
   useTeacherDuties: (...args: unknown[]) => {
     state.dutyArgs.push(args);
@@ -66,6 +67,15 @@ describe("the teacher's own uppdragsbeskrivning", () => {
     state.dutyArgs = [];
     state.historyArgs = [];
     state.teachers = [uppdragLoad];
+    state.supervision = null;
+  });
+
+  it("prints the session's own passes in the rastvaktsschema, and no colleague's", () => {
+    state.supervision = { teachers: [{ userId: "t-anna", shiftCount: 1, minutesPerWeek: 45, countedMinutesPerWeek: 0, peakMinutesPerWeek: 45, hoursPerYear: 28.5, ramMinutesPerWeek: null, ramCountedMinutesPerWeek: 0 }, { userId: "t-bo", shiftCount: 3, minutesPerWeek: 60, countedMinutesPerWeek: 0, peakMinutesPerWeek: 60, hoursPerYear: 38, ramMinutesPerWeek: 60, ramCountedMinutesPerWeek: 0 }] };
+    render(<MyUppdragsbeskrivning yearId="y1" />);
+    expect(screen.getByText("uppdrag.supervisionLine(1|45)")).toBeInTheDocument();
+    expect(screen.queryByText("uppdrag.supervisionLine(3|60)")).not.toBeInTheDocument();
+    expect(screen.getByText("staffing.annual.supervisionHours")).toBeInTheDocument();
   });
 
   it("prints the session's own row, uppdrag and history, for the asked year", () => {

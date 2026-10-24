@@ -22,6 +22,7 @@ import {
   type DutyProblem,
   type SlotDraft,
 } from "@/lib/duty-forms";
+import type { TeacherSupervision } from "@/lib/staffing-supervision";
 import type { TeacherDuty, TeacherDutyKind } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -56,6 +57,11 @@ export interface DutiesCardProps {
   groups: { id: string; name: string }[];
   /** Shown without its add, edit and remove buttons: a reader who does not write planering (Roller i skolan). */
   readOnly?: boolean;
+  /**
+   * The teacher's passes in the rastvaktsschema (supervisionOf), where the
+   * card's reader has the load; null without one, or where it does not.
+   */
+  supervision?: TeacherSupervision | null;
 }
 
 /** Which fields a problem is about: it is said once one of them is touched. */
@@ -93,6 +99,13 @@ const PROBLEM_FIELDS: Record<DutyProblem["reason"], (keyof DutyDraft)[]> = {
  * and the card says so where it applies (keepsTimesAllYear): on a listed
  * uppdrag with dates and times, and in the form once both are filled in.
  *
+ * RASTVAKT IS A RAM BESIDE A SCHEDULE. A teacher with passes in the
+ * rastvaktsschema is charged the passes, and their Rastvakt uppdrag only in
+ * weeks they have none (src/supervision/supervision-load.ts). Every Rastvakt
+ * uppdrag says so; where the card knows the passes (the drawer reads the
+ * load) it marks the uppdrag Ram and states the total without it, the
+ * passes on their own.
+ *
  * COUNTED OR NOT. "Räknas som undervisning" is the school's choice for
  * resurstid and pedagogisk lunch; off (the default), the minutes are drawn in
  * the bar as uppdrag beside the target and do not consume it — see
@@ -109,6 +122,7 @@ export function DutiesCard({
   subjects,
   groups,
   readOnly = false,
+  supervision = null,
 }: DutiesCardProps) {
   const t = useTranslations("staffing");
   const tCommon = useTranslations("common");
@@ -190,7 +204,10 @@ export function DutiesCard({
   };
 
   const pending = actions.create.isPending || actions.update.isPending;
-  const total = (duties ?? []).reduce((sum, duty) => sum + duty.minutesPerWeek, 0);
+  // With passes the Rastvakt uppdrag is the ram, not minutes of its own.
+  const hasPasses = (supervision?.shiftCount ?? 0) > 0;
+  const counted = (duties ?? []).filter((duty) => !hasPasses || duty.kind !== "RASTVAKT");
+  const total = counted.reduce((sum, duty) => sum + duty.minutesPerWeek, 0);
   const idFor = (field: string) => `duty-${teacher.id}-${field}`;
 
   return (
@@ -229,6 +246,7 @@ export function DutiesCard({
                       <p className="flex flex-wrap items-center gap-1.5">
                         <span className="font-medium">{duty.label}</span>
                         <Badge variant="outline">{t(`dutyKind${duty.kind}`)}</Badge>
+                        {hasPasses && duty.kind === "RASTVAKT" ? <Badge variant="secondary">{t("dutyRamBadge")}</Badge> : null}
                       </p>
                       <p className="text-foreground">
                         {duty.countsAsTeaching
@@ -252,6 +270,12 @@ export function DutiesCard({
                         <p className="flex items-start gap-1 text-muted-foreground">
                           <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
                           {t("dutyTimesAllYear")}
+                        </p>
+                      ) : null}
+                      {duty.kind === "RASTVAKT" ? (
+                        <p className="flex items-start gap-1 text-muted-foreground">
+                          <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                          {t("dutyRamHint")}
                         </p>
                       ) : null}
                       {duty.note ? <p className="text-muted-foreground">{duty.note}</p> : null}
@@ -281,7 +305,15 @@ export function DutiesCard({
               })}
             </ul>
             <p className="text-xs text-muted-foreground">
-              {t("dutiesTotal", { minutes: total, count: (duties ?? []).length })}
+              {hasPasses && supervision
+                ? t("dutiesTotalBesideSupervision", {
+                    minutes: total,
+                    count: counted.length,
+                    ramMinutes: supervision.ramCountedMinutesPerWeek,
+                    shifts: supervision.shiftCount,
+                    shiftMinutes: supervision.minutesPerWeek,
+                  })
+                : t("dutiesTotal", { minutes: total, count: (duties ?? []).length })}
             </p>
           </>
         )

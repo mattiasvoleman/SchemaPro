@@ -28,6 +28,16 @@ export interface SupervisionArea {
   shiftCount: number;
 }
 
+/** A lesson of the grundschema a pass runs during: the gateway's warning, not a refusal. */
+export interface LessonClash {
+  subject: string;
+  group: string;
+  dayOfWeek: number;
+  /** HH:MM */
+  startTime: string;
+  endTime: string;
+}
+
 /** One pass: a teacher on an area, a weekday, a time, between two dates. */
 export interface SupervisionShift {
   id: string;
@@ -38,10 +48,14 @@ export interface SupervisionShift {
   /** HH:MM */
   startTime: string;
   endTime: string;
-  /** yyyy-mm-dd, null for the läsår's own bound. */
+  /** yyyy-mm-dd, null for the läsår's own bound; on the pass's weekday when set. */
   validFrom: string | null;
   validTo: string | null;
   note: string | null;
+  /** The day the teacher was deactivated; the pass watches until the day before. Null while active. */
+  inactiveFrom: string | null;
+  /** The teacher's lessons the pass runs during; the generator and the vikarieförslag do not see passes yet. */
+  lessonClashes: LessonClash[];
 }
 
 /** One break of one area on one weekday, as the gateway resolves it. */
@@ -108,19 +122,21 @@ export interface GridRow {
 }
 
 /**
- * An area's grid: one row per break window of its week, in the order of the
- * day. A Friday whose rast is at another time is a row of its own with only
- * Friday in it, rather than a row that says two different times.
+ * An area's grid: one row per break of its week, in the order of the day —
+ * a window and the names of its rasts. A Friday whose rast is at another
+ * time is a row of its own with only Friday in it, rather than a row that
+ * says two different times; so is a Friday rast at Monday's time under
+ * another name, rather than a row whose heading names a rast some of its
+ * days do not have.
  */
 export function gridRowsOf(rota: Pick<SupervisionRota, "breaks">, areaId: string): GridRow[] {
   const rows = new Map<string, GridRow>();
   for (const row of rota.breaks) {
     if (row.areaId !== areaId) continue;
-    const key = `${row.startTime}-${row.endTime}`;
+    const key = `${row.startTime}-${row.endTime}-${row.names.join("|")}`;
     const found = rows.get(key);
     if (found) {
       found.days.set(row.dayOfWeek, row);
-      for (const name of row.names) if (!found.names.includes(name)) found.names.push(name);
       found.lunch ||= row.lunch;
     } else {
       rows.set(key, {
@@ -133,7 +149,12 @@ export function gridRowsOf(rota: Pick<SupervisionRota, "breaks">, areaId: string
       });
     }
   }
-  return [...rows.values()].sort((a, b) => a.startTime.localeCompare(b.startTime) || a.endTime.localeCompare(b.endTime));
+  return [...rows.values()].sort(
+    (a, b) =>
+      a.startTime.localeCompare(b.startTime) ||
+      a.endTime.localeCompare(b.endTime) ||
+      a.names.join(", ").localeCompare(b.names.join(", "), "sv"),
+  );
 }
 
 /** An area's passes that run in no break of their day: the entrance at 07:45, the bus at 15:00. */
@@ -177,29 +198,94 @@ export interface ShiftDraft {
 export type ShiftDraftFault =
   | "areaMissing"
   | "teacherMissing"
-  | "timeMissing"
+  | "startMissing"
+  | "endMissing"
   | "endBeforeStart"
   | "toBeforeFrom"
-  | "outsideYear"
+  | "fromOutsideYear"
+  | "toOutsideYear"
   | "noWeekday"
   | "noteTooLong";
 
+export type ShiftField = "area" | "teacher" | "start" | "end" | "from" | "to" | "note";
+
 /** The dialog field each fault is said beside, and focused on a refused save. */
-export const FAULT_FIELD: Readonly<Record<ShiftDraftFault, "area" | "teacher" | "start" | "end" | "from" | "to" | "note">> = {
+export const FAULT_FIELD: Readonly<Record<ShiftDraftFault, ShiftField>> = {
   areaMissing: "area",
   teacherMissing: "teacher",
-  timeMissing: "start",
+  startMissing: "start",
+  endMissing: "end",
   endBeforeStart: "end",
   toBeforeFrom: "to",
-  outsideYear: "from",
+  fromOutsideYear: "from",
+  toOutsideYear: "to",
   noWeekday: "to",
   noteTooLong: "note",
 };
 
 /**
+ * The field a fault is said at, for this draft: a pass that never runs is
+ * Från's where Till is the läsår's own (empty), as the gateway names it.
+ */
+export function faultFieldOf(fault: ShiftDraftFault, draft: Pick<ShiftDraft, "validFrom" | "validTo">): ShiftField {
+  return fault === "noWeekday" && draft.validFrom && !draft.validTo ? "from" : FAULT_FIELD[fault];
+}
+
+const DAY_MS = 86_400_000;
+const isoWeekday = (day: string) => {
+  const weekday = new Date(`${day}T00:00:00Z`).getUTCDay();
+  return weekday === 0 ? 7 : weekday;
+};
+const addDays = (day: string, days: number) =>
+  new Date(new Date(`${day}T00:00:00Z`).getTime() + days * DAY_MS).toISOString().slice(0, 10);
+
+/**
+ * The first and the last day of `dayOfWeek` from `from` to `to`, inclusive;
+ * null when the span has none.
+ */
+export function weekdaySpan(dayOfWeek: number, from: string, to: string): { first: string; last: string } | null {
+  const first = addDays(from, (dayOfWeek - isoWeekday(from) + 7) % 7);
+  const last = addDays(to, -((isoWeekday(to) - dayOfWeek + 7) % 7));
+  return first <= last ? { first, last } : null;
+}
+
+/**
+ * A pass's dates when its weekday changes: a date already on the old weekday
+ * (as the gateway stores them) moves to the new one in the same ISO week, as
+ * the gateway moves a stored date the PATCH does not retype; a date typed off
+ * the weekday is left as typed.
+ */
+export function datesForNewWeekday(
+  draft: Pick<ShiftDraft, "dayOfWeek" | "validFrom" | "validTo">,
+  dayOfWeek: number,
+): { validFrom: string; validTo: string } {
+  const move = (date: string) =>
+    date && isoWeekday(date) === draft.dayOfWeek ? addDays(date, dayOfWeek - draft.dayOfWeek) : date;
+  return { validFrom: move(draft.validFrom), validTo: move(draft.validTo) };
+}
+
+/**
+ * A draft's dates as the gateway stores them (SupervisionService
+ * datesOnTheWeekday): Från forward to the pass's first weekday, Till back to
+ * its last, an empty one left empty — the läsår's own bound.
+ */
+export function datesOnTheWeekday(
+  draft: Pick<ShiftDraft, "dayOfWeek" | "validFrom" | "validTo">,
+  year: { startDate: string; endDate: string } | null,
+): { validFrom: string; validTo: string } {
+  const from = draft.validFrom || year?.startDate || "";
+  const to = draft.validTo || year?.endDate || "";
+  if (!from || !to) return { validFrom: draft.validFrom, validTo: draft.validTo };
+  const span = weekdaySpan(draft.dayOfWeek, from, to);
+  if (!span) return { validFrom: draft.validFrom, validTo: draft.validTo };
+  return { validFrom: draft.validFrom ? span.first : "", validTo: draft.validTo ? span.last : "" };
+}
+
+/**
  * What the gateway would refuse in a draft, asked before it is sent so the
  * dialog can name the field: the same rules as SupervisionService (start
- * before end, Till not before Från, both inside the läsår), not new ones.
+ * before end, Till not before Från, both inside the läsår, and the pass's
+ * weekday between them, an empty date read as the läsår's own), not new ones.
  */
 export function shiftDraftFault(
   draft: ShiftDraft,
@@ -207,41 +293,40 @@ export function shiftDraftFault(
 ): ShiftDraftFault | null {
   if (!draft.areaId) return "areaMissing";
   if (!draft.userId) return "teacherMissing";
-  if (!isClock(draft.startTime) || !isClock(draft.endTime)) return "timeMissing";
+  if (!isClock(draft.startTime)) return "startMissing";
+  if (!isClock(draft.endTime)) return "endMissing";
   if (minutes(draft.endTime) <= minutes(draft.startTime)) return "endBeforeStart";
   if (draft.validFrom && draft.validTo && draft.validTo < draft.validFrom) return "toBeforeFrom";
-  if (year) {
-    for (const value of [draft.validFrom, draft.validTo]) {
-      if (value && (value < year.startDate || value > year.endDate)) return "outsideYear";
-    }
-  }
-  if (draft.validFrom && draft.validTo) {
-    const from = new Date(`${draft.validFrom}T00:00:00Z`);
-    const first = from.getUTCDay() === 0 ? 7 : from.getUTCDay();
-    const offset = (draft.dayOfWeek - first + 7) % 7;
-    if (new Date(from.getTime() + offset * 86_400_000).toISOString().slice(0, 10) > draft.validTo) return "noWeekday";
-  }
+  if (year && draft.validFrom && (draft.validFrom < year.startDate || draft.validFrom > year.endDate)) return "fromOutsideYear";
+  if (year && draft.validTo && (draft.validTo < year.startDate || draft.validTo > year.endDate)) return "toOutsideYear";
+  const from = draft.validFrom || year?.startDate;
+  const to = draft.validTo || year?.endDate;
+  if (from && to && !weekdaySpan(draft.dayOfWeek, from, to)) return "noWeekday";
   if ([...draft.note.trim()].length > 200) return "noteTooLong";
   return null;
 }
 
-/** The body a draft is saved as: empty dates and note as null, clocks as HH:MM. */
-export function shiftBody(draft: ShiftDraft) {
+/**
+ * The body a draft is saved as: empty dates and note as null, clocks as
+ * HH:MM, and the dates on the pass's weekday as the gateway stores them.
+ */
+export function shiftBody(draft: ShiftDraft, year: { startDate: string; endDate: string } | null = null) {
+  const dates = datesOnTheWeekday(draft, year);
   return {
     areaId: draft.areaId,
     userId: draft.userId,
     dayOfWeek: draft.dayOfWeek,
     startTime: clockOf(draft.startTime),
     endTime: clockOf(draft.endTime),
-    validFrom: draft.validFrom || null,
-    validTo: draft.validTo || null,
+    validFrom: dates.validFrom || null,
+    validTo: dates.validTo || null,
     note: draft.note.trim() || null,
   };
 }
 
 /**
  * The teacher's other pass that shares a minute with the draft on its
- * weekday, on a date both run: the clash the gateway would refuse
+ * weekday, on a date both run (the draft's dates moved onto its weekday): the clash the gateway would refuse
  * (SUPERVISION_SHIFT_CLASH, the table's one-place-at-a-time EXCLUDE), found
  * in the schedule the page already holds so the dialog can name it before
  * the save. Null without one, or without a complete window.
@@ -250,12 +335,15 @@ export function clashOf(
   draft: ShiftDraft,
   shifts: readonly SupervisionShift[],
   selfId: string | null,
+  year: { startDate: string; endDate: string } | null = null,
 ): SupervisionShift | null {
   if (!draft.userId || !isClock(draft.startTime) || !isClock(draft.endTime)) return null;
   const start = minutes(draft.startTime);
   const end = minutes(draft.endTime);
-  const from = draft.validFrom || null;
-  const to = draft.validTo || null;
+  // The dates the pass would be stored with, as the EXCLUDE reads them.
+  const dates = datesOnTheWeekday(draft, year);
+  const from = dates.validFrom || null;
+  const to = dates.validTo || null;
   return (
     shifts.find(
       (other) =>

@@ -159,6 +159,26 @@ describe("Min tjänst", () => {
     expect(screen.queryByText("staffing.annual.captionAdmin")).not.toBeInTheDocument();
   });
 
+  it("states the teacher's own rastvakt beside the year's hours, and no colleague's", () => {
+    state.load = {
+      data: {
+        teachers: [row()],
+        supervision: {
+          teachers: [
+            { userId: ME, shiftCount: 1, minutesPerWeek: 45, countedMinutesPerWeek: 0, peakMinutesPerWeek: 45, hoursPerYear: 28.5, ramMinutesPerWeek: null, ramCountedMinutesPerWeek: 0 },
+            { userId: "t-bo", shiftCount: 3, minutesPerWeek: 60, countedMinutesPerWeek: 0, peakMinutesPerWeek: 60, hoursPerYear: 38, ramMinutesPerWeek: 60, ramCountedMinutesPerWeek: 0 },
+          ],
+        },
+      },
+      isLoading: false,
+      isError: false,
+    };
+    render(<MyStaffingPage />);
+    expect(screen.getByText("staffing.annual.supervisionHours")).toBeInTheDocument();
+    expect(screen.getByText("staffing.annual.supervisionValue(28,5|45)")).toBeInTheDocument();
+    expect(screen.queryByText("staffing.annual.supervisionValue(38|60)")).not.toBeInTheDocument();
+  });
+
   it("lists the teacher's own post over the year when it changes, each period with its target, counted minutes and status", () => {
     const stretch = (from: string, to: string, extra: Record<string, unknown>) => ({
       from,

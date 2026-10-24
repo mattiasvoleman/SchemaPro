@@ -2806,7 +2806,9 @@
       "from": "från {date}",
       "to": "t.o.m. {date}",
       "fromTo": "{from} – {to}",
-      "passTime": "{start}–{end}"
+      "passTime": "{start}–{end}",
+      "inactiveFrom": "{name} (inaktiv från {date})",
+      "duringLesson": "Under lektion: {lessons}"
     },
     "areas": {
       "title": "Rastvaktsområden",
@@ -2860,7 +2862,8 @@
         "SUPERVISION_AREA_LIMIT": "En skola har högst 100 rastvaktsområden.",
         "SUPERVISION_SITE_NOT_FOUND": "Skolområdet finns inte längre. Ladda om sidan.",
         "SUPERVISION_AREA_NOT_FOUND": "Området finns inte längre. Ladda om sidan."
-      }
+      },
+      "nameHint": "Namnet är unikt i hela skolan, också mellan skolområden. Skriv till exempel Skolgården norra."
     },
     "shift": {
       "addTitle": "Nytt pass",
@@ -2885,14 +2888,16 @@
       "faults": {
         "areaMissing": "Välj ett område.",
         "teacherMissing": "Välj en lärare.",
-        "timeMissing": "Ange när passet börjar och slutar.",
         "endBeforeStart": "Passet måste sluta efter att det börjar.",
         "toBeforeFrom": "Slutdatumet ligger före startdatumet.",
-        "outsideYear": "Datumen ska ligga inom läsåret ({from} – {to}).",
         "noteTooLong": "Anteckningen får vara högst 200 tecken.",
         "clash": "Läraren har redan rastvakt i {area} {day} {start}–{end}. En rastvakt är på ett ställe i taget.",
         "dateInvalid": "Ange ett datum som finns, eller lämna fältet tomt för läsårets egen gräns.",
-        "noWeekday": "Veckodagen infaller inte mellan datumen, så passet skulle aldrig gå."
+        "noWeekday": "Ingen {day} ligger mellan {from} och {to}, så passet skulle aldrig gå.",
+        "startMissing": "Ange när passet börjar.",
+        "endMissing": "Ange när passet slutar.",
+        "fromOutsideYear": "Från ska ligga inom läsåret ({from} – {to}).",
+        "toOutsideYear": "Till ska ligga inom läsåret ({from} – {to})."
       },
       "errors": {
         "SUPERVISION_SHIFT_CLASH": "Läraren har redan ett pass som delar en minut med det här samma dag. En rastvakt är på ett ställe i taget.",
@@ -2900,8 +2905,17 @@
         "SUPERVISION_AREA_NOT_FOUND": "Området finns inte längre. Ladda om sidan.",
         "SUPERVISION_SHIFT_NOT_FOUND": "Passet finns inte längre. Ladda om sidan.",
         "SUPERVISION_YEAR_NOT_FOUND": "Läsåret finns inte längre. Ladda om sidan.",
-        "notFound": "Läraren, området eller passet finns inte längre. Ladda om sidan."
-      }
+        "notFound": "Läraren, området eller passet finns inte längre. Ladda om sidan.",
+        "SUPERVISION_TEACHER_INACTIVE": "Läraren är avaktiverad och kan inte få ett pass. Välj en annan lärare."
+      },
+      "firstRun": "Passet går första gången {date}.",
+      "lastRun": "Passet går sista gången {date}.",
+      "lessonClashTitle": "Passet ligger under en av lärarens lektioner",
+      "lessonClashSavedTitle": "Passet är sparat, men det ligger under en av lärarens lektioner",
+      "lessonClashItem": "{subject} med {group}, {day} {start}–{end}",
+      "lessonClashBody": "Generatorn och vikarieförslaget känner ännu inte till rastvaktspassen: generatorn kan lägga lektioner på passets tid, och vikarieförslaget kan föreslå läraren då. Flytta passet eller lektionen. Behåll också tiderna i lärarens uppdrag Rastvakt, så håller generatorn dem fria.",
+      "inactiveNotice": "{name} avaktiverades {date}. Passet vaktar till och med dagen före. Behöver rasten en rastvakt efter det lägger du ett pass på en annan lärare från {date}.",
+      "inactiveNoticeNever": "{name} avaktiverades {date}, innan passet började, så passet vaktar ingenting."
     },
     "teachers": {
       "title": "Lärarnas rastvakt",
@@ -3551,7 +3565,10 @@
     "removeEmploymentTitle": "Ta bort tjänsten för {name} {year}?",
     "removeEmploymentBody": "Tjänstegrad, nedsättning och avtal för läsåret tas bort, och läraren räknas utan mål tills en tjänst sparas igen. Timplansposter och uppdrag ligger kvar.",
     "dutiesLoadFailedHint": "Inget har ändrats i uppdragen. Ladda om sidan för att försöka igen.",
-    "sharesFailed": "Lärarandelarna kunde inte läsas, så lektioner som en annan lärare tar av en post saknas i korten och grupperna. Ladda om sidan."
+    "sharesFailed": "Lärarandelarna kunde inte läsas, så lektioner som en annan lärare tar av en post saknas i korten och grupperna. Ladda om sidan.",
+    "dutyRamHint": "Har läraren pass i rastvaktsschemat är uppdraget en ram: det räknas bara de veckor läraren saknar pass.",
+    "dutyRamBadge": "Ram",
+    "dutiesTotalBesideSupervision": "{count, plural, one {# uppdrag} other {# uppdrag}}, {minutes} min/v sammanlagt utom uppdraget Rastvakt, som räknas {ramMinutes} min/v de veckor läraren saknar pass. Rastvakten enligt rastvaktsschemat: {shifts, plural, one {# pass} other {# pass}}, {shiftMinutes} min/v."
   },
   "myStaffing": {
     "title": "Min tjänst",
@@ -4427,7 +4444,10 @@
     "noOwnPostHint": "Skolledningen har inte lagt in någon tjänst eller undervisning för dig det läsåret.",
     "loadFailedHint": "Ladda om sidan om en stund. Ingenting i tjänsten har ändrats.",
     "backAdmin": "Till tjänstefördelningen",
-    "backTeacher": "Till Min tjänst"
+    "backTeacher": "Till Min tjänst",
+    "stampSupervision": "Rastvakten enligt rastvaktsschemat den dag sidan skrevs ut; passen har ingen version i historiken.",
+    "supervisionLine": "Rastvakt enligt rastvaktsschemat: {shifts, plural, one {# pass} other {# pass}}, {minutes} min/v.",
+    "dutyRam": "ram för rastvaktsschemat, räknas de veckor läraren saknar pass"
   },
   "publishing": {
     "title": "Publicering",
