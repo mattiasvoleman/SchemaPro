@@ -132,10 +132,10 @@ describe("TeacherRequirementsCard", () => {
       />,
     );
     const items = screen.getAllByRole("listitem");
-    expect(items[0]).toHaveTextContent("teacherRowShare(2|3)");
+    expect(items[0]).toHaveTextContent("teacherRowShare(2|3|67)");
     expect(within(items[0]!).getByRole("button", { name: "changeTeacherFor(7A · Matematik)" })).toBeInTheDocument();
     expect(items[1]).toHaveTextContent("7B · Matematik");
-    expect(items[1]).toHaveTextContent("teacherRowShare(2|3)");
+    expect(items[1]).toHaveTextContent("teacherRowShare(2|3|67)");
     expect(items[1]).not.toHaveTextContent("teacherRowCoTeacher");
     expect(within(items[1]!).queryByRole("button")).toBeNull();
   });

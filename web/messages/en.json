@@ -765,7 +765,7 @@
       "minutes": "{minutes} min",
       "remove": "Remove the lessons of {teacher}",
       "add": "Add a teacher",
-      "part": "{teacher}: {lessons} of {of} lessons · {minutes} min a week ({percent}%)",
+      "part": "{teacher}: {lessons} of {of} lessons · {percent}% of the minutes ({minutes} min a week)",
       "problem": {
         "NO_TEACHER": "Choose a teacher on every row.",
         "NOT_INTEGER": "Give each teacher a whole number of lessons, and a length when the entry has lessons of different lengths.",
@@ -3103,7 +3103,7 @@
     "teacherRowsEmpty": "The teacher has no curriculum entries this year.",
     "teacherRowLessons": "{post} min",
     "teacherRowCoTeacher": "co-teacher",
-    "teacherRowShare": "{lessons} of {of} lessons",
+    "teacherRowShare": "{lessons} of {of} lessons · {percent}% of the minutes",
     "changeTeacher": "Change teacher",
     "changeTeacherFor": "Change teacher for {row}",
     "unstaffedGeneration": "Generation without teachers",
