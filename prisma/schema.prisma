@@ -3156,8 +3156,8 @@ model SupervisionArea {
   /// empties it (ON DELETE SET NULL ("siteId")).
   siteId        String? @db.Uuid
   /// The årskurser whose rasts and lunches the area is watched in, inclusive
-  /// 0..12 as a Rast's; both null = every stage's. Matching is overlap, as
-  /// for every stage span here.
+  /// 0..12 as a Rast's, in NIOARIG as every school-wide span; both null =
+  /// every stage's. Matching is overlap, as for every stage span here.
   minGradeLevel Int?
   maxGradeLevel Int?
   /// Watched while the matching stages have rast (Rast rows).
@@ -3204,7 +3204,7 @@ model SupervisionShift {
   userId         String    @db.Uuid
   /// ISO weekday 1..7.
   dayOfWeek      Int
-  /// Whole minutes, start before end.
+  /// Whole minutes of one day (before 24:00), start before end.
   startTime      DateTime  @db.Time(0)
   endTime        DateTime  @db.Time(0)
   /// Från, inclusive; null = the läsår's first day. Inside the läsår (the
