@@ -126,16 +126,20 @@ describe('cover support', () => {
       tx.subject.findMany.mockResolvedValue([{ id: 's', name: 'Matematik' }]);
       tx.studentGroup.findMany.mockResolvedValue([{ id: 'g', name: '7A' }]);
       tx.room.findMany.mockResolvedValue([{ id: 'r', name: 'Sal 12' }]);
-      tx.lessonSubstituteNote.findMany.mockResolvedValue([{ calendarLessonId: 'l' }]);
+      // app.substitute_noted_lessons: that 'l' has a note, never what it says.
+      tx.$queryRaw.mockResolvedValue([{ id: 'l' }]);
       const notifyUsers = jest.fn().mockResolvedValue(1);
       await sendNotices({ notifyUsers } as never, tx as never, 'school', 'Europe/Stockholm', [
         { kind: 'COVER', userId: 's', lessonId: 'l' },
         { kind: 'COVER', userId: 't', lessonId: 'm' },
       ]);
-      expect(tx.lessonSubstituteNote.findMany).toHaveBeenCalledWith({
-        where: { calendarLessonId: { in: ['l', 'm'] } },
-        select: { calendarLessonId: true },
-      });
+      const [asked] = tx.$queryRaw.mock.calls[0] as [{ strings: string[]; values: unknown[] }];
+      expect([asked.strings.join('?'), asked.values]).toEqual([
+        'SELECT id FROM app.substitute_noted_lessons(?::uuid[]) AS id',
+        [['l', 'm']],
+      ]);
+      // The administrator who books is no reader of the note itself.
+      expect(tx.lessonSubstituteNote.findMany).not.toHaveBeenCalled();
       const [first, second] = notifyUsers.mock.calls.map((call) => call[1]);
       expect(first.email.body).toContain('Lektionens lärare har lämnat en notis till dig.');
       expect(second.email.body).not.toContain('notis');

@@ -20,7 +20,7 @@ import {
 /**
  * LEKTIONSLOGG (20261203090000): a lesson's topic and homework, which the
  * pupils on it and their guardians see, and a note to its substitute, which
- * only staff see.
+ * only the lesson's teachers see.
  *
  * Who may do what is the database's: app.lesson_teacher_role(lesson) says
  * whether the calling teacher is the lesson's own (REGULAR), only its
@@ -31,9 +31,12 @@ import {
  *   the lesson's own teacher  writes the log and the note, reads both
  *   its substitute            writes the log (they taught it), reads the note
  *   another teacher           reads the log (the klassbok is everyone's)
- *   an administrator          reads both; writes both when the profile
+ *   an administrator          reads the log, and writes it when the profile
  *                             writes DRIFT (rektor removing what should not
- *                             stand), as the RolesGuard has already held
+ *                             stand), as the RolesGuard has already held;
+ *                             never the note, which the database gives no
+ *                             administrator (they learn that one exists,
+ *                             substitute-noted.ts)
  *   a pupil, a guardian       the log of their own lessons, never the note
  *                             (the family's week, family-schedule.service.ts,
  *                             and listForCaller here)
@@ -219,8 +222,8 @@ export class LessonLogService {
     const drift = role === 'ADMIN' && profileWrites(user.adminProfile, 'DRIFT');
     return {
       writeLog: drift || role === 'REGULAR' || role === 'SUBSTITUTE',
-      readNote: role === 'ADMIN' || role === 'REGULAR' || role === 'SUBSTITUTE',
-      writeNote: drift || role === 'REGULAR',
+      readNote: role === 'REGULAR' || role === 'SUBSTITUTE',
+      writeNote: role === 'REGULAR',
     };
   }
 
@@ -324,7 +327,7 @@ export class LessonLogService {
     return this.prisma.withRls(user, async (tx) => {
       const lesson = await tx.calendarLesson.findUnique({ where: { id: lessonId }, select: { id: true } });
       if (!lesson) throw lessonNotFound();
-      if (user.role === Role.TEACHER && (await this.teacherRole(tx, lessonId)) !== 'REGULAR') {
+      if ((await this.teacherRole(tx, lessonId)) !== 'REGULAR') {
         throw new ForbiddenException({
           message: 'Bara lektionens egen lärare skriver notisen till vikarien.',
           code: SUBSTITUTE_NOTE_NOT_YOURS,

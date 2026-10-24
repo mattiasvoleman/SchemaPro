@@ -143,9 +143,10 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *     pupil ("Kalle går ut 10.15"). But no field of it says whom, so there is
  *     no subject to record the read against: a row per pupil the text might
  *     mention would need the text parsed. What bounds it instead is who may
- *     read it at all — the lesson's own teacher, its substitute and the
- *     school's administrators (app.lesson_teacher_role, RLS 232) — which is
- *     the reach the läslogg would otherwise answer for. Nor is it gallrad
+ *     read it at all — the lesson's own teachers and its substitute, and no
+ *     administrator, who learns only that one exists
+ *     (app.lesson_teacher_role, app.substitute_noted_lessons, RLS 232) —
+ *     which is the reach the läslogg would otherwise answer for. Nor is it gallrad
  *     yet: it is no retention kind of 20261021110000, a gap stated in the
  *     manual (6.11). The klassbok is the timetable layer — a class's
  *     lessons, their teachers by name, the topic and the homework, a count

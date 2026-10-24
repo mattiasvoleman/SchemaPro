@@ -224,10 +224,11 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   CancellationBatches: only('DRIFT'),
   CoverSettings: only('DRIFT'),
   LeaveRequests: only('DRIFT'),
-  // Lektionslogg (20261203090000): rektor removes a log or a note that
-  // should not stand; the lesson's teachers write them through arms of their own.
+  // Lektionslogg (20261203090000): rektor removes a log that should not
+  // stand; the lesson's teachers write it through arms of their own.
+  // LessonSubstituteNotes has no administrator's arm at all: no
+  // administrator reads or writes a note to the substitute.
   LessonLogs: only('DRIFT'),
-  LessonSubstituteNotes: only('DRIFT'),
   Notifications: just('DRIFT', 'insert'),
   RoomBookings: only('DRIFT'),
   SubstituteAvailabilities: only('DRIFT'),

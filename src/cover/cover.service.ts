@@ -43,6 +43,7 @@ import {
 } from './cover-decisions';
 import { rethrowCoverError } from './cover-errors';
 import { sendNotices, settleNotices } from './cover-notices';
+import { substituteNotedLessons } from '../lesson-log/substitute-noted';
 import type { BulkDto, CoverDecisionKindValue, CoverStatusValue, DecisionDto } from './dto/cover.dto';
 
 export const COVER_STALE = 'COVER_STALE';
@@ -178,19 +179,13 @@ export class CoverService {
         user.channel,
       );
       const lessonIds = [...new Set(items.map((item) => item.lessonId))];
-      const noted =
-        lessonIds.length === 0
-          ? []
-          : ((await tx.lessonSubstituteNote.findMany({
-              where: { calendarLessonId: { in: lessonIds } },
-              select: { calendarLessonId: true },
-            })) ?? []);
+      const noted = await substituteNotedLessons(tx, lessonIds);
       return {
         from,
         to,
         items,
         summary: summaryOf(items),
-        notedLessonIds: noted.map((row) => row.calendarLessonId).sort(),
+        notedLessonIds: [...noted].sort(),
         absences: absences.map((a) => ({
           id: a.id,
           userId: a.userId,

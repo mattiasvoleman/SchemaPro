@@ -1,5 +1,6 @@
 import type { LessonRecurrence, Prisma, PrismaClient } from '@prisma/client';
 import { zonedTimeToUtc } from '../common/utils/time';
+import { substituteNotedLessons } from '../lesson-log/substitute-noted';
 import { runsOn } from './lesson-recurrence';
 import {
   coversTime,
@@ -192,7 +193,7 @@ export async function propagateTemplateChange(
           roomId: true,
           note: true,
           teachers: { select: { teacherId: true, role: true } },
-          _count: { select: { lessonLogs: true, substituteNotes: true } },
+          _count: { select: { lessonLogs: true } },
         },
       })
     : await tx.calendarLesson.findMany({
@@ -218,23 +219,22 @@ export async function propagateTemplateChange(
     roomId: string | null;
     note: string | null;
     teachers: { teacherId: string; role: string }[];
-    _count: { lessonLogs: number; substituteNotes: number };
+    _count: { lessonLogs: number };
   };
+  // Every stale row's operation, kept or dropped once its notes are known (below).
+  const staleOperations: LostDayOperation[] = [];
   const markStale = (row: { id: string; date: Date }) => {
     stale.push(row.id);
     if (!publishing) return;
     const full = row as PublishRow;
-    const operation: LostDayOperation = {
+    staleOperations.push({
       calendarLessonId: full.id,
       date: full.date.toISOString().slice(0, 10),
       substitute: full.teachers.some((teacher) => teacher.role === 'SUBSTITUTE'),
       roomChanged: (before.roomId ?? null) !== full.roomId,
       note: full.note !== null && full.note !== '',
-      lessonLog: full._count.lessonLogs > 0 || full._count.substituteNotes > 0,
-    };
-    if (operation.substitute || operation.roomChanged || operation.note || operation.lessonLog) {
-      lostDayOperations.push(operation);
-    }
+      lessonLog: full._count.lessonLogs > 0,
+    });
   };
 
   for (const calendarLesson of futureLessons) {
@@ -376,6 +376,19 @@ export async function propagateTemplateChange(
         await tx.calendarLessonTeacher.create({
           data: { schoolId, calendarLessonId: row.id, teacherId: after.teacherId, role: 'LEAD' },
         });
+      }
+    }
+  }
+
+  // A note to the substitute counts as the lesson's log. The publisher never
+  // reads one (no administrator does); app.substitute_noted_lessons says
+  // which lessons have one, asked once, and only when rows are about to go.
+  if (staleOperations.length > 0) {
+    const noted = await substituteNotedLessons(tx, staleOperations.map((operation) => operation.calendarLessonId));
+    for (const operation of staleOperations) {
+      if (noted.has(operation.calendarLessonId)) operation.lessonLog = true;
+      if (operation.substitute || operation.roomChanged || operation.note || operation.lessonLog) {
+        lostDayOperations.push(operation);
       }
     }
   }

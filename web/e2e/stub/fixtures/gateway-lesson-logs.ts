@@ -31,7 +31,9 @@ import {
  * The teacher persona is Anna, who teaches her lessons and covers Bo's
  * Thursday mathematics in 9A (cover-world.ts); the
  * administrator writes drift (the läsare is the admin persona too, and the
- * page hides the write by data-writes, as the real one does).
+ * page hides the write by data-writes, as the real one does). No
+ * administrator reads or writes a note to the substitute: the route admits
+ * teachers alone, as the real one does.
  */
 
 function refuse(context: GatewayContext, personas: Persona[]): Reply | null {
@@ -72,8 +74,8 @@ function lessonPage(context: GatewayContext): LessonLogLesson | Reply {
   const role = admin ? "ADMIN" : (annasRole(lesson) ?? "COLLEAGUE");
   const may = {
     writeLog: admin || role === "REGULAR" || role === "SUBSTITUTE",
-    readNote: admin || role === "REGULAR" || role === "SUBSTITUTE",
-    writeNote: admin || role === "REGULAR",
+    readNote: role === "REGULAR" || role === "SUBSTITUTE",
+    writeNote: role === "REGULAR",
   };
   const master = byId(MASTER_LESSONS, lesson.masterLessonId);
   return {
@@ -110,7 +112,7 @@ function putLog(context: GatewayContext): { log: LessonLogText | null } | Reply 
 }
 
 function putNote(context: GatewayContext): { note: SubstituteNoteText | null } | Reply {
-  const refused = refuse(context, ["teacher", "admin"]);
+  const refused = refuse(context, ["teacher"]);
   if (refused) return refused;
   const body = ((context.body ?? {}) as { body?: string | null }).body?.trim() || null;
   return { note: body ? { body, writtenBy: "Anna Lind", updatedAt: NOW } : null };

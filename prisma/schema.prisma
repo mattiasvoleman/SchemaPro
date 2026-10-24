@@ -2044,9 +2044,10 @@ model LessonLog {
 }
 
 /// A note to the substitute from the lesson's own teacher: read by the
-/// lesson's teachers, its substitute among them, and the school's
-/// administrators; never by a pupil or a guardian. One per calendar lesson
-/// at most.
+/// lesson's teachers, its substitute among them, and nobody else: never an
+/// administrator (who learns only that one exists,
+/// app.substitute_noted_lessons), a pupil or a guardian. One per calendar
+/// lesson at most.
 model LessonSubstituteNote {
   id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   schoolId         String   @db.Uuid

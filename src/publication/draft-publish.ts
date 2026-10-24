@@ -1,6 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
 import { zonedTimeToUtc } from '../common/utils/time';
 import { runsOn } from '../calendar/lesson-recurrence';
+import { substituteNotedLessons } from '../lesson-log/substitute-noted';
 import {
   propagateTemplateChange,
   type LostDayOperation,
@@ -242,7 +243,7 @@ async function settlePendingRemovals(
           roomId: true,
           note: true,
           teachers: { select: { role: true } },
-          _count: { select: { attendanceRecords: true, lessonLogs: true, substituteNotes: true } },
+          _count: { select: { attendanceRecords: true, lessonLogs: true } },
         },
       },
     },
@@ -287,7 +288,7 @@ async function settlePendingRemovals(
   let adopted = 0;
   const remove: string[] = [];
   const release: string[] = [];
-  const lostDayOperations: LostDayOperation[] = [];
+  const removedOperations: LostDayOperation[] = [];
   const changedMasterIds = new Set<string>();
   for (const row of rows) {
     const lesson = row.calendarLesson;
@@ -308,16 +309,22 @@ async function settlePendingRemovals(
       continue;
     }
     remove.push(lesson.id);
-    const operation: LostDayOperation = {
+    removedOperations.push({
       calendarLessonId: lesson.id,
       date,
       substitute: lesson.teachers.some((teacher) => teacher.role === 'SUBSTITUTE'),
       roomChanged: false,
       note: lesson.note !== null && lesson.note !== '',
-      lessonLog: lesson._count.lessonLogs > 0 || lesson._count.substituteNotes > 0,
-    };
-    if (operation.substitute || operation.note || operation.lessonLog) lostDayOperations.push(operation);
+      lessonLog: lesson._count.lessonLogs > 0,
+    });
   }
+  // A note to the substitute counts as the lesson's log; the publisher learns
+  // only that one exists (app.substitute_noted_lessons), asked once for the
+  // rows about to go.
+  const noted = await substituteNotedLessons(tx, remove);
+  const lostDayOperations = removedOperations
+    .map((operation) => (noted.has(operation.calendarLessonId) ? { ...operation, lessonLog: true } : operation))
+    .filter((operation) => operation.substitute || operation.note || operation.lessonLog);
   if (release.length > 0) {
     await tx.publicationPendingRemoval.deleteMany({ where: { calendarLessonId: { in: release } } });
   }
