@@ -96,6 +96,8 @@ export interface ClassBookLesson {
   teachers: { name: string; substitute: boolean }[];
   topic: string | null;
   homework: string | null;
+  /** When the log was last written (null with none): the basis a removal sends, so a log rewritten since is a 409. */
+  logUpdatedAt: string | null;
   /** Another group's lesson: how many of the class's pupils are on it; null for the class's own. */
   attending: number | null;
 }
