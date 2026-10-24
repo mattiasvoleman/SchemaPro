@@ -1921,6 +1921,186 @@ BEGIN
   INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime")
   VALUES (m, yr, area, teacher, 1, '10:00', '10:20');
 END $$;
+-- En elev i en tillagd undervisningsgrupp (20261208090000), sections 250–251:
+-- 7B's svenska with the teaching group SvA7 joined to it (TG-1), a 7A pupil
+-- in SvA7 (P1), a 7A pupil in no group (P2), a 7B pupil (P3), and each one's
+-- guardian; 7B's other lessons — one with nothing joined (TG-2), one with
+-- another teaching group joined that P1 is not in (TG-3); and another school
+-- with its own SvA7 joined to its own lesson (TG-9) and a pupil in it (Q).
+-- TG-1 and TG-9 carry a log. Each lesson carries its name in "note".
+-- Neither key of StudentGroupMembers nor of CalendarLessonGroups is composite
+-- with "schoolId", so the other school also holds two rows that point here
+-- (20260822120000 tells how a request could write them): Q in this school's
+-- SvA7, and TG-2 with Q's SvA7 joined; and this school holds one naming Q, in
+-- its Spanska. And a guardian here (G4) stands in SvA7 by a catalogue error.
+-- Last läsår (y0): 6B's lesson TG-0 with SvA6 joined and a log, and a 7A
+-- pupil (P5) still in SvA6, as the rollover leaves a membership, with their
+-- guardian (G5); a deactivated 7A pupil in SvA7 (P6); and three logins with
+-- a row at each school, this school's taking the login first: a pupil here
+-- and a teacher there (M1), a pupil at both (M2), a guardian here standing in
+-- SvA7 and a pupil there (M3), the other school's pupil rows in its SvA7.
+DO $$
+DECLARE
+  s1 uuid;
+  s2 uuid;
+  y uuid;
+  y2 uuid;
+  subj uuid;
+  subj2 uuid;
+  k7a uuid;
+  k7b uuid;
+  sva uuid;
+  spa uuid;
+  k9 uuid;
+  sva9 uuid;
+  t uuid;
+  p1 uuid;
+  p2 uuid;
+  p3 uuid;
+  g1 uuid;
+  g2 uuid;
+  g3 uuid;
+  g4 uuid;
+  q uuid;
+  l1 uuid;
+  l2 uuid;
+  l3 uuid;
+  l9 uuid;
+  y0 uuid;
+  k6b uuid;
+  sva6 uuid;
+  l0 uuid;
+  p5 uuid;
+  g5 uuid;
+  p6 uuid;
+  row_id uuid;
+  rec record;
+BEGIN
+  IF EXISTS (SELECT 1 FROM "Schools" WHERE slug = 'rls-tillagd-grupp-school') THEN
+    RETURN;
+  END IF;
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
+  VALUES ('RLS Tillagd grupp', 'rls-tillagd-grupp-school', 'Europe/Stockholm', now()) RETURNING id INTO s1;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s1, 'Tillagd grupp i år', current_date - 30, current_date + 300, true, now()) RETURNING id INTO y;
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s1, 'Svenska', 'RLSTG', now()) RETURNING id INTO subj;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s1, y, 'TG7A', 7, now()) RETURNING id INTO k7a;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s1, y, 'TG7B', 7, now()) RETURNING id INTO k7b;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "updatedAt")
+  VALUES (s1, y, 'TG SvA7', 7, 'TEACHING_GROUP', now()) RETURNING id INTO sva;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "updatedAt")
+  VALUES (s1, y, 'TG Spanska', 7, 'TEACHING_GROUP', now()) RETURNING id INTO spa;
+
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt")
+  VALUES (s1, 'tillagd-admin@example.invalid', 'Tillagd', 'Admin', 'SCHOOL_ADMIN', 'FULL', '00000000-0000-4000-8000-000000001400', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'tillagd-larare@example.invalid', 'Tillagd', 'Lärare', 'TEACHER', '00000000-0000-4000-8000-000000001401', true, now()) RETURNING id INTO t;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES (s1, 'tillagd-p1@example.invalid', 'Tillagd', 'Elev SvA', 'STUDENT', '00000000-0000-4000-8000-000000001402', true, k7a, now()) RETURNING id INTO p1;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES (s1, 'tillagd-p2@example.invalid', 'Tillagd', 'Elev 7A', 'STUDENT', '00000000-0000-4000-8000-000000001403', true, k7a, now()) RETURNING id INTO p2;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES (s1, 'tillagd-p3@example.invalid', 'Tillagd', 'Elev 7B', 'STUDENT', '00000000-0000-4000-8000-000000001404', true, k7b, now()) RETURNING id INTO p3;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'tillagd-g1@example.invalid', 'Tillagd', 'Vårdnadshavare SvA', 'GUARDIAN', '00000000-0000-4000-8000-000000001405', true, now()) RETURNING id INTO g1;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'tillagd-g2@example.invalid', 'Tillagd', 'Vårdnadshavare 7A', 'GUARDIAN', '00000000-0000-4000-8000-000000001406', true, now()) RETURNING id INTO g2;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'tillagd-g3@example.invalid', 'Tillagd', 'Vårdnadshavare 7B', 'GUARDIAN', '00000000-0000-4000-8000-000000001407', true, now()) RETURNING id INTO g3;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'tillagd-g4@example.invalid', 'Tillagd', 'Vårdnadshavare i SvA', 'GUARDIAN', '00000000-0000-4000-8000-000000001410', true, now()) RETURNING id INTO g4;
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES (s1, g1, p1), (s1, g2, p2), (s1, g3, p3);
+  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (s1, sva, p1), (s1, sva, g4);
+
+  -- TG-1: 7B's svenska, SvA7 joined.
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+  VALUES (s1, subj, k7b, current_date + 1, (current_date + 1) + time '08:00', (current_date + 1) + time '09:00', 'TG-1', now()) RETURNING id INTO l1;
+  -- TG-2: 7B's, nothing joined.
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+  VALUES (s1, subj, k7b, current_date + 2, (current_date + 2) + time '08:00', (current_date + 2) + time '09:00', 'TG-2', now()) RETURNING id INTO l2;
+  -- TG-3: 7B's, Spanska joined (P1 is not in it).
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+  VALUES (s1, subj, k7b, current_date + 3, (current_date + 3) + time '08:00', (current_date + 3) + time '09:00', 'TG-3', now()) RETURNING id INTO l3;
+  INSERT INTO "CalendarLessonGroups" ("schoolId", "calendarLessonId", "studentGroupId") VALUES (s1, l1, sva), (s1, l3, spa);
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES
+    (s1, l1, t, 'LEAD'), (s1, l2, t, 'LEAD'), (s1, l3, t, 'LEAD');
+  -- Written by the owner, so the trigger keeps the writer it is given.
+  INSERT INTO "LessonLogs" ("schoolId", "calendarLessonId", topic, homework, "writtenById")
+  VALUES (s1, l1, 'TG ett', 'TG läxa ett', t);
+
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
+  VALUES ('RLS Tillagd grupp annan', 'rls-tillagd-grupp-annan', 'Europe/Stockholm', now()) RETURNING id INTO s2;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s2, 'Annan i år', current_date - 30, current_date + 300, true, now()) RETURNING id INTO y2;
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s2, 'Annan svenska', 'RLSTGA', now()) RETURNING id INTO subj2;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s2, y2, 'Annan TG7B', 7, now()) RETURNING id INTO k9;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "updatedAt")
+  VALUES (s2, y2, 'Annan TG SvA7', 7, 'TEACHING_GROUP', now()) RETURNING id INTO sva9;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt")
+  VALUES (s2, 'tillagd-annan-admin@example.invalid', 'Annan', 'Admin', 'SCHOOL_ADMIN', 'FULL', '00000000-0000-4000-8000-000000001409', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s2, 'tillagd-annan-q@example.invalid', 'Annan', 'Elev SvA', 'STUDENT', '00000000-0000-4000-8000-000000001408', true, now()) RETURNING id INTO q;
+  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (s2, sva9, q);
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+  VALUES (s2, subj2, k9, current_date + 1, (current_date + 1) + time '08:00', (current_date + 1) + time '09:00', 'TG-9', now()) RETURNING id INTO l9;
+  INSERT INTO "CalendarLessonGroups" ("schoolId", "calendarLessonId", "studentGroupId") VALUES (s2, l9, sva9);
+  INSERT INTO "LessonLogs" ("schoolId", "calendarLessonId", topic) VALUES (s2, l9, 'TG annan');
+  -- The two rows that point across: the other school's, by their schoolId.
+  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (s2, sva, q);
+  INSERT INTO "CalendarLessonGroups" ("schoolId", "calendarLessonId", "studentGroupId") VALUES (s2, l2, sva9);
+  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (s1, spa, q);
+
+  -- Last läsår.
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s1, 'Tillagd grupp i fjol', current_date - 400, current_date - 31, false, now()) RETURNING id INTO y0;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s1, y0, 'TG6B', 6, now()) RETURNING id INTO k6b;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "updatedAt")
+  VALUES (s1, y0, 'TG SvA6', 6, 'TEACHING_GROUP', now()) RETURNING id INTO sva6;
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+  VALUES (s1, subj, k6b, current_date - 100, (current_date - 100) + time '08:00', (current_date - 100) + time '09:00', 'TG-0', now()) RETURNING id INTO l0;
+  INSERT INTO "CalendarLessonGroups" ("schoolId", "calendarLessonId", "studentGroupId") VALUES (s1, l0, sva6);
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (s1, l0, t, 'LEAD');
+  INSERT INTO "LessonLogs" ("schoolId", "calendarLessonId", topic, "writtenById") VALUES (s1, l0, 'TG noll', t);
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES (s1, 'tillagd-p5@example.invalid', 'Tillagd', 'Elev SvA6', 'STUDENT', '00000000-0000-4000-8000-000000001411', true, k7a, now()) RETURNING id INTO p5;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'tillagd-g5@example.invalid', 'Tillagd', 'Vårdnadshavare SvA6', 'GUARDIAN', '00000000-0000-4000-8000-000000001412', true, now()) RETURNING id INTO g5;
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES (s1, g5, p5);
+  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (s1, sva6, p5);
+
+  -- A deactivated pupil in SvA7.
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES (s1, 'tillagd-p6@example.invalid', 'Tillagd', 'Elev slutat', 'STUDENT', '00000000-0000-4000-8000-000000001413', true, k7a, now()) RETURNING id INTO p6;
+  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (s1, sva, p6);
+  UPDATE "Users" SET "isActive" = false WHERE id = p6;
+
+  -- Logins with a row at each school, as the Flera skolor fixture makes them
+  -- (app.login_join names each row): this school's row first.
+  FOR rec IN
+    SELECT * FROM (VALUES
+      ('00000000-0000-4000-8000-000000001414'::uuid, s1, 'STUDENT'::"UserRole", k7a,  sva,  'tillagd-m1-a'),
+      ('00000000-0000-4000-8000-000000001414'::uuid, s2, 'TEACHER',             NULL, NULL, 'tillagd-m1-b'),
+      ('00000000-0000-4000-8000-000000001415'::uuid, s1, 'STUDENT',             k7a,  sva,  'tillagd-m2-a'),
+      ('00000000-0000-4000-8000-000000001415'::uuid, s2, 'STUDENT',             NULL, sva9, 'tillagd-m2-b'),
+      ('00000000-0000-4000-8000-000000001416'::uuid, s1, 'GUARDIAN',            NULL, sva,  'tillagd-m3-a'),
+      ('00000000-0000-4000-8000-000000001416'::uuid, s2, 'STUDENT',             NULL, sva9, 'tillagd-m3-b')
+    ) v(auth_id, school, role, class_id, member_of, label)
+  LOOP
+    row_id := gen_random_uuid();
+    PERFORM set_config('app.login_join', row_id::text, true);
+    INSERT INTO "Users" (id, "schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "invitedAt", "updatedAt")
+    VALUES (row_id, rec.school, rec.label || '@example.invalid', 'Tillagd', rec.label, rec.role, rec.auth_id, true, rec.class_id, now(), now());
+    IF rec.member_of IS NOT NULL THEN
+      INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (rec.school, rec.member_of, row_id);
+    END IF;
+  END LOOP;
+  PERFORM set_config('app.login_join', '', true);
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.

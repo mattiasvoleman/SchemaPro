@@ -26,7 +26,12 @@
  *   ll-e  the substitute's booking reads that a note exists (cover-notices)
  *         and the cover board names the noted lessons, as the administrator
  *         and as the läsare (app.substitute_noted_lessons); to a teacher the
- *         function says nothing.
+ *         function says nothing;
+ *   ll-f  a 7A pupil in SvA7, a teaching group joined to 7B's lesson
+ *         (CalendarLessonGroups), reads the lesson and its SvA7 row directly
+ *         and the lesson's log through the roster reader, and their guardian's
+ *         week has it as before; a 7A pupil outside SvA7 does not
+ *         (20261208090000).
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -266,6 +271,49 @@ export async function lessonLogChecks(owner: Client, api: PrismaService, marker:
       const board = await cover.board(monday, monday, admin);
       assert.ok(board.items.some((item) => item.lessonId === own), 'Monday’s lesson is not on the board');
       assert.deepEqual(board.notedLessonIds, [own]);
+    });
+
+    await check('(ll-f) a pupil in a teaching group joined to another class’s lesson reads the lesson and its log, as their guardian does', async () => {
+      const sva = await group('LL SvA7', 'TEACHING_GROUP');
+      const joinedPupil = await person('STUDENT', 'Gustav', k7a);
+      const joinedGuardian = await person('GUARDIAN', 'Hanna');
+      await owner.query(`INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES ($1, $2, $3)`, [s, joinedGuardian.userId, joinedPupil.userId]);
+      await owner.query(`INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES ($1, $2, $3)`, [s, sva, joinedPupil.userId]);
+      // Thursday: 7B's svenska, SvA7 joined to it.
+      const joined = await lesson(3, k7b);
+      await owner.query(`INSERT INTO "CalendarLessonGroups" ("schoolId", "calendarLessonId", "studentGroupId") VALUES ($1, $2, $3)`, [s, joined, sva]);
+      await owner.query(`INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES ($1, $2, $3, 'LEAD')`, [s, joined, teacher.userId]);
+      await logs.putLog(joined, { topic: 'Novellen', homework: 'Läs kapitel 2' }, teacher);
+      const week = { from: monday, to: (await one<{ d: string }>(`SELECT ($1::date + 6)::text AS d`, [monday])).d };
+
+      // The week the pupil reads directly, as the web's /student and the app do: their class's lesson,
+      // and 7B's with its SvA7 row; not 7B's other lesson, nor Spanska's.
+      const read = await api.withRls(joinedPupil, (tx) =>
+        (tx as unknown as PrismaClient).calendarLesson.findMany({
+          where: { date: { gte: new Date(`${week.from}T00:00:00Z`), lte: new Date(`${week.to}T00:00:00Z`) } },
+          select: { id: true, extraGroups: { select: { studentGroupId: true } } },
+          orderBy: { date: 'asc' },
+        }),
+      );
+      assert.deepEqual(read, [
+        { id: own, extraGroups: [] },
+        { id: joined, extraGroups: [{ studentGroupId: sva }] },
+      ]);
+      // The gateway's list comes by the roster reader, which finds the pupil through the SvA7 row;
+      // not 7B's other lesson, nor Spanska's.
+      const mine = await logs.listForCaller(week, joinedPupil);
+      const listed = mine.entries.map((entry) => entry.lessonId);
+      assert.ok(listed.includes(joined) && !listed.includes(theirs) && !listed.includes(language), `the pupil's logs are ${listed}`);
+      assert.deepEqual(
+        mine.entries.filter((entry) => entry.lessonId === joined).map((entry) => [entry.topic, entry.homework]),
+        [['Novellen', 'Läs kapitel 2']],
+      );
+      // 7A's pupil in Spanska, not SvA7: not on it.
+      assert.ok(!(await logs.listForCaller(week, pupil)).entries.some((entry) => entry.lessonId === joined), 'a pupil outside SvA7 reads the joined lesson’s log');
+      // The guardian's week has it, as before.
+      const family = await new FamilyScheduleService(api).week({ studentId: joinedPupil.userId!, week: monday }, joinedGuardian);
+      const entry = family.lessons.find((row) => row.id === joined);
+      assert.deepEqual([entry?.topic, entry?.homework], ['Novellen', 'Läs kapitel 2']);
     });
   } finally {
     await sweepLessonLogSchool(owner, marker);

@@ -64,7 +64,11 @@ mirrored to `CalendarLessonGroups` / `CalendarLessonStudents` at publish.
 - **Student visibility** — RLS `*_participant_select` policies on
   `MasterLessons`/`CalendarLessons` make participant lessons appear in
   students' schedules automatically (individually or via their class being an
-  extra class), on top of the primary-group policy.
+  extra class), on top of the primary-group policy. On `CalendarLessons` an
+  extra group that is one of the student's teaching groups counts too (a SvA
+  group joined to another class's svenska), and
+  `calendar_lesson_groups_member_select` shows them that extra-group row, as
+  their guardian sees both (20261208090000).
 
 - **Versions** — snapshots capture participants and restores recreate them.
 - **Regeneration** — participant lessons are treated like locked lessons even

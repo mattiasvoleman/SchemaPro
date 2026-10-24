@@ -9537,11 +9537,13 @@ BEGIN
 END $$;
 SET LOCAL ROLE app_authenticated;
 
--- 29a: the pupil's own arms are unchanged: the home class, the class as an
--- extra group, the lesson naming them and their teaching group's own lesson —
--- and not the lesson carrying their teaching group as an extra group, which
--- the guardian reads (the old gap, out of scope). Their teacher rows are the
--- home class's lessons', as P3 tuned them.
+-- 29a: the pupil reads what the guardian reads: the home class, the class as
+-- an extra group, the lesson naming them, their teaching group's own lesson
+-- and, since 20261208090000 widened calendar_lessons_participant_select, the
+-- lesson carrying their teaching group as an extra group; and both extra-group
+-- rows, the home class's and, since then, the teaching group's
+-- (calendar_lesson_groups_member_select, widened too). Their teacher
+-- rows are the home class's lessons', as P3 tuned them.
 SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls29_c_sub'))::text, true);
 DO $$
 DECLARE l uuid[] := string_to_array(current_setting('app.test_rls29_lessons'), ',')::uuid[]; seen int[]; n bigint;
@@ -9549,7 +9551,9 @@ BEGIN
   IF app.current_user_role() IS DISTINCT FROM 'STUDENT' THEN RAISE EXCEPTION 'family: expected the pupil'; END IF;
   SELECT array_agg(i ORDER BY i) INTO seen FROM generate_subscripts(l, 1) i
    WHERE EXISTS (SELECT 1 FROM "CalendarLessons" cl WHERE cl.id = l[i]);
-  IF seen IS DISTINCT FROM ARRAY[1, 3, 4, 7] THEN RAISE EXCEPTION 'family: the pupil reads lessons %, not 1, 3, 4 and 7', seen; END IF;
+  IF seen IS DISTINCT FROM ARRAY[1, 2, 3, 4, 7] THEN RAISE EXCEPTION 'family: the pupil reads lessons %, not 1, 2, 3, 4 and 7', seen; END IF;
+  SELECT count(*) INTO n FROM "CalendarLessonGroups" WHERE "calendarLessonId" = ANY (l);
+  IF n <> 2 THEN RAISE EXCEPTION 'family: the pupil reads % extra-group rows, not the TG and H ones', n; END IF;
   SELECT count(*) INTO n FROM "CalendarLessonTeachers" WHERE "calendarLessonId" = ANY (l);
   IF n <> 1 THEN RAISE EXCEPTION 'family: the pupil reads % teacher rows, not their home lesson''s one', n; END IF;
   IF cardinality(app.current_guardian_child_ids()) + cardinality(app.current_guardian_group_ids()) <> 0 THEN
@@ -28429,5 +28433,242 @@ BEGIN
   IF n <> 1 THEN RAISE EXCEPTION 'supervision: the fixture''s teacher was not removed (%)', n; END IF;
   SELECT count(*) INTO n FROM "SupervisionShifts";
   IF n <> 0 THEN RAISE EXCEPTION 'supervision: % passes outlived their teacher', n; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 250: en elev i en tillagd undervisningsgrupp, katalogen
+-- (20261208090000): elevens två armar är vidgade som migreringen skrev dem,
+-- för authenticated som förut, och ingen annan arm frågar elevens hjälpare;
+-- hjälparna SECURITY DEFINER, STABLE, med fäst search_path, körbara av
+-- authenticated och app_authenticated och av ingen annan.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  bad text;
+  r text;
+  fn text;
+  -- The member arm's groups: a pupil's teaching groups and home class, the
+  -- old one group for every other role. Here and in the participant arm's
+  -- branch the role is asked inside the initplan, so that for staff no
+  -- helper runs (20261208090000, "Why these shapes").
+  groups constant text := '( SELECT CASE WHEN (app.current_user_role() = ''STUDENT''::"UserRole") '
+                          'THEN (app.current_student_teaching_group_ids() || app.current_user_group_id()) '
+                          'ELSE ARRAY[app.current_user_group_id()] END AS "array")::uuid[]';
+BEGIN
+  -- qual names functions relative to the search_path; read it as the migration's guard does.
+  PERFORM set_config('search_path', 'public, pg_temp', true);
+  SELECT string_agg(tablename || '.' || policyname || ' ' || cmd || ' ' || permissive || ' ' || roles::text, ', ' ORDER BY tablename, policyname)
+    INTO bad
+    FROM pg_policies
+   WHERE schemaname = 'public' AND (coalesce(qual, '') || coalesce(with_check, '')) LIKE '%current\_student\_%';
+  IF bad IS DISTINCT FROM 'CalendarLessonGroups.calendar_lesson_groups_member_select SELECT PERMISSIVE {authenticated}, '
+                          'CalendarLessons.calendar_lessons_participant_select SELECT PERMISSIVE {authenticated}' THEN
+    RAISE EXCEPTION 'joined group: the arms that ask a current_student_ helper are %', bad;
+  END IF;
+  IF (SELECT regexp_replace(qual, '\s+', ' ', 'g') FROM pg_policies
+       WHERE schemaname = 'public' AND tablename = 'CalendarLessons' AND policyname = 'calendar_lessons_participant_select')
+     IS DISTINCT FROM '(("schoolId" = ( SELECT app.current_school_id() AS current_school_id)) AND ((EXISTS ( SELECT 1 FROM "CalendarLessonStudents" cls '
+                      'WHERE ((cls."calendarLessonId" = "CalendarLessons".id) AND (cls."studentId" = ( SELECT app.current_user_id() AS current_user_id))))) '
+                      'OR (EXISTS ( SELECT 1 FROM "CalendarLessonGroups" clg WHERE ((clg."calendarLessonId" = "CalendarLessons".id) '
+                      'AND (clg."studentGroupId" = ( SELECT app.current_user_group_id() AS current_user_group_id))))) '
+                      'OR (id = ANY (( SELECT CASE WHEN (app.current_user_role() = ''STUDENT''::"UserRole") THEN app.current_student_joined_lesson_ids() '
+                      'ELSE NULL::uuid[] END AS "case")::uuid[]))))' THEN
+    RAISE EXCEPTION 'joined group: calendar_lessons_participant_select is not as 20261208090000 wrote it';
+  END IF;
+  IF (SELECT regexp_replace(qual, '\s+', ' ', 'g') FROM pg_policies
+       WHERE schemaname = 'public' AND tablename = 'CalendarLessonGroups' AND policyname = 'calendar_lesson_groups_member_select')
+     IS DISTINCT FROM '(("schoolId" = ( SELECT app.current_school_id() AS current_school_id)) AND ("studentGroupId" = ANY (' || groups || ')))' THEN
+    RAISE EXCEPTION 'joined group: calendar_lesson_groups_member_select is not as 20261208090000 wrote it';
+  END IF;
+
+  FOREACH fn IN ARRAY ARRAY['app.current_student_teaching_group_ids()', 'app.current_student_joined_lesson_ids()'] LOOP
+    IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = fn::regprocedure) THEN RAISE EXCEPTION 'joined group: % is not SECURITY DEFINER', fn; END IF;
+    IF (SELECT provolatile FROM pg_proc WHERE oid = fn::regprocedure) <> 's' THEN RAISE EXCEPTION 'joined group: % is not STABLE', fn; END IF;
+    IF (SELECT proconfig FROM pg_proc WHERE oid = fn::regprocedure) IS DISTINCT FROM ARRAY['search_path=public, pg_temp'] THEN
+      RAISE EXCEPTION 'joined group: % does not pin its search_path', fn;
+    END IF;
+    -- A policy runs as whoever reads: both roles the arms answer call it.
+    FOREACH r IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+      IF NOT has_function_privilege(r, fn, 'EXECUTE') THEN RAISE EXCEPTION 'joined group: % may not call %', r, fn; END IF;
+    END LOOP;
+    FOREACH r IN ARRAY ARRAY['anon', 'service_role'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) AND has_function_privilege(r, fn, 'EXECUTE') THEN
+        RAISE EXCEPTION 'joined group: % may call %', r, fn;
+      END IF;
+    END LOOP;
+    IF (SELECT proacl::text FROM pg_proc WHERE oid = fn::regprocedure) ~ '[{,]=X/' THEN
+      RAISE EXCEPTION 'joined group: PUBLIC may call %', fn;
+    END IF;
+  END LOOP;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 251: en elev i SvA7, som är tillagd till 7B:s svenska, läser
+-- lektionen, dess SvA7-rad och dess logg, som PostgREST:s roll och som
+-- API:ts; en elev i ingen av grupperna gör det inte, inte en elev som slutat,
+-- och inte en annan skolas elev, också när en rad i hens skola pekar över
+-- skolgränsen; ett medlemskap från förra läsåret räknas, som för
+-- vårdnadshavaren; en inloggning med en rad på varje skola läser den skola
+-- anropet namnger (inställningen eller huvudet), annars den äldsta raden;
+-- vårdnadshavarna läser som förut, och en som står i SvA7 av misstag läser
+-- ingenting av det (20261208090000).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001400')::text, true);
+SELECT set_config('app.test_tg_school', app.current_school_id()::text, true);
+SELECT set_config('app.test_tg_sva', (SELECT id::text FROM "StudentGroups" WHERE name = 'TG SvA7'), true);
+SELECT set_config('app.test_tg_spa', (SELECT id::text FROM "StudentGroups" WHERE name = 'TG Spanska'), true);
+SELECT set_config('app.test_tg_sva6', (SELECT id::text FROM "StudentGroups" WHERE name = 'TG SvA6'), true);
+SELECT set_config('app.test_tg_l0', (SELECT id::text FROM "CalendarLessons" WHERE note = 'TG-0'), true);
+SELECT set_config('app.test_tg_l1', (SELECT id::text FROM "CalendarLessons" WHERE note = 'TG-1'), true);
+SELECT set_config('app.test_tg_l2', (SELECT id::text FROM "CalendarLessons" WHERE note = 'TG-2'), true);
+SELECT set_config('app.test_tg_l3', (SELECT id::text FROM "CalendarLessons" WHERE note = 'TG-3'), true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001409')::text, true);
+SELECT set_config('app.test_tg_school9', app.current_school_id()::text, true);
+SELECT set_config('app.test_tg_sva9', (SELECT id::text FROM "StudentGroups" WHERE name = 'Annan TG SvA7'), true);
+SELECT set_config('app.test_tg_l9', (SELECT id::text FROM "CalendarLessons" WHERE note = 'TG-9'), true);
+-- What the caller reads of this section's rows, as one line: the lessons, the
+-- extra-group rows as lesson/group, the logs (as the API only: LessonLogs has
+-- no arm for PostgREST's role) and the helpers' teaching groups/joined
+-- lessons. A row without a name
+-- of this section shows as its id, so any leak fails the comparison.
+CREATE FUNCTION pg_temp.tg_reads(api boolean) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE
+  lessons text;
+  groups text;
+  logs text := '';
+  helper text;
+BEGIN
+  SELECT coalesce(string_agg(coalesce(note, id::text), ',' ORDER BY coalesce(note, id::text)), '') INTO lessons FROM "CalendarLessons";
+  SELECT coalesce(string_agg(lbl, ',' ORDER BY lbl), '') INTO groups
+    FROM (SELECT CASE g."calendarLessonId"::text
+                   WHEN current_setting('app.test_tg_l0') THEN 'TG-0' WHEN current_setting('app.test_tg_l1') THEN 'TG-1'
+                   WHEN current_setting('app.test_tg_l2') THEN 'TG-2' WHEN current_setting('app.test_tg_l3') THEN 'TG-3'
+                   WHEN current_setting('app.test_tg_l9') THEN 'TG-9' ELSE g."calendarLessonId"::text END
+                 || '/' ||
+                 CASE g."studentGroupId"::text
+                   WHEN current_setting('app.test_tg_sva') THEN 'SvA7' WHEN current_setting('app.test_tg_spa') THEN 'Spanska'
+                   WHEN current_setting('app.test_tg_sva6') THEN 'SvA6' WHEN current_setting('app.test_tg_sva9') THEN 'SvA7 annan'
+                   ELSE g."studentGroupId"::text END AS lbl
+            FROM "CalendarLessonGroups" g) x;
+  IF api THEN
+    SELECT coalesce(string_agg(coalesce(topic, "calendarLessonId"::text), ',' ORDER BY coalesce(topic, "calendarLessonId"::text)), '')
+      INTO logs FROM "LessonLogs";
+  END IF;
+  SELECT coalesce(string_agg(lbl, ',' ORDER BY lbl), '') || '/' INTO helper
+    FROM (SELECT CASE t::text WHEN current_setting('app.test_tg_sva') THEN 'SvA7' WHEN current_setting('app.test_tg_sva6') THEN 'SvA6'
+                              WHEN current_setting('app.test_tg_sva9') THEN 'SvA7 annan' ELSE t::text END AS lbl
+            FROM unnest(app.current_student_teaching_group_ids()) t) h;
+  SELECT helper || coalesce(string_agg(lbl, ',' ORDER BY lbl), '') INTO helper
+    FROM (SELECT CASE l::text WHEN current_setting('app.test_tg_l0') THEN 'TG-0' WHEN current_setting('app.test_tg_l1') THEN 'TG-1'
+                              WHEN current_setting('app.test_tg_l2') THEN 'TG-2' WHEN current_setting('app.test_tg_l9') THEN 'TG-9'
+                              ELSE l::text END AS lbl
+            FROM unnest(app.current_student_joined_lesson_ids()) l) j;
+  RETURN lessons || ' | ' || groups || ' | ' || logs || ' | ' || helper;
+END
+$f$;
+GRANT EXECUTE ON FUNCTION pg_temp.tg_reads(boolean) TO PUBLIC;
+DO $$
+DECLARE
+  via text;
+  i int;
+  seen text;
+  expected text;
+  cases constant text[][] := ARRAY[
+    -- authId; what they read as the API (app_authenticated) and as PostgREST
+    -- (authenticated): lessons | extra groups | logs (the API's) | helpers.
+    ['00000000-0000-4000-8000-000000001402', 'TG-1 | TG-1/SvA7 | TG ett | SvA7/TG-1', 'TG-1 | TG-1/SvA7 |  | SvA7/TG-1'],                 -- P1: 7A, in SvA7
+    ['00000000-0000-4000-8000-000000001403', ' |  |  | /', ' |  |  | /'],                                                           -- P2: 7A, in no group
+    ['00000000-0000-4000-8000-000000001404', 'TG-1,TG-2,TG-3 |  | TG ett | /', 'TG-1,TG-2,TG-3 |  |  | /'],                     -- P3: 7B
+    ['00000000-0000-4000-8000-000000001413', ' |  |  | /', ' |  |  | /'],                                                           -- P6: in SvA7, deactivated
+    ['00000000-0000-4000-8000-000000001411', 'TG-0 | TG-0/SvA6 | TG noll | SvA6/TG-0', 'TG-0 | TG-0/SvA6 |  | SvA6/TG-0'],             -- P5: in last year's SvA6
+    ['00000000-0000-4000-8000-000000001405', 'TG-1 | TG-1/SvA7 | TG ett | /', ' |  |  | /'],                                     -- P1's guardian
+    ['00000000-0000-4000-8000-000000001406', ' |  |  | /', ' |  |  | /'],                                                           -- P2's guardian
+    ['00000000-0000-4000-8000-000000001407', 'TG-1,TG-2,TG-3 |  | TG ett | /', ' |  |  | /'],                                   -- P3's guardian
+    ['00000000-0000-4000-8000-000000001412', 'TG-0 | TG-0/SvA6 | TG noll | /', ' |  |  | /'],                                   -- P5's guardian
+    ['00000000-0000-4000-8000-000000001410', ' |  |  | /', ' |  |  | /'],                                                           -- G4: a guardian in SvA7
+    ['00000000-0000-4000-8000-000000001401', 'TG-0,TG-1,TG-2,TG-3 | TG-0/SvA6,TG-1/SvA7,TG-3/Spanska | TG ett,TG noll | /',
+                                             'TG-0,TG-1,TG-2,TG-3 | TG-0/SvA6,TG-1/SvA7,TG-3/Spanska |  | /'],                -- the teacher
+    -- Q, the other school's pupil in its SvA7 and, by the row that points
+    -- across, in this school's: the arms' school checks keep TG-2 (joined
+    -- to Q's SvA7 by a row of Q's school) and TG-1's SvA7 row out.
+    ['00000000-0000-4000-8000-000000001408', 'TG-9 | TG-2/SvA7 annan,TG-9/SvA7 annan | TG annan | SvA7,SvA7 annan/TG-2,TG-9',
+                                             'TG-9 | TG-2/SvA7 annan,TG-9/SvA7 annan |  | SvA7,SvA7 annan/TG-2,TG-9']];
+BEGIN
+  IF coalesce(current_setting('app.test_tg_l1', true), '') = '' OR coalesce(current_setting('app.test_tg_l9', true), '') = ''
+     OR coalesce(current_setting('app.test_tg_l0', true), '') = '' OR coalesce(current_setting('app.test_tg_sva9', true), '') = '' THEN
+    RAISE EXCEPTION 'joined group: the fixture schools did not resolve; fixtures did not run';
+  END IF;
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    IF current_user <> via THEN RAISE EXCEPTION 'joined group: could not act as %', via; END IF;
+    FOR i IN 1 .. array_length(cases, 1) LOOP
+      PERFORM set_config('request.jwt.claims', json_build_object('sub', cases[i][1])::text, true);
+      seen := pg_temp.tg_reads(via = 'app_authenticated');
+      expected := CASE via WHEN 'app_authenticated' THEN cases[i][2] ELSE cases[i][3] END;
+      IF seen IS DISTINCT FROM expected THEN
+        RAISE EXCEPTION 'joined group: % (%) as % reads "%", not "%"', cases[i][1], app.current_user_role(), via, seen, expected;
+      END IF;
+    END LOOP;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+END $$;
+
+-- A login with a row at each school (Flera skolor, 20261204090000) reads
+-- what its row at the named school reads: the API names it in the setting
+-- app.chosen_school_id, PostgREST in the x-school-id header; named nowhere,
+-- the row that took the login first, here this school's.
+DO $$
+DECLARE
+  via text;
+  i int;
+  seen text;
+  expected text;
+  named text;
+  school text;
+  -- authId; the school named ('' none, 'S1' this school, 'S2' the other);
+  -- what the API reads; what PostgREST reads.
+  cases constant text[][] := ARRAY[
+    ['00000000-0000-4000-8000-000000001414', '',   'TG-1 | TG-1/SvA7 | TG ett | SvA7/TG-1', 'TG-1 | TG-1/SvA7 |  | SvA7/TG-1'],
+    ['00000000-0000-4000-8000-000000001414', 'S1', 'TG-1 | TG-1/SvA7 | TG ett | SvA7/TG-1', 'TG-1 | TG-1/SvA7 |  | SvA7/TG-1'],
+    ['00000000-0000-4000-8000-000000001414', 'S2', 'TG-9 | TG-2/SvA7 annan,TG-9/SvA7 annan | TG annan | /',
+                                                   'TG-9 | TG-2/SvA7 annan,TG-9/SvA7 annan |  | /'],            -- M1: the teacher there
+    ['00000000-0000-4000-8000-000000001415', '',   'TG-1 | TG-1/SvA7 | TG ett | SvA7/TG-1', 'TG-1 | TG-1/SvA7 |  | SvA7/TG-1'],
+    ['00000000-0000-4000-8000-000000001415', 'S1', 'TG-1 | TG-1/SvA7 | TG ett | SvA7/TG-1', 'TG-1 | TG-1/SvA7 |  | SvA7/TG-1'],
+    ['00000000-0000-4000-8000-000000001415', 'S2', 'TG-9 | TG-2/SvA7 annan,TG-9/SvA7 annan | TG annan | SvA7 annan/TG-2,TG-9',
+                                                   'TG-9 | TG-2/SvA7 annan,TG-9/SvA7 annan |  | SvA7 annan/TG-2,TG-9'],  -- M2: the pupil there
+    ['00000000-0000-4000-8000-000000001416', '',   ' |  |  | /', ' |  |  | /'],                                    -- M3: the guardian in SvA7 here
+    ['00000000-0000-4000-8000-000000001416', 'S1', ' |  |  | /', ' |  |  | /'],
+    ['00000000-0000-4000-8000-000000001416', 'S2', 'TG-9 | TG-2/SvA7 annan,TG-9/SvA7 annan | TG annan | SvA7 annan/TG-2,TG-9',
+                                                   'TG-9 | TG-2/SvA7 annan,TG-9/SvA7 annan |  | SvA7 annan/TG-2,TG-9']];
+BEGIN
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    IF current_user <> via THEN RAISE EXCEPTION 'joined group: could not act as %', via; END IF;
+    FOR i IN 1 .. array_length(cases, 1) LOOP
+      named := CASE cases[i][2] WHEN 'S1' THEN current_setting('app.test_tg_school') WHEN 'S2' THEN current_setting('app.test_tg_school9') ELSE '' END;
+      PERFORM set_config('request.jwt.claims', json_build_object('sub', cases[i][1])::text, true);
+      PERFORM set_config('app.chosen_school_id', CASE WHEN via = 'app_authenticated' THEN named ELSE '' END, true);
+      PERFORM set_config('request.headers', CASE WHEN via = 'authenticated' AND named <> '' THEN json_build_object('x-school-id', named)::text ELSE '' END, true);
+      school := app.current_school_id()::text;
+      expected := coalesce(nullif(named, ''), current_setting('app.test_tg_school'));
+      IF school IS DISTINCT FROM expected THEN
+        RAISE EXCEPTION 'joined group: % naming "%" as % resolved to school %', cases[i][1], cases[i][2], via, school;
+      END IF;
+      seen := pg_temp.tg_reads(via = 'app_authenticated');
+      expected := CASE via WHEN 'app_authenticated' THEN cases[i][3] ELSE cases[i][4] END;
+      IF seen IS DISTINCT FROM expected THEN
+        RAISE EXCEPTION 'joined group: % naming "%" (%) as % reads "%", not "%"', cases[i][1], cases[i][2], app.current_user_role(), via, seen, expected;
+      END IF;
+    END LOOP;
+  END LOOP;
+  PERFORM set_config('app.chosen_school_id', '', true);
+  PERFORM set_config('request.headers', '', true);
+  SET LOCAL ROLE app_authenticated;
 END $$;
 ROLLBACK;
