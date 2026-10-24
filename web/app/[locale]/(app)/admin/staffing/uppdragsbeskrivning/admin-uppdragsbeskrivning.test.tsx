@@ -5,6 +5,7 @@ import { AdminUppdragsbeskrivning } from "./admin-uppdragsbeskrivning";
 
 const state = vi.hoisted(() => ({
   teachers: [] as unknown[],
+  supervision: null as unknown,
   dutyArgs: [] as unknown[][],
   historyArgs: [] as unknown[][],
   history: { isSuccess: true, isError: false, data: { entries: [] as unknown[], truncated: false } } as Record<string, unknown>,
@@ -23,7 +24,7 @@ vi.mock("@/lib/queries", () => ({
 }));
 vi.mock("@/lib/staffing-queries", () => ({
   useStaffingLoad: () => ({
-    data: { loadModel: "MINUTES", teachers: state.teachers },
+    data: { loadModel: "MINUTES", teachers: state.teachers, supervision: state.supervision },
     isLoading: false,
     isError: false,
   }),
@@ -61,6 +62,15 @@ describe("the admin's uppdragsbeskrivning", () => {
     state.historyArgs = [];
     state.history = { isSuccess: true, isError: false, data: { entries: [], truncated: false } };
     state.teachers = [{ ...uppdragLoad, userId: "t-bo", employment: { ...uppdragLoad.employment!, userId: "t-bo", signature: "BOA" } }];
+  });
+
+  it("prints the asked teacher's passes in the rastvaktsschema, and no other teacher's", () => {
+    state.teachers = [uppdragLoad];
+    state.supervision = { teachers: [{ userId: "t-anna", shiftCount: 1, minutesPerWeek: 45, countedMinutesPerWeek: 0, peakMinutesPerWeek: 45, hoursPerYear: 28.5, ramMinutesPerWeek: null, ramCountedMinutesPerWeek: 0 }, { userId: "t-bo", shiftCount: 3, minutesPerWeek: 60, countedMinutesPerWeek: 0, peakMinutesPerWeek: 60, hoursPerYear: 38, ramMinutesPerWeek: 60, ramCountedMinutesPerWeek: 0 }] };
+    render(<AdminUppdragsbeskrivning teacherId="t-anna" yearId="y1" />);
+    expect(screen.getByText("uppdrag.supervisionLine(1|45)")).toBeInTheDocument();
+    expect(screen.queryByText("uppdrag.supervisionLine(3|60)")).not.toBeInTheDocument();
+    state.supervision = null;
   });
 
   it("never falls back to another teacher's row when the asked one is missing (C18)", () => {

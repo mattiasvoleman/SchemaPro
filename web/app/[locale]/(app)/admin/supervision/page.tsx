@@ -102,8 +102,8 @@ export default function SupervisionPage() {
 
   /**
    * A teacher by name, "(inaktiv)" after one the register has deactivated:
-   * their pass is still on the schedule and watches nothing (the gateway
-   * counts no deactivated teacher's pass as cover).
+   * the teacher lists and the dialog's select. A pass in the grid says from
+   * when instead (inactiveFrom): it watches until the day before.
    */
   const nameOf = useMemo(() => {
     const byId = new Map(
@@ -114,6 +114,11 @@ export default function SupervisionPage() {
     );
     return (userId: string) => byId.get(userId) ?? userId.slice(0, 8);
   }, [people, t]);
+  /** A teacher's name alone, for a sentence that says their state itself. */
+  const plainName = (userId: string) => {
+    const person = people?.find((row) => row.id === userId);
+    return person ? `${person.firstName} ${person.lastName}` : userId.slice(0, 8);
+  };
   /** Surname order, as every list of people in the app: the index of each person in it. */
   const order = useMemo(() => new Map(sortByPersonName(people ?? []).map((person, index) => [person.id, index])), [people]);
   /** Who may be given a pass: the school's active staff, by surname. The edited pass keeps its own teacher, whatever they are now. */
@@ -158,15 +163,20 @@ export default function SupervisionPage() {
     }
   };
 
-  const saveShift = async (body: ShiftBody) => {
+  /** The pass as the gateway stored it: the dialog says when it runs during a lesson. */
+  const saveShift = async (body: ShiftBody): Promise<SupervisionShift | undefined> => {
     const editing = shiftDialog?.shift ?? null;
     if (editing) {
-      await shiftMutations.update.mutateAsync({ id: editing.id, ...body });
+      const saved = await shiftMutations.update.mutateAsync({ id: editing.id, ...body });
       toast.success(t("shift.saved"));
-    } else if (scope.yearId) {
-      await shiftMutations.create.mutateAsync({ academicYearId: scope.yearId, ...body });
-      toast.success(t("shift.created"));
+      return saved;
     }
+    if (scope.yearId) {
+      const created = await shiftMutations.create.mutateAsync({ academicYearId: scope.yearId, ...body });
+      toast.success(t("shift.created"));
+      return created;
+    }
+    return undefined;
   };
   /** After a delete the control that opened the dialog is gone: focus goes to the page's own add button. */
   const deleted = useRef<"shift" | "area" | null>(null);
@@ -263,20 +273,37 @@ export default function SupervisionPage() {
                         : shift.validTo
                           ? t("grid.to", { date: shift.validTo })
                           : null;
-                  return { name: nameOf(shift.userId), dates };
+                  // A deactivated teacher's pass watches until the day before: the
+                  // day says from when the break is unwatched.
+                  const name = shift.inactiveFrom
+                    ? t("grid.inactiveFrom", { name: plainName(shift.userId), date: shift.inactiveFrom })
+                    : nameOf(shift.userId);
+                  const lessons =
+                    shift.lessonClashes.length > 0
+                      ? t("grid.duringLesson", {
+                          lessons: shift.lessonClashes.map((lesson) => `${lesson.subject} ${lesson.group}`).join(", "),
+                        })
+                      : null;
+                  return { name, dates, lessons };
                 };
                 const pass = (shift: SupervisionShift, withTime: boolean) => {
-                  const { name, dates } = passLabel(shift);
-                  // The button's name says what its text says, the dates too.
+                  const { name, dates, lessons } = passLabel(shift);
+                  // The button's name says what its text says, the dates and a lesson too.
                   const label =
                     t("grid.edit", { name, day: dayName(shift.dayOfWeek), start: clockOf(shift.startTime), end: clockOf(shift.endTime) }) +
-                    (dates ? `, ${dates}` : "");
+                    (dates ? `, ${dates}` : "") +
+                    (lessons ? `, ${lessons}` : "");
                   const time = withTime ? t("grid.passTime", { start: clockOf(shift.startTime), end: clockOf(shift.endTime) }) : null;
                   const text = (
                     <>
                       <span className="font-medium">{name}</span>
                       {time ? <span className="block text-xs text-muted-foreground tabular-nums">{time}</span> : null}
                       {dates ? <span className="block text-xs text-muted-foreground">{dates}</span> : null}
+                      {lessons ? (
+                        <span className="block text-xs font-medium text-warning-foreground dark:text-warning print:text-warning-foreground dark:print:text-warning-foreground">
+                          {lessons}
+                        </span>
+                      ) : null}
                     </>
                   );
                   return (
@@ -353,7 +380,9 @@ export default function SupervisionPage() {
                                 return (
                                   <TableCell key={day} className={short ? "align-top bg-warning/10" : "align-top"}>
                                     {short ? (
-                                      <span className="mb-1 block text-xs font-medium text-warning-foreground dark:text-warning">{t("grid.short")}</span>
+                                      <span className="mb-1 block text-xs font-medium text-warning-foreground dark:text-warning print:text-warning-foreground dark:print:text-warning-foreground">
+                                        {t("grid.short")}
+                                      </span>
                                     ) : null}
                                     <ul className="space-y-1">
                                       {shifts.map((shift) =>
@@ -513,6 +542,7 @@ export default function SupervisionPage() {
         seed={shiftDialog?.seed ?? {}}
         areas={areas}
         teachers={staffFor(shiftDialog?.shift?.userId ?? null)}
+        plainName={plainName}
         shifts={rota?.shifts ?? []}
         weekdays={weekdays}
         year={rota?.year ?? null}

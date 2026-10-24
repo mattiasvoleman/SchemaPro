@@ -11,9 +11,12 @@ import { TEACHERS } from "./world";
  * and the dining hall at lunch with two on duty. Bo watches the yard on
  * Mondays until the jullov, which is the Rastvakt uppdrag of 30 minutes
  * staffing-rows.ts gives him, now his ram; Cecilia the hall Monday to
- * Thursday; the Tuesday yard and Friday's lunch are short, so the gaps card,
- * the grid's marked cells, a dated pass, a pass in no break and the
- * teachers' card are all on the page for the a11y gate. The gateway resolves
+ * Thursday; Anna, the teacher persona, the hall on Fridays, during her
+ * Swedish with 7A (a lesson clash, as the gateway names it); the Tuesday
+ * yard and Friday's lunch are short, so the gaps card, the grid's marked
+ * cells, a dated pass, a pass in no break, a pass during a lesson and the
+ * teachers' card are all on the page for the a11y gate, and Anna's own
+ * tjänst and uppdragsbeskrivning carry a rastvakt line. The gateway resolves
  * the breaks; the stub states them as it would.
  */
 
@@ -31,7 +34,7 @@ export const SUPERVISION_AREAS: SupervisionArea[] = [
     duringLunch: true,
     guardsNeeded: 2,
     countsAsTeaching: false,
-    shiftCount: 4,
+    shiftCount: 5,
   },
   {
     id: garden,
@@ -59,14 +62,20 @@ const shift = (n: number, areaId: string, userId: string, dayOfWeek: number, sta
     validFrom: null,
     validTo: null,
     note: null,
+    inactiveFrom: null,
+    lessonClashes: [],
     ...rest,
   });
 
 const SHIFTS = [
-  shift(1, garden, TEACHERS.bo.id, 1, "09:10", "09:25", { validTo: `${AUTUMN_YEAR}-12-18` }),
+  // Until the jullov: the last Monday before it.
+  shift(1, garden, TEACHERS.bo.id, 1, "09:10", "09:25", { validTo: `${AUTUMN_YEAR}-12-14` }),
   // The entrance before the day, in no break of the yard's.
   shift(2, garden, TEACHERS.bo.id, 3, "07:45", "08:00", { note: "Entrén" }),
   ...[1, 2, 3, 4].map((day) => shift(2 + day, hall, TEACHERS.cecilia.id, day, "11:30", "12:15")),
+  shift(7, hall, TEACHERS.anna.id, 5, "11:30", "12:15", {
+    lessonClashes: [{ subject: "Svenska", group: "7A", dayOfWeek: 5, startTime: "11:00", endTime: "12:00" }],
+  }),
 ];
 
 const brk = (areaId: string, dayOfWeek: number, startTime: string, endTime: string, names: string[], needed: number, shiftIds: string[]): SupervisionBreak => ({
@@ -113,8 +122,7 @@ export function supervisionRota(year: AcademicYear, current: boolean): Supervisi
     ? [
         gap(garden, 1, "09:10", "09:25", ["Förmiddagsrast"], 1, 0, `${AUTUMN_YEAR}-12-19`),
         ...[2, 3, 4, 5].map((day) => gap(garden, day, "09:10", "09:25", ["Förmiddagsrast"], 1, 0, year.startDate)),
-        ...[1, 2, 3, 4].map((day) => gap(hall, day, "11:30", "12:15", ["Lunch"], 2, 1, year.startDate)),
-        gap(hall, 5, "11:30", "12:15", ["Lunch"], 2, 0, year.startDate),
+        ...[1, 2, 3, 4, 5].map((day) => gap(hall, day, "11:30", "12:15", ["Lunch"], 2, 1, year.startDate)),
       ]
     : breaks.map((row) => ({
         ...row,
@@ -137,14 +145,28 @@ export function supervisionRota(year: AcademicYear, current: boolean): Supervisi
       ? [
           { userId: TEACHERS.bo.id, shiftCount: 2, minutesPerWeek: 22, countedMinutesPerWeek: 0, peakMinutesPerWeek: 30, hoursPerYear: 9.3, ramMinutesPerWeek: 12, ramCountedMinutesPerWeek: 0 },
           { userId: TEACHERS.cecilia.id, shiftCount: 4, minutesPerWeek: 180, countedMinutesPerWeek: 0, peakMinutesPerWeek: 180, hoursPerYear: 114, ramMinutesPerWeek: null, ramCountedMinutesPerWeek: 0 },
+          ANNA_LINE,
         ]
       : [],
   };
 }
 
-/** Bo's line in the load: the rastvaktsschema's part of his uppdrag. */
+/** Anna's Friday lunch, all year and no ram: her own tjänst and uppdragsbeskrivning show it. */
+const ANNA_LINE = {
+  userId: TEACHERS.anna.id,
+  shiftCount: 1,
+  minutesPerWeek: 45,
+  countedMinutesPerWeek: 0,
+  peakMinutesPerWeek: 45,
+  hoursPerYear: 28.5,
+  ramMinutesPerWeek: null,
+  ramCountedMinutesPerWeek: 0,
+};
+
+/** Bo's and Anna's lines in the load: the rastvaktsschema's part of their uppdrag. */
 export const SUPERVISION_LOAD = {
   teachers: [
     { userId: TEACHERS.bo.id, shiftCount: 2, minutesPerWeek: 22, countedMinutesPerWeek: 0, peakMinutesPerWeek: 30, hoursPerYear: 9.3, ramMinutesPerWeek: 12, ramCountedMinutesPerWeek: 0 },
+    ANNA_LINE,
   ],
 };

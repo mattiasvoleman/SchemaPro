@@ -66,6 +66,8 @@ const shiftRow = (id: string, userId: string, dayOfWeek: number, startTime: stri
   validFrom: null,
   validTo: null,
   note: null,
+  inactiveFrom: null,
+  lessonClashes: [],
   ...rest,
 });
 const ROTA: SupervisionRota = {
@@ -74,10 +76,10 @@ const ROTA: SupervisionRota = {
   areas: [GARDEN],
   shifts: [
     shiftRow("s1", "anna", 1, "10:00", "10:20"),
-    shiftRow("s2", "bo", 3, "10:00", "10:10", { validFrom: "2027-01-07" }),
+    shiftRow("s2", "bo", 3, "10:00", "10:10", { validFrom: "2027-01-13" }),
     shiftRow("bus", "bo", 5, "15:00", "15:15"),
-    // Cilla has left: her Thursday is listed and watches nothing.
-    shiftRow("s3", "cilla", 4, "10:00", "10:20"),
+    // Cilla left in January: her Thursday is listed and watches until the day before.
+    shiftRow("s3", "cilla", 4, "10:00", "10:20", { inactiveFrom: "2027-01-11" }),
   ],
   breaks: [brk(1, ["s1"]), brk(2), brk(3, ["s2"]), brk(4, ["s3"]), brk(5)],
   gaps: [
@@ -185,13 +187,13 @@ describe("SupervisionPage", () => {
     // Bo's Wednesday pass is shorter than the break and dated: both are said.
     expect(cells[2]).toHaveTextContent("Bo Ek");
     expect(cells[2]).toHaveTextContent("grid.passTime(10:00|10:10)");
-    expect(cells[2]).toHaveTextContent("grid.from(2027-01-07)");
-    // A deactivated teacher's pass is listed as theirs, and the break is short.
-    expect(cells[3]).toHaveTextContent("grid.inactive(Cilla Ås)");
+    expect(cells[2]).toHaveTextContent("grid.from(2027-01-13)");
+    // A deactivated teacher's pass is listed as theirs, from when it stopped watching, and the break is short.
+    expect(cells[3]).toHaveTextContent("grid.inactiveFrom(Cilla Ås|2027-01-11)");
     expect(cells[3]).toHaveTextContent("grid.short");
     expect(screen.getByText("grid.other")).toBeInTheDocument();
     // Each pass's button says the pass, dates included.
-    expect(screen.getByRole("button", { name: "grid.edit(Bo Ek|dayName(3)|10:00|10:10), grid.from(2027-01-07)" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "grid.edit(Bo Ek|dayName(3)|10:00|10:10), grid.from(2027-01-13)" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "grid.edit(Bo Ek|dayName(5)|15:00|15:15)" })).toBeInTheDocument();
   });
 
@@ -274,9 +276,111 @@ describe("SupervisionPage", () => {
     await user.keyboard("{Escape}");
     await user.click(within(dialog).getByRole("button", { name: "cancel" }));
 
-    await user.click(screen.getByRole("button", { name: "grid.edit(grid.inactive(Cilla Ås)|dayName(4)|10:00|10:20)" }));
+    await user.click(screen.getByRole("button", { name: "grid.edit(grid.inactiveFrom(Cilla Ås|2027-01-11)|dayName(4)|10:00|10:20)" }));
     dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByRole("combobox", { name: "teacher" })).toHaveTextContent("grid.inactive(Cilla Ås)");
+    // The dialog says from when her pass stopped watching, by her name alone.
+    expect(within(dialog).getByText("inactiveNotice(Cilla Ås|2027-01-11)")).toBeInTheDocument();
+  });
+
+  it("says a pass of a teacher deactivated before it began watches nothing, and keeps quiet about one that ended before", async () => {
+    state.rota = {
+      ...ROTA,
+      shifts: ROTA.shifts.map((row) =>
+        row.id === "s3" ? { ...row, validFrom: "2027-02-04" } : row.id === "s1" ? { ...row, validTo: "2026-12-14", inactiveFrom: "2027-01-11" } : row,
+      ),
+    };
+    const user = userEvent.setup();
+    render(<SupervisionPage />);
+    await user.click(screen.getByRole("button", { name: /^grid\.edit\(grid\.inactiveFrom\(Cilla Ås\|2027-01-11\)\|dayName\(4\)/ }));
+    let dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("inactiveNoticeNever(Cilla Ås|2027-01-11)")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "cancel" }));
+    await user.click(screen.getByRole("button", { name: /^grid\.edit\(grid\.inactiveFrom\(Anna Lind\|2027-01-11\)\|dayName\(1\)/ }));
+    dialog = await screen.findByRole("dialog");
+    expect(within(dialog).queryByText(/inactiveNotice/)).not.toBeInTheDocument();
+  });
+
+  it("moves a stored pass's dates to the new weekday within their week", async () => {
+    state.rota = {
+      ...ROTA,
+      shifts: ROTA.shifts.map((row) => (row.id === "s1" ? { ...row, validFrom: "2027-01-11", validTo: "2027-03-01" } : row)),
+    };
+    const user = userEvent.setup();
+    render(<SupervisionPage />);
+    await user.click(screen.getByRole("button", { name: /^grid\.edit\(Anna Lind\|dayName\(1\)/ }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("combobox", { name: "day" }));
+    await user.click(await screen.findByRole("option", { name: "3" }));
+    expect([within(dialog).getByLabelText(/validFrom/), within(dialog).getByLabelText(/validTo/)].map((field) => (field as HTMLInputElement).value)).toEqual([
+      "2027-01-13",
+      "2027-03-03",
+    ]);
+  });
+
+  it("marks a pass during the teacher’s lesson in the grid, and says it when the pass is opened", async () => {
+    const lesson = { subject: "Matematik", group: "8A", dayOfWeek: 1, startTime: "10:00", endTime: "11:00" };
+    state.rota = { ...ROTA, shifts: ROTA.shifts.map((row) => (row.id === "s1" ? { ...row, lessonClashes: [lesson] } : row)) };
+    const user = userEvent.setup();
+    render(<SupervisionPage />);
+    const monday = within(within(grid()).getByRole("row", { name: /10:00–10:20/ })).getAllByRole("cell")[0]!;
+    expect(monday).toHaveTextContent("grid.duringLesson(Matematik 8A)");
+    await user.click(screen.getByRole("button", { name: "grid.edit(Anna Lind|dayName(1)|10:00|10:20), grid.duringLesson(Matematik 8A)" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("lessonClashTitle")).toBeInTheDocument();
+    expect(within(dialog).getByText("lessonClashItem(Matematik|8A|dayName(1)|10:00|11:00)")).toBeInTheDocument();
+  });
+
+  it("keeps the dialog open to say a saved pass runs during the teacher’s lesson", async () => {
+    mutations.createShift.mockResolvedValue({
+      ...shiftRow("new", "bo", 2, "10:00", "10:20"),
+      lessonClashes: [{ subject: "Svenska", group: "7A", dayOfWeek: 2, startTime: "09:40", endTime: "10:40" }],
+    });
+    const user = userEvent.setup();
+    render(<SupervisionPage />);
+    await user.click(screen.getByRole("button", { name: "add(Skolgården|dayName(2)|10:00)" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("combobox", { name: "teacher" }));
+    await user.click(await screen.findByRole("option", { name: "Bo Ek" }));
+    await user.click(within(dialog).getByRole("button", { name: "save" }));
+    expect(mutations.createShift).toHaveBeenCalled();
+    expect(await within(dialog).findByText("lessonClashSavedTitle")).toBeInTheDocument();
+    expect(within(dialog).getByText("lessonClashItem(Svenska|7A|dayName(2)|09:40|10:40)")).toBeInTheDocument();
+    // The footer's Stäng has focus (the dialog's own corner button is the other one).
+    const closers = within(dialog).getAllByRole("button", { name: "close" });
+    expect(closers).toContain(document.activeElement);
+    await user.click(document.activeElement as HTMLElement);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("says the gateway’s refusal of a field beside it and puts focus there", async () => {
+    mutations.updateShift.mockRejectedValue(
+      new ApiError(400, "validTo: ingen måndag ligger mellan 2027-06-08 och 2027-06-11, så passet skulle aldrig gå."),
+    );
+    const user = userEvent.setup();
+    render(<SupervisionPage />);
+    await user.click(screen.getByRole("button", { name: "grid.edit(Anna Lind|dayName(1)|10:00|10:20)" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "save" }));
+    const till = within(dialog).getByLabelText(/validTo/);
+    expect(await within(dialog).findByText("ingen måndag ligger mellan 2027-06-08 och 2027-06-11, så passet skulle aldrig gå.")).toBeInTheDocument();
+    expect(till).toHaveFocus();
+    expect(till).toHaveAttribute("aria-invalid", "true");
+    expect(within(dialog).queryByText("saveFailed")).not.toBeInTheDocument();
+  });
+
+  it("says where a typed date is not the pass’s weekday when the pass first runs, and sends that day", async () => {
+    const user = userEvent.setup();
+    render(<SupervisionPage />);
+    await user.click(screen.getByRole("button", { name: "add(Skolgården|dayName(2)|10:00)" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("combobox", { name: "teacher" }));
+    await user.click(await screen.findByRole("option", { name: "Bo Ek" }));
+    // A Tuesday pass from Thursday 7 January runs first on the 12th.
+    await user.type(within(dialog).getByLabelText(/validFrom/), "2027-01-07");
+    expect(within(dialog).getByText("firstRun(2027-01-12)")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "save" }));
+    expect(mutations.createShift).toHaveBeenCalledWith(expect.objectContaining({ validFrom: "2027-01-12" }));
   });
 
   it("edits a pass with its id and every field, and removes one after asking", async () => {
@@ -315,7 +419,27 @@ describe("SupervisionPage", () => {
     await user.click(within(dialog).getByRole("combobox", { name: "teacher" }));
     await user.click(await screen.findByRole("option", { name: "Bo Ek" }));
     await user.click(within(dialog).getByRole("button", { name: "save" }));
+    // At the teacher, where the clash is, not above the form.
     expect(await within(dialog).findByText("errors.SUPERVISION_SHIFT_CLASH")).toBeInTheDocument();
+    expect(within(dialog).getByRole("combobox", { name: "teacher" })).toHaveFocus();
+    expect(within(dialog).getByRole("combobox", { name: "teacher" })).toHaveAttribute("aria-invalid", "true");
+    expect(within(dialog).queryByText("saveFailed")).not.toBeInTheDocument();
+  });
+
+  it("says a name another area has beside the name, and puts focus there", async () => {
+    state.has = true;
+    mutations.createArea.mockRejectedValue(new ApiError(409, "Skolan har redan…", "SUPERVISION_AREA_NAME_TAKEN"));
+    const user = userEvent.setup();
+    render(<SupervisionPage />);
+    await user.click(screen.getByRole("button", { name: "areas.add" }));
+    const dialog = await screen.findByRole("dialog");
+    // The field says the name is the school's, sites included.
+    expect(within(dialog).getByText("nameHint")).toBeInTheDocument();
+    await user.type(within(dialog).getByLabelText(/name/), "Skolgården");
+    await user.click(within(dialog).getByRole("button", { name: "save" }));
+    expect(await within(dialog).findByText("errors.SUPERVISION_AREA_NAME_TAKEN")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText(/name/)).toHaveFocus();
+    expect(within(dialog).getByLabelText(/name/)).toHaveAttribute("aria-invalid", "true");
   });
 
   it("adds an area with the defaults, and says an empty name rather than greying the button", async () => {
@@ -326,7 +450,7 @@ describe("SupervisionPage", () => {
     await user.click(within(dialog).getByRole("button", { name: "save" }));
     expect(within(dialog).getByText("nameMissing")).toBeInTheDocument();
     expect(mutations.createArea).not.toHaveBeenCalled();
-    await user.type(within(dialog).getByLabelText("name"), "Matsalen");
+    await user.type(within(dialog).getByLabelText(/name/), "Matsalen");
     await user.click(within(dialog).getByRole("button", { name: "save" }));
     expect(mutations.createArea).toHaveBeenCalledWith({
       name: "Matsalen",

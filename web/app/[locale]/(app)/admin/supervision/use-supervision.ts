@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import { STAFFING_KEYS } from "@/lib/staffing-keys";
 import type { SupervisionArea, SupervisionRota, SupervisionShift } from "@/lib/supervision";
 
@@ -79,6 +79,24 @@ function useInvalidate() {
     );
 }
 
+/**
+ * A refusal that says the page is behind — a clash with a pass saved
+ * meanwhile (409), an area, pass or teacher gone or changed (409, 404) —
+ * reads the schedule again before the dialog says it, so the dialog's own
+ * clash question then names the other pass.
+ */
+function useInvalidateOnRefusal() {
+  const invalidate = useInvalidate();
+  const queryClient = useQueryClient();
+  return (error: unknown) => {
+    if (!(error instanceof ApiError) || (error.status !== 409 && error.status !== 404)) return undefined;
+    // A teacher deactivated meanwhile leaves the dialog's list with the people read again.
+    const people =
+      error.code === "SUPERVISION_TEACHER_INACTIVE" ? [queryClient.invalidateQueries({ queryKey: ["people"] })] : [];
+    return Promise.all([invalidate(), ...people]);
+  };
+}
+
 export function useAreaMutations() {
   const invalidate = useInvalidate();
   const create = useMutation({
@@ -99,15 +117,18 @@ export function useAreaMutations() {
 
 export function useShiftMutations() {
   const invalidate = useInvalidate();
+  const refused = useInvalidateOnRefusal();
   const create = useMutation({
     mutationFn: (body: ShiftBody & { academicYearId: string }) =>
       api.post<SupervisionShift>("/api/v1/supervision-shifts", body),
     onSuccess: invalidate,
+    onError: refused,
   });
   const update = useMutation({
     mutationFn: ({ id, ...body }: ShiftBody & { id: string }) =>
       api.patch<SupervisionShift>(`/api/v1/supervision-shifts/${id}`, body),
     onSuccess: invalidate,
+    onError: refused,
   });
   const remove = useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/supervision-shifts/${id}`),
