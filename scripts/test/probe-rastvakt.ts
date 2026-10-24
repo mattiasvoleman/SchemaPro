@@ -18,7 +18,15 @@
  *         under RLS: the admin's report charges each teacher their passes and
  *         drops a ram the passes cover, a teacher's own report (the `_count`
  *         and the join as a TEACHER) carries their line and nobody else's,
- *         and a pupil cannot be made of a teacher who holds a pass.
+ *         and a pupil cannot be made of a teacher who holds a pass;
+ *   rv-d  the schedule's one statement (areas, passes and each teacher's
+ *         state) and the lessons a pass runs during, through the adapter:
+ *         the teacher's lesson is named beside the pass, and a teacher
+ *         deactivated today is so from the school's date, gets no new pass,
+ *         and their own pass can still be ended.
+ *
+ * And in rv-a, the dates a pass is stored with are on its weekday: a typed
+ * Friday Till is the Wednesday before, a Tuesday Från the Wednesday after.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -29,7 +37,11 @@ import { Role } from '../../src/auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
 import type { PrismaService } from '../../src/database/prisma.service';
 import { StaffingLoadService } from '../../src/staffing/staffing-load.service';
-import { SUPERVISION_SHIFT_CLASH, SupervisionService } from '../../src/supervision/supervision.service';
+import {
+  SUPERVISION_SHIFT_CLASH,
+  SUPERVISION_TEACHER_INACTIVE,
+  SupervisionService,
+} from '../../src/supervision/supervision.service';
 import type { SupabaseAdminService } from '../../src/users/supabase-admin.service';
 import { UsersService } from '../../src/users/users.service';
 
@@ -89,7 +101,7 @@ export async function rastvaktChecks(owner: Client, api: PrismaService, marker: 
     const hall = await supervision.createArea({ name: 'Rv Matsalen', duringRasts: false, duringLunch: true, countsAsTeaching: true }, asAdmin);
     // Anna on the yard every Monday 10:00–10:20, and in the hall on autumn Wednesdays.
     await supervision.createShift({ academicYearId: year, areaId: garden.id, userId: anna.id, dayOfWeek: 1, startTime: '10:00', endTime: '10:20' }, asAdmin);
-    await supervision.createShift(
+    const autumn = await supervision.createShift(
       { academicYearId: year, areaId: hall.id, userId: anna.id, dayOfWeek: 3, startTime: '11:30', endTime: '12:00', validTo: '2030-12-20' },
       asAdmin,
     );
@@ -107,6 +119,9 @@ export async function rastvaktChecks(owner: Client, api: PrismaService, marker: 
         (error: unknown) => codeOf(error) === SUPERVISION_SHIFT_CLASH,
       );
       const january = await supervision.createShift({ ...clash, dayOfWeek: 3, startTime: '11:45', endTime: '12:15', validFrom: '2031-01-07' }, asAdmin);
+      // Stored on the Wednesday: Till Friday 20 December is the 18th, Från Tuesday 7 January the 8th.
+      assert.equal(autumn.validTo, '2030-12-18');
+      assert.equal(january.validFrom, '2031-01-08');
       const after = await supervision.createShift({ ...clash, startTime: '10:20', endTime: '10:40' }, asAdmin);
       assert.deepEqual([after.startTime, after.endTime], ['10:20', '10:40']);
       // Past the question, the table: the same 409 from the driver's 23P01.
@@ -170,6 +185,54 @@ export async function rastvaktChecks(owner: Client, api: PrismaService, marker: 
         users.update(anna.id, { role: Role.STUDENT } as never, asAdmin),
         /2 rastvaktspass finns registrerade/,
       );
+    });
+
+    await check('(rv-d) the schedule’s one statement and the lessons a pass runs during come through the adapter, and a teacher deactivated today is so from the school’s date', async () => {
+      // A lesson of Anna's, Mondays 10:00–11:00: her Monday on the yard runs during it.
+      const subject = (
+        await one<{ id: string }>(
+          `INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES ($1, 'Rv Matematik', 'RVMA', now()) RETURNING id`,
+          [s],
+        )
+      ).id;
+      const group = (
+        await one<{ id: string }>(
+          `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt") VALUES ($1, $2, 'Rv 8A', 8, now()) RETURNING id`,
+          [s, year],
+        )
+      ).id;
+      await owner.query(
+        `INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+         VALUES ($1, $2, $3, $4, $5, 1, '10:00', '11:00', now())`,
+        [s, year, subject, group, anna.id],
+      );
+      const rota = await supervision.rota(year, asAdmin);
+      const monday = rota.shifts.find((row) => row.userId === anna.id && row.dayOfWeek === 1)!;
+      assert.deepEqual(monday.lessonClashes, [{ subject: 'Rv Matematik', group: 'Rv 8A', dayOfWeek: 1, startTime: '10:00', endTime: '11:00' }]);
+      assert.deepEqual([monday.startTime, monday.endTime, monday.validFrom, monday.inactiveFrom], ['10:00', '10:20', null, null]);
+      assert.deepEqual(
+        rota.areas.map((area) => [area.name, area.shiftCount]),
+        [
+          ['Rv Matsalen', 1],
+          ['Rv Skolgården', 1],
+        ],
+      );
+      // Bo is deactivated today.
+      const tuesday = await supervision.createShift(
+        { academicYearId: year, areaId: garden.id, userId: bo.id, dayOfWeek: 2, startTime: '10:00', endTime: '10:20' },
+        asAdmin,
+      );
+      await owner.query(`UPDATE "Users" SET "isActive" = false, "updatedAt" = now() WHERE id = $1`, [bo.id]);
+      const today = (await one<{ day: string }>(`SELECT (now() AT TIME ZONE 'Europe/Stockholm')::date::text AS day`)).day;
+      const after = await supervision.rota(year, asAdmin);
+      assert.equal(after.shifts.find((row) => row.id === tuesday.id)!.inactiveFrom, today);
+      await assert.rejects(
+        supervision.createShift({ academicYearId: year, areaId: garden.id, userId: bo.id, dayOfWeek: 4, startTime: '10:00', endTime: '10:20' }, asAdmin),
+        (error: unknown) => codeOf(error) === SUPERVISION_TEACHER_INACTIVE,
+      );
+      // His own pass is ended all the same, on its weekday.
+      const ended = await supervision.updateShift(tuesday.id, { validTo: '2031-01-16' }, asAdmin);
+      assert.deepEqual([ended.validTo, ended.inactiveFrom], ['2031-01-14', today]);
     });
   } finally {
     await sweepRastvaktSchool(owner, marker);

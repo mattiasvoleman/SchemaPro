@@ -40,7 +40,8 @@ const shift = {
   startTime: time('10:00'),
   endTime: time('10:20'),
   validFrom: null,
-  validTo: day('2026-12-18'),
+  // The Friday typed below, stored as the pass's last Monday.
+  validTo: day('2026-12-14'),
   note: null,
   createdAt: new Date(),
   updatedAt: new Date(),
@@ -60,7 +61,7 @@ describe('Rastvaktsschema (e2e)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     harness.tx['$executeRaw']!.mockResolvedValue(1);
-    Object.assign(harness.tx, { $queryRaw: jest.fn() });
+    Object.assign(harness.tx, { $queryRaw: jest.fn().mockResolvedValue([]) });
   });
 
   afterEach(() => {
@@ -134,11 +135,14 @@ describe('Rastvaktsschema (e2e)', () => {
       startTime: '10:00',
       endTime: '10:20',
       validFrom: null,
-      validTo: '2026-12-18',
+      validTo: '2026-12-14',
       note: null,
+      inactiveFrom: null,
+      lessonClashes: [],
     });
+    // Till Friday 18 December is the pass's last Monday, the 14th.
     expect(harness.tx['supervisionShift']!['create']).toHaveBeenCalledWith({
-      data: expect.objectContaining({ schoolId: SCHOOL_ID, startTime: time('10:00'), validTo: day('2026-12-18') }),
+      data: expect.objectContaining({ schoolId: SCHOOL_ID, startTime: time('10:00'), validTo: day('2026-12-14') }),
     });
 
     harness.tx['supervisionShift']!['findUnique']!.mockResolvedValue(shift);
@@ -152,8 +156,30 @@ describe('Rastvaktsschema (e2e)', () => {
     expect(moved.body).toMatchObject({ startTime: '10:00', endTime: '10:30' });
 
     harness.tx['academicYear']!['findUnique']!.mockResolvedValue({ startDate: day('2026-08-17'), endDate: day('2027-06-11') });
-    harness.tx['supervisionArea']!['findMany']!.mockResolvedValue([{ ...area, _count: { shifts: 1 } }]);
-    harness.tx['supervisionShift']!['findMany']!.mockResolvedValue([shift]);
+    // The areas, their passes and the teachers' state: the rota's one statement.
+    queryRaw.mockResolvedValueOnce([
+      {
+        areaId: GARDEN,
+        name: area.name,
+        siteId: null,
+        minGradeLevel: null,
+        maxGradeLevel: null,
+        duringRasts: true,
+        duringLunch: false,
+        guardsNeeded: 1,
+        countsAsTeaching: false,
+        shiftCount: 1,
+        shiftId: SHIFT,
+        userId: ANNA,
+        dayOfWeek: 1,
+        startTime: shift.startTime,
+        endTime: shift.endTime,
+        validFrom: null,
+        validTo: shift.validTo,
+        note: null,
+        inactiveFrom: null,
+      },
+    ]);
     harness.tx['rast']!['findMany']!.mockResolvedValue([
       { name: 'Förmiddagsrast', minGradeLevel: 0, maxGradeLevel: 6, dayOfWeek: null, startTime: time('10:00'), endTime: time('10:20') },
     ]);
@@ -176,7 +202,7 @@ describe('Rastvaktsschema (e2e)', () => {
       needed: 1,
       shiftIds: [SHIFT],
     });
-    // Mondays after the pass's Till (a Friday), the first and the last of them;
+    // Mondays after the pass's Till, the first and the last of them;
     // Tuesday to Friday all year.
     expect(rota.body.gaps[0]).toMatchObject({
       dayOfWeek: 1,

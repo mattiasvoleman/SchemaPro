@@ -76,11 +76,13 @@ export interface CoverageShift {
   id: string;
   areaId: string;
   /**
-   * A pass of a deactivated teacher: listed beside its break, watching
-   * nothing. The register deactivates a leaver rather than deleting them,
-   * and a break they watched is unwatched from then.
+   * The day a deactivated teacher was deactivated (yyyy-mm-dd, the school's
+   * date), absent for an active one. The register deactivates a leaver
+   * rather than deleting them: their pass stays listed beside its break and
+   * watches until the day before, so the break is unwatched from that day —
+   * not over the autumn they did watch.
    */
-  inactive?: boolean;
+  inactiveFrom?: string;
   dayOfWeek: number;
   /** Minutes from midnight. */
   start: number;
@@ -284,6 +286,18 @@ function fewestOver(
 const runsThrough = (pass: CoverageShift, from: string, to: string) =>
   (pass.validFrom === null || pass.validFrom <= from) && (pass.validTo === null || pass.validTo >= to);
 
+/**
+ * A pass as it watches: a deactivated teacher's ends the day before they
+ * were deactivated, or watches nothing when that is before it starts.
+ */
+function asWatching(pass: CoverageShift, year: YearBounds): CoverageShift | null {
+  if (pass.inactiveFrom === undefined) return pass;
+  const lastDay = addDays(pass.inactiveFrom, -1);
+  const validTo = pass.validTo === null || pass.validTo > lastDay ? lastDay : pass.validTo;
+  if (validTo < (pass.validFrom ?? year.startDate)) return null;
+  return { ...pass, validTo };
+}
+
 /** The year cut at every date one of the passes starts or stops. */
 function stretchesOf(passes: readonly CoverageShift[], year: YearBounds): { from: string; to: string }[] {
   const cuts = new Set([year.startDate, addDays(year.endDate, 1)]);
@@ -304,7 +318,10 @@ export function supervisionCoverage(input: CoverageInput): Coverage {
       const windows = breaksOfDay(input, area, dayOfWeek);
       if (windows.length === 0) continue;
       const passes = input.shifts.filter((shift) => shift.areaId === area.id && shift.dayOfWeek === dayOfWeek);
-      const stretches = stretchesOf(passes, input.year);
+      const watching = passes
+        .map((pass) => asWatching(pass, input.year))
+        .filter((pass): pass is CoverageShift => pass !== null);
+      const stretches = stretchesOf(watching, input.year);
       for (const window of windows) {
         breaks.push({
           areaId: area.id,
@@ -320,7 +337,7 @@ export function supervisionCoverage(input: CoverageInput): Coverage {
         let open: CoverageGap | null = null;
         for (const stretch of stretches) {
           if (!holdsASchoolDay(area, input.closures, dayOfWeek, stretch.from, stretch.to)) continue;
-          const running = passes.filter((pass) => !pass.inactive && runsThrough(pass, stretch.from, stretch.to));
+          const running = watching.filter((pass) => runsThrough(pass, stretch.from, stretch.to));
           const short = fewestOver(running, window.start, window.end);
           if (short.fewest >= area.guardsNeeded) {
             open = null;

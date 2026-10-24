@@ -510,6 +510,47 @@ describe('StaffingLoadService', () => {
       });
     });
 
+    it('hands a year without a pass its uppdrag exactly as before: no kind, no added key, the same order', async () => {
+      // main's readLoadInput mapped each row to { userId, minutesPerWeek,
+      // countsAsTeaching } and the dates only when dated; the kind the ram
+      // needs must not reach the load where no pass is.
+      tx.teacherDuty.findMany.mockResolvedValue([
+        { userId: ME, kind: 'RASTVAKT', minutesPerWeek: 60, countsAsTeaching: false, validFrom: null, validTo: null },
+        {
+          userId: ME,
+          kind: 'MENTORSKAP',
+          minutesPerWeek: 90,
+          countsAsTeaching: true,
+          validFrom: new Date('2026-08-17T00:00:00.000Z'),
+          validTo: new Date('2026-12-18T00:00:00.000Z'),
+        },
+      ]);
+      const read = await readLoadInput(tx as unknown as PrismaClient, testUser(), YEAR_ID, SCHOOL_ID);
+      const before = [
+        { userId: ME, minutesPerWeek: 60, countsAsTeaching: false },
+        { userId: ME, minutesPerWeek: 90, countsAsTeaching: true, validFrom: '2026-08-17', validTo: '2026-12-18' },
+      ];
+      expect(read!.input.duties).toStrictEqual(before);
+      expect(JSON.stringify(read!.input.duties)).toBe(JSON.stringify(before));
+      expect(read!.supervision).toBeNull();
+      expect(tx.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it('charges a deactivated teacher’s passes until the day before they were deactivated, as the schedule watches them', async () => {
+      arrangeSchedule();
+      // ME was deactivated on Monday 11 January 2027: the autumn's weeks only.
+      tx.$queryRaw.mockResolvedValue([
+        { userId: ME, startTime: t('10:00'), endTime: t('10:20'), validFrom: null, validTo: null, countsAsTeaching: false, inactiveFrom: new Date('2027-01-11T00:00:00.000Z') },
+      ]);
+      const report = await service.load(YEAR_ID, 'planned', testUser());
+      const [strings] = tx.$queryRaw.mock.calls[0]! as [readonly string[]];
+      expect(strings.join('?')).toMatch(/AT TIME ZONE[\s\S]*LEFT JOIN "Users" u/);
+      const line = report.supervision!.teachers.find((row) => row.userId === ME)!;
+      // Fewer hours than a whole year's 20 a week, and the ram counted again in the spring.
+      expect(line.hoursPerYear).toBeLessThan(10);
+      expect(line.ramCountedMinutesPerWeek).toBeGreaterThan(0);
+    });
+
     it('answers a teacher their own line alone', async () => {
       arrangeSchedule();
       const own = await service.load(YEAR_ID, 'planned', testUser({ role: Role.TEACHER }));

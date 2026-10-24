@@ -50,6 +50,20 @@ export interface LoadShift {
   countsAsTeaching: boolean;
 }
 
+/**
+ * A pass as the load charges it: a deactivated teacher's runs until the day
+ * before they were deactivated (`inactiveFrom`, the school's date), as it
+ * watches in supervision-coverage.ts, and is no pass at all when that is
+ * before it starts. Null for the latter.
+ */
+export function chargedShift(shift: LoadShift, inactiveFrom: string | null, year: YearBounds): LoadShift | null {
+  if (inactiveFrom === null) return shift;
+  const lastDay = dayBefore(inactiveFrom);
+  const validTo = shift.validTo === null || shift.validTo > lastDay ? lastDay : shift.validTo;
+  if (validTo < (shift.validFrom ?? year.startDate)) return null;
+  return { ...shift, validTo };
+}
+
 /** An uppdrag as readLoadInput reads it: the load's fields and its kind. */
 export interface KindedDuty extends LoadDuty {
   kind: TeacherDutyKind;

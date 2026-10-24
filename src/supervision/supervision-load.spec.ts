@@ -1,5 +1,5 @@
 import { buildTeacherLoadReport, type LoadInput } from '../staffing/teacher-load';
-import { supervisionOfTeachers, withSupervision, type KindedDuty, type LoadShift } from './supervision-load';
+import { chargedShift, supervisionOfTeachers, withSupervision, type KindedDuty, type LoadShift } from './supervision-load';
 
 /**
  * Rastvakt in the load (Rastvaktsschema, 20261207090000). The year is the
@@ -108,6 +108,21 @@ describe('withSupervision', () => {
   });
 });
 
+describe('chargedShift', () => {
+  it('charges a deactivated teacher’s pass until the day before, as it watches, and not at all when that is before it starts', () => {
+    const monday = shift('anna', '10:00', '10:20');
+    expect(chargedShift(monday, null, YEAR)).toBe(monday);
+    expect(chargedShift(monday, '2026-09-21', YEAR)).toEqual({ ...monday, validTo: '2026-09-20' });
+    // Its own Till first when earlier.
+    expect(chargedShift({ ...monday, validTo: '2026-09-14' }, '2026-09-21', YEAR)).toEqual({ ...monday, validTo: '2026-09-14' });
+    expect(chargedShift(monday, '2026-09-07', YEAR)).toBeNull();
+    expect(chargedShift({ ...monday, validFrom: '2026-09-28' }, '2026-09-21', YEAR)).toBeNull();
+    // Two of the year's four weeks, and the ram counts again from the week of the 21st.
+    const [line] = supervisionOfTeachers(DUTIES, [chargedShift(monday, '2026-09-21', YEAR)!], YEAR, []);
+    expect(line).toMatchObject({ hoursPerYear: 0.7, ramCountedMinutesPerWeek: 30 });
+  });
+});
+
 describe('supervisionOfTeachers', () => {
   it('states nothing for a year without a pass', () => {
     expect(supervisionOfTeachers(DUTIES, [], YEAR, [])).toEqual([]);
@@ -127,6 +142,22 @@ describe('supervisionOfTeachers', () => {
         ramCountedMinutesPerWeek: 0,
       },
     ]);
+  });
+
+  it('charges a pass stored on its weekday for the one week it runs, and releases the ram only then', () => {
+    // The review's case: a Monday pass of 20 minutes typed Tuesday 15 to
+    // Monday 21 September runs only on the 21st. As typed it would touch two
+    // weeks; the service stores it as the 21st to the 21st (on its weekday).
+    const typed = [shift('anna', '10:00', '10:20', { validFrom: '2026-09-15', validTo: '2026-09-21' })];
+    const stored = [shift('anna', '10:00', '10:20', { validFrom: '2026-09-21', validTo: '2026-09-21' })];
+    const [asTyped] = supervisionOfTeachers(DUTIES, typed, YEAR, []);
+    const [asStored] = supervisionOfTeachers(DUTIES, stored, YEAR, []);
+    // 20 minutes once: a third of an hour, not two thirds.
+    expect(asStored).toMatchObject({ shiftCount: 1, hoursPerYear: 0.3, peakMinutesPerWeek: 20 });
+    expect(asTyped).toMatchObject({ hoursPerYear: 0.7 });
+    // The ram counts three weeks of four, not two.
+    expect(asStored!.ramCountedMinutesPerWeek).toBe(45);
+    expect(asTyped!.ramCountedMinutesPerWeek).toBe(30);
   });
 
   it('weighs dated passes and the ram they leave by the weeks each runs', () => {
