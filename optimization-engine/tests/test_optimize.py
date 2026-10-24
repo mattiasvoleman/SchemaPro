@@ -2941,17 +2941,17 @@ def _two_day_week(
 
 
 @pytest.mark.parametrize(
-    ("lengths", "cap", "day_minutes", "extra", "held_back"),
+    ("lengths", "cap", "day_minutes", "extra", "held_back", "summary"),
     [
-        ([60, 60, 45], 2, 90, {}, False),
-        ([60, 60, 60, 60], 2, 120, {}, False),
-        ([60, 60, 60], 1, 120, {}, True),
-        ([45, 15, 15, 15, 15], 3, 60, {}, False),
-        ([45, 15, 15, 15, 15], 2, 60, {}, True),
-        ([30, 30, 30], 1, 75, {"after": 15}, False),
-        ([30, 30, 30], 1, 90, {"after": 15}, True),
-        ([30, 30, 30], 1, 60, {"locked": True}, False),
-        ([30, 30, 30, 30], 1, 90, {"teacher_locked": True}, False),
+        ([60, 60, 45], 2, 90, {}, False, "DEMAND_LESSONS_EXCEED_GAPS"),
+        ([60, 60, 60, 60], 2, 120, {}, False, "CONFLICT_CORE_SUMMARY"),
+        ([60, 60, 60], 1, 120, {}, True, "CONFLICT_CORE_SUMMARY"),
+        ([45, 15, 15, 15, 15], 3, 60, {}, False, "CONFLICT_CORE_SUMMARY"),
+        ([45, 15, 15, 15, 15], 2, 60, {}, True, "CONFLICT_CORE_SUMMARY"),
+        ([30, 30, 30], 1, 75, {"after": 15}, False, "CONFLICT_CORE_SUMMARY"),
+        ([30, 30, 30], 1, 90, {"after": 15}, True, "CONFLICT_CORE_SUMMARY"),
+        ([30, 30, 30], 1, 60, {"locked": True}, False, "DEMAND_LESSONS_EXCEED_GAPS"),
+        ([30, 30, 30], 1, 105, {"after": 15, "teacher_locked": True}, False, "CONFLICT_CORE_SUMMARY"),
     ],
     ids=[
         "no day holds two, at any maximum",
@@ -2967,6 +2967,7 @@ def _two_day_week(
 )
 def test_a_group_is_blamed_on_the_maximum_only_where_it_fits_without_it(
     lengths: list[int], cap: int, day_minutes: int, extra: dict[str, object], held_back: bool,
+    summary: str,
 ) -> None:
     """The review's three false accusations, and the true ones beside them.
 
@@ -2981,15 +2982,21 @@ def test_a_group_is_blamed_on_the_maximum_only_where_it_fits_without_it(
     in 90, which the count of the lessons' own time does not see and the
     group's solve does; and a class locked for its first half hour of each
     hour-long day has one half hour left, which no start domain carries.
-    Four of half an hour on two days of 90, the teacher locked elsewhere for
-    every other quarter hour of Monday, fit Tuesday's three and none of
-    Monday's quarter hours, whatever the maximum. Only the teacher's locks
-    in the group's own solve see that. The teacher's minutes fit the 135 the
-    week leaves them, so the hours verdict, which counts minutes and not
-    pieces, lets the week through to the model (a week whose teacher's
-    minutes do not fit never reaches this solve, so it would test nothing).
-    The week stays impossible without the maximum (the post), so what is
-    measured is the maximum on its own.
+    Three of half an hour with a quarter hour after each, on two days of
+    105, the teacher locked elsewhere for every other quarter hour of
+    Monday: Monday's quarter hours take none of them and Tuesday two,
+    whatever the maximum, and without the locks each day would take two.
+    Only the teacher's locks in the group's own solve see that. A week
+    refused before any model never reaches this solve and would test
+    nothing, so this one is let through by both counts made before it: the
+    teacher's minutes fit the 135 the week leaves them, and the gaps take
+    the lessons' own minutes, three on Tuesday, with the pupils' quarter
+    hours left out (_teacher_hours_verdict, _lesson_gaps_verdict). Two of
+    the "at any maximum" weeks are refused by the gaps before the model:
+    a day of 90 minutes takes one of an hour and 45 minutes, and a day the
+    class's lock leaves half an hour takes one half hour. The maximum is
+    not named there either. The week stays impossible without the maximum
+    (the post), so what is measured is the maximum on its own.
     """
     payload, settings, group = _two_day_week(lengths, cap, day_minutes, **extra)  # type: ignore[arg-type]
     client = TestClient(create_app(_settings(SOLVER_PROBE_SECONDS=5, **settings)))
@@ -2997,7 +3004,7 @@ def test_a_group_is_blamed_on_the_maximum_only_where_it_fits_without_it(
     body = client.post("/api/v1/optimize", json=payload, headers=_HEADERS).json()
 
     assert body["status"] == "INFEASIBLE", body
-    assert body["conflicts"]["summaryCode"] == "CONFLICT_CORE_SUMMARY", body["conflicts"]
+    assert body["conflicts"]["summaryCode"] == summary, body["conflicts"]
     named = _daily_maximum_lines(body)
     if held_back:
         assert body["conflicts"]["conflicts"][0] == named[0]
@@ -8366,16 +8373,21 @@ def test_the_model_refuses_by_name_when_the_arithmetic_cannot() -> None:
     cannot be: the stretch is open, nothing is reserved, and whether a class
     can be taught in it depends on who gets the only room — which is the
     solver's decision, not arithmetic. Two classes, one room, one stretch that
-    holds a single lesson, and both classes with a lesson stranded after the
-    break. One of them must break the rule.
+    holds a single lesson, and each class with one lesson: one of them is
+    taught after the break with nothing before it, and breaks the rule.
 
     So the model does the refusing, and the assumption literal is what makes it
     sayable: without one the core comes back empty or made of unrelated rows,
     and a school is told its timetable is impossible for sentences it did not
     write.
+
+    One lesson each and not two. With two, the room's three hours around the
+    break took three of the four lessons whatever the rule said, so the week
+    was impossible with every literal released and the rule's line in its
+    core was one it did not need; the gaps say that now, before the model.
     """
     payload = _ordering_payload(
-        [_rast("09:40", "10:00", asks=True)], lessons_per_week=2, frame_end="12:00:00",
+        [_rast("09:40", "10:00", asks=True)], lessons_per_week=1, frame_end="12:00:00",
     )
     first = payload["groups"][0]["id"]  # type: ignore[index]
     second = str(uuid4())

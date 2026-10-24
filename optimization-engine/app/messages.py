@@ -264,6 +264,82 @@ MESSAGES: dict[str, str] = {
         "the frame times, the rasts, the margins around the lessons and the teacher's locked "
         "lessons leave them at most {capacityMinutes}."
     ),
+    # SchedulerSolver._lesson_gaps_verdict: lessons are taught whole, one in a
+    # gap at a time, and the gaps a teacher, a student group or a set of rooms
+    # is left with do not take them. `resources` counts the lines below it.
+    "DEMAND_LESSONS_EXCEED_GAPS": (
+        "Too many lessons for the gaps: a lesson is taught whole, in one stretch, and "
+        "for {resources, plural, one {one teacher, student group or set of rooms} "
+        "other {# teachers, student groups or sets of rooms}} the gaps that the school "
+        "day, the frame times, the rasts, the margins around the lessons, the locked "
+        "lessons and the lunch leave cannot take the lessons named here. No rule has "
+        "to give way; the gaps do. Widen the frame times, shorten the margins, unlock "
+        "a lesson, move the lunch window, or shorten, move or share out some of the "
+        "lessons."
+    ),
+    # The lines under it, one per student group, teacher or set of rooms. The
+    # lessons counted are those of `shortestMinutes` or more that can fall
+    # only on `days` of the week's `weekDays`. `shortOf` says what gave out:
+    # "nowhere" when they fit no gap at all (`days` is 0), "lessons" when
+    # there are more of them than the gaps take (`fitLessons`), else "minutes",
+    # when whole lessons fill at most `capacityMinutes` of them.
+    "DEMAND_GROUP_LESSONS_EXCEED_GAPS": (
+        "Student group {group} has {lessons, plural, one {# lesson} other {# lessons}} "
+        "of {shortestMinutes} minutes or more in {requirements, plural, one {# "
+        "requirement} other {# requirements}}, {demandMinutes} minutes in all. "
+        "{shortOf, select, nowhere {No gap that the school day, the frame times, the "
+        "rasts, the margins around the lessons, the locked lessons and the group's "
+        "lunch leave on the week's {weekDays} days takes {lessons, plural, one {it} "
+        "other {any of them}} whole.} lessons {On {days, plural, one {the one day} "
+        "other {the # days}} of the week's {weekDays} they can fall on, the school "
+        "day, the frame times, the rasts, the margins around the lessons, the locked "
+        "lessons and the group's lunch leave gaps that take at most {fitLessons} of "
+        "them.} other {On {days, plural, one {the one day} other {the # days}} of the "
+        "week's {weekDays} they can fall on, the school day, the frame times, the "
+        "rasts, the margins around the lessons, the locked lessons and the group's "
+        "lunch leave gaps that take at most {capacityMinutes} of those minutes in "
+        "whole lessons.}}"
+    ),
+    # One teacher's requirements, in requirementIds and resourceIds, and never
+    # the teacher: see DEMAND_TEACHER_HOURS_SHORT.
+    "DEMAND_TEACHER_LESSONS_EXCEED_GAPS": (
+        "One teacher gives {lessons, plural, one {# lesson} other {# lessons}} of "
+        "{shortestMinutes} minutes or more in {requirements, plural, one {# "
+        "requirement} other {# requirements}}, {demandMinutes} minutes in all. "
+        "{shortOf, select, nowhere {No gap that the school day, the frame times, the "
+        "rasts, the margins around the lessons, the locked lessons and the classes' "
+        "lunch leave on the week's {weekDays} days takes {lessons, plural, one {it} "
+        "other {any of them}} whole.} lessons {On {days, plural, one {the one day} "
+        "other {the # days}} of the week's {weekDays} they can fall on, the school "
+        "day, the frame times, the rasts, the margins around the lessons, the locked "
+        "lessons and the classes' lunch leave gaps that take at most {fitLessons} of "
+        "them.} other {On {days, plural, one {the one day} other {the # days}} of the "
+        "week's {weekDays} they can fall on, the school day, the frame times, the "
+        "rasts, the margins around the lessons, the locked lessons and the classes' "
+        "lunch leave gaps that take at most {capacityMinutes} of those minutes in "
+        "whole lessons.}}"
+    ),
+    # The rooms in roomIds: every room the lessons counted may use, each taking
+    # one lesson at a time. Their requirements are in requirementIds and in
+    # resourceIds, which the page names, as the teacher's line does.
+    "DEMAND_ROOM_LESSONS_EXCEED_GAPS": (
+        "{rooms, plural, one {The one room these lessons may use takes} other {The # "
+        "rooms these lessons may use take}} one lesson at a time, and {lessons, "
+        "plural, one {# lesson} other {# lessons}} of {shortestMinutes} minutes or "
+        "more in {requirements, plural, one {# requirement} other {# requirements}} "
+        "need {demandMinutes} minutes in all. {shortOf, select, nowhere {No gap that "
+        "the school day, the frame times, the rasts, the margins around the lessons, "
+        "the locked lessons and the lunch leave on the week's {weekDays} days takes "
+        "{lessons, plural, one {it} other {any of them}} whole.} lessons {On {days, "
+        "plural, one {the one day} other {the # days}} of the week's {weekDays} they "
+        "can fall on, the school day, the frame times, the rasts, the margins around "
+        "the lessons, the locked lessons and the lunch leave gaps that take at most "
+        "{fitLessons} of them.} other {On {days, plural, one {the one day} other {the "
+        "# days}} of the week's {weekDays} they can fall on, the school day, the frame "
+        "times, the rasts, the margins around the lessons, the locked lessons and the "
+        "lunch leave gaps that take at most {capacityMinutes} of those minutes in "
+        "whole lessons.}}"
+    ),
     # The school rules' "Max lessons per day", which applies to every class and
     # teaching group on its own. One line for every group the core holds, the
     # groups in resourceIds, which the gateway names and the page lists.
