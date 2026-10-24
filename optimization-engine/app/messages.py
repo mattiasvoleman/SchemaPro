@@ -696,6 +696,16 @@ MESSAGES: dict[str, str] = {
         "entries of {other} have room for beside their own. Give the entries of {block} the "
         "teachers of {other}, or take a co-teacher off {other}."
     ),
+    # Refused by the gateway too (same-times.ts, delade lektioner): an entry of
+    # either block whose lessons are split between teachers. A leader entry
+    # holds one teacher for all its lessons, and the follower's lessons each
+    # have their own. `requirement` is the entry's name.
+    "BLOCK_SAME_TIMES_SPLIT_LESSONS": (
+        "{block} takes the times of {other}, and {requirement} has its lessons split between "
+        "teachers. A block on another block's times holds one teacher per entry for all its "
+        "lessons, so give the entry one teacher again, or delete {block} to place its lessons at "
+        "times of their own."
+    ),
     # Sent by the GATEWAY beside a hand edit that moved one member of a block
     # away from the others (master-lessons.service.ts, block-lessons.ts): a
     # warning, never a refusal. The lesson is the school's from then on, which

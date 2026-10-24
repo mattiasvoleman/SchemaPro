@@ -22,11 +22,12 @@ import { isWriteConflict } from '../common/utils/prisma-errors';
 import { gradeSpanOf, loadRosters, roomNeedsOf, type RoomNeeds } from './room-eligibility';
 import { fromNioarig, toNioarig, toNioarigSpan, type GradeNumbering } from '../common/grade-numbering';
 import { dayNumberingOf, yearNumberingOf } from '../common/year-numbering';
-import { coverLockedLessons } from './locked-coverage';
+import { coverLockedLessons, coverLockedSharedLessons } from './locked-coverage';
 import { judgeBlocks, partlyLockedRefusal } from './parallel-blocks';
 import {
   BLOCK_MEMBERS_SHARE_TEACHER,
   BLOCK_SAME_TIMES_DIFFER,
+  BLOCK_SAME_TIMES_SPLIT_LESSONS,
   mirrorLessons,
   planMirror,
   sameTimesLinks,
@@ -36,6 +37,7 @@ import {
   type SameTimesRow,
 } from './same-times';
 import { canonicalShape, lessonMinutesOf } from '../common/lesson-lengths';
+import { hasShares, lessonTeachersOf, type LessonShare } from '../common/lesson-shares';
 import { effectiveDistribution, hasDistributionRule, type DistributionRule } from '../common/subject-distribution';
 import { minutesOf } from '../common/solver-grid';
 import { lockedWeekdaySets, type YearSpan } from '../common/teacher-day';
@@ -261,6 +263,12 @@ export interface RegenerationRequirementRow {
   recurrence: LessonRecurrence;
   startDate: Date | null;
   endDate: Date | null;
+  /**
+   * Delade lektioner: the row's shares as this read found them, longest
+   * first. Absent on a row nobody shares. A write compares them with the
+   * ones its answer was asked for (RegenerationDemand.shareKey).
+   */
+  shares?: LessonShare[];
 }
 
 /** What an answer must place for one timplanspost, in real ids. */
@@ -269,6 +277,18 @@ export interface RegenerationDemand {
   lessonsPerWeek: number;
   /** A split remainder's lengths; the placed lengths must equal them. Absent when uniform. */
   lessonLengths?: number[];
+  /**
+   * Delade lektioner: each remaining lesson's teacher, as sent
+   * (lessonTeacherIds) in real ids; the placed lessons' teachers must be
+   * exactly these. Absent on every entry sent without the list.
+   */
+  lessonTeachers?: (string | null)[];
+  /**
+   * The row's shares as the fetch read them (shareKeyOf), present only on a
+   * shared row: a write whose rows say otherwise — shares changed while the
+   * solver ran — is answering another request.
+   */
+  shareKey?: string;
 }
 
 /** A placed lesson in real ids: what a candidate stores and an apply writes. */
@@ -280,6 +300,12 @@ export interface CandidateLesson {
   startTime: string;
   /** HH:MM */
   endTime: string;
+  /**
+   * Delade lektioner: the lesson's own teacher, null for one whose teacher was
+   * deleted. Only on a lesson of a post sent with lessonTeacherIds; every
+   * other lesson takes its post's teachers, as it always did.
+   */
+  teacherId?: string | null;
 }
 
 /**
@@ -293,6 +319,50 @@ interface ResolvedLesson {
   dayOfWeek: DayOfWeek;
   startTime: string;
   endTime: string;
+  /** See CandidateLesson.teacherId. */
+  teacherId?: string | null;
+}
+
+/**
+ * Delade lektioner: the posts sent with lessonTeacherIds, by anonymous id,
+ * and the teachers those lists name, anonymous → real — the one part of the
+ * teacher map an answer is turned back through. Not in AnonMaps, which keeps
+ * no teacher map at all (see there); empty for a school that shares nothing.
+ */
+export interface SplitLessons {
+  requirementIds: ReadonlySet<string>;
+  realTeacher: ReadonlyMap<string, string>;
+  /**
+   * A shared post sent without the list, its lessons left all one teacher's
+   * (the lead's locked, say): anonymous post → that teacher in real ids.
+   * Every lesson of it is that teacher's, which the engine is not asked to say.
+   */
+  soleTeacher: ReadonlyMap<string, string | null>;
+}
+
+const NO_SPLIT: SplitLessons = { requirementIds: new Set(), realTeacher: new Map(), soleTeacher: new Map() };
+
+/** The SplitLessons of a payload, through the fetch's teacher map. */
+function splitLessonsOf(
+  sent: readonly AnonymousRequirement[],
+  teacherAnonMap: ReadonlyMap<string, string>,
+  soleTeacher: ReadonlyMap<string, string | null>,
+): SplitLessons {
+  const split = sent.filter((requirement) => requirement.lessonTeacherIds !== undefined);
+  if (split.length === 0 && soleTeacher.size === 0) return NO_SPLIT;
+  const real = reversed(teacherAnonMap);
+  const realTeacher = new Map<string, string>();
+  for (const requirement of split) {
+    for (const anon of requirement.lessonTeacherIds ?? []) {
+      if (anon !== null && real.has(anon)) realTeacher.set(anon, real.get(anon)!);
+    }
+  }
+  return { requirementIds: new Set(split.map((requirement) => requirement.id)), realTeacher, soleTeacher };
+}
+
+/** A row's shares as one string, '' for none: what a write compares with its demand's. */
+export function shareKeyOf(shares: readonly LessonShare[] | undefined): string {
+  return (shares ?? []).map((share) => `${share.teacherId ?? '-'}:${share.lessons}x${share.minutes}`).join(',');
 }
 
 /** A preserved master as the fetch reads it, minus its named pupils. */
@@ -398,6 +468,8 @@ export interface PreparedSchedule {
   mirrors: Mirror[];
   /** The timplansposter as this fetch read them; an apply stamps its lessons from these. */
   requirementRows: RegenerationRequirementRow[];
+  /** Delade lektioner: the posts sent with their lessons' teachers (SplitLessons). */
+  splitLessons: SplitLessons;
   /** sha256 hex over the six parts (candidate-basis.ts). */
   basis: string;
   basisParts: BasisParts;
@@ -660,8 +732,12 @@ function checkAgainstDemand(
   const lengths = new Map(
     demand.flatMap((entry) => (entry.lessonLengths ? [[entry.requirementId, entry.lessonLengths] as const] : [])),
   );
+  const teachers = new Map(
+    demand.flatMap((entry) => (entry.lessonTeachers ? [[entry.requirementId, entry.lessonTeachers] as const] : [])),
+  );
   const placedBy = new Map<string, number>();
   const minutesBy = new Map<string, number[]>();
+  const teachersBy = new Map<string, (string | null)[]>();
   let unmatched = 0;
   let placed = 0;
   for (const lesson of lessons) {
@@ -677,7 +753,17 @@ function checkAgainstDemand(
       list.push(minutesOf(lesson.endTime) - minutesOf(lesson.startTime));
       minutesBy.set(id, list);
     }
+    if (teachers.has(id)) {
+      const list = teachersBy.get(id) ?? [];
+      list.push(lesson.teacherId ?? null);
+      teachersBy.set(id, list);
+    }
   }
+  // Delade lektioner: the same teachers as sent, as many lessons each.
+  const sameTeachers = (sent: readonly (string | null)[], got: readonly (string | null)[]): boolean => {
+    const key = (list: readonly (string | null)[]) => list.map((id) => id ?? '').sort().join(',');
+    return sent.length === got.length && key(sent) === key(got);
+  };
   const sameLengths = (sent: readonly number[], got: readonly number[]): boolean => {
     const a = [...sent].sort((x, y) => y - x);
     const b = [...got].sort((x, y) => y - x);
@@ -686,7 +772,8 @@ function checkAgainstDemand(
   const offTarget = [...wanted].filter(
     ([id, count]) =>
       (placedBy.get(id) ?? 0) !== count ||
-      (lengths.has(id) && !sameLengths(lengths.get(id)!, minutesBy.get(id) ?? [])),
+      (lengths.has(id) && !sameLengths(lengths.get(id)!, minutesBy.get(id) ?? [])) ||
+      (teachers.has(id) && !sameTeachers(teachers.get(id)!, teachersBy.get(id) ?? [])),
   ).length;
   const requested = [...wanted.values()].reduce((sum, count) => sum + count, 0);
   return { requested, placed, unmatched, offTarget };
@@ -704,12 +791,28 @@ function demandOf(
   sent: readonly AnonymousRequirement[],
   realRequirement: ReadonlyMap<string, string>,
   mirrors: readonly Mirror[],
+  /** SplitLessons.realTeacher: anonymous → real, for the lists sent. */
+  realTeacher: ReadonlyMap<string, string> = new Map(),
+  rows: readonly RegenerationRequirementRow[] = [],
 ): RegenerationDemand[] {
-  const demand: RegenerationDemand[] = sent.map((requirement) => ({
-    requirementId: realRequirement.get(requirement.id) ?? `unsent:${requirement.id}`,
-    lessonsPerWeek: requirement.lessonsPerWeek,
-    ...(requirement.lessonLengths ? { lessonLengths: requirement.lessonLengths } : {}),
-  }));
+  const sharesOf = new Map(rows.flatMap((row) => (row.shares && row.shares.length > 0 ? [[row.id, row.shares] as const] : [])));
+  const demand: RegenerationDemand[] = sent.map((requirement) => {
+    const requirementId = realRequirement.get(requirement.id) ?? `unsent:${requirement.id}`;
+    const shares = sharesOf.get(requirementId);
+    return {
+      requirementId,
+      lessonsPerWeek: requirement.lessonsPerWeek,
+      ...(requirement.lessonLengths ? { lessonLengths: requirement.lessonLengths } : {}),
+      ...(requirement.lessonTeacherIds
+        ? {
+            lessonTeachers: requirement.lessonTeacherIds.map((anon) =>
+              anon === null ? null : (realTeacher.get(anon) ?? `unsent:${anon}`),
+            ),
+          }
+        : {}),
+      ...(shares ? { shareKey: shareKeyOf(shares) } : {}),
+    };
+  });
   const byId = new Map(demand.map((entry) => [entry.requirementId, entry]));
   for (const mirror of mirrors) {
     const leader = byId.get(mirror.leaderId);
@@ -754,15 +857,28 @@ function resolveLessons(
   lessons: readonly AiEngineLesson[],
   requirementAnonMap: ReadonlyMap<string, string>,
   roomAnonMap: ReadonlyMap<string, string>,
+  split: SplitLessons = NO_SPLIT,
 ): ResolvedLesson[] {
   const realRequirement = reversed(requirementAnonMap);
   const realRoom = reversed(roomAnonMap);
+  const { requirementIds: splitIds, realTeacher, soleTeacher } = split;
   return lessons.map((lesson) => ({
     requirementId: realRequirement.get(lesson.requirementId) ?? null,
     roomId: lesson.roomId ? (realRoom.get(lesson.roomId) ?? null) : null,
     dayOfWeek: lesson.dayOfWeek,
     startTime: lesson.startTime,
     endTime: lesson.endTime,
+    // Delade lektioner: a lesson of a post sent with its teachers carries its
+    // own — null where the engine named none (that lesson's teacher was
+    // deleted), and an id this request never sent as one it cannot match.
+    ...(splitIds.has(lesson.requirementId)
+      ? {
+          teacherId:
+            lesson.teacherId === undefined ? null : (realTeacher.get(lesson.teacherId) ?? `unsent:${lesson.teacherId}`),
+        }
+      : soleTeacher.has(lesson.requirementId)
+        ? { teacherId: soleTeacher.get(lesson.requirementId)! }
+        : {}),
   }));
 }
 
@@ -923,6 +1039,7 @@ export class OptimizationProxyService {
         realisedLunches,
         prepared.headcountByGroup,
         prepared.draftIds,
+        prepared.splitLessons,
       ),
     );
 
@@ -1133,6 +1250,7 @@ export class OptimizationProxyService {
     );
 
     const realRequirement = reversed(data.requirementAnonMap);
+    const splitLessons = splitLessonsOf(data.requirements, data.teacherAnonMap, data.soleTeachers);
     return {
       ready: true,
       requestId,
@@ -1148,9 +1266,10 @@ export class OptimizationProxyService {
         dayOfWeek: row.dayOfWeek,
       })),
       headcountByGroup: data.headcountByGroup,
-      demand: demandOf(data.requirements, realRequirement, data.mirrors),
+      demand: demandOf(data.requirements, realRequirement, data.mirrors, splitLessons.realTeacher, data.requirementRows),
       mirrors: data.mirrors,
       requirementRows: data.requirementRows,
+      splitLessons,
       basis: basisOf(basisParts),
       basisParts,
       draftIds: sortedIds(draftLessons.map((lesson) => lesson.id)),
@@ -1263,7 +1382,7 @@ export class OptimizationProxyService {
     }
 
     const resolved = mirrorLessons(
-      resolveLessons(response.lessons, anonMaps.requirementAnonMap, anonMaps.roomAnonMap),
+      resolveLessons(response.lessons, anonMaps.requirementAnonMap, anonMaps.roomAnonMap, prepared.splitLessons),
       prepared.mirrors,
     );
     const verdict = checkAgainstDemand(
@@ -1285,6 +1404,9 @@ export class OptimizationProxyService {
         dayOfWeek: lesson.dayOfWeek,
         startTime: withoutSeconds(lesson.startTime),
         endTime: withoutSeconds(lesson.endTime),
+        // Only on a lesson of a shared post, so a candidate of a school that
+        // shares nothing is stored byte for byte as it always was.
+        ...(lesson.teacherId !== undefined ? { teacherId: lesson.teacherId } : {}),
       })),
       lunches: this.realiseLunches(response, anonMaps.groupAnonMap),
       conflicts,
@@ -1704,6 +1826,12 @@ export class OptimizationProxyService {
     subjectAnonMap: Map<string, string>;
     /** The timplansposter as read, for the lessons a write stamps from them. */
     requirementRows: RegenerationRequirementRow[];
+    /**
+     * Delade lektioner: a shared post sent WITHOUT lessonTeacherIds, because
+     * the lessons left to place have one teacher — anonymous post → that
+     * teacher, real id or null. Its lessons are that teacher's, not the lead's.
+     */
+    soleTeachers: Map<string, string | null>;
     /** The preserved, non-parked masters as read, without their named pupils. */
     preservedRows: PreservedLessonRow[];
     /** The läsår's numbering, for the refusals that echo a class span (yearGrades). */
@@ -1739,6 +1867,7 @@ export class OptimizationProxyService {
     // reason, and a second one beside it for whose post it is: see the read.
     const dayLimitAnonMap = new Map<string, string>();
     const dayLimitTeacherIds = new Map<string, string>();
+    const soleTeachers = new Map<string, string | null>();
 
     const anonId = (map: Map<string, string>, realId: string): string => {
       const existing = map.get(realId);
@@ -1778,6 +1907,13 @@ export class OptimizationProxyService {
         // anonymous id, and only for a block the engine can hold together —
         // see judgeBlocks.
         blockId: true,
+        // Delade lektioner: the lessons other teachers take. Each lesson is
+        // sent with its own teacher when the ones left to place have two or
+        // more (lessonTeacherIds); a row nobody shares sends what it did.
+        shares: {
+          select: { teacherId: true, lessons: true, minutes: true },
+          orderBy: [{ minutes: 'desc' }, { teacherId: 'asc' }],
+        },
         // Never forwarded — the engine has no notion of weeks. Read here
         // because the subtraction below compares a preserved lesson's weeks
         // against these, and stamped on the lessons the run produces so a
@@ -2104,7 +2240,7 @@ export class OptimizationProxyService {
     // period and cannot be answered until the requirement is in hand.
     const preservedByDemand = new Map<
       string,
-      (RecurrenceWindow & { dayOfWeek: number; startTime: Date; endTime: Date })[]
+      (RecurrenceWindow & { dayOfWeek: number; startTime: Date; endTime: Date; teacherId: string | null })[]
     >();
     for (const lesson of preservedLessons) {
       const key = `${lesson.studentGroupId}:${lesson.subjectId}`;
@@ -2119,10 +2255,26 @@ export class OptimizationProxyService {
     // every row before any is sent, because a block is judged over all its
     // members.
     const remainingOf = new Map<string, number[]>();
+    // Delade lektioner: on a shared row, the teacher of each lesson left, in
+    // remainingOf's order (coverLockedSharedLessons); absent on every other.
+    const teachersLeftOf = new Map<string, (string | null)[]>();
     for (const r of rawRequirements) {
       const covering = (
         preservedByDemand.get(`${r.studentGroupId}:${r.subjectId}`) ?? []
       ).filter((lesson) => coversDemand(lesson, r));
+      const shares = r.shares ?? [];
+      if (hasShares({ ...r, shares })) {
+        const left = coverLockedSharedLessons(
+          lessonTeachersOf({ ...r, shares }),
+          covering.map((lesson) => ({
+            minutes: lessonMinutes(lesson.startTime, lesson.endTime),
+            teacherId: lesson.teacherId ?? null,
+          })),
+        );
+        remainingOf.set(r.id, left.map((lesson) => lesson.minutes));
+        teachersLeftOf.set(r.id, left.map((lesson) => lesson.teacherId));
+        continue;
+      }
       remainingOf.set(
         r.id,
         coverLockedLessons(
@@ -2189,6 +2341,19 @@ export class OptimizationProxyService {
       const bySubject = plan ? rowById.get(plan.sameSubject.get(r.id) ?? '') : undefined;
       const byGroup = plan ? rowById.get(plan.sameGroup.get(r.id) ?? '') : undefined;
       const adults = plan?.adults.get(r.id) ?? { teacherId: r.teacherId, coTeacherId: r.coTeacherId };
+      // Delade lektioner: each lesson left with its own teacher. Two or more
+      // teachers send the list, and the scalar is its first; one sends that
+      // teacher alone — a share's, when the lead's lessons are all locked —
+      // and no list, the entry a post with one teacher always had. A shared
+      // post is never in a mirrored pair (BLOCK_SAME_TIMES_SPLIT_LESSONS), so
+      // `adults` is its own here.
+      const teachersLeft = teachersLeftOf.get(r.id);
+      const lessonTeacherIds =
+        teachersLeft && new Set(teachersLeft).size > 1
+          ? teachersLeft.map((id) => (id === null ? null : anonId(teacherAnonMap, id)))
+          : null;
+      const leadTeacher = teachersLeft ? teachersLeft[0]! : adults.teacherId;
+      if (teachersLeft && !lessonTeacherIds) soleTeachers.set(anonId(requirementAnonMap, r.id), leadTeacher);
       const needs = widerNeeds(
         roomNeedsOf(rosters, { groupIds: [r.studentGroupId] }, r.subject, numbering),
         bySubject ? roomNeedsOf(rosters, { groupIds: [bySubject.studentGroupId] }, bySubject.subject, numbering) : null,
@@ -2213,7 +2378,7 @@ export class OptimizationProxyService {
           id: anonId(requirementAnonMap, r.id),
           subjectId: anonId(subjectAnonMap, r.subjectId),
           studentGroupId: anonId(groupAnonMap, r.studentGroupId),
-          teacherId: adults.teacherId ? anonId(teacherAnonMap, adults.teacherId) : null,
+          teacherId: leadTeacher ? anonId(teacherAnonMap, leadTeacher) : null,
           lessonsPerWeek: remaining,
           // The longest REMAINING length: r.minutesPerLesson for a uniform
           // requirement, as before, and 40 for 1 × 80 + 1 × 40 with the 80
@@ -2241,6 +2406,7 @@ export class OptimizationProxyService {
             ? anonId(roomTypeAnonMap, needs.requiredRoomTypeId)
             : null,
           coTeacherId: adults.coTeacherId ? anonId(teacherAnonMap, adults.coTeacherId) : null,
+          ...(lessonTeacherIds ? { lessonTeacherIds } : {}),
         },
       ];
     });
@@ -2936,6 +3102,7 @@ export class OptimizationProxyService {
           : null,
       teacherAnonMap,
       subjectAnonMap,
+      soleTeachers,
       requirementRows: rawRequirements.map((r) => ({
         id: r.id,
         subjectId: r.subjectId,
@@ -2945,6 +3112,8 @@ export class OptimizationProxyService {
         recurrence: r.recurrence,
         startDate: r.startDate ?? null,
         endDate: r.endDate ?? null,
+        // Only when there are any: a row nobody shares is the object it always was.
+        ...((r.shares ?? []).length > 0 ? { shares: r.shares } : {}),
       })),
       // Named field by field: the participants' pupil ids stay in here.
       preservedRows: preservedLessons.map((lesson) => ({
@@ -3191,6 +3360,8 @@ export class OptimizationProxyService {
     headcountByGroup: Map<string, number>,
     /** The draft's own masters as the fetch saw them, sorted (prepareSchedule). */
     draftIds: readonly string[],
+    /** Delade lektioner: the posts sent with their lessons' teachers. */
+    splitLessons: SplitLessons = NO_SPLIT,
   ): Promise<TeachersOnDay[] | null> {
     // First, before anything is read: the publication lock and the mode
     // (publish-mode.ts). In DRAFT the regenerated grundschema is a draft.
@@ -3239,19 +3410,27 @@ export class OptimizationProxyService {
       // Fetch requirement details needed for the MasterLesson record. Read again
       // rather than carried from the fetch phase: the solver has been running in
       // between, and every other field written below comes from this same row.
-      const requirementRows = await tx.teachingRequirement.findMany({
-        where: { academicYearId },
-        select: {
-          id: true,
-          subjectId: true,
-          studentGroupId: true,
-          teacherId: true,
-          coTeacherId: true,
-          recurrence: true,
-          startDate: true,
-          endDate: true,
-        },
-      });
+      const requirementRows = (
+        await tx.teachingRequirement.findMany({
+          where: { academicYearId },
+          select: {
+            id: true,
+            subjectId: true,
+            studentGroupId: true,
+            teacherId: true,
+            coTeacherId: true,
+            recurrence: true,
+            startDate: true,
+            endDate: true,
+            // Delade lektioner: compared with the ones the answer was asked
+            // for, so shares changed while the solver ran refuse the write.
+            shares: {
+              select: { teacherId: true, lessons: true, minutes: true },
+              orderBy: [{ minutes: 'desc' }, { teacherId: 'asc' }],
+            },
+          },
+        })
+      ).map(({ shares, ...row }) => ({ ...row, ...((shares ?? []).length > 0 ? { shares } : {}) }));
 
       // The answer in real ids, each mirrored post's lessons written beside
       // its leader post's, judged against the demand by the shared write.
@@ -3261,7 +3440,7 @@ export class OptimizationProxyService {
         actorId: user.userId ?? null,
         mode,
         solverStatus: response.status,
-        lessons: mirrorLessons(resolveLessons(response.lessons, requirementAnonMap, roomAnonMap), mirrors),
+        lessons: mirrorLessons(resolveLessons(response.lessons, requirementAnonMap, roomAnonMap, splitLessons), mirrors),
         demand,
         requirementRows,
         lunches,
@@ -3338,6 +3517,15 @@ export class OptimizationProxyService {
      * as it always was, so no school that never splits meets a new 502.
      */
     const verdict = checkAgainstDemand(input.lessons, input.demand, new Set(rowById.keys()));
+    // Delade lektioner: the rows' shares must be the ones the answer was
+    // asked for. Equal ('' and '') for every row nobody shares, so a school
+    // that shares nothing meets no new refusal here; a row shared, unshared or
+    // shared differently while the solver ran is an answer to another request.
+    const sharesMoved = input.demand.some((entry) => {
+      const row = rowById.get(entry.requirementId);
+      return row !== undefined && (entry.shareKey ?? '') !== shareKeyOf(row.shares);
+    });
+    if (sharesMoved) verdict.offTarget += 1;
     if (verdict.unmatched > 0 || verdict.offTarget > 0) {
       this.logger.error(
         `Rejected AI engine solution [academicYearId=${academicYearId}, status=${input.solverStatus}, requestedLessons=${verdict.requested}, placedLessons=${verdict.placed}, unmatchedLessons=${verdict.unmatched}, requirementsOffTarget=${verdict.offTarget}]. Timetable left untouched.`,
@@ -3359,7 +3547,9 @@ export class OptimizationProxyService {
         academicYearId,
         subjectId: req.subjectId,
         studentGroupId: req.studentGroupId,
-        teacherId: req.teacherId ?? null,
+        // Delade lektioner: a lesson of a shared post is its own teacher's;
+        // every other lesson is its post's lead's, as it always was.
+        teacherId: lesson.teacherId !== undefined ? lesson.teacherId : (req.teacherId ?? null),
         coTeacherId: req.coTeacherId ?? null,
         roomId: lesson.roomId ?? null,
         dayOfWeek: lesson.dayOfWeek,
@@ -3692,6 +3882,7 @@ function sameTimesRowOf(row: {
   recurrence: LessonRecurrence;
   startDate: Date | null;
   endDate: Date | null;
+  shares?: readonly LessonShare[];
 }): SameTimesRow {
   return {
     id: row.id,
@@ -3705,6 +3896,7 @@ function sameTimesRowOf(row: {
     recurrence: row.recurrence,
     startDate: row.startDate ?? null,
     endDate: row.endDate ?? null,
+    ...((row.shares ?? []).length > 0 ? { shared: true } : {}),
   };
 }
 
@@ -3724,6 +3916,21 @@ function sameTimesRefusalOf(
   const name = (id: string): string => nameById.get(id) ?? id;
   const block = name(link.followerBlockId);
   const other = name(link.leaderBlockId);
+  if (judgement.code === BLOCK_SAME_TIMES_SPLIT_LESSONS) {
+    const params = { block, other, requirement: name(judgement.requirementId) };
+    return new HttpException(
+      {
+        message:
+          `${block} takes the times of ${other}, and ${params.requirement} has its lessons split between ` +
+          'teachers. A block on another block\'s times holds one teacher per entry for all its lessons, so give ' +
+          'the entry one teacher again, or delete ' +
+          `${block} to place its lessons at times of their own.`,
+        code: judgement.code,
+        params,
+      },
+      HttpStatus.BAD_REQUEST,
+    );
+  }
   if (judgement.code === BLOCK_MEMBERS_SHARE_TEACHER) {
     const params = { block, requirement: name(judgement.requirementId), other: name(judgement.otherId) };
     return new HttpException(

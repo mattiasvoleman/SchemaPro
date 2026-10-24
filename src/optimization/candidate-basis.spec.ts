@@ -234,9 +234,12 @@ const anonymised = (real: School, turn = 0): BasisSource => {
         teacherId: orNull(maps.teacher, r.teacherId),
         coTeacherId: orNull(maps.teacher, r.coTeacherId),
         requiredRoomType: orNull(maps.roomType, r.requiredRoomType),
-        ...(r.lessonLengths ? { lessonLengths: shuffled(r.lessonLengths, turn) } : {}),
+        // Shuffled as any list, except beside a list of teachers aligned with it.
+        ...(r.lessonLengths ? { lessonLengths: r.lessonTeacherIds ? r.lessonLengths : shuffled(r.lessonLengths, turn) } : {}),
         ...(r.lockedDays ? { lockedDays: shuffled(r.lockedDays, turn) } : {}),
         ...(r.blockId ? { blockId: anon(maps.block, r.blockId) } : {}),
+        // Aligned with the lessons, so never shuffled apart from them.
+        ...(r.lessonTeacherIds ? { lessonTeacherIds: r.lessonTeacherIds.map((id) => orNull(maps.teacher, id)) } : {}),
       })),
       turn,
     ),
@@ -444,6 +447,29 @@ describe('the candidate basis', () => {
     edit(changed);
 
     expect(changedParts(before, partsOf(changed, 1))).toEqual(expected);
+  });
+
+  it('delade lektioner: reads each lesson’s teacher in real ids, and moves when a share moves to another length', () => {
+    // 7B's idrott as 80 + 60 + 40, Bo the lead: Cilla takes the 40, or the 60.
+    // The same teachers, the same lead, the same lengths — only which lesson
+    // is whose differs, which a digest of the list alone would miss.
+    const shared = (teachers: string[]) => {
+      const real = school();
+      const idrott = real.payload.requirements.find((r) => r.id === 'req-id-7b')!;
+      Object.assign(idrott, {
+        coTeacherId: null,
+        teacherId: 't-bo',
+        lessonsPerWeek: 3,
+        minutesPerLesson: 80,
+        lessonLengths: [80, 60, 40],
+        lessonTeacherIds: teachers,
+      });
+      return real;
+    };
+    expect(partsOf(shared(['t-bo', 't-bo', 't-cilla']), 1)).toEqual(partsOf(shared(['t-bo', 't-bo', 't-cilla'])));
+    expect(
+      changedParts(partsOf(shared(['t-bo', 't-bo', 't-cilla'])), partsOf(shared(['t-bo', 't-cilla', 't-bo']), 1)),
+    ).toEqual(['requirements']);
   });
 
   it('reads a post’s day limit in real ids, whatever its anonymous id, and moves with its days and its locked weekdays', () => {

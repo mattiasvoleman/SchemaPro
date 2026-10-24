@@ -108,6 +108,20 @@ describe('timetableWith', () => {
     ]);
   });
 
+  it('delade lektioner: gives a shared post’s lesson its own teacher and the post’s medlärare', () => {
+    const BO = 'bo-share';
+    expect(timetableWith([], rows, [{ requirementId: 'req-ma', dayOfWeek: 4, teacherId: BO }])).toEqual([
+      { teacherId: BO, coTeacherId: OLLE, dayOfWeek: 4 },
+    ]);
+    // Eva's Thursday wish is kept: the lesson that day is Bo's.
+    expect(
+      unkeptFreeDayWishes(
+        [wish({ userId: EVA, day: 4 })],
+        timetableWith([], rows, [{ requirementId: 'req-ma', dayOfWeek: 4, teacherId: BO }]),
+      ),
+    ).toEqual([]);
+  });
+
   it('leaves out a lesson whose post it was not given, which the demand guard refuses before it is stored', () => {
     expect(timetableWith([], rows, [{ requirementId: 'req-gone', dayOfWeek: 5 }])).toEqual([]);
   });

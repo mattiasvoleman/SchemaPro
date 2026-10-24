@@ -108,6 +108,18 @@ export interface AnonymousRequirement {
   /** Optional second teacher scheduled together with the lead (co-teaching). */
   coTeacherId: string | null;
   /**
+   * Delade lektioner: each lesson's own teacher, one entry per lesson in the
+   * engine's lesson_minutes() order — longest first, and within a length the
+   * huvudlärare's before each share's (src/common/lesson-shares.ts) — null for
+   * a lesson whose teacher was deleted. Sent ONLY when the lessons left to
+   * place have two or more teachers; then `teacherId` is the list's first
+   * entry and the engine answers each of the post's lessons with its teacher
+   * (AiEngineLesson.teacherId). The medlärare stays `coTeacherId`, in the room
+   * for every lesson. Absent on every post nobody shares, whose entry is byte
+   * for byte what it was before the field existed.
+   */
+  lessonTeacherIds?: (string | null)[];
+  /**
    * The years this group's students actually belong to, derived from their
    * home classes. Null when the group has no members with a year at all —
    * then no room limit can be checked against it.
@@ -662,4 +674,11 @@ export interface AiEngineLesson {
   startTime: string;
   /** HH:MM:SS */
   endTime: string;
+  /**
+   * Delade lektioner: this lesson's own teacher, anonymous, present only on a
+   * lesson of a post sent with lessonTeacherIds (absent where that lesson's
+   * entry was null). Every other lesson comes back without the key, and takes
+   * its post's teachers as it always did.
+   */
+  teacherId?: string;
 }
