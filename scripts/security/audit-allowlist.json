@@ -20,6 +20,27 @@
       "reason": "Mitigated in code, bump pending the seven-day rule. The advisory (published 2026-10-23) is a DoS in body-parser's inflate path: trailing bytes after a compressed request body. configureBodyParsers (src/common/http-defaults.ts) sets inflate: false on both parsers, so a body with Content-Encoding is refused with 415 before anything decompresses it (src/common/http-defaults.spec.ts proves gzip and deflate never reach a handler). The only patched 2.x release, body-parser 2.4.0, was published 2026-10-22; the repository installs versions at least seven days old, so it is bumped on 2026-10-29 or later. This entry expires before the bump can be forgotten.",
       "addedAt": "2026-10-24",
       "expires": "2026-10-31"
+    },
+    {
+      "id": "GHSA-w74x-v6f9-j3xg",
+      "package": "fast-uri",
+      "reason": "Unreachable from a request, bump pending the seven-day rule. fast-uri comes only through ajv, and ajv only through build tooling (@angular-devkit, schema-utils, webpack) and @prisma/streams-local, which validates its own configuration; no code in src imports ajv, and no URI a client sends is parsed by it. fast-uri is pinned by the root override (package.json) at 3.1.8; the fix, 3.1.9, was published 2026-10-19 and passes the repository's seven-day rule on 2026-10-26, so the override is raised then. This entry expires before that can be forgotten.",
+      "addedAt": "2026-10-24",
+      "expires": "2026-10-31"
+    },
+    {
+      "id": "GHSA-wjr9-j795-jxcr",
+      "package": "fast-uri",
+      "reason": "Same package, same path and same fix as GHSA-w74x-v6f9-j3xg: Unreachable from a request, bump pending the seven-day rule. fast-uri comes only through ajv, and ajv only through build tooling (@angular-devkit, schema-utils, webpack) and @prisma/streams-local, which validates its own configuration; no code in src imports ajv, and no URI a client sends is parsed by it. fast-uri is pinned by the root override (package.json) at 3.1.8; the fix, 3.1.9, was published 2026-10-19 and passes the repository's seven-day rule on 2026-10-26, so the override is raised then. This entry expires before that can be forgotten.",
+      "addedAt": "2026-10-24",
+      "expires": "2026-10-31"
+    },
+    {
+      "id": "GHSA-q7qp-rjg7-q26m",
+      "package": "multer",
+      "reason": "Unreachable, bump pending the seven-day rule. multer is the multipart parser of @nestjs/platform-express and only runs behind a file interceptor (FileInterceptor, MulterModule and kin); the gateway uses none, so no request ever reaches multer and the advisory's pending asynchronous fileFilter cannot occur. multer is pinned by the root override (package.json) at 2.4.0; the fix, 2.5.0, was published 2026-10-22 and passes the seven-day rule on 2026-10-29, when the override is raised together with body-parser 2.4.0. This entry expires before that can be forgotten.",
+      "addedAt": "2026-10-24",
+      "expires": "2026-10-31"
     }
   ],
   "web": [
