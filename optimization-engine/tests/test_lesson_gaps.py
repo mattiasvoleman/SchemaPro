@@ -147,7 +147,7 @@ class TestTheFuzzWeeks:
             f"Student group {group} has 5 lessons of 90 minutes or more in 1 requirement, "
             "450 minutes in all. On the 4 days of the week's 4 they can fall on, the school "
             "day, the frame times, the rasts, the margins around the lessons, the locked lessons "
-            "and the group's lunch leave gaps that take at most 4 of them."
+            "and the pupils' lunch leave gaps that take at most 4 of them."
         )
         assert teacher not in str(lines)
 
@@ -251,7 +251,7 @@ class TestTheFuzzWeeks:
             "One teacher gives 5 lessons of 100 minutes or more in 2 requirements, 540 minutes "
             "in all. On the 4 days of the week's 5 they can fall on, the school day, the frame "
             "times, the rasts, the margins around the lessons, the locked lessons and the "
-            "classes' lunch leave gaps that take at most 4 of them."
+            "pupils' lunch leave gaps that take at most 4 of them."
         )
         assert lunch["code"] == "LUNCH_BREAK_IS_THE_DIFFERENCE"
         assert lunch["resourceIds"] == _ids(*lessons)
@@ -285,7 +285,7 @@ class TestTheFuzzWeeks:
         assert line["message"] == (
             f"Student group {group} has 1 lesson of 100 minutes or more in 1 requirement, "
             "100 minutes in all. No gap that the school day, the frame times, the rasts, the "
-            "margins around the lessons, the locked lessons and the group's lunch leave on the "
+            "margins around the lessons, the locked lessons and the pupils' lunch leave on the "
             "week's 1 days takes it whole."
         )
         assert lunch["params"] == {"lunchMinutes": 60, "freeMinutes": 100}
@@ -327,7 +327,7 @@ class TestTheFuzzWeeks:
         assert line["resourceIds"] == _ids(*lessons[:2])
         assert line["message"].endswith(
             "On the one day of the week's 4 they can fall on, the school day, the frame times, "
-            "the rasts, the margins around the lessons, the locked lessons and the classes' lunch "
+            "the rasts, the margins around the lessons, the locked lessons and the pupils' lunch "
             "leave gaps that take at most 190 of those minutes in whole lessons.",
         )
 
@@ -393,8 +393,8 @@ class TestTheFuzzWeeks:
         assert line["roomIds"] == [room]
         assert line["resourceIds"] == _ids(*lessons)
         assert line["message"].startswith(
-            "The one room these lessons may use takes one lesson at a time, and 6 lessons of 50 "
-            "minutes or more in 2 requirements need 450 minutes in all.",
+            "The one room these lessons may use takes one lesson at a time, and there are 6 "
+            "lessons of 50 minutes or more to place in 2 requirements, 450 minutes in all.",
         )
 
         week["rooms"] = [*week["rooms"], {"id": str(uuid4()), "capacity": 30}]  # type: ignore[misc]
@@ -496,6 +496,51 @@ class TestTheGapsVerdict:
         params = verdict.conflicts[0].params
         assert (params["shortOf"], params["shortestMinutes"]) == ("minutes", 80)
         assert (params["demandMinutes"], params["capacityMinutes"]) == (350, 340)
+
+    def test_the_lunch_line_says_what_the_count_shows_and_no_more(self) -> None:
+        """The review of this verdict: two 100-minute lessons with 40 minutes
+        for the pupils after each, a day of 08:00-12:30, and the lunch held at
+        10:00-10:30. The last start that leaves the 40 minutes inside the day
+        is 10:10, so one lesson fits, before the meal. Counted without the
+        lunch the day takes both, but the week without it is impossible all
+        the same, since the 40 minutes after the first put the second's end
+        and its own 40 past 12:30. The count does not see margins between
+        lessons, so the line beside the refusal says what the count shows,
+        and never that the week would fit without the lunch."""
+        week = _week(
+            [{**_requirement(str(uuid4()), str(uuid4()), [100, 100]), "minutesAfter": 40}],
+            rules=_lunch(30, "10:00:00", "10:30:00"),
+        )
+
+        verdict = self._verdict(week, SCHEDULE_DAY_END_MINUTES=750)
+        assert verdict is not None
+        line, lunch = verdict.conflicts
+        assert (line.params["lessons"], line.params["fitLessons"]) == (2, 1)
+        assert lunch.code == "LUNCH_BREAK_IS_THE_DIFFERENCE"
+        assert lunch.message == (
+            "Counted without the 30-minute lunch break, the time these lessons can take has room "
+            "for 200 minutes of them, enough to hold them, so the lunch is part of what this count "
+            "finds short. It is a count and not a timetable, and does not say the week would fit "
+            "without the lunch."
+        )
+
+        del week["rules"]
+        assert self._verdict(week, SCHEDULE_DAY_END_MINUTES=750) is None
+        assert self._solve(week, SCHEDULE_DAY_END_MINUTES=750).status == "INFEASIBLE"
+
+    def test_a_room_line_for_one_lesson_says_it_in_the_singular(self) -> None:
+        from app.messages import render
+
+        text = render("DEMAND_ROOM_LESSONS_EXCEED_GAPS", {
+            "rooms": 1, "lessons": 1, "shortestMinutes": 100, "requirements": 1,
+            "demandMinutes": 100, "shortOf": "nowhere", "days": 0, "weekDays": 5,
+            "fitLessons": 0, "capacityMinutes": 0,
+        })
+        assert text.startswith(
+            "The one room these lessons may use takes one lesson at a time, and there is 1 lesson "
+            "of 100 minutes or more to place in 1 requirement, 100 minutes in all. No gap",
+        )
+        assert text.endswith("takes it whole.")
 
     def test_lessons_held_to_overlapping_days_are_counted_over_their_union(self) -> None:
         """One teacher, mornings of two hours, a 100-minute lesson a morning.

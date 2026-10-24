@@ -9968,12 +9968,16 @@ def test_locked_lessons_that_pin_the_lunch_are_refused_by_counting() -> None:
     assert "1440 minutes" in detail.message
     assert "1200" in detail.message
     assert len(detail.requirement_ids) == 8
-    # And the lunch is named as the difference: without it, 08:00-11:00 holds
+    # And the lunch is named beside it: counted without it, 08:00-11:00 holds
     # three and 13:00-15:30 two, 25 a week for a class that needs 24.
     lunch = response.conflicts.conflicts[1]
     assert lunch.category == "LUNCH_WINDOW"
     assert "lunch break" in lunch.message
-    assert "1500 minutes free" in lunch.message
+    assert lunch.params["freeMinutes"] == 1500
+    # What the count shows, and not that the week would fit without the meal:
+    # the count leaves the margins and every rule out.
+    assert "room for 1500 minutes of them" in lunch.message
+    assert "does not say the week would fit without the lunch" in lunch.message
 
 
 def test_the_hours_verdict_leaves_a_solvable_week_alone() -> None:
