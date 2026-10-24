@@ -81,6 +81,7 @@ function describeStaffingRows(
   employments: number,
   qualifications: number,
   duties: number,
+  shifts = 0,
 ): string {
   const parts: string[] = [];
   if (employments > 0) {
@@ -92,6 +93,9 @@ function describeStaffingRows(
   if (duties > 0) {
     // "uppdrag" is its own plural.
     parts.push(`${duties} uppdrag`);
+  }
+  if (shifts > 0) {
+    parts.push(`${shifts} rastvaktspass`);
   }
   if (parts.length <= 1) return parts.join('');
   return `${parts.slice(0, -1).join(', ')} och ${parts[parts.length - 1]}`;
@@ -553,14 +557,17 @@ export class UsersService {
         }
 
         if (isStaff(current.role) && !isStaff(role)) {
-          const [employments, qualifications, duties] = await Promise.all([
+          const [employments, qualifications, duties, shifts] = await Promise.all([
             tx.teacherEmployment.count({ where: { userId: id } }),
             tx.teacherSubjectQualification.count({ where: { userId: id } }),
             tx.teacherDuty.count({ where: { userId: id } }),
+            // Rastvaktspass (20261202090000), the other half of lockStaffRow's
+            // 'rastvaktspass': a pupil on the schedule would watch a break.
+            tx.supervisionShift.count({ where: { userId: id } }),
           ]);
-          if (employments > 0 || qualifications > 0 || duties > 0) {
+          if (employments > 0 || qualifications > 0 || duties > 0 || shifts > 0) {
             throw new ConflictException(
-              `Personen kan inte bli ${role === 'STUDENT' ? 'elev' : 'vårdnadshavare'}: ${describeStaffingRows(employments, qualifications, duties)} finns registrerade. Ta bort dem under Personer först.`,
+              `Personen kan inte bli ${role === 'STUDENT' ? 'elev' : 'vårdnadshavare'}: ${describeStaffingRows(employments, qualifications, duties, shifts)} finns registrerade. Ta bort dem under ${[employments > 0 || qualifications > 0 || duties > 0 ? 'Personer' : null, shifts > 0 ? 'Rastvaktsschema' : null].filter(Boolean).join(' och ')} först.`,
             );
           }
         }

@@ -24,8 +24,15 @@ import type { ClosedRange, YearBounds } from '../staffing/teaching-weeks';
  * F–6 school would otherwise eat at the school's lunch window, which no
  * sitting speaks about, and the hall would be watched for nobody.
  *
- * Weekdays are Monday to Friday, and Saturday or Sunday only where a row is
- * written for that day: "every day" is every teaching day, as for a rast.
+ * Weekdays are Monday to Friday. A Saturday or a Sunday is a day of its own
+ * only where a row names it, and then only that row speaks for it: "every
+ * day" is every teaching day, and a Saturday rast for one stage puts no
+ * other stage's every-day rasts, nor the school's lunch, on the Saturday.
+ *
+ * NIOARIG THROUGHOUT. Areas, rasts and sittings are school-wide spans, stated
+ * in NIOARIG (common/grade-numbering.ts). The service hands in the year's
+ * classes and lov already read in NIOARIG, so a tioårig läsår's åk 4 meets
+ * the 1–3 rasts its pupils are out in.
  *
  * WATCHED, MINUTE BY MINUTE. A pass covers the minutes it runs, whatever
  * break it was planned for: two teachers 11:30–12:00 and 12:00–12:30 watch a
@@ -68,6 +75,12 @@ export interface CoverageServing {
 export interface CoverageShift {
   id: string;
   areaId: string;
+  /**
+   * A pass of a deactivated teacher: listed beside its break, watching
+   * nothing. The register deactivates a leaver rather than deleting them,
+   * and a break they watched is unwatched from then.
+   */
+  inactive?: boolean;
   dayOfWeek: number;
   /** Minutes from midnight. */
   start: number;
@@ -86,10 +99,10 @@ export interface CoverageInput {
   /** The school's lunch window when its lunch is on; null when it is off. */
   lunch: { start: number; end: number } | null;
   /**
-   * The årskurser the year has (its classes' gradeLevel). An area with no
-   * span is watched for these, so a F–6 school's hall is not watched for a
-   * seventh year's meal at the school's window. Empty (no class yet): every
-   * årskurs 0..12.
+   * The årskurser the year has (its classes' gradeLevel, read in NIOARIG).
+   * An area with no span is watched for these, so a F–6 school's hall is
+   * not watched for a seventh year's meal at the school's window. Empty (no
+   * class yet): every årskurs 0..12.
    */
   grades: readonly number[];
   shifts: readonly CoverageShift[];
@@ -124,9 +137,12 @@ export interface CoverageGap {
   /** The first stretch of the break with that few. */
   shortFrom: number;
   shortTo: number;
-  /** Inclusive yyyy-mm-dd: the first and last date of the stretch. */
+  /** Inclusive yyyy-mm-dd: the first and the last date of the weekday the break is short on. */
   from: string;
   to: string;
+  /** Short from the läsår's first day, and until its last: a new pass for it needs no Från, or no Till. */
+  fromYearStart: boolean;
+  toYearEnd: boolean;
 }
 
 export interface Coverage {
@@ -164,6 +180,8 @@ function mealsOf(input: CoverageInput, grade: number, dayOfWeek: number): Window
   if (!input.lunch) return [];
   const matching = input.servings.filter((row) => grade >= row.minGradeLevel && grade <= row.maxGradeLevel);
   const today = matching.filter((row) => row.dayOfWeek === dayOfWeek);
+  // A weekend day has the sittings written for it and nothing else.
+  if (dayOfWeek > 5) return today.map((row) => ({ start: row.start, end: row.end, names: [LUNCH], lunch: true }));
   const open = today.length > 0 ? today : matching.filter((row) => row.dayOfWeek === null);
   const windows = open.length > 0 ? open : [input.lunch];
   return windows.map((row) => ({ start: row.start, end: row.end, names: [LUNCH], lunch: true }));
@@ -173,7 +191,9 @@ function breaksOfDay(input: CoverageInput, area: CoverageArea, dayOfWeek: number
   const windows: Window[] = [];
   for (const grade of gradesOf(area, input.grades)) {
     if (area.duringRasts) {
-      for (const rast of rastsForSpan([...input.rasts], grade, dayOfWeek)) {
+      // A weekend day has the rasts written for it, not the every-day ones.
+      const rows = dayOfWeek > 5 ? input.rasts.filter((rast) => rast.dayOfWeek === dayOfWeek) : [...input.rasts];
+      for (const rast of rastsForSpan(rows, grade, dayOfWeek)) {
         windows.push({ start: minutesOf(rast.startTime), end: minutesOf(rast.endTime), names: [rast.name], lunch: false });
       }
     }
@@ -213,6 +233,13 @@ function closedFor(area: CoverageArea, closures: readonly ClosedRange[], day: st
     if (area.minGradeLevel === null || area.maxGradeLevel === null) return false;
     return (min === null || min <= area.minGradeLevel) && (max === null || max >= area.maxGradeLevel);
   });
+}
+
+/** The first and the last date of `dayOfWeek` in [from, to], or null when it has none. */
+function weekdayDates(dayOfWeek: number, from: string, to: string): { first: string; last: string } | null {
+  const first = addDays(from, (dayOfWeek - isoWeekday(from) + 7) % 7);
+  const last = addDays(to, -((isoWeekday(to) - dayOfWeek + 7) % 7));
+  return first <= last ? { first, last } : null;
 }
 
 /** Whether [from, to] holds a school day on the weekday for the area. */
@@ -293,14 +320,16 @@ export function supervisionCoverage(input: CoverageInput): Coverage {
         let open: CoverageGap | null = null;
         for (const stretch of stretches) {
           if (!holdsASchoolDay(area, input.closures, dayOfWeek, stretch.from, stretch.to)) continue;
-          const running = passes.filter((pass) => runsThrough(pass, stretch.from, stretch.to));
+          const running = passes.filter((pass) => !pass.inactive && runsThrough(pass, stretch.from, stretch.to));
           const short = fewestOver(running, window.start, window.end);
           if (short.fewest >= area.guardsNeeded) {
             open = null;
             continue;
           }
+          const dates = weekdayDates(dayOfWeek, stretch.from, stretch.to)!;
           if (open && open.fewest === short.fewest && open.shortFrom === short.shortFrom && open.shortTo === short.shortTo) {
-            open.to = stretch.to;
+            open.to = dates.last;
+            open.toYearEnd = stretch.to === input.year.endDate;
             continue;
           }
           open = {
@@ -312,8 +341,10 @@ export function supervisionCoverage(input: CoverageInput): Coverage {
             lunch: window.lunch,
             needed: area.guardsNeeded,
             ...short,
-            from: stretch.from,
-            to: stretch.to,
+            from: dates.first,
+            to: dates.last,
+            fromYearStart: stretch.from === input.year.startDate,
+            toYearEnd: stretch.to === input.year.endDate,
           };
           gaps.push(open);
         }

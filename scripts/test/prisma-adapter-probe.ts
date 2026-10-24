@@ -136,6 +136,7 @@ import { ss12000NarvaroChecks, sweepSs12000NarvaroSchool } from './probe-ss12000
 import { scheduleCandidateChecks } from './probe-schedule-candidates';
 import { sweepTioarigSchool, tioarigChecks } from './probe-tioarig';
 import { lessonLogChecks, sweepLessonLogSchool } from './probe-lesson-log';
+import { rastvaktChecks, sweepRastvaktSchool } from './probe-rastvakt';
 import { ScheduleVersionsService as RealScheduleVersionsService } from '../../src/calendar/schedule-versions.service';
 import { CoverService } from '../../src/cover/cover.service';
 import { TeacherAbsencesService } from '../../src/cover/teacher-absences.service';
@@ -5097,6 +5098,7 @@ async function runChecks(
   await scheduleCandidateChecks(owner, api, MARKER, check, open, appUrl);
   await tioarigChecks(owner, api, MARKER, check);
   await lessonLogChecks(owner, api, MARKER, check);
+  await rastvaktChecks(owner, api, MARKER, check);
 }
 
 
@@ -5581,6 +5583,7 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await sweepTioarigSchool(owner, MARKER);
   // Lektionslogg's school, likewise.
   await sweepLessonLogSchool(owner, MARKER);
+  await sweepRastvaktSchool(owner, MARKER);
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-vikarie'`, [MARKER]);
   // Lärarens dag's school, whole, likewise.
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-lararensdag'`, [MARKER]);

@@ -24,9 +24,10 @@ import { peakPerWeekByKey, teachingWeeks, type ClosedRange, type YearBounds } fr
  * THE RASTVAKT UPPDRAG BECOMES THE RAM. A school that counted rastvakt before
  * typed it as an uppdrag of the kind RASTVAKT, "60 min/vecka". Once the
  * schedule gives a teacher passes, that figure is the ram (budget) the
- * schedule is planned against, not a second rastvakt: on every date one of
- * the teacher's passes runs, their RASTVAKT uppdrag stop counting, and on
- * the dates none does they count as before. So a schedule entered for the
+ * schedule is planned against, not a second rastvakt: in every week one of
+ * the teacher's passes runs, their RASTVAKT uppdrag stop counting, and in
+ * the weeks none does they count as before. Weeks, not days, as everything
+ * an uppdrag charges is counted (passDays). So a schedule entered for the
  * spring term leaves the autumn's typed figure in place, and a teacher with
  * no pass at all — every teacher at a school that never opens the page — is
  * charged exactly the uppdrag they always were (the input is the same
@@ -107,11 +108,28 @@ function clamp(validFrom: string | null | undefined, validTo: string | null | un
   return from <= to ? { from, to } : null;
 }
 
-/** The days some pass of the teacher runs, as disjoint spans in order. */
+const weekday = (day: string): number => {
+  const value = new Date(`${day}T00:00:00.000Z`).getUTCDay();
+  return value === 0 ? 7 : value;
+};
+const shift = (day: string, days: number): string =>
+  new Date(new Date(`${day}T00:00:00.000Z`).getTime() + days * DAY_MS).toISOString().slice(0, 10);
+
+/**
+ * The weeks some pass of the teacher runs in, as disjoint spans in order,
+ * each from a Monday to a Sunday (or the year's bound). WHOLE WEEKS because
+ * an uppdrag is weekly: the week arithmetic (teaching-weeks.ts) charges every
+ * ISO week a period touches as a week, so a ram cut at the day a pass ends —
+ * a Friday Till, a one-day pass — would leave a piece in the same week as
+ * the pass, and that week would be charged the ram and the pass both. A week
+ * belongs to the passes if one of them runs in it, and the ram counts only
+ * in the weeks none does.
+ */
 function passDays(shifts: readonly LoadShift[], year: YearBounds): Span[] {
   const spans = shifts
-    .map((shift) => clamp(shift.validFrom, shift.validTo, year))
+    .map((pass) => clamp(pass.validFrom, pass.validTo, year))
     .filter((span): span is Span => span !== null)
+    .map((span) => clamp(shift(span.from, 1 - weekday(span.from)), shift(span.to, 7 - weekday(span.to)), year)!)
     .sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0));
   const merged: Span[] = [];
   for (const span of spans) {

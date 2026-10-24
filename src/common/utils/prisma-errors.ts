@@ -411,7 +411,8 @@ export function writeConflict(): ConflictException {
 /**
  * The lokal timplan CHECKs (migrations 20261006120000 and 20261007130000),
  * the Fas 2 tjänstefördelning CHECKs (20261007090000), the lektionslängder
- * CHECK (20261008090000) and Lärarens dag's three (20261123090000) by constraint name, as the field and the bound a 400 should state. The DTOs mirror each
+ * CHECK (20261008090000), Lärarens dag's three (20261123090000) and the
+ * rastvaktsschema's (20261202090000) by constraint name, as the field and the bound a 400 should state. The DTOs mirror each
  * bound, so this is the second line: a value a DTO counted differently from
  * the column (lengths are code points on both sides now, but the next
  * difference will not announce itself) answers 400 naming the field rather
@@ -453,6 +454,15 @@ const NAMED_CHECKS: Record<string, string> = {
   TimplanCredits_name_is_sane: 'name: beslutet behöver ett namn på högst 80 tecken.',
   TimplanCredits_note_is_sane: 'note: anteckningen kan vara högst 500 tecken, och inte bara blanktecken.',
   TeachingBlocks_name_is_sane: 'name: blocket behöver ett namn på högst 80 tecken, utan blanksteg först eller sist.',
+  SupervisionAreas_name_named: 'name: rastvaktsområdet behöver ett namn på högst 60 tecken, utan blanksteg först eller sist.',
+  SupervisionAreas_grade_span: 'minGradeLevel: årskurserna anges båda eller ingen, 0 till 12, den lägsta först.',
+  SupervisionAreas_guards_range: 'guardsNeeded: ett område behöver 0 till 10 rastvakter samtidigt.',
+  SupervisionShifts_day_is_iso: 'dayOfWeek: anges som veckodag 1 (måndag) till 7 (söndag).',
+  SupervisionShifts_window_is_ordered: 'endTime: passet måste sluta efter att det börjar.',
+  SupervisionShifts_within_the_day: 'endTime: ett pass ligger inom ett dygn, 00:00 till 23:59.',
+  SupervisionShifts_whole_minutes: 'startTime: anges i hela minuter.',
+  SupervisionShifts_dates_are_ordered: 'validTo: Till ligger före Från.',
+  SupervisionShifts_note_is_short: 'note: anteckningen kan vara högst 200 tecken.',
   TeachingRequirements_lesson_lengths_are_canonical:
     'lessonLengths: en längd per lektion, längsta först, 15–240 minuter i femminuterssteg och ' +
     'två eller tre olika längder — och lessonsPerWeek och minutesPerLesson ska vara antalet och den längsta.',

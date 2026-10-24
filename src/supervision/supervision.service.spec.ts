@@ -249,6 +249,21 @@ describe('SupervisionService', () => {
       });
     });
 
+    it('keeps a pass inside one day, and refuses dates its weekday never falls between', async () => {
+      for (const window of [{ startTime: '23:00', endTime: '24:30' }, { startTime: '10:00', endTime: '10:60' }, { startTime: '25:00', endTime: '26:00' }]) {
+        await expect(service.createShift({ ...PASS, ...window }, testUser())).rejects.toThrow(/mellan 00:00 och 23:59/);
+      }
+      // A Monday pass dated Tuesday 2027-01-05 to Friday 2027-01-08.
+      await expect(
+        service.createShift({ ...PASS, validFrom: '2027-01-05', validTo: '2027-01-08' }, testUser()),
+      ).rejects.toThrow(/ingen måndag ligger mellan 2027-01-05 och 2027-01-08/);
+      // The same dates on a Wednesday are a pass.
+      givenStaffAndYear();
+      await expect(
+        service.createShift({ ...PASS, dayOfWeek: 3, validFrom: '2027-01-05', validTo: '2027-01-08' }, testUser()),
+      ).resolves.toMatchObject({ dayOfWeek: 3 });
+    });
+
     it('gives a pass only to staff', async () => {
       givenStaffAndYear('STUDENT');
       await expect(service.createShift(PASS, testUser())).rejects.toThrow(/Ett rastvaktspass hör till en lärare/);
@@ -285,7 +300,8 @@ describe('SupervisionService', () => {
     it('answers the EXCLUDE constraint a racing save meets as the same clash, and the year’s limit', async () => {
       givenStaffAndYear();
       tx.supervisionShift.create.mockRejectedValue(
-        prismaError('P2010', { driverAdapterError: { cause: { originalCode: '23P01', originalMessage: 'conflicting key value' } } }),
+        // adapter-pg hands an SQLSTATE Prisma has no code for over as P2039, the code in the cause.
+        prismaError('P2039', { driverAdapterError: { cause: { originalCode: '23P01', originalMessage: 'conflicting key value' } } }),
       );
       await expect(service.createShift(PASS, testUser())).rejects.toMatchObject({
         response: expect.objectContaining({ code: SUPERVISION_SHIFT_CLASH }),
@@ -383,6 +399,36 @@ describe('SupervisionService', () => {
       // Whose rastvakt and ram it handed out: EMPLOYMENT, in its one transaction.
       expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [ANNA, BO] }]);
       expect(prisma.withRls).toHaveBeenCalledTimes(1);
+    });
+
+    it('lets a deactivated teacher’s pass watch nothing', async () => {
+      tx.user.findMany.mockResolvedValue([{ id: ANNA }]);
+      const rota = await service.rota(YEAR_ID, testUser());
+      expect(tx.user.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: { in: [ANNA] }, isActive: false } }),
+      );
+      // Anna's Monday on the yard is listed, and the Monday is short.
+      expect(rota.breaks.find((row) => row.areaId === GARDEN && row.dayOfWeek === 1)!.shiftIds).toEqual([SHIFT]);
+      expect(rota.gaps.map((row) => row.dayOfWeek)).toEqual([1, 2, 3, 4, 5]);
+    });
+
+    it('reads a tioårig läsår’s classes and lov in NIOARIG, as the school-wide spans are stated', async () => {
+      // Lågstadiegården watches 0–3. In 2028/29 (TIOARIG) the old åk 3 is åk 4.
+      tx.academicYear.findUnique.mockResolvedValue({ startDate: day('2028-08-21'), endDate: day('2029-06-15'), gradeNumbering: 'TIOARIG' });
+      tx.supervisionArea.findMany.mockResolvedValue([storedArea({ minGradeLevel: 0, maxGradeLevel: 3, _count: { shifts: 0 } })]);
+      tx.supervisionShift.findMany.mockResolvedValue([]);
+      tx.rast.findMany.mockResolvedValue([
+        { name: 'Lågstadiets rast', minGradeLevel: 0, maxGradeLevel: 3, dayOfWeek: null, startTime: time('10:00'), endTime: time('10:20') },
+        { name: 'Mellanstadiets rast', minGradeLevel: 4, maxGradeLevel: 6, dayOfWeek: null, startTime: time('10:30'), endTime: time('10:50') },
+      ]);
+      tx.studentGroup.findMany.mockResolvedValue([{ gradeLevel: 4 }]);
+      const rota = await service.rota(YEAR_ID, testUser());
+      expect(rota.breaks.filter((row) => row.dayOfWeek === 1).map((row) => row.names)).toEqual([['Lågstadiets rast']]);
+      // A lov for the year's åk 1–4, all year: every årskurs of the yard, read in NIOARIG (0–3).
+      tx.schoolBreak.findMany.mockResolvedValue([
+        { startDate: day('2028-08-21'), endDate: day('2029-06-15'), minGradeLevel: 1, maxGradeLevel: 4 },
+      ]);
+      expect((await service.rota(YEAR_ID, testUser())).gaps).toEqual([]);
     });
 
     it('asks no sitting of a school whose lunch is off, and 404s a year RLS hides', async () => {

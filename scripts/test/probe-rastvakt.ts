@@ -1,0 +1,177 @@
+/**
+ * The adapter probe's checks for the rastvaktsschema (20261202090000), through
+ * the real services on the API's role and real Postgres as CI runs it — the
+ * part the unit specs and the e2e cannot see, since both run on the Prisma
+ * mock. In a school of its own (slug <marker>-rastvakt), swept whole before
+ * and after:
+ *
+ *   rv-a  the clash question is a Prisma filter on @db.Time columns, the only
+ *         lt/gt on a time column in the gateway: through the adapter it finds
+ *         the pass a new one shares a minute with and names it (409
+ *         SUPERVISION_SHIFT_CLASH), lets the pass that starts the minute the
+ *         other ends through, and, with the question skipped, the table's
+ *         EXCLUDE refuses the same pass and the service reads the driver's
+ *         23P01 as the same 409;
+ *   rv-b  the schedule's read records whose rastvakt and ram it handed out
+ *         in the läslogg (EMPLOYMENT);
+ *   rv-c  the load reads the passes with one statement joining their areas
+ *         under RLS: the admin's report charges each teacher their passes and
+ *         drops a ram the passes cover, a teacher's own report (the `_count`
+ *         and the join as a TEACHER) carries their line and nobody else's,
+ *         and a pupil cannot be made of a teacher who holds a pass.
+ *
+ * Imported by prisma-adapter-probe.ts, which hands in its `check`.
+ */
+import { strict as assert } from 'node:assert';
+import { randomUUID } from 'node:crypto';
+import type { Client } from 'pg';
+import { Role } from '../../src/auth/enums/role.enum';
+import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
+import type { PrismaService } from '../../src/database/prisma.service';
+import { StaffingLoadService } from '../../src/staffing/staffing-load.service';
+import { SUPERVISION_SHIFT_CLASH, SupervisionService } from '../../src/supervision/supervision.service';
+import type { SupabaseAdminService } from '../../src/users/supabase-admin.service';
+import { UsersService } from '../../src/users/users.service';
+
+type Check = (label: string, body: () => Promise<void>) => Promise<void>;
+
+export function rastvaktSlug(marker: string): string {
+  return `${marker}-rastvakt`;
+}
+
+export async function sweepRastvaktSchool(owner: Client, marker: string): Promise<void> {
+  await owner.query(`DELETE FROM "Schools" WHERE slug = $1`, [rastvaktSlug(marker)]);
+}
+
+/** The 409's body, whatever Nest wrapped it in. */
+const codeOf = (error: unknown): unknown =>
+  (error as { getResponse?: () => { code?: unknown } }).getResponse?.().code;
+
+export async function rastvaktChecks(owner: Client, api: PrismaService, marker: string, check: Check): Promise<void> {
+  await sweepRastvaktSchool(owner, marker);
+  const one = async <T extends object>(sql: string, params: unknown[] = []): Promise<T> => (await owner.query<T>(sql, params)).rows[0]!;
+  try {
+    const s = (
+      await one<{ id: string }>(
+        `INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ($1, $2, 'Europe/Stockholm', now()) RETURNING id`,
+        [`${marker} rastvakt`, rastvaktSlug(marker)],
+      )
+    ).id;
+    const year = (
+      await one<{ id: string }>(
+        `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+         VALUES ($1, 'Rv 2030/31', DATE '2030-08-19', DATE '2031-06-13', true, now()) RETURNING id`,
+        [s],
+      )
+    ).id;
+    const person = async (role: string, label: string, adminProfile: string | null = null) => {
+      const authId = randomUUID();
+      const row = await one<{ id: string }>(
+        `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt")
+         VALUES ($1, $2, $3, 'Probe', $4::"UserRole", $5::"AdminProfile", $6, true, now()) RETURNING id`,
+        [s, `${marker}-rastvakt-${label}@example.invalid`, label, role, adminProfile, authId],
+      );
+      return { id: row.id, authId };
+    };
+    // One rast for every stage, every day: the yard's break.
+    await owner.query(
+      `INSERT INTO "Rasts" ("schoolId", name, "minGradeLevel", "maxGradeLevel", "startTime", "endTime", "updatedAt")
+       VALUES ($1, 'Rv förmiddagsrast', 0, 12, '10:00', '10:20', now())`,
+      [s],
+    );
+    const admin = await person('SCHOOL_ADMIN', 'admin', 'FULL');
+    const anna = await person('TEACHER', 'anna');
+    const bo = await person('TEACHER', 'bo');
+    const asAdmin: AuthenticatedUser = { authId: admin.authId, role: Role.SCHOOL_ADMIN, userId: admin.id, schoolId: s, channel: 'WEB', adminProfile: 'FULL' };
+    const asAnna: AuthenticatedUser = { authId: anna.authId, role: Role.TEACHER, userId: anna.id, schoolId: s, channel: 'APP' };
+    const supervision = new SupervisionService(api);
+    const garden = await supervision.createArea({ name: 'Rv Skolgården' }, asAdmin);
+    const hall = await supervision.createArea({ name: 'Rv Matsalen', duringRasts: false, duringLunch: true, countsAsTeaching: true }, asAdmin);
+    // Anna on the yard every Monday 10:00–10:20, and in the hall on autumn Wednesdays.
+    await supervision.createShift({ academicYearId: year, areaId: garden.id, userId: anna.id, dayOfWeek: 1, startTime: '10:00', endTime: '10:20' }, asAdmin);
+    await supervision.createShift(
+      { academicYearId: year, areaId: hall.id, userId: anna.id, dayOfWeek: 3, startTime: '11:30', endTime: '12:00', validTo: '2030-12-20' },
+      asAdmin,
+    );
+
+    await check('(rv-a) the clash on @db.Time is found through the adapter and named, the minute after is free, and the EXCLUDE refuses what the question would have', async () => {
+      const clash = { academicYearId: year, areaId: hall.id, userId: anna.id, dayOfWeek: 1, startTime: '10:10', endTime: '10:30' };
+      await assert.rejects(supervision.createShift(clash, asAdmin), (error: unknown) => {
+        assert.equal(codeOf(error), SUPERVISION_SHIFT_CLASH);
+        assert.match(String((error as Error).message), /Rv Skolgården måndag 10:00–10:20/);
+        return true;
+      });
+      // A December Wednesday clashes with the autumn's; one from January does not.
+      await assert.rejects(
+        supervision.createShift({ ...clash, dayOfWeek: 3, startTime: '11:45', endTime: '12:15', validFrom: '2030-12-02', validTo: '2030-12-31' }, asAdmin),
+        (error: unknown) => codeOf(error) === SUPERVISION_SHIFT_CLASH,
+      );
+      const january = await supervision.createShift({ ...clash, dayOfWeek: 3, startTime: '11:45', endTime: '12:15', validFrom: '2031-01-07' }, asAdmin);
+      const after = await supervision.createShift({ ...clash, startTime: '10:20', endTime: '10:40' }, asAdmin);
+      assert.deepEqual([after.startTime, after.endTime], ['10:20', '10:40']);
+      // Past the question, the table: the same 409 from the driver's 23P01.
+      const unguarded = Object.assign(Object.create(Object.getPrototypeOf(supervision)), supervision, {
+        assertOnePlace: async () => undefined,
+      }) as SupervisionService;
+      await assert.rejects(unguarded.createShift(clash, asAdmin), (error: unknown) => codeOf(error) === SUPERVISION_SHIFT_CLASH);
+      await supervision.removeShift(after.id, asAdmin);
+      await supervision.removeShift(january.id, asAdmin);
+      const [{ n }] = (await owner.query<{ n: number }>(`SELECT count(*)::int AS n FROM "SupervisionShifts" WHERE "schoolId" = $1`, [s])).rows;
+      assert.equal(n, 2);
+    });
+
+    await check('(rv-b) the schedule’s read records whose rastvakt and ram it handed out (EMPLOYMENT), in its own transaction', async () => {
+      await owner.query(
+        `INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
+         VALUES ($1, $2, $3, 'RASTVAKT', 'Rastvakt', 60, now()), ($1, $4, $3, 'RASTVAKT', 'Rastvakt', 40, now())`,
+        [s, anna.id, year, bo.id],
+      );
+      const rota = await supervision.rota(year, asAdmin);
+      assert.deepEqual(rota.teachers.map((row) => row.userId).sort(), [anna.id, bo.id].sort());
+      // The yard's rast is watched on Mondays alone: Tuesday to Friday are short, all year.
+      assert.deepEqual(
+        rota.gaps.filter((gap) => gap.areaId === garden.id).map((gap) => [gap.dayOfWeek, gap.fromYearStart, gap.toYearEnd]),
+        [
+          [2, true, true],
+          [3, true, true],
+          [4, true, true],
+          [5, true, true],
+        ],
+      );
+      const recorded = await owner.query<{ subjects: string[] }>(
+        `SELECT "subjectIds"::text[] AS subjects FROM "PersonalDataAccess" WHERE "schoolId" = $1 AND "actorId" = $2 AND kind = 'EMPLOYMENT'`,
+        [s, admin.id],
+      );
+      assert.deepEqual(recorded.rows.flatMap((row) => row.subjects).sort(), [anna.id, bo.id].sort());
+    });
+
+    await check('(rv-c) the load joins the passes to their areas under RLS: the admin sees each teacher’s, a teacher their own, the ram the passes cover counts no more, and a teacher holding a pass is no pupil', async () => {
+      const load = new StaffingLoadService(api);
+      const report = await load.load(year, 'planned', asAdmin);
+      const annaRow = report.teachers.find((row) => row.userId === anna.id)!;
+      const boRow = report.teachers.find((row) => row.userId === bo.id)!;
+      // Anna: 20 every week and 30 in the autumn's weeks, her ram gone; the hall counts as teaching.
+      assert.ok(annaRow.dutyMinutesPerWeek > 20 && annaRow.dutyMinutesPerWeek < 50, JSON.stringify(annaRow));
+      assert.ok(annaRow.countedDutyMinutesPerWeek > 0 && annaRow.countedDutyMinutesPerWeek < 30, JSON.stringify(annaRow));
+      // Bo has no pass: his uppdrag counts as it always did.
+      assert.equal(boRow.dutyMinutesPerWeek, 40);
+      assert.deepEqual(
+        report.supervision?.teachers.map((row) => [row.userId, row.shiftCount, row.ramMinutesPerWeek, row.ramCountedMinutesPerWeek]),
+        [[anna.id, 2, 60, 0]],
+      );
+      const own = await load.load(year, 'planned', asAnna);
+      assert.deepEqual(own.supervision?.teachers.map((row) => row.userId), [anna.id]);
+      assert.equal(own.teachers[0]!.dutyMinutesPerWeek, annaRow.dutyMinutesPerWeek);
+      // Bo, a teacher with no pass, reads no line: his `_count` is 0 and nothing more is asked.
+      const asBo: AuthenticatedUser = { authId: bo.authId, role: Role.TEACHER, userId: bo.id, schoolId: s, channel: 'APP' };
+      assert.equal((await load.load(year, 'planned', asBo)).supervision, null);
+      const users = new UsersService(api, {} as SupabaseAdminService);
+      await assert.rejects(
+        users.update(anna.id, { role: Role.STUDENT } as never, asAdmin),
+        /2 rastvaktspass finns registrerade/,
+      );
+    });
+  } finally {
+    await sweepRastvaktSchool(owner, marker);
+  }
+}

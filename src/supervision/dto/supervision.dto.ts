@@ -71,9 +71,13 @@ export class CreateSupervisionAreaDto {
   countsAsTeaching?: boolean;
 }
 
-/** A PATCH: every field optional, the same bounds. */
+/**
+ * A PATCH: every field optional, the same bounds. A field the table holds
+ * NOT NULL is refused as null (ValidateIf, not IsOptional, which would let
+ * null through to the service): a PATCH that names a field says what it is.
+ */
 export class UpdateSupervisionAreaDto {
-  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
   @IsString({ message: 'name: anges som text.' })
   @MinLength(1, { message: 'name: området behöver ett namn.' })
   @MaxCodePoints(60, { message: 'name: högst 60 tecken.' })
@@ -159,27 +163,30 @@ export class CreateSupervisionShiftDto {
   note?: string | null;
 }
 
-/** A PATCH: the year is the pass's for good; everything else may move. */
+/**
+ * A PATCH: the year is the pass's for good; everything else may move. Null is
+ * refused where the table holds NOT NULL, as on the areas' PATCH.
+ */
 export class UpdateSupervisionShiftDto {
-  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
   @IsUUID('4', { message: 'areaId: anges som rastvaktsområdets id.' })
   areaId?: string;
 
-  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
   @IsUUID('4', { message: 'userId: anges som lärarens id.' })
   userId?: string;
 
-  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
   @IsInt({ message: 'dayOfWeek: anges som veckodag 1 (måndag) till 7 (söndag).' })
   @Min(1, { message: 'dayOfWeek: anges som veckodag 1 (måndag) till 7 (söndag).' })
   @Max(7, { message: 'dayOfWeek: anges som veckodag 1 (måndag) till 7 (söndag).' })
   dayOfWeek?: number;
 
-  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
   @Matches(TIME, { message: 'startTime: anges som HH:MM.' })
   startTime?: string;
 
-  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
   @Matches(TIME, { message: 'endTime: anges som HH:MM.' })
   endTime?: string;
 

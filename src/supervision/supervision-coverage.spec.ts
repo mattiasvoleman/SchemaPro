@@ -127,7 +127,17 @@ describe('supervisionCoverage: the gaps', () => {
   it('names an unwatched break for the whole year, and the first stretch a short one is short', () => {
     const result = coverage({ shifts: [pass('garden', 4, '10:00', '10:20')] });
     expect(gapsOf(result, 2)).toEqual([
-      expect.objectContaining({ fewest: 0, needed: 1, shortFrom: clock('10:00'), shortTo: clock('10:30'), from: '2026-09-07', to: '2026-10-04' }),
+      // The year's first and last Tuesday, and from its first day to its last.
+      expect.objectContaining({
+        fewest: 0,
+        needed: 1,
+        shortFrom: clock('10:00'),
+        shortTo: clock('10:30'),
+        from: '2026-09-08',
+        to: '2026-09-29',
+        fromYearStart: true,
+        toYearEnd: true,
+      }),
     ]);
     expect(gapsOf(result, 4)).toEqual([expect.objectContaining({ fewest: 0, shortFrom: clock('10:20'), shortTo: clock('10:30') })]);
   });
@@ -144,7 +154,10 @@ describe('supervisionCoverage: the gaps', () => {
 
   it('dates a gap by the passes’ Från and Till', () => {
     const result = coverage({ shifts: [pass('garden', 2, '10:00', '10:30', { validFrom: '2026-09-21' })] });
-    expect(gapsOf(result, 2)).toEqual([expect.objectContaining({ from: '2026-09-07', to: '2026-09-20' })]);
+    // Tuesdays before the pass's Från: the dates a new pass for them would carry.
+    expect(gapsOf(result, 2)).toEqual([
+      expect.objectContaining({ from: '2026-09-08', to: '2026-09-15', fromYearStart: true, toYearEnd: false }),
+    ]);
   });
 
   it('asks nothing of a stretch the whole school is closed, and tells one gap across it', () => {
@@ -155,12 +168,30 @@ describe('supervisionCoverage: the gaps', () => {
     });
     expect(gapsOf(handed, 2)).toEqual([]);
     const lovOnly = coverage({ closures: lov, shifts: [pass('garden', 2, '10:00', '10:30', { validFrom: '2026-09-14', validTo: '2026-09-18' })] });
-    expect(gapsOf(lovOnly, 2)).toEqual([expect.objectContaining({ from: '2026-09-07', to: '2026-10-04' })]);
+    expect(gapsOf(lovOnly, 2)).toEqual([
+      expect.objectContaining({ from: '2026-09-08', to: '2026-09-29', fromYearStart: true, toYearEnd: true }),
+    ]);
     // A lov for some grades closes an area only when it spans all the area's.
     const lower = area('lower', { minGradeLevel: 1, maxGradeLevel: 3 });
     const week = [{ startDate: '2026-09-07', endDate: '2026-10-04', minGradeLevel: 0, maxGradeLevel: 3 }];
     expect(coverage({ areas: [lower], closures: week }).gaps).toEqual([]);
     expect(coverage({ areas: [GARDEN], closures: week }).gaps).not.toEqual([]);
+  });
+
+  it('puts a weekend day on the week only for the rows that name it', () => {
+    const saturday = coverage({
+      rasts: [...RASTS, rast('Lördagsrast', 0, 3, '11:00', '11:15', 6)],
+      areas: [GARDEN, area('hall', { duringRasts: false, duringLunch: true })],
+    });
+    expect(saturday.breaks.filter((row) => row.dayOfWeek === 6)).toEqual([
+      expect.objectContaining({ areaId: 'garden', start: clock('11:00'), end: clock('11:15'), names: ['Lördagsrast'] }),
+    ]);
+  });
+
+  it('lets a deactivated teacher’s pass watch nothing, and still lists it beside the break', () => {
+    const result = coverage({ shifts: [pass('garden', 1, '10:00', '10:30', { inactive: true })] });
+    expect(gapsOf(result, 1)).toEqual([expect.objectContaining({ fewest: 0 })]);
+    expect(result.breaks.find((row) => row.dayOfWeek === 1)!.shiftIds).toHaveLength(1);
   });
 
   it('never warns where the area needs nobody', () => {
