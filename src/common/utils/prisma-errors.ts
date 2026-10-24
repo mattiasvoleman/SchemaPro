@@ -462,6 +462,7 @@ const NAMED_CHECKS: Record<string, string> = {
   SupervisionShifts_within_the_day: 'endTime: ett pass ligger inom ett dygn, 00:00 till 23:59.',
   SupervisionShifts_whole_minutes: 'startTime: anges i hela minuter.',
   SupervisionShifts_dates_are_ordered: 'validTo: Till ligger före Från.',
+  SupervisionShifts_dates_on_the_weekday: 'validFrom: Från och Till är dagar då passet går, alltså passets veckodag.',
   SupervisionShifts_note_is_short: 'note: anteckningen kan vara högst 200 tecken.',
   TeachingRequirements_lesson_lengths_are_canonical:
     'lessonLengths: en längd per lektion, längsta först, 15–240 minuter i femminuterssteg och ' +

@@ -1879,10 +1879,12 @@ BEGIN
   VALUES (s1, 'RV Skolgården', site, 0, 3) RETURNING id INTO garden;
   INSERT INTO "SupervisionAreas" ("schoolId", name, "duringRasts", "duringLunch", "guardsNeeded", "countsAsTeaching")
   VALUES (s1, 'RV Matsalen', false, true, 2, true) RETURNING id INTO hall;
-  -- Anna on the yard every Monday and in the autumn's Tuesdays; Bo in the hall.
+  -- Anna on the yard every Monday and in the autumn's Tuesdays (dated on
+  -- the weekday, its first and last, as the table holds a pass's dates);
+  -- Bo in the hall.
   INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime", "validFrom", "validTo") VALUES
     (s1, y, garden, anna, 1, '10:00', '10:20', NULL, NULL),
-    (s1, y, garden, anna, 2, '10:00', '10:20', DATE '2030-09-01', DATE '2030-12-20'),
+    (s1, y, garden, anna, 2, '10:00', '10:20', DATE '2030-09-03', DATE '2030-12-17'),
     (s1, y, hall, bo, 1, '11:00', '11:30', NULL, NULL);
 
   INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
