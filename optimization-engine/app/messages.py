@@ -243,17 +243,22 @@ MESSAGES: dict[str, str] = {
     # The school rules' "Max lessons per day", which applies to every class and
     # teaching group on its own. One line for every group the core holds, the
     # groups in resourceIds, which the gateway names and the page lists.
-    # `measured` is 1 when solving the week without the maximum found a
-    # timetable (SchedulerSolver._daily_maximum_verdict): the groups named are
-    # then the ones that timetable gives more than the maximum on some day.
+    # `measured` is what SchedulerSolver._daily_maximum_verdict established:
+    # 1, solving the week without the maximum found a timetable, and the groups
+    # are the ones it gives more than the maximum on some day; 2, the week is
+    # impossible without the maximum too, and the maximum is impossible on its
+    # own for the groups named; 0, nothing could be measured.
     "GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT": (
         "The school rules allow at most {maxPerDay, plural, one {# lesson} other {# lessons}} a "
         "day for each class and teaching group. {measured, select, 1 {That maximum is what "
         "makes the week impossible: without it, a timetable exists that keeps every other rule, "
-        "and in it the groups named here have more lessons than that on some day.} other {That "
+        "and in it the groups named here have more lessons than that on some day.} 2 {That "
+        "maximum makes the week impossible on its own: even with the other rules set aside, the "
+        "groups named here cannot fit their lessons into the days open to them at that maximum. "
+        "The week has other causes too: it stays impossible without the maximum.} other {That "
         "maximum is one of the rules that cannot all hold at once for the groups named here; "
-        "there was no time left to measure whether it alone is the difference.}} Raise Max "
-        "lessons per day under School rules, or free more days for those groups' lessons."
+        "whether it alone is the difference could not be measured.}} Raise Max lessons per day "
+        "under School rules, or free more days for those groups' lessons."
     ),
     "LUNCH_BREAK_IS_THE_DIFFERENCE": (
         "The {lunchMinutes}-minute lunch break is what leaves no room: without it the week would "
