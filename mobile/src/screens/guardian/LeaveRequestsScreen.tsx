@@ -15,6 +15,7 @@ import { fetchChildren } from '../../services/children';
 import { deciderOf, fetchLeaveRequests, requestLeave } from '../../services/leaveRequests';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/LocaleContext';
+import { localDate } from '../../i18n/format';
 import type { ChildRow, LeaveRequestRow, LeaveRequestStatus } from '../../types';
 
 const STATUS_COLORS: Record<LeaveRequestStatus, string> = {
@@ -23,10 +24,6 @@ const STATUS_COLORS: Record<LeaveRequestStatus, string> = {
   REJECTED: '#f87171',
 };
 
-function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
 /** Leave requests (ledighetsansökan): submit + follow decisions. */
 export function LeaveRequestsScreen(): React.JSX.Element {
   const { authState } = useAuth();
@@ -34,8 +31,8 @@ export function LeaveRequestsScreen(): React.JSX.Element {
   const [children, setChildren] = useState<ChildRow[]>([]);
   const [leaves, setLeaves] = useState<LeaveRequestRow[]>([]);
   const [selectedChild, setSelectedChild] = useState<string | null>(null);
-  const [startDate, setStartDate] = useState(todayISO());
-  const [endDate, setEndDate] = useState(todayISO());
+  const [startDate, setStartDate] = useState(localDate());
+  const [endDate, setEndDate] = useState(localDate());
   const [reason, setReason] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);

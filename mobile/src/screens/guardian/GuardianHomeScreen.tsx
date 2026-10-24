@@ -15,12 +15,10 @@ import { fetchChildren } from '../../services/children';
 import { fetchAbsenceReports, removeAbsenceReport, reportAbsence } from '../../services/absenceReports';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/LocaleContext';
+import { localDate } from '../../i18n/format';
 import type { AbsenceReportRow, AbsenceReportType, ChildRow } from '../../types';
 
 const TYPES: readonly AbsenceReportType[] = ['SICK', 'APPOINTMENT', 'OTHER'];
-function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 /** Guardian home: children overview + one-tap absence reporting. */
 export function GuardianHomeScreen(): React.JSX.Element {
@@ -29,7 +27,7 @@ export function GuardianHomeScreen(): React.JSX.Element {
   const [children, setChildren] = useState<ChildRow[]>([]);
   const [reports, setReports] = useState<AbsenceReportRow[]>([]);
   const [selectedChild, setSelectedChild] = useState<string | null>(null);
-  const [date, setDate] = useState(todayISO());
+  const [date, setDate] = useState(localDate());
   const [type, setType] = useState<AbsenceReportType>('SICK');
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -219,7 +217,7 @@ export function GuardianHomeScreen(): React.JSX.Element {
               {/* Only the reporter takes a report back, and only before its day
                   has passed: the gateway refuses anyone else, so the other
                   guardian is not offered a button that can only fail. */}
-              {report.date.slice(0, 10) >= todayISO() && report.reportedById === authState.teacherId ? (
+              {report.date.slice(0, 10) >= localDate() && report.reportedById === authState.teacherId ? (
                 <TouchableOpacity
                   accessibilityRole="button"
                   accessibilityLabel={t('guardian.deleteA11y')}
