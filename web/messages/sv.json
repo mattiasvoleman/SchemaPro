@@ -2905,7 +2905,7 @@
     },
     "teachers": {
       "title": "Lärarnas rastvakt",
-      "description": "Passens minuter per vecka bredvid ramen i lärarens uppdrag Rastvakt. Passen räknas som uppdrag i tjänstefördelningen, och uppdraget Rastvakt räknas bara de datum läraren inte har något pass.",
+      "description": "Passens minuter per vecka bredvid ramen i lärarens uppdrag Rastvakt. Passen räknas som uppdrag i tjänstefördelningen, och uppdraget Rastvakt räknas bara de veckor läraren inte har något pass.",
       "caption": "Varje lärare med pass eller uppdraget Rastvakt detta läsår",
       "columns": {
         "teacher": "Lärare",
@@ -3383,7 +3383,7 @@
       "travelValue": "{hours} h ({minutes} min/v)",
       "supervisionHours": "Därav rastvakt enligt rastvaktsschemat",
       "supervisionValue": "{hours} h ({minutes} min/v)",
-      "supervisionRam": "Uppdraget Rastvakt ({ram} min/v) är ramen som rastvaktsschemat planeras mot. Det räknas bara de datum läraren inte har något pass ({counted} min/v).",
+      "supervisionRam": "Uppdraget Rastvakt ({ram} min/v) är ramen som rastvaktsschemat planeras mot. Det räknas bara de veckor läraren inte har något pass ({counted} min/v).",
       "regulated": "Reglerad arbetstid",
       "annualHours": "Årsarbetstid",
       "unregulated": "Övrig arbetstid (årsarbetstid − reglerad)",

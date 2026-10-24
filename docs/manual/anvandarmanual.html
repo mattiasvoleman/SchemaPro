@@ -2259,10 +2259,10 @@
     datum men utan blockerade tider.
   </p>
   <p>
-    Rastvakt kan också planeras i <span class="path">Planering › Rastvakter</span>
+    Rastvakt kan också planeras i <span class="path">Planering › Rastvaktsschema</span>
     (4.6). Varje pass där räknas då som ett uppdrag, och ett uppdrag av typen
     <em>Rastvakt</em> blir ramen som schemat planeras mot: det räknas bara de
-    datum läraren inte har något pass, så att rastvakten aldrig räknas två
+    veckor läraren inte har något pass, så att rastvakten aldrig räknas två
     gånger.
   </p>
 
@@ -2739,7 +2739,7 @@
   </div>
   <h3 id="s46"><span class="num">4.6</span>Rastvaktsschema</h3>
   <p>
-    Gå till <span class="path">Planering › Rastvakter</span>. Här bestämmer du
+    Gå till <span class="path">Planering › Rastvaktsschema</span>. Här bestämmer du
     var skolan vaktar under rasterna och vem som vaktar vilken rast, och sidan
     visar vilka raster som saknar rastvakt. Passen räknas som uppdrag i
     lärarnas belastning (4.3).
@@ -2750,14 +2750,16 @@
     Ett område är en plats skolan vaktar, till exempel <em>Skolgården</em>,
     <em>Matsalen</em> eller <em>Korridoren plan 2</em>. Du lägger till dem under
     <span class="ui">Rastvaktsområden</span> längst ned på sidan. Ett område
-    gäller alla läsår, precis som rasterna.
+    gäller alla läsår, precis som rasterna. Det betyder också att en ändring
+    av området gäller alla läsårs pass på det, och att ett område som tas
+    bort tar med sig sina pass i alla läsår.
   </p>
   <table>
     <thead><tr><th style="width:30%">Fält</th><th>Vad det betyder</th></tr></thead>
     <tbody>
       <tr><td class="k">Namn</td><td>Högst 60 tecken och unikt på skolan.</td></tr>
       <tr><td class="k">Skolområde</td><td>Vilket av skolans skolområden (3.3) området ligger på. Fältet visas när skolan har skolområden.</td></tr>
-      <tr><td class="k">Årskurser</td><td>Vilka årskursers raster området vaktas under. Ett tomt fält betyder alla stadier. En lågstadiegård för förskoleklass till åk 3 vaktas bara när de årskurserna är ute.</td></tr>
+      <tr><td class="k">Årskurser</td><td>Vilka årskursers raster området vaktas under. Ett tomt fält betyder alla stadier. En lågstadiegård för förskoleklass till åk 3 vaktas bara när de årskurserna är ute. Årskurserna anges i den nioåriga numreringen, som rasterna; ett tioårigt läsårs klasser läses om till den (8.1).</td></tr>
       <tr><td class="k">Bevakas under rasterna</td><td>Rasterna läses från <span class="path">Planering › Raster</span> (4.5).</td></tr>
       <tr><td class="k">Bevakas under lunchen</td><td>Lunchen läses från årskursernas lunchsittningar, eller från skolans lunchfönster där ingen sittning anges. Ett område kan bevakas under både raster och lunch, eller under ingetdera, till exempel en busshållplats som bara har egna pass.</td></tr>
       <tr><td class="k">Rastvakter samtidigt</td><td>Hur många som behöver vakta på en gång, från 0 till 10. Med 0 sägs ingen rast vara obevakad.</td></tr>
@@ -2790,8 +2792,8 @@
     <p>
       En lärare kan inte ha två pass som delar en minut samma veckodag, på
       datum då båda gäller. 11.30–12.00 i matsalen och 12.00–12.30 på gården
-      går bra. 11.30–12.10 och 12.00–12.30 går inte, och då säger sidan vilket
-      pass läraren redan har.
+      går bra. 11.30–12.10 och 12.00–12.30 går inte, och dialogen säger redan
+      innan du sparar vilket pass läraren har.
     </p>
   </div>
 
@@ -2802,7 +2804,10 @@
     vaktar mot hur många som behövs, under vilka minuter och på vilka datum
     (eller <em>hela läsåret</em>). Två lärare som delar på en lunch, till
     exempel 11.30–12.00 och 12.00–12.30, vaktar den tillsammans. Ett lov som
-    stänger hela skolan räknas inte som en lucka. Plusknappen på raden lägger
+    stänger hela skolan räknas inte som en lucka. En lärare som avaktiverats
+    i registret står kvar på sina pass, markerad som inaktiv, men vaktar
+    ingenting: rasterna visas som obevakade tills du lägger dem på någon
+    annan. Plusknappen på raden lägger
     ett pass på just den rasten. Gäller luckan bara en del av läsåret följer
     dess datum med.
   </p>
@@ -2818,9 +2823,9 @@
   </p>
   <p>
     Har läraren redan ett uppdrag av typen <em>Rastvakt</em> blir det
-    <strong>ramen</strong> som schemat planeras mot. De datum läraren har ett
-    pass räknas passen och inte uppdraget. De datum läraren saknar pass räknas
-    uppdraget som förut. Rastvakten räknas alltså aldrig två gånger, och en
+    <strong>ramen</strong> som schemat planeras mot. De veckor läraren har ett
+    pass räknas passen och inte uppdraget, också en vecka då passet bara går
+    en enda dag. De veckor läraren saknar pass räknas uppdraget som förut. Rastvakten räknas alltså aldrig två gånger, och en
     skola som inte använder rastvaktsschemat får samma belastning som
     tidigare. Tabellen <span class="ui">Lärarnas rastvakt</span> visar varje
     lärares minuter per vecka bredvid ramen, och hur långt över eller under
