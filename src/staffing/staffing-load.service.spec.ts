@@ -551,6 +551,26 @@ describe('StaffingLoadService', () => {
       expect(line.ramCountedMinutesPerWeek).toBeGreaterThan(0);
     });
 
+    it('charges a teacher who shares a post and holds passes with both: their own lessons of the post, and the passes beside them', async () => {
+      // Delade lektioner (20261205090000) and the rastvaktsschema together:
+      // COLLEAGUE takes 4 of the post's 10 lessons, and ME keeps the passes.
+      arrangeSchedule();
+      tx.teachingRequirement.findMany.mockResolvedValue([
+        requirementRow({ shares: [{ teacherId: COLLEAGUE, lessons: 4, minutes: 60 }] }),
+      ]);
+      const report = await service.load(YEAR_ID, 'planned', testUser());
+      const mine = report.teachers.find((row) => row.userId === ME)!;
+      const theirs = report.teachers.find((row) => row.userId === COLLEAGUE)!;
+      expect(mine.assignedMinutesPerWeek).toBe(360);
+      expect(theirs.assignedMinutesPerWeek).toBe(240);
+      // 90 mentorskap + 20 + 30 of passes, the Rastvakt uppdrag the ram; the
+      // counted minutes are ME's own lessons and the pass that counts.
+      expect(mine).toMatchObject({ dutyMinutesPerWeek: 140, countedDutyMinutesPerWeek: 30, countedMinutesPerWeek: 360 + 30 });
+      // COLLEAGUE has no pass: their share and their uppdrag as each always counted.
+      expect(theirs).toMatchObject({ dutyMinutesPerWeek: 40, countedMinutesPerWeek: 240 });
+      expect(report.supervision?.teachers.map((row) => row.userId)).toEqual([ME, PASS_ONLY]);
+    });
+
     it('answers a teacher their own line alone', async () => {
       arrangeSchedule();
       const own = await service.load(YEAR_ID, 'planned', testUser({ role: Role.TEACHER }));
