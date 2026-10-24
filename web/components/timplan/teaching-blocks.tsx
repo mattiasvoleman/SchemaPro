@@ -46,6 +46,7 @@ import { toast } from "sonner";
 import { createClient } from "@/utils/supabase/client";
 import { useCrudMutations } from "@/lib/queries";
 import { lengthPartsOf } from "@/lib/lesson-lengths";
+import { lessonTeachersOf } from "@/lib/lesson-shares";
 import { draftPartsOf, shapeFromDraft, type DraftPart } from "@/lib/lesson-lengths-text";
 import type { MessageLookup } from "@/lib/engine-message";
 import { STAFFING_KEYS } from "@/lib/staffing-keys";
@@ -123,9 +124,14 @@ function useTeachingBlocks(academicYearId: string) {
 /**
  * What the generator would refuse in a block, seen from the posts alone:
  * fewer than two posts (nothing to hold together), a teacher on two posts,
- * and two posts on one group. Each as a sentence naming the posts.
+ * two posts on one group, and two posts whose lessons are each split between
+ * teachers (delade lektioner, the gateway's BLOCK_MEMBERS_SPLIT). Each as a
+ * sentence naming the posts.
  */
-export type WarningText = (key: "warnOne" | "warnTeacher" | "warnGroup", values?: Record<string, string>) => string;
+export type WarningText = (
+  key: "warnOne" | "warnTeacher" | "warnGroup" | "warnSplit",
+  values?: Record<string, string>,
+) => string;
 
 export function blockWarnings(
   members: readonly TeachingRequirement[],
@@ -152,6 +158,16 @@ export function blockWarnings(
       }
     }
   }
+  // Delade lektioner: the block's k-th lessons start together, so two posts
+  // each split between teachers would tie one teacher's lesson to another's,
+  // and the generation refuses the block by name. Said here first, of the
+  // first two, as it says it. One split post beside others is fine. Read
+  // from the post's whole lessons; the generation counts only those left to
+  // place, so it may let a block through that this warns about.
+  const split = members.filter(
+    (row) => (row.shares ?? []).length > 0 && new Set(lessonTeachersOf(row).map((lesson) => lesson.teacherId)).size > 1,
+  );
+  if (split.length >= 2) warnings.push(t("warnSplit", { first: label(split[0]!), second: label(split[1]!) }));
   return warnings;
 }
 

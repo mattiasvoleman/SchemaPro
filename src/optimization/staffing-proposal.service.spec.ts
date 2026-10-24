@@ -1215,6 +1215,22 @@ describe('StaffingProposalService.propose', () => {
       expect(pinned.basisSha256).toBe(await basis(rows));
     });
 
+    it('delade lektioner: does not move with the order a row’s shares are read in, and does with a share', async () => {
+      // Two teacherless shares of one length beside Bo's: the read's order
+      // does not decide between them, so the basis must not either.
+      const shared = (shares: Row[]) => {
+        const rows = schoolRows();
+        const row = rows['teachingRequirement']![2]!;
+        Object.assign(row, { lessonsPerWeek: 4, shares });
+        return rows;
+      };
+      const minutes = schoolRows()['teachingRequirement']![2]!['minutesPerLesson'] as number;
+      const one = { teacherId: null, lessons: 1, minutes };
+      const bos = { teacherId: BO, lessons: 1, minutes };
+      expect(await basis(shared([one, bos, { ...one }]))).toBe(await basis(shared([bos, { ...one }, one])));
+      expect(await basis(shared([one, bos]))).not.toBe(await basis(shared([bos])));
+    });
+
     it.each<[string, (rows: Record<string, Row[]>) => void]>([
       ['a lead', (r) => void (r['teachingRequirement']![2]!['teacherId'] = BO)],
       ['a co-teacher', (r) => void (r['teachingRequirement']![2]!['coTeacherId'] = CY)],

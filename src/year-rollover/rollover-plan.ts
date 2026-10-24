@@ -681,7 +681,13 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
         };
         teacherId = keep('TEACHER', requirement.teacherId);
         coTeacherId = keep('CO_TEACHER', requirement.coTeacherId);
-        keepShare = (userId) => keep('TEACHER', userId);
+        // Once per teacher of the row: a teacher with a share of two lengths
+        // is one teacher of it, judged and listed once in the review.
+        const keptShare = new Map<string | null, string | null>();
+        keepShare = (userId) => {
+          if (!keptShare.has(userId)) keptShare.set(userId, keep('TEACHER', userId));
+          return keptShare.get(userId)!;
+        };
       }
       // Delade lektioner: the lessons stay split as they were, each share's
       // teacher kept by the same rules as the lead (a share's teacher teaches

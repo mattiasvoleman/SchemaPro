@@ -62,6 +62,7 @@ import {
 } from './interfaces/staffing.interface';
 import { OptimizationProxyService, requirementName, type AnonMaps } from './optimization-proxy.service';
 import { lockApplyYearKey } from './regeneration-lock';
+import { canonicalShares } from '../common/lesson-shares';
 
 /** The engine's route; see optimization-engine/app/api/v1/staffing.py. */
 export const STAFF_PATH = '/api/v1/staff';
@@ -1664,9 +1665,12 @@ export function basisOf(state: Pick<StaffingState, 'read' | 'policy' | 'staffIds
         row.loadWeight ?? 1,
         state.lastYear.get(row.id)?.teacherIds ?? null,
         // Delade lektioner only when the row has any, so the basis of a
-        // school that shares nothing is the digest it always was.
+        // school that shares nothing is the digest it always was. Canonical
+        // first (canonicalShares, as the generator's shareKeyOf): the read's
+        // order does not decide between two teacherless shares of one
+        // length, and two reads of the same rows must give one basis.
         ...((row.shares ?? []).length > 0
-          ? [row.shares!.map((share) => [share.teacherId, share.lessons, share.minutes])]
+          ? [canonicalShares(row.shares!).map((share) => [share.teacherId, share.lessons, share.minutes])]
           : []),
       ]),
     // A post's periods (20261022120000) only when it has any, so the basis of

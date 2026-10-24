@@ -29,6 +29,7 @@ import {
   type BlockStaffingWarning,
 } from './teaching-blocks.service';
 import { requirementResponse, type TeachingRequirementResponse } from './teaching-requirements.service';
+import { lockPostForShares } from './requirement-shares';
 import type { SplitByTermDto } from './dto/term-halves.dto';
 
 /** The problem codes "Dela terminsvis i halvklass" answers with besides the shared ones. */
@@ -45,6 +46,17 @@ export const HALF_HAS_SUBJECT = 'HALF_HAS_SUBJECT';
  * term to go to, so the split is refused rather than the shares dropped.
  */
 export const TERM_SPLIT_HAS_SHARES = 'TERM_SPLIT_HAS_SHARES';
+
+/** The refusal of a shared post, named; `params` for the reader's language. */
+function splitHasShares(postName: string): ConflictException {
+  return new ConflictException({
+    message:
+      `${postName} delar sina lektioner mellan lärare. Ta bort delningen i postens dialog först, ` +
+      'och välj sedan lärare för varje ämne här.',
+    code: TERM_SPLIT_HAS_SHARES,
+    params: { requirement: postName },
+  });
+}
 
 /** What the split wrote: the halves, the two blocks and the four posts. */
 export interface TermHalvesResponse {
@@ -242,15 +254,7 @@ export class TermHalvesService {
             code: REQUIREMENT_HAS_PERIOD,
           });
         }
-        if (source._count.shares > 0) {
-          throw new ConflictException({
-            message:
-              `${postName} delar sina lektioner mellan lärare. Ta bort delningen i postens dialog först, ` +
-              'och välj sedan lärare för varje ämne här.',
-            code: TERM_SPLIT_HAS_SHARES,
-            params: { requirement: postName },
-          });
-        }
+        if (source._count.shares > 0) throw splitHasShares(postName);
 
         if (springStart <= year.startDate || springStart > year.endDate) {
           throw new BadRequestException({
@@ -396,6 +400,19 @@ export class TermHalvesService {
         );
 
         const warnings = await this.judge(tx, user, source, planned, subjectName);
+
+        // Delade lektioner: the post locked as a shares PATCH locks it
+        // (lockPostForShares), where the DELETE below would take it anyway —
+        // after the teachers' posts, the import's order — and its shares
+        // counted again in a statement of their own. A PATCH that committed
+        // since the read above is seen here; one after waits for the split
+        // and finds the post gone. The DELETE's `shares: none` alone is
+        // judged on the DELETE's snapshot, and a share committed while it
+        // waited on the row would go with the post.
+        await lockPostForShares(tx, source.id);
+        if ((await tx.teachingRequirementShare.count({ where: { requirementId: source.id } })) > 0) {
+          throw splitHasShares(postName);
+        }
 
         const { count } = await tx.teachingRequirement.deleteMany({
           where: {

@@ -699,6 +699,7 @@
       "warnOne": "Ett block behöver minst två poster för att något ska läggas samtidigt.",
       "warnTeacher": "{first} och {second} har samma lärare, som inte kan undervisa i båda samtidigt. Generatorn vägrar blocket.",
       "warnGroup": "{first} och {second} är samma grupp, och samma elever kan inte vara i båda samtidigt. Generatorn vägrar blocket.",
+      "warnSplit": "{first} och {second} har båda sina lektioner delade mellan lärare, och ett blocks lektioner läggs ihop en och en. Generatorn vägrar blocket. Ge en av dem en lärare igen, eller ta den ur blocket.",
       "memberNotice": "Posten ligger i ett parallellt block, och dess lektioner och veckor är hela blockets. Ändra hela blockets lektioner med Ändra lektioner under Block, eller ta posten ur blocket för att ändra dem bara här.",
       "lessons": "Ändra lektioner",
       "lessonsNamed": "Ändra lektionerna i blocket {name}",

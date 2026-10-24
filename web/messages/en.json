@@ -699,6 +699,7 @@
       "warnOne": "A block needs at least two entries for anything to be placed together.",
       "warnTeacher": "{first} and {second} have the same teacher, who cannot teach both at once. The generator refuses the block.",
       "warnGroup": "{first} and {second} are the same group, and the same pupils cannot be in both at once. The generator refuses the block.",
+      "warnSplit": "{first} and {second} both have their lessons split between teachers, and the lessons of a block are placed together one by one. The generator refuses the block. Give one of them one teacher again, or take it out of the block.",
       "memberNotice": "The entry is in a parallel block, and its lessons and weeks are the whole block's. Change the whole block's lessons with Change lessons under Blocks, or take the entry out of the block to change them here alone.",
       "lessons": "Change lessons",
       "lessonsNamed": "Change the lessons of the block {name}",

@@ -2378,6 +2378,35 @@ describe('YearRolloverService — delade lektioner (20261205090000)', () => {
     ]);
   });
 
+  it('judges a teacher with shares of two lengths once, and lists them once in the review', async () => {
+    const rows = withShare(defaultRolloverRows());
+    const ma = rows['teachingRequirement']!.find(
+      (row) => row['studentGroupId'] === IDS.g7a && row['subjectId'] === IDS.ma,
+    )!;
+    // 60 + 60 + 40, Bo (who has left) the second 60 and the 40.
+    Object.assign(ma, {
+      lessonsPerWeek: 3,
+      minutesPerLesson: 60,
+      lessonLengths: [60, 60, 40],
+      shares: [
+        { teacherId: IDS.bo, lessons: 1, minutes: 60 },
+        { teacherId: IDS.bo, lessons: 1, minutes: 40 },
+      ],
+    });
+    const { world, service } = setup(rows);
+    const { preview } = await previewAndExecute(world, service, { ...OPTIONS, keepTeachers: true });
+
+    const bos = preview.requirements.teachersCleared.filter(
+      (row) => row.teacherId === IDS.bo && row.sourceRequirementId === ma['id'],
+    );
+    expect(bos).toEqual([expect.objectContaining({ role: 'TEACHER', reason: 'INACTIVE' })]);
+    // Both of his shares carried, each without him.
+    expect(sharesOf(world).map((share) => [share['teacherId'], share['minutes']])).toEqual([
+      [null, 60],
+      [null, 40],
+    ]);
+  });
+
   it('writes the one INSERT it always wrote for a year nobody shares', async () => {
     const { world, service } = setup(defaultRolloverRows());
     await previewAndExecute(world, service, OPTIONS);
