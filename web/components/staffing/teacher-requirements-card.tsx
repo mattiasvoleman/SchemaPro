@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 import { ArrowLeftRight, BookOpen } from "lucide-react";
 import type { StaffingWarning } from "@/lib/types";
 import { formatLengths } from "@/lib/lesson-lengths-text";
-import { lessonCountOf } from "@/lib/lesson-lengths";
+import { lessonCountOf, weeklyMinutesOf } from "@/lib/lesson-lengths";
 import { teacherPartsOf, type LessonShare } from "@/lib/lesson-shares";
 import { Button } from "@/components/ui/button";
 import { SectionCard } from "@/components/ui/section-card";
@@ -84,9 +84,10 @@ export function TeacherRequirementsCard({
           {mine.map(({ row, label }) => {
             const leads = row.teacherId === teacherId;
             const coTeaches = row.coTeacherId === teacherId;
-            // Delade lektioner: this teacher's own lessons of a shared row.
+            // Delade lektioner: this teacher's own lessons of a shared row, and
+            // their share of its minutes — the factor the tjänst is filled with.
             const own = (row.shares ?? []).length > 0 && !coTeaches
-              ? (teacherPartsOf(row).find((part) => part.teacherId === teacherId)?.lessons ?? null)
+              ? (teacherPartsOf(row).find((part) => part.teacherId === teacherId) ?? null)
               : null;
             const open = openId === row.id;
             return (
@@ -97,7 +98,13 @@ export function TeacherRequirementsCard({
                     <span className="text-muted-foreground">
                       {t("teacherRowLessons", { post: formatLengths(row) })}
                       {coTeaches ? ` · ${t("teacherRowCoTeacher")}` : ""}
-                      {own !== null ? ` · ${t("teacherRowShare", { lessons: own, of: lessonCountOf(row) })}` : ""}
+                      {own !== null
+                        ? ` · ${t("teacherRowShare", {
+                            lessons: own.lessons,
+                            of: lessonCountOf(row),
+                            percent: Math.round((100 * own.minutes) / weeklyMinutesOf(row)),
+                          })}`
+                        : ""}
                     </span>
                   </span>
                   {leads ? (

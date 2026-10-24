@@ -765,7 +765,7 @@
       "minutes": "{minutes} min",
       "remove": "Ta bort lektionerna för {teacher}",
       "add": "Lägg till lärare",
-      "part": "{teacher}: {lessons} av {of} lektioner · {minutes} min i veckan ({percent} %)",
+      "part": "{teacher}: {lessons} av {of} lektioner · {percent} % av minuterna ({minutes} min i veckan)",
       "problem": {
         "NO_TEACHER": "Välj en lärare på varje rad.",
         "NOT_INTEGER": "Ange ett helt antal lektioner för varje lärare, och en längd när posten har olika längder.",
@@ -3103,7 +3103,7 @@
     "teacherRowsEmpty": "Läraren har inga timplansposter det här läsåret.",
     "teacherRowLessons": "{post} min",
     "teacherRowCoTeacher": "medlärare",
-    "teacherRowShare": "{lessons} av {of} lektioner",
+    "teacherRowShare": "{lessons} av {of} lektioner · {percent} % av minuterna",
     "changeTeacher": "Byt lärare",
     "changeTeacherFor": "Byt lärare för {row}",
     "unstaffedGeneration": "Generering utan lärare",
