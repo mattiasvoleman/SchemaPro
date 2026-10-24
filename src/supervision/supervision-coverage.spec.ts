@@ -188,10 +188,31 @@ describe('supervisionCoverage: the gaps', () => {
     ]);
   });
 
-  it('lets a deactivated teacher’s pass watch nothing, and still lists it beside the break', () => {
-    const result = coverage({ shifts: [pass('garden', 1, '10:00', '10:30', { inactive: true })] });
-    expect(gapsOf(result, 1)).toEqual([expect.objectContaining({ fewest: 0 })]);
+  it('lets a deactivated teacher’s pass watch until the day before, and still lists it beside the break', () => {
+    // Deactivated on Wednesday 23 September: the Mondays 7, 14 and 21 were watched, the 28th is not.
+    const result = coverage({ shifts: [pass('garden', 1, '10:00', '10:30', { inactiveFrom: '2026-09-23' })] });
+    expect(gapsOf(result, 1)).toEqual([
+      expect.objectContaining({ fewest: 0, from: '2026-09-28', to: '2026-09-28', fromYearStart: false, toYearEnd: true }),
+    ]);
     expect(result.breaks.find((row) => row.dayOfWeek === 1)!.shiftIds).toHaveLength(1);
+    // Its own Till comes first when it is earlier.
+    const ended = coverage({
+      shifts: [pass('garden', 1, '10:00', '10:30', { inactiveFrom: '2026-09-23', validTo: '2026-09-14' })],
+    });
+    expect(gapsOf(ended, 1)).toEqual([expect.objectContaining({ from: '2026-09-21', to: '2026-09-28' })]);
+    // Deactivated before the pass began: it watches nothing, all year.
+    const never = coverage({
+      shifts: [pass('garden', 1, '10:00', '10:30', { inactiveFrom: '2026-09-01' })],
+    });
+    expect(gapsOf(never, 1)).toEqual([expect.objectContaining({ fromYearStart: true, toYearEnd: true })]);
+    // A replacement from the 28th closes it.
+    const handedOn = coverage({
+      shifts: [
+        pass('garden', 1, '10:00', '10:30', { inactiveFrom: '2026-09-23' }),
+        pass('garden', 1, '10:00', '10:30', { id: 'cilla', validFrom: '2026-09-28' }),
+      ],
+    });
+    expect(gapsOf(handedOn, 1)).toEqual([]);
   });
 
   it('never warns where the area needs nobody', () => {

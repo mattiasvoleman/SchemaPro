@@ -21,8 +21,9 @@ import type {
   UpdateSupervisionAreaDto,
   UpdateSupervisionShiftDto,
 } from './dto/supervision.dto';
+import { lessonClashesOf, type ClashLesson, type LessonClash } from './lesson-clashes';
 import { supervisionCoverage, type AreaBreak, type CoverageGap } from './supervision-coverage';
-import { rastvaktRam, supervisionOfTeachers, type TeacherSupervision } from './supervision-load';
+import { chargedShift, rastvaktRam, supervisionOfTeachers, type LoadShift, type TeacherSupervision } from './supervision-load';
 
 /**
  * Rastvaktsschema (migration 20261207090000): the school's rastvaktsområden,
@@ -60,10 +61,21 @@ export interface SupervisionShiftView {
   /** HH:MM */
   startTime: string;
   endTime: string;
-  /** yyyy-mm-dd, null for the läsår's own bound. */
+  /** yyyy-mm-dd, null for the läsår's own bound; on the pass's weekday when set. */
   validFrom: string | null;
   validTo: string | null;
   note: string | null;
+  /**
+   * The day the teacher was deactivated (the school's date), null while they
+   * are active: the pass watches until the day before.
+   */
+  inactiveFrom: string | null;
+  /**
+   * The teacher's lessons of the grundschema the pass runs during. A warning,
+   * not a refusal: the pass is saved, and the generator and the vikarieförslag
+   * do not read passes yet (lesson-clashes.ts).
+   */
+  lessonClashes: LessonClash[];
 }
 
 /** A break or a gap as the page reads it: clocks, not minutes. */
@@ -85,6 +97,29 @@ export interface SupervisionRota {
   teachers: TeacherSupervision[];
 }
 
+/** One row of the rota's statement: an area, and one of its passes this year or none. */
+interface RotaRow {
+  areaId: string;
+  name: string;
+  siteId: string | null;
+  minGradeLevel: number | null;
+  maxGradeLevel: number | null;
+  duringRasts: boolean;
+  duringLunch: boolean;
+  guardsNeeded: number;
+  countsAsTeaching: boolean;
+  shiftCount: number;
+  shiftId: string | null;
+  userId: string | null;
+  dayOfWeek: number | null;
+  startTime: Date | null;
+  endTime: Date | null;
+  validFrom: Date | null;
+  validTo: Date | null;
+  note: string | null;
+  inactiveFrom: Date | null;
+}
+
 export const SUPERVISION_AREA_NAME_TAKEN = 'SUPERVISION_AREA_NAME_TAKEN';
 export const SUPERVISION_AREA_LIMIT = 'SUPERVISION_AREA_LIMIT';
 export const SUPERVISION_AREA_NOT_FOUND = 'SUPERVISION_AREA_NOT_FOUND';
@@ -93,6 +128,7 @@ export const SUPERVISION_SHIFT_NOT_FOUND = 'SUPERVISION_SHIFT_NOT_FOUND';
 export const SUPERVISION_SHIFT_CLASH = 'SUPERVISION_SHIFT_CLASH';
 export const SUPERVISION_SHIFT_LIMIT = 'SUPERVISION_SHIFT_LIMIT';
 export const SUPERVISION_YEAR_NOT_FOUND = 'SUPERVISION_YEAR_NOT_FOUND';
+export const SUPERVISION_TEACHER_INACTIVE = 'SUPERVISION_TEACHER_INACTIVE';
 
 /** More places than any school watches; the page lists them all at once. */
 export const MAX_AREAS = 100;
@@ -122,7 +158,18 @@ function areaView(row: SupervisionArea & { _count?: { shifts: number } }): Super
   };
 }
 
-function shiftView(row: SupervisionShift): SupervisionShiftView {
+type ShiftRow = Pick<
+  SupervisionShift,
+  'id' | 'academicYearId' | 'areaId' | 'userId' | 'dayOfWeek' | 'startTime' | 'endTime' | 'validFrom' | 'validTo' | 'note'
+>;
+
+function shiftView(
+  row: ShiftRow,
+  inactiveFrom: string | null,
+  lessons: readonly ClashLesson[],
+): SupervisionShiftView {
+  const validFrom = dayOrNull(row.validFrom);
+  const validTo = dayOrNull(row.validTo);
   return {
     id: row.id,
     academicYearId: row.academicYearId,
@@ -131,9 +178,21 @@ function shiftView(row: SupervisionShift): SupervisionShiftView {
     dayOfWeek: row.dayOfWeek,
     startTime: toWallClock(row.startTime),
     endTime: toWallClock(row.endTime),
-    validFrom: dayOrNull(row.validFrom),
-    validTo: dayOrNull(row.validTo),
+    validFrom,
+    validTo,
     note: row.note,
+    inactiveFrom,
+    lessonClashes: lessonClashesOf(
+      {
+        userId: row.userId,
+        dayOfWeek: row.dayOfWeek,
+        start: minutesOfTime(row.startTime),
+        end: minutesOfTime(row.endTime),
+        validFrom,
+        validTo,
+      },
+      lessons,
+    ),
   };
 }
 
@@ -175,23 +234,10 @@ function assertWindow(startTime: string, endTime: string): void {
   }
 }
 
-/**
- * Från not after Till, both inside the läsår (null bounds are the year's),
- * and the pass's weekday between them: a Monday pass dated Tuesday to Friday
- * would be charged a week it never runs in.
- */
-function assertDates(year: YearBounds | null, validFrom: Date | null, validTo: Date | null, dayOfWeek: number): void {
+/** Från not after Till, and both inside the läsår (null bounds are the year's). */
+function assertDates(year: YearBounds | null, validFrom: Date | null, validTo: Date | null): void {
   if (validFrom && validTo && validTo < validFrom) {
     throw new BadRequestException(`validTo: Till (${asDay(validTo)}) ligger före Från (${asDay(validFrom)}).`);
-  }
-  if (validFrom && validTo) {
-    const first = validFrom.getUTCDay() === 0 ? 7 : validFrom.getUTCDay();
-    const offset = (dayOfWeek - first + 7) % 7;
-    if (validFrom.getTime() + offset * 24 * 60 * 60 * 1000 > validTo.getTime()) {
-      throw new BadRequestException(
-        `validTo: ingen ${WEEKDAY[dayOfWeek]} ligger mellan ${asDay(validFrom)} och ${asDay(validTo)}, så passet skulle aldrig gå.`,
-      );
-    }
   }
   if (!year) return;
   for (const [field, value] of [
@@ -205,6 +251,50 @@ function assertDates(year: YearBounds | null, validFrom: Date | null, validTo: D
       );
     }
   }
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const isoWeekday = (value: Date) => (value.getUTCDay() === 0 ? 7 : value.getUTCDay());
+
+/**
+ * Från and Till on the pass's weekday, as the table holds them
+ * (SupervisionShifts_dates_on_the_weekday): Från forward to the first such
+ * day, Till back to the last. A null date stays null, the läsår's own bound,
+ * and is read as that bound when asking whether the pass runs at all: a
+ * Monday pass from Tuesday 8 June in a year that ends Friday 11 June never
+ * runs, and is refused rather than charged a week.
+ */
+function datesOnTheWeekday(
+  year: YearBounds,
+  validFrom: Date | null,
+  validTo: Date | null,
+  dayOfWeek: number,
+): { validFrom: Date | null; validTo: Date | null } {
+  const from = validFrom ?? year.startDate;
+  const to = validTo ?? year.endDate;
+  const first = new Date(from.getTime() + ((dayOfWeek - isoWeekday(from) + 7) % 7) * DAY_MS);
+  const last = new Date(to.getTime() - ((isoWeekday(to) - dayOfWeek + 7) % 7) * DAY_MS);
+  if (first > last) {
+    // Said at the date the admin wrote: Från when Till is the year's own.
+    const field = validFrom && !validTo ? 'validFrom' : 'validTo';
+    throw new BadRequestException(
+      `${field}: ingen ${WEEKDAY[dayOfWeek]} ligger mellan ${asDay(from)} och ${asDay(to)}, så passet skulle aldrig gå.`,
+    );
+  }
+  return { validFrom: validFrom ? first : null, validTo: validTo ? last : null };
+}
+
+/**
+ * A stored date of a pass moved to its new weekday: the same ISO week, so a
+ * pass from Monday 11 January to Monday 1 March moved to Wednesdays runs from
+ * the 13th to Wednesday 3 March and loses no week at either end. Kept inside
+ * the läsår; datesOnTheWeekday then moves a date the bound pushed off the
+ * weekday inward.
+ */
+function sameWeek(stored: Date | null, from: number, to: number, year: YearBounds): Date | null {
+  if (stored === null) return null;
+  const moved = new Date(stored.getTime() + (to - from) * DAY_MS);
+  return moved < year.startDate ? year.startDate : moved > year.endDate ? year.endDate : moved;
 }
 
 /** A pass write's errors: the EXCLUDE constraint as the clash the check answers, the rest as every write maps it. */
@@ -357,18 +447,20 @@ export class SupervisionService {
   async createShift(dto: CreateSupervisionShiftDto, user: AuthenticatedUser): Promise<SupervisionShiftView> {
     const schoolId = requireSchoolId(user);
     assertWindow(dto.startTime, dto.endTime);
-    const validFrom = dateOrNull(dto.validFrom);
-    const validTo = dateOrNull(dto.validTo);
-    assertDates(null, validFrom, validTo, dto.dayOfWeek);
+    const typedFrom = dateOrNull(dto.validFrom);
+    const typedTo = dateOrNull(dto.validTo);
+    assertDates(null, typedFrom, typedTo);
     const note = dto.note?.trim() || null;
     try {
       return await this.prisma.withRls(user, async (tx) => {
         await lockSchedule(tx, dto.academicYearId);
-        // The person is staff, and stays staff until this commits.
+        // The person is staff, and stays staff (and active) until this commits.
         await lockStaffRow(tx, dto.userId, 'rastvaktspass');
+        await this.assertActive(tx, dto.userId);
         const year = await readYearBoundsForShare(tx, dto.academicYearId);
         if (!year) throw new NotFoundException({ message: 'Läsåret finns inte.', code: SUPERVISION_YEAR_NOT_FOUND });
-        assertDates(year, validFrom, validTo, dto.dayOfWeek);
+        assertDates(year, typedFrom, typedTo);
+        const { validFrom, validTo } = datesOnTheWeekday(year, typedFrom, typedTo, dto.dayOfWeek);
         await this.assertArea(tx, dto.areaId);
         if ((await tx.supervisionShift.count({ where: { academicYearId: dto.academicYearId } })) >= MAX_SHIFTS_PER_YEAR) {
           throw new ConflictException({
@@ -389,7 +481,7 @@ export class SupervisionService {
         const row = await tx.supervisionShift.create({
           data: { schoolId, areaId: dto.areaId, note, ...candidate },
         });
-        return shiftView(row);
+        return this.viewOf(tx, row);
       });
     } catch (error) {
       rethrowShiftError(error);
@@ -410,14 +502,28 @@ export class SupervisionService {
         const startTime = dto.startTime ?? toWallClock(locked.startTime);
         const endTime = dto.endTime ?? toWallClock(locked.endTime);
         assertWindow(startTime, endTime);
-        const validFrom = dto.validFrom !== undefined ? dateOrNull(dto.validFrom) : locked.validFrom;
-        const validTo = dto.validTo !== undefined ? dateOrNull(dto.validTo) : locked.validTo;
+        let validFrom = dto.validFrom !== undefined ? dateOrNull(dto.validFrom) : locked.validFrom;
+        let validTo = dto.validTo !== undefined ? dateOrNull(dto.validTo) : locked.validTo;
         const dayOfWeek = dto.dayOfWeek ?? locked.dayOfWeek;
-        assertDates(null, validFrom, validTo, dayOfWeek);
+        assertDates(null, validFrom, validTo);
         const userId = dto.userId ?? locked.userId;
         await lockStaffRow(tx, userId, 'rastvaktspass');
-        if (dto.validFrom !== undefined || dto.validTo !== undefined) {
-          assertDates(await readYearBoundsForShare(tx, locked.academicYearId), validFrom, validTo, dayOfWeek);
+        // A pass given to someone else goes to an active teacher. A
+        // deactivated teacher's own pass can still be dated or moved: the
+        // page ends it there before the break is handed on.
+        if (userId !== locked.userId) await this.assertActive(tx, userId);
+        // New dates, or a new weekday the stored dates must move onto.
+        if (dto.validFrom !== undefined || dto.validTo !== undefined || dayOfWeek !== locked.dayOfWeek) {
+          const year = await readYearBoundsForShare(tx, locked.academicYearId);
+          if (!year) throw new NotFoundException({ message: 'Läsåret finns inte.', code: SUPERVISION_YEAR_NOT_FOUND });
+          // A stored date the PATCH does not retype follows the pass to its
+          // new weekday within its week; a retyped one is the admin's.
+          if (dayOfWeek !== locked.dayOfWeek) {
+            if (dto.validFrom === undefined) validFrom = sameWeek(locked.validFrom, locked.dayOfWeek, dayOfWeek, year);
+            if (dto.validTo === undefined) validTo = sameWeek(locked.validTo, locked.dayOfWeek, dayOfWeek, year);
+          }
+          assertDates(year, validFrom, validTo);
+          ({ validFrom, validTo } = datesOnTheWeekday(year, validFrom, validTo, dayOfWeek));
         }
         if (dto.areaId !== undefined && dto.areaId !== locked.areaId) await this.assertArea(tx, dto.areaId);
         const candidate = {
@@ -443,7 +549,7 @@ export class SupervisionService {
             ...(dto.note !== undefined ? { note: dto.note?.trim() || null } : {}),
           },
         });
-        return shiftView(row);
+        return this.viewOf(tx, row);
       });
     } catch (error) {
       rethrowShiftError(error);
@@ -460,6 +566,72 @@ export class SupervisionService {
     } catch (error) {
       rethrowShiftError(error);
     }
+  }
+
+  /** A new pass, or a pass handed on, goes to a teacher who is active; the row is locked (lockStaffRow), so they stay so. */
+  private async assertActive(tx: PrismaClient, userId: string): Promise<void> {
+    const person = await tx.user.findUnique({ where: { id: userId }, select: { isActive: true } });
+    if (person && !person.isActive) {
+      throw new ConflictException({
+        message: 'Läraren är avaktiverad och kan inte få ett rastvaktspass.',
+        code: SUPERVISION_TEACHER_INACTIVE,
+      });
+    }
+  }
+
+  /** The day the teacher was deactivated, in the school's time zone; null while active. */
+  private async inactiveFromOf(tx: PrismaClient, userId: string): Promise<string | null> {
+    const [row] = await tx.$queryRaw<{ inactiveFrom: Date }[]>`
+      SELECT (u."deactivatedAt" AT TIME ZONE s."timezone")::date AS "inactiveFrom"
+      FROM "Users" u
+      JOIN "Schools" s ON s."id" = u."schoolId"
+      WHERE u."id" = ${userId}::uuid AND NOT u."isActive"
+    `;
+    return row ? asDay(row.inactiveFrom) : null;
+  }
+
+  /** The year's lessons the passes' teachers teach or co-teach on the passes' weekdays: what a pass may clash with. */
+  private async lessonsOf(
+    tx: PrismaClient,
+    academicYearId: string,
+    shifts: readonly Pick<SupervisionShift, 'userId' | 'dayOfWeek'>[],
+  ): Promise<ClashLesson[]> {
+    const userIds = [...new Set(shifts.map((row) => row.userId))];
+    if (userIds.length === 0) return [];
+    const rows = await tx.masterLesson.findMany({
+      where: {
+        academicYearId,
+        isParked: false,
+        dayOfWeek: { in: [...new Set(shifts.map((row) => row.dayOfWeek))] },
+        OR: [{ teacherId: { in: userIds } }, { coTeacherId: { in: userIds } }],
+      },
+      select: {
+        teacherId: true,
+        coTeacherId: true,
+        dayOfWeek: true,
+        startTime: true,
+        endTime: true,
+        startDate: true,
+        endDate: true,
+        subject: { select: { name: true } },
+        studentGroup: { select: { name: true } },
+      },
+    });
+    return rows.map((row) => ({
+      teacherIds: [row.teacherId, row.coTeacherId],
+      dayOfWeek: row.dayOfWeek,
+      start: minutesOfTime(row.startTime),
+      end: minutesOfTime(row.endTime),
+      startDate: dayOrNull(row.startDate),
+      endDate: dayOrNull(row.endDate),
+      subject: row.subject.name,
+      group: row.studentGroup.name,
+    }));
+  }
+
+  /** A pass as a write answers it: with its teacher's state and the lessons it runs during. */
+  private async viewOf(tx: PrismaClient, row: ShiftRow): Promise<SupervisionShiftView> {
+    return shiftView(row, await this.inactiveFromOf(tx, row.userId), await this.lessonsOf(tx, row.academicYearId, [row]));
   }
 
   private async assertArea(tx: PrismaClient, areaId: string): Promise<void> {
@@ -517,10 +689,13 @@ export class SupervisionService {
   // ---------------------------------------------------------------------------
 
   /**
-   * The läsår's schedule over its breaks, in ONE RLS transaction so the gaps
-   * and the minutes agree with the passes listed: the areas, the year's
-   * passes, the rasts and the meal, the year's lov and classes, and the
-   * RASTVAKT uppdrag that are each teacher's ram.
+   * The läsår's schedule over its breaks: the areas, the year's passes, the
+   * rasts and the meal, the year's lov and classes, and the RASTVAKT uppdrag
+   * that are each teacher's ram. The areas, the passes and whether each
+   * pass's teacher is active are ONE statement, so a pass is never read
+   * without its area or beside an area list from before it (read committed
+   * gives each statement its own snapshot). The rest is the school's
+   * calendar, read in the same transaction.
    */
   async rota(academicYearId: string, user: AuthenticatedUser): Promise<SupervisionRota> {
     const schoolId = requireSchoolId(user);
@@ -531,14 +706,63 @@ export class SupervisionService {
       });
       if (!yearRow) throw new NotFoundException({ message: 'Läsåret finns inte.', code: SUPERVISION_YEAR_NOT_FOUND });
       const year = { startDate: asDay(yearRow.startDate), endDate: asDay(yearRow.endDate) };
-      const areas = await tx.supervisionArea.findMany({
-        where: { schoolId },
-        include: { _count: { select: { shifts: true } } },
-      });
-      const shifts = await tx.supervisionShift.findMany({
-        where: { academicYearId },
-        orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }, { id: 'asc' }],
-      });
+      const rows = await tx.$queryRaw<RotaRow[]>`
+        SELECT a."id" AS "areaId", a."name", a."siteId", a."minGradeLevel", a."maxGradeLevel",
+               a."duringRasts", a."duringLunch", a."guardsNeeded", a."countsAsTeaching",
+               coalesce(c."shiftCount", 0) AS "shiftCount",
+               s."id" AS "shiftId", s."userId", s."dayOfWeek", s."startTime", s."endTime",
+               s."validFrom", s."validTo", s."note",
+               CASE WHEN u."isActive" THEN NULL
+                    ELSE (u."deactivatedAt" AT TIME ZONE sc."timezone")::date END AS "inactiveFrom"
+        FROM "SupervisionAreas" a
+        JOIN "Schools" sc ON sc."id" = a."schoolId"
+        -- Every läsår's passes per area, counted once: what a delete takes with it.
+        LEFT JOIN (
+          SELECT "areaId", count(*)::int AS "shiftCount"
+          FROM "SupervisionShifts"
+          WHERE "schoolId" = ${schoolId}::uuid
+          GROUP BY "areaId"
+        ) c ON c."areaId" = a."id"
+        LEFT JOIN "SupervisionShifts" s
+          ON s."areaId" = a."id" AND s."schoolId" = a."schoolId" AND s."academicYearId" = ${academicYearId}::uuid
+        LEFT JOIN "Users" u ON u."id" = s."userId" AND u."schoolId" = s."schoolId"
+        WHERE a."schoolId" = ${schoolId}::uuid
+        ORDER BY s."dayOfWeek", s."startTime", s."id"
+      `;
+      const areaById = new Map<string, SupervisionAreaView>();
+      const shifts: (ShiftRow & { inactiveFrom: string | null })[] = [];
+      for (const row of rows) {
+        if (!areaById.has(row.areaId)) {
+          areaById.set(row.areaId, {
+            id: row.areaId,
+            name: row.name,
+            siteId: row.siteId,
+            minGradeLevel: row.minGradeLevel,
+            maxGradeLevel: row.maxGradeLevel,
+            duringRasts: row.duringRasts,
+            duringLunch: row.duringLunch,
+            guardsNeeded: row.guardsNeeded,
+            countsAsTeaching: row.countsAsTeaching,
+            shiftCount: Number(row.shiftCount),
+          });
+        }
+        if (row.shiftId !== null) {
+          shifts.push({
+            id: row.shiftId,
+            academicYearId,
+            areaId: row.areaId,
+            userId: row.userId!,
+            dayOfWeek: row.dayOfWeek!,
+            startTime: row.startTime!,
+            endTime: row.endTime!,
+            validFrom: row.validFrom,
+            validTo: row.validTo,
+            note: row.note,
+            inactiveFrom: row.inactiveFrom ? asDay(row.inactiveFrom) : null,
+          });
+        }
+      }
+      const areas = [...areaById.values()];
       const rasts = await tx.rast.findMany({
         where: { schoolId },
         select: { name: true, minGradeLevel: true, maxGradeLevel: true, dayOfWeek: true, startTime: true, endTime: true },
@@ -580,24 +804,12 @@ export class SupervisionService {
         select: { gradeLevel: true },
         distinct: ['gradeLevel'],
       });
-      // A deactivated teacher's passes stay on the schedule and watch nothing:
-      // the register deactivates a leaver, and the break is unwatched from then.
-      const inactive = new Set(
-        shifts.length > 0
-          ? (
-              await tx.user.findMany({
-                where: { id: { in: [...new Set(shifts.map((row) => row.userId))] }, isActive: false },
-                select: { id: true },
-              })
-            ).map((row) => row.id)
-          : [],
-      );
+      const lessons = await this.lessonsOf(tx, academicYearId, shifts);
       const duties = await tx.teacherDuty.findMany({
         where: { academicYearId, kind: 'RASTVAKT' },
         select: { userId: true, kind: true, minutesPerWeek: true, countsAsTeaching: true, validFrom: true, validTo: true },
       });
 
-      const areaById = new Map(areas.map((area) => [area.id, area]));
       const coverage = supervisionCoverage({
         year,
         closures,
@@ -631,17 +843,28 @@ export class SupervisionService {
           end: minutesOfTime(row.endTime),
           validFrom: dayOrNull(row.validFrom),
           validTo: dayOrNull(row.validTo),
-          inactive: inactive.has(row.userId),
+          // A deactivated teacher's pass stays on the schedule and watches
+          // until the day before they were deactivated.
+          ...(row.inactiveFrom ? { inactiveFrom: row.inactiveFrom } : {}),
         })),
       });
-      const loadShifts = shifts.map((row) => ({
-        userId: row.userId,
-        start: minutesOfTime(row.startTime),
-        end: minutesOfTime(row.endTime),
-        validFrom: dayOrNull(row.validFrom),
-        validTo: dayOrNull(row.validTo),
-        countsAsTeaching: areaById.get(row.areaId)?.countsAsTeaching ?? false,
-      }));
+      // Charged as the load charges them: a deactivated teacher's until the day before.
+      const loadShifts = shifts
+        .map((row) =>
+          chargedShift(
+            {
+              userId: row.userId,
+              start: minutesOfTime(row.startTime),
+              end: minutesOfTime(row.endTime),
+              validFrom: dayOrNull(row.validFrom),
+              validTo: dayOrNull(row.validTo),
+              countsAsTeaching: areaById.get(row.areaId)?.countsAsTeaching ?? false,
+            },
+            row.inactiveFrom,
+            year,
+          ),
+        )
+        .filter((row): row is LoadShift => row !== null);
       const kinded = duties.map((row) => ({
         userId: row.userId,
         kind: row.kind,
@@ -674,8 +897,8 @@ export class SupervisionService {
       return {
         academicYearId,
         year,
-        areas: areas.map(areaView).sort((a, b) => a.name.localeCompare(b.name, 'sv')),
-        shifts: shifts.map(shiftView),
+        areas: areas.sort((a, b) => a.name.localeCompare(b.name, 'sv')),
+        shifts: shifts.map((row) => shiftView(row, row.inactiveFrom, lessons)),
         breaks: coverage.breaks.map(({ start, end, ...row }) => ({ ...row, startTime: clock(start), endTime: clock(end) })),
         gaps: coverage.gaps.map(({ start, end, shortFrom, shortTo, ...row }) => ({
           ...row,

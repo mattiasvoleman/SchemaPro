@@ -4,7 +4,7 @@ import { rostersOfYear, type RosterViewer } from '../year-rollover/projected-ros
 import { loadWeightOf, type GradeSpan, type JudgedYear, type LoadInput, type LoadModel } from './teacher-load';
 import type { LoadPeriod } from './employment-periods';
 import type { YearBounds } from './teaching-weeks';
-import { supervisionOfTeachers, withSupervision, type LoadShift, type TeacherSupervision } from '../supervision/supervision-load';
+import { chargedShift, supervisionOfTeachers, withSupervision, type LoadShift, type TeacherSupervision } from '../supervision/supervision-load';
 
 const asDay = (value: Date): string => value.toISOString().slice(0, 10);
 const asDayOrNull = (value: Date | null): string | null => (value === null ? null : asDay(value));
@@ -203,14 +203,29 @@ export async function readLoadInput(
     select: { userId: true, kind: true, minutesPerWeek: true, countsAsTeaching: true, validFrom: true, validTo: true },
   });
   // The year's rastvaktspass (20261207090000), with whether their area counts
-  // as teaching: one statement, and only when the year has a pass the reader
-  // may read — a TEACHER their own, as for the uppdrag.
+  // as teaching and the day a deactivated teacher was deactivated (the
+  // school's date): one statement, and only when the year has a pass the
+  // reader may read — a TEACHER their own, as for the uppdrag.
   const shiftRows =
     (yearRow._count?.supervisionShifts ?? 0) > 0
-      ? await tx.$queryRaw<{ userId: string; startTime: Date; endTime: Date; validFrom: Date | null; validTo: Date | null; countsAsTeaching: boolean }[]>`
-          SELECT s."userId", s."startTime", s."endTime", s."validFrom", s."validTo", a."countsAsTeaching"
+      ? await tx.$queryRaw<
+          {
+            userId: string;
+            startTime: Date;
+            endTime: Date;
+            validFrom: Date | null;
+            validTo: Date | null;
+            countsAsTeaching: boolean;
+            inactiveFrom: Date | null;
+          }[]
+        >`
+          SELECT s."userId", s."startTime", s."endTime", s."validFrom", s."validTo", a."countsAsTeaching",
+                 CASE WHEN u."isActive" THEN NULL
+                      ELSE (u."deactivatedAt" AT TIME ZONE sc."timezone")::date END AS "inactiveFrom"
           FROM "SupervisionShifts" s
           JOIN "SupervisionAreas" a ON a."id" = s."areaId" AND a."schoolId" = s."schoolId"
+          LEFT JOIN "Users" u ON u."id" = s."userId" AND u."schoolId" = s."schoolId"
+          LEFT JOIN "Schools" sc ON sc."id" = s."schoolId"
           WHERE s."academicYearId" = ${academicYearId}::uuid
           ORDER BY s."id"
         `
@@ -265,14 +280,23 @@ export async function readLoadInput(
     ...(row.validFrom ? { validFrom: asDay(row.validFrom) } : {}),
     ...(row.validTo ? { validTo: asDay(row.validTo) } : {}),
   }));
-  const shifts: LoadShift[] = shiftRows.map((row) => ({
-    userId: row.userId,
-    start: row.startTime.getUTCHours() * 60 + row.startTime.getUTCMinutes(),
-    end: row.endTime.getUTCHours() * 60 + row.endTime.getUTCMinutes(),
-    validFrom: asDayOrNull(row.validFrom),
-    validTo: asDayOrNull(row.validTo),
-    countsAsTeaching: row.countsAsTeaching,
-  }));
+  // A deactivated teacher's pass is charged until the day before, as it watches.
+  const shifts: LoadShift[] = shiftRows
+    .map((row) =>
+      chargedShift(
+        {
+          userId: row.userId,
+          start: row.startTime.getUTCHours() * 60 + row.startTime.getUTCMinutes(),
+          end: row.endTime.getUTCHours() * 60 + row.endTime.getUTCMinutes(),
+          validFrom: asDayOrNull(row.validFrom),
+          validTo: asDayOrNull(row.validTo),
+          countsAsTeaching: row.countsAsTeaching,
+        },
+        asDayOrNull(row.inactiveFrom ?? null),
+        year,
+      ),
+    )
+    .filter((shift): shift is LoadShift => shift !== null);
   const closures = breaks.map((row) => ({
     startDate: asDay(row.startDate),
     endDate: asDay(row.endDate),
