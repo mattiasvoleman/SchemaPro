@@ -313,6 +313,8 @@ describe('MasterLessonsService', () => {
       minDaysBetween?: number | null;
     } | null,
     week: Row[],
+    /** The rest of the post's row (postOf): its figures, and `shared`. */
+    figures: Record<string, unknown> = {},
   ) => {
     const postRaw = jest.fn((strings: unknown, ...values: unknown[]) => {
       if (!isPostRead(strings)) return Promise.resolve([]);
@@ -330,6 +332,7 @@ describe('MasterLessonsService', () => {
                 subjectMinDaysBetween: post.subject.minDaysBetween ?? null,
                 subjectName: 'Idrott',
                 groupName: '7A',
+                ...figures,
               },
             ],
       );
@@ -353,6 +356,27 @@ describe('MasterLessonsService', () => {
         : clashScan(query),
     );
     return postRaw;
+  };
+
+  /**
+   * Delade lektioner: 7A's idrott as a shared post — three lessons, Bo
+   * (SHARE_TEACHER) takes one and the lesson's own teacher (TEACHER_ID) the
+   * rest — with no distribution rule, and its placed week, each lesson with
+   * the teacher who leads it. The shares come back as storedSharesOf reads
+   * them.
+   */
+  const SHARE_TEACHER = '00000000-bbbb-4bbb-8bbb-0000000000b0';
+  const arrangeShared = (week: Row[]) => {
+    tx.teachingRequirementShare.findMany.mockResolvedValue([{ teacherId: SHARE_TEACHER, lessons: 1, minutes: 60 }]);
+    return arrangeDistribution({ subject: {} }, week, {
+      id: '00000000-bbbb-4bbb-8bbb-0000000000a0',
+      teacherId: TEACHER_ID,
+      coTeacherId: null,
+      lessonsPerWeek: 3,
+      minutesPerLesson: 60,
+      lessonLengths: [],
+      shared: true,
+    });
   };
 
   /**
@@ -1266,6 +1290,45 @@ describe('MasterLessonsService', () => {
         expect(tx.masterLesson.findMany).not.toHaveBeenCalledWith(
           expect.objectContaining({ where: expect.objectContaining({ subjectId: SUBJECT_ID }) }),
         );
+      });
+    });
+
+    describe('delade lektioner', () => {
+      it('a lesson created by hand on a shared post is one more of its teacher’s than their share, and says so', async () => {
+        // A warning, never a 409, as the ämnesfördelning's: the next
+        // generation lays the shares again.
+        arrangeCreate();
+        arrangeShared([
+          { id: LESSON_ID, teacherId: TEACHER_ID },
+          { id: 'a2', teacherId: TEACHER_ID, dayOfWeek: 2 },
+          { id: 'a3', teacherId: TEACHER_ID, dayOfWeek: 3 },
+          { id: 'b1', teacherId: SHARE_TEACHER, dayOfWeek: 4 },
+        ]);
+
+        const created = await service.create(createDto(), testUser());
+
+        expect(tx.masterLesson.create).toHaveBeenCalled();
+        expect(created.warnings).toEqual([
+          {
+            code: 'SHARE_LESSONS_DIFFER',
+            params: { requirement: 'Idrott för 7A', role: 'LESSON', lessons: 3, share: 2 },
+          },
+        ]);
+        // The shares by the post the one joined read named.
+        expect(tx.teachingRequirementShare.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { requirementId: '00000000-bbbb-4bbb-8bbb-0000000000a0' } }),
+        );
+      });
+
+      it('a post without a share sends nothing beyond the ämnesfördelning’s one read', async () => {
+        arrangeCreate();
+        const postRead = arrangeDistribution({ subject: {} }, [{ id: LESSON_ID, teacherId: TEACHER_ID }], {
+          shared: false,
+        });
+
+        await expect(service.create(createDto(), testUser())).resolves.toMatchObject({ warnings: [] });
+        expect(postRead.mock.calls.filter(([strings]) => isPostRead(strings))).toHaveLength(1);
+        expect(tx.teachingRequirementShare.findMany).not.toHaveBeenCalled();
       });
     });
 
@@ -2970,6 +3033,77 @@ describe('MasterLessonsService', () => {
       });
     });
 
+    describe('delade lektioner', () => {
+      const SHARING = {
+        school: {
+          id: SCHOOL_ID,
+          timezone: 'Europe/Stockholm',
+          _count: { academicYears: 1, teachingRequirementShares: 1 },
+        },
+      };
+      const shareWarnings = (warnings: Array<{ code: string }>) =>
+        warnings.filter((warning) => warning.code === 'SHARE_LESSONS_DIFFER');
+
+      it('a lesson given to Bo tells both: his two of one, and the lesson’s previous teacher’s one of two', async () => {
+        arrangeUpdate(SHARING, { teacherId: SHARE_TEACHER });
+        arrangeShared([
+          { id: LESSON_ID, teacherId: SHARE_TEACHER },
+          { id: 'a2', teacherId: TEACHER_ID, dayOfWeek: 3 },
+          { id: 'b1', teacherId: SHARE_TEACHER, dayOfWeek: 5 },
+        ]);
+
+        const updated = await service.update(LESSON_ID, { teacherId: SHARE_TEACHER }, testUser());
+
+        expect(tx.masterLesson.update).toHaveBeenCalled();
+        expect(shareWarnings(updated.warnings)).toEqual([
+          {
+            code: 'SHARE_LESSONS_DIFFER',
+            params: { requirement: 'Idrott för 7A', role: 'LESSON', lessons: 2, share: 1 },
+          },
+          {
+            code: 'SHARE_LESSONS_DIFFER',
+            params: { requirement: 'Idrott för 7A', role: 'PREVIOUS', lessons: 1, share: 2 },
+          },
+        ]);
+      });
+
+      it('a lesson moved to another day keeps its teacher and its weeks, and says nothing', async () => {
+        arrangeUpdate(SHARING, { dayOfWeek: 2 });
+        arrangeShared([
+          { id: LESSON_ID, teacherId: TEACHER_ID, dayOfWeek: 2 },
+          { id: 'a2', teacherId: TEACHER_ID, dayOfWeek: 3 },
+          { id: 'b1', teacherId: SHARE_TEACHER, dayOfWeek: 5 },
+        ]);
+
+        const updated = await service.update(LESSON_ID, { dayOfWeek: 2 }, testUser());
+
+        expect(shareWarnings(updated.warnings)).toEqual([]);
+        expect(tx.teachingRequirementShare.findMany).toHaveBeenCalledTimes(1);
+      });
+
+      it('a school without a share reads no post for a teacher change that moves nothing', async () => {
+        // The gate rides in the school's statement (teachingRequirementShares:
+        // 0 here), so the PATCH sends what it sent before delade lektioner.
+        arrangeUpdate({}, { teacherId: SHARE_TEACHER });
+        const postRead = arrangeShared([{ id: LESSON_ID, teacherId: SHARE_TEACHER }]);
+
+        await service.update(LESSON_ID, { teacherId: SHARE_TEACHER }, testUser());
+
+        expect(postRead.mock.calls.filter(([strings]) => isPostRead(strings))).toHaveLength(0);
+        expect(tx.teachingRequirementShare.findMany).not.toHaveBeenCalled();
+      });
+
+      it('a lesson set aside on the tray asks nothing', async () => {
+        arrangeUpdate(SHARING, { teacherId: SHARE_TEACHER, isParked: true });
+        arrangeShared([{ id: 'a2', teacherId: TEACHER_ID }]);
+
+        const updated = await service.update(LESSON_ID, { teacherId: SHARE_TEACHER, isParked: true }, testUser());
+
+        expect(shareWarnings(updated.warnings)).toEqual([]);
+        expect(tx.teachingRequirementShare.findMany).not.toHaveBeenCalled();
+      });
+    });
+
     describe('Lärarens dag', () => {
       /**
        * The stored lesson, its school counting the caps and the year's day
@@ -3023,6 +3157,8 @@ describe('MasterLessonsService', () => {
           academicYears: expect.anything(),
           // Skolområden och restid's gate, counted in the same statement.
           siteTravelTimes: true,
+          // Delade lektioner's, likewise.
+          teachingRequirementShares: true,
           teacherWorkRules: { where: { maxTeachingMinutesPerDay: { not: null } } },
           teacherEmployments: {
             where: {

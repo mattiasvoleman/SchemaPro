@@ -620,6 +620,17 @@ MESSAGES: dict[str, str] = {
         "{minDaysBetween, select, 2 {allows no consecutive days} other {wants lesson days at "
         "least {minDaysBetween} days apart}}."
     ),
+    # Sent by the GATEWAY beside a hand edit of a shared post's lesson (delade
+    # lektioner, share-warnings.ts): a warning, never a refusal, here for the
+    # reason DISTRIBUTION_* is. `role` says which of the edited lesson's two
+    # teachers it is about — the one on it now, or the one a teacher change
+    # took it from; never a name, as Lärarens dag's role.
+    "SHARE_LESSONS_DIFFER": (
+        "{requirement} splits its lessons between teachers, and {role, select, PREVIOUS "
+        "{the lesson's previous teacher} other {the lesson's teacher}} now has {lessons} of them "
+        "in the timetable where the split gives {share}. Change the lesson's teacher, or the "
+        "split in the entry's dialog."
+    ),
 
     # ---- Parallella block: requirements run at the same times -----------
     #
