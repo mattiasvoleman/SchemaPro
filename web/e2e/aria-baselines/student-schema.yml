@@ -19,6 +19,23 @@
   - text: Lunch Förmiddagsrast
   - button "Torsdag 08:10–08:40, Mentorstid 7A · Sal 101"
   - text: Lunch Förmiddagsrast
+  - region "Ämne och läxa":
+    - heading "Ämne och läxa" [level=2]
+    - text: Det dina lärare har skrivit om veckans lektioner.
+    - list:
+      - listitem:
+        - paragraph: Svenska måndag <datum> 08:10
+        - paragraph: "Ämne: Novellanalys: berättarperspektiv"
+        - paragraph: "Läxa: Läs novellen ”Tant Ruth” och skriv tre frågor till den."
+      - listitem:
+        - paragraph: Matematik måndag <datum> 09:25
+        - paragraph: "Ämne: Bråk och decimaltal"
+      - listitem:
+        - paragraph: Engelska tisdag <datum> 08:10
+        - paragraph: "Läxa: Glosor kapitel 3"
+      - listitem:
+        - paragraph: Matematik onsdag <datum> 13:00
+        - paragraph: "Läxa: Uppgift 5.1–5.4"
   - region "Undervisningstid":
     - heading "Undervisningstid" [level=2]
     - text: Uppdaterad <datum>

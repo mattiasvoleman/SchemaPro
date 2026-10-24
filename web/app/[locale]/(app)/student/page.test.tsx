@@ -49,6 +49,11 @@ vi.mock("@/components/profile-context", () => ({
   }),
 }));
 
+// The week's ämne och läxa, its own lazy file with its own test
+// (components/lesson-log/student-lesson-log.test.tsx).
+vi.mock("@/components/lesson-log/student-lesson-log", () => ({
+  StudentLessonLog: ({ from, to }: { from: string; to: string }) => <p>lesson-log {from} {to}</p>,
+}));
 // The card is its own lazy file with its own test (components/teaching-time-card.test.tsx).
 vi.mock("@/components/teaching-time-card", () => ({
   TeachingTimeCard: ({ studentId }: { studentId: string }) => <p>teaching-time {studentId}</p>,
@@ -221,6 +226,20 @@ describe("the pupil's Undervisningstid card", () => {
     render(<StudentSchedulePage />);
     await screen.findAllByText("lunch.bandLabel");
     expect(screen.queryByText(/^teaching-time/)).not.toBeInTheDocument();
+  });
+});
+
+describe("the pupil's ämne och läxa (Lektionslogg)", () => {
+  it("is the pupil's own, for the week on screen", async () => {
+    render(<StudentSchedulePage />);
+    expect(await screen.findByText(/^lesson-log \d{4}-\d{2}-\d{2} \d{4}-\d{2}-\d{2}$/)).toBeInTheDocument();
+  });
+
+  it("is not asked for by anyone else who opens the page", async () => {
+    state.role = "TEACHER";
+    render(<StudentSchedulePage />);
+    await screen.findAllByText("lunch.bandLabel");
+    expect(screen.queryByText(/^lesson-log/)).not.toBeInTheDocument();
   });
 });
 

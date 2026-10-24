@@ -1,3 +1,4 @@
+import { SUBSTITUTE_NOTES } from "./lesson-logs";
 import type {
   Absence,
   AbsenceCounts,
@@ -202,6 +203,8 @@ function boardOf(from: string, to: string): Board {
     items,
     summary: summaryOf(items),
     absences: active.map(({ id, userId, startsAt, endsAt }) => ({ id, userId, startsAt, endsAt })),
+    // Lektionslogg: the board's lessons with a note to the substitute.
+    notedLessonIds: [...new Set(items.map((item) => item.lessonId))].filter((id) => SUBSTITUTE_NOTES.has(id)).sort(),
   };
 }
 

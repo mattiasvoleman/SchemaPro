@@ -1,7 +1,8 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import type { Persona } from "./stub/sessions";
-import { CALENDAR_LESSON_TEACHERS, CALENDAR_LESSONS, TEACHERS, YEAR } from "./stub/fixtures/world";
+import { addDays, THIS_MONDAY } from "./stub/fixtures/calendar";
+import { CALENDAR_LESSON_TEACHERS, CALENDAR_LESSONS, GROUPS, TEACHERS, YEAR } from "./stub/fixtures/world";
 
 /**
  * Every signed-in page, and who it is checked as.
@@ -83,6 +84,9 @@ const QUERY: Record<string, string> = {
   "/admin/timplan/tackning": "",
   // ?guardians= opens one pupil's guardians, from the integration review.
   "/admin/people": "",
+  // Lektionslogg's klassbok, opened on 7A's week so axe reads the book itself.
+  "/admin/klassbok": `group=${GROUPS.g7A.id}&from=${THIS_MONDAY}&to=${addDays(THIS_MONDAY, 4)}`,
+  "/teacher/klassbok": `group=${GROUPS.g7A.id}&from=${THIS_MONDAY}&to=${addDays(THIS_MONDAY, 4)}`,
 };
 
 /** What makes a page.tsx read a query, the two ways (app) does it. */

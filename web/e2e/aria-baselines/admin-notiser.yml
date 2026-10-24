@@ -96,6 +96,9 @@
       - listitem:
         - link "Rapporter":
           - /url: /sv/admin/reports
+      - listitem:
+        - link "Klassbok":
+          - /url: /sv/admin/klassbok
     - list:
       - listitem:
         - link "Dataskydd":

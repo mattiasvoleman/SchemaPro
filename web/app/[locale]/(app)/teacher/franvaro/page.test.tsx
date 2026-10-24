@@ -105,6 +105,34 @@ const MINE: Absence = {
 function answer(selfReport: boolean) {
   get.mockImplementation(async (path: string) => {
     if (path === "/api/v1/cover/settings") return { poolPreference: "NEUTRAL", teacherSelfReport: selfReport };
+    // Lektionslogg: the lessons this teacher handed over for an absence.
+    if (path.startsWith("/api/v1/lesson-logs/handed-over?")) {
+      return {
+        lessons: [
+          {
+            lessonId: "l-gone",
+            date: day,
+            startsAt: `${day}T12:00:00.000Z`,
+            endsAt: `${day}T13:00:00.000Z`,
+            subjectId: "s-en",
+            studentGroupId: "g-8b",
+            roomId: null,
+            status: "SCHEDULED",
+            decision: "SUBSTITUTE",
+            noted: false,
+          },
+        ],
+      };
+    }
+    // Lektionslogg: the notes the lessons' own teachers left this substitute.
+    if (path.startsWith("/api/v1/lesson-logs?")) {
+      return {
+        entries: [
+          { lessonId: "l-cover", topic: null, homework: null, substituteNote: "Planeringen ligger i lärplattformen." },
+          { lessonId: "l-own", topic: "Verb", homework: null, substituteNote: "Min egen lektions notis" },
+        ],
+      };
+    }
     if (path.startsWith("/api/v1/teacher-absences")) return [MINE];
     if (path === "/api/v1/teacher-absence-reasons") return [{ id: "r-sick", builtin: "SICK", label: null, sortOrder: 10, archived: false }];
     if (path.startsWith("/api/v1/cover/availability")) {
@@ -142,6 +170,29 @@ describe("/teacher/franvaro", () => {
     const mine = screen.getByText("Min frånvaro").closest("section")!;
     expect(await within(mine).findByText("Sjukdom")).toBeInTheDocument();
     expect(within(mine).getByText("2 med vikarie")).toBeInTheDocument();
+  });
+
+  it("shows on each pass the note its own teacher left, and links the pass to its lesson page (Lektionslogg)", async () => {
+    answer(false);
+    renderPage();
+    const covers = (await screen.findByText("Mina vikariepass")).closest("section")!;
+    expect(await within(covers).findByText("Planeringen ligger i lärplattformen.")).toBeInTheDocument();
+    expect(within(covers).getByText("Notis från läraren:")).toBeInTheDocument();
+    expect(within(covers).getByRole("link", { name: "Matematik" })).toHaveAttribute("href", expect.stringContaining("/teacher/lektion/l-cover"));
+    // The teacher's own lesson is no pass, and its note is not listed here.
+    expect(within(covers).queryByText("Min egen lektions notis")).not.toBeInTheDocument();
+    const asked = get.mock.calls.map(([path]) => path as string).find((path) => path.startsWith("/api/v1/lesson-logs?"));
+    expect(asked).toMatch(/^\/api\/v1\/lesson-logs\?from=\d{4}-\d{2}-\d{2}&to=\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("lists the lessons handed over for the teacher's absence, each with the way to its note (Lektionslogg)", async () => {
+    answer(false);
+    renderPage();
+    const mine = (await screen.findByText("Min frånvaro")).closest("section")!;
+    expect(await within(mine).findByText("Lektioner du lämnat över")).toBeInTheDocument();
+    expect(within(mine).getByText("Vikarie tillsatt")).toBeInTheDocument();
+    const link = within(mine).getByRole("link", { name: /^Skriv notis till vikarien/ });
+    expect(link).toHaveAttribute("href", expect.stringContaining("/teacher/lektion/l-gone"));
   });
 
   it("offers no self-report when the school has it off, and says whom to tell", async () => {

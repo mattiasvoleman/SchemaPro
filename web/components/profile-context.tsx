@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext } from "react";
-import { CalendarDays, CalendarRange, ClipboardCheck, MapPin, Scale, Users, UserX } from "lucide-react";
+import { BookOpen, CalendarDays, CalendarRange, ClipboardCheck, MapPin, Scale, Users, UserX } from "lucide-react";
 import { usePathname } from "@/i18n/navigation";
 import type { NavSection } from "@/components/layout/app-shell";
 import type { Profile, School } from "@/lib/types";
@@ -90,6 +90,9 @@ export const TEACHER_NAV: NavSection[] = [
     items: [
       { labelKey: "mySchedule", href: "/teacher", icon: CalendarDays },
       { labelKey: "attendance", href: "/teacher/attendance", icon: ClipboardCheck },
+      // Lektionslogg: a class's lessons over a period with their topic and
+      // homework. The admin menu's subjects icon, already in the shell.
+      { labelKey: "classBook", href: "/teacher/klassbok", icon: BookOpen },
       { labelKey: "roomBooking", href: "/teacher/rooms", icon: MapPin },
       // The teacher's own tjänst, read-only. The admin's Tjänstefördelning
       // icon, already in the shell: the same thing seen from the other side,

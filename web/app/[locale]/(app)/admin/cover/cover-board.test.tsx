@@ -116,6 +116,8 @@ const BOARD: Board = {
   items: [OPEN_MA, OPEN_EN, COVERED],
   summary: { open: 2, covered: 1, cancelled: 0, handled: 0, passedOpen: 0 },
   absences: [{ id: "a-anna", userId: "t-anna", startsAt: `${DATE}T00:00:00Z`, endsAt: "2030-10-15T00:00:00Z" }],
+  // Lektionslogg: Anna left the substitute a note for her mathematics.
+  notedLessonIds: ["l-ma"],
 };
 
 const CANDIDATES: Candidates = {
@@ -198,6 +200,13 @@ describe("Vikarietavla", () => {
     const open = screen.getAllByText("Behöver vikarie").find((element) => element.tagName === "DT")!;
     expect(open.nextElementSibling).toHaveTextContent("2");
     expect(screen.queryByText(/Sjuk|Vård av barn/)).not.toBeInTheDocument();
+  });
+
+  it("says which lessons have a note to the substitute, and never what it says (Lektionslogg)", async () => {
+    renderBoard();
+    await screen.findByRole("cell", { name: "Matematik" });
+    expect(within(rowOf("Matematik")).getByText("Notis till vikarien")).toBeInTheDocument();
+    expect(within(rowOf("Engelska")).queryByText("Notis till vikarien")).not.toBeInTheDocument();
   });
 
   it("lists each pair on a phone with its lesson, room, absent teacher and state, acting on the same selection and dialogs", async () => {

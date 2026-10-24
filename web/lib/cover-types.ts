@@ -109,6 +109,12 @@ export interface Board {
   items: BoardItem[];
   summary: AbsenceCounts;
   absences: { id: string; userId: string; startsAt: string; endsAt: string }[];
+  /**
+   * Lektionslogg: the lessons whose own teacher left the substitute a note,
+   * that there is one and never what it says. Absent from a gateway before
+   * 20261203090000.
+   */
+  notedLessonIds?: string[];
 }
 
 export interface CoverMessage {

@@ -3,6 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { expectAriaBaseline } from "./aria-baseline";
 import { scanBothSchemes } from "./axe";
 import { freezeClock, settle, signIn, watchStubMisses } from "./signed-in";
+import { addDays, THIS_MONDAY } from "./stub/fixtures/calendar";
 import { SHARE_TOKEN } from "./stub/fixtures/gateway-public";
 import { CALENDAR_LESSON_TEACHERS, CALENDAR_LESSONS, GROUPS, TEACHERS, YEAR } from "./stub/fixtures/world";
 import type { Persona } from "./stub/sessions";
@@ -56,6 +57,15 @@ const SCREENS: Screen[] = [
   { name: "admin-vikarier", url: "/sv/admin/cover", persona: "admin", scope: "main" },
   { name: "teacher-schema", url: "/sv/teacher", persona: "teacher", scope: "main" },
   { name: "teacher-narvaro", url: `/sv/teacher/attendance/${annasLesson.id}`, persona: "teacher", scope: "main" },
+  // Lektionslogg: Anna's Monday Swedish, with its topic, homework and note to the substitute.
+  { name: "teacher-lektion", url: `/sv/teacher/lektion/${annasLesson.id}`, persona: "teacher", scope: "main" },
+  // The klassbok of 7A's school week: its own lessons and what was written.
+  {
+    name: "teacher-klassbok",
+    url: `/sv/teacher/klassbok?group=${GROUPS.g7A.id}&from=${THIS_MONDAY}&to=${addDays(THIS_MONDAY, 4)}`,
+    persona: "teacher",
+    scope: "main",
+  },
   { name: "teacher-franvaro", url: "/sv/teacher/franvaro", persona: "teacher", scope: "main" },
   // The mentor's inbox (#142): Ella's three days are Anna's to decide.
   { name: "teacher-ledighet", url: "/sv/teacher/ledighet", persona: "teacher", scope: "main" },

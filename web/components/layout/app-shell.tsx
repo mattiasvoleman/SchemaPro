@@ -160,6 +160,8 @@ const ADMIN_NAV: NavSection[] = [
       { labelKey: "leaveRequests", href: "/admin/leave", icon: ClipboardCheck },
       { labelKey: "roomBookings", href: "/admin/room-bookings", icon: MapPin },
       { labelKey: "reports", href: "/admin/reports", icon: BarChart3 },
+      // Lektionslogg's klassbok: a class's lessons over a period, printed. The subjects' book.
+      { labelKey: "classBook", href: "/admin/klassbok", icon: BookOpen },
     ],
   },
   {

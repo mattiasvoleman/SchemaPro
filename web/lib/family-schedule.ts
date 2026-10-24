@@ -16,7 +16,10 @@
  *   * a lesson's teachers are what the school chose to show families
  *     (Publicering's "Läraren visas som"), empty for a cancelled or
  *     substituted lesson; the substitute is a flag, never a person;
- *   * no note, no cause, no absence reason and no other pupil is in it.
+ *   * no note, no cause, no absence reason and no other pupil is in it. The
+ *     lesson's topic and homework are (Lektionslogg): the teacher's own words
+ *     for the class, null when nothing is written, and absent from a gateway
+ *     before 20261203090000. The note to the substitute never is.
  */
 
 export type FamilyLessonStatus = "SCHEDULED" | "COMPLETED" | "CANCELLED";
@@ -35,6 +38,8 @@ export interface FamilyLesson {
   teachers: string[];
   status: FamilyLessonStatus;
   substitute: boolean;
+  topic?: string | null;
+  homework?: string | null;
 }
 
 export interface FamilyMeal {

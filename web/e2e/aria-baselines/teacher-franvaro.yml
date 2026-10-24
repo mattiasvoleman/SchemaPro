@@ -5,7 +5,12 @@
   - region "Mina vikariepass":
     - heading "Mina vikariepass" [level=2]
     - list:
-      - listitem: tors <datum> 09:25–10:25 Matematik 9A Sal 201
+      - listitem:
+        - text: tors <datum> 09:25–10:25
+        - link "Matematik":
+          - /url: /sv/teacher/lektion/00000061-0000-4000-8000-00000000000c
+        - text: 9A Sal 201
+        - paragraph: "Notis från läraren: Eleverna räknar vidare i kapitel 6. Facit ligger i katedern."
   - region "Min frånvaro":
     - heading "Min frånvaro" [level=2]
     - text: Du kan anmäla frånvaro från och med i dag, avsluta den i förtid och återkalla en anmälan innan den börjar.
@@ -17,3 +22,5 @@
         - text: mån <datum> 12:00–16:30 Facklig verksamhet
         - button "Återkalla mån <datum> 12:00–16:30": Återkalla
     - paragraph: Orsaken ser bara du och skolledningen. Kollegor, elever och vårdnadshavare ser bara att lektionen har en vikarie eller är inställd.
+    - heading "Lektioner du lämnat över" [level=3]
+    - paragraph: Inga lektioner under din frånvaro de närmaste 4 veckorna.

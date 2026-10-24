@@ -11,6 +11,9 @@
         - link "Närvaro":
           - /url: /sv/teacher/attendance
       - listitem:
+        - link "Klassbok":
+          - /url: /sv/teacher/klassbok
+      - listitem:
         - link "Boka lokal":
           - /url: /sv/teacher/rooms
       - listitem:

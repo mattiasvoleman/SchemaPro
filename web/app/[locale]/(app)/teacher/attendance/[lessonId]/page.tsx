@@ -3,7 +3,8 @@
 import { use, useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { Check, CheckCheck, Loader2 } from "lucide-react";
+import { Check, CheckCheck, Loader2, NotebookPen } from "lucide-react";
+import { Link } from "@/i18n/navigation";
 import {
   isNotOnLesson,
   useLesson,
@@ -163,6 +164,15 @@ export default function LessonAttendancePage({
             {t("recordedBadge", { count: recordedCount, total: students.length })}
           </Badge>
         ) : null
+      }
+      actions={
+        // The lesson's ämne och läxa and its note to the substitute (Lektionslogg).
+        <Button asChild variant="outline">
+          <Link href={`/teacher/lektion/${lessonId}`}>
+            <NotebookPen aria-hidden="true" />
+            {t("lessonLog")}
+          </Link>
+        </Button>
       }
     />
   );

@@ -389,8 +389,16 @@ export function CoverBoard({ initialDate, initialView }: { initialDate: string |
     t("selectPair", { teacher: nameOf(item.absentTeacherId), lesson: lessonText(item.lessonId) });
 
   /** Why a decided pair reads as it does: the cancel's cause, a stale decision, a lesson now outside the absence. */
+  const noted = new Set(board?.notedLessonIds ?? []);
   const pairNotes = (item: BoardItem) => (
     <>
+      {/* Lektionslogg: that the lesson's own teacher left the substitute a
+          note, which the substitute reads on the lesson; never what it says. */}
+      {noted.has(item.lessonId) ? (
+        <span className="block whitespace-normal text-xs text-muted-foreground" title={t("notedHint")}>
+          {t("noted")}
+        </span>
+      ) : null}
       {item.status === "CANCELLED" && item.cancelCause ? (
         <span className="block whitespace-normal text-xs text-muted-foreground">{t(`causes.${item.cancelCause}`)}</span>
       ) : null}

@@ -4,6 +4,8 @@
   - heading "Svenska" [level=1]
   - paragraph: måndag <datum> · 08:10–09:10
   - text: <datum> registrerade
+  - link "Ämne och läxa":
+    - /url: /sv/teacher/lektion/00000061-0000-4000-8000-000000000001
   - region "Elever":
     - heading "Elever" [level=2]
     - text: 3 elever

@@ -1,0 +1,66 @@
+- main:
+  - heading "Klassbok" [level=1]
+  - paragraph: En klass lektioner under en period, med ämne och läxa
+  - button "Skriv ut"
+  - text: Klass eller grupp
+  - combobox "Klass eller grupp":
+    - option "Välj klass eller grupp"
+  - text: Från
+  - textbox "Från":
+    - /placeholder: åååå-mm-dd
+    - text: <datum>
+  - button "Öppna kalender för Från"
+  - text: Till
+  - textbox "Till":
+    - /placeholder: åååå-mm-dd
+    - text: <datum>
+  - button "Öppna kalender för Till"
+  - article "Klassbok 7A":
+    - heading "Klassbok 7A" [level=2]
+    - paragraph: Exempelskolan · <datum>–<datum> · 3 elever
+    - region "måndag <datum>":
+      - heading "måndag <datum>" [level=3]
+      - list:
+        - listitem:
+          - text: 08:10–09:10 Svenska
+          - paragraph: Anna Lind · Sal 101
+          - paragraph: "Ämne: Novellanalys: berättarperspektiv"
+          - paragraph: "Läxa: Läs novellen ”Tant Ruth” och skriv tre frågor till den."
+        - listitem:
+          - text: 09:25–10:25 Matematik
+          - paragraph: Eva Holm (vikarie) · Sal 101
+          - paragraph: "Ämne: Bråk och decimaltal"
+        - listitem:
+          - text: 13:00–14:00 Idrott och hälsa
+          - paragraph: David Berg · Idrottshallen
+          - paragraph: Inget skrivet.
+    - region "tisdag <datum>":
+      - heading "tisdag <datum>" [level=3]
+      - list:
+        - listitem:
+          - text: 08:10–09:10 Engelska
+          - paragraph: Anna Lind · Sal 101
+          - paragraph: "Läxa: Glosor kapitel 3"
+        - listitem:
+          - text: 09:25–10:25 Biologi
+          - paragraph: Cecilia Ås · NO-salen
+          - paragraph: Inget skrivet.
+    - region "onsdag <datum>":
+      - heading "onsdag <datum>" [level=3]
+      - list:
+        - listitem:
+          - text: 10:40–11:40 Svenska Inställd
+          - paragraph: Anna Lind · Sal 101
+          - paragraph: Inget skrivet.
+        - listitem:
+          - text: 13:00–14:00 Matematik
+          - paragraph: Ingen lärare · Sal 101
+          - paragraph: "Läxa: Uppgift 5.1–5.4"
+    - region "torsdag <datum>":
+      - heading "torsdag <datum>" [level=3]
+      - list:
+        - listitem:
+          - text: 08:10–08:40 Mentorstid
+          - paragraph: Anna Lind · Sal 101
+          - paragraph: Inget skrivet.
+    - paragraph: Med i klassboken är klassens egna lektioner och de lektioner där någon av klassens elever deltar, till exempel språkval. Notiser till vikarier står aldrig här.
