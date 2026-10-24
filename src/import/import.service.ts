@@ -27,6 +27,7 @@ import {
   resolveLessonShape,
 } from '../resources/lesson-shape-merge';
 import { canonicalShape, isMixed } from '../common/lesson-lengths';
+import { sharesProblem } from '../common/lesson-shares';
 import { SLOT_MINUTES, fitsTheGrid } from '../common/solver-grid';
 import {
   normalizeNationalCode,
@@ -38,6 +39,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import {
   RequirementImportChecks,
   SAME_TEACHER_TWICE_IN_FILE,
+  SHARES_DO_NOT_FIT_IN_FILE,
   sameTeacherTwice,
 } from '../staffing/staffing-enforcement';
 import { staffingSentence } from '../staffing/staffing-checks';
@@ -1211,6 +1213,10 @@ export class ImportService {
           startDate: true,
           endDate: true,
           blockId: true,
+          // Delade lektioner: the file has no column for them (yet), so the
+          // stored ones stay; a row whose new lessons or teachers they would
+          // no longer fit is named below rather than refusing the whole file.
+          shares: { select: { teacherId: true, lessons: true, minutes: true } },
         },
       });
       const existingByKey = new Map(
@@ -1460,6 +1466,23 @@ export class ImportService {
         ) {
           report.errors.push({ row: rowNumber, message: SAME_TEACHER_TWICE_IN_FILE });
           continue;
+        }
+        // Delade lektioner: the stored shares against the row as the file
+        // leaves it — its lead, its medlärare and its lessons. The trigger
+        // (TS409) would otherwise refuse the file's whole transaction.
+        if (current && (current.shares ?? []).length > 0) {
+          const problem = sharesProblem(
+            {
+              teacherId: 'teacherId' in values ? (values.teacherId ?? null) : current.teacherId,
+              coTeacherId: 'coTeacherId' in values ? (values.coTeacherId ?? null) : current.coTeacherId,
+              ...shape,
+            },
+            current.shares,
+          );
+          if (problem !== null) {
+            report.errors.push({ row: rowNumber, message: SHARES_DO_NOT_FIT_IN_FILE });
+            continue;
+          }
         }
         // An untouched row adds no teacher and no minute: nothing to ask.
         const unchanged = current ? this.requirementIsUnchanged(current, values) : false;
