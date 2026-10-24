@@ -81,6 +81,17 @@ describe('slotPercentOf', () => {
     expect(slotPercentOf(['7a'], MA, 'LEAD', null, rows)).toBe(50);
   });
 
+  it('delade lektioner: counts a row the person takes a share of, at its teacher percentage', () => {
+    // Samläst 7A+7B: Anna leads 7A's row at 50 % and takes a share of 7B's,
+    // which Cy leads at 50 %: the lesson is hers on both rows.
+    const shared: SlotRequirement[] = [
+      rows[0]!,
+      { ...rows[1]!, teacherId: 'cy', shares: [{ teacherId: ANNA, lessons: 1, minutes: 60 }] },
+    ];
+    expect(slotPercentOf(['7a', '7b'], MA, 'LEAD', ANNA, shared)).toBe(100);
+    expect(slotPercentOf(['7b'], MA, 'LEAD', ANNA, shared)).toBe(50);
+  });
+
   it('is 100 without a row, and always for a vikarie', () => {
     expect(slotPercentOf(['8a'], MA, 'LEAD', ANNA, rows)).toBe(100);
     expect(slotPercentOf(['7a'], 'bi', 'LEAD', ANNA, rows)).toBe(100);

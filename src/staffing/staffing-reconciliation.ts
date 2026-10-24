@@ -13,6 +13,7 @@ import {
 import { lessonMinutes } from '../common/timplan-scheduled';
 import { slotPercentOf, type LessonSlot, type ScheduledMaster } from './scheduled-load';
 import { weigh, type LoadModel, type LoadRequirement } from './teacher-load';
+import { teacherPartsOf } from '../common/lesson-shares';
 import type { ClosedRange, YearBounds } from './teaching-weeks';
 
 /*
@@ -334,19 +335,30 @@ export function buildReconciliation(input: ReconciliationInput): StaffingReconci
   const charge = (minutes: number, percent: number, subjectId: string): number =>
     weigh((minutes * percent) / 100, input.weightOf(subjectId));
 
-  // ---- Planned: every timplanspost, each role at its own percentage.
+  // ---- Planned: every timplanspost, each role at its own percentage. A
+  // shared row (delade lektioner) charges each of its teachers their own
+  // lessons' part of its minutes, as the load does (teacherPartsOf), so the
+  // lead's and a share's planned meet the lessons scheduled and delivered
+  // for them; the medlärare is on every lesson and charged the whole row.
+  // A row without a share is one part, the whole row, as it always was.
   for (const row of input.requirements) {
     const minutes = comparison
       ? plannedMinutesBetween(row, comparison.from, comparison.to, input.year, [...input.closures], gradeOfGroup.get(row.studentGroupId) ?? null)
       : 0;
-    const roles: [string | null, number][] = [
-      [row.teacherId, row.teacherLoadPercent],
-      [row.coTeacherId, row.coTeacherLoadPercent],
+    const parts = teacherPartsOf(row);
+    const week = parts.reduce((sum, part) => sum + part.minutes, 0);
+    const roles: [string | null, number, number][] = [
+      ...parts.map((part): [string | null, number, number] => [
+        part.teacherId,
+        week > 0 ? part.minutes / week : 0,
+        row.teacherLoadPercent,
+      ]),
+      [row.coTeacherId, 1, row.coTeacherLoadPercent],
     ];
-    for (const [userId, percent] of roles) {
+    for (const [userId, part, percent] of roles) {
       if (userId === null || !keep(userId)) continue;
       // weigh(), not charge(): the row carries the weight readLoadInput gave it.
-      lineOf(userId, row.subjectId, row.studentGroupId).planned += weigh((minutes * percent) / 100, row.loadWeight);
+      lineOf(userId, row.subjectId, row.studentGroupId).planned += weigh((minutes * part * percent) / 100, row.loadWeight);
     }
   }
 
