@@ -58,6 +58,7 @@ import {
   engineMayStillBeSolving,
   OptimizationProxyService,
   previousLessonsFrom,
+  regenerationSweepDay,
   type CandidateLesson,
   type CandidateSolution,
 } from './optimization-proxy.service';
@@ -1333,7 +1334,14 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
         if (mode === 'DRAFT') {
           return { stale, changed, refusalCode: null, mode, futureCalendarLessons: 0, coverAssignments: 0 };
         }
-        const swept = calendarSweepWhere({ kind: 'IDS', ids: prepared.draftIds }, run.academicYearId);
+        // The write's day as well as its clause, the school's today: the
+        // dialog counts what the apply takes, and not yesterday's lessons for
+        // the hour or two after local midnight.
+        const swept = calendarSweepWhere(
+          { kind: 'IDS', ids: prepared.draftIds },
+          run.academicYearId,
+          await regenerationSweepDay(tx, schoolId),
+        );
         const futureCalendarLessons = await tx.calendarLesson.count({ where: swept });
         const coverAssignments =
           futureCalendarLessons === 0

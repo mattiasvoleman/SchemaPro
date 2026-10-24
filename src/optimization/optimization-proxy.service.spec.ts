@@ -26,6 +26,7 @@ import {
   engineMayStillBeSolving,
   OptimizationProxyService,
   previousLessonsFrom,
+  regenerationSweepDay,
   unplacedOf,
   yearGrades,
   type AnonMaps,
@@ -1013,6 +1014,175 @@ describe('OptimizationProxyService', () => {
       expect(
         tx.calendarLesson.deleteMany.mock.invocationCallOrder[0]!,
       ).toBeLessThan(tx.masterLesson.deleteMany.mock.invocationCallOrder[0]!);
+    });
+  });
+
+  /*
+   * The day the sweep starts on is the school's, not UTC's. For the hour or
+   * two after local midnight UTC's day is still yesterday in Stockholm, and a
+   * regeneration then took yesterday's held lessons without attendance, their
+   * lektionslogg and their place in the genomförd tid. Lessons and meals start
+   * on the same day, and the candidate check counts from it too
+   * (schedule-candidates.service.spec.ts).
+   */
+  describe("persistMasterLessons — the sweep starts on the school's today", () => {
+    beforeEach(() => {
+      tx.teachingRequirement.findMany.mockResolvedValue([]);
+      tx.masterLesson.deleteMany.mockResolvedValue({ count: 0 });
+      tx.calendarLesson.deleteMany.mockResolvedValue({ count: 0 });
+      tx.school.findUnique.mockResolvedValue({ timezone: 'Europe/Stockholm' });
+    });
+
+    /** The day the lessons' and the meals' deletes started on, run at `instant`. */
+    const sweptFrom = async (instant: string) => {
+      jest.useFakeTimers().setSystemTime(new Date(instant));
+      try {
+        await persist({ status: 'OPTIMAL', lessons: [placement()] }, { ...oneRequirement(1), lunches: [] });
+      } finally {
+        jest.useRealTimers();
+      }
+      const lessons: Date = tx.calendarLesson.deleteMany.mock.calls[0][0].where.date.gte;
+      const meals: Date = tx.calendarLunch.deleteMany.mock.calls[0][0].where.date.gte;
+      return { lessons: lessons.toISOString(), meals: meals.toISOString() };
+    };
+
+    it.each([
+      // 00:30 in Stockholm, the window the UTC day reached into yesterday.
+      ['00:30 summer time (CEST)', '2026-08-12T22:30:00.000Z', '2026-08-13'],
+      ['00:30 winter time (CET)', '2026-01-14T23:30:00.000Z', '2026-01-15'],
+      // 23:30, an hour or two before UTC's midnight: still today, not tomorrow.
+      ['23:30 summer time (CEST)', '2026-08-12T21:30:00.000Z', '2026-08-12'],
+      ['23:30 winter time (CET)', '2026-01-14T22:30:00.000Z', '2026-01-14'],
+    ])('at %s it sweeps lessons and meals from that Stockholm day', async (_label, instant, day) => {
+      await expect(sweptFrom(instant)).resolves.toEqual({
+        lessons: `${day}T00:00:00.000Z`,
+        meals: `${day}T00:00:00.000Z`,
+      });
+      expect(tx.school.findUnique).toHaveBeenCalledWith({
+        where: { id: THIS_SCHOOL },
+        select: { timezone: true },
+      });
+    });
+
+    it("reads the school's own timezone, not Stockholm's", async () => {
+      // 23:30 UTC is 01:30 the next day in Helsinki and still today in Stockholm.
+      tx.school.findUnique.mockResolvedValue({ timezone: 'Europe/Helsinki' });
+      await expect(sweptFrom('2026-08-12T23:30:00.000Z')).resolves.toMatchObject({
+        lessons: '2026-08-13T00:00:00.000Z',
+      });
+    });
+
+    it('reads no day in DRAFT, where nothing leaves the calendar', async () => {
+      tx.$queryRaw.mockResolvedValueOnce([{ mode: 'DRAFT' }]);
+      await persist({ status: 'OPTIMAL', lessons: [placement()] }, { ...oneRequirement(1), lunches: [] });
+
+      expect(tx.school.findUnique).not.toHaveBeenCalled();
+      expect(tx.calendarLesson.deleteMany).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The sweep's where-clause applied to a dated lesson as Postgres would.
+     * It knows the clauses the sweep has, and throws on any other: a clause
+     * added later, an instant say, has to answer the test below rather than
+     * pass it unread.
+     */
+    const sweeps = (
+      where: Record<string, any>,
+      lesson: { status: string; date: string; startsAt: string; attendance: number },
+    ): boolean =>
+      Object.entries(where).every(([key, clause]) => {
+        switch (key) {
+          // The scope: which masters' lessons, asserted above.
+          case 'masterLesson':
+          case 'masterLessonId':
+            return true;
+          case 'status':
+            return lesson.status === clause;
+          case 'date':
+            return new Date(`${lesson.date}T00:00:00.000Z`) >= clause.gte;
+          case 'attendanceRecords':
+            return lesson.attendance === 0;
+          default:
+            throw new Error(`Unhandled sweep clause: ${key}`);
+        }
+      });
+
+    it("takes today's lessons whole, the ones already held among them, and leaves yesterday's", async () => {
+      /*
+       * By the day, not the instant, and on purpose: reconcilableLessons
+       * keeps this morning because its master survives and a publish finds
+       * the kept row by (masterLessonId, date). A regeneration replaces the
+       * masters, and the DIRECT publish that follows writes today whole from
+       * the new ones, the past hours included (defaultPublishWindow starts on
+       * the school's today). A morning kept here would be the class's morning
+       * twice, and the genomförd tid would count both.
+       */
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-12T12:00:00.000Z')); // 14:00 in Stockholm
+      try {
+        await persist({ status: 'FEASIBLE', lessons: [] });
+      } finally {
+        jest.useRealTimers();
+      }
+      const where = tx.calendarLesson.deleteMany.mock.calls[0][0].where;
+
+      // 08:00 this morning, over, and nobody took the register.
+      expect(
+        sweeps(where, { status: 'SCHEDULED', date: '2026-08-12', startsAt: '2026-08-12T06:00:00.000Z', attendance: 0 }),
+      ).toBe(true);
+      // The same lesson with its register taken stays, as on any day.
+      expect(
+        sweeps(where, { status: 'SCHEDULED', date: '2026-08-12', startsAt: '2026-08-12T06:00:00.000Z', attendance: 3 }),
+      ).toBe(false);
+      // Yesterday's, held and without a register: what happened stays.
+      expect(
+        sweeps(where, { status: 'SCHEDULED', date: '2026-08-11', startsAt: '2026-08-11T06:00:00.000Z', attendance: 0 }),
+      ).toBe(false);
+      // And this afternoon's, not yet held.
+      expect(
+        sweeps(where, { status: 'SCHEDULED', date: '2026-08-12', startsAt: '2026-08-12T13:00:00.000Z', attendance: 0 }),
+      ).toBe(true);
+    });
+
+    it("at 00:30 leaves yesterday's held lessons, which the UTC day took", async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-12T22:30:00.000Z')); // 00:30 on the 13th in Stockholm
+      try {
+        await persist({ status: 'FEASIBLE', lessons: [] });
+      } finally {
+        jest.useRealTimers();
+      }
+      const where = tx.calendarLesson.deleteMany.mock.calls[0][0].where;
+
+      // Yesterday afternoon in Stockholm, which is still "today" in UTC.
+      expect(
+        sweeps(where, { status: 'SCHEDULED', date: '2026-08-12', startsAt: '2026-08-12T12:00:00.000Z', attendance: 0 }),
+      ).toBe(false);
+      expect(
+        sweeps(where, { status: 'SCHEDULED', date: '2026-08-13', startsAt: '2026-08-13T06:00:00.000Z', attendance: 0 }),
+      ).toBe(true);
+    });
+  });
+
+  describe('regenerationSweepDay', () => {
+    it.each([
+      ['00:30 summer time', '2026-08-12T22:30:00.000Z', '2026-08-13'],
+      ['00:30 winter time', '2026-01-14T23:30:00.000Z', '2026-01-15'],
+      ['23:30 summer time', '2026-08-12T21:30:00.000Z', '2026-08-12'],
+      ['23:30 winter time', '2026-01-14T22:30:00.000Z', '2026-01-14'],
+      // The night summer time ends (25 October 2026): 02:30 comes twice, both the 25th.
+      ['02:30 CEST, the night summer time ends', '2026-10-25T00:30:00.000Z', '2026-10-25'],
+      ['02:30 CET, the same night', '2026-10-25T01:30:00.000Z', '2026-10-25'],
+    ])('is the Stockholm day at %s', async (_label, instant, day) => {
+      tx.school.findUnique.mockResolvedValue({ timezone: 'Europe/Stockholm' });
+      await expect(regenerationSweepDay(tx as unknown as PrismaClient, THIS_SCHOOL, new Date(instant))).resolves.toEqual(
+        new Date(`${day}T00:00:00.000Z`),
+      );
+    });
+
+    it('is the Stockholm day for a school the caller cannot read', async () => {
+      tx.school.findUnique.mockResolvedValue(null);
+      await expect(
+        regenerationSweepDay(tx as unknown as PrismaClient, THIS_SCHOOL, new Date('2026-08-12T22:30:00.000Z')),
+      ).resolves.toEqual(new Date('2026-08-13T00:00:00.000Z'));
     });
   });
 

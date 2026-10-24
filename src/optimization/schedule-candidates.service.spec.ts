@@ -1238,6 +1238,26 @@ describe('ScheduleCandidatesService', () => {
       expect(tx.calendarLessonTeacher.count).toHaveBeenCalledWith({ where: { role: 'SUBSTITUTE', calendarLesson: { is: where } } });
     });
 
+    it.each([
+      ['00:30 summer time', '2026-08-12T22:30:00.000Z', '2026-08-13'],
+      ['00:30 winter time', '2026-01-14T23:30:00.000Z', '2026-01-15'],
+      ['23:30 summer time', '2026-08-12T21:30:00.000Z', '2026-08-12'],
+    ])("in DIRECT at %s counts from the school's today, the day the apply sweeps from", async (_label, instant, day) => {
+      // UTC's day at 00:30 is yesterday in Stockholm: the dialog would have
+      // counted yesterday's lessons, which the apply no longer takes.
+      tx.$queryRaw.mockImplementation(async (...args: unknown[]) => (sqlOf(args).text.includes('school_publish_mode') ? [{ mode: 'DIRECT' }] : []));
+      tx.school.findUnique.mockResolvedValue({ timezone: 'Europe/Stockholm' });
+      tx.calendarLesson.count.mockResolvedValue(0);
+      jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick'] }).setSystemTime(new Date(instant));
+      try {
+        await service.check(RUN, user);
+      } finally {
+        jest.useRealTimers();
+      }
+      expect(tx.school.findUnique).toHaveBeenCalledWith({ where: { id: SCHOOL }, select: { timezone: true } });
+      expect(tx.calendarLesson.count.mock.calls[0][0].where.date).toEqual({ gte: new Date(`${day}T00:00:00.000Z`) });
+    });
+
     it('404 CANDIDATE_GONE for a run that is not there, or that a discard removed', async () => {
       tx.scheduleCandidateRun.findUnique.mockResolvedValue(null);
       await expect(service.check(RUN, user)).rejects.toMatchObject({ status: 404, response: expect.objectContaining({ code: CANDIDATE_GONE }) });

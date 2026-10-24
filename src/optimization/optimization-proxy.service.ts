@@ -19,6 +19,7 @@ import type { ScheduleVersionsService } from '../calendar/schedule-versions.serv
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { isWriteConflict } from '../common/utils/prisma-errors';
+import { todayInZone } from '../common/utils/time';
 import { gradeSpanOf, loadRosters, roomNeedsOf, type RoomNeeds } from './room-eligibility';
 import { fromNioarig, toNioarig, toNioarigSpan, type GradeNumbering } from '../common/grade-numbering';
 import { dayNumberingOf, yearNumberingOf } from '../common/year-numbering';
@@ -568,12 +569,6 @@ export interface CandidateApplyResult extends RegenerationCounts {
  */
 export type RegenerationScope = { kind: 'NOT_PRESERVED' } | { kind: 'IDS'; ids: readonly string[] };
 
-/**
- * The dated lessons a regeneration of this scope removes in DIRECT mode:
- * future, still SCHEDULED, no attendance, of the masters the scope replaces.
- * The write's own where-clause, exported so a check can count exactly the rows
- * an apply would take off the calendar (design §3, futureCalendarLessons).
- */
 /** callAiEngine's 503 when no connection was made: the engine never had the request. */
 const ENGINE_UNREACHABLE = 'The AI engine could not be reached.';
 /** callAiEngine's 503 for a failure before or outside the HTTP call itself. */
@@ -607,10 +602,19 @@ export function draftMastersWhere(academicYearId: string): Prisma.MasterLessonWh
   return { academicYearId, NOT: { OR: PRESERVED_FROM_REGENERATION } };
 }
 
+/**
+ * The dated lessons a regeneration of this scope removes in DIRECT mode: from
+ * `today` on, still SCHEDULED, no attendance, of the masters the scope
+ * replaces. The write's own where-clause, exported so a check can count
+ * exactly the rows an apply would take off the calendar (design §3,
+ * futureCalendarLessons). `today` has no default: it is regenerationSweepDay's,
+ * for the write and the check alike, and a default here once handed every
+ * caller the UTC day.
+ */
 export function calendarSweepWhere(
   scope: RegenerationScope,
   academicYearId: string,
-  today: Date = startOfUtcDay(new Date()),
+  today: Date,
 ): Prisma.CalendarLessonWhereInput {
   return {
     ...(scope.kind === 'IDS'
@@ -622,11 +626,37 @@ export function calendarSweepWhere(
   };
 }
 
-/** Midnight UTC of the day `now` falls on: the boundary a regeneration's sweep starts at. */
-export function startOfUtcDay(now: Date): Date {
-  const day = new Date(now);
-  day.setUTCHours(0, 0, 0, 0);
-  return day;
+/**
+ * The first day a DIRECT regeneration sweeps, its lessons and its meals alike:
+ * the SCHOOL's today, as a lov's purge has it (SchoolBreaksService). It was
+ * midnight UTC, and for the hour or two after local midnight that is yesterday
+ * in Stockholm: a regeneration then took yesterday's lessons that had no
+ * attendance — lessons already held, the lektionslogg written for them, the
+ * minutes the timplan's genomförd tid counts — and yesterday's meals with them.
+ *
+ * A day and not an instant, so today goes whole, its lessons already held
+ * among them. reconcilableLessons (propagate-template.ts) asks by instant and
+ * keeps this morning, and can: its master survives the edit, so a publish's
+ * idempotency key (masterLessonId, date) still finds the row it kept. A
+ * regeneration replaces the masters, and nothing finds a kept row. The DIRECT
+ * publish that refills the calendar starts on the school's today
+ * (defaultPublishWindow) and writes the whole day, the hours already past
+ * included, so a morning kept here would stand beside the new timetable's
+ * morning: each class's morning twice, once as held and once as the new
+ * timetable has it, and the genomförd tid counting both. The sweep clears the
+ * days the publish fills, and no part of one. What that costs, this morning's
+ * lessons without attendance and their logs, the manual says (6.11).
+ *
+ * Read in the caller's transaction. A school the caller cannot read (it is
+ * their own) gets Stockholm, which every school is created with.
+ */
+export async function regenerationSweepDay(
+  tx: PrismaClient,
+  schoolId: string,
+  now: Date = new Date(),
+): Promise<Date> {
+  const school = await tx.school.findUnique({ where: { id: schoolId }, select: { timezone: true } });
+  return todayInZone(school?.timezone ?? 'Europe/Stockholm', now);
 }
 
 /**
@@ -3646,18 +3676,21 @@ export class OptimizationProxyService {
      * same week a second time: one lesson a week over four weeks came back as
      * eight, half of them at a slot no timetable mentions any more.
      *
-     * Same rule the single-lesson delete uses (master-lessons.service.ts):
-     * future, still-SCHEDULED, no attendance recorded. What has already
+     * Still-SCHEDULED, no attendance recorded, from the school's today: the
+     * single-lesson delete's rule (master-lessons.service.ts) but by the day
+     * where that one asks by instant, because the publish that follows a
+     * regeneration refills whole days (regenerationSweepDay). What has already
      * happened stays exactly as it happened, orphaned but intact.
      */
-    const today = startOfUtcDay(new Date());
     // Not in DRAFT: the regeneration is a draft, its published rows stay, and
     // the delete below records them (PublicationPendingRemovals) for the next
-    // publish to adopt or remove.
+    // publish to adopt or remove. Nor its meals (replaceSittings), so there is
+    // no day to read.
+    const sweepFrom = mode === 'DRAFT' ? null : await regenerationSweepDay(tx, schoolId);
     const { count: removedCalendarLessons } =
-      mode === 'DRAFT'
+      sweepFrom === null
         ? { count: 0 }
-        : await tx.calendarLesson.deleteMany({ where: calendarSweepWhere(scope, academicYearId, today) });
+        : await tx.calendarLesson.deleteMany({ where: calendarSweepWhere(scope, academicYearId, sweepFrom) });
 
     const { count: removedUnlocked } = await tx.masterLesson.deleteMany({
       where:
@@ -3713,7 +3746,7 @@ export class OptimizationProxyService {
      * asked the engine, which has no sittings to replace them with.
      */
     if (input.lunches !== null) {
-      await this.replaceSittings(tx, schoolId, academicYearId, input.lunches, input.headcountByGroup, today, mode);
+      await this.replaceSittings(tx, schoolId, academicYearId, input.lunches, input.headcountByGroup, sweepFrom);
     }
 
     await input.verify?.(creates.length);
@@ -3761,8 +3794,8 @@ export class OptimizationProxyService {
     academicYearId: string,
     lunches: AiEngineLunch[],
     headcountByGroup: Map<string, number>,
-    today: Date,
-    mode: PublishMode = 'DIRECT',
+    /** The lessons' first swept day (regenerationSweepDay); null in DRAFT. */
+    sweepFrom: Date | null,
   ): Promise<void> {
     /*
      * The solver's rows only. A meal the school placed by hand is an
@@ -3889,19 +3922,19 @@ export class OptimizationProxyService {
      * may carry attendance, and rewriting one would be rewriting what happened;
      * a CalendarLunch carries no attendance, no status and no participants, so
      * there is nothing to preserve and no reason to keep the past. Only the
-     * future is deleted all the same, because a meal that was eaten is a fact
-     * about a day that has been.
+     * lessons' days are deleted all the same, from the school's today, because
+     * a meal that was eaten is a fact about a day that has been.
      */
     // Not in DRAFT. The regeneration is a draft, and the meals on the
     // calendar are the published ones that pupils, guardians and the viewer
     // read; the sittings written above are the draft's, hidden from them by
     // RLS until a publish, which replaces the meals of its own window from
     // them (PublicationsService.attempt).
-    if (mode === 'DRAFT') return;
+    if (sweepFrom === null) return;
     await tx.calendarLunch.deleteMany({
       where: {
         studentGroup: { is: { academicYearId } },
-        date: { gte: today },
+        date: { gte: sweepFrom },
       },
     });
   }
