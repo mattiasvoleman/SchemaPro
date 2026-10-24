@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TeacherTravel } from "./staffing-travel";
+import type { TeacherSupervision } from "./staffing-supervision";
 import { api } from "@/lib/api";
 import { STAFFING_KEYS } from "@/lib/staffing-keys";
 import { REQUIREMENT_SHARES_KEY } from "@/lib/requirement-shares";
@@ -191,6 +192,13 @@ export interface TeacherLoadReportResponse extends TeacherLoadReport {
    * never in it. Null, or absent, at a school with no travel figure.
    */
   travel?: { teachers: TeacherTravel[] } | null;
+  /**
+   * Rastvakt (Rastvaktsschema, src/supervision/supervision-load.ts): each
+   * teacher's passes in the rastvaktsschema, already counted in the report's
+   * uppdrag, on their own line beside the ram. Null, or absent, when the
+   * year has no pass.
+   */
+  supervision?: { teachers: TeacherSupervision[] } | null;
 }
 
 /**

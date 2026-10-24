@@ -120,6 +120,7 @@ const ADMIN_NAV: NavSection[] = [
       // the shell.
       { labelKey: "frameTimes", href: "/admin/frame-times", icon: CalendarRange },
       { labelKey: "rasts", href: "/admin/rasts", icon: Coffee },
+      { labelKey: "supervision", href: "/admin/supervision", icon: Coffee },
       // After the ramtider and the raster, because it is read with them: a
       // stage's day, its pauses and the meal in the middle of it. The lunch
       // card itself stays on tillgänglighet — the hall's size and the break's

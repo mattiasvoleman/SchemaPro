@@ -10,6 +10,7 @@ import { dutyPeriodLine, dutySlotsLine } from "@/lib/duty-lines";
 import type { LoadModel, TeacherLoad } from "@/lib/teacher-load";
 import type { TeacherDuty } from "@/lib/types";
 import type { TeacherTravel } from "@/lib/staffing-travel";
+import type { TeacherSupervision } from "@/lib/staffing-supervision";
 import { AnnualCard } from "@/components/staffing/annual-card";
 import { Button } from "@/components/ui/button";
 
@@ -22,6 +23,8 @@ export interface UppdragsbeskrivningProps {
   loadModel: LoadModel;
   /** Restid between the school's sites (travelOf); null at a school with no travel figure. */
   travel?: TeacherTravel | null;
+  /** The teacher's passes in the rastvaktsschema (supervisionOf); null without one. */
+  supervision?: TeacherSupervision | null;
   /** The teacher's own uppdrag for the year. */
   duties: readonly TeacherDuty[];
   subjectName: (id: string) => string | null;
@@ -72,6 +75,7 @@ export function Uppdragsbeskrivning({
   load,
   loadModel,
   travel = null,
+  supervision = null,
   duties,
   subjectName,
   groupName,
@@ -317,7 +321,7 @@ export function Uppdragsbeskrivning({
         )}
       </section>
 
-      <AnnualCard annual={load.annual} loadModel={loadModel} headingLevel="h2" travel={travel} />
+      <AnnualCard annual={load.annual} loadModel={loadModel} headingLevel="h2" travel={travel} supervision={supervision} />
 
       <section className="break-inside-avoid space-y-1" aria-labelledby="uppdrag-target">
         <h2 id="uppdrag-target" className="text-lg font-semibold">

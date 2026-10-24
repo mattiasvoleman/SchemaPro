@@ -6,6 +6,7 @@ import { Link } from "@/i18n/navigation";
 import { formatPercent } from "@/lib/staffing-view";
 import { useTeacherDuties } from "@/lib/staffing-queries";
 import type { TeacherTravel } from "@/lib/staffing-travel";
+import type { TeacherSupervision } from "@/lib/staffing-supervision";
 import type { LoadModel, TeacherLoad, UnqualifiedAssignment } from "@/lib/teacher-load";
 import type {
   StaffingPolicy,
@@ -52,6 +53,8 @@ export interface TeacherDrawerProps {
   personName?: (userId: string) => string | null;
   /** The teacher's restid between sites (travelOf); null at a school with no travel figure. */
   travel?: TeacherTravel | null;
+  /** The teacher's passes in the rastvaktsschema (supervisionOf); null without one. */
+  supervision?: TeacherSupervision | null;
 }
 
 /**
@@ -82,6 +85,7 @@ export function TeacherDrawer({
   teacherName,
   loadModel = "MINUTES",
   travel = null,
+  supervision = null,
   personName = () => null,
 }: TeacherDrawerProps) {
   const t = useTranslations("staffing");
@@ -199,7 +203,7 @@ export function TeacherDrawer({
           </SectionCard>
         ) : null}
 
-        {load ? <AnnualCard annual={load.annual} loadModel={loadModel} showSettingsPath travel={travel} /> : null}
+        {load ? <AnnualCard annual={load.annual} loadModel={loadModel} showSettingsPath travel={travel} supervision={supervision} /> : null}
 
         <EmploymentHistoryCard
           userId={teacher.id}

@@ -61,6 +61,7 @@ export function AdminUppdragsbeskrivning({
         load={data.row}
         loadModel={data.loadModel}
         travel={data.travel}
+        supervision={data.supervision}
         duties={data.duties}
         subjectName={data.subjectName}
         groupName={data.groupName}

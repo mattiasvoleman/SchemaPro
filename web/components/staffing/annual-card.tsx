@@ -4,6 +4,7 @@ import { useTranslations } from "next-intl";
 import { formatPercent } from "@/lib/staffing-view";
 import type { LoadModel, TeacherLoad } from "@/lib/teacher-load";
 import type { TeacherTravel } from "@/lib/staffing-travel";
+import type { TeacherSupervision } from "@/lib/staffing-supervision";
 import { SectionCard } from "@/components/ui/section-card";
 
 export interface AnnualCardProps {
@@ -23,6 +24,12 @@ export interface AnnualCardProps {
    * figure, which sees no row for it.
    */
   travel?: TeacherTravel | null;
+  /**
+   * The teacher's passes in the rastvaktsschema (supervisionOf): already in
+   * the uppdrag above, stated as their part of it, and the ram their
+   * Rastvakt uppdrag set. Null for a teacher with no pass.
+   */
+  supervision?: TeacherSupervision | null;
 }
 
 /**
@@ -53,6 +60,7 @@ export function AnnualCard({
   showSettingsPath = false,
   headingLevel = "h3",
   travel = null,
+  supervision = null,
 }: AnnualCardProps) {
   const t = useTranslations("staffing.annual");
   const hours = (value: number) => t("hours", { hours: formatPercent(value) });
@@ -63,6 +71,12 @@ export function AnnualCard({
     },
     { label: t("dutyHours"), value: hours(annual.dutyHoursPerYear) },
   ];
+  if (supervision) {
+    rows.push({
+      label: t("supervisionHours"),
+      value: t("supervisionValue", { hours: formatPercent(supervision.hoursPerYear), minutes: supervision.minutesPerWeek }),
+    });
+  }
   if (travel) {
     rows.push({
       label: t("travelHours"),
@@ -112,6 +126,11 @@ export function AnnualCard({
           </div>
         ))}
       </dl>
+      {supervision && supervision.ramMinutesPerWeek !== null ? (
+        <p className="text-xs text-muted-foreground">
+          {t("supervisionRam", { ram: supervision.ramMinutesPerWeek, counted: supervision.ramCountedMinutesPerWeek })}
+        </p>
+      ) : null}
       <p className="text-xs text-muted-foreground">
         {showSettingsPath ? t("captionAdmin") : t("caption")}
       </p>
