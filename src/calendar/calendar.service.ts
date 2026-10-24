@@ -116,11 +116,14 @@ export interface MaterialiseSitting {
  *
  * "Today" was the UTC day, and for the hour or two after local midnight that
  * is yesterday in Stockholm. A regeneration sweeps the calendar from the
- * school's today (regenerationSweepDay, OptimizationProxyService) and keeps
- * yesterday's lessons; the publish that refills it is the other half of the
- * same replacement, so it starts on the same day. Started on UTC's, a dateless
- * publish at 00:30 wrote yesterday over again for the new masters, beside the
- * yesterday the sweep had kept. The web always sends the start, and sends the
+ * school's today and keeps yesterday's lessons; the publish that refills it is
+ * the other half of the same replacement. Both ask todayInZone of the school's
+ * Schools.timezone: the sweep through regenerationSweepDay
+ * (OptimizationProxyService), this through the läsår's school. Each asks at
+ * its own instant, so they name the same day when the regeneration and the
+ * publish fall on the same school day. Started on UTC's, a dateless publish at
+ * 00:30 wrote yesterday over again for the new masters, beside the yesterday
+ * the sweep had kept. The web always sends the start, and sends the
  * school's today (defaultPublishWindow), so only a caller that leaves the
  * dates out ever reads this default.
  */
