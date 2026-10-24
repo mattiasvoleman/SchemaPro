@@ -26,7 +26,7 @@ import {
 } from './publish-days';
 import { rastsForSpan } from './rasts-for-span';
 import { requireSchoolId } from '../common/utils/request-context';
-import { zonedTimeToUtc } from '../common/utils/time';
+import { todayInZone, zonedTimeToUtc } from '../common/utils/time';
 import type { PublishScheduleDto } from './dto/publish-schedule.dto';
 
 /**
@@ -110,19 +110,28 @@ export interface MaterialiseSitting {
 
 /**
  * The window a publish materialises: the request's dates clamped to the
- * läsår, from today when no start is given. "Today" is the UTC day, a legacy
- * quirk kept so the old route writes what it always wrote; POST /publications
+ * läsår, from the school's today when no start is given. POST /publications
  * asks the same function, so its validity range is exactly the window the
  * calendar was materialised over.
+ *
+ * "Today" was the UTC day, and for the hour or two after local midnight that
+ * is yesterday in Stockholm. A regeneration sweeps the calendar from the
+ * school's today (regenerationSweepDay, OptimizationProxyService) and keeps
+ * yesterday's lessons; the publish that refills it is the other half of the
+ * same replacement, so it starts on the same day. Started on UTC's, a dateless
+ * publish at 00:30 wrote yesterday over again for the new masters, beside the
+ * yesterday the sweep had kept. The web always sends the start, and sends the
+ * school's today (defaultPublishWindow), so only a caller that leaves the
+ * dates out ever reads this default.
  */
 export function publishWindow(
-  year: { startDate: Date; endDate: Date },
+  year: { startDate: Date; endDate: Date; timezone: string },
   dto: { fromDate?: string; toDate?: string },
   now: Date = new Date(),
 ): { fromDate: string; toDate: string } {
   const yearStart = toDateString(year.startDate);
   const yearEnd = toDateString(year.endDate);
-  const today = toDateString(now);
+  const today = toDateString(todayInZone(year.timezone, now));
   const fromDate = clampDate(dto.fromDate ?? maxDate(yearStart, today), yearStart, yearEnd);
   const toDate = clampDate(dto.toDate ?? yearEnd, yearStart, yearEnd);
   if (fromDate > toDate) {
@@ -206,7 +215,7 @@ export class CalendarService {
     }
 
     const timezone = year.school.timezone;
-    const { fromDate, toDate } = publishWindow(year, dto);
+    const { fromDate, toDate } = publishWindow({ startDate: year.startDate, endDate: year.endDate, timezone }, dto);
 
     const masterLessons = options.templates ?? await tx.masterLesson.findMany({
       // A parked lesson is not on the timetable, so it is not on the
