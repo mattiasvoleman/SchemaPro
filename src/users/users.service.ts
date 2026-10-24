@@ -561,7 +561,7 @@ export class UsersService {
             tx.teacherEmployment.count({ where: { userId: id } }),
             tx.teacherSubjectQualification.count({ where: { userId: id } }),
             tx.teacherDuty.count({ where: { userId: id } }),
-            // Rastvaktspass (20261202090000), the other half of lockStaffRow's
+            // Rastvaktspass (20261207090000), the other half of lockStaffRow's
             // 'rastvaktspass': a pupil on the schedule would watch a break.
             tx.supervisionShift.count({ where: { userId: id } }),
           ]);

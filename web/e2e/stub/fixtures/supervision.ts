@@ -7,7 +7,7 @@ import { TEACHERS } from "./world";
 
 /**
  * Rastvaktsschema (GET /api/v1/supervision-areas and /supervision-rota,
- * 20261202090000): the yard on the main house, watched at the morning rast,
+ * 20261207090000): the yard on the main house, watched at the morning rast,
  * and the dining hall at lunch with two on duty. Bo watches the yard on
  * Mondays until the jullov, which is the Rastvakt uppdrag of 30 minutes
  * staffing-rows.ts gives him, now his ram; Cecilia the hall Monday to

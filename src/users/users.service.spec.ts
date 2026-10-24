@@ -1180,7 +1180,7 @@ describe('UsersService', () => {
     });
 
     it('refuses a demotion on rastvaktspass, and says where they are planned', async () => {
-      // lockStaffRow's other half (Rastvaktsschema, 20261202090000): a pupil
+      // lockStaffRow's other half (Rastvaktsschema, 20261207090000): a pupil
       // left on the schedule would watch a break and be charged it.
       storeUser({ role: UserRole.TEACHER, studentGroupId: null });
       tx.teacherEmployment.count.mockResolvedValue(0);

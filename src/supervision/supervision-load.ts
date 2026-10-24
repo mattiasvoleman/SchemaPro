@@ -3,7 +3,7 @@ import { dutyStandardWeekMinutes, type LoadDuty } from '../staffing/teacher-load
 import { peakPerWeekByKey, teachingWeeks, type ClosedRange, type YearBounds } from '../staffing/teaching-weeks';
 
 /**
- * RASTVAKT I BELASTNINGEN (Rastvaktsschema, 20261202090000): what a teacher's
+ * RASTVAKT I BELASTNINGEN (Rastvaktsschema, 20261207090000): what a teacher's
  * passes in the rastvaktsschema add to their tjänst, and what becomes of the
  * uppdrag the school typed for rastvakt before it had a schedule.
  *
@@ -73,7 +73,7 @@ export interface TeacherSupervision {
    * whole minutes — what the schedule is planned against. Null without one.
    */
   ramMinutesPerWeek: number | null;
-  /** The part of the ram still counted: its dates no pass runs on. */
+  /** The part of the ram still counted: the weeks no pass runs in. */
   ramCountedMinutesPerWeek: number;
 }
 

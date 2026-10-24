@@ -2,7 +2,7 @@ import { buildTeacherLoadReport, type LoadInput } from '../staffing/teacher-load
 import { supervisionOfTeachers, withSupervision, type KindedDuty, type LoadShift } from './supervision-load';
 
 /**
- * Rastvakt in the load (Rastvaktsschema, 20261202090000). The year is the
+ * Rastvakt in the load (Rastvaktsschema, 20261207090000). The year is the
  * four weeks from Monday 7 September 2026 to Sunday 4 October. Anna has an
  * uppdrag "Rastvakt 60 min/vecka" and a mentorskap of 90; Bo a Rastvakt of
  * 40 and no pass.

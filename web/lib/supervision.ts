@@ -1,5 +1,5 @@
 /*
- * Rastvaktsschema (migration 20261202090000): what GET /api/v1/supervision-rota
+ * Rastvaktsschema (migration 20261207090000): what GET /api/v1/supervision-rota
  * and /api/v1/supervision-areas answer, and the arithmetic the page lays
  * them out with. The breaks, the gaps and every teacher's minutes are the
  * gateway's (src/supervision); nothing here decides what is watched, only

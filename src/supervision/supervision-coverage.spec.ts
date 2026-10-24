@@ -2,7 +2,7 @@ import type { RastRow } from '../calendar/rasts-for-span';
 import { supervisionCoverage, type CoverageArea, type CoverageInput, type CoverageShift } from './supervision-coverage';
 
 /**
- * Which breaks nobody watches (Rastvaktsschema, 20261202090000). The year is
+ * Which breaks nobody watches (Rastvaktsschema, 20261207090000). The year is
  * the four weeks from Monday 7 September 2026 to Sunday 4 October. Lågstadiet
  * (0–3) is out 10:00–10:20 and mellanstadiet (4–6) 10:10–10:30, every day;
  * on Friday lågstadiet goes out at 10:05 instead. Lågstadiet eats 11:00–11:40

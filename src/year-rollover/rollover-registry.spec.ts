@@ -243,7 +243,7 @@ describe('the rollover registry', () => {
     // year-start one), Schemaförslag's runs (20261125090000, a week's
     // working material, never a starting point), a lesson's log and its
     // note to the substitute (Lektionslogg, 20261203090000, which stay with
-    // the old year's lessons), and the rastvaktsschema (20261202090000, the
+    // the old year's lessons), and the rastvaktsschema (20261207090000, the
     // old year's passes; the areas are the school's).
     const skipped = skippedModels();
     const added = [

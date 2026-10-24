@@ -412,7 +412,7 @@ export function writeConflict(): ConflictException {
  * The lokal timplan CHECKs (migrations 20261006120000 and 20261007130000),
  * the Fas 2 tjänstefördelning CHECKs (20261007090000), the lektionslängder
  * CHECK (20261008090000), Lärarens dag's three (20261123090000) and the
- * rastvaktsschema's (20261202090000) by constraint name, as the field and the bound a 400 should state. The DTOs mirror each
+ * rastvaktsschema's (20261207090000) by constraint name, as the field and the bound a 400 should state. The DTOs mirror each
  * bound, so this is the second line: a value a DTO counted differently from
  * the column (lengths are code points on both sides now, but the next
  * difference will not announce itself) answers 400 naming the field rather

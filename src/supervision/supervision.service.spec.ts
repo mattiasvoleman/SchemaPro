@@ -18,7 +18,7 @@ import {
 } from './supervision.service';
 
 /**
- * Rastvaktsschema (20261202090000): what the service adds to what the
+ * Rastvaktsschema (20261207090000): what the service adds to what the
  * database holds (RLS sections 200–203 run the table rules): a name trimmed,
  * a span both ends or neither, a pass in whole minutes inside its läsår and
  * in one place at a time, named when it is not, and the schedule read laid
