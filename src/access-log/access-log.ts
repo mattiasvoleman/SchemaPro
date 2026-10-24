@@ -132,7 +132,25 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *     other, and which staff read directly through PostgREST as well;
  *   - who signed a decision (the leave delegation, retention, attendance
  *     sharing): rektor's or a full administrator's name on the school's own
- *     decision, which is the school's act and not data about the person.
+ *     decision, which is the school's act and not data about the person;
+ *   - a lesson's log and its note to the substitute (Lektionslogg,
+ *     20261203090000; src/lesson-log). A log is the teacher's text about a
+ *     lesson, written for the class to read: no row of it is about a person.
+ *     A pupil reads the logs of their own lessons; a guardian reads them
+ *     only inside the family's week, which is recorded (SCHEDULE) as before,
+ *     so the log adds no read the week does not already record. A note is a
+ *     colleague's free text to a colleague about a lesson, and it MAY name a
+ *     pupil ("Kalle går ut 10.15"). But no field of it says whom, so there is
+ *     no subject to record the read against: a row per pupil the text might
+ *     mention would need the text parsed. What bounds it instead is who may
+ *     read it at all — the lesson's own teacher, its substitute and the
+ *     school's administrators (app.lesson_teacher_role, RLS 232) — which is
+ *     the reach the läslogg would otherwise answer for. Nor is it gallrad
+ *     yet: it is no retention kind of 20261021110000, a gap stated in the
+ *     manual (6.11). The klassbok is the timetable layer — a class's
+ *     lessons, their teachers by name, the topic and the homework, a count
+ *     of the class's pupils on another group's lesson — and carries no note
+ *     and no pupil, as the print set of the school's weeks does not.
  *
  * Läsbehörighet (20261120100000) checked every read an administrator makes,
  * since a läsare reads everything an administrator does. Recorded since:

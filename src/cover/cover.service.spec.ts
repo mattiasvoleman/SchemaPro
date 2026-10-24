@@ -606,8 +606,15 @@ describe('CoverService', () => {
     tx.teacherAbsence.findMany.mockResolvedValue([
       { id: ABSENCE, userId: A, startsAt: new Date('2026-10-13T22:00:00.000Z'), endsAt: new Date('2026-10-14T22:00:00.000Z') },
     ]);
+    tx.lessonSubstituteNote.findMany.mockResolvedValue([{ calendarLessonId: LESSON }]);
     const board = await cover.board('2026-10-14', '2026-10-14', testUser({ channel: 'WEB' }));
     expect(board.summary).toEqual({ open: 1, covered: 0, cancelled: 0, handled: 0, passedOpen: 0 });
+    // Lektionslogg: that the lesson's own teacher left a note, never the note.
+    expect(board.notedLessonIds).toEqual([LESSON]);
+    expect(tx.lessonSubstituteNote.findMany).toHaveBeenCalledWith({
+      where: { calendarLessonId: { in: [LESSON] } },
+      select: { calendarLessonId: true },
+    });
     // Who is away, without why, recorded once with the reader's channel.
     expect(recordedReads(tx)).toEqual([{ kind: 'STAFF_ABSENCES', channel: 'WEB', ids: [A] }]);
     expect(board.absences).toEqual([
@@ -622,8 +629,10 @@ describe('CoverService', () => {
   it('the board records the absent teacher of a pair whose absence has ended too, and an empty board records nothing', async () => {
     tx.$queryRaw.mockResolvedValue([]);
     tx.teacherAbsence.findMany.mockResolvedValue([]);
-    await cover.board('2026-10-14', '2026-10-14', testUser());
+    const empty = await cover.board('2026-10-14', '2026-10-14', testUser());
     expect(recordedReads(tx)).toEqual([]);
+    expect(empty.notedLessonIds).toEqual([]);
+    expect(tx.lessonSubstituteNote.findMany).not.toHaveBeenCalled();
     tx.$queryRaw.mockResolvedValue([
       {
         absenceId: ABSENCE,

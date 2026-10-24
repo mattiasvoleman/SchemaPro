@@ -5,6 +5,8 @@ import { breakDaysOf, closuresByDateOf, type PublishDaysContext } from './publis
 import { PUBLISH_NOTE_TEACHER_UNAVAILABLE } from './calendar.service';
 
 const NOW = new Date('2026-10-12T06:00:00.000Z'); // Monday 08:00 in Stockholm
+/** A row with no lesson log and no note to the substitute (Lektionslogg). */
+const NO_LOG = { lessonLogs: 0, substituteNotes: 0 };
 const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
 const time = (h: number, m = 0) => new Date(Date.UTC(1970, 0, 1, h, m));
 const OLD_ROOM = 'room-old';
@@ -81,9 +83,9 @@ describe('propagateTemplateChange', () => {
 
   it("'publish' leaves a room changed for the day, and a vikarie's lesson, as they are", async () => {
     tx.calendarLesson.findMany.mockResolvedValue([
-      { id: 'kept-room', date: day('2026-10-13'), roomId: 'room-for-the-day', note: null, teachers: [{ teacherId: OLD_TEACHER, role: 'LEAD' }] },
-      { id: 'vikarie', date: day('2026-10-20'), roomId: OLD_ROOM, note: null, teachers: [{ teacherId: 'sub', role: 'SUBSTITUTE' }] },
-      { id: 'plain', date: day('2026-10-27'), roomId: OLD_ROOM, note: null, teachers: [{ teacherId: OLD_TEACHER, role: 'LEAD' }] },
+      { id: 'kept-room', date: day('2026-10-13'), roomId: 'room-for-the-day', note: null, teachers: [{ teacherId: OLD_TEACHER, role: 'LEAD' }], _count: NO_LOG },
+      { id: 'vikarie', date: day('2026-10-20'), roomId: OLD_ROOM, note: null, teachers: [{ teacherId: 'sub', role: 'SUBSTITUTE' }], _count: NO_LOG },
+      { id: 'plain', date: day('2026-10-27'), roomId: OLD_ROOM, note: null, teachers: [{ teacherId: OLD_TEACHER, role: 'LEAD' }], _count: NO_LOG },
     ]);
     const result = await run('publish');
     const writes = Object.fromEntries(
@@ -101,7 +103,7 @@ describe('propagateTemplateChange', () => {
 
   it("'publish' removes a row that would land on a lov, and reports what the school did on it", async () => {
     tx.calendarLesson.findMany.mockResolvedValue([
-      { id: 'onto-lov', date: day('2026-10-27'), roomId: OLD_ROOM, note: 'Ta med gympakläder', teachers: [{ teacherId: 'sub', role: 'SUBSTITUTE' }] },
+      { id: 'onto-lov', date: day('2026-10-27'), roomId: OLD_ROOM, note: 'Ta med gympakläder', teachers: [{ teacherId: 'sub', role: 'SUBSTITUTE' }], _count: NO_LOG },
     ]);
     const result = await run(
       'publish',
@@ -110,13 +112,30 @@ describe('propagateTemplateChange', () => {
     expect(tx.calendarLesson.update).not.toHaveBeenCalled();
     expect(tx.calendarLesson.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ['onto-lov'] } } });
     expect(result.lostDayOperations).toEqual([
-      { calendarLessonId: 'onto-lov', date: '2026-10-27', substitute: true, roomChanged: false, note: true },
+      { calendarLessonId: 'onto-lov', date: '2026-10-27', substitute: true, roomChanged: false, note: true, lessonLog: false },
+    ]);
+  });
+
+  it("'publish' names a removed row that only carried a lesson log or a note to the substitute (Lektionslogg)", async () => {
+    tx.calendarLesson.findMany.mockResolvedValue([
+      { id: 'homework', date: day('2026-10-27'), roomId: OLD_ROOM, note: null, teachers: [], _count: { lessonLogs: 1, substituteNotes: 0 } },
+      { id: 'note', date: day('2026-10-28'), roomId: OLD_ROOM, note: null, teachers: [], _count: { lessonLogs: 0, substituteNotes: 1 } },
+      { id: 'nothing', date: day('2026-10-29'), roomId: OLD_ROOM, note: null, teachers: [], _count: NO_LOG },
+    ]);
+    const result = await run(
+      'publish',
+      landing({ breakDays: breakDaysOf([{ startDate: day('2026-10-26'), endDate: day('2026-10-30'), minGradeLevel: null, maxGradeLevel: null }], '2026-10-01', '2026-12-31') }),
+    );
+    expect(tx.calendarLesson.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ['homework', 'note', 'nothing'] } } });
+    expect(result.lostDayOperations).toEqual([
+      { calendarLessonId: 'homework', date: '2026-10-27', substitute: false, roomChanged: false, note: false, lessonLog: true },
+      { calendarLessonId: 'note', date: '2026-10-28', substitute: false, roomChanged: false, note: false, lessonLog: true },
     ]);
   });
 
   it("'publish' writes a row that lands on the teacher's closure CANCELLED, as materialisation would", async () => {
     tx.calendarLesson.findMany.mockResolvedValue([
-      { id: 'closed', date: day('2026-10-13'), roomId: OLD_ROOM, note: null, teachers: [{ teacherId: OLD_TEACHER, role: 'LEAD' }] },
+      { id: 'closed', date: day('2026-10-13'), roomId: OLD_ROOM, note: null, teachers: [{ teacherId: OLD_TEACHER, role: 'LEAD' }], _count: NO_LOG },
     ]);
     const result = await run(
       'publish',
@@ -148,8 +167,8 @@ describe('propagateTemplateChange', () => {
     // The snapshot says Tuesday, the template Wednesday; the 10-21 row already
     // stands on Wednesday (an earlier, shorter publish carried it there).
     tx.calendarLesson.findMany.mockResolvedValue([
-      { id: 'tue', date: day('2026-10-20'), roomId: OLD_ROOM, note: null, teachers: [] },
-      { id: 'already-wed', date: day('2026-10-21'), roomId: OLD_ROOM, note: null, teachers: [] },
+      { id: 'tue', date: day('2026-10-20'), roomId: OLD_ROOM, note: null, teachers: [], _count: NO_LOG },
+      { id: 'already-wed', date: day('2026-10-21'), roomId: OLD_ROOM, note: null, teachers: [], _count: NO_LOG },
     ]);
     await run('publish');
     const dates = Object.fromEntries(
@@ -161,9 +180,9 @@ describe('propagateTemplateChange', () => {
   it("'publish' never lands a row outside the range: a weekday move across either edge removes it", async () => {
     tx.calendarLesson.findMany.mockResolvedValue([
       // Thursday 15 Oct → Monday 12 Oct, before the range's Tuesday start.
-      { id: 'across-from', date: day('2026-10-15'), roomId: OLD_ROOM, note: null, teachers: [] },
+      { id: 'across-from', date: day('2026-10-15'), roomId: OLD_ROOM, note: null, teachers: [], _count: NO_LOG },
       // Monday 26 Oct → Thursday 29 Oct, after the range's Wednesday end.
-      { id: 'across-to', date: day('2026-10-26'), roomId: OLD_ROOM, note: null, teachers: [] },
+      { id: 'across-to', date: day('2026-10-26'), roomId: OLD_ROOM, note: null, teachers: [], _count: NO_LOG },
     ]);
     const result = await propagateTemplateChange(
       tx as unknown as PrismaClient,
@@ -177,7 +196,7 @@ describe('propagateTemplateChange', () => {
 
     tx = createTxMock();
     tx.calendarLesson.findMany.mockResolvedValue([
-      { id: 'across-to', date: day('2026-10-26'), roomId: OLD_ROOM, note: null, teachers: [] },
+      { id: 'across-to', date: day('2026-10-26'), roomId: OLD_ROOM, note: null, teachers: [], _count: NO_LOG },
     ]);
     const forward = await propagateTemplateChange(
       tx as unknown as PrismaClient,
@@ -192,7 +211,7 @@ describe('propagateTemplateChange', () => {
   it("'publish' never carries a row into the past", async () => {
     tx.calendarLesson.findMany.mockResolvedValue([
       // Tuesday 13 Oct 08:00 → Wednesday is ahead, but a Monday move would not be.
-      { id: 'r', date: day('2026-10-13'), roomId: OLD_ROOM, note: null, teachers: [] },
+      { id: 'r', date: day('2026-10-13'), roomId: OLD_ROOM, note: null, teachers: [], _count: NO_LOG },
     ]);
     const result = await propagateTemplateChange(
       tx as unknown as PrismaClient,

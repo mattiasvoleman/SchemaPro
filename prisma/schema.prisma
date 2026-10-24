@@ -210,6 +210,8 @@ model School {
   masterLessons           MasterLesson[]
   calendarLessons         CalendarLesson[]
   calendarLessonTeachers  CalendarLessonTeacher[]
+  lessonLogs              LessonLog[]
+  lessonSubstituteNotes   LessonSubstituteNote[]
   attendanceRecords       AttendanceRecord[]
   availabilityConstraints AvailabilityConstraint[]
   schoolBreaks            SchoolBreak[]
@@ -323,6 +325,9 @@ model User {
   coMasterLessons         MasterLesson[]           @relation("MasterLessonCoTeacher")
   calendarLessonTeachers  CalendarLessonTeacher[]  @relation("AssignedTeacher")
   recordedAttendance      AttendanceRecord[]       @relation("AttendanceRecorder")
+  /// Lesson logs and notes to the substitute this person wrote last (Lektionslogg).
+  writtenLessonLogs       LessonLog[]              @relation("LessonLogWriter")
+  writtenSubstituteNotes  LessonSubstituteNote[]   @relation("SubstituteNoteWriter")
   availabilityConstraints AvailabilityConstraint[] @relation("ConstraintTeacher")
   /// At most one row, which the database enforces with @@unique([userId]) on
   /// the other side. A list rather than an optional single relation because the
@@ -1857,6 +1862,11 @@ model CalendarLesson {
   /// Set while the lesson's template was deleted in a DRAFT school and no publish has settled it.
   pendingRemovals   PublicationPendingRemoval[]
   batchLessons      CancellationBatchLesson[]
+  /// The lesson's log and its note to the substitute (Lektionslogg,
+  /// 20261203090000): at most one row each (UNIQUE "calendarLessonId" on the
+  /// other side). Lists for the composite key's sake, as User.workRules.
+  lessonLogs        LessonLog[]
+  substituteNotes   LessonSubstituteNote[]
 
   // Not visible here, and load-bearing: an EXCLUDE constraint on
   // (roomId, tstzrange(startsAt, endsAt)) refuses a second SCHEDULED lesson in
@@ -1998,6 +2008,63 @@ model CalendarLessonTeacher {
   @@index([schoolId])
   @@index([teacherId])
   @@map("CalendarLessonTeachers")
+}
+
+// -----------------------------------------------------------------------------
+// Lektionslogg (20261203090000): what a lesson is about and what is to be
+// done before the next one, which families see; and a note to whoever
+// covers it, which only staff see. Two tables, so that row security and not
+// only the gateway keeps the note from families. Composite keys, CHECKs, the
+// write arms and app.lesson_teacher_role live in the migration.
+// -----------------------------------------------------------------------------
+
+/// A lesson's topic and homework, written by its teacher if they want to and
+/// read by the pupils on it and their guardians. One per calendar lesson at
+/// most; deleted, never kept empty (CHECK: topic or homework).
+model LessonLog {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId         String   @db.Uuid
+  calendarLessonId String   @unique @db.Uuid
+  /// One line, trimmed, 1..200 characters (DB CHECK).
+  topic            String?
+  /// Trimmed, 1..1000 characters, may run over lines (DB CHECK).
+  homework         String?
+  /// Who wrote it last: a trigger stamps it from the claims (app.lesson_text_written_by).
+  writtenById      String?  @db.Uuid
+  createdAt        DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @db.Timestamptz(6)
+
+  school         School         @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  calendarLesson CalendarLesson @relation(fields: [calendarLessonId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  writtenBy      User?          @relation("LessonLogWriter", fields: [writtenById, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([schoolId])
+  @@index([writtenById])
+  @@map("LessonLogs")
+}
+
+/// A note to the substitute from the lesson's own teacher: read by the
+/// lesson's teachers, its substitute among them, and the school's
+/// administrators; never by a pupil or a guardian. One per calendar lesson
+/// at most.
+model LessonSubstituteNote {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId         String   @db.Uuid
+  calendarLessonId String   @unique @db.Uuid
+  /// Trimmed, 1..2000 characters (DB CHECK).
+  body             String
+  /// Who wrote it last: a trigger stamps it from the claims (app.lesson_text_written_by).
+  writtenById      String?  @db.Uuid
+  createdAt        DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @db.Timestamptz(6)
+
+  school         School         @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  calendarLesson CalendarLesson @relation(fields: [calendarLessonId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  writtenBy      User?          @relation("SubstituteNoteWriter", fields: [writtenById, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([schoolId])
+  @@index([writtenById])
+  @@map("LessonSubstituteNotes")
 }
 
 // -----------------------------------------------------------------------------

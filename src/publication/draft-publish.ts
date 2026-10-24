@@ -242,7 +242,7 @@ async function settlePendingRemovals(
           roomId: true,
           note: true,
           teachers: { select: { role: true } },
-          _count: { select: { attendanceRecords: true } },
+          _count: { select: { attendanceRecords: true, lessonLogs: true, substituteNotes: true } },
         },
       },
     },
@@ -314,8 +314,9 @@ async function settlePendingRemovals(
       substitute: lesson.teachers.some((teacher) => teacher.role === 'SUBSTITUTE'),
       roomChanged: false,
       note: lesson.note !== null && lesson.note !== '',
+      lessonLog: lesson._count.lessonLogs > 0 || lesson._count.substituteNotes > 0,
     };
-    if (operation.substitute || operation.note) lostDayOperations.push(operation);
+    if (operation.substitute || operation.note || operation.lessonLog) lostDayOperations.push(operation);
   }
   if (release.length > 0) {
     await tx.publicationPendingRemoval.deleteMany({ where: { calendarLessonId: { in: release } } });

@@ -95,6 +95,9 @@ describe('the family schedule (e2e)', () => {
           teachers: [],
           status: 'CANCELLED',
           substitute: false,
+          // Lektionslogg: none written for this lesson.
+          topic: null,
+          homework: null,
         },
       ],
       lunches: [],

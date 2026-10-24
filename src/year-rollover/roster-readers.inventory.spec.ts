@@ -102,6 +102,10 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
     basis: 'CURRENT',
     why: 'one child’s published week for the family: the child’s own row and teaching groups as they are; the home class only on dates its class history (ENROLLED) names',
   },
+  'src/lesson-log/class-book.service.ts': {
+    basis: 'CURRENT',
+    why: 'the klassbok (Lektionslogg): the class’s active pupils as it stands today and their teaching groups, to find the other groups’ lessons the roster reader puts them on; a count, written nowhere',
+  },
 };
 
 /**

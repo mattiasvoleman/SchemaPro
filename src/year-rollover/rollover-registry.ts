@@ -472,6 +472,22 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
     parent: 'CalendarLesson',
     reason: 'Närvaro recorded on the old year’s lessons stays with them, as history.',
   },
+  /**
+   * Lektionslogg (20261203090000): what an old lesson was about, its
+   * homework and the note its substitute was left. Keyed by the lesson, not
+   * the year, so not in the set this registry must cover; written down all
+   * the same, as a FOLLOWS of its real parent.
+   */
+  LessonLog: {
+    kind: 'FOLLOWS',
+    parent: 'CalendarLesson',
+    reason: 'Ämne och läxa written on the old year’s lessons stay with them: they are that year’s klassbok.',
+  },
+  LessonSubstituteNote: {
+    kind: 'FOLLOWS',
+    parent: 'CalendarLesson',
+    reason: 'A note to the substitute of an old year’s lesson stays with the lesson it was written for.',
+  },
   CalendarRast: {
     kind: 'SKIPPED',
     reason: 'Dated raster of the old year; the new year’s are placed when its calendar is published.',

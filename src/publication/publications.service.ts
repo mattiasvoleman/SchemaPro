@@ -549,6 +549,7 @@ export class PublicationsService {
                 operation.substitute ? 'vikarie' : null,
                 operation.roomChanged ? 'ändrad sal' : null,
                 operation.note ? 'anteckning' : null,
+                operation.lessonLog ? 'lektionslogg' : null,
               ]
                 .filter(Boolean)
                 .join(', ')}`,

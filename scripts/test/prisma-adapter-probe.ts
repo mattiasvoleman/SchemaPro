@@ -4451,7 +4451,10 @@ async function runChecks(
           // +1 since Skolområden och restid: the cover warnings ask whether
           // the school has a travel figure (SiteTravelTimes, one indexed
           // SELECT), and a school without one, as here, asks nothing more.
-          'assign a substitute': 35,
+          // +1 since Lektionslogg (20261203090000): whether the lesson's own
+          // teacher left the substitute a note, for the booking's e-mail (one
+          // SELECT by the unique calendarLessonId).
+          'assign a substitute': 36,
           // +1 each since Publicering: app.enter_grundschema_write, the shared
           // publication lock and the mode in one statement, first (below).
           // +1 since Halvklasser on a PATCH that meets another group's lesson

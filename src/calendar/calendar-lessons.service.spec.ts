@@ -692,6 +692,25 @@ describe('CalendarLessonsService', () => {
       expect(JSON.stringify(own)).not.toMatch(/Sjuk|reason/i);
     });
 
+    it('tells the substitute that the lesson’s own teacher left a note, and not what it says (Lektionslogg)', async () => {
+      arrangeAssign();
+      tx.studentGroup.findUnique.mockResolvedValue({ name: '7A' });
+      tx.room.findUnique.mockResolvedValue({ name: 'Sal 12' });
+      tx.school.findUnique.mockResolvedValue({ timezone: 'Europe/Stockholm' });
+      tx.lessonSubstituteNote.findUnique.mockResolvedValue({ id: 'note' });
+
+      await service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID }, testUser());
+
+      const own = notifications.notifyUsers.mock.calls
+        .map(([, options]) => options as { userIds: string[]; meta: Record<string, unknown>; email: { body: string } })
+        .find((options) => options.userIds.includes(SUB_ID))!;
+      expect(own.email.body).toBe(
+        'Du är inbokad som vikarie: Mathematics, 7A, Sal 12, mån 10 aug 10:00. Lektionens lärare har lämnat en notis till dig. Du läser den på lektionen i Rastra.',
+      );
+      expect(own.meta).toEqual({ subjectName: 'Mathematics', startsAt: STARTS_AT.toISOString(), cover: true, groupName: '7A', roomName: 'Sal 12' });
+      expect(tx.lessonSubstituteNote.findUnique).toHaveBeenCalledWith({ where: { calendarLessonId: LESSON_ID }, select: { id: true } });
+    });
+
     it.each([
       ['unknown', null],
       ['inactive', { id: SUB_ID, role: 'TEACHER', isActive: false }],

@@ -260,7 +260,7 @@ describe('FamilyScheduleService', () => {
         'timezone',
         'lessons', 'lessons.id', 'lessons.date', 'lessons.start', 'lessons.end', 'lessons.startsAt', 'lessons.endsAt',
         'lessons.subjectId', 'lessons.subject', 'lessons.subjectColor', 'lessons.room', 'lessons.teachers', 'lessons.status',
-        'lessons.substitute',
+        'lessons.substitute', 'lessons.topic', 'lessons.homework',
         'lunches', 'lunches.id', 'lunches.date', 'lunches.start', 'lunches.end',
         'rasts', 'rasts.id', 'rasts.date', 'rasts.start', 'rasts.end', 'rasts.name',
       ]),
@@ -269,6 +269,35 @@ describe('FamilyScheduleService', () => {
     expect(result.lessons[0]).toMatchObject({ status: 'CANCELLED', teachers: [], substitute: false });
     expect(result.lunches).toEqual([{ id: 'm-1', date: '2026-10-13', start: '11:20', end: '11:50' }]);
     expect(result.rasts).toEqual([{ id: 'r-1', date: '2026-10-13', start: '09:40', end: '10:00', name: 'Förmiddagsrast' }]);
+  });
+
+  it('carries each lesson’s topic and homework as its log says, null without one, and reads the log only for the shown lessons', async () => {
+    tx.calendarLesson.findMany.mockResolvedValue([
+      lesson('l-1', '2026-10-13'),
+      lesson('l-2', '2026-10-14'),
+      lesson('l-sibling', '2026-10-14', { studentGroupId: SIBLING_GROUP }),
+    ]);
+    tx.lessonLog.findMany.mockResolvedValue([
+      { calendarLessonId: 'l-1', topic: 'Bråk, kapitel 4', homework: 'Uppgift 4.1–4.6' },
+    ]);
+    const result = await run('2026-10-13');
+    expect(result.lessons.map((l) => [l.id, l.topic, l.homework])).toEqual([
+      ['l-1', 'Bråk, kapitel 4', 'Uppgift 4.1–4.6'],
+      ['l-2', null, null],
+    ]);
+    expect(tx.lessonLog.findMany).toHaveBeenCalledWith({
+      where: { calendarLessonId: { in: ['l-1', 'l-2'] } },
+      select: { calendarLessonId: true, topic: true, homework: true },
+    });
+    // The note to the substitute is another table, and the family's week never asks it.
+    expect(tx.lessonSubstituteNote.findMany).not.toHaveBeenCalled();
+    expect(tx.lessonSubstituteNote.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('asks for no log when the week has no lessons', async () => {
+    tx.calendarLesson.findMany.mockResolvedValue([]);
+    await run('2026-10-13');
+    expect(tx.lessonLog.findMany).not.toHaveBeenCalled();
   });
 
   it('names teachers and the substitute only as app.family_lesson_staff says', async () => {

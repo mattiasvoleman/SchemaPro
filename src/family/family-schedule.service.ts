@@ -32,7 +32,9 @@ import type { FamilyScheduleQueryDto } from './dto/family-schedule.dto';
  *     count as of today;
  *   * the whitelist. No note (it carries "Inställd: <aktivitet>" and
  *     "Självstudier under tillsyn"), no cancel cause, no teacher id, no other
- *     pupil, no roster. Teachers are named only by app.family_lesson_staff,
+ *     pupil, no roster. The lesson's topic and homework (Lektionslogg) are
+ *     the teacher's, written for the class; the note to the substitute is
+ *     never read here. Teachers are named only by app.family_lesson_staff,
  *     the SECURITY DEFINER function that applies the school's
  *     publicTeacherDisplay as the public viewer does; a substituted or
  *     cancelled lesson names nobody, and the substitute is a boolean.
@@ -58,6 +60,13 @@ export interface FamilyLesson {
   teachers: string[];
   status: ShownStatus;
   substitute: boolean;
+  /**
+   * The lesson's log (Lektionslogg, 20261203090000): what it is about and
+   * what is to be done before the next one, as its teacher chose to write
+   * it; null when nothing is written. Never the note to the substitute.
+   */
+  topic: string | null;
+  homework: string | null;
 }
 
 export interface FamilyMeal {
@@ -212,6 +221,10 @@ export class FamilyScheduleService {
         tx,
         lessons.map((lesson) => lesson.id),
       );
+      const logs = await this.logs(
+        tx,
+        lessons.map((lesson) => lesson.id),
+      );
 
       const [lunches, rasts] = home
         ? await Promise.all([
@@ -258,6 +271,8 @@ export class FamilyScheduleService {
             teachers: said?.labels ?? [],
             status: row.status as ShownStatus,
             substitute: said?.substitute ?? false,
+            topic: logs.get(row.id)?.topic ?? null,
+            homework: logs.get(row.id)?.homework ?? null,
           };
         }),
         lunches: (lunches ?? [])
@@ -351,6 +366,25 @@ export class FamilyScheduleService {
       if (segments.some((s) => asDay(s.validFrom) <= day && (s.validTo === null || day < asDay(s.validTo)))) days.add(day);
     }
     return days;
+  }
+
+  /**
+   * The logs of the week's lessons (lesson_logs_family_select: a lesson the
+   * caller can read, which these are). Topic and homework only: the note to
+   * the substitute is another table, which no family arm reaches. Part of the
+   * week, and recorded with it (SCHEDULE).
+   */
+  private async logs(
+    tx: PrismaClient,
+    lessonIds: string[],
+  ): Promise<Map<string, { topic: string | null; homework: string | null }>> {
+    if (lessonIds.length === 0) return new Map();
+    const rows =
+      (await tx.lessonLog.findMany({
+        where: { calendarLessonId: { in: lessonIds } },
+        select: { calendarLessonId: true, topic: true, homework: true },
+      })) ?? [];
+    return new Map(rows.map((row) => [row.calendarLessonId, { topic: row.topic, homework: row.homework }]));
   }
 
   /** app.family_lesson_staff: the substitute flag and the teachers as the school names them to families. */
