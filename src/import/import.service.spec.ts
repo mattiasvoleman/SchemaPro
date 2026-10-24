@@ -2278,6 +2278,18 @@ describe('ImportService', () => {
         expect(tx.teachingRequirement.update).not.toHaveBeenCalled();
       });
 
+      it('delade lektioner: a row the stored shares no longer fit is a row error naming the dialog, and nothing is written', async () => {
+        const BO = '55555555-5555-4555-8555-555555555555';
+        // 7A Ma, 3 × 60, Karin's (TEACHER_ID) with one of Bo's. The file, which
+        // has no column for shares, gives the row one lesson: Karin keeps none.
+        arrangeRows(tx.teachingRequirement.findMany, [
+          stored({ teacherId: TEACHER_ID, shares: [{ teacherId: BO, lessons: 1, minutes: 60 }] }),
+        ]);
+        const report = await run(row({ teacherEmail: 'karin@example.com', lessonsPerWeek: 1 }));
+        expect(report.errors).toEqual([{ row: 1, message: expect.stringContaining('delade mellan lärare') }]);
+        expect(tx.teachingRequirement.update).not.toHaveBeenCalled();
+      });
+
       it('an unknown CO-teacher email is a row error that says which column it was', async () => {
         const report = await run(
           row({ teacherEmail: 'karin@example.com', coTeacherEmail: 'ghost@example.com' }),

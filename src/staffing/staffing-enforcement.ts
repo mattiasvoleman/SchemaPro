@@ -39,6 +39,13 @@ export const SAME_TEACHER_TWICE =
   'coTeacherId: medläraren kan inte vara samma person som läraren — en lärare står en gång per timplanspost.';
 export const SAME_TEACHER_TWICE_IN_FILE =
   'Läraren och medläraren är samma person. En lärare står en gång per timplanspost — lämna medlärare tom eller ange en annan.';
+/**
+ * Delade lektioner: a row whose new lessons or teachers the post's stored
+ * shares would no longer fit (sharesProblem). The file has no column for the
+ * shares, so they are changed in the post's dialog.
+ */
+export const SHARES_DO_NOT_FIT_IN_FILE =
+  'Postens lektioner är delade mellan lärare, och raden ryms inte med dem: en lärare med en andel kan inte bli postens lärare eller medlärare, och postens lärare behåller minst en lektion av de längder andelarna tar. Ändra delningen i postens dialog först.';
 
 export const sameTeacherTwice = (
   teacherId: string | null | undefined,
