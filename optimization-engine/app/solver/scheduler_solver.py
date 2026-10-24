@@ -1118,6 +1118,137 @@ class SchedulerSolver:
                 )
         return None
 
+    def _teacher_hours_verdict(self, request: OptimizeScheduleRequest) -> ConflictAnalysis | None:
+        """A teacher's week against the room their lessons can take, decided by arithmetic.
+
+        The four weeks of the fuzz that still came back CONFLICT_NO_CORE after
+        the class maximum got its literal were one week four times. The frame
+        times closed every day but one for year 7, and a teacher whose classes
+        were all year 7 had more minutes of lessons than that day held: 550
+        against Tuesday's 420 in one of them, 800 against 785 in another. No
+        rule is needed for that. The lessons' starts are their frames, and the
+        teacher's NoOverlap and the locked lessons' avoidance are posted bare,
+        so the explaining solve proved the week impossible with every literal
+        released. The core was empty, and the school read the guess about
+        rooms and teacher time, of which only the teacher's time was right.
+        Lärarens dag's bare linking rows are what let presolve see the sum at
+        once. Where a teacher has no days limit, CP-SAT finds a slower proof
+        through literals, and the core it returns is worse than empty: on the
+        smallest such week it said no room held the classes, with two rooms of
+        thirty for classes of twenty and sixteen. In the same fuzz this count
+        decides 119 of the 557 impossible weeks; 114 of them came back with a
+        core, and every one of those weeks is impossible with every literal
+        released, so no line of their cores was needed.
+
+        So the count is made here, before any model, and named for what it is:
+        the hours, not a rule. The days pre-flight makes the same count for a
+        teacher with a post, and leaves the week alone where it tips, because
+        the post is not what tips it (_verify_teacher_day_rules).
+
+        SOUND BY THE LINKING ROWS' ARGUMENT (_teaching_room). Every lesson the
+        teacher has lies inside the union of the slots its starts can reach.
+        No two of them overlap (their NoOverlap, corridor included), and none
+        overlaps a locked one (its avoidance, at the outward window). So no
+        timetable gives them more minutes than the union less the locks.
+        Reservations are not subtracted. They hang on literals, so a week they
+        make impossible goes to the model and is named by the reservation.
+        Neither is the cap or the post: the room is every day's, uncapped,
+        so a week this refuses has no timetable with every rule released.
+
+        EVERY TEACHER, lead and co-teacher alike (_teachers_of), each
+        requirement once. The bound has nothing to do with a post or a cap,
+        and a teacher with neither is the one whose core used to blame the
+        rooms. A teacher whose every lesson is locked has nothing to place,
+        and is refused nothing.
+
+        NEVER THE TEACHER'S ID. The gateway discards the teacher map by
+        design, and an anonymous teacher id would leave as a uuid nobody can
+        look up. So each line names that teacher's requirements, which the
+        page shows as "Matematik för 7B", the way the unstaffed refusal does.
+        """
+        week_minutes: dict[UUID, int] = {}
+        requirements_of: dict[UUID, list[AnonymousRequirement]] = {}
+        for requirement in request.requirements:
+            for teacher_id in dict.fromkeys(_teachers_of(requirement)):
+                week_minutes[teacher_id] = (
+                    week_minutes.get(teacher_id, 0) + sum(requirement.lesson_minutes())
+                )
+                requirements_of.setdefault(teacher_id, []).append(requirement)
+        if not week_minutes:
+            return None
+
+        minutes = self._grid.slot_minutes
+        rooms = self._teacher_rooms(request, requirements_of)
+        conflicts = []
+        for teacher_id, demand in week_minutes.items():
+            room = rooms[teacher_id]
+            capacity = sum(room.values()) * minutes
+            if demand <= capacity:
+                continue
+            requirements = requirements_of[teacher_id]
+            conflicts.append(
+                ConflictDetail(
+                    category="REQUIREMENT_DEMAND",
+                    code="DEMAND_TEACHER_LESSONS_EXCEED_ROOM",
+                    params={
+                        "requirements": len(requirements),
+                        "demandMinutes": demand,
+                        "capacityMinutes": capacity,
+                        "days": sum(1 for slots in room.values() if slots > 0),
+                        "weekDays": len(self._grid.schedule_days),
+                    },
+                    requirement_ids=[requirement.id for requirement in requirements],
+                    resource_ids=[requirement.id for requirement in requirements],
+                ),
+            )
+        if not conflicts:
+            return None
+        return ConflictAnalysis(
+            summary_code="DEMAND_TEACHER_HOURS_SHORT",
+            summary_params={"teachers": len(conflicts)},
+            conflicts=conflicts,
+        )
+
+    def _teacher_rooms(
+        self,
+        request: OptimizeScheduleRequest,
+        requirements_of: dict[UUID, list[AnonymousRequirement]],
+    ) -> dict[UUID, dict[int, int]]:
+        """Teacher -> day index -> the slots their lessons can take there, at most.
+
+        _teaching_room on the starts the model builds (_start_domains) and the
+        teacher's own locked lessons. Read by the hours verdict and by the
+        days pre-flight, one computation for both, so the two can never
+        disagree about a day. A requirement's starts are read once, for its
+        lead and its co-teacher alike, and once per LENGTH rather than per
+        lesson: lessons of one length start on one domain and reach the same
+        slots, and the room is their union, which a second copy cannot change.
+        Read per lesson, the 2,000-student benchmark spent two thirds of the
+        verdict reaching the same slots three times.
+        """
+        slots_per_day = self._grid.slots_per_day
+        lattice = _start_lattice(_start_step(request, self._grid), self._grid.horizon)
+        locked_busy = self._teacher_busy_from_locks(request.fixed_lessons)
+        reaches_of: dict[UUID, list[dict[int, list[tuple[int, int]]]]] = {}
+        rooms: dict[UUID, dict[int, int]] = {}
+        for teacher_id, requirements in requirements_of.items():
+            reaches = []
+            for requirement in requirements:
+                if requirement.id not in reaches_of:
+                    domains = self._start_domains(
+                        requirement, request.frame_times, request.rasts, lattice,
+                    )
+                    reaches_of[requirement.id] = [
+                        _day_reach(domains[duration], duration, slots_per_day)
+                        for duration in sorted({
+                            self._grid.minutes_to_slots(minutes)
+                            for minutes in requirement.lesson_minutes()
+                        })
+                    ]
+                reaches.extend(reaches_of[requirement.id])
+            rooms[teacher_id] = self._teaching_room(reaches, locked_busy, teacher_id)
+        return rooms
+
     def _lunch_pins(
         self,
         placements: list[LunchPlacement],
@@ -1960,7 +2091,11 @@ class SchedulerSolver:
         )
         # Arithmetic first, models second: a hall the school cannot fit in is
         # decided here in microseconds and reported the way a solve would have.
-        verdict = self._dining_hall_verdict(request) or self._clique_hours_verdict(request)
+        verdict = (
+            self._dining_hall_verdict(request)
+            or self._clique_hours_verdict(request)
+            or self._teacher_hours_verdict(request)
+        )
         if verdict is not None:
             return OptimizeScheduleResponse(
                 request_id=request.request_id,
@@ -3892,22 +4027,16 @@ class SchedulerSolver:
 
         if not limits:
             return
-        slots_per_day = self._grid.slots_per_day
-        lattice = _start_lattice(_start_step(request, self._grid), self._grid.horizon)
-        locked_busy = self._teacher_busy_from_locks(request.fixed_lessons)
+        rooms = self._teacher_rooms(request, {
+            limit.teacher_id: requirements_of[limit.teacher_id]
+            for limit in limits
+            if limit.teacher_id in week_minutes
+        })
         for limit in limits:
             teacher_id = limit.teacher_id
             if teacher_id not in week_minutes:
                 continue
-            reaches = []
-            for requirement in requirements_of[teacher_id]:
-                domains = self._start_domains(
-                    requirement, request.frame_times, request.rasts, lattice,
-                )
-                for minutes in requirement.lesson_minutes():
-                    duration = self._grid.minutes_to_slots(minutes)
-                    reaches.append(_day_reach(domains[duration], duration, slots_per_day))
-            room = self._teaching_room(reaches, locked_busy, teacher_id)
+            room = rooms[teacher_id]
             caps = [
                 rule.max_teaching_minutes_per_day
                 for rule in reaching
@@ -3929,10 +4058,15 @@ class SchedulerSolver:
                 # whatever the post says, and the post is not what tips it.
                 # Named, it would tell a decider to allow more days when no
                 # number of days helps, and a reader without HR read access
-                # would get the masked sentence where the model's own core
-                # can name a cause they can act on. This is also the model's
-                # "allowed >= candidates" skip, read here: a count reaching
-                # every day with room takes all of them, so its sum is this one.
+                # would get the masked sentence in place of a cause they can
+                # act on. Where the room alone tips it, with no cap in it,
+                # that cause is the hours, and _teacher_hours_verdict names
+                # them before any model: the model itself has no literal to
+                # name, and its core came back empty. Where a cap is what
+                # tips it, the cap's literal is in the model. This is also
+                # the model's "allowed >= candidates" skip, read here: a count
+                # reaching every day with room takes all of them, so its sum
+                # is this one.
                 continue
             if week_minutes[teacher_id] > sum(sorted(per_day, reverse=True)[:days]):
                 raise InvalidScheduleInputError.of("TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK", {
@@ -8249,6 +8383,16 @@ class SchedulerSolver:
         is impossible because its two locked afternoons hold less than the
         week does.
 
+        Implied, so a week these rows refuse on their own is a week the
+        teacher's NoOverlap refuses too. With the days' totals summed that is
+        the week's minutes against every day's room, and no rule is in it.
+        The fuzz found four such weeks: frame times left a teacher's year-7
+        classes one day, and the explaining solve proved them impossible with
+        every literal released, so the core came back empty.
+        _teacher_hours_verdict counts them before the model and names the
+        hours. Hanging these rows on the post's literal would not have named
+        anything true: the post would have been in a core it is no part of.
+
         ON THE DAY'S MINUTES, NEVER ON THEIR SUM. Each row bounds the day's
         total of the teacher's minutes, a variable equal to `Σ minutes·x` with
         the week's minutes the sum of the days' (_day_totals, bare: a
@@ -8557,8 +8701,9 @@ class SchedulerSolver:
         WHY THAT IS A BOUND NO TIMETABLE BEATS: every lesson the teacher has on
         the day lies inside the union, no two of them overlap (their NoOverlap)
         and none overlaps a locked one (its avoidance) — so their lengths add up
-        to at most what is left. Read by the linking rows and by the days
-        pre-flight, which is the same arithmetic on the same domains.
+        to at most what is left. Read by the linking rows, and through
+        _teacher_rooms by the days pre-flight and the hours verdict, which is
+        the same arithmetic on the same domains.
         """
         by_day: dict[int, list[tuple[int, int]]] = defaultdict(list)
         for reach in reaches:

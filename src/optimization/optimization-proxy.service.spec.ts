@@ -4082,6 +4082,71 @@ describe('OptimizationProxyService', () => {
       ]);
     });
 
+    it('names a teacher’s hours by the timplan rows they give, and never the teacher', async () => {
+      /*
+       * The hours verdict counts one teacher's lessons against the time their
+       * frames, the day and their locked lessons leave. A teacher has no name
+       * here to give, by design, so the engine's line names the teacher's rows
+       * by their anonymous ids in resourceIds, and each comes back as the row
+       * the Timplan page shows. The values are numbers and leave as they came.
+       */
+      const SVENSKA = '99999999-9999-4999-8999-999999999999';
+      arrange({
+        requirements: [
+          requirement({ subject: { requiredRoomTypeId: null, name: 'Matematik' } }),
+          requirement({ id: SVENSKA, subjectId: 'svenska', subject: { requiredRoomTypeId: null, name: 'Svenska' } }),
+        ],
+        groups: [{ id: GROUP_ID, gradeLevel: 7, kind: 'CLASS', name: '7A' }],
+      });
+      const params = { requirements: 2, demandMinutes: 440, capacityMinutes: 420, days: 1, weekDays: 5 };
+      let anonymousTeacher = '';
+      http.post.mockImplementation((_url: string, payload: any) => {
+        anonymousTeacher = payload.requirements[0].teacherId;
+        const rows = payload.requirements.map((row: any) => row.id);
+        return of({
+          data: {
+            requestId: payload.requestId,
+            status: 'INFEASIBLE',
+            lessons: [],
+            conflicts: {
+              summary: "Too many lessons for one teacher's hours.",
+              summaryCode: 'DEMAND_TEACHER_HOURS_SHORT',
+              summaryParams: { teachers: 1 },
+              conflicts: [
+                {
+                  category: 'REQUIREMENT_DEMAND',
+                  code: 'DEMAND_TEACHER_LESSONS_EXCEED_ROOM',
+                  params,
+                  message: 'One teacher gives the lessons of 2 requirements, and they need 440 minutes a week.',
+                  requirementIds: rows,
+                  roomIds: [],
+                  constraintIds: [],
+                  resourceIds: rows,
+                },
+              ],
+            },
+          },
+        });
+      });
+
+      const result = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(result.conflicts?.summaryCode).toBe('DEMAND_TEACHER_HOURS_SHORT');
+      expect(result.conflicts?.summaryParams).toEqual({ teachers: 1 });
+      expect(result.conflicts?.conflicts).toEqual([
+        expect.objectContaining({
+          code: 'DEMAND_TEACHER_LESSONS_EXCEED_ROOM',
+          params,
+          resourceIds: [REQ_ID, SVENSKA],
+          resourceNames: ['Matematik för 7A', 'Svenska för 7A'],
+        }),
+      ]);
+      const sent = JSON.stringify(result.conflicts);
+      expect(anonymousTeacher).not.toBe('');
+      expect(sent).not.toContain(anonymousTeacher);
+      expect(sent).not.toContain(TEACHER_ID);
+    });
+
     it('names a timplan row by its subject and group, and a room type by its name', async () => {
       // A refusal that said "Timplansposten 8f2c…" named something a rektor
       // could not look up. A timplan row carries no name of its own, so it is
