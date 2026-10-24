@@ -30,6 +30,8 @@ import {
   notesViewOf,
   storedOf,
   subjectsOf,
+  travelNamesOf,
+  travelTeachersOf,
   type ConflictView,
 } from './stored-conflicts';
 import { lockYearForSolveStart, SCHEDULE_BUSY } from './regeneration-lock';
@@ -235,9 +237,11 @@ function sentenceOf(
   return { code: code ?? null, params: asParams(params), message: message ?? null, subjectIds: subjectIds ?? [] };
 }
 
-/** The teachers the notes of these runs are about: whom their view names. */
+/** The teachers the notes and the travel sentences of these runs are about: whom their view names. */
 function notedOf(jobs: readonly JobRow[]): string[] {
-  return [...new Set(jobs.flatMap((job) => notedTeachersOf(job.notes)))];
+  return [
+    ...new Set(jobs.flatMap((job) => [...notedTeachersOf(job.notes), ...travelTeachersOf(job.conflicts)])),
+  ];
 }
 
 const NO_NAMES: ReadonlyMap<string, string> = new Map();
@@ -286,7 +290,8 @@ export function jobView(
     conflicts.push({
       ...stored,
       ...(shown.params !== null ? { params: shown.params } : {}),
-      resourceNames: [...stored.resourceNames, ...shown.names],
+      // A travel sentence's teachers, named now as a note's are.
+      resourceNames: [...stored.resourceNames, ...shown.names, ...travelNamesOf(entry, names)],
     });
   }
 

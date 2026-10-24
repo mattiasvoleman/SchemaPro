@@ -2158,6 +2158,70 @@ describe('OptimizationProxyService', () => {
         }),
       );
 
+    describe('Restid i generatorn', () => {
+      const SITE_N = '55555555-aaaa-4aaa-8aaa-555555555551';
+      const SITE_S = '55555555-aaaa-4aaa-8aaa-555555555552';
+      const keepingTheWalk = (keeps: boolean) => {
+        arrange({
+          rooms: [{ id: ROOM_ID, capacity: 30, type: 'CLASSROOM', siteId: SITE_N }],
+          lunchSettings: {
+            lunchEnabled: false,
+            lunchStartTime: eightAm,
+            lunchEndTime: nineAm,
+            lunchMinutes: 30,
+            diningSeats: null,
+            maxLessonsPerDayPerGroup: null,
+            generatorKeepsTravelTime: keeps,
+          },
+        });
+        tx.siteTravelTime.findMany.mockResolvedValue([{ siteAId: SITE_N, siteBId: SITE_S, minutes: 10 }]);
+      };
+
+      it('sends no site and asks for no walk while the school has not turned the walk on', async () => {
+        keepingTheWalk(false);
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        expect(Object.keys(postedPayload())).not.toContain('siteTravelTimes');
+        expect(JSON.stringify(postedPayload())).not.toMatch(/siteId/);
+        expect(tx.siteTravelTime.findMany).not.toHaveBeenCalled();
+      });
+
+      it('names the teachers who cannot make the walk only as Users ids kept for the server', async () => {
+        keepingTheWalk(true);
+        answerWithConflicts((payload) => ({
+          summary: 'blocked',
+          summaryCode: 'CONFLICT_CORE_SUMMARY',
+          summaryParams: {},
+          conflicts: [
+            {
+              category: 'TEACHER_OVERLAP',
+              code: 'TEACHER_TRAVEL_CANNOT_BE_KEPT',
+              params: { stepMinutes: 30, measured: 1 },
+              message: 'The travel time between the school’s sites cannot be kept for the teachers named here.',
+              requirementIds: [],
+              roomIds: [],
+              constraintIds: [],
+              resourceIds: [payload.requirements[0].teacherId],
+            },
+          ],
+        }));
+
+        const conflicts = (await service.triggerScheduling(ACADEMIC_YEAR, testUser())).conflicts!;
+
+        expect(postedPayload().siteTravelTimes).toHaveLength(1);
+        expect(conflicts.conflicts[0]).toMatchObject({
+          code: 'TEACHER_TRAVEL_CANNOT_BE_KEPT',
+          params: { stepMinutes: 30, measured: 1 },
+          resourceIds: [TEACHER_ID],
+          // Named when the run is read, never stored as a name here.
+          resourceNames: [],
+          subjectIds: [TEACHER_ID],
+        });
+      });
+    });
+
     it('reads a requirement’s room needs through the derivation the room optimisation shares', async () => {
       /*
        * The room optimisation may only move a lesson into a room this run

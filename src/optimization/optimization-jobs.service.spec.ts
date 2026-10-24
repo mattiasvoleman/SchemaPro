@@ -1443,6 +1443,37 @@ describe('OptimizationJobsService', () => {
         expect(Object.keys(view.conflicts[1]!)).toEqual(['category', 'message', 'resourceNames']);
       });
 
+      it('names the teachers who cannot make the walk for any reader, now and from the ids it keeps', () => {
+        // Restid i generatorn: the sentence keeps the teachers' Users ids
+        // server-side and is named when it is read, as a note is — with or
+        // without HR-läs, and nobody for a teacher since removed.
+        const travel = {
+          category: 'TEACHER_OVERLAP',
+          code: 'TEACHER_TRAVEL_CANNOT_BE_KEPT',
+          params: { stepMinutes: 30, measured: 1 },
+          message: 'The travel time between the school’s sites cannot be kept …',
+          resourceNames: [],
+          subjectIds: [EVA, 'gone'],
+        };
+        const run = row({ conflicts: [travel, { ...lunchConflict, subjectIds: [EVA] }] });
+
+        for (const posts of [null, new Map()]) {
+          const { view, revealed } = jobView(run as never, posts, new Map([[EVA, 'Eva Ek']]));
+          expect(view.conflicts[0]).toEqual({
+            category: 'TEACHER_OVERLAP',
+            code: 'TEACHER_TRAVEL_CANNOT_BE_KEPT',
+            params: { stepMinutes: 30, measured: 1 },
+            message: travel.message,
+            resourceNames: ['Eva Ek'],
+          });
+          // Another sentence's kept teacher is named by nothing here, and no
+          // walk is a post's days: nothing for the Läslogg.
+          expect(view.conflicts[1]!.resourceNames).toEqual([]);
+          expect(revealed).toEqual([]);
+          expect(JSON.stringify(view)).not.toMatch(new RegExp(`${EVA}|gone|subjectIds`));
+        }
+      });
+
       it('reads a notes column that is not a list as none', () => {
         expect(jobView(row({ notes: { unexpected: 'shape' } }) as never, null).view.notes).toEqual([]);
       });

@@ -212,6 +212,7 @@ const anonymised = (real: School, turn = 0): BasisSource => {
     workRule: new Map<string, string>(),
     block: new Map<string, string>(),
     dayLimit: new Map<string, string>(),
+    site: new Map<string, string>(),
   };
   const anon = (map: Map<string, string>, id: string): string => {
     const known = map.get(id);
@@ -244,9 +245,27 @@ const anonymised = (real: School, turn = 0): BasisSource => {
       turn,
     ),
     rooms: shuffled(
-      p.rooms.map((room) => ({ ...room, id: anon(maps.room, room.id), type: orNull(maps.roomType, room.type) })),
+      p.rooms.map((room) => ({
+        ...room,
+        id: anon(maps.room, room.id),
+        type: orNull(maps.roomType, room.type),
+        ...(room.siteId !== undefined ? { siteId: anon(maps.site, room.siteId) } : {}),
+      })),
       turn,
     ),
+    // Sent only when the school keeps the walk and has a figure.
+    ...(p.siteTravelTimes !== undefined
+      ? {
+          siteTravelTimes: shuffled(
+            p.siteTravelTimes.map((row) => ({
+              ...row,
+              siteAId: anon(maps.site, row.siteAId),
+              siteBId: anon(maps.site, row.siteBId),
+            })),
+            turn,
+          ),
+        }
+      : {}),
     constraints: shuffled(
       p.constraints.map((c) => ({
         ...c,
@@ -483,6 +502,25 @@ describe('the candidate basis', () => {
     // A lesson's weeks reach the basis through the weekdays it holds week by
     // week, which a fixed lesson by itself does not carry.
     expect(changedParts(partsOf(limited(3, [[1]])), partsOf(limited(3, [[1], [2]]), 1))).toEqual(['rules']);
+  });
+
+  it('reads the walk in real ids, as a change of rooms and rules, and a school without it as before', () => {
+    const walked = (minutes: number) => {
+      const real = school();
+      real.payload.rooms = real.payload.rooms.map((room, index) => ({
+        ...room,
+        siteId: index === 0 ? 'site-norra' : 'site-sodra',
+      }));
+      real.payload.siteTravelTimes = [{ siteAId: 'site-norra', siteBId: 'site-sodra', minutes }];
+      return real;
+    };
+    // Whatever the sites' anonymous ids.
+    expect(partsOf(walked(10), 1)).toEqual(partsOf(walked(10)));
+    // Turned on: the rooms carry their sites and the walks, and the rules
+    // say the walk is kept, so a stale schemaförslag names both.
+    expect(changedParts(partsOf(school()), partsOf(walked(10), 1))).toEqual(['rooms', 'rules']);
+    // A figure is the rooms' part alone.
+    expect(changedParts(partsOf(walked(10)), partsOf(walked(15), 1))).toEqual(['rooms']);
   });
 
   it('reads a conflict pair either way round as one pair', () => {

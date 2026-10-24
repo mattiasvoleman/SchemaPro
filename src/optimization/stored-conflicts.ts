@@ -36,7 +36,8 @@ export interface StoredConflict {
    * (work-days.ts). Kept, unlike the id arrays, because the sentence was
    * stored without its figure and the post is where a reader with HR-läs is
    * shown it from; never in a view (conflictView is a whitelist). On a note,
-   * whose free-day wish it was (free-day-wishes.ts), named when it is read.
+   * whose free-day wish it was (free-day-wishes.ts), named when it is read;
+   * on the walk's line, the teachers it is about (travelTeachersOf), the same.
    */
   subjectIds?: string[];
 }
@@ -123,6 +124,33 @@ export function namesOf(rows: ReadonlyArray<{ id: string; firstName: string; las
 /** The teachers stored notes are about: whom their view names (notesViewOf). Anything but a list is nobody. */
 export function notedTeachersOf(stored: unknown): string[] {
   return entriesOf(stored).flatMap(subjectsOf);
+}
+
+/**
+ * Restid i generatorn: the sentence that names the teachers who cannot make
+ * the walk between two sites (the engine's TEACHER_TRAVEL_CANNOT_BE_KEPT).
+ *
+ * NAMED AS A NOTE IS, AND FOR EVERY READER. A walk is no HR fact: which
+ * teacher has lessons on two sites on one day is on the timetable every
+ * member of staff reads. So the sentence keeps its teachers' Users ids
+ * server-side (`subjectIds`, as a note does) and is shown with the names the
+ * school gives them when it is read — never a stored copy, and nobody for a
+ * teacher since removed. Not days-bearing, so no Läslogg: a name beside a
+ * staff-readable fact, as the notes are (optimization-jobs.service.ts).
+ */
+export const TRAVEL_TEACHERS_CODE = 'TEACHER_TRAVEL_CANNOT_BE_KEPT';
+
+/** The teachers the travel sentences of a stored list of conflicts name. */
+export function travelTeachersOf(stored: unknown): string[] {
+  return entriesOf(stored)
+    .filter((entry) => entry.code === TRAVEL_TEACHERS_CODE)
+    .flatMap(subjectsOf);
+}
+
+/** A travel sentence's teachers as their names now; nobody for any other sentence. */
+export function travelNamesOf(entry: Partial<StoredConflict>, names: ReadonlyMap<string, string>): string[] {
+  if (entry.code !== TRAVEL_TEACHERS_CODE) return [];
+  return subjectsOf(entry).flatMap((id) => names.get(id) ?? []);
 }
 
 /**

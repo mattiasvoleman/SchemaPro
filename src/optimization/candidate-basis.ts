@@ -73,6 +73,7 @@ export const BASIS_PAYLOAD_FIELDS = [
   'requirements',
   'roomPreferences',
   'rooms',
+  'siteTravelTimes',
   'teacherDayLimits',
   'teacherWorkRules',
 ] as const;
@@ -134,6 +135,7 @@ export type BasisPayload = Pick<
   | 'groups'
   | 'previousLessons'
   | 'groupConflicts'
+  | 'siteTravelTimes'
 >;
 
 /**
@@ -317,7 +319,22 @@ export function basisInputsOf(source: BasisSource): BasisInputs {
         ...room,
         id: realOf(room.id),
         type: realOrNull(room.type),
+        ...(room.siteId !== undefined ? { siteId: realOf(room.siteId) } : {}),
       })),
+      // Restid i generatorn: the walks, with the rooms' sites above, in the
+      // rooms' part. The key is sent only when the school turned the walk on
+      // and has a figure, and is read the same way, so every other school
+      // keeps the basis it had; a school that turns it on after a run makes
+      // that run stale, which is the truth: it was solved without the walk.
+      ...(payload.siteTravelTimes !== undefined
+        ? {
+            siteTravelTimes: payload.siteTravelTimes.map((row) => ({
+              ...row,
+              siteAId: realOf(row.siteAId),
+              siteBId: realOf(row.siteBId),
+            })),
+          }
+        : {}),
       roomPreferences: payload.roomPreferences.map((rule) => ({
         ...rule,
         id: realOf(rule.id),
@@ -357,6 +374,11 @@ export function basisInputsOf(source: BasisSource): BasisInputs {
             })),
           }
         : {}),
+      // Restid i generatorn: the switch is a Skolregler rule, and a stale
+      // schemaförslag should say the rules changed when it was turned, not
+      // only the rooms (whose part carries the walks and the sites). Present
+      // only when the walk was sent, as the rooms' keys are.
+      ...(payload.siteTravelTimes !== undefined ? { keepsTravelTime: true } : {}),
       storedRules: source.storedRules,
     },
     rosters: {
