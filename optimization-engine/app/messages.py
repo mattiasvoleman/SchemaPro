@@ -240,6 +240,27 @@ MESSAGES: dict[str, str] = {
         "Lessons of {requirements, plural, one {# requirement} other {# requirements}} need "
         "{demandMinutes} minutes a week and the week offers {capacityMinutes}."
     ),
+    # SchedulerSolver._teacher_hours_verdict: a teacher's lessons against the
+    # time their own starts reach, which no rule narrows. `teachers` counts
+    # the lines below it, one per teacher, and never names one: the gateway
+    # has no name for a teacher to give, so each line names the teacher's
+    # requirements in resourceIds instead.
+    "DEMAND_TEACHER_HOURS_SHORT": (
+        "Too many lessons for {teachers, plural, one {one teacher's hours} other {the hours of # "
+        "teachers}}: a teacher gives one lesson at a time, and the lessons named here need more "
+        "of the week than the frame times, the rasts, the school day and the teacher's locked "
+        "lessons leave them. No rule has to give way; the hours do. Widen the frame times, "
+        "unlock a lesson, or give some of the lessons to another teacher."
+    ),
+    # One teacher's requirements, in requirementIds and resourceIds. `days` is
+    # how many of the week's `weekDays` their lessons can fall on at all.
+    "DEMAND_TEACHER_LESSONS_EXCEED_ROOM": (
+        "One teacher gives the lessons of {requirements, plural, one {# requirement} other {# "
+        "requirements}}, and they need {demandMinutes} minutes a week. They can fall on {days, "
+        "plural, one {# day} other {# days}} of the week's {weekDays}, and there the frame times, "
+        "the rasts, the school day and the teacher's locked lessons leave them at most "
+        "{capacityMinutes}."
+    ),
     # The school rules' "Max lessons per day", which applies to every class and
     # teaching group on its own. One line for every group the core holds, the
     # groups in resourceIds, which the gateway names and the page lists.

@@ -493,12 +493,16 @@ def test_a_timeout_probe_that_throws_twice_finds_nothing(
 def test_a_proved_week_whose_explanation_throws_is_an_unexplained_infeasible(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Forty four-hour lessons in a fifty-hour week: phase 1 proves it, and
-    the assumption solve that would name the cause throws, twice. The proof
-    stands; the names are what is lost."""
+    """Forty four-hour lessons for one class in a fifty-hour week: phase 1
+    proves it, and the assumption solve that would name the cause throws,
+    twice. The proof stands; the names are what is lost.
+
+    With no teacher on them, because a teacher's hours are counted before any
+    model (_teacher_hours_verdict) and the week would never reach phase 1.
+    A class's hours are the model's to prove."""
     _throwing(monkeypatch, lambda _solver, model: len(model.Proto().assumptions) > 0)
 
-    response = _solve(_payload(lessons_per_week=40, minutes_per_lesson=240))
+    response = _solve(_payload(lessons_per_week=40, minutes_per_lesson=240, teacherId=None))
 
     assert response.status == "INFEASIBLE"
     assert response.lessons == []

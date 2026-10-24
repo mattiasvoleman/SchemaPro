@@ -809,17 +809,34 @@ def test_the_validator_asks_lunch_of_the_groups_the_engine_feeds() -> None:
 
 
 def _oversubscribed_payload() -> dict[str, object]:
-    """A payload that is provably impossible: one group needs 160 h of a 50 h week.
+    """A payload the room capacity rule makes impossible, and nothing else.
 
-    The single student group must attend 40 lessons of 240 minutes (9600 min)
-    but the grid only offers 5 days x 600 min = 3000 min, so the group's
-    no-overlap constraint is violated by simple energy reasoning. CP-SAT
-    refutes this at presolve, well inside the default time budget.
+    One class of 24 has forty lessons of an hour, 2,400 minutes of a
+    3,000-minute week, and the one room that seats it is locked from 08:00 to
+    17:00 every day, which leaves it an hour a day. A room of twenty is free
+    all week, so with the capacity rule released the class fits: the core is
+    the capacity literals, one per lesson. Locked for three hours a day
+    instead, the room keeps 2,100 minutes, short of the 2,400 too, and CP-SAT
+    spent the whole minute's budget without finding the proof.
+
+    It was one class with forty four-hour lessons once, 9,600 minutes of the
+    3,000, and its core said room capacity then too, for a room of thirty and
+    a class of twenty-four, which it held. That week is impossible by the
+    teacher's hours with every rule released, and is refused by them before
+    any model now (_teacher_hours_verdict).
     """
     payload = _sample_payload()
+    seats_the_class = payload["rooms"][0]["id"]  # type: ignore[index]
+    payload["rooms"].append({"id": str(uuid4()), "capacity": 20})  # type: ignore[union-attr]
     requirement = payload["requirements"][0]  # type: ignore[index]
     requirement["lessonsPerWeek"] = 40  # type: ignore[index]
-    requirement["minutesPerLesson"] = 240  # type: ignore[index]
+    payload["fixedLessons"] = [
+        {
+            "id": str(uuid4()), "studentGroupId": str(uuid4()), "roomId": seats_the_class,
+            "dayOfWeek": day, "startTime": "08:00:00", "endTime": "17:00:00",
+        }
+        for day in range(1, 6)
+    ]
     return payload
 
 
@@ -892,7 +909,8 @@ def test_proven_infeasible_reports_infeasible_with_conflicts(client: TestClient)
     fell outside it. Nothing about the payload changed; the core was always
     there and always said room capacity. Asserting the category rather than
     "at least one conflict" is the difference between a test that noticed and
-    a test that did not.
+    a test that did not. (The week is a different one now, where room capacity
+    is what the week lacks: see _oversubscribed_payload.)
 
     The count IS pinned, and pinning it is the second thing this test does.
     `_add_capacity_constraints` registers one literal per lesson INSTANCE, so
@@ -2957,6 +2975,11 @@ def test_a_group_is_blamed_on_the_maximum_only_where_it_fits_without_it(
     so has one whose teacher is locked elsewhere then. The
     week stays impossible without the maximum (the post), so what is
     measured is the maximum on its own.
+
+    The last of them never reaches the model. Its teacher's locks leave that
+    teacher an hour of the week for an hour and a half of lessons, which is
+    the hours whatever any rule says, and is said before the model as that
+    (_teacher_hours_verdict): the maximum is not named there either.
     """
     payload, settings, group = _two_day_week(lengths, cap, day_minutes, **extra)  # type: ignore[arg-type]
     client = TestClient(create_app(_settings(SOLVER_PROBE_SECONDS=5, **settings)))
@@ -2964,7 +2987,9 @@ def test_a_group_is_blamed_on_the_maximum_only_where_it_fits_without_it(
     body = client.post("/api/v1/optimize", json=payload, headers=_HEADERS).json()
 
     assert body["status"] == "INFEASIBLE", body
-    assert body["conflicts"]["summaryCode"] == "CONFLICT_CORE_SUMMARY", body["conflicts"]
+    assert body["conflicts"]["summaryCode"] == (
+        "DEMAND_TEACHER_HOURS_SHORT" if extra.get("teacher_locked") else "CONFLICT_CORE_SUMMARY"
+    ), body["conflicts"]
     named = _daily_maximum_lines(body)
     if held_back:
         assert body["conflicts"]["conflicts"][0] == named[0]
@@ -10621,3 +10646,324 @@ def test_the_clique_still_refuses_when_the_years_agree() -> None:
 
     assert verdict is not None
     assert "1500 minutes" in verdict.conflicts[0].message
+
+
+# ---------------------------------------------------------------------------
+# A teacher's hours against the room their lessons can reach
+# ---------------------------------------------------------------------------
+#
+# A teacher gives one lesson at a time, so their lessons need at least their
+# summed minutes of the time their own starts reach. No rule says so: the
+# starts are the frames and the school day, and the teacher's NoOverlap and
+# the locked lessons' avoidance are posted bare. A week that bound refuses is
+# impossible with every literal released, and the explaining solve answered
+# it with an empty core — or, where presolve did not see the sum at once,
+# with a core whose every line the week did not need, the rooms that held
+# its classes among them. _teacher_hours_verdict counts it before any model.
+
+_YEAR_7 = {"minGradeLevel": 7, "maxGradeLevel": 7}
+
+
+def _teacher_week(
+    lessons: list[tuple[int, int]],
+    *,
+    teacher: str,
+    rooms: int = 2,
+    **extra: object,
+) -> dict[str, object]:
+    """One teacher's year-7 requirements, a class each: (lessons a week, minutes)."""
+    return {
+        "requestId": str(uuid4()),
+        "academicYearId": str(uuid4()),
+        "requirements": [
+            {
+                "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": str(uuid4()),
+                "teacherId": teacher, "lessonsPerWeek": count, "minutesPerLesson": minutes,
+                "studentGroupSize": 24, **_YEAR_7,
+            }
+            for count, minutes in lessons
+        ],
+        "rooms": [{"id": str(uuid4()), "capacity": 30} for _ in range(rooms)],
+        **extra,
+    }
+
+
+def _requirement_ids(payload: dict[str, object]) -> list[str]:
+    return [requirement["id"] for requirement in payload["requirements"]]  # type: ignore[index, union-attr]
+
+
+def test_the_fuzz_week_whose_core_was_empty_names_the_teachers_hours() -> None:
+    """ldworks/500063 from #174's generator, shrunk while the core stayed
+    empty: a school day of 08:00-15:00 on Tuesday alone, one teacher with two
+    classes of 2 x 120 and 2 x 100 minutes, one room, and a post of two days
+    whose locks hold Monday and Wednesday. 440 minutes, and Tuesday holds 420.
+
+    Before the verdict the explaining solve proved it with no assumption, the
+    post's bare linking rows letting presolve see the sum at once, and the
+    school read CONFLICT_NO_CORE_GUESS about rooms and teacher time. Through
+    the API, because the codes, the values and the rows in resourceIds are
+    what the gateway reads.
+    """
+    teacher = str(uuid4())
+    limit = {
+        "id": str(uuid4()), "teacherId": teacher, "maxTeachingDaysPerWeek": 2,
+        "lockedWeekdays": [[1, 3]],
+    }
+    payload = _teacher_week(
+        [(2, 120), (2, 100)], teacher=teacher, rooms=1, teacherDayLimits=[limit],
+    )
+    client = TestClient(create_app(_settings(
+        SCHEDULE_DAYS="2", SCHEDULE_DAY_END_MINUTES=900, SOLVER_PROBE_SECONDS=5,
+    )))
+
+    body = client.post("/api/v1/optimize", json=payload, headers=_HEADERS).json()
+
+    assert body["status"] == "INFEASIBLE", body
+    conflicts = body["conflicts"]
+    assert conflicts["summaryCode"] == "DEMAND_TEACHER_HOURS_SHORT", conflicts
+    assert conflicts["summaryParams"] == {"teachers": 1}
+    assert conflicts["summary"].startswith(
+        "Too many lessons for one teacher's hours: a teacher gives one lesson at a time,",
+    )
+    (line,) = conflicts["conflicts"]
+    assert line["category"] == "REQUIREMENT_DEMAND"
+    assert line["code"] == "DEMAND_TEACHER_LESSONS_EXCEED_ROOM"
+    assert line["params"] == {
+        "requirements": 2, "demandMinutes": 440, "capacityMinutes": 420,
+        "days": 1, "weekDays": 1,
+    }
+    assert line["requirementIds"] == _requirement_ids(payload)
+    assert line["resourceIds"] == _requirement_ids(payload)
+    assert line["message"] == (
+        "One teacher gives the lessons of 2 requirements, and they need 440 minutes a week. "
+        "They can fall on 1 day of the week's 1, and there the frame times, the rasts, the "
+        "school day and the teacher's locked lessons leave them at most 420."
+    )
+    # Never the teacher: the gateway has no name to give one.
+    assert teacher not in str(body)
+
+    # The control: one 100-minute lesson fewer and the hours fit, so the
+    # verdict says nothing and the model names what is left, the post. Its
+    # locked Monday and Wednesday spend both its days, and Tuesday is a third.
+    payload["requirements"][1]["lessonsPerWeek"] = 1  # type: ignore[index]
+    left = client.post("/api/v1/optimize", json=payload, headers=_HEADERS).json()
+    assert left["status"] == "INFEASIBLE", left
+    assert left["conflicts"]["summaryCode"] == "CONFLICT_CORE_SUMMARY", left["conflicts"]
+    codes = {conflict["code"] for conflict in left["conflicts"]["conflicts"]}
+    assert "TEACHER_WORK_DAYS_CANNOT_BE_KEPT" in codes, codes
+    assert "DEMAND_TEACHER_LESSONS_EXCEED_ROOM" not in codes
+
+
+def test_frame_times_that_leave_a_teacher_too_few_hours_name_the_hours() -> None:
+    """The frame times close Wednesday to Friday for year 7, as a school's own
+    would, and one teacher has two year-7 classes of eleven hours each:
+    twenty-two hours against the twenty that Monday and Tuesday hold. Each
+    class fits its two days on its own, so it is the teacher, and no rule of
+    theirs is in it.
+
+    Before the verdict the core said no room held either class, with two
+    rooms of thirty seats for classes of twenty-four. Opening Wednesday
+    solves the same week.
+    """
+    payload = _teacher_week(
+        [(11, 60), (11, 60)],
+        teacher=str(uuid4()),
+        frameTimes=[
+            {**_YEAR_7, "dayOfWeek": day, "startTime": "06:00:00", "endTime": "07:00:00"}
+            for day in (3, 4, 5)
+        ],
+    )
+    client = TestClient(create_app(_settings(SOLVER_PROBE_SECONDS=5)))
+
+    body = client.post("/api/v1/optimize", json=payload, headers=_HEADERS).json()
+
+    assert body["status"] == "INFEASIBLE", body
+    assert body["conflicts"]["summaryCode"] == "DEMAND_TEACHER_HOURS_SHORT"
+    (line,) = body["conflicts"]["conflicts"]
+    assert line["params"] == {
+        "requirements": 2, "demandMinutes": 1320, "capacityMinutes": 1200,
+        "days": 2, "weekDays": 5,
+    }
+    assert line["resourceIds"] == _requirement_ids(payload)
+
+    payload["frameTimes"] = payload["frameTimes"][1:]  # type: ignore[index]
+    solved = client.post("/api/v1/optimize", json=payload, headers=_HEADERS).json()
+    assert solved["status"] in {"OPTIMAL", "FEASIBLE"}, solved.get("conflicts")
+
+
+class TestTheTeachersHoursVerdict:
+    """The count itself, on a Monday of 08:00-10:00: 120 minutes of room."""
+
+    @staticmethod
+    def _solver(day_end: int = 600):  # type: ignore[no-untyped-def]
+        from app.solver.scheduler_solver import SchedulerSolver
+
+        return SchedulerSolver(_settings(SCHEDULE_DAYS="1", SCHEDULE_DAY_END_MINUTES=day_end))
+
+    def _verdict(self, payload: dict[str, object], day_end: int = 600):  # type: ignore[no-untyped-def]
+        from app.schemas.schedule import OptimizeScheduleRequest
+
+        return self._solver(day_end)._teacher_hours_verdict(
+            OptimizeScheduleRequest.model_validate(payload),
+        )
+
+    def _solve(self, payload: dict[str, object]):  # type: ignore[no-untyped-def]
+        from app.schemas.schedule import OptimizeScheduleRequest
+
+        return self._solver().solve(OptimizeScheduleRequest.model_validate(payload))
+
+    @staticmethod
+    def _lock(teacher: str, start: str, end: str, *, as_co_teacher: bool) -> dict[str, object]:
+        return {
+            "id": str(uuid4()),
+            "teacherId": str(uuid4()) if as_co_teacher else teacher,
+            **({"coTeacherId": teacher} if as_co_teacher else {}),
+            "studentGroupId": str(uuid4()),
+            "dayOfWeek": 1,
+            "startTime": start,
+            "endTime": end,
+        }
+
+    def test_a_week_that_fills_the_room_exactly_is_the_models(self) -> None:
+        full = _teacher_week([(1, 60), (1, 60)], teacher=str(uuid4()))
+
+        assert self._verdict(full) is None
+        assert self._solve(full).status in {"OPTIMAL", "FEASIBLE"}
+
+        over = _teacher_week([(1, 60), (1, 65)], teacher=str(uuid4()))
+        verdict = self._verdict(over)
+        assert verdict is not None
+        assert [line.params for line in verdict.conflicts] == [{
+            "requirements": 2, "demandMinutes": 125, "capacityMinutes": 120,
+            "days": 1, "weekDays": 1,
+        }]
+
+    @pytest.mark.parametrize("as_co_teacher", [False, True], ids=["lead", "co-teacher"])
+    def test_a_lock_takes_its_outward_window_from_the_room(self, as_co_teacher: bool) -> None:
+        """08:47-09:13 rounds out to 08:45-09:15 on the five-minute grid and
+        leaves 90 minutes, which two 45-minute lessons fill on either side of
+        it; 08:47-09:18 rounds to 08:45-09:20 and leaves 85, which they do
+        not. The teacher's own lock or one they co-teach, alike."""
+        teacher = str(uuid4())
+        fits = _teacher_week(
+            [(1, 45), (1, 45)], teacher=teacher,
+            fixedLessons=[self._lock(teacher, "08:47:00", "09:13:00", as_co_teacher=as_co_teacher)],
+        )
+        assert self._verdict(fits) is None
+        assert self._solve(fits).status in {"OPTIMAL", "FEASIBLE"}
+
+        short = {
+            **fits,
+            "fixedLessons": [self._lock(teacher, "08:47:00", "09:18:00", as_co_teacher=as_co_teacher)],
+        }
+        verdict = self._verdict(short)
+        assert verdict is not None
+        assert verdict.conflicts[0].params["capacityMinutes"] == 85
+
+    def test_a_day_the_teacher_is_locked_all_day_is_no_day_to_fall_on(self) -> None:
+        """Monday and Tuesday of two hours each, and the teacher locked all of
+        Tuesday in another class: their lessons can fall on Monday alone, and
+        the line says one day of the week's two."""
+        from app.schemas.schedule import OptimizeScheduleRequest
+        from app.solver.scheduler_solver import SchedulerSolver
+
+        teacher = str(uuid4())
+        week = _teacher_week(
+            [(2, 45), (1, 40)], teacher=teacher,
+            fixedLessons=[{**self._lock(teacher, "08:00:00", "10:00:00", as_co_teacher=False), "dayOfWeek": 2}],
+        )
+        solver = SchedulerSolver(_settings(SCHEDULE_DAYS="1,2", SCHEDULE_DAY_END_MINUTES=600))
+
+        verdict = solver._teacher_hours_verdict(OptimizeScheduleRequest.model_validate(week))
+
+        assert verdict is not None
+        assert verdict.conflicts[0].params == {
+            "requirements": 2, "demandMinutes": 130, "capacityMinutes": 120,
+            "days": 1, "weekDays": 2,
+        }
+
+    def test_every_length_reaches_its_own_windows(self) -> None:
+        """An hour and a half hour of one requirement, and year 7's frames
+        open Monday 08:00-08:45 and Tuesday 08:00-09:00: the hour fits Tuesday
+        alone, and the half hour fits Monday too. Read at its longest length
+        only, the requirement would reach Tuesday's 60 minutes and be refused
+        its 90, in a week the model places."""
+        from app.schemas.schedule import OptimizeScheduleRequest
+        from app.solver.scheduler_solver import SchedulerSolver
+
+        week = _teacher_week(
+            [(2, 60)], teacher=str(uuid4()),
+            frameTimes=[
+                {**_YEAR_7, "dayOfWeek": 1, "startTime": "08:00:00", "endTime": "08:45:00"},
+                {**_YEAR_7, "dayOfWeek": 2, "startTime": "08:00:00", "endTime": "09:00:00"},
+            ],
+        )
+        week["requirements"][0]["lessonLengths"] = [60, 30]  # type: ignore[index]
+        solver = SchedulerSolver(_settings(SCHEDULE_DAYS="1,2", SCHEDULE_DAY_END_MINUTES=600))
+        request = OptimizeScheduleRequest.model_validate(week)
+
+        assert solver._teacher_hours_verdict(request) is None
+        assert solver.solve(request).status in {"OPTIMAL", "FEASIBLE"}
+
+    def test_a_reservation_is_left_to_the_model_which_names_it(self) -> None:
+        """A reservation hangs on a literal, so the week it makes impossible is
+        the model's to refuse, by the reservation's name. Subtracted here, the
+        hours would be blamed for a sentence the school wrote."""
+        teacher = str(uuid4())
+        reserved = _teacher_week(
+            [(1, 45), (1, 45)], teacher=teacher,
+            constraints=[{
+                "id": str(uuid4()), "resourceKind": "TEACHER", "resourceId": teacher,
+                "dayOfWeek": 1, "startTime": "08:45:00", "endTime": "09:20:00",
+                "kind": "UNAVAILABLE",
+            }],
+        )
+
+        assert self._verdict(reserved) is None
+        response = self._solve(reserved)
+        assert response.status == "INFEASIBLE"
+        assert response.conflicts is not None
+        assert response.conflicts.summary_code == "CONFLICT_CORE_SUMMARY"
+        assert "AVAIL_CONSTRAINT_BLOCKS_LESSONS" in {
+            line.code for line in response.conflicts.conflicts
+        }
+
+    def test_a_co_teacher_counts_every_lesson_they_are_on(self) -> None:
+        """Anna leads one hour and co-teaches another that Bo leads, on a day
+        of 90 minutes: two hours are Anna's, one is Bo's, and only Anna's
+        rows are named, both of them."""
+        anna, bo = str(uuid4()), str(uuid4())
+        week = _teacher_week([(1, 60), (1, 60)], teacher=anna)
+        week["requirements"][1]["teacherId"] = bo  # type: ignore[index]
+        week["requirements"][1]["coTeacherId"] = anna  # type: ignore[index]
+        verdict = self._verdict(week, day_end=570)
+
+        assert verdict is not None
+        assert verdict.summary_params == {"teachers": 1}
+        (line,) = verdict.conflicts
+        assert [str(value) for value in line.resource_ids] == _requirement_ids(week)
+        assert line.params["demandMinutes"] == 120
+
+    def test_one_person_as_lead_and_co_teacher_is_counted_once(self) -> None:
+        teacher = str(uuid4())
+        legacy = _teacher_week([(1, 60), (1, 60)], teacher=teacher)
+        legacy["requirements"][0]["coTeacherId"] = teacher  # type: ignore[index]
+
+        assert self._verdict(legacy) is None
+
+    def test_every_teacher_short_of_hours_has_a_line_of_their_own(self) -> None:
+        anna, bo = str(uuid4()), str(uuid4())
+        week = _teacher_week([(1, 90), (1, 40), (1, 100), (1, 30)], teacher=anna)
+        for requirement in week["requirements"][2:]:  # type: ignore[index]
+            requirement["teacherId"] = bo
+
+        verdict = self._verdict(week)
+
+        assert verdict is not None
+        assert verdict.summary_code == "DEMAND_TEACHER_HOURS_SHORT"
+        assert verdict.summary_params == {"teachers": 2}
+        assert verdict.summary.startswith("Too many lessons for the hours of 2 teachers:")
+        assert [[str(value) for value in line.resource_ids] for line in verdict.conflicts] == [
+            _requirement_ids(week)[:2], _requirement_ids(week)[2:],
+        ]
+        assert [line.params["demandMinutes"] for line in verdict.conflicts] == [130, 130]
