@@ -248,18 +248,21 @@ MESSAGES: dict[str, str] = {
     "DEMAND_TEACHER_HOURS_SHORT": (
         "Too many lessons for {teachers, plural, one {one teacher's hours} other {the hours of # "
         "teachers}}: a teacher gives one lesson at a time, and the lessons named here need more "
-        "of the week than the frame times, the rasts, the school day and the teacher's locked "
-        "lessons leave them. No rule has to give way; the hours do. Widen the frame times, "
-        "unlock a lesson, or give some of the lessons to another teacher."
+        "of the week than the school day, the frame times, the rasts, the margins around the "
+        "lessons and the teacher's locked lessons leave them. No rule has to give way; the "
+        "hours do. Widen the frame times, shorten the margins, unlock a lesson, or give some "
+        "of the lessons to another teacher."
     ),
     # One teacher's requirements, in requirementIds and resourceIds. `days` is
-    # how many of the week's `weekDays` their lessons can fall on at all.
+    # how many of the week's `weekDays` their lessons can fall on at all. The
+    # margins are the pupils' minutes before and after a lesson and the
+    # frame's changeover, which the starts keep inside the school day.
     "DEMAND_TEACHER_LESSONS_EXCEED_ROOM": (
         "One teacher gives the lessons of {requirements, plural, one {# requirement} other {# "
         "requirements}}, and they need {demandMinutes} minutes a week. They can fall on {days, "
-        "plural, one {# day} other {# days}} of the week's {weekDays}, and there the frame times, "
-        "the rasts, the school day and the teacher's locked lessons leave them at most "
-        "{capacityMinutes}."
+        "plural, one {# day} other {# days}} of the week's {weekDays}, and there the school day, "
+        "the frame times, the rasts, the margins around the lessons and the teacher's locked "
+        "lessons leave them at most {capacityMinutes}."
     ),
     # The school rules' "Max lessons per day", which applies to every class and
     # teaching group on its own. One line for every group the core holds, the
@@ -746,6 +749,13 @@ MESSAGES: dict[str, str] = {
         "The timplan is empty: there is nothing to place. Add at least one row."
     ),
     "INPUT_NO_ROOMS": "No rooms are registered, so no lesson can be given one.",
+    # SchedulerSolver._validate_request: every reader of the week keys a
+    # requirement by its id, so two rows sharing one are refused rather than
+    # read two ways. The gateway never sends one.
+    "INPUT_DUPLICATE_REQUIREMENT_ID": (
+        "Requirement {requirement} appears more than once in the week sent. Every requirement "
+        "needs an id of its own."
+    ),
     "INPUT_TOO_MANY_LESSONS": (
         "The week holds {lessons} lessons, more than the {limit} this engine will place in one "
         "run. Split the run, or reduce lessons per week."
