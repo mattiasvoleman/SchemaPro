@@ -1829,6 +1829,96 @@ BEGIN
   VALUES (s1, post, bo, 1, 60, now());
 END $$;
 
+-- Rastvaktsschema (20261202090000), sections 200–203: a school with a site,
+-- two rastvaktsområden, two teachers with passes and every role; and another
+-- school with an area and a pass of its own that nothing here may reach.
+DO $$
+DECLARE
+  s1 uuid;
+  s2 uuid;
+  y uuid;
+  y2 uuid;
+  klass uuid;
+  pupil uuid;
+  guardian uuid;
+  anna uuid;
+  bo uuid;
+  other uuid;
+  site uuid;
+  garden uuid;
+  hall uuid;
+  away uuid;
+BEGIN
+  IF EXISTS (SELECT 1 FROM "Schools" WHERE slug = 'rls-rastvakt-school') THEN
+    RETURN;
+  END IF;
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
+  VALUES ('RLS Rastvakt', 'rls-rastvakt-school', 'Europe/Stockholm', now()) RETURNING id INTO s1;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s1, 'Rastvakt 2030/31', DATE '2030-08-15', DATE '2031-06-13', true, now()) RETURNING id INTO y;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s1, y, 'RV1A', 1, now()) RETURNING id INTO klass;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt") VALUES
+    (s1, 'rastvakt-admin@example.invalid', 'Rastvakt', 'Admin', 'SCHOOL_ADMIN', 'FULL', '00000000-0000-4000-8000-000000002020', true, now()),
+    (s1, 'rastvakt-exp@example.invalid', 'Rastvakt', 'Expedition', 'SCHOOL_ADMIN', 'EXPEDITION', '00000000-0000-4000-8000-000000002024', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'rastvakt-anna@example.invalid', 'Rastvakt', 'Anna', 'TEACHER', '00000000-0000-4000-8000-000000002021', true, now())
+  RETURNING id INTO anna;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'rastvakt-bo@example.invalid', 'Rastvakt', 'Bo', 'TEACHER', '00000000-0000-4000-8000-000000002026', true, now())
+  RETURNING id INTO bo;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES (s1, 'rastvakt-pupil@example.invalid', 'Rastvakt', 'Elev', 'STUDENT', '00000000-0000-4000-8000-000000002022', true, klass, now())
+  RETURNING id INTO pupil;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'rastvakt-guardian@example.invalid', 'Rastvakt', 'Vårdnadshavare', 'GUARDIAN', '00000000-0000-4000-8000-000000002023', true, now())
+  RETURNING id INTO guardian;
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES (s1, guardian, pupil);
+  INSERT INTO "Sites" ("schoolId", name) VALUES (s1, 'RV Norra') RETURNING id INTO site;
+  INSERT INTO "SupervisionAreas" ("schoolId", name, "siteId", "minGradeLevel", "maxGradeLevel")
+  VALUES (s1, 'RV Skolgården', site, 0, 3) RETURNING id INTO garden;
+  INSERT INTO "SupervisionAreas" ("schoolId", name, "duringRasts", "duringLunch", "guardsNeeded", "countsAsTeaching")
+  VALUES (s1, 'RV Matsalen', false, true, 2, true) RETURNING id INTO hall;
+  -- Anna on the yard every Monday and in the autumn's Tuesdays; Bo in the hall.
+  INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime", "validFrom", "validTo") VALUES
+    (s1, y, garden, anna, 1, '10:00', '10:20', NULL, NULL),
+    (s1, y, garden, anna, 2, '10:00', '10:20', DATE '2030-09-01', DATE '2030-12-20'),
+    (s1, y, hall, bo, 1, '11:00', '11:30', NULL, NULL);
+
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
+  VALUES ('RLS Rastvakt annan', 'rls-rastvakt-annan', 'Europe/Stockholm', now()) RETURNING id INTO s2;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s2, 'Annan 2030/31', DATE '2030-08-15', DATE '2031-06-13', true, now()) RETURNING id INTO y2;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt")
+  VALUES (s2, 'rastvakt-annan-admin@example.invalid', 'Annan', 'Admin', 'SCHOOL_ADMIN', 'FULL', '00000000-0000-4000-8000-000000002025', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s2, 'rastvakt-annan-teacher@example.invalid', 'Annan', 'Lärare', 'TEACHER', '00000000-0000-4000-8000-000000002027', true, now())
+  RETURNING id INTO other;
+  INSERT INTO "SupervisionAreas" ("schoolId", name) VALUES (s2, 'Annan gård') RETURNING id INTO away;
+  INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime")
+  VALUES (s2, y2, away, other, 1, '10:00', '10:20');
+END $$;
+
+-- The matrix school's rastvaktsschema (Rastvaktsschema, 20261202090000): an
+-- area and a pass of its teacher, so section 116 has a row of each to probe.
+-- A block of its own, for the reason the skolområden's is.
+DO $$
+DECLARE
+  m uuid;
+  yr uuid;
+  teacher uuid;
+  area uuid;
+BEGIN
+  SELECT id INTO m FROM "Schools" WHERE slug = 'rls-roller-school';
+  IF m IS NULL OR EXISTS (SELECT 1 FROM "SupervisionAreas" WHERE "schoolId" = m) THEN
+    RETURN;
+  END IF;
+  SELECT id INTO yr FROM "AcademicYears" WHERE "schoolId" = m ORDER BY "createdAt" LIMIT 1;
+  SELECT id INTO teacher FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000111';
+  INSERT INTO "SupervisionAreas" ("schoolId", name) VALUES (m, 'Roller gården') RETURNING id INTO area;
+  INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime")
+  VALUES (m, yr, area, teacher, 1, '10:00', '10:20');
+END $$;
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.

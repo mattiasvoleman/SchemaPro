@@ -241,9 +241,10 @@ describe('the rollover registry', () => {
     // left behind with the uppdrag and counted, beside it in the list), and a
     // post's periods (20261022120000, left behind, the carried post being the
     // year-start one), Schemaförslag's runs (20261125090000, a week's
-    // working material, never a starting point), and a lesson's log and its
+    // working material, never a starting point), a lesson's log and its
     // note to the substitute (Lektionslogg, 20261203090000, which stay with
-    // the old year's lessons).
+    // the old year's lessons), and the rastvaktsschema (20261202090000, the
+    // old year's passes; the areas are the school's).
     const skipped = skippedModels();
     const added = [
       'TeacherDutySlot',
@@ -265,13 +266,14 @@ describe('the rollover registry', () => {
       'ScheduleCandidate',
       'LessonLog',
       'LessonSubstituteNote',
+      'SupervisionShift',
     ];
     expect(
       createHash('sha256')
         .update(JSON.stringify(skipped.filter((entry) => !added.includes(entry.model))))
         .digest('hex'),
     ).toBe('15e270c65904cbdbf7c54b605def4014bb038dc836dd29dae22f91c0b23ad113');
-    expect(skipped.slice(-14)).toEqual([
+    expect(skipped.slice(-15)).toEqual([
       expect.objectContaining({ model: 'TimplanCredit', counted: false }),
       expect.objectContaining({ model: 'TeacherEmploymentPeriod', counted: false }),
       expect.objectContaining({ model: 'TeacherEmploymentLog', counted: false }),
@@ -286,6 +288,7 @@ describe('the rollover registry', () => {
       expect.objectContaining({ model: 'PublicTimetableLink', counted: false }),
       expect.objectContaining({ model: 'PublicationPendingRemoval', counted: false }),
       expect.objectContaining({ model: 'Ss12000DutyLink', counted: false }),
+      expect.objectContaining({ model: 'SupervisionShift', counted: false }),
     ]);
     expect(skippedModels({ carryStaffing: false })).toEqual(skippedModels());
     // fa4a3d6's tables, and the parallel blocks (20261024090000), whose rows
