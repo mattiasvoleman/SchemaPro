@@ -9235,6 +9235,23 @@
               "min": 7,
               "max": 7
             }
+          },
+          {
+            "requirementId": "r-sv-7b",
+            "subjectId": "sv-subject",
+            "subjectName": "Svenska",
+            "studentGroupId": "g-7b",
+            "groupName": "7B",
+            "minutesPerWeek": 60,
+            "teacherMinutesPerWeek": 60,
+            "gradeSpan": {
+              "min": 7,
+              "max": 7
+            },
+            "share": {
+              "lessons": 1,
+              "minutes": 60
+            }
           }
         ],
         "unqualifiedAssignments": [

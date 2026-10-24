@@ -28,6 +28,8 @@ const state = vi.hoisted(() => ({
   /** Message keys this build has no translation for; see the next-intl stub. */
   untranslated: [] as string[],
   requirements: [] as unknown[] | undefined,
+  /** Delade lektioner: GET /teaching-requirements/shares. */
+  shares: [] as unknown[],
   groups: [] as unknown[],
   memberships: [] as unknown[],
   people: [] as unknown[],
@@ -81,6 +83,11 @@ const noMutation = { mutateAsync: vi.fn(), isPending: false };
 /** The two reads the page asks to be made again: the year's history, the candidates overview. */
 const historyRefetch = vi.hoisted(() => vi.fn());
 const candidatesRefetch = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/requirement-shares", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/requirement-shares")>()),
+  useRequirementShares: () => ({ data: state.shares }),
+}));
 
 vi.mock("@/lib/queries", () => ({
   useAcademicYears: () => ({
@@ -176,6 +183,7 @@ beforeEach(() => {
   state.yearsLoading = false;
   state.yearsFailed = false;
   state.requirementsFailed = false;
+  state.shares = [];
   state.history = [];
   state.historyFailed = false;
   state.requirementsFor = [];
@@ -297,6 +305,17 @@ describe("every timplanspost has a teacher (Fas 2 pre-flight)", () => {
     );
     expect(runButton()).toBeEnabled();
     expect(screen.queryByText(/generate\.runBlockedUnstaffed/)).toBeNull();
+  });
+
+  it("delade lektioner: counts a post whose lead is set but whose share has nobody, as the pre-flight does", () => {
+    state.policy = { unstaffedGeneration: "REFUSE" };
+    const shared = requirement("g-41") as { id: string };
+    state.requirements = [shared, requirement("g-sl1")];
+    state.shares = [{ requirementId: shared.id, teacherId: null, lessons: 1, minutes: 60 }];
+    render(<GeneratePage />);
+
+    expect(within(staffedLine()).getByText("generate.preStaffedMissing(1)")).toBeInTheDocument();
+    expect(runButton()).toBeDisabled();
   });
 
   it("disables the run under REFUSE and says why beside the button", () => {

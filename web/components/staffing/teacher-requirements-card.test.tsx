@@ -41,6 +41,7 @@ vi.mock("@/lib/staffing-queries", () => ({
     },
   }),
   useAssignTeacher: () => ({ mutateAsync: assign, isPending: false }),
+  useAssignShare: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("next-intl", () => ({

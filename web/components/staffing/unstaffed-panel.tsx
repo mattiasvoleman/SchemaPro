@@ -6,6 +6,7 @@ import { Sparkles } from "lucide-react";
 import { Link } from "@/i18n/navigation";
 import type { UnstaffedRequirement } from "@/lib/teacher-load";
 import type { StaffingWarning } from "@/lib/types";
+import type { LessonShare } from "@/lib/lesson-shares";
 import { Button } from "@/components/ui/button";
 import { SectionCard } from "@/components/ui/section-card";
 import { TeacherSuggestions } from "@/components/staffing/teacher-suggestions";
@@ -28,9 +29,16 @@ export const UNSTAFFED_ANCHOR = "unstaffed";
 export function UnstaffedPanel({
   rows,
   teacherName,
+  sharesOf,
 }: {
   rows: UnstaffedRequirement[];
   teacherName: (userId: string) => string;
+  /**
+   * Delade lektioner: a post's stored shares. A row for a share nobody
+   * teaches (row.share) is given a teacher by writing them again, that one
+   * with its teacher (useAssignShare).
+   */
+  sharesOf: (requirementId: string) => readonly LessonShare[];
 }) {
   const t = useTranslations("staffing");
   const [openId, setOpenId] = useState<string | null>(null);
@@ -85,17 +93,27 @@ export function UnstaffedPanel({
       ) : (
         <ul className="divide-y text-sm">
           {rows.map((row) => {
-            const open = openId === row.requirementId;
-            const panelId = `suggest-${row.requirementId}`;
+            // A post's lead and each of its teacherless shares are rows of their own.
+            const key = row.share ? `${row.requirementId}-${row.share.minutes}` : row.requirementId;
+            const open = openId === key;
+            const panelId = `suggest-${key}`;
             return (
-              <li key={row.requirementId} className="py-2">
+              <li key={key} className="py-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span>
-                    {t("unstaffedRow", {
-                      group: row.groupName,
-                      subject: row.subjectName,
-                      minutes: row.teacherMinutesPerWeek,
-                    })}
+                    {row.share
+                      ? t("unstaffedShareRow", {
+                          group: row.groupName,
+                          subject: row.subjectName,
+                          lessons: row.share.lessons,
+                          length: row.share.minutes,
+                          minutes: row.teacherMinutesPerWeek,
+                        })
+                      : t("unstaffedRow", {
+                          group: row.groupName,
+                          subject: row.subjectName,
+                          minutes: row.teacherMinutesPerWeek,
+                        })}
                   </span>
                   <span className="flex items-center gap-2">
                     <Link
@@ -109,7 +127,7 @@ export function UnstaffedPanel({
                       variant={open ? "secondary" : "outline"}
                       aria-expanded={open}
                       aria-controls={panelId}
-                      onClick={() => setOpenId(open ? null : row.requirementId)}
+                      onClick={() => setOpenId(open ? null : key)}
                     >
                       <Sparkles />
                       {t("suggestTeachers")}
@@ -122,6 +140,7 @@ export function UnstaffedPanel({
                       requirementId={row.requirementId}
                       currentTeacherId={null}
                       teacherName={teacherName}
+                      share={row.share ? { minutes: row.share.minutes, stored: sharesOf(row.requirementId) } : undefined}
                       onAssigned={({ warnings }) => {
                         setOpenId(null);
                         setWarned(

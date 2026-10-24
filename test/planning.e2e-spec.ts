@@ -3294,6 +3294,17 @@ describe('Planning surface (e2e)', () => {
           .get('/api/v1/staffing/suggest-teachers')
           .set('x-test-user', admin())
           .expect(400);
+        // Delade lektioner: a share is asked for by its length, and only one
+        // nobody teaches; the row here has no share at all.
+        const noShare = await request(http())
+          .get(`/api/v1/staffing/suggest-teachers?requirementId=70707070-7070-4070-8070-707070707070&shareMinutes=60`)
+          .set('x-test-user', admin())
+          .expect(400);
+        expect(noShare.body.detail).toContain('ingen andel utan lärare');
+        await request(http())
+          .get(`/api/v1/staffing/suggest-teachers?requirementId=70707070-7070-4070-8070-707070707070&shareMinutes=sextio`)
+          .set('x-test-user', admin())
+          .expect(400);
         harness.tx['teachingRequirement']!['findUnique']!.mockResolvedValue(null);
         await request(http())
           .get(`/api/v1/staffing/suggest-teachers?requirementId=70707070-7070-4070-8070-707070707070`)

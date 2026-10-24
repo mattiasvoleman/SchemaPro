@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { useAssignTeacher, useSuggestTeachers } from "@/lib/staffing-queries";
+import { useAssignShare, useAssignTeacher, useSuggestTeachers } from "@/lib/staffing-queries";
+import type { LessonShare } from "@/lib/lesson-shares";
 import type { MessageLookup } from "@/lib/engine-message";
 import {
   refusalText,
@@ -22,6 +23,16 @@ import { RefusalNotice } from "@/components/staffing/staffing-notices";
 /** Shown before "Visa alla": a school of sixty is a list nobody reads to the end. */
 export const SUGGESTIONS_SHOWN = 6;
 
+/** The stored shares with the first teacherless one of `share.minutes` given `teacherId`. */
+function withTeacher(share: { minutes: number; stored: readonly LessonShare[] }, teacherId: string | null): LessonShare[] {
+  let given = false;
+  return share.stored.map((stored) => {
+    if (given || stored.teacherId !== null || stored.minutes !== share.minutes) return stored;
+    given = true;
+    return { ...stored, teacherId };
+  });
+}
+
 /** The gateway's remaining minutes, in the shape the Fas 1 badge paints. */
 export function remainingOf(candidate: Pick<TeacherCandidate, "remainingMinutesPerWeek">): CandidateRemaining {
   const minutes = candidate.remainingMinutesPerWeek;
@@ -36,6 +47,12 @@ export interface TeacherSuggestionsProps {
   teacherName: (userId: string) => string;
   /** After a saved assignment, with what WARN mode said (possibly nothing). */
   onAssigned: (result: { teacherId: string | null; warnings: StaffingWarning[] }) => void;
+  /**
+   * Delade lektioner: the row's share nobody teaches (its length) to give a
+   * teacher, instead of the row's lead, and the post's stored shares the
+   * write states again with that one's teacher set.
+   */
+  share?: { minutes: number; stored: readonly LessonShare[] };
 }
 
 /**
@@ -73,12 +90,14 @@ export function TeacherSuggestions({
   currentTeacherId,
   teacherName,
   onAssigned,
+  share,
 }: TeacherSuggestionsProps) {
   const t = useTranslations("staffing");
   const tCommon = useTranslations("common");
   const tEngine = useTranslations("engineMessages") as unknown as MessageLookup;
-  const { data, isLoading, isError } = useSuggestTeachers(requirementId);
+  const { data, isLoading, isError } = useSuggestTeachers(requirementId, share?.minutes ?? null);
   const assign = useAssignTeacher();
+  const assignShare = useAssignShare();
   const [showAll, setShowAll] = useState(false);
   const [refusal, setRefusal] = useState<StaffingRefusal | null>(null);
   const [pendingId, setPendingId] = useState<string | null | undefined>(undefined);
@@ -87,7 +106,9 @@ export function TeacherSuggestions({
     setRefusal(null);
     setPendingId(teacherId);
     try {
-      const saved = await assign.mutateAsync({ requirementId, teacherId });
+      const saved = share
+        ? await assignShare.mutateAsync({ requirementId, shares: withTeacher(share, teacherId) })
+        : await assign.mutateAsync({ requirementId, teacherId });
       onAssigned({ teacherId, warnings: saved?.warnings ?? [] });
     } catch (error) {
       const refused = staffingRefusal(error);

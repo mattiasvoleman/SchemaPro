@@ -13,6 +13,7 @@ import {
   type LoadEmployment,
   type LoadInput,
   type LoadQualification,
+  type LoadRequirement,
   type LoadStatus,
 } from './teacher-load';
 
@@ -50,8 +51,16 @@ export interface TeacherSuggestions {
   subjectId: string;
   studentGroupId: string;
   gradeSpan: GradeSpan | null;
-  /** What the row charges its lead: lessons × minutes × weight × teacherLoadPercent. */
+  /**
+   * What the row charges its lead: lessons × minutes × weight ×
+   * teacherLoadPercent — or, when `share` is set, what that share does.
+   */
   teacherMinutesPerWeek: number;
+  /**
+   * Delade lektioner: the share nobody teaches the candidates are ranked for
+   * (its length), instead of the row's lead. Absent for the lead.
+   */
+  share?: { minutes: number };
   qualificationsRecorded: boolean;
   /**
    * The group's predecessor and its year, when the predecessor had a row in
@@ -127,6 +136,7 @@ export function suggestTeachers(
   staffIds: readonly string[],
   lastYear: LastYearTeachers | null = null,
   showsPeriods = true,
+  share: { minutes: number } | null = null,
 ): TeacherSuggestions {
   const requirement = input.requirements.find((row) => row.id === requirementId);
   if (!requirement) {
@@ -136,14 +146,37 @@ export function suggestTeachers(
   const employmentByUser = new Map(input.employments.map((row) => [row.userId, row]));
   const qualificationsRecorded = input.qualifications.length > 0;
 
-  // Everybody's minutes with this row's lead taken off it.
-  const base = countedMinutesByTeacher({
-    ...input,
-    requirements: input.requirements.map((row) =>
-      row.id === requirementId ? { ...row, teacherId: null } : row,
-    ),
-  });
-  const charge = chargedMinutes(requirement, input.year, input.closures).teacher;
+  /*
+   * What a candidate takes: the row's lead, or — delade lektioner — a share
+   * of it nobody teaches (`share`, by its length), given its own teacher.
+   * The ranking is the same either way; only the place they are put in, and
+   * so the minutes they are charged, differ.
+   */
+  const shareIndex =
+    share === null
+      ? -1
+      : (requirement.shares ?? []).findIndex((row) => row.teacherId === null && row.minutes === share.minutes);
+  if (share !== null && shareIndex < 0) {
+    throw new Error(`suggestTeachers: requirement ${requirementId} has no teacherless share of ${share.minutes} minutes`);
+  }
+  const placed = (row: LoadRequirement, userId: string | null): LoadRequirement =>
+    row.id !== requirementId
+      ? row
+      : shareIndex < 0
+        ? { ...row, teacherId: userId }
+        : { ...row, shares: row.shares!.map((stored, index) => (index === shareIndex ? { ...stored, teacherId: userId } : stored)) };
+  const withoutLead = input.requirements.map((row) => placed(row, null));
+  const takenBy = (userId: string) => input.requirements.map((row) => placed(row, userId));
+
+  // Everybody's minutes with the place taken off: the lead's, or nothing
+  // for a share nobody teaches.
+  const base = countedMinutesByTeacher({ ...input, requirements: withoutLead });
+  const charge =
+    shareIndex < 0
+      ? chargedMinutes(requirement, input.year, input.closures).teacher
+      : (chargedMinutes(placed(requirement, SHARE_PLACE), input.year, input.closures).parts.find(
+          (part) => part.teacherId === SHARE_PLACE,
+        )?.charged ?? 0);
 
   const others = input.requirements.filter((row) => row.id !== requirementId);
   // Delade lektioner: a share's teacher teaches the row's group and subject too.
@@ -152,14 +185,13 @@ export function suggestTeachers(
     row.coTeacherId === userId ||
     (row.shares ?? []).some((share) => share.teacherId === userId);
   // Who already teaches some of this row's lessons is not offered its lead
-  // (the trigger's rule (d)), as its medlärare is not.
-  const sharing = new Set((requirement.shares ?? []).map((share) => share.teacherId));
+  // (the trigger's rule (d)), as its medlärare is not; for a share, nor is
+  // its lead.
+  const sharing = new Set((requirement.shares ?? []).map((stored) => stored.teacherId));
+  if (shareIndex >= 0 && requirement.teacherId !== null) sharing.add(requirement.teacherId);
   const lastYearTeachers = new Set(lastYear?.teacherIds ?? []);
   const familiar = subjectFamiliarTeachers(input, requirementId, lastYear);
 
-  const withoutLead = input.requirements.map((row) =>
-    row.id === requirementId ? { ...row, teacherId: null } : row,
-  );
   const candidates: TeacherCandidate[] = [];
   for (const userId of new Set(staffIds)) {
     if (userId === requirement.coTeacherId || sharing.has(userId)) continue;
@@ -173,7 +205,7 @@ export function suggestTeachers(
       const after = (base.get(userId) ?? 0) + charge;
       status = loadStatus(after, target, policy.overAllocationTolerancePercent);
       remainingMinutesPerWeek = target === null ? null : target - Math.round(after);
-      wouldExceed = exceedsAStretch(input, withoutLead, requirementId, userId, changing);
+      wouldExceed = exceedsAStretch(input, withoutLead, takenBy(userId), changing);
     } else if (changing) {
       // A post that changes during the year: stretch by stretch, as the write
       // is judged (staffing-checks.ts overTargetFindingByStretch). The
@@ -181,13 +213,7 @@ export function suggestTeachers(
       // would exceed exactly when some stretch the row adds to goes over.
       const tolerance = policy.overAllocationTolerancePercent;
       const without = stretchLoads({ ...input, requirements: withoutLead }, changing);
-      const taking = stretchLoads(
-        {
-          ...input,
-          requirements: input.requirements.map((row) => (row.id === requirementId ? { ...row, teacherId: userId } : row)),
-        },
-        changing,
-      );
+      const taking = stretchLoads({ ...input, requirements: takenBy(userId) }, changing);
       const judged = taking.filter((stretch) => stretch.weeks > 0);
       const rooms = judged
         .filter((stretch) => stretch.target !== null)
@@ -228,7 +254,7 @@ export function suggestTeachers(
         (row) => row.studentGroupId === requirement.studentGroupId && teaches(userId, row),
       ),
       taughtLastYear: lastYearTeachers.has(userId),
-      currentlyAssigned: requirement.teacherId === userId,
+      currentlyAssigned: shareIndex < 0 && requirement.teacherId === userId,
       remainingMinutesPerWeek,
       wouldExceed,
       status,
@@ -257,6 +283,7 @@ export function suggestTeachers(
     studentGroupId: requirement.studentGroupId,
     gradeSpan: requirement.gradeSpan,
     teacherMinutesPerWeek: Math.round(charge),
+    ...(shareIndex < 0 ? {} : { share: { minutes: share!.minutes } }),
     qualificationsRecorded,
     lastYear: lastYear ? { groupName: lastYear.groupName, yearName: lastYear.yearName } : null,
     candidates,
@@ -267,19 +294,12 @@ export function suggestTeachers(
 function exceedsAStretch(
   input: LoadInput,
   withoutLead: LoadInput['requirements'],
-  requirementId: string,
-  userId: string,
+  takenBy: LoadInput['requirements'],
   employment: LoadEmployment,
 ): boolean {
   const tolerance = (input.policy ?? DEFAULT_LOAD_POLICY).overAllocationTolerancePercent;
   const without = stretchLoads({ ...input, requirements: withoutLead }, employment);
-  const taking = stretchLoads(
-    {
-      ...input,
-      requirements: input.requirements.map((row) => (row.id === requirementId ? { ...row, teacherId: userId } : row)),
-    },
-    employment,
-  );
+  const taking = stretchLoads({ ...input, requirements: takenBy }, employment);
   return taking.some(
     (stretch, index) =>
       stretch.weeks > 0 &&
@@ -287,6 +307,12 @@ function exceedsAStretch(
       loadStatus(stretch.counted, stretch.target, tolerance) === 'OVER',
   );
 }
+
+/**
+ * A teacher id no member of staff has, for reading what a share would charge
+ * whoever is given it: chargedMinutes keys its parts by teacher.
+ */
+const SHARE_PLACE = '\u0000share';
 
 /** OVER first, as the matrix sorts: the worst of a changing post's stretches is its status. */
 const STATUS_RANK: Record<LoadStatus, number> = { OVER: 0, UNDER: 1, OK: 2, NO_TARGET: 3 };
