@@ -1933,12 +1933,13 @@ model CalendarLesson {
   lessonLogs        LessonLog[]
   substituteNotes   LessonSubstituteNote[]
 
-  // Not visible here, and load-bearing: an EXCLUDE constraint on
-  // (roomId, tstzrange(startsAt, endsAt)) refuses a second SCHEDULED lesson in
-  // a room already taken, and a BEFORE trigger takes an advisory lock on the
-  // room so the cross-table checks against RoomBookings hold too. Prisma
-  // cannot express either — see migration
-  // 20260822131500_a_room_holds_one_thing_at_a_time.
+  // Nothing in the database keeps a room to one SCHEDULED lesson at a time.
+  // An EXCLUDE constraint on (roomId, tstzrange(startsAt, endsAt)) was written
+  // and removed, and so was a BEFORE trigger locking the room: publish writes
+  // a whole year in one transaction, and one overlapping pair would abort all
+  // of it. Migration 20260822131500_a_room_is_booked_once says why, and puts
+  // the constraint on RoomBookings alone. A booking asks this table for a
+  // lesson in the room by query (RoomBookingsService.assertNoLessonUsesRoom).
 
   // Indexes optimized for fast date/time range scans.
   @@index([schoolId, date])
@@ -2481,7 +2482,7 @@ model RoomBooking {
   // Not visible here, and load-bearing: an EXCLUDE constraint on
   // (roomId, tstzrange(startsAt, endsAt)), limited to PENDING and APPROVED
   // rows, is what stops two people holding one room at one hour. Prisma cannot
-  // express it — see migration 20260822131500_a_room_holds_one_thing_at_a_time.
+  // express it — see migration 20260822131500_a_room_is_booked_once.
   @@index([schoolId, startsAt])
   @@index([roomId, startsAt])
   @@index([bookedById, startsAt])
