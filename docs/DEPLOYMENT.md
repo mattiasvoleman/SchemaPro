@@ -958,6 +958,115 @@ the risk is accepted: it needs a malicious app already installed on a staff
 member's phone, and the 24-hour limit above bounds how long a stolen session
 lasts.
 
+## 12. Several schools per login ("Flera skolor per inloggning")
+
+A person who works at two schools, or a guardian with children at two, signs
+in once and switches school in the web app (the app's switcher follows the
+app build). Each school keeps its own `"Users"` row for the person (role,
+profile, HR-läs, details); what changed in migration `20261204090000` is that
+a login may hold one row per school: the unique key is
+`("authId", "schoolId")`.
+
+**Which row a request is.** Every request names its school in the header
+`X-School-Id` (the web sends it only for a session with more than one school).
+The gateway reads it, and PostgREST hands it to the database as
+`request.headers`; `app.current_user_id()` then picks the login's active row
+at that school, or, with no school named, the login's active row that took
+the login first (`"loginSince"`, which only a trigger writes: a school that
+invites the person later never becomes their default). A
+school the login has no active row in gives no row at all (the gateway answers
+403 `SCHOOL_NOT_AVAILABLE`), never another school. A login with one row, which
+is every login before this release, gets the row it always had.
+
+**Which pages ask for the switcher.** The web's server asks the gateway for a
+login's schools (`GET /api/v1/me/schools`) only when the login carries the
+mark `app_metadata.rastraSeveralSchools`, which the gateway sets when an
+invitation links a row to a login another school's row holds, or when the
+browser has chosen a school; for at most a second, beside the profile read.
+Every other page renders on what it reads from Supabase, as before this
+release. A mark the gateway could not write is logged (`A login held at
+several schools was not marked`): the person then sees the school their login
+came from, without the switcher, until an invitation marks it again. A mark
+left on a login that one school holds again costs that question and nothing
+else. The route has a rate-limit bucket of its own, 6,000 a minute for the web
+server's address and 120 a minute per login.
+
+**How a second school arrives.** A school's admin adds the person with the
+address they sign in with and invites them; the invitation finds the existing
+login and links the row to it (no mail is sent). Only the gateway's
+invitation may give a row a login another row holds: a trigger refuses every
+other writer as the old unique index did (23505 on `Users_authId_key`). A
+shared login is the person's: no single school's removal, re-invitation or
+gallring deletes it or moves it to another address. (Each checks just before
+it acts. Two schools acting on one person in the same moment, one inviting
+and one removing, can leave the inviting school's row on a login the other
+just deleted; inviting the person again gives the row a login.) Two writers
+handing one login to rows at two schools at once, without the gateway's
+invitation (the older API between the migration and the deploy), wait for each
+other on a lock the trigger takes for an invited row, and the second fails as
+it did on the old unique index.
+
+**With the access-token hook on (§11.2).** The hook judges each of the
+person's active rows under that row's school. If no school lets the session in
+it refuses as before; if some do, the token carries
+`rastra_closed_schools: {schoolId: reason}` for the others, which the database
+and the switcher read, an inactive row's school too. For a person with one
+school the token is unchanged. The verdicts are the token's: a row that takes
+the login, or is made active, after the token was issued is judged at the
+next refresh, within the token's lifetime, as a school turning on *Kräv
+skolkonto för personal* already is (§11).
+
+A school-account session is still judged on every school-account identity
+the login carries (§11: the hook cannot tell which one signed in). A person
+whose schools sign in with different organisations (two Entra tenants, or
+Entra and Google) and who has linked both is therefore refused a
+school-account sign-in at every school, as a person with an identity from
+elsewhere always was (11.7): remove the identity they do not use, or let them
+sign in with a password where their schools allow it. Relaxing this would let
+a sign-in through one organisation into a school that requires another.
+
+### 12.1 Deploy order
+
+1. Run the migration before the code (§2). It locks `"Users"` with a NOWAIT
+   retry for at most 30 s and changes no data. If it gives up, nothing changed:
+   `prisma migrate resolve --rolled-back 20261204090000_en_inloggning_kan_ha_flera_skolor`
+   and deploy again. The API before this release keeps working on the new
+   schema.
+2. Deploy the API and the web of the release together. The API's CORS list
+   allows `X-School-Id`.
+3. Check once that the Supabase API passes the header from a browser (the web
+   sends it to PostgREST only for a session with more than one school, so a
+   refusal here touches nobody else):
+
+   ```bash
+   curl -s -o /dev/null -w '%{http_code}\n' -X OPTIONS \
+     "https://<ref>.supabase.co/rest/v1/Users" \
+     -H "Origin: https://<web origin>" \
+     -H "Access-Control-Request-Method: GET" \
+     -H "Access-Control-Request-Headers: authorization, apikey, x-client-info, x-school-id" -D - \
+     | grep -i 'access-control-allow-headers'
+   ```
+
+   The answer must name `x-school-id` (or `*`). If it does not, multi-school
+   sessions would fail their direct reads: say so before any school invites a
+   person who already has a login.
+
+### 12.2 Operations
+
+- **Which logins have more than one school** (as the owner):
+  `SELECT "authId", count(*) FROM "Users" GROUP BY 1 HAVING count(*) > 1;`
+- **A rollback past this release** once such logins exist: the older API
+  deletes a login when one school removes or re-invites its row, which ends
+  the person's access at the other schools too. List the shared logins first,
+  and do not remove or re-invite those people until the release is back.
+- **Somebody sees the wrong school's start page.** The browser remembers its
+  school in the cookie `rastra_school`; signing out does not clear it, and a
+  school the login can no longer use falls back to its first school by
+  itself. Clearing the site's cookies resets it.
+- **Somebody with two schools has no switcher.** Their login lacks the mark
+  (the gateway's log names it). Invite the person again from either school,
+  which marks the login; nothing else about the rows changes.
+
 ---
 
 # Future improvements

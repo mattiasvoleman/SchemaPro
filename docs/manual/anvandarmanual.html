@@ -35,6 +35,7 @@
     <ol>
       <li><span>2.1 Arbetets fyra faser</span><span class="dots"></span><span class="pg" data-pg="s21"></span></li>
       <li><span>2.2 Roller och behörigheter</span><span class="dots"></span><span class="pg" data-pg="s22"></span></li>
+      <li><span>2.3 Flera skolor med en inloggning</span><span class="dots"></span><span class="pg" data-pg="s23"></span></li>
     </ol>
     <li><span>3 · Fas 1 — Kom igång</span><span class="dots"></span><span class="pg" data-pg="ch3"></span></li>
     <li><span>4 · Fas 2 — Planering</span><span class="dots"></span><span class="pg" data-pg="ch4"></span></li>
@@ -300,6 +301,62 @@
       Administratörsrollen ger tillgång till samtliga elevers uppgifter, vilken
       profil personen än har. Tilldela den restriktivt, och ta bort
       behörigheten omgående när någon slutar.
+    </p>
+  </div>
+
+  <h3 id="s23"><span class="num">2.3</span>Flera skolor med en inloggning</h3>
+  <p>
+    En lärare som arbetar på två skolor, en rektor för flera skolenheter
+    eller en vårdnadshavare med barn på olika skolor loggar in en gång och
+    byter skola i Rastra Schema. Varje skola har sin egen uppgift om personen:
+    roll, profil, HR-läs, namn och e-postadress. Samma person kan alltså vara
+    lärare på en skola och administratör med profilen schemaläggare på en
+    annan, och det du ser och får ändra gäller den skola du har valt.
+    Ingen skola ser något om dig från en annan skola.
+  </p>
+  <p>
+    <strong>Skolväljaren.</strong> Under <em>Rastra Schema</em> överst i menyn
+    står skolans namn. Har du flera skolor är namnet en knapp,
+    <span class="ui">Byt skola</span>. Den visar dina skolor och din roll på
+    var och en. Välj en skola, så öppnas din startsida där. Webbläsaren minns
+    valet, så att en ny flik och nästa inloggning öppnas på samma skola. En
+    flik som var öppen före bytet fortsätter att visa och spara på sin skola
+    tills du går tillbaka till den. Då laddas den om på den skola du valde.
+  </p>
+  <p>
+    <strong>Vårdnadshavare med barn på flera skolor.</strong> Under
+    <span class="path">Mina barn</span> finns barnen på den valda skolan,
+    och under <span class="ui">Barn på andra skolor</span> barnen på dina
+    andra skolor, med en knapp som byter dit. Frånvaroanmälan, ledighet och
+    schema gäller alltid den valda skolan.
+  </p>
+  <p>
+    <strong>Hur en skola till kommer med.</strong> Skolans administratör
+    lägger upp personen med samma e-postadress som personen loggar in med och
+    skickar inbjudan (3.5). Har adressen redan en inloggning från en annan
+    skola skickas inget mejl. Skickar du inbjudan från personens rad säger
+    kvittensen att personen redan har en inloggning och att skolan nu finns i
+    personens skolväljare. Personen loggar in som vanligt. Saknar personen
+    ändå skolväljaren, skicka inbjudan en gång till från personens rad.
+  </p>
+  <div class="note">
+    <span class="label">Bra att veta</span>
+    <p>
+      Kräver en av dina skolor skolkonto (7.5) och du har loggat in med
+      lösenord, är den skolan gråmarkerad i väljaren med förklaringen. Logga
+      ut och logga in med skolkontot för att arbeta där. Det omvända gäller en
+      skola som inte använder skolkonton när du har loggat in med ett. Under
+      <span class="ui">Barn på andra skolor</span> står en sådan skola utan
+      barnen.
+    </p>
+    <p>
+      Tar en skola bort dig försvinner skolan ur väljaren. Inloggningen finns
+      kvar för dina andra skolor, och ingen enskild skola kan flytta den till
+      en annan adress eller ta bort den.
+    </p>
+    <p>
+      Appen får sin skolväljare i en senare version. Fram till dess visar
+      appen den skola där du först fick din inloggning, och inte en skola som har lagt till dig senare.
     </p>
   </div>
 </section>
@@ -772,6 +829,14 @@
       <span class="ui">Glömt lösenordet?</span> på inloggningssidan. Går
       borttagningen inte igenom loggar Rastra Schema det, och den som driftar
       Rastra Schema tar bort den gamla inloggningen för hand.
+    </p>
+    <p>
+      Har adressen en inloggning från en annan skola i Rastra Schema kopplas
+      personen till den. Kvittensen säger att personen redan har en inloggning
+      från en annan skola och att din skola nu finns i personens skolväljare
+      (2.3). En sådan delad inloggning flyttar Rastra Schema aldrig till en
+      ny adress. Tar du bort personen tas inte heller inloggningen bort, eftersom
+      den andra skolan fortfarande använder den.
     </p>
   </div>
   <p>
@@ -4749,7 +4814,7 @@
       <tr><td class="k">Ändringsloggar</td><td>Schemats ändringslogg och historiken över kopplingar till vårdnadshavare före gränsdagen. Tjänsternas versioner för läsår som slutade före gränsdagen, ett helt läsår i taget.</td><td>Tjänsterna och uppdragen. Ett tjänstefördelningsförslag som tillämpades före gränsdagen kan inte längre ångras.</td></tr>
       <tr><td class="k">Frånvaroorsaker</td><td>Orsaken på lärarfrånvaro som slutade före gränsdagen. I listorna står det <span class="ui">Gallrad</span>.</td><td>Frånvaron och vikariebesluten, så att vikarietimmar och lön stämmer.</td></tr>
       <tr><td class="k">Läslogg</td><td>Läsningar i läsloggen (se nedan) före gränsdagen.</td><td>—</td></tr>
-      <tr><td class="k">Slutade personer</td><td>För den som avaktiverades före gränsdagen ersätts namn, e-post, telefon och SS12000-id: personen pseudonymiseras, och namnet blir <em>Pseudonym</em> och sex tecken. Inloggningen tas bort. Kopplingar mellan personen och vårdnadshavare eller elever, personens enheter för push, val av e-post och push och alla egna notiser tas också bort, de egna notiserna oavsett beslutet för Notiser. Signatur och anteckning tas bort från personens tjänster.</td><td>Personen som rad, med närvaro, beslut och klasshistorik. Tjänsterna, utan signatur och anteckning; tidigare versioner av dem behåller signaturen tills Ändringsloggar gallrar läsåret. Notiser till andra som nämner personen, till exempel en vårdnadshavares notis om en elev, följer beslutet för Notiser.</td></tr>
+      <tr><td class="k">Slutade personer</td><td>För den som avaktiverades före gränsdagen ersätts namn, e-post, telefon och SS12000-id: personen pseudonymiseras, och namnet blir <em>Pseudonym</em> och sex tecken. Inloggningen tas bort, utom när en annan skola fortfarande använder den (2.3); då är det bara den här skolans uppgift om personen som pseudonymiseras. Kopplingar mellan personen och vårdnadshavare eller elever, personens enheter för push, val av e-post och push och alla egna notiser tas också bort, de egna notiserna oavsett beslutet för Notiser. Signatur och anteckning tas bort från personens tjänster.</td><td>Personen som rad, med närvaro, beslut och klasshistorik. Tjänsterna, utan signatur och anteckning; tidigare versioner av dem behåller signaturen tills Ändringsloggar gallrar läsåret. Notiser till andra som nämner personen, till exempel en vårdnadshavares notis om en elev, följer beslutet för Notiser.</td></tr>
     </tbody>
   </table>
 
@@ -4937,6 +5002,13 @@
     som har slutat och stängts av i Entra ID eller Google Workspace kommer
     alltså inte in längre än så, och inaktiverar du personen i Rastra Schema
     gäller det direkt.
+  </p>
+  <p>
+    En person med flera skolor (2.3) prövas mot varje skolas val för sig.
+    Loggar personen in med lösenord och en av skolorna kräver skolkonto,
+    kommer personen in på de andra skolorna, och den skolan är gråmarkerad i
+    skolväljaren. Vägrar alla skolorna kommer personen inte in, och
+    inloggningssidan säger varför, som för en person med en skola.
   </p>
   <h4>Kräv skolkonto för personal</h4>
   <p>
