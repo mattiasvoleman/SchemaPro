@@ -753,6 +753,28 @@
       "failedTitle": "Inget sparades",
       "submit": "Dela terminsvis",
       "done": "{post} delades terminsvis i {first} och {second}."
+    },
+    "shares": {
+      "open": "Dela lektionerna mellan lärare",
+      "title": "Delade lektioner",
+      "hint": "Varje lektion har en lärare. Läraren ovan tar de lektioner som ingen här tar, och var och en belastas med sina egna minuter.",
+      "teacher": "Lärare",
+      "lessons": "Lektioner",
+      "length": "Längd",
+      "lengthPlaceholder": "Välj längd",
+      "minutes": "{minutes} min",
+      "remove": "Ta bort lektionerna för {teacher}",
+      "add": "Lägg till lärare",
+      "part": "{teacher}: {lessons} av {of} lektioner · {minutes} min i veckan ({percent} %)",
+      "problem": {
+        "NOT_INTEGER": "Ange ett helt antal lektioner för varje lärare, och en längd när posten har olika längder.",
+        "OUT_OF_RANGE": "En lärare tar 1–39 lektioner.",
+        "TEACHER_TWICE": "Samma lärare står två gånger med samma längd. Slå ihop raderna.",
+        "TEACHER_ON_POST": "Postens lärare och medlärare kan inte också ta lektioner här. Välj en annan lärare.",
+        "LENGTH_NOT_ON_POST": "En vald längd finns inte bland postens lektioner.",
+        "TOO_MANY_OF_LENGTH": "Lärarna här tar fler lektioner av en längd än posten har.",
+        "LEAD_KEEPS_NONE": "Läraren ovan behåller minst en lektion. Ta färre här, eller gör den som ska ha resten till postens lärare."
+      }
     }
   },
   "timplan": {
@@ -3080,6 +3102,7 @@
     "teacherRowsEmpty": "Läraren har inga timplansposter det här läsåret.",
     "teacherRowLessons": "{post} min",
     "teacherRowCoTeacher": "medlärare",
+    "teacherRowShare": "{lessons} av {of} lektioner",
     "changeTeacher": "Byt lärare",
     "changeTeacherFor": "Byt lärare för {row}",
     "unstaffedGeneration": "Generering utan lärare",

@@ -110,6 +110,16 @@ describe("groupsInSubject", () => {
   });
 });
 
+describe("groupsInSubject, delade lektioner", () => {
+  it("counts a group whose lessons the teacher takes some of", () => {
+    const requirements = [
+      { subjectId: "s-ma", studentGroupId: "g-7a", teacherId: "t-2", coTeacherId: null, shares: [{ teacherId: "t-1" }] },
+      { subjectId: "s-ma", studentGroupId: "g-7b", teacherId: "t-2", coTeacherId: null, shares: [{ teacherId: null }] },
+    ];
+    expect(groupsInSubject(requirements, "t-1", "s-ma", (id) => ({ "g-7a": "7A", "g-7b": "7B" })[id]!)).toEqual(["7A"]);
+  });
+});
+
 describe("loadBarSegments", () => {
   it("fills to the target with the remainder green", () => {
     const segments = loadBarSegments({ assignedMinutesPerWeek: 900, targetMinutesPerWeek: 1080 });

@@ -753,6 +753,28 @@
       "failedTitle": "Nothing was saved",
       "submit": "Split by term",
       "done": "{post} was split by term into {first} and {second}."
+    },
+    "shares": {
+      "open": "Split the lessons between teachers",
+      "title": "Split lessons",
+      "hint": "Each lesson has one teacher. The teacher above takes the lessons nobody here takes, and each is charged their own minutes.",
+      "teacher": "Teacher",
+      "lessons": "Lessons",
+      "length": "Length",
+      "lengthPlaceholder": "Choose a length",
+      "minutes": "{minutes} min",
+      "remove": "Remove the lessons of {teacher}",
+      "add": "Add a teacher",
+      "part": "{teacher}: {lessons} of {of} lessons · {minutes} min a week ({percent}%)",
+      "problem": {
+        "NOT_INTEGER": "Give each teacher a whole number of lessons, and a length when the entry has lessons of different lengths.",
+        "OUT_OF_RANGE": "A teacher takes 1–39 lessons.",
+        "TEACHER_TWICE": "The same teacher is listed twice with the same length. Merge the rows.",
+        "TEACHER_ON_POST": "The entry's teacher and co-teacher cannot also take lessons here. Choose another teacher.",
+        "LENGTH_NOT_ON_POST": "A chosen length is not among the entry's lessons.",
+        "TOO_MANY_OF_LENGTH": "The teachers here take more lessons of one length than the entry has.",
+        "LEAD_KEEPS_NONE": "The teacher above keeps at least one lesson. Take fewer here, or make whoever should have the rest the entry's teacher."
+      }
     }
   },
   "timplan": {
@@ -3080,6 +3102,7 @@
     "teacherRowsEmpty": "The teacher has no curriculum entries this year.",
     "teacherRowLessons": "{post} min",
     "teacherRowCoTeacher": "co-teacher",
+    "teacherRowShare": "{lessons} of {of} lessons",
     "changeTeacher": "Change teacher",
     "changeTeacherFor": "Change teacher for {row}",
     "unstaffedGeneration": "Generation without teachers",

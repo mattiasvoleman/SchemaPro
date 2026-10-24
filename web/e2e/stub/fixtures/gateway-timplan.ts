@@ -34,6 +34,15 @@ export const timplanRoutes: GatewayRoute[] = [
     return new Reply(404, undefined, { miss: true });
   }),
 
+  // Delade lektioner: the world shares no post, so every year answers none
+  // (an admin's read; the gateway refuses any other role the route).
+  route("GET", "/api/v1/teaching-requirements/shares", ({ person, query }) => {
+    if (!person) return new Reply(401, { message: "Inte inloggad." });
+    if (person.role !== "SCHOOL_ADMIN") return new Reply(403, { message: "Åtkomst nekad." });
+    if (!KNOWN_YEARS.has(query.get("academicYearId") ?? "")) return new Reply(400, { message: "academicYearId" });
+    return [];
+  }),
+
   route("GET", "/api/v1/timplan-credits", ({ query }) =>
     CREDITS.filter((credit) => credit.academicYearId === query.get("academicYearId")),
   ),

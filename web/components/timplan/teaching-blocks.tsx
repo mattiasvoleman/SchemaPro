@@ -135,8 +135,15 @@ export function blockWarnings(
   const warnings: string[] = [];
   for (const [index, first] of members.entries()) {
     for (const second of members.slice(index + 1)) {
-      const teachers = [first.teacherId, first.coTeacherId].filter((id): id is string => !!id);
-      if ([second.teacherId, second.coTeacherId].some((id) => id && teachers.includes(id))) {
+      // Everyone on each post — lead, medlärare and, on a shared post, each
+      // share's teacher (delade lektioner): the engine refuses the block on the
+      // union too (BLOCK_MEMBERS_SHARE_TEACHER).
+      const teachersOf = (row: TeachingRequirement) =>
+        [row.teacherId, row.coTeacherId, ...(row.shares ?? []).map((share) => share.teacherId)].filter(
+          (id): id is string => !!id,
+        );
+      const teachers = teachersOf(first);
+      if (teachersOf(second).some((id) => teachers.includes(id))) {
         warnings.push(t("warnTeacher", { first: label(first), second: label(second) }));
       }
       if (first.studentGroupId === second.studentGroupId) {

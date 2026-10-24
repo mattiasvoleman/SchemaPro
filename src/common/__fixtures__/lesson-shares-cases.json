@@ -1,0 +1,711 @@
+{
+  "constants": {
+    "MAX_SHARE_LESSONS": 39
+  },
+  "rows": [
+    {
+      "name": "a row nobody shares",
+      "row": {
+        "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "coTeacherId": null,
+        "lessonsPerWeek": 3,
+        "minutesPerLesson": 60,
+        "lessonLengths": []
+      },
+      "hasShares": false,
+      "parts": [
+        {
+          "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "role": "LEAD",
+          "lessons": 3,
+          "minutes": 180
+        }
+      ],
+      "lessons": [
+        {
+          "minutes": 60,
+          "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        },
+        {
+          "minutes": 60,
+          "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        },
+        {
+          "minutes": 60,
+          "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        }
+      ],
+      "teacherIds": [
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+      ]
+    },
+    {
+      "name": "Bo takes one of three",
+      "row": {
+        "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "coTeacherId": null,
+        "lessonsPerWeek": 3,
+        "minutesPerLesson": 60,
+        "lessonLengths": [],
+        "shares": [
+          {
+            "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "lessons": 1,
+            "minutes": 60
+          }
+        ]
+      },
+      "hasShares": true,
+      "parts": [
+        {
+          "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "role": "LEAD",
+          "lessons": 2,
+          "minutes": 120
+        },
+        {
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "role": "SHARE",
+          "lessons": 1,
+          "minutes": 60
+        }
+      ],
+      "lessons": [
+        {
+          "minutes": 60,
+          "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        },
+        {
+          "minutes": 60,
+          "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        },
+        {
+          "minutes": 60,
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+        }
+      ],
+      "teacherIds": [
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+      ]
+    },
+    {
+      "name": "Bo takes two of three, a medlärare beside them",
+      "row": {
+        "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "coTeacherId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        "lessonsPerWeek": 3,
+        "minutesPerLesson": 60,
+        "lessonLengths": [],
+        "shares": [
+          {
+            "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "lessons": 2,
+            "minutes": 60
+          }
+        ]
+      },
+      "hasShares": true,
+      "parts": [
+        {
+          "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "role": "LEAD",
+          "lessons": 1,
+          "minutes": 60
+        },
+        {
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "role": "SHARE",
+          "lessons": 2,
+          "minutes": 120
+        }
+      ],
+      "lessons": [
+        {
+          "minutes": 60,
+          "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        },
+        {
+          "minutes": 60,
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+        },
+        {
+          "minutes": 60,
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+        }
+      ],
+      "teacherIds": [
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+      ]
+    },
+    {
+      "name": "an unstaffed lead beside Bo’s one",
+      "row": {
+        "teacherId": null,
+        "coTeacherId": null,
+        "lessonsPerWeek": 3,
+        "minutesPerLesson": 60,
+        "lessonLengths": [],
+        "shares": [
+          {
+            "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "lessons": 1,
+            "minutes": 60
+          }
+        ]
+      },
+      "hasShares": true,
+      "parts": [
+        {
+          "teacherId": null,
+          "role": "LEAD",
+          "lessons": 2,
+          "minutes": 120
+        },
+        {
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "role": "SHARE",
+          "lessons": 1,
+          "minutes": 60
+        }
+      ],
+      "lessons": [
+        {
+          "minutes": 60,
+          "teacherId": null
+        },
+        {
+          "minutes": 60,
+          "teacherId": null
+        },
+        {
+          "minutes": 60,
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+        }
+      ],
+      "teacherIds": [
+        "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+      ]
+    },
+    {
+      "name": "1 × 80 + 1 × 40, Bo the 40",
+      "row": {
+        "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "coTeacherId": null,
+        "lessonsPerWeek": 2,
+        "minutesPerLesson": 80,
+        "lessonLengths": [
+          80,
+          40
+        ],
+        "shares": [
+          {
+            "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "lessons": 1,
+            "minutes": 40
+          }
+        ]
+      },
+      "hasShares": true,
+      "parts": [
+        {
+          "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "role": "LEAD",
+          "lessons": 1,
+          "minutes": 80
+        },
+        {
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "role": "SHARE",
+          "lessons": 1,
+          "minutes": 40
+        }
+      ],
+      "lessons": [
+        {
+          "minutes": 80,
+          "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        },
+        {
+          "minutes": 40,
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+        }
+      ],
+      "teacherIds": [
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+      ]
+    },
+    {
+      "name": "1 × 80 + 1 × 40, Bo the 80",
+      "row": {
+        "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "coTeacherId": null,
+        "lessonsPerWeek": 2,
+        "minutesPerLesson": 80,
+        "lessonLengths": [
+          80,
+          40
+        ],
+        "shares": [
+          {
+            "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "lessons": 1,
+            "minutes": 80
+          }
+        ]
+      },
+      "hasShares": true,
+      "parts": [
+        {
+          "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "role": "LEAD",
+          "lessons": 1,
+          "minutes": 40
+        },
+        {
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "role": "SHARE",
+          "lessons": 1,
+          "minutes": 80
+        }
+      ],
+      "lessons": [
+        {
+          "minutes": 80,
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+        },
+        {
+          "minutes": 40,
+          "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        }
+      ],
+      "teacherIds": [
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+      ]
+    },
+    {
+      "name": "two lengths, Bo one of each, a deleted teacher’s 40 and two in no order",
+      "row": {
+        "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "coTeacherId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        "lessonsPerWeek": 5,
+        "minutesPerLesson": 80,
+        "lessonLengths": [
+          80,
+          80,
+          40,
+          40,
+          40
+        ],
+        "shares": [
+          {
+            "teacherId": null,
+            "lessons": 1,
+            "minutes": 40
+          },
+          {
+            "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "lessons": 1,
+            "minutes": 40
+          },
+          {
+            "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "lessons": 1,
+            "minutes": 80
+          }
+        ]
+      },
+      "hasShares": true,
+      "parts": [
+        {
+          "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "role": "LEAD",
+          "lessons": 2,
+          "minutes": 120
+        },
+        {
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "role": "SHARE",
+          "lessons": 2,
+          "minutes": 120
+        },
+        {
+          "teacherId": null,
+          "role": "SHARE",
+          "lessons": 1,
+          "minutes": 40
+        }
+      ],
+      "lessons": [
+        {
+          "minutes": 80,
+          "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        },
+        {
+          "minutes": 80,
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+        },
+        {
+          "minutes": 40,
+          "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        },
+        {
+          "minutes": 40,
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+        },
+        {
+          "minutes": 40,
+          "teacherId": null
+        }
+      ],
+      "teacherIds": [
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+      ]
+    }
+  ],
+  "problems": [
+    {
+      "name": "none",
+      "row": {
+        "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "coTeacherId": null,
+        "lessonsPerWeek": 3,
+        "minutesPerLesson": 60,
+        "lessonLengths": []
+      },
+      "shares": [],
+      "problem": null
+    },
+    {
+      "name": "one of three",
+      "row": {
+        "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "coTeacherId": null,
+        "lessonsPerWeek": 3,
+        "minutesPerLesson": 60,
+        "lessonLengths": []
+      },
+      "shares": [
+        {
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "lessons": 1,
+          "minutes": 60
+        }
+      ],
+      "problem": null
+    },
+    {
+      "name": "half a lesson",
+      "row": {
+        "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "coTeacherId": null,
+        "lessonsPerWeek": 3,
+        "minutesPerLesson": 60,
+        "lessonLengths": []
+      },
+      "shares": [
+        {
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "lessons": 0.5,
+          "minutes": 60
+        }
+      ],
+      "problem": "NOT_INTEGER"
+    },
+    {
+      "name": "no lesson",
+      "row": {
+        "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "coTeacherId": null,
+        "lessonsPerWeek": 3,
+        "minutesPerLesson": 60,
+        "lessonLengths": []
+      },
+      "shares": [
+        {
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "lessons": 0,
+          "minutes": 60
+        }
+      ],
+      "problem": "OUT_OF_RANGE"
+    },
+    {
+      "name": "forty lessons",
+      "row": {
+        "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "coTeacherId": null,
+        "lessonsPerWeek": 3,
+        "minutesPerLesson": 60,
+        "lessonLengths": []
+      },
+      "shares": [
+        {
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "lessons": 40,
+          "minutes": 60
+        }
+      ],
+      "problem": "OUT_OF_RANGE"
+    },
+    {
+      "name": "Bo twice at 60",
+      "row": {
+        "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "coTeacherId": null,
+        "lessonsPerWeek": 3,
+        "minutesPerLesson": 60,
+        "lessonLengths": []
+      },
+      "shares": [
+        {
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "lessons": 1,
+          "minutes": 60
+        },
+        {
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "lessons": 1,
+          "minutes": 60
+        }
+      ],
+      "problem": "TEACHER_TWICE"
+    },
+    {
+      "name": "the lead",
+      "row": {
+        "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "coTeacherId": null,
+        "lessonsPerWeek": 3,
+        "minutesPerLesson": 60,
+        "lessonLengths": []
+      },
+      "shares": [
+        {
+          "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "lessons": 1,
+          "minutes": 60
+        }
+      ],
+      "problem": "TEACHER_ON_POST"
+    },
+    {
+      "name": "the medlärare",
+      "row": {
+        "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "coTeacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        "lessonsPerWeek": 3,
+        "minutesPerLesson": 60,
+        "lessonLengths": []
+      },
+      "shares": [
+        {
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "lessons": 1,
+          "minutes": 60
+        }
+      ],
+      "problem": "TEACHER_ON_POST"
+    },
+    {
+      "name": "a 45 on a row of 60s",
+      "row": {
+        "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "coTeacherId": null,
+        "lessonsPerWeek": 3,
+        "minutesPerLesson": 60,
+        "lessonLengths": []
+      },
+      "shares": [
+        {
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "lessons": 1,
+          "minutes": 45
+        }
+      ],
+      "problem": "LENGTH_NOT_ON_POST"
+    },
+    {
+      "name": "two of the one 40",
+      "row": {
+        "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "coTeacherId": null,
+        "lessonsPerWeek": 2,
+        "minutesPerLesson": 80,
+        "lessonLengths": [
+          80,
+          40
+        ]
+      },
+      "shares": [
+        {
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "lessons": 1,
+          "minutes": 40
+        },
+        {
+          "teacherId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          "lessons": 1,
+          "minutes": 40
+        }
+      ],
+      "problem": "TOO_MANY_OF_LENGTH"
+    },
+    {
+      "name": "every lesson",
+      "row": {
+        "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "coTeacherId": null,
+        "lessonsPerWeek": 3,
+        "minutesPerLesson": 60,
+        "lessonLengths": []
+      },
+      "shares": [
+        {
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "lessons": 2,
+          "minutes": 60
+        },
+        {
+          "teacherId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          "lessons": 1,
+          "minutes": 60
+        }
+      ],
+      "problem": "LEAD_KEEPS_NONE"
+    },
+    {
+      "name": "the only lesson",
+      "row": {
+        "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "coTeacherId": null,
+        "lessonsPerWeek": 1,
+        "minutesPerLesson": 60,
+        "lessonLengths": []
+      },
+      "shares": [
+        {
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "lessons": 1,
+          "minutes": 60
+        }
+      ],
+      "problem": "LEAD_KEEPS_NONE"
+    },
+    {
+      "name": "two deleted teachers’ ones",
+      "row": {
+        "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "coTeacherId": null,
+        "lessonsPerWeek": 3,
+        "minutesPerLesson": 60,
+        "lessonLengths": []
+      },
+      "shares": [
+        {
+          "teacherId": null,
+          "lessons": 1,
+          "minutes": 60
+        },
+        {
+          "teacherId": null,
+          "lessons": 1,
+          "minutes": 60
+        }
+      ],
+      "problem": null
+    },
+    {
+      "name": "Bo one of each length",
+      "row": {
+        "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "coTeacherId": null,
+        "lessonsPerWeek": 3,
+        "minutesPerLesson": 80,
+        "lessonLengths": [
+          80,
+          80,
+          40
+        ]
+      },
+      "shares": [
+        {
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "lessons": 1,
+          "minutes": 80
+        },
+        {
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "lessons": 1,
+          "minutes": 40
+        }
+      ],
+      "problem": null
+    }
+  ],
+  "canonical": [
+    {
+      "name": "nothing",
+      "shares": [],
+      "canonical": []
+    },
+    {
+      "name": "merged, longest first, the deleted last",
+      "shares": [
+        {
+          "teacherId": null,
+          "lessons": 1,
+          "minutes": 40
+        },
+        {
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "lessons": 1,
+          "minutes": 40
+        },
+        {
+          "teacherId": null,
+          "lessons": 1,
+          "minutes": 40
+        },
+        {
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "lessons": 1,
+          "minutes": 80
+        },
+        {
+          "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "lessons": 2,
+          "minutes": 40
+        }
+      ],
+      "canonical": [
+        {
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "lessons": 1,
+          "minutes": 80
+        },
+        {
+          "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "lessons": 2,
+          "minutes": 40
+        },
+        {
+          "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "lessons": 1,
+          "minutes": 40
+        },
+        {
+          "teacherId": null,
+          "lessons": 2,
+          "minutes": 40
+        }
+      ]
+    }
+  ]
+}

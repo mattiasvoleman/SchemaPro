@@ -315,4 +315,17 @@ describe("blockWarnings", () => {
     ).toEqual(["warnTeacher(a|b)"]);
     expect(blockWarnings([row("a", "g-ty", "s-ty"), row("b", "g-fr", "s-fr")], label, t)).toEqual([]);
   });
+
+  it("names a teacher who takes some of one post's lessons and leads another (delade lektioner)", () => {
+    expect(
+      blockWarnings(
+        [
+          row("a", "g-ty", "s-ty", { teacherId: "t-1", shares: [{ teacherId: "t-2", lessons: 1, minutes: 60 }] }),
+          row("b", "g-fr", "s-fr", { teacherId: "t-2" }),
+        ],
+        label,
+        t,
+      ),
+    ).toEqual(["warnTeacher(a|b)"]);
+  });
 });
