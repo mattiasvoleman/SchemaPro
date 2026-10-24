@@ -18,7 +18,7 @@ import { IsCalendarDate } from '../../resources/dto/is-calendar-date';
 const TIME = /^\d{2}:\d{2}(:\d{2})?$/;
 
 /**
- * Ett rastvaktsområde, as the admin writes it (migration 20261202090000). The
+ * Ett rastvaktsområde, as the admin writes it (migration 20261207090000). The
  * bounds mirror the table's CHECKs, so a value the database would refuse is
  * refused here with the field named; the name is trimmed by the service
  * (SupervisionAreas_name_named), and a span is both ends or neither, which

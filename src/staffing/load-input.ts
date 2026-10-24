@@ -202,7 +202,7 @@ export async function readLoadInput(
     where: { academicYearId },
     select: { userId: true, kind: true, minutesPerWeek: true, countsAsTeaching: true, validFrom: true, validTo: true },
   });
-  // The year's rastvaktspass (20261202090000), with whether their area counts
+  // The year's rastvaktspass (20261207090000), with whether their area counts
   // as teaching: one statement, and only when the year has a pass the reader
   // may read — a TEACHER their own, as for the uppdrag.
   const shiftRows =
@@ -339,7 +339,7 @@ export async function readLoadInput(
     })),
     closures,
     // The uppdrag with the rastvaktsschema in them (supervision-load.ts): each
-    // pass an uppdrag, and a RASTVAKT uppdrag counted only on the dates its
+    // pass an uppdrag, and a RASTVAKT uppdrag counted only in the weeks its
     // teacher has no pass. Without a pass, the uppdrag as they always were.
     duties: withSupervision(kindedDuties, shifts, year),
     inactiveUserIds: (inactive ?? []).map((row) => row.id),

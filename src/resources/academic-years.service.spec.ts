@@ -680,7 +680,7 @@ describe('AcademicYearsService', () => {
       expect(tx.academicYear.update).not.toHaveBeenCalled();
     });
 
-    it('counts a rastvaktspass the new bounds leave outside (20261202090000), by this year and both its dates', async () => {
+    it('counts a rastvaktspass the new bounds leave outside (20261207090000), by this year and both its dates', async () => {
       givenYear();
       tx.teachingRequirement.count.mockResolvedValue(0);
       tx.schoolBreak.count.mockResolvedValue(0);

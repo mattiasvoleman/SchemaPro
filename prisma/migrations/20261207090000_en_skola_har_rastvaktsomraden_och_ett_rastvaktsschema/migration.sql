@@ -95,8 +95,9 @@
 -- (src/supervision/supervision-load.ts): a pass's minutes, every week its
 -- dates run, through the same arithmetic as a dated uppdrag (teaching weeks,
 -- school-wide lov subtracted), counted against the target only where its
--- area countsAsTeaching. On the dates a teacher has a pass, their uppdrag of
--- the kind RASTVAKT stop counting: the schedule is then what they do, and
+-- area countsAsTeaching. In the weeks a teacher has a pass (whole weeks, as
+-- an uppdrag is counted), their uppdrag of the kind RASTVAKT stop counting:
+-- the schedule is then what they do, and
 -- the typed figure is the ram the schedule is planned against, shown beside
 -- it. A teacher with no pass keeps the uppdrag as it always counted, so a
 -- school that never opens the page reads the load it always did.

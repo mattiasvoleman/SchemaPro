@@ -449,7 +449,7 @@ export class AcademicYearsService {
     });
 
     /*
-     * A rastvaktspass's Från and Till (20261202090000) likewise: one outside
+     * A rastvaktspass's Från and Till (20261207090000) likewise: one outside
      * its year would count weeks of no year in the load and in which breaks
      * are watched, and SupervisionService reads the bounds FOR SHARE before
      * it writes one.

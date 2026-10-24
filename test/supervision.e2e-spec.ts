@@ -2,7 +2,7 @@ import request from 'supertest';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
 
 /**
- * Rastvaktsschema over HTTP (20261202090000): every route an administrator's
+ * Rastvaktsschema over HTTP (20261207090000): every route an administrator's
  * round trip, so the wire contract is what the page reads — clocks as
  * "10:00", dates as yyyy-mm-dd, schoolId stamped from the principal — and
  * the guards: administrators read, planering writes, nobody else either.

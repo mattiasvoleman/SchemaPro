@@ -48,7 +48,7 @@ import {
 } from "./use-supervision";
 
 /**
- * Rastvaktsschema (migration 20261202090000): the places the school watches
+ * Rastvaktsschema (migration 20261207090000): the places the school watches
  * during the pupils' breaks, who watches which break where, and the breaks
  * nobody watches.
  *

@@ -541,7 +541,7 @@ model Site {
 
   school       School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   rooms        Room[]
-  /// Rastvaktsområden on the site (SupervisionArea, 20261202090000).
+  /// Rastvaktsområden on the site (SupervisionArea, 20261207090000).
   supervisionAreas SupervisionArea[]
   travelFromA  SiteTravelTime[] @relation("SiteTravelA")
   travelFromB  SiteTravelTime[] @relation("SiteTravelB")
@@ -3143,7 +3143,7 @@ model TeacherDutySlot {
 }
 
 /// A rastvaktsområde: a place the school watches during the pupils' breaks —
-/// skolgården, matsalen, korridoren på plan 2 (migration 20261202090000).
+/// skolgården, matsalen, korridoren på plan 2 (migration 20261207090000).
 /// Which breaks it is watched in is said here once, and the rastvaktsschema
 /// (SupervisionShift) says who watches it when. Not per läsår: like a rast,
 /// it describes the building and the yard, not one year's curriculum.
@@ -3187,7 +3187,7 @@ model SupervisionArea {
 
 /// One pass of the rastvaktsschema: a teacher watches an area on a weekday,
 /// from a time to a time, between two dates of a läsår (migration
-/// 20261202090000). The time is the pass's own, not a reference to a Rast:
+/// 20261207090000). The time is the pass's own, not a reference to a Rast:
 /// a rast moved in March must not rewrite who watched in February, and a
 /// pass at the bus at 15:00 belongs to no rast. One person watches one place
 /// at a time: two passes of a teacher on one weekday never share a minute

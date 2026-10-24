@@ -25,7 +25,7 @@ import { supervisionCoverage, type AreaBreak, type CoverageGap } from './supervi
 import { rastvaktRam, supervisionOfTeachers, type TeacherSupervision } from './supervision-load';
 
 /**
- * Rastvaktsschema (migration 20261202090000): the school's rastvaktsområden,
+ * Rastvaktsschema (migration 20261207090000): the school's rastvaktsområden,
  * the passes of a läsår's schedule, and the read that lays them over the
  * breaks — which of them nobody watches, and what each teacher's passes
  * come to beside the ram their RASTVAKT uppdrag set.

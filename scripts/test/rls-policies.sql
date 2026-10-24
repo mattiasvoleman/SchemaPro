@@ -27847,7 +27847,7 @@ ROLLBACK;
 
 -- ---------------------------------------------------------------------------
 -- Section 200: rastvaktsområdena och rastvaktsschemat står i katalogen som
--- migreringen säger (SupervisionAreas, SupervisionShifts, 20261202090000).
+-- migreringen säger (SupervisionAreas, SupervisionShifts, 20261207090000).
 --
 -- Row security on both tables, every arm TO app_authenticated: the areas'
 -- staff read and the planner's three writes; the passes' administrator read,
@@ -27987,7 +27987,7 @@ END $$;
 -- lärare områdena och sina egna pass, ingen annans skola; den som skriver
 -- planering skriver dem, expeditionen inte; elev, vårdnadshavare, tjänsten
 -- och synken läser inget; PostgREST:s roll når dem inte ens med
--- administratörens anspråk (20261202090000).
+-- administratörens anspråk (20261207090000).
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -28155,7 +28155,7 @@ ROLLBACK;
 -- ---------------------------------------------------------------------------
 -- Section 202: ett område och ett pass håller sina gränser, ett pass hör till
 -- sin skolas läsår, område och lärare, och en lärare är på ett ställe i taget
--- (20261202090000).
+-- (20261207090000).
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -28325,7 +28325,7 @@ ROLLBACK;
 -- ---------------------------------------------------------------------------
 -- Section 203: ett skolområde som tas bort lämnar sina rastvaktsområden kvar
 -- utan skolområde; ett område tar sina pass med sig, och det gör också en
--- lärare och ett läsår (20261202090000).
+-- lärare och ett läsår (20261207090000).
 -- ---------------------------------------------------------------------------
 
 BEGIN;

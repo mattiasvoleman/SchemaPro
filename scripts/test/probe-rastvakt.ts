@@ -1,5 +1,5 @@
 /**
- * The adapter probe's checks for the rastvaktsschema (20261202090000), through
+ * The adapter probe's checks for the rastvaktsschema (20261207090000), through
  * the real services on the API's role and real Postgres as CI runs it — the
  * part the unit specs and the e2e cannot see, since both run on the Prisma
  * mock. In a school of its own (slug <marker>-rastvakt), swept whole before

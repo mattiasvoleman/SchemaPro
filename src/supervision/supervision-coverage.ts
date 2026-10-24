@@ -2,7 +2,7 @@ import { rastsForSpan, type RastRow } from '../calendar/rasts-for-span';
 import type { ClosedRange, YearBounds } from '../staffing/teaching-weeks';
 
 /**
- * WHICH BREAKS NOBODY WATCHES (Rastvaktsschema, 20261202090000): the breaks
+ * WHICH BREAKS NOBODY WATCHES (Rastvaktsschema, 20261207090000): the breaks
  * each rastvaktsområde is watched in, and where the schedule leaves one with
  * fewer rastvakter than the area needs.
  *

@@ -1829,7 +1829,7 @@ BEGIN
   VALUES (s1, post, bo, 1, 60, now());
 END $$;
 
--- Rastvaktsschema (20261202090000), sections 200–203: a school with a site,
+-- Rastvaktsschema (20261207090000), sections 200–203: a school with a site,
 -- two rastvaktsområden, two teachers with passes and every role; and another
 -- school with an area and a pass of its own that nothing here may reach.
 DO $$
@@ -1899,7 +1899,7 @@ BEGIN
   VALUES (s2, y2, away, other, 1, '10:00', '10:20');
 END $$;
 
--- The matrix school's rastvaktsschema (Rastvaktsschema, 20261202090000): an
+-- The matrix school's rastvaktsschema (Rastvaktsschema, 20261207090000): an
 -- area and a pass of its teacher, so section 116 has a row of each to probe.
 -- A block of its own, for the reason the skolområden's is.
 DO $$

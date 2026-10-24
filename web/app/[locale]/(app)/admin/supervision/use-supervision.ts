@@ -6,7 +6,7 @@ import { STAFFING_KEYS } from "@/lib/staffing-keys";
 import type { SupervisionArea, SupervisionRota, SupervisionShift } from "@/lib/supervision";
 
 /**
- * Rastvaktsschema (migration 20261202090000), through the gateway: the tables
+ * Rastvaktsschema (migration 20261207090000), through the gateway: the tables
  * have no arm for a PostgREST session. Here and not in lib/queries, which is
  * in every app route's graph, for the one page that shows them.
  *
