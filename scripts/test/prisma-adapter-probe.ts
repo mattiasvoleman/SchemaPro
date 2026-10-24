@@ -80,6 +80,7 @@ import { readDeliveredRows, staffingCreditStatement } from '../../src/timplan/ti
 import type { DeliveredLineDetail } from '../../src/common/timplan-delivered';
 import {
   BLOCK_MEMBERS_DIFFER,
+  REQUIREMENT_SHARES_DO_NOT_FIT,
   areaRefusal,
   classHalfRefusal,
   decidedTimplanRefusal,
@@ -88,6 +89,7 @@ import {
   rolloverLinkRefusal,
   teacherDutyBlockRefusal,
   teachingBlockRefusal,
+  requirementSharesRefusal,
   timplanCreditKeyField,
 } from '../../src/common/utils/prisma-errors';
 import { todayInZone } from '../../src/common/utils/time';
@@ -2244,6 +2246,96 @@ async function runChecks(
       await years.remove(year.id, admin);
       await subjects.remove(language.id, admin);
       await other.$disconnect();
+    }
+  });
+
+  // ---- (u2s) delade lektioner: TS409 through the real adapter
+  await check('(u2s) a post\'s shares are written and read through the API role, and lessons they no longer fit are a TS409 the adapter carries whole and a 409 naming the rule', async () => {
+    const requirements = new TeachingRequirementsService(api);
+    const subjects = new SubjectsService(api);
+    const years = new AcademicYearsService(api);
+    const teachers = (
+      await owner.query<{ id: string }>(
+        `SELECT id FROM "Users" WHERE "schoolId" = $1 AND role = 'TEACHER' AND "isActive" ORDER BY id LIMIT 2`,
+        [fixture.schoolId],
+      )
+    ).rows.map((row) => row.id);
+    assert.equal(teachers.length, 2, 'the seed school has two teachers');
+    const [anna, bo] = teachers as [string, string];
+
+    const year = await years.create(
+      { name: `${MARKER} dl`, startDate: '2095-08-17', endDate: '2096-06-11' } as never,
+      admin,
+    );
+    const matematik = await subjects.create({ name: `${MARKER} dl-matematik` } as never, admin);
+    try {
+      const groupId = (
+        await owner.query<{ id: string }>(
+          `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+           VALUES ($1, $2, $3 || ' 9A', 'CLASS', 9, now()) RETURNING id`,
+          [fixture.schoolId, year.id, MARKER],
+        )
+      ).rows[0].id;
+      // Anna's three, one of them Bo's, through the service and the API role.
+      const post = await requirements.create(
+        {
+          academicYearId: year.id,
+          subjectId: matematik.id,
+          studentGroupId: groupId,
+          teacherId: anna,
+          lessonsPerWeek: 3,
+          minutesPerLesson: 60,
+          shares: [{ teacherId: bo, lessons: 1 }],
+        } as never,
+        admin,
+      );
+      assert.deepEqual(post.shares, [{ teacherId: bo, lessons: 1, minutes: 60 }]);
+      assert.deepEqual(await requirements.listShares(year.id, admin), [
+        { requirementId: post.id, teacherId: bo, lessons: 1, minutes: 60 },
+      ]);
+
+      // Written past the service: the adapter's P2039 with the driver's
+      // cause, whose DETAIL names the post and the rule.
+      try {
+        await api.withRls(admin, (tx) =>
+          tx.teachingRequirement.update({ where: { id: post.id }, data: { lessonsPerWeek: 1 } }),
+        );
+        assert.fail('a post took fewer lessons than its shares');
+      } catch (error) {
+        assert.equal(sqlStateOf(error), 'TS409', summarise(error));
+        assert.equal((error as Prisma.PrismaClientKnownRequestError).code, 'P2039', summarise(error));
+        assert.deepEqual(requirementSharesRefusal(error), { requirementId: post.id, reason: 'LEAD_KEEPS_NONE' });
+        assert.throws(
+          () => rethrowPrismaError(error),
+          (thrown: unknown) =>
+            thrown instanceof ConflictException &&
+            (thrown.getResponse() as { code?: string; reason?: string }).code === REQUIREMENT_SHARES_DO_NOT_FIT &&
+            (thrown.getResponse() as { reason?: string }).reason === 'LEAD_KEEPS_NONE',
+        );
+      }
+      // Through the service, the rule named before the trigger; nothing written.
+      await assert.rejects(
+        requirements.update(post.id, { teacherId: bo } as never, admin),
+        (error: unknown) =>
+          error instanceof ConflictException &&
+          (error.getResponse() as { reason?: string }).reason === 'TEACHER_ON_POST',
+      );
+      const stored = (
+        await owner.query<{ teacherId: string; n: number }>(
+          `SELECT r."teacherId", (SELECT count(*)::int FROM "TeachingRequirementShares" s WHERE s."requirementId" = r.id) AS n
+             FROM "TeachingRequirements" r WHERE r.id = $1`,
+          [post.id],
+        )
+      ).rows[0];
+      assert.deepEqual(stored, { teacherId: anna, n: 1 });
+      // [] gives Anna every lesson again, in the trigger's order.
+      const unshared = await requirements.update(post.id, { shares: [] } as never, admin);
+      assert.equal(unshared.shares, undefined);
+      assert.deepEqual(await requirements.listShares(year.id, admin), []);
+    } finally {
+      // The year takes its groups, posts and shares with it.
+      await years.remove(year.id, admin);
+      await subjects.remove(matematik.id, admin);
     }
   });
 
@@ -4594,7 +4686,11 @@ async function runChecks(
           // +1 since Tjänstens perioder (20261022120000): the year has posts,
           // so the load read asks for their periods (one indexed SELECT); a
           // year without a post asks nothing more.
-          'give a timplanspost a teacher': 23,
+          // +2 since Delade lektioner (20261205090000): the row's stored
+          // shares, which a PATCH naming a teacher must still fit, and every
+          // row's shares in the load read — each a selected relation, so a
+          // statement of its own under Prisma 7, indexed on requirementId.
+          'give a timplanspost a teacher': 25,
           // +1 since Lärarens dag (20261123090000) on a create that names a
           // teacher, in a school without a cap, as here, and the one thing a
           // create pays for it: the teachers' caps, one indexed SELECT,
