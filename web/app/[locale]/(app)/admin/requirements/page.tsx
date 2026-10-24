@@ -1942,9 +1942,9 @@ export default function RequirementsPage() {
                 onChange={(next) => setForm({ ...form, ...next })}
               />
             </Suspense>
-            {/* A class's post for the whole year can become four on its halves, the subjects swapping at the spring term. */}
+            {/* A class's post for the whole year, not shared between teachers, can become four on its halves, the subjects swapping at the spring term. */}
             {cell?.existing && !cell.existing.blockId && !cell.existing.startDate && !cell.existing.endDate &&
-            groupOf(cell.groupId)?.kind === "CLASS" ? (
+            !sharesOf.has(cell.existing.id) && groupOf(cell.groupId)?.kind === "CLASS" ? (
               <Button
                 data-writes="PLANERING"
                 variant="outline"
