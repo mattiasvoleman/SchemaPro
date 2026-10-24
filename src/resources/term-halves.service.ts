@@ -248,6 +248,7 @@ export class TermHalvesService {
               `${postName} delar sina lektioner mellan lärare. Ta bort delningen i postens dialog först, ` +
               'och välj sedan lärare för varje ämne här.',
             code: TERM_SPLIT_HAS_SHARES,
+            params: { requirement: postName },
           });
         }
 

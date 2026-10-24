@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { useAssignShare, useAssignTeacher, useSuggestTeachers } from "@/lib/staffing-queries";
 import type { LessonShare } from "@/lib/lesson-shares";
+import { sharesRefusal } from "@/lib/requirement-shares";
 import type { MessageLookup } from "@/lib/engine-message";
 import {
   refusalText,
@@ -95,6 +96,7 @@ export function TeacherSuggestions({
   const t = useTranslations("staffing");
   const tCommon = useTranslations("common");
   const tEngine = useTranslations("engineMessages") as unknown as MessageLookup;
+  const tShares = useTranslations("requirements.shares");
   const { data, isLoading, isError } = useSuggestTeachers(requirementId, share?.minutes ?? null);
   const assign = useAssignTeacher();
   const assignShare = useAssignShare();
@@ -112,7 +114,11 @@ export function TeacherSuggestions({
       onAssigned({ teacherId, warnings: saved?.warnings ?? [] });
     } catch (error) {
       const refused = staffingRefusal(error);
+      const shares = sharesRefusal(error);
       if (refused) setRefusal(refused);
+      // A share's write refused by its rules (the post changed since the
+      // panel read it), in the reader's language.
+      else if (shares && tShares.has(`problem.${shares.rule}`)) toast.error(tShares(`problem.${shares.rule}`));
       else toast.error(error instanceof Error ? error.message : tCommon("error"));
     } finally {
       setPendingId(undefined);

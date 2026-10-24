@@ -752,7 +752,8 @@
       "generatorNote": "The spring block takes the autumn block's times, so the halves have their lessons at the same times all year: generation gives each spring entry the times and room the autumn entry in its subject got. Lock one block with Lock block, or drag its card, in the master timetable and the other follows (see the manual, 4.2).",
       "failedTitle": "Nothing was saved",
       "submit": "Split by term",
-      "done": "{post} was split by term into {first} and {second}."
+      "done": "{post} was split by term into {first} and {second}.",
+      "sharesRefused": "{post} splits its lessons between teachers. Remove the split in the entry's dialog first, then choose a teacher for each subject here."
     },
     "shares": {
       "open": "Split the lessons between teachers",
@@ -775,7 +776,10 @@
         "LENGTH_NOT_ON_POST": "A chosen length is not among the entry's lessons.",
         "TOO_MANY_OF_LENGTH": "The teachers here take more lessons of one length than the entry has.",
         "LEAD_KEEPS_NONE": "The teacher above keeps at least one lesson. Take fewer here, or make whoever should have the rest the entry's teacher."
-      }
+      },
+      "loadFailed": "The entry's teacher shares could not be read, so it cannot be split here right now. Reload the page and try again.",
+      "inactiveTeacher": "{name} (inactive)",
+      "refusedIn": "{requirement}: {sentence}"
     }
   },
   "timplan": {
@@ -3383,7 +3387,8 @@
     "policyLoadFailedHint": "Save stays off until the school's settings have been read, so the default values in the fields do not overwrite them. Reload the page to try again.",
     "removeEmploymentTitle": "Remove the post of {name} for {year}?",
     "removeEmploymentBody": "The employment rate, reduction and contract for the year are removed, and the teacher counts without a target until a post is saved again. Curriculum entries and duties stay.",
-    "dutiesLoadFailedHint": "Nothing has changed in the duties. Reload the page to try again."
+    "dutiesLoadFailedHint": "Nothing has changed in the duties. Reload the page to try again.",
+    "sharesFailed": "The teacher shares could not be read, so lessons another teacher takes of an entry are missing from the cards and the groups. Reload the page."
   },
   "myStaffing": {
     "title": "My workload",

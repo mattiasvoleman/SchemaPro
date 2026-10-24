@@ -50,6 +50,7 @@ import { draftPartsOf, shapeFromDraft, type DraftPart } from "@/lib/lesson-lengt
 import type { MessageLookup } from "@/lib/engine-message";
 import { STAFFING_KEYS } from "@/lib/staffing-keys";
 import { refusalText, staffingRefusal, warningText } from "@/lib/staffing-warnings";
+import { sharesRefusal } from "@/lib/requirement-shares";
 import type { StaffingWarning, TeachingBlock, TeachingRequirement } from "@/lib/types";
 import { LessonLengthsFields } from "@/components/timplan/lesson-lengths-fields";
 import { EXTRA_ROW_GRID } from "@/components/timplan/lesson-lengths-grid";
@@ -275,6 +276,16 @@ export function BlocksHost({ academicYearId, requirements, groups, subjects }: B
       const refused = staffingRefusal(error);
       if (refused) {
         setLessonsRefusal(`${postOf(refused.params.requirementId)}${refusalText(tEngine, refused)}`);
+        return;
+      }
+      // Delade lektioner: a member whose shares the new lessons do not fit,
+      // named, in the reader's language.
+      const shares = sharesRefusal(error);
+      if (shares && tRequirements.has(`shares.problem.${shares.rule}`)) {
+        const sentence = tRequirements(`shares.problem.${shares.rule}`);
+        setLessonsRefusal(
+          shares.requirement ? tRequirements("shares.refusedIn", { requirement: shares.requirement, sentence }) : sentence,
+        );
         return;
       }
       toast.error(error instanceof Error ? error.message : tCommon("error"));

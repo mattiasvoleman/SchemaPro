@@ -82,6 +82,7 @@ export function sharesRefusal(problem: SharesProblem): BadRequestException | Con
         message: 'Samma lärare står två gånger med samma lektionslängd. Slå ihop lärarens rader till en.',
         code: REQUIREMENT_SHARES_DO_NOT_FIT,
         reason: problem,
+        params: { reason: problem },
       });
     default:
       return requirementSharesConflict(problem);

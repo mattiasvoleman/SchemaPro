@@ -241,7 +241,9 @@ export function requirementSharesConflict(reason: SharesRule | null): ConflictEx
         ? 'Timplanspostens lärarandelar ryms inte i dess lektioner. Ändra andelarna eller postens lektioner.'
         : SHARE_SENTENCES[reason],
     code: REQUIREMENT_SHARES_DO_NOT_FIT,
-    ...(reason !== null ? { reason } : {}),
+    // `params` too, which the exception filter forwards (it drops other
+    // keys), so the web renders the rule in the reader's language.
+    ...(reason !== null ? { reason, params: { reason } } : {}),
   });
 }
 
