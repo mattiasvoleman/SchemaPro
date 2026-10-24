@@ -15,8 +15,19 @@ export interface AuthenticatedUser {
   role: Role;
   /** Internal `Users.id`, when present in the token. */
   userId?: string;
-  /** Tenant id, when present in the token. */
+  /**
+   * Tenant id: the school of the Users row this request is (Flera skolor per
+   * inloggning: a login has one row per school, and the request names one
+   * with X-School-Id, src/auth/school-choice.ts). PrismaService.withRls names
+   * it to the database in every transaction, so RLS answers for this row.
+   */
   schoolId?: string;
+  /**
+   * The schools the access-token hook closed for this session
+   * (rastra_closed_schools: {schoolId: reason}), forwarded to the database
+   * in the claims. Absent when the token closes none.
+   */
+  closedSchools?: Readonly<Record<string, string>>;
   /**
    * A SCHOOL_ADMIN's profile, read from Users with the role (Roller i
    * skolan). Which areas it writes is src/auth/admin-areas.ts; RolesGuard

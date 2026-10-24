@@ -2,13 +2,14 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import type { KeyObject } from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
-import { ExtractJwt, Strategy, StrategyOptions } from 'passport-jwt';
+import { ExtractJwt, Strategy, StrategyOptionsWithRequest } from 'passport-jwt';
 import type { JwtConfig } from '../config/configuration';
 import { PrismaService } from '../database/prisma.service';
 import { Role } from './enums/role.enum';
 import type { AuthenticatedUser } from './interfaces/authenticated-user.interface';
 import type { JwtPayload } from './interfaces/jwt-payload.interface';
 import { schoolAccountOf } from './school-account';
+import { closedSchoolsOf, schoolChoiceOf, schoolNotAvailable } from './school-choice';
 import {
   ACCEPTED_ALGORITHMS,
   createSigningKeyProvider,
@@ -29,8 +30,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     const jwt = configService.getOrThrow<JwtConfig>('jwt');
     const signingKey = createSigningKeyProvider(jwt);
 
-    const options: StrategyOptions = {
+    const options: StrategyOptionsWithRequest = {
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      // validate() reads the school the request names (X-School-Id).
+      passReqToCallback: true,
       ignoreExpiration: false,
       secretOrKeyProvider: (_request, rawToken: string, done) => {
         // passport-jwt hands the key unchanged to jsonwebtoken.verify, which
@@ -62,11 +65,26 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
    * if a token carried a spoofed `role`/`schoolId` claim, it cannot grant
    * access beyond what the database says the account is, and revoked/inactive
    * accounts are rejected on every request.
+   *
+   * A login has one row per school (Flera skolor per inloggning), and the
+   * request names the school in X-School-Id. The lookup runs under that
+   * choice, so the row it finds is the one the database's RLS answers for
+   * in every transaction after it (PrismaService names the row's school
+   * again there): the named school's active row, else, with none named, the
+   * login's row that took the login first. A school named that the login has
+   * no active row in, or that the access-token hook closed, gets 403
+   * SCHOOL_NOT_AVAILABLE rather than another school: the client asked about
+   * that one.
    */
-  async validate(payload: JwtPayload): Promise<AuthenticatedUser> {
+  async validate(
+    request: { headers?: Record<string, string | string[] | undefined> },
+    payload: JwtPayload,
+  ): Promise<AuthenticatedUser> {
     if (!payload.sub) {
       throw new UnauthorizedException('Invalid authentication token.');
     }
+    const school = schoolChoiceOf(request.headers);
+    const closedSchools = closedSchoolsOf(payload.rastra_closed_schools);
 
     // Identity lookup by the verified subject claim, scoped to that subject.
     //
@@ -79,11 +97,18 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     // `payload.sub` is verified at this point (signature, issuer, audience and
     // expiry are all checked before validate() runs), so injecting it grants
     // exactly the caller's own row via the users_self_select policy.
-    const profile = await this.prisma.withVerifiedSubject(payload.sub, (db) =>
-      db.user.findUnique({
-        where: { authId: payload.sub },
-        select: { id: true, schoolId: true, role: true, isActive: true, adminProfile: true, hrRead: true },
-      }),
+    //
+    // A login with rows at several schools reads only the chosen one: RLS
+    // shows a person their own row at the chosen school and no other, so the
+    // filter on authId finds that row or none.
+    const profile = await this.prisma.withVerifiedSubject(
+      payload.sub,
+      (db) =>
+        db.user.findFirst({
+          where: { authId: payload.sub },
+          select: { id: true, schoolId: true, role: true, isActive: true, adminProfile: true, hrRead: true },
+        }),
+      { ...(school ? { school } : {}), ...(closedSchools ? { closedSchools } : {}) },
     );
 
     if (profile && profile.isActive) {
@@ -98,7 +123,22 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         // Set exactly on an administrator (CHECK Users_a_profile_is_an_administrators).
         ...(profile.adminProfile ? { adminProfile: profile.adminProfile, hrRead: profile.hrRead } : {}),
         ...(schoolAccount ? { schoolAccount } : {}),
+        ...(closedSchools ? { closedSchools } : {}),
       };
+    }
+
+    // A school was named and gave no row: the login has a row somewhere,
+    // just not one this request may use there. Asked only on this rare path,
+    // so a session's ordinary request stays one lookup.
+    if (school) {
+      const elsewhere = await this.prisma.withVerifiedSubject(
+        payload.sub,
+        (db) => db.user.findFirst({ where: { authId: payload.sub }, select: { id: true } }),
+        closedSchools ? { closedSchools } : {},
+      );
+      if (elsewhere) {
+        throw schoolNotAvailable();
+      }
     }
 
     // No tenant profile exists for this subject. A genuine cross-tenant

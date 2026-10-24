@@ -13,6 +13,7 @@ import type { Server, Socket } from 'socket.io';
 import type { UserRole } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
+import { SCHOOL_HEADER, closedSchoolsOf, schoolChoiceOf } from '../auth/school-choice';
 import {
   COVER_BOARD_UPDATED_EVENT,
   LESSON_UPDATED_EVENT,
@@ -63,6 +64,12 @@ const PRESENCE_COALESCE_MS = 100;
  * field (never in the URL). The gateway verifies the signature/expiry and
  * resolves the profile from the `Users` table — same trust chain as the HTTP
  * JWT strategy. Unauthenticated sockets are disconnected immediately.
+ *
+ * A login with rows at several schools (Flera skolor per inloggning) names
+ * the school in `auth.school`, as X-School-Id does over HTTP; the socket is
+ * that row's, in that school's rooms. A school that cannot be followed
+ * disconnects, as an unknown one would; none named is the login's row that
+ * took the login first.
  *
  * ## Rooms
  * Every socket joins `user:<userId>`. Staff — teachers and school admins —
@@ -120,18 +127,29 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     // Identity lookup by the verified subject claim, mirroring
     // JwtStrategy.validate. See withVerifiedSubject: this is scoped to the
     // subject rather than attempting (and failing) to bypass RLS.
-    const profile = await this.prisma.withVerifiedSubject(payload.sub, (db) =>
-      db.user.findUnique({
-        where: { authId: payload.sub },
-        select: {
-          id: true,
-          schoolId: true,
-          role: true,
-          isActive: true,
-          firstName: true,
-          lastName: true,
-        },
-      }),
+    let school: string | undefined;
+    try {
+      school = schoolChoiceOf({ [SCHOOL_HEADER]: this.extractSchool(client) });
+    } catch {
+      client.disconnect(true);
+      return;
+    }
+    const closedSchools = closedSchoolsOf(payload.rastra_closed_schools);
+    const profile = await this.prisma.withVerifiedSubject(
+      payload.sub,
+      (db) =>
+        db.user.findFirst({
+          where: { authId: payload.sub },
+          select: {
+            id: true,
+            schoolId: true,
+            role: true,
+            isActive: true,
+            firstName: true,
+            lastName: true,
+          },
+        }),
+      { ...(school ? { school } : {}), ...(closedSchools ? { closedSchools } : {}) },
     );
     if (!profile || !profile.isActive) {
       client.disconnect(true);
@@ -276,6 +294,12 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     this.server
       .to(teacherIds.map((teacherId) => `user:${teacherId}`))
       .emit(LESSON_UPDATED_EVENT, payload);
+  }
+
+  /** The school the socket names (handshake `auth.school`), if it names one. */
+  private extractSchool(client: Socket): string | undefined {
+    const auth = client.handshake.auth as Record<string, unknown>;
+    return typeof auth['school'] === 'string' ? auth['school'] : undefined;
   }
 
   private extractToken(client: Socket): string | null {

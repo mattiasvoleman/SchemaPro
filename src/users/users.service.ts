@@ -129,6 +129,12 @@ export interface InvitationResult {
    * address no longer signs in, and the admin is the one to say so.
    */
   loginMoved: boolean;
+  /**
+   * True when the login is also another school's (Flera skolor per
+   * inloggning): the person signs in as before and finds this school in
+   * their school switcher. Nothing more about the other school is said.
+   */
+  sharedLogin: boolean;
 }
 
 /** An administrator's profile and HR-läs, as the role chooser reads them. */
@@ -308,7 +314,9 @@ export class UsersService {
       throw error;
     }
 
-    return this.adoptIdentity(created.id, invite.authId, user);
+    const adopted = await this.adoptIdentity(created.id, invite.authId, user);
+    if (adopted.sharedLogin) await this.supabaseAdmin.markSeveralSchools(invite.authId);
+    return adopted.row;
   }
 
   /**
@@ -378,23 +386,29 @@ export class UsersService {
     }
 
     // Somebody never invited holds a placeholder that is nobody's login.
+    // A login another school's row holds too is the person's, not this
+    // school's (Flera skolor per inloggning): it is neither moved nor
+    // deleted from here, and the invitation goes to the row's address as it
+    // did before logins moved.
     const owner: LoginOwner | null =
       target.invitedAt === null ? null : { userId: target.id, since: target.invitedAt };
     const login = owner ? target.authId : null;
+    const own = login !== null && !(await this.loginIsHeldElsewhere(login, target.id, user));
     let change: EmailChange | null = null;
-    if (login && owner) {
+    if (login && owner && own) {
       change = await this.moveLogin(login, target.email, owner);
       if (change.outcome === 'unchanged' || change.outcome === 'changed') {
         if (!change.confirmed) {
           await this.resendInvitation(target.email);
         }
         await this.adoptIdentity(id, login, user);
-        return { id, emailSent: !change.confirmed, loginMoved: change.outcome === 'changed' };
+        return { id, emailSent: !change.confirmed, loginMoved: change.outcome === 'changed', sharedLogin: false };
       }
     }
 
     const invite = await this.mintIdentity(target.email, target.id);
-    await this.adoptIdentity(id, invite.authId, user);
+    const adopted = await this.adoptIdentity(id, invite.authId, user);
+    if (adopted.sharedLogin) await this.supabaseAdmin.markSeveralSchools(invite.authId);
 
     // The login the row left: the row's own when another login had the
     // address ('taken'), not the row's ('foreign'), or gone ('missing').
@@ -406,7 +420,7 @@ export class UsersService {
       }
     }
 
-    return { id, emailSent: invite.emailSent, loginMoved: false };
+    return { id, emailSent: invite.emailSent, loginMoved: false, sharedLogin: adopted.sharedLogin };
   }
 
   /**
@@ -696,8 +710,10 @@ export class UsersService {
 
     // Best effort: also remove the Supabase identity so the email can be
     // re-invited later. The tenant row is already gone; an orphaned identity
-    // grants no data access (RLS finds no Users row).
-    if (authId) {
+    // grants no data access (RLS finds no Users row). A login another
+    // school's row still holds is the person's, and stays (Flera skolor per
+    // inloggning); asked after the delete, so any row that holds it counts.
+    if (authId && !(await this.loginIsHeldElsewhere(authId, null, user))) {
       try {
         await this.supabaseAdmin.deleteUser(authId);
       } catch {
@@ -814,24 +830,59 @@ export class UsersService {
    * What we owe instead is a trail. The pair logged below is what reconciles
    * a stranded identity with the row that should be carrying it; both are
    * opaque ids, so nothing about the person reaches the log.
+   *
+   * The identity may be one another school's row already holds: the person
+   * has a login from there (Flera skolor per inloggning). This is the one
+   * writer that may give a row such a login. The database refuses every
+   * other (trigger Users_a_login_joins_another_school_by_invitation, 23505)
+   * unless the transaction names the row in app.login_join, which is set
+   * here. `sharedLogin` says whether the login is another row's too.
    */
   private async adoptIdentity(
     id: string,
     authId: string,
     user: AuthenticatedUser,
-  ): Promise<User> {
+  ): Promise<{ row: User; sharedLogin: boolean }> {
     try {
-      return await this.prisma.withRls(user, (tx) =>
-        tx.user.update({
+      return await this.prisma.withRls(user, async (tx) => {
+        await tx.$executeRaw`SELECT set_config('app.login_join', ${id}, true)`;
+        const row = await tx.user.update({
           where: { id },
           data: { authId, invitedAt: new Date() },
-        }),
-      );
+        });
+        const [held] = await tx.$queryRaw<Array<{ held: boolean }>>`
+          SELECT app.login_is_held_elsewhere(${authId}::uuid, ${id}::uuid) AS held`;
+        return { row, sharedLogin: held?.held === true };
+      });
     } catch (error) {
       this.logger.error(
         `Invitation identity was not linked to its row [user=${id}] [authId=${authId}]`,
       );
       rethrowPrismaError(error);
+    }
+  }
+
+  /**
+   * Whether a row other than `userId` holds the login (app.login_is_held_elsewhere,
+   * 20261204090000); with `userId` null, whether any row does. A shared
+   * login is the person's: a caller that would delete or move it leaves it
+   * instead. Fails safe: a question that cannot be answered counts as held,
+   * and a login is left rather than deleted from under another school.
+   */
+  private async loginIsHeldElsewhere(
+    authId: string,
+    userId: string | null,
+    user: AuthenticatedUser,
+  ): Promise<boolean> {
+    try {
+      const [answer] = await this.prisma.queryWithRls(user, (db) =>
+        db.$queryRaw<Array<{ held: boolean }>>`
+          SELECT app.login_is_held_elsewhere(${authId}::uuid, ${userId}::uuid) AS held`,
+      );
+      return answer?.held !== false;
+    } catch {
+      this.logger.warn(`Could not ask whether a login is shared; it is left [authId=${authId}]`);
+      return true;
     }
   }
 

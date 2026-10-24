@@ -30,7 +30,9 @@ async function bootstrap(): Promise<void> {
     app.enableCors({
       origin: appConfig.corsOrigins,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Authorization', 'Content-Type'],
+      // X-School-Id: the school a request is about, for a login with rows
+      // at several schools (src/auth/school-choice.ts).
+      allowedHeaders: ['Authorization', 'Content-Type', 'X-School-Id'],
       credentials: true,
     });
   }
