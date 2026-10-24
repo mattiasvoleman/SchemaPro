@@ -1696,8 +1696,9 @@
     av idrottens 80 + 40. Med <span class="ui">Lägg till lärare</span> delar du
     på fler. Läraren under <span class="ui">Lärare</span> tar de lektioner som
     ingen annan tar och behåller alltid minst en. Under raderna står varje
-    lärares del, till exempel <em>Bo Lind: 1 av 3 lektioner · 60 min i veckan
-    (33 %)</em>. Andelen av minuterna är den faktor tjänsten fylls med. I
+    lärares del, till exempel <em>Bo Lind: 1 av 3 lektioner · 33 % av
+    minuterna (60 min i veckan)</em>. Andelen av minuterna är den faktor
+    tjänsten fylls med. I
     rutan står huvudläraren med antalet övriga lärare efter, till exempel
     <em>A. Svensson +1</em>.
   </p>
@@ -1709,6 +1710,13 @@
       (lunch, vila, tak per dag, arbetsdagar och önskad ledig dag, 4.4) räknar
       bara hens egna lektioner av posten. En låst lektion med Bo täcker Bos
       lektion och inte en av Annas.</li>
+    <li>Ändrar du en lektion av posten för hand i grundschemat (5.3), till
+      exempel lägger till en, ger den en annan lärare eller flyttar den till
+      andra veckor, så att en lärare får fler eller färre av postens lektioner
+      än delningen ger, sparas ändringen med en varning. Varningen säger om
+      det gäller lektionens lärare eller den lärare den hade, och hur många
+      lektioner hen nu har mot delningens. Nästa generering lägger delningen
+      igen.</li>
     <li>Grundschemat, publiceringen, vikarieplaneringen, exporterna och
       SS12000 visar varje lektion med dess egen lärare.</li>
     <li>En lärare som tar lektioner av posten kan inte samtidigt vara dess
@@ -1728,6 +1736,9 @@
       då vilka två poster det gäller. En post i ett block som ligger på ett
       annat blocks tider (terminsvis halvklass, nedan) kan inte delas alls.
       Genereringen säger även då vilken post det gäller.</li>
+    <li>En delad post kan inte delas terminsvis i halvklass (nedan), eftersom
+      halvornas poster bemannas per ämne. Ta bort delningen först och välj
+      sedan lärare för varje ämne i halvklassdialogen.</li>
     <li>Filen <em>timplansposter.csv</em> har ingen kolumn för delningen. En
       import som ändrar en delad posts lektioner eller lärare så att delningen
       inte längre går ihop stoppar den raden och säger varför. Ändra då
@@ -1781,7 +1792,8 @@
     klassens post, till exempel <em>7A · Slöjd</em>, och tryck
     <span class="ui">Dela terminsvis i halvklass</span> under
     <span class="ui">Veckor</span>. Knappen finns på en klass post som gäller
-    hela läsåret och inte ligger i ett block.
+    hela läsåret, inte ligger i ett block och inte delar sina lektioner mellan
+    lärare.
   </p>
   <p>
     Välj vilket ämne varje halva läser på hösten. På våren läser den det
@@ -1829,9 +1841,7 @@
       <em>Slöjd 7A VT</em>. Halvorna har då lektion samtidigt, och klassen
       har aldrig slöjd två gånger. Vårens block läggs på höstens tider (se
       nedan).</li>
-    <li>Klassens post tas bort. Dess lärare och medlärare räknas inte längre,
-      inte heller lärare som tog några av dess lektioner. Halvornas poster
-      börjar utan delning.
+    <li>Klassens post tas bort. Dess lärare och medlärare räknas inte längre.
       De nya posternas lärare och medlärare prövas mot tjänstefördelningens
       inställningar (4.3),
       som när du sparar en post. Läraren i textilslöjd belastas för halva 1
@@ -1844,6 +1854,7 @@
     I vissa fall sparas ingenting:
   </p>
   <ul>
+    <li>klassens post delar sina lektioner mellan lärare;</li>
     <li>en halva har redan en post i något av ämnena;</li>
     <li>samma person är lärare eller medlärare i båda ämnena;</li>
     <li>läsåret har redan ett block med något av namnen;</li>
@@ -2033,8 +2044,9 @@
     <span class="ui">Timplansposter</span> med <span class="ui">Byt lärare</span>.
     Medlärare ändras i timplansposternas dialog (4.2). Tar läraren bara några
     av en posts lektioner (4.2, <em>Dela lektionerna mellan lärare</em>) står
-    det i kortet hur många, till exempel <em>1 av 3 lektioner</em>. Delningen
-    ändras i timplansposternas dialog.
+    det i kortet hur många och hur stor del av postens minuter det är, till
+    exempel <em>1 av 3 lektioner · 33 % av minuterna</em>. Det är den delen
+    tjänsten fylls med. Delningen ändras i timplansposternas dialog.
   </p>
 
   <h4>Föreslå bemanning</h4>
@@ -2945,6 +2957,12 @@
     lektionerna och restiden. Den gäller lärarna på lektionen och varje elev
     från den lektion hen faktiskt kommer ifrån. Lektionen sparas ändå: det är en varning, inte ett
     nej, eftersom skolan kan veta något schemat inte vet.
+  </p>
+  <p>
+    På samma sätt varnar sparandet när en lektion av en post som delar sina
+    lektioner mellan lärare (4.2, <em>Dela lektionerna mellan lärare</em>) får
+    en annan lärare, läggs till eller flyttas till andra veckor, så att en
+    lärare får fler eller färre av postens lektioner än delningen ger.
   </p>
   <h4>Parallella block i grundschemat</h4>
   <p>
