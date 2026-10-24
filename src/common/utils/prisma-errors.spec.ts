@@ -276,6 +276,35 @@ describe('rethrowPrismaError and a tjänstefördelning CHECK', () => {
   });
 });
 
+describe('rethrowPrismaError and a rastvaktsschema CHECK', () => {
+  // Every CHECK of 20261207090000, each with the field its 400 names: the
+  // service and the DTOs refuse these first, so a row only meets the CHECK
+  // when a caller got past them.
+  it.each([
+    ['SupervisionAreas', 'SupervisionAreas_name_named', 'name'],
+    ['SupervisionAreas', 'SupervisionAreas_grade_span', 'minGradeLevel'],
+    ['SupervisionAreas', 'SupervisionAreas_guards_range', 'guardsNeeded'],
+    ['SupervisionShifts', 'SupervisionShifts_day_is_iso', 'dayOfWeek'],
+    ['SupervisionShifts', 'SupervisionShifts_window_is_ordered', 'endTime'],
+    ['SupervisionShifts', 'SupervisionShifts_within_the_day', 'endTime'],
+    ['SupervisionShifts', 'SupervisionShifts_whole_minutes', 'startTime'],
+    ['SupervisionShifts', 'SupervisionShifts_dates_are_ordered', 'validTo'],
+    ['SupervisionShifts', 'SupervisionShifts_dates_on_the_weekday', 'validFrom'],
+    ['SupervisionShifts', 'SupervisionShifts_note_is_short', 'note'],
+  ])('answers %s’s %s with a 400 naming %s', (table, constraint, field) => {
+    let thrown: unknown;
+    try {
+      rethrowPrismaError(
+        driverError('23514', `new row for relation "${table}" violates check constraint "${constraint}"`),
+      );
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(BadRequestException);
+    expect((thrown as BadRequestException).message.startsWith(`${field}: `)).toBe(true);
+  });
+});
+
 /**
  * The slot-link triggers' refusal as the adapter carries it: P2039, the
  * driver's fields under meta, DETAIL with the two ids. The shape is the one

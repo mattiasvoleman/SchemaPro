@@ -79,6 +79,16 @@
 --     school into the schedule with row security off.
 --   * Från not after Till (CHECK); both inside the läsår (the service, against
 --     the year's bounds read FOR SHARE, as an uppdrag's are).
+--   * Från and Till fall on the pass's weekday (CHECK
+--     SupervisionShifts_dates_on_the_weekday): they are the first and the
+--     last day the pass runs. The service moves a typed date there — Från
+--     forward to the first such weekday, Till back to the last — and refuses
+--     a pass whose dates hold none. A Monday pass "from Tuesday 1 September"
+--     otherwise runs from the 7th yet would be charged the week of the 1st,
+--     and two Monday passes, one until a Wednesday and one from the Tuesday
+--     before it, never meet on a Monday yet would share a daterange. With the
+--     dates on the weekday the EXCLUDE below, the load's weeks and the gaps
+--     read the same days.
 --   * note: at most 200 characters, trimmed, or null.
 --
 -- ONE PLACE AT A TIME. Two passes of one teacher in one läsår on one weekday
@@ -131,6 +141,19 @@
 --
 -- The SS12000 providers emit nothing new: the duties resource reads the
 -- post, not its uppdrag, and no S1 object has a slot for a pass.
+--
+-- ## A pseudonym's passes keep no note
+--
+-- A pass's note is free text about a named person's pass ("går 10:10, har
+-- sjukgymnastik") — the same kind of text as a tjänst's note, which
+-- app.gallring_pseudonymise clears when a person who left is pseudonymised
+-- (20261021110000, 20261021130000). The function below is 20261021130000's
+-- body, unchanged, plus one UPDATE that clears the notes of the same
+-- people's passes. The passes themselves stay, as the tjänst does: they are
+-- the schedule a past läsår had, and they name the person only by an id the
+-- pseudonym keeps. CREATE OR REPLACE keeps the function's owner and its
+-- grants (EXECUTE for the API's role alone, 20261021110000), and states its
+-- SECURITY DEFINER and search_path again as they were.
 --
 -- ## Beside the live API: every lock at once, or none
 --
@@ -254,6 +277,10 @@ CREATE TABLE "SupervisionShifts" (
     CONSTRAINT "SupervisionShifts_dates_are_ordered" CHECK (
         "validFrom" IS NULL OR "validTo" IS NULL OR "validTo" >= "validFrom"
     ),
+    CONSTRAINT "SupervisionShifts_dates_on_the_weekday" CHECK (
+        ("validFrom" IS NULL OR EXTRACT(ISODOW FROM "validFrom") = "dayOfWeek")
+        AND ("validTo" IS NULL OR EXTRACT(ISODOW FROM "validTo") = "dayOfWeek")
+    ),
     CONSTRAINT "SupervisionShifts_note_is_short" CHECK (
         "note" IS NULL OR ("note" = btrim("note") AND char_length("note") BETWEEN 1 AND 200)
     ),
@@ -365,6 +392,84 @@ BEGIN
   END LOOP;
 END
 $$;
+
+-- ---------------------------------------------------------------------------
+-- app.gallring_pseudonymise: 20261021130000's body, and a pseudonym's passes
+-- lose their note with their tjänst's.
+-- ---------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION app.gallring_pseudonymise(p_run uuid, p_users uuid[]) RETURNS integer
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+DECLARE
+  r "GallringRuns";
+  cutoff date;
+  today date;
+  due uuid[];
+  n integer;
+BEGIN
+  SELECT * INTO r FROM "GallringRuns" WHERE "id" = p_run AND "status" = 'RUNNING' FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'GALLRING_RUN_NOT_RUNNING' USING ERRCODE = 'GL404';
+  END IF;
+  -- The rows before the question: a reactivation in flight is waited for,
+  -- one that comes later waits for this transaction, and every statement
+  -- below reads after the wait. Id order, so two callers cannot deadlock.
+  PERFORM 1 FROM "Users" u
+   WHERE u."schoolId" = r."schoolId" AND u."id" = ANY (p_users)
+   ORDER BY u."id"
+     FOR NO KEY UPDATE;
+  IF r."cutoffs" ->> 'DEPARTED_PEOPLE' IS NULL
+     OR app.retention_months_in_force(r."schoolId", 'DEPARTED_PEOPLE', clock_timestamp()) IS NULL THEN
+    RETURN 0;
+  END IF;
+  cutoff := app.gallring_run_cutoff(r."schoolId", r."startedAt", r."cutoffs", 'DEPARTED_PEOPLE');
+  today := app.gallring_today(r."schoolId", r."startedAt");
+  -- Asked again: somebody reactivated since the list was read is not due.
+  due := ARRAY(
+    SELECT d."id" FROM app.gallring_due(r."schoolId", 'DEPARTED_PEOPLE', cutoff, today) d
+     WHERE d."id" = ANY (p_users)
+     ORDER BY d."id"
+     LIMIT 500);
+
+  PERFORM set_config('app.gallring', r."schoolId"::text, true);
+  UPDATE "Users" u SET
+      "firstName"       = 'Pseudonym',
+      "lastName"        = upper(left(replace(u."id"::text, '-', ''), 6)),
+      "email"           = 'pseudonym-' || u."id"::text || '@pseudonym.invalid',
+      "phone"           = NULL,
+      "ss12000Id"       = NULL,
+      "authId"          = gen_random_uuid(),
+      "invitedAt"       = NULL,
+      "pseudonymisedAt" = now(),
+      "updatedAt"       = now()
+   WHERE u."schoolId" = r."schoolId" AND u."id" = ANY (due);
+  GET DIAGNOSTICS n = ROW_COUNT;
+  UPDATE "TeacherEmployments" SET "signature" = NULL, "note" = NULL
+   WHERE "schoolId" = r."schoolId" AND "userId" = ANY (due)
+     AND ("signature" IS NOT NULL OR "note" IS NOT NULL);
+  -- Rastvaktsschema (20261207090000): a pass's note, as the tjänst's.
+  UPDATE "SupervisionShifts" SET "note" = NULL, "updatedAt" = now()
+   WHERE "schoolId" = r."schoolId" AND "userId" = ANY (due) AND "note" IS NOT NULL;
+  DELETE FROM "GuardianStudents"
+   WHERE "schoolId" = r."schoolId" AND ("guardianId" = ANY (due) OR "studentId" = ANY (due));
+  DELETE FROM "PushTickets" p USING "DevicePushTokens" t
+   WHERE p."tokenId" = t."id" AND p."schoolId" = t."schoolId"
+     AND t."schoolId" = r."schoolId" AND t."userId" = ANY (due);
+  DELETE FROM "DevicePushTokens" WHERE "schoolId" = r."schoolId" AND "userId" = ANY (due);
+  DELETE FROM "NotificationOptOuts" WHERE "schoolId" = r."schoolId" AND "userId" = ANY (due);
+  DELETE FROM "Notifications" WHERE "schoolId" = r."schoolId" AND "userId" = ANY (due);
+  PERFORM set_config('app.gallring', '', true);
+
+  UPDATE "GallringRuns" SET
+    "counts" = "counts" || jsonb_build_object('DEPARTED_PEOPLE', COALESCE(("counts" ->> 'DEPARTED_PEOPLE')::bigint, 0) + n),
+    "cutoffs" = "cutoffs" || jsonb_build_object('DEPARTED_PEOPLE', cutoff::text)
+   WHERE "id" = p_run;
+  RETURN n;
+END
+$$;
+
+COMMENT ON FUNCTION app.gallring_pseudonymise(uuid, uuid[]) IS
+  'Locks the rows of p_users in the run''s school, then pseudonymises those still due: name, e-mail, phone, SS12000 id and login replaced; their tjänster''s signature and note, and their rastvaktspass'' notes, cleared; their guardian links, push devices, notification opt-outs and all their own notices (whatever NOTIFICATIONS says) removed. Returns how many it pseudonymised.';
 
 -- ---------------------------------------------------------------------------
 -- SUPERVISION_REACH: the arms above on each table and no other; none for a

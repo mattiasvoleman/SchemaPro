@@ -14888,6 +14888,19 @@ BEGIN
   IF (SELECT "deactivatedAt" FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000085') > now() - interval '23 months' THEN
     RAISE EXCEPTION 'pseudonymisation: the fixture pupil was not deactivated two years ago';
   END IF;
+  -- Rastvaktsschema (20261207090000): a pass with a note for the departed
+  -- teacher, and one for the teacher SCB holds, in their old läsår.
+  WITH area AS (
+    INSERT INTO "SupervisionAreas" ("schoolId", name) VALUES (app.current_school_id(), 'Gallringsgården') RETURNING id
+  )
+  INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime", note)
+  SELECT app.current_school_id(), y.id, area.id, u.id, 1, '10:00', '10:20', 'Går 10:10, har sjukgymnastik'
+    FROM area, "AcademicYears" y, "Users" u
+   WHERE y."schoolId" = app.current_school_id() AND y.name = 'Gallring 2019/20'
+     AND u."authId" IN ('00000000-0000-4000-8000-000000000087', '00000000-0000-4000-8000-000000000088');
+  IF (SELECT count(*) FROM "SupervisionShifts" WHERE note IS NOT NULL) <> 2 THEN
+    RAISE EXCEPTION 'pseudonymisation: the two passes with a note were not planted';
+  END IF;
 END $$;
 
 SELECT set_config('request.jwt.claims', '', true);
@@ -14961,6 +14974,18 @@ BEGIN
   END IF;
   IF (SELECT count(*) FROM "TeacherEmploymentLogs")::text <> current_setting('app.test_rls84_versions') THEN
     RAISE EXCEPTION 'pseudonymisation: clearing the signature wrote a version of the tjänst';
+  END IF;
+  -- The pseudonym's pass stays, without its note; the held teacher's keeps theirs.
+  IF EXISTS (SELECT 1 FROM "SupervisionShifts" s JOIN "Users" u ON u.id = s."userId"
+              WHERE u."pseudonymisedAt" IS NOT NULL AND s.note IS NOT NULL) THEN
+    RAISE EXCEPTION 'pseudonymisation: a pseudonym''s rastvaktspass kept its note';
+  END IF;
+  IF (SELECT count(*) FROM "SupervisionShifts" s JOIN "Users" u ON u.id = s."userId" WHERE u."pseudonymisedAt" IS NOT NULL) <> 1 THEN
+    RAISE EXCEPTION 'pseudonymisation: the departed teacher''s pass went; it stays for the schedule''s history';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM "SupervisionShifts" s JOIN "Users" u ON u.id = s."userId"
+                  WHERE u."authId" = '00000000-0000-4000-8000-000000000088' AND s.note = 'Går 10:10, har sjukgymnastik') THEN
+    RAISE EXCEPTION 'pseudonymisation: the note of a teacher not pseudonymised went';
   END IF;
 
   IF EXISTS (SELECT 1 FROM "GuardianStudents" gs JOIN "Users" u ON u.id IN (gs."guardianId", gs."studentId") WHERE u."pseudonymisedAt" IS NOT NULL) THEN
@@ -27945,6 +27970,7 @@ BEGIN
       'SupervisionShifts_within_the_day|"endTime" < |24:00',
       'SupervisionShifts_whole_minutes|SECOND|SECOND',
       'SupervisionShifts_dates_are_ordered|"validTo" >= "validFrom"|"validTo" >= "validFrom"',
+      'SupervisionShifts_dates_on_the_weekday|isodow FROM "validFrom"|isodow FROM "validTo"',
       'SupervisionShifts_note_is_short|btrim|200'])
   LOOP
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = split_part(def, '|', 1) AND contype = 'c' AND convalidated
@@ -27953,6 +27979,13 @@ BEGIN
       RAISE EXCEPTION 'supervision: the check % is missing or says something else', split_part(def, '|', 1);
     END IF;
   END LOOP;
+  -- A pseudonym's passes lose their note with their tjänst's (section 84 runs it).
+  IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                  WHERE n.nspname = 'app' AND p.proname = 'gallring_pseudonymise' AND p.prosecdef
+                    AND p.prosrc LIKE '%UPDATE "SupervisionShifts" SET "note" = NULL%'
+                    AND p.prosrc LIKE '%UPDATE "TeacherEmployments" SET "signature" = NULL, "note" = NULL%') THEN
+    RAISE EXCEPTION 'supervision: app.gallring_pseudonymise does not clear a pseudonym''s pass notes beside their tjänst''s';
+  END IF;
   SELECT pg_get_constraintdef(oid) INTO def FROM pg_constraint
    WHERE conname = 'SupervisionShifts_one_place_at_a_time' AND contype = 'x';
   IF def IS NULL OR def NOT LIKE 'EXCLUDE USING gist ("userId" WITH =, "academicYearId" WITH =, "dayOfWeek" WITH =, tsrange(%startTime%endTime%) WITH &&, daterange("validFrom", "validTo", %[]%) WITH &&)' THEN
@@ -28249,12 +28282,27 @@ BEGIN
     EXCEPTION WHEN check_violation THEN NULL;
     END;
   END LOOP;
+  -- Thursdays both, so the order alone refuses it.
   BEGIN
     INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime", "validFrom", "validTo")
-    VALUES (app.current_school_id(), yr, garden, bo, 4, '10:00', '10:20', DATE '2031-01-08', DATE '2031-01-07');
+    VALUES (app.current_school_id(), yr, garden, bo, 4, '10:00', '10:20', DATE '2031-01-16', DATE '2031-01-09');
     RAISE EXCEPTION 'supervision: a pass ending before it begins was stored';
   EXCEPTION WHEN check_violation THEN NULL;
   END;
+  -- Från and Till on the pass's weekday: a Thursday pass from a Wednesday,
+  -- or until a Friday, is not a row; from and until Thursdays it is.
+  FOREACH st IN ARRAY ARRAY['2031-01-08|', '|2031-01-10', '2031-01-08|2031-01-16'] LOOP
+    BEGIN
+      INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime", "validFrom", "validTo")
+      VALUES (app.current_school_id(), yr, garden, bo, 4, '10:00', '10:20',
+              NULLIF(split_part(st, '|', 1), '')::date, NULLIF(split_part(st, '|', 2), '')::date);
+      RAISE EXCEPTION 'supervision: a Thursday pass dated % was stored', st;
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+  END LOOP;
+  INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime", "validFrom", "validTo")
+  VALUES (app.current_school_id(), yr, garden, bo, 4, '10:00', '10:20', DATE '2031-01-09', DATE '2031-01-16') RETURNING id INTO pass;
+  DELETE FROM "SupervisionShifts" WHERE id = pass;
   FOREACH st IN ARRAY ARRAY['', ' Norra', 'Norra ', repeat('x', 201)] LOOP
     BEGIN
       INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime", note)
@@ -28301,7 +28349,7 @@ BEGIN
   VALUES (app.current_school_id(), yr, hall, anna, 2, '10:00', '10:20', DATE '2031-01-07');
   BEGIN
     INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime", "validFrom", "validTo")
-    VALUES (app.current_school_id(), yr, hall, anna, 2, '10:00', '10:20', DATE '2030-12-01', DATE '2030-12-31');
+    VALUES (app.current_school_id(), yr, hall, anna, 2, '10:00', '10:20', DATE '2030-12-03', DATE '2030-12-31');
     RAISE EXCEPTION 'supervision: Anna was put in the hall on December Tuesdays she watches the yard';
   EXCEPTION WHEN exclusion_violation THEN NULL;
   END;
@@ -28309,6 +28357,19 @@ BEGIN
   BEGIN
     UPDATE "SupervisionShifts" SET "startTime" = '10:15' WHERE id = pass;
     RAISE EXCEPTION 'supervision: a pass was moved onto another of the same teacher';
+  EXCEPTION WHEN exclusion_violation THEN NULL;
+  END;
+  -- Two Friday passes of Bo's that never share a Friday: the yard until
+  -- Friday 3 January, the hall from Friday the 10th. With the dates on the
+  -- weekday their ranges do not meet; from the 3rd they would.
+  INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime", "validTo")
+  VALUES (app.current_school_id(), yr, garden, bo, 5, '10:00', '10:20', DATE '2031-01-03');
+  INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime", "validFrom")
+  VALUES (app.current_school_id(), yr, hall, bo, 5, '10:00', '10:20', DATE '2031-01-10');
+  BEGIN
+    INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime", "validFrom")
+    VALUES (app.current_school_id(), yr, hall, bo, 5, '10:10', '10:30', DATE '2031-01-03');
+    RAISE EXCEPTION 'supervision: Bo was put in the hall on a Friday he watches the yard';
   EXCEPTION WHEN exclusion_violation THEN NULL;
   END;
   -- Two teachers on one place at once: what guardsNeeded asks for.
