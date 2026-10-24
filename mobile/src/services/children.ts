@@ -10,6 +10,7 @@ interface ChildView {
   readonly lastName: string;
   readonly isActive: boolean;
   readonly studentGroupId: string | null;
+  readonly schoolToday?: string;
 }
 
 /**
@@ -27,7 +28,14 @@ interface ChildView {
 export async function fetchChildren(): Promise<ChildRow[]> {
   const rows = await apiRequest<ChildView[]>('/api/v1/family/children');
   return rows
-    .map(({ linkId, id, firstName, lastName, isActive }) => ({ linkId, id, firstName, lastName, isActive }))
+    .map(({ linkId, id, firstName, lastName, isActive, schoolToday }) => ({
+      linkId,
+      id,
+      firstName,
+      lastName,
+      isActive,
+      ...(schoolToday ? { schoolToday } : {}),
+    }))
     .sort((a, b) => compareSwedish(a.firstName, b.firstName) || compareSwedish(a.lastName, b.lastName));
 }
 

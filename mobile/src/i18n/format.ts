@@ -95,6 +95,17 @@ export function localDate(at: Date = new Date()): string {
   return `${at.getFullYear()}-${pad2(at.getMonth() + 1)}-${pad2(at.getDate())}`;
 }
 
+/**
+ * Today as the school counts it, "YYYY-MM-DD": the gateway's schoolToday for
+ * the child when it said one, the phone's own day only when an older gateway
+ * did not. The gateway holds a report and a leave to the school's day, and a
+ * phone abroad is on another: in New York at 20:00 it is already tomorrow in
+ * Stockholm, in Bangkok at 03:00 still yesterday.
+ */
+export function schoolDate(schoolToday: string | undefined, at: Date = new Date()): string {
+  return schoolToday ?? localDate(at);
+}
+
 /** A calendar date shifted by whole days, by its components. */
 export function shiftDate(date: string, days: number): string {
   const { year, month, day } = dateParts(date);

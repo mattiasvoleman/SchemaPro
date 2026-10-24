@@ -7,6 +7,7 @@ import {
   formatTime,
   formatTimeRange,
   localDate,
+  schoolDate,
   shiftDate,
 } from './format';
 
@@ -101,5 +102,35 @@ describe('format, on a Swedish phone across 2026-10-25', () => {
     // 23:30Z on the 25th is 00:30 on the 26th in Stockholm.
     expect(inZone('Europe/Stockholm', "f.localDate(new Date('2026-10-25T23:30:00.000Z'))")).toBe('2026-10-26');
     expect(localDate(new Date('2026-10-25T23:30:00.000Z'))).toBe('2026-10-25');
+  });
+});
+
+/*
+ * A phone west and east of Sweden. 2026-10-25T00:00Z is 20:00 the evening
+ * before in New York and 02:00 in Stockholm; 2026-10-24T20:00Z is 03:00 the
+ * next morning in Bangkok and 22:00 in Stockholm. The gateway's schoolToday
+ * is the day; the phone's own is only for a gateway that does not say one.
+ */
+describe('schoolDate, on a phone abroad', () => {
+  it('takes the school’s day in New York at 20:00, already tomorrow in Stockholm', () => {
+    const at = "new Date('2026-10-25T00:00:00.000Z')";
+    expect(inZone('America/New_York', `[f.schoolDate('2026-10-25', ${at}), f.localDate(${at})]`)).toEqual([
+      '2026-10-25',
+      '2026-10-24',
+    ]);
+  });
+
+  it('takes the school’s day in Bangkok at 03:00, still yesterday in Stockholm', () => {
+    const at = "new Date('2026-10-24T20:00:00.000Z')";
+    expect(inZone('Asia/Bangkok', `[f.schoolDate('2026-10-24', ${at}), f.localDate(${at})]`)).toEqual([
+      '2026-10-24',
+      '2026-10-25',
+    ]);
+  });
+
+  it('falls back to the phone’s day when the gateway said none', () => {
+    expect(inZone('America/New_York', "f.schoolDate(undefined, new Date('2026-10-25T00:00:00.000Z'))")).toBe('2026-10-24');
+    expect(inZone('Asia/Bangkok', "f.schoolDate(undefined, new Date('2026-10-24T20:00:00.000Z'))")).toBe('2026-10-25');
+    expect(schoolDate(undefined, new Date('2026-10-25T00:00:00.000Z'))).toBe('2026-10-25');
   });
 });
