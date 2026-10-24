@@ -4774,6 +4774,7 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         LunchServing,
         OptimizeScheduleRequest,
         Rast,
+        ScheduledLesson,
         ScheduleRules,
         SearchOptions,
     )
@@ -4915,7 +4916,9 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
     # three are sent only for a requirement that carries a rule, and the
     # gateway pins that set as REQUIREMENT_FIELDS_DISTRIBUTED. blockId is sent
     # only on a member of a parallel block with two or more members left to
-    # place, pinned there as REQUIREMENT_FIELDS_BLOCKED.
+    # place, pinned there as REQUIREMENT_FIELDS_BLOCKED. lessonTeacherIds is
+    # sent only for a post whose lessons still to place have two or more
+    # leads (delade lektioner); every other requirement's keys are unchanged.
     assert _field_names(AnonymousRequirement) == {
         "id",
         "subjectId",
@@ -4935,6 +4938,18 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "minDaysBetween",
         "lockedDays",
         "blockId",
+        "lessonTeacherIds",
+    }
+    # The response's one row. teacherId is a split post's lead of THIS lesson,
+    # and omitted wherever it is None — on every lesson of every other post —
+    # so a response for a school without a split is the bytes it always was.
+    assert _field_names(ScheduledLesson) == {
+        "requirementId",
+        "roomId",
+        "dayOfWeek",
+        "startTime",
+        "endTime",
+        "teacherId",
     }
     assert _field_names(AnonymousConstraint) == {
         "id",

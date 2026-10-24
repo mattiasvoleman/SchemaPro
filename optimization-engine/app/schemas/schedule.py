@@ -212,6 +212,34 @@ class AnonymousRequirement(CamelModel):
     #: (BLOCK_MEMBERS_SHARE_TEACHER) and no pupil in two of them
     #: (BLOCK_MEMBERS_SHARE_PUPILS). See SchedulerSolver._validate_blocks.
     block_id: UUID4 | None = Field(default=None, alias="blockId")
+    #: Delade lektioner: the lead teacher of each lesson of the week, when the
+    #: lessons are NOT all one person's — [A, A, B] is Matematik för 7A with
+    #: two lessons of Anna's and one of Bertil's. One entry per lesson, in
+    #: lesson_minutes() order (longest first), so [80, 40] with [A, B] is
+    #: Anna's 80 and Bertil's 40; None is a lesson nobody leads.
+    #:
+    #: OPTIONAL AND ADDITIVE. Absent on every requirement one person leads,
+    #: which is every requirement of every school until one splits a post;
+    #: the gateway sends the key only when the lessons it still wants placed
+    #: have two or more leads, so a payload without a split is byte for byte
+    #: what it was, builds the model it built, and is answered with the bytes
+    #: it was answered with.
+    #:
+    #: ONE REQUIREMENT, NOT ONE PER TEACHER, for lessonLengths' reason: the
+    #: spread across days, the subject's distribution rule, its block, the
+    #: previous-lesson reward and every refusal that names the row are the
+    #: SUBJECT's, and two requirements would be two subjects that may share
+    #: a Monday.
+    #:
+    #: THE SCALARS STAY TRUE: lessons_per_week is the list's length,
+    #: teacher_id its first entry — a reader of the scalar still finds one of
+    #: the post's real teachers — and the co-teacher, who is on every lesson
+    #: already, is never in it (the validator below). Every reader that asks
+    #: who teaches A LESSON reads lesson_teacher(); a reader that needs
+    #: everybody on the row reads the union (SchedulerSolver's _teachers_of).
+    lesson_teacher_ids: list[UUID4 | None] | None = Field(
+        default=None, alias="lessonTeacherIds", max_length=40,
+    )
 
     @model_validator(mode="after")
     def validate_lesson_lengths(self) -> AnonymousRequirement:
@@ -226,11 +254,43 @@ class AnonymousRequirement(CamelModel):
             raise ValueError(msg)
         return self
 
+    @model_validator(mode="after")
+    def validate_lesson_teachers(self) -> AnonymousRequirement:
+        """The list and the scalars say the same, and only a split is a list.
+
+        ONE REPRESENTATION PER MEANING: a post one person leads is teacherId
+        alone, so a list naming one teacher throughout is a gateway that
+        forgot to drop it, and refused here rather than carried as a second
+        way of saying the same week.
+        """
+        teachers = self.lesson_teacher_ids
+        if teachers is None:
+            return self
+        if len(teachers) != self.lessons_per_week:
+            msg = "lessonTeacherIds must hold exactly lessonsPerWeek entries."
+            raise ValueError(msg)
+        if teachers[0] != self.teacher_id:
+            msg = "teacherId must be the first entry of lessonTeacherIds."
+            raise ValueError(msg)
+        if self.co_teacher_id is not None and self.co_teacher_id in teachers:
+            msg = "coTeacherId is on every lesson and must not be in lessonTeacherIds."
+            raise ValueError(msg)
+        if len(set(teachers)) < 2:
+            msg = "lessonTeacherIds must name two different leads; one lead is teacherId alone."
+            raise ValueError(msg)
+        return self
+
     def lesson_minutes(self) -> tuple[int, ...]:
         """One length per lesson, longest first; a uniform requirement repeats its one."""
         if self.lesson_lengths is None:
             return (self.minutes_per_lesson,) * self.lessons_per_week
         return tuple(sorted(self.lesson_lengths, reverse=True))
+
+    def lesson_teacher(self, lesson_index: int) -> UUID4 | None:
+        """Lesson `lesson_index`'s lead, in lesson_minutes() order; an unsplit post's is teacherId."""
+        if self.lesson_teacher_ids is None:
+            return self.teacher_id
+        return self.lesson_teacher_ids[lesson_index]
 
     def shortest_lesson_minutes(self) -> int:
         """The shortest lesson: the one a tight stretch can still hold."""
@@ -975,6 +1035,19 @@ class ScheduledLesson(CamelModel):
     day_of_week: DayOfWeek = Field(alias="dayOfWeek")
     start_time: str = Field(alias="startTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
     end_time: str = Field(alias="endTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
+    #: Delade lektioner: which lead this placement is, for a lesson of a
+    #: requirement that carried lessonTeacherIds — the lessons of one
+    #: requirement are otherwise interchangeable, and the gateway cannot tell
+    #: Bertil's Tuesday from Anna's without it. Its entry of the list, so
+    #: None — omitted — on a lesson the list gives nobody.
+    #:
+    #: OMITTED WHEREVER IT IS NONE, and on every lesson of an unsplit
+    #: requirement it is: a response for a school without a split carries no
+    #: key it did not carry before, byte for byte. Set by
+    #: SchedulerSolver._extract_lessons and nowhere else.
+    teacher_id: UUID4 | None = Field(
+        default=None, alias="teacherId", exclude_if=lambda value: value is None,
+    )
 
 
 class LunchPlacement(CamelModel):

@@ -39,6 +39,11 @@ Checks, all derived from the request:
                       elevens val) at the same times: each member's lessons
                       placed on the same weekdays, starts and ends as the
                       first member's
+    delade lektioner  a requirement split between leads (lessonTeacherIds):
+                      every placed lesson names its lead, and the (lead,
+                      length) pairs placed are the pairs requested — each
+                      lesson's teacher is then read off the lesson, by every
+                      check here that reads a teacher, see _lesson_teachers
     teacher's day     Lärarens dag: per teacher, lead and co-teacher alike,
                       the minutes of teaching on each weekday within their
                       work rule's cap — the union of every lesson's own
@@ -84,6 +89,18 @@ def _lesson_slots(grid, requirement, lesson):
     if requirement.lesson_lengths is None:
         return grid.minutes_to_slots(requirement.minutes_per_lesson)
     return grid.parse_hhmmss(lesson.end_time) - grid.parse_hhmmss(lesson.start_time)
+
+
+def _lesson_lead(requirement, lesson):
+    """The placed lesson's lead: its own for a split requirement, the row's otherwise."""
+    if requirement.lesson_teacher_ids is None:
+        return requirement.teacher_id
+    return lesson.teacher_id
+
+
+def _lesson_teachers(requirement, lesson) -> set:
+    """Everybody on the placed lesson: its lead and the row's co-teacher."""
+    return {_lesson_lead(requirement, lesson), requirement.co_teacher_id} - {None}
 
 
 def _occupied(grid, day_of_week, start_time, duration_slots):
@@ -192,7 +209,7 @@ def _reached_by(constraint, requirement, lesson) -> bool:
         return not (below or above)
 
     owner = {
-        "TEACHER": (requirement.teacher_id, requirement.co_teacher_id),
+        "TEACHER": tuple(_lesson_teachers(requirement, lesson)),
         "STUDENT_GROUP": (requirement.student_group_id,),
         "ROOM": (lesson.room_id,),
     }.get(constraint.resource_kind, ())
@@ -401,7 +418,7 @@ def _teacher_day_problems(request, lessons) -> list[str]:
         if requirement is None:
             continue
         span = (_clock(lesson.start_time), _clock(lesson.end_time))
-        for teacher in {requirement.teacher_id, requirement.co_teacher_id} - {None}:
+        for teacher in _lesson_teachers(requirement, lesson):
             placed[teacher][lesson.day_of_week].append(span)
     locked: dict = defaultdict(lambda: defaultdict(list))
     for fixed in request.fixed_lessons:
@@ -450,6 +467,7 @@ def validate(grid, request, lessons) -> list[str]:
     per_group_day: dict[tuple, list[tuple[int, int]]] = defaultdict(list)
     placed_by_requirement: dict = defaultdict(int)
     placed_lengths: dict = defaultdict(list)
+    placed_leads: dict = defaultdict(list)
     placed_weekdays: dict = defaultdict(list)
 
     for lesson in lessons:
@@ -463,6 +481,8 @@ def validate(grid, request, lessons) -> list[str]:
         try:
             duration = _lesson_slots(grid, requirement, lesson)
             placed_lengths[requirement.id].append(duration * grid.slot_minutes)
+            placed_leads[requirement.id].append(
+                (str(_lesson_lead(requirement, lesson)), duration * grid.slot_minutes))
             day_idx, start_slot, slots = _occupied(
                 grid, lesson.day_of_week, lesson.start_time, duration)
         except ValueError as exc:
@@ -477,7 +497,7 @@ def validate(grid, request, lessons) -> list[str]:
                 f"next day's opening slots")
 
         for kind, resource in (
-            ("teacher", requirement.teacher_id),
+            ("teacher", _lesson_lead(requirement, lesson)),
             ("student group", requirement.student_group_id),
             ("room", lesson.room_id),
         ):
@@ -524,6 +544,16 @@ def validate(grid, request, lessons) -> list[str]:
                 problems.append(
                     f"requirement {requirement.id}: lessons of {placed} minutes placed, "
                     f"{list(requirement.lesson_minutes())} requested")
+        if got == want and requirement.lesson_teacher_ids is not None:
+            requested = sorted(
+                (str(lead), minutes)
+                for lead, minutes in zip(requirement.lesson_teacher_ids,
+                                         requirement.lesson_minutes())
+            )
+            if sorted(placed_leads.get(requirement.id, [])) != requested:
+                problems.append(
+                    f"requirement {requirement.id}: (lead, minutes) "
+                    f"{sorted(placed_leads.get(requirement.id, []))} placed, {requested} requested")
 
     # Group-conflict pairs (groups sharing students) must never overlap.
     lessons_by_group: dict = defaultdict(list)
