@@ -537,6 +537,13 @@ export interface LunchSettings {
   /** Null means the school has no seat limit worth modelling. */
   diningSeats: number | null;
   maxLessonsPerDayPerGroup: number | null;
+  /**
+   * Restid i generatorn: the generator keeps the walk between the school's
+   * skolområden. Off by default; the sites and the walks themselves are set
+   * on the rooms page. Optional because an API from before the switch sends
+   * no such field, which reads as the rule it then is: off.
+   */
+  generatorKeepsTravelTime?: boolean;
 }
 
 export type LessonRecurrence = "ALL_WEEKS" | "ODD_WEEKS" | "EVEN_WEEKS";
