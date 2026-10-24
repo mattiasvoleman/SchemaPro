@@ -2694,36 +2694,108 @@ ROLLBACK;
 -- ---------------------------------------------------------------------------
 -- Section 10: the constraint the whole authorization layer rests on.
 --
--- app.current_user_id, app.current_school_id, app.current_user_role and
--- app.current_user_group_id each resolve one value WHERE "authId" = auth.uid(),
--- and each is declared RETURNS uuid rather than SETOF. With two rows for one
--- authId they do not error and do not warn — they return whichever row the heap
--- hands over first, and the answer flips when unrelated rows are rewritten.
+-- Until 20261204090000 the helpers resolved one value WHERE "authId" =
+-- auth.uid(), declared RETURNS uuid rather than SETOF, and a unique authId was
+-- what kept every session in its own school: with two rows they would have
+-- returned whichever the heap handed over first. Now a login has one row per
+-- school (Flera skolor per inloggning), and the six helpers pick the row by
+-- the school the request names or else the oldest, each with the same clause
+-- (20261204090000 says why each has its own). Three things hold that up, and
+-- this section asserts them:
 --
--- So the UNIQUE constraint is not hygiene, it is what keeps every session
--- resolving to the school it belongs to. It also does not look load-bearing
--- from the schema, which is why this assertion exists rather than a comment
--- alone: relaxing it is the obvious first step towards one person working in
--- several schools, and doing that without rewriting those four functions in the
--- same migration would silently start resolving sessions to an arbitrary school.
+--   * the unique key is exactly (authId, schoolId), so a login has at most
+--     one row per school and "the row at school S" is one row;
+--   * the six helpers' clauses are the same text, so no helper can answer
+--     for another row than the others do;
+--   * no other function resolves the caller by "authId": a function that
+--     still did would pick an arbitrary row of a login with two schools. The
+--     ones that read "authId" for another reason are named here with that
+--     reason, and a new one fails this section until it is.
 -- ---------------------------------------------------------------------------
 
 DO $$
+DECLARE
+  unexpected text;
+  clause text;
+  helper record;
 BEGIN
+  -- The clause, from FROM to LIMIT, whitespace collapsed.
+  SELECT regexp_replace(substring(p.prosrc FROM 'FROM "Users" u.*LIMIT 1'), '\s+', ' ', 'g') INTO clause
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'app' AND p.proname = 'current_user_id';
+  IF clause IS NULL OR clause NOT LIKE '%"authId" = (select auth.uid())%' OR clause NOT LIKE '%"isActive"%'
+     OR clause NOT LIKE '%app.closed_schools()%' OR clause NOT LIKE '%app.requested_school()%'
+     OR clause NOT LIKE '%ORDER BY u."loginSince", u."createdAt", u."id" LIMIT 1' THEN
+    RAISE EXCEPTION 'app.current_user_id() picks the row in an unexpected way: %', clause;
+  END IF;
+  FOR helper IN
+    SELECT p.proname, regexp_replace(p.prosrc, '\s+', ' ', 'g') AS src
+      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname = 'app'
+       AND p.proname IN ('current_school_id', 'current_user_role', 'current_user_group_id', 'current_user_may', 'current_user_decides')
+  LOOP
+    IF strpos(helper.src, clause) = 0 THEN
+      RAISE EXCEPTION 'app.%() does not pick the row with app.current_user_id()''s clause', helper.proname;
+    END IF;
+  END LOOP;
+
   IF NOT EXISTS (
     SELECT 1
-    FROM pg_index i
-    JOIN pg_class t ON t.oid = i.indrelid
-    JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY (i.indkey)
-    WHERE t.relname = 'Users'
-      AND i.indisunique
-      AND i.indnatts = 1
-      AND a.attname = 'authId'
+      FROM pg_index i
+      JOIN pg_class t ON t.oid = i.indrelid
+     WHERE t.relname = 'Users' AND i.indisunique AND i.indpred IS NULL
+       AND i.indnatts = 2
+       AND (SELECT array_agg(a.attname ORDER BY k.ord)
+              FROM unnest(i.indkey) WITH ORDINALITY k(attnum, ord)
+              JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum)
+           = ARRAY['authId', 'schoolId']::name[]
   ) THEN
-    RAISE EXCEPTION
-      'Users.authId is no longer uniquely constrained — the four app.current_* '
-      'helpers now resolve an arbitrary row, and every session can silently '
-      'land in the wrong school';
+    RAISE EXCEPTION 'Users has no unique key on ("authId", "schoolId"): a login could have two rows in one school';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+      FROM pg_index i
+      JOIN pg_class t ON t.oid = i.indrelid
+      JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = i.indkey[0]
+     WHERE t.relname = 'Users' AND i.indisunique AND i.indnatts = 1 AND a.attname = 'authId'
+  ) THEN
+    RAISE EXCEPTION 'Users.authId is unique on its own again: a login can belong to one school only';
+  END IF;
+
+  -- pg_get_functiondef and not prosrc: a BEGIN ATOMIC body (sign_in.rules)
+  -- has no prosrc, and its text is only the definition's.
+  SELECT string_agg(n.nspname || '.' || p.proname, ', ' ORDER BY 1)
+    INTO unexpected
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname IN ('app', 'sign_in', 'public')
+     AND p.prokind IN ('f', 'p')
+     AND pg_get_functiondef(p.oid) ~ '"authId"'
+     AND (n.nspname, p.proname) NOT IN (
+       -- The six helpers, with the clause asserted above.
+       ('app', 'current_user_id'),
+       ('app', 'current_school_id'),
+       ('app', 'current_user_role'),
+       ('app', 'current_user_group_id'),
+       ('app', 'current_user_may'),
+       ('app', 'current_user_decides'),
+       -- The switcher's list: the login's own rows, every one.
+       ('app', 'my_schools'),
+       -- Whether another row holds a login, for the gateway's deletes.
+       ('app', 'login_is_held_elsewhere'),
+       -- The trigger that lets a login join another school by invitation,
+       -- and the one that stamps when a row took its login.
+       ('app', 'users_a_login_joins_another_school_by_invitation'),
+       ('app', 'users_login_since_is_the_logins'),
+       -- The access-token hook's rows, each judged under its school.
+       ('sign_in', 'rules'),
+       -- Gallring: a departed person's login, which it deletes or replaces.
+       ('app', 'gallring_claim_person'),
+       ('app', 'gallring_departed_due'),
+       ('app', 'gallring_pseudonymise')
+     );
+  IF unexpected IS NOT NULL THEN
+    RAISE EXCEPTION 'functions read "authId" without being named in section 10: % (resolve the caller through app.current_user_id())', unexpected;
   END IF;
 END $$;
 
@@ -19601,8 +19673,10 @@ END $$;
 -- The role × table matrix. In the fixtures' school rls-roller-school every
 -- table an administrator's arm reaches has a row, and there is one
 -- administrator of each profile, three of them with HR-läs: the läsare
--- (Läsbehörighet, 20261120100000) twice, with and without. Each of the eight
--- reads, inserts, updates and deletes in each table, and every cell is
+-- (Läsbehörighet, 20261120100000) twice, with and without; and two logins
+-- with a row at school A too (Flera skolor per inloggning, 20261204090000),
+-- each naming this school, one by header and one by the gateway's setting.
+-- Each of the ten reads, inserts, updates and deletes in each table, and every cell is
 -- compared with what src/auth/admin-areas.ts says, through the rows the
 -- generator writes below (scripts/test/generate-rls-area-matrix.ts):
 --
@@ -19727,15 +19801,22 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
 
 DO $$
 DECLARE
+  -- The fourth column says how the school is named (Flera skolor per
+  -- inloggning, 20261204090000): not at all, or, for a login with a row at
+  -- school A as well, by PostgREST's header or the gateway's setting. Those
+  -- two hold the other profile at school A, so a helper that answered for
+  -- every row of the login would show here as the wrong profile's cells.
   principals constant text[][] := ARRAY[
-    ['00000000-0000-4000-8000-000000000105', 'FULL', 'false'],
-    ['00000000-0000-4000-8000-000000000106', 'REKTOR', 'false'],
-    ['00000000-0000-4000-8000-000000000107', 'SCHEMALAGGARE', 'false'],
-    ['00000000-0000-4000-8000-000000000108', 'EXPEDITION', 'false'],
-    ['00000000-0000-4000-8000-000000000109', 'SCHEMALAGGARE', 'true'],
-    ['00000000-0000-4000-8000-000000000110', 'EXPEDITION', 'true'],
-    ['00000000-0000-4000-8000-000000000115', 'LASARE', 'false'],
-    ['00000000-0000-4000-8000-000000000116', 'LASARE', 'true']];
+    ['00000000-0000-4000-8000-000000000105', 'FULL', 'false', ''],
+    ['00000000-0000-4000-8000-000000000106', 'REKTOR', 'false', ''],
+    ['00000000-0000-4000-8000-000000000107', 'SCHEMALAGGARE', 'false', ''],
+    ['00000000-0000-4000-8000-000000000108', 'EXPEDITION', 'false', ''],
+    ['00000000-0000-4000-8000-000000000109', 'SCHEMALAGGARE', 'true', ''],
+    ['00000000-0000-4000-8000-000000000110', 'EXPEDITION', 'true', ''],
+    ['00000000-0000-4000-8000-000000000115', 'LASARE', 'false', ''],
+    ['00000000-0000-4000-8000-000000000116', 'LASARE', 'true', ''],
+    ['fe000000-0000-4000-8000-000000000240', 'LASARE', 'false', 'header'],
+    ['fe000000-0000-4000-8000-000000000241', 'FULL', 'false', 'setting']];
   i integer;
   m uuid;
   pr record;
@@ -19765,6 +19846,9 @@ BEGIN
 
   FOR i IN 1 .. array_length(principals, 1) LOOP
     PERFORM set_config('request.jwt.claims', json_build_object('sub', principals[i][1])::text, true);
+    PERFORM set_config('request.headers',
+      CASE principals[i][4] WHEN 'header' THEN json_build_object('x-school-id', m)::text ELSE '' END, true);
+    PERFORM set_config('app.chosen_school_id', CASE principals[i][4] WHEN 'setting' THEN m::text ELSE '' END, true);
     IF i = 1 THEN
       m := app.current_school_id();
       IF m IS NULL OR (SELECT slug FROM "Schools" WHERE id = m) IS DISTINCT FROM 'rls-roller-school' THEN
@@ -25966,6 +26050,11 @@ BEGIN
 
   -- Every administrator's profile of the matrix school, the läsare's too:
   -- none reads the note on its lesson, every one learns that it is there.
+  -- Each names the matrix school, as the gateway names the school of every
+  -- request: a login with a row at another school too (Flera skolor per
+  -- inloggning, 20261204090000) is otherwise its first school's.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+  PERFORM set_config('app.chosen_school_id', app.current_school_id()::text, true);
   FOREACH who IN ARRAY string_to_array(current_setting('app.test_ll_roller_admins'), ',') LOOP
     PERFORM set_config('request.jwt.claims', json_build_object('sub', who)::text, true);
     SELECT count(*) INTO n FROM "LessonSubstituteNotes";
@@ -25976,6 +26065,7 @@ BEGIN
       RAISE EXCEPTION 'lesson log: the matrix school''s administrator % is not told its lesson has a note', who;
     END IF;
   END LOOP;
+  PERFORM set_config('app.chosen_school_id', '', true);
   IF array_length(string_to_array(current_setting('app.test_ll_roller_admins'), ','), 1) < 5 THEN
     RAISE EXCEPTION 'lesson log: the matrix school has % administrators, not one of each profile',
       array_length(string_to_array(current_setting('app.test_ll_roller_admins'), ','), 1);
@@ -26407,6 +26497,879 @@ BEGIN
   IF EXISTS (SELECT 1 FROM "LessonLogs" WHERE "calendarLessonId" = l1)
      OR EXISTS (SELECT 1 FROM app.substitute_noted_lessons(ARRAY[l1])) THEN
     RAISE EXCEPTION 'lesson log: L1''s log or note outlived the lesson';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 240: vilken rad ett anrop är (Flera skolor per inloggning,
+-- 20261204090000).
+--
+-- A login has one row per school, and app.current_user_id() picks the row
+-- the request names: the gateway's app.chosen_school_id first, PostgREST's
+-- x-school-id header second, else the login's oldest active row. The fixtures'
+-- logins …0240-…0244 have two rows each (rls-fixtures.sql). For both API roles
+-- (the gateway's app_authenticated and PostgREST's authenticated), all six
+-- helpers are asked:
+--
+--   240a  a login with one row resolves to it named or not, in either case
+--         of the uuid, and to nothing when another school, a value that is
+--         no uuid or an empty header is named… (empty is "not named");
+--   240b  a login with two rows: none named gives the row that took the
+--         login first ("loginSince"), not the row made first; each school
+--         named, by setting and by header, gives that row; the setting wins
+--         over the header; a school the login has no row in gives nothing;
+--   240c  current_user_may and current_user_decides answer for the chosen
+--         row only: FULL at A and LASARE in the roller school writes nothing
+--         and decides nothing there (the bool_or over every row they took
+--         before 20261204090000), and the other way round;
+--   240d  an inactive row is never chosen: named, it gives nothing; not
+--         named, the next active row;
+--   240e  a school the access-token hook closed (rastra_closed_schools) is
+--         never chosen, named or not;
+--   240f  app.my_schools() lists the login's own active rows, oldest first,
+--         with each school's name, why it is closed and which one is chosen;
+--   240g  a pupil with a row and a class at each school: the class
+--         (current_user_group_id) is the chosen row's, by setting and by
+--         header, and none at a school the pupil has no row in.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_rls240_a', :'school_a', true),
+       set_config('app.test_rls240_b', :'school_b', true);
+
+DO $$
+DECLARE
+  a uuid := current_setting('app.test_rls240_a')::uuid;
+  b uuid := current_setting('app.test_rls240_b')::uuid;
+  m uuid;
+  via text;
+  r record;
+  got record;
+  n int := 0;
+  m1 constant text := 'fe000000-0000-4000-8000-000000000240';
+  m2 constant text := 'fe000000-0000-4000-8000-000000000241';
+  m3 constant text := 'fe000000-0000-4000-8000-000000000242';
+  pupil constant text := 'fe000000-0000-4000-8000-000000000248';
+  single constant text := '00000000-0000-4000-8000-000000000105';
+  class_a uuid;
+  class_m uuid;
+  want_role text;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', single)::text, true);
+  m := app.current_school_id();
+  IF m IS NULL OR m IN (a, b) THEN
+    RAISE EXCEPTION 'flera 240: the roller school''s full administrator resolves to %; fixtures did not run', m;
+  END IF;
+  -- The pupil's two classes, as each school's administrator reads the
+  -- pupil's row there (the roller school's here, A's as …0240 with nothing
+  -- named), so that neither leans on current_user_group_id.
+  SELECT "studentGroupId" INTO class_m FROM "Users" WHERE "authId" = pupil::uuid AND "schoolId" = m;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', m1)::text, true);
+  SELECT "studentGroupId" INTO class_a FROM "Users" WHERE "authId" = pupil::uuid AND "schoolId" = a;
+  IF class_a IS NULL OR class_m IS NULL OR class_a = class_m THEN
+    RAISE EXCEPTION 'flera 240g: the pupil''s classes are % and %; fixtures did not run', class_a, class_m;
+  END IF;
+
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    IF current_user <> via THEN
+      RAISE EXCEPTION 'flera 240: running as %, not %', current_user, via;
+    END IF;
+
+    FOR r IN
+      SELECT * FROM (VALUES
+        -- sub, claims extra, setting, header, expected school, role, may PERSONAL write, decides, case
+        (single, NULL::jsonb, '',            '',                       m,    'SCHOOL_ADMIN', true,  true,  '240a one row, none named'),
+        (single, NULL,        m::text,       '',                       m,    'SCHOOL_ADMIN', true,  true,  '240a one row, its school by setting'),
+        (single, NULL,        '',            m::text,                  m,    'SCHOOL_ADMIN', true,  true,  '240a one row, its school by header'),
+        (single, NULL,        '',            upper(m::text),           m,    'SCHOOL_ADMIN', true,  true,  '240a one row, upper case'),
+        (single, NULL,        '',            ' ' || m::text || ' ',    m,    'SCHOOL_ADMIN', true,  true,  '240a one row, padded'),
+        (single, NULL,        a::text,       '',                       NULL, NULL,           false, false, '240a one row, another school by setting'),
+        (single, NULL,        '',            a::text,                  NULL, NULL,           false, false, '240a one row, another school by header'),
+        (single, NULL,        '',            'not-a-uuid',             NULL, NULL,           false, false, '240a one row, no uuid'),
+        (m1,     NULL,        '',            '',                       a,    'SCHOOL_ADMIN', true,  true,  '240b two rows, none named: the oldest'),
+        (m1,     NULL,        a::text,       '',                       a,    'SCHOOL_ADMIN', true,  true,  '240b two rows, A by setting'),
+        (m1,     NULL,        m::text,       '',                       m,    'SCHOOL_ADMIN', false, false, '240c two rows, roller by setting (LASARE there)'),
+        (m1,     NULL,        '',            m::text,                  m,    'SCHOOL_ADMIN', false, false, '240c two rows, roller by header (LASARE there)'),
+        (m1,     NULL,        a::text,       m::text,                  a,    'SCHOOL_ADMIN', true,  true,  '240b the setting wins over the header'),
+        (m1,     NULL,        '',            b::text,                  NULL, NULL,           false, false, '240b a school the login has no row in'),
+        ('fe000000-0000-4000-8000-000000000246', NULL, '', '',          a,    'TEACHER',      false, false, '240b the row made first took the login later: not the default'),
+        ('fe000000-0000-4000-8000-000000000246', NULL, '', m::text,     m,    'TEACHER',      false, false, '240b that row, named'),
+        (m2,     NULL,        '',            '',                       a,    'SCHOOL_ADMIN', false, false, '240c LASARE at A (oldest), FULL in roller: none named'),
+        (m2,     NULL,        '',            m::text,                  m,    'SCHOOL_ADMIN', true,  true,  '240c FULL in roller, by header'),
+        (m3,     NULL,        '',            '',                       m,    'TEACHER',      false, false, '240d the oldest row is inactive: the next one'),
+        (m3,     NULL,        a::text,       '',                       NULL, NULL,           false, false, '240d the inactive row named'),
+        (m3,     NULL,        '',            a::text,                  NULL, NULL,           false, false, '240d the inactive row named by header'),
+        (m3,     NULL,        '',            m::text,                  m,    'TEACHER',      false, false, '240d a school where the row has another role: that row''s role, not the other''s'),
+        (m1,     jsonb_build_object(a::text, 'sso_required'), '', '',  m,    'SCHOOL_ADMIN', false, false, '240e A closed: none named gives roller'),
+        (m1,     jsonb_build_object(a::text, 'sso_required'), a::text, '', NULL, NULL,       false, false, '240e A closed, named by setting'),
+        (m1,     jsonb_build_object(a::text, 'sso_required'), '', a::text, NULL, NULL,       false, false, '240e A closed, named by header'),
+        (single, jsonb_build_object(m::text, 'sso_required'), '', '',  NULL, NULL,           false, false, '240e the only school closed')
+      ) v(sub, closed, setting, header, school, role, may_write, decides, label)
+    LOOP
+      PERFORM set_config('request.jwt.claims',
+        (jsonb_build_object('sub', r.sub, 'role', 'authenticated')
+          || CASE WHEN r.closed IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('rastra_closed_schools', r.closed) END)::text,
+        true);
+      PERFORM set_config('app.chosen_school_id', r.setting, true);
+      PERFORM set_config('request.headers',
+        CASE WHEN r.header = '' THEN '' ELSE json_build_object('x-school-id', r.header, 'accept', '*/*')::text END, true);
+
+      SELECT app.current_user_id() AS id, app.current_school_id() AS school, app.current_user_role()::text AS role,
+             app.current_user_may('PERSONAL', true) AS may_write, app.current_user_may('PERSONAL', false) AS may_read,
+             app.current_user_decides() AS decides, app.current_user_group_id() AS grp
+        INTO got;
+      IF got.school IS DISTINCT FROM r.school OR got.role IS DISTINCT FROM r.role
+         OR got.may_write IS DISTINCT FROM r.may_write OR got.decides IS DISTINCT FROM r.decides
+         OR got.may_read IS DISTINCT FROM coalesce(r.role = 'SCHOOL_ADMIN', false)
+         OR (got.id IS NULL) IS DISTINCT FROM (r.school IS NULL)
+         OR got.grp IS NOT NULL THEN
+        RAISE EXCEPTION 'flera %: % as % resolved to school %, role %, may write %, may read %, decides %, user %, group %; expected school %, role %, may write %, decides %',
+          via, r.label, r.sub, got.school, got.role, got.may_write, got.may_read, got.decides, got.id, got.grp,
+          r.school, r.role, r.may_write, r.decides;
+      END IF;
+      IF got.id IS NOT NULL AND (SELECT "schoolId" FROM "Users" WHERE id = got.id) IS DISTINCT FROM r.school THEN
+        RAISE EXCEPTION 'flera %: % reads its own row in another school', via, r.label;
+      END IF;
+      n := n + 1;
+    END LOOP;
+
+    FOR r IN
+      SELECT * FROM (VALUES
+        ('',       '',       a,          class_a,    '240g a pupil at two schools, none named: A''s row and class'),
+        (m::text,  '',       m,          class_m,    '240g the roller school by setting: its class'),
+        ('',       m::text,  m,          class_m,    '240g the roller school by header: its class'),
+        (a::text,  m::text,  a,          class_a,    '240g the setting over the header: A''s class'),
+        ('',       b::text,  NULL::uuid, NULL::uuid, '240g a school the pupil has no row in: no class')
+      ) v(setting, header, school, grp, label)
+    LOOP
+      PERFORM set_config('request.jwt.claims', json_build_object('sub', pupil, 'role', 'authenticated')::text, true);
+      PERFORM set_config('app.chosen_school_id', r.setting, true);
+      PERFORM set_config('request.headers',
+        CASE WHEN r.header = '' THEN '' ELSE json_build_object('x-school-id', r.header)::text END, true);
+      SELECT app.current_school_id() AS school, app.current_user_role()::text AS role,
+             app.current_user_group_id() AS grp, app.current_user_id() AS id
+        INTO got;
+      want_role := CASE WHEN r.school IS NULL THEN NULL ELSE 'STUDENT' END;
+      IF got.school IS DISTINCT FROM r.school OR got.grp IS DISTINCT FROM r.grp
+         OR got.role IS DISTINCT FROM want_role
+         OR (got.id IS NULL) IS DISTINCT FROM (r.school IS NULL) THEN
+        RAISE EXCEPTION 'flera %: % resolved to school %, role %, class %; expected school %, class %',
+          via, r.label, got.school, got.role, got.grp, r.school, r.grp;
+      END IF;
+      n := n + 1;
+    END LOOP;
+    SET LOCAL ROLE app_authenticated;
+  END LOOP;
+
+  PERFORM set_config('app.chosen_school_id', '', true);
+  PERFORM set_config('request.headers', '', true);
+
+  -- The contrast 240b leans on: …0246's row in the roller school was made
+  -- before its row at A and took the login after it.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000246')::text, true);
+  PERFORM set_config('app.chosen_school_id', m::text, true);
+  SELECT "createdAt", "loginSince" INTO got FROM "Users" WHERE id = app.current_user_id();
+  PERFORM set_config('app.chosen_school_id', a::text, true);
+  IF NOT (got."createdAt" < (SELECT "createdAt" FROM "Users" WHERE id = app.current_user_id())
+          AND got."loginSince" > (SELECT "loginSince" FROM "Users" WHERE id = app.current_user_id())) THEN
+    RAISE EXCEPTION 'flera 240: …0246''s rows are not made one way and logged in the other; fixtures did not run';
+  END IF;
+  PERFORM set_config('app.chosen_school_id', '', true);
+
+  -- 240f, as the API role (the only one that may execute it).
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', m1)::text, true);
+  IF (SELECT array_agg(school_id ORDER BY ord) FROM (SELECT school_id, row_number() OVER () AS ord FROM app.my_schools()) x)
+     IS DISTINCT FROM ARRAY[a, m] THEN
+    RAISE EXCEPTION 'flera 240f: my_schools lists % for the two-row login', (SELECT array_agg(school_id) FROM app.my_schools());
+  END IF;
+  IF (SELECT array_agg(is_current ORDER BY school_id = a DESC) FROM app.my_schools()) IS DISTINCT FROM ARRAY[true, false]
+     OR (SELECT count(*) FROM app.my_schools() WHERE school_name IS NULL OR closed_reason IS NOT NULL) <> 0
+     OR (SELECT role::text || '/' || admin_profile::text FROM app.my_schools() WHERE school_id = m) <> 'SCHOOL_ADMIN/LASARE' THEN
+    RAISE EXCEPTION 'flera 240f: my_schools said %', (SELECT json_agg(x) FROM app.my_schools() x);
+  END IF;
+  PERFORM set_config('request.headers', json_build_object('x-school-id', m)::text, true);
+  IF (SELECT school_id FROM app.my_schools() WHERE is_current) IS DISTINCT FROM m THEN
+    RAISE EXCEPTION 'flera 240f: with the roller school named, my_schools marks % as chosen', (SELECT school_id FROM app.my_schools() WHERE is_current);
+  END IF;
+  PERFORM set_config('request.headers', '', true);
+  PERFORM set_config('request.jwt.claims',
+    json_build_object('sub', m1, 'rastra_closed_schools', json_build_object(a, 'sso_required'))::text, true);
+  IF (SELECT closed_reason FROM app.my_schools() WHERE school_id = a) IS DISTINCT FROM 'sso_required'
+     OR (SELECT school_id FROM app.my_schools() WHERE is_current) IS DISTINCT FROM m THEN
+    RAISE EXCEPTION 'flera 240f: with A closed, my_schools said %', (SELECT json_agg(x) FROM app.my_schools() x);
+  END IF;
+  -- The inactive row is not listed.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', m3)::text, true);
+  IF (SELECT array_agg(school_id) FROM app.my_schools()) IS DISTINCT FROM ARRAY[m] THEN
+    RAISE EXCEPTION 'flera 240f: the login with an inactive row lists %', (SELECT array_agg(school_id) FROM app.my_schools());
+  END IF;
+  -- Nobody signed in: nothing.
+  PERFORM set_config('request.jwt.claims', '', true);
+  IF EXISTS (SELECT 1 FROM app.my_schools()) THEN
+    RAISE EXCEPTION 'flera 240f: my_schools lists rows with nobody signed in';
+  END IF;
+
+  RAISE NOTICE 'flera 240: % resolutions', n;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 241: varje tabell svarar för den valda skolan och ingen annan.
+--
+-- Every table with row security, for both API roles:
+--
+--   241a  a login with two rows, choosing either school, sees no row filed
+--         under another school (a table's "schoolId", or the school itself
+--         for Schools): the admin with FULL at A and LASARE in the roller
+--         school, the guardian with a child at each, the teacher at A
+--         and at school B, and the pupil with a class at A and one in the
+--         roller school;
+--   241b  and sees in the chosen school exactly what a login with only that
+--         row sees: …0240 choosing A against school A's administrator, both
+--         FULL; …0240 choosing the roller school against its läsare (…0115);
+--         the guardian choosing the roller school against its guardian
+--         (…0113), who has the same child. The tables named below answer for
+--         a person's own rows (notices, devices, feeds, a private schedule
+--         proposal) and are compared by whether they answer at all.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_rls241_a', :'school_a', true),
+       set_config('app.test_rls241_b', :'school_b', true),
+       set_config('app.test_rls241_admin', :'admin_auth_id', true);
+
+DO $$
+DECLARE
+  a uuid := current_setting('app.test_rls241_a')::uuid;
+  b uuid := current_setting('app.test_rls241_b')::uuid;
+  admin_a constant text := current_setting('app.test_rls241_admin');
+  m uuid;
+  via text;
+  t record;
+  c record;
+  n bigint;
+  twin_n bigint;
+  key_col text;
+  wrong text[] := '{}';
+  cells int := 0;
+  -- Tables whose rows are the reader's own, so two different people with
+  -- the same role see different rows: compared by whether they read at all.
+  own_rows constant text[] := ARRAY['Notifications', 'NotificationOptOuts', 'PushDevices', 'CalendarFeeds',
+                                    'ScheduleCandidateRuns', 'ScheduleCandidates', 'PersonalDataAccess'];
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+  m := app.current_school_id();
+  IF m IS NULL THEN
+    RAISE EXCEPTION 'flera 241: the roller school is not there; fixtures did not run';
+  END IF;
+
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    FOR c IN
+      SELECT * FROM (VALUES
+        ('fe000000-0000-4000-8000-000000000240', a, admin_a,                                 'admin FULL at A'),
+        ('fe000000-0000-4000-8000-000000000240', m, '00000000-0000-4000-8000-000000000115', 'admin LASARE in roller'),
+        ('fe000000-0000-4000-8000-000000000243', a, NULL,                                    'guardian at A'),
+        ('fe000000-0000-4000-8000-000000000243', m, '00000000-0000-4000-8000-000000000113', 'guardian in roller'),
+        ('fe000000-0000-4000-8000-000000000244', a, NULL,                                    'teacher at A'),
+        ('fe000000-0000-4000-8000-000000000244', b, NULL,                                    'teacher at B'),
+        ('fe000000-0000-4000-8000-000000000248', a, NULL,                                    'pupil at A'),
+        ('fe000000-0000-4000-8000-000000000248', m, NULL,                                    'pupil in roller')
+      ) v(sub, school, twin, label)
+    LOOP
+      FOR t IN
+        SELECT cl.relname AS tbl,
+               EXISTS (SELECT 1 FROM pg_attribute at WHERE at.attrelid = cl.oid AND at.attname = 'schoolId' AND NOT at.attisdropped) AS has_school
+          FROM pg_class cl JOIN pg_namespace ns ON ns.oid = cl.relnamespace
+         WHERE ns.nspname = 'public' AND cl.relkind = 'r' AND cl.relrowsecurity
+         ORDER BY 1
+      LOOP
+        key_col := CASE WHEN t.tbl = 'Schools' THEN 'id' WHEN t.has_school THEN 'schoolId' END;
+
+        -- As the login, the school named by header for PostgREST's role and
+        -- by the gateway's setting for the API's.
+        PERFORM set_config('request.jwt.claims', json_build_object('sub', c.sub)::text, true);
+        PERFORM set_config('app.chosen_school_id', CASE via WHEN 'app_authenticated' THEN c.school::text ELSE '' END, true);
+        PERFORM set_config('request.headers', CASE via WHEN 'authenticated' THEN json_build_object('x-school-id', c.school)::text ELSE '' END, true);
+        IF app.current_school_id() IS DISTINCT FROM c.school THEN
+          RAISE EXCEPTION 'flera 241: % did not resolve to its school as %', c.label, via;
+        END IF;
+        BEGIN
+          IF key_col IS NOT NULL THEN
+            EXECUTE format('SELECT count(*) FROM %I WHERE %I IS DISTINCT FROM $1 AND %I IS NOT NULL', t.tbl, key_col, key_col)
+              INTO n USING c.school;
+            IF n > 0 THEN
+              wrong := wrong || format('%s as %s sees %s rows of %s filed under another school', c.label, via, n, t.tbl);
+            END IF;
+          END IF;
+          EXECUTE format('SELECT count(*) FROM %I', t.tbl) INTO n;
+        EXCEPTION WHEN insufficient_privilege THEN
+          n := -1;
+        END;
+        cells := cells + 1;
+
+        CONTINUE WHEN c.twin IS NULL;
+        PERFORM set_config('request.jwt.claims', json_build_object('sub', c.twin)::text, true);
+        PERFORM set_config('app.chosen_school_id', '', true);
+        PERFORM set_config('request.headers', '', true);
+        IF app.current_school_id() IS DISTINCT FROM c.school THEN
+          RAISE EXCEPTION 'flera 241: the twin of % is not in its school', c.label;
+        END IF;
+        BEGIN
+          EXECUTE format('SELECT count(*) FROM %I', t.tbl) INTO twin_n;
+        EXCEPTION WHEN insufficient_privilege THEN
+          twin_n := -1;
+        END;
+        IF t.tbl = ANY (own_rows) THEN
+          IF (n = -1) IS DISTINCT FROM (twin_n = -1) THEN
+            wrong := wrong || format('%s as %s: %s answers %s, the single-school twin %s', c.label, via, t.tbl, n, twin_n);
+          END IF;
+        ELSIF n IS DISTINCT FROM twin_n THEN
+          wrong := wrong || format('%s as %s sees %s rows of %s, the single-school twin %s', c.label, via, n, t.tbl, twin_n);
+        END IF;
+        cells := cells + 1;
+      END LOOP;
+    END LOOP;
+    SET LOCAL ROLE app_authenticated;
+  END LOOP;
+
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION 'flera 241: % of % cells wrong: %', cardinality(wrong), cells, array_to_string(wrong, '; ');
+  END IF;
+  RAISE NOTICE 'flera 241: % cells', cells;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 242: en inloggning ansluts till en annan skola bara genom
+-- inbjudan, och en delad inloggning är personens (20261204090000).
+--
+--   242a  as the roller school's FULL administrator (the API's role): a row
+--         that takes a login another row holds, inserted or updated, is
+--         refused with 23505 on Users_authId_key, as before a login could
+--         be shared, unless app.login_join names that very row; a login
+--         nobody holds, and any write that leaves authId alone, pass;
+--   242b  app.login_is_held_elsewhere answers for the API role only: true
+--         for a row whose login another row holds, false for a login of
+--         one row, for a login nobody holds and with nobody signed in;
+--   242c  gallring leaves a shared login alone: with the gallring school's
+--         departed pupil's login also held by a row the roller school's
+--         administrator joined to it, app.gallring_claim_person answers
+--         invited = false, so the job deletes no login.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  shared constant uuid := 'fe000000-0000-4000-8000-000000000244';
+  m uuid;
+  pupil2 uuid;
+  new_id uuid;
+  con text;
+  st text;
+  r record;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+  m := app.current_school_id();
+  SELECT id INTO pupil2 FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000114';
+  IF m IS NULL OR pupil2 IS NULL THEN
+    RAISE EXCEPTION 'flera 242: the roller school or its second pupil is missing; fixtures did not run';
+  END IF;
+
+  FOR r IN SELECT * FROM (VALUES
+      ('insert, not named',          'insert', shared,            false, false),
+      ('insert, named',              'insert', shared,            true,  true),
+      ('update, not named',          'update', shared,            false, false),
+      ('update, another row named',  'update', shared,            NULL,  false),
+      ('update, named',              'update', shared,            true,  true),
+      ('update to a login nobody holds', 'update', gen_random_uuid(), false, true)
+    ) AS t(label, cmd, login, named, admitted)
+  LOOP
+    new_id := gen_random_uuid();
+    PERFORM set_config('app.login_join',
+      CASE WHEN r.named IS NULL THEN gen_random_uuid()::text
+           WHEN r.named AND r.cmd = 'insert' THEN new_id::text
+           WHEN r.named THEN pupil2::text
+           ELSE '' END, true);
+    BEGIN
+      IF r.cmd = 'insert' THEN
+        INSERT INTO "Users" (id, "schoolId", email, "firstName", "lastName", role, "authId", "updatedAt")
+        VALUES (new_id, m, 'flera-242@example.invalid', 'Flera', 'Ansluten', 'TEACHER', r.login, now());
+      ELSE
+        UPDATE "Users" SET "authId" = r.login WHERE id = pupil2;
+        IF NOT FOUND THEN RAISE EXCEPTION 'flera 242: % updated no row', r.label; END IF;
+      END IF;
+      IF NOT r.admitted THEN
+        RAISE EXCEPTION 'flera 242: % was admitted', r.label;
+      END IF;
+      RAISE EXCEPTION USING ERRCODE = 'ZF242';
+    EXCEPTION
+      WHEN SQLSTATE 'ZF242' THEN NULL;
+      WHEN unique_violation THEN
+        GET STACKED DIAGNOSTICS con = CONSTRAINT_NAME, st = MESSAGE_TEXT;
+        IF r.admitted THEN
+          RAISE EXCEPTION 'flera 242: % was refused: %', r.label, st;
+        END IF;
+        IF con IS DISTINCT FROM 'Users_authId_key' OR st NOT LIKE '%"Users_authId_key"%' THEN
+          RAISE EXCEPTION 'flera 242: % was refused as % (%), not as Users_authId_key', r.label, con, st;
+        END IF;
+    END;
+  END LOOP;
+  PERFORM set_config('app.login_join', '', true);
+
+  -- A write that leaves the shared login where it is.
+  UPDATE "Users" SET "firstName" = 'Flera' WHERE "authId" = 'fe000000-0000-4000-8000-000000000240' AND "schoolId" = m;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'flera 242: the roller row of the shared login could not be written';
+  END IF;
+
+  -- 242d: an administrator cannot move a person's default school by
+  -- writing "loginSince"; it moves only with the login.
+  UPDATE "Users" SET "loginSince" = timestamptz '1900-01-01', "firstName" = 'Flera'
+   WHERE "authId" = 'fe000000-0000-4000-8000-000000000246' AND "schoolId" = m;
+  IF NOT FOUND THEN RAISE EXCEPTION 'flera 242d: the roller row of …0246 could not be written'; END IF;
+  IF (SELECT "loginSince" FROM "Users" WHERE "authId" = 'fe000000-0000-4000-8000-000000000246' AND "schoolId" = m)
+     < timestamptz '2000-01-01' THEN
+    RAISE EXCEPTION 'flera 242d: an administrator moved a row''s loginSince';
+  END IF;
+  new_id := gen_random_uuid();
+  INSERT INTO "Users" (id, "schoolId", email, "firstName", "lastName", role, "authId", "loginSince", "updatedAt")
+  VALUES (new_id, m, 'flera-242d@example.invalid', 'Flera', 'Ny', 'TEACHER', gen_random_uuid(), timestamptz '1900-01-01', now());
+  IF (SELECT "loginSince" FROM "Users" WHERE id = new_id) < timestamptz '2000-01-01' THEN
+    RAISE EXCEPTION 'flera 242d: a new row kept the loginSince its writer gave it';
+  END IF;
+  -- A new login restamps it.
+  UPDATE "Users" SET "authId" = gen_random_uuid() WHERE id = pupil2 RETURNING "loginSince" INTO con;
+  IF con::timestamptz < (SELECT max("loginSince") FROM "Users" WHERE "schoolId" = m AND id <> pupil2) THEN
+    RAISE EXCEPTION 'flera 242d: a row that took a new login was not stamped now';
+  END IF;
+
+  -- 242b.
+  IF NOT app.login_is_held_elsewhere('fe000000-0000-4000-8000-000000000240',
+           (SELECT id FROM "Users" WHERE "authId" = 'fe000000-0000-4000-8000-000000000240' AND "schoolId" = m))
+     OR app.login_is_held_elsewhere('00000000-0000-4000-8000-000000000105',
+           (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000105'))
+     OR app.login_is_held_elsewhere(gen_random_uuid(), NULL) THEN
+    RAISE EXCEPTION 'flera 242b: login_is_held_elsewhere answered wrongly';
+  END IF;
+  -- Without the row's id, any row holding it counts (a row just removed).
+  IF NOT app.login_is_held_elsewhere('00000000-0000-4000-8000-000000000105', NULL) THEN
+    RAISE EXCEPTION 'flera 242b: a held login counted as nobody''s';
+  END IF;
+  PERFORM set_config('request.jwt.claims', '', true);
+  IF NOT app.login_is_held_elsewhere('fe000000-0000-4000-8000-000000000240', NULL) THEN
+    RAISE EXCEPTION 'flera 242b: with nobody signed in, the shared login was nobody''s';
+  END IF;
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    PERFORM app.login_is_held_elsewhere(gen_random_uuid(), NULL);
+    RAISE EXCEPTION 'flera 242b: PostgREST''s role may ask whether a login is shared';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  SET LOCAL ROLE app_authenticated;
+END $$;
+ROLLBACK;
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000081')::text, true);
+DO $$
+BEGIN
+  PERFORM set_config('app.test_rls242_school', app.current_school_id()::text, true);
+  PERFORM set_config('app.test_rls242_pupil', (SELECT id::text FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000085'), true);
+  IF current_setting('app.test_rls242_pupil', true) IS NULL THEN
+    RAISE EXCEPTION 'flera 242c: the gallring school''s departed pupil is not in the fixtures';
+  END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+DO $$
+DECLARE
+  joined uuid := gen_random_uuid();
+BEGIN
+  -- The roller school's administrator joins the departed pupil's login to a
+  -- guardian row of theirs, as the gateway's invitation does.
+  PERFORM set_config('app.login_join', joined::text, true);
+  INSERT INTO "Users" (id, "schoolId", email, "firstName", "lastName", role, "authId", "invitedAt", "updatedAt")
+  VALUES (joined, app.current_school_id(), 'flera-242c@example.invalid', 'Flera', 'Förälder', 'GUARDIAN',
+          '00000000-0000-4000-8000-000000000085', now(), now());
+  PERFORM set_config('app.login_join', '', true);
+END $$;
+SELECT set_config('request.jwt.claims', '', true);
+DO $$
+DECLARE
+  run uuid := app.gallring_begin(current_setting('app.test_rls242_school')::uuid, clock_timestamp());
+  c record;
+BEGIN
+  SELECT * INTO c FROM app.gallring_claim_person(run, current_setting('app.test_rls242_pupil')::uuid);
+  IF c.auth_id IS DISTINCT FROM '00000000-0000-4000-8000-000000000085' OR c.invited IS DISTINCT FROM false THEN
+    RAISE EXCEPTION 'flera 242c: the departed pupil whose login another school holds was claimed as % %', c.auth_id, c.invited;
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 243: kroken dömer varje skola för sig (20261204090000).
+--
+-- As supabase_auth_admin, like section 76. The teacher …0244 is at school A,
+-- which has no school-account row, and at school B, whose staff must sign in
+-- with B's Entra tenant:
+--
+--   243a  by password: the claims, with rastra_closed_schools {B:
+--         sso_required}; refreshed, the same;
+--   243b  by school account with an identity of B's tenant: the claims,
+--         with {A: sso_not_enabled};
+--   243c  by school account with no identity: neither school lets it in, so
+--         the 403 of the oldest row (A's sso_not_enabled);
+--   243d  logins whose schools all let the session in get exactly the
+--         claims Auth signed, without the key, also when Auth's claims
+--         carried a stale one: the admin with FULL at A and LASARE in the
+--         roller school, and the login whose older row is inactive (only
+--         its active row is judged);
+--   243e  by SAML: no school pins it, so the 403 of section 76;
+--   243f  a deactivated row whose school refuses the session is closed in
+--         the claim too, so making it active again during the token's life
+--         does not open it (…0247: active at A, inactive at B);
+--   243g  whether a token is issued is judged on the active rows: a person
+--         active only at B, which refuses a password, is refused, though
+--         their inactive row at A would let them in (…0245).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_rls243_a', :'school_a', true),
+       set_config('app.test_rls243_b', :'school_b', true);
+DO $$
+DECLARE
+  a constant text := current_setting('app.test_rls243_a');
+  b constant text := current_setting('app.test_rls243_b');
+  now_s bigint := extract(epoch FROM now())::bigint;
+  b_tenant constant text := '7b0c2a9e-3c1d-4e5f-8a6b-0c1d2e3f4a5b';
+  t constant text := 'fe000000-0000-4000-8000-000000000244';
+  r record;
+  claims jsonb;
+  got jsonb;
+  expected jsonb;
+  cases int := 0;
+BEGIN
+  SET LOCAL ROLE supabase_auth_admin;
+  IF current_user <> 'supabase_auth_admin' THEN RAISE EXCEPTION 'flera 243: running as %', current_user; END IF;
+
+  FOR r IN SELECT * FROM (VALUES
+      ('243a the teacher at A and B by password',  t, 'password', '["password"]'::jsonb, NULL::jsonb, jsonb_build_object(b, 'sso_required'), NULL::text, false),
+      ('243a refreshed',                           t, 'token_refresh', '["password"]', NULL, jsonb_build_object(b, 'sso_required'), NULL, false),
+      ('243c by school account, no identity',      t, 'oauth', '["oauth"]', NULL, NULL, 'sso_not_enabled', false),
+      ('243d FULL at A, LASARE in roller',         'fe000000-0000-4000-8000-000000000240', 'password', '["password"]', NULL, NULL, NULL, false),
+      ('243d with a stale key in the claims',      'fe000000-0000-4000-8000-000000000240', 'password', '["password"]', jsonb_build_object(a, 'sso_required'), NULL, NULL, false),
+      ('243d an inactive older row',               'fe000000-0000-4000-8000-000000000242', 'password', '["password"]', NULL, NULL, NULL, false),
+      ('243e by SAML',                             t, 'sso/saml', '["sso/saml"]', NULL, NULL, 'sign_in_method_not_allowed', false),
+      ('243f an inactive row refuses: closed too',  'fe000000-0000-4000-8000-000000000247', 'password', '["password"]', NULL, jsonb_build_object(b, 'sso_required'), NULL, false),
+      ('243g only an inactive row would let it in', 'fe000000-0000-4000-8000-000000000245', 'password', '["password"]', NULL, NULL, 'sso_required', false),
+      ('243b by school account, B''s tenant',      t, 'oauth', '["oauth"]', NULL, jsonb_build_object(a, 'sso_not_enabled'), NULL, true)
+    ) AS v(label, sub, method, amr, stale, closed, refusal, needs_identity)
+  LOOP
+    IF r.needs_identity THEN
+      INSERT INTO auth.identities (provider_id, user_id, identity_data, provider)
+      VALUES ('rls243-entra', t::uuid,
+              jsonb_build_object('iss', 'https://login.microsoftonline.com/' || b_tenant || '/v2.0', 'sub', 'rls243-entra',
+                                 'custom_claims', jsonb_build_object('tid', b_tenant)),
+              'azure');
+    END IF;
+    claims := jsonb_build_object(
+      'aud', 'authenticated', 'sub', r.sub, 'role', 'authenticated', 'email', 'rls243@example.invalid',
+      'session_id', gen_random_uuid(), 'aal', 'aal1', 'is_anonymous', false,
+      'app_metadata', jsonb_build_object('provider', 'email'), 'user_metadata', '{}'::jsonb,
+      'amr', (SELECT jsonb_agg(jsonb_build_object('method', e #>> '{}', 'timestamp', now_s - 60)) FROM jsonb_array_elements(r.amr) e));
+    got := sign_in.custom_access_token_hook(jsonb_build_object(
+      'user_id', r.sub, 'claims', claims || CASE WHEN r.stale IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('rastra_closed_schools', r.stale) END,
+      'authentication_method', r.method));
+    expected := CASE
+      WHEN r.refusal IS NOT NULL THEN jsonb_build_object('error', jsonb_build_object('http_code', 403, 'message', r.refusal))
+      WHEN r.closed IS NULL THEN jsonb_build_object('claims', claims)
+      ELSE jsonb_build_object('claims', claims || jsonb_build_object('rastra_closed_schools', r.closed)) END;
+    IF got IS DISTINCT FROM expected THEN
+      RAISE EXCEPTION 'flera %: gave %, expected %', r.label, got, expected;
+    END IF;
+    cases := cases + 1;
+  END LOOP;
+  IF cases <> 10 THEN RAISE EXCEPTION 'flera 243: only % cases ran', cases; END IF;
+  SET LOCAL ROLE app_authenticated;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 244: lösarens funktioner står i katalogen som migreringen skrev dem
+-- (20261204090000).
+--
+--   244a  the six helpers are SECURITY DEFINER, STABLE, with search_path
+--         public, pg_temp, and executable by both API roles; the two that
+--         read the request (app.requested_school, app.closed_schools) by no
+--         API role at all: the helpers call them as their owner;
+--   244b  app.my_schools and app.login_is_held_elsewhere are the API role's
+--         alone; sign_in.rules is supabase_auth_admin's alone;
+--   244c  the join trigger is there, enabled, AFTER INSERT OR UPDATE OF
+--         "authId", row-level (after row security, so it tells a refused
+--         writer nothing), and takes the login's lock before it looks for
+--         another row, for a row invited to the login (two writers of one
+--         login wait for each other, as on the unique index; the race
+--         itself takes two sessions, so the PR's demo shows it); the
+--         loginSince trigger BEFORE, on "authId" and "loginSince".
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  bad text;
+BEGIN
+  SELECT string_agg(p.proname, ', ') INTO bad
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'app'
+     AND p.proname IN ('current_user_id', 'current_school_id', 'current_user_role', 'current_user_group_id',
+                       'current_user_may', 'current_user_decides')
+     AND NOT (p.prosecdef AND p.provolatile = 's'
+              AND p.proconfig = ARRAY['search_path=public, pg_temp']
+              AND has_function_privilege('app_authenticated', p.oid, 'EXECUTE')
+              AND has_function_privilege('authenticated', p.oid, 'EXECUTE'));
+  IF bad IS NOT NULL OR (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                          WHERE n.nspname = 'app' AND p.proname IN ('current_user_id', 'current_school_id', 'current_user_role',
+                                'current_user_group_id', 'current_user_may', 'current_user_decides')) <> 6 THEN
+    RAISE EXCEPTION 'flera 244a: helpers not as written: %', bad;
+  END IF;
+
+  SELECT string_agg(fn || ' for ' || r, ', ') INTO bad
+    FROM unnest(ARRAY['app.requested_school()', 'app.closed_schools()', 'app.my_schools()',
+                      'app.login_is_held_elsewhere(uuid, uuid)', 'sign_in.rules(uuid)']) fn,
+         unnest(ARRAY['app_authenticated', 'authenticated', 'anon', 'service_role', 'supabase_auth_admin']) r
+   WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r)
+     AND has_function_privilege(r, fn::regprocedure, 'EXECUTE')
+         IS DISTINCT FROM ((fn IN ('app.my_schools()', 'app.login_is_held_elsewhere(uuid, uuid)') AND r = 'app_authenticated')
+                           OR (fn = 'sign_in.rules(uuid)' AND r = 'supabase_auth_admin'));
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION 'flera 244b: EXECUTE is wrong on %', bad;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger tg
+     WHERE tg.tgrelid = '"Users"'::regclass AND tg.tgname = 'Users_login_since_is_the_logins'
+       AND tg.tgenabled = 'O'
+       AND pg_get_triggerdef(tg.oid) LIKE '%BEFORE INSERT OR UPDATE OF "authId", "loginSince" ON public."Users" FOR EACH ROW%') THEN
+    RAISE EXCEPTION 'flera 244c: the loginSince trigger is missing or not as written';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger tg
+     WHERE tg.tgrelid = '"Users"'::regclass AND tg.tgname = 'Users_a_login_joins_another_school_by_invitation'
+       AND tg.tgenabled = 'O'
+       AND pg_get_triggerdef(tg.oid) LIKE '%AFTER INSERT OR UPDATE OF "authId" ON public."Users" FOR EACH ROW%') THEN
+    RAISE EXCEPTION 'flera 244c: the join trigger is missing or not as written: %',
+      (SELECT pg_get_triggerdef(oid) FROM pg_trigger WHERE tgrelid = '"Users"'::regclass AND tgname = 'Users_a_login_joins_another_school_by_invitation');
+  END IF;
+  IF pg_get_functiondef('app.users_a_login_joins_another_school_by_invitation()'::regprocedure) NOT LIKE
+       '%IF NEW."invitedAt" IS NOT NULL THEN%PERFORM pg_advisory_xact_lock(hashtext(''Users.authId''), hashtext(NEW."authId"::text));%END IF;%IF EXISTS (SELECT 1 FROM "Users" o WHERE o."authId" = NEW."authId"%' THEN
+    RAISE EXCEPTION 'flera 244c: the join trigger does not take the login''s lock before it looks for another row';
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 245: ingen skrivning går över skolgränsen, och en enhet följer
+-- skolan den registrerades för (Flera skolor per inloggning,
+-- 20261204090000).
+--
+--   245a  every table with row security and a "schoolId", every write verb,
+--         both directions, both API roles: a login with rows at two schools
+--         reads a row of one school (stashing it whole, as that school's
+--         row), then names the other school and tries to write it.
+--         …0240 reads the roller school (LASARE) and writes with FULL at A;
+--         …0241 reads A (LASARE) and writes with FULL in the roller school.
+--         So the profile at the writing school would let every write
+--         through, and only the school stops it: an INSERT of the stashed
+--         row is refused by row security (42501) or by the role's grants,
+--         an UPDATE or DELETE of it by its ctid meets no row. Through the
+--         gateway's setting for app_authenticated, through PostgREST's
+--         header for authenticated;
+--   245b  a device registered at one school of a login moves when it is
+--         registered at the other: one row, the new school's, and only the
+--         new school's delivery (app.push_targets) finds it. A push is the
+--         notices of the school the app works in; the other school's stay
+--         in its inbox.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_rls245_a', :'school_a', true);
+DO $$
+DECLARE
+  a uuid := current_setting('app.test_rls245_a')::uuid;
+  m uuid;
+  via text;
+  d record;
+  t record;
+  key_col text;
+  ins_cols text;
+  upd_col text;
+  tid text;
+  stashed jsonb;
+  n bigint;
+  st text;
+  msg text;
+  outcome text;
+  cmd text;
+  probed int;
+  at_least int;
+  tried text[] := '{}';
+  wrong text[] := '{}';
+  others text[] := '{}';
+  cells int := 0;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+  m := app.current_school_id();
+
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    FOR d IN SELECT * FROM (VALUES
+        ('fe000000-0000-4000-8000-000000000240', m, a, 'reads roller as LASARE, writes with FULL at A'),
+        ('fe000000-0000-4000-8000-000000000241', a, m, 'reads A as LASARE, writes with FULL in roller')
+      ) v(sub, read_at, write_at, label)
+    LOOP
+      PERFORM set_config('request.jwt.claims', json_build_object('sub', d.sub)::text, true);
+      probed := 0;
+      FOR t IN
+        SELECT cl.relname AS tbl
+          FROM pg_class cl JOIN pg_namespace ns ON ns.oid = cl.relnamespace
+         WHERE ns.nspname = 'public' AND cl.relkind = 'r' AND cl.relrowsecurity
+           AND (cl.relname = 'Schools'
+                OR EXISTS (SELECT 1 FROM pg_attribute at WHERE at.attrelid = cl.oid AND at.attname = 'schoolId' AND NOT at.attisdropped))
+         ORDER BY 1
+      LOOP
+        key_col := CASE t.tbl WHEN 'Schools' THEN 'id' ELSE 'schoolId' END;
+        -- Read one row of the reading school, as that school.
+        PERFORM set_config('app.chosen_school_id', CASE via WHEN 'app_authenticated' THEN d.read_at::text ELSE '' END, true);
+        PERFORM set_config('request.headers', CASE via WHEN 'authenticated' THEN json_build_object('x-school-id', d.read_at)::text ELSE '' END, true);
+        tid := NULL;
+        BEGIN
+          EXECUTE format('SELECT x.ctid::text, to_jsonb(x) FROM %I x WHERE x.%I = $1 LIMIT 1', t.tbl, key_col)
+            INTO tid, stashed USING d.read_at;
+        EXCEPTION WHEN insufficient_privilege THEN tid := NULL;
+        END;
+        CONTINUE WHEN tid IS NULL;
+        probed := probed + 1;
+        SELECT string_agg(quote_ident(at.attname), ', ' ORDER BY at.attnum) INTO ins_cols
+          FROM pg_attribute at
+         WHERE at.attrelid = format('public.%I', t.tbl)::regclass AND at.attnum > 0 AND NOT at.attisdropped
+           AND has_column_privilege(format('public.%I', t.tbl), at.attname, 'INSERT');
+        SELECT quote_ident(at.attname) INTO upd_col
+          FROM pg_attribute at
+         WHERE at.attrelid = format('public.%I', t.tbl)::regclass AND at.attnum > 0 AND NOT at.attisdropped
+           AND has_column_privilege(format('public.%I', t.tbl), at.attname, 'UPDATE')
+         ORDER BY at.attnum LIMIT 1;
+
+        -- Now name the writing school, and try to write the other's row.
+        PERFORM set_config('app.chosen_school_id', CASE via WHEN 'app_authenticated' THEN d.write_at::text ELSE '' END, true);
+        PERFORM set_config('request.headers', CASE via WHEN 'authenticated' THEN json_build_object('x-school-id', d.write_at)::text ELSE '' END, true);
+        IF app.current_school_id() IS DISTINCT FROM d.write_at THEN
+          RAISE EXCEPTION 'flera 245a: % did not resolve to the writing school as %', d.label, via;
+        END IF;
+        FOREACH cmd IN ARRAY ARRAY['insert', 'update', 'delete'] LOOP
+          outcome := NULL;
+          BEGIN
+            IF cmd = 'insert' THEN
+              IF ins_cols IS NULL THEN
+                outcome := 'denied';
+              ELSE
+                EXECUTE format('INSERT INTO %I (%s) SELECT %s FROM jsonb_populate_record(NULL::%I, $1)',
+                               t.tbl, ins_cols, ins_cols, t.tbl) USING stashed;
+                GET DIAGNOSTICS n = ROW_COUNT;
+                outcome := CASE WHEN n = 1 THEN 'admitted' ELSE 'none' END;
+              END IF;
+            ELSIF cmd = 'update' THEN
+              IF upd_col IS NULL THEN
+                outcome := 'denied';
+              ELSE
+                EXECUTE format('UPDATE %I SET %s = %s WHERE ctid = $1::tid', t.tbl, upd_col, upd_col) USING tid;
+                GET DIAGNOSTICS n = ROW_COUNT;
+                outcome := CASE WHEN n = 0 THEN 'none' ELSE 'admitted' END;
+              END IF;
+            ELSE
+              EXECUTE format('DELETE FROM %I WHERE ctid = $1::tid', t.tbl) USING tid;
+              GET DIAGNOSTICS n = ROW_COUNT;
+              outcome := CASE WHEN n = 0 THEN 'none' ELSE 'admitted' END;
+            END IF;
+            RAISE EXCEPTION USING ERRCODE = 'ZF245';
+          EXCEPTION
+            WHEN SQLSTATE 'ZF245' THEN NULL;
+            WHEN unique_violation OR foreign_key_violation OR exclusion_violation OR check_violation OR not_null_violation THEN
+              -- Past row security, which PostgreSQL checks before the
+              -- table's constraints: the row reached them.
+              outcome := 'admitted';
+            WHEN insufficient_privilege THEN
+              GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT;
+              outcome := CASE WHEN msg LIKE '%row-level security%' THEN 'refused' ELSE 'denied' END;
+            WHEN OTHERS THEN
+              GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT;
+              -- A BEFORE trigger refusing first is no write either, but proves
+              -- less: counted and named below.
+              outcome := 'other ' || st;
+          END;
+          IF outcome LIKE 'other %' THEN
+            others := others || format('%s %s %s', t.tbl, cmd, outcome);
+          END IF;
+          IF outcome = 'admitted' THEN
+            wrong := wrong || format('%s as %s: %s %s of the other school was admitted', d.label, via, cmd, t.tbl);
+          END IF;
+          cells := cells + 1;
+        END LOOP;
+      END LOOP;
+      -- PostgREST's role reads few of the tables at all; the API's most of
+      -- them, though school A (the seed's) has rows in fewer than the
+      -- roller school, which has one in each.
+      at_least := CASE via WHEN 'app_authenticated' THEN 20 ELSE 5 END;
+      IF probed < at_least THEN
+        wrong := wrong || format('%s as %s: only %s tables had a row to try', d.label, via, probed);
+      END IF;
+      tried := tried || format('%s %s: %s tables', via, d.label, probed);
+    END LOOP;
+    SET LOCAL ROLE app_authenticated;
+  END LOOP;
+
+  PERFORM set_config('app.chosen_school_id', '', true);
+  PERFORM set_config('request.headers', '', true);
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION 'flera 245a: % of % cells wrong: %', cardinality(wrong), cells, array_to_string(wrong, '; ');
+  END IF;
+  RAISE NOTICE 'flera 245a: % cells (%); refused by a trigger before row security: %', cells,
+    array_to_string(tried, '; '), coalesce(nullif(array_to_string(others, ', '), ''), 'none');
+END $$;
+ROLLBACK;
+
+BEGIN;
+SELECT set_config('app.test_rls245_a', :'school_a', true),
+       set_config('app.test_rls245_b', :'school_b', true);
+DO $$
+DECLARE
+  a uuid := current_setting('app.test_rls245_a')::uuid;
+  b uuid := current_setting('app.test_rls245_b')::uuid;
+  t constant text := 'fe000000-0000-4000-8000-000000000244';
+  token constant text := 'ExponentPushToken[rls245flera000]';
+  row_a uuid;
+  row_b uuid;
+  r record;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', t)::text, true);
+  PERFORM set_config('app.chosen_school_id', a::text, true);
+  row_a := app.current_user_id();
+  PERFORM app.claim_device_push_token(token, 'IOS', 'sv');
+  PERFORM set_config('app.chosen_school_id', b::text, true);
+  row_b := app.current_user_id();
+  IF row_a IS NULL OR row_b IS NULL OR row_a = row_b THEN
+    RAISE EXCEPTION 'flera 245b: the teacher at A and B did not resolve to two rows';
+  END IF;
+  PERFORM app.claim_device_push_token(token, 'IOS', 'sv');
+
+  -- As the delivery asks, with no principal.
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('app.chosen_school_id', '', true);
+  IF EXISTS (SELECT 1 FROM app.push_targets(a, ARRAY[row_a], 'LESSON_CANCELLED', true)) THEN
+    RAISE EXCEPTION 'flera 245b: the device still receives school A''s notices after registering at B';
+  END IF;
+  SELECT count(*) AS n, min(user_id::text) AS who INTO r FROM app.push_targets(b, ARRAY[row_b], 'LESSON_CANCELLED', true);
+  IF r.n <> 1 OR r.who IS DISTINCT FROM row_b::text THEN
+    RAISE EXCEPTION 'flera 245b: school B''s delivery found % devices (%)', r.n, r.who;
   END IF;
 END $$;
 ROLLBACK;
