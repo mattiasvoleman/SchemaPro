@@ -1,10 +1,12 @@
 import { Injectable } from '@nestjs/common';
+import type { PrismaClient } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { recordRead } from '../access-log/access-log';
 import { requireUserId } from '../common/utils/request-context';
 import { parseDateString } from '../common/utils/time';
 import { PrismaService } from '../database/prisma.service';
 import type { AbsenceReportsQueryDto, GuardianLinksQueryDto } from './dto/family-reads.dto';
+import { absenceReportRemoval, schoolToday } from './family-access';
 
 /** A guardian's child, as the family's pages list them: no contact details. */
 export interface ChildView {
@@ -14,6 +16,13 @@ export interface ChildView {
   lastName: string;
   isActive: boolean;
   studentGroupId: string | null;
+  /**
+   * The day the child's school is on, YYYY-MM-DD: what "today" means for a
+   * report or a leave request about this child, whatever the reader's
+   * device says. A phone in New York at 20:00 is already on tomorrow in
+   * Stockholm, and one in Bangkok at 03:00 still on yesterday.
+   */
+  schoolToday: string;
 }
 
 /** An absence report as PostgREST answered it: a bare date, wall clocks, the note. */
@@ -27,6 +36,13 @@ export interface AbsenceReportView {
   type: string;
   note: string | null;
   createdAt: string;
+  /**
+   * Whether the caller may take the report back now: the withdrawal's own
+   * rule (absenceReportRemoval), its reporter or the administrator, from the
+   * school's today on. Not PostgREST's, and added after it: a client that
+   * does not know it decides as it did.
+   */
+  removable: boolean;
 }
 
 export interface GuardianLinkView {
@@ -39,6 +55,14 @@ export interface GuardianLinkView {
 export const FAMILY_READ_LIMIT = 200;
 
 const day = (value: Date) => value.toISOString().slice(0, 10);
+
+/** Each school's today, read once per school however many rows name it. */
+async function schoolTodays(tx: PrismaClient, schoolIds: string[]): Promise<Map<string, Date>> {
+  const now = new Date();
+  const unique = [...new Set(schoolIds)];
+  const days = await Promise.all(unique.map((schoolId) => schoolToday(tx, schoolId, now)));
+  return new Map(unique.map((schoolId, index) => [schoolId, days[index]!]));
+}
 
 /** A `@db.Time` column as PostgREST spelled it: "HH:MM:SS", read in UTC (see toWallClock). */
 function clock(value: Date | null): string | null {
@@ -73,11 +97,17 @@ export class FamilyReadsService {
         where: { guardianId },
         select: {
           id: true,
+          schoolId: true,
           student: { select: { id: true, firstName: true, lastName: true, isActive: true, studentGroupId: true } },
         },
         orderBy: { id: 'asc' },
       });
-      const children = links.map((link) => ({ linkId: link.id, ...link.student }));
+      const todays = await schoolTodays(tx, links.map((link) => link.schoolId));
+      const children = links.map((link) => ({
+        linkId: link.id,
+        ...link.student,
+        schoolToday: day(todays.get(link.schoolId)!),
+      }));
       await recordRead(tx, 'PEOPLE', children.map((child) => child.id), user.channel);
       return children;
     });
@@ -94,6 +124,7 @@ export class FamilyReadsService {
         },
         select: {
           id: true,
+          schoolId: true,
           studentId: true,
           reportedById: true,
           date: true,
@@ -107,12 +138,14 @@ export class FamilyReadsService {
         take: FAMILY_READ_LIMIT,
       });
       await recordRead(tx, 'ABSENCE_REPORTS', rows.map((row) => row.studentId), user.channel);
-      return rows.map((row) => ({
+      const todays = await schoolTodays(tx, rows.map((row) => row.schoolId));
+      return rows.map(({ schoolId, ...row }) => ({
         ...row,
         date: day(row.date),
         startTime: clock(row.startTime),
         endTime: clock(row.endTime),
         createdAt: row.createdAt.toISOString(),
+        removable: absenceReportRemoval(row, user, todays.get(schoolId)!) === 'ALLOWED',
       }));
     });
   }

@@ -6,13 +6,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
-import { Role } from '../auth/enums/role.enum';
 import { PrismaService } from '../database/prisma.service';
 import { requireUserId } from '../common/utils/request-context';
-import { parseTimeString, todayInZone } from '../common/utils/time';
-import { schoolTimezone } from '../cover/cover-context';
+import { parseTimeString } from '../common/utils/time';
 import type { CreateAbsenceReportDto, CreateGuardianLinkDto } from './dto/family.dto';
-import { assertMayActForStudent, schoolIdOf } from './family-access';
+import { absenceReportRemoval, assertMayActForStudent, schoolIdOf, schoolToday } from './family-access';
 
 /**
  * Guardian↔student links and guardian/adult-student absence reporting.
@@ -131,19 +129,14 @@ export class FamilyService {
         select: { id: true, schoolId: true, reportedById: true, date: true },
       });
       if (!report) throw new NotFoundException('Absence report not found.');
-      if (
-        user.role !== Role.SCHOOL_ADMIN &&
-        report.reportedById !== user.userId
-      ) {
-        throw new ForbiddenException('Only the reporter may remove this report.');
-      }
       // The school's today, not UTC's: the report's date is a school-local
       // day, and for the hour or two after midnight in Stockholm UTC is still
       // on yesterday, which made yesterday's report removable in that window.
-      // The school row is read as the caller reads it, and one RLS hides
-      // falls back to Stockholm (schoolTimezone).
-      const today = todayInZone(await schoolTimezone(tx, report.schoolId));
-      if (report.date < today) {
+      const removal = absenceReportRemoval(report, user, await schoolToday(tx, report.schoolId));
+      if (removal === 'NOT_REPORTER') {
+        throw new ForbiddenException('Only the reporter may remove this report.');
+      }
+      if (removal === 'PAST') {
         throw new BadRequestException('Past absence reports cannot be removed.');
       }
       await tx.absenceReport.delete({ where: { id } });
