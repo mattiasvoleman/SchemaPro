@@ -117,6 +117,29 @@ describe("TeacherRequirementsCard", () => {
     expect(items[1]).toHaveTextContent("teacherRowLessons(1 × 80 + 1 × 40)");
   });
 
+  it("delade lektioner: lists a row the teacher takes some lessons of, with how many, and offers no handover there", () => {
+    render(
+      <TeacherRequirementsCard
+        teacherId="t-anna"
+        rows={[
+          // Anna leads 7A Ma and Bo takes one; Cilla leads 7B Ma and Anna takes two.
+          { ...rows[0]!, shares: [{ teacherId: "t-bo", lessons: 1, minutes: 60 }] },
+          { ...rows[2]!, shares: [{ teacherId: "t-anna", lessons: 2, minutes: 60 }] },
+        ]}
+        subjectName={(id) => subjects[id]!}
+        groupName={(id) => groups[id]!}
+        teacherName={(id) => names[id] ?? id}
+      />,
+    );
+    const items = screen.getAllByRole("listitem");
+    expect(items[0]).toHaveTextContent("teacherRowShare(2|3)");
+    expect(within(items[0]!).getByRole("button", { name: "changeTeacherFor(7A · Matematik)" })).toBeInTheDocument();
+    expect(items[1]).toHaveTextContent("7B · Matematik");
+    expect(items[1]).toHaveTextContent("teacherRowShare(2|3)");
+    expect(items[1]).not.toHaveTextContent("teacherRowCoTeacher");
+    expect(within(items[1]!).queryByRole("button")).toBeNull();
+  });
+
   it("hands a row on and keeps WARN's sentence on screen in the card", async () => {
     const user = userEvent.setup();
     const warning = {

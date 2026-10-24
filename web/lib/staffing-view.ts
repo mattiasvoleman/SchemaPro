@@ -76,6 +76,8 @@ export function groupsInSubject(
     studentGroupId: string;
     teacherId: string | null;
     coTeacherId: string | null;
+    /** Delade lektioner: a share's teacher carries the group too. */
+    shares?: readonly { teacherId: string | null }[];
   }[],
   userId: string,
   subjectId: string,
@@ -84,7 +86,13 @@ export function groupsInSubject(
   const names = new Set<string>();
   for (const requirement of requirements) {
     if (requirement.subjectId !== subjectId) continue;
-    if (requirement.teacherId !== userId && requirement.coTeacherId !== userId) continue;
+    if (
+      requirement.teacherId !== userId &&
+      requirement.coTeacherId !== userId &&
+      !(requirement.shares ?? []).some((share) => share.teacherId === userId)
+    ) {
+      continue;
+    }
     names.add(groupName(requirement.studentGroupId));
   }
   return [...names].sort((a, b) => a.localeCompare(b, "sv"));

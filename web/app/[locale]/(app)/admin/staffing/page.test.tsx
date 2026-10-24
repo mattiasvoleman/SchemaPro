@@ -139,6 +139,14 @@ vi.mock("@/lib/queries", () => ({
   }),
 }));
 
+// Delade lektioner: no share in this school unless a test sets some; the
+// grouping by post is the real one.
+const shareRows = vi.hoisted(() => ({ current: [] as { requirementId: string; teacherId: string | null; lessons: number; minutes: number }[] }));
+vi.mock("@/lib/requirement-shares", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/requirement-shares")>()),
+  useRequirementShares: () => ({ data: shareRows.current }),
+}));
+
 vi.mock("@/lib/staffing-queries", () => ({
   useStaffingLoad: (yearId: string | null) => {
     const other = yearId !== null && yearId !== "y1" ? state.reports[yearId] : undefined;

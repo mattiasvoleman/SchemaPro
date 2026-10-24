@@ -152,6 +152,8 @@ import {
 } from "@/lib/queries";
 import { useStaffingLoad, useTeacherQualifications } from "@/lib/staffing-queries";
 import { STAFFING_KEYS } from "@/lib/staffing-keys";
+import { REQUIREMENT_SHARES_KEY, sharesByRequirement, useRequirementShares } from "@/lib/requirement-shares";
+import type { ShareDraft } from "@/components/timplan/lesson-shares-fields";
 import { buildGradeSpans } from "@/lib/grade-span";
 import { useYearRosters } from "@/lib/planning-year";
 import { withProjectedHomes } from "@/lib/projected-rosters";
@@ -250,6 +252,16 @@ const LessonLengthsFields = lazy(() =>
     default: module.LessonLengthsFields,
   })),
 );
+/**
+ * Delade lektioner, fetched the first time "Dela lektionerna mellan lärare"
+ * is pressed or a shared post is opened: only the dialog draws the rows, and
+ * the route has no room to carry them (its budget is 190 KB).
+ */
+const LessonSharesFields = lazy(() =>
+  import("@/components/timplan/lesson-shares-fields").then((module) => ({
+    default: module.LessonSharesFields,
+  })),
+);
 /** Holds the recurrence box's place in the dialog while its code arrives. */
 function RecurrenceFieldsFallback() {
   return (
@@ -341,6 +353,12 @@ interface CellForm {
   maxLessonsPerDay: string;
   /** Null for no rule; 2 is "inte dagar i följd". */
   minDaysBetween: number | null;
+  /**
+   * Delade lektioner: the other teachers' lessons, as typed. Null leaves the
+   * stored shares alone and sends no `shares` — every post until "Dela
+   * lektionerna" is pressed, or one that already had shares is opened.
+   */
+  shares: ShareDraft[] | null;
 }
 
 export default function RequirementsPage() {
@@ -415,6 +433,14 @@ export default function RequirementsPage() {
     isLoading: requirementsLoading,
     isError: requirementsFailed,
   } = useRequirements(activeYearId);
+  // Delade lektioner: each post's shares, from the gateway beside the rows.
+  const { data: shareRows } = useRequirementShares(activeYearId);
+  const sharesOf = useMemo(() => sharesByRequirement(shareRows), [shareRows]);
+  /** The rows with their shares beside them, for the Block panel's teacher warning. */
+  const sharedRequirements = useMemo(
+    () => (requirements ?? []).map((row) => (sharesOf.has(row.id) ? { ...row, shares: sharesOf.get(row.id) } : row)),
+    [requirements, sharesOf],
+  );
   /**
    * The year's lov, which the hours are measured against.
    *
@@ -531,11 +557,13 @@ export default function RequirementsPage() {
     ownDistribution?: boolean;
     maxLessonsPerDay?: number | null;
     minDaysBetween?: number | null;
+    shares?: { teacherId: string | null; lessons: number; minutes?: number }[];
     recurrence?: LessonRecurrence;
     startDate?: string | null;
     endDate?: string | null;
   }>("/api/v1/teaching-requirements", [
     ["requirements", activeYearId ?? ""],
+    [...REQUIREMENT_SHARES_KEY, activeYearId ?? ""],
     // A save that names or changes a teacher moves their load and the
     // candidate badges this dialog draws from it; without these the badge
     // would read the minutes from before the save.
@@ -625,7 +653,10 @@ export default function RequirementsPage() {
     ownDistribution: false,
     maxLessonsPerDay: "",
     minDaysBetween: null,
+    shares: null,
   });
+  /** Whether the share rows can be saved as they stand (lesson-shares-fields.tsx). */
+  const [sharesOk, setSharesOk] = useState(true);
 
   const teachers = useMemo(
     () => (people ?? []).filter((person) => person.role === "TEACHER" && person.isActive),
@@ -849,7 +880,15 @@ export default function RequirementsPage() {
       ownDistribution: existing?.ownDistribution ?? false,
       maxLessonsPerDay: existing?.maxLessonsPerDay ? String(existing.maxLessonsPerDay) : "",
       minDaysBetween: existing?.minDaysBetween ?? null,
+      shares: existing && sharesOf.has(existing.id)
+        ? sharesOf.get(existing.id)!.map((share) => ({
+            teacherId: share.teacherId ?? NO_TEACHER,
+            lessons: String(share.lessons),
+            minutes: String(share.minutes),
+          }))
+        : null,
     });
+    setSharesOk(true);
   };
 
   const submit = async () => {
@@ -917,6 +956,19 @@ export default function RequirementsPage() {
           minDaysBetween: form.minDaysBetween,
         }
       : { ownDistribution: false };
+    // Delade lektioner: the whole list once the rows are open, [] for none;
+    // nothing at all otherwise, which leaves the stored shares as they are.
+    // A uniform post's rows name no length: the gateway reads its one.
+    const shares =
+      form.shares === null
+        ? {}
+        : {
+            shares: form.shares.map((draft) => ({
+              teacherId: draft.teacherId === NO_TEACHER ? null : draft.teacherId,
+              lessons: Number(draft.lessons),
+              ...(split ? { minutes: Number(draft.minutes) } : {}),
+            })),
+          };
     const label = `${groupOf(cell.groupId)?.name ?? ""} · ${subjectOf(cell.subjectId)?.name ?? ""}`;
     setRefusal(null);
     try {
@@ -934,6 +986,7 @@ export default function RequirementsPage() {
           teacherLoadPercent,
           coTeacherLoadPercent,
           ...distribution,
+          ...shares,
           recurrence: form.recurrence,
           startDate,
           endDate,
@@ -953,6 +1006,7 @@ export default function RequirementsPage() {
           teacherLoadPercent,
           coTeacherLoadPercent,
           ...distribution,
+          ...shares,
           recurrence: form.recurrence,
           startDate,
           endDate,
@@ -1307,7 +1361,7 @@ export default function RequirementsPage() {
           {blocksMode && blocksModule && activeYearId ? (
             <blocksModule.BlocksHost
               academicYearId={activeYearId}
-              requirements={requirements ?? []}
+              requirements={sharedRequirements}
               groups={yearGroups}
               subjects={subjects ?? []}
             />
@@ -1588,9 +1642,11 @@ export default function RequirementsPage() {
                                     ? formatLengths(requirement, true)
                                     : `${requirement.lessonsPerWeek}×${requirement.minutesPerLesson}`}
                                 </span>
-                                {teacherLabel(requirement.teacherId) ? (
+                                {teacherLabel(requirement.teacherId) || sharesOf.has(requirement.id) ? (
                                   <span className="max-w-24 truncate text-[10px] leading-tight">
-                                    {teacherLabel(requirement.teacherId)}
+                                    {teacherLabel(requirement.teacherId) ?? tCommon("notAssigned")}
+                                    {/* Delade lektioner: how many more teachers take some of its lessons. */}
+                                    {sharesOf.has(requirement.id) ? ` +${sharesOf.get(requirement.id)!.length}` : null}
                                   </span>
                                 ) : null}
                                 {badge ? (
@@ -1828,6 +1884,34 @@ export default function RequirementsPage() {
               </Select>
               <p className="text-xs text-muted-foreground">{t("coTeacherHint")}</p>
             </div>
+            {form.shares !== null ? (
+              <Suspense fallback={null}>
+                <LessonSharesFields
+                  value={form.shares}
+                  onChange={(next) => setForm({ ...form, shares: next })}
+                  first={{ lessons: form.lessonsPerWeek, minutes: form.minutesPerLesson }}
+                  extra={form.extraLengths}
+                  teacherId={form.teacherId}
+                  coTeacherId={form.coTeacherId}
+                  noTeacher={NO_TEACHER}
+                  teachers={teachers}
+                  teacherLine={candidateLine}
+                  onValidity={setSharesOk}
+                />
+              </Suspense>
+            ) : (Number(form.lessonsPerWeek) || 0) +
+                form.extraLengths.reduce((sum, part) => sum + (Number(part.lessons) || 0), 0) >=
+              2 ? (
+              <Button
+                data-writes="PLANERING"
+                variant="outline"
+                size="sm"
+                className="col-span-2 justify-self-start"
+                onClick={() => setForm({ ...form, shares: [{ teacherId: NO_TEACHER, lessons: "1", minutes: "" }] })}
+              >
+                {t("shares.open")}
+              </Button>
+            ) : null}
             {/*
               The master timetable's own period control, reused rather than
               rebuilt. It writes its three fields straight onto the form, the
@@ -2035,6 +2119,7 @@ export default function RequirementsPage() {
                   !loadPercentInRange(form.teacherLoadPercent) ||
                   !loadPercentInRange(form.coTeacherLoadPercent) ||
                   (form.ownDistribution && !perDayInRange(form.maxLessonsPerDay)) ||
+                  (form.shares !== null && !sharesOk) ||
                   mutations.create.isPending ||
 
                   mutations.update.isPending

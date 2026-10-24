@@ -320,6 +320,8 @@ const freshState = () => ({
    * Read only while the dialog holds a rule; the ämnesfördelning tests set it.
    */
   masterLessons: loaded([] as Record<string, unknown>[]),
+  /** Delade lektioner: the year's shares, from the gateway beside the rows. */
+  shares: loaded([] as { requirementId: string; teacherId: string | null; lessons: number; minutes: number }[]),
 });
 
 interface YearTimplanFixture {
@@ -402,6 +404,12 @@ vi.mock("@/lib/planning-year", () => ({
 vi.mock("@/lib/staffing-queries", () => ({
   useStaffingLoad: () => state.load,
   useTeacherQualifications: () => state.qualifications,
+}));
+
+// Delade lektioner: the shares read, from its own module; the grouping is real.
+vi.mock("@/lib/requirement-shares", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/requirement-shares")>()),
+  useRequirementShares: () => state.shares,
 }));
 
 // Mål mode's reads, from the hooks file the lazily loaded module imports.
@@ -2638,5 +2646,78 @@ describe("Dela terminsvis i halvklass", () => {
 
     await user.click(screen.getByLabelText("cellLabel(7A|Bild)"));
     expect(screen.queryByRole("button", { name: "termHalves.action" })).toBeNull();
+  });
+});
+
+describe("Delade lektioner in the cell dialog", () => {
+  const anna: PersonFixture = {
+    id: "t-anna",
+    role: "TEACHER",
+    firstName: "Anna",
+    lastName: "Svensson",
+    email: "anna@example.test",
+    isActive: true,
+    studentGroupId: null,
+  };
+  const bo: PersonFixture = { ...anna, id: "t-bo", firstName: "Bo", lastName: "Lind", email: "bo@example.test" };
+  const CELL = "cellLabelSet(7A|Samhällsorientering|3|60)";
+  const saveButton = () => screen.getByRole("button", { name: "save" }) as HTMLButtonElement;
+
+  beforeEach(() => {
+    state.people = loaded([anna, bo]);
+    state.requirements = loaded([
+      { ...requirements[0], teacherId: "t-anna", lessonsPerWeek: 3, recurrence: "ALL_WEEKS" },
+      ...requirements.slice(1),
+    ]);
+  });
+
+  const open = async () => {
+    render(<RequirementsPage />);
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText(CELL));
+    return user;
+  };
+
+  it("sends no shares for a post nobody shares, and offers to split one of two or more lessons", async () => {
+    const user = await open();
+    expect(screen.getByRole("button", { name: "shares.open" })).toBeInTheDocument();
+    await user.click(saveButton());
+    expect(updateMock.mock.calls[0][0]).not.toHaveProperty("shares");
+  });
+
+  it("shows a shared post's extra teachers in its cell, and opens with its shares to save back", async () => {
+    state.shares = loaded([{ requirementId: "r-so", teacherId: "t-bo", lessons: 1, minutes: 60 }]);
+    render(<RequirementsPage />);
+    expect(within(screen.getByLabelText(CELL)).getByText(/A\. Svensson \+1/)).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText(CELL));
+    // The rows' module arrives lazily, under its own namespace
+    // (requirements.shares); the summary says each teacher's part.
+    expect(await screen.findByText("part(Anna Svensson|2|3|120|67)")).toBeInTheDocument();
+    expect(screen.getByText("part(Bo Lind|1|3|60|33)")).toBeInTheDocument();
+    await user.click(saveButton());
+    // A uniform post's rows name no length: the gateway reads its one.
+    expect((updateMock.mock.calls[0][0] as Record<string, unknown>).shares).toEqual([{ teacherId: "t-bo", lessons: 1 }]);
+  });
+
+  it("will not save shares that leave the lead no lesson, and says why", async () => {
+    state.shares = loaded([{ requirementId: "r-so", teacherId: "t-bo", lessons: 1, minutes: 60 }]);
+    await open();
+    const lessons = await screen.findByLabelText("lessons");
+    fireEvent.change(lessons, { target: { value: "3" } });
+    expect(await screen.findByText("problem.LEAD_KEEPS_NONE")).toBeInTheDocument();
+    expect(saveButton().disabled).toBe(true);
+    fireEvent.change(lessons, { target: { value: "2" } });
+    expect(await screen.findByText("part(Bo Lind|2|3|120|67)")).toBeInTheDocument();
+    expect(saveButton().disabled).toBe(false);
+  });
+
+  it("sends [] when every row is removed, giving the lead every lesson again", async () => {
+    state.shares = loaded([{ requirementId: "r-so", teacherId: "t-bo", lessons: 1, minutes: 60 }]);
+    const user = await open();
+    await user.click(await screen.findByRole("button", { name: "remove(Bo Lind)" }));
+    await user.click(saveButton());
+    expect((updateMock.mock.calls[0][0] as Record<string, unknown>).shares).toEqual([]);
   });
 });

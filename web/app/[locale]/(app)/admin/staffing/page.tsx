@@ -73,6 +73,7 @@ import {
   useTeacherQualifications,
 } from "@/lib/staffing-queries";
 import { travelOf } from "@/lib/staffing-travel";
+import { sharesByRequirement, useRequirementShares } from "@/lib/requirement-shares";
 import { kpis, type UnitView, type WeekView } from "@/lib/staffing-view";
 import { NextStep } from "@/components/layout/next-step";
 import { Page } from "@/components/layout/page";
@@ -163,6 +164,13 @@ export default function StaffingPage() {
   const { data: people } = usePeople();
   const { data: groups } = useGroups();
   const { data: requirements } = useRequirements(activeYearId);
+  // Delade lektioner: each post's shares beside it, from the gateway, so the
+  // matrix's groups and a teacher's card name the posts they take lessons of.
+  const { data: shareRows } = useRequirementShares(activeYearId);
+  const sharedRequirements = useMemo(() => {
+    const byPost = sharesByRequirement(shareRows);
+    return (requirements ?? []).map((row) => (byPost.has(row.id) ? { ...row, shares: byPost.get(row.id) } : row));
+  }, [requirements, shareRows]);
   const { data: employments } = useTeacherEmployments(activeYearId);
   const { data: predecessorEmployments } = useTeacherEmployments(predecessor?.id ?? null);
   const { data: duties } = useTeacherDuties(predecessor ? activeYearId : null);
@@ -423,7 +431,7 @@ export default function StaffingPage() {
             <StaffingMatrix
               report={report}
               subjects={subjects ?? []}
-              requirements={requirements ?? []}
+              requirements={sharedRequirements}
               groupName={groupName}
               teacherName={teacherName}
               week={week}
@@ -494,7 +502,7 @@ export default function StaffingPage() {
             subjects={subjects ?? []}
             academicYearId={activeYearId}
             academicYearName={activeYear.name}
-            requirements={requirements ?? []}
+            requirements={sharedRequirements}
             groups={yearGroups}
             teacherName={teacherName}
             loadModel={report?.loadModel ?? "MINUTES"}

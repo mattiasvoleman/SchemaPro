@@ -31,7 +31,8 @@
 // pins that the two give the same week counts; nothing in this file touches a
 // Date of its own.
 
-import { weeklyMinutesOf } from "@/lib/lesson-lengths";
+import { lessonCountOf, weeklyMinutesOf } from "@/lib/lesson-lengths";
+import { hasShares, teacherPartsOf, type LessonShare, type TeacherPart } from "@/lib/lesson-shares";
 import {
   changesDuringYear,
   postStretches,
@@ -160,7 +161,15 @@ export interface LoadRequirement extends TeachingPeriod {
    * (lib/lesson-lengths.ts), so 1 × 80 + 1 × 40 charges 120, not 160.
    */
   lessonLengths?: readonly number[];
-  /** How much of the row the lead is charged, 0..200; 100 = all of it. */
+  /**
+   * Delade lektioner: the lessons other teachers take; the lead
+   * (teacherId) has the rest. Absent or empty: the lead has every lesson.
+   */
+  shares?: readonly LessonShare[];
+  /**
+   * How much of the row the lead is charged, 0..200; 100 = all of it. On a
+   * shared row, how much of THEIR OWN lessons each teacher is charged.
+   */
   teacherLoadPercent: number;
   /** How much of the row the co-teacher is charged, 0..200. */
   coTeacherLoadPercent: number;
@@ -248,6 +257,13 @@ export interface TeacherAssignment {
   endDate: string | null;
   /** The row's lektionsminuter, standardvecka, at 100 % and never weighted. */
   lessonMinutesPerWeek: number;
+  /**
+   * Delade lektioner: the lessons a week this teacher has of the row, and
+   * the row's own count — present only on a shared row, for its lead and its
+   * share teachers ("1 av 3 lektioner"). A row with no share has no key.
+   */
+  ownLessonsPerWeek?: number;
+  rowLessonsPerWeek?: number;
   /** The role's share of the lesson time, standardvecka, never weighted (SCB's undervisningstid). */
   timeMinutesPerWeek: number;
   /** What the row charges this teacher, standardvecka: × the role's % × the weight. */
@@ -549,10 +565,27 @@ export function strongestCoveringQualification(
   return best;
 }
 
-/** The minutes one requirement charges each role, before rounding. */
+/** One teacher's own lessons of a row, charged: see chargedMinutes. */
+export interface ChargedPart extends TeacherPart {
+  /** Their lessons' minutes, standardvecka, never weighted. */
+  lesson: number;
+  /** What those lessons charge them: × teacherLoadPercent × the weight. */
+  charged: number;
+}
+
+/**
+ * The minutes one requirement charges each role, before rounding. `parts` is
+ * every teacher's own lessons, the lead first (teacherPartsOf): on a row with
+ * no share it is the lead alone at the row's whole lesson minutes, and
+ * `teacher` is exactly the figure it always was. On a shared row `teacher` is
+ * the lead's own part, which is also what the row would charge whoever is
+ * given its lead (suggest-teachers, the staffing proposal, unstaffed demand).
+ */
 export function chargedMinutes(
   requirement: Pick<
     LoadRequirement,
+    | "teacherId"
+    | "shares"
     | "lessonsPerWeek"
     | "minutesPerLesson"
     | "lessonLengths"
@@ -566,12 +599,31 @@ export function chargedMinutes(
   >,
   year: YearBounds,
   closures: ClosedRange[],
-): { lesson: number; teacher: number; coTeacher: number } {
-  const lesson = weeklyMinutesOf(requirement) * standardWeekWeight(requirement, year, closures);
+): { lesson: number; teacher: number; coTeacher: number; parts: ChargedPart[] } {
+  const weight = standardWeekWeight(requirement, year, closures);
+  const lesson = weeklyMinutesOf(requirement) * weight;
+  const charge = (minutes: number, percent: number): number =>
+    weigh((minutes * percent) / 100, requirement.loadWeight);
+  const parts: ChargedPart[] = hasShares(requirement)
+    ? teacherPartsOf(requirement).map((part) => {
+        const own = part.minutes * weight;
+        return { ...part, lesson: own, charged: charge(own, requirement.teacherLoadPercent) };
+      })
+    : [
+        {
+          teacherId: requirement.teacherId,
+          role: "LEAD",
+          lessons: lessonCountOf(requirement),
+          minutes: weeklyMinutesOf(requirement),
+          lesson,
+          charged: charge(lesson, requirement.teacherLoadPercent),
+        },
+      ];
   return {
     lesson,
-    teacher: weigh((lesson * requirement.teacherLoadPercent) / 100, requirement.loadWeight),
-    coTeacher: weigh((lesson * requirement.coTeacherLoadPercent) / 100, requirement.loadWeight),
+    teacher: parts[0]!.charged,
+    coTeacher: charge(lesson, requirement.coTeacherLoadPercent),
+    parts,
   };
 }
 
@@ -622,11 +674,25 @@ type StretchInput = Pick<LoadInput, "year" | "closures" | "requirements" | "duti
 function countedInWindow(userId: string, input: StretchInput, window: YearBounds): number {
   let counted = 0;
   for (const requirement of input.requirements) {
-    if (requirement.teacherId !== userId && requirement.coTeacherId !== userId) continue;
+    const shared = hasShares(requirement);
+    if (
+      requirement.teacherId !== userId &&
+      requirement.coTeacherId !== userId &&
+      !(shared && requirement.shares!.some((share) => share.teacherId === userId))
+    ) {
+      continue;
+    }
     const weight = stretchWeight(requirement, input.year, window, input.closures);
     if (weight === 0) continue;
     const lesson = weeklyMinutesOf(requirement) * weight;
-    if (requirement.teacherId === userId) {
+    if (shared) {
+      // Each teacher's own lessons; the lead is the first part, a share's
+      // teacher one of the rest (never both: the trigger's rule (d)).
+      for (const part of teacherPartsOf(requirement)) {
+        if (part.teacherId !== userId) continue;
+        counted += weigh((part.minutes * weight * requirement.teacherLoadPercent) / 100, requirement.loadWeight);
+      }
+    } else if (requirement.teacherId === userId) {
       counted += weigh((lesson * requirement.teacherLoadPercent) / 100, requirement.loadWeight);
     }
     if (requirement.coTeacherId === userId) {
@@ -806,10 +872,10 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
   for (const requirement of input.requirements) {
     const weeklyMinutes = weeklyMinutesOf(requirement);
     const charged = chargedMinutes(requirement, year, closures);
-    const yearMinutes =
-      weeklyMinutes *
-      teachingWeeks(requirement, year, closures, singleGrade(requirement.gradeSpan));
+    const weeks = teachingWeeks(requirement, year, closures, singleGrade(requirement.gradeSpan));
+    const yearMinutes = weeklyMinutes * weeks;
     lessonMinutesPerWeek += charged.lesson;
+    const shared = hasShares(requirement);
 
     if (requirement.teacherId === null) {
       unstaffedRequirements.push({
@@ -818,7 +884,9 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
         subjectName: requirement.subjectName,
         studentGroupId: requirement.studentGroupId,
         groupName: requirement.groupName,
-        minutesPerWeek: Math.round(charged.lesson),
+        // The lead's own lessons: the whole row unless it is shared, when the
+        // shares' teachers have theirs and only the rest wants a teacher.
+        minutesPerWeek: Math.round(charged.parts[0]!.lesson),
         teacherMinutesPerWeek: Math.round(charged.teacher),
         gradeSpan: requirement.gradeSpan,
       });
@@ -832,15 +900,45 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
       demand.set(requirement.subjectId, subjectDemand);
     }
 
-    const assignees: [string | null, UnqualifiedAssignment["role"], number][] = [
-      [requirement.teacherId, "TEACHER", requirement.teacherLoadPercent],
-      [requirement.coTeacherId, "CO_TEACHER", requirement.coTeacherLoadPercent],
+    // Every teacher's own lessons (chargedMinutes' parts: the lead, then each
+    // share's teacher, as TEACHER), then the medlärare over the whole row. A
+    // row with no share is the lead and the medlärare at the row's minutes,
+    // exactly the two roles it always was.
+    const assignees: {
+      userId: string | null;
+      role: UnqualifiedAssignment["role"];
+      percent: number;
+      standardMinutes: number;
+      lesson: number;
+      weekly: number;
+      yearly: number;
+      lessons: number | null;
+    }[] = [
+      ...charged.parts.map((part) => ({
+        userId: part.teacherId,
+        role: "TEACHER" as const,
+        percent: requirement.teacherLoadPercent,
+        standardMinutes: part.charged,
+        lesson: part.lesson,
+        weekly: shared ? part.minutes : weeklyMinutes,
+        yearly: shared ? part.minutes * weeks : yearMinutes,
+        lessons: shared ? part.lessons : null,
+      })),
+      {
+        userId: requirement.coTeacherId,
+        role: "CO_TEACHER" as const,
+        percent: requirement.coTeacherLoadPercent,
+        standardMinutes: charged.coTeacher,
+        lesson: charged.lesson,
+        weekly: weeklyMinutes,
+        yearly: yearMinutes,
+        lessons: null,
+      },
     ];
-    for (const [userId, role, percent] of assignees) {
+    for (const { userId, role, percent, standardMinutes, lesson, weekly, yearly, lessons } of assignees) {
       if (userId === null) continue;
       const share = percent / 100;
-      const standardMinutes = role === "TEACHER" ? charged.teacher : charged.coTeacher;
-      const annualMinutes = weigh(yearMinutes * share, requirement.loadWeight);
+      const annualMinutes = weigh(yearly * share, requirement.loadWeight);
       const acc = accumulatorFor(userId);
       acc.assigned += standardMinutes;
       acc.annualMinutes += annualMinutes;
@@ -857,7 +955,10 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
         startDate: requirement.startDate ?? null,
         endDate: requirement.endDate ?? null,
         lessonMinutesPerWeek: Math.round(charged.lesson),
-        timeMinutesPerWeek: Math.round((charged.lesson * percent) / 100),
+        ...(lessons !== null
+          ? { ownLessonsPerWeek: lessons, rowLessonsPerWeek: lessonCountOf(requirement) }
+          : {}),
+        timeMinutesPerWeek: Math.round((lesson * percent) / 100),
         minutesPerWeek: Math.round(standardMinutes),
         hoursPerYear: round1(annualMinutes / 60),
       });
@@ -869,7 +970,7 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
       acc.subjects.set(requirement.subjectId, subject);
       peakItems.push({
         key: userId,
-        minutes: weigh(weeklyMinutes * share, requirement.loadWeight),
+        minutes: weigh(weekly * share, requirement.loadWeight),
         recurrence: requirement.recurrence,
         startDate: requirement.startDate,
         endDate: requirement.endDate,

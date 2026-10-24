@@ -5,6 +5,8 @@ import { useTranslations } from "next-intl";
 import { ArrowLeftRight, BookOpen } from "lucide-react";
 import type { StaffingWarning } from "@/lib/types";
 import { formatLengths } from "@/lib/lesson-lengths-text";
+import { lessonCountOf } from "@/lib/lesson-lengths";
+import { teacherPartsOf, type LessonShare } from "@/lib/lesson-shares";
 import { Button } from "@/components/ui/button";
 import { SectionCard } from "@/components/ui/section-card";
 import { TeacherSuggestions } from "@/components/staffing/teacher-suggestions";
@@ -20,6 +22,8 @@ export interface TeacherRequirementRow {
   minutesPerLesson: number;
   /** Lektionslängder, longest first; empty or absent when uniform. */
   lessonLengths?: number[];
+  /** Delade lektioner: the lessons other teachers take; absent when nobody shares. */
+  shares?: LessonShare[];
 }
 
 /**
@@ -30,6 +34,8 @@ export interface TeacherRequirementRow {
  * who ELSE could take 7A Ma, and what would it do to them. Only the rows they
  * LEAD can be handed on here; a co-teaching row is listed for completeness
  * and changed in the timplan's own dialog, where both teachers are visible.
+ * So is a row they take some of the lessons of (delade lektioner), with how
+ * many: "1 av 3 lektioner" — the split itself is the timplan dialog's too.
  *
  * A WARN verdict on the handover is shown in this card, not as a toast: the
  * sentence names the subject and the limit, and the admin needs it on screen
@@ -53,7 +59,12 @@ export function TeacherRequirementsCard({
   const [warnings, setWarnings] = useState<StaffingWarning[]>([]);
 
   const mine = rows
-    .filter((row) => row.teacherId === teacherId || row.coTeacherId === teacherId)
+    .filter(
+      (row) =>
+        row.teacherId === teacherId ||
+        row.coTeacherId === teacherId ||
+        (row.shares ?? []).some((share) => share.teacherId === teacherId),
+    )
     .map((row) => ({ row, label: `${groupName(row.studentGroupId)} · ${subjectName(row.subjectId)}` }))
     .sort((a, b) => a.label.localeCompare(b.label, "sv"));
 
@@ -72,6 +83,11 @@ export function TeacherRequirementsCard({
         <ul className="divide-y text-sm">
           {mine.map(({ row, label }) => {
             const leads = row.teacherId === teacherId;
+            const coTeaches = row.coTeacherId === teacherId;
+            // Delade lektioner: this teacher's own lessons of a shared row.
+            const own = (row.shares ?? []).length > 0 && !coTeaches
+              ? (teacherPartsOf(row).find((part) => part.teacherId === teacherId)?.lessons ?? null)
+              : null;
             const open = openId === row.id;
             return (
               <li key={row.id} className="py-2">
@@ -80,7 +96,8 @@ export function TeacherRequirementsCard({
                     <span className="font-medium">{label}</span>{" "}
                     <span className="text-muted-foreground">
                       {t("teacherRowLessons", { post: formatLengths(row) })}
-                      {leads ? "" : ` · ${t("teacherRowCoTeacher")}`}
+                      {coTeaches ? ` · ${t("teacherRowCoTeacher")}` : ""}
+                      {own !== null ? ` · ${t("teacherRowShare", { lessons: own, of: lessonCountOf(row) })}` : ""}
                     </span>
                   </span>
                   {leads ? (

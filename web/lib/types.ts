@@ -414,6 +414,12 @@ export interface TeachingRequirement {
    */
   startDate: string | null;
   endDate: string | null;
+  /**
+   * Delade lektioner: the lessons other teachers take. NOT a column of the
+   * row PostgREST answers — the shares are read through the gateway
+   * (useRequirementShares) and present only where a page merged them in.
+   */
+  shares?: import("@/lib/lesson-shares").LessonShare[];
 }
 
 export interface AvailabilityConstraint {
