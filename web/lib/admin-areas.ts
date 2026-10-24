@@ -111,6 +111,8 @@ export const PAGE_GATES: Readonly<Record<string, PageGate>> = {
   "/admin/breaks": "PLANERING",
   "/admin/frame-times": "PLANERING",
   "/admin/rasts": "PLANERING",
+  // Rastvaktsschema: the areas and the passes, planering's as the uppdrag are.
+  "/admin/supervision": "PLANERING",
   "/admin/lunch-servings": "PLANERING",
   "/admin/generate": "SCHEMALAGGNING",
   "/admin/timetable": "SCHEMALAGGNING",

@@ -3,6 +3,7 @@
 import { useActiveYear, useGroups, useSubjects } from "@/lib/queries";
 import { useStaffingLoad, useTeacherDuties } from "@/lib/staffing-queries";
 import { travelOf } from "@/lib/staffing-travel";
+import { supervisionOf } from "@/lib/staffing-supervision";
 import { useEmploymentHistory } from "@/lib/staffing-history-queries";
 import { versionStampOf } from "@/lib/employment-history-view";
 
@@ -33,6 +34,8 @@ export function useMyUppdragsbeskrivning(userId: string, askedYearId: string | n
     loadModel: load.data?.loadModel ?? "MINUTES",
     // Restid between the school's sites; null at a school with no travel figure.
     travel: travelOf(load.data, userId),
+    // Rastvakt in the rastvaktsschema; null without a pass.
+    supervision: supervisionOf(load.data, userId),
     duties: (duties.data ?? []).filter((duty) => duty.userId === userId),
     subjectName: (id: string) => subjects.data?.find((subject) => subject.id === id)?.name ?? null,
     groupName: (id: string) => groups.data?.find((group) => group.id === id)?.name ?? null,

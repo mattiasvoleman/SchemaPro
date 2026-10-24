@@ -17,6 +17,7 @@ import { addDays, TODAY } from "./calendar";
 import { scbFileOf } from "./scb-file";
 import { delivered, loadReport, ownLoad, suggestTeachers, type LoadResponse } from "./staffing-load";
 import { DUTIES, EMPLOYMENTS, historyOf, QUALIFICATIONS, STAFFING_POLICY } from "./staffing-rows";
+import { SUPERVISION_AREAS, SUPERVISION_LOAD, supervisionRota } from "./supervision";
 import { NEXT_YEAR, YEAR } from "./world";
 
 /**
@@ -76,8 +77,20 @@ export const staffingRoutes: GatewayRoute[] = [
     if (horizon !== "planned") {
       return new Reply(400, { statusCode: 400, message: `Horisonten "${horizon}" finns inte i stubben.` });
     }
-    const report = loadReport(year);
-    return person!.role === "SCHOOL_ADMIN" ? report : ownLoad(report, person!.userId);
+    // Bo's passes in the rastvaktsschema, this year's alone (supervision.ts).
+    const report = { ...loadReport(year), supervision: year.id === YEAR.id ? SUPERVISION_LOAD : null };
+    if (person!.role === "SCHOOL_ADMIN") return report;
+    const own = ownLoad(report, person!.userId);
+    return { ...own, supervision: report.supervision && { teachers: report.supervision.teachers.filter((row) => row.userId === person!.userId) } };
+  }),
+
+  // Rastvaktsschema (supervision.ts): the areas, and a year's schedule, the administrator's.
+  route("GET", "/api/v1/supervision-areas", ({ person }) => refusal(person, ADMIN_ONLY) ?? SUPERVISION_AREAS),
+  route("GET", "/api/v1/supervision-rota", ({ person, query }) => {
+    const refused = refusal(person, ADMIN_ONLY);
+    if (refused) return refused;
+    const year = yearOf(query);
+    return year instanceof Reply ? year : supervisionRota(year, year.id === YEAR.id);
   }),
 
   route("GET", "/api/v1/staffing/unstaffed", ({ person, query }): UnstaffedRequirement[] | Reply => {

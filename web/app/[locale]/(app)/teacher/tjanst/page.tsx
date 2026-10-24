@@ -46,6 +46,7 @@ import { useProfile } from "@/components/profile-context";
 import { useActiveYear, useGroups, useSubjects } from "@/lib/queries";
 import { useStaffingLoad, useTeacherDuties } from "@/lib/staffing-queries";
 import { travelOf } from "@/lib/staffing-travel";
+import { supervisionOf } from "@/lib/staffing-supervision";
 import { dutyPeriodLine, dutySlotsLine } from "@/lib/duty-lines";
 import { useLastYearTjanst } from "./use-last-year-tjanst";
 import { isJudged, postAtStart } from "@/lib/period-view";
@@ -278,6 +279,7 @@ export default function MyStaffingPage() {
           loadModel={load.data?.loadModel ?? "MINUTES"}
           headingLevel="h2"
           travel={travelOf(load.data, row.userId)}
+          supervision={supervisionOf(load.data, row.userId)}
         />
       ) : null}
 

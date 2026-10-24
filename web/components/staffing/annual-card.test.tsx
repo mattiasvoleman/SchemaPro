@@ -57,6 +57,30 @@ describe("AnnualCard", () => {
     ]);
   });
 
+  it("states the rastvaktsschema's part of the uppdrag, and the ram it leaves, for a teacher with passes", () => {
+    const supervision = {
+      userId: "t",
+      shiftCount: 2,
+      minutesPerWeek: 50,
+      countedMinutesPerWeek: 0,
+      peakMinutesPerWeek: 50,
+      hoursPerYear: 31.7,
+      ramMinutesPerWeek: 60,
+      ramCountedMinutesPerWeek: 0,
+    };
+    const { unmount } = render(<AnnualCard annual={ferie} loadModel="MINUTES" supervision={supervision} />);
+    expect(rows().slice(0, 3)).toEqual([
+      "teachingHours=hours(573,5)",
+      "dutyHours=hours(57)",
+      "supervisionHours=supervisionValue(31,7|50)",
+    ]);
+    expect(screen.getByText("supervisionRam(60|0)")).toBeInTheDocument();
+    unmount();
+    // No Rastvakt uppdrag: no ram to speak of.
+    render(<AnnualCard annual={ferie} loadModel="MINUTES" supervision={{ ...supervision, ramMinutesPerWeek: null }} />);
+    expect(screen.queryByText(/supervisionRam/)).not.toBeInTheDocument();
+  });
+
   it("says räknad tid under the Faktor model, and points the admin at the settings", () => {
     render(<AnnualCard annual={ferie} loadModel="FACTOR" showSettingsPath />);
     expect(rows()[0]).toBe("teachingHoursFactor=hours(573,5)");

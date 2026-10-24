@@ -267,6 +267,7 @@ describe("AppShell navigation", () => {
       "nav.breaks",
       "nav.frameTimes",
       "nav.rasts",
+      "nav.supervision",
       "nav.lunchServings",
     ]);
     expect(group("nav.scheduling")).toEqual([
