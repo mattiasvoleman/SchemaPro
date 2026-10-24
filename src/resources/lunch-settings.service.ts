@@ -87,6 +87,10 @@ export class LunchSettingsService {
       lunchMinutes: dto.lunchMinutes,
       diningSeats: dto.diningSeats ?? null,
       maxLessonsPerDayPerGroup: dto.maxLessonsPerDayPerGroup ?? null,
+      // Only when sent: an older tab's PUT names no switch and changes none.
+      ...(dto.generatorKeepsTravelTime !== undefined
+        ? { generatorKeepsTravelTime: dto.generatorKeepsTravelTime }
+        : {}),
     };
 
     try {

@@ -38,6 +38,12 @@ export interface WalkRoom {
   building: BuildingKind | null;
   /** Null is unknown, and never counted as a floor change. -5..50. */
   floor: number | null;
+  /**
+   * Restid i generatorn: the room's skolområde, anonymised. Sent only when the
+   * school's generator keeps the walk between sites (Skolregler), and then no
+   * lesson is moved off the site it is on. Absent otherwise.
+   */
+  siteId?: string;
 }
 
 export interface PlacedLesson {

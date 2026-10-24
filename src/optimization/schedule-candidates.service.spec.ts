@@ -1106,6 +1106,44 @@ describe('ScheduleCandidatesService', () => {
         expect(recordedReads(tx)).toEqual([]);
       });
 
+      it('names a refused candidate’s travel teachers for every reader, from the ids it keeps', async () => {
+        // Restid i generatorn: a candidate refused over the walk names the
+        // teachers who cannot make it as a note names its teacher.
+        const travel = {
+          category: 'TEACHER_OVERLAP',
+          code: 'TEACHER_TRAVEL_CANNOT_BE_KEPT',
+          params: { stepMinutes: 30, measured: 1 },
+          message: 'The travel time between the school’s sites cannot be kept …',
+          resourceNames: [],
+          subjectIds: [TEACHER, OTHER_TEACHER],
+        };
+        tx.scheduleCandidateRun.findFirst.mockResolvedValueOnce(
+          row({
+            draftNotes: [],
+            candidates: [{ ...keep, solverStatus: 'INFEASIBLE', metrics: null, conflicts: [travel], notes: null }],
+          }),
+        );
+        tx.user.findMany.mockResolvedValue([{ id: TEACHER, firstName: 'Eva', lastName: 'Ek' }]);
+
+        const overview = await service.overview(YEAR, user, NOW);
+
+        expect(overview.batch!.candidates[0]!.conflicts).toEqual([
+          {
+            category: 'TEACHER_OVERLAP',
+            code: 'TEACHER_TRAVEL_CANNOT_BE_KEPT',
+            params: { stepMinutes: 30, measured: 1 },
+            message: travel.message,
+            resourceNames: ['Eva Ek'],
+          },
+        ]);
+        expect(tx.user.findMany).toHaveBeenCalledWith({
+          where: { id: { in: [TEACHER, OTHER_TEACHER] } },
+          select: { id: true, firstName: true, lastName: true },
+        });
+        expect(JSON.stringify(overview)).not.toMatch(new RegExp(`subjectIds|${TEACHER}|${OTHER_TEACHER}`));
+        expect(recordedReads(tx)).toEqual([]);
+      });
+
       it('names the previous batch’s teachers beside a running run, and shows no wish of a candidate with no timetable', async () => {
         tx.scheduleCandidateRun.findFirst
           .mockResolvedValueOnce(row({ id: 'new', status: 'RUNNING', progress: 0, finishedAt: null, heartbeatAt: NOW, unplaced: null, candidates: [] }))
@@ -1576,6 +1614,28 @@ describe('the pieces', () => {
       { category: 'INSUFFICIENT_RESOURCES', code: 'X', params: { n: 1 }, message: 'm', resourceNames: ['Sal 1'] },
     ]);
     expect(JSON.stringify(stored)).not.toMatch(/post-1|teacher-1|subjectIds/);
+  });
+
+  it('keeps a travel sentence’s teachers server-side, and no other sentence’s', () => {
+    const stored = storedConflictsOf({
+      summary: 's',
+      conflicts: [
+        {
+          category: 'TEACHER_OVERLAP',
+          code: 'TEACHER_TRAVEL_CANNOT_BE_KEPT',
+          params: { stepMinutes: 30, measured: 1 },
+          message: 'm',
+          resourceIds: ['teacher-1'],
+          resourceNames: [],
+          subjectIds: ['teacher-1'],
+        },
+        { category: 'INSUFFICIENT_RESOURCES', code: 'X', params: {}, message: 'm', resourceIds: ['r'], resourceNames: [], subjectIds: ['teacher-2'] },
+      ],
+    } as unknown as AiEngineConflictAnalysis);
+    expect(stored).toEqual([
+      { category: 'TEACHER_OVERLAP', code: 'TEACHER_TRAVEL_CANNOT_BE_KEPT', params: { stepMinutes: 30, measured: 1 }, message: 'm', resourceNames: [], subjectIds: ['teacher-1'] },
+      { category: 'INSUFFICIENT_RESOURCES', code: 'X', params: {}, message: 'm', resourceNames: [] },
+    ]);
   });
 
   it('fails a run the engine refused over a post’s days with the hidden sentence, and keeps no post', () => {

@@ -233,6 +233,24 @@ export interface AnonymousRoom {
    */
   minGradeLevel: number | null;
   maxGradeLevel: number | null;
+  /**
+   * Restid i generatorn: the skolområde the room stands on, anonymised. Sent
+   * only by a school whose Skolregler turn the walk on and that has a figure
+   * between two sites; absent everywhere else, so every other payload is the
+   * one it was.
+   */
+  siteId?: string;
+}
+
+/**
+ * The walk between two skolområden: the school's SiteTravelTimes row, its
+ * two sites anonymised like the rooms' `siteId`. One per pair, the same both
+ * ways (common/site-travel.ts).
+ */
+export interface AnonymousSiteTravelTime {
+  siteAId: string;
+  siteBId: string;
+  minutes: number;
 }
 
 /** A soft wish that a subject's lessons land in particular rooms. */
@@ -538,6 +556,14 @@ export interface AiEngineScheduleRequest {
    * constraint, and it keeps STUDENT data out of the engine entirely.
    */
   groupConflicts: [string, string][];
+  /**
+   * Restid i generatorn: the walks between the school's skolområden. The KEY
+   * is sent only when the school's Skolregler turn the walk on and a pair has
+   * a figure — the rooms then carry their `siteId` — so every other school
+   * sends the payload it always sent, and the engine builds the model it
+   * always built.
+   */
+  siteTravelTimes?: AnonymousSiteTravelTime[];
   weights?: ObjectiveWeights | null;
   rules?: ScheduleRules | null;
   roomPreferences: AnonymousRoomPreference[];
@@ -601,7 +627,9 @@ export interface AiEngineConflictDetail {
    * kept beside the stored refusal so a reader with HR-läs can be shown the
    * days from the post and the read written to the Läslogg. And the teacher
    * whose free-day wish a note says was not kept (free-day-wishes.ts), whom
-   * the job view names for every reader. No answer of the API carries it:
+   * the job view names for every reader; and the teachers on the walk's line
+   * (TEACHER_TRAVEL_CANNOT_BE_KEPT, stored-conflicts.ts), named the same way,
+   * in the job view and the candidates'. No answer of the API carries it:
    * the job view is a whitelist, and the synchronous trigger answers with a
    * status.
    */
