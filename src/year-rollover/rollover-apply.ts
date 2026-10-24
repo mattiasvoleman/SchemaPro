@@ -156,8 +156,7 @@ export const ROLLOVER_STEPS: Record<RolloverStepName, (context: StepContext) => 
 
   async requirements(context) {
     if (context.writes.requirements.length === 0) return;
-    const { count } = await context.tx.teachingRequirement.createMany({
-      data: context.writes.requirements.map((row) => ({
+    const data = context.writes.requirements.map((row) => ({
         schoolId: context.schoolId,
         academicYearId: context.targetYearId as string,
         subjectId: row.subjectId,
@@ -185,9 +184,36 @@ export const ROLLOVER_STEPS: Record<RolloverStepName, (context: StepContext) => 
         // Only a row in a block names one. One INSERT for every row, so the
         // block trigger judges each block as it stands once all are in.
         ...(row.blockKey ? { blockId: blockOf(context, row.blockKey) } : {}),
-      })),
+      }));
+    // Delade lektioner: the shares need their rows' new ids, so a year that
+    // has any reads them back — by (group, subject), the row's unique key in
+    // its year — and writes the shares after, as the trigger wants them. A
+    // year with none writes the one INSERT it always wrote.
+    const shared = context.writes.requirements.filter((row) => (row.shares ?? []).length > 0);
+    if (shared.length === 0) {
+      const { count } = await context.tx.teachingRequirement.createMany({ data });
+      context.counts.requirements = count;
+      return;
+    }
+    const created = await context.tx.teachingRequirement.createManyAndReturn({
+      data,
+      select: { id: true, studentGroupId: true, subjectId: true },
     });
-    context.counts.requirements = count;
+    context.counts.requirements = created.length;
+    const idOf = new Map(created.map((row) => [`${row.studentGroupId}:${row.subjectId}`, row.id]));
+    await context.tx.teachingRequirementShare.createMany({
+      data: shared.flatMap((row) => {
+        const requirementId = idOf.get(`${groupOf(context, row.groupKey)}:${row.subjectId}`);
+        if (!requirementId) throw new Error('Rollover: a created timplanspost did not come back.');
+        return (row.shares ?? []).map((share) => ({
+          schoolId: context.schoolId,
+          requirementId,
+          teacherId: share.teacherId,
+          lessons: share.lessons,
+          minutes: share.minutes,
+        }));
+      }),
+    });
   },
 
   async breaks(context) {

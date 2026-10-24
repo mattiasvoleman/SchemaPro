@@ -493,6 +493,8 @@ describe('TeachingRequirementsService', () => {
       lessonLengths: [80, 40],
       startDate: null,
       endDate: null,
+      // Delade lektioner: what Prisma answers for a row nobody shares.
+      shares: [],
     };
     const UNIFORM_ROW = { ...SPLIT_ROW, lessonsPerWeek: 3, minutesPerLesson: 60, lessonLengths: [] };
 
@@ -731,6 +733,7 @@ describe('TeachingRequirementsService', () => {
         id: REQUIREMENT_ID,
         schoolId: SCHOOL_ID,
         academicYearId: YEAR_ID,
+        shares: [],
         ...period,
       };
       tx.teachingRequirement.findUnique.mockImplementation(
@@ -1199,6 +1202,7 @@ describe('TeachingRequirementsService', () => {
         coTeacherId: null,
         lessonsPerWeek: 2,
         minutesPerLesson: 60,
+        shares: [],
       };
 
       const arrangeRow = (overrides: StaffingWorld = {}) => {
@@ -1310,6 +1314,178 @@ describe('TeachingRequirementsService', () => {
         expect(handle.locked).toEqual([]);
         expect(tx.staffingPolicy.findUnique).not.toHaveBeenCalled();
       });
+    });
+  });
+
+  describe('delade lektioner', () => {
+    const BO = '55555555-5555-4555-8555-555555555555';
+    const STORED = {
+      id: REQUIREMENT_ID,
+      schoolId: SCHOOL_ID,
+      academicYearId: YEAR_ID,
+      subjectId: SUBJECT_ID,
+      studentGroupId: GROUP_ID,
+      teacherId: TEACHER_ID,
+      coTeacherId: null,
+      lessonsPerWeek: 3,
+      minutesPerLesson: 60,
+      lessonLengths: [],
+      startDate: null,
+      endDate: null,
+      shares: [{ teacherId: BO, lessons: 1, minutes: 60 }],
+    };
+    // What create and update answer: the row's own columns, never the relation.
+    const { shares: _stored, ...ROW } = STORED;
+    const givenStored = (row: Record<string, unknown>): void => {
+      tx.teachingRequirement.findUnique.mockImplementation(
+        ({ where, select }: { where: { id: string }; select?: Selection }) =>
+          Promise.resolve(where.id === REQUIREMENT_ID ? selected(row, select) : null),
+      );
+    };
+    const order = (mock: jest.Mock): number => mock.mock.invocationCallOrder[0] ?? Number.NaN;
+
+    it('creates the row first and its shares after it, judged and with the uniform row’s length filled in', async () => {
+      tx.teachingRequirement.create.mockResolvedValue(ROW);
+
+      const created = await service.create(
+        dto({ teacherId: TEACHER_ID, lessonsPerWeek: 3, minutesPerLesson: 60, shares: [{ teacherId: BO, lessons: 1 }] }),
+        testUser(),
+      );
+
+      expect(tx.teachingRequirementShare.createMany).toHaveBeenCalledWith({
+        data: [{ schoolId: SCHOOL_ID, requirementId: REQUIREMENT_ID, teacherId: BO, lessons: 1, minutes: 60 }],
+      });
+      expect(order(tx.teachingRequirement.create)).toBeLessThan(order(tx.teachingRequirementShare.createMany));
+      expect(created.shares).toEqual([{ teacherId: BO, lessons: 1, minutes: 60 }]);
+    });
+
+    it('creates a row nobody shares with the statements it always made, and answers without the key', async () => {
+      tx.teachingRequirement.create.mockResolvedValue(ROW);
+
+      const created = await service.create(dto({ teacherId: TEACHER_ID }), testUser());
+
+      expect(tx.teachingRequirementShare.createMany).not.toHaveBeenCalled();
+      expect(created).not.toHaveProperty('shares');
+    });
+
+    it.each<[string, Partial<CreateTeachingRequirementDto>, string]>([
+      ['the lead as a share', { shares: [{ teacherId: TEACHER_ID, lessons: 1 }] }, 'TEACHER_ON_POST'],
+      ['the medlärare as a share', { coTeacherId: BO, shares: [{ teacherId: BO, lessons: 1 }] }, 'TEACHER_ON_POST'],
+      ['every lesson', { shares: [{ teacherId: BO, lessons: 3 }] }, 'LEAD_KEEPS_NONE'],
+      ['a length the row lacks', { shares: [{ teacherId: BO, lessons: 1, minutes: 45 }] }, 'LENGTH_NOT_ON_POST'],
+      ['one teacher twice', { shares: [{ teacherId: BO, lessons: 1 }, { teacherId: BO, lessons: 1 }] }, 'TEACHER_TWICE'],
+    ])('refuses %s with a 409 naming the rule, and writes nothing', async (_case, body, reason) => {
+      const refused = service.create(
+        dto({ teacherId: TEACHER_ID, lessonsPerWeek: 3, minutesPerLesson: 60, ...body }),
+        testUser(),
+      );
+
+      await expect(refused).rejects.toBeInstanceOf(ConflictException);
+      await expect(refused).rejects.toMatchObject({ response: { code: 'REQUIREMENT_SHARES_DO_NOT_FIT', reason } });
+      expect(tx.teachingRequirement.create).not.toHaveBeenCalled();
+      expect(tx.teachingRequirementShare.createMany).not.toHaveBeenCalled();
+    });
+
+    it('asks a row of two lengths which length a share takes', async () => {
+      await expect(
+        service.create(
+          dto({ teacherId: TEACHER_ID, lessonLengths: [80, 40], shares: [{ teacherId: BO, lessons: 1 }] }),
+          testUser(),
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(tx.teachingRequirement.create).not.toHaveBeenCalled();
+    });
+
+    it('replaces the shares in the trigger’s order: the stored ones out, the row, the new ones in', async () => {
+      givenStored(STORED);
+      tx.teachingRequirement.update.mockResolvedValue(ROW);
+
+      const updated = await service.update(
+        REQUIREMENT_ID,
+        { lessonsPerWeek: 4, shares: [{ teacherId: BO, lessons: 2 }] },
+        testUser(),
+      );
+
+      expect(tx.teachingRequirementShare.deleteMany).toHaveBeenCalledWith({ where: { requirementId: REQUIREMENT_ID } });
+      expect(order(tx.teachingRequirementShare.deleteMany)).toBeLessThan(order(tx.teachingRequirement.update));
+      expect(order(tx.teachingRequirement.update)).toBeLessThan(order(tx.teachingRequirementShare.createMany));
+      expect(updated.shares).toEqual([{ teacherId: BO, lessons: 2, minutes: 60 }]);
+    });
+
+    it('[] gives the lead every lesson again, with nothing inserted', async () => {
+      givenStored(STORED);
+      tx.teachingRequirement.update.mockResolvedValue(ROW);
+
+      const updated = await service.update(REQUIREMENT_ID, { shares: [] }, testUser());
+
+      expect(tx.teachingRequirementShare.deleteMany).toHaveBeenCalledTimes(1);
+      expect(tx.teachingRequirementShare.createMany).not.toHaveBeenCalled();
+      expect(updated).not.toHaveProperty('shares');
+    });
+
+    it.each<[string, UpdateTeachingRequirementDto, string]>([
+      ['makes the share’s teacher the lead', { teacherId: BO }, 'TEACHER_ON_POST'],
+      ['makes the share’s teacher the medlärare', { coTeacherId: BO }, 'TEACHER_ON_POST'],
+      ['leaves the lead no lesson', { lessonsPerWeek: 1 }, 'LEAD_KEEPS_NONE'],
+      ['moves every lesson off the share’s length', { minutesPerLesson: 55 }, 'LENGTH_NOT_ON_POST'],
+    ])('refuses a PATCH without shares that %s, and writes nothing', async (_case, body, reason) => {
+      givenStored(STORED);
+
+      const refused = service.update(REQUIREMENT_ID, body, testUser());
+
+      await expect(refused).rejects.toMatchObject({ response: { code: 'REQUIREMENT_SHARES_DO_NOT_FIT', reason } });
+      expect(tx.teachingRequirement.update).not.toHaveBeenCalled();
+      expect(tx.teachingRequirementShare.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('keeps the stored shares on a PATCH that does not name them, and answers with them', async () => {
+      givenStored(STORED);
+      tx.teachingRequirement.update.mockResolvedValue(ROW);
+
+      const updated = await service.update(REQUIREMENT_ID, { lessonsPerWeek: 2 }, testUser());
+
+      expect(tx.teachingRequirementShare.deleteMany).not.toHaveBeenCalled();
+      expect(tx.teachingRequirementShare.createMany).not.toHaveBeenCalled();
+      expect(updated.shares).toEqual([{ teacherId: BO, lessons: 1, minutes: 60 }]);
+    });
+
+    it('answers the TS409 the database meets anyway as the 409 naming the rule, not a 500', async () => {
+      givenStored({ ...STORED, shares: [] });
+      tx.teachingRequirement.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Database error', {
+          code: 'P2039',
+          clientVersion: Prisma.prismaVersion.client,
+          meta: {
+            driverAdapterError: {
+              cause: {
+                originalCode: 'TS409',
+                originalMessage: 'REQUIREMENT_SHARES_DO_NOT_FIT: timplanspostens lärarandelar ryms inte i dess lektioner (LEAD_KEEPS_NONE)',
+                detail: `requirementId=${REQUIREMENT_ID} reason=LEAD_KEEPS_NONE`,
+              },
+            },
+          },
+        }),
+      );
+
+      await expect(service.update(REQUIREMENT_ID, { lessonsPerWeek: 1 }, testUser())).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'REQUIREMENT_SHARES_DO_NOT_FIT', reason: 'LEAD_KEEPS_NONE' },
+      });
+    });
+
+    it('lists the year’s shares through the caller’s RLS, by post', async () => {
+      tx.teachingRequirementShare.findMany.mockResolvedValue([
+        { requirementId: REQUIREMENT_ID, teacherId: BO, lessons: 1, minutes: 60 },
+      ]);
+      const user = testUser();
+
+      await expect(service.listShares(YEAR_ID, user)).resolves.toEqual([
+        { requirementId: REQUIREMENT_ID, teacherId: BO, lessons: 1, minutes: 60 },
+      ]);
+      expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
+      expect(tx.teachingRequirementShare.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { requirement: { academicYearId: YEAR_ID } } }),
+      );
     });
   });
 

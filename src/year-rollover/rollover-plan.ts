@@ -175,6 +175,13 @@ export interface RolloverWrites {
      * writes, and hashes, what it always did.
      */
     blockKey?: string;
+    /**
+     * Delade lektioner: the row's shares, each teacher kept as the lead is
+     * (a cleared one leaves a share with no teacher, never the lessons to the
+     * lead). Only on a successor row whose source is shared, so a school that
+     * shares nothing writes, and hashes, what it always did.
+     */
+    shares?: { teacherId: string | null; lessons: number; minutes: number }[];
   }[];
   /**
    * The parallel blocks carried, one copy per block and side: the rows
@@ -630,6 +637,7 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
     if (row.successor) {
       let teacherId: string | null = null;
       let coTeacherId: string | null = null;
+      let keepShare: (userId: string | null) => string | null = () => null;
       if (options.keepTeachers) {
         const span = spanOf(group, row);
         const keep = (role: 'TEACHER' | 'CO_TEACHER', userId: string | null): string | null => {
@@ -673,13 +681,25 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
         };
         teacherId = keep('TEACHER', requirement.teacherId);
         coTeacherId = keep('CO_TEACHER', requirement.coTeacherId);
+        keepShare = (userId) => keep('TEACHER', userId);
       }
+      // Delade lektioner: the lessons stay split as they were, each share's
+      // teacher kept by the same rules as the lead (a share's teacher teaches
+      // their lessons as one), or the share left with no teacher — its
+      // lessons are then unstaffed, as a cleared lead's are. Without
+      // keepTeachers every share is teacherless, as the row's lead is.
+      const shares = (requirement.shares ?? []).map((share) => ({
+        teacherId: keepShare(share.teacherId),
+        lessons: share.lessons,
+        minutes: share.minutes,
+      }));
       writes.requirements.push({
         ...base,
         groupKey: group.id,
         teacherId,
         coTeacherId,
         ...(requirement.blockId ? { blockKey: requirement.blockId } : {}),
+        ...(shares.length > 0 ? { shares } : {}),
       });
       requirementStats.carried++;
       carriedPerGroup.set(group.id, (carriedPerGroup.get(group.id) ?? 0) + 1);

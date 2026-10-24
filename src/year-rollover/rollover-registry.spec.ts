@@ -295,6 +295,7 @@ describe('the rollover registry', () => {
       'StudentGroup',
       'StudentGroupMember',
       'TeachingRequirement',
+      'TeachingRequirementShare',
       'TeachingBlock',
       'SchoolBreak',
       'AvailabilityConstraint',

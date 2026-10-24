@@ -2,12 +2,14 @@ import {
   Body,
   Controller,
   Delete,
+  Get,
   HttpCode,
   HttpStatus,
   Param,
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -34,6 +36,18 @@ export class TeachingRequirementsController {
     private readonly requirements: TeachingRequirementsService,
     private readonly termHalves: TermHalvesService,
   ) {}
+
+  /**
+   * Delade lektioner: the year's shares, for the administrator's pages. A
+   * read, so every administrator's (RolesGuard asks no area of a GET).
+   */
+  @Get('shares')
+  listShares(
+    @Query('academicYearId', new ParseUUIDPipe({ version: '4' })) academicYearId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.requirements.listShares(academicYearId, user);
+  }
 
   @Post()
   create(

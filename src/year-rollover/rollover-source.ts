@@ -79,6 +79,11 @@ export interface SourceRequirement {
   endDate: string | null;
   /** Parallella block: the block the row runs in, or null. */
   blockId: string | null;
+  /**
+   * Delade lektioner (20261205090000): the lessons other teachers take,
+   * longest first. Absent on a row nobody shares.
+   */
+  shares?: { teacherId: string | null; lessons: number; minutes: number }[];
 }
 
 /** A parallel block of the source year that holds at least one row. */
@@ -252,6 +257,11 @@ export async function readRolloverSource(
       endDate: true,
       blockId: true,
       subject: { select: { name: true } },
+      // Delade lektioner: the lessons other teachers take, kept with the row.
+      shares: {
+        select: { teacherId: true, lessons: true, minutes: true },
+        orderBy: [{ minutes: 'desc' }, { teacherId: 'asc' }],
+      },
     },
     orderBy: { id: 'asc' },
   });
@@ -462,6 +472,8 @@ export async function readRolloverSource(
       startDate: row.startDate ? asDay(row.startDate) : null,
       endDate: row.endDate ? asDay(row.endDate) : null,
       blockId: row.blockId ?? null,
+      // Only when there are any: a row nobody shares is the object it always was.
+      ...((row.shares ?? []).length > 0 ? { shares: row.shares } : {}),
     })),
     blocks: (blocks ?? []).map((block) => ({
       id: block.id,

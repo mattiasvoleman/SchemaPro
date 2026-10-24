@@ -146,8 +146,14 @@ export function suggestTeachers(
   const charge = chargedMinutes(requirement, input.year, input.closures).teacher;
 
   const others = input.requirements.filter((row) => row.id !== requirementId);
+  // Delade lektioner: a share's teacher teaches the row's group and subject too.
   const teaches = (userId: string, row: (typeof others)[number]) =>
-    row.teacherId === userId || row.coTeacherId === userId;
+    row.teacherId === userId ||
+    row.coTeacherId === userId ||
+    (row.shares ?? []).some((share) => share.teacherId === userId);
+  // Who already teaches some of this row's lessons is not offered its lead
+  // (the trigger's rule (d)), as its medlärare is not.
+  const sharing = new Set((requirement.shares ?? []).map((share) => share.teacherId));
   const lastYearTeachers = new Set(lastYear?.teacherIds ?? []);
   const familiar = subjectFamiliarTeachers(input, requirementId, lastYear);
 
@@ -156,7 +162,7 @@ export function suggestTeachers(
   );
   const candidates: TeacherCandidate[] = [];
   for (const userId of new Set(staffIds)) {
-    if (userId === requirement.coTeacherId) continue;
+    if (userId === requirement.coTeacherId || sharing.has(userId)) continue;
     const employment = employmentByUser.get(userId) ?? null;
     const changing = employment !== null && changesDuringYear(employment, input.year) ? employment : null;
     let remainingMinutesPerWeek: number | null;
@@ -314,6 +320,9 @@ export function subjectFamiliarTeachers(
     if (row.id === requirementId || row.subjectId !== requirement.subjectId) continue;
     if (row.teacherId !== null) familiar.add(row.teacherId);
     if (row.coTeacherId !== null) familiar.add(row.coTeacherId);
+    for (const share of row.shares ?? []) {
+      if (share.teacherId !== null) familiar.add(share.teacherId);
+    }
   }
   return familiar;
 }

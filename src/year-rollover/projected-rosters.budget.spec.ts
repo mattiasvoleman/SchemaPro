@@ -306,13 +306,16 @@ describe('the active year’s statement budget', () => {
     ]);
   });
 
-  it('a timplanspost given a teacher under a WARN policy: 18 statements, as before', async () => {
+  it('a timplanspost given a teacher under a WARN policy: 18 statements, and the two its shares are read with', async () => {
     const { world, prisma } = school();
     // r2 is Bo's (who has left): Anna is newly assigned, so behörighet is asked.
     const r2 = world.rows['teachingRequirement']![1]!['id'] as string;
     await new TeachingRequirementsService(prisma).update(r2, { teacherId: IDS.anna }, admin);
     expect(statementsOf(world.calls)).toEqual([
       'teachingRequirement.findUnique',
+      // Delade lektioner: the row's stored shares, which a PATCH naming a
+      // teacher must still fit (requirement-shares.ts), as a selected relation.
+      'teachingRequirement.findUnique › shares',
       'staffingPolicy.findUnique',
       'teacherEmployment.findMany',
       // readLoadInput's year row, which now carries the flags too.
@@ -320,6 +323,8 @@ describe('the active year’s statement budget', () => {
       'teachingRequirement.findMany',
       'teachingRequirement.findMany › subject',
       'teachingRequirement.findMany › studentGroup',
+      // Delade lektioner: every row's shares, which the load counts by teacher.
+      'teachingRequirement.findMany › shares',
       'teacherEmployment.findMany',
       'staffingPolicy.findUnique',
       'schoolBreak.findMany',

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { requirementSharesConflict } from '../common/utils/prisma-errors';
 import {
   BadRequestException,
   ConflictException,
@@ -604,6 +605,12 @@ export class StaffingProposalService {
         }
         if (change.toTeacherId !== null && change.toTeacherId === row.coTeacherId) {
           throw new BadRequestException(SAME_TEACHER_TWICE);
+        }
+        // Delade lektioner: a teacher who takes some of the row's lessons
+        // cannot also be its lead (the trigger's rule (d)); the plan never
+        // proposes it, and an apply naming it is answered by name.
+        if (change.toTeacherId !== null && (row.shares ?? []).some((share) => share.teacherId === change.toTeacherId)) {
+          throw requirementSharesConflict('TEACHER_ON_POST');
         }
         if (row.teacherId !== change.fromTeacherId) throw stale();
       }
@@ -1290,11 +1297,20 @@ export function planOf(
   // on the dates it runs (allowedDatedRows); every other free dated row
   // excludes it, whatever behörighet says. Teachers in staffIds order, so
   // each row's list is sorted.
+  //
+  // Delade lektioner: a share's teacher already teaches some of the row's
+  // lessons, so is never offered its lead (the trigger's rule (d)); the
+  // lessons they have are fixed load above (countedMinutesByTeacher with the
+  // free rows' leads taken off), and the row charges its lead only the rest
+  // (chargedMinutes' lead part). In the same pass, so each list stays in
+  // staffIds order. A row nobody shares excludes what it always did.
   for (const teacher of teachers) {
-    if (!teacher.changing) continue;
-    const allowed = allowedDatedRows(teacher, rows, fixedInput, tolerance);
+    const allowed = teacher.changing ? allowedDatedRows(teacher, rows, fixedInput, tolerance) : null;
     for (const row of rows) {
-      if (row.kind !== 'FIXED' && isDatedRow(row.row) && !allowed.has(row.row.id)) row.excluded.push(teacher.userId);
+      if (row.kind === 'FIXED') continue;
+      const datedOut = allowed !== null && isDatedRow(row.row) && !allowed.has(row.row.id);
+      const sharesRow = (row.row.shares ?? []).some((share) => share.teacherId === teacher.userId);
+      if (datedOut || sharesRow) row.excluded.push(teacher.userId);
     }
   }
 
@@ -1639,6 +1655,11 @@ export function basisOf(state: Pick<StaffingState, 'read' | 'policy' | 'staffIds
         row.gradeSpan ? [row.gradeSpan.min, row.gradeSpan.max] : null,
         row.loadWeight ?? 1,
         state.lastYear.get(row.id)?.teacherIds ?? null,
+        // Delade lektioner only when the row has any, so the basis of a
+        // school that shares nothing is the digest it always was.
+        ...((row.shares ?? []).length > 0
+          ? [row.shares!.map((share) => [share.teacherId, share.lessons, share.minutes])]
+          : []),
       ]),
     // A post's periods (20261022120000) only when it has any, so the basis of
     // a school without them is the digest it always was.

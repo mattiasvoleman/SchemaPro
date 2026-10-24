@@ -742,13 +742,16 @@ describe('Fas 2: each teacher is charged the row’s own percentage', () => {
   });
 
   it('chargedMinutes states the three figures one row is worth', () => {
-    expect(
-      chargedMinutes(
-        requirement({ lessonsPerWeek: 3, recurrence: 'ODD_WEEKS', teacherLoadPercent: 150, coTeacherLoadPercent: 50 }),
-        YEAR,
-        [],
-      ),
-    ).toEqual({ lesson: 90, teacher: 135, coTeacher: 45 });
+    const charged = chargedMinutes(
+      requirement({ lessonsPerWeek: 3, recurrence: 'ODD_WEEKS', teacherLoadPercent: 150, coTeacherLoadPercent: 50 }),
+      YEAR,
+      [],
+    );
+    expect(charged).toMatchObject({ lesson: 90, teacher: 135, coTeacher: 45 });
+    // A row with no share is one part: its lead, at the row's own figures.
+    expect(charged.parts).toEqual([
+      { teacherId: ANNA, role: 'LEAD', lessons: 3, minutes: 180, lesson: 90, charged: 135 },
+    ]);
   });
 });
 

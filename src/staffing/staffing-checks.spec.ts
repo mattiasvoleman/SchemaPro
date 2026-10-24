@@ -339,6 +339,40 @@ describe('judgeRequirementWrite', () => {
     ]);
   });
 
+  it('delade lektioner: asks behörighet of a share’s new teacher, as a teacher, after the lead', () => {
+    const findings = judge({
+      after: requirement({ teacherId: ANNA, lessonsPerWeek: 3, shares: [{ teacherId: BO, lessons: 1, minutes: 60 }] }),
+    });
+    // Anna holds Ma 7–9 (input()'s one behörighet); Bo holds nothing.
+    expect(findings.map((f) => [f.code, f.userId, f.params.role])).toEqual([[STAFF_TEACHER_NOT_QUALIFIED, BO, 'TEACHER']]);
+  });
+
+  it('delade lektioner: does not ask again of a teacher whose share only changes size', () => {
+    const stored = requirement({ teacherId: ANNA, lessonsPerWeek: 3, shares: [{ teacherId: BO, lessons: 1, minutes: 60 }] });
+    expect(
+      judge({
+        input: input({ requirements: [stored] }),
+        before: stored,
+        after: { ...stored, shares: [{ teacherId: BO, lessons: 2, minutes: 60 }] },
+      }),
+    ).toEqual([]);
+  });
+
+  it('delade lektioner: charges the share’s teacher only their own lessons, and the lead the rest', () => {
+    // Bo's riktmärke is 1 000 (+10 %: 1 100). He has 1 000 already; one
+    // lesson of the row puts him at 1 060, inside; two at 1 120, past it.
+    const year = input({
+      employments: [employment(ANNA), employment(BO)],
+      qualifications: [qualification(), qualification({ userId: BO })],
+      requirements: [requirement({ id: 'req-0', teacherId: BO, lessonsPerWeek: 10, minutesPerLesson: 100 })],
+    });
+    const row = (lessons: number) =>
+      requirement({ teacherId: ANNA, lessonsPerWeek: 3, shares: [{ teacherId: BO, lessons, minutes: 60 }] });
+    expect(judge({ input: year, policy: policy({ overAllocationMode: 'REFUSE' }), after: row(1) })).toEqual([]);
+    const findings = judge({ input: year, policy: policy({ overAllocationMode: 'REFUSE' }), after: row(2) });
+    expect(findings.map((f) => [f.code, f.userId, f.params.minutes])).toEqual([[STAFF_TEACHER_OVER_TARGET, BO, 1120]]);
+  });
+
   it('does not ask behörighet again of the teacher the row already had', () => {
     const stored = requirement({ teacherId: BO });
     expect(

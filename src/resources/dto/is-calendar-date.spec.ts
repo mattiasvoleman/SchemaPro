@@ -1,3 +1,5 @@
+// The DTO's nested shares use class-transformer's @Type, which reads design metadata.
+import 'reflect-metadata';
 import { validate } from 'class-validator';
 import { isCalendarDate } from './is-calendar-date';
 import { CreateTeachingRequirementDto } from './teaching-requirement.dto';
