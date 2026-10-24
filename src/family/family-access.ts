@@ -2,6 +2,8 @@ import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import type { PrismaClient } from '@prisma/client';
 import { Role } from '../auth/enums/role.enum';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+import { todayInZone } from '../common/utils/time';
+import { schoolTimezone } from '../cover/cover-context';
 
 /*
  * Who may act for a pupil: report an absence (FamilyService) or file a leave
@@ -43,4 +45,30 @@ export async function schoolIdOf(tx: PrismaClient, studentId: string): Promise<s
   });
   if (!student) throw new NotFoundException('Student not found.');
   return student.schoolId;
+}
+
+/**
+ * A school's today, as the UTC midnight a `@db.Date` column stores: the day
+ * the school is on, not UTC's, which is still yesterday for the hour or two
+ * after midnight in Stockholm. The school row is read as the caller reads it,
+ * and one row security hides is Stockholm's (schoolTimezone).
+ */
+export async function schoolToday(tx: PrismaClient, schoolId: string, now: Date = new Date()): Promise<Date> {
+  return todayInZone(await schoolTimezone(tx, schoolId), now);
+}
+
+/**
+ * Whether the caller may take an absence report back, and if not, why: only
+ * its reporter, or the administrator, and only from the school's today on.
+ * The withdrawal refuses by it (403, 400), and the read answers it per row
+ * (removable), so a phone or a browser in another timezone offers exactly the
+ * withdrawals the gateway will make.
+ */
+export function absenceReportRemoval(
+  report: { reportedById: string; date: Date },
+  user: AuthenticatedUser,
+  today: Date,
+): 'ALLOWED' | 'NOT_REPORTER' | 'PAST' {
+  if (user.role !== Role.SCHOOL_ADMIN && report.reportedById !== user.userId) return 'NOT_REPORTER';
+  return report.date < today ? 'PAST' : 'ALLOWED';
 }
