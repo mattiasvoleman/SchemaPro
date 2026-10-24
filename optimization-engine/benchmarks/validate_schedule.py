@@ -52,6 +52,10 @@ Checks, all derived from the request:
                       post's limit in every week `lockedWeekdays` names; what
                       the school locked judged as the engine is held to it,
                       see _teacher_day_problems
+    travel            Restid i generatorn: between two lessons one party
+                      shares on one weekday, at least the school's minutes
+                      for the pair of skolområden their rooms stand on — the
+                      pupils' margins added — see _travel_problems
 
 Use as a library::
 
@@ -451,6 +455,93 @@ def _teacher_day_problems(request, lessons) -> list[str]:
     return problems
 
 
+def _travel_problems(request, lessons) -> list[str]:
+    """Restid i generatorn: the walk between two skolområden, re-read from the request.
+
+    THE GATEWAY'S DEFINITION, NOT THE ENGINE'S CODE (src/common/site-travel.ts):
+    a walk is counted between two lessons on one weekday whose rooms stand on
+    two different sites the school gave a figure above zero. A room on no
+    site, an unknown room and a pair with no figure count nothing. Every pair
+    of lessons one party shares is read, not only neighbours: wherever the
+    figures keep the triangle inequality the two are the same rule, and the
+    engine promises the stricter one.
+
+    WHO WALKS: a teacher between their lessons (lead or co-teacher); the
+    pupils between two lessons of one group, and between a lesson of a group
+    and one of a group sharing a pupil with it (groupConflicts). For pupils
+    the walk comes after the earlier lesson's minutesAfter and before the
+    later one's minutesBefore — a class showers, changes, then walks. A
+    locked lesson is in the day at its own clock times and room, and two
+    locked lessons are never read against each other: what the school locked
+    is not judged on its own.
+
+    THE RAW FIGURE, NOT THE STEP. The engine rounds a walk up to its start
+    step; a timetable that keeps the rounded walk keeps the school's minutes,
+    which is what this checks — the promise the hand-edit warning reads.
+    """
+    if not getattr(request, "site_travel_times", None):
+        return []
+    site_of = {room.id: room.site_id for room in request.rooms if room.site_id is not None}
+    minutes = {
+        frozenset((row.site_a_id, row.site_b_id)): row.minutes
+        for row in request.site_travel_times
+        if row.minutes > 0
+    }
+    if not minutes:
+        return []
+    req_by_id = {r.id: r for r in request.requirements}
+    conflicts = defaultdict(set)
+    for first, second in getattr(request, "group_conflicts", []) or []:
+        conflicts[first].add(second)
+        conflicts[second].add(first)
+
+    # (weekday, start, end, site, teachers, groups, lead, trail, locked, label)
+    entries = []
+    for lesson in lessons:
+        requirement = req_by_id.get(lesson.requirement_id)
+        if requirement is None:
+            continue
+        entries.append((
+            lesson.day_of_week, _clock(lesson.start_time), _clock(lesson.end_time),
+            site_of.get(lesson.room_id), _lesson_teachers(requirement, lesson),
+            {requirement.student_group_id}, requirement.minutes_before,
+            requirement.minutes_after, False, f"lesson {lesson.requirement_id}",
+        ))
+    for fixed in request.fixed_lessons:
+        entries.append((
+            fixed.day_of_week, _clock(fixed.start_time), _clock(fixed.end_time),
+            site_of.get(fixed.room_id), {fixed.teacher_id, fixed.co_teacher_id} - {None},
+            {fixed.student_group_id, *fixed.extra_group_ids}, 0, 0, True,
+            f"locked lesson {fixed.id}",
+        ))
+
+    problems: list[str] = []
+    for i, first in enumerate(entries):
+        for second in entries[i + 1:]:
+            if first[8] and second[8]:
+                continue
+            if first[0] != second[0] or first[3] is None or second[3] is None:
+                continue
+            walk = minutes.get(frozenset((first[3], second[3])))
+            if walk is None or first[3] == second[3]:
+                continue
+            early, late = (first, second) if first[1] <= second[1] else (second, first)
+            gap = late[1] - early[2]
+            if early[4] & late[4] and gap < walk:
+                problems.append(
+                    f"teacher walk {early[9]} -> {late[9]} on weekday {early[0]}: "
+                    f"{gap} min between, the walk takes {walk}")
+            shares_pupils = bool(early[5] & late[5]) or any(
+                other in conflicts[group] for group in early[5] for other in late[5]
+            )
+            if shares_pupils and gap - early[7] - late[6] < walk:
+                problems.append(
+                    f"pupils' walk {early[9]} -> {late[9]} on weekday {early[0]}: "
+                    f"{gap - early[7] - late[6]} min between their margins, the walk "
+                    f"takes {walk}")
+    return problems
+
+
 def validate(grid, request, lessons) -> list[str]:
     """Return a list of rule violations; empty means the timetable is valid."""
     problems: list[str] = []
@@ -613,6 +704,7 @@ def validate(grid, request, lessons) -> list[str]:
     problems.extend(_distribution_problems(request, placed_weekdays))
     problems.extend(_block_problems(request, lessons))
     problems.extend(_teacher_day_problems(request, lessons))
+    problems.extend(_travel_problems(request, lessons))
 
     rules = request.rules
     if rules is not None:

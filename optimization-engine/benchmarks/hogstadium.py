@@ -17,6 +17,8 @@ phases measure on.
     python benchmarks/hogstadium.py --teacher-day-rules [--first-solution]
     python benchmarks/hogstadium.py --teacher-day-rules --infeasible-days
     python benchmarks/hogstadium.py --teacher-day-rules --wish-disruption
+    python benchmarks/hogstadium.py --travel 10 [--first-solution]
+    python benchmarks/hogstadium.py --travel 10 --open-sites [--first-solution]
 
 THE SHAPE. Three years (7–9) of six classes of 25 pupils. Per class and week,
 in lessons of 60 minutes unless named: matematik 3, svenska 3, engelska 2,
@@ -43,6 +45,25 @@ come back INFEASIBLE, quickly, and never TIMEOUT. --wish-disruption measures
 the free-day wish against last term's timetable: one solve without the wishes
 seeds previousLessons, then the week is solved with them, once with the
 disruption term standing back on the wished days and once without.
+
+RESTID I GENERATORN, opt in with --travel MINUTES: the school stands on two
+skolområden, Norra and Södra, MINUTES apart, with its rooms split between them
+(SITES) — half the classrooms on each, the kitchen and the art room at Norra,
+the music room and the workshops at Södra, a laboratory and a hall on each and
+the third laboratory at Norra. The classrooms are each year's home, as a
+two-site school keeps them: Norra's eleven for åk 7, Södra's for åk 8 and 9
+(their own stage limits, which the generator already reads), so a class walks
+for the rooms its site lacks and nowhere else. And the staff is the site's,
+as a two-site school staffs: in a subject with more than one teacher, åk 7's
+classes are taught by its first and åk 8 and 9's by the others (site_teacher),
+so the teachers who walk are the ones a school has only one of — music,
+slöjd, bild, hemkunskap, teknik — and the NO teachers between the
+laboratories. The week's loads are the earlier phases' own, divided the other
+way. --open-sites is the worst case instead: every classroom open to every
+year, and every teacher spread over the years as the earlier phases staff
+them, so every lesson without a room type chooses its site and nearly every
+teacher walks every day. Without --travel no room has a site and no walk is
+sent, which is the week every earlier phase measured on.
 """
 
 from __future__ import annotations
@@ -107,6 +128,16 @@ ELEVENS_VAL = (
     ("Programmering", None, "TK"),
 )
 POOL = {code: pool for code, *_, pool in CLASS_SUBJECTS}
+#: Restid i generatorn: how many rooms of each kind stand at (Norra, Södra).
+SITES = {
+    "CLASSROOM": (11, 11),
+    "LABORATORY": (2, 1),
+    "GYMNASIUM": (1, 1),
+    "ART": (1, 0),
+    "MUSIC": (0, 1),
+    "WORKSHOP": (0, 2),
+    "KITCHEN": (1, 0),
+}
 ROOMS = (
     ("CLASSROOM", 22),
     ("LABORATORY", 3),
@@ -204,11 +235,23 @@ def _teacher_day_rows(
     return rules, limits, locked
 
 
+def site_teacher(code: str, year: int, class_index: int, pool: int) -> str:
+    """Restid i generatorn's staffing: åk 7 by a subject's first teacher, åk 8
+    and 9 by the rest, where the subject has more than one; see the docstring."""
+    if pool == 1:
+        return f"teacher-{code}-0"
+    if year == 7:
+        return f"teacher-{code}-0"
+    return f"teacher-{code}-{1 + (class_index + year) % (pool - 1)}"
+
+
 def build_request(
     *,
     blocks: bool = True,
     teacher_day_rules: bool = False,
     infeasible_days: bool = False,
+    travel_minutes: int | None = None,
+    open_sites: bool = False,
 ) -> OptimizeScheduleRequest:
     """The school's week; `blocks=False` sends the same rows with no blockId.
 
@@ -225,7 +268,11 @@ def build_request(
         for class_index, name in enumerate(classes):
             group_ids[name] = _uid(f"group-{name}")
             for code, lessons, minutes, room_type, pool in CLASS_SUBJECTS:
-                teacher = f"teacher-{code}-{(class_index + year) % pool}"
+                teacher = (
+                    site_teacher(code, year, class_index, pool)
+                    if travel_minutes is not None and not open_sites
+                    else f"teacher-{code}-{(class_index + year) % pool}"
+                )
                 row: dict[str, object] = {
                     "id": _uid(f"req-{name}-{code}"),
                     "subjectId": _uid(f"subject-{code}"),
@@ -266,7 +313,11 @@ def build_request(
                 "studentGroupId": group_ids[name],
                 # The pool's last teacher, whom the classes of this year load
                 # least: a block of five is five people free at one hour.
-                "teacherId": _uid(f"teacher-{code}-{(year + 1) % POOL[code]}"),
+                "teacherId": _uid(
+                    site_teacher(code, year, CLASSES_PER_YEAR, POOL[code])
+                    if travel_minutes is not None and not open_sites
+                    else f"teacher-{code}-{(year + 1) % POOL[code]}",
+                ),
                 "lessonsPerWeek": 1,
                 "minutesPerLesson": 60,
                 "studentGroupSize": GROUP_SIZE,
@@ -297,6 +348,16 @@ def build_request(
         for kind, count in ROOMS
         for index in range(count)
     ]
+    if travel_minutes is not None:
+        position: dict[str, int] = {}
+        for room in rooms:
+            kind = str(room["type"])
+            index = position.get(kind, 0)
+            position[kind] = index + 1
+            norra = index < SITES[kind][0]
+            room["siteId"] = _uid("site-norra" if norra else "site-sodra")
+            if kind == "CLASSROOM" and not open_sites:
+                room["minGradeLevel"], room["maxGradeLevel"] = (7, 7) if norra else (8, 9)
     groups = [
         {
             "id": group_ids[f"{year}{chr(ord('A') + index)}"],
@@ -349,6 +410,12 @@ def build_request(
             "maxLessonsPerDayPerGroup": 7,
         },
     }
+    if travel_minutes is not None:
+        payload["siteTravelTimes"] = [{
+            "siteAId": _uid("site-norra"),
+            "siteBId": _uid("site-sodra"),
+            "minutes": travel_minutes,
+        }]
     if teacher_day_rules or infeasible_days:
         work_rules, day_limits, locked = _teacher_day_rows(infeasible_days=infeasible_days)
         payload["teacherWorkRules"] = work_rules
@@ -402,7 +469,8 @@ def _load() -> float:
 
 def run(
     *, blocks: bool, budget: float, teacher_day_rules: bool = False,
-    infeasible_days: bool = False,
+    infeasible_days: bool = False, travel_minutes: int | None = None,
+    open_sites: bool = False,
 ) -> dict[str, object]:
     from validate_schedule import validate
 
@@ -410,6 +478,7 @@ def run(
     solver = SchedulerSolver(settings)
     request = build_request(
         blocks=blocks, teacher_day_rules=teacher_day_rules, infeasible_days=infeasible_days,
+        travel_minutes=travel_minutes, open_sites=open_sites,
     )
     load_before = _load()
     started = time.perf_counter()
@@ -432,6 +501,8 @@ def run(
         "blocks": blocks,
         "teacherDayRules": teacher_day_rules,
         "infeasibleDays": infeasible_days,
+        "travelMinutes": travel_minutes,
+        "openSites": open_sites,
         **teacher_day_counts(request),
         "status": response.status,
         "conflictCodes": sorted({
@@ -455,7 +526,8 @@ def run(
 
 def first_solution(
     *, blocks: bool, budget: float, teacher_day_rules: bool = False,
-    infeasible_days: bool = False,
+    infeasible_days: bool = False, travel_minutes: int | None = None,
+    open_sites: bool = False,
 ) -> dict[str, object]:
     """Seconds to a first timetable in the satisfaction model, as phase 1a builds it.
 
@@ -468,6 +540,7 @@ def first_solution(
     solver = SchedulerSolver(Settings(SOLVER_MAX_TIME_SECONDS=budget))  # type: ignore[call-arg]
     request = build_request(
         blocks=blocks, teacher_day_rules=teacher_day_rules, infeasible_days=infeasible_days,
+        travel_minutes=travel_minutes, open_sites=open_sites,
     )
     solver._validate_request(request)
     full, *_ = solver._build_model(request, use_assumptions=False, include_objective=True)
@@ -483,6 +556,8 @@ def first_solution(
         "blocks": blocks,
         "teacherDayRules": teacher_day_rules,
         "infeasibleDays": infeasible_days,
+        "travelMinutes": travel_minutes,
+        "openSites": open_sites,
         **teacher_day_counts(request),
         "status": status,
         "buildSeconds": round(built, 2),
@@ -569,10 +644,19 @@ def main() -> int:
                         help="add a deltid post the week cannot hold; must answer INFEASIBLE")
     parser.add_argument("--wish-disruption", action="store_true",
                         help="wishes kept against last term's timetable, with and without A6")
+    parser.add_argument("--travel", type=int, default=None, metavar="MINUTES",
+                        help="stand the school on two sites MINUTES apart (SITES)")
+    parser.add_argument("--open-sites", action="store_true",
+                        help="with --travel, open every classroom to every year")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     blocks = not args.without_blocks
-    rules = {"teacher_day_rules": args.teacher_day_rules, "infeasible_days": args.infeasible_days}
+    rules = {
+        "teacher_day_rules": args.teacher_day_rules,
+        "infeasible_days": args.infeasible_days,
+        "travel_minutes": args.travel,
+        "open_sites": args.open_sites,
+    }
     if args.wish_disruption:
         print(json.dumps(wish_disruption(blocks=blocks, budget=args.budget), indent=2))
         return 0

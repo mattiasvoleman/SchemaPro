@@ -127,6 +127,7 @@ class School:
         capacity: int | None = None,
         type: str | None = None,  # noqa: A002 - the wire's own name
         grades: tuple[int, int] | None = None,
+        site: str | None = None,
     ) -> str:
         room_id = str(uuid4())
         self.rooms.append({
@@ -137,6 +138,7 @@ class School:
             "maxGradeLevel": grades[1] if grades else None,
             "building": building,
             "floor": floor,
+            **({"siteId": site} if site is not None else {}),
         })
         return room_id
 
@@ -277,6 +279,34 @@ def test_the_schools_own_example_each_teacher_keeps_one_room() -> None:
     assert outcome.response.status == "OPTIMAL"
     assert {walker.kind for walker in outcome.response.walkers} == {"TEACHER"}
     assert len(outcome.response.walkers) == 2
+
+
+@pytest.mark.parametrize("sites", [False, True])
+def test_a_lesson_never_leaves_its_site_when_the_generator_keeps_the_walk(sites: bool) -> None:
+    """Restid i generatorn: the swap that spares Elin and Alexander a room
+    change would put each of them on the other site for one lesson. Without
+    sites it is the answer; with them — sent only when the school's generator
+    keeps the walk — nothing moves, since the generator placed each lesson on
+    its site with the walk in mind."""
+    school = School()
+    norra, sodra = str(uuid4()), str(uuid4())
+    first = school.room(site=norra if sites else None)
+    second = school.room(site=sodra if sites else None)
+    elin, alexander = person(), person()
+    school.lesson(first, "08:00", "09:00", teacher=elin)
+    school.lesson(second, "09:30", "10:30", teacher=elin)
+    school.lesson(second, "08:00", "09:00", teacher=alexander)
+    school.lesson(first, "09:30", "10:30", teacher=alexander)
+
+    outcome = school.solve()
+
+    assert outcome.response.teachers.before == walk(2, 0, 0)
+    if sites:
+        assert outcome.moved == set()
+        assert outcome.response.teachers.after == walk(2, 0, 0)
+    else:
+        assert len(outcome.moved) == 2
+        assert outcome.response.teachers.after == walk(0, 0, 0)
 
 
 def test_a_room_change_alone_is_worth_a_move() -> None:
@@ -1227,6 +1257,9 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends_and_reads() -> None
         "maxGradeLevel",
         "building",
         "floor",
+        # Restid i generatorn: sent only when the school's generator keeps
+        # the walk, and then no lesson moves off its site.
+        "siteId",
     }
     assert _field_names(PlacedLesson) == {
         "id",

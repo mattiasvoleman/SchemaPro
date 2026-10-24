@@ -1,0 +1,194 @@
+{
+ "_comment": "The second review of #191: andra/repro/roomline_measured2_week.json",
+ "payload": {
+  "requestId": "1dfc8352-4562-4e7f-bb42-e0b20426465e",
+  "academicYearId": "cb69ca38-5f3f-4638-b870-1a14b490b608",
+  "requirements": [
+   {
+    "id": "85776e9a-dd84-439e-b154-5a137a1d5006",
+    "subjectId": "eb2083e6-ce16-4dba-8ff1-8e0242af9fc3",
+    "studentGroupId": "5487ce1e-af19-422a-99b8-a714e61a441c",
+    "teacherId": "17e0aa3c-0398-4ca8-aa7e-9d498c778ea6",
+    "lessonsPerWeek": 1,
+    "minutesPerLesson": 60,
+    "studentGroupSize": 20,
+    "requiredRoomType": "LAB"
+   },
+   {
+    "id": "37176e84-d977-4993-bc49-d76fcfc6e625",
+    "subjectId": "d3447490-96fd-45d0-adf2-0806e5214606",
+    "studentGroupId": "5a921187-19c7-4df4-8f4f-f31e78de5857",
+    "teacherId": "85940927-468f-453d-864a-7a50b48d73f1",
+    "lessonsPerWeek": 1,
+    "minutesPerLesson": 60,
+    "studentGroupSize": 20
+   },
+   {
+    "id": "42930b33-a81a-4477-bb36-75b89cdeb3e6",
+    "subjectId": "adc0da7a-16fe-4aa0-91af-923d79fdef7c",
+    "studentGroupId": "5a921187-19c7-4df4-8f4f-f31e78de5857",
+    "teacherId": "0870e15c-2fcd-41b5-924b-ace4307bf326",
+    "lessonsPerWeek": 1,
+    "minutesPerLesson": 60,
+    "studentGroupSize": 20
+   },
+   {
+    "id": "a0116be5-ab0c-4681-88f8-e3d0d3290a4c",
+    "subjectId": "d3fbf47a-7e5b-4e7f-9ca5-499d004ae545",
+    "studentGroupId": "5487ce1e-af19-422a-99b8-a714e61a441c",
+    "teacherId": "b5d32b16-6619-4cb1-9710-37d1b83e90ec",
+    "lessonsPerWeek": 1,
+    "minutesPerLesson": 60,
+    "studentGroupSize": 20
+   },
+   {
+    "id": "e005b860-51ef-4922-be43-c49e149818d1",
+    "subjectId": "7d41e602-eece-428b-bf7b-118e820865d6",
+    "studentGroupId": "5487ce1e-af19-422a-99b8-a714e61a441c",
+    "teacherId": "1759edc3-72ae-4244-8b01-63c1cd9d2b7d",
+    "lessonsPerWeek": 1,
+    "minutesPerLesson": 60,
+    "studentGroupSize": 20
+   },
+   {
+    "id": "259f4329-e6f4-490b-9a16-4106cf6a659e",
+    "subjectId": "12e0c8b2-bad6-40fb-9948-8dec4f65d4d9",
+    "studentGroupId": "e443df78-9558-467f-9ba9-1faf7a024204",
+    "teacherId": "eb1167b3-67a9-4378-bc65-c1e582e2e662",
+    "lessonsPerWeek": 1,
+    "minutesPerLesson": 60,
+    "studentGroupSize": 20
+   },
+   {
+    "id": "1775336d-71ea-4d05-89a3-e80e966e1277",
+    "subjectId": "5129fb7c-6288-41a5-8c45-782198a6416d",
+    "studentGroupId": "5a921187-19c7-4df4-8f4f-f31e78de5857",
+    "teacherId": "2f120554-4a53-48cc-bdfa-bc08935ddd72",
+    "lessonsPerWeek": 1,
+    "minutesPerLesson": 60,
+    "studentGroupSize": 20,
+    "requiredRoomType": "LAB"
+   }
+  ],
+  "rooms": [
+   {
+    "id": "23a7711a-8133-4876-b7eb-dcd9e87a1613",
+    "capacity": 30,
+    "siteId": "e3e70682-c209-4cac-a29f-6fbed82c07cd"
+   },
+   {
+    "id": "1846d424-c17c-4279-a3c6-612f48268673",
+    "capacity": 30,
+    "siteId": "e3e70682-c209-4cac-a29f-6fbed82c07cd"
+   },
+   {
+    "id": "fcbd04c3-4021-4ef7-8ca5-a5a19e4d6e3c",
+    "capacity": 30,
+    "siteId": "f728b4fa-4248-4e3a-8a5d-2f346baa9455"
+   },
+   {
+    "id": "b4862b21-fb97-4435-8856-1712e8e5216a",
+    "capacity": 30,
+    "type": "LAB",
+    "siteId": "e3e70682-c209-4cac-a29f-6fbed82c07cd"
+   }
+  ],
+  "groupConflicts": [],
+  "fixedLessons": [
+   {
+    "id": "a3f2c9bf-9c63-46b9-90f2-44556f25e2a2",
+    "teacherId": "eb1167b3-67a9-4378-bc65-c1e582e2e662",
+    "studentGroupId": "f7c1bd87-4da5-4709-9471-3d60c8a70639",
+    "dayOfWeek": 1,
+    "startTime": "08:00:00",
+    "endTime": "09:00:00",
+    "roomId": "23a7711a-8133-4876-b7eb-dcd9e87a1613"
+   },
+   {
+    "id": "8d723104-f773-43c1-b458-a748e9bb17bc",
+    "teacherId": "eb1167b3-67a9-4378-bc65-c1e582e2e662",
+    "studentGroupId": "f7c1bd87-4da5-4709-9471-3d60c8a70639",
+    "dayOfWeek": 1,
+    "startTime": "10:00:00",
+    "endTime": "11:00:00",
+    "roomId": "fcbd04c3-4021-4ef7-8ca5-a5a19e4d6e3c"
+   },
+   {
+    "id": "baf3897a-3e70-416a-9548-5822de1b372a",
+    "teacherId": "b5d32b16-6619-4cb1-9710-37d1b83e90ec",
+    "studentGroupId": "101fbccc-ded7-43e8-b421-eaeb534097ca",
+    "dayOfWeek": 1,
+    "startTime": "08:00:00",
+    "endTime": "09:00:00"
+   },
+   {
+    "id": "38c1962e-9148-424f-aac1-c14f30e9c5cc",
+    "teacherId": "b5d32b16-6619-4cb1-9710-37d1b83e90ec",
+    "studentGroupId": "247a8333-f7b0-47d2-8da8-056c3d15eef7",
+    "dayOfWeek": 1,
+    "startTime": "09:00:00",
+    "endTime": "10:00:00"
+   },
+   {
+    "id": "4a84eb03-8d1f-49b7-8d2b-9deb1beb3711",
+    "teacherId": "1759edc3-72ae-4244-8b01-63c1cd9d2b7d",
+    "studentGroupId": "552f233a-8c25-466a-9ff3-9849b4e1357d",
+    "dayOfWeek": 1,
+    "startTime": "09:00:00",
+    "endTime": "10:00:00"
+   },
+   {
+    "id": "3405095c-8a50-46c1-ac18-8efbd080e66e",
+    "teacherId": "1759edc3-72ae-4244-8b01-63c1cd9d2b7d",
+    "studentGroupId": "8c1745a7-9a6a-4f92-8ca7-4147f6be1f72",
+    "dayOfWeek": 1,
+    "startTime": "10:00:00",
+    "endTime": "11:00:00"
+   },
+   {
+    "id": "2648ee38-e074-45eb-a156-63abc1f254b8",
+    "teacherId": "0870e15c-2fcd-41b5-924b-ace4307bf326",
+    "studentGroupId": "148b2758-d7ab-4928-89e4-69e6ec62b2c8",
+    "dayOfWeek": 1,
+    "startTime": "08:00:00",
+    "endTime": "09:00:00"
+   },
+   {
+    "id": "d450fe4a-ec4f-417b-b306-d1a8e5eeac76",
+    "teacherId": "0870e15c-2fcd-41b5-924b-ace4307bf326",
+    "studentGroupId": "d67e55fd-642b-4a42-aef9-c00b8a64c1b9",
+    "dayOfWeek": 1,
+    "startTime": "09:00:00",
+    "endTime": "10:00:00"
+   },
+   {
+    "id": "46743741-9466-4472-ab5f-5241f323ca74",
+    "teacherId": "85940927-468f-453d-864a-7a50b48d73f1",
+    "studentGroupId": "a425799a-a905-4750-be1e-a9c573581a81",
+    "dayOfWeek": 1,
+    "startTime": "09:00:00",
+    "endTime": "10:00:00"
+   },
+   {
+    "id": "fb82860d-eabc-48d0-b341-facdff0ac0f1",
+    "teacherId": "85940927-468f-453d-864a-7a50b48d73f1",
+    "studentGroupId": "5306f3f5-1516-4570-9b7c-709acb175a5a",
+    "dayOfWeek": 1,
+    "startTime": "10:00:00",
+    "endTime": "11:00:00"
+   }
+  ],
+  "siteTravelTimes": [
+   {
+    "siteAId": "e3e70682-c209-4cac-a29f-6fbed82c07cd",
+    "siteBId": "f728b4fa-4248-4e3a-8a5d-2f346baa9455",
+    "minutes": 10
+   }
+  ]
+ },
+ "settings": {
+  "SCHEDULE_DAYS": "1",
+  "SCHEDULE_DAY_START_MINUTES": 480,
+  "SCHEDULE_DAY_END_MINUTES": 660
+ }
+}

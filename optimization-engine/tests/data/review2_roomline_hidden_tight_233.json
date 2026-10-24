@@ -1,0 +1,105 @@
+{
+ "_comment": "The second review of #191: andra/repro/roomline_hidden_tight_233.json",
+ "payload": {
+  "requestId": "5c944a5d-5fea-4983-9507-12c30ee8440a",
+  "academicYearId": "dd067be3-51be-47c4-bf1a-fa3502a5ac5e",
+  "requirements": [
+   {
+    "id": "9efb3b1f-dc16-4e29-8b11-1bc81b3ff937",
+    "subjectId": "e11d57eb-ca54-41d0-a0e8-9509bd40f874",
+    "studentGroupId": "e26f3881-e03a-4cce-96c8-d1ed11f4b669",
+    "teacherId": "203a9575-ade9-4fa5-9e98-dd81de648c37",
+    "lessonsPerWeek": 2,
+    "minutesPerLesson": 90,
+    "studentGroupSize": 20,
+    "lessonLengths": [
+     90,
+     45
+    ],
+    "lessonTeacherIds": [
+     "203a9575-ade9-4fa5-9e98-dd81de648c37",
+     "adecae7e-71ed-4b54-95e9-c3cb710a1497"
+    ]
+   },
+   {
+    "id": "ba431b51-9c4b-46b4-acd1-94be05995133",
+    "subjectId": "fa073cd6-4650-4867-b35e-dcf8a6b53230",
+    "studentGroupId": "f07e962a-9381-4152-9c05-a171ccd2c819",
+    "teacherId": "203a9575-ade9-4fa5-9e98-dd81de648c37",
+    "lessonsPerWeek": 1,
+    "minutesPerLesson": 90,
+    "studentGroupSize": 20,
+    "requiredRoomType": "LAB"
+   }
+  ],
+  "rooms": [
+   {
+    "id": "6422fa1c-2f25-477f-bb9e-53248dc36490",
+    "capacity": 30,
+    "type": "LAB",
+    "siteId": "3ac749fd-6b13-4f64-b8a6-c3ff6c01b1cd"
+   },
+   {
+    "id": "da78b74b-75dc-4f4c-9401-78f3d0cf8227",
+    "capacity": 30,
+    "type": "GYM",
+    "siteId": "e3f036b7-4fd8-42f1-992b-b419724cf679"
+   },
+   {
+    "id": "be512761-b5af-428b-a8cd-87e1476d569b",
+    "capacity": 30,
+    "siteId": "3ac749fd-6b13-4f64-b8a6-c3ff6c01b1cd"
+   },
+   {
+    "id": "2e8c56b7-fa5e-4853-9078-d9b579ea1725",
+    "capacity": 30,
+    "siteId": "e3f036b7-4fd8-42f1-992b-b419724cf679"
+   },
+   {
+    "id": "687149cc-ab59-43f6-9da8-e974c28cc95f",
+    "capacity": 30,
+    "siteId": "1412cc64-f04e-403f-8e26-a520687c90d2"
+   }
+  ],
+  "groupConflicts": [],
+  "fixedLessons": [
+   {
+    "id": "6c12086e-f5c6-4591-b6ca-a288aa43c691",
+    "teacherId": "adecae7e-71ed-4b54-95e9-c3cb710a1497",
+    "studentGroupId": "f07e962a-9381-4152-9c05-a171ccd2c819",
+    "dayOfWeek": 1,
+    "startTime": "08:50:00",
+    "endTime": "09:20:00",
+    "roomId": "6422fa1c-2f25-477f-bb9e-53248dc36490"
+   },
+   {
+    "id": "73f6ec34-7486-4f1e-a382-18ef5462b3ed",
+    "teacherId": "adecae7e-71ed-4b54-95e9-c3cb710a1497",
+    "studentGroupId": "f07e962a-9381-4152-9c05-a171ccd2c819",
+    "dayOfWeek": 1,
+    "startTime": "10:50:00",
+    "endTime": "11:30:00",
+    "roomId": "2e8c56b7-fa5e-4853-9078-d9b579ea1725"
+   }
+  ],
+  "siteTravelTimes": [
+   {
+    "siteAId": "3ac749fd-6b13-4f64-b8a6-c3ff6c01b1cd",
+    "siteBId": "e3f036b7-4fd8-42f1-992b-b419724cf679",
+    "minutes": 30
+   },
+   {
+    "siteAId": "e3f036b7-4fd8-42f1-992b-b419724cf679",
+    "siteBId": "1412cc64-f04e-403f-8e26-a520687c90d2",
+    "minutes": 60
+   }
+  ]
+ },
+ "settings": {
+  "SCHEDULE_DAYS": "1",
+  "SCHEDULE_DAY_START_MINUTES": 480,
+  "SCHEDULE_DAY_END_MINUTES": 780
+ },
+ "requirement": "ba431b51-9c4b-46b4-acd1-94be05995133",
+ "measured": 1
+}

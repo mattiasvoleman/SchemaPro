@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from uuid import UUID
 
@@ -87,6 +87,15 @@ class AssumptionRegistry:
             ),
         )
         return literal
+
+    def records(self) -> list[AssumptionRecord]:
+        """Every literal registered, with what its line would say, in order."""
+        return list(self._records)
+
+    def literals(self, codes: Iterable[str]) -> list[cp_model.IntVar]:
+        """The literals registered under these codes, in registration order."""
+        wanted = set(codes)
+        return [record.literal for record in self._records if record.code in wanted]
 
     def resolve(self, indices: list[int]) -> list[AssumptionRecord]:
         """Find the records behind a conflict core.
