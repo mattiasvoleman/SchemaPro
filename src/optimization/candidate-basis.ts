@@ -288,6 +288,19 @@ export function basisInputsOf(source: BasisSource): BasisInputs {
         coTeacherId: realOrNull(requirement.coTeacherId),
         requiredRoomType: realOrNull(requirement.requiredRoomType),
         ...(requirement.blockId !== undefined ? { blockId: realOf(requirement.blockId) } : {}),
+        // Delade lektioner: each lesson's teacher, so shares changed since the
+        // run make it stale. As [length, teacher] pairs, because the digest
+        // sorts every array (canonicalJson) and a list of teachers sorted
+        // apart from its lengths could not tell Bo's 40 from Bo's 80. Only on
+        // a post sent with the list.
+        ...(requirement.lessonTeacherIds !== undefined
+          ? {
+              lessonTeacherIds: requirement.lessonTeacherIds.map((anon, index) => [
+                requirement.lessonLengths?.[index] ?? requirement.minutesPerLesson,
+                realOrNull(anon),
+              ]),
+            }
+          : {}),
       })),
       ...(source.mirrors ?? []).map((row) => ({ ...row })),
     ],

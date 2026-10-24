@@ -51,3 +51,64 @@ export function coverLockedLessons(
   }
   return remaining;
 }
+
+/** One lesson of a shared post and its teacher (src/common/lesson-shares.ts). */
+export interface TaughtLesson {
+  minutes: number;
+  teacherId: string | null;
+}
+
+/**
+ * Delade lektioner: which of a SHARED post's lessons the hand-placed ones
+ * already answer, each with its teacher. Asked only of a post with shares —
+ * every other post is coverLockedLessons above, call for call — because on a
+ * shared post a locked lesson is somebody's: Bo's own locked 60 answers Bo's
+ * 60, not Anna's, and the lesson left to place is then one of hers.
+ *
+ *  1. A lock taught by one of the post's teachers at one of that teacher's
+ *     lengths cancels that lesson first.
+ *  2. Every other lock — taught by somebody the post does not name, or at a
+ *     length its teacher has none of — falls to the length rule above, exact
+ *     match first and then the nearest (a tie toward the shorter), over the
+ *     lessons still left; within a length the first in the post's order,
+ *     the huvudlärare's before the shares', since a lesson the school placed
+ *     by hand with another teacher is most likely one the lead would have had.
+ *  3. A lock beyond the demand cancels nothing.
+ *
+ * The answer keeps the post's order: longest first, the lead's before each
+ * share's within a length — lessonTeachersOf's, the engine's lessonTeacherIds.
+ */
+export function coverLockedSharedLessons(
+  lessons: readonly TaughtLesson[],
+  locked: readonly TaughtLesson[],
+): TaughtLesson[] {
+  const remaining = [...lessons];
+  const unmatched: TaughtLesson[] = [];
+  for (const lock of locked) {
+    const at = remaining.findIndex((lesson) => lesson.minutes === lock.minutes && lesson.teacherId === lock.teacherId);
+    if (at >= 0) remaining.splice(at, 1);
+    else unmatched.push(lock);
+  }
+  const later: TaughtLesson[] = [];
+  for (const lock of unmatched) {
+    const at = remaining.findIndex((lesson) => lesson.minutes === lock.minutes);
+    if (at >= 0) remaining.splice(at, 1);
+    else later.push(lock);
+  }
+  for (const lock of later.sort((a, b) => b.minutes - a.minutes)) {
+    if (remaining.length === 0) break;
+    // The nearest length, a tie toward the shorter, as coverLockedLessons;
+    // then that length's first lesson in the post's order.
+    let best = remaining[0]!.minutes;
+    for (const lesson of remaining) {
+      const distance = Math.abs(lesson.minutes - lock.minutes);
+      const bestDistance = Math.abs(best - lock.minutes);
+      if (distance < bestDistance || (distance === bestDistance && lesson.minutes < best)) best = lesson.minutes;
+    }
+    remaining.splice(
+      remaining.findIndex((lesson) => lesson.minutes === best),
+      1,
+    );
+  }
+  return remaining;
+}

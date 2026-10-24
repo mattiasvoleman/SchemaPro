@@ -71,7 +71,8 @@ export interface TeachersOnDay {
 export function timetableWith(
   kept: readonly TeachersOnDay[],
   rows: readonly { id: string; teacherId: string | null; coTeacherId: string | null }[],
-  lessons: readonly { requirementId: string; dayOfWeek: number }[],
+  /** A lesson of a shared post carries its own teacher (delade lektioner), as the apply writes it. */
+  lessons: readonly { requirementId: string; dayOfWeek: number; teacherId?: string | null }[],
 ): TeachersOnDay[] {
   const byId = new Map(rows.map((row) => [row.id, row]));
   return [
@@ -80,7 +81,13 @@ export function timetableWith(
       const row = byId.get(lesson.requirementId);
       return row === undefined
         ? []
-        : [{ teacherId: row.teacherId, coTeacherId: row.coTeacherId, dayOfWeek: lesson.dayOfWeek }];
+        : [
+            {
+              teacherId: lesson.teacherId !== undefined ? lesson.teacherId : row.teacherId,
+              coTeacherId: row.coTeacherId,
+              dayOfWeek: lesson.dayOfWeek,
+            },
+          ];
     }),
   ];
 }

@@ -346,7 +346,10 @@ export function storedLessonsOf(value: unknown): CandidateLesson[] | null {
     const lesson = (entry ?? {}) as Record<string, unknown>;
     const day = lesson['dayOfWeek'];
     const room = lesson['roomId'];
+    const teacher = lesson['teacherId'];
     if (
+      // Delade lektioner: a lesson of a shared post names its own teacher.
+      !(teacher === undefined || teacher === null || typeof teacher === 'string') ||
       typeof lesson['requirementId'] !== 'string' ||
       !(room === null || typeof room === 'string') ||
       typeof day !== 'number' ||
@@ -366,6 +369,7 @@ export function storedLessonsOf(value: unknown): CandidateLesson[] | null {
       dayOfWeek: day as DayOfWeek,
       startTime: lesson['startTime'],
       endTime: lesson['endTime'],
+      ...(teacher !== undefined ? { teacherId: teacher as string | null } : {}),
     });
   }
   return lessons;
@@ -1282,7 +1286,9 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
             requirementId: lesson.requirementId,
             subjectId: row.subjectId,
             studentGroupId: row.studentGroupId,
-            teacherId: row.teacherId ?? null,
+            // Delade lektioner: a shared post's lesson is its own teacher's,
+            // as the apply writes it.
+            teacherId: lesson.teacherId !== undefined ? lesson.teacherId : (row.teacherId ?? null),
             coTeacherId: row.coTeacherId ?? null,
             roomId: lesson.roomId,
             dayOfWeek: lesson.dayOfWeek,

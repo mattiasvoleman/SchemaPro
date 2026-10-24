@@ -1,6 +1,7 @@
 import {
   BLOCK_MEMBERS_SHARE_TEACHER,
   BLOCK_SAME_TIMES_DIFFER,
+  BLOCK_SAME_TIMES_SPLIT_LESSONS,
   BLOCK_SAME_TIMES_TEACHERS,
   mirrorLessons,
   planMirror,
@@ -64,6 +65,21 @@ describe('planMirror', () => {
         ['a2', { teacherId: 'tor', coTeacherId: null }],
       ]),
     );
+  });
+
+  it('refuses, by the post, a link either of whose blocks holds a post split between teachers', () => {
+    // A leader post has one place for a teacher of all its lessons; a spring
+    // post whose lessons are two teachers' cannot be held there.
+    expect(planMirror(autumn, [spring[0]!, { ...spring[1]!, shared: true }])).toEqual({
+      ok: false,
+      code: BLOCK_SAME_TIMES_SPLIT_LESSONS,
+      requirementId: 's2',
+    });
+    expect(planMirror([{ ...autumn[0]!, shared: true }, autumn[1]!], spring)).toEqual({
+      ok: false,
+      code: BLOCK_SAME_TIMES_SPLIT_LESSONS,
+      requirementId: 'a1',
+    });
   });
 
   it('seats a spring teacher the autumn lacks beside the autumn post in the same subject', () => {

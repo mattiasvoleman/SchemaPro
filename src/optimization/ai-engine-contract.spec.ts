@@ -144,10 +144,17 @@ const REQUIREMENT_FIELDS_DISTRIBUTED = [
 /**
  * A member of a parallel block with two or more members to place carries the
  * block's anonymous id besides; a row in no block never does.
- * optimization-engine/tests/test_optimize.py's `_field_names(AnonymousRequirement)`
- * must equal THIS set: the engine declares every optional field either way.
  */
 const REQUIREMENT_FIELDS_BLOCKED = [...REQUIREMENT_FIELDS_DISTRIBUTED, 'blockId'].sort();
+
+/**
+ * Delade lektioner: a post whose lessons still to place have two or more
+ * teachers carries each lesson's teacher besides; a post nobody shares never
+ * does. optimization-engine/tests/test_optimize.py's
+ * `_field_names(AnonymousRequirement)` must equal THIS set: the engine
+ * declares every optional field either way.
+ */
+const REQUIREMENT_FIELDS_SHARED = [...REQUIREMENT_FIELDS_BLOCKED, 'lessonTeacherIds'].sort();
 
 /** No resourceId: a year range names no resource, and sending one is refused. */
 const GRADE_CONSTRAINT_FIELDS = [
@@ -212,6 +219,11 @@ describe('AI engine wire contract', () => {
   /** What the most recent buildPayload's run answered, and whether it called the engine. */
   let lastResult: Awaited<ReturnType<OptimizationProxyService['triggerScheduling']>>;
   let lastPost: jest.Mock;
+  /** How the stub engine's lessons are answered: as asked, unless a test says otherwise. */
+  let answered: (lessons: Record<string, unknown>[]) => Record<string, unknown>[] = (lessons) => lessons;
+  afterEach(() => {
+    answered = (lessons) => lessons;
+  });
 
   const buildPayload = async (
     requirementOverrides: Record<string, unknown> = {},
@@ -382,6 +394,7 @@ describe('AI engine wire contract', () => {
           lessonsPerWeek: number;
           minutesPerLesson: number;
           lessonLengths?: number[];
+          lessonTeacherIds?: (string | null)[];
         }>;
         const rooms = payload['rooms'] as Array<{ id: string }>;
         const clock = (minutes: number): string =>
@@ -390,18 +403,21 @@ describe('AI engine wire contract', () => {
           data: {
             requestId: payload['requestId'],
             status: 'OPTIMAL',
-            lessons: requirements.flatMap((requirement) =>
+            lessons: answered(requirements.flatMap((requirement) =>
               (
                 requirement.lessonLengths ??
                 Array.from({ length: requirement.lessonsPerWeek }, () => 60)
-              ).map((minutes) => ({
+              ).map((minutes, index) => ({
                 requirementId: requirement.id,
                 roomId: rooms[0]?.id ?? null,
                 dayOfWeek: 1,
                 startTime: '08:00:00',
                 endTime: clock(480 + minutes),
+                // As the engine answers a shared post: each lesson's own
+                // teacher, the key left out where the list says null.
+                ...(requirement.lessonTeacherIds?.[index] ? { teacherId: requirement.lessonTeacherIds[index] } : {}),
               })),
-            ),
+            )),
             conflicts: null,
           },
         });
@@ -669,6 +685,113 @@ describe('AI engine wire contract', () => {
     const payload = await buildPayload();
     const requirements = payload['requirements'] as Array<Record<string, unknown>>;
     expect(Object.keys(requirements[0]!).sort()).toEqual(REQUIREMENT_FIELDS);
+  });
+
+  it('names the engine’s whole requirement set, the shared post’s key included', () => {
+    expect(REQUIREMENT_FIELDS_SHARED).toEqual(
+      [
+        'blockId', 'coTeacherId', 'id', 'lessonLengths', 'lessonTeacherIds', 'lessonsPerWeek', 'lockedDays',
+        'maxGradeLevel', 'maxLessonsPerDay', 'minDaysBetween', 'minGradeLevel', 'minutesAfter', 'minutesBefore',
+        'minutesPerLesson', 'requiredRoomType', 'studentGroupId', 'studentGroupSize', 'subjectId', 'teacherId',
+      ],
+    );
+  });
+
+  it('delade lektioner: sends each lesson of a shared post its own teacher, and writes each lesson with it', async () => {
+    // 9A's three matematik, Anna (t1) the lead and Bo (t3) one lesson.
+    const payload = await buildPayload({
+      lessonsPerWeek: 3,
+      shares: [{ teacherId: 't3', lessons: 1, minutes: 60 }],
+    });
+    const requirements = payload['requirements'] as Array<Record<string, unknown>>;
+    expect(Object.keys(requirements[0]!).sort()).toEqual([...REQUIREMENT_FIELDS, 'lessonTeacherIds'].sort());
+    const list = requirements[0]!['lessonTeacherIds'] as string[];
+    expect(list).toHaveLength(3);
+    expect(list[0]).toBe(requirements[0]!['teacherId']);
+    expect(list[1]).toBe(list[0]);
+    expect(list[2]).not.toBe(list[0]);
+    // Anonymous, as every id that crosses.
+    expect(list.some((id) => id === 't1' || id === 't3')).toBe(false);
+
+    const written = (lastTx['masterLesson']!['createMany']!.mock.calls as [{ data: { teacherId: string | null }[] }][])
+      .flatMap(([call]) => call.data)
+      .map((lesson) => lesson.teacherId);
+    expect(written.sort()).toEqual(['t1', 't1', 't3']);
+  });
+
+  it('delade lektioner: refuses an answer that gives a shared post’s lessons other teachers, and writes nothing', async () => {
+    // Every lesson answered as the lead's: three of Anna's where two were asked.
+    answered = (lessons) => lessons.map((lesson) => (lesson['teacherId'] ? { ...lesson, teacherId: undefined } : lesson));
+    await expect(
+      buildPayload({ lessonsPerWeek: 3, shares: [{ teacherId: 't3', lessons: 1, minutes: 60 }] }),
+    ).rejects.toMatchObject({ status: 502 });
+    expect(lastTx['masterLesson']!['createMany']).not.toHaveBeenCalled();
+  });
+
+  it('delade lektioner: refuses to write an answer whose post was shared differently while the engine ran', async () => {
+    const row = {
+      id: 'r1',
+      subjectId: 's1',
+      studentGroupId: 'g1',
+      teacherId: 't1',
+      coTeacherId: null,
+      lessonsPerWeek: 3,
+      minutesPerLesson: 60,
+      lessonLengths: [],
+      subject: { requiredRoomTypeId: null },
+    };
+    await expect(
+      buildPayload({ lessonsPerWeek: 3, shares: [{ teacherId: 't3', lessons: 1, minutes: 60 }] }, [], [], (tx) => {
+        // The fetch reads Bo's one; the write's own read finds two.
+        tx['teachingRequirement']!['findMany']!
+          .mockResolvedValueOnce([{ ...row, shares: [{ teacherId: 't3', lessons: 1, minutes: 60 }] }])
+          .mockResolvedValue([{ ...row, shares: [{ teacherId: 't3', lessons: 2, minutes: 60 }] }]);
+      }),
+    ).rejects.toMatchObject({ status: 502 });
+    expect(lastTx['masterLesson']!['createMany']).not.toHaveBeenCalled();
+  });
+
+  it('delade lektioner: sends a post whose lessons left have one teacher as it always did, with that teacher', async () => {
+    // Anna's two lessons locked by hand: only Bo's is left to place.
+    const lock = (id: string) => ({
+      id,
+      subjectId: 's1',
+      studentGroupId: 'g1',
+      teacherId: 't1',
+      coTeacherId: null,
+      roomId: null,
+      dayOfWeek: 2,
+      startTime: new Date('1970-01-01T08:00:00.000Z'),
+      endTime: new Date('1970-01-01T09:00:00.000Z'),
+      recurrence: 'ALL_WEEKS',
+      startDate: null,
+      endDate: null,
+      extraGroups: [],
+      participants: [],
+    });
+    const payload = await buildPayload(
+      {
+        lessonsPerWeek: 3,
+        recurrence: 'ALL_WEEKS',
+        startDate: null,
+        endDate: null,
+        shares: [{ teacherId: 't3', lessons: 1, minutes: 60 }],
+      },
+      [lock('ml-a'), lock('ml-b')],
+    );
+    const requirements = payload['requirements'] as Array<Record<string, unknown>>;
+    // One lesson, one teacher: the entry a post with one teacher always had.
+    expect(Object.keys(requirements[0]!).sort()).toEqual(REQUIREMENT_FIELDS);
+    expect(requirements[0]!['lessonsPerWeek']).toBe(1);
+    // The scalar is Bo, not the post's lead: the fixed lessons are Anna's.
+    const fixed = payload['fixedLessons'] as Array<Record<string, unknown>>;
+    expect(fixed.map((lesson) => lesson['teacherId'])).not.toContain(requirements[0]!['teacherId']);
+    // And the lesson is written Bo's: a post sent with one teacher who is not
+    // its lead is that teacher's, never stamped with the lead.
+    const written = (lastTx['masterLesson']!['createMany']!.mock.calls as [{ data: { teacherId: string | null }[] }][])
+      .flatMap(([call]) => call.data)
+      .map((lesson) => lesson.teacherId);
+    expect(written).toEqual(['t3']);
   });
 
   it('sends every member of a block the block’s one anonymous id, and nothing else new', async () => {

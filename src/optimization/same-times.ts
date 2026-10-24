@@ -39,6 +39,14 @@ import { weeksCanOverlap } from '../calendar/lesson-recurrence';
  *    post's by the proxy: the larger half, the longer buffer on each group, the
  *    stricter rule (see fetchAndAnonymize).
  *
+ * A SHARED POST IS REFUSED BY NAME (BLOCK_SAME_TIMES_SPLIT_LESSONS). Delade
+ * lektioner give each lesson of a post its own teacher, and a leader post has
+ * one teacher place and one co-teacher place for all its lessons: the
+ * follower's teacher of lesson k could only be held at lesson k's times by a
+ * seat per lesson, which neither the payload nor the engine has. So a link
+ * either of whose blocks holds a shared post is refused before anything is
+ * sent, naming the post, rather than written with the wrong teacher held.
+ *
  * THE TWO NEVER RUN IN THE SAME WEEK: the same times in a week both run would
  * put a half in two rooms. They have the same lessons, or one cannot be
  * written at the other's times. Both are BLOCK_SAME_TIMES_DIFFER, judged here
@@ -59,6 +67,8 @@ export interface SameTimesRow {
   recurrence: LessonRecurrence;
   startDate: Date | null;
   endDate: Date | null;
+  /** Delade lektioner: whether some of its lessons are another teacher's. */
+  shared?: boolean;
 }
 
 /** A block of the year with the block it takes the times of, or null. */
@@ -97,11 +107,14 @@ export interface MirrorPlan {
 export type MirrorJudgement =
   | { ok: true; plan: MirrorPlan }
   | { ok: false; code: typeof BLOCK_SAME_TIMES_DIFFER | typeof BLOCK_SAME_TIMES_TEACHERS }
-  | { ok: false; code: typeof BLOCK_MEMBERS_SHARE_TEACHER; requirementId: string; otherId: string };
+  | { ok: false; code: typeof BLOCK_MEMBERS_SHARE_TEACHER; requirementId: string; otherId: string }
+  | { ok: false; code: typeof BLOCK_SAME_TIMES_SPLIT_LESSONS; requirementId: string };
 
 /** The refusals' codes, which the engine's catalogue renders (messages.py). */
 export const BLOCK_SAME_TIMES_DIFFER = 'BLOCK_SAME_TIMES_DIFFER';
 export const BLOCK_SAME_TIMES_TEACHERS = 'BLOCK_SAME_TIMES_TEACHERS';
+/** A post of either block whose lessons are split between teachers (see the header). */
+export const BLOCK_SAME_TIMES_SPLIT_LESSONS = 'BLOCK_SAME_TIMES_SPLIT_LESSONS';
 /** The engine's own, for two posts of one block with one teacher. */
 export const BLOCK_MEMBERS_SHARE_TEACHER = 'BLOCK_MEMBERS_SHARE_TEACHER';
 
@@ -133,6 +146,9 @@ export function planMirror(
   if (chained || leaders.length === 0 || leaders.length !== followers.length) return differ;
   const lead = [...leaders].sort((a, b) => byId(a.id, b.id));
   const follow = [...followers].sort((a, b) => byId(a.id, b.id));
+  // Delade lektioner, first and by name: see the header.
+  const shared = [...lead, ...follow].find((row) => row.shared === true);
+  if (shared) return { ok: false, code: BLOCK_SAME_TIMES_SPLIT_LESSONS, requirementId: shared.id };
 
   // One post per subject on each side, and the same subjects.
   const leaderBySubject = new Map(lead.map((row) => [row.subjectId, row]));

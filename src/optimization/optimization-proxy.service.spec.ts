@@ -3284,6 +3284,19 @@ describe('OptimizationProxyService', () => {
         });
       });
 
+      it('delade lektioner: refuses a spring post split between teachers, by the post, before the engine', async () => {
+        arrangeTerms({ s1: { lessonsPerWeek: 2, shares: [{ teacherId: TEA, lessons: 1, minutes: 60 }] } });
+
+        const refused = await refusedWith();
+
+        expect(refused.refusalCode).toBe('BLOCK_SAME_TIMES_SPLIT_LESSONS');
+        expect(bodyOf(refused.error)).toMatchObject({
+          code: 'BLOCK_SAME_TIMES_SPLIT_LESSONS',
+          params: { block: 'Slöjd 7A VT', other: 'Slöjd 7A HT', requirement: 'Trä- och metallslöjd för 7A:1' },
+        });
+        expect(http.post).not.toHaveBeenCalled();
+      });
+
       it('refuses spring teachers the autumn posts have no room for', async () => {
         arrangeTerms({ s1: { teacherId: TEA }, s2: { teacherId: 'dddddddd-0004-4000-8000-000000000004', coTeacherId: 'dddddddd-0005-4000-8000-000000000005' } });
 

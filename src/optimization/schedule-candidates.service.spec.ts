@@ -1512,6 +1512,10 @@ describe('the pieces', () => {
     expect(storedLessonsOf([{ ...lesson, dayOfWeek: 8 }])).toBeNull();
     expect(storedLessonsOf([{ ...lesson, startTime: '8:00' }])).toBeNull();
     expect(storedLessonsOf({})).toBeNull();
+    // Delade lektioner: a shared post's lesson names its own teacher, or null.
+    expect(storedLessonsOf([{ ...lesson, teacherId: 't-bo' }])).toEqual([{ ...lesson, teacherId: 't-bo' }]);
+    expect(storedLessonsOf([{ ...lesson, teacherId: null }])).toEqual([{ ...lesson, teacherId: null }]);
+    expect(storedLessonsOf([{ ...lesson, teacherId: 7 }])).toBeNull();
     expect(storedLunchesOf(null)).toBeNull();
     expect(storedLunchesOf([{ studentGroupId: 'g', dayOfWeek: 1, startTime: '11:30:00', endTime: '12:00:00' }])).toHaveLength(1);
     expect(storedLunchesOf([{ studentGroupId: 1 }])).toBeNull();
