@@ -908,3 +908,25 @@ def test_a_maximum_impossible_on_its_own_leads_the_refusal_of_a_week_with_other_
     assert "TEACHER_DAILY_CAP_CANNOT_BE_KEPT" in {
         detail.code for detail in response.conflicts.conflicts
     }
+
+
+def test_the_lines_after_the_measured_one_keep_the_core_s_order() -> None:
+    """The measured line moves to the front and nothing else moves: the rest
+    of dist/500057's refusal is the unmeasured core's, line for line."""
+    settings, payload = _dist_500057()
+    request = OptimizeScheduleRequest.model_validate(payload)
+
+    def lines(probe_seconds: float) -> list[tuple[str, dict[str, object]]]:
+        response = SchedulerSolver(
+            _settings(SOLVER_PROBE_SECONDS=probe_seconds, **settings),
+        ).solve(request)
+        assert response.conflicts is not None
+        return [(detail.code, detail.params) for detail in response.conflicts.conflicts]
+
+    measured, unmeasured = lines(5), lines(0)
+
+    assert measured[0][0] == "GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT"
+    assert len(measured) > 3
+    assert measured[1:] == [
+        line for line in unmeasured if line[0] != "GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT"
+    ]

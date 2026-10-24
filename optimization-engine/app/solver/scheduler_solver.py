@@ -4656,34 +4656,39 @@ class SchedulerSolver:
           on a five-day week is impossible whatever else the week holds, and a
           school told only of its blocks and rooms fixes those and is refused
           again for the maximum (dist/500057 of the fuzz). So the maximum is
-          counted on its own (_held_back_by_the_maximum): a group whose
-          lessons the days open to it cannot hold at the maximum keeps the
-          line, `measured` 2, and is named. No group counted out, the line
-          goes; a core that was nothing else is then CONFLICT_NO_CORE.
+          measured on its own (_held_back_by_the_maximum): a group whose
+          lessons the days open to it cannot hold at the maximum, and can
+          without it, keeps the line, `measured` 2, and is named. No group
+          held back, the line goes; a core that was nothing else is then
+          CONFLICT_NO_CORE.
         - Nothing inside the budget, no budget, or a probe that could not be
           built or solved: the line stays as the core gave it, every capped
           group in it and `measured` 0, since the maximum may matter and
           nothing says it does not.
 
-        COUNTED AND NOT SOLVED, the second time, because a solve cannot tell
-        the cause apart at a price a refusal can pay. The maximum's literals as
-        the only assumptions answer "impossible" on 66 of the 120 fuzz weeks
-        that get this far, and 45 of those are impossible with no assumption
+        PER GROUP AND NOT FOR THE WEEK, the second time, because a solve of the
+        whole week cannot tell the cause apart at a price a refusal can pay.
+        The maximum's literals as the only assumptions answer "impossible" on
+        66 of the 120 fuzz weeks that get this far, and 45 of those are
+        impossible with no assumption
         at all — the fixed part of the model, days and frames and locks and
         overlaps, refuses them alone — so the answer names the maximum where
         nothing about it is the matter. Telling those apart takes a timetable
         with every other rule lifted, which on the högstadium post week took
         15 s on all of the host's cores, and which the single-threaded
-        assumption solve did not find in 30 s. The count names all 21 weeks
-        where the maximum alone is the matter and the rest of the week is not,
-        none of the 54 where the maximum alone is possible, and of the 45 only
-        21, saying of each only what is true there too.
+        assumption solve did not find in 30 s. The count, with each group it
+        names placed on its own without the maximum, names all 21 weeks where
+        the maximum alone is the matter and the rest of the week is not, none
+        of the 54 where the maximum alone is possible, and 6 of the 45 — in
+        those, only groups whose own week holds them without the maximum and
+        not with it.
 
         A line measured to be a cause leads the refusal: it is the one line
         on it that was checked, and the reading order puts first what an
         administrator can check (conflict_analyzer._how_far_it_narrows).
-        One solve for all the groups and not one per group, for
-        _blocks_verdict's reason.
+        The week is solved once without the maximum for all the groups and not
+        once per group, for _blocks_verdict's reason; what is solved per group
+        is the group alone, a few dozen intervals.
         """
         line = next(
             (
@@ -4701,6 +4706,7 @@ class SchedulerSolver:
             budget = min(budget, seconds_left)
         if budget < self.MIN_PHASE_SECONDS:
             return conflicts
+        deadline = time.monotonic() + budget
         others = [detail for detail in conflicts.conflicts if detail is not line]
 
         def said(measured: int, groups: list[UUID]) -> ConflictAnalysis:
@@ -4745,7 +4751,9 @@ class SchedulerSolver:
             return said(1, [group_id for (group_id, _day), count in per_day.items() if count > cap])
         if status != cp_model.INFEASIBLE:
             return conflicts
-        held_back = self._held_back_by_the_maximum(decisions, cap)
+        held_back = self._held_back_by_the_maximum(
+            request, decisions, cap, deadline=deadline,
+        )
         if held_back:
             return said(2, held_back)
         if not others:
@@ -4753,21 +4761,36 @@ class SchedulerSolver:
         return conflicts.model_copy(update={"conflicts": others})
 
     def _held_back_by_the_maximum(
-        self, decisions: list[LessonDecision], cap: int,
+        self,
+        request: OptimizeScheduleRequest,
+        decisions: list[LessonDecision],
+        cap: int,
+        *,
+        deadline: float,
     ) -> list[UUID]:
-        """The groups whose lessons the days open to them cannot hold at `cap`.
+        """The groups the maximum, and nothing about the group but it, holds back.
 
-        Arithmetic, and sound with every rule but the maximum set aside: each
-        bound below is the fixed part of the model, which no literal lifts. A
-        lesson lands on a day its starts reach (_day_reach: frames, margins,
-        rasts, the school's days), and a group's lessons never overlap
-        (_add_group_no_overlap, posted bare). So a day takes at most `cap` of
-        a group's lessons, at most the ones that reach it, and at most as many
-        of the shortest of those as fit end to end in the time they can reach
-        there — a frame that leaves Tuesday one hour leaves it one lesson of
-        an hour. Where the days' bounds sum to fewer than the group's lessons,
-        no timetable keeps the maximum for it. The margins around a lesson
-        are left out of the time it takes, which only lets more through.
+        TWO HALVES, both on the fixed part of the model, which no literal
+        lifts, so both hold with every other rule set aside:
+        - With the maximum the group's lessons do not fit: counted. A lesson
+          lands on a day its starts reach (_day_reach: frames, margins, rasts,
+          the school's days), and a group's lessons never overlap
+          (_add_group_no_overlap, posted bare). So a day takes at most `cap`
+          of a group's lessons, at most the ones that reach it, and at most as
+          many of the shortest of those as fit end to end in the time they can
+          reach there — a frame that leaves Tuesday one hour leaves it one
+          lesson of an hour. Where the days' bounds sum to fewer than the
+          group's lessons, no timetable keeps the maximum for it. The margins
+          around a lesson are left out of the time it takes, which only lets
+          more through.
+        - Without it they do: solved, on the group alone
+          (_placeable_without_the_maximum). A group whose lessons fit no week
+          with or without a maximum — two of an hour and one of 45 minutes on
+          two days of 90 — is held back by its days, and a line blaming the
+          maximum for it was false (the review of #182: 11 of 42 measured
+          weeks named such a group). The same count without the cap rules most
+          of them out first, a solve the rest; a solve that cannot answer in
+          the time left proves nothing, and the group is not named.
         """
         by_group: dict[UUID, list[LessonDecision]] = defaultdict(list)
         for decision in decisions:
@@ -4792,7 +4815,7 @@ class SchedulerSolver:
                 for day_index, ranges in reach.items():
                     durations[day_index].append(decision.duration)
                     spans[day_index].extend(ranges)
-            room = 0
+            capped = uncapped = 0
             for day_index, lengths in durations.items():
                 time_there = _covered(spans[day_index])
                 fits = 0
@@ -4801,10 +4824,87 @@ class SchedulerSolver:
                         break
                     time_there -= length
                     fits += 1
-                room += min(cap, fits)
-            if room < len(group):
+                capped += min(cap, fits)
+                uncapped += fits
+            if capped < len(group) <= uncapped and self._placeable_without_the_maximum(
+                request, group, deadline=deadline,
+            ):
                 held_back.append(group_id)
         return held_back
+
+    #: The most one group's placement without the maximum may take. It is a
+    #: few dozen intervals; one that takes longer is not worth the refusal's
+    #: wait, and is not named.
+    PLACEABLE_CAP_SECONDS = 0.5
+
+    def _placeable_without_the_maximum(
+        self,
+        request: OptimizeScheduleRequest,
+        group: list[LessonDecision],
+        *,
+        deadline: float,
+    ) -> bool:
+        """Whether one group's lessons fit its week when nothing caps a day.
+
+        THE GROUP'S OWN FIXED PART, AS THE MODEL POSTS IT. Each lesson on the
+        starts it was built on, the class's own no-overlap over the pupils'
+        intervals (pupil_padded_of: the lead, the lesson, the corridor, the
+        trail), and every locked lesson the model keeps it off: one that holds
+        its pupils or a group sharing them blocks the pupils' interval, one
+        that only shares a teacher blocks the lesson and its corridor
+        (_add_fixed_lesson_constraints). Other groups' lessons are not in it,
+        so a group that fits here may still clash with them; what this rules
+        out is a group no week could ever hold, which is the false accusation.
+        True only for a placement found inside the time left.
+        """
+        left = min(self.PLACEABLE_CAP_SECONDS, deadline - time.monotonic())
+        if left <= 0:
+            return False
+        model = cp_model.CpModel()
+        group_id = group[0].lesson.requirement.student_group_id
+        sharing = {group_id}
+        for first_id, second_id in request.group_conflicts or []:
+            if group_id in (first_id, second_id):
+                sharing.update((first_id, second_id))
+        pupils: list[cp_model.IntervalVar] = []
+        lessons: list[tuple[set[UUID], cp_model.IntervalVar]] = []
+        for k, decision in enumerate(group):
+            domain = decision.starts or cp_model.Domain(0, self._grid.horizon)
+            start = model.NewIntVarFromDomain(domain, f"start_{k}")
+            pupils.append(model.NewFixedSizeIntervalVar(
+                start - decision.lead,
+                decision.lead + decision.duration + decision.changeover + decision.trail,
+                f"pupils_{k}",
+            ))
+            requirement = decision.lesson.requirement
+            lessons.append((
+                {tid for tid in (requirement.teacher_id, requirement.co_teacher_id) if tid},
+                model.NewFixedSizeIntervalVar(
+                    start, decision.duration + decision.changeover, f"lesson_{k}",
+                ),
+            ))
+        for fixed in request.fixed_lessons:
+            window = self._fixed_window(fixed)
+            if window is None:
+                continue
+            blocked = model.NewFixedSizeIntervalVar(
+                window[0], window[1] - window[0], f"locked_{fixed.id}",
+            )
+            if {fixed.student_group_id, *fixed.extra_group_ids} & sharing:
+                pupils.append(blocked)
+                continue
+            teachers = {tid for tid in (fixed.teacher_id, fixed.co_teacher_id) if tid}
+            for own, interval in lessons:
+                if own & teachers:
+                    model.AddNoOverlap([interval, blocked])
+        model.AddNoOverlap(pupils)
+        solver = cp_model.CpSolver()
+        solver.parameters.num_workers = 1
+        solver.parameters.max_time_in_seconds = left
+        status = _solve_guarded(
+            solver, model, what="a group without the daily maximum", request_id=request.request_id,
+        )
+        return status in (cp_model.OPTIMAL, cp_model.FEASIBLE)
 
     def _blocks_verdict(
         self, request: OptimizeScheduleRequest, *, seconds_left: float | None = None,

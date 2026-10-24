@@ -2858,6 +2858,123 @@ def test_a_group_the_core_left_out_is_named_when_the_timetable_breaks_it_too() -
     assert [str(group) for group in verdict.conflicts[0].resource_ids] == groups
 
 
+def _two_day_week(
+    lengths: list[int], cap: int, day_minutes: int, *,
+    after: int = 0, locked: bool = False, teacher_locked: bool = False,
+) -> tuple[dict[str, object], dict[str, object], str]:
+    """Class G's lessons of `lengths` on two days of `day_minutes`, at `cap` a day.
+
+    `after` gives G's lessons that many minutes for the pupils after each,
+    `locked` locks G's first half hour on both days, and `teacher_locked` its
+    teacher's, in another class. Beside it a post that
+    makes the week impossible whatever the maximum says: class B's two lessons
+    of half a day each, from a teacher whose post is one day and whose Monday
+    starts locked for all but one of them. B has no more lessons than the
+    maximum, and so no literal.
+    """
+    group, other, teacher, own_teacher = str(uuid4()), str(uuid4()), str(uuid4()), str(uuid4())
+    half = day_minutes // 2 // 15 * 15
+    held = day_minutes - half
+    own_locks = [
+        {
+            "id": str(uuid4()), "teacherId": own_teacher if teacher_locked else None,
+            "studentGroupId": str(uuid4()) if teacher_locked else group,
+            "dayOfWeek": day, "startTime": "08:00:00", "endTime": "08:30:00",
+        }
+        for day in (1, 2)
+    ] if locked or teacher_locked else []
+    return {
+        "requestId": str(uuid4()),
+        "academicYearId": str(uuid4()),
+        "requirements": [
+            {
+                "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": group,
+                "teacherId": own_teacher, "lessonsPerWeek": len(lengths),
+                "minutesPerLesson": max(lengths), "lessonLengths": lengths,
+                "studentGroupSize": 24, **({"minutesAfter": after} if after else {}),
+            },
+            {
+                "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": other,
+                "teacherId": teacher, "lessonsPerWeek": 2, "minutesPerLesson": half,
+                "studentGroupSize": 24,
+            },
+        ],
+        "rooms": [{"id": str(uuid4()), "capacity": 30} for _ in range(2)],
+        "fixedLessons": [{
+            "id": str(uuid4()), "teacherId": teacher, "studentGroupId": str(uuid4()),
+            "dayOfWeek": 1, "startTime": "08:00:00",
+            "endTime": f"{8 + held // 60:02d}:{held % 60:02d}:00",
+        }, *own_locks],
+        "teacherDayLimits": [{
+            "id": str(uuid4()), "teacherId": teacher, "maxTeachingDaysPerWeek": 1,
+            "lockedWeekdays": [[1]],
+        }],
+        "rules": {"maxLessonsPerDayPerGroup": cap},
+    }, {"SCHEDULE_DAYS": "1,2", "SCHEDULE_DAY_END_MINUTES": 480 + day_minutes}, group
+
+
+@pytest.mark.parametrize(
+    ("lengths", "cap", "day_minutes", "extra", "held_back"),
+    [
+        ([60, 60, 45], 2, 90, {}, False),
+        ([60, 60, 60, 60], 2, 120, {}, False),
+        ([60, 60, 60], 1, 120, {}, True),
+        ([45, 15, 15, 15, 15], 3, 60, {}, False),
+        ([45, 15, 15, 15, 15], 2, 60, {}, True),
+        ([30, 30, 30], 1, 75, {"after": 15}, False),
+        ([30, 30, 30], 1, 90, {"after": 15}, True),
+        ([30, 30, 30], 1, 60, {"locked": True}, False),
+        ([30, 30, 30], 1, 60, {"teacher_locked": True}, False),
+    ],
+    ids=[
+        "no day holds two, at any maximum",
+        "an exact fit the maximum allows",
+        "an exact fit the maximum holds back",
+        "shortest first, the maximum allows",
+        "shortest first, the maximum holds back",
+        "the pupils' minutes after leave one a day, at any maximum",
+        "the pupils' minutes after leave two a day, the maximum one",
+        "the class's own locks leave one a day, at any maximum",
+        "its teacher's locks leave one a day, at any maximum",
+    ],
+)
+def test_a_group_is_blamed_on_the_maximum_only_where_it_fits_without_it(
+    lengths: list[int], cap: int, day_minutes: int, extra: dict[str, object], held_back: bool,
+) -> None:
+    """The review's three false accusations, and the true ones beside them.
+
+    Two of an hour and one of 45 minutes on two days of 90 fit no week with
+    or without a maximum, so the maximum is not what holds the class back and
+    is not named. Four of an hour on two days of two hours fit two a day
+    exactly; at one a day, three do not, though two days of two hours hold
+    them. 45 and four of 15 on two days of an hour fit at three a day —
+    45 + 15 and 15 + 15 + 15 — and not at two, though four of 15 fill an hour:
+    only the shortest-first reading sees that the hour holds four. Three of
+    half an hour with a quarter after each fit one a day in 75 minutes and two
+    in 90, which the count of the lessons' own time does not see and the
+    group's solve does; and a class locked for its first half hour of each
+    hour-long day has one half hour left, which no start domain carries, and
+    so has one whose teacher is locked elsewhere then. The
+    week stays impossible without the maximum (the post), so what is
+    measured is the maximum on its own.
+    """
+    payload, settings, group = _two_day_week(lengths, cap, day_minutes, **extra)  # type: ignore[arg-type]
+    client = TestClient(create_app(_settings(SOLVER_PROBE_SECONDS=5, **settings)))
+
+    body = client.post("/api/v1/optimize", json=payload, headers=_HEADERS).json()
+
+    assert body["status"] == "INFEASIBLE", body
+    assert body["conflicts"]["summaryCode"] == "CONFLICT_CORE_SUMMARY", body["conflicts"]
+    named = _daily_maximum_lines(body)
+    if held_back:
+        assert body["conflicts"]["conflicts"][0] == named[0]
+        assert (named[0]["params"], named[0]["resourceIds"]) == (
+            {"maxPerDay": cap, "measured": 2}, [group],
+        )
+    else:
+        assert named == [], [line["code"] for line in body["conflicts"]["conflicts"]]
+
+
 def test_the_class_daily_maximum_hangs_on_its_literal_and_the_counts_are_bare() -> None:
     """What a core can only suggest, asked of the model directly.
 

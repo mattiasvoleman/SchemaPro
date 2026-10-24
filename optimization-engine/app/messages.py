@@ -246,8 +246,8 @@ MESSAGES: dict[str, str] = {
     # `measured` is what SchedulerSolver._daily_maximum_verdict established:
     # 1, solving the week without the maximum found a timetable, and the groups
     # are the ones it gives more than the maximum on some day; 2, the week is
-    # impossible without the maximum too, and the maximum is impossible on its
-    # own for the groups named; 0, nothing could be measured.
+    # impossible without the maximum too, and the groups named fit their own
+    # days without the maximum and not with it; 0, nothing could be measured.
     "GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT": (
         "The school rules allow at most {maxPerDay, plural, one {# lesson} other {# lessons}} a "
         "day for each class and teaching group. {measured, select, 1 {That maximum is what "
