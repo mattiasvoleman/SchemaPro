@@ -68,7 +68,19 @@
 -- NO KEY UPDATE, held until COMMIT, and only then reads the shares: in READ
 -- COMMITTED that read is a new snapshot, taken after the lock. FOR NO KEY
 -- UPDATE and not FOR UPDATE, because the share's own foreign key holds KEY
--- SHARE on the same row and the two do not conflict. SECURITY DEFINER, owned
+-- SHARE on the same row and the two do not conflict.
+--
+-- WHICH ISOLATION LEVELS THAT HOLDS IN. READ COMMITTED, the gateway's and
+-- every Prisma transaction's (none sets another), as above. SERIALIZABLE, by
+-- its own means: each writer reads the post's shares and the other writes
+-- into what was read, a cycle SSI aborts one side of (40001). Not REPEATABLE
+-- READ: there the read after the lock sees the transaction's first snapshot,
+-- a lock alone forces no serialization failure (only a committed UPDATE of
+-- the row does), and two writers both pass. Recounting after the lock cannot
+-- change that, so in REPEATABLE READ a write of shares, and an UPDATE of the
+-- five post columns the rules read, are refused outright (TS409, reason
+-- ISOLATION) rather than judged on a snapshot that may be missing a
+-- concurrent share. Nothing in the gateway or the scripts runs there. SECURITY DEFINER, owned
 -- by the migration owner, so the lock and the read are the post's whatever the
 -- caller may see; it reads only the post named and its shares, in the row's
 -- own school.
@@ -217,10 +229,22 @@ DECLARE
   lengths int[];
   reason text;
 BEGIN
+  -- Two assignments, not one CASE: PL/pgSQL resolves every field an
+  -- expression names, and the post's row has no "requirementId".
   IF TG_TABLE_NAME = 'TeachingRequirementShares' THEN
     post_id := NEW."requirementId";
   ELSE
     post_id := NEW."id";
+  END IF;
+  -- See WHICH ISOLATION LEVELS above: the one level the lock below does not
+  -- make the read safe in. First, on both tables: on the post's, the "no
+  -- share" shortcut below reads the same stale snapshot.
+  IF current_setting('transaction_isolation') = 'repeatable read' THEN
+    RAISE EXCEPTION 'REQUIREMENT_SHARES_DO_NOT_FIT: lärarandelar och de postfält de prövas mot skrivs i READ COMMITTED eller SERIALIZABLE, inte i REPEATABLE READ (ISOLATION)'
+      USING ERRCODE = 'TS409',
+            DETAIL = format('requirementId=%s reason=ISOLATION', post_id);
+  END IF;
+  IF TG_TABLE_NAME <> 'TeachingRequirementShares' THEN
     -- A post with no share has nothing to fit, and is every post of every
     -- school until one writes a share: no lock, one index probe.
     IF NOT EXISTS (SELECT 1 FROM "TeachingRequirementShares" s
@@ -239,8 +263,10 @@ BEGIN
     RETURN NULL;
   END IF;
 
+  -- GREATEST: no writer stores a negative count, but array_fill would answer
+  -- one with 54000 rather than the refusal below (no lessons: no share fits).
   lengths := CASE WHEN cardinality(post."lessonLengths") = 0
-                  THEN array_fill(post."minutesPerLesson", ARRAY[post."lessonsPerWeek"])
+                  THEN array_fill(post."minutesPerLesson", ARRAY[GREATEST(post."lessonsPerWeek", 0)])
                   ELSE post."lessonLengths" END;
 
   IF EXISTS (SELECT 1 FROM "TeachingRequirementShares" s
