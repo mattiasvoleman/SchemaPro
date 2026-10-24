@@ -31,16 +31,17 @@ import type { Prisma, UserRole } from '@prisma/client';
  * schoolId) foreign key is what makes that a guarantee rather than this read.
  */
 /** The sentence's subject, with the article Swedish gives each noun. */
-const WHAT: Record<'tjänst' | 'behörighet' | 'uppdrag', string> = {
+const WHAT: Record<'tjänst' | 'behörighet' | 'uppdrag' | 'rastvaktspass', string> = {
   tjänst: 'En tjänst',
   behörighet: 'En behörighet',
   uppdrag: 'Ett uppdrag',
+  rastvaktspass: 'Ett rastvaktspass',
 };
 
 export async function lockStaffRow(
   tx: Prisma.TransactionClient,
   userId: string,
-  what: 'tjänst' | 'behörighet' | 'uppdrag',
+  what: 'tjänst' | 'behörighet' | 'uppdrag' | 'rastvaktspass',
 ): Promise<void> {
   const [row] = await tx.$queryRaw<{ role: UserRole }[]>`
     SELECT "role"

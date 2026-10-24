@@ -27,6 +27,7 @@ import { readActiveStaffIds } from './staff-candidates';
 import { hideHr, readsHr } from './hr-visibility';
 import { hasTravel, readSiteMap } from '../common/site-travel';
 import { travelLoad, type TeacherTravel } from './travel-load';
+import type { TeacherSupervision } from '../supervision/supervision-load';
 
 /**
  * The horizons the weekly report can be asked for: the timplansposter
@@ -59,6 +60,16 @@ export interface TeacherLoadReportResponse extends TeacherLoadReport {
    * always did. Never part of the counted minutes, the saldo or the status.
    */
   travel: { teachers: TeacherTravel[] } | null;
+  /**
+   * Rastvakt (Rastvaktsschema, supervision-load.ts): each teacher's passes in
+   * the year's rastvaktsschema, their counted part, toppvecka and annual
+   * hours, and the ram their RASTVAKT uppdrag set, for the teachers with a
+   * pass. Unlike restid it IS in the counted figures: the passes are uppdrag
+   * in the report (dutyMinutesPerWeek, and against the target where the
+   * area counts as teaching), and this block is their own line beside them.
+   * Null when the year has no pass, whatever the horizon.
+   */
+  supervision: { teachers: TeacherSupervision[] } | null;
 }
 
 /** GET /staffing/delivered's answer. */
@@ -118,7 +129,7 @@ export class StaffingLoadService {
     }
 
     const scheduled = chosen === 'scheduled';
-    const { year, report, travel } = await this.prisma.withRls(user, async (tx) => {
+    const { year, report, travel, supervision } = await this.prisma.withRls(user, async (tx) => {
       const read = scheduled
         ? await this.readScheduledInput(tx, academicYearId, user)
         : await this.readInput(tx, academicYearId, user);
@@ -134,7 +145,9 @@ export class StaffingLoadService {
       // post, row or uppdrag has no row to stand beside.
       const reported = new Set(built.teachers.map((row) => row.userId));
       const travel = walks && { teachers: walks.teachers.filter((row) => reported.has(row.userId)) };
-      return { year: read.year, report: built, travel };
+      // Every teacher with a pass has a row: the passes are their uppdrag.
+      const supervision = read.supervision && { teachers: read.supervision.filter((row) => reported.has(row.userId)) };
+      return { year: read.year, report: built, travel, supervision };
     });
 
     const response: TeacherLoadReportResponse = {
@@ -144,6 +157,7 @@ export class StaffingLoadService {
       ...report,
       listsComputed: !scheduled,
       travel,
+      supervision,
       ...(scheduled
         ? { unstaffedRequirements: [], unqualifiedAssignments: [], subjectBottlenecks: [], bottlenecksComputed: false }
         : {}),
@@ -181,6 +195,7 @@ export class StaffingLoadService {
       ...response,
       teachers: report.teachers.filter((row) => row.userId === own),
       travel: travel && { teachers: travel.teachers.filter((row) => row.userId === own) },
+      supervision: supervision && { teachers: supervision.teachers.filter((row) => row.userId === own) },
       unstaffedRequirements: [],
       unqualifiedAssignments: report.unqualifiedAssignments.filter(
         (row) => row.userId === own,
@@ -473,12 +488,12 @@ export class StaffingLoadService {
     tx: PrismaClient,
     academicYearId: string,
     user: AuthenticatedUser,
-  ): Promise<{ year: YearBounds; input: LoadInput }> {
+  ): Promise<{ year: YearBounds; input: LoadInput; supervision: LoadRead['supervision'] }> {
     const read = await readLoadInput(tx, user, academicYearId, requireSchoolId(user));
     if (!read) {
       throw new NotFoundException('Academic year not found.');
     }
-    return { year: read.year, input: read.input };
+    return { year: read.year, input: read.input, supervision: read.supervision };
   }
 
   /**
@@ -494,7 +509,7 @@ export class StaffingLoadService {
     tx: PrismaClient,
     academicYearId: string,
     user: AuthenticatedUser,
-  ): Promise<{ year: YearBounds; input: LoadInput }> {
+  ): Promise<{ year: YearBounds; input: LoadInput; supervision: LoadRead['supervision'] }> {
     const { rows: masters } = await readGrundschema(tx, { role: user.role, schoolId: requireSchoolId(user) }, academicYearId, () =>
       readMasters(tx, academicYearId),
     );
@@ -516,6 +531,7 @@ export class StaffingLoadService {
         ),
         qualifications: [],
       },
+      supervision: read.supervision,
     };
   }
 }

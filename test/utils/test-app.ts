@@ -51,6 +51,7 @@ import { SignInModule } from '../../src/sign-in/sign-in.module';
 import { SchoolUnitsModule } from '../../src/school-units/school-units.module';
 import { SitesModule } from '../../src/sites/sites.module';
 import { LessonLogModule } from '../../src/lesson-log/lesson-log.module';
+import { SupervisionModule } from '../../src/supervision/supervision.module';
 import { GallringModule } from '../../src/gallring/gallring.module';
 import { CalendarFeedModule } from '../../src/calendar-feed/calendar-feed.module';
 import { JwtAuthGuard } from '../../src/auth/jwt-auth.guard';
@@ -164,6 +165,7 @@ const FEATURE_MODULES = [
   SchoolUnitsModule,
   SitesModule,
   LessonLogModule,
+  SupervisionModule,
   // Without JobsModule: GallringJob takes the runner as @Optional and
   // registers nothing, so the controller is routed and no timer starts.
   GallringModule,
