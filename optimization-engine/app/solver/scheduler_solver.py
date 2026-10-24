@@ -62,6 +62,20 @@ from app.solver.room_allocator import (
     collect_distinguished_room_ids,
 )
 from app.solver.time_grid import TimeGrid
+from app.solver.travel import (
+    CATEGORIES as TRAVEL_CATEGORIES,
+    CODES as TRAVEL_CODES,
+    Family,
+    Party,
+    Placed,
+    TravelMap,
+    TravelRows,
+    breached,
+    families_of,
+    site_choices,
+    site_plan,
+    travel_map,
+)
 
 
 @dataclass(frozen=True)
@@ -968,6 +982,10 @@ class SchedulerSolver:
         # builds a relaxed copy of the week, and a week without its rasts or
         # its sittings may step further than the week that timed out.
         step = _start_step(request, self._grid)
+        # Restid i generatorn, None unless the school turned it on and wrote a
+        # walk between two sites its rooms stand on: then nothing below builds
+        # a row of it, and the model is the one it was. See travel.py.
+        travel = travel_map(request, slot_minutes=self._grid.slot_minutes, step=step)
         decisions = self._create_lesson_decisions(
             model, request.requirements, len(rooms), request.frame_times, request.rasts,
             step=step,
@@ -987,13 +1005,26 @@ class SchedulerSolver:
             request.constraints,
             request.fixed_lessons,
             request.room_preferences,
+            site_key=travel.site_key if travel is not None else None,
         )
         self._add_availability_constraints(model, registry, decisions, rooms, request.constraints)
+        # Before the locked lessons, whose rows read the sites; the day cache
+        # is made here for the same builder, which stretches a row over the
+        # night only where the domains need it (travel.TravelRows._wraps).
+        day_vars: dict[str, cp_model.IntVar] = {}
+        travel_rows = (
+            self._travel_rows(model, registry, room_plan, travel, day_vars)
+            if travel is not None
+            else None
+        )
         self._add_fixed_lesson_constraints(
             model, decisions, rooms, request.fixed_lessons, request.group_conflicts,
+            travel_rows=travel_rows,
         )
+        if travel_rows is not None:
+            for family in families_of(decisions, request.group_conflicts):
+                travel_rows.add_family(model, family)
 
-        day_vars: dict[str, cp_model.IntVar] = {}
         lunch_starts = self._add_rules_constraints(
             model, registry, decisions, request.rules, day_vars,
             request.fixed_lessons, request.groups, request.constraints,
@@ -2639,6 +2670,20 @@ class SchedulerSolver:
         # one names ROOM_CAPACITY. Trading one school's precise cause for
         # another's is a change that needs its own measurement across the
         # refusal suite, not a line borrowed from a rast fix.
+        # WHERE THE SCHOOL KEEPS THE WALK, A SECOND TRY WITHOUT IT. Measured on
+        # the review's tight week (gentravel.tight(3070), a walk of 40), the
+        # objective's assumption solve ran past the 15-second cap and the
+        # refusal reached the school with no cause at all; without the
+        # objective, 1.9 s and a core of six. Not instead of the objective,
+        # though: on the högstadium week at four lessons a day with the walk,
+        # the objective's core came in 0.4 s and the objective-free one in
+        # 10.2. So the objective first, on EXPLAIN_WALK_FIRST_SECONDS of the
+        # cap, and only when it names nothing the model without it, on the
+        # rest. A school that has not turned the walk on is explained exactly
+        # as before.
+        keeps_walk = travel_map(
+            request, slot_minutes=self._grid.slot_minutes, step=_start_step(request, self._grid),
+        ) is not None
         model, registry, _, _, _ = self._build_model(request, use_assumptions=True)
         solver = cp_model.CpSolver()
         # Capped, because the verdict is already in. Measured: a payload phase 1
@@ -2648,13 +2693,26 @@ class SchedulerSolver:
         # unexplained INFEASIBLE after fifteen seconds says the same thing as
         # one after sixty, and the school has its answer forty-five seconds
         # sooner.
-        solver.parameters.max_time_in_seconds = min(
-            self._settings.solver_max_time_seconds, self.EXPLAIN_CAP_SECONDS,
+        cap = min(self._settings.solver_max_time_seconds, self.EXPLAIN_CAP_SECONDS)
+        solver.parameters.max_time_in_seconds = (
+            min(cap, self.EXPLAIN_WALK_FIRST_SECONDS) if keeps_walk else cap
         )
         conflicts = None
         status = _solve_guarded(
             solver, model, what="the explanation", request_id=request.request_id,
         )
+        if keeps_walk and status != cp_model.INFEASIBLE:
+            left = cap - solver.wall_time
+            if left >= self.MIN_PHASE_SECONDS:
+                model, registry, _, _, _ = self._build_model(
+                    request, use_assumptions=True, include_objective=False,
+                )
+                solver = cp_model.CpSolver()
+                solver.parameters.max_time_in_seconds = left
+                status = _solve_guarded(
+                    solver, model, what="the explanation without the objective",
+                    request_id=request.request_id,
+                )
         if status == cp_model.INFEASIBLE:
             conflicts = build_conflict_analysis(solver, registry)
             # Before the blocks below: a core the maximum alone filled is a
@@ -2662,6 +2720,8 @@ class SchedulerSolver:
             if conflicts is not None:
                 left = None if deadline is None else deadline - time.monotonic()
                 conflicts = self._daily_maximum_verdict(request, conflicts, seconds_left=left)
+                left = None if deadline is None else deadline - time.monotonic()
+                conflicts = self._travel_verdict(request, conflicts, seconds_left=left)
         # A PROOF WITH NOTHING TO SAY, ON A WEEK WITH BLOCKS. A block is the
         # one rule a school writes to make its week NARROWER, so a refusal that
         # names nothing while blocks are in force sends the school looking
@@ -2670,6 +2730,13 @@ class SchedulerSolver:
         # finds a timetable, the blocks are what make the week impossible, and
         # the refusal says so by name rather than as an unexplained INFEASIBLE.
         unexplained = conflicts is None or conflicts.summary_code == "CONFLICT_NO_CORE"
+        # THE SAME, FOR THE WALK, and first: the one rule a school with two
+        # sites turned on itself. Solved again without it; a timetable then
+        # names whom it leaves short of a walk, measured 1.
+        if unexplained and keeps_walk:
+            left = None if deadline is None else deadline - time.monotonic()
+            conflicts = self._travel_without_core(request, seconds_left=left) or conflicts
+            unexplained = conflicts is None or conflicts.summary_code == "CONFLICT_NO_CORE"
         if unexplained and _blocks_of(request.requirements):
             # Out of the solve's own budget, not on top of it: `deadline` is
             # solve()'s, a time.monotonic() value, and the probe gets what the
@@ -2691,6 +2758,9 @@ class SchedulerSolver:
     # verdict is proved before it runs; this only decides how long the school
     # waits for the names.
     EXPLAIN_CAP_SECONDS = 15.0
+    # Restid i generatorn: the objective's share of that cap before the
+    # explanation tries the model without it. See _explain_infeasible.
+    EXPLAIN_WALK_FIRST_SECONDS = 5.0
     # Cap on the objective-free build's slice of phase 1. Beyond mid-size
     # schools it stops converging at all (>240s at 1,000 students), so letting
     # it run longer only starves the encoding that does work there.
@@ -2699,6 +2769,205 @@ class SchedulerSolver:
     # it refuses it has paid for itself many times over; on a feasible week
     # this is the most it can cost, and its starts are hinted onward.
     LUNCH_STAGE_CAP_SECONDS = 10.0
+    # Restid i generatorn: the most of the budget the week on planned sites
+    # may take before phase 1a gets the rest, and the cap on planning them.
+    # See _solve_on_planned_sites.
+    TRAVEL_PLANNED_SHARE = 0.6
+    SITE_PLAN_CAP_SECONDS = 5.0
+
+    def _solve_on_planned_sites(
+        self,
+        request: OptimizeScheduleRequest,
+        travel: TravelMap,
+        feas_model: cp_model.CpModel,
+        feas_decisions: list[LessonDecision],
+        feas_plan: RoomPlan,
+        seconds: float,
+        *,
+        make_solver: Callable[[float], cp_model.CpSolver],
+        what: str = "the planned sites",
+        tie_break: bool = True,
+    ) -> cp_model.CpSolver | None:
+        """Search the week with each lesson on the site planned for it.
+
+        WHY A SECOND SEARCH. A lesson that may use rooms on two sites chooses
+        its site and its time in one search, and the walk's rows bind only
+        once a site is chosen, so the free search guesses blind: on the
+        högstadium week on two sites it found nothing where the same week with
+        its sites fixed found a timetable (travel.site_plan has the
+        measurement). So the sites are planned first — every teacher and
+        group a home site and as few lessons away from it as the rooms allow —
+        and phase 1a's own model is searched with each lesson's other sites
+        closed.
+
+        NOTHING IS PROVED HERE. The pinned model is phase 1a's with rows
+        added, so a timetable found keeps every rule and is returned as phase
+        1a's would be (a clone keeps every variable's index). An INFEASIBLE or
+        an UNKNOWN says only that these sites were a bad guess: None, and
+        solve() goes on to phase 1a with what is left, which proves or finds
+        what it can on the free model, as it did before. The probes use it the
+        same way (_probe_search).
+
+        `seconds` is the whole of it; the plan itself takes at most
+        SITE_PLAN_CAP_SECONDS of that. `make_solver` builds each solver for
+        the seconds it may take — solve()'s generation solver, with the
+        request's seed and workers, or a probe's.
+        """
+        if seconds < 2 * self.MIN_PHASE_SECONDS:
+            return None
+        started = time.monotonic()
+        slots_per_day = self._grid.slots_per_day
+        decision_of = {decision.lesson.key(): decision for decision in feas_decisions}
+        spans: dict[int, list[tuple[int, int]]] = defaultdict(list)
+        for key, _start, duration, _room in feas_plan.placements:
+            decision = decision_of[key]
+            forced = feas_plan.forced_class.get(key)
+            classes = [forced] if forced is not None else list(feas_plan.literals[key])
+            starts = decision.starts or cp_model.Domain(0, self._grid.horizon - duration)
+            reach = [
+                span
+                for ranges in _day_reach(starts, duration, slots_per_day).values()
+                for span in ranges
+            ]
+            for class_index in classes:
+                spans[class_index].extend(reach)
+        # A room closed for part of the week, or held there by a locked lesson,
+        # gives its class less than its lessons can reach. Such a room is a
+        # class of its own (collect_distinguished_room_ids), so its windows are
+        # its class's, exactly.
+        room_class = {
+            room_class.room_indices[0]: room_class.index
+            for room_class in feas_plan.classes
+            if room_class.capacity == 1
+        }
+        index_of = {room.id: index for index, room in enumerate(request.rooms)}
+        blocked: dict[int, list[tuple[int, int]]] = defaultdict(list)
+        for constraint in request.constraints:
+            if (
+                constraint.kind != "UNAVAILABLE"
+                or constraint.date is not None
+                or constraint.resource_kind != "ROOM"
+            ):
+                continue
+            class_index = room_class.get(index_of.get(constraint.resource_id, -1))
+            if class_index is None:
+                continue
+            try:
+                blocked[class_index].extend(self._grid.window_to_absolute_range(
+                    constraint.day_of_week, constraint.start_time, constraint.end_time,
+                ))
+            except ValueError:
+                continue
+        for fixed in request.fixed_lessons:
+            if fixed.room_id is None:
+                continue
+            class_index = room_class.get(index_of.get(fixed.room_id, -1))
+            window = self._fixed_window(fixed)
+            if class_index is not None and window is not None:
+                blocked[class_index].append(window)
+        open_slots = {
+            class_index: _covered(ranges) - _covered_both(ranges, blocked.get(class_index, []))
+            for class_index, ranges in spans.items()
+        }
+        families = families_of(feas_decisions, request.group_conflicts)
+        locked_sites: dict[tuple[Party, tuple[UUID, ...]], set[object]] = defaultdict(set)
+        for fixed in request.fixed_lessons:
+            site = travel.site_of_room.get(fixed.room_id) if fixed.room_id else None
+            if site is None:
+                continue
+            teachers = {tid for tid in (fixed.teacher_id, fixed.co_teacher_id) if tid}
+            groups = {fixed.student_group_id, *fixed.extra_group_ids}
+            for family in families:
+                ids = set(family.resource_ids)
+                if (family.party == "TEACHER" and ids & teachers) or (
+                    family.party == "PUPILS" and ids & groups
+                ):
+                    locked_sites[(family.party, family.resource_ids)].add(site)
+        planned = site_plan(
+            feas_decisions,
+            feas_plan,
+            families,
+            locked_sites,
+            open_slots,
+            solver=make_solver(min(self.SITE_PLAN_CAP_SECONDS, seconds * 0.1)),
+            solve=lambda solver, model: _solve_guarded(
+                solver, model, what="the site plan", request_id=request.request_id,
+            ),
+            tie_break=tie_break,
+        )
+        if planned is None:
+            logger.info("%s [requestId=%s]: no site plan", what, request.request_id)
+            return None
+        sites, away = planned
+        pinned = feas_model.Clone()
+        for key, site in sites.items():
+            for other, literal in feas_plan.site_choices.get(key, {}).items():
+                if literal is None:
+                    continue
+                variable = pinned.get_bool_var_from_proto_index(literal.Index())
+                pinned.Add(variable == (1 if other == site else 0))
+        left = seconds - (time.monotonic() - started)
+        if left < self.MIN_PHASE_SECONDS:
+            return None
+        solver = make_solver(left)
+        code = _solve_guarded(solver, pinned, what=what, request_id=request.request_id)
+        logger.info(
+            "%s [requestId=%s]: sites planned for %d lessons (%d away from home) in %.1fs; %s",
+            what, request.request_id, len(sites), away, time.monotonic() - started,
+            solver.StatusName(code),
+        )
+        if code in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            return solver
+        return None
+
+    def _probe_search(
+        self,
+        request: OptimizeScheduleRequest,
+        model: cp_model.CpModel,
+        decisions: list[LessonDecision],
+        plan: RoomPlan,
+        seconds: float,
+        *,
+        what: str,
+    ) -> tuple[int, cp_model.CpSolver]:
+        """A probe's search: on planned sites first, where the probe keeps the walk.
+
+        Every probe that keeps the walk — the daily maximum's, the blocks', a
+        timeout relaxation's, the walk's own against the fixed part — searches
+        a model the free search finds no two-site timetable in
+        (_solve_on_planned_sites), and its UNKNOWN is a verdict lost: on the
+        högstadium week at four lessons a day the maximum's line fell from
+        `measured` 1 to 0, at place 22 of 256, and the refusal took 61.5 s
+        where it took 19.1 without the walk. So it searches as solve() does:
+        the planned sites on TRAVEL_PLANNED_SHARE of its seconds, then the
+        free model on what is left. A timetable on planned sites keeps every
+        rule of the probe's model; an INFEASIBLE there proves nothing, and the
+        free search goes on. A probe without the walk is the one solve it was,
+        on a solver with nothing but its time limit set, as the probes' are.
+        """
+        def make(left: float) -> cp_model.CpSolver:
+            solver = cp_model.CpSolver()
+            solver.parameters.max_time_in_seconds = max(0.0, left)
+            return solver
+
+        left = seconds
+        travel = travel_map(
+            request, slot_minutes=self._grid.slot_minutes, step=_start_step(request, self._grid),
+        )
+        if travel is not None:
+            started = time.monotonic()
+            # No tie-break: a probe asks whether a timetable exists at all, and
+            # the plan's second stage cost each one up to a second of that.
+            found = self._solve_on_planned_sites(
+                request, travel, model, decisions, plan, seconds * self.TRAVEL_PLANNED_SHARE,
+                make_solver=make, what=f"{what} on planned sites", tie_break=False,
+            )
+            if found is not None:
+                return cp_model.FEASIBLE, found
+            left = seconds - (time.monotonic() - started)
+        probe = make(left)
+        status = _solve_guarded(probe, model, what=what, request_id=request.request_id)
+        return status, probe
 
     def solve(self, request: OptimizeScheduleRequest) -> OptimizeScheduleResponse:
         """Two-phase solve: prove a timetable exists, then improve it.
@@ -2747,6 +3016,7 @@ class SchedulerSolver:
         scoped = settings_for_search(self._settings, request.search)
         if scoped is not self._settings:
             return SchedulerSolver(scoped).solve(request)
+        entered = time.monotonic()
         self._validate_request(request)
         # THE STEP, beside the grid it counts in. Per request, because the week
         # decides it: one lesson locked at 08:05 takes a school searched every
@@ -2792,7 +3062,18 @@ class SchedulerSolver:
         )
 
         total_budget = self._settings.solver_max_time_seconds
-        started = time.monotonic()
+        travel = travel_map(request, slot_minutes=self._grid.slot_minutes, step=step)
+        # WHERE THE SCHOOL KEEPS THE WALK THE BUILDS COUNT, from the moment the
+        # request arrived: two builds of a 2,000-pupil week with the walk took
+        # 3.3 s each, twice their time without it, and the review's timeout
+        # path ran to 91 s against the gateway's and the API's 90. A week
+        # without the walk keeps the clock it always had.
+        started = entered if travel is not None else time.monotonic()
+        probe_deadline = (
+            None
+            if travel is None
+            else entered + total_budget + self._settings.solver_probe_seconds
+        )
 
         def _remaining() -> float:
             return total_budget - (time.monotonic() - started)
@@ -2809,28 +3090,79 @@ class SchedulerSolver:
             if key in lunch_feas:
                 feas_model.AddHint(lunch_feas[key], slot)
 
-        # ---- phase 1a: clean satisfaction build -----------------------------
-        phase1 = self._generation_solver(
-            request, min(total_budget, self.CLEAN_SAT_CAP_SECONDS),
+        # ---- phase 1s: Restid i generatorn, the week on planned sites -------
+        # FIRST, on a week that keeps the walk, and only there: the free
+        # search below guesses sites blind and finds no first timetable where
+        # this finds one (_solve_on_planned_sites). A timetable found here has
+        # phase 1a's own variables (a clone keeps every index) and is read and
+        # hinted onward exactly as phase 1a's would be.
+        # WHAT IT COSTS A REFUSAL, stated rather than hidden. Nothing proved
+        # here is kept: an INFEASIBLE on the pinned model says only that the
+        # sites were a bad guess, so a week impossible for any other reason is
+        # proved twice, here and in phase 1a, and phase 1a proves it on what
+        # this left. Where the pinned model refutes fast — the walk itself the
+        # cause, or a contradiction no site choice touches — that is seconds;
+        # where it searches its whole share and answers nothing, phase 1a has
+        # 1 − TRAVEL_PLANNED_SHARE of the budget, and a refusal phase 1a needs
+        # longer than that to prove comes back TIMEOUT, whose probes still
+        # name the walk where dropping it helps. Measured in the review with a
+        # clock replaced: at 60 s, refusals needing 30–59 s of phase 1a were
+        # lost when the pinned model was as hard to refute as the free one.
+        # Posting the pins as assumptions, so that an INFEASIBLE with none in
+        # its core is a proof of the free week, was measured too and not
+        # taken: CP-SAT runs an assumption solve on one worker with
+        # presolve held back, 6.2 s where phase 1a's own proof took 3.0.
+        # Capped at CLEAN_SAT_CAP_SECONDS, the clean encoding's own cap: the
+        # pinned model is a clone of that build, and past mid-size schools
+        # time beyond the cap is better spent on phase 1b.
+        sited = (
+            self._solve_on_planned_sites(
+                request, travel, feas_model, feas_decisions, feas_plan,
+                # Of what is LEFT, not of the budget: with the walk the builds
+                # count (above), and a share of the whole budget taken after
+                # slow builds left phase 1a a negative time limit, which
+                # CP-SAT calls MODEL_INVALID (the review's 2,000-pupil week
+                # at ten seconds: an HTTP 500).
+                min(max(0.0, _remaining()) * self.TRAVEL_PLANNED_SHARE, self.CLEAN_SAT_CAP_SECONDS),
+                make_solver=lambda seconds: self._generation_solver(request, seconds),
+            )
+            if travel is not None
+            else None
         )
-        phase1_code = _solve_guarded(
-            phase1, feas_model, what="phase 1a", request_id=request.request_id,
-        )
+        if sited is not None:
+            phase1, phase1_code = sited, cp_model.FEASIBLE
+        else:
+            # ---- phase 1a: clean satisfaction build -------------------------
+            if travel is not None and _remaining() < self.MIN_PHASE_SECONDS:
+                # Nothing left after the builds and the planned sites: the
+                # timeout below, as phase 1b's own guard has it, never a
+                # solve on a time limit at or under zero.
+                phase1_code = cp_model.UNKNOWN
+            else:
+                phase1 = self._generation_solver(
+                    request,
+                    min(total_budget, self.CLEAN_SAT_CAP_SECONDS)
+                    if travel is None
+                    else min(max(0.0, _remaining()), self.CLEAN_SAT_CAP_SECONDS),
+                )
+                phase1_code = _solve_guarded(
+                    phase1, feas_model, what="phase 1a", request_id=request.request_id,
+                )
 
-        # MODEL_INVALID is a bug in model construction, not a property of the
-        # school's data — surface it as a server error instead of dressing it
-        # up as a scheduling verdict.
-        if phase1_code == cp_model.MODEL_INVALID:
-            msg = f"CP-SAT rejected the generated model: {feas_model.Validate()}"
-            raise SolverBuildError(msg)
+            # MODEL_INVALID is a bug in model construction, not a property of
+            # the school's data — surface it as a server error instead of
+            # dressing it up as a scheduling verdict.
+            if phase1_code == cp_model.MODEL_INVALID:
+                msg = f"CP-SAT rejected the generated model: {feas_model.Validate()}"
+                raise SolverBuildError(msg)
 
-        # Conflict analysis is only meaningful once CP-SAT has *proved*
-        # infeasibility, and the proof needs the assumptions field, which
-        # these builds leave empty so the search can use every core.
-        # Explaining the failure means rebuilding — paid only on a payload
-        # that has no timetable.
-        if phase1_code == cp_model.INFEASIBLE:
-            return self._explain_infeasible(request, deadline=started + total_budget)
+            # Conflict analysis is only meaningful once CP-SAT has *proved*
+            # infeasibility, and the proof needs the assumptions field, which
+            # these builds leave empty so the search can use every core.
+            # Explaining the failure means rebuilding — paid only on a payload
+            # that has no timetable.
+            if phase1_code == cp_model.INFEASIBLE:
+                return self._explain_infeasible(request, deadline=started + total_budget)
 
         if phase1_code in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             winner_solver: cp_model.CpSolver = phase1
@@ -2848,6 +3180,9 @@ class SchedulerSolver:
                 # groups eat on which days, or the map read below belongs to a
                 # different school week than the one being returned.
                 or set(lunch_full) != set(lunch_feas)
+                # And the walk's site literals, made in build order.
+                or [(key, site) for key, site, _ in room_plan.site_vars]
+                != [(key, site) for key, site, _ in feas_plan.site_vars]
             ):
                 msg = "objective-free and full builds disagree on model structure"
                 raise SolverBuildError(msg)
@@ -2856,17 +3191,31 @@ class SchedulerSolver:
                 (literal, feas_plan.literals[key][class_index])
                 for key, literals in room_plan.literals.items()
                 for class_index, literal in literals.items()
+            ] + [
+                (literal, source)
+                for (_, _, literal), (_, _, source) in zip(
+                    room_plan.site_vars, feas_plan.site_vars,
+                )
             ]
         else:
             # ---- phase 1b: the cleared clone takes what is left -------------
             remaining = _remaining()
             if remaining < self.MIN_PHASE_SECONDS:
-                logger.warning(self._timeout_diagnosis(request, "phase 1a used the whole budget"))
+                logger.warning(self._timeout_diagnosis(
+                    request,
+                    "phase 1a used the whole budget"
+                    if travel is None
+                    else "the planned sites and phase 1a used the whole budget",
+                ))
                 return OptimizeScheduleResponse(
                     request_id=request.request_id,
                     status="TIMEOUT",
                     lessons=[],
-                    conflicts=self._probe_timeout(request),
+                    conflicts=(
+                        self._probe_timeout(request)
+                        if probe_deadline is None
+                        else self._probe_timeout(request, deadline=probe_deadline)
+                    ),
                 )
             clone_model = model.Clone()
             clone_model.ClearObjective()
@@ -2889,7 +3238,11 @@ class SchedulerSolver:
                     request_id=request.request_id,
                     status="TIMEOUT",
                     lessons=[],
-                    conflicts=self._probe_timeout(request),
+                    conflicts=(
+                        self._probe_timeout(request)
+                        if probe_deadline is None
+                        else self._probe_timeout(request, deadline=probe_deadline)
+                    ),
                 )
             # Clone() preserves variable indices, so the full model's own
             # variables read their values straight off the clone's solver.
@@ -2902,7 +3255,7 @@ class SchedulerSolver:
                 (literal, literal)
                 for literals in room_plan.literals.values()
                 for literal in literals.values()
-            ]
+            ] + [(literal, literal) for _, _, literal in room_plan.site_vars]
 
         def _phase1_response() -> OptimizeScheduleResponse:
             lessons = self._extract_lessons(
@@ -3255,6 +3608,18 @@ class SchedulerSolver:
                                                the week. Zero unless a rast
                                                asks; the minutes a rast reserves
                                                cost no variables at all
+            S'L + 2L        travel             with the walk on (travel.py): a
+            + T + G + C                        literal per lesson and site it
+                                               may stand on (S' sites a walk
+                                               is counted from), a day and a
+                                               stretched start per lesson for
+                                               a row the night could reach, and
+                                               one literal per teacher, group
+                                               and pair of groups sharing a
+                                               pupil (C). The class partition
+                                               above splits by site as well,
+                                               and the bound counts the site.
+                                               Zero with the rule off
             (D + 1)L_t      teacher's day      per teacher whose row caps the
             + 2D + DC + 1                      day or whose post limits the
             + W                                days, and who has a lesson: a
@@ -3334,6 +3699,12 @@ class SchedulerSolver:
             for preference in request.room_preferences
             if preference.kind == "WISH"
         ]
+        # Restid i generatorn keeps each class on one site, so the site is
+        # one more field the signature splits on — None for every room when
+        # the rule is off, which leaves the bound as it was.
+        travel = travel_map(
+            request, slot_minutes=self._grid.slot_minutes, step=_start_step(request, self._grid),
+        )
         signature_bound = len(
             {
                 (
@@ -3342,6 +3713,7 @@ class SchedulerSolver:
                     room.min_grade_level,
                     room.max_grade_level,
                     tuple(room.id in preferred for preferred in preference_sets),
+                    travel.site_key(room) if travel is not None else None,
                 )
                 for room in request.rooms
             },
@@ -3535,9 +3907,28 @@ class SchedulerSolver:
             if lessons_by_teacher.get(limit.teacher_id, 0) > 0
         )
 
+        # The walk's own variables (travel.py), at their worst case: every
+        # lesson a choice of every site and every row stretched over the
+        # night, which the domains almost never ask for. "Every site" counts
+        # the rooms on no counted site as one more: a lesson with two classes
+        # there gets a literal for it too (travel.site_choices).
+        travel_vars = (
+            total_lessons * (
+                len(set(travel.site_of_room.values()))
+                + any(room.id not in travel.site_of_room for room in request.rooms)
+            )
+            + 2 * total_lessons
+            + len(lessons_by_teacher)
+            + len(lessons_by_group)
+            + len(request.group_conflicts)
+            if travel is not None
+            else 0
+        )
+
         return (
             4 * total_lessons
             + room_class_vars
+            + travel_vars
             + affected_vars
             + (1 + day_count) * total_lessons
             + daily_count_vars
@@ -5574,15 +5965,13 @@ class SchedulerSolver:
             update={"rules": rules.model_copy(update={"max_lessons_per_day_per_group": None})},
         )
         try:
-            model, _, decisions, _, _ = self._build_model(
+            model, _, decisions, plan, _ = self._build_model(
                 without, use_assumptions=False, include_objective=False,
             )
         except InvalidScheduleInputError:
             return conflicts
-        probe = cp_model.CpSolver()
-        probe.parameters.max_time_in_seconds = budget
-        status = _solve_guarded(
-            probe, model, what="the daily maximum probe", request_id=request.request_id,
+        status, probe = self._probe_search(
+            without, model, decisions, plan, budget, what="the daily maximum probe",
         )
         if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             per_day = Counter(
@@ -5752,6 +6141,685 @@ class SchedulerSolver:
         )
         return status in (cp_model.OPTIMAL, cp_model.FEASIBLE)
 
+    def _travel_verdict(
+        self,
+        request: OptimizeScheduleRequest,
+        conflicts: ConflictAnalysis,
+        *,
+        seconds_left: float | None = None,
+    ) -> ConflictAnalysis:
+        """Keep the walk in a refusal only where it is a cause, and name whose.
+
+        THE DAILY MAXIMUM'S VERDICT, for the walk, and for its reason: a core is
+        close to all or nothing on these models, and a literal per teacher,
+        group and pair of groups puts the walk into nearly every refusal of a
+        school that has turned it on, whatever the cause. So it is measured:
+        - The week is solved once more without the walk, every other rule in
+          force, on the probe's budget and never more than the solve has left.
+          A timetable means the walk is what makes the week impossible
+          (`measured` 1), and each party's line names the teachers, or groups,
+          that timetable leaves short of a walk — read as the rows hold it
+          (travel.breached). A party the timetable leaves short of none is no
+          part of the answer, since that same timetable keeps its walk, and
+          its line goes.
+          That timetable proves that dropping the walk for those named is
+          enough, and not that each of them needs it: it was found without
+          the walk and keeps a walk only where it happens to, so the sentence
+          says what the timetable shows and never "cannot be kept". A party
+          the timetable names and the core left out gets its line too.
+        - Still impossible: the walk is not needed for the proof, which does
+          not make it no cause. Each family is measured on its own
+          (_held_back_by_travel), the core's own first: one that cannot be
+          placed with the walk and can without it keeps its line, `measured`
+          2; a party whose families the caps left unanswered keeps the line
+          the core gave it, `measured` 0.
+        - None held back, every family answered: the walk may still be a cause
+          only TOGETHER — three teachers who each fit alone and not with one
+          laboratory between them, beside a second cause the probe keeps
+          (_walk_against_the_fixed_part). Where the week's fixed part refuses
+          the walk and holds without it, the lines stay, `measured` 0; where
+          it holds the walk, the lines go, and a core that was nothing else is
+          then CONFLICT_NO_CORE.
+        - Nothing inside the budget, no budget, a probe that could not be
+          built or solved, or a family the deadline left unanswered: the lines
+          stay as the core gave them, `measured` 0. An unmeasured walk is
+          never read as one measured and found innocent.
+
+        A measured line leads the refusal, as the daily maximum's does: it is
+        the one line on it that was checked. The core's other lines beside it
+        are judged by _lines_that_stand: beside `measured` 1 only what is
+        measured stands, beside `measured` 2 the core's lines stay, room lines
+        measured against the week without the walk.
+        """
+        lines = [
+            detail for detail in conflicts.conflicts
+            if detail.code in TRAVEL_CODES.values()
+        ]
+        if not lines:
+            return conflicts
+        step = _start_step(request, self._grid)
+        travel = travel_map(request, slot_minutes=self._grid.slot_minutes, step=step)
+        if travel is None:
+            return conflicts
+        budget = self._settings.solver_probe_seconds
+        if seconds_left is not None:
+            budget = min(budget, seconds_left)
+        if budget < self.MIN_PHASE_SECONDS:
+            return conflicts
+        deadline = time.monotonic() + budget
+        others = [detail for detail in conflicts.conflicts if not any(detail is line for line in lines)]
+        party_of = {code: party for party, code in TRAVEL_CODES.items()}
+
+        def said(
+            measured: int,
+            named: dict[Party, list[UUID]],
+            unanswered: set[Party] | frozenset[Party] = frozenset(),
+        ) -> ConflictAnalysis:
+            kept: list[ConflictDetail] = []
+            for line in lines:
+                ids = named.get(party_of[line.code], [])
+                if not ids:
+                    # A party the measurement could not finish keeps the line
+                    # the core gave it, `measured` 0: unmeasured is never read
+                    # as measured and found innocent.
+                    if party_of[line.code] in unanswered:
+                        kept.append(line)
+                    continue
+                # The core's own first and in its order, then any the
+                # measurement adds, as the daily maximum's line is built.
+                ordered = [rid for rid in line.resource_ids if rid in ids]
+                ordered += [rid for rid in ids if rid not in ordered]
+                kept.append(ConflictDetail(
+                    category=line.category,
+                    code=line.code,
+                    params={**line.params, "measured": measured},
+                    requirement_ids=line.requirement_ids,
+                    room_ids=line.room_ids,
+                    constraint_ids=line.constraint_ids,
+                    resource_ids=ordered,
+                ))
+            # A party the measurement names and the core did not: its line, as
+            # the model registers it, under the same measurement.
+            for party, code in TRAVEL_CODES.items():
+                ids = named.get(party, [])
+                if ids and not any(party_of[line.code] == party for line in lines):
+                    kept.append(ConflictDetail(
+                        category=TRAVEL_CATEGORIES[party],  # type: ignore[arg-type]
+                        code=code,
+                        params={"stepMinutes": travel.step_minutes, "measured": measured},
+                        resource_ids=list(ids),
+                    ))
+            standing = others
+            if kept and measured in (1, 2):
+                standing = self._lines_that_stand(request, others, measured, deadline=deadline)
+            if not kept and not standing:
+                return no_core_analysis()
+            return conflicts.model_copy(update={"conflicts": [*kept, *standing]})
+
+        status, short = self._without_the_walk(request, travel, budget)
+        if short is not None:
+            if not short["TEACHER"] and not short["PUPILS"]:
+                # A timetable without the walk that keeps every walk would be
+                # a timetable with it, which the proof rules out: the reading
+                # and the rows disagree. Say nothing measured rather than
+                # something false.
+                logger.error(
+                    "travel probe [requestId=%s]: a timetable without the walk keeps "
+                    "every walk on a week proved impossible with it",
+                    request.request_id,
+                )
+                return conflicts
+            return said(1, short)
+        if status != cp_model.INFEASIBLE:
+            return conflicts
+        held, unanswered = self._held_back_by_travel(
+            request, travel, deadline=deadline,
+            first={rid for line in lines for rid in line.resource_ids},
+        )
+        if held["TEACHER"] or held["PUPILS"]:
+            return said(2, held, unanswered)
+        if unanswered:
+            return conflicts
+        if self._walk_against_the_fixed_part(request, deadline=deadline) is not False:
+            return conflicts
+        return said(2, held)
+
+    def _without_the_walk(
+        self, request: OptimizeScheduleRequest, travel: TravelMap, seconds: float,
+    ) -> tuple[int, dict[Party, list[UUID]] | None]:
+        """The week solved once more without the walk, every other rule in force.
+
+        The status, and with a timetable whom it leaves short of a walk, read
+        as the rows hold it (travel.breached): None without one. A week that
+        refuses by name without the walk is UNKNOWN here, not a finding.
+        """
+        without = request.model_copy(update={"site_travel_times": []})
+        try:
+            model, _, decisions, plan, _ = self._build_model(
+                without, use_assumptions=False, include_objective=False,
+            )
+        except InvalidScheduleInputError:
+            return cp_model.UNKNOWN, None
+        probe = cp_model.CpSolver()
+        probe.parameters.max_time_in_seconds = max(0.0, seconds)
+        status = _solve_guarded(
+            probe, model, what="the travel probe", request_id=request.request_id,
+        )
+        if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            return status, None
+        rooms = plan.assign_rooms(probe)
+        placed = {
+            decision.lesson.key(): Placed(
+                key=decision.lesson.key(),
+                start=probe.Value(decision.start),
+                end=probe.Value(decision.start) + decision.duration,
+                lead=decision.lead,
+                trail=decision.trail,
+                site=travel.site_of_room.get(request.rooms[rooms[decision.lesson.key()]].id),
+            )
+            for decision in decisions
+        }
+        return status, breached(
+            travel,
+            families_of(decisions, request.group_conflicts),
+            placed,
+            self._locked_travel_pairs(request, decisions, travel),
+            self._grid.slots_per_day,
+        )
+
+    def _travel_without_core(
+        self, request: OptimizeScheduleRequest, *, seconds_left: float | None = None,
+    ) -> ConflictAnalysis | None:
+        """Name the walk in a proved INFEASIBLE week the explanation said nothing about.
+
+        _blocks_verdict's reasoning, for the other rule a school turns on to
+        make its week narrower: the explaining solve can run out of its cap on
+        a week the walk alone makes impossible, and an unexplained refusal
+        then sends a school with two sites everywhere but to the rule it just
+        turned on. So the week is solved once more without the walk, on the
+        probe's budget and never more than the solve has left; a timetable
+        names, for each party, whom it leaves short of a walk (`measured` 1,
+        as _travel_verdict's lines are), under TRAVEL_PROBE_SUMMARY. None when
+        there is no budget, no timetable, or one that keeps every walk.
+        """
+        travel = travel_map(
+            request, slot_minutes=self._grid.slot_minutes, step=_start_step(request, self._grid),
+        )
+        if travel is None:
+            return None
+        budget = self._settings.solver_probe_seconds
+        if seconds_left is not None:
+            budget = min(budget, seconds_left)
+        if budget < self.MIN_PHASE_SECONDS:
+            return None
+        started = time.perf_counter()
+        _status, short = self._without_the_walk(request, travel, budget)
+        if not short or not (short["TEACHER"] or short["PUPILS"]):
+            return None
+        return ConflictAnalysis(
+            summary_code="TRAVEL_PROBE_SUMMARY",
+            summary_params={"seconds": round(time.perf_counter() - started, 1)},
+            conflicts=[
+                ConflictDetail(
+                    category=TRAVEL_CATEGORIES[party],  # type: ignore[arg-type]
+                    code=TRAVEL_CODES[party],
+                    params={"stepMinutes": travel.step_minutes, "measured": 1},
+                    resource_ids=list(ids),
+                )
+                for party, ids in short.items()
+                if ids
+            ],
+        )
+
+    def _walk_against_the_fixed_part(
+        self, request: OptimizeScheduleRequest, *, deadline: float,
+    ) -> bool | None:
+        """Whether the walk is a cause together with the week's fixed part alone.
+
+        The week with every rule a literal stands for set aside but the walk —
+        starts, rooms and their types, overlaps, locked lessons, every family's
+        walk — and then without the walk too. Impossible with it and possible
+        without it is a walk that is a cause across families, which no family
+        measured alone shows (the review's three teachers, one laboratory and
+        a second cause beside them): True. A timetable with the walk, or a
+        fixed part impossible even without it: False, the walk is not the
+        matter. None when either solve did not answer by `deadline`, or in
+        TRAVEL_JOINT_CAP_SECONDS each: plain searches, not the planned sites.
+        The weeks it decides (the review's: three teachers, one laboratory)
+        are a few dozen lessons and answer at once; on the högstadium week
+        the two searches through the planned sites took 17 s to answer
+        UNKNOWN twice, which kept the lines at `measured` 0 as an unanswered
+        check does anyway.
+        """
+        if deadline - time.monotonic() < self.MIN_PHASE_SECONDS:
+            return None
+        try:
+            model, registry, _decisions, _plan, _ = self._build_model(
+                request, use_assumptions=True, include_objective=False,
+            )
+        except InvalidScheduleInputError:
+            return None
+        # Every literal free: the fixed part is what no literal stands for.
+        model.ClearAssumptions()
+        bare = model.Clone()
+        model.AddBoolAnd(registry.literals(TRAVEL_CODES.values()))
+
+        def tried(candidate: cp_model.CpModel, what: str) -> int:
+            left = min(self.TRAVEL_JOINT_CAP_SECONDS, deadline - time.monotonic())
+            if left < 0.1:
+                return cp_model.UNKNOWN
+            solver = cp_model.CpSolver()
+            solver.parameters.max_time_in_seconds = left
+            return _solve_guarded(solver, candidate, what=what, request_id=request.request_id)
+
+        status = tried(model, "the walk against the fixed part")
+        if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            return False
+        if status != cp_model.INFEASIBLE:
+            return None
+        status = tried(bare, "the fixed part without the walk")
+        if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            return True
+        return False if status == cp_model.INFEASIBLE else None
+
+    #: Restid i generatorn's refusal, kept to a couple of seconds over the
+    #: same refusal without the walk (the review measured 28.8 s against
+    #: 1.3 s on the högstadium week at four lessons a day, 17 s of it in the
+    #: joint check below answering UNKNOWN twice). Each is a hard cap, inside
+    #: the verdict's own deadline: the joint check per solve, the family
+    #: pass as a whole, the room lines as a whole and per line. The weeks
+    #: where these answer — a few dozen lessons — answer in milliseconds; on
+    #: a large week they answered nothing in any time the school would wait.
+    TRAVEL_JOINT_CAP_SECONDS = 1.0
+    TRAVEL_FAMILIES_CAP_SECONDS = 1.0
+    TRAVEL_ROOM_LINES_CAP_SECONDS = 2.0
+    TRAVEL_ROOM_LINE_CAP_SECONDS = 0.5
+
+    #: The core's room lines, which the walk drags in: a lesson's site is its
+    #: room's, so the literals that keep a lesson in its own kind of room sit
+    #: in nearly every core the walk is in. See _lines_that_stand.
+    ROOM_LINE_CODES = frozenset({
+        "ROOM_NO_ROOM_OF_TYPE_FOR_REQUIREMENT", "ROOM_NO_ROOM_FOR_REQUIREMENT",
+    })
+
+    def _lines_that_stand(
+        self,
+        request: OptimizeScheduleRequest,
+        lines: list[ConflictDetail],
+        measured: int,
+        *,
+        deadline: float,
+    ) -> list[ConflictDetail]:
+        """The other lines of a refusal the walk is measured in, those that stand.
+
+        BESIDE A LINE MEASURED 1 nothing unmeasured stands. That line says the
+        week has a timetable once the walk is dropped for those it names,
+        which is the whole of the answer; the core's other lines are at best
+        other ways out, and the review found a lunch's and a block's beside
+        it on weeks whose only cause was the walk. A line another verdict
+        measured (`measured` 1 or 2: the daily maximum's) stands, and a room
+        line stands where it is measured to restore the week on its own.
+
+        BESIDE A LINE MEASURED 2 the week has other causes, and the core's
+        lines are kept, room lines measured against the week WITHOUT the walk
+        — which is impossible on its own, so a room line measured against the
+        walk could never restore it, and a genuine second cause (two
+        laboratory hours and one laboratory) would be hidden. A room line
+        measured not to restore it goes; one the caps leave unmeasured stays.
+
+        A ROOM LINE IS MEASURED AS A SCHOOL WOULD FIX IT, by the payload: the
+        requirement's room type dropped and its group size set to one, so
+        every room is eligible, and the week built again. Not by its literal,
+        which only forbids room_index values: the classes a lesson may use
+        come from the payload, so opening the literal never moved a lesson
+        and no room line ever stood. First all the room lines at once — an
+        open room holds no more than it did, so nothing impossible with all
+        of them open is possible with one — and then, where that found a
+        timetable, each alone, within TRAVEL_ROOM_LINES_CAP_SECONDS.
+        """
+        room_lines = [line for line in lines if line.code in self.ROOM_LINE_CODES]
+        if measured == 1:
+            standing_others = {
+                id(line) for line in lines
+                if line.code not in self.ROOM_LINE_CODES
+                and line.params.get("measured") in (1, 2)
+            }
+        else:
+            standing_others = {id(line) for line in lines if line.code not in self.ROOM_LINE_CODES}
+        verdict: dict[int, bool | None] = {id(line): None for line in room_lines}
+        if room_lines:
+            stop = min(deadline, time.monotonic() + self.TRAVEL_ROOM_LINES_CAP_SECONDS)
+            base = (
+                request if measured == 1
+                else request.model_copy(update={"site_travel_times": []})
+            )
+
+            def opened(chosen: list[ConflictDetail]) -> OptimizeScheduleRequest:
+                ids = {rid for line in chosen for rid in line.requirement_ids}
+                return base.model_copy(update={"requirements": [
+                    requirement.model_copy(update={
+                        "required_room_type": None, "student_group_size": 1,
+                    }) if requirement.id in ids else requirement
+                    for requirement in base.requirements
+                ]})
+
+            def restores(candidate: OptimizeScheduleRequest) -> bool | None:
+                left = min(self.TRAVEL_ROOM_LINE_CAP_SECONDS, stop - time.monotonic())
+                if left < 0.05:
+                    return None
+                try:
+                    model, *_ = self._build_model(
+                        candidate, use_assumptions=False, include_objective=False,
+                    )
+                except InvalidScheduleInputError:
+                    return None
+                solver = cp_model.CpSolver()
+                solver.parameters.max_time_in_seconds = left
+                status = _solve_guarded(
+                    solver, model, what="the room lines", request_id=request.request_id,
+                )
+                if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+                    return True
+                return False if status == cp_model.INFEASIBLE else None
+
+            together = restores(opened(room_lines))
+            if together is False:
+                verdict = {key: False for key in verdict}
+            elif together:
+                for line in room_lines:
+                    verdict[id(line)] = restores(opened([line]))
+        return [
+            line for line in lines
+            if id(line) in standing_others
+            or (
+                line.code in self.ROOM_LINE_CODES
+                and (verdict[id(line)] or (measured == 2 and verdict[id(line)] is None))
+            )
+        ]
+
+    def _locked_travel_pairs(
+        self,
+        request: OptimizeScheduleRequest,
+        decisions: list[LessonDecision],
+        travel: TravelMap,
+    ) -> list[tuple[Party, tuple[UUID, ...], str, Placed]]:
+        """Each generated lesson beside each locked one on a site it shares a party with.
+
+        The pairs _add_fixed_lesson_constraints holds apart, keyed as its walk
+        rows are (_fixed_relations), for travel.breached to read a timetable
+        against: the locks are not in a response, so they are placed here at
+        the window every builder blocks.
+        """
+        conflicts_with: dict[UUID, set[UUID]] = defaultdict(set)
+        for first_id, second_id in request.group_conflicts or []:
+            conflicts_with[first_id].add(second_id)
+            conflicts_with[second_id].add(first_id)
+        pairs: list[tuple[Party, tuple[UUID, ...], str, Placed]] = []
+        for fixed in request.fixed_lessons:
+            site = travel.site_of_room.get(fixed.room_id) if fixed.room_id else None
+            if site is None:
+                continue
+            window = self._fixed_window(fixed)
+            if window is not None:
+                lock = Placed(
+                    key=f"fixed_{fixed.id}", start=window[0], end=window[1], lead=0, trail=0,
+                    site=site,
+                )
+            else:
+                # Before or after the day's hours (outside_rows): placed at its
+                # clock time, on its own day.
+                outside = _fixed_lesson_outside(fixed, self._grid)
+                if outside is None:
+                    continue
+                day_start, (start, end) = outside
+                lock = Placed(
+                    key=f"fixed_{fixed.id}", start=day_start + start, end=day_start + end,
+                    lead=0, trail=0, site=site, day=day_start // self._grid.slots_per_day,
+                )
+            for decision in decisions:
+                for party, resource_ids in _fixed_relations(
+                    decision.lesson, fixed, conflicts_with,
+                ):
+                    pairs.append((party, resource_ids, decision.lesson.key(), lock))
+        return pairs
+
+    #: The most one family's placement, with or without the walk, may take: a
+    #: few dozen intervals. One that takes longer proves nothing, and the
+    #: family is not named.
+    TRAVEL_ALONE_CAP_SECONDS = 0.5
+
+    def _held_back_by_travel(
+        self,
+        request: OptimizeScheduleRequest,
+        travel: TravelMap,
+        *,
+        deadline: float,
+        first: set[UUID] | None = None,
+    ) -> tuple[dict[Party, list[UUID]], set[Party]]:
+        """The families the walk, and nothing about them but it, holds back.
+
+        Each family alone — a teacher's lessons, a group's, or two groups'
+        that share a pupil — on the starts its lessons were built on, the
+        sites their rooms allow, its own no-overlap and the locked lessons it
+        shares, and nothing of any other family: solved with its walk, and,
+        when that finds nothing, without it. Impossible with the walk and
+        possible without it names the family. What it rules out is a family no
+        week could hold with its walk, whatever else the school changes, which
+        is the one thing a line measured 2 claims. Room capacity is left out:
+        it only lets more through, so a family named here is held back in the
+        week too.
+
+        The families whose ids are in `first` (the core's) come first, the
+        rest in the order they are built (teachers, groups, pairs); each solve
+        on one worker and capped at TRAVEL_ALONE_CAP_SECONDS, never past
+        `deadline`. A family not reached, or not answered in time, is not
+        named — and the second value is the parties with a family left
+        unanswered either way it needed, which is what lets the verdict read
+        an empty answer for a party as "none of them" rather than "none
+        measured", and keep that party's line as the core gave it.
+        """
+        named: dict[Party, list[UUID]] = {"TEACHER": [], "PUPILS": []}
+        deadline = min(deadline, time.monotonic() + self.TRAVEL_FAMILIES_CAP_SECONDS)
+        try:
+            model, _, decisions, plan, _ = self._build_model(
+                request, use_assumptions=False, include_objective=False,
+            )
+        except InvalidScheduleInputError:
+            return named, {"TEACHER", "PUPILS"}
+        sites: dict[str, list[object]] = {}
+        for key, _start, _duration, _room in plan.placements:
+            forced = plan.forced_class.get(key)
+            sites[key] = (
+                [plan.class_sites[forced]]
+                if forced is not None
+                else list(dict.fromkeys(plan.class_sites[c] for c in plan.literals[key]))
+            )
+        conflicts_with: dict[UUID, set[UUID]] = defaultdict(set)
+        for first_id, second_id in request.group_conflicts or []:
+            conflicts_with[first_id].add(second_id)
+            conflicts_with[second_id].add(first_id)
+        by_key: dict[tuple[Party, tuple[UUID, ...]], list[Family]] = defaultdict(list)
+        for family in families_of(decisions, request.group_conflicts):
+            by_key[(family.party, family.resource_ids)].append(family)
+        unanswered: set[Party] = set()
+        order = sorted(
+            by_key.items(),
+            key=lambda item: not (first and set(item[0][1]) & first),
+        )
+        for (party, resource_ids), families in order:
+            members = list({
+                decision.lesson.key(): decision
+                for family in families
+                for decision in (*family.leaving, *family.arriving)
+            }.values())
+            # A family none of whose lessons can stand on a site a walk is
+            # counted from has no row, with the walk or without it.
+            if not any(site is not None for d in members for site in sites[d.lesson.key()]):
+                continue
+            if time.monotonic() >= deadline:
+                unanswered.add(party)
+                continue
+            with_walk = self._family_alone(
+                request, travel, party, resource_ids, families, members, sites,
+                conflicts_with, walk=True, deadline=deadline,
+            )
+            if with_walk is None:
+                unanswered.add(party)
+            if with_walk is not False:
+                continue
+            without_walk = self._family_alone(
+                request, travel, party, resource_ids, families, members, sites,
+                conflicts_with, walk=False, deadline=deadline,
+            )
+            if without_walk is None:
+                unanswered.add(party)
+            if without_walk:
+                for resource_id in resource_ids:
+                    if resource_id not in named[party]:
+                        named[party].append(resource_id)
+        return named, unanswered
+
+    def _family_alone(
+        self,
+        request: OptimizeScheduleRequest,
+        travel: TravelMap,
+        party: Party,
+        resource_ids: tuple[UUID, ...],
+        families: list[Family],
+        members: list[LessonDecision],
+        sites: dict[str, list[object]],
+        conflicts_with: dict[UUID, set[UUID]],
+        *,
+        walk: bool,
+        deadline: float,
+    ) -> bool | None:
+        """Whether one family's lessons fit their week alone; None when not answered.
+
+        THE FAMILY'S OWN FIXED PART, AS THE MODEL POSTS IT, built afresh: each
+        lesson on its starts, its no-overlap over the interval the party is
+        occupied by (padded_of for a teacher, pupil_padded_of for pupils), a
+        site from the ones its rooms allow, every locked lesson the model keeps
+        it off with the same margins, and — with `walk` — the family's rows
+        and the walk to each such lock, built by the same TravelRows as the
+        week's, its literal pinned true.
+        """
+        left = min(self.TRAVEL_ALONE_CAP_SECONDS, deadline - time.monotonic())
+        if left <= 0:
+            return None
+        model = cp_model.CpModel()
+        horizon = self._grid.horizon
+        local: dict[str, LessonDecision] = {}
+        choices: dict[str, dict[object, cp_model.IntVar | None]] = {}
+        for k, decision in enumerate(members):
+            key = decision.lesson.key()
+            domain = decision.starts or cp_model.Domain(0, horizon - decision.duration)
+            start = model.NewIntVarFromDomain(domain, f"start_{k}")
+            end = model.NewIntVar(0, horizon, f"end_{k}")
+            model.Add(end == start + decision.duration)
+            local[key] = LessonDecision(
+                lesson=decision.lesson,
+                start=start,
+                duration=decision.duration,
+                end=end,
+                interval=model.NewIntervalVar(start, decision.duration, end, f"lesson_{k}"),
+                room_index=model.NewConstant(0),
+                changeover=decision.changeover,
+                lead=decision.lead,
+                trail=decision.trail,
+                starts=decision.starts,
+            )
+            options = sites[key]
+            if len(options) == 1:
+                choices[key] = {options[0]: None}
+            else:
+                literals = {site: model.NewBoolVar(f"site_{k}_{i}") for i, site in enumerate(options)}
+                model.AddExactlyOne(literals.values())
+                choices[key] = dict(literals)
+        lessons = list(local.values())
+        # The family's own no-overlap families, as _add_teacher_no_overlap and
+        # _add_group_no_overlap post them: a teacher's lessons together; a
+        # group's together, and each pair of groups sharing a pupil together.
+        # Never one across all of a hub's groups — two of its neighbours may
+        # well run at once (a språkval's groups do), and holding them apart
+        # would be a rule the week does not have.
+        if party == "TEACHER":
+            model.AddNoOverlap([padded_of(model, lesson) for lesson in lessons])
+        else:
+            by_group: dict[UUID, list[LessonDecision]] = defaultdict(list)
+            for lesson in lessons:
+                by_group[lesson.lesson.requirement.student_group_id].append(lesson)
+            for members_of_group in by_group.values():
+                model.AddNoOverlap([pupil_padded_of(model, lesson) for lesson in members_of_group])
+            for first_id, second_id in request.group_conflicts or []:
+                if first_id != second_id and first_id in by_group and second_id in by_group:
+                    model.AddNoOverlap([
+                        pupil_padded_of(model, lesson)
+                        for lesson in (*by_group[first_id], *by_group[second_id])
+                    ])
+        pinned = model.NewBoolVar("walk")
+        model.Add(pinned == 1)
+        day_vars: dict[str, cp_model.IntVar] = {}
+        rows = TravelRows(
+            travel=travel,
+            choices=choices,  # type: ignore[arg-type]
+            register=lambda _party, _ids: pinned,
+            day_var=lambda lesson: self._day_var(model, lesson, day_vars),
+            slots_per_day=self._grid.slots_per_day,
+            horizon=horizon,
+        )
+        if walk:
+            for family in families:
+                rows.add_family(model, Family(
+                    family.party,
+                    family.resource_ids,
+                    tuple(local[d.lesson.key()] for d in family.leaving),
+                    tuple(local[d.lesson.key()] for d in family.arriving),
+                ))
+        for fixed in request.fixed_lessons:
+            window = self._fixed_window(fixed)
+            if window is None:
+                if walk:
+                    self._walk_to_lock_outside(
+                        model, rows, lessons, fixed, conflicts_with,
+                        only=(party, resource_ids),
+                    )
+                continue
+            fixed_site = (
+                travel.site_of_room.get(fixed.room_id) if fixed.room_id is not None else None
+            )
+            for lesson in lessons:
+                relations = [
+                    relation
+                    for relation in _fixed_relations(
+                        lesson.lesson, fixed, conflicts_with,
+                    )
+                    if relation == (party, resource_ids)
+                ]
+                if not relations:
+                    continue
+                pupils = party == "PUPILS"
+                before, after = self._add_window_avoidance(
+                    model, lesson, window[0], window[1],
+                    tag=f"fixed_{fixed.id}_{lesson.lesson.key()}",
+                    guard=None,
+                    margin=lesson.changeover,
+                    lead=lesson.lead if pupils else 0,
+                    trail=lesson.trail if pupils else 0,
+                )
+                if walk and fixed_site is not None:
+                    rows.fixed_rows(model, lesson, window, fixed_site, before, after, relations)
+        solver = cp_model.CpSolver()
+        solver.parameters.num_workers = 1
+        solver.parameters.max_time_in_seconds = left
+        status = _solve_guarded(
+            solver, model, what="a family's walk alone", request_id=request.request_id,
+        )
+        if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            return True
+        if status == cp_model.INFEASIBLE:
+            return False
+        return None
+
     def _blocks_verdict(
         self, request: OptimizeScheduleRequest, *, seconds_left: float | None = None,
     ) -> ConflictAnalysis | None:
@@ -5785,17 +6853,16 @@ class SchedulerSolver:
         blocks = _blocks_of(request.requirements)
         if budget < self.MIN_PHASE_SECONDS or not blocks:
             return None
+        relaxed = _without_blocks(request)
         try:
-            feas_model, _, _, _, _ = self._build_model(
-                _without_blocks(request), use_assumptions=False, include_objective=False,
+            feas_model, _, decisions, plan, _ = self._build_model(
+                relaxed, use_assumptions=False, include_objective=False,
             )
         except InvalidScheduleInputError:
             return None
-        probe = cp_model.CpSolver()
-        probe.parameters.max_time_in_seconds = budget
         started = time.perf_counter()
-        status = _solve_guarded(
-            probe, feas_model, what="the blocks probe", request_id=request.request_id,
+        status, _ = self._probe_search(
+            relaxed, feas_model, decisions, plan, budget, what="the blocks probe",
         )
         if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             return None
@@ -5814,7 +6881,9 @@ class SchedulerSolver:
             ],
         )
 
-    def _probe_timeout(self, request: OptimizeScheduleRequest) -> ConflictAnalysis | None:
+    def _probe_timeout(
+        self, request: OptimizeScheduleRequest, *, deadline: float | None = None,
+    ) -> ConflictAnalysis | None:
         """Name what does not fit, when nothing was proved.
 
         _explain_infeasible works from a proof: CP-SAT said INFEASIBLE, so
@@ -5837,6 +6906,8 @@ class SchedulerSolver:
 
         None for a request that turned its probes off, as for a deployment
         that set SOLVER_PROBE_SECONDS to zero: the TIMEOUT then stands bare.
+        Likewise where the school keeps the walk and `deadline` came before
+        any probe could run.
         """
         budget = self._settings.solver_probe_seconds
         if budget <= 0 or not _runs_probes(request):
@@ -5845,28 +6916,92 @@ class SchedulerSolver:
         relaxations = self._timeout_relaxations(request)
         if not relaxations:
             return None
+        # RESTID I GENERATORN: the walk's own probe first, where the school
+        # keeps it. It is the rule this school turned on itself, the one whose
+        # search is the hardest (the planned sites), and on a week that runs
+        # out of time the probes run out of time too — the walk's goes before
+        # `deadline` can take it.
+        keeps_walk = any(code == "PROBE_SOLVED_WITHOUT_TRAVEL" for code, _ in relaxations)
+        if keeps_walk:
+            relaxations.sort(key=lambda item: item[0] != "PROBE_SOLVED_WITHOUT_TRAVEL")
 
         slice_seconds = max(self.MIN_PHASE_SECONDS, budget / len(relaxations))
         found: list[tuple[str, float]] = []
+        probed = 0
+        # What the walk's own probe did: how long it searched and what it
+        # answered. None while it has not run.
+        walk_probe: tuple[int, float] | None = None
         for code, relaxed in relaxations:
+            # `deadline` (a week that keeps the walk; see solve()) bounds the
+            # probes and their builds together: a probe that cannot have the
+            # rest of its slice is not started, and the summary counts only
+            # the rules that were probed.
+            if deadline is not None and deadline - time.monotonic() < self.MIN_PHASE_SECONDS:
+                break
             try:
-                feas_model, _, _, _, _ = self._build_model(
+                feas_model, _, decisions, plan, _ = self._build_model(
                     relaxed, use_assumptions=False, include_objective=False,
                 )
             except InvalidScheduleInputError:
                 # A relaxation can also make the payload refuse by name (a
                 # sitting that no longer reaches a stage, say). Not a finding.
                 continue
-            probe = cp_model.CpSolver()
-            probe.parameters.max_time_in_seconds = slice_seconds
+            seconds = slice_seconds
+            if keeps_walk and code == "PROBE_SOLVED_WITHOUT_TRAVEL":
+                # THE WALK'S PROBE TAKES THE WHOLE PROBE BUDGET. A slice of it
+                # was too short to say anything: the högstadium week at seven
+                # a day needs 14-21 s without the walk, and its slice was 6.7.
+                # It is the answer a school with two sites can act on, so the
+                # other rules yield: they get what it leaves, which on a large
+                # week is nothing, and the summary counts only the rules that
+                # ran. Their probes keep the walk, so on a week the walk's own
+                # probe could not solve in the whole budget a slice of it
+                # would not have solved them either.
+                seconds = budget
+            if deadline is not None:
+                seconds = min(seconds, deadline - time.monotonic())
+                if seconds < self.MIN_PHASE_SECONDS:
+                    break
+            probed += 1
             started = time.perf_counter()
-            status = _solve_guarded(
-                probe, feas_model, what="the timeout probe", request_id=request.request_id,
+            status, _ = self._probe_search(
+                relaxed, feas_model, decisions, plan, seconds, what="the timeout probe",
             )
+            if code == "PROBE_SOLVED_WITHOUT_TRAVEL":
+                walk_probe = (status, time.perf_counter() - started)
             if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
                 found.append((code, time.perf_counter() - started))
 
         budget = round(self._settings.solver_max_time_seconds)
+        if keeps_walk and not found:
+            # WITH THE WALK KEPT ONLY WHAT RAN IS SAID. No probe ran when the
+            # builds ate the probes' time (the review's slow setup on a
+            # five-second candidate): no sentence, and the TIMEOUT stands bare
+            # as it does where probes are off — "none of the 0 rules probed"
+            # and "searching without it for 0 s" were both written about
+            # searches that never happened. The summary names no time per
+            # rule, because the walk's probe had more than the others; its
+            # line carries its own seconds. And the line says what the probe
+            # measured and nothing more: the 2,000-pupil week runs out of time
+            # with the walk off as well, so "the walk is likely why" was a
+            # claim nothing had measured. A walk probe that proved the week
+            # impossible even without the walk measured that the walk is not
+            # the difference, and gets no line.
+            if probed == 0:
+                return None
+            return ConflictAnalysis(
+                summary_code="PROBE_NOTHING_HELPED_WITH_TRAVEL",
+                summary_params={"budget": budget, "rules": probed},
+                conflicts=(
+                    [ConflictDetail(
+                        category="TIMEOUT_PROBE",
+                        code="PROBE_TRAVEL_UNMEASURED",
+                        params={"seconds": round(walk_probe[1], 1)},
+                    )]
+                    if walk_probe is not None and walk_probe[0] == cp_model.UNKNOWN
+                    else []
+                ),
+            )
         if not found:
             return ConflictAnalysis(
                 summary_code="PROBE_NOTHING_HELPED",
@@ -5945,6 +7080,20 @@ class SchedulerSolver:
                         for requirement in request.requirements
                     ],
                 }),
+            ))
+        if travel_map(
+            request, slot_minutes=self._grid.slot_minutes, step=_start_step(request, self._grid),
+        ) is not None:
+            # RESTID I GENERATORN, beside the corridor and the pupils' margins
+            # because it is the same kind of thing for the search: a gap the
+            # overlap checks must leave, here only between two sites. One
+            # probe for the whole rule, since it is one switch and one card: a
+            # school told the walk is what the budget ran out on knows both
+            # places it can act — the switch in Skolregler, the figures under
+            # Rooms.
+            out.append((
+                "PROBE_SOLVED_WITHOUT_TRAVEL",
+                request.model_copy(update={"site_travel_times": []}),
             ))
         if any(
             requirement.max_lessons_per_day is not None
@@ -6196,6 +7345,14 @@ class SchedulerSolver:
         )
         # Parallella block the model held together: two or more members each.
         blocks = len(_blocks_of(request.requirements))
+        # Restid i generatorn: the walks the model held, and the longest of
+        # them as the step made it. Counts and minutes only, as every number
+        # on this line.
+        travel = travel_map(
+            request, slot_minutes=self._grid.slot_minutes, step=_start_step(request, self._grid),
+        )
+        travel_pairs = len(travel.slots) if travel is not None else 0
+        travel_minutes = travel.longest * self._grid.slot_minutes if travel is not None else 0
         # One sentence per thing worth trying at zero, in the order the
         # measurements rank them, and none at all for a week that carries
         # neither — the line already says what was in force, and advice about a
@@ -6223,6 +7380,7 @@ class SchedulerSolver:
             f"teacherDailyCaps={teacher_caps}, teacherDayLimits={teacher_day_limits}, "
             f"freeDayWishes={free_day_wishes}, "
             f"distributionRules={distribution_rules}, blocks={blocks}, "
+            f"travelPairs={travel_pairs}, travelMinutes={travel_minutes}, "
             f"startStepMinutes={step_minutes}, "
             f"budget={self._settings.solver_max_time_seconds}s. "
             + " ".join(hints)
@@ -6661,6 +7819,8 @@ class SchedulerSolver:
         constraints: list[AnonymousConstraint],
         fixed_lessons: list[FixedLesson],
         room_preferences: list[AnonymousRoomPreference] | None = None,
+        *,
+        site_key: Callable[[AnonymousRoom], object] | None = None,
     ) -> RoomPlan:
         """Enforce room capacity by interchangeability class, not by named room.
 
@@ -6703,6 +7863,44 @@ class SchedulerSolver:
             room_allowed=allowed,
             profile_key=key,
             preference_sets=preference_sets,
+            site_key=site_key,
+        )
+
+    def _travel_rows(
+        self,
+        model: cp_model.CpModel,
+        registry: AssumptionRegistry,
+        room_plan: RoomPlan,
+        travel: TravelMap,
+        day_vars: dict[str, cp_model.IntVar],
+    ) -> TravelRows:
+        """The builder of the walk's rows for this model. See travel.py.
+
+        ONE LITERAL PER FAMILY — a teacher, a group, a pair of groups sharing a
+        pupil — registered the first time a row needs it, so a family the rule
+        cannot touch registers nothing. Every literal of one party carries the
+        same values, so a core holding several becomes one line naming them all
+        (build_conflict_analysis), the way the daily maximum's do; the measured
+        verdict narrows it afterwards (_travel_verdict).
+        """
+
+        def register(party: Party, resource_ids: tuple[UUID, ...]) -> cp_model.IntVar:
+            return registry.register(
+                model,
+                name=f"travel_{party.lower()}_{'_'.join(str(r) for r in resource_ids)}",
+                category=TRAVEL_CATEGORIES[party],  # type: ignore[arg-type]
+                code=TRAVEL_CODES[party],
+                params={"stepMinutes": travel.step_minutes, "measured": 0},
+                resource_ids=list(resource_ids),
+            )
+
+        return TravelRows(
+            travel=travel,
+            choices=site_choices(model, room_plan),
+            register=register,
+            day_var=lambda decision: self._day_var(model, decision, day_vars),
+            slots_per_day=self._grid.slots_per_day,
+            horizon=self._grid.horizon,
         )
 
     def _add_availability_constraints(
@@ -6847,6 +8045,8 @@ class SchedulerSolver:
         rooms: list[AnonymousRoom],
         fixed_lessons: list[FixedLesson],
         group_conflicts: list[tuple[UUID, UUID]] | None = None,
+        *,
+        travel_rows: TravelRows | None = None,
     ) -> None:
         """Hard-block generated lessons from overlapping locked placements.
 
@@ -6865,6 +8065,11 @@ class SchedulerSolver:
         window for the wider of the two is avoiding it for both — and the widest
         margin on each side is the whole answer. Two separate disjunctions would
         cost two more booleans per pair to say it.
+
+        THE WALK TO A LOCKED LESSON ON ANOTHER SITE rides on the same pair's
+        before/after literals (travel.TravelRows.fixed_rows), so it costs no
+        boolean either; two locked lessons are never held apart, as nothing
+        here ever compares two of them.
         """
         room_index_by_id = {room.id: idx for idx, room in enumerate(rooms)}
 
@@ -6878,12 +8083,22 @@ class SchedulerSolver:
             window = self._fixed_window(fixed)
             if window is None:
                 # Outside the scheduling grid (e.g. weekend when the grid is
-                # Mon-Fri): generated lessons can never collide with it.
+                # Mon-Fri): generated lessons can never collide with it. Before
+                # or after a scheduled day's hours, the walk to it still binds.
+                if travel_rows is not None:
+                    self._walk_to_lock_outside(
+                        model, travel_rows, decisions, fixed, conflicts_with,
+                    )
                 continue
             abs_start, abs_end = window
 
             room_idx = (
                 room_index_by_id.get(fixed.room_id) if fixed.room_id is not None else None
+            )
+            fixed_site = (
+                travel_rows.travel.site_of_room.get(fixed.room_id)
+                if travel_rows is not None and fixed.room_id is not None
+                else None
             )
 
             for decision in decisions:
@@ -6903,7 +8118,7 @@ class SchedulerSolver:
                 )
 
                 if shares_teacher or shares_group:
-                    self._add_window_avoidance(
+                    before, after = self._add_window_avoidance(
                         model,
                         decision,
                         abs_start,
@@ -6930,6 +8145,11 @@ class SchedulerSolver:
                         lead=decision.lead if shares_group else 0,
                         trail=decision.trail if shares_group else 0,
                     )
+                    if fixed_site is not None:
+                        relations = _fixed_relations(decision.lesson, fixed, conflicts_with)
+                        travel_rows.fixed_rows(  # type: ignore[union-attr]
+                            model, decision, window, fixed_site, before, after, relations,
+                        )
                     continue
 
                 if room_idx is not None:
@@ -6959,6 +8179,38 @@ class SchedulerSolver:
                         margin=0,
                     )
 
+    def _walk_to_lock_outside(
+        self,
+        model: cp_model.CpModel,
+        travel_rows: TravelRows,
+        decisions: Iterable[LessonDecision],
+        fixed: FixedLesson,
+        conflicts_with: dict[UUID, set[UUID]],
+        *,
+        only: tuple[Party, tuple[UUID, ...]] | None = None,
+    ) -> None:
+        """The walk to a lock before or after the day's hours, for whoever shares it.
+
+        `only` keeps one family's row, as _family_alone measures one family.
+        """
+        outside = _fixed_lesson_outside(fixed, self._grid)
+        site = (
+            travel_rows.travel.site_of_room.get(fixed.room_id)
+            if fixed.room_id is not None
+            else None
+        )
+        if outside is None or site is None:
+            return
+        day_start, lock = outside
+        for decision in decisions:
+            relations = [
+                relation
+                for relation in _fixed_relations(decision.lesson, fixed, conflicts_with)
+                if only is None or relation == only
+            ]
+            if relations:
+                travel_rows.outside_rows(model, decision, day_start, lock, site, relations)
+
     def _add_window_avoidance(
         self,
         model: cp_model.CpModel,
@@ -6970,7 +8222,7 @@ class SchedulerSolver:
         margin: int = 0,
         lead: int = 0,
         trail: int = 0,
-    ) -> None:
+    ) -> tuple[cp_model.IntVar, cp_model.IntVar]:
         """decision must end before, or start after, the [abs_start, abs_end) window.
 
         `margin` widens the window by the same corridor padded_of gives a
@@ -7002,6 +8254,7 @@ class SchedulerSolver:
             model.AddBoolOr([before, after])
         else:
             model.AddBoolOr([before, after]).OnlyEnforceIf(guard)
+        return before, after
 
     def _constraint_params(self, constraint: AnonymousConstraint) -> dict[str, str | int]:
         """The values a sentence about one reservation substitutes.
@@ -9840,6 +11093,32 @@ def _fixed_lesson_window(fixed: FixedLesson, grid: TimeGrid) -> tuple[int, int] 
     return day_offset + start_slot, day_offset + end_slot
 
 
+def _fixed_lesson_outside(
+    fixed: FixedLesson, grid: TimeGrid,
+) -> tuple[int, tuple[int, int]] | None:
+    """A lock on a scheduled day lying wholly outside the day's hours.
+
+    The lock _fixed_lesson_window clips to nothing: 07:20–08:00 on a grid that
+    opens at 08:00, or one after it closes. It blocks no slot of the grid, but
+    the walk to it is the walk to any lesson (TravelRows.outside_rows). Returns
+    the day's first absolute slot and the lock's [start, end) in slots from
+    it, rounded outward as the window is — below 0 for a morning lock, at or
+    past the day's length for an evening one. None for every other lock.
+    """
+    if fixed.day_of_week not in grid.schedule_days:
+        return None
+    start_minutes = _hhmmss_to_minutes(fixed.start_time)
+    end_minutes = _hhmmss_to_minutes(fixed.end_time)
+    if end_minutes <= start_minutes:
+        return None
+    if start_minutes < grid.day_end_minutes and end_minutes > grid.day_start_minutes:
+        return None
+    slot = grid.slot_minutes
+    start = (start_minutes - grid.day_start_minutes) // slot
+    end = -(-(end_minutes - grid.day_start_minutes) // slot)
+    return grid.day_index(fixed.day_of_week) * grid.slots_per_day, (start, end)
+
+
 def _start_step(request: OptimizeScheduleRequest, grid: TimeGrid) -> int:
     """How many slots apart this week's lesson and lunch starts may be.
 
@@ -10385,6 +11664,38 @@ def _teacher_week(
     return week_minutes, longest, requirements_of
 
 
+def _fixed_relations(
+    lesson: LessonInstance,
+    fixed: FixedLesson,
+    conflicts_with: dict[UUID, set[UUID]],
+) -> list[tuple[Party, tuple[UUID, ...]]]:
+    """Whom a locked lesson and a generated one share, as the walk's families key them.
+
+    _add_fixed_lesson_constraints's own test, read per party: each teacher on
+    both, and the pupils of the generated lesson's group when the lock holds
+    that group or one sharing a pupil with it. The walk's rows hang on these
+    keys' literals, and the verdict reads a timetable against the same keys.
+    The teachers ON THE LESSON (_lesson_teachers), as that test reads them: a
+    lock of Bertil's holds his lesson of a split post a walk away and none of
+    Anna's, which the row's union of leads would hold too.
+    """
+    requirement = lesson.requirement
+    relations: list[tuple[Party, tuple[UUID, ...]]] = []
+    fixed_teachers = {tid for tid in (fixed.teacher_id, fixed.co_teacher_id) if tid}
+    for teacher_id in dict.fromkeys(_lesson_teachers(lesson)):
+        if teacher_id in fixed_teachers:
+            relations.append(("TEACHER", (teacher_id,)))
+    own = requirement.student_group_id
+    fixed_groups = [fixed.student_group_id, *fixed.extra_group_ids]
+    if own in fixed_groups or any(
+        fixed_group in conflicts_with.get(own, ()) for fixed_group in fixed_groups
+    ):
+        # Keyed by the generated lesson's own group, the hub whose pupils
+        # walk (travel.families_of): the lock holds some of them.
+        relations.append(("PUPILS", (own,)))
+    return relations
+
+
 def _lessons_by_teacher(
     decisions: list[LessonDecision],
 ) -> dict[UUID, list[LessonDecision]]:
@@ -10508,6 +11819,28 @@ def _covered(spans: list[tuple[int, int]]) -> int:
         if high > low:
             covered += high - low
             reach = high
+    return covered
+
+
+def _merged(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """The half-open spans joined where they meet or overlap, in order."""
+    out: list[tuple[int, int]] = []
+    for low, high in sorted(spans):
+        if high <= low:
+            continue
+        if out and low <= out[-1][1]:
+            out[-1] = (out[-1][0], max(out[-1][1], high))
+        else:
+            out.append((low, high))
+    return out
+
+
+def _covered_both(first: list[tuple[int, int]], second: list[tuple[int, int]]) -> int:
+    """The slots both sets of half-open spans cover."""
+    covered = 0
+    for low, high in _merged(first):
+        for other_low, other_high in _merged(second):
+            covered += max(0, min(high, other_high) - max(low, other_low))
     return covered
 
 

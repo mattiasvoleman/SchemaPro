@@ -397,7 +397,7 @@
   },
   "sites": {
     "title": "Sites",
-    "description": "The school's different locations and the travel time between them. The timetable warns when a teacher or pupils cannot make it between two lessons on different sites, and the travel time counts as working time in the load. A school in one place needs none.",
+    "description": "The school's different locations and the travel time between them. The timetable warns when a teacher or pupils cannot make it between two lessons on different sites, and the travel time counts as working time in the load. The generator keeps the travel time if the school turns it on under School rules. A school in one place needs none.",
     "add": "Add site",
     "empty": "The school has no sites. Add them if the school is in more than one place.",
     "oneSite": "With one site there is no travel time to count. Add another to give the travel time between them.",
@@ -1312,6 +1312,7 @@
     "rulesTitle": "School rules",
     "rulesHint": "The rules apply to the whole school and are set under Availability.",
     "ruleMaxPerDay": "Max lessons per day per class",
+    "ruleTravel": "The generator keeps the travel time between sites",
     "rulesEdit": "Change",
     "noYearTitle": "{count, plural, one {One group} other {# groups}} in the curriculum entries has no year",
     "noYearBody": "The solver reads “no year” as “unrestricted”: frame times and breaks do not apply to these groups’ lessons, so they can land straight across a break. The year is derived from the members’ home classes, or from the group’s own year when it has no members.",
@@ -2645,7 +2646,9 @@
     "loadFailed": "The school rules could not be fetched",
     "loadFailedHint": "The form is not shown, because it would otherwise be filled with defaults that could be saved over the school's real rules. Reload the page to try again.",
     "saveFailed": "The school rules were not saved",
-    "saveFailedHint": "The rules that applied before still stand."
+    "saveFailedHint": "The rules that applied before still stand.",
+    "travel": "The generator keeps the travel time between sites",
+    "travelHint": "A teacher, or the pupils, with two lessons on one day at different sites get the travel time between them, rounded up to whole start steps of the timetable. The travel times are set under Rooms, Sites."
   },
   "conflictCategories": {
     "AVAILABILITY": "Availability",
@@ -3980,6 +3983,7 @@
     "LUNCH_WINDOW_OFF_GRID": "The lunch window {windowStart}-{windowEnd} and its {minutes}-minute break do not fit the {slotMinutes}-minute scheduling grid. Use whole multiples of {slotMinutes} minutes.",
     "LUNCH_WINDOW_SHORTER_THAN_BREAK": "The lunch window {windowStart}-{windowEnd} is shorter than the {minutes}-minute lunch break it has to hold.",
     "PROBE_NOTHING_HELPED": "No timetable was found within {budget} s, and none of the {rules, plural, one {# rule} other {# rules}} probed made one appear inside {slice} s each. The week may simply be large; try a longer budget.",
+    "PROBE_NOTHING_HELPED_WITH_TRAVEL": "No timetable was found within {budget} s, and none of the {rules, plural, one {# rule} other {# rules}} probed made one appear. The travel time was probed first, and the other rules only had the time it left. The week may simply be large; try a longer budget.",
     "PROBE_ONE_RULE_HELPED": "No timetable was found within {budget} s, but relaxing a single rule made the same week solve. {rules, plural, one {The rule is listed below} other {The # rules are listed below}} — a measurement, not a proof.",
     "PROBE_SOLVED_WITHOUT_CHANGEOVER": "With the margin between lessons set to 0, a timetable was found in {seconds} s.",
     "PROBE_SOLVED_WITHOUT_PUPIL_BUFFERS": "With the extra time the pupils need before and after their lessons set to 0, a timetable was found in {seconds} s.",
@@ -4048,7 +4052,12 @@
     "TEACHER_FREE_DAY_WISH_NOT_KEPT": "A teacher wishes {day, select, 1 {Mondays} 2 {Tuesdays} 3 {Wednesdays} 4 {Thursdays} 5 {Fridays} 6 {Saturdays} 7 {Sundays} other {day {day}}} free, and the new timetable gives them lessons that day. A wish is weighed against the rest of the week and gives way where keeping it would cost more.",
     "TEACHER_DAY_TOO_LONG": "{role, select, CO_TEACHER {The co-teacher} other {The teacher}} of {requirement} now teaches {minutes} minutes on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}}, more than the {cap} minutes a day their working-time rule allows.",
     "TEACHER_WEEK_TOO_MANY_DAYS": "{role, select, CO_TEACHER {The co-teacher} other {The teacher}} of {requirement} now teaches on {days} days a week, more than the {max} their post allows.",
-    "TEACHER_WEEK_TOO_MANY_DAYS_HIDDEN": "{role, select, CO_TEACHER {The co-teacher} other {The teacher}} of {requirement} now teaches on more days a week than their post allows. The days are shown to the principal, a full administrator and anyone with HR read access."
+    "TEACHER_WEEK_TOO_MANY_DAYS_HIDDEN": "{role, select, CO_TEACHER {The co-teacher} other {The teacher}} of {requirement} now teaches on more days a week than their post allows. The days are shown to the principal, a full administrator and anyone with HR read access.",
+    "PROBE_SOLVED_WITHOUT_TRAVEL": "With the travel time between the school's sites dropped, a timetable was found in {seconds} s.",
+    "PROBE_TRAVEL_UNMEASURED": "The travel time between the school's sites is turned on. Searching without it for {seconds} s did not find a timetable either, so whether it is the difference was not measured. A run with it turned off under School rules shows that.",
+    "TRAVEL_PROBE_SUMMARY": "No timetable satisfies every rule, and the solver could not name which of them collide. With the travel time between the school's sites dropped a timetable was found in {seconds} s, so it is the travel time below that makes the week impossible.",
+    "PUPILS_TRAVEL_CANNOT_BE_KEPT": "The school rules ask the generator to keep the travel time between the school's sites for pupils with lessons on two sites on one day, after their time to change, rounded up to whole start steps of {stepMinutes} min. {measured, select, 1 {That travel time is what makes the week impossible: without it, a timetable exists that keeps every other rule, and in it the pupils of the groups named here have less time than the travel time between two lessons on different sites.} 2 {That travel time makes the week impossible on its own: even with the other rules set aside, the lessons of the groups named here cannot be placed so that it fits. The week has other causes too: it stays impossible without the travel time.} other {That travel time is one of the rules that cannot all hold at once for the groups named here; whether it alone is the difference could not be measured.}} Let these groups' lessons use rooms on one site, shorten the travel time under Rooms, Sites, or turn it off under School rules.",
+    "TEACHER_TRAVEL_CANNOT_BE_KEPT": "The school rules ask the generator to keep the travel time between the school's sites for every teacher with lessons on two sites on one day, rounded up to whole start steps of {stepMinutes} min. {measured, select, 1 {That travel time is what makes the week impossible: without it, a timetable exists that keeps every other rule, and in it the teachers named here have less time than the travel time between two lessons on different sites.} 2 {That travel time makes the week impossible on its own: even with the other rules set aside, the lessons of the teachers named here cannot be placed so that it fits. The week has other causes too: it stays impossible without the travel time.} other {That travel time is one of the rules that cannot all hold at once for the teachers named here; whether it alone is the difference could not be measured.}} Let these teachers' lessons use rooms on one site, shorten the travel time under Rooms, Sites, or turn it off under School rules."
   },
   "timplanCoverage": {
     "title": "Coverage",

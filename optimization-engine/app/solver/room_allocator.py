@@ -73,7 +73,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable, Iterable
+from typing import TYPE_CHECKING, Callable, Hashable, Iterable
 from uuid import UUID
 
 from ortools.sat.python import cp_model
@@ -99,6 +99,22 @@ class RoomClass:
 @dataclass
 class RoomPlan:
     classes: list[RoomClass]
+    #: The skolområde of each class, by class index — Restid i generatorn's
+    #: reading of a lesson's class choice (app/solver/travel.py). Every class
+    #: stands on one when the partition was asked to keep sites apart
+    #: (`site_key`), and the list is empty when it was not: nothing then
+    #: reads it.
+    class_sites: list[Hashable] = field(default_factory=list)
+    #: The literals that sum a lesson's classes on one site, made by
+    #: travel.site_choices where a lesson has more than one class there, in
+    #: build order: (lesson key, site, literal). Two builds of one request make
+    #: them in the same order, which is what lets solve() hint one build's
+    #: from the other's, as it hints the class literals. Empty with the rule off.
+    site_vars: list[tuple[str, Hashable, cp_model.IntVar]] = field(default_factory=list)
+    #: Every lesson's sites and the literal saying it stands there (None where
+    #: it stands there whatever happens), by lesson key: travel.site_choices's
+    #: answer, kept for solve()'s planned-sites search. Empty with the rule off.
+    site_choices: dict[str, dict[Hashable, cp_model.IntVar | None]] = field(default_factory=dict)
     # lesson key -> {class index: literal}; absent when the class is forced.
     literals: dict[str, dict[int, cp_model.IntVar]] = field(default_factory=dict)
     forced_class: dict[str, int] = field(default_factory=dict)
@@ -175,6 +191,7 @@ def build_room_classes(
     room_allowed: Callable[[AnonymousRoom, object], bool],
     profile_key: Callable[[object], tuple],
     preference_sets: list[set[UUID]] | None = None,
+    site_key: Callable[[AnonymousRoom], Hashable] | None = None,
 ) -> list[RoomClass]:
     """Partition rooms so that every lesson's eligible set is a union of classes.
 
@@ -196,6 +213,13 @@ def build_room_classes(
 
     The key is therefore passed in by the caller that owns the predicate, beside
     it, rather than spelled out here where the two can drift apart again.
+
+    `site_key`, WHEN GIVEN, JOINS THE SIGNATURE TOO, so that no class spans two
+    skolområden. Restid i generatorn reads a lesson's site off its class
+    choice, and a class holding a room on each of two sites would let the
+    post-pass hand the lesson a room on the other one — a walk the model never
+    saw. Absent, the signature is exactly what it was, and so is every class;
+    a pinned room is its own class either way and stands on its own site.
     """
     representatives: dict[tuple, object] = {}
     for decision in decisions:
@@ -220,6 +244,8 @@ def build_room_classes(
                 tuple(room_allowed(room, profile) for profile in profiles)
                 + tuple(room.id in preferred for preferred in wanted)
             )
+            if site_key is not None:
+                signature += (site_key(room),)
         grouped.setdefault(signature, []).append(index)
 
     return [
@@ -237,13 +263,21 @@ def add_room_allocation(
     room_allowed: Callable[[AnonymousRoom, object], bool],
     profile_key: Callable[[object], tuple],
     preference_sets: list[set[UUID]] | None = None,
+    site_key: Callable[[AnonymousRoom], Hashable] | None = None,
 ) -> RoomPlan:
     """Enforce room capacity without naming rooms. Replaces per-room NoOverlap."""
     classes = build_room_classes(
         decisions, rooms, distinguished_room_ids, room_allowed, profile_key,
-        preference_sets,
+        preference_sets, site_key,
     )
-    plan = RoomPlan(classes=classes)
+    plan = RoomPlan(
+        classes=classes,
+        class_sites=(
+            [site_key(rooms[room_class.room_indices[0]]) for room_class in classes]
+            if site_key is not None
+            else []
+        ),
+    )
     pools: dict[int, list[cp_model.IntervalVar]] = defaultdict(list)
 
     for decision in decisions:

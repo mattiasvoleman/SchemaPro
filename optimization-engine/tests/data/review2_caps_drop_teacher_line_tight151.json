@@ -1,0 +1,247 @@
+{
+ "_comment": "The second review of #191: andra/repro/caps_drop_teacher_line_tight151.json",
+ "payload": {
+  "requestId": "e52b007a-5d6f-42bc-ba2e-9fffeff19839",
+  "academicYearId": "2b2ae4c2-83d6-457a-a12e-a469f4efe965",
+  "requirements": [
+   {
+    "id": "0f1e1aef-7523-48af-8d9a-9a9874f982a9",
+    "subjectId": "d0fa58b6-8e9a-4a8a-b4e5-01d36a2762b3",
+    "studentGroupId": "61d14b43-91bd-4f6e-b497-d15d6c68d20e",
+    "teacherId": "b13492d4-f176-4904-a318-72aa6138165b",
+    "lessonsPerWeek": 2,
+    "minutesPerLesson": 60,
+    "studentGroupSize": 20,
+    "lessonLengths": [
+     40,
+     60
+    ],
+    "requiredRoomType": "LAB",
+    "lessonTeacherIds": [
+     "b13492d4-f176-4904-a318-72aa6138165b",
+     "7fb7ab4c-4673-4d02-adad-cc14072c9f38"
+    ]
+   },
+   {
+    "id": "93938d36-5011-4489-bc2a-e02cbf5c543d",
+    "subjectId": "2869ad75-da62-490e-b86f-be8dfb0b8022",
+    "studentGroupId": "61d14b43-91bd-4f6e-b497-d15d6c68d20e",
+    "teacherId": "b13492d4-f176-4904-a318-72aa6138165b",
+    "lessonsPerWeek": 1,
+    "minutesPerLesson": 60,
+    "studentGroupSize": 20,
+    "requiredRoomType": "GYM",
+    "minutesBefore": 5
+   },
+   {
+    "id": "b37fca88-7f22-44b4-896c-82b0ec8eaaaa",
+    "subjectId": "c0da90fd-3256-4775-bd09-8969ed40b46b",
+    "studentGroupId": "bfc6a3f1-c8ec-424b-9ff2-faa5e6a25ea6",
+    "teacherId": "b13492d4-f176-4904-a318-72aa6138165b",
+    "lessonsPerWeek": 2,
+    "minutesPerLesson": 40,
+    "studentGroupSize": 20,
+    "requiredRoomType": "GYM",
+    "lessonTeacherIds": [
+     "b13492d4-f176-4904-a318-72aa6138165b",
+     "fb252557-d5d1-4138-a9ab-5bf481b2facd"
+    ]
+   },
+   {
+    "id": "95318039-5889-45ea-b3cb-8e80cbc0af7a",
+    "subjectId": "1fd14057-4114-4d20-ab40-867fabc5fe9e",
+    "studentGroupId": "61d14b43-91bd-4f6e-b497-d15d6c68d20e",
+    "teacherId": "b13492d4-f176-4904-a318-72aa6138165b",
+    "lessonsPerWeek": 1,
+    "minutesPerLesson": 40,
+    "studentGroupSize": 20,
+    "requiredRoomType": "GYM",
+    "minutesAfter": 15
+   },
+   {
+    "id": "adea4139-adb4-4cda-aa92-87d321ff8466",
+    "subjectId": "379d35dc-95a7-49a0-a153-ef8e682b9dfe",
+    "studentGroupId": "61d14b43-91bd-4f6e-b497-d15d6c68d20e",
+    "teacherId": "b13492d4-f176-4904-a318-72aa6138165b",
+    "lessonsPerWeek": 2,
+    "minutesPerLesson": 60,
+    "studentGroupSize": 20,
+    "requiredRoomType": "LAB",
+    "minutesBefore": 10,
+    "lessonTeacherIds": [
+     "b13492d4-f176-4904-a318-72aa6138165b",
+     "7fb7ab4c-4673-4d02-adad-cc14072c9f38"
+    ]
+   },
+   {
+    "id": "f8fd7b85-f330-41be-8b56-57441ae4275b",
+    "subjectId": "b3e19424-bc5f-48ce-95f4-be02e660154b",
+    "studentGroupId": "bfc6a3f1-c8ec-424b-9ff2-faa5e6a25ea6",
+    "teacherId": "b13492d4-f176-4904-a318-72aa6138165b",
+    "lessonsPerWeek": 2,
+    "minutesPerLesson": 20,
+    "studentGroupSize": 20,
+    "requiredRoomType": "LAB",
+    "minutesAfter": 5
+   },
+   {
+    "id": "166ad388-3548-4175-a3d0-7d04e52bc708",
+    "subjectId": "4c9fb9ef-73c8-4c68-bd86-ef64bff1645c",
+    "studentGroupId": "61d14b43-91bd-4f6e-b497-d15d6c68d20e",
+    "teacherId": "fb252557-d5d1-4138-a9ab-5bf481b2facd",
+    "lessonsPerWeek": 2,
+    "minutesPerLesson": 60,
+    "studentGroupSize": 20,
+    "requiredRoomType": "GYM",
+    "lessonTeacherIds": [
+     "fb252557-d5d1-4138-a9ab-5bf481b2facd",
+     "b13492d4-f176-4904-a318-72aa6138165b"
+    ]
+   },
+   {
+    "id": "68e80666-4d61-40c4-9a65-af967d334a5a",
+    "subjectId": "3ec8b352-c11f-482c-984d-209fcd64ce21",
+    "studentGroupId": "bfc6a3f1-c8ec-424b-9ff2-faa5e6a25ea6",
+    "teacherId": "fb252557-d5d1-4138-a9ab-5bf481b2facd",
+    "lessonsPerWeek": 1,
+    "minutesPerLesson": 60,
+    "studentGroupSize": 20,
+    "requiredRoomType": "LAB",
+    "coTeacherId": "b13492d4-f176-4904-a318-72aa6138165b",
+    "minutesBefore": 5
+   },
+   {
+    "id": "9d5a14bd-c142-489f-94cd-280691547ab0",
+    "subjectId": "606b430a-a0ca-4c5e-89bf-1119cebe9303",
+    "studentGroupId": "bfc6a3f1-c8ec-424b-9ff2-faa5e6a25ea6",
+    "teacherId": "fb252557-d5d1-4138-a9ab-5bf481b2facd",
+    "lessonsPerWeek": 2,
+    "minutesPerLesson": 60,
+    "studentGroupSize": 20,
+    "requiredRoomType": "GYM",
+    "coTeacherId": "b13492d4-f176-4904-a318-72aa6138165b"
+   },
+   {
+    "id": "152cb7d3-435a-47f3-b78e-be8756ae877d",
+    "subjectId": "d3ee7ecf-1389-4355-add7-fc80402b9f7c",
+    "studentGroupId": "61d14b43-91bd-4f6e-b497-d15d6c68d20e",
+    "teacherId": "fb252557-d5d1-4138-a9ab-5bf481b2facd",
+    "lessonsPerWeek": 2,
+    "minutesPerLesson": 20,
+    "studentGroupSize": 20,
+    "requiredRoomType": "LAB",
+    "minutesBefore": 10,
+    "lessonTeacherIds": [
+     "fb252557-d5d1-4138-a9ab-5bf481b2facd",
+     "7fb7ab4c-4673-4d02-adad-cc14072c9f38"
+    ]
+   }
+  ],
+  "rooms": [
+   {
+    "id": "c424096b-6db8-4e5c-b120-da90356625b9",
+    "capacity": 30,
+    "type": "LAB",
+    "siteId": "9286b86a-cbf8-4d00-a121-98eb4390d472"
+   },
+   {
+    "id": "5a8cdb82-6e32-4c01-ac19-d2a968b4efaf",
+    "capacity": 30,
+    "type": "GYM",
+    "siteId": "a3c64870-f033-4190-8818-3ff7957e324d"
+   },
+   {
+    "id": "fdf61903-7a1c-46e2-9662-6b6afbfe220c",
+    "capacity": 30,
+    "type": "LAB",
+    "siteId": "9286b86a-cbf8-4d00-a121-98eb4390d472"
+   },
+   {
+    "id": "ce741678-55a4-420d-8928-bc9117161f57",
+    "capacity": 30,
+    "type": "GYM",
+    "siteId": "a3c64870-f033-4190-8818-3ff7957e324d"
+   },
+   {
+    "id": "50f833d4-0991-4ba4-8d21-11fec86302f1",
+    "capacity": 30,
+    "type": "LAB",
+    "siteId": "9286b86a-cbf8-4d00-a121-98eb4390d472"
+   },
+   {
+    "id": "804b6333-ca0e-4088-9111-81f421a921b9",
+    "capacity": 30,
+    "siteId": "9286b86a-cbf8-4d00-a121-98eb4390d472"
+   },
+   {
+    "id": "50fbdc0c-dd63-479e-a503-12c4a13e6dd6",
+    "capacity": 30,
+    "siteId": "9286b86a-cbf8-4d00-a121-98eb4390d472"
+   },
+   {
+    "id": "a300ab91-305f-4725-a59a-e6b5d843e30e",
+    "capacity": 30
+   },
+   {
+    "id": "149473c1-8cd9-499f-aad5-b33b6cf5be71",
+    "capacity": 30,
+    "siteId": "a3c64870-f033-4190-8818-3ff7957e324d"
+   },
+   {
+    "id": "af8dff60-db7c-4aae-8072-87c8147d7715",
+    "capacity": 30,
+    "siteId": "7c3b13f6-bf3c-418d-933e-2b905e14a147"
+   },
+   {
+    "id": "be83ae06-2959-4994-ad8f-7e57ff16450a",
+    "capacity": 30,
+    "siteId": "7c3b13f6-bf3c-418d-933e-2b905e14a147"
+   },
+   {
+    "id": "a1eb7512-c04d-446d-8fbb-a4612a1d8f89",
+    "capacity": 30,
+    "type": "GYM",
+    "siteId": "7c3b13f6-bf3c-418d-933e-2b905e14a147"
+   }
+  ],
+  "groupConflicts": [
+   [
+    "bfc6a3f1-c8ec-424b-9ff2-faa5e6a25ea6",
+    "61d14b43-91bd-4f6e-b497-d15d6c68d20e"
+   ]
+  ],
+  "fixedLessons": [
+   {
+    "id": "fbfdd827-290f-4e95-9fa2-b5352e8bc8e7",
+    "teacherId": "fb252557-d5d1-4138-a9ab-5bf481b2facd",
+    "studentGroupId": "61d14b43-91bd-4f6e-b497-d15d6c68d20e",
+    "dayOfWeek": 1,
+    "startTime": "11:10:00",
+    "endTime": "11:50:00",
+    "roomId": "fdf61903-7a1c-46e2-9662-6b6afbfe220c"
+   }
+  ],
+  "siteTravelTimes": [
+   {
+    "siteAId": "9286b86a-cbf8-4d00-a121-98eb4390d472",
+    "siteBId": "a3c64870-f033-4190-8818-3ff7957e324d",
+    "minutes": 15
+   },
+   {
+    "siteAId": "9286b86a-cbf8-4d00-a121-98eb4390d472",
+    "siteBId": "7c3b13f6-bf3c-418d-933e-2b905e14a147",
+    "minutes": 25
+   },
+   {
+    "siteAId": "a3c64870-f033-4190-8818-3ff7957e324d",
+    "siteBId": "7c3b13f6-bf3c-418d-933e-2b905e14a147",
+    "minutes": 5
+   }
+  ]
+ },
+ "settings": {
+  "SCHEDULE_DAYS": "1,2,3",
+  "SCHEDULE_DAY_START_MINUTES": 480,
+  "SCHEDULE_DAY_END_MINUTES": 660
+ }
+}

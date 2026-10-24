@@ -303,6 +303,11 @@ def prepare(request: OptimizeRoomsRequest, settings: Settings) -> RoomProblem:
         resolve_room_locks(decision_lessons, request.room_preferences, request.rooms),
     )
     eligible_by_profile: dict[tuple, list[UUID]] = {}
+    # Restid i generatorn: a request whose rooms carry sites keeps every lesson
+    # on its own (WalkRoom.site_id). A restriction of the domain and nothing
+    # else, so the school's own rooms stay a feasible answer.
+    keeps_sites = any(room.site_id is not None for room in request.rooms)
+    site_of = {room.id: room.site_id for room in request.rooms}
     for index in decisions:
         lesson = lessons[index]
         key = profile_key(lesson)
@@ -319,7 +324,9 @@ def prepare(request: OptimizeRoomsRequest, settings: Settings) -> RoomProblem:
         problem.domains[index] = (here,) + tuple(
             room_id
             for room_id in eligible
-            if room_id != here and not blocked(room_id, index)
+            if room_id != here
+            and not blocked(room_id, index)
+            and (not keeps_sites or site_of[room_id] == site_of[here])
         )
 
     problem.pairs = _consecutive_pairs(problem)
