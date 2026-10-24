@@ -3568,6 +3568,13 @@ model LunchSetting {
   /// modelling — the solver then places lunch exactly as it did before.
   diningSeats              Int?
   maxLessonsPerDayPerGroup Int?
+  /// Restid i generatorn: whether the generator keeps the walk between the
+  /// school's skolområden (Sites, SiteTravelTimes) for teachers and pupils.
+  /// Off by default, and off sends the engine neither a site nor a walk, so
+  /// the week is generated exactly as before the rule existed. Not a lunch
+  /// rule either; it is in this row for the reason maxLessonsPerDayPerGroup
+  /// is: it sits in the same form, Skolregler.
+  generatorKeepsTravelTime Boolean  @default(false)
   createdAt                DateTime @default(now()) @db.Timestamptz(6)
   updatedAt                DateTime @updatedAt @db.Timestamptz(6)
 
