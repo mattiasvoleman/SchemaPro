@@ -51,6 +51,12 @@ export interface ClassBookLesson {
   teachers: { name: string; substitute: boolean }[];
   topic: string | null;
   homework: string | null;
+  /**
+   * When the log was last written, null with no log: the version an
+   * administrator's removal sends as its basis, so a log rewritten since the
+   * klassbok was read is a 409 and not removed unseen.
+   */
+  logUpdatedAt: string | null;
   /** Another group's lesson: how many of this class's pupils are on it. Null for the group's own. */
   attending: number | null;
 }
@@ -156,7 +162,7 @@ export class ClassBookService {
           ? []
           : ((await tx.lessonLog.findMany({
               where: { calendarLessonId: { in: lessons.map((lesson) => lesson.id) } },
-              select: { calendarLessonId: true, topic: true, homework: true },
+              select: { calendarLessonId: true, topic: true, homework: true, updatedAt: true },
             })) ?? []);
       const logOf = new Map(logs.map((log) => [log.calendarLessonId, log]));
 
@@ -182,6 +188,7 @@ export class ClassBookService {
           })),
           topic: logOf.get(lesson.id)?.topic ?? null,
           homework: logOf.get(lesson.id)?.homework ?? null,
+          logUpdatedAt: logOf.get(lesson.id)?.updatedAt.toISOString() ?? null,
           attending: own(lesson) ? null : (rosters.get(lesson.id)?.size ?? 0),
         })),
       };

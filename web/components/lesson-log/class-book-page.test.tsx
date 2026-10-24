@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import sv from "@/messages/sv.json";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import type { ClassBook } from "@/lib/lesson-log";
 import { ClassBookPage } from "./class-book-page";
 
@@ -63,6 +63,7 @@ const BOOK: ClassBook = {
       teachers: [{ name: "Bo Berg", substitute: true }],
       topic: "Bråk",
       homework: "Uppgift 4.1",
+      logUpdatedAt: "2026-10-19T09:15:00.000Z",
       attending: null,
     },
     {
@@ -77,6 +78,7 @@ const BOOK: ClassBook = {
       teachers: [],
       topic: null,
       homework: null,
+      logUpdatedAt: null,
       attending: 6,
     },
     {
@@ -91,6 +93,7 @@ const BOOK: ClassBook = {
       teachers: [{ name: "Anna Lind", substitute: false }],
       topic: null,
       homework: "Läs kapitel 2",
+      logUpdatedAt: "2026-10-20T07:00:00.000Z",
       attending: null,
     },
   ],
@@ -161,7 +164,22 @@ describe("the klassbok", () => {
     await user.click(remove);
     const dialog = await screen.findByRole("dialog");
     await user.click(within(dialog).getByRole("button", { name: "Ta bort" }));
-    expect(put).toHaveBeenCalledWith("/api/v1/lesson-logs/lessons/l-1", { topic: null, homework: null });
+    // Against the version the klassbok shows.
+    expect(put).toHaveBeenCalledWith("/api/v1/lesson-logs/lessons/l-1", { topic: null, homework: null, basis: "2026-10-19T09:15:00.000Z" });
     expect(toast.success).toHaveBeenCalledWith("Ämne och läxa borttagna");
+  });
+
+  it("removes nothing the teacher rewrote since, says so and reads the klassbok in again", async () => {
+    put.mockRejectedValue(new ApiError(409, "Någon annan har ändrat loggen sedan du öppnade den.", "LESSON_LOG_STALE"));
+    const user = userEvent.setup();
+    renderBook({ audience: "admin" });
+    await user.click(await screen.findByRole("button", { name: "Ta bort ämne och läxa för Matematik 08:00" }));
+    const reads = get.mock.calls.length;
+    await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Ta bort" }));
+    expect(await screen.findByText("Bråk")).toBeInTheDocument();
+    expect(toast.error).toHaveBeenCalledWith(sv.classBook.removeStale);
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await vi.waitFor(() => expect(get.mock.calls.length).toBeGreaterThan(reads));
   });
 });

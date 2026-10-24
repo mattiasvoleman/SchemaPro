@@ -114,14 +114,17 @@ export function useSaveSubstituteNote(lessonId: string) {
 
 /**
  * Removes a log from the klassbok: the administrator who writes drift
- * clearing what should not stand. The same PUT with both fields empty.
+ * clearing what should not stand. The same PUT with both fields empty,
+ * against the version the klassbok showed (`basis`): a log its teacher
+ * rewrote since is a 409 (LESSON_LOG_STALE), not removed unseen.
  */
 export function useRemoveLessonLog() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (lessonId: string) =>
-      api.put<{ log: LessonLogText | null }>(`/api/v1/lesson-logs/lessons/${lessonId}`, { topic: null, homework: null }),
-    onSuccess: () => {
+    mutationFn: ({ lessonId, basis }: { lessonId: string; basis: string | null }) =>
+      api.put<{ log: LessonLogText | null }>(`/api/v1/lesson-logs/lessons/${lessonId}`, { topic: null, homework: null, basis }),
+    // After a 409 too: the klassbok then shows the version that stands.
+    onSettled: () => {
       void client.invalidateQueries({ queryKey: LESSON_LOG_KEYS.all });
     },
   });

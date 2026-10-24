@@ -5,6 +5,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { BookOpen, Printer, Trash2 } from "lucide-react";
 import { usePathname, useRouter } from "@/i18n/navigation";
+import { ApiError } from "@/lib/api";
 import {
   CLASS_BOOK_MAX_DAYS,
   byDate,
@@ -41,7 +42,9 @@ import { Skeleton } from "@/components/ui/skeleton";
  *
  * The administrator who writes drift may remove a log that should not stand;
  * the button is data-writes="DRIFT", so the läsare never sees it, and the
- * gateway and the database refuse it to anyone else.
+ * gateway and the database refuse it to anyone else. The removal is made
+ * against the version shown (logUpdatedAt): a log its teacher rewrote since
+ * is refused (409) and read in again, never removed unseen.
  */
 
 export interface ClassBookPageProps {
@@ -259,13 +262,25 @@ function BookRow({ lesson, admin }: { lesson: ClassBookLesson; admin: boolean })
               confirmLabel={t("remove")}
               loading={remove.isPending}
               onConfirm={() => {
-                remove.mutate(lesson.id, {
-                  onSuccess: () => {
-                    setConfirming(false);
-                    toast.success(t("removed"));
+                remove.mutate(
+                  { lessonId: lesson.id, basis: lesson.logUpdatedAt },
+                  {
+                    onSuccess: () => {
+                      setConfirming(false);
+                      toast.success(t("removed"));
+                    },
+                    onError: (error) => {
+                      // Rewritten since the klassbok was read: nothing removed, and the
+                      // klassbok reads the new text in (the hook's onSettled).
+                      if (error instanceof ApiError && error.code === "LESSON_LOG_STALE") {
+                        setConfirming(false);
+                        toast.error(t("removeStale"));
+                        return;
+                      }
+                      toast.error(error instanceof Error ? error.message : t("removeFailed"));
+                    },
                   },
-                  onError: (error) => toast.error(error instanceof Error ? error.message : t("removeFailed")),
-                });
+                );
               }}
             />
           </div>

@@ -62,7 +62,9 @@ describe('ClassBookService', () => {
       lesson('spanish', LANGUAGE, 'Spanska 7', { subject: { name: 'Spanska' } }),
       lesson('elsewhere', OTHER_CLASS, '7B'),
     ]);
-    tx.lessonLog.findMany.mockResolvedValue([{ calendarLessonId: 'spanish', topic: 'Verb', homework: 'Glosor' }]);
+    tx.lessonLog.findMany.mockResolvedValue([
+      { calendarLessonId: 'spanish', topic: 'Verb', homework: 'Glosor', updatedAt: new Date('2026-10-20T09:15:00.000Z') },
+    ]);
 
     const book = await service.classBook(query, testUser({ role: 'TEACHER' as never }));
 
@@ -74,10 +76,11 @@ describe('ClassBookService', () => {
       timezone: 'Europe/Stockholm',
       pupils: 2,
     });
-    expect(book.lessons.map((l) => [l.id, l.attending, l.topic, l.homework])).toEqual([
-      ['own', null, null, null],
-      ['joined', null, null, null],
-      ['spanish', 1, 'Verb', 'Glosor'],
+    // The log's version too, which an administrator's removal sends as its basis.
+    expect(book.lessons.map((l) => [l.id, l.attending, l.topic, l.homework, l.logUpdatedAt])).toEqual([
+      ['own', null, null, null, null],
+      ['joined', null, null, null, null],
+      ['spanish', 1, 'Verb', 'Glosor', '2026-10-20T09:15:00.000Z'],
     ]);
     expect(book.lessons[0]).toMatchObject({
       date: '2026-10-20',

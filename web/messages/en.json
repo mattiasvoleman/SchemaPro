@@ -5889,6 +5889,7 @@
     "removeTitle": "Remove the lesson’s topic and homework?",
     "removeDescription": "The text disappears for the pupils and guardians and from the class book. This cannot be undone.",
     "removed": "Topic and homework removed",
-    "removeFailed": "It could not be removed. Try again."
+    "removeFailed": "It could not be removed. Try again.",
+    "removeStale": "The teacher has changed the topic or homework since the class book was loaded. The class book now shows the new text, so you see what you remove."
   }
 }

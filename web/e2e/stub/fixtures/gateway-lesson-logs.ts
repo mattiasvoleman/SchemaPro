@@ -216,6 +216,7 @@ function classBook(context: GatewayContext): ClassBook | Reply {
       })),
       topic: LESSON_LOGS.get(lesson.id)?.topic ?? null,
       homework: LESSON_LOGS.get(lesson.id)?.homework ?? null,
+      logUpdatedAt: LESSON_LOGS.get(lesson.id)?.updatedAt ?? null,
       attending,
     })),
   };

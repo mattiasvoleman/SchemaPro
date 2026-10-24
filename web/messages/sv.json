@@ -5889,6 +5889,7 @@
     "removeTitle": "Ta bort lektionens ämne och läxa?",
     "removeDescription": "Texten försvinner för eleverna, vårdnadshavarna och ur klassboken. Det går inte att ångra.",
     "removed": "Ämne och läxa borttagna",
-    "removeFailed": "Det gick inte att ta bort. Försök igen."
+    "removeFailed": "Det gick inte att ta bort. Försök igen.",
+    "removeStale": "Läraren har ändrat ämne eller läxa sedan klassboken lästes in. Klassboken visar nu den nya texten, så att du ser vad du tar bort."
   }
 }
