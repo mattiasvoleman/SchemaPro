@@ -93,7 +93,9 @@
   }
   tbody td { padding: 2.2mm 2.6mm; border-bottom: 1px solid var(--rule); vertical-align: top; }
   tbody tr:nth-child(even) td { background: hsl(240 20% 98.5%); }
-  td.k { font-weight: 700; white-space: nowrap; color: var(--ink); }
+  /* En nyckel radbryts hellre än att tabellen blir bredare än sidan: då krymper
+     Chrome hela PDF:en för att få plats. Kolumnens bredd står på thead:s th. */
+  td.k { font-weight: 700; color: var(--ink); text-wrap: balance; }
 
   /* ---------- block ---------- */
   .check, .note, .warn {
@@ -125,14 +127,16 @@
   /* ---------- innehåll ---------- */
   .toc { break-after: page; }
   .toc h2 { border-bottom-color: var(--rule); }
-  .toc ol { list-style: none; padding: 0; margin: 5mm 0 0; }
+  .toc ol { list-style: none; padding: 0; margin: 5mm 0 0; line-height: 1.4; }
   .toc > ol > li {
     font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
     font-size: 10.5pt; font-weight: 700; margin: 0 0 1mm;
     display: flex; align-items: baseline; gap: 2mm;
   }
   .toc .dots { flex: 1; border-bottom: 1px dotted var(--rule); transform: translateY(-1mm); }
-  .toc .pg { color: var(--muted); font-weight: 400; font-size: 9.5pt; }
+  /* Sidnumren fylls i först i andra passet. Med radens egen line-height gör de
+     raden högre, innehållet kan nå en andra sida och då är varje nummer fel. */
+  .toc .pg { color: var(--muted); font-weight: 400; font-size: 9.5pt; line-height: 1; }
   .toc ol ol { margin: .8mm 0 3mm 6mm; }
   .toc ol ol li {
     font-weight: 400; font-size: 9.4pt; color: var(--muted);
