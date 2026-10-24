@@ -43,7 +43,7 @@ import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { api } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import type { MessageLookup } from "@/lib/engine-message";
 import { lengthPartsOf } from "@/lib/lesson-lengths";
 import { STAFFING_KEYS } from "@/lib/staffing-keys";
@@ -292,6 +292,9 @@ function TermHalvesForm({
     } catch (error) {
       const refusal = staffingRefusal(error);
       if (refusal) setRefused(refusalText(tEngine, refusal));
+      // Delade lektioner: a shared post is refused before anything is written,
+      // said in the reader's language (the gateway's sentence is Swedish).
+      else if (error instanceof ApiError && error.code === "TERM_SPLIT_HAS_SHARES") setFailed(t("sharesRefused", { post: postName }));
       else setFailed(error instanceof Error ? error.message : tCommon("error"));
     } finally {
       setBusy(false);

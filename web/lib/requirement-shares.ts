@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import type { LessonShare } from "@/lib/lesson-shares";
 
 /*
@@ -10,8 +10,7 @@ import type { LessonShare } from "@/lib/lesson-shares";
  * beside them from here.
  *
  * A module of its own, not lib/queries.ts, for the bundle: every client page
- * imports that one, and only the Timplansposter and Tjänstefördelning pages
- * read shares.
+ * imports that one, and only the pages that plan posts read shares.
  */
 
 /** The prefix react-query invalidates on: every write to a post or its shares. */
@@ -42,4 +41,20 @@ export function sharesByRequirement(rows: readonly RequirementShare[] | undefine
     else byPost.set(requirementId, [share]);
   }
   return byPost;
+}
+
+/**
+ * The rule a write was refused by when its shares do not fit the post
+ * (REQUIREMENT_SHARES_DO_NOT_FIT, 409), and the post it names when the write
+ * was another's — a block's lessons changed under a shared member. The
+ * gateway's own sentence is Swedish; the rule lets the page say it in the
+ * reader's language (requirements.shares.problem.*). Null for any other
+ * error.
+ */
+export function sharesRefusal(error: unknown): { rule: string; requirement: string | null } | null {
+  if (!(error instanceof ApiError) || error.code !== "REQUIREMENT_SHARES_DO_NOT_FIT") return null;
+  const rule = error.params?.reason;
+  if (typeof rule !== "string") return null;
+  const requirement = error.params?.requirement;
+  return { rule, requirement: typeof requirement === "string" ? requirement : null };
 }

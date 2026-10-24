@@ -347,6 +347,10 @@ async function setLessons(
         'Ändra delningen i postens dialog först.',
       code: REQUIREMENT_SHARES_DO_NOT_FIT,
       reason: body.reason ?? problem,
+      params: {
+        reason: body.reason ?? problem,
+        ...(named ? { requirement: requirementName(named.subject.name, named.studentGroup.name) } : {}),
+      },
     });
   }
   const warnings = await judgeMembers(tx, user, members, resolved.shape);

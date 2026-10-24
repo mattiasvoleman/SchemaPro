@@ -152,8 +152,9 @@ import {
 } from "@/lib/queries";
 import { useStaffingLoad, useTeacherQualifications } from "@/lib/staffing-queries";
 import { STAFFING_KEYS } from "@/lib/staffing-keys";
-import { REQUIREMENT_SHARES_KEY, sharesByRequirement, useRequirementShares } from "@/lib/requirement-shares";
+import { REQUIREMENT_SHARES_KEY, sharesByRequirement, sharesRefusal, useRequirementShares } from "@/lib/requirement-shares";
 import type { ShareDraft } from "@/components/timplan/lesson-shares-fields";
+import type { LessonShare } from "@/lib/lesson-shares";
 import { buildGradeSpans } from "@/lib/grade-span";
 import { useYearRosters } from "@/lib/planning-year";
 import { withProjectedHomes } from "@/lib/projected-rosters";
@@ -257,6 +258,15 @@ const LessonLengthsFields = lazy(() =>
  * is pressed or a shared post is opened: only the dialog draws the rows, and
  * the route has no room to carry them (its budget is 190 KB).
  */
+/** A post's stored shares as the dialog's rows; a teacherless one is kept as it is. */
+const draftsOf = (shares: readonly LessonShare[]): ShareDraft[] =>
+  shares.map((share) => ({
+    teacherId: share.teacherId ?? NO_TEACHER,
+    lessons: String(share.lessons),
+    minutes: String(share.minutes),
+    ...(share.teacherId === null ? { kept: true } : {}),
+  }));
+
 const LessonSharesFields = lazy(() =>
   import("@/components/timplan/lesson-shares-fields").then((module) => ({
     default: module.LessonSharesFields,
@@ -434,7 +444,12 @@ export default function RequirementsPage() {
     isError: requirementsFailed,
   } = useRequirements(activeYearId);
   // Delade lektioner: each post's shares, from the gateway beside the rows.
-  const { data: shareRows, isSuccess: sharesLoaded } = useRequirementShares(activeYearId);
+  const {
+    data: shareRows,
+    isSuccess: sharesLoaded,
+    isError: sharesFailed,
+    refetch: refetchShares,
+  } = useRequirementShares(activeYearId);
   const sharesOf = useMemo(() => sharesByRequirement(shareRows), [shareRows]);
   /** The rows with their shares beside them, for the Block panel's teacher warning. */
   const sharedRequirements = useMemo(
@@ -657,6 +672,19 @@ export default function RequirementsPage() {
   });
   /** Whether the share rows can be saved as they stand (lesson-shares-fields.tsx). */
   const [sharesOk, setSharesOk] = useState(true);
+  /*
+   * Delade lektioner: shares that arrive after the dialog opened — the
+   * gateway's read lands beside the PostgREST rows, not with them — are put
+   * in its rows then, as if they had been there. The dialog never shows a
+   * shared post as unshared, and a save never states a list without them.
+   */
+  const openShares = cell?.existing ? sharesOf.get(cell.existing.id) : undefined;
+  useEffect(() => {
+    if (!openShares || form.shares !== null) return;
+    setForm((current) => ({ ...current, shares: draftsOf(openShares) }));
+    // Unsaveable until the rows' module has judged them (onValidity).
+    setSharesOk(false);
+  }, [openShares, form.shares]);
 
   const teachers = useMemo(
     () => (people ?? []).filter((person) => person.role === "TEACHER" && person.isActive),
@@ -850,6 +878,11 @@ export default function RequirementsPage() {
       ? { module: targetModule, ...targetState }
       : null;
 
+  /** Anybody's full name, active or not: a share may name a teacher who has since left. */
+  const personName = (id: string) => {
+    const person = (people ?? []).find((candidate) => candidate.id === id);
+    return person ? `${person.firstName} ${person.lastName}` : null;
+  };
   const teacherLabel = (id: string | null) => {
     if (!id) return null;
     const teacher = teachers.find((person) => person.id === id);
@@ -880,14 +913,7 @@ export default function RequirementsPage() {
       ownDistribution: existing?.ownDistribution ?? false,
       maxLessonsPerDay: existing?.maxLessonsPerDay ? String(existing.maxLessonsPerDay) : "",
       minDaysBetween: existing?.minDaysBetween ?? null,
-      shares: existing && sharesOf.has(existing.id)
-        ? sharesOf.get(existing.id)!.map((share) => ({
-            teacherId: share.teacherId ?? NO_TEACHER,
-            lessons: String(share.lessons),
-            minutes: String(share.minutes),
-            ...(share.teacherId === null ? { kept: true } : {}),
-          }))
-        : null,
+      shares: existing && sharesOf.has(existing.id) ? draftsOf(sharesOf.get(existing.id)!) : null,
     });
     // Unsaveable until the rows' module has judged them (onValidity).
     setSharesOk(!(existing && sharesOf.has(existing.id)));
@@ -1020,6 +1046,10 @@ export default function RequirementsPage() {
       // gateway. Read defensively all the same — an older build answers with
       // the bare row, and that must read as "nothing to say", not crash.
       const warnings = (saved as { warnings?: StaffingWarning[] } | null)?.warnings ?? [];
+      // A save that stated the shares waits for them to be read back, so a
+      // dialog opened again at once shows the list just saved, not the one
+      // before it — which its own save would then write back.
+      if (form.shares !== null) await refetchShares();
       setSavedWarnings(warnings.length > 0 ? { label, warnings } : null);
       toast.success(tCommon("updated"));
       setCell(null);
@@ -1027,6 +1057,12 @@ export default function RequirementsPage() {
       const refused = staffingRefusal(error);
       if (refused) {
         setRefusal(refused);
+        return;
+      }
+      // The shares' rule, in the reader's language (the gateway's is Swedish).
+      const shares = sharesRefusal(error);
+      if (shares && t.has(`shares.problem.${shares.rule}`)) {
+        toast.error(t(`shares.problem.${shares.rule}`));
         return;
       }
       toast.error(error instanceof Error ? error.message : tCommon("error"));
@@ -1902,6 +1938,7 @@ export default function RequirementsPage() {
                   noTeacher={NO_TEACHER}
                   teachers={teachers}
                   teacherLine={candidateLine}
+                  personName={personName}
                   onValidity={setSharesOk}
                 />
               </Suspense>
@@ -1916,11 +1953,22 @@ export default function RequirementsPage() {
                 className="col-span-2 justify-self-start"
                 onClick={() => {
                   setSharesOk(false);
-                  setForm({ ...form, shares: [{ teacherId: NO_TEACHER, lessons: "1", minutes: "" }] });
+                  // The stored shares when the post has any (they may have
+                  // arrived after the dialog opened), never a blank row over
+                  // them: the save states the whole list.
+                  const stored = cell?.existing ? sharesOf.get(cell.existing.id) : undefined;
+                  setForm({
+                    ...form,
+                    shares: stored ? draftsOf(stored) : [{ teacherId: NO_TEACHER, lessons: "1", minutes: "" }],
+                  });
                 }}
               >
                 {t("shares.open")}
               </Button>
+            ) : sharesFailed && cell?.existing ? (
+              // Without the post's shares the dialog cannot state them, so it
+              // offers no split rather than one that would write over them.
+              <p className="col-span-2 text-xs text-destructive">{t("shares.loadFailed")}</p>
             ) : null}
             {/*
               The master timetable's own period control, reused rather than

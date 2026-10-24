@@ -166,7 +166,7 @@ export default function StaffingPage() {
   const { data: requirements } = useRequirements(activeYearId);
   // Delade lektioner: each post's shares beside it, from the gateway, so the
   // matrix's groups and a teacher's card name the posts they take lessons of.
-  const { data: shareRows } = useRequirementShares(activeYearId);
+  const { data: shareRows, isError: sharesFailed } = useRequirementShares(activeYearId);
   const sharesOfPost = useMemo(() => sharesByRequirement(shareRows), [shareRows]);
   const sharedRequirements = useMemo(
     () =>
@@ -346,6 +346,12 @@ export default function StaffingPage() {
             >
               {t("noTargetBody")}
             </Notice>
+          ) : null}
+
+          {sharesFailed ? (
+            // The matrix and the cards still read the rows; only the lessons
+            // other teachers take of them are missing, which is said.
+            <Notice tone="warning" title={t("sharesFailed")} />
           ) : null}
 
           {offerCarry && predecessor ? (

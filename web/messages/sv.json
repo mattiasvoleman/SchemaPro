@@ -752,7 +752,8 @@
       "generatorNote": "Vårens block läggs på höstens tider, så halvorna har lektion samtidigt hela året: genereringen ger varje vårpost tiderna och salen som höstens post i samma ämne fick. Låser du det ena blocket med Lås blocket, eller drar dess kort, i grundschemat följer det andra med (se manualen, 4.2).",
       "failedTitle": "Inget sparades",
       "submit": "Dela terminsvis",
-      "done": "{post} delades terminsvis i {first} och {second}."
+      "done": "{post} delades terminsvis i {first} och {second}.",
+      "sharesRefused": "{post} delar sina lektioner mellan lärare. Ta bort delningen i postens dialog först, och välj sedan lärare för varje ämne här."
     },
     "shares": {
       "open": "Dela lektionerna mellan lärare",
@@ -775,7 +776,10 @@
         "LENGTH_NOT_ON_POST": "En vald längd finns inte bland postens lektioner.",
         "TOO_MANY_OF_LENGTH": "Lärarna här tar fler lektioner av en längd än posten har.",
         "LEAD_KEEPS_NONE": "Läraren ovan behåller minst en lektion. Ta färre här, eller gör den som ska ha resten till postens lärare."
-      }
+      },
+      "loadFailed": "Postens lärarandelar kunde inte läsas, så den kan inte delas här just nu. Ladda om sidan och försök igen.",
+      "inactiveTeacher": "{name} (inaktiv)",
+      "refusedIn": "{requirement}: {sentence}"
     }
   },
   "timplan": {
@@ -3383,7 +3387,8 @@
     "policyLoadFailedHint": "Spara är avstängt tills skolans inställningar har lästs, så att standardvärdena i fälten inte skriver över dem. Ladda om sidan för att försöka igen.",
     "removeEmploymentTitle": "Ta bort tjänsten för {name} {year}?",
     "removeEmploymentBody": "Tjänstegrad, nedsättning och avtal för läsåret tas bort, och läraren räknas utan mål tills en tjänst sparas igen. Timplansposter och uppdrag ligger kvar.",
-    "dutiesLoadFailedHint": "Inget har ändrats i uppdragen. Ladda om sidan för att försöka igen."
+    "dutiesLoadFailedHint": "Inget har ändrats i uppdragen. Ladda om sidan för att försöka igen.",
+    "sharesFailed": "Lärarandelarna kunde inte läsas, så lektioner som en annan lärare tar av en post saknas i korten och grupperna. Ladda om sidan."
   },
   "myStaffing": {
     "title": "Min tjänst",

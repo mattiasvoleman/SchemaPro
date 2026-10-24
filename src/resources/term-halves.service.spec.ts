@@ -541,6 +541,7 @@ describe('TermHalvesService', () => {
           'Slöjd för 7A delar sina lektioner mellan lärare. Ta bort delningen i postens dialog först, ' +
           'och välj sedan lärare för varje ämne här.',
         code: TERM_SPLIT_HAS_SHARES,
+        params: { requirement: 'Slöjd för 7A' },
       });
       // Before the staffing judge, which would have asked about its teachers.
       expect(openChecks).not.toHaveBeenCalled();

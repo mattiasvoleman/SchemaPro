@@ -346,6 +346,7 @@ let state = freshState();
  * reference to — the whole submit path, including the null-versus-omitted
  * distinction the period depends on, ran unobserved.
  */
+const refetchSharesMock = vi.hoisted(() => vi.fn());
 const { createMock, updateMock, removeMock, importMock } = vi.hoisted(() => ({
   createMock: vi.fn(),
   updateMock: vi.fn(),
@@ -410,7 +411,11 @@ vi.mock("@/lib/staffing-queries", () => ({
 vi.mock("@/lib/requirement-shares", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/requirement-shares")>()),
   // react-query's isSuccess, which the page waits on before it offers to split.
-  useRequirementShares: () => ({ ...state.shares, isSuccess: !state.shares.isLoading && !state.shares.isError }),
+  useRequirementShares: () => ({
+    ...state.shares,
+    isSuccess: !state.shares.isLoading && !state.shares.isError,
+    refetch: refetchSharesMock,
+  }),
 }));
 
 // Mål mode's reads, from the hooks file the lazily loaded module imports.
@@ -505,6 +510,7 @@ beforeEach(() => {
   state = freshState();
   createMock.mockReset().mockResolvedValue(undefined);
   updateMock.mockReset().mockResolvedValue(undefined);
+  refetchSharesMock.mockReset().mockResolvedValue(undefined);
   removeMock.mockReset().mockResolvedValue(undefined);
   importMock.mockReset().mockResolvedValue({ created: 0, skipped: 0, errors: [] });
   mockDownloadCsv.mockReset();
@@ -2752,6 +2758,69 @@ describe("Delade lektioner in the cell dialog", () => {
     state.shares = { data: undefined, isLoading: true, isError: false } as never;
     await open();
     expect(screen.queryByRole("button", { name: "shares.open" })).not.toBeInTheDocument();
+  });
+
+  it("puts shares that arrive after the dialog opened in its rows, and saves them back rather than over them", async () => {
+    // The gateway's read lands after the PostgREST rows: the dialog is open
+    // before the post's share is known.
+    state.shares = { data: undefined, isLoading: true, isError: false } as never;
+    const { rerender } = render(<RequirementsPage />);
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText(CELL));
+    expect(screen.queryByRole("button", { name: "shares.open" })).not.toBeInTheDocument();
+
+    state.shares = loaded([{ requirementId: "r-so", teacherId: "t-bo", lessons: 1, minutes: 60 }]);
+    rerender(<RequirementsPage />);
+    expect(await screen.findByText("part(Bo Lind|1|3|60|33)")).toBeInTheDocument();
+    await user.click(saveButton());
+    expect((updateMock.mock.calls[0][0] as Record<string, unknown>).shares).toEqual([{ teacherId: "t-bo", lessons: 1 }]);
+  });
+
+  it("waits for the shares to be read back before it closes, so a dialog opened again shows the list just saved", async () => {
+    state.shares = loaded([{ requirementId: "r-so", teacherId: "t-bo", lessons: 1, minutes: 60 }]);
+    let readBack: () => void = () => undefined;
+    refetchSharesMock.mockImplementation(() => new Promise<void>((resolve) => (readBack = resolve)));
+    const user = await open();
+    await screen.findByText("part(Bo Lind|1|3|60|33)");
+    await user.click(saveButton());
+    expect(updateMock).toHaveBeenCalled();
+    expect(refetchSharesMock).toHaveBeenCalledTimes(1);
+    // Still open while the shares are read.
+    expect(screen.getByRole("button", { name: "save" })).toBeInTheDocument();
+    readBack();
+    await waitFor(() => expect(screen.queryByRole("button", { name: "save" })).toBeNull());
+  });
+
+  it("asks nothing back for a save that stated no shares", async () => {
+    const user = await open();
+    await user.click(saveButton());
+    expect(updateMock).toHaveBeenCalled();
+    expect(refetchSharesMock).not.toHaveBeenCalled();
+  });
+
+  it("says when the shares could not be read, and offers no split that could write over them", async () => {
+    state.shares = { data: undefined, isLoading: false, isError: true } as never;
+    await open();
+    expect(screen.getByText("shares.loadFailed")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "shares.open" })).not.toBeInTheDocument();
+  });
+
+  it("names a share's teacher who has left, as inactive, rather than as nobody", async () => {
+    state.people = loaded([anna, { ...bo, isActive: false }]);
+    state.shares = loaded([{ requirementId: "r-so", teacherId: "t-bo", lessons: 1, minutes: 60 }]);
+    await open();
+    expect(await screen.findByText("part(inactiveTeacher(Bo Lind)|1|3|60|33)")).toBeInTheDocument();
+  });
+
+  it("says a refused split's rule in the reader's language, not the gateway's Swedish", async () => {
+    state.shares = loaded([{ requirementId: "r-so", teacherId: "t-bo", lessons: 1, minutes: 60 }]);
+    updateMock.mockRejectedValue(
+      new ApiError(409, "Läraren är redan postens lärare.", "REQUIREMENT_SHARES_DO_NOT_FIT", { reason: "TEACHER_ON_POST" }),
+    );
+    const user = await open();
+    await screen.findByText("part(Bo Lind|1|3|60|33)");
+    await user.click(saveButton());
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("shares.problem.TEACHER_ON_POST"));
   });
 
   it("sends [] when every row is removed, giving the lead every lesson again", async () => {

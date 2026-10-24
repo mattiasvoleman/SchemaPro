@@ -73,6 +73,7 @@ export function LessonSharesFields({
   noTeacher,
   teachers,
   teacherLine,
+  personName,
   onValidity,
 }: {
   value: ShareDraft[];
@@ -87,6 +88,11 @@ export function LessonSharesFields({
   teachers: Person[];
   /** How a teacher reads in a picker: the page's name and candidate badge. */
   teacherLine: (teacher: Person) => ReactNode;
+  /**
+   * Anybody's name, active or not: a stored share may name a teacher who has
+   * left, who is not among `teachers` and is shown as they are, marked.
+   */
+  personName: (id: string) => string | null;
   /** Whether the shares can be saved as they stand. */
   onValidity: (ok: boolean) => void;
 }) {
@@ -128,7 +134,9 @@ export function LessonSharesFields({
   const nameOf = (id: string | null) => {
     if (id === null) return tCommon("notAssigned");
     const person = teachers.find((teacher) => teacher.id === id);
-    return person ? `${person.firstName} ${person.lastName}` : tCommon("notAssigned");
+    if (person) return `${person.firstName} ${person.lastName}`;
+    const left = personName(id);
+    return left ? t("inactiveTeacher", { name: left }) : tCommon("notAssigned");
   };
   const update = (index: number, patch: Partial<ShareDraft>) =>
     onChange(value.map((draft, i) => (i === index ? { ...draft, ...patch } : draft)));
@@ -161,6 +169,10 @@ export function LessonSharesFields({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value={noTeacher}>{tCommon("notAssigned")}</SelectItem>
+                {/* A stored teacher no longer among the active ones, kept as stored. */}
+                {draft.teacherId !== noTeacher && !teachers.some((teacher) => teacher.id === draft.teacherId) ? (
+                  <SelectItem value={draft.teacherId}>{nameOf(draft.teacherId)}</SelectItem>
+                ) : null}
                 {candidates(index).map((teacher) => (
                   <SelectItem key={teacher.id} value={teacher.id}>
                     {teacherLine(teacher)}
