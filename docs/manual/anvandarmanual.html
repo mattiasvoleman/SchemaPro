@@ -240,7 +240,7 @@
       <tr><td class="k">Planering</td><td>Grunddata (läsår, ämnen, salar, klasser och skolenheter), timplanen och dess block, tjänstefördelningens regler, lärarnas arbetstid, behörigheter och uppdrag.</td></tr>
       <tr><td class="k">Schemaläggning</td><td>Grundschemat, dess versioner och genereringen.</td></tr>
       <tr><td class="k">Publicering</td><td>Publiceringen, Schemavisaren, undervisningstiden och skolans kalenderprenumeration.</td></tr>
-      <tr><td class="k">Drift</td><td>Den daterade kalendern, frånvaro, vikarier, ledighet, lokalbokningar och rapporter.</td></tr>
+      <tr><td class="k">Drift</td><td>Den daterade kalendern, frånvaro, vikarier, ledighet, lokalbokningar, rapporter och att ta bort en lektions ämne och läxa eller notis till vikarien (6.11).</td></tr>
       <tr><td class="k">Personal</td><td>Registret: personer och kopplingar mellan elever och vårdnadshavare.</td></tr>
       <tr><td class="k">Integrationer</td><td>API-nycklar, SS12000 och skolans inloggning.</td></tr>
     </tbody>
@@ -3185,7 +3185,8 @@
     kvar. Det gäller också efter att en version återställts eller schemat
     genererats om. En dagsändring på en lektion som tas bort försvinner med
     den, och kontrollen <em>Dagsändringar som försvinner</em> säger det
-    först.
+    först. Den nämner också en lektion som har ämne, läxa eller en notis till
+    vikarien (6.11): texten försvinner med lektionen.
   </p>
   <h4>Kassera och fyll på</h4>
   <p>
@@ -3565,7 +3566,10 @@
   <ul>
     <li><span class="ui">Tillsätt vikarie</span> öppnar förslagen (nedan).
       Vikarien får en notis och, om skolan skickar e-post, ett mejl med ämne,
-      klass, sal och tid — aldrig vem hen ersätter eller varför.</li>
+      klass, sal och tid — aldrig vem hen ersätter eller varför. Har
+      lektionens lärare lämnat en notis till vikarien (6.11) står det
+      <em>Notis till vikarien</em> på raden, och mejlet säger att det finns en
+      notis att läsa på lektionen, men inte vad den säger.</li>
     <li><span class="ui">Ställ in</span> ställer in lektionen med orsaken att
       läraren inte kan. Ingen anledning skickas till klassen. En lektion som
       redan har börjat kan inte ställas in; tillsätt en vikarie eller välj
@@ -4153,6 +4157,85 @@
     notis till många personer, till exempel en sammanfattning för hela
     skolan, går i e-postbrev om högst 50 adresser.
   </p>
+
+  <h3 id="s611"><span class="num">6.11</span>Lektionslogg och klassbok</h3>
+  <p>
+    En lärare kan skriva vad en lektion handlar om och vilken läxa som gäller
+    till nästa gång. Eleverna på lektionen och deras vårdnadshavare ser det
+    vid lektionen i sitt schema på webben. Det är frivilligt: står inget
+    skrivet visas inget. Läraren skriver på lektionens sida, som öppnas från
+    veckan under <span class="path">Mitt schema</span> eller från närvaron.
+    Lärarmanualen beskriver hur.
+  </p>
+  <table>
+    <thead><tr><th style="width:28%">Text</th><th>Skrivs av</th><th style="width:34%">Läses av</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Ämne och läxa</td><td>Lektionens lärare och dess vikarie. Ämnet är en rad på högst 200 tecken, läxan högst 1 000.</td><td>Eleverna på lektionen och deras vårdnadshavare, skolans lärare och administratörer, och klassboken.</td></tr>
+      <tr><td class="k">Notis till vikarien</td><td>Lektionens egen lärare, också när hen är borta och vikarien redan är bokad. Högst 2 000 tecken.</td><td>Lektionens lärare och den som vikarierar på den. På vikarietavlan ser administratören att det finns en notis. Aldrig eleverna eller vårdnadshavarna.</td></tr>
+    </tbody>
+  </table>
+  <p>
+    Lektionens egen lärare är den som står på den publicerade lektionen, som
+    lärare eller medlärare, eller den frånvarande som ett beslut på
+    vikarietavlan gällde. En lärare som bara står i grundschemat, till exempel
+    i ett utkast som inte är publicerat, är det inte. Bokas en vikarie utan att
+    någon frånvaro är registrerad tar vikarien lärarens plats på lektionen och
+    läraren kommer inte längre åt notisen. Lektionsloggen är ingen
+    meddelandefunktion. Ingen kan svara på en
+    text, ingen får en notis om att något skrivits, och vikarien kan inte
+    svara på notisen. Frågor och meddelanden mellan skola och hem går via
+    skolans lärplattform.
+  </p>
+  <h4>Klassbok</h4>
+  <p>
+    <span class="path">Drift › Klassbok</span> (och för lärare
+    <span class="path">Klassbok</span>) visar en klass lektioner under en
+    period på högst 200 dagar, dag för dag, med tid, ämne, lärare, sal, ämne
+    och läxa. En inställd lektion står med som inställd, och en vikarie står
+    med <em>(vikarie)</em> efter namnet. Klassens egna lektioner är med, och
+    också lektioner där någon av klassens elever deltar, till exempel ett
+    språkval eller en nivågrupp. De visar hur många av klassens elever som
+    är där. Det är samma lista över vem som går på en lektion som närvaron och
+    notiserna räknar med. Väljer du en undervisningsgrupp visas gruppens egna
+    lektioner. <span class="ui">Skriv ut</span> skriver ut klassboken utan
+    sidans knappar. Klassen och perioden står i adressen, så en utskriven
+    klassbok kan öppnas igen likadan.
+  </p>
+  <p>
+    Klassboken visar aldrig notiser till vikarier och aldrig någon elev, bara
+    hur många. Den som ändrar drift kan ta bort ämne och läxa som inte ska stå
+    kvar med <span class="ui">Ta bort</span> på raden. Texten försvinner då
+    för eleverna och vårdnadshavarna. Läsaren ser klassboken men inte knappen.
+  </p>
+  <h4>När en lektion försvinner</h4>
+  <p>
+    Ämne, läxa och notis hör till den daterade lektionen och försvinner med
+    den. Det händer med kommande lektioner utan närvaro när ett lov eller en
+    studiedag läggs in, när grundschemat ändras eller genereras om i en skola
+    som publicerar direkt, när en avbokning tas tillbaka och lektionen har
+    flyttats, och när en publicering tar bort lektionen. Publiceringen säger det
+    först (5.7). De andra säger det inte, lika lite som de säger det om en
+    bokad vikarie på lektionen. En lektion som flyttas behåller sin text.
+  </p>
+  <div class="warn">
+    <span class="label">Notiser gallras inte ännu</span>
+    <p>
+      En notis till vikarien kan nämna elever, men den hör inte till någon av
+      gallringens kategorier (7.4) och sparas tills lektionen tas bort. Be
+      lärarna skriva det vikarien behöver och inget mer.
+    </p>
+  </div>
+  <div class="note">
+    <span class="label">Läsloggen</span>
+    <p>
+      En vårdnadshavare läser ämne och läxa i sitt barns vecka. Den läsningen
+      loggas som barnets schema, som förut (7.4). Lärarnas och
+      administratörernas läsningar av lektionsloggen och klassboken loggas
+      inte. Ämne och läxa handlar inte om någon person. En notis kan nämna en
+      elev, men ingenting i den säger vem, så det finns ingen att logga
+      läsningen på. Det som begränsar den är vilka som får läsa den alls.
+    </p>
+  </div>
 </section>
 
 <!-- ============================ 7 ============================ -->
