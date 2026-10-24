@@ -4147,6 +4147,100 @@ describe('OptimizationProxyService', () => {
       expect(sent).not.toContain(TEACHER_ID);
     });
 
+    it('names the gaps by the class, its timplan rows and the lunch, and never the teacher', async () => {
+      /*
+       * The gaps verdict says which lessons the gaps cannot take, a line per
+       * class, teacher or set of rooms. The class's line carries the class in
+       * `group` and resourceIds, both anonymous on the way out, and comes back
+       * as 7A; the teacher's and the rooms' lines carry the timplan rows, as
+       * the hours verdict's does; the lunch's line follows the line it is
+       * about. Every value but `group` is a number or the word that picks the
+       * sentence's ending, and leaves as it came.
+       */
+      const SVENSKA = '99999999-9999-4999-8999-999999999999';
+      arrange({
+        requirements: [
+          requirement({ subject: { requiredRoomTypeId: null, name: 'Matematik' } }),
+          requirement({ id: SVENSKA, subjectId: 'svenska', subject: { requiredRoomTypeId: null, name: 'Svenska' } }),
+        ],
+        groups: [{ id: GROUP_ID, gradeLevel: 7, kind: 'CLASS', name: '7A' }],
+      });
+      const counted = {
+        requirements: 2, lessons: 5, shortestMinutes: 90, demandMinutes: 450, days: 4,
+        weekDays: 5, shortOf: 'lessons', fitLessons: 4, capacityMinutes: 360,
+      };
+      let anonymousTeacher = '';
+      let anonymousGroup = '';
+      http.post.mockImplementation((_url: string, payload: any) => {
+        anonymousTeacher = payload.requirements[0].teacherId;
+        anonymousGroup = payload.requirements[0].studentGroupId;
+        const rows = payload.requirements.map((row: any) => row.id);
+        const rooms = payload.rooms.map((room: any) => room.id);
+        const line = (code: string, params: object, resourceIds: string[], roomIds: string[] = []) => ({
+          category: 'REQUIREMENT_DEMAND',
+          code,
+          params,
+          message: 'Too many lessons for the gaps.',
+          requirementIds: rows,
+          roomIds,
+          constraintIds: [],
+          resourceIds,
+        });
+        return of({
+          data: {
+            requestId: payload.requestId,
+            status: 'INFEASIBLE',
+            lessons: [],
+            conflicts: {
+              summary: 'Too many lessons for the gaps.',
+              summaryCode: 'DEMAND_LESSONS_EXCEED_GAPS',
+              summaryParams: { resources: 2 },
+              conflicts: [
+                line('DEMAND_GROUP_LESSONS_EXCEED_GAPS', { group: anonymousGroup, ...counted }, [anonymousGroup]),
+                {
+                  ...line('LUNCH_BREAK_IS_THE_DIFFERENCE', { lunchMinutes: 30, freeMinutes: 480 }, [anonymousGroup]),
+                  category: 'LUNCH_WINDOW',
+                  requirementIds: [],
+                },
+                line('DEMAND_ROOM_LESSONS_EXCEED_GAPS', { rooms: rooms.length, ...counted }, rows, rooms),
+              ],
+            },
+          },
+        });
+      });
+
+      const result = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(result.conflicts?.summaryCode).toBe('DEMAND_LESSONS_EXCEED_GAPS');
+      expect(result.conflicts?.summaryParams).toEqual({ resources: 2 });
+      expect(result.conflicts?.conflicts).toEqual([
+        expect.objectContaining({
+          code: 'DEMAND_GROUP_LESSONS_EXCEED_GAPS',
+          params: { group: '7A', ...counted },
+          resourceIds: [GROUP_ID],
+          resourceNames: ['7A'],
+        }),
+        expect.objectContaining({
+          code: 'LUNCH_BREAK_IS_THE_DIFFERENCE',
+          params: { lunchMinutes: 30, freeMinutes: 480 },
+          resourceIds: [GROUP_ID],
+          resourceNames: ['7A'],
+        }),
+        expect.objectContaining({
+          code: 'DEMAND_ROOM_LESSONS_EXCEED_GAPS',
+          params: { rooms: 1, ...counted },
+          resourceIds: [REQ_ID, SVENSKA],
+          resourceNames: ['Matematik för 7A', 'Svenska för 7A'],
+        }),
+      ]);
+      const sent = JSON.stringify(result.conflicts);
+      expect(anonymousGroup).not.toBe('');
+      expect(sent).not.toContain(anonymousGroup);
+      expect(anonymousTeacher).not.toBe('');
+      expect(sent).not.toContain(anonymousTeacher);
+      expect(sent).not.toContain(TEACHER_ID);
+    });
+
     it('names a timplan row by its subject and group, and a room type by its name', async () => {
       // A refusal that said "Timplansposten 8f2c…" named something a rektor
       // could not look up. A timplan row carries no name of its own, so it is
