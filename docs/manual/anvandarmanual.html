@@ -2390,7 +2390,8 @@
   <p>
     Kortet <span class="ui">Historik</span> i lärarens kort visar lärarens tjänst
     för läsåret version för version: varje ändring av tjänsten eller av ett
-    uppdrag, vem som gjorde den och när, och vad som ändrades — till exempel
+    uppdrag som du skriver på kortet, vem som gjorde den och när, och vad som
+    ändrades — till exempel
     <em>Version 7 · 2026-10-09 14:02 · Anna Admin · Tjänst ändrad ·
     Tjänstgöringsgrad: 100 % → 80 %</em>. Versionen sparas i samma ögonblick
     som ändringen, hur den än gjordes: i kortet, genom en import, vid
@@ -2401,6 +2402,9 @@
     <em>System</em>, och en användare som har tagits bort som
     <em>Borttagen användare</em>. Kortet är ihopfällt tills du öppnar det.
     Tas en lärare bort ur Rastra Schema försvinner också lärarens historik.
+    Rastvaktspassen (4.6) har ingen historik. De räknas som uppdrag och kan
+    ändra lärarens uppdragstimmar och om uppdraget Rastvakt räknas, men en
+    ändring av ett pass ger ingen ny version.
   </p>
   <p>
     En antecknings text sparas inte i historiken, bara att anteckningen
@@ -2428,7 +2432,11 @@
     <em>Tjänst och uppdrag: version N (datum)</em> ur historiken, så papperet
     går att knyta till en version av tjänsten och uppdragen. Undervisningen
     kommer från timplansposterna, som historiken inte versionerar; foten
-    säger därför att den är tjänstefördelningen den dag sidan skrevs ut. Medan
+    säger därför att den är tjänstefördelningen den dag sidan skrevs ut. Har
+    läraren rastvaktspass säger foten också att rastvakten är
+    rastvaktsschemats den dag sidan skrevs ut, eftersom passen inte heller
+    versioneras. Under övriga uppdrag står då passen, och uppdraget Rastvakt
+    är märkt som ram. Medan
     historiken läses väntar <span class="ui">Skriv ut</span>, och kan den inte
     läsas säger foten det i stället för att påstå att versioner saknas.
     Ändras tjänsten under läsåret står tjänstgöringsgrad och nedsättning som
@@ -2757,7 +2765,7 @@
   <table>
     <thead><tr><th style="width:30%">Fält</th><th>Vad det betyder</th></tr></thead>
     <tbody>
-      <tr><td class="k">Namn</td><td>Högst 60 tecken och unikt på skolan.</td></tr>
+      <tr><td class="k">Namn</td><td>Högst 60 tecken och unikt i hela skolan, också mellan skolområden. Har två skolområden var sin gård skriver du till exempel <em>Skolgården norra</em> och <em>Skolgården södra</em>.</td></tr>
       <tr><td class="k">Skolområde</td><td>Vilket av skolans skolområden (3.3) området ligger på. Fältet visas när skolan har skolområden.</td></tr>
       <tr><td class="k">Årskurser</td><td>Vilka årskursers raster området vaktas under. Ett tomt fält betyder alla stadier. En lågstadiegård för förskoleklass till åk 3 vaktas bara när de årskurserna är ute. Årskurserna anges i den nioåriga numreringen, som rasterna; ett tioårigt läsårs klasser läses om till den (8.1).</td></tr>
       <tr><td class="k">Bevakas under rasterna</td><td>Rasterna läses från <span class="path">Planering › Raster</span> (4.5).</td></tr>
@@ -2772,8 +2780,10 @@
     Varje område har en tabell med en rad per rast och en kolumn per veckodag.
     Raster som överlappar slås ihop. Har lågstadiet rast 10.00–10.20 och
     mellanstadiet 10.10–10.30 behöver gården alltså vaktas 10.00–10.30. I
-    varje ruta står de pass som går under rasten. Ett pass som är kortare än
-    rasten visar sin tid, och ett pass med datum visar datumen. Pass som inte
+    varje ruta står de pass som går under rasten. Ett pass vars tid skiljer
+    sig från rastens visar sin tid, och ett pass med datum visar datumen. En
+    rast med ett annat namn eller en annan tid än de andra dagarnas, till
+    exempel fredagens, får en egen rad. Pass som inte
     ligger under någon av områdets raster står under
     <span class="ui">Övriga pass</span>, till exempel entrén före skoldagen
     eller bussen efter den.
@@ -2784,8 +2794,15 @@
     Ett pass har område, lärare, veckodag och när det börjar och slutar. Det
     kan också ha <span class="ui">Gäller från</span> och
     <span class="ui">Gäller till och med</span> inom läsåret. Utan datum
-    gäller passet hela läsåret. Klicka på ett pass för att ändra eller ta bort
-    det.
+    gäller passet hela läsåret. Datumen sparas som de dagar passet faktiskt
+    går: <span class="ui">Gäller från</span> blir den första av passets
+    veckodagar på eller efter det datum du skriver, och <span class="ui">Gäller
+    till och med</span> den sista på eller före det. Dialogen säger vilken dag
+    det blir. Ett måndagspass från tisdag 1 september börjar alltså måndag 7
+    september. Ett pass vars datum inte rymmer någon sådan veckodag går inte
+    att spara. Byter du veckodag på ett pass flyttar datumen med inom samma
+    vecka, så att passet behåller sina veckor. Klicka på ett pass för att
+    ändra eller ta bort det.
   </p>
   <div class="note">
     <span class="label">En rastvakt är på ett ställe i taget</span>
@@ -2796,20 +2813,40 @@
       innan du sparar vilket pass läraren har.
     </p>
   </div>
+  <div class="note">
+    <span class="label">Ett pass under lärarens lektion</span>
+    <p>
+      Ligger ett pass under en av lärarens lektioner i grundschemat, som
+      lärare eller medlärare, sparas det ändå. Dialogen säger vilken lektion
+      det gäller innan den stängs, och passet visar det i schemat. Generatorn
+      och vikarieförslaget känner ännu inte till passen. Generatorn kan alltså
+      lägga lektioner på passets tid, och vikarieförslaget kan föreslå läraren
+      då. Flytta passet eller lektionen. Behåll också tiderna i lärarens
+      uppdrag Rastvakt (4.3), så håller generatorn dem fria.
+    </p>
+  </div>
 
   <h4>Raster utan rastvakt</h4>
   <p>
     Överst på sidan står de raster där färre lärare vaktar än området behöver,
     någon minut av rasten. Raden säger område, dag och rast, hur många som
-    vaktar mot hur många som behövs, under vilka minuter och på vilka datum
-    (eller <em>hela läsåret</em>). Två lärare som delar på en lunch, till
-    exempel 11.30–12.00 och 12.00–12.30, vaktar den tillsammans. Ett lov som
-    stänger hela skolan räknas inte som en lucka. En lärare som avaktiverats
-    i registret står kvar på sina pass, markerad som inaktiv, men vaktar
-    ingenting: rasterna visas som obevakade tills du lägger dem på någon
-    annan. Plusknappen på raden lägger
-    ett pass på just den rasten. Gäller luckan bara en del av läsåret följer
-    dess datum med.
+    vaktar mot hur många som behövs och på vilka datum (eller <em>hela
+    läsåret</em>). Minuterna på raden är rastens första sträcka med så få
+    rastvakter; vaktar färre också senare under samma rast syns det i
+    rutan. Två lärare som delar på en lunch, till exempel 11.30–12.00 och
+    12.00–12.30, vaktar den tillsammans. Ett lov som stänger hela skolan
+    räknas inte som en lucka. Plusknappen på raden lägger ett pass på just
+    den rasten. Gäller luckan bara en del av läsåret följer dess datum med.
+  </p>
+  <p>
+    En lärare som avaktiveras i registret står kvar på sina pass, markerad
+    som inaktiv från den dag läraren avaktiverades. Passen vaktar till och
+    med dagen före. Har rasten inga andra rastvakter visas den som obevakad
+    från den dagen, och plusknappen på luckan fyller i passets första
+    veckodag från den dagen som <span class="ui">Gäller från</span>, så att
+    den som tar över får passet från dess och inte för hösten. Belastningen
+    räknar passen på samma sätt. En avaktiverad lärare kan inte få nya pass,
+    men du kan fortfarande ge lärarens pass ett slutdatum.
   </p>
 
   <h4>Rastvakten i belastningen</h4>
@@ -2836,9 +2873,12 @@
     <p>
       Passen följer inte med till nästa läsår. Områdena står kvar, men
       passen planeras om mot det nya läsårets personal och raster.
-      Genereringen håller inte lärarens passtider fria. Vill du det anger du
-      tiderna på uppdraget Rastvakt (4.3). Passen syns ännu inte i lärarens
-      veckoschema, och en frånvarande rastvakt hamnar inte på vikarietavlan.
+      Generatorn och vikarieförslaget känner inte till passen. Vill du att
+      generatorn håller lärarens passtider fria anger du tiderna på uppdraget
+      Rastvakt (4.3). Passen syns ännu inte i lärarens veckoschema, och en
+      frånvarande rastvakt hamnar inte på vikarietavlan. Passen har ingen
+      historik: en ändring syns inte under <span class="ui">Historik</span>
+      (4.3).
     </p>
   </div>
 </section>
