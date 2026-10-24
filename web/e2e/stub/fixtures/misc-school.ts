@@ -44,6 +44,9 @@ export const LUNCH_SETTINGS: LunchSettings = {
   lunchMinutes: 30,
   diningSeats: 120,
   maxLessonsPerDayPerGroup: 6,
+  // On, so the a11y sweep meets the Skolregler switch checked and the line
+  // the generate page adds for it (Restid i generatorn).
+  generatorKeepsTravelTime: true,
 };
 
 // --- Generation ----------------------------------------------------------------

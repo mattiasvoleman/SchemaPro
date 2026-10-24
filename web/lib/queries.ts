@@ -572,6 +572,8 @@ export interface LunchSettingsInput {
   lunchMinutes: number;
   diningSeats: number | null;
   maxLessonsPerDayPerGroup: number | null;
+  /** Left out to keep what is stored; an API from before the switch refuses it. */
+  generatorKeepsTravelTime?: boolean;
 }
 
 export function useSaveLunchSettings() {

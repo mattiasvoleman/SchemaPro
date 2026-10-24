@@ -516,6 +516,41 @@ Walk the full product loop once, in order:
   engine's `/openapi.json` names `SearchOptions`. Set
   `RAILWAY_DEPLOYMENT_DRAINING_SECONDS` (above); the `CANDIDATE_*` defaults
   need no setting.
+- **Restid i generatorn**: 20261209090000 adds one column,
+  `LunchSettings."generatorKeepsTravelTime"` (boolean, NOT NULL, default
+  false): the Skolregler switch that has the generator keep the walk between
+  the school's skolområden. It changes no row and takes its one lock (ACCESS
+  EXCLUSIVE on `LunchSettings`) NOWAIT in a loop: if the table is not free
+  once in 30 s it stops with nothing changed — `prisma migrate resolve
+  --rolled-back 20261209090000_generatorn_haller_restiden_nar_skolan_slar_pa_den`,
+  then deploy again. The API before the release names only the old columns,
+  so it keeps working between the migration and the deploy; the new API
+  reads the column, so the migration goes in first, then the merge. The
+  engine and the API deploy from the same merge, and the three new optional
+  fields (`siteTravelTimes` and each room's `siteId` in a generation, and
+  `siteId` on a room sent to Optimera salar) reach the engine only once a
+  school has turned the switch on with a travel time written (Optimera
+  salar: one above zero), which nobody can do before the new web is out: so the short window where
+  the API is new and the engine old sends nothing the old engine refuses. A
+  PUT of the Skolregler that leaves the switch out keeps it, so a web from
+  before the release, open in a tab, turns nothing off; and the new web
+  leaves the key out unless the API it read named it, or the admin turned
+  the switch on, so a lunch save never meets the old API's 400
+  (`forbidNonWhitelisted`) and the web and the API may go out in either
+  order. After the deploy the engine's `/openapi.json` names
+  `SiteTravelTime`.
+  **Rolling it back:** the engine before this release refuses the new fields
+  (its request models are `extra="forbid"`: 422), so once a school has turned
+  the switch on, an engine rolled back alone — or one deployed after the API
+  and the web — fails that school's Generera, schemaförslag and Optimera
+  salar, and the web before the release has no switch to turn it off with.
+  Roll the API back first, or with the engine: the API before the release
+  sends neither field. If the API must stay, turn the switch off for every
+  school before the engine goes back (`UPDATE "LunchSettings" SET
+  "generatorKeepsTravelTime" = false WHERE "generatorKeepsTravelTime";`, as
+  the owner), and tell the schools it was. The column itself can stay through
+  a rollback: nothing before the release reads it, and the migration is not
+  undone.
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).
   `GET /health/ready` adds three counts, never names: how many jobs this

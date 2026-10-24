@@ -545,11 +545,12 @@
     skolområden, och ett skolområde kan rymma två skolenheter.
   </p>
   <p>
-    Restiden används på tre ställen. Schemat varnar när en ändring du gör för
+    Restiden används på fyra ställen. Schemat varnar när en ändring du gör för
     hand lämnar en lärare eller elever mindre tid mellan två lektioner på olika
     skolområden än restiden (5.3). Vikarieförslagen säger samma sak om
-    vikariens dag (6.3). Och restiden räknas som arbetstid bredvid
-    undervisningen i belastningen (4.3). Genereringen läser den inte ännu.
+    vikariens dag (6.3). Restiden räknas som arbetstid bredvid
+    undervisningen i belastningen (4.3). Och genereringen håller den, om skolan
+    slår på det bland skolreglerna (5.1).
   </p>
   <div class="note">
     <span class="label">En siffra per par, samma åt båda hållen</span>
@@ -2901,8 +2902,95 @@
   <p>
     <strong>Skolregler</strong> är hårda villkor. De <em>måste</em> uppfyllas.
     De anger garanterad lunchrast för varje klass — inom vilket tidsfönster och
-    hur många minuter — antalet platser i matsalen, och högsta antal lektioner
-    per dag och klass.
+    hur många minuter — antalet platser i matsalen, högsta antal lektioner
+    per dag och klass, och om generatorn ska hålla restiden mellan skolans
+    skolområden.
+  </p>
+  <p id="restid-i-generatorn">
+    <strong>Restid i generatorn.</strong> Har skolan skolområden med restid
+    (3.3) kan genereringen hålla restiden. Slå på
+    <span class="ui">Generatorn håller restiden mellan skolområdena</span>
+    bland skolreglerna och spara. En lärare, eller eleverna i en lektion, som
+    har två lektioner samma dag på olika skolområden får då minst restiden
+    mellan dem. Regeln är avstängd tills skolan slår på den, och en skola som
+    låter den vara får precis samma schema som förut. Den läser samma uppgifter
+    som varningarna: salens skolområde och restiden för paret. En sal utan
+    skolområde, och ett par utan restid, räknas inte.
+  </p>
+  <div class="note">
+    <span class="label">Restiden avrundas uppåt till hela startsteg</span>
+    <p>
+      Generatorn lägger lektionerna med ett startsteg, det största steg som
+      alla skolans tider går jämnt upp i. Börjar och slutar varje lektion på
+      hel- eller halvtimme är steget 30 minuter, och då räknar generatorn en
+      restid på 10 minuter som 30, och en på 40 minuter som 60. Det gör inget schema sämre än det annars
+      hade kunnat bli med det steget, men en vecka som bara gick ihop med
+      exakt 10 minuter kan bli omöjlig. Vägran säger hur stort steget är.
+      Varningarna vid handändringar räknar med skolans egen siffra.
+    </p>
+  </div>
+  <div class="note">
+    <span class="label">Elevernas ombyte kommer före restiden</span>
+    <p>
+      Har en timplanspost minuter före eller efter lektionen, till exempel för
+      ombyte och dusch på idrotten, läggs restiden till dem: klassen duschar,
+      byter om och går sedan. Marginalen mellan lektioner (korridoren) är
+      promenaden inom ett hus. Mellan två skolområden ersätts den av restiden,
+      och det längre av de två gäller.
+    </p>
+  </div>
+  <div class="note">
+    <span class="label">Varje par samma dag, inte bara grannar</span>
+    <p>
+      Generatorn håller restiden mellan varje par lektioner samma dag, inte
+      bara mellan två som ligger intill varandra. Det är samma regel så länge
+      restiderna går ihop, det vill säga att Norra–Södra inte tar längre tid än
+      Norra–Väst plus Väst–Södra. Annars är generatorn strängare än varningen.
+      Den är också strängare när lektionen emellan ligger i en sal utan
+      skolområde, eller på ett skolområde utan restid: varningen räknar då
+      ingen restid alls, men generatorn håller ändå Norra och Södra isär med
+      hela restiden. Vill skolan att generatorn och varningen läser exakt
+      likadant, ge varje sal ett skolområde. Ett schema som generatorn har
+      lagt ger därför ingen restidsvarning för lärarna och grupperna i
+      lektionerna. Elever som lagts till en och en på en handlagd lektion ser
+      generatorn inte, och för dem kan en senare ändring ändå ge en varning.
+    </p>
+  </div>
+  <div class="note">
+    <span class="label">Låsta lektioner är fakta</span>
+    <p>
+      En lektion som generatorn lägger hålls på restidens avstånd från en låst
+      lektion på ett annat skolområde, också från en låst lektion före eller
+      efter schemats dag, till exempel 07:20–08:00 när dagen börjar 08:00.
+      Två låsta lektioner hålls aldrig isär av regeln: har skolan själv låst
+      dem för nära varandra sa varningen det när de lades.
+    </p>
+  </div>
+  <p>
+    Går restiden inte att hålla säger vägran det, för lärarna och för
+    grupperna var för sig, och namnger dem. Motorn mäter också om restiden är
+    orsaken. Går veckan att lägga utan restid står raden först, och den
+    namnger de lärare och grupper som det schemat inte ger restid. Det räcker
+    att släppa restiden för dem, men det är inte säkert att var och en av dem
+    behöver det. Är veckan omöjlig även utan restid prövar motorn varje lärare
+    och grupp för sig, och raden står kvar för dem som inte ens ensamma får
+    sina lektioner att räcka till restiden. Hittar den ingen sådan prövar
+    motorn till sist restiden mot veckans fasta delar, som salar, starttider
+    och låsta lektioner: går restiden inte ihop med dem står raden kvar som
+    omätt, och annars stryks den. En rad som motorn inte hann mäta står också
+    kvar som omätt. Är restiden mätt som orsak står en rad om salstyp eller
+    salsstorlek bredvid den bara om den ensam gör veckan lösbar. Kan lösaren
+    inte peka ut någon orsak alls prövar motorn veckan utan restid, och
+    hittar den då ett schema säger vägran att det är restiden. Hinner lösaren
+    inte klart prövar diagnosen först veckan utan restid, med hela den tid
+    diagnosen har (9), och de andra reglerna får bara den tid som blir över.
+    Hittar den ett schema utan restid säger den det. Annars säger den bara vad
+    den mätte: att restiden är påslagen, och att inget schema hittades utan
+    den heller på så många sekunder. Om restiden är skillnaden är då inte
+    mätt. En körning med restiden avstängd visar det, och en stor skola kan
+    behöva en längre körning med eller utan restid. Tog förberedelserna all
+    tid, så att diagnosen inte hann pröva något, står tidsgränsen utan
+    förklaring.
   </p>
   <p>
     Antalet platser i matsalen räknas mot de klasser som är i skolan den
@@ -2978,8 +3066,9 @@
     <p>
       När ingen lösning hittas inom tidsbudgeten provar motorn att lätta på en
       regel i taget — marginalen mellan lektioner, rasterna, lunchen,
-      matsalsplatserna — med kort budget, och rapporterar vilken som gjorde
-      veckan lösbar. Det är en mätning, inte ett bevis, men det pekar ut var
+      matsalsplatserna och, när generatorn håller den, restiden mellan
+      skolområdena, som då prövas först — med kort budget, och rapporterar
+      vilken som gjorde veckan lösbar. Det är en mätning, inte ett bevis, men det pekar ut var
       man ska titta. Marginalen mellan lektioner är det som oftast fäller
       en full vecka.
     </p>
@@ -3289,6 +3378,14 @@
       begränsningar som gäller salen och ämnet (se 4.4) och ledig på den tiden. En sal som är markerad som otillgänglig
       under <span class="path">Planering › Tillgänglighet</span> på den tiden
       väljs inte.
+    </li>
+    <li>
+      När generatorn håller restiden (5.1) och minst en restid över noll
+      är angiven mellan två skolområden som har salar, flyttas ingen lektion
+      till en sal på ett annat skolområde: generatorn lade den där med
+      restiden i beräkningen. Salar utan skolområde räknas då som en egen
+      grupp, så en lektion i en sådan sal flyttas bara till en annan sal utan
+      skolområde.
     </li>
     <li>
       Lektioner som redan delar sal med en annan lektion på samma tid lämnas
@@ -5738,9 +5835,19 @@
         <td>Läs <span class="ui">Upptäckta konflikter</span>. Ta bort begränsningar som egentligen är önskemål och lägg in dem i optimeringsprofilen i stället.</td>
       </tr>
       <tr>
+        <td class="k">Vägran säger att restiden mellan skolområdena inte går att hålla</td>
+        <td>De namngivna lärarna eller grupperna har lektioner på två skolområden samma dag, och veckan rymmer inte restiden mellan dem, avrundad uppåt till hela startsteg (5.1). Raden säger om motorn mätt att restiden är orsaken. Säger tidsgränsens diagnos att ett schema hittades utan restiden är det samma sak, utan bevis.</td>
+        <td>Låt deras lektioner använda salar på ett skolområde, till exempel med salens årskurser eller en salsregel (4.4), korta restiden under <span class="path">Salar › Skolområden</span> om den är för lång, eller stäng av restiden i generatorn under Skolregler (5.1).</td>
+      </tr>
+      <tr>
         <td class="k">Lösaren hann inte klart</td>
         <td>Problemet är stort men inte nödvändigtvis olösbart.</td>
         <td>Kör om. Har ni ett tidigare schema, höj <span class="ui">Schemastabilitet</span> — då utgår motorn från det och blir betydligt snabbare.</td>
+      </tr>
+      <tr>
+        <td class="k">Lösaren hann inte klart, och restiden mellan skolområdena är påslagen</td>
+        <td>Restiden gör en vecka med lektioner på två skolområden svårare att söka. Om det är restiden som gör att tiden inte räcker visar diagnosens rad bara när den hittade ett schema utan restiden (5.1).</td>
+        <td>Läs raden om restiden. Säger den att ett schema hittades utan restiden är det restiden som är skillnaden: låt fler lektioner använda salar på ett skolområde, till exempel med en salsregel (4.4), och kör om, eller stäng av restiden i generatorn under Skolregler (5.1). Säger den att inget schema hittades utan restiden heller är skillnaden inte mätt. En körning med restiden avstängd visar om den är det, och en stor skola kan behöva en längre körning.</td>
       </tr>
       <tr>
         <td class="k">Läraren ser inget schema</td>

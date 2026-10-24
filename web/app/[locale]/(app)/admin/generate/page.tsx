@@ -857,6 +857,9 @@ export default function GeneratePage() {
                   {t("ruleMaxPerDay")}: {lunchSettings.maxLessonsPerDayPerGroup}
                 </li>
               ) : null}
+              {lunchSettings?.generatorKeepsTravelTime ? (
+                <li className="text-muted-foreground">{t("ruleTravel")}</li>
+              ) : null}
             </ul>
           )}
         </SectionCard>
