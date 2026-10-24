@@ -265,7 +265,11 @@ model User {
   id       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   schoolId String   @db.Uuid
   // `authId` is the Supabase Auth user id (auth.users.id == JWT sub == auth.uid()).
-  authId   String   @unique @db.Uuid
+  // A login has one row per school it belongs to (20261204090000): the
+  // unique key is (authId, schoolId), and app.current_user_id() picks the row
+  // a request names. A second school takes a login only through the
+  // gateway's invitation (trigger Users_a_login_joins_another_school_by_invitation).
+  authId   String   @db.Uuid
   role     UserRole
 
   // --- PII (masked at the NestJS gateway, never sent to the AI engine) ---
@@ -305,6 +309,11 @@ model User {
   /// nedsättning. Rektor and full read them anyway, so the flag is false for
   /// them and for everybody who is not an administrator (CHECK).
   hrRead          Boolean   @default(false)
+  /// When the row took the login it holds now (20261204090000): stamped by
+  /// the trigger Users_login_since_is_the_logins on insert and on a change
+  /// of authId, kept on every other write. A login's default row, when a
+  /// request names no school, is the one that took the login first.
+  loginSince      DateTime  @default(now()) @db.Timestamptz(6)
   createdAt DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt DateTime  @updatedAt @db.Timestamptz(6)
 
@@ -381,6 +390,7 @@ model User {
   roleChanges               UserRoleChange[]       @relation("RoleChangeSubject")
 
   @@unique([schoolId, email])
+  @@unique([authId, schoolId])
   /// The target a tenant-scoped composite foreign key needs. Redundant as an
   /// index — id is already the primary key — and load-bearing as a constraint:
   /// without it no other table can reference (id, schoolId) at all.

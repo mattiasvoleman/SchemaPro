@@ -1664,6 +1664,98 @@ BEGIN
   INSERT INTO "LessonSubstituteNotes" ("schoolId", "calendarLessonId", body) VALUES (m, cl, 'Roller notis');
 END $$;
 
+-- Flera skolor per inloggning (20261204090000): logins with a row in more
+-- than one school, for sections 240-244. A login with no school named
+-- resolves to the row that took the login first ("loginSince", which the
+-- trigger stamps as each row is inserted here, in this list's order), so
+-- "older" below is the row inserted first. A row takes a login another row
+-- holds only with app.login_join naming it (the gateway's invitation), which
+-- the owner sets here row by row.
+--
+--   …0240  FULL at school A (older), LASARE in rls-roller-school
+--   …0241  LASARE at school A (older), FULL in rls-roller-school
+--   …0242  a deactivated admin at school A (older), a teacher in rls-roller-school
+--   …0243  a guardian at school A (older) and in rls-roller-school, a child at each
+--   …0244  a teacher at school A (older) and at school B (rls-fixture-school,
+--          whose staff must sign in with the school account)
+--   …0245  a deactivated teacher at school A (older), a teacher at school B
+--   …0246  a teacher at school A (older) and in rls-roller-school, whose row
+--          there was created before school A's but took the login after it
+--   …0247  a teacher at school A (older), a deactivated teacher at school B
+--   …0248  a pupil at school A (older) and in rls-roller-school, in a class
+--          at each
+DO $$
+DECLARE
+  a uuid := (SELECT id FROM "Schools" WHERE slug <> 'rls-fixture-school' ORDER BY "createdAt" LIMIT 1);
+  b uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-fixture-school');
+  m uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-roller-school');
+  row_id uuid;
+  rec record;
+BEGIN
+  IF EXISTS (SELECT 1 FROM "Users" WHERE "authId" = 'fe000000-0000-4000-8000-000000000240') THEN
+    RETURN;
+  END IF;
+  IF a IS NULL OR b IS NULL OR m IS NULL THEN
+    RAISE EXCEPTION 'flera skolor: schools A, B and rls-roller-school must exist first';
+  END IF;
+
+  FOR rec IN
+    SELECT * FROM (VALUES
+      ('fe000000-0000-4000-8000-000000000240'::uuid, a, 'SCHOOL_ADMIN'::"UserRole", 'FULL'::"AdminProfile",   true,  timestamptz '2026-01-01', 'flera-m1-a'),
+      ('fe000000-0000-4000-8000-000000000240'::uuid, m, 'SCHOOL_ADMIN',             'LASARE',                 true,  timestamptz '2026-02-01', 'flera-m1-m'),
+      ('fe000000-0000-4000-8000-000000000241'::uuid, a, 'SCHOOL_ADMIN',             'LASARE',                 true,  timestamptz '2026-01-01', 'flera-m2-a'),
+      ('fe000000-0000-4000-8000-000000000241'::uuid, m, 'SCHOOL_ADMIN',             'FULL',                   true,  timestamptz '2026-02-01', 'flera-m2-m'),
+      ('fe000000-0000-4000-8000-000000000242'::uuid, a, 'SCHOOL_ADMIN',             'FULL',                   false, timestamptz '2026-01-01', 'flera-m3-a'),
+      ('fe000000-0000-4000-8000-000000000242'::uuid, m, 'TEACHER',                  NULL,                     true,  timestamptz '2026-02-01', 'flera-m3-m'),
+      ('fe000000-0000-4000-8000-000000000243'::uuid, a, 'GUARDIAN',                 NULL,                     true,  timestamptz '2026-01-01', 'flera-g-a'),
+      ('fe000000-0000-4000-8000-000000000243'::uuid, m, 'GUARDIAN',                 NULL,                     true,  timestamptz '2026-02-01', 'flera-g-m'),
+      ('fe000000-0000-4000-8000-000000000244'::uuid, a, 'TEACHER',                  NULL,                     true,  timestamptz '2026-01-01', 'flera-t-a'),
+      ('fe000000-0000-4000-8000-000000000244'::uuid, b, 'TEACHER',                  NULL,                     true,  timestamptz '2026-02-01', 'flera-t-b'),
+      ('fe000000-0000-4000-8000-000000000245'::uuid, a, 'TEACHER',                  NULL,                     false, timestamptz '2026-01-01', 'flera-u-a'),
+      ('fe000000-0000-4000-8000-000000000245'::uuid, b, 'TEACHER',                  NULL,                     true,  timestamptz '2026-02-01', 'flera-u-b'),
+      ('fe000000-0000-4000-8000-000000000246'::uuid, a, 'TEACHER',                  NULL,                     true,  timestamptz '2026-03-01', 'flera-l-a'),
+      ('fe000000-0000-4000-8000-000000000246'::uuid, m, 'TEACHER',                  NULL,                     true,  timestamptz '2025-01-01', 'flera-l-m'),
+      ('fe000000-0000-4000-8000-000000000247'::uuid, a, 'TEACHER',                  NULL,                     true,  timestamptz '2026-01-01', 'flera-v-a'),
+      ('fe000000-0000-4000-8000-000000000247'::uuid, b, 'TEACHER',                  NULL,                     false, timestamptz '2026-02-01', 'flera-v-b'),
+      ('fe000000-0000-4000-8000-000000000248'::uuid, a, 'STUDENT',                  NULL,                     true,  timestamptz '2026-01-01', 'flera-p-a'),
+      ('fe000000-0000-4000-8000-000000000248'::uuid, m, 'STUDENT',                  NULL,                     true,  timestamptz '2026-02-01', 'flera-p-m')
+    ) v(auth_id, school, role, profile, active, created, label)
+  LOOP
+    row_id := gen_random_uuid();
+    PERFORM set_config('app.login_join', row_id::text, true);
+    INSERT INTO "Users" (id, "schoolId", email, "firstName", "lastName", role, "adminProfile", "authId",
+                         "isActive", "invitedAt", "createdAt", "updatedAt")
+    VALUES (row_id, rec.school, rec.label || '@example.invalid', 'Flera', rec.label, rec.role, rec.profile,
+            rec.auth_id, true, rec.created, rec.created, now());
+    IF NOT rec.active THEN
+      UPDATE "Users" SET "isActive" = false WHERE id = row_id;
+    END IF;
+  END LOOP;
+  PERFORM set_config('app.login_join', '', true);
+
+  -- The pupil's classes: a class at A that one of A's pupils is in, and the
+  -- roller school's pupil's (…0112), so that current_user_group_id has a
+  -- different answer at each school.
+  UPDATE "Users" SET "studentGroupId" = (
+      SELECT g.id FROM "StudentGroups" g
+       WHERE g."schoolId" = a AND EXISTS (SELECT 1 FROM "Users" p WHERE p."studentGroupId" = g.id)
+       ORDER BY g.name, g.id LIMIT 1)
+   WHERE "authId" = 'fe000000-0000-4000-8000-000000000248' AND "schoolId" = a;
+  UPDATE "Users" SET "studentGroupId" = coalesce(
+      (SELECT "studentGroupId" FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000112'),
+      (SELECT g.id FROM "StudentGroups" g WHERE g."schoolId" = m ORDER BY g.name, g.id LIMIT 1))
+   WHERE "authId" = 'fe000000-0000-4000-8000-000000000248' AND "schoolId" = m;
+
+  -- The guardian's children: school A's first active pupil, and the
+  -- roller school's pupil (…0112).
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId")
+  SELECT a, g.id, (SELECT id FROM "Users" WHERE "schoolId" = a AND role = 'STUDENT' AND "isActive" ORDER BY "authId" LIMIT 1)
+    FROM "Users" g WHERE g."authId" = 'fe000000-0000-4000-8000-000000000243' AND g."schoolId" = a;
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId")
+  SELECT m, g.id, (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000112')
+    FROM "Users" g WHERE g."authId" = 'fe000000-0000-4000-8000-000000000243' AND g."schoolId" = m;
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.

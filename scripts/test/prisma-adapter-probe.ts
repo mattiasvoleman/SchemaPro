@@ -448,6 +448,111 @@ async function runChecks(
     assert.equal(self?.id, admin.userId);
   });
 
+  // ---- (fs) Flera skolor per inloggning (20261204090000): a login with rows
+  // at two schools, from the RLS fixtures (…0240: FULL at the seeded school,
+  // LASARE in rls-roller-school, the seeded school's row older).
+  {
+    const login = 'fe000000-0000-4000-8000-000000000240';
+    const rows = (
+      await owner.query<{ id: string; schoolId: string; slug: string }>(
+        `SELECT u.id, u."schoolId", s.slug FROM "Users" u JOIN "Schools" s ON s.id = u."schoolId"
+          WHERE u."authId" = $1 ORDER BY u."createdAt"`,
+        [login],
+      )
+    ).rows;
+    assert.equal(rows.length, 2, 'the RLS fixtures have no two-school login (run run-rls-tests.sh first)');
+    const [older, roller] = rows as [(typeof rows)[0], (typeof rows)[0]];
+    const other = (await owner.query<{ id: string }>(`SELECT id FROM "Schools" WHERE slug = 'rls-fixture-school'`)).rows[0]!.id;
+    const asRow = (row: (typeof rows)[0]): AuthenticatedUser => ({
+      authId: login,
+      role: Role.SCHOOL_ADMIN,
+      userId: row.id,
+      schoolId: row.schoolId,
+      adminProfile: row.slug === 'rls-roller-school' ? 'LASARE' : 'FULL',
+      hrRead: false,
+    });
+
+    await check('(fs-a) withVerifiedSubject reads the row at the school it names, the oldest with none, and none at a school the login is not in', async () => {
+      const lookup = (session: { school?: string; closedSchools?: Record<string, string> }) =>
+        api.withVerifiedSubject(login, (db) => db.user.findFirst({ where: { authId: login }, select: { id: true } }), session);
+      assert.equal((await lookup({}))?.id, older.id);
+      assert.equal((await lookup({ school: roller.schoolId }))?.id, roller.id);
+      assert.equal((await lookup({ school: older.schoolId }))?.id, older.id);
+      assert.equal(await lookup({ school: other }), null);
+      // A school the access-token hook closed is never the row.
+      assert.equal((await lookup({ closedSchools: { [older.schoolId]: 'sso_required' } }))?.id, roller.id);
+      assert.equal(await lookup({ school: older.schoolId, closedSchools: { [older.schoolId]: 'sso_required' } }), null);
+    });
+
+    await check('(fs-b) withRls names the principal\'s school in the transaction, and the database answers for that row', async () => {
+      type Seen = { chosen: string | null; school: string | null; may: boolean; claims: string | null };
+      const seen = (user: AuthenticatedUser) =>
+        api.withRls(user, (tx) =>
+          tx.$queryRaw<Seen[]>`
+            SELECT current_setting('app.chosen_school_id', true) AS chosen,
+                   app.current_school_id()::text AS school,
+                   app.current_user_may('PERSONAL', true) AS may,
+                   current_setting('request.jwt.claims', true) AS claims`,
+        );
+      const [atRoller] = await seen(asRow(roller));
+      assert.deepEqual([atRoller!.chosen, atRoller!.school, atRoller!.may], [roller.schoolId, roller.schoolId, false]);
+      const [atOlder] = await seen(asRow(older));
+      assert.deepEqual([atOlder!.chosen, atOlder!.school, atOlder!.may], [older.schoolId, older.schoolId, true]);
+      const closed = { [other]: 'sso_required' };
+      const [withClosed] = await seen({ ...asRow(older), closedSchools: closed });
+      assert.deepEqual(JSON.parse(withClosed!.claims ?? 'null'), { sub: login, role: 'authenticated', rastra_closed_schools: closed });
+      // The setting is the transaction's: nothing of it on the reused connection.
+      const [after] = await api.queryWithRls({ ...admin, schoolId: undefined }, (db) =>
+        db.$queryRaw<{ chosen: string | null }[]>`SELECT current_setting('app.chosen_school_id', true) AS chosen`,
+      );
+      assert.equal(after!.chosen, '');
+    });
+
+    await check('(fs-c) a row given another school\'s login without app.login_join is P2002 on Users_authId_key, as the API before this release read it; with it, the row takes the login', async () => {
+      const pupil = (await owner.query<{ id: string }>(
+        `SELECT id FROM "Users" WHERE "schoolId" = $1 AND role = 'STUDENT' AND "isActive" ORDER BY "createdAt" LIMIT 1`,
+        [fixture.schoolId],
+      )).rows[0]!.id;
+      // A login of another school's only (the roller school's full
+      // administrator): this school's pupil may hold it beside theirs, but
+      // only by invitation. (The two-school login above has a row here
+      // already, and the unique key refuses a second one in one school.)
+      const elsewhere = '00000000-0000-4000-8000-000000000105';
+      const rollback = new Error('rollback');
+      let refused: unknown = null;
+      try {
+        await api.withRls(admin, (tx) => tx.user.update({ where: { id: pupil }, data: { authId: elsewhere } }));
+      } catch (error) {
+        refused = error;
+      }
+      assert.ok(refused instanceof Prisma.PrismaClientKnownRequestError, `refused as ${String(refused)}`);
+      assert.equal((refused as Prisma.PrismaClientKnownRequestError).code, 'P2002');
+      assert.match(JSON.stringify((refused as Prisma.PrismaClientKnownRequestError).meta), /Users_authId_key|authId/);
+      await assert.rejects(
+        api.withRls(admin, async (tx) => {
+          await tx.$executeRaw`SELECT set_config('app.login_join', ${pupil}, true)`;
+          const row = await tx.user.update({ where: { id: pupil }, data: { authId: elsewhere }, select: { authId: true } });
+          assert.equal(row.authId, elsewhere);
+          throw rollback;
+        }),
+        (error) => error === rollback,
+      );
+    });
+
+    await check('(fs-d) the switcher\'s list through the real adapter: both schools, oldest first, the chosen one marked', async () => {
+      const { MySchoolsService } = await import('../../src/users/my-schools.service');
+      const schools = await new MySchoolsService(api).list(asRow(roller));
+      assert.deepEqual(
+        schools.map((one) => [one.schoolId, one.current, one.adminProfile, one.closed]),
+        [
+          [older.schoolId, false, 'FULL', null],
+          [roller.schoolId, true, 'LASARE', null],
+        ],
+      );
+      assert.ok(schools.every((one) => typeof one.schoolName === 'string' && one.schoolName.length > 0));
+    });
+  }
+
   await check('(c) withRls keeps every statement of its callback in one transaction', async () => {
     const txid = async (tx: PrismaClient) =>
       (await tx.$queryRaw<{ txid: string }[]>`SELECT txid_current()::text AS txid`)[0].txid;
