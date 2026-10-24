@@ -1516,6 +1516,132 @@ BEGIN
   VALUES (run, m, 1, 'CLOSE', 'OPTIMAL', '[]');
 END $$;
 
+-- Lektionslogg (20261203090000), sections 230–235: a school where each way
+-- of standing to a lesson has a person — its own teacher on the lesson (A),
+-- its substitute (B), a colleague on none (C), the absent teacher a cover
+-- decision was made for (D), and a teacher the grundschema puts on the
+-- lesson's master but the published lesson does not have (E): in a school
+-- that publishes through a draft, a draft nobody has published — and every
+-- other role, with logs and notes planted as the owner; and another school
+-- with a log and a note nothing here may reach.
+-- Each lesson carries its name in "note", so a section finds it as staff.
+DO $$
+DECLARE
+  s1 uuid;
+  s2 uuid;
+  y uuid;
+  y2 uuid;
+  subj uuid;
+  subj2 uuid;
+  k uuid;
+  k2 uuid;
+  tg uuid;
+  k9 uuid;
+  a uuid;
+  b uuid;
+  c uuid;
+  d uuid;
+  e uuid;
+  p1 uuid;
+  p2 uuid;
+  g1 uuid;
+  g2 uuid;
+  m2 uuid;
+  l1 uuid;
+  l2 uuid;
+  l3 uuid;
+  l4 uuid;
+  l9 uuid;
+  abs uuid;
+BEGIN
+  IF EXISTS (SELECT 1 FROM "Schools" WHERE slug = 'rls-lektionslogg-school') THEN
+    RETURN;
+  END IF;
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
+  VALUES ('RLS Lektionslogg', 'rls-lektionslogg-school', 'Europe/Stockholm', now()) RETURNING id INTO s1;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s1, 'Lektionslogg i år', current_date - 30, current_date + 300, true, now()) RETURNING id INTO y;
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s1, 'Logg ämne', 'RLSLL', now()) RETURNING id INTO subj;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s1, y, 'LL7A', 7, now()) RETURNING id INTO k;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s1, y, 'LL7B', 7, now()) RETURNING id INTO k2;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "updatedAt")
+  VALUES (s1, y, 'LL Spanska', 7, 'TEACHING_GROUP', now()) RETURNING id INTO tg;
+
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt") VALUES
+    (s1, 'lektionslogg-admin@example.invalid', 'Logg', 'Admin', 'SCHOOL_ADMIN', 'FULL', '00000000-0000-4000-8000-000000001300', true, now()),
+    (s1, 'lektionslogg-lasare@example.invalid', 'Logg', 'Läsare', 'SCHOOL_ADMIN', 'LASARE', '00000000-0000-4000-8000-000000001308', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'lektionslogg-a@example.invalid', 'Logg', 'Ägare', 'TEACHER', '00000000-0000-4000-8000-000000001301', true, now()) RETURNING id INTO a;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'lektionslogg-b@example.invalid', 'Logg', 'Vikarie', 'TEACHER', '00000000-0000-4000-8000-000000001302', true, now()) RETURNING id INTO b;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'lektionslogg-c@example.invalid', 'Logg', 'Kollega', 'TEACHER', '00000000-0000-4000-8000-000000001303', true, now()) RETURNING id INTO c;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'lektionslogg-d@example.invalid', 'Logg', 'Frånvarande', 'TEACHER', '00000000-0000-4000-8000-000000001309', true, now()) RETURNING id INTO d;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'lektionslogg-e@example.invalid', 'Logg', 'Grundschema', 'TEACHER', '00000000-0000-4000-8000-000000001310', true, now()) RETURNING id INTO e;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES (s1, 'lektionslogg-p1@example.invalid', 'Logg', 'Elev Ett', 'STUDENT', '00000000-0000-4000-8000-000000001304', true, k, now()) RETURNING id INTO p1;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES (s1, 'lektionslogg-p2@example.invalid', 'Logg', 'Elev Två', 'STUDENT', '00000000-0000-4000-8000-000000001306', true, k2, now()) RETURNING id INTO p2;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'lektionslogg-g1@example.invalid', 'Logg', 'Vårdnadshavare Ett', 'GUARDIAN', '00000000-0000-4000-8000-000000001305', true, now()) RETURNING id INTO g1;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'lektionslogg-g2@example.invalid', 'Logg', 'Vårdnadshavare Två', 'GUARDIAN', '00000000-0000-4000-8000-000000001307', true, now()) RETURNING id INTO g2;
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES (s1, g1, p1), (s1, g2, p2);
+  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (s1, tg, p1);
+
+  INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+  VALUES (s1, y, subj, k2, e, 2, '09:00', '10:00', now()) RETURNING id INTO m2;
+  -- L1: 7A's, A its teacher and B its substitute.
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+  VALUES (s1, subj, k, current_date + 1, (current_date + 1) + time '07:00', (current_date + 1) + time '08:00', 'LL-1', now()) RETURNING id INTO l1;
+  -- L2: 7B's, of a master lesson the grundschema gives E; the published lesson has only B, its substitute.
+  INSERT INTO "CalendarLessons" ("schoolId", "masterLessonId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+  VALUES (s1, m2, subj, k2, current_date + 2, (current_date + 2) + time '07:00', (current_date + 2) + time '08:00', 'LL-2', now()) RETURNING id INTO l2;
+  -- L3: 7B's, covered by B for D's absence (a cover decision names D).
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+  VALUES (s1, subj, k2, current_date + 3, (current_date + 3) + time '07:00', (current_date + 3) + time '08:00', 'LL-3', now()) RETURNING id INTO l3;
+  -- L4: the teaching group's (P1 is in it), A its teacher.
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+  VALUES (s1, subj, tg, current_date + 4, (current_date + 4) + time '07:00', (current_date + 4) + time '08:00', 'LL-4', now()) RETURNING id INTO l4;
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES
+    (s1, l1, a, 'LEAD'), (s1, l1, b, 'SUBSTITUTE'), (s1, l2, b, 'SUBSTITUTE'), (s1, l3, b, 'SUBSTITUTE'), (s1, l4, a, 'LEAD');
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt")
+  VALUES (s1, d, (current_date + 3) + time '00:00', (current_date + 4) + time '00:00') RETURNING id INTO abs;
+  INSERT INTO "TeacherAbsenceCovers" ("schoolId", "absenceId", "calendarLessonId", "absentTeacherId", decision, "substituteId", "removedTeachers")
+  VALUES (s1, abs, l3, d, 'SUBSTITUTE', b, jsonb_build_array(jsonb_build_object('teacherId', d, 'role', 'LEAD')));
+
+  -- Written by the owner, so the trigger keeps the writer it is given.
+  INSERT INTO "LessonLogs" ("schoolId", "calendarLessonId", topic, homework, "writtenById") VALUES
+    (s1, l1, 'LL ett', 'Läxa ett', a),
+    (s1, l2, 'LL två', NULL, e),
+    (s1, l4, NULL, 'Läxa fyra', a);
+  INSERT INTO "LessonSubstituteNotes" ("schoolId", "calendarLessonId", body, "writtenById") VALUES
+    (s1, l1, 'LL notis ett', a),
+    (s1, l2, 'LL notis två', e),
+    (s1, l3, 'LL notis tre', d);
+
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
+  VALUES ('RLS Lektionslogg annan', 'rls-lektionslogg-annan', 'Europe/Stockholm', now()) RETURNING id INTO s2;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s2, 'Annan i år', current_date - 30, current_date + 300, true, now()) RETURNING id INTO y2;
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s2, 'Annat ämne', 'RLSLA', now()) RETURNING id INTO subj2;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s2, y2, 'Annan 7A', 7, now()) RETURNING id INTO k9;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt")
+  VALUES (s2, 'lektionslogg-annan-admin@example.invalid', 'Annan', 'Admin', 'SCHOOL_ADMIN', 'FULL', '00000000-0000-4000-8000-000000001311', true, now());
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+  VALUES (s2, subj2, k9, current_date + 1, (current_date + 1) + time '07:00', (current_date + 1) + time '08:00', 'LL-9', now()) RETURNING id INTO l9;
+  -- And one with nothing on it: a key to it from this school is the composite key's to refuse.
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+  VALUES (s2, subj2, k9, current_date + 2, (current_date + 2) + time '07:00', (current_date + 2) + time '08:00', 'LL-9b', now());
+  INSERT INTO "LessonLogs" ("schoolId", "calendarLessonId", topic) VALUES (s2, l9, 'LL annan');
+  INSERT INTO "LessonSubstituteNotes" ("schoolId", "calendarLessonId", body) VALUES (s2, l9, 'LL annan notis');
+END $$;
+
 -- The matrix school's lesson log and note (Lektionslogg, 20261203090000), so the role
 -- matrix (section 116) has a row of each to probe. A block of its own: on a database that
 -- ran main's fixtures, the school's block has already returned.
