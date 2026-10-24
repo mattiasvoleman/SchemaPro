@@ -11,6 +11,7 @@ import {
   useLeaveRequestActions,
   useLeaveRequests,
   useMyChildren,
+  type GuardianChild,
 } from "@/lib/guardian-queries";
 import { lastLeaveDay, leaveRequestError } from "@/lib/leave-errors";
 import { LEAVE_STATUS_VARIANT } from "@/lib/status-variants";
@@ -86,9 +87,13 @@ const lazyConfirmDialog = () =>
   lazy(() => import("@/components/ui/confirm-dialog").then((module) => ({ default: module.ConfirmDialog })));
 let ConfirmDialog = lazyConfirmDialog();
 
-/** The guardian's own day: before 02:00 in Sweden UTC is still yesterday. */
-function todayISO(): string {
-  return toDateString(new Date());
+/**
+ * Today for a child: its school's day as the gateway said (schoolToday), the
+ * browser's own only from a gateway that did not say one. The gateway holds a
+ * report and a leave to the school's day, and a browser abroad is on another.
+ */
+function todayFor(child: GuardianChild | undefined): string {
+  return child?.schoolToday ?? toDateString(new Date());
 }
 
 export default function GuardianPage() {
@@ -113,7 +118,8 @@ export default function GuardianPage() {
   const leaves = leavesQuery.data ?? [];
 
   const [childId, setChildId] = useState<string>("");
-  const [date, setDate] = useState(todayISO());
+  // The dates are null until the guardian picks one: the child's today.
+  const [date, setDate] = useState<string | null>(null);
   const [fullDay, setFullDay] = useState(true);
   const [startTime, setStartTime] = useState("08:00");
   const [endTime, setEndTime] = useState("12:00");
@@ -121,8 +127,8 @@ export default function GuardianPage() {
   const [note, setNote] = useState("");
 
   const [leaveChildId, setLeaveChildId] = useState<string>("");
-  const [leaveStart, setLeaveStart] = useState(todayISO());
-  const [leaveEnd, setLeaveEnd] = useState(todayISO());
+  const [leaveStart, setLeaveStart] = useState<string | null>(null);
+  const [leaveEnd, setLeaveEnd] = useState<string | null>(null);
   const [leaveReason, setLeaveReason] = useState("");
 
   // The report a confirmation is about stays set while the dialog closes, so
@@ -142,6 +148,11 @@ export default function GuardianPage() {
   const activeChildren = (children ?? []).filter((child) => child.isActive);
   const selectedChildId = childId || (children?.[0]?.id ?? "");
   const selectedLeaveChildId = leaveChildId || (children?.[0]?.id ?? "");
+  const reportToday = todayFor(childById.get(selectedChildId));
+  const reportDate = date ?? reportToday;
+  const leaveToday = todayFor(childById.get(selectedLeaveChildId));
+  const leaveFrom = leaveStart ?? leaveToday;
+  const leaveTo = leaveEnd ?? leaveToday;
 
   const childName = (id: string) => {
     const child = childById.get(id);
@@ -169,7 +180,7 @@ export default function GuardianPage() {
     try {
       await absenceActions.report.mutateAsync({
         studentId: selectedChildId,
-        date,
+        date: reportDate,
         ...(fullDay ? {} : { startTime, endTime }),
         type,
         ...(note.trim() ? { note: note.trim() } : {}),
@@ -186,8 +197,8 @@ export default function GuardianPage() {
     try {
       await leaveActions.request.mutateAsync({
         studentId: selectedLeaveChildId,
-        startDate: leaveStart,
-        endDate: leaveEnd,
+        startDate: leaveFrom,
+        endDate: leaveTo,
         reason: leaveReason.trim(),
       });
       toast.success(t("leaveSubmitted"));
@@ -303,8 +314,8 @@ export default function GuardianPage() {
                 <DateField
                   label={t("date")}
                   id="absence-date"
-                  min={todayISO()}
-                  value={date}
+                  min={reportToday}
+                  value={reportDate}
                   onChange={(value) => setDate(value)}
                 />
               </FormField>
@@ -351,7 +362,7 @@ export default function GuardianPage() {
             <Button
               className="w-full"
               onClick={doReport}
-              disabled={absenceActions.report.isPending || !selectedChildId || !date}
+              disabled={absenceActions.report.isPending || !selectedChildId || !reportDate}
             >
               {absenceActions.report.isPending ? (
                 <>
@@ -399,7 +410,9 @@ export default function GuardianPage() {
                         <Badge variant="secondary">{t(`type${report.type}`)}</Badge>
                       </div>
                     </div>
-                    {report.date.slice(0, 10) >= todayISO() ? (
+                    {/* The gateway says (removable): its reporter, from the
+                        school's today on, wherever the browser is. */}
+                    {(report.removable ?? report.date.slice(0, 10) >= todayFor(childById.get(report.studentId))) ? (
                       <Button
                         size="icon"
                         variant="ghost"
@@ -433,8 +446,8 @@ export default function GuardianPage() {
                 <DateField
                   label={t("from")}
                   id="leave-start"
-                  min={todayISO()}
-                  value={leaveStart}
+                  min={leaveToday}
+                  value={leaveFrom}
                   onChange={(value) => setLeaveStart(value)}
                 />
               </FormField>
@@ -442,9 +455,9 @@ export default function GuardianPage() {
                 <DateField
                   label={t("to")}
                   id="leave-end"
-                  min={leaveStart}
-                  max={lastLeaveDay(leaveStart)}
-                  value={leaveEnd}
+                  min={leaveFrom}
+                  max={lastLeaveDay(leaveFrom)}
+                  value={leaveTo}
                   onChange={(value) => setLeaveEnd(value)}
                 />
               </FormField>
