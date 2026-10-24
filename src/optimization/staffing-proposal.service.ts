@@ -1075,8 +1075,16 @@ export class StaffingProposalService {
       ) {
         return {};
       }
+      // Delade lektioner: a share's teacher is excluded because they already
+      // teach some of the row's lessons, not because their post changes; the
+      // dialog's "bemanna för hand" would be refused (TEACHER_ON_POST).
+      const sharing = new Set((plannedRow.row.shares ?? []).map((share) => share.teacherId));
       const could = plannedRow.excluded.filter(
-        (id) => id !== plannedRow.co && couldTakeByHand(id, plannedRow) && (!plan.respect || plannedRow.eligible.includes(id)),
+        (id) =>
+          id !== plannedRow.co &&
+          !sharing.has(id) &&
+          couldTakeByHand(id, plannedRow) &&
+          (!plan.respect || plannedRow.eligible.includes(id)),
       );
       return could.length > 0 ? { excludedChanging: could } : {};
     }

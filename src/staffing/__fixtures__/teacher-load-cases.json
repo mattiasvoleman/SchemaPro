@@ -9257,8 +9257,8 @@
           {
             "subjectId": "sv-subject",
             "subjectName": "Svenska",
-            "unstaffedCount": 1,
-            "demandedMinutesPerWeek": 120,
+            "unstaffedCount": 2,
+            "demandedMinutesPerWeek": 180,
             "qualifiedRemainingMinutesPerWeek": 840,
             "qualifiedTeacherCount": 1,
             "qualifiedNoTargetCount": 0,

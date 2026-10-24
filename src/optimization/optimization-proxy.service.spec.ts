@@ -5835,7 +5835,7 @@ describe('OptimizationProxyService', () => {
         tx.staffingPolicy.findUnique.mockResolvedValue({ unstaffedGeneration: 'REFUSE' });
         tx.teachingRequirement.findMany.mockImplementation((query: Query) =>
           Promise.resolve(
-            query.where && 'teacherId' in query.where
+            query.where && 'OR' in query.where
               ? [{ id: REQ_ID, subject: { name: 'Matematik' }, studentGroup: { name: '7A' } }]
               : [],
           ),
@@ -6904,7 +6904,8 @@ describe('OptimizationProxyService', () => {
     const unstaffed = () =>
       tx.teachingRequirement.findMany.mockImplementation((query: Query) =>
         Promise.resolve(
-          query.where && 'teacherId' in query.where
+          // The unstaffed read: no lead, or a share nobody teaches.
+          query.where && 'OR' in query.where
             ? [
                 { id: SV_7B, subject: { name: 'Svenska' }, studentGroup: { name: '7B' } },
                 { id: MA_7A, subject: { name: 'Matematik' }, studentGroup: { name: '7A' } },
@@ -6973,7 +6974,12 @@ describe('OptimizationProxyService', () => {
 
       await expect(refusalOf()).resolves.toBeNull();
       expect(tx.teachingRequirement.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { academicYearId: ACADEMIC_YEAR, teacherId: null } }),
+        expect.objectContaining({
+          where: {
+            academicYearId: ACADEMIC_YEAR,
+            OR: [{ teacherId: null }, { shares: { some: { teacherId: null } } }],
+          },
+        }),
       );
     });
 

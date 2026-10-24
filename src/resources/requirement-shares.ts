@@ -106,6 +106,18 @@ export async function storedSharesOf(tx: PrismaClient, requirementId: string): P
   });
 }
 
+/**
+ * Locks the row FOR NO KEY UPDATE before its shares are replaced: the UPDATE
+ * that follows takes the same lock, so this moves it a statement earlier and
+ * inverts no order, and a second replacing write waits for the first to
+ * commit and then deletes what it wrote.
+ */
+export async function lockPostForShares(tx: PrismaClient, requirementId: string): Promise<void> {
+  await tx.$queryRaw`
+    SELECT "id" FROM "TeachingRequirements" WHERE "id" = ${requirementId}::uuid FOR NO KEY UPDATE
+  `;
+}
+
 /** Deletes a row's shares: the first of a replacing write's three statements. */
 export async function clearShares(tx: PrismaClient, requirementId: string): Promise<void> {
   await tx.teachingRequirementShare.deleteMany({ where: { requirementId } });

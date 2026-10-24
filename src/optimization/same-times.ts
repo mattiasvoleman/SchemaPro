@@ -113,6 +113,11 @@ export type MirrorJudgement =
 /** The refusals' codes, which the engine's catalogue renders (messages.py). */
 export const BLOCK_SAME_TIMES_DIFFER = 'BLOCK_SAME_TIMES_DIFFER';
 export const BLOCK_SAME_TIMES_TEACHERS = 'BLOCK_SAME_TIMES_TEACHERS';
+/**
+ * Two members of one parallel block whose lessons are both split between
+ * teachers (delade lektioner): refused by the proxy, see fetchAndAnonymize.
+ */
+export const BLOCK_MEMBERS_SPLIT = 'BLOCK_MEMBERS_SPLIT';
 /** A post of either block whose lessons are split between teachers (see the header). */
 export const BLOCK_SAME_TIMES_SPLIT_LESSONS = 'BLOCK_SAME_TIMES_SPLIT_LESSONS';
 /** The engine's own, for two posts of one block with one teacher. */

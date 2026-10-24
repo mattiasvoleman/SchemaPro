@@ -409,7 +409,8 @@ vi.mock("@/lib/staffing-queries", () => ({
 // Delade lektioner: the shares read, from its own module; the grouping is real.
 vi.mock("@/lib/requirement-shares", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/requirement-shares")>()),
-  useRequirementShares: () => state.shares,
+  // react-query's isSuccess, which the page waits on before it offers to split.
+  useRequirementShares: () => ({ ...state.shares, isSuccess: !state.shares.isLoading && !state.shares.isError }),
 }));
 
 // Mål mode's reads, from the hooks file the lazily loaded module imports.
@@ -2711,6 +2712,46 @@ describe("Delade lektioner in the cell dialog", () => {
     fireEvent.change(lessons, { target: { value: "2" } });
     expect(await screen.findByText("part(Bo Lind|2|3|120|67)")).toBeInTheDocument();
     expect(saveButton().disabled).toBe(false);
+  });
+
+  it("will not save a row added without a teacher, and saves it once one is chosen", async () => {
+    const user = await open();
+    await user.click(screen.getByRole("button", { name: "shares.open" }));
+    // The new row names nobody: unsaveable, and said why.
+    expect(await screen.findByText("problem.NO_TEACHER")).toBeInTheDocument();
+    expect(saveButton().disabled).toBe(true);
+    // The share row's picker ("teacher"), after the lead's and the medlärare's.
+    const pickers = screen.getAllByRole("combobox", { name: "teacher" });
+    await user.click(pickers[pickers.length - 1]!);
+    await user.click(screen.getByRole("option", { name: /Bo Lind/ }));
+    expect(await screen.findByText("part(Bo Lind|1|3|60|33)")).toBeInTheDocument();
+    expect(saveButton().disabled).toBe(false);
+    await user.click(saveButton());
+    expect((updateMock.mock.calls[0][0] as Record<string, unknown>).shares).toEqual([{ teacherId: "t-bo", lessons: 1 }]);
+  });
+
+  it("keeps a share whose teacher was deleted as it was, saved back with no teacher", async () => {
+    state.shares = loaded([{ requirementId: "r-so", teacherId: null, lessons: 1, minutes: 60 }]);
+    const user = await open();
+    expect(await screen.findByText("part(notAssigned|1|3|60|33)")).toBeInTheDocument();
+    await user.click(saveButton());
+    expect((updateMock.mock.calls[0][0] as Record<string, unknown>).shares).toEqual([{ teacherId: null, lessons: 1 }]);
+  });
+
+  it("counts teachers, not rows, in the cell", () => {
+    // Bo has two rows of the post's shares, one per length: still one more teacher.
+    state.shares = loaded([
+      { requirementId: "r-so", teacherId: "t-bo", lessons: 1, minutes: 60 },
+      { requirementId: "r-so", teacherId: "t-bo", lessons: 1, minutes: 40 },
+    ]);
+    render(<RequirementsPage />);
+    expect(within(screen.getByLabelText(CELL)).getByText(/A\. Svensson \+1$/)).toBeInTheDocument();
+  });
+
+  it("does not offer to split a post while the shares are still being read", async () => {
+    state.shares = { data: undefined, isLoading: true, isError: false } as never;
+    await open();
+    expect(screen.queryByRole("button", { name: "shares.open" })).not.toBeInTheDocument();
   });
 
   it("sends [] when every row is removed, giving the lead every lesson again", async () => {

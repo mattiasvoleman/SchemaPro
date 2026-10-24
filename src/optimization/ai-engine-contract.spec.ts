@@ -794,6 +794,21 @@ describe('AI engine wire contract', () => {
     expect(written).toEqual(['t3']);
   });
 
+  it('delade lektioner: sends a block with one split member, and refuses one with two by name, before the engine', async () => {
+    const shared = (teacherId: string) => ({ lessonsPerWeek: 2, shares: [{ teacherId, lessons: 1, minutes: 60 }] });
+    // One split member: its lessons laid against the other's in any order, so sent.
+    const one = await buildPayload({ blockId: 'b1', ...shared('t3') }, [], [member({ blockId: 'b1', lessonsPerWeek: 2 })], named);
+    const sent = one['requirements'] as Array<Record<string, unknown>>;
+    expect(sent.map((r) => r['blockId'] !== undefined)).toEqual([true, true]);
+    expect(sent[0]!['lessonTeacherIds']).toHaveLength(2);
+
+    // Two: the block's k-th lessons tie one teacher's to one particular other's.
+    await expect(
+      buildPayload({ blockId: 'b1', ...shared('t3') }, [], [member({ blockId: 'b1', ...shared('t4') })], named),
+    ).rejects.toMatchObject({ response: { code: 'BLOCK_MEMBERS_SPLIT', params: { block: 'Språkval åk 7' } } });
+    expect(lastPost).not.toHaveBeenCalled();
+  });
+
   it('sends every member of a block the block’s one anonymous id, and nothing else new', async () => {
     const payload = await buildPayload({ blockId: 'b1' }, [], [member({ blockId: 'b1' })], named);
     const requirements = payload['requirements'] as Array<Record<string, unknown>>;

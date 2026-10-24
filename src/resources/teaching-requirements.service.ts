@@ -20,6 +20,7 @@ import {
   SHARE_SELECT,
   clearShares,
   insertShares,
+  lockPostForShares,
   judgedShares,
   sharesOfRequest,
   sharesOfYear,
@@ -410,7 +411,14 @@ export class TeachingRequirementsService {
 
         // The stored shares go first, the new ones after the row: each
         // statement then meets a pair the trigger accepts (requirement-shares.ts).
-        if (sharesWrite !== null) await clearShares(tx, id);
+        // The row is locked first, at the point in the order the UPDATE below
+        // would take it anyway: two PATCHes replacing one row's shares queue,
+        // and the second deletes what the first wrote rather than the list it
+        // read — never the union of both.
+        if (sharesWrite !== null) {
+          await lockPostForShares(tx, id);
+          await clearShares(tx, id);
+        }
         const updated = await tx.teachingRequirement.update({
           where: { id },
           data: {

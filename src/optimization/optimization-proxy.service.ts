@@ -28,6 +28,7 @@ import {
   BLOCK_MEMBERS_SHARE_TEACHER,
   BLOCK_SAME_TIMES_DIFFER,
   BLOCK_SAME_TIMES_SPLIT_LESSONS,
+  BLOCK_MEMBERS_SPLIT,
   mirrorLessons,
   planMirror,
   sameTimesLinks,
@@ -37,7 +38,7 @@ import {
   type SameTimesRow,
 } from './same-times';
 import { canonicalShape, lessonMinutesOf } from '../common/lesson-lengths';
-import { hasShares, lessonTeachersOf, type LessonShare } from '../common/lesson-shares';
+import { canonicalShares, hasShares, lessonTeachersOf, type LessonShare } from '../common/lesson-shares';
 import { effectiveDistribution, hasDistributionRule, type DistributionRule } from '../common/subject-distribution';
 import { minutesOf } from '../common/solver-grid';
 import { lockedWeekdaySets, type YearSpan } from '../common/teacher-day';
@@ -360,9 +361,16 @@ function splitLessonsOf(
   return { requirementIds: new Set(split.map((requirement) => requirement.id)), realTeacher, soleTeacher };
 }
 
-/** A row's shares as one string, '' for none: what a write compares with its demand's. */
+/**
+ * A row's shares as one string, '' for none: what a write compares with its
+ * demand's. Canonical first (canonicalShares), since the read's order does not
+ * decide between two teacherless shares of one length, which two deleted
+ * teachers leave behind: two reads of the same rows must give one key.
+ */
 export function shareKeyOf(shares: readonly LessonShare[] | undefined): string {
-  return (shares ?? []).map((share) => `${share.teacherId ?? '-'}:${share.lessons}x${share.minutes}`).join(',');
+  return canonicalShares(shares ?? [])
+    .map((share) => `${share.teacherId ?? '-'}:${share.lessons}x${share.minutes}`)
+    .join(',');
 }
 
 /** A preserved master as the fetch reads it, minus its named pupils. */
@@ -2323,6 +2331,42 @@ export class OptimizationProxyService {
       for (const leaderId of judgement.plan.adults.keys()) leaderPlans.set(leaderId, judgement.plan);
     }
 
+    /*
+     * Delade lektioner in a parallel block: the engine starts the k-th lesson
+     * of each member with the k-th of the others, which loses nothing while a
+     * member's lessons are interchangeable — one teacher's, or one member
+     * split and the rest each one teacher's, whose lessons can be laid
+     * against the split one's in any order. Two members split between
+     * teachers are not: Anna's lesson tied to Carl's where only Anna's beside
+     * Dana's fits refuses a week that has a timetable. So such a block is
+     * refused by name before anything is sent, as the engine refuses a block
+     * it cannot hold.
+     */
+    let splitBlockRefusal: HttpException | null = null;
+    for (const blockId of blocks.sent) {
+      const split = rawRequirements.filter(
+        (r) => r.blockId === blockId && new Set(teachersLeftOf.get(r.id) ?? []).size > 1,
+      );
+      if (split.length < 2) continue;
+      const [first, second] = [...split].sort((a, b) => (a.id < b.id ? -1 : 1));
+      const params = {
+        block: nameById.get(blockId) ?? blockId,
+        requirement: nameById.get(first!.id) ?? first!.id,
+        other: nameById.get(second!.id) ?? second!.id,
+      };
+      splitBlockRefusal ??= new HttpException(
+        {
+          message:
+            `${params.block}: ${params.requirement} and ${params.other} both have their lessons split between ` +
+            'teachers, and the lessons of a block are placed together one by one. Give one of them one teacher ' +
+            'again, or take it out of the block.',
+          code: BLOCK_MEMBERS_SPLIT,
+          params,
+        },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
     const requirements: AnonymousRequirement[] = rawRequirements.flatMap((r) => {
       // A mirrored post is written at its leader post's times, never sent.
       if (mirroredIds.has(r.id)) return [];
@@ -3078,7 +3122,8 @@ export class OptimizationProxyService {
       blockAnonMap,
       blockRefusal,
       mirrors,
-      sameTimesRefusal,
+      // The two ways a block cannot be held, answered the same way.
+      sameTimesRefusal: sameTimesRefusal ?? splitBlockRefusal,
       // The free-day wishes, for what the finished timetable is read against
       // (unkeptFreeDayWishes): every rule that states one, sent to the engine
       // or not — a teacher who teaches nothing keeps theirs trivially. The

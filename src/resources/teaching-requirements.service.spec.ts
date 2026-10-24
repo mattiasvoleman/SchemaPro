@@ -1343,6 +1343,13 @@ describe('TeachingRequirementsService', () => {
       );
     };
     const order = (mock: jest.Mock): number => mock.mock.invocationCallOrder[0] ?? Number.NaN;
+    /** The row lock a replacing write takes before it deletes (lockPostForShares). */
+    const POST_LOCK = /SELECT "id" FROM "TeachingRequirements" WHERE "id" = \?::uuid FOR NO KEY UPDATE/;
+    beforeEach(() => {
+      queryRaw.mockImplementation((...call: unknown[]) =>
+        POST_LOCK.test(rawSql(call)) ? Promise.resolve([{ id: REQUIREMENT_ID }]) : Promise.resolve(lockingRead(YEARS, years, call)),
+      );
+    });
 
     it('creates the row first and its shares after it, judged and with the uniform row’s length filled in', async () => {
       tx.teachingRequirement.create.mockResolvedValue(ROW);
@@ -1407,6 +1414,9 @@ describe('TeachingRequirementsService', () => {
       );
 
       expect(tx.teachingRequirementShare.deleteMany).toHaveBeenCalledWith({ where: { requirementId: REQUIREMENT_ID } });
+      // The row locked first, so a second replacing write queues behind this one.
+      expect(POST_LOCK.test(rawSql(queryRaw.mock.calls[0]!))).toBe(true);
+      expect(queryRaw.mock.invocationCallOrder[0]!).toBeLessThan(order(tx.teachingRequirementShare.deleteMany));
       expect(order(tx.teachingRequirementShare.deleteMany)).toBeLessThan(order(tx.teachingRequirement.update));
       expect(order(tx.teachingRequirement.update)).toBeLessThan(order(tx.teachingRequirementShare.createMany));
       expect(updated.shares).toEqual([{ teacherId: BO, lessons: 2, minutes: 60 }]);

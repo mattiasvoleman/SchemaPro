@@ -825,6 +825,30 @@ describe('StaffingProposalService.propose', () => {
       expect(masked.assignments.map((a) => a.requirementId)).toEqual(full.assignments.map((a) => a.requirementId));
     });
 
+    it('delade lektioner: never offers a share\'s teacher the row\'s lead, and charges the lead only the lessons left', async () => {
+      const shared = (rows: Record<string, Row[]>) => {
+        const ma8 = rows['teachingRequirement']!.find((row) => row['id'] === R_MA8)!;
+        ma8['shares'] = [{ teacherId: BO, lessons: 1, minutes: ma8['minutesPerLesson'] }];
+        return rows;
+      };
+      const sentFor = async (rows: Record<string, Row[]>) => {
+        const { service, sent } = setup(rows);
+        await service.propose(ask({ onlyUnstaffed: false, respectQualifications: false }), admin());
+        return sent()[0]!;
+      };
+      const plain = await sentFor(schoolRows());
+      const split = await sentFor(shared(schoolRows()));
+      const before = sentRow(plain, R_MA8, schoolRows());
+      const after = sentRow(split, R_MA8, schoolRows());
+      expect(before.excludedTeacherIds).toBeUndefined();
+      // Bo is the second staff member by id (Anna, Bo, …): excluded on Ma 8A alone.
+      expect(after.excludedTeacherIds).toEqual([split.teachers[1]!.id]);
+      expect(sentRow(split, R_SV8, schoolRows()).excludedTeacherIds).toBeUndefined();
+      // The lead is charged the lessons the share leaves, one fewer than the row's.
+      const lessons = schoolRows()['teachingRequirement']!.find((row) => row['id'] === R_MA8)!['lessonsPerWeek'] as number;
+      expect(after.chargeTenths).toBe(Math.round((before.chargeTenths * (lessons - 1)) / lessons));
+    });
+
     it('leaves a dated row such a post leads where it is, and a spring row excludes a post that halves in January', async () => {
       const dated = (rows: Record<string, Row[]>) => {
         const list = rows['teachingRequirement']!;
