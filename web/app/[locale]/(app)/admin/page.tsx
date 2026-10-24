@@ -28,7 +28,10 @@ export default async function AdminDashboardPage() {
   const locale = await getLocale();
   const session = await getSession();
   const cookieStore = await cookies();
-  const supabase = createClient(cookieStore);
+  // The school the session read its profile at (Flera skolor per inloggning):
+  // also a school the browser chose that it can no longer use, which the
+  // session read again as the login's oldest.
+  const supabase = createClient(cookieStore, { school: session?.namedSchool ?? null });
 
   const today = toDateString(new Date());
   const weekAgo = toDateString(new Date(Date.now() - 7 * 86_400_000));

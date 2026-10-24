@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
 import type { GuardianChild } from "@/lib/guardian-queries";
+import type { MySchool } from "@/lib/types";
 import GuardianPage from "./page";
 
 /**
@@ -23,6 +24,8 @@ const state = vi.hoisted(() => ({
   reports: [] as Record<string, unknown>[],
   leaves: [] as Record<string, unknown>[],
   requestLeave: vi.fn(),
+  /** The login's schools (Flera skolor per inloggning); none: one school. */
+  schools: [] as MySchool[],
 }));
 
 vi.mock("@/components/profile-context", () => ({
@@ -38,7 +41,13 @@ vi.mock("@/components/profile-context", () => ({
       studentGroupId: null,
     },
     school: null,
+    schools: state.schools,
   }),
+}));
+vi.mock("@/components/guardian/other-schools", () => ({
+  OtherSchools: ({ schools }: { schools: MySchool[] }) => (
+    <p>other-schools {schools.map((school) => school.schoolName).join(",")}</p>
+  ),
 }));
 // "Gallrat före": nothing gallrat in these rows.
 vi.mock("@/lib/retention-queries", () => ({ usePurgedBefore: () => ({ of: () => null }) }));
@@ -88,6 +97,7 @@ vi.mock("next-intl", () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  state.schools = [];
   state.reports = [];
   state.childrenAskedFor = [];
   state.leaves = [];
@@ -242,5 +252,41 @@ describe("the guardian's delete confirmation", () => {
     await user.click(screen.getByRole("button", { name: "guardian.deleteReportNamed" }));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("common.confirmLoadFailed"));
     expect(toast.error).not.toHaveBeenCalledWith(expect.stringContaining("dynamically imported module"));
+  });
+});
+
+describe("a guardian with children at another school (Flera skolor per inloggning)", () => {
+  const school = (name: string, extra: Partial<MySchool>): MySchool => ({
+    schoolId: `${name}-id`,
+    schoolName: name,
+    role: "GUARDIAN",
+    adminProfile: null,
+    closed: null,
+    current: false,
+    ...extra,
+  });
+
+  it("names the other schools where the login is a guardian, not this one or one where it has another role", async () => {
+    state.schools = [
+      school("Ekbacken", { current: true }),
+      school("Granen", {}),
+      school("Hagen", { role: "TEACHER" }),
+    ];
+    render(<GuardianPage />);
+    expect(await screen.findByText("other-schools Granen")).toBeInTheDocument();
+  });
+
+  it("names them also when this school has no child linked", async () => {
+    state.children = [];
+    state.schools = [school("Ekbacken", { current: true }), school("Granen", {})];
+    render(<GuardianPage />);
+    expect(await screen.findByText("other-schools Granen")).toBeInTheDocument();
+    expect(screen.getByText("guardian.noChildrenTitle")).toBeInTheDocument();
+  });
+
+  it("shows no card for a guardian with one school", () => {
+    state.schools = [school("Ekbacken", { current: true })];
+    render(<GuardianPage />);
+    expect(screen.queryByText(/other-schools/)).toBeNull();
   });
 });

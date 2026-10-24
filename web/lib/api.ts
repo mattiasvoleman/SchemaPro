@@ -1,4 +1,5 @@
 import { createClient } from "@/utils/supabase/client";
+import { pageSchool, schoolHeaders } from "@/lib/school-choice";
 
 /**
  * Typed client for the NestJS gateway. All mutations and AI actions go
@@ -58,12 +59,15 @@ async function request<T>(
   path: string,
   body?: unknown,
   signal?: AbortSignal,
+  school?: string,
 ): Promise<T> {
   if (!API_BASE_URL) {
     throw new ApiError(0, "NEXT_PUBLIC_API_BASE_URL is not configured.");
   }
 
-  const headers: Record<string, string> = await authHeader();
+  // The school the page was rendered for, for a session with more than one
+  // (lib/school-choice.ts); a read may name another of the person's schools.
+  const headers: Record<string, string> = { ...(await authHeader()), ...schoolHeaders(school ?? pageSchool()) };
   if (body !== undefined) {
     headers["Content-Type"] = "application/json";
   }
@@ -94,6 +98,13 @@ async function request<T>(
     } catch {
       // Non-JSON error body; keep the generic message.
     }
+    // The page's school is no longer the person's to work in (removed,
+    // deactivated, or closed to this sign-in, Flera skolor per inloggning):
+    // the page is drawn again for a school that is. A read at another of the
+    // person's schools that is refused fails alone; drawn again, the page
+    // would ask it again.
+    const page = pageSchool();
+    if (code === "SCHOOL_NOT_AVAILABLE" && page && (school ?? page) === page) window.location.reload();
     throw new ApiError(response.status, detail, code, params);
   }
 
@@ -109,7 +120,8 @@ async function request<T>(
 }
 
 export const api = {
-  get: <T>(path: string) => request<T>("GET", path),
+  /** `school`: read at another of the person's schools than the page's (the guardian's other children). */
+  get: <T>(path: string, options?: { school?: string }) => request<T>("GET", path, undefined, undefined, options?.school),
   /** `signal`: a superseded read sent as a POST (a dry run) is cancelled, not left to finish. */
   post: <T>(path: string, body?: unknown, signal?: AbortSignal) => request<T>("POST", path, body, signal),
   put: <T>(path: string, body?: unknown) => request<T>("PUT", path, body),

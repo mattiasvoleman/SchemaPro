@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Socket } from "socket.io-client";
 import { useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/utils/supabase/client";
+import { pageSchool } from "@/lib/school-choice";
 
 // socket.io-client is ~12.9KB gzipped and only the timetable editor uses it.
 // Importing it lazily inside the effect keeps it out of that route's initial
@@ -24,6 +25,12 @@ export interface TimetablePeer {
   label: string;
   editingLessonId: string | null;
 }
+
+/** The page's school, for a socket of a session with more than one (lib/school-choice.ts). */
+const socketSchool = (): { school?: string } => {
+  const school = pageSchool();
+  return school ? { school } : {};
+};
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
 
@@ -53,7 +60,7 @@ export function useTimetableRealtime(): {
 
       socket = io(API_BASE_URL, {
         transports: ["websocket"],
-        auth: { token },
+        auth: { token, ...socketSchool() },
       });
       socketRef.current = socket;
 

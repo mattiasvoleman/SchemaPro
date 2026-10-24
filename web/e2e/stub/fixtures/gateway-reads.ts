@@ -3,10 +3,23 @@ import type { GuardianChild } from "../../../lib/guardian-queries";
 import type { GroupAttendanceRow, GroupMembershipRow } from "../../../lib/queries";
 import type { AbsenceReport, AttendanceRecordRow, Person } from "../../../lib/types";
 import { Reply, route, type GatewayContext, type GatewayRoute } from "../gateway-routes";
-import type { SignedInPerson } from "../sessions";
+import { MULTI_GUARDIAN, type SignedInPerson } from "../sessions";
 import { CALENDAR_LESSONS_WITH_COVER } from "./cover-world";
 import { ABSENCE_REPORTS, ATTENDANCE_RECORDS, GROUP_MEMBERS } from "./school-days";
-import { ALL_PEOPLE, byId, GUARDIAN_LINKS, SCHOOL, STUDENT_LIST } from "./world";
+import { ALL_PEOPLE, byId, GUARDIAN_LINKS, SCHOOL, SECOND_SCHOOL, STUDENT_LIST } from "./world";
+import type { MySchool } from "../../../lib/types";
+
+/** MULTI_GUARDIAN's child at Granskolan, the only person the stub keeps there. */
+const SECOND_SCHOOL_CHILD: GuardianChild = {
+  linkId: "00000090-0000-4000-8000-000000000901",
+  id: "00000010-0000-4000-8000-000000000901",
+  firstName: "Olle",
+  lastName: "Granlund",
+  isActive: true,
+  studentGroupId: null,
+};
+
+const ROLE_OF = { admin: "SCHOOL_ADMIN", teacher: "TEACHER", student: "STUDENT", guardian: "GUARDIAN" } as const;
 
 /**
  * The reads of other people's data that the läslogg moved from PostgREST to
@@ -62,8 +75,31 @@ export const readRoutes: GatewayRoute[] = [
 
   route("GET", "/api/v1/student-groups/memberships", (context): GroupMembershipRow[] | Reply => staffOnly(context) ?? GROUP_MEMBERS),
 
+  /*
+   * The login's schools (Flera skolor per inloggning): one for every person
+   * the stub knows, and two for the guardian with a second school. The one
+   * the request names is the chosen one; none named is the fixture school.
+   */
+  route("GET", "/api/v1/me/schools", (context): MySchool[] | Reply => {
+    if (!context.person) return unauthorised;
+    const own = (school: { id: string; name: string }, role: MySchool["role"]): MySchool => ({
+      schoolId: school.id,
+      schoolName: school.name,
+      role,
+      adminProfile: role === "SCHOOL_ADMIN" ? "FULL" : null,
+      closed: null,
+      current: (context.school ?? SCHOOL.id) === school.id,
+    });
+    const role = ROLE_OF[context.person.persona];
+    if (context.person.authId !== MULTI_GUARDIAN.authId) return [own(SCHOOL, role)];
+    return [own(SCHOOL, "GUARDIAN"), own(SECOND_SCHOOL, "GUARDIAN")];
+  }),
+
   route("GET", "/api/v1/family/children", (context): GuardianChild[] | Reply => {
     if (!context.person) return unauthorised;
+    if (context.school === SECOND_SCHOOL.id) {
+      return context.person.authId === MULTI_GUARDIAN.authId ? [SECOND_SCHOOL_CHILD] : new Reply(403, { code: "SCHOOL_NOT_AVAILABLE" });
+    }
     return GUARDIAN_LINKS.filter((link) => link.guardianId === context.person!.userId).map((link) => {
       const child = byId(STUDENT_LIST, link.studentId)!;
       return {

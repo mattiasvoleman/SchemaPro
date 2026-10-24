@@ -109,3 +109,122 @@ describe("useProfile", () => {
     }
   });
 });
+
+/*
+ * Flera skolor per inloggning: a tab rendered for one school, after another
+ * tab switched the browser to another school, reloads when it is looked at
+ * again; until then its clients go on naming its own school.
+ */
+/** The school object, by a name the block below does not shadow. */
+const school_ = school;
+
+describe("a tab left on a school another tab switched away from", () => {
+  const A = "33333333-3333-4333-8333-333333333333";
+  const B = "44444444-4444-4444-8444-444444444444";
+  const C = "55555555-5555-4555-8555-555555555555";
+  const school = (id: string, closed: string | null = null) => ({
+    schoolId: id,
+    schoolName: id,
+    role: "TEACHER" as const,
+    adminProfile: null,
+    closed,
+    current: id === A,
+  });
+  const both = [school(A), school(B)];
+
+  const look = (state: "visible" | "hidden") => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
+    document.dispatchEvent(new Event("visibilitychange"));
+  };
+
+  const withReload = () => {
+    const reload = vi.fn();
+    const original = window.location;
+    Object.defineProperty(window, "location", { configurable: true, value: { ...original, reload } });
+    return {
+      reload,
+      restore: () => {
+        Object.defineProperty(window, "location", { configurable: true, value: original });
+        document.cookie = "rastra_school=; max-age=0; path=/";
+      },
+    };
+  };
+  const cookie = () => document.cookie.split("; ").find((part) => part.startsWith("rastra_school="))?.slice(14) ?? null;
+
+  it("reloads into the browser's school when it is looked at again, and not while hidden", () => {
+    const { reload, restore } = withReload();
+    document.cookie = `rastra_school=${B}; path=/`;
+    try {
+      render(<ProfileProvider profile={profile} school={school_} schools={both} namedSchool={A}><p>sida</p></ProfileProvider>);
+      look("hidden");
+      expect(reload).not.toHaveBeenCalled();
+      look("visible");
+      expect(reload).toHaveBeenCalledTimes(1);
+    } finally {
+      restore();
+    }
+  });
+
+  it("stays when the browser still names the tab's school, or when the page names none", () => {
+    const { reload, restore } = withReload();
+    document.cookie = `rastra_school=${A}; path=/`;
+    try {
+      const { unmount } = render(<ProfileProvider profile={profile} school={school_} schools={both} namedSchool={A}><p>sida</p></ProfileProvider>);
+      look("visible");
+      unmount();
+      document.cookie = `rastra_school=${B}; path=/`;
+      render(<ProfileProvider profile={profile} school={school_} schools={both}><p>sida</p></ProfileProvider>);
+      look("visible");
+      expect(reload).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  it("replaces a choice this login cannot follow with the page's school, and reloads for none", () => {
+    const { reload, restore } = withReload();
+    // B is closed to this sign-in: the page fell back to A.
+    document.cookie = `rastra_school=${B}; path=/`;
+    try {
+      render(<ProfileProvider profile={profile} school={school_} schools={[school(A), school(B, "sso_required")]} namedSchool={A}><p>sida</p></ProfileProvider>);
+      expect(cookie()).toBe(A);
+      look("visible");
+      expect(reload).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  it("drops another person's choice for a login with one school", () => {
+    const { restore } = withReload();
+    document.cookie = `rastra_school=${C}; path=/`;
+    try {
+      render(<ProfileProvider profile={profile} school={school_} schools={[school(A)]}><p>sida</p></ProfileProvider>);
+      expect(cookie()).toBeNull();
+    } finally {
+      restore();
+    }
+  });
+
+  it("leaves the choice alone when the list of schools could not be read", () => {
+    const { restore } = withReload();
+    document.cookie = `rastra_school=${B}; path=/`;
+    try {
+      render(<ProfileProvider profile={profile} school={school_} schools={[]} namedSchool={B}><p>sida</p></ProfileProvider>);
+      expect(cookie()).toBe(B);
+    } finally {
+      restore();
+    }
+  });
+
+  it("hands the login's schools and the page's school to the page", () => {
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <ProfileProvider profile={profile} school={school_} schools={both} namedSchool={A}>
+        {children}
+      </ProfileProvider>
+    );
+    const { result } = renderHook(() => useProfile(), { wrapper });
+    expect(result.current.schools).toBe(both);
+    expect(result.current.namedSchool).toBe(A);
+  });
+});

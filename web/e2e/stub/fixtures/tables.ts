@@ -48,15 +48,18 @@ const withSchool = <T extends object>(rows: T[]) => rows.map((row) => ({ ...row,
 
 /**
  * Users: every person, and on the four signed-in ones the authId getSession
- * looks them up by; and the läsare's own row, which only its session reads
- * (the pages read people through the gateway, not this table).
+ * looks them up by; and the profile rows no person carries already: the
+ * läsare's own row, and Sara's row under the login of the guardian with a
+ * second school (Flera skolor per inloggning), each of which only its own
+ * session reads (the pages read people through the gateway, not this table).
  */
+const people = ALL_PEOPLE.map((person) => {
+  const profile = PROFILE_ROWS.find((row) => row.id === person.id);
+  return { ...person, schoolId: SCHOOL.id, authId: profile?.authId ?? null };
+});
 const users = [
-  ...ALL_PEOPLE.map((person) => {
-    const profile = PROFILE_ROWS.find((row) => row.id === person.id);
-    return { ...person, schoolId: SCHOOL.id, authId: profile?.authId ?? null };
-  }),
-  ...PROFILE_ROWS.filter((row) => !ALL_PEOPLE.some((person) => person.id === row.id)),
+  ...people,
+  ...PROFILE_ROWS.filter((row) => !people.some((person) => person.id === row.id && person.authId === row.authId)),
 ];
 
 export const tables: Tables = {

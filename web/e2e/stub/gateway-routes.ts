@@ -20,6 +20,8 @@ export interface GatewayContext {
    * it, so it is for requests the browser makes.
    */
   scenario: string | null;
+  /** The school the request names (X-School-Id, Flera skolor per inloggning), lower case, or null. */
+  school: string | null;
 }
 
 export class Reply {

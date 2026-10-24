@@ -724,7 +724,9 @@ export default function PeoplePage() {
           ? t("invitationSent", { name: person.firstName })
           : result.loginMoved
             ? t("invitationLoginMoved", { name: person.firstName })
-            : t("invitationAlreadyRegistered", { name: person.firstName }),
+            : result.sharedLogin
+              ? t("invitationSharedLogin", { name: person.firstName })
+              : t("invitationAlreadyRegistered", { name: person.firstName }),
       );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : tCommon("error"));

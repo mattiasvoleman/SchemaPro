@@ -11,7 +11,7 @@ import type {
   TeachingBlock,
   TeachingRequirement,
 } from "../../../lib/types";
-import { KIND, PEOPLE, READER, uid } from "../sessions";
+import { KIND, MULTI_GUARDIAN, PEOPLE, READER, uid } from "../sessions";
 import {
   NEXT_YEAR_END,
   NEXT_YEAR_NAME,
@@ -37,6 +37,17 @@ export const SCHOOL: School = {
   id: uid(KIND.school, 1),
   name: "Exempelskolan",
   slug: "exempelskolan",
+  timezone: "Europe/Stockholm",
+};
+
+/**
+ * Flera skolor per inloggning: the other school of MULTI_GUARDIAN, which only
+ * the gateway's GET /api/v1/me/schools and that guardian's children there name.
+ */
+export const SECOND_SCHOOL: School = {
+  id: uid(KIND.school, 2),
+  name: "Granskolan",
+  slug: "granskolan",
   timezone: "Europe/Stockholm",
 };
 
@@ -263,6 +274,8 @@ export const PROFILE_ROWS = [
   { ...TEACHERS.anna, authId: PEOPLE.teacher.authId, schoolId: SCHOOL.id },
   { ...STUDENTS.ella, authId: PEOPLE.student.authId, schoolId: SCHOOL.id },
   { ...GUARDIANS.sara, authId: PEOPLE.guardian.authId, schoolId: SCHOOL.id },
+  // The guardian with a second school: Sara's row at this one.
+  { ...GUARDIANS.sara, authId: MULTI_GUARDIAN.authId, schoolId: SCHOOL.id },
   // The läsare: read-only, and only here, so no page lists it.
   {
     ...person(READER.userId, "SCHOOL_ADMIN", "Lisa", "Läsare", READER.email),

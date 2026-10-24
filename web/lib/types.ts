@@ -63,6 +63,20 @@ export interface Profile {
   hrRead?: boolean;
 }
 
+/**
+ * One of the login's schools, as GET /api/v1/me/schools lists it for the
+ * switcher (Flera skolor per inloggning).
+ */
+export interface MySchool {
+  schoolId: string;
+  schoolName: string;
+  role: UserRole;
+  adminProfile: AdminProfile | null;
+  /** Why this session may not enter the school (sso_required, …); null when it may. */
+  closed: string | null;
+  current: boolean;
+}
+
 export interface School {
   id: string;
   name: string;

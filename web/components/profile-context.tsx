@@ -1,10 +1,11 @@
 "use client";
 
-import { createContext, useContext } from "react";
+import { createContext, useContext, useEffect } from "react";
 import { BookOpen, CalendarDays, CalendarRange, ClipboardCheck, MapPin, Scale, Users, UserX } from "lucide-react";
 import { usePathname } from "@/i18n/navigation";
 import type { NavSection } from "@/components/layout/app-shell";
-import type { Profile, School } from "@/lib/types";
+import type { MySchool, Profile, School } from "@/lib/types";
+import { SCHOOL_COOKIE, cookieSchool } from "@/lib/school-choice";
 
 interface ProfileContextValue {
   profile: Profile;
@@ -17,6 +18,13 @@ interface ProfileContextValue {
    * keyboard a way in. Worked out by the (app) layout on the server.
    */
   readOnly?: boolean;
+  /**
+   * Flera skolor per inloggning: the login's schools (GET /api/v1/me/schools),
+   * one for almost everybody, and the school this page names to the
+   * gateway and PostgREST (null when it names none: one school).
+   */
+  schools?: MySchool[];
+  namedSchool?: string | null;
 }
 
 const ProfileContext = createContext<ProfileContextValue | null>(null);
@@ -47,10 +55,40 @@ export function ProfileProvider({
   school,
   readOnly,
   closed = {},
+  schools = [],
+  namedSchool = null,
   children,
 }: ProfileContextValue & { closed?: ClosedPages; children: React.ReactNode }) {
+  // Flera skolor per inloggning (lib/school-choice.ts). A browser choice this
+  // login cannot follow (another person's, signed out on this browser; a
+  // school left, deactivated or closed to this sign-in) is replaced by the
+  // school the page was rendered for, or dropped, so that the server stops
+  // trying it and the tab below has nothing to follow. And a tab rendered
+  // for one school while another tab switched the browser to another open
+  // school goes on naming its own (it writes nothing in the other) and
+  // reloads into the browser's school when the person looks at it again.
+  useEffect(() => {
+    const usable = (school: string | null) =>
+      school !== null && schools.some((one) => one.schoolId === school && one.closed === null);
+    const chosen = cookieSchool();
+    if (chosen && schools.length > 0 && !usable(chosen)) {
+      // As the switcher's route handler sets it: Secure where the page is.
+      const flags = `; path=/; samesite=lax${location.protocol === "https:" ? "; secure" : ""}`;
+      document.cookie = namedSchool
+        ? `${SCHOOL_COOKIE}=${namedSchool}; max-age=31536000${flags}`
+        : `${SCHOOL_COOKIE}=; max-age=0${flags}`;
+    }
+    if (!namedSchool) return;
+    const followTheBrowser = () => {
+      const now = cookieSchool();
+      if (document.visibilityState === "visible" && now !== namedSchool && usable(now)) window.location.reload();
+    };
+    document.addEventListener("visibilitychange", followTheBrowser);
+    return () => document.removeEventListener("visibilitychange", followTheBrowser);
+  }, [namedSchool, schools]);
+
   return (
-    <ProfileContext.Provider value={{ profile, school, readOnly }}>
+    <ProfileContext.Provider value={{ profile, school, readOnly, schools, namedSchool }}>
       <ClosedContext.Provider value={closed}>{children}</ClosedContext.Provider>
     </ProfileContext.Provider>
   );

@@ -158,6 +158,17 @@
     "noProfileSchoolAccount": "Du loggade in med skolkontot {email}, men ingen på din skola har bjudit in den adressen till Rastra Schema. Be skolans administratör bjuda in dig med just den adressen. Finns du redan i Rastra Schema med en annan adress kopplar administratören dig till skolkontot du nyss loggade in med: Rastra Schema behöver få den här adressen, och sedan skickar administratören inbjudan igen. Då loggar du in med skolkontot. Din gamla inloggning tas bort med sitt lösenord, eller tas om hand av den som driftar Rastra Schema.",
     "linkNeedsSchoolAccount": "Din skola kräver att personal loggar in med skolkonto, så länken kan inte användas för att välja lösenord. Gå till inloggningen och välj Logga in med skolkonto."
   },
+  "schoolSwitcher": {
+    "label": "Dina skolor",
+    "change": "Byt skola",
+    "switchTo": "Byt till {school}",
+    "currentRole": "{role}, vald nu",
+    "closedSsoRequired": "Skolan kräver skolkonto. Logga in med skolkontot för att byta hit.",
+    "closedSsoNotEnabled": "Skolan använder inte skolkonto. Logga in med lösenord för att byta hit.",
+    "closedSsoIdentity": "Ditt skolkonto hör inte till den här skolan.",
+    "closedReauth": "Logga in med skolkontot igen för att byta hit.",
+    "closedOther": "Går inte att byta till med den här inloggningen."
+  },
   "nav": {
     "overview": "Översikt",
     "dashboard": "Översikt",
@@ -512,6 +523,7 @@
     "createdAndInvited": "Personen är tillagd och inbjudan skickad.",
     "invitationSent": "Inbjudan skickad till {name}.",
     "invitationAlreadyRegistered": "{name} har redan ett konto — inget nytt e-postmeddelande skickades.",
+    "invitationSharedLogin": "{name} har redan en inloggning från en annan skola. Skolan finns nu i {name}s skolväljare; inget e-postmeddelande skickades.",
     "invitationLoginMoved": "{name} loggar nu in med den nya adressen. Inget e-postmeddelande skickades, så berätta det för {name}.",
     "invitationsSent": "{sent} inbjudningar skickade. {skipped} hade redan konto.",
     "invitationsFailed": "{count} inbjudningar kunde inte skickas.",
@@ -1888,6 +1900,11 @@
     "tableCaption": "Din närvaro per lektion: dag, tid, ämne och status"
   },
   "guardian": {
+    "otherSchoolsTitle": "Barn på andra skolor",
+    "otherSchoolsBody": "Du är vårdnadshavare på fler skolor. Byt skola för att se schemat, anmäla frånvaro och ansöka om ledighet där.",
+    "otherSchoolsLoading": "Hämtar barnen…",
+    "otherSchoolsUnreadable": "Barnen på skolan kunde inte hämtas just nu.",
+    "otherSchoolsNone": "Inga barn kopplade på skolan.",
     "title": "Mina barn",
     "subtitle": "Se schemat, anmäl frånvaro och ansök om ledighet för dina barn",
     "noChildrenTitle": "Inga barn kopplade",

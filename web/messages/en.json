@@ -158,6 +158,17 @@
     "noProfileSchoolAccount": "You signed in with the school account {email}, but nobody at your school has invited that address to Rastra timetable. Ask your school's administrator to invite you with exactly that address. If you are already in Rastra timetable with another address, the administrator connects you to the school account you just signed in with: Rastra timetable needs this address, and then the administrator sends your invitation again. You then sign in with the school account. Your old login is removed with its password, or handled by whoever runs Rastra timetable.",
     "linkNeedsSchoolAccount": "Your school requires staff to sign in with their school account, so this link cannot be used to choose a password. Go to the sign-in page and choose Sign in with school account."
   },
+  "schoolSwitcher": {
+    "label": "Your schools",
+    "change": "Switch school",
+    "switchTo": "Switch to {school}",
+    "currentRole": "{role}, chosen now",
+    "closedSsoRequired": "The school requires its school account. Sign in with the school account to switch here.",
+    "closedSsoNotEnabled": "The school does not use school accounts. Sign in with your password to switch here.",
+    "closedSsoIdentity": "Your school account does not belong to this school.",
+    "closedReauth": "Sign in with your school account again to switch here.",
+    "closedOther": "Not available with this sign-in."
+  },
   "nav": {
     "overview": "Overview",
     "dashboard": "Dashboard",
@@ -512,6 +523,7 @@
     "createdAndInvited": "Person added and invitation sent.",
     "invitationSent": "Invitation sent to {name}.",
     "invitationAlreadyRegistered": "{name} already has an account — no new email was sent.",
+    "invitationSharedLogin": "{name} already has a login from another school. Your school is now in {name}'s school switcher; no email was sent.",
     "invitationLoginMoved": "{name} now signs in with the new address. No email was sent, so let {name} know.",
     "invitationsSent": "{sent} invitations sent. {skipped} already had an account.",
     "invitationsFailed": "{count} invitations could not be sent.",
@@ -1888,6 +1900,11 @@
     "tableCaption": "Your attendance per lesson: day, time, subject and status"
   },
   "guardian": {
+    "otherSchoolsTitle": "Children at other schools",
+    "otherSchoolsBody": "You are a guardian at more than one school. Switch school to see the timetable, report absence and request leave there.",
+    "otherSchoolsLoading": "Fetching the children…",
+    "otherSchoolsUnreadable": "The school's children could not be fetched just now.",
+    "otherSchoolsNone": "No children linked at the school.",
     "title": "My children",
     "subtitle": "See the schedule, report absence and request leave for your children",
     "noChildrenTitle": "No children linked",
