@@ -425,9 +425,10 @@ describe('FamilyService', () => {
     const arrangeReport = (overrides: Record<string, unknown> = {}) => {
       const row = {
         id: REPORT_ID,
+        schoolId: SCHOOL_ID,
         studentId: STUDENT_ID,
         reportedById: GUARDIAN_ID,
-        // NOW is 2026-08-07T08:00Z, so this is "today" at UTC midnight.
+        // NOW is 2026-08-07T08:00Z, 10:00 in Stockholm, so this is the school's today.
         date: new Date('2026-08-07T00:00:00.000Z'),
         type: 'SICK',
         ...overrides,
@@ -438,6 +439,14 @@ describe('FamilyService', () => {
       );
       tx.absenceReport.delete.mockResolvedValue({ id: REPORT_ID });
     };
+
+    /** The report's school, found by its id, in the given zone. */
+    const arrangeSchool = (timezone = 'Europe/Stockholm') =>
+      tx.school.findUnique.mockImplementation(({ where, select }: any) =>
+        Promise.resolve(
+          where?.id === SCHOOL_ID ? asSelected({ id: SCHOOL_ID, timezone }, select) : null,
+        ),
+      );
 
     it('lets the reporter remove a report dated today (boundary: not past)', async () => {
       arrangeReport();
@@ -479,6 +488,58 @@ describe('FamilyService', () => {
         service.removeAbsenceReport(REPORT_ID, testUser()),
       ).rejects.toThrow('Past absence reports cannot be removed.');
       expect(tx.absenceReport.delete).not.toHaveBeenCalled();
+    });
+
+    /*
+     * The school's day, not UTC's. A report's date is a school-local day; at
+     * 00:30 in Stockholm UTC is still on yesterday (22:30Z in summer time,
+     * 23:30Z in winter time), and a cut-off taken from UTC let yesterday's
+     * report be removed until 01:00 or 02:00. At 23:30 the two agree, and the
+     * report dated today stays removable until the school's midnight.
+     */
+    describe.each([
+      { at: '00:30 in summer time', now: '2026-08-06T22:30:00.000Z', today: '2026-08-07', yesterday: '2026-08-06' },
+      { at: '00:30 in winter time', now: '2026-12-07T23:30:00.000Z', today: '2026-12-08', yesterday: '2026-12-07' },
+      { at: '23:30 in summer time', now: '2026-08-07T21:30:00.000Z', today: '2026-08-07', yesterday: '2026-08-06' },
+      { at: '23:30 in winter time', now: '2026-12-08T22:30:00.000Z', today: '2026-12-08', yesterday: '2026-12-07' },
+    ])('at $at in Stockholm', ({ now, today, yesterday }) => {
+      beforeEach(() => {
+        jest.setSystemTime(new Date(now));
+        arrangeSchool();
+      });
+
+      it('refuses yesterday’s report, whatever day UTC is on', async () => {
+        arrangeReport({ date: new Date(`${yesterday}T00:00:00.000Z`) });
+
+        await expect(
+          service.removeAbsenceReport(REPORT_ID, guardianUser()),
+        ).rejects.toThrow(new BadRequestException('Past absence reports cannot be removed.'));
+        expect(tx.absenceReport.delete).not.toHaveBeenCalled();
+      });
+
+      it('lets the reporter remove today’s report', async () => {
+        arrangeReport({ date: new Date(`${today}T00:00:00.000Z`) });
+
+        await expect(
+          service.removeAbsenceReport(REPORT_ID, guardianUser()),
+        ).resolves.toEqual({ id: REPORT_ID });
+        expect(tx.school.findUnique).toHaveBeenCalledWith({
+          where: { id: SCHOOL_ID },
+          select: { timezone: true },
+        });
+      });
+    });
+
+    it('takes the day from the report’s school, not from Stockholm', async () => {
+      // 00:30 in Stockholm is still 22:30 the day before in Reykjavík, so a
+      // school there removes the report Stockholm already calls yesterday.
+      jest.setSystemTime(new Date('2026-08-06T22:30:00.000Z'));
+      arrangeSchool('Atlantic/Reykjavik');
+      arrangeReport({ date: new Date('2026-08-06T00:00:00.000Z') });
+
+      await expect(
+        service.removeAbsenceReport(REPORT_ID, guardianUser()),
+      ).resolves.toEqual({ id: REPORT_ID });
     });
 
     it('404s on an unknown report', async () => {
