@@ -2893,6 +2893,20 @@ class SchedulerSolver:
             raise InvalidScheduleInputError.of("INPUT_NO_REQUIREMENTS")
         if not request.rooms:
             raise InvalidScheduleInputError.of("INPUT_NO_ROOMS")
+        # ONE ID, ONE REQUIREMENT. Every reader of the week keys a requirement
+        # by its id: the builder's start domains (_create_lesson_decisions, the
+        # last row wins), the hours verdict's reach (_teacher_rooms, the first
+        # wins), every lesson's key. Two rows sharing an id would be two
+        # different weeks to two readers of one payload. The gateway mints each
+        # id with randomUUID and never sends one twice, so a payload that does
+        # is not one this engine can answer, and it is refused by name.
+        seen: set[UUID] = set()
+        for requirement in request.requirements:
+            if requirement.id in seen:
+                raise InvalidScheduleInputError.of("INPUT_DUPLICATE_REQUIREMENT_ID", {
+                    "requirement": str(requirement.id),
+                })
+            seen.add(requirement.id)
 
         # Aggregate complexity budget — reject oversized models before building.
         total_lessons = sum(r.lessons_per_week for r in request.requirements)

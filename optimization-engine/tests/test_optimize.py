@@ -2883,8 +2883,9 @@ def _two_day_week(
     """Class G's lessons of `lengths` on two days of `day_minutes`, at `cap` a day.
 
     `after` gives G's lessons that many minutes for the pupils after each,
-    `locked` locks G's first half hour on both days, and `teacher_locked` its
-    teacher's, in another class. Beside it a post that
+    `locked` locks G's first half hour on both days, and `teacher_locked`
+    locks its teacher, in another class, for every other quarter hour of
+    Monday from 08:15. Beside it a post that
     makes the week impossible whatever the maximum says: class B's two lessons
     of half a day each, from a teacher whose post is one day and whose Monday
     starts locked for all but one of them. B has no more lessons than the
@@ -2895,12 +2896,20 @@ def _two_day_week(
     held = day_minutes - half
     own_locks = [
         {
-            "id": str(uuid4()), "teacherId": own_teacher if teacher_locked else None,
-            "studentGroupId": str(uuid4()) if teacher_locked else group,
+            "id": str(uuid4()), "teacherId": None, "studentGroupId": group,
             "dayOfWeek": day, "startTime": "08:00:00", "endTime": "08:30:00",
         }
         for day in (1, 2)
-    ] if locked or teacher_locked else []
+    ] if locked else []
+    if teacher_locked:
+        own_locks = [
+            {
+                "id": str(uuid4()), "teacherId": own_teacher, "studentGroupId": str(uuid4()),
+                "dayOfWeek": 1, "startTime": f"{8 + start // 60:02d}:{start % 60:02d}:00",
+                "endTime": f"{8 + (start + 15) // 60:02d}:{(start + 15) % 60:02d}:00",
+            }
+            for start in range(15, day_minutes, 30)
+        ]
     return {
         "requestId": str(uuid4()),
         "academicYearId": str(uuid4()),
@@ -2942,7 +2951,7 @@ def _two_day_week(
         ([30, 30, 30], 1, 75, {"after": 15}, False),
         ([30, 30, 30], 1, 90, {"after": 15}, True),
         ([30, 30, 30], 1, 60, {"locked": True}, False),
-        ([30, 30, 30], 1, 60, {"teacher_locked": True}, False),
+        ([30, 30, 30, 30], 1, 90, {"teacher_locked": True}, False),
     ],
     ids=[
         "no day holds two, at any maximum",
@@ -2953,7 +2962,7 @@ def _two_day_week(
         "the pupils' minutes after leave one a day, at any maximum",
         "the pupils' minutes after leave two a day, the maximum one",
         "the class's own locks leave one a day, at any maximum",
-        "its teacher's locks leave one a day, at any maximum",
+        "its teacher's locks cut Monday into quarter hours, at any maximum",
     ],
 )
 def test_a_group_is_blamed_on_the_maximum_only_where_it_fits_without_it(
@@ -2971,15 +2980,16 @@ def test_a_group_is_blamed_on_the_maximum_only_where_it_fits_without_it(
     half an hour with a quarter after each fit one a day in 75 minutes and two
     in 90, which the count of the lessons' own time does not see and the
     group's solve does; and a class locked for its first half hour of each
-    hour-long day has one half hour left, which no start domain carries, and
-    so has one whose teacher is locked elsewhere then. The
-    week stays impossible without the maximum (the post), so what is
+    hour-long day has one half hour left, which no start domain carries.
+    Four of half an hour on two days of 90, the teacher locked elsewhere for
+    every other quarter hour of Monday, fit Tuesday's three and none of
+    Monday's quarter hours, whatever the maximum. Only the teacher's locks
+    in the group's own solve see that. The teacher's minutes fit the 135 the
+    week leaves them, so the hours verdict, which counts minutes and not
+    pieces, lets the week through to the model (a week whose teacher's
+    minutes do not fit never reaches this solve, so it would test nothing).
+    The week stays impossible without the maximum (the post), so what is
     measured is the maximum on its own.
-
-    The last of them never reaches the model. Its teacher's locks leave that
-    teacher an hour of the week for an hour and a half of lessons, which is
-    the hours whatever any rule says, and is said before the model as that
-    (_teacher_hours_verdict): the maximum is not named there either.
     """
     payload, settings, group = _two_day_week(lengths, cap, day_minutes, **extra)  # type: ignore[arg-type]
     client = TestClient(create_app(_settings(SOLVER_PROBE_SECONDS=5, **settings)))
@@ -2987,9 +2997,7 @@ def test_a_group_is_blamed_on_the_maximum_only_where_it_fits_without_it(
     body = client.post("/api/v1/optimize", json=payload, headers=_HEADERS).json()
 
     assert body["status"] == "INFEASIBLE", body
-    assert body["conflicts"]["summaryCode"] == (
-        "DEMAND_TEACHER_HOURS_SHORT" if extra.get("teacher_locked") else "CONFLICT_CORE_SUMMARY"
-    ), body["conflicts"]
+    assert body["conflicts"]["summaryCode"] == "CONFLICT_CORE_SUMMARY", body["conflicts"]
     named = _daily_maximum_lines(body)
     if held_back:
         assert body["conflicts"]["conflicts"][0] == named[0]
@@ -10736,8 +10744,9 @@ def test_the_fuzz_week_whose_core_was_empty_names_the_teachers_hours() -> None:
     assert line["resourceIds"] == _requirement_ids(payload)
     assert line["message"] == (
         "One teacher gives the lessons of 2 requirements, and they need 440 minutes a week. "
-        "They can fall on 1 day of the week's 1, and there the frame times, the rasts, the "
-        "school day and the teacher's locked lessons leave them at most 420."
+        "They can fall on 1 day of the week's 1, and there the school day, the frame times, the "
+        "rasts, the margins around the lessons and the teacher's locked lessons leave them at "
+        "most 420."
     )
     # Never the teacher: the gateway has no name to give one.
     assert teacher not in str(body)
@@ -10789,6 +10798,36 @@ def test_frame_times_that_leave_a_teacher_too_few_hours_name_the_hours() -> None
     payload["frameTimes"] = payload["frameTimes"][1:]  # type: ignore[index]
     solved = client.post("/api/v1/optimize", json=payload, headers=_HEADERS).json()
     assert solved["status"] in {"OPTIMAL", "FEASIBLE"}, solved.get("conflicts")
+
+
+def test_two_requirements_sharing_an_id_are_refused_by_name(client: TestClient) -> None:
+    """Every reader of the week keys a requirement by its id, and two readers
+    took a shared one two ways: the builder's start domains the last row's,
+    the hours verdict's reach the first row's. The review's week put year 7
+    (Monday only) and year 8 (every day) under one id, and main solved it on
+    year 8's days while the verdict refused it on year 7's. The gateway never
+    sends such a week; the engine refuses it by name rather than answer one of
+    the two."""
+    shared = str(uuid4())
+    payload = _sample_payload()
+    template = payload["requirements"][0]  # type: ignore[index]
+    payload["requirements"] = [
+        {**template, "id": shared},
+        {**template, "id": shared, "studentGroupId": str(uuid4())},
+    ]
+
+    response = client.post("/api/v1/optimize", json=payload, headers=_HEADERS)
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["code"] == "INVALID_SCHEDULE_INPUT"
+    assert body["details"] == {
+        "code": "INPUT_DUPLICATE_REQUIREMENT_ID", "params": {"requirement": shared},
+    }
+    assert body["message"] == (
+        f"Requirement {shared} appears more than once in the week sent. Every requirement "
+        "needs an id of its own."
+    )
 
 
 class TestTheTeachersHoursVerdict:
