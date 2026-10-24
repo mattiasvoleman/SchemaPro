@@ -56,6 +56,8 @@ import { readsHr } from '../staffing/hr-visibility';
 import { recordRead } from '../access-log/access-log';
 import { EMPTY_SITE_MAP, hasTravel, readSiteMap, type SiteMap } from '../common/site-travel';
 import { travelWarningsOf, type TravelDayLesson, type TravelWarning } from './travel-warnings';
+import { shareBreaches, shareWarning, type ShareWarning } from './share-warnings';
+import { storedSharesOf } from '../resources/requirement-shares';
 
 export interface MasterLessonConflict {
   kind: 'TEACHER' | 'ROOM' | 'GROUP' | 'AVAILABILITY';
@@ -88,6 +90,27 @@ interface DistributionPost {
   subjectMinDaysBetween: number | null;
   subjectName: string;
   groupName: string | null;
+  /**
+   * Delade lektioner (shareWarnings): the post's own figures, and whether it
+   * has a share at all, read in the same statement — a post with none asks
+   * nothing more.
+   */
+  id: string;
+  teacherId: string | null;
+  coTeacherId: string | null;
+  lessonsPerWeek: number;
+  minutesPerLesson: number;
+  lessonLengths: number[];
+  shared: boolean;
+}
+
+/** A lesson as postOf finds its timplanspost: by the post's own key. */
+interface PostLesson {
+  id: string;
+  academicYearId: string;
+  studentGroupId: string;
+  subjectId: string;
+  isParked: boolean;
 }
 
 /** What a lesson nobody wrote a number for occupies outside itself: nothing. */
@@ -184,13 +207,20 @@ export type TeacherDayWarning =
 /**
  * What a hand edit is told beside the saved lesson: the staffing policy's WARN
  * about a teacher it put on the lesson, the ämnesfördelning the timplanspost
- * is held to when the edit breaks it, a parallel block the move split, a
- * teacher's day or week the edit leaves over their rule, and a walk between
- * two sites the edit leaves too little time for (travel-warnings.ts). Each
+ * is held to when the edit breaks it, a teacher of a shared post the edit
+ * leaves off their share (share-warnings.ts), a parallel block the move
+ * split, a teacher's day or week the edit leaves over their rule, and a walk
+ * between two sites the edit leaves too little time for (travel-warnings.ts). Each
  * is a code from the engine catalogue and its params, rendered by the page;
  * none is a refusal.
  */
-export type LessonWarning = StaffingWarning | DistributionWarning | BlockSplitWarning | TeacherDayWarning | TravelWarning;
+export type LessonWarning =
+  | StaffingWarning
+  | DistributionWarning
+  | ShareWarning
+  | BlockSplitWarning
+  | TeacherDayWarning
+  | TravelWarning;
 
 export interface CreateMasterLessonResult extends MasterLessonResult {
   /**
@@ -460,7 +490,11 @@ export class MasterLessonsService {
 
       // Read after the write, from the week as it now stands: the new lesson
       // is in it, and a breach it is no part of is not this edit's to report.
-      const warnings: LessonWarning[] = await this.distributionWarnings(tx, created);
+      const post = created.isParked ? null : await this.postOf(tx, created);
+      const warnings: LessonWarning[] = await this.distributionWarnings(tx, created, post);
+      // Delade lektioner, from the same read: a lesson created by hand on a
+      // shared post is somebody's, and may be one more than their share.
+      warnings.push(...(await this.shareWarnings(tx, created, post, null)));
       // Lärarens dag the same way, for the teachers the new lesson names. A
       // create reads no row the school's caps could be counted in — a year
       // has no relation to the work rules, and selecting its school would be
@@ -531,6 +565,9 @@ export class MasterLessonsService {
                   // (Skolområden och restid): none, and the walks below ask
                   // nothing, in this statement and in no other.
                   siteTravelTimes: true,
+                  // Whether it has split a timplanspost's lessons between
+                  // teachers (delade lektioner), for the same reason.
+                  teachingRequirementShares: true,
                 },
               },
             },
@@ -809,8 +846,18 @@ export class MasterLessonsService {
         dto.startDate !== undefined ||
         dto.endDate !== undefined ||
         (lesson.isParked && dto.isParked === false);
-      if (movesTheWeek) {
-        warnings.push(...(await this.distributionWarnings(tx, updated)));
+      // Delade lektioner: a lesson given another teacher, or moved to other
+      // weeks or back from the tray, changes whose lessons the weeks hold —
+      // asked only at a school with a share at all, counted inside the
+      // school's statement (siteTravelTimes' way), so every other school
+      // sends what it sent.
+      const movesTheShares =
+        lesson.school._count.teachingRequirementShares > 0 &&
+        (movesTheWeek || updated.teacherId !== lesson.teacherId);
+      if (movesTheWeek || movesTheShares) {
+        const post = updated.isParked ? null : await this.postOf(tx, updated);
+        if (movesTheWeek) warnings.push(...(await this.distributionWarnings(tx, updated, post)));
+        if (movesTheShares) warnings.push(...(await this.shareWarnings(tx, updated, post, lesson.teacherId)));
       }
       // The walks between sites, asked of an edit that can change who walks
       // where and when: the day, the times, the weeks, the room, the
@@ -1527,6 +1574,89 @@ export class MasterLessonsService {
   }
 
   /**
+   * The timplanspost behind a lesson, by its own key (läsår, class, subject):
+   * its distribution, its subject's default and the two names it is called
+   * by, joined in ONE statement (see distributionWarnings), and since delade
+   * lektioner its own figures and whether it has a share, in the same one —
+   * an EXISTS on an indexed column, not a statement of its own. Null for a
+   * post the caller cannot see, or a lesson no post answers.
+   */
+  private async postOf(tx: PrismaClient, lesson: PostLesson): Promise<DistributionPost | null> {
+    const [post] = await tx.$queryRaw<DistributionPost[]>`
+      SELECT r."ownDistribution", r."maxLessonsPerDay", r."minDaysBetween",
+             s."maxLessonsPerDay" AS "subjectMaxLessonsPerDay",
+             s."minDaysBetween" AS "subjectMinDaysBetween",
+             s."name" AS "subjectName", g."name" AS "groupName",
+             r."id", r."teacherId", r."coTeacherId", r."lessonsPerWeek",
+             r."minutesPerLesson", r."lessonLengths",
+             EXISTS (
+               SELECT 1 FROM "TeachingRequirementShares" sh WHERE sh."requirementId" = r."id"
+             ) AS "shared"
+        FROM "TeachingRequirements" r
+        JOIN "Subjects" s ON s."id" = r."subjectId"
+        JOIN "StudentGroups" g ON g."id" = r."studentGroupId"
+       WHERE r."academicYearId" = ${lesson.academicYearId}::uuid
+         AND r."studentGroupId" = ${lesson.studentGroupId}::uuid
+         AND r."subjectId" = ${lesson.subjectId}::uuid`;
+    return post ?? null;
+  }
+
+  /**
+   * DELADE LEKTIONER: the shared post's teachers this edit leaves off their
+   * share, as warnings (share-warnings.ts) — the lesson's teacher after the
+   * edit, and `previousTeacherId`, the one a teacher change took it from.
+   *
+   * NOTHING FOR A POST WITHOUT A SHARE, which is every post until a school
+   * splits one: postOf's `shared` is false, and no statement is sent. A
+   * shared post costs two — its shares, and its placed lessons with their
+   * teachers — under the caller's RLS like the rest. A lesson on the tray
+   * occupies nothing and changes no count that matters (a week short of a
+   * lesson tells only a teacher over their share), so it asks nothing.
+   */
+  private async shareWarnings(
+    tx: PrismaClient,
+    lesson: PostLesson & { teacherId: string | null },
+    post: DistributionPost | null,
+    previousTeacherId: string | null,
+  ): Promise<ShareWarning[]> {
+    if (lesson.isParked || !post?.shared) return [];
+    const shares = await storedSharesOf(tx, post.id);
+    const week = await tx.masterLesson.findMany({
+      where: {
+        academicYearId: lesson.academicYearId,
+        studentGroupId: lesson.studentGroupId,
+        subjectId: lesson.subjectId,
+        isParked: false,
+      },
+      select: { id: true, teacherId: true, dayOfWeek: true, recurrence: true, startDate: true, endDate: true },
+    });
+    const name = requirementName(post.subjectName, post.groupName);
+    return shareBreaches(
+      {
+        teacherId: post.teacherId,
+        coTeacherId: post.coTeacherId,
+        lessonsPerWeek: post.lessonsPerWeek,
+        minutesPerLesson: post.minutesPerLesson,
+        lessonLengths: post.lessonLengths,
+        shares,
+      },
+      week.map((row) => ({
+        id: row.id,
+        teacherId: row.teacherId,
+        dayOfWeek: row.dayOfWeek,
+        recurrence: row.recurrence,
+        startDate: toDateStringOrNull(row.startDate),
+        endDate: toDateStringOrNull(row.endDate),
+      })),
+      lesson.id,
+      [
+        { role: 'LESSON', teacherId: lesson.teacherId },
+        ...(previousTeacherId !== lesson.teacherId ? [{ role: 'PREVIOUS' as const, teacherId: previousTeacherId }] : []),
+      ],
+    ).map((breach) => shareWarning(breach, name));
+  }
+
+  /**
    * The ämnesfördelning breaches this lesson is part of, as warnings.
    *
    * The rule is the timplanspost's — its own when it carries one, else its
@@ -1552,26 +1682,12 @@ export class MasterLessonsService {
    */
   private async distributionWarnings(
     tx: PrismaClient,
-    lesson: {
-      id: string;
-      academicYearId: string;
-      studentGroupId: string;
-      subjectId: string;
-      isParked: boolean;
-    },
+    lesson: PostLesson,
+    /** The post as postOf read it, when the edit has; absent, it is read here. */
+    read?: DistributionPost | null,
   ): Promise<DistributionWarning[]> {
     if (lesson.isParked) return [];
-    const [post] = await tx.$queryRaw<DistributionPost[]>`
-      SELECT r."ownDistribution", r."maxLessonsPerDay", r."minDaysBetween",
-             s."maxLessonsPerDay" AS "subjectMaxLessonsPerDay",
-             s."minDaysBetween" AS "subjectMinDaysBetween",
-             s."name" AS "subjectName", g."name" AS "groupName"
-        FROM "TeachingRequirements" r
-        JOIN "Subjects" s ON s."id" = r."subjectId"
-        JOIN "StudentGroups" g ON g."id" = r."studentGroupId"
-       WHERE r."academicYearId" = ${lesson.academicYearId}::uuid
-         AND r."studentGroupId" = ${lesson.studentGroupId}::uuid
-         AND r."subjectId" = ${lesson.subjectId}::uuid`;
+    const post = read !== undefined ? read : await this.postOf(tx, lesson);
     if (!post) return [];
     const rule = effectiveDistribution(post, {
       maxLessonsPerDay: post.subjectMaxLessonsPerDay,
