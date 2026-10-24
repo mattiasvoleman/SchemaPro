@@ -1740,8 +1740,19 @@ class SchedulerSolver:
         for requirement in request.requirements:
             member = (requirement, kinds_of[requirement.id])
             by_group.setdefault(requirement.student_group_id, []).append(member)
-            for teacher_id in dict.fromkeys(_teachers_of(requirement)):
-                by_teacher.setdefault(teacher_id, []).append(member)
+            if requirement.lesson_teacher_ids is None:
+                for teacher_id in dict.fromkeys(_teachers_of(requirement)):
+                    by_teacher.setdefault(teacher_id, []).append(member)
+                continue
+            # A split post (lessonTeacherIds): each teacher is counted the
+            # lessons they are on (_teachers_at), never the row's — Bo's one
+            # lesson of three is the only one in his gaps.
+            own: dict[UUID, list[_LessonKind]] = {}
+            for index, kind in enumerate(kinds_of[requirement.id]):
+                for teacher_id in dict.fromkeys(_teachers_at(requirement, index)):
+                    own.setdefault(teacher_id, []).append(kind)
+            for teacher_id, kinds in own.items():
+                by_teacher.setdefault(teacher_id, []).append((requirement, kinds))
 
         def counts(members: list[tuple[AnonymousRequirement, list[_LessonKind]]]) -> Counter[_LessonKind]:
             return Counter(kind for _, kinds in members for kind in kinds)
@@ -1856,9 +1867,13 @@ class SchedulerSolver:
                 )
             domains = domains_of[shape]
             pupils = (requirement.student_group_id, *sharing.get(requirement.student_group_id, ()))
+            # A kind is per length, not per lesson, so a teacher's locks cut
+            # it only when they are on every lesson (_teachers_on_every_lesson):
+            # Bo's locked Monday is no Monday shut to Anna's lessons of a split
+            # post. For a post one person leads that is _teachers_of.
             windows = {
                 window
-                for teacher_id in _teachers_of(requirement)
+                for teacher_id in _teachers_on_every_lesson(requirement)
                 for window in teacher_windows.get(teacher_id, ())
             }
             windows.update(window for group_id in pupils for window in group_windows.get(group_id, ()))

@@ -711,3 +711,51 @@ class TestTheGapsVerdict:
         assert narrowings is not None
         assert [str(key[0]) for key in narrowings] == [group]
         assert solver._lunch_stage_one(request) == (None, {})
+
+
+class TestASplitPost:
+    """Delade lektioner: a post whose lessons are split between teachers
+    (lessonTeacherIds) is in each teacher's gaps with the lessons they are on.
+
+    The verdict reads a teacher's lessons as the model posts them — one
+    NoOverlap per teacher, each lesson in its own lead's — so Bo's one lesson
+    of 7A's two is his, and Anna's is hers. Counted with the row's union
+    (_teachers_of) the verdict would put both in Bo's gaps and refuse a week
+    the model places; that is what each test below would see.
+    """
+
+    def test_a_share_teacher_is_counted_only_their_own_lesson(self) -> None:
+        """Bo has three 90-minute lessons of his own and one of 7A's two, on
+        four mornings that take one each: four in four. Anna has the other."""
+        g1, g2, anna, bo = (str(uuid4()) for _ in range(4))
+        shared = _requirement(g1, anna, [90, 90], lessonTeacherIds=[anna, bo])
+        bos_own = _requirement(g2, bo, [90] * 3)
+        settings = {"SCHEDULE_DAYS": "1,2,3,4", "SCHEDULE_DAY_END_MINUTES": 600}
+
+        body = _post(settings, _week([shared, bos_own], rooms=2))
+
+        assert body["status"] in _SOLVED, body.get("conflicts")
+
+    def test_with_both_lessons_his_the_week_is_refused(self) -> None:
+        """The control: 7A's two lessons both Bo's make five in four, and
+        the verdict says so before any model."""
+        g1, g2, bo = (str(uuid4()) for _ in range(3))
+        both = _requirement(g1, bo, [90, 90])
+        bos_own = _requirement(g2, bo, [90] * 3)
+        settings = {"SCHEDULE_DAYS": "1,2,3,4", "SCHEDULE_DAY_END_MINUTES": 600}
+
+        _conflicts, lines = _refusal(_post(settings, _week([both, bos_own], rooms=2)))
+
+        assert any(line["code"] == "DEMAND_TEACHER_LESSONS_EXCEED_GAPS" for line in lines), lines
+
+    def test_a_share_teacher_s_lock_cuts_only_their_own_lesson(self) -> None:
+        """Bo's lesson locked elsewhere on Monday morning shuts Monday to his
+        lesson of 7A, not to Anna's: hers goes on Monday, his on Tuesday."""
+        g1, anna, bo = (str(uuid4()) for _ in range(3))
+        shared = _requirement(g1, anna, [90, 90], lessonTeacherIds=[anna, bo])
+        settings = {"SCHEDULE_DAYS": "1,2", "SCHEDULE_DAY_END_MINUTES": 600}
+        week = _week([shared], rooms=1, fixedLessons=[_lock(1, "08:00:00", "09:30:00", teacher=bo)])
+
+        body = _post(settings, week)
+
+        assert body["status"] in _SOLVED, body.get("conflicts")
