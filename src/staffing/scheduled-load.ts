@@ -21,7 +21,8 @@ import type { GradeSpan, LoadRequirement } from './teacher-load';
  *
  *   1. Σ over the year's requirements in the lesson's subject for ANY of its
  *      groups (owner and extra groups) that name this person, each at the
- *      percentage of the role they hold there. A samläst lesson for 7A+7B
+ *      percentage of the role they hold there — a share's teacher (delade
+ *      lektioner) at the row's teacher percentage, as its lead. A samläst lesson for 7A+7B
  *      whose two rows each charge their teacher 50 % charges 100 % of one
  *      lesson — the 50 + 50 the two rows planned — and two rows at 100 %
  *      charge 200 %, as planned charged both. Skola24's "Justera längd för
@@ -39,7 +40,8 @@ import type { GradeSpan, LoadRequirement } from './teacher-load';
 export type SlotRequirement = Pick<
   LoadRequirement,
   'studentGroupId' | 'subjectId' | 'teacherId' | 'coTeacherId' | 'teacherLoadPercent' | 'coTeacherLoadPercent'
->;
+> &
+  Partial<Pick<LoadRequirement, 'shares'>>;
 
 /** A teacher's place on a lesson: the master's lead, its co-teacher, or a vikarie. */
 export type LessonSlot = 'LEAD' | 'ASSISTANT' | 'SUBSTITUTE';
@@ -68,6 +70,11 @@ export function slotPercentOf(
       } else if (row.coTeacherId === personId) {
         named = true;
         sum += row.coTeacherLoadPercent;
+      } else if ((row.shares ?? []).some((share) => share.teacherId === personId)) {
+        // Delade lektioner: a share's teacher leads their lessons of the row
+        // at its teacher's percentage, as the load charges them.
+        named = true;
+        sum += row.teacherLoadPercent;
       }
     }
     if (named) return sum;

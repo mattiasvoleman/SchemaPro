@@ -119,6 +119,27 @@ describe('buildReconciliation', () => {
     expect(result.comparison).toEqual({ from: '2026-09-07', to: '2026-09-18' });
   });
 
+  it('delade lektioner: a shared row plans each teacher their own lessons, as scheduled and delivered count them', () => {
+    // 9A's three, Anna two and Bo one, over the two weeks: Anna 240 of
+    // 360, Bo 120. Charged the whole row, Anna would read 360 against 240
+    // scheduled and Bo nothing against 120 — a deviation on both rows for a
+    // schedule that went to plan.
+    const shared: LoadRequirement = {
+      ...requirement,
+      coTeacherId: null,
+      shares: [{ teacherId: BO, lessons: 1, minutes: 60 }],
+    };
+    const result = buildReconciliation(
+      base({
+        requirements: [shared],
+        masters: [master('mon', 1, { coTeacherId: null }), master('wed', 3, { coTeacherId: null }), master('fri', 5, { teacherId: BO, coTeacherId: null })],
+        credits: [],
+      }),
+    );
+    expect(row(result, ANNA)).toMatchObject({ planned: 240, scheduled: 240 });
+    expect(row(result, BO)).toMatchObject({ planned: 120, scheduled: 120 });
+  });
+
   it('credits the held lessons to the rows on them: lead and co-teacher at their percentages, the vikarie at 100 %', () => {
     const result = buildReconciliation(base());
     expect(row(result, ANNA)).toMatchObject({ delivered: 240, substituteMinutes: 0, deliveredLessons: 4 });
