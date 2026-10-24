@@ -176,6 +176,9 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   StudentGroupMembers: only('PLANERING'),
   StudentGroups: only('PLANERING'),
   Subjects: only('PLANERING'),
+  // Rastvaktsschema: the areas and the passes, written as the uppdrag are.
+  SupervisionAreas: only('PLANERING'),
+  SupervisionShifts: only('PLANERING'),
   TeacherDuties: only('PLANERING'),
   // A link is deleted and made again, never updated (no UPDATE grant).
   TeacherDutySlots: just('PLANERING', 'insert', 'delete'),

@@ -243,6 +243,8 @@ model School {
   teacherDutySlots        TeacherDutySlot[]
   teacherEmploymentLogs   TeacherEmploymentLog[]
   teacherEmploymentPeriods TeacherEmploymentPeriod[]
+  supervisionAreas        SupervisionArea[]
+  supervisionShifts       SupervisionShift[]
   localTimplans           LocalTimplan[]
   localTimplanEntries     LocalTimplanEntry[]
   academicYearTimplans    AcademicYearTimplan[]
@@ -354,6 +356,8 @@ model User {
   subjectQualifications   TeacherSubjectQualification[] @relation("QualificationTeacher")
   /// Uppdrag beside teaching, per läsår (TeacherDuty), by the same key.
   duties                  TeacherDuty[]                 @relation("DutyTeacher")
+  /// Rastvaktspass, per läsår (SupervisionShift), by the same key.
+  supervisionShifts       SupervisionShift[]            @relation("SupervisionShiftTeacher")
   employmentLogs          TeacherEmploymentLog[]        @relation("EmploymentLogTeacher")
   /// Local timplans this person recorded as decided. Restrict on the other
   /// side: a person who recorded a decision is deactivated, not deleted.
@@ -537,6 +541,8 @@ model Site {
 
   school       School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   rooms        Room[]
+  /// Rastvaktsområden on the site (SupervisionArea, 20261202090000).
+  supervisionAreas SupervisionArea[]
   travelFromA  SiteTravelTime[] @relation("SiteTravelA")
   travelFromB  SiteTravelTime[] @relation("SiteTravelB")
 
@@ -1406,6 +1412,8 @@ model AcademicYear {
   lunchSittings        LunchSitting[]
   teacherEmployments   TeacherEmployment[]
   teacherDuties        TeacherDuty[]
+  /// The year's rastvaktsschema (SupervisionShift).
+  supervisionShifts    SupervisionShift[]
   teacherEmploymentLogs TeacherEmploymentLog[]
   /// Which lokal timplan each årskurs follows this year.
   timplans             AcademicYearTimplan[]
@@ -3132,6 +3140,92 @@ model TeacherDutySlot {
   @@unique([availabilityConstraintId, schoolId])
   @@index([teacherDutyId, schoolId])
   @@map("TeacherDutySlots")
+}
+
+/// A rastvaktsområde: a place the school watches during the pupils' breaks —
+/// skolgården, matsalen, korridoren på plan 2 (migration 20261202090000).
+/// Which breaks it is watched in is said here once, and the rastvaktsschema
+/// (SupervisionShift) says who watches it when. Not per läsår: like a rast,
+/// it describes the building and the yard, not one year's curriculum.
+model SupervisionArea {
+  id            String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId      String  @db.Uuid
+  /// 1..60 characters, trimmed; unique per school.
+  name          String
+  /// The skolområde the area is on; null = not said. Deleting the site
+  /// empties it (ON DELETE SET NULL ("siteId")).
+  siteId        String? @db.Uuid
+  /// The årskurser whose rasts and lunches the area is watched in, inclusive
+  /// 0..12 as a Rast's; both null = every stage's. Matching is overlap, as
+  /// for every stage span here.
+  minGradeLevel Int?
+  maxGradeLevel Int?
+  /// Watched while the matching stages have rast (Rast rows).
+  duringRasts   Boolean @default(true)
+  /// Watched while the matching stages eat (their lunchsittningar, or the
+  /// school's lunch window where none speaks about the stage).
+  duringLunch   Boolean @default(false)
+  /// Rastvakter the area needs at once, 0..10. 0: passes may be planned
+  /// here, and no break is warned about as unwatched.
+  guardsNeeded  Int     @default(1)
+  /// True: a pass here consumes the teaching target, as an uppdrag marked
+  /// countsAsTeaching does (rastaktivitet the school counts as undervisning).
+  countsAsTeaching Boolean @default(false)
+  createdAt     DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  school School            @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  site   Site?             @relation(fields: [siteId, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
+  shifts SupervisionShift[]
+
+  @@unique([schoolId, name])
+  /// The target a tenant-scoped composite foreign key needs; see User.
+  @@unique([id, schoolId])
+  @@index([siteId])
+  @@map("SupervisionAreas")
+}
+
+/// One pass of the rastvaktsschema: a teacher watches an area on a weekday,
+/// from a time to a time, between two dates of a läsår (migration
+/// 20261202090000). The time is the pass's own, not a reference to a Rast:
+/// a rast moved in March must not rewrite who watched in February, and a
+/// pass at the bus at 15:00 belongs to no rast. One person watches one place
+/// at a time: two passes of a teacher on one weekday never share a minute
+/// on a date both run (EXCLUDE). A teacher reads their own passes and no
+/// colleague's; the administrator reads all and planering writes them.
+model SupervisionShift {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String    @db.Uuid
+  /// Composite (academicYearId, schoolId) key to AcademicYears.
+  academicYearId String    @db.Uuid
+  /// Composite (areaId, schoolId) key to SupervisionAreas; goes with the area.
+  areaId         String    @db.Uuid
+  /// Composite (userId, schoolId) key to Users; goes with the person.
+  userId         String    @db.Uuid
+  /// ISO weekday 1..7.
+  dayOfWeek      Int
+  /// Whole minutes, start before end.
+  startTime      DateTime  @db.Time(0)
+  endTime        DateTime  @db.Time(0)
+  /// Från, inclusive; null = the läsår's first day. Inside the läsår (the
+  /// service checks it against the year's bounds, read FOR SHARE).
+  validFrom      DateTime? @db.Date
+  /// Till, inclusive; null = the läsår's last day. Not before validFrom (CHECK).
+  validTo        DateTime? @db.Date
+  /// At most 200 characters, trimmed.
+  note           String?
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  school       School          @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  academicYear AcademicYear    @relation(fields: [academicYearId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  area         SupervisionArea @relation(fields: [areaId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  user         User            @relation("SupervisionShiftTeacher", fields: [userId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([academicYearId, schoolId])
+  @@index([areaId, schoolId])
+  @@index([userId, schoolId])
+  @@map("SupervisionShifts")
 }
 
 /// What a TeacherEmploymentLog row is about.

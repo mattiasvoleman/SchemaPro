@@ -755,6 +755,16 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
     reason:
       'A teacher’s duty at the school’s student register is that register’s record for the year; the new year’s links come from the next sync.',
   },
+  /**
+   * Rastvaktsschema (20261202090000): a pass names a teacher, a weekday and a
+   * time of the old year's breaks. The areas are the school's and stay; the
+   * new year's schedule is planned against its own staff and rasts.
+   */
+  SupervisionShift: {
+    kind: 'SKIPPED',
+    reason:
+      'The rastvaktsschema is the old year’s: the new year’s passes are planned against its own staff and rasts; the areas stay.',
+  },
 };
 
 const isOn = (disposition: Disposition, options: RolloverOptions): boolean =>

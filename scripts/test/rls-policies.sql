@@ -19778,6 +19778,8 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('Subjects', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('SubstituteAvailabilities', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
   ('SubstitutePoolMembers', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('SupervisionAreas', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('SupervisionShifts', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('TeacherAbsenceCovers', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
   ('TeacherAbsenceReasons', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
   ('TeacherAbsences', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
@@ -27840,5 +27842,530 @@ BEGIN
       RAISE EXCEPTION '%: wrote the roller school''s share: %', r.label, wrote;
     END IF;
   END LOOP;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 200: rastvaktsområdena och rastvaktsschemat står i katalogen som
+-- migreringen säger (SupervisionAreas, SupervisionShifts, 20261202090000).
+--
+-- Row security on both tables, every arm TO app_authenticated: the areas'
+-- staff read and the planner's three writes; the passes' administrator read,
+-- the teacher's read of their own, and the planner's three writes. The update
+-- arms ask the area in WITH CHECK only. PostgREST's authenticated and anon
+-- hold nothing, service_role reads and writes nothing more, the API holds
+-- SELECT, INSERT, UPDATE and DELETE and no TRUNCATE, REFERENCES or TRIGGER,
+-- and no API role holds MAINTAIN on 17. Each CHECK says what the migration
+-- says, one place at a time is an EXCLUDE over the teacher, the year, the
+-- weekday, the minutes and the dates, and every key is composite with the
+-- school, ON UPDATE NO ACTION.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  t text;
+  r text;
+  p text;
+  n bigint;
+  def text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['SupervisionAreas', 'SupervisionShifts'] LOOP
+    IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = format('public.%I', t)::regclass) THEN
+      RAISE EXCEPTION 'supervision: row security is off on %', t;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = t AND roles <> '{app_authenticated}') THEN
+      RAISE EXCEPTION 'supervision: % has an arm for another role than the API''s', t;
+    END IF;
+    FOREACH r IN ARRAY ARRAY['authenticated', 'anon'] LOOP
+      CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+      FOREACH p IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+        IF has_table_privilege(r, format('public.%I', t), p) THEN RAISE EXCEPTION 'supervision: % holds % on %', r, p, t; END IF;
+      END LOOP;
+    END LOOP;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+      FOREACH p IN ARRAY ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+        IF has_table_privilege('service_role', format('public.%I', t), p) THEN RAISE EXCEPTION 'supervision: service_role holds % on %', p, t; END IF;
+      END LOOP;
+    END IF;
+    FOREACH p IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE'] LOOP
+      IF NOT has_table_privilege('app_authenticated', format('public.%I', t), p) THEN RAISE EXCEPTION 'supervision: the API lacks % on %', p, t; END IF;
+    END LOOP;
+    FOREACH p IN ARRAY ARRAY['TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+      IF has_table_privilege('app_authenticated', format('public.%I', t), p) THEN RAISE EXCEPTION 'supervision: the API holds % on %', p, t; END IF;
+    END LOOP;
+    IF current_setting('server_version_num')::int >= 170000 THEN
+      FOREACH r IN ARRAY ARRAY['authenticated', 'app_authenticated', 'service_role', 'anon'] LOOP
+        CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+        IF has_table_privilege(r, format('public.%I', t), 'MAINTAIN') THEN RAISE EXCEPTION 'supervision: % holds MAINTAIN on %', r, t; END IF;
+      END LOOP;
+    END IF;
+    -- The planner's writes: the area in the insert's and update's WITH
+    -- CHECK and the delete's USING, never in the update's USING.
+    IF (SELECT count(*) FROM pg_policies WHERE tablename = t AND cmd IN ('INSERT', 'UPDATE', 'DELETE')
+          AND coalesce(with_check, qual) LIKE '%current_user_may(''PLANERING''%'
+          AND coalesce(with_check, qual) LIKE '%SCHOOL_ADMIN%') <> 3
+       OR EXISTS (SELECT 1 FROM pg_policies WHERE tablename = t AND cmd = 'UPDATE' AND qual LIKE '%current_user_may%') THEN
+      RAISE EXCEPTION 'supervision: %''s writes are not the planner''s three, with the update asking in WITH CHECK alone', t;
+    END IF;
+  END LOOP;
+
+  SELECT count(*) INTO n FROM pg_policies WHERE schemaname = 'public' AND tablename = 'SupervisionAreas'
+     AND (policyname, cmd) IN (('supervision_areas_staff_select', 'SELECT'), ('supervision_areas_admin_insert', 'INSERT'),
+                               ('supervision_areas_admin_update', 'UPDATE'), ('supervision_areas_admin_delete', 'DELETE'));
+  IF n <> 4 OR (SELECT count(*) FROM pg_policies WHERE tablename = 'SupervisionAreas') <> 4 THEN
+    RAISE EXCEPTION 'supervision: the areas have not exactly the staff read and the planner''s three writes';
+  END IF;
+  SELECT count(*) INTO n FROM pg_policies WHERE schemaname = 'public' AND tablename = 'SupervisionShifts'
+     AND (policyname, cmd) IN (('supervision_shifts_admin_select', 'SELECT'), ('supervision_shifts_teacher_own_select', 'SELECT'),
+                               ('supervision_shifts_admin_insert', 'INSERT'), ('supervision_shifts_admin_update', 'UPDATE'),
+                               ('supervision_shifts_admin_delete', 'DELETE'));
+  IF n <> 5 OR (SELECT count(*) FROM pg_policies WHERE tablename = 'SupervisionShifts') <> 5 THEN
+    RAISE EXCEPTION 'supervision: the passes have not exactly the two reads and the planner''s three writes';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'supervision_areas_staff_select'
+                   AND qual LIKE '%SCHOOL_ADMIN%' AND qual LIKE '%TEACHER%' AND qual NOT LIKE '%STUDENT%'
+                   AND qual NOT LIKE '%GUARDIAN%' AND qual LIKE '%current_school_id()%') THEN
+    RAISE EXCEPTION 'supervision: the areas'' read is not the school''s administrators and teachers';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'supervision_shifts_admin_select'
+                   AND qual LIKE '%SCHOOL_ADMIN%' AND qual NOT LIKE '%TEACHER%' AND qual LIKE '%current_school_id()%')
+     OR NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'supervision_shifts_teacher_own_select'
+                   AND qual LIKE '%''TEACHER''%' AND qual NOT LIKE '%SCHOOL_ADMIN%' AND qual LIKE '%"userId" = %current_user_id()%'
+                   AND qual LIKE '%current_school_id()%') THEN
+    RAISE EXCEPTION 'supervision: the passes'' reads are not the administrators'' and the teacher''s own';
+  END IF;
+
+  -- The checks, by what they say.
+  FOR def IN SELECT unnest(ARRAY[
+      'SupervisionAreas_name_named|btrim|60',
+      'SupervisionAreas_grade_span|IS NULL|12',
+      'SupervisionAreas_guards_range|>= 0|<= 10',
+      'SupervisionShifts_day_is_iso|>= 1|<= 7',
+      'SupervisionShifts_window_is_ordered|"endTime" > "startTime"|"endTime" > "startTime"',
+      'SupervisionShifts_whole_minutes|SECOND|SECOND',
+      'SupervisionShifts_dates_are_ordered|"validTo" >= "validFrom"|"validTo" >= "validFrom"',
+      'SupervisionShifts_note_is_short|btrim|200'])
+  LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = split_part(def, '|', 1) AND contype = 'c' AND convalidated
+                     AND pg_get_constraintdef(oid) ILIKE '%' || split_part(def, '|', 2) || '%'
+                     AND pg_get_constraintdef(oid) ILIKE '%' || split_part(def, '|', 3) || '%') THEN
+      RAISE EXCEPTION 'supervision: the check % is missing or says something else', split_part(def, '|', 1);
+    END IF;
+  END LOOP;
+  SELECT pg_get_constraintdef(oid) INTO def FROM pg_constraint
+   WHERE conname = 'SupervisionShifts_one_place_at_a_time' AND contype = 'x';
+  IF def IS NULL OR def NOT LIKE 'EXCLUDE USING gist ("userId" WITH =, "academicYearId" WITH =, "dayOfWeek" WITH =, tsrange(%startTime%endTime%) WITH &&, daterange("validFrom", "validTo", %[]%) WITH &&)' THEN
+    RAISE EXCEPTION 'supervision: one place at a time is not the EXCLUDE the migration writes: %', def;
+  END IF;
+
+  -- The keys: composite with the school, ON UPDATE NO ACTION, and what a
+  -- delete of the other end does.
+  FOR def IN SELECT unnest(ARRAY[
+      'SupervisionShifts|AcademicYears|academicYearId,schoolId|c',
+      'SupervisionShifts|SupervisionAreas|areaId,schoolId|c',
+      'SupervisionShifts|Users|userId,schoolId|c',
+      'SupervisionAreas|Sites|siteId,schoolId|n'])
+  LOOP
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint c
+       WHERE c.contype = 'f' AND c.conrelid = format('public.%I', split_part(def, '|', 1))::regclass
+         AND c.confrelid = format('public.%I', split_part(def, '|', 2))::regclass
+         AND c.confupdtype = 'a' AND c.confdeltype = split_part(def, '|', 4)
+         AND (SELECT string_agg(a.attname::text, ',' ORDER BY k.ord) FROM unnest(c.conkey) WITH ORDINALITY k(attnum, ord)
+                JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum) = split_part(def, '|', 3)
+         AND (split_part(def, '|', 4) <> 'n'
+              OR (SELECT array_agg(a.attname::text) FROM unnest(c.confdelsetcols) k(attnum)
+                    JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum) = ARRAY['siteId'])) THEN
+      RAISE EXCEPTION 'supervision: the key % is not as the migration writes it', def;
+    END IF;
+  END LOOP;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 201: skolans administratörer läser områdena och hela schemat, en
+-- lärare områdena och sina egna pass, ingen annans skola; den som skriver
+-- planering skriver dem, expeditionen inte; elev, vårdnadshavare, tjänsten
+-- och synken läser inget; PostgREST:s roll når dem inte ens med
+-- administratörens anspråk (20261202090000).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000002025')::text, true);
+SELECT set_config('app.test_rv_other', app.current_school_id()::text, true);
+SELECT set_config('app.test_rv_other_area', (SELECT id::text FROM "SupervisionAreas" WHERE name = 'Annan gård'), true);
+SELECT set_config('app.test_rv_other_shift', (SELECT min(id::text) FROM "SupervisionShifts"), true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000002020')::text, true);
+SELECT set_config('app.test_rv_school', app.current_school_id()::text, true);
+DO $$
+DECLARE
+  n bigint;
+  who text;
+  garden uuid;
+  yr uuid;
+  bo uuid;
+  ny uuid;
+  pass uuid;
+BEGIN
+  IF coalesce(current_setting('app.test_rv_school', true), '') = ''
+     OR coalesce(current_setting('app.test_rv_other_area', true), '') = ''
+     OR coalesce(current_setting('app.test_rv_other_shift', true), '') = '' THEN
+    RAISE EXCEPTION 'supervision: a fixture admin read no school, or the other school''s admin none of its area and pass';
+  END IF;
+  SELECT count(*) INTO n FROM "SupervisionAreas";
+  IF n <> 2 THEN RAISE EXCEPTION 'supervision: the admin reads % areas, not the school''s two', n; END IF;
+  SELECT count(*) INTO n FROM "SupervisionShifts";
+  IF n <> 3 THEN RAISE EXCEPTION 'supervision: the admin reads % passes, not the school''s three', n; END IF;
+  SELECT id INTO garden FROM "SupervisionAreas" WHERE name = 'RV Skolgården';
+  SELECT "academicYearId" INTO yr FROM "SupervisionShifts" LIMIT 1;
+  SELECT id INTO bo FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000002026';
+
+  -- The planner writes: an area, a pass on it, both changed, both gone.
+  INSERT INTO "SupervisionAreas" ("schoolId", name) VALUES (app.current_school_id(), 'RV Korridoren') RETURNING id INTO ny;
+  INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime")
+  VALUES (app.current_school_id(), yr, ny, bo, 3, '12:00', '12:20') RETURNING id INTO pass;
+  UPDATE "SupervisionShifts" SET "endTime" = '12:30' WHERE id = pass;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'supervision: the admin changed % of their own passes', n; END IF;
+  UPDATE "SupervisionAreas" SET "guardsNeeded" = 2 WHERE id = ny;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'supervision: the admin changed % of their own areas', n; END IF;
+  DELETE FROM "SupervisionShifts" WHERE id = pass;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'supervision: the admin removed % of their own passes', n; END IF;
+  DELETE FROM "SupervisionAreas" WHERE id = ny;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'supervision: the admin removed % of their own areas', n; END IF;
+
+  -- Another school's area and pass: not seen, not changed, not removed, not written into.
+  UPDATE "SupervisionAreas" SET name = 'x' WHERE id = current_setting('app.test_rv_other_area')::uuid;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'supervision: the admin renamed another school''s area'; END IF;
+  DELETE FROM "SupervisionShifts" WHERE id = current_setting('app.test_rv_other_shift')::uuid;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'supervision: the admin removed another school''s pass'; END IF;
+  BEGIN
+    INSERT INTO "SupervisionAreas" ("schoolId", name) VALUES (current_setting('app.test_rv_other')::uuid, 'Inte min');
+    RAISE EXCEPTION 'supervision: the admin wrote an area into another school';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE "SupervisionAreas" SET "schoolId" = current_setting('app.test_rv_other')::uuid WHERE id = garden;
+    RAISE EXCEPTION 'supervision: the admin moved an area into another school';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE "SupervisionShifts" SET "schoolId" = current_setting('app.test_rv_other')::uuid;
+    RAISE EXCEPTION 'supervision: the admin moved a pass into another school';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+
+  -- The expedition reads, as every administrator does, and writes nothing here.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000002024')::text, true);
+  SELECT count(*) INTO n FROM "SupervisionShifts";
+  IF n <> 3 THEN RAISE EXCEPTION 'supervision: the expedition reads % passes, not the school''s three', n; END IF;
+  BEGIN
+    INSERT INTO "SupervisionAreas" ("schoolId", name) VALUES (app.current_school_id(), 'Expeditionens');
+    RAISE EXCEPTION 'supervision: the expedition created an area';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE "SupervisionShifts" SET "dayOfWeek" = 4;
+    RAISE EXCEPTION 'supervision: the expedition moved a pass';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  DELETE FROM "SupervisionShifts";
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'supervision: the expedition removed % passes', n; END IF;
+
+  -- Anna reads both areas and her own two passes, not Bo's, and writes nothing.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000002021')::text, true);
+  SELECT count(*) INTO n FROM "SupervisionAreas";
+  IF n <> 2 THEN RAISE EXCEPTION 'supervision: the teacher reads % areas, not the school''s two', n; END IF;
+  SELECT count(*) INTO n FROM "SupervisionShifts" WHERE "userId" = app.current_user_id();
+  IF n <> 2 OR (SELECT count(*) FROM "SupervisionShifts") <> 2 THEN
+    RAISE EXCEPTION 'supervision: the teacher reads % of her own passes and % in all, not her two alone',
+      n, (SELECT count(*) FROM "SupervisionShifts");
+  END IF;
+  UPDATE "SupervisionAreas" SET name = 'x';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'supervision: the teacher renamed % areas', n; END IF;
+  UPDATE "SupervisionShifts" SET "endTime" = '10:30';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'supervision: the teacher changed % of her passes', n; END IF;
+  DELETE FROM "SupervisionShifts";
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'supervision: the teacher removed % passes', n; END IF;
+  BEGIN
+    INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime")
+    VALUES (app.current_school_id(), yr, garden, app.current_user_id(), 5, '10:00', '10:20');
+    RAISE EXCEPTION 'supervision: the teacher gave herself a pass';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  -- Bo reads his one.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000002026')::text, true);
+  SELECT count(*) INTO n FROM "SupervisionShifts";
+  IF n <> 1 THEN RAISE EXCEPTION 'supervision: Bo reads % passes, not his one', n; END IF;
+
+  -- Pupil and guardian: nothing read, nothing written.
+  FOREACH who IN ARRAY ARRAY['00000000-0000-4000-8000-000000002022', '00000000-0000-4000-8000-000000002023'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', who)::text, true);
+    SELECT count(*) INTO n FROM "SupervisionAreas";
+    IF n <> 0 THEN RAISE EXCEPTION 'supervision: % (%) reads % areas', who, app.current_user_role(), n; END IF;
+    SELECT count(*) INTO n FROM "SupervisionShifts";
+    IF n <> 0 THEN RAISE EXCEPTION 'supervision: % (%) reads % passes', who, app.current_user_role(), n; END IF;
+    BEGIN
+      INSERT INTO "SupervisionAreas" ("schoolId", name) VALUES (app.current_school_id(), 'Familjens');
+      RAISE EXCEPTION 'supervision: % created an area', who;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+  END LOOP;
+
+  -- The service and the sync principal of the school: nothing.
+  PERFORM set_config('request.jwt.claims', '', true);
+  FOREACH who IN ARRAY ARRAY['app.service_school_id', 'app.sync_school_id'] LOOP
+    PERFORM set_config(who, current_setting('app.test_rv_school'), true);
+    SELECT count(*) INTO n FROM "SupervisionAreas";
+    IF n <> 0 THEN RAISE EXCEPTION 'supervision: % reads % areas', who, n; END IF;
+    SELECT count(*) INTO n FROM "SupervisionShifts";
+    IF n <> 0 THEN RAISE EXCEPTION 'supervision: % reads % passes', who, n; END IF;
+    PERFORM set_config(who, '', true);
+  END LOOP;
+END $$;
+
+-- PostgREST's role, with the admin's claims: nothing at all.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000002020')::text, true);
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  IF current_user <> 'authenticated' THEN RAISE EXCEPTION 'supervision: could not act as authenticated'; END IF;
+  BEGIN
+    PERFORM 1 FROM "SupervisionAreas";
+    RAISE EXCEPTION 'supervision: PostgREST''s role reads the areas';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    PERFORM 1 FROM "SupervisionShifts";
+    RAISE EXCEPTION 'supervision: PostgREST''s role reads the passes';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 202: ett område och ett pass håller sina gränser, ett pass hör till
+-- sin skolas läsår, område och lärare, och en lärare är på ett ställe i taget
+-- (20261202090000).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000002025')::text, true);
+SELECT set_config('app.test_rv_other_area', (SELECT id::text FROM "SupervisionAreas" WHERE name = 'Annan gård'), true);
+SELECT set_config('app.test_rv_other_year', (SELECT min(id::text) FROM "AcademicYears"), true);
+SELECT set_config('app.test_rv_other_teacher', (SELECT id::text FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000002027'), true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001245')::text, true);
+SELECT set_config('app.test_rv_other_site', (SELECT id::text FROM "Sites" WHERE name = 'Annan Norra'), true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000002020')::text, true);
+DO $$
+DECLARE
+  n bigint;
+  st text;
+  span int[];
+  garden uuid;
+  hall uuid;
+  yr uuid;
+  later uuid;
+  anna uuid;
+  bo uuid;
+  pass uuid;
+BEGIN
+  IF coalesce(current_setting('app.test_rv_other_year', true), '') = ''
+     OR coalesce(current_setting('app.test_rv_other_teacher', true), '') = ''
+     OR coalesce(current_setting('app.test_rv_other_site', true), '') = '' THEN
+    RAISE EXCEPTION 'supervision: another school''s year, teacher or site could not be read for the keys below';
+  END IF;
+  SELECT id INTO garden FROM "SupervisionAreas" WHERE name = 'RV Skolgården';
+  SELECT id INTO hall FROM "SupervisionAreas" WHERE name = 'RV Matsalen';
+  SELECT "academicYearId" INTO yr FROM "SupervisionShifts" LIMIT 1;
+  SELECT id INTO anna FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000002021';
+  SELECT id INTO bo FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000002026';
+
+  -- An area's name: trimmed, 1..60, unique in the school.
+  FOREACH st IN ARRAY ARRAY['', ' RV Väst', 'RV Väst ', repeat('x', 61)] LOOP
+    BEGIN
+      INSERT INTO "SupervisionAreas" ("schoolId", name) VALUES (app.current_school_id(), st);
+      RAISE EXCEPTION 'supervision: an area named "%" was stored', st;
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+  END LOOP;
+  BEGIN
+    INSERT INTO "SupervisionAreas" ("schoolId", name) VALUES (app.current_school_id(), 'RV Matsalen');
+    RAISE EXCEPTION 'supervision: two areas of the school share a name';
+  EXCEPTION WHEN unique_violation THEN NULL;
+  END;
+  INSERT INTO "SupervisionAreas" ("schoolId", name) VALUES (app.current_school_id(), repeat('x', 60));
+  -- A span: both ends or neither, 0..12, in order.
+  FOREACH span SLICE 1 IN ARRAY ARRAY[[1, NULL], [NULL, 3], [4, 3], [-1, 2], [0, 13]] LOOP
+    BEGIN
+      UPDATE "SupervisionAreas" SET "minGradeLevel" = span[1], "maxGradeLevel" = span[2] WHERE id = garden;
+      RAISE EXCEPTION 'supervision: an area was given the span %', span;
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+  END LOOP;
+  UPDATE "SupervisionAreas" SET "minGradeLevel" = 0, "maxGradeLevel" = 12 WHERE id = garden;
+  UPDATE "SupervisionAreas" SET "minGradeLevel" = 5, "maxGradeLevel" = 5 WHERE id = garden;
+  UPDATE "SupervisionAreas" SET "minGradeLevel" = NULL, "maxGradeLevel" = NULL WHERE id = garden;
+  -- Rastvakter at once: 0 and 10 are answers, -1 and 11 are not.
+  UPDATE "SupervisionAreas" SET "guardsNeeded" = 0 WHERE id = garden;
+  UPDATE "SupervisionAreas" SET "guardsNeeded" = 10 WHERE id = garden;
+  FOREACH n IN ARRAY ARRAY[-1, 11] LOOP
+    BEGIN
+      UPDATE "SupervisionAreas" SET "guardsNeeded" = n WHERE id = garden;
+      RAISE EXCEPTION 'supervision: an area was said to need % rastvakter', n;
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+  END LOOP;
+  -- Another school's site: refused by the key.
+  BEGIN
+    UPDATE "SupervisionAreas" SET "siteId" = current_setting('app.test_rv_other_site')::uuid WHERE id = garden;
+    RAISE EXCEPTION 'supervision: an area was put on another school''s site';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+
+  -- A pass's weekday, window, minutes, dates and note.
+  FOREACH n IN ARRAY ARRAY[0, 8] LOOP
+    BEGIN
+      INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime")
+      VALUES (app.current_school_id(), yr, garden, bo, n, '10:00', '10:20');
+      RAISE EXCEPTION 'supervision: a pass was stored on weekday %', n;
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+  END LOOP;
+  FOREACH st IN ARRAY ARRAY['10:20|10:20', '10:20|10:00', '10:00:30|10:20', '10:00|10:20:01'] LOOP
+    BEGIN
+      INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime")
+      VALUES (app.current_school_id(), yr, garden, bo, 4, split_part(st, '|', 1)::time, split_part(st, '|', 2)::time);
+      RAISE EXCEPTION 'supervision: a pass % was stored', st;
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+  END LOOP;
+  BEGIN
+    INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime", "validFrom", "validTo")
+    VALUES (app.current_school_id(), yr, garden, bo, 4, '10:00', '10:20', DATE '2031-01-08', DATE '2031-01-07');
+    RAISE EXCEPTION 'supervision: a pass ending before it begins was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  FOREACH st IN ARRAY ARRAY['', ' Norra', 'Norra ', repeat('x', 201)] LOOP
+    BEGIN
+      INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime", note)
+      VALUES (app.current_school_id(), yr, garden, bo, 4, '10:00', '10:20', st);
+      RAISE EXCEPTION 'supervision: a pass with the note "%" was stored', left(st, 20);
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+  END LOOP;
+
+  -- Another school's area, teacher and year, by their ids: refused by the keys.
+  BEGIN
+    INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime")
+    VALUES (app.current_school_id(), yr, current_setting('app.test_rv_other_area')::uuid, bo, 4, '10:00', '10:20');
+    RAISE EXCEPTION 'supervision: a pass was put on another school''s area';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime")
+    VALUES (app.current_school_id(), yr, garden, current_setting('app.test_rv_other_teacher')::uuid, 4, '10:00', '10:20');
+    RAISE EXCEPTION 'supervision: another school''s teacher was given a pass';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime")
+    VALUES (app.current_school_id(), current_setting('app.test_rv_other_year')::uuid, garden, bo, 4, '10:00', '10:20');
+    RAISE EXCEPTION 'supervision: a pass was put in another school''s year';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+
+  -- One place at a time. Anna watches the yard every Monday 10:00–10:20.
+  BEGIN
+    INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime")
+    VALUES (app.current_school_id(), yr, hall, anna, 1, '10:10', '10:30');
+    RAISE EXCEPTION 'supervision: Anna was put in the hall while she watches the yard';
+  EXCEPTION WHEN exclusion_violation THEN NULL;
+  END;
+  -- The minute she leaves the yard she may be in the hall, and on another weekday at the same time.
+  INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime")
+  VALUES (app.current_school_id(), yr, hall, anna, 1, '10:20', '10:40') RETURNING id INTO pass;
+  INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime")
+  VALUES (app.current_school_id(), yr, hall, anna, 3, '10:00', '10:20');
+  -- Her autumn Tuesdays on the yard: the hall from January is free, December is not.
+  INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime", "validFrom")
+  VALUES (app.current_school_id(), yr, hall, anna, 2, '10:00', '10:20', DATE '2031-01-07');
+  BEGIN
+    INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime", "validFrom", "validTo")
+    VALUES (app.current_school_id(), yr, hall, anna, 2, '10:00', '10:20', DATE '2030-12-01', DATE '2030-12-31');
+    RAISE EXCEPTION 'supervision: Anna was put in the hall on December Tuesdays she watches the yard';
+  EXCEPTION WHEN exclusion_violation THEN NULL;
+  END;
+  -- A pass moved onto another: refused as the insert is.
+  BEGIN
+    UPDATE "SupervisionShifts" SET "startTime" = '10:15' WHERE id = pass;
+    RAISE EXCEPTION 'supervision: a pass was moved onto another of the same teacher';
+  EXCEPTION WHEN exclusion_violation THEN NULL;
+  END;
+  -- Two teachers on one place at once: what guardsNeeded asks for.
+  INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime")
+  VALUES (app.current_school_id(), yr, garden, bo, 1, '10:00', '10:20');
+  -- Another läsår is another schedule.
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (app.current_school_id(), 'Rastvakt 2031/32', DATE '2031-08-14', DATE '2032-06-11', false, now()) RETURNING id INTO later;
+  INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime")
+  VALUES (app.current_school_id(), later, hall, anna, 1, '10:00', '10:20');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 203: ett skolområde som tas bort lämnar sina rastvaktsområden kvar
+-- utan skolområde; ett område tar sina pass med sig, och det gör också en
+-- lärare och ett läsår (20261202090000).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000002020')::text, true);
+DO $$
+DECLARE
+  n bigint;
+  garden uuid;
+  later uuid;
+  bo uuid;
+BEGIN
+  SELECT id INTO garden FROM "SupervisionAreas" WHERE name = 'RV Skolgården';
+  SELECT id INTO bo FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000002026';
+
+  DELETE FROM "Sites" WHERE name = 'RV Norra';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'supervision: the fixture''s site was not removed (%)', n; END IF;
+  SELECT count(*) INTO n FROM "SupervisionAreas" WHERE id = garden AND "siteId" IS NULL;
+  IF n <> 1 THEN RAISE EXCEPTION 'supervision: the area on a removed site went with it, or kept the site'; END IF;
+
+  -- The yard goes, and Anna's two passes with it; Bo's in the hall stays.
+  DELETE FROM "SupervisionAreas" WHERE id = garden;
+  SELECT count(*) INTO n FROM "SupervisionShifts";
+  IF n <> 1 OR NOT EXISTS (SELECT 1 FROM "SupervisionShifts" WHERE "userId" = bo) THEN
+    RAISE EXCEPTION 'supervision: % passes outlived or went with the yard, not Bo''s one alone', n;
+  END IF;
+
+  -- A year removed takes its passes.
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (app.current_school_id(), 'Rastvakt 2031/32', DATE '2031-08-14', DATE '2032-06-11', false, now()) RETURNING id INTO later;
+  INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime")
+  SELECT app.current_school_id(), later, "areaId", bo, 2, '11:00', '11:30' FROM "SupervisionShifts" WHERE "userId" = bo;
+  DELETE FROM "AcademicYears" WHERE id = later;
+  SELECT count(*) INTO n FROM "SupervisionShifts" WHERE "academicYearId" = later;
+  IF n <> 0 THEN RAISE EXCEPTION 'supervision: % passes outlived their year', n; END IF;
+
+  -- Bo removed takes his pass: the hall's break shows unwatched, nobody's pass dangles.
+  DELETE FROM "Users" WHERE id = bo;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'supervision: the fixture''s teacher was not removed (%)', n; END IF;
+  SELECT count(*) INTO n FROM "SupervisionShifts";
+  IF n <> 0 THEN RAISE EXCEPTION 'supervision: % passes outlived their teacher', n; END IF;
 END $$;
 ROLLBACK;
