@@ -15,6 +15,17 @@ import {
 import type { StaffingWarning } from '../staffing/staffing-checks';
 import { readsHr } from '../staffing/hr-visibility';
 import { isMixed } from '../common/lesson-lengths';
+import { sharesProblem, type LessonShare, type SharedRow } from '../common/lesson-shares';
+import {
+  SHARE_SELECT,
+  clearShares,
+  insertShares,
+  judgedShares,
+  sharesOfRequest,
+  sharesOfYear,
+  sharesRefusal,
+  type RequirementShareResponse,
+} from './requirement-shares';
 import {
   CREATE_DEFAULT_SHAPE,
   assertLessonLengthFitsTheGrid,
@@ -74,6 +85,12 @@ export type TeachingRequirementResponse = Omit<
  * REFUSE never reaches here — it is the 409 the write answered instead.
  */
 export type StaffedRequirementResponse = TeachingRequirementResponse & {
+  /**
+   * Delade lektioner: the row's shares as the write left them, longest
+   * first. Present only on a shared row; a row nobody shares is answered
+   * without the key, byte for byte as before the table existed.
+   */
+  shares?: LessonShare[];
   warnings: StaffingWarning[];
 };
 
@@ -159,6 +176,10 @@ export class TeachingRequirementsService {
         if (sameTeacherTwice(charged.teacherId, charged.coTeacherId)) {
           throw new BadRequestException(SAME_TEACHER_TWICE);
         }
+        // Delade lektioner: judged against the row as it is about to be
+        // written, before anything is (requirement-shares.ts).
+        const shares =
+          dto.shares !== undefined ? judgedShares(charged, sharesOfRequest(charged, dto.shares)) : [];
 
         // The staffing policy's two questions, asked of the row as it is about
         // to be written and before it is — see staffing-enforcement.ts. A
@@ -174,6 +195,7 @@ export class TeachingRequirementsService {
           before: null,
           patch: {
             ...charged,
+            ...(shares.length > 0 ? { shares } : {}),
             startDate: dto.startDate || null,
             endDate: dto.endDate || null,
           },
@@ -208,7 +230,9 @@ export class TeachingRequirementsService {
             endDate,
           },
         });
-        return { ...this.toResponse(created), warnings };
+        // After the row, so the trigger finds it (requirement-shares.ts).
+        await insertShares(tx, schoolId, created.id, shares);
+        return { ...this.toResponse(created), ...(shares.length > 0 ? { shares } : {}), warnings };
       });
     } catch (error) {
       rethrowPrismaError(error);
@@ -268,6 +292,10 @@ export class TeachingRequirementsService {
         // field, and the CHECK refuses (23514, a 400) any interleaving that
         // would store a list contradicting its scalars.
         let warnings: StaffingWarning[] = [];
+        // The shares this PATCH replaces the stored ones with; null leaves them.
+        let sharesWrite: LessonShare[] | null = null;
+        // The stored ones, when the staffing read below has them in hand.
+        let storedShares: LessonShare[] | null = null;
         let lengthWrite: Record<string, unknown> = {
           ...(dto.lessonsPerWeek !== undefined ? { lessonsPerWeek: dto.lessonsPerWeek } : {}),
           ...(dto.minutesPerLesson !== undefined ? { minutesPerLesson: dto.minutesPerLesson } : {}),
@@ -284,6 +312,7 @@ export class TeachingRequirementsService {
               lessonsPerWeek: true,
               minutesPerLesson: true,
               lessonLengths: true,
+              shares: SHARE_SELECT,
             },
           });
           // The shape as the row will end up, and the fields that put it
@@ -300,6 +329,29 @@ export class TeachingRequirementsService {
             : null;
           if (resolved) lengthWrite = resolved.write;
           if (stored) {
+            storedShares = stored.shares ?? [];
+            // Delade lektioner, against the row as it will end up: its lead,
+            // its medlärare and its lessons after this PATCH. Shares sent are
+            // the whole new list; without them the stored ones must still fit
+            // — a PATCH taking a lesson away, or making a share's teacher the
+            // lead, hears which rule here rather than from the trigger.
+            const rowAfter: SharedRow = {
+              teacherId: dto.teacherId !== undefined ? dto.teacherId : stored.teacherId,
+              coTeacherId: dto.coTeacherId !== undefined ? dto.coTeacherId : stored.coTeacherId,
+              ...(resolved
+                ? resolved.shape
+                : {
+                    lessonsPerWeek: stored.lessonsPerWeek,
+                    minutesPerLesson: stored.minutesPerLesson,
+                    lessonLengths: stored.lessonLengths,
+                  }),
+            };
+            if (dto.shares !== undefined) {
+              sharesWrite = judgedShares(rowAfter, sharesOfRequest(rowAfter, dto.shares));
+            } else if ((stored.shares ?? []).length > 0) {
+              const problem = sharesProblem(rowAfter, stored.shares);
+              if (problem !== null) throw sharesRefusal(problem);
+            }
             // As the row will end up: a PATCH naming only the co-teacher is
             // measured against the lead already on the row.
             if (
@@ -318,10 +370,15 @@ export class TeachingRequirementsService {
               requirementId: id,
               subjectId: stored.subjectId,
               studentGroupId: stored.studentGroupId,
-              before: { teacherId: stored.teacherId, coTeacherId: stored.coTeacherId },
+              before: {
+                teacherId: stored.teacherId,
+                coTeacherId: stored.coTeacherId,
+                shareTeacherIds: (stored.shares ?? []).map((share) => share.teacherId),
+              },
               patch: {
                 teacherId: dto.teacherId,
                 coTeacherId: dto.coTeacherId,
+                ...(sharesWrite !== null ? { shares: sharesWrite } : {}),
                 // The resolved shape, all three together, so the judge
                 // charges exactly what the UPDATE leaves on the row.
                 ...(resolved ? resolved.shape : {}),
@@ -351,6 +408,9 @@ export class TeachingRequirementsService {
         }
         const distribution = this.distributionWrite(dto, storedOwn);
 
+        // The stored shares go first, the new ones after the row: each
+        // statement then meets a pair the trigger accepts (requirement-shares.ts).
+        if (sharesWrite !== null) await clearShares(tx, id);
         const updated = await tx.teachingRequirement.update({
           where: { id },
           data: {
@@ -383,11 +443,27 @@ export class TeachingRequirementsService {
             ...(dto.endDate !== undefined ? { endDate } : {}),
           },
         });
-        return { ...this.toResponse(updated), warnings };
+        if (sharesWrite !== null) await insertShares(tx, updated.schoolId, id, sharesWrite);
+        // The shares in hand: the ones written, else the ones the staffing
+        // read found. A PATCH that touches no staffing field reads none, and
+        // answers without the key rather than with a statement of its own
+        // (the active year's write path is pinned, projected-rosters.budget).
+        const shares = sharesWrite ?? storedShares ?? [];
+        return { ...this.toResponse(updated), ...(shares.length > 0 ? { shares } : {}), warnings };
       });
     } catch (error) {
       rethrowPrismaError(error);
     }
+  }
+
+  /**
+   * Delade lektioner: every share of the year's timplansposter, for the
+   * Timplansposter dialog and Tjänstefördelning. Planning data like the rows
+   * themselves (TeachingRequirements is every staff member's to read), so no
+   * Läslogg; through the gateway only, as the table's grants say.
+   */
+  async listShares(academicYearId: string, user: AuthenticatedUser): Promise<RequirementShareResponse[]> {
+    return this.prisma.withRls(user, (tx) => sharesOfYear(tx, academicYearId));
   }
 
   async remove(id: string, user: AuthenticatedUser): Promise<void> {

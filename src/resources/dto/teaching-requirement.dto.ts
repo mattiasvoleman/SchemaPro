@@ -1,4 +1,5 @@
 import { LessonRecurrence } from '@prisma/client';
+import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
@@ -10,6 +11,7 @@ import {
   Max,
   Min,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
 import { IsCalendarDate } from './is-calendar-date';
 import {
@@ -41,6 +43,34 @@ const OWN_DISTRIBUTION_MESSAGE =
  * and the lokal timplan's DTOs refuse null the same way.
  */
 const presentOrNull = (_: object, value: unknown): boolean => value !== undefined;
+
+/**
+ * Delade lektioner: `lessons` of the row's lessons that `teacherId` takes
+ * instead of its lead — "Bo: 1 × 60". `minutes` says which length on a row of
+ * two or three lengths, and may be left out on a uniform one, whose lessons
+ * are all minutesPerLesson. A null teacher keeps a share whose teacher was
+ * deleted: that many unstaffed lessons (the dialog saves back what it shows).
+ *
+ * 1..39 lessons and 15..240 minutes mirror the table's CHECKs; whether the
+ * shares fit the row is the service's to say (sharesProblem), with the rule
+ * named, before the trigger TS409 has to.
+ */
+export class RequirementShareDto {
+  @IsOptional()
+  @IsUUID('4', { message: 'shares: lärarens id är ett uuid.' })
+  teacherId?: string | null;
+
+  @IsInt({ message: 'shares: antalet lektioner anges som ett heltal.' })
+  @Min(1, { message: 'shares: en andel tar minst en lektion.' })
+  @Max(39, { message: 'shares: en andel tar högst 39 lektioner.' })
+  lessons!: number;
+
+  @ValidateIf(presentOrNull)
+  @IsInt({ message: 'shares: lektionslängden anges i hela minuter.' })
+  @Min(15, { message: 'shares: minst 15 minuter per lektion.' })
+  @Max(240, { message: 'shares: högst 240 minuter per lektion.' })
+  minutes?: number;
+}
 
 export class CreateTeachingRequirementDto {
   @IsUUID('4')
@@ -147,6 +177,18 @@ export class CreateTeachingRequirementDto {
   @Max(60)
   minutesAfter?: number;
 
+  /**
+   * Delade lektioner: EVERY share the row ends up with — [] for none, so the
+   * lead takes every lesson again. Omitted, the stored shares stay. See
+   * RequirementShareDto and src/resources/requirement-shares.ts.
+   */
+  @ValidateIf(presentOrNull)
+  @IsArray({ message: 'shares: anges som en lista med lärarandelar.' })
+  @ArrayMaxSize(39, { message: 'shares: högst 39 lärarandelar.' })
+  @ValidateNested({ each: true })
+  @Type(() => RequirementShareDto)
+  shares?: RequirementShareDto[];
+
   @ValidateIf(presentOrNull)
   @IsBoolean({ message: OWN_DISTRIBUTION_MESSAGE })
   ownDistribution?: boolean;
@@ -250,6 +292,18 @@ export class UpdateTeachingRequirementDto {
   @Min(0)
   @Max(60)
   minutesAfter?: number;
+
+  /**
+   * Delade lektioner: EVERY share the row ends up with — [] for none, so the
+   * lead takes every lesson again. Omitted, the stored shares stay. See
+   * RequirementShareDto and src/resources/requirement-shares.ts.
+   */
+  @ValidateIf(presentOrNull)
+  @IsArray({ message: 'shares: anges som en lista med lärarandelar.' })
+  @ArrayMaxSize(39, { message: 'shares: högst 39 lärarandelar.' })
+  @ValidateNested({ each: true })
+  @Type(() => RequirementShareDto)
+  shares?: RequirementShareDto[];
 
   @ValidateIf(presentOrNull)
   @IsBoolean({ message: OWN_DISTRIBUTION_MESSAGE })

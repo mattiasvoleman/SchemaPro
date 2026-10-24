@@ -48,6 +48,22 @@ function withBlock(rows: Record<string, Row[]>): Record<string, Row[]> {
   return rows;
 }
 
+/**
+ * Delade lektioner: 7A's matematik split, one of its three lessons Bo's — who
+ * has left, so the share is carried without a teacher. On the row, as the
+ * fake world reads a selected to-many relation the fixture put there.
+ */
+function withShare(rows: Record<string, Row[]>): Record<string, Row[]> {
+  for (const requirement of rows['teachingRequirement']!) {
+    if (requirement['studentGroupId'] === IDS.g7a && requirement['subjectId'] === IDS.ma) {
+      requirement['shares'] = [{ teacherId: IDS.bo, lessons: 1, minutes: 60 }];
+    }
+  }
+  // The table the run writes the carried share into, empty in the source year.
+  rows['teachingRequirementShare'] = [];
+  return rows;
+}
+
 function setup(rows?: Record<string, Row[]>) {
   const world = givenRolloverWorld(rows);
   const prisma = prismaFor(world);
@@ -446,7 +462,7 @@ describe('YearRolloverService — rollover execute', () => {
    * id where the table has one, studentGroupId is one of its new groups.
    */
   it('reads, locks the source FOR SHARE and creates into the new year only (write audit)', async () => {
-    const { world, service } = setup(withBlock(defaultRolloverRows()));
+    const { world, service } = setup(withShare(withBlock(defaultRolloverRows())));
     const { result } = await previewAndExecute(world, service, {
       ...OPTIONS,
       breaks: [{ sourceBreakId: IDS.jullov }],
@@ -488,6 +504,7 @@ describe('YearRolloverService — rollover execute', () => {
       'studentGroupMember',
       'teachingBlock',
       'teachingRequirement',
+      'teachingRequirementShare',
     ]);
     // And they are exactly the tables the registry says are carried.
     const carried = carriedModels()
@@ -1218,7 +1235,8 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
     expect(preview.planHash).toBe(PINNED);
     // The ONLY differences from fa4a3d6, named rather than re-recorded: the
     // source read of the timplansposter selects lessonLengths (lektionslängder,
-    // 20261008090000) and the row's own ämnesfördelning (20261019090000); the
+    // 20261008090000), the row's own ämnesfördelning (20261019090000) and its
+    // shares (delade lektioner, 20261205090000); the
     // source read of the groups each group's class when it is a half.
     // Asserted on their own, then taken out of that select, and every call with
     // every argument is then fa4a3d6's, byte for byte.
@@ -1233,6 +1251,11 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
         maxLessonsPerDay: true,
         minDaysBetween: true,
         blockId: true,
+        // Delade lektioner (20261205090000): each row's shares, kept with it.
+        shares: {
+          select: { teacherId: true, lessons: true, minutes: true },
+          orderBy: [{ minutes: 'desc' }, { teacherId: 'asc' }],
+        },
       });
     }
     // The SECOND, named the same way: the count of the uppdrag's times reads
@@ -1303,6 +1326,7 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
         maxLessonsPerDay: _perDay,
         minDaysBetween: _apart,
         blockId: _block,
+        shares: _shares,
         ...select
       } = args.select;
       return { ...call, args: { ...args, select } };
@@ -1405,7 +1429,7 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
   });
 
   it('writes the posts, the uppdrag and NEW slots into the new year, takes the staff and their rows under lock, and changes nothing of the source', async () => {
-    const rows = withBlock(staffingRows());
+    const rows = withShare(withBlock(staffingRows()));
     const { world, service } = setup(rows);
     const before = JSON.stringify(rows);
     const { result } = await previewAndExecute(world, service, {
@@ -2332,5 +2356,33 @@ describe('YearRolloverService — a class split in halves (Halvklasser)', () => 
     expect(
       plain.world.calls.filter((call) => call.model === 'studentGroup' && call.method === 'createManyAndReturn'),
     ).toHaveLength(1);
+  });
+});
+
+describe('YearRolloverService — delade lektioner (20261205090000)', () => {
+  const sharesOf = (world: RolloverWorld) => world.rows['teachingRequirementShare'] ?? [];
+
+  it('carries a post’s shares onto its successor’s new row, a teacher who has left without a teacher', async () => {
+    const { world, service } = setup(withShare(defaultRolloverRows()));
+    const { result } = await previewAndExecute(world, service, { ...OPTIONS, keepTeachers: true });
+    const target = result.academicYear.id;
+    const g8a = world.rows['studentGroup']!.find((group) => group['academicYearId'] === target && group['name'] === '8A')!['id'];
+    const carried = world.rows['teachingRequirement']!.find(
+      (row) => row['academicYearId'] === target && row['studentGroupId'] === g8a && row['subjectId'] === IDS.ma,
+    )!;
+    // Anna keeps the lead; Bo has left, so his lesson stays split off, unstaffed —
+    // never handed to Anna in silence.
+    expect(carried['teacherId']).toBe(IDS.anna);
+    expect(sharesOf(world)).toEqual([
+      expect.objectContaining({ requirementId: carried['id'], teacherId: null, lessons: 1, minutes: 60, schoolId: IDS.school }),
+    ]);
+  });
+
+  it('writes the one INSERT it always wrote for a year nobody shares', async () => {
+    const { world, service } = setup(defaultRolloverRows());
+    await previewAndExecute(world, service, OPTIONS);
+    const writes = world.calls.filter((call) => call.model === 'teachingRequirement' && call.method.startsWith('create'));
+    expect(writes.map((call) => call.method)).toEqual(['createMany']);
+    expect(world.calls.some((call) => call.model === 'teachingRequirementShare')).toBe(false);
   });
 });

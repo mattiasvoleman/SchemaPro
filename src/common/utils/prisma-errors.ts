@@ -52,6 +52,13 @@ import { TIOARIG_TOO_EARLY } from '../grade-numbering';
  * whichever writer met it: the requirements PATCH, a block's members, the
  * import, the rollover or "Skapa timplansposter". See teachingBlockRefusal.
  *
+ * Delade lektioner's trigger (migration 20261205090000) answers SQLSTATE
+ * TS409 when a timplanspost's shares would not fit its lessons, and that is
+ * the 409 REQUIREMENT_SHARES_DO_NOT_FIT with the rule broken — whichever
+ * writer met it. The requirements service judges the same rules first
+ * (sharesProblem) and names the one broken; this is what any other path meets.
+ * See requirementSharesRefusal.
+ *
  * The Halvklasser triggers (migration 20261113090000) answer SQLSTATE HC409
  * with a reason token, each a 409 of the same name, and a pupil placed in
  * both halves of one class meets the unique index
@@ -81,6 +88,10 @@ export function rethrowPrismaError(error: unknown): never {
   const block = teachingBlockRefusal(error);
   if (block) {
     throw blockMembersDifferConflict(block);
+  }
+  const shares = requirementSharesRefusal(error);
+  if (shares) {
+    throw requirementSharesConflict(shares.reason);
   }
   const half = classHalfRefusal(error);
   if (half) {
@@ -172,6 +183,65 @@ export function blockMembersDifferConflict(refusal: TeachingBlockRefusal): Confl
       'Timplansposter, eller ta posten ur blocket först.',
     code: BLOCK_MEMBERS_DIFFER,
     ...(refusal.teachingBlockId !== null ? { teachingBlockId: refusal.teachingBlockId } : {}),
+  });
+}
+
+/** The problem `code` of a timplanspost whose shares do not fit its lessons. */
+export const REQUIREMENT_SHARES_DO_NOT_FIT = 'REQUIREMENT_SHARES_DO_NOT_FIT';
+
+/** The rule a write broke: sharesProblem's last four, the trigger's four, or null when unread. */
+export type SharesRule = 'TEACHER_ON_POST' | 'LENGTH_NOT_ON_POST' | 'TOO_MANY_OF_LENGTH' | 'LEAD_KEEPS_NONE';
+
+const SHARE_RULES: readonly SharesRule[] = ['TEACHER_ON_POST', 'LENGTH_NOT_ON_POST', 'TOO_MANY_OF_LENGTH', 'LEAD_KEEPS_NONE'];
+
+/**
+ * Recognises the shares trigger's refusal and reads which rule, as
+ * teachingBlockRefusal does TB409: the driver's cause when the adapter carries
+ * it, the rendered message otherwise. DETAIL carries the post's id and the
+ * rule — never a person.
+ */
+export function requirementSharesRefusal(
+  error: unknown,
+): { requirementId: string | null; reason: SharesRule | null } | null {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return null;
+  const cause = (error.meta as { driverAdapterError?: { cause?: DriverCause } } | undefined)
+    ?.driverAdapterError?.cause;
+  const byMeta = cause?.originalCode === 'TS409';
+  const byMessage = error.code === 'P2039' && error.message.includes('Code: `TS409`');
+  if (!byMeta && !byMessage) return null;
+  const detail = typeof cause?.detail === 'string' ? cause.detail : error.message;
+  const reason = /reason=([A-Z_]+)/.exec(detail)?.[1] ?? /\(([A-Z_]+)\)/.exec(error.message)?.[1] ?? null;
+  return {
+    requirementId: /requirementId=([0-9a-f-]{36})/i.exec(detail)?.[1] ?? null,
+    reason: SHARE_RULES.includes(reason as SharesRule) ? (reason as SharesRule) : null,
+  };
+}
+
+const SHARE_SENTENCES: Record<SharesRule, string> = {
+  TEACHER_ON_POST:
+    'En lärare som tar några av postens lektioner kan inte också vara postens lärare eller medlärare. ' +
+    'Ta bort lärarens andel, eller välj en annan lärare eller medlärare.',
+  LENGTH_NOT_ON_POST:
+    'En lärarandel har en lektionslängd som posten inte har. Ange en av postens längder för andelen.',
+  TOO_MANY_OF_LENGTH:
+    'Lärarandelarna tar fler lektioner av en längd än posten har. Minska andelarna, eller ge posten fler lektioner.',
+  LEAD_KEEPS_NONE:
+    'Lärarandelarna tar alla postens lektioner, och postens lärare behåller minst en. ' +
+    'Gör den som ska ha resten till postens lärare, eller minska andelarna.',
+};
+
+/**
+ * The 409 for shares that do not fit their post: the rule broken in a
+ * sentence that says what to change, and the rule as `reason` beside the code.
+ */
+export function requirementSharesConflict(reason: SharesRule | null): ConflictException {
+  return new ConflictException({
+    message:
+      reason === null
+        ? 'Timplanspostens lärarandelar ryms inte i dess lektioner. Ändra andelarna eller postens lektioner.'
+        : SHARE_SENTENCES[reason],
+    code: REQUIREMENT_SHARES_DO_NOT_FIT,
+    ...(reason !== null ? { reason } : {}),
   });
 }
 

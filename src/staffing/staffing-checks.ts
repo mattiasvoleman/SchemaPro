@@ -348,8 +348,9 @@ function overTargetOfWrite(args: {
  * every teacher the row ends up with, and answers only when their load grows
  * past the limit (see the header).
  *
- * Findings in a fixed order — lead before co-teacher, behörighet before load —
- * so the 409 a REFUSE answers with is the same for the same write every time.
+ * Findings in a fixed order — lead before co-teacher before the shares'
+ * teachers, behörighet before load — so the 409 a REFUSE answers with is the
+ * same for the same write every time.
  */
 export function judgeRequirementWrite(args: {
   input: LoadInput;
@@ -377,6 +378,14 @@ export function judgeRequirementWrite(args: {
     ['TEACHER', after.teacherId, before?.teacherId ?? null],
     ['CO_TEACHER', after.coTeacherId, before?.coTeacherId ?? null],
   ];
+  // Delade lektioner: each share's teacher teaches their lessons as a
+  // teacher of the row, after the lead and the medlärare, in the shares'
+  // order. A teacher who already had a share of the row is not newly
+  // assigned; a row with no share adds nothing here.
+  const sharedBefore = new Set((before?.shares ?? []).map((share) => share.teacherId));
+  for (const id of new Set((after.shares ?? []).map((share) => share.teacherId))) {
+    if (id !== null) roles.push(['TEACHER', id, sharedBefore.has(id) ? id : null]);
+  }
   for (const [role, userId, previous] of roles) {
     if (userId === null) continue;
     if (userId !== previous) {

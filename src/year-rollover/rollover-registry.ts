@@ -144,6 +144,8 @@ export type ColumnRule =
   | 'NEW_SLOT'
   /** The new uppdrag this run wrote for the source uppdrag the link's time belongs to. */
   | 'NEW_DUTY'
+  /** The new timplanspost this run wrote for the source row the share belongs to. */
+  | 'NEW_REQUIREMENT'
   /**
    * Written as null whatever the source row holds. An uppdrag's Från and Till:
    * a carried uppdrag runs the whole new year, and one whose Till ended
@@ -311,6 +313,22 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
       recurrence: 'COPY',
       startDate: 'SHIFT_DATE',
       endDate: 'SHIFT_DATE',
+      ...timestamps,
+    },
+  },
+
+  TeachingRequirementShare: {
+    kind: 'COPIED',
+    step: 'requirements',
+    reason:
+      'Delade lektioner follow their timplanspost: Bo’s one of 7A’s three matematik is Bo’s one of 8A’s, with the teacher kept where the lead would be, and the share left without a teacher where the lead would be cleared.',
+    columns: {
+      id: 'NEW_ID',
+      schoolId: 'COPY',
+      requirementId: 'NEW_REQUIREMENT',
+      teacherId: 'KEEP_TEACHER',
+      lessons: 'COPY',
+      minutes: 'COPY',
       ...timestamps,
     },
   },

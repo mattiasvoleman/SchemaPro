@@ -107,6 +107,11 @@ export async function readLoadInput(
       endDate: true,
       subject: { select: { name: true } },
       studentGroup: { select: { name: true, gradeLevel: true } },
+      // Delade lektioner (20261205090000): the lessons other teachers take.
+      shares: {
+        select: { teacherId: true, lessons: true, minutes: true },
+        orderBy: [{ minutes: 'desc' }, { teacherId: 'asc' }],
+      },
     },
   });
   const posts = await tx.teacherEmployment.findMany({ where: { academicYearId } });
@@ -260,6 +265,8 @@ export async function readLoadInput(
       lessonLengths: row.lessonLengths,
       teacherLoadPercent: row.teacherLoadPercent,
       coTeacherLoadPercent: row.coTeacherLoadPercent,
+      // Only when there are any: a row nobody shares is the object it always was.
+      ...((row.shares ?? []).length > 0 ? { shares: row.shares } : {}),
       recurrence: row.recurrence,
       startDate: asDayOrNull(row.startDate),
       endDate: asDayOrNull(row.endDate),

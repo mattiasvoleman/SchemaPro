@@ -1,4 +1,5 @@
 import { ConflictException } from '@nestjs/common';
+import type { LessonShare } from '../common/lesson-shares';
 import type { LessonRecurrence, PrismaClient, UnstaffedGenerationMode } from '@prisma/client';
 import { gradeSpanOf, loadRosters } from '../optimization/room-eligibility';
 import { asDay, readLoadInput } from './load-input';
@@ -153,6 +154,11 @@ export interface RequirementPatch {
   lessonLengths?: readonly number[];
   teacherLoadPercent?: number;
   coTeacherLoadPercent?: number;
+  /**
+   * Delade lektioner: the row's shares as the write leaves them, the whole
+   * list ([] for none). Absent keeps the stored ones.
+   */
+  shares?: readonly LessonShare[];
   recurrence?: LessonRecurrence;
   /** YYYY-MM-DD, or null for "the year's own bound". */
   startDate?: string | null;
@@ -168,6 +174,7 @@ export const STAFFING_FIELDS: readonly (keyof RequirementPatch)[] = [
   'lessonLengths',
   'teacherLoadPercent',
   'coTeacherLoadPercent',
+  'shares',
   'recurrence',
   'startDate',
   'endDate',
@@ -201,10 +208,13 @@ export function mergeRequirement(
       : before
         ? before[name]
         : fallback;
+  const shares = patch.shares !== undefined ? patch.shares : (before?.shares ?? []);
   return {
     ...base,
     teacherId: field('teacherId', null),
     coTeacherId: field('coTeacherId', null),
+    // Only when there are any: a row nobody shares is the object it always was.
+    ...(shares.length > 0 ? { shares } : {}),
     lessonsPerWeek: field('lessonsPerWeek', 1),
     minutesPerLesson: field('minutesPerLesson', 60),
     lessonLengths: field('lessonLengths', []),
@@ -235,7 +245,15 @@ export async function enforceRequirementWrite(
     requirementId: string | null;
     subjectId: string;
     studentGroupId: string;
-    before: { teacherId: string | null; coTeacherId: string | null } | null;
+    /**
+     * The stored row's teachers: its lead, its medlärare and, on a shared row,
+     * the teachers of its shares (absent: none).
+     */
+    before: {
+      teacherId: string | null;
+      coTeacherId: string | null;
+      shareTeacherIds?: readonly (string | null)[];
+    } | null;
     patch: RequirementPatch;
   },
 ): Promise<StaffingWarning[]> {
@@ -245,14 +263,20 @@ export async function enforceRequirementWrite(
   const teacherAfter = patch.teacherId !== undefined ? patch.teacherId : (before?.teacherId ?? null);
   const coTeacherAfter =
     patch.coTeacherId !== undefined ? patch.coTeacherId : (before?.coTeacherId ?? null);
-  const assignees = [teacherAfter, coTeacherAfter].filter((id): id is string => id !== null);
+  const sharedBefore = new Set((before?.shareTeacherIds ?? []).filter((id): id is string => id !== null));
+  const sharedAfter =
+    patch.shares !== undefined
+      ? patch.shares.map((share) => share.teacherId).filter((id): id is string => id !== null)
+      : [...sharedBefore];
+  const assignees = [teacherAfter, coTeacherAfter, ...sharedAfter].filter((id): id is string => id !== null);
   if (assignees.length === 0) return [];
   const policy = await readCheckPolicy(tx, args.schoolId, args.showsPeriods);
   if (!checksAnything(policy)) return [];
 
   const newlyAssigned =
     (teacherAfter !== null && teacherAfter !== (before?.teacherId ?? null)) ||
-    (coTeacherAfter !== null && coTeacherAfter !== (before?.coTeacherId ?? null));
+    (coTeacherAfter !== null && coTeacherAfter !== (before?.coTeacherId ?? null)) ||
+    sharedAfter.some((id) => !sharedBefore.has(id));
   const asksQualification = policy.qualificationMode !== 'OFF' && newlyAssigned;
   const asksLoad =
     policy.overAllocationMode !== 'OFF' &&

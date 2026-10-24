@@ -46,6 +46,17 @@ describe('the load report agrees with the shared fixture', () => {
     expect(cases.some((c) => c.input.closures.length > 0)).toBe(true);
   });
 
+  it('reaches delade lektioner: a shared row with a medlärare, a split one, an unstaffed lead and a deleted teacher’s share', () => {
+    const rows = cases.flatMap((c) => c.input.requirements);
+    const shared = rows.filter((r) => (r.shares ?? []).length > 0);
+    expect(shared.some((r) => r.coTeacherId !== null && r.teacherLoadPercent !== 100)).toBe(true);
+    expect(shared.some((r) => isMixed(r))).toBe(true);
+    expect(shared.some((r) => r.teacherId === null)).toBe(true);
+    expect(shared.some((r) => (r.shares ?? []).some((share) => share.teacherId === null))).toBe(true);
+    const assignments = cases.flatMap((c) => c.report.teachers.flatMap((t) => t.assignments));
+    expect(assignments.some((a) => a.ownLessonsPerWeek !== undefined && a.ownLessonsPerWeek < a.rowLessonsPerWeek!)).toBe(true);
+  });
+
   it('reaches every Fas 2 branch: a percentage off 100, both kinds of uppdrag, both bottleneck verdicts and the uncomputed one', () => {
     const rows = cases.flatMap((c) => c.input.requirements);
     expect(rows.some((r) => r.teacherLoadPercent !== 100)).toBe(true);
