@@ -83,6 +83,7 @@ import { STAFF_UNSTAFFED_REQUIREMENTS } from '../staffing/staffing-checks';
 import { recordRead, type AccessChannel } from '../access-log/access-log';
 import { WORK_DAYS_HIDDEN_MESSAGE, WorkDaysRefusal, isDaysBearing, withoutDays } from './work-days';
 import { unkeptFreeDayWishes, type FreeDayWish, type TeachersOnDay } from './free-day-wishes';
+import { TRAVEL_TEACHERS_CODE } from './stored-conflicts';
 import type {
   AiEngineConflictAnalysis,
   AiEngineLesson,
@@ -101,6 +102,7 @@ import type {
   AnonymousRoom,
   AnonymousRoomPreference,
   AnonymousTeacherDayLimit,
+  AnonymousSiteTravelTime,
   AnonymousTeacherWorkRule,
   ConstraintKind,
   DayOfWeek,
@@ -194,8 +196,9 @@ export interface AnonMaps {
    * sends no work rules and passes an empty map. A refusal here says "this
    * teacher's lunch has nowhere to go" and can name nobody — the teacher map is
    * discarded on purpose, because no person's name may enter the stored
-   * conflicts — so the RULE's id is the only thing a school can look the refusal
-   * up by. Left optional, a route that forgot it would answer with a uuid that
+   * conflicts (the walk's line, which names teachers when it is read, gets
+   * only the teachers' Users ids: travelTeacherIds) — so the RULE's id is the
+   * only thing a school can look the refusal up by. Left optional, a route that forgot it would answer with a uuid that
    * exists in no table and nothing would report it.
    */
   workRuleAnonMap: Map<string, string>;
@@ -222,6 +225,14 @@ export interface AnonMaps {
    * which no answer carries.
    */
   dayLimitTeacherIds?: Map<string, string>;
+  /**
+   * Restid i generatorn: a teacher's anonymous id -> their Users id, for the
+   * one sentence that names teachers (TEACHER_TRAVEL_CANNOT_BE_KEPT). Turned
+   * into the sentence's server-only `subjectIds` and never into text: the
+   * view names them when read, as a free-day note's teacher is
+   * (stored-conflicts.ts). Optional and empty unless the walk was sent.
+   */
+  travelTeacherIds?: Map<string, string>;
   /** Real group id -> the school's own name, the last step out of id space. */
   nameById: Map<string, string>;
   /**
@@ -1158,6 +1169,9 @@ export class OptimizationProxyService {
       blockAnonMap: data.blockAnonMap,
       dayLimitAnonMap: data.dayLimitAnonMap,
       dayLimitTeacherIds: data.dayLimitTeacherIds,
+      // Only when the walk was sent: no other sentence names a teacher.
+      travelTeacherIds:
+        data.siteTravelTimes.length > 0 ? reversed(data.teacherAnonMap) : new Map<string, string>(),
       nameById: data.nameById,
     };
 
@@ -1264,6 +1278,9 @@ export class OptimizationProxyService {
       groups: data.groups,
       previousLessons: data.previousLessons,
       groupConflicts: data.groupConflicts,
+      // Restid i generatorn: only when the school turned the walk on and has a
+      // figure, the rooms then carrying their sites. See AiEngineScheduleRequest.
+      ...(data.siteTravelTimes.length > 0 ? { siteTravelTimes: data.siteTravelTimes } : {}),
     };
 
     // Over the payload turned back to real ids — the teacher's and the
@@ -1283,6 +1300,7 @@ export class OptimizationProxyService {
           data.workRuleAnonMap,
           data.blockAnonMap,
           data.dayLimitAnonMap,
+          data.siteAnonMap,
         ],
         storedRules: data.storedRules,
         draftLessons,
@@ -1597,10 +1615,28 @@ export class OptimizationProxyService {
       ...(summaryBearsDays ? { summarySubjectIds: this.limitSubjects(summaryParams, maps) } : {}),
       conflicts: conflicts.conflicts.map((detail) => {
         // A post's id goes on to its teacher's: the resource a deltid
-        // sentence is about is the person, and nothing else in this list is
-        // ever a Users id. Never named — see nameById — and never shown: the
-        // stored refusal keeps no ids, and the reader is told whose post it
-        // is only when they read HR (OptimizationJobsService).
+        // sentence is about is the person, and so is the travel line's (just
+        // below); nothing else in this list is ever a Users id. Never named
+        // here — see nameById — and never stored: the stored refusal keeps no
+        // resourceIds, and the reader is told whose post it is only when they
+        // read HR, whose walk it is when anyone reads it
+        // (OptimizationJobsService).
+        const travelTeachers = maps.travelTeacherIds ?? new Map<string, string>();
+        if (detail.code === TRAVEL_TEACHERS_CODE) {
+          // The teachers who cannot make the walk, as Users ids kept beside
+          // the sentence and named when it is read; never a name stored here.
+          const teachers = detail.resourceIds
+            .map((anonId) => travelTeachers.get(anonId))
+            .filter((id): id is string => id !== undefined);
+          return {
+            ...detail,
+            message: this.named(detail.message, maps),
+            params: this.namedParams(detail.params ?? {}, maps),
+            resourceIds: teachers,
+            resourceNames: [],
+            subjectIds: teachers,
+          };
+        }
         const resourceIds = detail.resourceIds.map((anonId) => {
           const realId = realByAnon.get(anonId) ?? anonId;
           return teacherOfPost.get(realId) ?? realId;
@@ -1824,6 +1860,10 @@ export class OptimizationProxyService {
     groups: AnonymousGroup[];
     previousLessons: AnonymousPreviousLesson[];
     groupConflicts: [string, string][];
+    /** Restid i generatorn: the walks, empty unless the school turned them on. */
+    siteTravelTimes: AnonymousSiteTravelTime[];
+    /** The sites the walks and the rooms name. Nothing in an answer names one. */
+    siteAnonMap: Map<string, string>;
     roomAnonMap: Map<string, string>;
     requirementAnonMap: Map<string, string>;
     /**
@@ -1861,7 +1901,10 @@ export class OptimizationProxyService {
      * The teacher's and the subject's maps, which nothing turns an engine
      * answer back through. Returned for the basis alone (prepareSchedule),
      * which has to read the payload in real ids, and dropped there: a refusal
-     * may name no person, so the teacher map never reaches AnonMaps.
+     * may name no person, so the teacher map never reaches AnonMaps. Its
+     * reverse does, as travelTeacherIds, only when walks were sent: the walk's
+     * line is turned into Users ids, which the job and candidate views name
+     * at read time, never a name stored.
      */
     teacherAnonMap: Map<string, string>;
     subjectAnonMap: Map<string, string>;
@@ -2620,6 +2663,8 @@ export class OptimizationProxyService {
         roomTypeId: true,
         minGradeLevel: true,
         maxGradeLevel: true,
+        // Restid i generatorn: sent only when the walk is on, below.
+        siteId: true,
         // Same reason as the subject's name above: for the way back, never
         // for the engine.
         name: true,
@@ -2651,6 +2696,7 @@ export class OptimizationProxyService {
         lunchMinutes: true,
         diningSeats: true,
         maxLessonsPerDayPerGroup: true,
+        generatorKeepsTravelTime: true,
       },
     });
     const storedRules: ScheduleRules | null = !lunchSettings
@@ -2689,12 +2735,42 @@ export class OptimizationProxyService {
       },
     });
 
+    /*
+     * Restid i generatorn: the walk between the school's skolområden, kept by
+     * the generator only when the school's Skolregler say so. Read only then —
+     * a school that has not turned it on asks nothing more than it did — and
+     * sent only when there is a figure: the walks, and each room's site
+     * beside them, every site anonymised like a room type. Off, or on without
+     * a figure, the payload is the one it was (no `siteTravelTimes`, no
+     * `siteId`), and so is the engine's model.
+     *
+     * Every row as stored, a 0 included: the engine counts a walk the way
+     * common/site-travel.ts does (a figure above zero between two different
+     * sites), and one reading of the rule is enough.
+     */
+    const siteAnonMap = new Map<string, string>();
+    const travelRows = lunchSettings?.generatorKeepsTravelTime
+      ? await tx.siteTravelTime.findMany({
+          where: { schoolId },
+          select: { siteAId: true, siteBId: true, minutes: true },
+          orderBy: [{ siteAId: 'asc' }, { siteBId: 'asc' }],
+        })
+      : [];
+    const siteTravelTimes: AnonymousSiteTravelTime[] = travelRows.map((row) => ({
+      siteAId: anonId(siteAnonMap, row.siteAId),
+      siteBId: anonId(siteAnonMap, row.siteBId),
+      minutes: row.minutes,
+    }));
+
     const rooms: AnonymousRoom[] = rawRooms.map((r) => ({
       id: anonId(roomAnonMap, r.id),
       capacity: r.capacity,
       type: r.roomTypeId ? anonId(roomTypeAnonMap, r.roomTypeId) : null,
       minGradeLevel: r.minGradeLevel,
       maxGradeLevel: r.maxGradeLevel,
+      ...(siteTravelTimes.length > 0 && r.siteId !== null
+        ? { siteId: anonId(siteAnonMap, r.siteId) }
+        : {}),
     }));
 
     const roomPreferences: AnonymousRoomPreference[] = rawPreferences.map((p) => {
@@ -3142,6 +3218,8 @@ export class OptimizationProxyService {
       groups,
       previousLessons,
       groupConflicts,
+      siteTravelTimes,
+      siteAnonMap,
       roomAnonMap,
       requirementAnonMap,
       groupAnonMap,

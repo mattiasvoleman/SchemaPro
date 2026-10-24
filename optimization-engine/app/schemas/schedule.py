@@ -370,6 +370,37 @@ class AnonymousRoom(CamelModel):
     max_grade_level: int | None = Field(
         default=None, alias="maxGradeLevel", ge=0, le=12,
     )
+    #: The skolområde the room stands on, anonymised like every other id.
+    #: Sent only by a school that has asked the generator to keep the walk
+    #: between its skolområden (Skolregler), and absent on every other
+    #: payload, which is therefore byte for byte what it was. None is a room
+    #: on no site, or a school that has not asked: either way an unknown, and
+    #: an unknown walk is never charged (src/common/site-travel.ts). See
+    #: app/solver/travel.py.
+    site_id: UUID4 | None = Field(default=None, alias="siteId")
+
+
+class SiteTravelTime(CamelModel):
+    """The minutes between two skolområden, one figure for both directions.
+
+    The school's own row (SiteTravelTimes), anonymised. One per pair: the
+    table stores the lower id first, so a pair cannot carry two figures, and a
+    payload that names one pair twice is a gateway that joined something twice
+    — refused as a shape below rather than read either way round.
+    """
+
+    site_a_id: UUID4 = Field(alias="siteAId")
+    site_b_id: UUID4 = Field(alias="siteBId")
+    #: 0..240, the database's own bounds (SiteTravelTimes_minutes_check). Zero
+    #: is a walk of no time, which keeps nothing apart.
+    minutes: int = Field(ge=0, le=240)
+
+    @model_validator(mode="after")
+    def validate_sites(self) -> SiteTravelTime:
+        if self.site_a_id == self.site_b_id:
+            msg = "A travel time joins two different sites."
+            raise ValueError(msg)
+        return self
 
 
 class AnonymousRoomPreference(CamelModel):
@@ -974,6 +1005,14 @@ class OptimizeScheduleRequest(CamelModel):
         alias="previousLessons",
         max_length=5000,
     )
+    #: Restid i generatorn: the walk between the school's skolområden, sent
+    #: with each room's `siteId` by a school whose Skolregler turn the rule on,
+    #: and never otherwise — so an empty list is every other school's payload,
+    #: byte for byte, and builds exactly today's model. At most one row per
+    #: pair of the 50 sites a school may have (SITE_LIMIT): 50·49/2.
+    site_travel_times: list[SiteTravelTime] = Field(
+        default_factory=list, alias="siteTravelTimes", max_length=1225,
+    )
     weights: ObjectiveWeights | None = None
     rules: ScheduleRules | None = None
     # Optional, and absent on every request but a schemaförslag candidate's;
@@ -1025,6 +1064,24 @@ class OptimizeScheduleRequest(CamelModel):
         teachers = [limit.teacher_id for limit in self.teacher_day_limits]
         if len(set(teachers)) != len(teachers):
             msg = "teacherDayLimits names one teacher twice."
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def validate_travel_pairs(self) -> OptimizeScheduleRequest:
+        """One figure per pair of skolområden, in either order.
+
+        A SHAPE, refused as the day limits above are: the table keeps one row
+        per pair (the lower id first), so two rows for one pair — in the same
+        order or reversed — are a gateway that joined something twice. Read
+        either way round, the generator would be choosing which of two figures
+        the school meant.
+        """
+        pairs = [
+            frozenset((row.site_a_id, row.site_b_id)) for row in self.site_travel_times
+        ]
+        if len(set(pairs)) != len(pairs):
+            msg = "siteTravelTimes names one pair of sites twice."
             raise ValueError(msg)
         return self
 

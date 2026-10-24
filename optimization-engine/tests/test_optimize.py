@@ -4766,6 +4766,7 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         AnonymousConstraint,
         AnonymousGroup,
         AnonymousRequirement,
+        AnonymousRoom,
         AnonymousRoomPreference,
         AnonymousTeacherDayLimit,
         AnonymousTeacherWorkRule,
@@ -4777,7 +4778,15 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         ScheduledLesson,
         ScheduleRules,
         SearchOptions,
+        SiteTravelTime,
     )
+
+    # A room's site rides with it only when the walk is on (Restid i
+    # generatorn); the gateway sends the five others always.
+    assert _field_names(AnonymousRoom) == {
+        "id", "capacity", "type", "minGradeLevel", "maxGradeLevel", "siteId",
+    }
+    assert _field_names(SiteTravelTime) == {"siteAId", "siteBId", "minutes"}
 
     assert _field_names(OptimizeScheduleRequest) == {
         "requestId",
@@ -4796,6 +4805,9 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "fixedLessons",
         "groupConflicts",
         "previousLessons",
+        # Restid i generatorn: sent only when a school's Skolregler turn the
+        # walk on and it has a figure; every other payload omits it.
+        "siteTravelTimes",
         "weights",
         "rules",
         # Optional, and sent only for a schemaförslag candidate: a Generera's

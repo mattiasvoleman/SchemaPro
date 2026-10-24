@@ -131,6 +131,8 @@ type RoomFixture = {
   building: string | null;
   floor: number | null;
   name?: string;
+  /** Skolområden och restid; none unless a test places the room. */
+  siteId?: string | null;
 };
 
 const standardRooms = (): RoomFixture[] => [
@@ -895,6 +897,85 @@ describe('RoomOptimizationService', () => {
         roomIds: [anonRoom(sent!, ROOM_1)],
         kind: 'WISH',
         weight: 5,
+      });
+    });
+
+    describe('when the generator keeps the walk between sites', () => {
+      const NORRA = 'c0000000-0000-4000-8000-000000000001';
+      const SODRA = 'c0000000-0000-4000-8000-000000000002';
+      type Walk = { siteAId: string; siteBId: string; minutes: number };
+      let walks: Walk[];
+
+      const keeps = (on: boolean) => {
+        tx.lunchSetting.findUnique.mockResolvedValue({ generatorKeepsTravelTime: on });
+      };
+
+      beforeEach(() => {
+        rooms[0]!.siteId = NORRA;
+        rooms[1]!.siteId = NORRA;
+        rooms[2]!.siteId = SODRA;
+        walks = [{ siteAId: NORRA, siteBId: SODRA, minutes: 10 }];
+        // The filter the service asks for is honoured: a dropped `gt` would
+        // send a 0-minute pair as a walk.
+        tx.siteTravelTime.findMany.mockImplementation(
+          async ({ where }: { where: { schoolId: string; minutes?: { gt: number } } }) =>
+            walks.filter(
+              (walk) => where.schoolId === SCHOOL && (where.minutes === undefined || walk.minutes > where.minutes.gt),
+            ),
+        );
+      });
+
+      it('sends each room’s site under a token of its own', async () => {
+        keeps(true);
+        engine();
+
+        await propose();
+
+        const [first, tenth, annex] = sent!.rooms;
+        expect(first!.siteId).toEqual(expect.any(String));
+        expect(first!.siteId).toBe(tenth!.siteId);
+        expect(annex!.siteId).not.toBe(first!.siteId);
+        const text = JSON.stringify(sent);
+        expect(text).not.toContain(NORRA);
+        expect(text).not.toContain(SODRA);
+      });
+
+      it('sends no site while the switch is off, and reads no walk', async () => {
+        keeps(false);
+        engine();
+
+        await propose();
+
+        expect(sent!.rooms.every((room) => room.siteId === undefined)).toBe(true);
+        expect(tx.siteTravelTime.findMany).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ['no walk at all', [] as Walk[]],
+        ['only a walk of 0 minutes', [{ siteAId: NORRA, siteBId: SODRA, minutes: 0 }]],
+        ['only a walk to a site no room stands on', [{ siteAId: NORRA, siteBId: 'c0000000-0000-4000-8000-000000000009', minutes: 10 }]],
+      ])('sends no site when the switch is on with %s, as the generator then keeps none', async (_label, these) => {
+        walks = these;
+        keeps(true);
+        engine();
+
+        await propose();
+
+        expect(sent!.rooms.every((room) => room.siteId === undefined)).toBe(true);
+      });
+
+      it('moves the basis with a room’s site only while a walk is kept', async () => {
+        keeps(false);
+        const off = await basisNow();
+        rooms[2]!.siteId = NORRA;
+        expect(await basisNow()).toBe(off);
+
+        keeps(true);
+        rooms[2]!.siteId = SODRA;
+        const on = await basisNow();
+        expect(on).not.toBe(off);
+        rooms[1]!.siteId = SODRA;
+        expect(await basisNow()).not.toBe(on);
       });
     });
   });

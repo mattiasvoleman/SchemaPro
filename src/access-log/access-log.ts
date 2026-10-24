@@ -91,16 +91,26 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *     no studentIds and no participants (schedule-candidates.service.spec.ts).
  *     Nor a post's days: a sentence about them is stored as the hidden one
  *     (TEACHER_WORK_DAYS_HIDDEN, no figure, no post, no teacher) for every
- *     reader, so nothing HR is shown. The one name it gives is a teacher's
+ *     reader, so nothing HR is shown. The names it gives are a teacher's
  *     beside a free-day wish a candidate or the draft breaks
  *     (20261127090000), read when the page is read, as a generator run's
  *     notes name them: the wish is on the work rule every member of staff
- *     reads (below), not on the post. What IS recorded is each rebuild of
+ *     reads (below), not on the post; and the travel line's teachers, the
+ *     same way (below). What IS recorded is each rebuild of
  *     the fetch reading the posts' day limits it sends the engine — the
  *     run, the check before an apply and the apply itself — by the
  *     fetch's own recordRead (EMPLOYMENT), as Generera's is. A row per poll
  *     of the page would record the timetable layer about the people who
  *     already read it;
+ *   - the teachers a refusal names on its travel line (Restid i
+ *     generatorn, TEACHER_TRAVEL_CANNOT_BE_KEPT), on a generator run and on
+ *     a schemaförslag alike: kept on the server only as Users ids
+ *     (subjectIds) and named when the page is read, for every reader, as
+ *     the free-day wish's teacher is. What the line says of them — lessons
+ *     on two skolområden on one day, and the walk between — is the
+ *     timetable (MasterLessons, the rooms' sites) and the school's own
+ *     travel times, which every member of staff reads directly, and nothing
+ *     of a post or a pupil;
  *   - the publication check's timplan coverage (preview and publish): it
  *     judges by both layers and hands out group lines and the verdicts'
  *     sentences, and a pupil verdict's sentence ("En elev i 7A ...") names

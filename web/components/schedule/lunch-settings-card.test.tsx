@@ -168,6 +168,57 @@ describe("LunchSettingsCard", () => {
     });
   });
 
+  it("fills the walk switch from the school's rules, and sends what it is turned to", async () => {
+    // Restid i generatorn: off until the school turns it on, and a save to an
+    // API that names it sends it every time, so the stored rule is always the
+    // one on screen.
+    saved({ generatorKeepsTravelTime: false });
+    const user = userEvent.setup();
+    render(<LunchSettingsCard />);
+
+    const travel = await screen.findByRole("switch", { name: "travel" });
+    expect(travel.getAttribute("aria-checked")).toBe("false");
+    expect(travel.getAttribute("aria-describedby")).toBe("generator-keeps-travel-hint");
+    await user.click(travel);
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    expect(save.mock.calls[0]?.[0]).toMatchObject({ generatorKeepsTravelTime: true });
+  });
+
+  it("reads a school whose API predates the switch as off, and offers nothing to save", async () => {
+    saved();
+    render(<LunchSettingsCard />);
+
+    const travel = await screen.findByRole("switch", { name: "travel" });
+    expect(travel.getAttribute("aria-checked")).toBe("false");
+    expect((screen.getByRole("button", { name: "save" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("leaves the switch out of a save to an API that predates it", async () => {
+    // That API refuses a key it does not know (forbidNonWhitelisted): a web
+    // out before it would otherwise refuse every lunch save with a 400.
+    saved();
+    const user = userEvent.setup();
+    render(<LunchSettingsCard />);
+
+    await waitFor(() => expect(field("seats").value).toBe("180"));
+    fireEvent.change(field("seats"), { target: { value: "200" } });
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    expect(save.mock.calls[0]?.[0]).not.toHaveProperty("generatorKeepsTravelTime");
+  });
+
+  it("sends the switch turned off when the API named it", async () => {
+    saved({ generatorKeepsTravelTime: true });
+    const user = userEvent.setup();
+    render(<LunchSettingsCard />);
+
+    await user.click(await screen.findByRole("switch", { name: "travel" }));
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    expect(save.mock.calls[0]?.[0]).toMatchObject({ generatorKeepsTravelTime: false });
+  });
+
   it("sends the seat count as a number once one is typed", async () => {
     const user = userEvent.setup();
     render(<LunchSettingsCard />);
@@ -277,7 +328,7 @@ describe("LunchSettingsCard", () => {
       render(<LunchSettingsCard />);
 
       await waitFor(() => expect(field("windowStart").value).toBe("10:30"));
-      expect((screen.getByRole("switch") as HTMLElement).getAttribute("aria-checked")).toBe(
+      expect((screen.getByRole("switch", { name: "enabled" }) as HTMLElement).getAttribute("aria-checked")).toBe(
         "false",
       );
     });
@@ -344,7 +395,12 @@ describe("LunchSettingsCard under Läsbehörighet", () => {
     render(<LunchSettingsCard />);
     await waitFor(() => expect(field("windowStart")).toBeInTheDocument());
     expect(screen.getByRole("button", { name: "save" })).toHaveAttribute("data-writes", "PLANERING");
-    for (const control of [field("windowStart"), field("seats"), screen.getByRole("switch")]) {
+    for (const control of [
+      field("windowStart"),
+      field("seats"),
+      screen.getByRole("switch", { name: "enabled" }),
+      screen.getByRole("switch", { name: "travel" }),
+    ]) {
       expect(control.closest("[data-writes-inert]")).toHaveAttribute("data-writes-inert", "PLANERING");
       expect(control.closest("[data-writes]")).toBeNull();
     }

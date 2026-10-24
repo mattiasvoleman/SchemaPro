@@ -397,7 +397,7 @@
   },
   "sites": {
     "title": "Skolområden",
-    "description": "Skolans olika platser och restiden mellan dem. Schemat varnar när en lärare eller elever inte hinner mellan två lektioner på olika skolområden, och restiden räknas som arbetstid i belastningen. En skola på ett ställe behöver inga.",
+    "description": "Skolans olika platser och restiden mellan dem. Schemat varnar när en lärare eller elever inte hinner mellan två lektioner på olika skolområden, och restiden räknas som arbetstid i belastningen. Genereringen håller restiden om skolan slår på det under Skolregler. En skola på ett ställe behöver inga.",
     "add": "Lägg till skolområde",
     "empty": "Skolan har inga skolområden. Lägg till dem om skolan ligger på mer än ett ställe.",
     "oneSite": "Med ett skolområde finns ingen restid att räkna. Lägg till ett till för att ange restiden mellan dem.",
@@ -1312,6 +1312,7 @@
     "rulesTitle": "Skolregler",
     "rulesHint": "Reglerna gäller hela skolan och ställs in under Tillgänglighet.",
     "ruleMaxPerDay": "Max lektioner per dag och klass",
+    "ruleTravel": "Generatorn håller restiden mellan skolområdena",
     "rulesEdit": "Ändra",
     "noYearTitle": "{count, plural, one {En grupp} other {# grupper}} i timplansposterna saknar årskurs",
     "noYearBody": "Motorn läser ”ingen årskurs” som ”obegränsad”: ramtider och raster gäller inte för dessa gruppers lektioner, så de kan hamna rakt över en rast. Årskursen härleds ur medlemmarnas hemklasser, eller ur gruppens egen årskurs om den saknar medlemmar.",
@@ -2645,7 +2646,9 @@
     "loadFailed": "Skolreglerna kunde inte hämtas",
     "loadFailedHint": "Formuläret visas inte, eftersom det annars skulle fyllas med standardvärden som kunde sparas över skolans riktiga regler. Ladda om sidan för att försöka igen.",
     "saveFailed": "Skolreglerna sparades inte",
-    "saveFailedHint": "De regler som gällde innan står kvar."
+    "saveFailedHint": "De regler som gällde innan står kvar.",
+    "travel": "Generatorn håller restiden mellan skolområdena",
+    "travelHint": "Lärare och elever med två lektioner samma dag på olika skolområden får restiden mellan dem, avrundad uppåt till hela startsteg i schemat. Restiderna anges under Salar, Skolområden."
   },
   "conflictCategories": {
     "AVAILABILITY": "Tillgänglighet",
@@ -3965,6 +3968,7 @@
     "LUNCH_WINDOW_SHORTER_THAN_BREAK": "Lunchfönstret {windowStart}–{windowEnd} är kortare än den lunch på {minutes} minuter som ska rymmas i det.",
     "LUNCH_WINDOW_OFF_GRID": "Lunchfönstret {windowStart}–{windowEnd} och lunchen på {minutes} minuter passar inte schemarutnätet på {slotMinutes} minuter. Använd hela multiplar av {slotMinutes} minuter.",
     "PROBE_NOTHING_HELPED": "Inget schema hittades inom {budget} s, och ingen av de {rules, plural, one {# regel} other {# regler}} som provades gjorde att ett dök upp inom {slice} s var. Veckan kan helt enkelt vara stor — prova med längre tid.",
+    "PROBE_NOTHING_HELPED_WITH_TRAVEL": "Inget schema hittades inom {budget} s, och ingen av de {rules, plural, one {# regel} other {# regler}} som provades gjorde att ett dök upp. Restiden provades först, och de andra reglerna fick bara den tid som blev över. Veckan kan helt enkelt vara stor — prova med längre tid.",
     "PROBE_ONE_RULE_HELPED": "Inget schema hittades inom {budget} s, men veckan gick att lösa när en enda regel lättades. {rules, plural, one {Regeln står nedan} other {De # reglerna står nedan}} — en mätning, inte ett bevis.",
     "PROBE_SOLVED_WITHOUT_CHANGEOVER": "Med marginalen mellan lektioner satt till 0 hittades ett schema på {seconds} s.",
     "PROBE_SOLVED_WITHOUT_PUPIL_BUFFERS": "Med elevernas extra tid före och efter lektionerna satt till 0 hittades ett schema på {seconds} s.",
@@ -4048,7 +4052,12 @@
     "TEACHER_FREE_DAY_WISH_NOT_KEPT": "En lärare önskar ha {day, select, 1 {måndagar} 2 {tisdagar} 3 {onsdagar} 4 {torsdagar} 5 {fredagar} 6 {lördagar} 7 {söndagar} other {dag {day}}} lediga, och det nya schemat ger hen lektioner den dagen. Ett önskemål vägs mot resten av veckan och får ge vika där det skulle kosta mer att hålla det.",
     "TEACHER_DAY_TOO_LONG": "{requirement}: {role, select, CO_TEACHER {medläraren} other {läraren}} undervisar nu {minutes} minuter på {day, select, 1 {måndagen} 2 {tisdagen} 3 {onsdagen} 4 {torsdagen} 5 {fredagen} 6 {lördagen} 7 {söndagen} other {dag {day}}}, mer än de {cap} minuter per dag som arbetstidsregeln tillåter.",
     "TEACHER_WEEK_TOO_MANY_DAYS": "{requirement}: {role, select, CO_TEACHER {medläraren} other {läraren}} undervisar nu {days} dagar i veckan, fler än de {max} som tjänsten tillåter.",
-    "TEACHER_WEEK_TOO_MANY_DAYS_HIDDEN": "{requirement}: {role, select, CO_TEACHER {medläraren} other {läraren}} undervisar nu fler dagar i veckan än tjänsten tillåter. Dagarna visas för rektor, en fullständig administratör och den som har HR-läs."
+    "TEACHER_WEEK_TOO_MANY_DAYS_HIDDEN": "{requirement}: {role, select, CO_TEACHER {medläraren} other {läraren}} undervisar nu fler dagar i veckan än tjänsten tillåter. Dagarna visas för rektor, en fullständig administratör och den som har HR-läs.",
+    "PROBE_SOLVED_WITHOUT_TRAVEL": "Utan restiden mellan skolområdena hittades ett schema på {seconds} s.",
+    "PROBE_TRAVEL_UNMEASURED": "Restiden mellan skolans skolområden är påslagen. Utan restiden hittades inget schema heller på {seconds} s, så om restiden är skillnaden är inte mätt. En körning med restiden avstängd under Skolregler visar det.",
+    "TRAVEL_PROBE_SUMMARY": "Inget schema uppfyller alla regler, och lösaren kunde inte peka ut vilka av dem som krockar. Utan restiden mellan skolans skolområden hittades ett schema på {seconds} s, så det är restiden nedan som gör veckan omöjlig.",
+    "PUPILS_TRAVEL_CANNOT_BE_KEPT": "Skolreglerna ber generatorn hålla restiden mellan skolans skolområden för elever med lektioner på två skolområden samma dag, räknat efter deras tid för ombyte och avrundad uppåt till hela startsteg om {stepMinutes} min. {measured, select, 1 {Den restiden är det som gör veckan omöjlig: utan den finns ett schema som håller alla andra regler, och i det har eleverna i grupperna som nämns här kortare tid än restiden mellan två lektioner på olika skolområden.} 2 {Den restiden gör ensam veckan omöjlig: även med de andra reglerna åsidosatta går lektionerna för grupperna som nämns här inte att lägga så att den ryms. Veckan har också andra orsaker: den är omöjlig även utan restiden.} other {Den restiden är en av reglerna som inte kan gälla samtidigt för grupperna som nämns här. Om den ensam är det som gör skillnaden gick inte att mäta.}} Låt gruppernas lektioner använda salar på ett skolområde, korta restiden under Salar, Skolområden eller stäng av den under Skolregler.",
+    "TEACHER_TRAVEL_CANNOT_BE_KEPT": "Skolreglerna ber generatorn hålla restiden mellan skolans skolområden för varje lärare med lektioner på två skolområden samma dag, avrundad uppåt till hela startsteg om {stepMinutes} min. {measured, select, 1 {Den restiden är det som gör veckan omöjlig: utan den finns ett schema som håller alla andra regler, och i det har lärarna som nämns här kortare tid än restiden mellan två lektioner på olika skolområden.} 2 {Den restiden gör ensam veckan omöjlig: även med de andra reglerna åsidosatta går lektionerna för lärarna som nämns här inte att lägga så att den ryms. Veckan har också andra orsaker: den är omöjlig även utan restiden.} other {Den restiden är en av reglerna som inte kan gälla samtidigt för lärarna som nämns här. Om den ensam är det som gör skillnaden gick inte att mäta.}} Låt lärarnas lektioner använda salar på ett skolområde, korta restiden under Salar, Skolområden eller stäng av den under Skolregler."
   },
   "timplanCoverage": {
     "title": "Täckning",

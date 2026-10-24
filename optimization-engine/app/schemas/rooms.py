@@ -74,6 +74,14 @@ class WalkRoom(CamelModel):
     #: floor change — guessing either way would steer rooms on a fact nobody
     #: gave us. Same bounds as the database check.
     floor: int | None = Field(default=None, ge=-5, le=50)
+    #: Restid i generatorn: the skolområde the room stands on, anonymised.
+    #: Sent only by a school whose generator keeps the walk between its sites
+    #: (Skolregler), and then a lesson may move only to a room on the site it
+    #: is on: the generator placed it there with the walk in mind, and a move
+    #: across would undo what it kept. None is a room on no site, which keeps
+    #: its lessons among the rooms on none. Absent on every other request,
+    #: whose proposal is therefore the one it was.
+    site_id: UUID4 | None = Field(default=None, alias="siteId")
 
 
 class PlacedLesson(CamelModel):

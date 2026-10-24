@@ -104,6 +104,7 @@ describe('LunchSettingsService', () => {
     lunchMinutes: 30,
     diningSeats: 180,
     maxLessonsPerDayPerGroup: null,
+    generatorKeepsTravelTime: false,
     createdAt: new Date('2026-08-01T00:00:00.000Z'),
     updatedAt: new Date('2026-08-01T00:00:00.000Z'),
     ...overrides,
@@ -136,6 +137,36 @@ describe('LunchSettingsService', () => {
         create: { schoolId: SCHOOL_ID, ...data },
         update: data,
       });
+    });
+
+    it('writes the walk switch when the form sends it, on both arms of the upsert', async () => {
+      tx.lunchSetting.upsert.mockResolvedValue(storedRow({ generatorKeepsTravelTime: true }));
+
+      await service.upsert(dto({ generatorKeepsTravelTime: true }), testUser());
+
+      const call = tx.lunchSetting.upsert.mock.calls[0]?.[0] as {
+        create: Record<string, unknown>;
+        update: Record<string, unknown>;
+      };
+      expect(call.create['generatorKeepsTravelTime']).toBe(true);
+      expect(call.update['generatorKeepsTravelTime']).toBe(true);
+    });
+
+    it('leaves the walk switch alone when a tab from before it PUTs the row', async () => {
+      // A Skolregler tab loaded before the switch existed saves lunch and the
+      // daily maximum and names no switch. Writing `false` for it would turn
+      // the rule off that a colleague turned on, without a word to either.
+      tx.lunchSetting.upsert.mockResolvedValue(storedRow());
+
+      await service.upsert(dto(), testUser());
+
+      const call = tx.lunchSetting.upsert.mock.calls[0]?.[0] as {
+        create: Record<string, unknown>;
+        update: Record<string, unknown>;
+      };
+      expect(call.update).not.toHaveProperty('generatorKeepsTravelTime');
+      // A first row starts with the column's own default: off.
+      expect(call.create).not.toHaveProperty('generatorKeepsTravelTime');
     });
 
     it('stores an absent seat count as null rather than dropping the field', async () => {

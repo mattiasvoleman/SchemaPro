@@ -49,6 +49,9 @@ import {
   notedTeachersOf,
   notesViewOf,
   storedOf,
+  TRAVEL_TEACHERS_CODE,
+  travelNamesOf,
+  travelTeachersOf,
   type ConflictView,
   type StoredConflict,
 } from './stored-conflicts';
@@ -455,6 +458,11 @@ export function storedConflictsOf(analysis: AiEngineConflictAnalysis | null): St
         params: conflict.params ?? {},
         message: conflict.message,
         resourceNames: conflict.resourceNames ?? [],
+        // A travel sentence keeps its teachers server-side, named when read,
+        // as a note does (stored-conflicts.ts).
+        ...(conflict.code === TRAVEL_TEACHERS_CODE && conflict.subjectIds && conflict.subjectIds.length > 0
+          ? { subjectIds: [...conflict.subjectIds] }
+          : {}),
       },
     ];
   });
@@ -469,15 +477,19 @@ function sentenceCodeOf(
   return { code: codeOrNull(code), params: scalarParams(params) };
 }
 
-/** The stored sentences as a view, field by field: nothing a row might carry beyond them goes out. */
-function conflictsViewOf(value: unknown): StoredConflict[] {
+/**
+ * The stored sentences as a view, field by field: nothing a row might carry
+ * beyond them goes out — a travel sentence's teachers least of all, which go
+ * out as the names the school gives them now (`names`) and never as ids.
+ */
+function conflictsViewOf(value: unknown, names: ReadonlyMap<string, string>): StoredConflict[] {
   if (!Array.isArray(value)) return [];
   return (value as Array<Partial<StoredConflict> & Pick<StoredConflict, 'category' | 'message'>>).map((conflict) => ({
     category: conflict.category,
     ...(conflict.code !== undefined ? { code: conflict.code } : {}),
     ...(conflict.params !== undefined ? { params: conflict.params } : {}),
     message: conflict.message,
-    resourceNames: conflict.resourceNames ?? [],
+    resourceNames: [...(conflict.resourceNames ?? []), ...travelNamesOf(conflict, names)],
   }));
 }
 
@@ -1233,7 +1245,10 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
       for (const run of [newest, succeeded]) {
         if (!run) continue;
         for (const id of notedTeachersOf(run.draftNotes)) noted.add(id);
-        for (const candidate of run.candidates) for (const id of notedTeachersOf(candidate.notes)) noted.add(id);
+        for (const candidate of run.candidates) {
+          for (const id of notedTeachersOf(candidate.notes)) noted.add(id);
+          for (const id of travelTeachersOf(candidate.conflicts)) noted.add(id);
+        }
       }
       const people =
         noted.size === 0
@@ -1676,7 +1691,7 @@ function batchViewOf(row: RunRow, now: Date, names: ReadonlyMap<string, string>)
         errorCode: candidate.errorCode ?? null,
         errorParams: scalarParams(candidate.errorParams),
         metrics: applicable ? metricsViewOf(candidate.metrics) : null,
-        conflicts: conflictsViewOf(candidate.conflicts),
+        conflicts: conflictsViewOf(candidate.conflicts, names),
         notes: applicable ? measuredNotesOf(candidate.notes, names) : null,
       };
     }),

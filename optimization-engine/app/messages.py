@@ -354,6 +354,50 @@ MESSAGES: dict[str, str] = {
         "whether it alone is the difference could not be measured.}} Raise Max lessons per day "
         "under School rules, or free more days for those groups' lessons."
     ),
+    # Restid i generatorn (app/solver/travel.py): the walk between two
+    # skolområden, which the school's Skolregler ask the generator to keep.
+    # One line per party, the teachers or the pupils, naming every teacher, or
+    # every group and pair of groups, the core holds, in resourceIds, which
+    # the gateway names and the page lists. `stepMinutes` is the timetable's
+    # start step: the generator rounds each walk up to whole steps, and a
+    # school that wrote ten minutes deserves to be told it was asked for
+    # thirty. `measured` is what SchedulerSolver._travel_verdict established,
+    # the daily maximum's three answers: 1, the week has a timetable without
+    # the walk, and in it these leave less time between two sites than the
+    # walk — dropping the walk for them is enough, which is all that timetable
+    # proves, so the sentence never says they cannot keep it; 2, the week is
+    # impossible without the walk too, and these cannot keep it even with
+    # every other rule set aside; 0, nothing settled it either way. The lead
+    # sentence states the rule, as the maximum's does, and claims nothing of
+    # anyone named.
+    "TEACHER_TRAVEL_CANNOT_BE_KEPT": (
+        "The school rules ask the generator to keep the travel time between the school's sites "
+        "for every teacher with lessons on two sites on one day, rounded up to whole start "
+        "steps of {stepMinutes} min. {measured, select, 1 {That travel time is what makes the "
+        "week impossible: without it, a timetable exists that keeps every other rule, and in it "
+        "the teachers named here have less time than the travel time between two lessons on "
+        "different sites.} 2 {That travel time makes the week impossible on its own: even with "
+        "the other rules set aside, the lessons of the teachers named here cannot be placed so "
+        "that it fits. The week has other causes too: it stays impossible without the travel "
+        "time.} other {That travel time is one of the rules that cannot all hold at once for the "
+        "teachers named here; whether it alone is the difference could not be measured.}} Let "
+        "these teachers' lessons use rooms on one site, shorten the travel time under Rooms, "
+        "Sites, or turn it off under School rules."
+    ),
+    "PUPILS_TRAVEL_CANNOT_BE_KEPT": (
+        "The school rules ask the generator to keep the travel time between the school's sites "
+        "for pupils with lessons on two sites on one day, after their time to change, rounded "
+        "up to whole start steps of {stepMinutes} min. {measured, select, 1 {That travel time "
+        "is what makes the week impossible: without it, a timetable exists that keeps every "
+        "other rule, and in it the pupils of the groups named here have less time than the "
+        "travel time between two lessons on different sites.} 2 {That travel time makes the "
+        "week impossible on its own: even with the other rules set aside, the lessons of the "
+        "groups named here cannot be placed so that it fits. The week has other causes too: it "
+        "stays impossible without the travel time.} other {That travel time is one of the rules "
+        "that cannot all hold at once for the groups named here; whether it alone is the "
+        "difference could not be measured.}} Let these groups' lessons use rooms on one site, "
+        "shorten the travel time under Rooms, Sites, or turn it off under School rules."
+    ),
     "LUNCH_BREAK_IS_THE_DIFFERENCE": (
         "Counted without the {lunchMinutes}-minute lunch break, the time these lessons can "
         "take has room for {freeMinutes} minutes of them, enough to hold them, so the lunch "
@@ -665,6 +709,13 @@ MESSAGES: dict[str, str] = {
     # instead: the same week without its blocks, given the probe's budget.
     # Removing every block made the week solve, so the blocks are what make
     # it impossible — together, which is all this establishes about each one.
+    # Restid i generatorn: a proved refusal the explanation named nothing in,
+    # solved again without the walk (SchedulerSolver._travel_without_core).
+    "TRAVEL_PROBE_SUMMARY": (
+        "No timetable satisfies every rule, and the solver could not name which of them collide. "
+        "With the travel time between the school's sites dropped a timetable was found in "
+        "{seconds} s, so it is the travel time below that makes the week impossible."
+    ),
     "BLOCK_PROBE_SUMMARY": (
         "No timetable satisfies every rule, and the solver could not name which of them collide. "
         "With the blocks dropped a timetable was found in {seconds} s, so it is the blocks listed "
@@ -739,8 +790,9 @@ MESSAGES: dict[str, str] = {
     # of a lesson, less time between two lessons at different skolområden than
     # the walk between them (master-lessons.service.ts, travel-warnings.ts): a
     # warning, never a refusal. Here for the reason DISTRIBUTION_* is. The
-    # engine sends nothing about travel yet; Restid i generatorn will name an
-    # unkept walk with its own code.
+    # generator's own refusal is TEACHER_TRAVEL_CANNOT_BE_KEPT and its pupils'
+    # twin above, and a timetable it made never draws this warning: it holds
+    # every pair, not only neighbours, and the walk rounded up to its step.
     "TRAVEL_TIME_SHORT": (
         "{party, select, TEACHER {{name}} other {The pupils in {name}}} cannot make it from {from} "
         "to {to}: {gap} min between the lessons, and the walk takes {minutes} min ({other} "
@@ -752,6 +804,15 @@ MESSAGES: dict[str, str] = {
         "No timetable was found within {budget} s, and none of the {rules, plural, "
         "one {# rule} other {# rules}} probed made one appear inside {slice} s each. The week may "
         "simply be large; try a longer budget."
+    ),
+    # Restid i generatorn: the same, where the school keeps the walk. No time
+    # per rule, because the walk's probe goes first with the whole probe
+    # budget and the other rules get what it leaves; its line gives its own.
+    "PROBE_NOTHING_HELPED_WITH_TRAVEL": (
+        "No timetable was found within {budget} s, and none of the {rules, plural, "
+        "one {# rule} other {# rules}} probed made one appear. The travel time was probed first, "
+        "and the other rules only had the time it left. The week may simply be large; try a "
+        "longer budget."
     ),
     "PROBE_ONE_RULE_HELPED": (
         "No timetable was found within {budget} s, but relaxing a single rule made the same week "
@@ -781,6 +842,23 @@ MESSAGES: dict[str, str] = {
     ),
     "PROBE_SOLVED_WITHOUT_LUNCH": (
         "With the guaranteed lunch break switched off, a timetable was found in {seconds} s."
+    ),
+    # Restid i generatorn. The walk is one switch in the Skolregler and its
+    # figures one card under Rooms, so a single probe: it says the walk is
+    # what the budget ran out on, and both places a school can act on it.
+    "PROBE_SOLVED_WITHOUT_TRAVEL": (
+        "With the travel time between the school's sites dropped, a timetable was found in "
+        "{seconds} s."
+    ),
+    # Restid i generatorn, a timeout with the walk on whose own probe found
+    # nothing either. Only what the probe measured: the rule is on, and a
+    # search without it found nothing in its time. Not that the walk is the
+    # cause — the review's 2,000-pupil week runs out of time with it off too —
+    # and the way to measure that (a run with it off).
+    "PROBE_TRAVEL_UNMEASURED": (
+        "The travel time between the school's sites is turned on. Searching without it for "
+        "{seconds} s did not find a timetable either, so whether it is the difference was not "
+        "measured. A run with it turned off under School rules shows that."
     ),
     "PROBE_SOLVED_WITHOUT_DISTRIBUTION": (
         "With the subjects' distribution rules dropped — at most a number of lessons a day, "

@@ -44,4 +44,19 @@ describe('UpsertLunchSettingsDto limits', () => {
       'maxLessonsPerDayPerGroup',
     ]);
   });
+
+  it('takes the travel switch as true or false, and leaves it out as nothing to change', async () => {
+    await expect(failing(base)).resolves.toEqual([]);
+    await expect(failing({ ...base, generatorKeepsTravelTime: true })).resolves.toEqual([]);
+    await expect(failing({ ...base, generatorKeepsTravelTime: false })).resolves.toEqual([]);
+  });
+
+  it('refuses a null travel switch, which the NOT NULL column would answer with a 500', async () => {
+    await expect(failing({ ...base, generatorKeepsTravelTime: null })).resolves.toEqual([
+      'generatorKeepsTravelTime',
+    ]);
+    await expect(failing({ ...base, generatorKeepsTravelTime: 'true' })).resolves.toEqual([
+      'generatorKeepsTravelTime',
+    ]);
+  });
 });

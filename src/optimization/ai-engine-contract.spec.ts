@@ -93,6 +93,19 @@ const DAY_LIMIT_FIELDS = ['id', 'lockedWeekdays', 'maxTeachingDaysPerWeek', 'tea
 /** The top level with a day limit sent: the key exists only then. */
 const PAYLOAD_FIELDS_WITH_DAY_LIMITS = [...PAYLOAD_FIELDS, 'teacherDayLimits'].sort();
 
+/**
+ * Restid i generatorn: the walks between the school's sites, sent only when
+ * the school's Skolregler turn the walk on and a pair has a figure — and the
+ * rooms then carry `siteId`. The engine's `_field_names(SiteTravelTime)`.
+ */
+const SITE_TRAVEL_FIELDS = ['minutes', 'siteAId', 'siteBId'];
+const PAYLOAD_FIELDS_WITH_TRAVEL = [...PAYLOAD_FIELDS, 'siteTravelTimes'].sort();
+/** Every key a payload can carry, the conditional ones included. */
+const PAYLOAD_FIELDS_ALL = [...PAYLOAD_FIELDS, 'teacherDayLimits', 'siteTravelTimes'].sort();
+/** The generator's room: the engine's `_field_names(AnonymousRoom)` with the walk on. */
+const ROOM_FIELDS = ['capacity', 'id', 'maxGradeLevel', 'minGradeLevel', 'type'];
+const ROOM_FIELDS_WITH_SITE = [...ROOM_FIELDS, 'siteId'].sort();
+
 /** A sitting names a span of years, so there is nothing here to anonymise. */
 const SERVING_FIELDS = [
   'dayOfWeek',
@@ -477,9 +490,9 @@ describe('AI engine wire contract', () => {
     // a field the guard never sees is the one a stale candidate slips through.
     const covered = [...BASIS_PAYLOAD_FIELDS, ...BASIS_EXCLUDED_FIELDS];
     expect(new Set(covered).size).toBe(covered.length);
-    expect(PAYLOAD_FIELDS_WITH_DAY_LIMITS.filter((field) => !covered.includes(field as never))).toEqual([]);
+    expect(PAYLOAD_FIELDS_ALL.filter((field) => !covered.includes(field as never))).toEqual([]);
     // And nothing is read that the payload no longer has.
-    expect(BASIS_PAYLOAD_FIELDS.filter((field) => !PAYLOAD_FIELDS_WITH_DAY_LIMITS.includes(field))).toEqual([]);
+    expect(BASIS_PAYLOAD_FIELDS.filter((field) => !PAYLOAD_FIELDS_ALL.includes(field))).toEqual([]);
   });
 
   it('sends a schemaförslag candidate Generera\'s fields plus search, and search exactly its four', async () => {
@@ -599,6 +612,65 @@ describe('AI engine wire contract', () => {
     );
     expect(Object.keys(payload).sort()).toEqual(PAYLOAD_FIELDS);
     expect(JSON.stringify(payload)).not.toMatch(/teacherDayLimits|maxTeaching|preferredFreeDay/);
+  });
+
+  describe('Restid i generatorn', () => {
+    const rooms = [
+      { id: 'rm-n', capacity: 30, roomTypeId: null, minGradeLevel: null, maxGradeLevel: null, siteId: 'site-n', name: 'N1', roomType: null },
+      { id: 'rm-s', capacity: 30, roomTypeId: null, minGradeLevel: null, maxGradeLevel: null, siteId: 'site-s', name: 'S1', roomType: null },
+      { id: 'rm-x', capacity: 30, roomTypeId: null, minGradeLevel: null, maxGradeLevel: null, siteId: null, name: 'X1', roomType: null },
+    ];
+    const keeping = (keeps: boolean, figures: Array<Record<string, unknown>>) => (tx: ReturnType<typeof createTxMock>) => {
+      tx['room']!['findMany']!.mockResolvedValue(rooms);
+      tx['lunchSetting']!['findUnique']!.mockResolvedValue({
+        lunchEnabled: true,
+        lunchStartTime: new Date(0),
+        lunchEndTime: new Date(0),
+        lunchMinutes: 30,
+        diningSeats: 180,
+        maxLessonsPerDayPerGroup: 7,
+        generatorKeepsTravelTime: keeps,
+      });
+      tx['siteTravelTime']!['findMany']!.mockResolvedValue(figures);
+    };
+    const figure = { siteAId: 'site-n', siteBId: 'site-s', minutes: 10 };
+
+    it('sends a school whose walk is off neither a site nor a walk, and asks for no figure', async () => {
+      const payload = await buildPayload({}, [], [], keeping(false, [figure]));
+
+      expect(Object.keys(payload).sort()).toEqual(PAYLOAD_FIELDS);
+      for (const room of payload['rooms'] as Array<Record<string, unknown>>) {
+        expect(Object.keys(room).sort()).toEqual(ROOM_FIELDS);
+      }
+      expect(JSON.stringify(payload)).not.toMatch(/siteId|siteTravelTimes/);
+      expect(lastTx['siteTravelTime']!['findMany']).not.toHaveBeenCalled();
+    });
+
+    it('sends a school that keeps the walk but has no figure the payload it always sent', async () => {
+      const payload = await buildPayload({}, [], [], keeping(true, []));
+
+      expect(Object.keys(payload).sort()).toEqual(PAYLOAD_FIELDS);
+      expect(JSON.stringify(payload)).not.toMatch(/siteId|siteTravelTimes/);
+    });
+
+    it('sends the walks and every room’s site, anonymised, under the names the engine declares', async () => {
+      const payload = await buildPayload({}, [], [], keeping(true, [figure]));
+      const sentRooms = payload['rooms'] as Array<Record<string, unknown>>;
+      const walks = payload['siteTravelTimes'] as Array<Record<string, unknown>>;
+
+      expect(Object.keys(payload).sort()).toEqual(PAYLOAD_FIELDS_WITH_TRAVEL);
+      expect(walks).toHaveLength(1);
+      expect(Object.keys(walks[0]!).sort()).toEqual(SITE_TRAVEL_FIELDS);
+      expect(walks[0]!['minutes']).toBe(10);
+      // A room on a site carries it; a room on none carries no key, which the
+      // engine reads as unknown, as common/site-travel.ts does.
+      expect(Object.keys(sentRooms[0]!).sort()).toEqual(ROOM_FIELDS_WITH_SITE);
+      expect(Object.keys(sentRooms[2]!).sort()).toEqual(ROOM_FIELDS);
+      // The sites are tokens: the walk names exactly the two the rooms carry,
+      // and neither is the school's own id.
+      expect([walks[0]!['siteAId'], walks[0]!['siteBId']]).toEqual([sentRooms[0]!['siteId'], sentRooms[1]!['siteId']]);
+      expect(JSON.stringify(payload)).not.toMatch(/site-n|site-s/);
+    });
   });
 
   it('sends a rule’s cap and wish under the names the engine declares, and a rule holding only them', async () => {
@@ -1081,10 +1153,11 @@ describe('AI engine wire contract — room optimisation', () => {
     frozenLessonIds: [],
   });
 
-  const run = async (reply: (requestId: string) => object = engineReply) => {
+  const run = async (reply: (requestId: string) => object = engineReply, keepsSites = false) => {
     const tx = createTxMock();
     const prisma = createPrismaMock(tx);
     tx['academicYear']!['findUnique']!.mockResolvedValue({ id: 'year-1', schoolId: 'school-1' });
+    tx['lunchSetting']!['findUnique']!.mockResolvedValue({ generatorKeepsTravelTime: keepsSites });
     tx['masterLesson']!['findMany']!.mockResolvedValue([
       {
         id: 'ml-1',
@@ -1115,8 +1188,22 @@ describe('AI engine wire contract — room optimisation', () => {
         maxGradeLevel: null,
         building: 'Hus A',
         floor: 2,
+        siteId: 'site-n',
+      },
+      {
+        id: 'rm2',
+        capacity: 30,
+        roomTypeId: null,
+        minGradeLevel: null,
+        maxGradeLevel: null,
+        building: 'Hus B',
+        floor: 1,
+        siteId: 'site-s',
       },
     ]);
+    // The walk the switch is kept for: one figure above zero between the two
+    // rooms' sites, which is what makes Optimera salar keep the sites.
+    tx['siteTravelTime']!['findMany']!.mockResolvedValue([{ siteAId: 'site-n', siteBId: 'site-s' }]);
     tx['availabilityConstraint']!['findMany']!.mockResolvedValue([
       {
         id: 'c1',
@@ -1164,6 +1251,14 @@ describe('AI engine wire contract — room optimisation', () => {
     const { sent } = await run();
     const rooms = sent['rooms'] as Array<Record<string, unknown>>;
     expect(Object.keys(rooms[0]!).sort()).toEqual(ROOMS_ROOM_FIELDS);
+  });
+
+  it('sends each room’s site, a token, only when the school’s generator keeps the walk', async () => {
+    // Restid i generatorn: the engine then moves no lesson off its site.
+    const { sent } = await run(engineReply, true);
+    const rooms = sent['rooms'] as Array<Record<string, unknown>>;
+    expect(Object.keys(rooms[0]!).sort()).toEqual([...ROOMS_ROOM_FIELDS, 'siteId'].sort());
+    expect(rooms[0]!['siteId']).not.toBe('site-n');
   });
 
   it('sends exactly the constraint fields the engine declares', async () => {

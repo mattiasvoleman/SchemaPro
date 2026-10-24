@@ -25,6 +25,7 @@ interface LunchForm {
   lunchMinutes: string;
   diningSeats: string;
   maxLessonsPerDayPerGroup: string;
+  generatorKeepsTravelTime: boolean;
 }
 
 const EMPTY_FORM: LunchForm = {
@@ -34,6 +35,8 @@ const EMPTY_FORM: LunchForm = {
   lunchMinutes: "30",
   diningSeats: "",
   maxLessonsPerDayPerGroup: "",
+  // Off until the school turns it on: Restid i generatorn.
+  generatorKeepsTravelTime: false,
 };
 
 /**
@@ -134,6 +137,11 @@ export function LunchSettingsCard() {
    * rules read from localStorage) are something to save, and Save stays open.
    */
   const [baseline, setBaseline] = useState<LunchForm | null>(null);
+  // Whether the API this page read names the travel switch. One from before
+  // it refuses the key outright (forbidNonWhitelisted), so a save leaves the
+  // key out unless the API named it or the admin turned it on: a web that
+  // reaches the browsers before the API does still saves the lunch.
+  const [apiKnowsTravel, setApiKnowsTravel] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -152,9 +160,13 @@ export function LunchSettingsCard() {
           settings.maxLessonsPerDayPerGroup === null
             ? ""
             : String(settings.maxLessonsPerDayPerGroup),
+        // `?? false`: an API from before the switch sends no such field, and
+        // reads as the rule it is then — off.
+        generatorKeepsTravelTime: settings.generatorKeepsTravelTime ?? false,
       };
       setForm(filled);
       setBaseline(filled);
+      setApiKnowsTravel(settings.generatorKeepsTravelTime !== undefined);
       return;
     }
     setForm({ ...EMPTY_FORM, ...legacyForm() });
@@ -184,6 +196,9 @@ export function LunchSettingsCard() {
         lunchMinutes: Number(sent.lunchMinutes),
         diningSeats: optionalNumber(sent.diningSeats),
         maxLessonsPerDayPerGroup: optionalNumber(sent.maxLessonsPerDayPerGroup),
+        ...(apiKnowsTravel || sent.generatorKeepsTravelTime
+          ? { generatorKeepsTravelTime: sent.generatorKeepsTravelTime }
+          : {}),
       });
       setBaseline(sent);
       // `updated`, not `saved`: this called a key that has never existed in
@@ -288,6 +303,24 @@ export function LunchSettingsCard() {
                 }
               />
             </FormField>
+          </div>
+
+          {/* Restid i generatorn. The walks themselves, and which room
+              stands on which site, are set on the rooms page; this only says
+              whether the generator keeps them. */}
+          <div className="flex items-start justify-between gap-4 rounded-md border p-3">
+            <div className="space-y-1">
+              <Label htmlFor="generator-keeps-travel">{t("travel")}</Label>
+              <p id="generator-keeps-travel-hint" className="text-sm text-muted-foreground">
+                {t("travelHint")}
+              </p>
+            </div>
+            <Switch
+              id="generator-keeps-travel"
+              aria-describedby="generator-keeps-travel-hint"
+              checked={form.generatorKeepsTravelTime}
+              onCheckedChange={(checked) => patch({ generatorKeepsTravelTime: checked })}
+            />
           </div>
 
           {saveError !== null ? (

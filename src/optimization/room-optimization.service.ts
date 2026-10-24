@@ -120,6 +120,7 @@ const ROOM_SELECT = Prisma.validator<Prisma.RoomSelect>()({
   maxGradeLevel: true,
   building: true,
   floor: true,
+  siteId: true,
 });
 
 const PREFERENCE_SELECT = Prisma.validator<Prisma.RoomPreferenceSelect>()({
@@ -156,6 +157,17 @@ interface YearState {
   constraints: ConstraintRow[];
   /** lessonId -> what it asks of a room, for every lesson that is sent. */
   needs: Map<string, RoomNeeds>;
+  /**
+   * Restid i generatorn: the school's generator keeps a walk between its
+   * sites — the switch on (LunchSettings.generatorKeepsTravelTime) AND a
+   * figure above zero between two sites rooms stand on, which is when the
+   * engine's model holds one (travel_map). Then the rooms are sent with their
+   * sites and the engine moves no lesson off its own, since the generator put
+   * it there with the walk in mind. The switch alone keeps nothing apart in
+   * the generator, so it keeps nothing apart here either, and a school that
+   * turns it on before writing a figure sees no proposal change.
+   */
+  keepsSites: boolean;
 }
 
 /** realId -> anonymous id, one map per id space, minted per request. */
@@ -167,6 +179,7 @@ interface RoomAnonMaps {
   subjects: Map<string, string>;
   roomTypes: Map<string, string>;
   buildings: Map<string, string>;
+  sites: Map<string, string>;
   preferences: Map<string, string>;
   constraints: Map<string, string>;
 }
@@ -412,7 +425,7 @@ export class RoomOptimizationService {
     // School-scoped rows through the year -> school hop, as the generator
     // reads them, so a request for another school's year pulls nothing.
     const inSchool = { school: { academicYears: { some: { id: academicYearId } } } };
-    const [lessons, rooms, preferences, constraints] = await Promise.all([
+    const [lessons, rooms, preferences, constraints, settings] = await Promise.all([
       tx.masterLesson.findMany({ where: { academicYearId }, select: LESSON_SELECT }),
       tx.room.findMany({ where: inSchool, select: ROOM_SELECT }),
       tx.roomPreference.findMany({ select: PREFERENCE_SELECT }),
@@ -428,7 +441,22 @@ export class RoomOptimizationService {
         },
         select: CONSTRAINT_SELECT,
       }),
+      // Restid i generatorn: whether the school keeps its lessons on their
+      // sites. One indexed SELECT on the Skolregler row, the one read this
+      // feature adds to every proposal and apply; the figures below only
+      // where it is on.
+      tx.lunchSetting.findUnique({
+        where: { schoolId: year.schoolId },
+        select: { generatorKeepsTravelTime: true },
+      }),
     ]);
+    const walks = settings?.generatorKeepsTravelTime
+      ? await tx.siteTravelTime.findMany({
+          where: { schoolId: year.schoolId, minutes: { gt: 0 } },
+          select: { siteAId: true, siteBId: true },
+        })
+      : [];
+    const sitesWithRooms = new Set(rooms.flatMap((room) => (room.siteId ? [room.siteId] : [])));
 
     // What each lesson asks of a room, derived HERE so that propose and apply
     // read it the same way: the proposal sends it, and the basis covers it.
@@ -462,7 +490,18 @@ export class RoomOptimizationService {
       ]),
     );
 
-    return { schoolId: year.schoolId, lessons, rooms, preferences, constraints, needs };
+    return {
+      schoolId: year.schoolId,
+      lessons,
+      rooms,
+      preferences,
+      constraints,
+      needs,
+      keepsSites: walks.some(
+        (walk) =>
+          walk.siteAId !== walk.siteBId && sitesWithRooms.has(walk.siteAId) && sitesWithRooms.has(walk.siteBId),
+      ),
+    };
   }
 
   private anonymise(
@@ -479,6 +518,7 @@ export class RoomOptimizationService {
       subjects: new Map(),
       roomTypes: new Map(),
       buildings: new Map(),
+      sites: new Map(),
       preferences: new Map(),
       constraints: new Map(),
     };
@@ -501,6 +541,9 @@ export class RoomOptimizationService {
       // name answers that exactly.
       building: room.building ? anon(maps.buildings, room.building) : null,
       floor: room.floor,
+      // Only when the walk is kept, and then every room with a site says
+      // which: the engine keeps a lesson among the rooms of its own site.
+      ...(state.keepsSites && room.siteId !== null ? { siteId: anon(maps.sites, room.siteId) } : {}),
     }));
 
     const lessons: PlacedLesson[] = placed.map((lesson) => {
@@ -692,6 +735,10 @@ function basisOf(state: YearState): string {
       room.maxGradeLevel,
       room.building,
       room.floor,
+      // Restid i generatorn: a room's site, only while the walk is kept, so a
+      // school that keeps none has the basis it had, and turning the rule on
+      // or moving a room to another site makes a proposal stale.
+      ...(state.keepsSites ? [room.siteId] : []),
     ]),
     roomPreferences: sortedById(state.preferences).map((rule) => [
       rule.id,

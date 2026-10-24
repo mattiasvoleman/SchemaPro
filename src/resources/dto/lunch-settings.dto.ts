@@ -5,6 +5,7 @@ import {
   Matches,
   Max,
   Min,
+  ValidateIf,
 } from 'class-validator';
 
 const TIME = /^\d{2}:\d{2}(:\d{2})?$/;
@@ -53,4 +54,17 @@ export class UpsertLunchSettingsDto {
   @Min(1)
   @Max(20)
   maxLessonsPerDayPerGroup?: number | null;
+
+  /**
+   * Restid i generatorn: the generator keeps the walk between the school's
+   * skolområden. OPTIONAL, and absent leaves the stored value as it is: a
+   * Skolregler tab loaded before the switch existed PUTs the row without it,
+   * and must not turn the rule off that a colleague turned on. A school's
+   * first row starts with it off, the column's default. Absent, and not
+   * null: `@IsOptional` would let a null through to a NOT NULL column, a 500
+   * where the caller deserves the 400 that names the field.
+   */
+  @ValidateIf((_, value) => value !== undefined)
+  @IsBoolean()
+  generatorKeepsTravelTime?: boolean;
 }

@@ -112,6 +112,7 @@ import { RoomOptimizationService } from '../../src/optimization/room-optimizatio
 import { BLOCK_CARD_STALE, MasterLessonsService } from '../../src/calendar/master-lessons.service';
 import { CalendarLessonsService } from '../../src/calendar/calendar-lessons.service';
 import { LunchSittingsService } from '../../src/resources/lunch-sittings.service';
+import { LunchSettingsService } from '../../src/resources/lunch-settings.service';
 import type { RealtimeService } from '../../src/realtime/realtime.service';
 import type { ScheduleVersionsService } from '../../src/calendar/schedule-versions.service';
 import { CalendarService } from '../../src/calendar/calendar.service';
@@ -4570,6 +4571,76 @@ async function runChecks(
       await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-elevhistorik'`, [MARKER]);
     }
   }
+
+  // ---- (rg) Restid i generatorn: the Skolregler switch, and what the generator's fetch sends
+  await check('(rg) the Skolregler walk switch round-trips the real adapter and a PUT without it keeps it; the generator’s fetch sends no site and no walk while it is off, and then every room’s site and the walks as tokens', async () => {
+    const lunch = new LunchSettingsService(api);
+    const before = await owner.query('SELECT * FROM "LunchSettings" WHERE "schoolId" = $1', [fixture.schoolId]);
+    const roomsBefore = await owner.query<{ id: string; siteId: string | null }>(
+      'SELECT id, "siteId" FROM "Rooms" WHERE "schoolId" = $1 ORDER BY id', [fixture.schoolId],
+    );
+    const [norra, sodra] = [0, 1].map(() => randomUUID());
+    try {
+      for (const [id, name] of [[norra, 'rg Norra'], [sodra, 'rg Södra']] as const) {
+        await owner.query('INSERT INTO "Sites" (id, "schoolId", name) VALUES ($1, $2, $3)', [id, fixture.schoolId, `${MARKER} ${name}`]);
+      }
+      const [a, b] = [norra!, sodra!].sort();
+      await owner.query('INSERT INTO "SiteTravelTimes" ("schoolId", "siteAId", "siteBId", minutes) VALUES ($1, $2, $3, 10)', [fixture.schoolId, a, b]);
+      await owner.query('UPDATE "Rooms" SET "siteId" = $2 WHERE id = $1', [fixture.roomId, norra]);
+
+      const fetch = () =>
+        api.withRls(fixture.admin, async (tx) =>
+          (
+            new OptimizationProxyService(
+              api,
+              { post: () => { throw new Error('the engine was called'); } } as never,
+              { getOrThrow: () => ({ baseUrl: 'http://engine.invalid', apiKey: 'k'.repeat(32), timeoutMs: 1 }) } as never,
+            ) as unknown as {
+              fetchAndAnonymize: (...args: unknown[]) => Promise<{
+                rooms: { id: string; siteId?: string }[];
+                roomAnonMap: Map<string, string>;
+                siteTravelTimes: { siteAId: string; siteBId: string; minutes: number }[];
+              }>;
+            }
+          ).fetchAndAnonymize(tx, fixture.activeYearId, fixture.schoolId, await rostersOfYear(tx, fixture.admin, fixture.activeYearId)),
+        );
+
+      const base = { lunchEnabled: false, lunchStartTime: '11:00', lunchEndTime: '13:00', lunchMinutes: 30 };
+      // Off: no site and no walk, whatever the school's sites say.
+      const off = await lunch.upsert({ ...base, generatorKeepsTravelTime: false }, fixture.admin);
+      assert.equal(off.generatorKeepsTravelTime, false);
+      const quiet = await fetch();
+      assert.deepEqual(quiet.siteTravelTimes, []);
+      assert.ok(quiet.rooms.every((room) => !('siteId' in room)), 'a room carried its site with the walk off');
+
+      // On, through the real adapter; a PUT from a tab before the switch keeps it.
+      const on = await lunch.upsert({ ...base, generatorKeepsTravelTime: true }, fixture.admin);
+      assert.equal(on.generatorKeepsTravelTime, true);
+      const kept = await lunch.upsert(base, fixture.admin);
+      assert.equal(kept.generatorKeepsTravelTime, true, 'a PUT without the switch turned it off');
+
+      const sent = await fetch();
+      assert.equal(sent.siteTravelTimes.length, 1);
+      assert.equal(sent.siteTravelTimes[0]!.minutes, 10);
+      const room = sent.rooms.find((row) => row.id === sent.roomAnonMap.get(fixture.roomId));
+      assert.ok(room?.siteId, 'the room on Norra went without its site');
+      assert.ok([sent.siteTravelTimes[0]!.siteAId, sent.siteTravelTimes[0]!.siteBId].includes(room!.siteId!));
+      assert.ok(!([norra, sodra] as string[]).includes(room!.siteId!), 'a site went out under its own id');
+    } finally {
+      await owner.query('DELETE FROM "Sites" WHERE id = ANY($1::uuid[])', [[norra, sodra]]);
+      for (const row of roomsBefore.rows) {
+        await owner.query('UPDATE "Rooms" SET "siteId" = $2 WHERE id = $1', [row.id, row.siteId]);
+      }
+      await owner.query('DELETE FROM "LunchSettings" WHERE "schoolId" = $1', [fixture.schoolId]);
+      for (const row of before.rows) {
+        const columns = Object.keys(row);
+        await owner.query(
+          `INSERT INTO "LunchSettings" (${columns.map((c) => `"${c}"`).join(', ')}) VALUES (${columns.map((_c, i) => `$${i + 1}`).join(', ')})`,
+          columns.map((c) => (row as Record<string, unknown>)[c]),
+        );
+      }
+    }
+  });
 
   await check('(z) the active year\'s hot paths send Postgres exactly f5ff8da\'s statements, the PATCH one fewer: the roster basis rides on reads they already make', async () => {
     // A school of its own, swept whole: an active year with 7A and 8A at the
