@@ -71,9 +71,12 @@ export interface SupervisionGap {
   fewest: number;
   shortFrom: string;
   shortTo: string;
-  /** Inclusive yyyy-mm-dd. */
+  /** Inclusive yyyy-mm-dd: the first and the last date of the weekday the break is short on. */
   from: string;
   to: string;
+  /** Short from the läsår's first day, and until its last. */
+  fromYearStart: boolean;
+  toYearEnd: boolean;
 }
 
 export interface SupervisionRota {
@@ -152,18 +155,12 @@ export function gapsOfBreak(rota: Pick<SupervisionRota, "gaps">, brk: Supervisio
   );
 }
 
-/** Whether the dates are the whole läsår: no Från, no Till, or both on the year's bounds. */
-export function wholeYear(
-  dates: { from: string | null; to: string | null },
-  year: { startDate: string; endDate: string },
-): boolean {
-  return (dates.from === null || dates.from <= year.startDate) && (dates.to === null || dates.to >= year.endDate);
-}
-
 /** "08:05" from "08:05:00" or "08:05". */
 export const clockOf = (value: string) => value.slice(0, 5);
 
 const minutes = (clock: string) => Number(clock.slice(0, 2)) * 60 + Number(clock.slice(3, 5));
+/** A wall clock of one day, 00:00 to 23:59. */
+const isClock = (value: string) => /^([01]\d|2[0-3]):[0-5]\d$/.test(clockOf(value));
 
 /** A pass as the dialog edits it: clocks and dates as typed. */
 export interface ShiftDraft {
@@ -184,7 +181,20 @@ export type ShiftDraftFault =
   | "endBeforeStart"
   | "toBeforeFrom"
   | "outsideYear"
+  | "noWeekday"
   | "noteTooLong";
+
+/** The dialog field each fault is said beside, and focused on a refused save. */
+export const FAULT_FIELD: Readonly<Record<ShiftDraftFault, "area" | "teacher" | "start" | "end" | "from" | "to" | "note">> = {
+  areaMissing: "area",
+  teacherMissing: "teacher",
+  timeMissing: "start",
+  endBeforeStart: "end",
+  toBeforeFrom: "to",
+  outsideYear: "from",
+  noWeekday: "to",
+  noteTooLong: "note",
+};
 
 /**
  * What the gateway would refuse in a draft, asked before it is sent so the
@@ -197,13 +207,19 @@ export function shiftDraftFault(
 ): ShiftDraftFault | null {
   if (!draft.areaId) return "areaMissing";
   if (!draft.userId) return "teacherMissing";
-  if (!/^\d{2}:\d{2}$/.test(clockOf(draft.startTime)) || !/^\d{2}:\d{2}$/.test(clockOf(draft.endTime))) return "timeMissing";
+  if (!isClock(draft.startTime) || !isClock(draft.endTime)) return "timeMissing";
   if (minutes(draft.endTime) <= minutes(draft.startTime)) return "endBeforeStart";
   if (draft.validFrom && draft.validTo && draft.validTo < draft.validFrom) return "toBeforeFrom";
   if (year) {
     for (const value of [draft.validFrom, draft.validTo]) {
       if (value && (value < year.startDate || value > year.endDate)) return "outsideYear";
     }
+  }
+  if (draft.validFrom && draft.validTo) {
+    const from = new Date(`${draft.validFrom}T00:00:00Z`);
+    const first = from.getUTCDay() === 0 ? 7 : from.getUTCDay();
+    const offset = (draft.dayOfWeek - first + 7) % 7;
+    if (new Date(from.getTime() + offset * 86_400_000).toISOString().slice(0, 10) > draft.validTo) return "noWeekday";
   }
   if ([...draft.note.trim()].length > 200) return "noteTooLong";
   return null;
@@ -221,4 +237,53 @@ export function shiftBody(draft: ShiftDraft) {
     validTo: draft.validTo || null,
     note: draft.note.trim() || null,
   };
+}
+
+/**
+ * The teacher's other pass that shares a minute with the draft on its
+ * weekday, on a date both run: the clash the gateway would refuse
+ * (SUPERVISION_SHIFT_CLASH, the table's one-place-at-a-time EXCLUDE), found
+ * in the schedule the page already holds so the dialog can name it before
+ * the save. Null without one, or without a complete window.
+ */
+export function clashOf(
+  draft: ShiftDraft,
+  shifts: readonly SupervisionShift[],
+  selfId: string | null,
+): SupervisionShift | null {
+  if (!draft.userId || !isClock(draft.startTime) || !isClock(draft.endTime)) return null;
+  const start = minutes(draft.startTime);
+  const end = minutes(draft.endTime);
+  const from = draft.validFrom || null;
+  const to = draft.validTo || null;
+  return (
+    shifts.find(
+      (other) =>
+        other.id !== selfId &&
+        other.userId === draft.userId &&
+        other.dayOfWeek === draft.dayOfWeek &&
+        minutes(other.startTime) < end &&
+        minutes(other.endTime) > start &&
+        (to === null || other.validFrom === null || other.validFrom <= to) &&
+        (from === null || other.validTo === null || other.validTo >= from),
+    ) ?? null
+  );
+}
+
+/**
+ * A gap's dates as a new pass's: a bound on the läsår's own is left empty,
+ * so the pass follows the year if its bounds move, as an undated one does.
+ */
+export function datesOfGap(
+  gap: Pick<SupervisionGap, "from" | "to" | "fromYearStart" | "toYearEnd">,
+): { validFrom: string; validTo: string } {
+  return {
+    validFrom: gap.fromYearStart ? "" : gap.from,
+    validTo: gap.toYearEnd ? "" : gap.to,
+  };
+}
+
+/** How many breaks the gaps are about: one break short in two stretches of the year is one break. */
+export function brokenBreakCount(gaps: readonly SupervisionGap[]): number {
+  return new Set(gaps.map((gap) => `${gap.areaId}|${gap.dayOfWeek}|${gap.startTime}|${gap.endTime}`)).size;
 }

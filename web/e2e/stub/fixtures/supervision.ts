@@ -80,6 +80,13 @@ const brk = (areaId: string, dayOfWeek: number, startTime: string, endTime: stri
   shiftIds,
 });
 
+/** The nearest date of ISO `day` on or after (1) or on or before (-1) `date`. */
+function weekdayFrom(date: string, day: number, direction: 1 | -1): string {
+  let at = new Date(`${date}T00:00:00Z`);
+  while ((at.getUTCDay() || 7) !== day) at = new Date(at.getTime() + direction * 86_400_000);
+  return at.toISOString().slice(0, 10);
+}
+
 /** The year's schedule; NEXT_YEAR, rolled and not activated, has none yet. */
 export function supervisionRota(year: AcademicYear, current: boolean): SupervisionRota {
   const shifts = current ? SHIFTS.map((make) => make(year.id)) : [];
@@ -90,13 +97,17 @@ export function supervisionRota(year: AcademicYear, current: boolean): Supervisi
     ...days.map((day) => brk(garden, day, "09:10", "09:25", ["Förmiddagsrast"], 1, idOf(garden, day))),
     ...days.map((day) => brk(hall, day, "11:30", "12:15", ["Lunch"], 2, idOf(hall, day))),
   ];
+  // Dates as the gateway states them: the first and the last date of the
+  // weekday, and whether the gap reaches the year's bounds.
   const gap = (areaId: string, day: number, start: string, end: string, names: string[], needed: number, fewest: number, from: string) => ({
     ...brk(areaId, day, start, end, names, needed, []),
     fewest,
     shortFrom: start,
     shortTo: end,
-    from,
-    to: year.endDate,
+    from: weekdayFrom(from, day, 1),
+    to: weekdayFrom(year.endDate, day, -1),
+    fromYearStart: from === year.startDate,
+    toYearEnd: true,
   });
   const gaps = current
     ? [
@@ -105,7 +116,16 @@ export function supervisionRota(year: AcademicYear, current: boolean): Supervisi
         ...[1, 2, 3, 4].map((day) => gap(hall, day, "11:30", "12:15", ["Lunch"], 2, 1, year.startDate)),
         gap(hall, 5, "11:30", "12:15", ["Lunch"], 2, 0, year.startDate),
       ]
-    : breaks.map((row) => ({ ...row, fewest: 0, shortFrom: row.startTime, shortTo: row.endTime, from: year.startDate, to: year.endDate }));
+    : breaks.map((row) => ({
+        ...row,
+        fewest: 0,
+        shortFrom: row.startTime,
+        shortTo: row.endTime,
+        from: year.startDate,
+        to: year.endDate,
+        fromYearStart: true,
+        toYearEnd: true,
+      }));
   return {
     academicYearId: year.id,
     year: { startDate: year.startDate, endDate: year.endDate },

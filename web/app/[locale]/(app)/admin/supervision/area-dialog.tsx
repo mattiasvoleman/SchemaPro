@@ -66,10 +66,12 @@ export function AreaDialog({ open, onOpenChange, area, sites, saving, onSave }: 
   const [form, setForm] = useState<AreaBody>(EMPTY);
   const [guards, setGuards] = useState("1");
   const [error, setError] = useState<string | null>(null);
+  const [touched, setTouched] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setError(null);
+    setTouched(false);
     if (area) {
       setForm({
         name: area.name,
@@ -89,11 +91,20 @@ export function AreaDialog({ open, onOpenChange, area, sites, saving, onSave }: 
   }, [open, area]);
 
   const guardsNeeded = guardsFromField(guards);
-  const valid = form.name.trim() !== "" && guardsNeeded !== undefined;
+  // Code points, as the table's char_length counts them.
+  const nameLength = [...form.name.trim()].length;
+  const nameError = nameLength === 0 ? (touched ? t("nameMissing") : undefined) : nameLength > 60 ? t("nameTooLong") : undefined;
+  const valid = nameLength > 0 && nameLength <= 60 && guardsNeeded !== undefined;
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!valid || guardsNeeded === undefined) return;
+    setTouched(true);
+    if (!valid || guardsNeeded === undefined) {
+      // Focus the first field that says why: the name, else the number.
+      const first = nameLength === 0 || nameLength > 60 ? "supervision-area-name" : "supervision-area-guards";
+      (event.currentTarget as HTMLFormElement).querySelector<HTMLElement>(`#${first}`)?.focus();
+      return;
+    }
     setError(null);
     try {
       await onSave({ ...form, name: form.name.trim(), guardsNeeded });
@@ -123,11 +134,10 @@ export function AreaDialog({ open, onOpenChange, area, sites, saving, onSave }: 
                 {error}
               </Notice>
             ) : null}
-            <FormField id="supervision-area-name" label={t("name")}>
+            <FormField id="supervision-area-name" label={t("name")} error={nameError}>
               <Input
                 value={form.name}
                 required
-                maxLength={60}
                 placeholder={t("namePlaceholder")}
                 onChange={(event) => setForm({ ...form, name: event.target.value })}
               />
@@ -220,7 +230,7 @@ export function AreaDialog({ open, onOpenChange, area, sites, saving, onSave }: 
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               {tCommon("cancel")}
             </Button>
-            <Button type="submit" disabled={!valid || saving}>
+            <Button type="submit" disabled={saving}>
               {saving ? tCommon("saving") : tCommon("save")}
             </Button>
           </DialogFooter>

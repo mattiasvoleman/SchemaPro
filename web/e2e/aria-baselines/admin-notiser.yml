@@ -54,7 +54,7 @@
         - link "Raster":
           - /url: /sv/admin/rasts
       - listitem:
-        - link "Rastvakter":
+        - link "Rastvaktsschema":
           - /url: /sv/admin/supervision
       - listitem:
         - link "Lunchsittningar":

@@ -2768,11 +2768,13 @@
     "title": "Break supervision",
     "subtitle": "Where the school supervises pupils during breaks, who is on duty when, and which breaks nobody covers. Shifts count as duties in teachers' load.",
     "yearLabel": "School year",
+    "dayName": "{day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {}}",
     "addShift": "New shift",
     "noYearTitle": "The school has no school year",
     "noYear": "The supervision rota belongs to a school year. Add the year under School years first.",
     "loadFailed": "The supervision rota could not be loaded",
     "loadFailedHint": "No rota is shown, since an empty one would mean no break has anyone on duty. Nothing has changed; reload the page to try again.",
+    "peopleFailed": "The teachers’ names could not be loaded, so the shifts are shown without them. Reload the page to try again.",
     "noAreasTitle": "No supervision areas yet",
     "noAreas": "Add the places the school supervises, such as the playground, the dining hall and the corridor. Then you can put shifts on them.",
     "gaps": {
@@ -2784,22 +2786,25 @@
       "nobody": "Nobody on duty {from}–{to}.",
       "short": "{fewest} of {needed} on duty {from}–{to}.",
       "dates": "{from} – {to}",
-      "wholeYear": "The whole school year",
-      "add": "Add shift: {area} {day} {start}"
+      "wholeYear": "the whole school year",
+      "add": "Add shift: {area} {day} {start}",
+      "from": "from {date}",
+      "to": "through {date}"
     },
     "grid": {
       "caption": "Supervision rota for {area}: the breaks and who is on duty each weekday",
       "break": "Break",
       "notThatDay": "No break",
       "needs": "{count, plural, =0 {Nobody required} one {Needs # on duty} other {Needs # on duty}}",
-      "short": "Not covered",
-      "add": "Add shift {day} {start}",
+      "short": "Understaffed",
+      "add": "Add shift in {area}, {day} {start}",
       "edit": "Edit shift: {name}, {day} {start}–{end}",
+      "inactive": "{name} (inactive)",
       "other": "Other shifts",
       "otherHint": "Shifts outside every break of the area, such as the entrance before school or the bus after it.",
       "noBreaks": "The area is supervised in no break: no year in its span has breaks or lunch it is supervised in. Shifts can still be put on it.",
       "from": "from {date}",
-      "to": "until {date}",
+      "to": "through {date}",
       "fromTo": "{from} – {to}",
       "passTime": "{start}–{end}"
     },
@@ -2841,6 +2846,8 @@
       "guards": "On duty at once",
       "guardsHint": "With 0, no break is reported as uncovered.",
       "guardsInvalid": "Enter a whole number from 0 to 10.",
+      "nameMissing": "The area needs a name.",
+      "nameTooLong": "The name can be at most 60 characters.",
       "countsAsTeaching": "Counts as teaching",
       "countsAsTeachingHint": "Shifts count against the teaching target, as a duty that counts as teaching does. Organised break activities, for instance.",
       "saveFailed": "The area could not be saved",
@@ -2865,7 +2872,7 @@
       "start": "Starts",
       "end": "Ends",
       "validFrom": "Valid from",
-      "validTo": "Valid until",
+      "validTo": "Valid through",
       "note": "Note",
       "notePlaceholder": "North end of the playground",
       "delete": "Remove shift",
@@ -2882,14 +2889,18 @@
         "endBeforeStart": "The shift must end after it starts.",
         "toBeforeFrom": "The end date is before the start date.",
         "outsideYear": "The dates must lie within the school year ({from} – {to}).",
-        "noteTooLong": "The note can be at most 200 characters."
+        "noteTooLong": "The note can be at most 200 characters.",
+        "clash": "The teacher is already on duty in {area} on {day} {start}–{end}. A teacher supervises one place at a time.",
+        "dateInvalid": "Enter a date that exists, or leave the field empty for the school year’s own bound.",
+        "noWeekday": "The weekday does not fall between the dates, so the shift would never run."
       },
       "errors": {
         "SUPERVISION_SHIFT_CLASH": "The teacher already has a shift sharing a minute with this one that day. A teacher supervises one place at a time.",
         "SUPERVISION_SHIFT_LIMIT": "A school year has at most 2,000 supervision shifts.",
         "SUPERVISION_AREA_NOT_FOUND": "The area no longer exists. Reload the page.",
         "SUPERVISION_SHIFT_NOT_FOUND": "The shift no longer exists. Reload the page.",
-        "SUPERVISION_YEAR_NOT_FOUND": "The school year no longer exists. Reload the page."
+        "SUPERVISION_YEAR_NOT_FOUND": "The school year no longer exists. Reload the page.",
+        "notFound": "The teacher, the area or the shift no longer exists. Reload the page."
       }
     },
     "teachers": {

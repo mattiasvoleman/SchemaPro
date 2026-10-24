@@ -30,6 +30,10 @@ export function useSupervisionRota(academicYearId: string | null) {
   return useQuery({
     queryKey: [...SUPERVISION_KEYS.rota, academicYearId],
     enabled: academicYearId !== null,
+    // Read again whenever the page opens: the breaks are Raster's and Lunch-
+    // sittningar's, the ram is an uppdrag, and none of their pages knows
+    // this key to invalidate it.
+    staleTime: 0,
     queryFn: () =>
       api.get<SupervisionRota>(`/api/v1/supervision-rota?academicYearId=${encodeURIComponent(academicYearId!)}`),
   });
@@ -59,13 +63,20 @@ export interface ShiftBody {
   note: string | null;
 }
 
+/**
+ * Awaited: a write resolves once the schedule has been read again, so a pass
+ * reopened right after a save is the saved one, not the one before it (the
+ * dialog sends every field, and would PATCH the old ones back). The teacher
+ * suggestions read the load, and the passes are in it.
+ */
 function useInvalidate() {
   const queryClient = useQueryClient();
-  return () => {
-    for (const key of [SUPERVISION_KEYS.areas, SUPERVISION_KEYS.rota, STAFFING_KEYS.load]) {
-      void queryClient.invalidateQueries({ queryKey: key });
-    }
-  };
+  return () =>
+    Promise.all(
+      [SUPERVISION_KEYS.areas, SUPERVISION_KEYS.rota, STAFFING_KEYS.load, STAFFING_KEYS.suggestions].map((key) =>
+        queryClient.invalidateQueries({ queryKey: key }),
+      ),
+    );
 }
 
 export function useAreaMutations() {

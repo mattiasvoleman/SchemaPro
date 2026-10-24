@@ -202,7 +202,7 @@
     "myChildren": "Mina barn",
     "integrations": "Integrationer",
     "rasts": "Raster",
-    "supervision": "Rastvakter",
+    "supervision": "Rastvaktsschema",
     "staffing": "Tjänstefördelning",
     "years": "Läsår",
     "publishing": "Publicering",
@@ -2768,11 +2768,13 @@
     "title": "Rastvaktsschema",
     "subtitle": "Var skolan vaktar under rasterna, vem som vaktar när och vilka raster ingen vaktar. Passen räknas som uppdrag i lärarnas belastning.",
     "yearLabel": "Läsår",
+    "dayName": "{day, select, 1 {måndag} 2 {tisdag} 3 {onsdag} 4 {torsdag} 5 {fredag} 6 {lördag} 7 {söndag} other {}}",
     "addShift": "Nytt pass",
     "noYearTitle": "Skolan har inget läsår",
     "noYear": "Rastvaktsschemat gäller ett läsår. Lägg till läsåret under Läsår först.",
     "loadFailed": "Rastvaktsschemat kunde inte hämtas",
     "loadFailedHint": "Inget schema visas, eftersom ett tomt schema skulle betyda att ingen rast har någon rastvakt. Inget har ändrats; ladda om sidan för att försöka igen.",
+    "peopleFailed": "Lärarnas namn kunde inte hämtas, så passen visas utan namn. Ladda om sidan för att försöka igen.",
     "noAreasTitle": "Inga rastvaktsområden ännu",
     "noAreas": "Lägg till platserna skolan vaktar, till exempel skolgården, matsalen och korridoren. Sedan kan du lägga pass på dem.",
     "gaps": {
@@ -2784,8 +2786,10 @@
       "nobody": "Ingen rastvakt {from}–{to}.",
       "short": "{fewest} av {needed} rastvakter {from}–{to}.",
       "dates": "{from} – {to}",
-      "wholeYear": "Hela läsåret",
-      "add": "Lägg till pass: {area} {day} {start}"
+      "wholeYear": "hela läsåret",
+      "add": "Lägg till pass: {area} {day} {start}",
+      "from": "från {date}",
+      "to": "till och med {date}"
     },
     "grid": {
       "caption": "Rastvaktsschema för {area}: rasterna och vem som vaktar dem varje veckodag",
@@ -2793,8 +2797,9 @@
       "notThatDay": "Ingen rast",
       "needs": "{count, plural, =0 {Ingen rastvakt krävs} one {Behöver # rastvakt} other {Behöver # rastvakter}}",
       "short": "Saknar rastvakt",
-      "add": "Lägg till pass {day} {start}",
+      "add": "Lägg till pass i {area}, {day} {start}",
       "edit": "Redigera pass: {name}, {day} {start}–{end}",
+      "inactive": "{name} (inaktiv)",
       "other": "Övriga pass",
       "otherHint": "Pass som inte ligger under någon av områdets raster, till exempel entrén före skoldagen eller bussen efter den.",
       "noBreaks": "Området bevakas inte under någon rast: inga årskurser i dess spann har raster eller lunch som det bevakas under. Pass går ändå att lägga på det.",
@@ -2841,6 +2846,8 @@
       "guards": "Rastvakter samtidigt",
       "guardsHint": "Med 0 sägs ingen rast vara obevakad.",
       "guardsInvalid": "Ange ett heltal från 0 till 10.",
+      "nameMissing": "Området behöver ett namn.",
+      "nameTooLong": "Namnet får vara högst 60 tecken.",
       "countsAsTeaching": "Räknas som undervisning",
       "countsAsTeachingHint": "Passen räknas mot riktmärket för undervisning, som ett uppdrag som räknas som undervisning. Till exempel rastaktivitet.",
       "saveFailed": "Området kunde inte sparas",
@@ -2882,14 +2889,18 @@
         "endBeforeStart": "Passet måste sluta efter att det börjar.",
         "toBeforeFrom": "Slutdatumet ligger före startdatumet.",
         "outsideYear": "Datumen ska ligga inom läsåret ({from} – {to}).",
-        "noteTooLong": "Anteckningen får vara högst 200 tecken."
+        "noteTooLong": "Anteckningen får vara högst 200 tecken.",
+        "clash": "Läraren har redan rastvakt i {area} {day} {start}–{end}. En rastvakt är på ett ställe i taget.",
+        "dateInvalid": "Ange ett datum som finns, eller lämna fältet tomt för läsårets egen gräns.",
+        "noWeekday": "Veckodagen infaller inte mellan datumen, så passet skulle aldrig gå."
       },
       "errors": {
         "SUPERVISION_SHIFT_CLASH": "Läraren har redan ett pass som delar en minut med det här samma dag. En rastvakt är på ett ställe i taget.",
         "SUPERVISION_SHIFT_LIMIT": "Ett läsår har högst 2 000 rastvaktspass.",
         "SUPERVISION_AREA_NOT_FOUND": "Området finns inte längre. Ladda om sidan.",
         "SUPERVISION_SHIFT_NOT_FOUND": "Passet finns inte längre. Ladda om sidan.",
-        "SUPERVISION_YEAR_NOT_FOUND": "Läsåret finns inte längre. Ladda om sidan."
+        "SUPERVISION_YEAR_NOT_FOUND": "Läsåret finns inte längre. Ladda om sidan.",
+        "notFound": "Läraren, området eller passet finns inte längre. Ladda om sidan."
       }
     },
     "teachers": {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { CalendarClock, Pencil, Plus, ShieldCheck, Trash2 } from "lucide-react";
@@ -8,12 +8,13 @@ import { ApiError } from "@/lib/api";
 import { usePeople } from "@/lib/queries";
 import { sortByPersonName } from "@/lib/sorting";
 import {
+  brokenBreakCount,
   clockOf,
+  datesOfGap,
   gapsOfBreak,
   gridRowsOf,
   otherShiftsOf,
   weekdaysOf,
-  wholeYear,
   type SupervisionArea,
   type SupervisionGap,
   type SupervisionRota,
@@ -80,7 +81,8 @@ export default function SupervisionPage() {
   const scope = useYearScope();
   const areasQuery = useSupervisionAreas();
   const rotaQuery = useSupervisionRota(scope.yearId);
-  const { data: people } = usePeople();
+  const peopleQuery = usePeople();
+  const people = peopleQuery.data;
   const { data: sitesData } = useSites();
   const areaMutations = useAreaMutations();
   const shiftMutations = useShiftMutations();
@@ -98,20 +100,33 @@ export default function SupervisionPage() {
   const sites = sitesData?.sites ?? [];
   const siteName = (id: string | null) => sites.find((site) => site.id === id)?.name ?? null;
 
+  /**
+   * A teacher by name, "(inaktiv)" after one the register has deactivated:
+   * their pass is still on the schedule and watches nothing (the gateway
+   * counts no deactivated teacher's pass as cover).
+   */
   const nameOf = useMemo(() => {
-    const byId = new Map((people ?? []).map((person) => [person.id, `${person.firstName} ${person.lastName}`]));
+    const byId = new Map(
+      (people ?? []).map((person) => {
+        const name = `${person.firstName} ${person.lastName}`;
+        return [person.id, person.isActive ? name : t("grid.inactive", { name })];
+      }),
+    );
     return (userId: string) => byId.get(userId) ?? userId.slice(0, 8);
-  }, [people]);
-  /** Who may be given a pass: the school's active staff, by name. */
-  const staff = useMemo(
-    () =>
-      sortByPersonName((people ?? []).filter((person) => person.isActive && (person.role === "TEACHER" || person.role === "SCHOOL_ADMIN"))).map(
-        (person) => ({ id: person.id, name: `${person.firstName} ${person.lastName}` }),
+  }, [people, t]);
+  /** Surname order, as every list of people in the app: the index of each person in it. */
+  const order = useMemo(() => new Map(sortByPersonName(people ?? []).map((person, index) => [person.id, index])), [people]);
+  /** Who may be given a pass: the school's active staff, by surname. The edited pass keeps its own teacher, whatever they are now. */
+  const staffFor = (keep: string | null) =>
+    sortByPersonName(
+      (people ?? []).filter(
+        (person) => person.id === keep || (person.isActive && (person.role === "TEACHER" || person.role === "SCHOOL_ADMIN")),
       ),
-    [people],
-  );
+    ).map((person) => ({ id: person.id, name: nameOf(person.id) }));
   const weekdays = rota ? weekdaysOf(rota) : [1, 2, 3, 4, 5];
   const shortDay = (day: number) => tCommon(SHORT_DAY[day] ?? "monday");
+  /** A weekday inside a sentence: "måndag", where the column says "Måndag". */
+  const dayName = (day: number) => t("dayName", { day: String(day) });
   const areaName = (id: string) => areas.find((area) => area.id === id)?.name ?? "";
 
   const errorText = (error: unknown, scopeKey: "areas" | "shift") =>
@@ -136,6 +151,7 @@ export default function SupervisionPage() {
     try {
       await areaMutations.remove.mutateAsync(deletingArea.id);
       toast.success(t("areas.deleted", { name: deletingArea.name }));
+      deleted.current = "area";
       setDeletingArea(null);
     } catch (error) {
       toast.error(errorText(error, "areas"));
@@ -152,11 +168,22 @@ export default function SupervisionPage() {
       toast.success(t("shift.created"));
     }
   };
+  /** After a delete the control that opened the dialog is gone: focus goes to the page's own add button. */
+  const deleted = useRef<"shift" | "area" | null>(null);
+  const focusAfterDelete = (event: Event) => {
+    const target = deleted.current === "area" ? "supervision-add-area" : deleted.current === "shift" ? "supervision-add-shift" : null;
+    deleted.current = null;
+    const element = target ? document.getElementById(target) : null;
+    if (!element) return;
+    event.preventDefault();
+    element.focus();
+  };
   const removeShift = async () => {
     if (!deletingShift) return;
     try {
       await shiftMutations.remove.mutateAsync(deletingShift.id);
       toast.success(t("shift.deleted"));
+      deleted.current = "shift";
       setDeletingShift(null);
       setShiftDialog(null);
     } catch (error) {
@@ -165,16 +192,18 @@ export default function SupervisionPage() {
   };
 
   const openNewShift = (seed: ShiftSeed = {}) => setShiftDialog({ shift: null, seed });
-  /** A gap's dates as the new pass's, unless the gap is the whole year. */
+  /** A gap's area, day, break and dates as the new pass's; a bound on the year's own stays empty. */
   const seedOfGap = (gap: SupervisionGap): ShiftSeed => ({
     areaId: gap.areaId,
     dayOfWeek: gap.dayOfWeek,
     startTime: gap.startTime,
     endTime: gap.endTime,
-    ...(rota && !wholeYear({ from: gap.from, to: gap.to }, rota.year) ? { validFrom: gap.from, validTo: gap.to } : {}),
+    ...datesOfGap(gap),
   });
 
-  const loading = scope.isLoading || (scope.yearId !== null && rotaQuery.isLoading) || areasQuery.isLoading;
+  // The names too: a pass is its teacher's name, and a grid of ids is no schedule.
+  const loading =
+    scope.isLoading || (scope.yearId !== null && rotaQuery.isLoading) || areasQuery.isLoading || peopleQuery.isLoading;
   const failed = scope.isError || (rotaQuery.isError && !rota);
 
   return (
@@ -186,6 +215,7 @@ export default function SupervisionPage() {
           <>
             <YearSelect value={scope.yearId} label={t("yearLabel")} onValueChange={scope.setYearId} />
             <Button
+              id="supervision-add-shift"
               data-writes="PLANERING"
               onClick={() => openNewShift(areas[0] ? { areaId: areas[0].id } : {})}
               disabled={!rota || areas.length === 0}
@@ -209,8 +239,11 @@ export default function SupervisionPage() {
       ) : (
         <div className="space-y-6">
           {rotaQuery.isError ? <LoadError variant="inline" title={t("loadFailed")} hint={tCommon("refetchFailedHint")} /> : null}
+          {peopleQuery.isError ? <LoadError variant="inline" title={t("peopleFailed")} /> : null}
 
-          {rota && areas.length > 0 ? <GapsCard rota={rota} areaName={areaName} onAdd={(gap) => openNewShift(seedOfGap(gap))} /> : null}
+          {rota && areas.length > 0 ? (
+            <GapsCard rota={rota} areaName={areaName} dayName={dayName} onAdd={(gap) => openNewShift(seedOfGap(gap))} />
+          ) : null}
 
           {rota && areas.length === 0 ? (
             <EmptyState icon={ShieldCheck} title={t("noAreasTitle")} description={t("noAreas")} />
@@ -234,6 +267,10 @@ export default function SupervisionPage() {
                 };
                 const pass = (shift: SupervisionShift, withTime: boolean) => {
                   const { name, dates } = passLabel(shift);
+                  // The button's name says what its text says, the dates too.
+                  const label =
+                    t("grid.edit", { name, day: dayName(shift.dayOfWeek), start: clockOf(shift.startTime), end: clockOf(shift.endTime) }) +
+                    (dates ? `, ${dates}` : "");
                   const time = withTime ? t("grid.passTime", { start: clockOf(shift.startTime), end: clockOf(shift.endTime) }) : null;
                   const text = (
                     <>
@@ -251,12 +288,7 @@ export default function SupervisionPage() {
                           type="button"
                           data-writes="PLANERING"
                           className="block w-full rounded-sm text-left text-sm hover:underline focus-visible:outline-2 focus-visible:outline-ring"
-                          aria-label={t("grid.edit", {
-                            name,
-                            day: tDays(String(shift.dayOfWeek)),
-                            start: clockOf(shift.startTime),
-                            end: clockOf(shift.endTime),
-                          })}
+                          aria-label={label}
                           onClick={() => setShiftDialog({ shift, seed: {} })}
                         >
                           {text}
@@ -334,7 +366,7 @@ export default function SupervisionPage() {
                                       variant="ghost"
                                       size="sm"
                                       className="mt-1 h-7 px-2"
-                                      aria-label={t("grid.add", { day: tDays(String(day)), start: clockOf(brk.startTime) })}
+                                      aria-label={t("grid.add", { area: area.name, day: dayName(day), start: clockOf(brk.startTime) })}
                                       onClick={() =>
                                         openNewShift({ areaId: area.id, dayOfWeek: day, startTime: brk.startTime, endTime: brk.endTime })
                                       }
@@ -368,14 +400,21 @@ export default function SupervisionPage() {
               })
             : null}
 
-          {rota ? <TeachersCard rota={rota} nameOf={nameOf} /> : null}
+          {rota ? <TeachersCard rota={rota} nameOf={nameOf} order={order} /> : null}
 
           <SectionCard
             id="supervision-areas"
             title={t("areas.title")}
             description={t("areas.description")}
             action={
-              <Button data-writes="PLANERING" type="button" variant="outline" size="sm" onClick={() => setAreaDialog({ area: null })}>
+              <Button
+                id="supervision-add-area"
+                data-writes="PLANERING"
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setAreaDialog({ area: null })}
+              >
                 <Plus aria-hidden="true" />
                 {t("areas.add")}
               </Button>
@@ -465,6 +504,7 @@ export default function SupervisionPage() {
         confirmLabel={tCommon("delete")}
         loading={areaMutations.remove.isPending}
         onConfirm={removeArea}
+        onCloseAutoFocus={focusAfterDelete}
       />
       <ShiftDialog
         open={shiftDialog !== null}
@@ -472,7 +512,8 @@ export default function SupervisionPage() {
         shift={shiftDialog?.shift ?? null}
         seed={shiftDialog?.seed ?? {}}
         areas={areas}
-        teachers={staff}
+        teachers={staffFor(shiftDialog?.shift?.userId ?? null)}
+        shifts={rota?.shifts ?? []}
         weekdays={weekdays}
         year={rota?.year ?? null}
         saving={shiftMutations.create.isPending || shiftMutations.update.isPending}
@@ -487,7 +528,7 @@ export default function SupervisionPage() {
           deletingShift
             ? t("shift.deleteBody", {
                 name: nameOf(deletingShift.userId),
-                day: tDays(String(deletingShift.dayOfWeek)),
+                day: dayName(deletingShift.dayOfWeek),
                 start: clockOf(deletingShift.startTime),
                 end: clockOf(deletingShift.endTime),
                 area: areaName(deletingShift.areaId),
@@ -497,6 +538,7 @@ export default function SupervisionPage() {
         confirmLabel={tCommon("delete")}
         loading={shiftMutations.remove.isPending}
         onConfirm={removeShift}
+        onCloseAutoFocus={focusAfterDelete}
       />
     </Page>
   );
@@ -506,14 +548,17 @@ export default function SupervisionPage() {
 function GapsCard({
   rota,
   areaName,
+  dayName,
   onAdd,
 }: {
   rota: SupervisionRota;
   areaName: (id: string) => string;
+  dayName: (day: number) => string;
   onAdd: (gap: SupervisionGap) => void;
 }) {
   const tGaps = useTranslations("supervision.gaps");
-  const tDays = useTranslations("days");
+  // Nothing to say when no break needs anybody: no rast yet, or every area at 0.
+  if (rota.gaps.length === 0 && !rota.breaks.some((row) => row.needed > 0)) return null;
   if (rota.gaps.length === 0) {
     return (
       <Notice tone="success" title={tGaps("title")}>
@@ -530,12 +575,12 @@ function GapsCard({
       a.from.localeCompare(b.from),
   );
   return (
-    <SectionCard id="supervision-gaps" title={tGaps("count", { count: gaps.length })} description={tGaps("description")}>
+    <SectionCard id="supervision-gaps" title={tGaps("count", { count: brokenBreakCount(gaps) })} description={tGaps("description")}>
       <ul className="divide-y">
         {gaps.map((gap) => {
           const where = tGaps("where", {
             area: areaName(gap.areaId),
-            day: tDays(String(gap.dayOfWeek)),
+            day: dayName(gap.dayOfWeek),
             start: clockOf(gap.startTime),
             end: clockOf(gap.endTime),
           });
@@ -553,9 +598,13 @@ function GapsCard({
                     ? tGaps("nobody", { from: clockOf(gap.shortFrom), to: clockOf(gap.shortTo) })
                     : tGaps("short", { fewest: gap.fewest, needed: gap.needed, from: clockOf(gap.shortFrom), to: clockOf(gap.shortTo) })}{" "}
                   <span className="text-muted-foreground">
-                    {wholeYear({ from: gap.from, to: gap.to }, rota.year)
+                    {gap.fromYearStart && gap.toYearEnd
                       ? tGaps("wholeYear")
-                      : tGaps("dates", { from: gap.from, to: gap.to })}
+                      : gap.fromYearStart
+                        ? tGaps("to", { date: gap.to })
+                        : gap.toYearEnd
+                          ? tGaps("from", { date: gap.from })
+                          : tGaps("dates", { from: gap.from, to: gap.to })}
                   </span>
                 </p>
               </div>
@@ -564,7 +613,7 @@ function GapsCard({
                 type="button"
                 variant="outline"
                 size="sm"
-                aria-label={tGaps("add", { area: areaName(gap.areaId), day: tDays(String(gap.dayOfWeek)), start: clockOf(gap.startTime) })}
+                aria-label={tGaps("add", { area: areaName(gap.areaId), day: dayName(gap.dayOfWeek), start: clockOf(gap.startTime) })}
                 onClick={() => onAdd(gap)}
               >
                 <Plus aria-hidden="true" />
@@ -578,9 +627,19 @@ function GapsCard({
 }
 
 /** Each teacher's passes in minutes per week beside the ram their RASTVAKT uppdrag set. */
-function TeachersCard({ rota, nameOf }: { rota: SupervisionRota; nameOf: (userId: string) => string }) {
+function TeachersCard({
+  rota,
+  nameOf,
+  order,
+}: {
+  rota: SupervisionRota;
+  nameOf: (userId: string) => string;
+  /** Each person's place in surname order. */
+  order: ReadonlyMap<string, number>;
+}) {
   const tTeachers = useTranslations("supervision.teachers");
-  const teachers = [...rota.teachers].sort((a, b) => nameOf(a.userId).localeCompare(nameOf(b.userId), "sv"));
+  const place = (userId: string) => order.get(userId) ?? Number.MAX_SAFE_INTEGER;
+  const teachers = [...rota.teachers].sort((a, b) => place(a.userId) - place(b.userId));
   return (
     <SectionCard id="supervision-teachers" title={tTeachers("title")} description={tTeachers("description")}>
       {teachers.length === 0 ? (

@@ -7,7 +7,9 @@ import {
   shiftBody,
   shiftDraftFault,
   weekdaysOf,
-  wholeYear,
+  brokenBreakCount,
+  clashOf,
+  datesOfGap,
   type ShiftDraft,
   type SupervisionBreak,
   type SupervisionGap,
@@ -79,6 +81,8 @@ describe("the grid", () => {
       shortTo: "10:20",
       from: YEAR.startDate,
       to: YEAR.endDate,
+      fromYearStart: true,
+      toYearEnd: true,
     });
     const gaps = [gap(1, "10:00"), gap(2, "10:00"), gap(1, "10:05")];
     expect(gapsOfBreak({ gaps }, brk(1, "10:00", "10:20"))).toEqual([gaps[0]]);
@@ -89,10 +93,25 @@ describe("the grid", () => {
     expect(weekdaysOf({ breaks: [brk(6, "10:00", "10:20")], shifts: [shift("s", 7, "09:00", "09:30")] })).toEqual([1, 2, 3, 4, 5, 6, 7]);
   });
 
-  it("calls dates the whole year when they reach both of its bounds or say none", () => {
-    expect(wholeYear({ from: null, to: null }, YEAR)).toBe(true);
-    expect(wholeYear({ from: YEAR.startDate, to: YEAR.endDate }, YEAR)).toBe(true);
-    expect(wholeYear({ from: "2027-01-07", to: null }, YEAR)).toBe(false);
+  it("seeds a new pass with a gap's dates, a bound on the year's own left empty", () => {
+    const gap = { from: "2026-12-21", to: "2027-06-07" };
+    expect(datesOfGap({ ...gap, fromYearStart: false, toYearEnd: true })).toEqual({ validFrom: "2026-12-21", validTo: "" });
+    expect(datesOfGap({ ...gap, fromYearStart: true, toYearEnd: true })).toEqual({ validFrom: "", validTo: "" });
+    expect(datesOfGap({ ...gap, fromYearStart: true, toYearEnd: false })).toEqual({ validFrom: "", validTo: "2027-06-07" });
+  });
+
+  it("counts the breaks short, not the stretches they are short in", () => {
+    const gap = (dayOfWeek: number, from: string): SupervisionGap => ({
+      ...brk(dayOfWeek, "10:00", "10:20"),
+      fewest: 0,
+      shortFrom: "10:00",
+      shortTo: "10:20",
+      from,
+      to: YEAR.endDate,
+      fromYearStart: false,
+      toYearEnd: true,
+    });
+    expect(brokenBreakCount([gap(1, "2026-08-17"), gap(1, "2027-01-11"), gap(2, "2026-08-18")])).toBe(2);
   });
 });
 
@@ -122,6 +141,31 @@ describe("the pass dialog", () => {
     expect(shiftDraftFault(draft({ note: "x".repeat(201) }), YEAR)).toBe("noteTooLong");
     // Code points, as the gateway counts them: 200 emoji are 200 characters.
     expect(shiftDraftFault(draft({ note: "🙂".repeat(200) }), YEAR)).toBeNull();
+  });
+
+  it("refuses a clock past 23:59 and dates the weekday never falls between", () => {
+    expect(shiftDraftFault(draft({ endTime: "24:00" }), YEAR)).toBe("timeMissing");
+    // A Monday pass, Tuesday 2027-01-05 to Friday 2027-01-08.
+    expect(shiftDraftFault(draft({ validFrom: "2027-01-05", validTo: "2027-01-08" }), YEAR)).toBe("noWeekday");
+    expect(shiftDraftFault(draft({ dayOfWeek: 3, validFrom: "2027-01-05", validTo: "2027-01-08" }), YEAR)).toBeNull();
+  });
+
+  it("finds the teacher's other pass sharing a minute on a date both run, and not the pass itself", () => {
+    const shifts = [
+      shift("yard", 1, "10:00", "10:20"),
+      shift("autumn", 3, "11:30", "12:00", { validTo: "2026-12-18" }),
+      shift("bo", 1, "10:00", "10:20", { userId: "bo" }),
+    ];
+    expect(clashOf(draft({ startTime: "10:10", endTime: "10:30" }), shifts, null)?.id).toBe("yard");
+    // The minute the other ends is free, and so is another teacher's.
+    expect(clashOf(draft({ startTime: "10:20", endTime: "10:40" }), shifts, null)).toBeNull();
+    expect(clashOf(draft({ userId: "bo", startTime: "10:20", endTime: "10:40" }), shifts, null)).toBeNull();
+    // Dates: December clashes with the autumn's pass, January does not.
+    const wednesday = { dayOfWeek: 3, startTime: "11:45", endTime: "12:15" };
+    expect(clashOf(draft({ ...wednesday, validFrom: "2026-12-02", validTo: "2026-12-31" }), shifts, null)?.id).toBe("autumn");
+    expect(clashOf(draft({ ...wednesday, validFrom: "2027-01-07" }), shifts, null)).toBeNull();
+    // Editing the yard pass itself is no clash with itself.
+    expect(clashOf(draft({ startTime: "10:00", endTime: "10:30" }), shifts, "yard")).toBeNull();
   });
 
   it("sends empty dates and note as null and clocks as HH:MM", () => {

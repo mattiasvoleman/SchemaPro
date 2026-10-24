@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useTranslations } from "next-intl";
 import { ApiError } from "@/lib/api";
 import {
+  FAULT_FIELD,
+  clashOf,
   clockOf,
   shiftBody,
   shiftDraftFault,
@@ -36,8 +38,10 @@ export interface ShiftDialogProps {
   shift: SupervisionShift | null;
   seed: ShiftSeed;
   areas: readonly SupervisionArea[];
-  /** Active staff, by name: who may be given a pass. */
+  /** Who may be given a pass, by name; the edited pass's own teacher too, whatever they are now. */
   teachers: readonly { id: string; name: string }[];
+  /** The läsår's passes, for the clash the gateway would refuse. */
+  shifts: readonly SupervisionShift[];
   weekdays: readonly number[];
   year: { startDate: string; endDate: string } | null;
   saving: boolean;
@@ -57,12 +61,17 @@ const BLANK: ShiftDraft = {
   note: "",
 };
 
+type Field = (typeof FAULT_FIELD)[keyof typeof FAULT_FIELD];
+const fieldId = (field: Field) => `supervision-shift-${field}`;
+
 /**
  * Ett rastvaktspass: who watches which area, on which weekday, from when to
- * when, and between which dates. The dialog says what the gateway would
- * refuse before it is asked (lib/supervision.ts shiftDraftFault); the one
- * thing only the gateway knows is a clash with the teacher's other passes,
- * which comes back as SUPERVISION_SHIFT_CLASH naming the other one.
+ * when, and between which dates. Each refusal the gateway would make is said
+ * beside its field before the save (lib/supervision.ts shiftDraftFault), and
+ * a save it would refuse moves focus to that field: the one-place-at-a-time
+ * clash too, named from the schedule the page holds (clashOf). Only a clash
+ * with a pass saved by someone else meanwhile comes back from the gateway,
+ * as SUPERVISION_SHIFT_CLASH.
  */
 export function ShiftDialog({
   open,
@@ -71,6 +80,7 @@ export function ShiftDialog({
   seed,
   areas,
   teachers,
+  shifts,
   weekdays,
   year,
   saving,
@@ -78,16 +88,21 @@ export function ShiftDialog({
   onDelete,
 }: ShiftDialogProps) {
   const t = useTranslations("supervision.shift");
+  const tSupervision = useTranslations("supervision");
   const tCommon = useTranslations("common");
   const tDays = useTranslations("days");
   const [draft, setDraft] = useState<ShiftDraft>(BLANK);
   const [touched, setTouched] = useState(false);
+  /** A date field the browser holds half-typed: it reports "", which is not "no date". */
+  const [badDates, setBadDates] = useState<{ from: boolean; to: boolean }>({ from: false, to: false });
   const [error, setError] = useState<string | null>(null);
+  const form = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
     if (!open) return;
     setError(null);
     setTouched(false);
+    setBadDates({ from: false, to: false });
     setDraft(
       shift
         ? {
@@ -106,20 +121,43 @@ export function ShiftDialog({
   }, [open, shift]);
 
   const fault = shiftDraftFault(draft, year);
-  const faultText =
-    fault === "outsideYear" && year
-      ? t("faults.outsideYear", { from: year.startDate, to: year.endDate })
-      : fault
-        ? t(`faults.${fault}`)
-        : null;
+  const clash = fault ? null : clashOf(draft, shifts, shift?.id ?? null);
   // A fault is said once the admin has tried to save, or where it is about
-  // a field they have filled in: an empty form is not wrong yet.
-  const shown = touched || (fault !== null && !["areaMissing", "teacherMissing", "timeMissing"].includes(fault));
+  // what they have filled in: an empty form is not wrong yet.
+  const said = (key: string) => touched || !["areaMissing", "teacherMissing", "timeMissing"].includes(key);
+  const errors: Partial<Record<Field, string>> = {};
+  if (badDates.from) errors.from = t("faults.dateInvalid");
+  if (badDates.to) errors.to = t("faults.dateInvalid");
+  if (fault && said(fault)) {
+    errors[FAULT_FIELD[fault]] ??=
+      fault === "outsideYear" && year
+        ? t("faults.outsideYear", { from: year.startDate, to: year.endDate })
+        : t(`faults.${fault}`);
+  }
+  if (clash) {
+    errors.teacher = t("faults.clash", {
+      area: areas.find((area) => area.id === clash.areaId)?.name ?? "",
+      day: tSupervision("dayName", { day: String(clash.dayOfWeek) }),
+      start: clockOf(clash.startTime),
+      end: clockOf(clash.endTime),
+    });
+  }
+  const refused = fault !== null || clash !== null || badDates.from || badDates.to;
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setTouched(true);
-    if (fault) return;
+    if (refused) {
+      const first = (["area", "teacher", "start", "end", "from", "to", "note"] as const).find(
+        (field) =>
+          (fault && FAULT_FIELD[fault] === field) ||
+          (clash && field === "teacher") ||
+          (badDates.from && field === "from") ||
+          (badDates.to && field === "to"),
+      );
+      if (first) form.current?.querySelector<HTMLElement>(`#${fieldId(first)}`)?.focus();
+      return;
+    }
     setError(null);
     try {
       await onSave(shiftBody(draft));
@@ -128,17 +166,25 @@ export function ShiftDialog({
       setError(
         caught instanceof ApiError && caught.code && t.has(`errors.${caught.code}`)
           ? t(`errors.${caught.code}`)
-          : caught instanceof Error
-            ? caught.message
-            : tCommon("error"),
+          : caught instanceof ApiError && caught.status === 404
+            ? t("errors.notFound")
+            : caught instanceof Error
+              ? caught.message
+              : tCommon("error"),
       );
     }
+  };
+
+  const dateChange = (key: "validFrom" | "validTo", flag: "from" | "to") => (event: React.ChangeEvent<HTMLInputElement>) => {
+    const bad = event.target.validity.badInput;
+    setBadDates((current) => ({ ...current, [flag]: bad }));
+    setDraft({ ...draft, [key]: bad ? "" : event.target.value });
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
-        <form onSubmit={submit} noValidate>
+        <form ref={form} onSubmit={submit} noValidate>
           <DialogHeader>
             <DialogTitle>{shift ? t("editTitle") : t("addTitle")}</DialogTitle>
             <DialogDescription>{t("dialogHint")}</DialogDescription>
@@ -149,12 +195,7 @@ export function ShiftDialog({
                 {error}
               </Notice>
             ) : null}
-            {shown && faultText ? (
-              <Notice tone="warning" role={null}>
-                {faultText}
-              </Notice>
-            ) : null}
-            <FormField id="supervision-shift-area" label={t("area")}>
+            <FormField id={fieldId("area")} label={t("area")} error={errors.area}>
               {(control) => (
                 <Select value={draft.areaId || undefined} onValueChange={(value) => setDraft({ ...draft, areaId: value })}>
                   <SelectTrigger {...control}>
@@ -170,7 +211,7 @@ export function ShiftDialog({
                 </Select>
               )}
             </FormField>
-            <FormField id="supervision-shift-teacher" label={t("teacher")}>
+            <FormField id={fieldId("teacher")} label={t("teacher")} error={errors.teacher}>
               {(control) => (
                 <Select value={draft.userId || undefined} onValueChange={(value) => setDraft({ ...draft, userId: value })}>
                   <SelectTrigger {...control}>
@@ -206,42 +247,41 @@ export function ShiftDialog({
               )}
             </FormField>
             <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
-              <FormField id="supervision-shift-start" label={t("start")}>
+              <FormField id={fieldId("start")} label={t("start")} error={errors.start}>
                 <Input
                   type="time"
                   value={draft.startTime}
                   onChange={(event) => setDraft({ ...draft, startTime: event.target.value })}
                 />
               </FormField>
-              <FormField id="supervision-shift-end" label={t("end")}>
+              <FormField id={fieldId("end")} label={t("end")} error={errors.end}>
                 <Input
                   type="time"
                   value={draft.endTime}
                   onChange={(event) => setDraft({ ...draft, endTime: event.target.value })}
                 />
               </FormField>
-              <FormField id="supervision-shift-from" label={t("validFrom")} optional>
+              <FormField id={fieldId("from")} label={t("validFrom")} optional error={errors.from}>
                 <Input
                   type="date"
                   min={year?.startDate}
                   max={year?.endDate}
                   value={draft.validFrom}
-                  onChange={(event) => setDraft({ ...draft, validFrom: event.target.value })}
+                  onChange={dateChange("validFrom", "from")}
                 />
               </FormField>
-              <FormField id="supervision-shift-to" label={t("validTo")} optional>
+              <FormField id={fieldId("to")} label={t("validTo")} optional error={errors.to}>
                 <Input
                   type="date"
                   min={year?.startDate}
                   max={year?.endDate}
                   value={draft.validTo}
-                  onChange={(event) => setDraft({ ...draft, validTo: event.target.value })}
+                  onChange={dateChange("validTo", "to")}
                 />
               </FormField>
             </div>
-            <FormField id="supervision-shift-note" label={t("note")} optional>
+            <FormField id={fieldId("note")} label={t("note")} optional error={errors.note}>
               <Input
-                maxLength={200}
                 placeholder={t("notePlaceholder")}
                 value={draft.note}
                 onChange={(event) => setDraft({ ...draft, note: event.target.value })}
