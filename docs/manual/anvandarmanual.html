@@ -240,7 +240,7 @@
       <tr><td class="k">Planering</td><td>Grunddata (läsår, ämnen, salar, klasser och skolenheter), timplanen och dess block, tjänstefördelningens regler, lärarnas arbetstid, behörigheter och uppdrag.</td></tr>
       <tr><td class="k">Schemaläggning</td><td>Grundschemat, dess versioner och genereringen.</td></tr>
       <tr><td class="k">Publicering</td><td>Publiceringen, Schemavisaren, undervisningstiden och skolans kalenderprenumeration.</td></tr>
-      <tr><td class="k">Drift</td><td>Den daterade kalendern, frånvaro, vikarier, ledighet, lokalbokningar, rapporter och att ta bort en lektions ämne och läxa eller notis till vikarien (6.11).</td></tr>
+      <tr><td class="k">Drift</td><td>Den daterade kalendern, frånvaro, vikarier, ledighet, lokalbokningar, rapporter och att ta bort en lektions ämne och läxa (6.11).</td></tr>
       <tr><td class="k">Personal</td><td>Registret: personer och kopplingar mellan elever och vårdnadshavare.</td></tr>
       <tr><td class="k">Integrationer</td><td>API-nycklar, SS12000 och skolans inloggning.</td></tr>
     </tbody>
@@ -4171,7 +4171,7 @@
     <thead><tr><th style="width:28%">Text</th><th>Skrivs av</th><th style="width:34%">Läses av</th></tr></thead>
     <tbody>
       <tr><td class="k">Ämne och läxa</td><td>Lektionens lärare och dess vikarie. Ämnet är en rad på högst 200 tecken, läxan högst 1 000.</td><td>Eleverna på lektionen och deras vårdnadshavare, skolans lärare och administratörer, och klassboken.</td></tr>
-      <tr><td class="k">Notis till vikarien</td><td>Lektionens egen lärare, också när hen är borta och vikarien redan är bokad. Högst 2 000 tecken.</td><td>Lektionens lärare och den som vikarierar på den. På vikarietavlan ser administratören att det finns en notis. Aldrig eleverna eller vårdnadshavarna.</td></tr>
+      <tr><td class="k">Notis till vikarien</td><td>Lektionens egen lärare, också när hen är borta och vikarien redan är bokad. Högst 2 000 tecken.</td><td>Lektionens lärare och den som vikarierar på den. Aldrig skolans administratörer, vilken profil de än har, och aldrig eleverna eller vårdnadshavarna. På vikarietavlan ser administratören att det finns en notis, inte vad den säger.</td></tr>
     </tbody>
   </table>
   <p>
@@ -4205,17 +4205,26 @@
     Klassboken visar aldrig notiser till vikarier och aldrig någon elev, bara
     hur många. Den som ändrar drift kan ta bort ämne och läxa som inte ska stå
     kvar med <span class="ui">Ta bort</span> på raden. Texten försvinner då
-    för eleverna och vårdnadshavarna. Läsaren ser klassboken men inte knappen.
+    för eleverna och vårdnadshavarna. Har läraren ändrat texten sedan du
+    öppnade klassboken tas ingenting bort, och klassboken visar i stället den
+    nya texten. Läsaren ser klassboken men inte knappen. En notis till
+    vikarien kan ingen administratör ta bort, eftersom ingen administratör
+    läser den. Den försvinner med lektionen.
   </p>
   <h4>När en lektion försvinner</h4>
   <p>
     Ämne, läxa och notis hör till den daterade lektionen och försvinner med
-    den. Det händer med kommande lektioner utan närvaro när ett lov eller en
-    studiedag läggs in, när grundschemat ändras eller genereras om i en skola
-    som publicerar direkt, när en avbokning tas tillbaka och lektionen har
-    flyttats, och när en publicering tar bort lektionen. Publiceringen säger det
-    först (5.7). De andra säger det inte, lika lite som de säger det om en
-    bokad vikarie på lektionen. En lektion som flyttas behåller sin text.
+    den. Det händer med kommande lektioner utan närvaro när grundschemat
+    ändras i en skola som publicerar direkt, när en avbokning tas tillbaka och
+    lektionen har flyttats, och när en publicering tar bort lektionen. Två
+    ändringar tar också dagens lektioner utan närvaro, även de som redan har
+    hållits: när ett lov eller en studiedag läggs in, och när grundschemat
+    genereras om i en skola som publicerar direkt. Omgenereringen räknar dagen
+    i UTC, så strax efter midnatt tar den även gårdagens. Registrera närvaron
+    på dagens lektioner först, så står de kvar med sin text. Publiceringen
+    säger före att text försvinner (5.7). De andra säger det inte, lika lite
+    som de säger det om en bokad vikarie på lektionen. En lektion som flyttas
+    behåller sin text.
   </p>
   <div class="warn">
     <span class="label">Notiser gallras inte ännu</span>
