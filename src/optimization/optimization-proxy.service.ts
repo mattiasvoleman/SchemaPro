@@ -20,6 +20,7 @@ import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { isWriteConflict } from '../common/utils/prisma-errors';
 import { todayInZone } from '../common/utils/time';
+import { schoolTimezone } from '../cover/cover-context';
 import { gradeSpanOf, loadRosters, roomNeedsOf, type RoomNeeds } from './room-eligibility';
 import { fromNioarig, toNioarig, toNioarigSpan, type GradeNumbering } from '../common/grade-numbering';
 import { dayNumberingOf, yearNumberingOf } from '../common/year-numbering';
@@ -647,16 +648,16 @@ export function calendarSweepWhere(
  * days the publish fills, and no part of one. What that costs, this morning's
  * lessons without attendance and their logs, the manual says (6.11).
  *
- * Read in the caller's transaction. A school the caller cannot read (it is
- * their own) gets Stockholm, which every school is created with.
+ * The timezone is read in the caller's transaction by schoolTimezone, as the
+ * vikarie and lektionslogg paths read it, Stockholm for a school the caller
+ * cannot read (it is their own).
  */
 export async function regenerationSweepDay(
   tx: PrismaClient,
   schoolId: string,
   now: Date = new Date(),
 ): Promise<Date> {
-  const school = await tx.school.findUnique({ where: { id: schoolId }, select: { timezone: true } });
-  return todayInZone(school?.timezone ?? 'Europe/Stockholm', now);
+  return todayInZone(await schoolTimezone(tx, schoolId), now);
 }
 
 /**
