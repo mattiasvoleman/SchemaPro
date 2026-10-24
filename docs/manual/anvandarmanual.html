@@ -1678,6 +1678,55 @@
     exempel <em>Timplanen säger 180 min/vecka för åk 7; 3 × 60 täcker det</em>,
     medan du skriver.
   </p>
+  <h4 id="delade-lektioner">Dela lektionerna mellan lärare</h4>
+  <p>
+    En post behöver inte ha samma lärare på alla sina lektioner. Har 9A tre
+    matematiklektioner i veckan kan Anna ta två och Bo den tredje, till exempel
+    för att Bos tjänst har plats för precis en lektion till. Varje lektion har
+    då en lärare, varje lärare har bara sina egna lektioner i schemat, och
+    tjänsten belastas med de minuter läraren faktiskt har. Det är inte
+    samundervisning. Ska två lärare vara med på samma lektion anger du en
+    medlärare, som är med på alla postens lektioner.
+  </p>
+  <p>
+    Öppna posten och tryck <span class="ui">Dela lektionerna mellan
+    lärare</span>. Knappen finns när posten har minst två lektioner. Välj en
+    lärare och hur många lektioner hen tar. Har posten lektioner av olika
+    längd väljer du också vilken längd, till exempel att Bo tar 40-minuterslektionen
+    av idrottens 80 + 40. Med <span class="ui">Lägg till lärare</span> delar du
+    på fler. Läraren under <span class="ui">Lärare</span> tar de lektioner som
+    ingen annan tar och behåller alltid minst en. Under raderna står varje
+    lärares del, till exempel <em>Bo Lind: 1 av 3 lektioner · 60 min i veckan
+    (33 %)</em>. Andelen av minuterna är den faktor tjänsten fylls med. I
+    rutan står huvudläraren med antalet övriga lärare efter, till exempel
+    <em>A. Svensson +1</em>.
+  </p>
+  <ul>
+    <li>Lärarna räknas var för sig i tjänstefördelningen (4.3), med sina egna
+      lektioner × <span class="ui">Räknas för lärare (%)</span>. Medläraren
+      räknas med hela posten, som förut.</li>
+    <li>Genereringen lägger varje lektion med sin lärare. Lärarens egna regler
+      (lunch, vila, tak per dag, arbetsdagar och önskad ledig dag, 4.4) räknar
+      bara hens egna lektioner av posten. En låst lektion med Bo täcker Bos
+      lektion och inte en av Annas.</li>
+    <li>Grundschemat, publiceringen, vikarieplaneringen, exporterna och
+      SS12000 visar varje lektion med dess egen lärare.</li>
+    <li>En lärare som tar lektioner av posten kan inte samtidigt vara dess
+      lärare eller medlärare. Dialogen säger till innan du sparar.</li>
+    <li>Tas en lärare bort ur skolan står hens lektioner kvar som
+      <em>Ej tilldelad</em> tills du väljer någon annan eller tar bort raden.
+      De läggs aldrig tyst på huvudläraren.</li>
+    <li>Läsårsrullningen (8.1) tar med delningen till nästa år. Varje lärare
+      behålls på samma villkor som postens lärare, och den som inte kan
+      behållas lämnar sina lektioner som <em>Ej tilldelad</em>.</li>
+    <li>En post i ett block som ligger på ett annat blocks tider (terminsvis
+      halvklass, nedan) kan inte delas. Genereringen säger då vilken post det
+      gäller.</li>
+    <li>Filen <em>timplansposter.csv</em> har ingen kolumn för delningen. En
+      import som ändrar en delad posts lektioner eller lärare så att delningen
+      inte längre går ihop stoppar den raden och säger varför. Ändra då
+      delningen i postens dialog först.</li>
+  </ul>
   <h4>Parallella block</h4>
   <p>
     Språkval och elevens val läses i undervisningsgrupper som skär över
@@ -1774,7 +1823,9 @@
       <em>Slöjd 7A VT</em>. Halvorna har då lektion samtidigt, och klassen
       har aldrig slöjd två gånger. Vårens block läggs på höstens tider (se
       nedan).</li>
-    <li>Klassens post tas bort. Dess lärare och medlärare räknas inte längre.
+    <li>Klassens post tas bort. Dess lärare och medlärare räknas inte längre,
+      inte heller lärare som tog några av dess lektioner. Halvornas poster
+      börjar utan delning.
       De nya posternas lärare och medlärare prövas mot tjänstefördelningens
       inställningar (4.3),
       som när du sparar en post. Läraren i textilslöjd belastas för halva 1
@@ -1974,7 +2025,10 @@
   <p>
     En post som redan har en lärare byts i lärarens kort, under
     <span class="ui">Timplansposter</span> med <span class="ui">Byt lärare</span>.
-    Medlärare ändras i timplansposternas dialog (4.2).
+    Medlärare ändras i timplansposternas dialog (4.2). Tar läraren bara några
+    av en posts lektioner (4.2, <em>Dela lektionerna mellan lärare</em>) står
+    det i kortet hur många, till exempel <em>1 av 3 lektioner</em>. Delningen
+    ändras i timplansposternas dialog.
   </p>
 
   <h4>Föreslå bemanning</h4>
@@ -2009,6 +2063,9 @@
       bara en post från en lärare för att ge den till en annan.</li>
     <li>Medlärare ändras inte. Förslaget bemannar bara postens lärare, och
       medläraren räknas som redan i klassen.</li>
+    <li>Delade lektioner ändras inte. Förslaget bemannar bara postens lärare,
+      för de lektioner ingen annan tar. Den som tar lektioner av posten räknas
+      med dem och föreslås inte som postens lärare.</li>
     <li>En lärare vars tjänst ändras under läsåret planeras på sin trängsta
       period, den period som lämnar minst plats under sin gräns; dialogen
       säger vilken. En post med datum, som bara går en del av läsåret, läses
