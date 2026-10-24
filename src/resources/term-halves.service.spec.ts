@@ -655,6 +655,27 @@ describe('TermHalvesService', () => {
       return { judge, apply };
     };
 
+    it('delade lektioner: refuses a share saved since the read, under the post’s lock, taken after the teachers’ posts', async () => {
+      givenChecks(() => []);
+      // The read saw none; a shares PATCH committed before the lock.
+      tx.teachingRequirementShare.count.mockResolvedValue(1);
+
+      const error = await service.split(POST, DTO, admin).catch((e: unknown) => e);
+
+      expect((error as ConflictException).getResponse()).toMatchObject({ code: TERM_SPLIT_HAS_SHARES });
+      expect(tx.teachingRequirement.deleteMany).not.toHaveBeenCalled();
+      // FOR NO KEY UPDATE on the post, as lockPostForShares takes it, after the
+      // teachers' posts (the import's order: Users, posts, then requirements).
+      const lockAt = tx.$queryRaw.mock.calls.findIndex(([strings]) => {
+        const sql = (strings as TemplateStringsArray).join('?');
+        return sql.includes('"TeachingRequirements"') && sql.includes('FOR NO KEY UPDATE');
+      });
+      expect(lockAt).toBeGreaterThan(-1);
+      expect(tx.$queryRaw.mock.calls[lockAt]![1]).toBe(POST);
+      expect(tx.$queryRaw.mock.invocationCallOrder[lockAt]!).toBeGreaterThan(openChecks.mock.invocationCallOrder[0]!);
+      expect(tx.teachingRequirementShare.count).toHaveBeenCalledWith({ where: { requirementId: POST } });
+    });
+
     it('takes the class’s post off its teacher first, then judges the four posts with their periods, each counted for the next', async () => {
       const { judge, apply } = givenChecks(() => []);
 

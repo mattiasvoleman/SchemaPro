@@ -162,7 +162,7 @@ export function RolloverReview({
             </p>
             <ul className="ml-4 list-disc text-muted-foreground">
               {requirements.teachersCleared.map((row) => (
-                <li key={`${row.sourceRequirementId}-${row.role}`}>
+                <li key={`${row.sourceRequirementId}-${row.role}-${row.teacherId}`}>
                   {t("clearedLine", {
                     teacher: teacherName(row.teacherId),
                     subject: row.subjectName,
@@ -179,7 +179,7 @@ export function RolloverReview({
             <p>{t("reviewQualification", { count: requirements.qualificationWarnings.length })}</p>
             <ul className="ml-4 list-disc text-muted-foreground">
               {requirements.qualificationWarnings.map((row) => (
-                <li key={`${row.sourceRequirementId}-${row.role}`}>
+                <li key={`${row.sourceRequirementId}-${row.role}-${row.teacherId}`}>
                   {t("qualificationLine", {
                     teacher: teacherName(row.teacherId),
                     subject: row.subjectName,

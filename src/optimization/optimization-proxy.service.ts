@@ -3570,7 +3570,16 @@ export class OptimizationProxyService {
       const row = rowById.get(entry.requirementId);
       return row !== undefined && (entry.shareKey ?? '') !== shareKeyOf(row.shares);
     });
-    if (sharesMoved) verdict.offTarget += 1;
+    if (sharesMoved) {
+      // Not the engine's fault, so no 502: the school changed a post's shares
+      // while the solver ran, and the answer is to a request that no longer
+      // stands — said as a draft that moved (GENERATE_STALE, run again), or
+      // as the caller's own stale basis (a schemaförslag's apply).
+      this.logger.warn(
+        `Generated timetable not written: a timplanspost's shares changed while the solver ran [academicYearId=${academicYearId}].`,
+      );
+      throw input.refusals?.mismatch?.() ?? generateStale();
+    }
     if (verdict.unmatched > 0 || verdict.offTarget > 0) {
       this.logger.error(
         `Rejected AI engine solution [academicYearId=${academicYearId}, status=${input.solverStatus}, requestedLessons=${verdict.requested}, placedLessons=${verdict.placed}, unmatchedLessons=${verdict.unmatched}, requirementsOffTarget=${verdict.offTarget}]. Timetable left untouched.`,

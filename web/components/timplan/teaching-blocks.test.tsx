@@ -316,6 +316,20 @@ describe("blockWarnings", () => {
     expect(blockWarnings([row("a", "g-ty", "s-ty"), row("b", "g-fr", "s-fr")], label, t)).toEqual([]);
   });
 
+  it("names two posts each split between teachers, which the generator refuses, and lets one through (delade lektioner)", () => {
+    const shared = (id: string, group: string, lead: string, share: string) =>
+      row(id, group, `s-${id}`, {
+        teacherId: lead,
+        lessonsPerWeek: 2,
+        minutesPerLesson: 60,
+        shares: [{ teacherId: share, lessons: 1, minutes: 60 }],
+      });
+    expect(
+      blockWarnings([shared("a", "g-1", "t-1", "t-2"), shared("b", "g-2", "t-3", "t-4")], label, t),
+    ).toEqual(["warnSplit(a|b)"]);
+    expect(blockWarnings([shared("a", "g-1", "t-1", "t-2"), row("b", "g-2", "s-b", { teacherId: "t-3" })], label, t)).toEqual([]);
+  });
+
   it("names a teacher who takes some of one post's lessons and leads another (delade lektioner)", () => {
     expect(
       blockWarnings(

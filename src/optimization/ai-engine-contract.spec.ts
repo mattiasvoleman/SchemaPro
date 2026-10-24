@@ -728,7 +728,7 @@ describe('AI engine wire contract', () => {
     expect(lastTx['masterLesson']!['createMany']).not.toHaveBeenCalled();
   });
 
-  it('delade lektioner: refuses to write an answer whose post was shared differently while the engine ran', async () => {
+  it('delade lektioner: refuses to write an answer whose post was shared differently while the engine ran, as a draft that moved (409), not the engine’s 502', async () => {
     const row = {
       id: 'r1',
       subjectId: 's1',
@@ -747,7 +747,7 @@ describe('AI engine wire contract', () => {
           .mockResolvedValueOnce([{ ...row, shares: [{ teacherId: 't3', lessons: 1, minutes: 60 }] }])
           .mockResolvedValue([{ ...row, shares: [{ teacherId: 't3', lessons: 2, minutes: 60 }] }]);
       }),
-    ).rejects.toMatchObject({ status: 502 });
+    ).rejects.toMatchObject({ status: 409, response: expect.objectContaining({ code: 'GENERATE_STALE' }) });
     expect(lastTx['masterLesson']!['createMany']).not.toHaveBeenCalled();
   });
 
