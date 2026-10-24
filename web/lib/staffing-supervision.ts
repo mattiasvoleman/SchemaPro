@@ -18,7 +18,7 @@ export interface TeacherSupervision {
   hoursPerYear: number;
   /** The teacher's RASTVAKT uppdrag over the year; null without one. */
   ramMinutesPerWeek: number | null;
-  /** The part of the ram still counted: its dates no pass runs on. */
+  /** The part of the ram still counted: the weeks no pass runs in. */
   ramCountedMinutesPerWeek: number;
 }
 

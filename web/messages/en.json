@@ -2905,7 +2905,7 @@
     },
     "teachers": {
       "title": "Teachers' supervision",
-      "description": "The shifts' minutes per week beside the budget in the teacher's Break supervision duty. Shifts count as duties in staffing, and the Break supervision duty counts only on dates the teacher has no shift.",
+      "description": "The shifts' minutes per week beside the budget in the teacher's Break supervision duty. Shifts count as duties in staffing, and the Break supervision duty counts only in weeks the teacher has no shift.",
       "caption": "Every teacher with shifts or the Break supervision duty this school year",
       "columns": {
         "teacher": "Teacher",
@@ -3383,7 +3383,7 @@
       "travelValue": "{hours} h ({minutes} min/wk)",
       "supervisionHours": "Of which break supervision in the rota",
       "supervisionValue": "{hours} h ({minutes} min/wk)",
-      "supervisionRam": "The Break supervision duty ({ram} min/wk) is the budget the rota is planned against. It counts only on dates the teacher has no shift ({counted} min/wk).",
+      "supervisionRam": "The Break supervision duty ({ram} min/wk) is the budget the rota is planned against. It counts only in weeks the teacher has no shift ({counted} min/wk).",
       "regulated": "Regulated working time",
       "annualHours": "Annual working time",
       "unregulated": "Other working time (annual − regulated)",
