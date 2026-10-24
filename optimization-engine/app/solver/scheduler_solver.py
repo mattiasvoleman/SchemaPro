@@ -3121,6 +3121,14 @@ class SchedulerSolver:
                         requirement.min_grade_level, requirement.max_grade_level,
                     )
                 )
+                # Whether a frame closes or narrows any of the stage's days, so
+                # both sentences below offer the frame time only where there is
+                # one to widen. Without one the rasts cut the configured day,
+                # which no school row moves.
+                framed = int(windows != {
+                    day_index: (0, self._grid.slots_per_day)
+                    for day_index in range(len(self._grid.schedule_days))
+                })
                 if widest < duration_slots:
                     remaining = widest * self._grid.slot_minutes
                     raise InvalidScheduleInputError.of("RAST_NO_STRETCH_FOR_REQUIREMENT", {
@@ -3128,6 +3136,7 @@ class SchedulerSolver:
                         "grades": grades,
                         "minutes": requirement.minutes_per_lesson,
                         "remaining": remaining,
+                        "framed": framed,
                     })
                 # Its own sentence, as the margins have one beside the frames'.
                 # Folded into the one above, that sentence would tell the school
@@ -3143,13 +3152,7 @@ class SchedulerSolver:
                         "after": trail * self._grid.slot_minutes,
                         "changeover": changeover * self._grid.slot_minutes,
                         "remaining": with_margins * self._grid.slot_minutes,
-                        # Whether a frame closes or narrows any of the stage's
-                        # days, so the sentence offers the frame time only
-                        # where there is one to widen.
-                        "framed": int(windows != {
-                            day_index: (0, self._grid.slots_per_day)
-                            for day_index in range(len(self._grid.schedule_days))
-                        }),
+                        "framed": framed,
                     })
 
             grades = (

@@ -7249,6 +7249,31 @@ def test_a_frame_closing_the_only_day_a_rast_leaves_room_on_is_a_400_not_a_500()
     # builder's variable never reaches a body again.
     assert params["requirement"] == "00000000-0000-4000-8000-000000000003"
     assert "start_" not in response.text
+    # A frame closes Monday, so widening it is one way out of this week.
+    assert params["framed"] == 1
+    assert "widen the frame time" in body["message"]
+
+
+def test_rasts_that_cut_a_day_no_frame_narrows_do_not_send_the_school_to_the_frame() -> None:
+    """The same refusal with no frame anywhere: the rasts cut the configured day.
+
+    Every day of 08:00-10:00 loses 08:40-09:00, which leaves 40 and 60 minutes
+    for a 70-minute lesson. No school row sets that day's edges, so the frame
+    time is not among the ways out, and the sentence must not offer it.
+    """
+    payload = _fuzz_week(70)
+    payload["rasts"] = [_rast("08:40", "09:00", grades=(7, 9))]
+
+    response = _short_day_client("1,2,3,4,5,6", 600).post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["details"]["code"] == "RAST_NO_STRETCH_FOR_REQUIREMENT"
+    assert (body["details"]["params"]["remaining"], body["details"]["params"]["framed"]) == (60, 0)
+    assert "frame time" not in body["message"]
+    assert body["message"].endswith("Shorten a rast, or split the lesson.")
 
 
 def test_the_same_week_with_monday_open_is_not_refused() -> None:

@@ -804,11 +804,17 @@ MESSAGES: dict[str, str] = {
         "day then leaves for the lesson itself is {remaining} minutes. Shorten the lessons, "
         "shorten those margins, or widen the window they all have to fit inside."
     ),
+    # The frame time only where a frame narrows the stage's days (`framed`), for
+    # the reason the margins' sentence below gives: without one the rasts cut
+    # the configured day, and the frame screen has nothing on it to widen.
+    # `framed` arrived after the sentence did, so a refusal stored before it is
+    # shown in its own English (web/lib/engine-message.ts), not as a hole.
     "RAST_NO_STRETCH_FOR_REQUIREMENT": (
         "The rasts leave no room for requirement {requirement} "
         "({grades, select, any {years unknown} other {years {grades}}}): its {minutes}-minute "
         "lessons need an unbroken stretch, and the longest any day still offers is {remaining} "
-        "minutes. Shorten a rast, widen the frame time, or split the lesson."
+        "minutes. {framed, select, 0 {Shorten a rast, or split the lesson.} "
+        "other {Shorten a rast, widen the frame time, or split the lesson.}}"
     ),
     # Its own code for the reason the margins' is: neither sentence above is true
     # of the week. Its window holds the lesson and its margins, and its rasts

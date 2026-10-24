@@ -1475,7 +1475,7 @@ describe('OptimizationProxyService', () => {
           'MARGIN_NO_WINDOW_FOR_REQUIREMENT',
           { grades: '7–9', minutes: 60, before: 10, after: 0, changeover: 5, remaining: 55 },
         ],
-        ['RAST_NO_STRETCH_FOR_REQUIREMENT', { grades: '7–9', minutes: 60, remaining: 40 }],
+        ['RAST_NO_STRETCH_FOR_REQUIREMENT', { grades: '7–9', minutes: 60, remaining: 40, framed: 1 }],
         [
           'RAST_MARGIN_NO_STRETCH_FOR_REQUIREMENT',
           { grades: '7–9', minutes: 90, before: 10, after: 0, changeover: 0, remaining: 80, framed: 1 },
