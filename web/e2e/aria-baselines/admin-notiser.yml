@@ -54,6 +54,9 @@
         - link "Raster":
           - /url: /sv/admin/rasts
       - listitem:
+        - link "Rastvakter":
+          - /url: /sv/admin/supervision
+      - listitem:
         - link "Lunchsittningar":
           - /url: /sv/admin/lunch-servings
     - text: Schemaläggning

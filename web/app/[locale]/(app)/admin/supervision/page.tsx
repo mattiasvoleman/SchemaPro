@@ -321,7 +321,7 @@ export default function SupervisionPage() {
                                 return (
                                   <TableCell key={day} className={short ? "align-top bg-warning/10" : "align-top"}>
                                     {short ? (
-                                      <span className="mb-1 block text-xs font-medium text-warning-strong">{t("grid.short")}</span>
+                                      <span className="mb-1 block text-xs font-medium text-warning-foreground dark:text-warning">{t("grid.short")}</span>
                                     ) : null}
                                     <ul className="space-y-1">
                                       {shifts.map((shift) =>
