@@ -115,6 +115,50 @@ with open(sys.argv[-1], "wb") as fh:
 // heading verbatim, so a search that includes it matches page 2 for everything.
 const FRONT_MATTER_PAGES = 2;
 
+// A4 minus render()'s side margins.
+const CONTENT_WIDTH_MM = 210 - 18 - 18;
+
+/**
+ * Anything wider than the page makes Chrome shrink the whole document until it
+ * fits, without a word: the user manual printed at two thirds of its size from
+ * 2026-10-10 because of two tables with long nowrap keys. Lay the document out
+ * at the PDF's content width and name what sticks out.
+ */
+async function tooWide(html) {
+  const browser = await chromium.launch();
+  const page = await browser.newPage({
+    viewport: { width: Math.round((CONTENT_WIDTH_MM / 25.4) * 96), height: 1000 },
+  });
+  await page.emulateMedia({ media: "print" });
+  await page.setContent(html, { waitUntil: "networkidle" });
+  const found = await page.evaluate(() => {
+    const limit = document.documentElement.clientWidth + 1;
+    const sticksOut = (el) => el.getBoundingClientRect().right > limit;
+    return [...document.body.querySelectorAll("*")]
+      .filter((el) => sticksOut(el) && !sticksOut(el.parentElement))
+      .map((el) => `<${el.localName}> ${el.textContent.trim().replace(/\s+/g, " ").slice(0, 70)}`);
+  });
+  await browser.close();
+  return found;
+}
+
+/**
+ * Whether the first entry's heading is on the page after the contents (page 2
+ * of `bodyPath`, which starts at the contents), where the first chapter begins
+ * when the contents fit on one page. locate() skips only one contents page,
+ * and the numbers come from a render with empty placeholders: contents that
+ * spill onto a second page put the numbers one page off.
+ */
+function contentsFitOnePage(bodyPath, needle) {
+  const script = `
+import sys, pdfplumber
+with pdfplumber.open(sys.argv[1], pages=[2]) as pdf:
+    text = (pdf.pages[0].extract_text() or "").replace(" ", "").replace("\\n", "")
+print(sys.argv[2].replace(" ", "") in text)
+`;
+  return execFileSync(PYTHON, ["-c", script, bodyPath, needle], { encoding: "utf8" }).trim() === "True";
+}
+
 /** Page number (1-based) each anchor string first appears on, body only. */
 function locate(pdfPath, ANCHORS) {
   const script = `
@@ -174,6 +218,11 @@ for (const name of targets) {
   const footer = footerFor(doc.footer);
 
   console.log(`\n${doc.html} → ${doc.pdf}`);
+  const wide = await tooWide(html);
+  if (wide.length) {
+    console.error(`  wider than the page, so Chrome would shrink the whole PDF:\n    ${wide.join("\n    ")}`);
+    process.exit(1);
+  }
   console.log("  pass 1: measuring page positions…");
   await render(html, scratch, { footer });
 
@@ -192,6 +241,11 @@ for (const name of targets) {
   console.log("  pass 2: rendering final PDF…");
   await render(withNumbers, coverTmp, { footer: null, pageRanges: "1" });
   await render(withNumbers, bodyTmp, { footer, pageRanges: "2-" });
+  if (!contentsFitOnePage(bodyTmp, Object.values(anchors)[0])) {
+    console.error("  the contents spill past one page, so the page numbers in them would be off");
+    for (const tmp of [scratch, coverTmp, bodyTmp]) unlinkSync(tmp);
+    process.exit(1);
+  }
   joinCoverAndBody(coverTmp, bodyTmp, output);
   for (const tmp of [scratch, coverTmp, bodyTmp]) unlinkSync(tmp);
 
