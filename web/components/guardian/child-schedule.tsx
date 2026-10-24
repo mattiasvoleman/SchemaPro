@@ -106,6 +106,17 @@ function EntryRow({ entry, lunch }: { entry: FamilyEntry; lunch: string }) {
         {details.length > 0 ? (
           <span className="block truncate text-muted-foreground">{details.join(" · ")}</span>
         ) : null}
+        {/* Lektionslogg: what the teacher chose to write for the lesson. */}
+        {lesson.topic ? (
+          <span className="mt-1 block">
+            <span className="font-medium">{t("topic")}:</span> {lesson.topic}
+          </span>
+        ) : null}
+        {lesson.homework ? (
+          <span className="mt-1 block whitespace-pre-line">
+            <span className="font-medium">{t("homework")}:</span> {lesson.homework}
+          </span>
+        ) : null}
       </span>
     </li>
   );

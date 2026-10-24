@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useProfile } from "@/components/profile-context";
+import { useRouter } from "@/i18n/navigation";
 import {
   useCalendarRasts,
   useGroups,
@@ -21,6 +22,7 @@ import { WeekSchedule } from "@/components/schedule/week-schedule";
 export default function TeacherSchedulePage() {
   const t = useTranslations("schedule");
   const { profile, school } = useProfile();
+  const router = useRouter();
   const [weekStart, setWeekStart] = useState(() => startOfIsoWeek(new Date()));
 
   const fromDate = toDateString(weekStart);
@@ -94,6 +96,9 @@ export default function TeacherSchedulePage() {
         isLoading={isLoading}
         isError={isError}
         bands={rastBands}
+        // A lesson opens its page: ämne och läxa, the note to the substitute
+        // (Lektionslogg), and from there its register.
+        onLessonClick={(lesson) => router.push(`/teacher/lektion/${lesson.id}`)}
         printSheet={() =>
           sheetFromGrid({
             kind: "TEACHER",

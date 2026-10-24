@@ -59,6 +59,8 @@ const week = (studentId: string, firstName: string, from = "2026-10-19"): Family
       teachers: ["ANLI"],
       status: "SCHEDULED",
       substitute: false,
+      topic: "Bråk",
+      homework: "Uppgift 4.1\nUppgift 4.2",
     },
     {
       id: `${firstName}-sv`,
@@ -142,6 +144,17 @@ describe("the guardian's Schema card", () => {
     expect(within(row).getByText("08:05–08:50")).toBeInTheDocument();
     expect(within(row).getByText("B204 · ANLI")).toBeInTheDocument();
     expect(screen.getByText("guardian.schedule.lunch")).toBeInTheDocument();
+  });
+
+  it("shows the topic and homework the teacher wrote, and nothing for a lesson without (Lektionslogg)", async () => {
+    renderCard();
+    const row = (await screen.findByText("Matematik Alva")).closest("li")!;
+    expect(within(row).getByText("Bråk")).toBeInTheDocument();
+    expect(within(row).getByText("guardian.schedule.topic:")).toBeInTheDocument();
+    expect(within(row).getByText(/Uppgift 4\.1\s+Uppgift 4\.2/)).toBeInTheDocument();
+    const other = screen.getByText("Svenska").closest("li")!;
+    expect(within(other).queryByText("guardian.schedule.topic:")).not.toBeInTheDocument();
+    expect(within(other).queryByText("guardian.schedule.homework:")).not.toBeInTheDocument();
   });
 
   it("says Vikarie for a substituted lesson and names nobody", async () => {

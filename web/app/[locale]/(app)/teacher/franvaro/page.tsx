@@ -5,12 +5,17 @@
 //
 // MINA VIKARIEPASS: the lessons this teacher covers in the coming four weeks,
 // read as the teacher reads their week (CalendarLessonTeachers, role
-// SUBSTITUTE) — nothing new is read, and nothing says whom they replace or
-// why: the substitute's own day, as the notice and the e-mail say it.
+// SUBSTITUTE) — nothing says whom they replace or why: the substitute's own
+// day, as the notice and the e-mail say it. Each opens its lesson page, and
+// shows the note its own teacher left the substitute (Lektionslogg), which
+// the gateway hands this teacher for the lessons they are on.
 //
 // MIN FRÅNVARO: the teacher's own absences, with their reason (RLS lets the
 // admin and the absent teacher read it, nobody else) and how far the school
-// has come covering them. "Anmäl frånvaro", "Avsluta i förtid" and
+// has come covering them. Under them, the lessons the teacher has handed over
+// in the coming four weeks — each a lesson a decision took them off, so it is
+// gone from their week — with the way to its page and the note to whoever
+// covers it (Lektionslogg). "Anmäl frånvaro", "Avsluta i förtid" and
 // "Återkalla" are offered only when the school allows self-report
 // (CoverSettings.teacherSelfReport, off by default); the gateway and the
 // database guard decide again.
@@ -29,6 +34,9 @@ import { CalendarPlus } from "lucide-react";
 import { useProfile } from "@/components/profile-context";
 import { useGroups, useRooms, useSubjects, useTeacherLessons } from "@/lib/queries";
 import { useAbsenceReasons, useAbsences, useCoverSettings, usePoolMembership } from "@/lib/cover-queries";
+import { DECISION_STATUS, entriesByLesson } from "@/lib/lesson-log";
+import { useHandedOverLessons, useLessonLogEntries } from "@/lib/lesson-log-queries";
+import { Link } from "@/i18n/navigation";
 import type { Absence } from "@/lib/cover-types";
 import { absencePeriodText, shiftDate } from "@/lib/cover-absence-form";
 import { reasonName } from "@/lib/cover-view";
@@ -98,6 +106,10 @@ export default function TeacherCoverPage() {
   } = useAbsences({ userId: profile.id });
   const { data: reasons } = useAbsenceReasons();
   const { data: isPoolMember } = usePoolMembership(profile.id);
+  const { data: logEntries } = useLessonLogEntries(today, until);
+  const logOf = useMemo(() => entriesByLesson(logEntries), [logEntries]);
+  const { data: handedOver } = useHandedOverLessons(today, until);
+  const tStatus = useTranslations("coverStatus");
 
   const [reporting, setReporting] = useState(false);
   const [ending, setEnding] = useState<Absence | null>(null);
@@ -156,11 +168,18 @@ export default function TeacherCoverPage() {
                 <span className="w-24 tabular-nums">
                   {timeText(lesson.startsAt)}–{timeText(lesson.endsAt)}
                 </span>
-                <span className="font-medium">{subjectName.get(lesson.subjectId) ?? "—"}</span>
+                <Link href={`/teacher/lektion/${lesson.id}`} className="font-medium underline-offset-4 hover:underline">
+                  {subjectName.get(lesson.subjectId) ?? "—"}
+                </Link>
                 <span>{groupName.get(lesson.studentGroupId) ?? "—"}</span>
                 <span className="text-muted-foreground">
                   {lesson.roomId ? (roomName.get(lesson.roomId) ?? "—") : t("noRoom")}
                 </span>
+                {logOf.get(lesson.id)?.substituteNote ? (
+                  <p className="w-full whitespace-pre-line rounded-md bg-muted px-3 py-2">
+                    <span className="font-medium">{t("noteFromTeacher")}</span> {logOf.get(lesson.id)?.substituteNote}
+                  </p>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -235,6 +254,41 @@ export default function TeacherCoverPage() {
           </ul>
         )}
         <p className="text-xs text-muted-foreground">{t("privacy")}</p>
+        {/* Lektionslogg: the lessons this teacher handed over, which a
+            decision took off their week, and the way back to each one's
+            note to the substitute. */}
+        <div className="space-y-2">
+          <h3 className="text-sm font-semibold">{t("handedOverTitle")}</h3>
+          {(handedOver ?? []).length === 0 ? (
+            <p className="text-sm text-muted-foreground">{t("handedOverEmpty", { weeks: WEEKS_AHEAD })}</p>
+          ) : (
+            <ul className="divide-y rounded-md border">
+              {(handedOver ?? []).map((lesson) => (
+                <li key={lesson.lessonId} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 text-sm">
+                  <span className="w-28 capitalize">{dayText(lesson.date)}</span>
+                  <span className="w-24 tabular-nums">
+                    {timeText(lesson.startsAt)}–{timeText(lesson.endsAt)}
+                  </span>
+                  <span className="font-medium">{subjectName.get(lesson.subjectId) ?? "—"}</span>
+                  <span>{groupName.get(lesson.studentGroupId) ?? "—"}</span>
+                  {DECISION_STATUS[lesson.decision] ? (
+                    <Badge variant="outline">{tStatus(DECISION_STATUS[lesson.decision] as "COVERED")}</Badge>
+                  ) : null}
+                  <Link
+                    href={`/teacher/lektion/${lesson.lessonId}`}
+                    className="ml-auto underline underline-offset-4"
+                    aria-label={tCommon("actionNamed", {
+                      action: lesson.noted ? t("editNote") : t("writeNote"),
+                      name: `${subjectName.get(lesson.subjectId) ?? ""} ${dayText(lesson.date)} ${timeText(lesson.startsAt)}`,
+                    })}
+                  >
+                    {lesson.noted ? t("editNote") : t("writeNote")}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </SectionCard>
 
       {isPoolMember ? (

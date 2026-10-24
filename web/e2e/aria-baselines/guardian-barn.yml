@@ -17,7 +17,7 @@
         - listitem: 09:10–09:25 Förmiddagsrast
         - listitem: 10:40–11:40 Svenska Inställd Sal 101
         - listitem: 11:40–12:10 Lunch
-        - listitem: 13:00–14:00 Matematik Vikarie Sal 101
+        - listitem: "13:00–14:00 Matematik Vikarie Sal 101 Läxa: Uppgift 5.1–5.4"
   - region "Anmäl frånvaro":
     - heading "Anmäl frånvaro" [level=2]
     - text: Skolan och berörda lärare ser anmälan direkt. Barn

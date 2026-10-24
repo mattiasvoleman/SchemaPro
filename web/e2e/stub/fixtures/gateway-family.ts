@@ -7,6 +7,7 @@ import { Reply, route, type GatewayContext, type GatewayRoute } from "../gateway
 import { KIND, uid, type Persona } from "../sessions";
 import { addDays, mondayOf, stockholmInstant, THIS_MONDAY, TODAY, YEAR_END } from "./calendar";
 import { ABSENCE_REPORTS, CALENDAR_LUNCHES, CALENDAR_RASTS, GROUP_MEMBERS, LEAVE_REQUESTS, SCHOOL_BREAKS } from "./school-days";
+import { LESSON_LOGS } from "./lesson-logs";
 import {
   byId,
   CALENDAR_LESSON_TEACHERS,
@@ -51,7 +52,7 @@ const CLOCK = new Intl.DateTimeFormat("en-GB", {
 });
 
 /** HH:MM of an instant in Stockholm, as the gateway writes the family's times. */
-const schoolClock = (instant: string) => CLOCK.format(new Date(instant));
+export const schoolClock = (instant: string) => CLOCK.format(new Date(instant));
 
 const daysBetween = (from: string, to: string) => Math.round((Date.parse(to) - Date.parse(from)) / 86_400_000);
 
@@ -75,7 +76,7 @@ function groupsOf(student: Person): Set<string> {
 }
 
 /** The roster reader's four sources: the lesson's group, its extra groups, their members, the pupils named on it. */
-function attends(student: Person, lesson: CalendarLesson): boolean {
+export function attends(student: Person, lesson: CalendarLesson): boolean {
   const master = byId(MASTER_LESSONS, lesson.masterLessonId);
   const groups = groupsOf(student);
   return (
@@ -163,6 +164,9 @@ function familyWeek(student: Person, monday: string): FamilySchedule {
         teachers: status === "CANCELLED" || substitute ? [] : teachersOf(lesson),
         status: status as FamilyLesson["status"],
         substitute,
+        // Lektionslogg: this week's lessons carry what their teachers wrote.
+        topic: shift === 0 ? (LESSON_LOGS.get(lesson.id)?.topic ?? null) : null,
+        homework: shift === 0 ? (LESSON_LOGS.get(lesson.id)?.homework ?? null) : null,
       };
     })
     .filter((lesson) => shown(lesson.date))

@@ -36,6 +36,20 @@ const TeachingTimeCard = lazy(() =>
   ),
 );
 
+/*
+ * Ämne och läxa for the week (Lektionslogg): what the pupil's teachers wrote
+ * for the week's lessons. Lazy for the same two reasons as the card above.
+ */
+type StudentLessonLogProps = React.ComponentProps<
+  typeof import("@/components/lesson-log/student-lesson-log").StudentLessonLog
+>;
+const StudentLessonLog = lazy<React.ComponentType<StudentLessonLogProps>>(() =>
+  import("@/components/lesson-log/student-lesson-log").then(
+    (module) => ({ default: module.StudentLessonLog }),
+    () => ({ default: () => null }),
+  ),
+);
+
 export default function StudentSchedulePage() {
   const t = useTranslations("schedule");
   const tLunch = useTranslations("lunch");
@@ -129,11 +143,18 @@ export default function StudentSchedulePage() {
             : undefined
         }
       />
-      {/* A pupil's own card only: any role may open this page, and the
-          gateway answers a STUDENT with their own statement whatever is
-          asked. A teacher is refused the route, so nobody else asks. */}
+      {/* A pupil's own cards only: any role may open this page, and the
+          gateway answers a STUDENT with their own statement and their own
+          lessons' logs whatever is asked. A teacher is refused the route,
+          so nobody else asks. */}
       {profile.role === "STUDENT" ? (
         <Suspense fallback={null}>
+          <StudentLessonLog
+            from={fromDate}
+            to={toDate}
+            lessons={lessons ?? []}
+            subjectName={new Map((subjects ?? []).map((subject) => [subject.id, subject.name]))}
+          />
           <TeachingTimeCard studentId={profile.id} />
         </Suspense>
       ) : null}

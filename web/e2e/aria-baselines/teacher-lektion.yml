@@ -1,0 +1,26 @@
+- main:
+  - link "Till mitt schema":
+    - /url: /sv/teacher
+  - heading "Svenska" [level=1]
+  - paragraph: måndag <datum> · 08:10–09:10 · 7A · Sal 101
+  - link "Ta närvaro":
+    - /url: /sv/teacher/attendance/00000061-0000-4000-8000-000000000001
+  - paragraph: "Lärare: Anna Lind"
+  - region "Ämne och läxa":
+    - heading "Ämne och läxa" [level=2]
+    - text: Eleverna på lektionen och deras vårdnadshavare ser det du skriver här, vid lektionen i sitt schema. Du väljer själv om du skriver något. Ämne (valfritt)
+    - textbox "Ämne (valfritt)": "Novellanalys: berättarperspektiv"
+    - paragraph: Vad lektionen handlar om, på en rad. Högst 200 tecken.
+    - text: Läxa (valfritt)
+    - textbox "Läxa (valfritt)": Läs novellen ”Tant Ruth” och skriv tre frågor till den.
+    - paragraph: Det som ska vara gjort till nästa gång. Högst 1 000 tecken.
+    - button "Spara ämne och läxa" [disabled]
+    - text: Skrivet av Anna Lind, <datum> 10:00
+    - paragraph: Eleverna och vårdnadshavarna kan inte svara här, och ingen får någon notis om det du skriver. Frågor och meddelanden går via skolans lärplattform.
+  - region "Notis till vikarien":
+    - heading "Notis till vikarien" [level=2]
+    - text: Bara lektionens lärare och den som vikarierar läser notisen. Skolans administratörer ser på vikarietavlan att det finns en. Eleverna och vårdnadshavarna ser den aldrig. Notis (valfritt)
+    - textbox "Notis (valfritt)": Planeringen ligger i lärplattformen. Eleverna arbetar i par med frågorna på sidan 12.
+    - paragraph: Till exempel var planeringen finns och vad eleverna ska arbeta med. Högst 2 000 tecken.
+    - button "Spara notisen" [disabled]
+    - text: Skrivet av Anna Lind, <datum> 10:00
