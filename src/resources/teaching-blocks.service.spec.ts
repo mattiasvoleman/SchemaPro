@@ -347,6 +347,29 @@ describe('TeachingBlocksService', () => {
       ]);
     });
 
+    it('delade lektioner: refuses new lessons a member\'s shares do not fit, naming the member, and writes nothing', async () => {
+      tx.teachingRequirement.findMany.mockImplementation(async ({ select }: { select: Record<string, unknown> }) =>
+        'lessonsPerWeek' in select
+          ? [
+              member(TY, { teacherId: 't-anna', shares: [{ teacherId: 't-cilla', lessons: 1, minutes: 60 }] }),
+              member(FR, { teacherId: 't-bo' }),
+            ]
+          : [{ id: TY }, { id: FR }],
+      );
+      tx.teachingRequirement.findUnique.mockResolvedValue({ subject: { name: 'Tyska' }, studentGroup: { name: 'Ty7' } });
+
+      // Two lessons become one: Anna would keep none of Tyska's.
+      const error = await service.update(BLOCK, { lessonsPerWeek: 1 }, admin).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(ConflictException);
+      expect((error as ConflictException).getResponse()).toMatchObject({
+        code: 'REQUIREMENT_SHARES_DO_NOT_FIT',
+        reason: 'LEAD_KEEPS_NONE',
+        message: expect.stringMatching(/^Tyska för Ty7 har sina lektioner delade mellan lärare/),
+      });
+      expect(tx.teachingRequirement.updateMany).not.toHaveBeenCalled();
+    });
+
     it('changes the lessons of a block on its times with it, judged and written as one', async () => {
       // The spring block of a term split, locked with this one (the autumn)
       // in id order before this one's own read.

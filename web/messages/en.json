@@ -767,6 +767,7 @@
       "add": "Add a teacher",
       "part": "{teacher}: {lessons} of {of} lessons · {minutes} min a week ({percent}%)",
       "problem": {
+        "NO_TEACHER": "Choose a teacher on every row.",
         "NOT_INTEGER": "Give each teacher a whole number of lessons, and a length when the entry has lessons of different lengths.",
         "OUT_OF_RANGE": "A teacher takes 1–39 lessons.",
         "TEACHER_TWICE": "The same teacher is listed twice with the same length. Merge the rows.",
@@ -3833,6 +3834,7 @@
     "DISTRIBUTION_DAYS_TOO_CLOSE": "{requirement} now has lessons on {firstDay, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {firstDay}}} and {secondDay, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {secondDay}}}, and its distribution rule {minDaysBetween, select, 2 {allows no consecutive days} other {wants lesson days at least {minDaysBetween} days apart}}.",
     "BLOCK_MEMBERS_DIFFER": "{block}: {requirement} does not have the same lessons as {other}, and the lessons of a block are placed at the same times. Give every entry in the block the same lessons per week and the same lengths.",
     "BLOCK_MEMBERS_SHARE_TEACHER": "{block}: {requirement} and {other} have the same teacher, who cannot teach both at the same time. Give one of them another teacher, or take it out of the block.",
+    "BLOCK_MEMBERS_SPLIT": "{block}: {requirement} and {other} both have their lessons split between teachers, and the lessons of a block are placed together one by one. Give one of them one teacher again, or take it out of the block.",
     "BLOCK_MEMBERS_SHARE_PUPILS": "{block}: {requirement} and {other} share pupils, who cannot be in both at the same time. Take one of them out of the block, or let each pupil be in only one group of it.",
     "BLOCK_NO_COMMON_START": "{block}: its groups have no time in common at which a {minutes}-minute lesson can start, with the frame times, breaks and margins of their years. Widen the frame times, or take an entry out of the block.",
     "BLOCK_CANNOT_BE_PLACED": "{block} cannot have all its lessons at the same times, and that rule is one of those that cannot all hold at once. Check when its groups, teachers and rooms are free, or take an entry out of the block.",

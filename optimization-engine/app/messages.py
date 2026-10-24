@@ -696,6 +696,15 @@ MESSAGES: dict[str, str] = {
         "entries of {other} have room for beside their own. Give the entries of {block} the "
         "teachers of {other}, or take a co-teacher off {other}."
     ),
+    # Refused by the gateway (optimization-proxy.service.ts, delade lektioner):
+    # two members of one block each split between teachers. The k-th lessons
+    # of a block start together, which ties one teacher's lesson to one
+    # particular other's; `requirement` and `other` are the two entries.
+    "BLOCK_MEMBERS_SPLIT": (
+        "{block}: {requirement} and {other} both have their lessons split between teachers, and "
+        "the lessons of a block are placed together one by one. Give one of them one teacher "
+        "again, or take it out of the block."
+    ),
     # Refused by the gateway too (same-times.ts, delade lektioner): an entry of
     # either block whose lessons are split between teachers. A leader entry
     # holds one teacher for all its lessons, and the follower's lessons each

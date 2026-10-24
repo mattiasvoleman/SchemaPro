@@ -1252,6 +1252,11 @@ export class ImportService {
         const stored = existingByKey.get(key);
         if (stored?.teacherId) touchedTeacherIds.add(stored.teacherId);
         if (stored?.coTeacherId) touchedTeacherIds.add(stored.coTeacherId);
+        // Delade lektioner: a row's percent, weeks or period reach its shares'
+        // teachers too, whose posts are then judged and locked like the lead's.
+        for (const share of stored?.shares ?? []) {
+          if (share.teacherId) touchedTeacherIds.add(share.teacherId);
+        }
       }
       const checks = await RequirementImportChecks.open(tx, {
         viewer: user,

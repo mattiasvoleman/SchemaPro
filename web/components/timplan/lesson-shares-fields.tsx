@@ -50,6 +50,11 @@ export interface ShareDraft {
   lessons: string;
   /** "" on a uniform post, whose lessons are all one length. */
   minutes: string;
+  /**
+   * A share stored with no teacher (theirs was deleted), shown as "Ej
+   * tilldelad" and saved back as it is. A row added here needs a teacher.
+   */
+  kept?: boolean;
 }
 
 interface Person {
@@ -108,7 +113,13 @@ export function LessonSharesFields({
     minutes: mixed ? (draft.minutes.trim() === "" ? Number.NaN : Number(draft.minutes)) : (shape?.minutesPerLesson ?? Number.NaN),
   }));
   const row = shape ? { ...shape, teacherId: lead, coTeacherId: co } : null;
-  const problem = row ? sharesProblem(row, shares) : null;
+  // A row added here names a teacher: a share nobody teaches is only ever
+  // one whose teacher was deleted, kept until somebody is chosen.
+  const problem = row
+    ? value.some((draft) => draft.teacherId === noTeacher && !draft.kept)
+      ? "NO_TEACHER"
+      : sharesProblem(row, shares)
+    : null;
   const ok = row !== null && problem === null;
   useEffect(() => {
     onValidity(ok);

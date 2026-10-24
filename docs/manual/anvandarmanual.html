@@ -1715,13 +1715,19 @@
       lärare eller medlärare. Dialogen säger till innan du sparar.</li>
     <li>Tas en lärare bort ur skolan står hens lektioner kvar som
       <em>Ej tilldelad</em> tills du väljer någon annan eller tar bort raden.
-      De läggs aldrig tyst på huvudläraren.</li>
+      De läggs aldrig tyst på huvudläraren. Sådana lektioner räknas som
+      obemannade, både när genereringen och publiceringen letar efter poster
+      utan lärare och i tjänstefördelningens ämnesflaskhalsar (4.3). En rad
+      du lägger till själv måste ha en lärare.</li>
     <li>Läsårsrullningen (8.1) tar med delningen till nästa år. Varje lärare
       behålls på samma villkor som postens lärare, och den som inte kan
       behållas lämnar sina lektioner som <em>Ej tilldelad</em>.</li>
-    <li>En post i ett block som ligger på ett annat blocks tider (terminsvis
-      halvklass, nedan) kan inte delas. Genereringen säger då vilken post det
-      gäller.</li>
+    <li>I ett parallellt block (nedan) kan en av posterna vara delad.
+      Blockets lektioner läggs ihop en och en, och två delade poster skulle
+      binda en viss lärares lektion till en viss annans. Genereringen säger
+      då vilka två poster det gäller. En post i ett block som ligger på ett
+      annat blocks tider (terminsvis halvklass, nedan) kan inte delas alls.
+      Genereringen säger även då vilken post det gäller.</li>
     <li>Filen <em>timplansposter.csv</em> har ingen kolumn för delningen. En
       import som ändrar en delad posts lektioner eller lärare så att delningen
       inte längre går ihop stoppar den raden och säger varför. Ändra då

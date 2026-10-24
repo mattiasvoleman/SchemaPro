@@ -4,6 +4,7 @@
   "BLOCK_MEMBERS_DIFFER": "{block}: {requirement} does not have the same lessons as {other}, and the lessons of a block are placed at the same times. Give every entry in the block the same lessons per week and the same lengths.",
   "BLOCK_MEMBERS_SHARE_PUPILS": "{block}: {requirement} and {other} share pupils, who cannot be in both at the same time. Take one of them out of the block, or let each pupil be in only one group of it.",
   "BLOCK_MEMBERS_SHARE_TEACHER": "{block}: {requirement} and {other} have the same teacher, who cannot teach both at the same time. Give one of them another teacher, or take it out of the block.",
+  "BLOCK_MEMBERS_SPLIT": "{block}: {requirement} and {other} both have their lessons split between teachers, and the lessons of a block are placed together one by one. Give one of them one teacher again, or take it out of the block.",
   "BLOCK_NO_COMMON_START": "{block}: its groups have no time in common at which a {minutes}-minute lesson can start, with the frame times, breaks and margins of their years. Widen the frame times, or take an entry out of the block.",
   "BLOCK_PARTLY_LOCKED": "{block} has {locked, plural, one {# lesson} other {# lessons}} locked or placed by hand while the rest of it is still to be placed. Unlock the block's lessons and move any moved by hand back with the block, or lock all of them.",
   "BLOCK_PARTLY_LOCKED_SUMMARY": "{count, plural, one {# block has} other {# blocks have}} lessons locked or placed by hand while the rest of the block is still to be placed, and a block's lessons are placed together.",

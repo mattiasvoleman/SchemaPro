@@ -434,7 +434,7 @@ export default function RequirementsPage() {
     isError: requirementsFailed,
   } = useRequirements(activeYearId);
   // Delade lektioner: each post's shares, from the gateway beside the rows.
-  const { data: shareRows } = useRequirementShares(activeYearId);
+  const { data: shareRows, isSuccess: sharesLoaded } = useRequirementShares(activeYearId);
   const sharesOf = useMemo(() => sharesByRequirement(shareRows), [shareRows]);
   /** The rows with their shares beside them, for the Block panel's teacher warning. */
   const sharedRequirements = useMemo(
@@ -885,10 +885,12 @@ export default function RequirementsPage() {
             teacherId: share.teacherId ?? NO_TEACHER,
             lessons: String(share.lessons),
             minutes: String(share.minutes),
+            ...(share.teacherId === null ? { kept: true } : {}),
           }))
         : null,
     });
-    setSharesOk(true);
+    // Unsaveable until the rows' module has judged them (onValidity).
+    setSharesOk(!(existing && sharesOf.has(existing.id)));
   };
 
   const submit = async () => {
@@ -966,7 +968,9 @@ export default function RequirementsPage() {
             shares: form.shares.map((draft) => ({
               teacherId: draft.teacherId === NO_TEACHER ? null : draft.teacherId,
               lessons: Number(draft.lessons),
-              ...(split ? { minutes: Number(draft.minutes) } : {}),
+              // Only on a post of two or more lengths: extra rows of one length
+              // make a uniform post, whose rows the dialog asks no length of.
+              ...(split && split.lessonLengths.length > 0 ? { minutes: Number(draft.minutes) } : {}),
             })),
           };
     const label = `${groupOf(cell.groupId)?.name ?? ""} · ${subjectOf(cell.subjectId)?.name ?? ""}`;
@@ -1646,7 +1650,9 @@ export default function RequirementsPage() {
                                   <span className="max-w-24 truncate text-[10px] leading-tight">
                                     {teacherLabel(requirement.teacherId) ?? tCommon("notAssigned")}
                                     {/* Delade lektioner: how many more teachers take some of its lessons. */}
-                                    {sharesOf.has(requirement.id) ? ` +${sharesOf.get(requirement.id)!.length}` : null}
+                                    {sharesOf.has(requirement.id)
+                                      ? ` +${new Set(sharesOf.get(requirement.id)!.map((share) => share.teacherId)).size}`
+                                      : null}
                                   </span>
                                 ) : null}
                                 {badge ? (
@@ -1899,15 +1905,19 @@ export default function RequirementsPage() {
                   onValidity={setSharesOk}
                 />
               </Suspense>
-            ) : (Number(form.lessonsPerWeek) || 0) +
+            ) : sharesLoaded &&
+              (Number(form.lessonsPerWeek) || 0) +
                 form.extraLengths.reduce((sum, part) => sum + (Number(part.lessons) || 0), 0) >=
-              2 ? (
+                2 ? (
               <Button
                 data-writes="PLANERING"
                 variant="outline"
                 size="sm"
                 className="col-span-2 justify-self-start"
-                onClick={() => setForm({ ...form, shares: [{ teacherId: NO_TEACHER, lessons: "1", minutes: "" }] })}
+                onClick={() => {
+                  setSharesOk(false);
+                  setForm({ ...form, shares: [{ teacherId: NO_TEACHER, lessons: "1", minutes: "" }] });
+                }}
               >
                 {t("shares.open")}
               </Button>

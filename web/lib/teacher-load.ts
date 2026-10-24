@@ -877,6 +877,11 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
     lessonMinutesPerWeek += charged.lesson;
     const shared = hasShares(requirement);
 
+    // The lessons nobody teaches: the lead's when the row has none, and — on
+    // a shared row — a share whose teacher was deleted (delade lektioner). A
+    // row with no share is its lead alone, so this is the row exactly when it
+    // has no teacher, as always.
+    const nobody = charged.parts.filter((part) => part.teacherId === null);
     if (requirement.teacherId === null) {
       unstaffedRequirements.push({
         requirementId: requirement.id,
@@ -886,16 +891,21 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
         groupName: requirement.groupName,
         // The lead's own lessons: the whole row unless it is shared, when the
         // shares' teachers have theirs and only the rest wants a teacher.
+        // Listed only for a row without a lead: the panel's Tilldela gives
+        // the row a lead, which is no answer to a teacherless share — that
+        // is the timplan dialog's, and the subject's demand below counts it.
         minutesPerWeek: Math.round(charged.parts[0]!.lesson),
         teacherMinutesPerWeek: Math.round(charged.teacher),
         gradeSpan: requirement.gradeSpan,
       });
+    }
+    if (nobody.length > 0) {
       const subjectDemand = demand.get(requirement.subjectId) ?? {
         subjectName: requirement.subjectName,
         minutes: 0,
         count: 0,
       };
-      subjectDemand.minutes += charged.teacher;
+      subjectDemand.minutes += nobody.reduce((sum, part) => sum + part.charged, 0);
       subjectDemand.count += 1;
       demand.set(requirement.subjectId, subjectDemand);
     }

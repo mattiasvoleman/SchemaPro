@@ -1,7 +1,8 @@
 import type { PrismaClient } from '@prisma/client';
 
 /**
- * The year's timplansposter with no teacher, with the subject and group names
+ * The year's timplansposter with lessons nobody teaches — no lead, or a share
+ * whose teacher was deleted (delade lektioner) — with the subject and group names
  * the school reads them by ("Matematik för 7B").
  *
  * One query for both askers: the generate pre-flight
@@ -15,7 +16,10 @@ export function readUnstaffedRequirements(
   academicYearId: string,
 ): Promise<Array<{ id: string; subject: { name: string }; studentGroup: { name: string } }>> {
   return tx.teachingRequirement.findMany({
-    where: { academicYearId, teacherId: null },
+    // Delade lektioner: a post with a lead but a share whose teacher was
+    // deleted has lessons nobody teaches too, and the generator would place
+    // them teacherless. One statement either way.
+    where: { academicYearId, OR: [{ teacherId: null }, { shares: { some: { teacherId: null } } }] },
     select: {
       id: true,
       subject: { select: { name: true } },

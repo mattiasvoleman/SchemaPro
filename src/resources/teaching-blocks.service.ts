@@ -10,6 +10,7 @@ import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import {
   BLOCK_MEMBERS_DIFFER,
+  REQUIREMENT_SHARES_DO_NOT_FIT,
   rethrowPrismaError,
   teachingBlockRefusal,
   writeConflict,
@@ -18,6 +19,8 @@ import { requirementName } from '../optimization/optimization-proxy.service';
 import { RequirementImportChecks } from '../staffing/staffing-enforcement';
 import { staffingSentence, type StaffingWarning } from '../staffing/staffing-checks';
 import { readsHr } from '../staffing/hr-visibility';
+import { sharesProblem } from '../common/lesson-shares';
+import { SHARE_SELECT, sharesRefusal } from './requirement-shares';
 import {
   assertLessonLengthFitsTheGrid,
   mergeLessonShape,
@@ -312,6 +315,8 @@ async function setLessons(
       minutesPerLesson: true,
       lessonLengths: true,
       blockId: true,
+      // Delade lektioner: a member's shares must fit the block's new lessons.
+      shares: SHARE_SELECT,
     },
     orderBy: { id: 'asc' },
   });
@@ -322,6 +327,28 @@ async function setLessons(
     throw new BadRequestException('lessonsPerWeek: blocket har inga poster att ändra lektionerna på.');
   }
   const resolved = mergeLessonShape(own, dto);
+  // Delade lektioner: a member whose shares the block's new lessons do not
+  // fit is refused by name, before the trigger (TS409) would refuse the
+  // block's one UPDATE without saying which post.
+  for (const member of members) {
+    if ((member.shares ?? []).length === 0) continue;
+    const problem = sharesProblem({ ...member, ...resolved.shape }, member.shares);
+    if (problem === null) continue;
+    const named = await tx.teachingRequirement.findUnique({
+      where: { id: member.id },
+      select: { subject: { select: { name: true } }, studentGroup: { select: { name: true } } },
+    });
+    const refusal = sharesRefusal(problem);
+    const body = refusal.getResponse() as { message?: string; reason?: string };
+    throw new ConflictException({
+      message:
+        `${named ? requirementName(named.subject.name, named.studentGroup.name) : 'En av blockets poster'} har sina ` +
+        `lektioner delade mellan lärare, och blockets nya lektioner rymmer inte delningen. ${body.message ?? ''} ` +
+        'Ändra delningen i postens dialog först.',
+      code: REQUIREMENT_SHARES_DO_NOT_FIT,
+      reason: body.reason ?? problem,
+    });
+  }
   const warnings = await judgeMembers(tx, user, members, resolved.shape);
   // With a block on the same times, the whole shape goes to both: the change
   // was merged over this block's posts, and the other's may have drifted (a
