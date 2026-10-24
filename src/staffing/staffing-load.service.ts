@@ -345,7 +345,12 @@ export class StaffingLoadService {
    * then — a school that never rolls makes the same statements as before and
    * gets the same ranking.
    */
-  async suggestTeachers(requirementId: string, user: AuthenticatedUser): Promise<TeacherSuggestions> {
+  async suggestTeachers(
+    requirementId: string,
+    user: AuthenticatedUser,
+    /** Delade lektioner: rank for the row's teacherless share of this length, not its lead. */
+    shareMinutes: number | null = null,
+  ): Promise<TeacherSuggestions> {
     requireSchoolId(user);
     return this.prisma.withRls(user, async (tx) => {
       const requirement = await tx.teachingRequirement.findUnique({
@@ -367,9 +372,26 @@ export class StaffingLoadService {
       const lastYear = predecessorId
         ? await readLastYearTeachersOf(tx, predecessorId, requirement.subjectId)
         : null;
+      // A share is asked for by its length, and only one nobody teaches can
+      // be given a teacher from the unstaffed panel.
+      if (
+        shareMinutes !== null &&
+        !yearInput.requirements
+          .find((row) => row.id === requirementId)
+          ?.shares?.some((share) => share.teacherId === null && share.minutes === shareMinutes)
+      ) {
+        throw new BadRequestException('shareMinutes: posten har ingen andel utan lärare med den längden.');
+      }
       // Without HR-läs a changing post's room is the year's, as the report
       // states it (suggest-teachers.ts showsPeriods).
-      const answer = suggestTeachers(yearInput, requirementId, staffIds, lastYear, readsHr(user));
+      const answer = suggestTeachers(
+        yearInput,
+        requirementId,
+        staffIds,
+        lastYear,
+        readsHr(user),
+        shareMinutes === null ? null : { minutes: shareMinutes },
+      );
       // A candidate's room is their target less their load: their tjänst, as
       // the load report hands it out, so recorded as the report is
       // (EMPLOYMENT), in this transaction. A candidate without a post has no

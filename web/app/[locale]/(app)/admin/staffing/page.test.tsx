@@ -207,6 +207,7 @@ vi.mock("@/lib/staffing-queries", () => ({
     },
   }),
   useAssignTeacher: () => ({ mutateAsync: (body: unknown) => state.assign(body), isPending: false }),
+  useAssignShare: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
 vi.mock("@/i18n/navigation", () => ({

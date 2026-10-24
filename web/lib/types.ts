@@ -842,6 +842,8 @@ export interface TeacherSuggestions {
   studentGroupId: string;
   gradeSpan: { min: number; max: number } | null;
   teacherMinutesPerWeek: number;
+  /** Delade lektioner: ranked for the row's teacherless share of this length, not its lead. */
+  share?: { minutes: number };
   qualificationsRecorded: boolean;
   /** The group's predecessor and its läsår, or null without one (or without a row in the subject). */
   lastYear: { groupName: string; yearName: string } | null;

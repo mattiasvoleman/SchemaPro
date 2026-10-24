@@ -45,6 +45,7 @@ import { formatTime } from "@/lib/utils";
 import { buildGradeSpans } from "@/lib/grade-span";
 import { solverRunVariant } from "@/lib/status-variants";
 import { useStaffingPolicy, useTeacherDuties } from "@/lib/staffing-queries";
+import { sharesByRequirement, useRequirementShares } from "@/lib/requirement-shares";
 import { dutyPeriodLine, keepsTimesAllYear } from "@/lib/duty-lines";
 import { usePlanningYear } from "@/lib/planning-year";
 import { withProjectedHomes } from "@/lib/projected-rosters";
@@ -141,10 +142,17 @@ export default function GeneratePage() {
    * the same refusal, named, in the result card below.
    */
   const { data: staffingPolicy } = useStaffingPolicy();
-  const unstaffedCount = useMemo(
-    () => (requirements ?? []).filter((requirement) => requirement.teacherId === null).length,
-    [requirements],
-  );
+  // Delade lektioner: a post with a lead but a share nobody teaches has
+  // lessons without a teacher too, and the pre-flight counts it
+  // (readUnstaffedRequirements), so this does.
+  const { data: shareRows } = useRequirementShares(year?.id ?? null);
+  const unstaffedCount = useMemo(() => {
+    const sharesOf = sharesByRequirement(shareRows);
+    return (requirements ?? []).filter(
+      (requirement) =>
+        requirement.teacherId === null || (sharesOf.get(requirement.id) ?? []).some((share) => share.teacherId === null),
+    ).length;
+  }, [requirements, shareRows]);
   const refusesUnstaffed = staffingPolicy?.unstaffedGeneration === "REFUSE";
 
   /**

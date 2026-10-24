@@ -286,6 +286,46 @@ describe('suggestTeachers', () => {
     expect(order(suggestTeachers(input(), 'target', [ANNA, ANNA]))).toEqual([ANNA]);
   });
 
+  describe('delade lektioner: a share nobody teaches', () => {
+    // 8A's four, Anna leading three; the fourth's teacher was deleted.
+    const shared = row('target', {
+      teacherId: ANNA,
+      shares: [
+        { teacherId: CY, lessons: 1, minutes: 60 },
+        { teacherId: null, lessons: 1, minutes: 60 },
+      ],
+      lessonsPerWeek: 5,
+    });
+
+    it('ranks for the share: its own minutes, without the row’s lead or the share teachers', () => {
+      const result = suggestTeachers(input({ requirements: [shared] }), 'target', [ANNA, BO, CY, DAG], null, true, { minutes: 60 });
+
+      expect(result.share).toEqual({ minutes: 60 });
+      expect(result.teacherMinutesPerWeek).toBe(60);
+      // Not Anna, the lead, nor Cy, who has a share already; Dag has no post
+      // and so no room, and sorts last.
+      expect(order(result)).toEqual([BO, DAG]);
+      const bo = result.candidates.find((candidate) => candidate.userId === BO)!;
+      // Bo teaches nothing yet: 1080 less the share's 60.
+      expect(bo).toMatchObject({ remainingMinutesPerWeek: 1020, currentlyAssigned: false, wouldExceed: false });
+    });
+
+    it('leaves the lead’s ranking as it was: the lead’s own three lessons, and no share key', () => {
+      const result = suggestTeachers(input({ requirements: [shared] }), 'target', [ANNA, BO, CY, DAG]);
+
+      expect(result.share).toBeUndefined();
+      expect(result.teacherMinutesPerWeek).toBe(180);
+      // The share's teacher is not offered the lead (rule (d)).
+      expect(order(result)).not.toContain(CY);
+    });
+
+    it('throws for a length the row has no teacherless share of', () => {
+      expect(() =>
+        suggestTeachers(input({ requirements: [shared] }), 'target', [BO], null, true, { minutes: 40 }),
+      ).toThrow(/no teacherless share of 40 minutes/);
+    });
+  });
+
   describe('continuity: the same teacher as last year', () => {
     const LAST = (teacherIds: string[]) => ({ groupName: '7A', yearName: '2025/26', teacherIds });
 

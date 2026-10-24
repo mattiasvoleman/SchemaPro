@@ -5,11 +5,12 @@ import type { UnstaffedRequirement } from "@/lib/teacher-load";
 import { UNSTAFFED_ANCHOR, UnstaffedPanel } from "./unstaffed-panel";
 
 const assign = vi.hoisted(() => vi.fn());
+const assignShare = vi.hoisted(() => vi.fn());
 const asked = vi.hoisted(() => ({ ids: [] as unknown[] }));
 
 vi.mock("@/lib/staffing-queries", () => ({
-  useSuggestTeachers: (requirementId: unknown) => {
-    asked.ids.push(requirementId);
+  useSuggestTeachers: (requirementId: unknown, shareMinutes: unknown = null) => {
+    asked.ids.push(shareMinutes === null ? requirementId : `${String(requirementId)}@${String(shareMinutes)}`);
     return {
       isLoading: false,
       isError: false,
@@ -36,6 +37,7 @@ vi.mock("@/lib/staffing-queries", () => ({
     };
   },
   useAssignTeacher: () => ({ mutateAsync: assign, isPending: false }),
+  useAssignShare: () => ({ mutateAsync: assignShare, isPending: false }),
 }));
 vi.mock("@/i18n/navigation", () => ({
   Link: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => (
@@ -77,6 +79,7 @@ describe("UnstaffedPanel", () => {
       <UnstaffedPanel
         rows={[row({}), row({ requirementId: "r-7b-no", subjectName: "NO", groupName: "7B", teacherMinutesPerWeek: 90 })]}
         teacherName={(id) => id}
+        sharesOf={() => []}
       />,
     );
     expect(container.querySelector(`#${UNSTAFFED_ANCHOR}`)).not.toBeNull();
@@ -87,7 +90,7 @@ describe("UnstaffedPanel", () => {
   });
 
   it("leaves Föreslå lärare unmarked: the ranking is a reading, and its buttons that staff the row are marked (Läsbehörighet)", () => {
-    render(<UnstaffedPanel rows={[row({})]} teacherName={(id) => id} />);
+    render(<UnstaffedPanel rows={[row({})]} teacherName={(id) => id} sharesOf={() => []} />);
     expect(screen.getByRole("button", { name: "suggestTeachers" })).not.toHaveAttribute("data-writes");
   });
 
@@ -107,6 +110,7 @@ describe("UnstaffedPanel", () => {
       <UnstaffedPanel
         rows={[row({}), row({ requirementId: "r-7b-no", groupName: "7B" })]}
         teacherName={(id) => (id === "t-anna" ? "Anna Ek" : id)}
+        sharesOf={() => []}
       />,
     );
     const first = screen.getByText("unstaffedRow(7A|Matematik|180)").closest("li")!;
@@ -140,14 +144,46 @@ describe("UnstaffedPanel", () => {
   it("puts focus back on the panel after an assignment that drew no warning", async () => {
     const user = userEvent.setup();
     assign.mockResolvedValue({ id: "r-7a-ma", warnings: [] });
-    const { container } = render(<UnstaffedPanel rows={[row({})]} teacherName={(id) => id} />);
+    const { container } = render(<UnstaffedPanel rows={[row({})]} teacherName={(id) => id} sharesOf={() => []} />);
     await user.click(screen.getByRole("button", { name: "suggestTeachers" }));
     await user.click(screen.getByRole("button", { name: "suggestAssignNamed(t-anna)" }));
     expect(document.activeElement).toBe(container.querySelector(`#${UNSTAFFED_ANCHOR}`));
   });
 
+  it("delade lektioner: a share nobody teaches is a row of its own, ranked for it and given its teacher by writing the shares", async () => {
+    const user = userEvent.setup();
+    assignShare.mockResolvedValue({ id: "r-7a-ma", warnings: [] });
+    const stored = [
+      { teacherId: "t-bo", lessons: 1, minutes: 60 },
+      { teacherId: null, lessons: 1, minutes: 60 },
+    ];
+    render(
+      <UnstaffedPanel
+        rows={[row({}), row({ minutesPerWeek: 60, teacherMinutesPerWeek: 60, share: { lessons: 1, minutes: 60 } })]}
+        teacherName={(id) => id}
+        sharesOf={(id) => (id === "r-7a-ma" ? stored : [])}
+      />,
+    );
+    // The lead's row and the share's, side by side under one post.
+    expect(screen.getByText("unstaffedRow(7A|Matematik|180)")).toBeInTheDocument();
+    const share = screen.getByText("unstaffedShareRow(7A|Matematik|1|60|60)").closest("li")!;
+    await user.click(within(share).getByRole("button", { name: "suggestTeachers" }));
+    expect(asked.ids).toEqual(["r-7a-ma@60"]);
+
+    await user.click(within(share).getByRole("button", { name: "suggestAssignNamed(t-anna)" }));
+    // The whole list again, the teacherless share now Anna's; the lead untouched.
+    expect(assignShare).toHaveBeenCalledWith({
+      requirementId: "r-7a-ma",
+      shares: [
+        { teacherId: "t-bo", lessons: 1, minutes: 60 },
+        { teacherId: "t-anna", lessons: 1, minutes: 60 },
+      ],
+    });
+    expect(assign).not.toHaveBeenCalled();
+  });
+
   it("says when every row has a teacher", () => {
-    render(<UnstaffedPanel rows={[]} teacherName={(id) => id} />);
+    render(<UnstaffedPanel rows={[]} teacherName={(id) => id} sharesOf={() => []} />);
     expect(screen.getByText("unstaffedEmpty")).toBeInTheDocument();
   });
 });

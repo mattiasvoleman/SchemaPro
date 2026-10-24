@@ -4,7 +4,7 @@ import type {
   TeacherQualificationKind,
 } from '@prisma/client';
 import { lessonCountOf, weeklyMinutesOf } from '../common/lesson-lengths';
-import { hasShares, teacherPartsOf, type LessonShare, type TeacherPart } from '../common/lesson-shares';
+import { canonicalShares, hasShares, teacherPartsOf, type LessonShare, type TeacherPart } from '../common/lesson-shares';
 import { toNioarigSpan, type GradeNumbering } from '../common/grade-numbering';
 import { changesDuringYear, postStretches, type LoadPeriod, type PostStretchDates } from './employment-periods';
 import {
@@ -486,6 +486,13 @@ export interface UnstaffedRequirement {
   /** What the row would charge the teacher who takes it (× teacherLoadPercent). */
   teacherMinutesPerWeek: number;
   gradeSpan: GradeSpan | null;
+  /**
+   * Delade lektioner: a share of the row that nobody teaches — its teacher
+   * deleted, or not kept by a rollover — rather than the row's lead. The
+   * minutes above are then the share's own, and Tilldela gives the share a
+   * teacher. Absent for the row's lead, as it always was.
+   */
+  share?: { lessons: number; minutes: number };
 }
 
 /** Per subject with an unstaffed row: is there anybody qualified left to take it? */
@@ -1078,13 +1085,33 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
         groupName: requirement.groupName,
         // The lead's own lessons: the whole row unless it is shared, when the
         // shares' teachers have theirs and only the rest wants a teacher.
-        // Listed only for a row without a lead: the panel's Tilldela gives
-        // the row a lead, which is no answer to a teacherless share — that
-        // is the timplan dialog's, and the subject's demand below counts it.
         minutesPerWeek: Math.round(charged.parts[0]!.lesson),
         teacherMinutesPerWeek: Math.round(charged.teacher),
         gradeSpan: requirement.gradeSpan,
       });
+    }
+    // Delade lektioner: each share nobody teaches is listed as its own row,
+    // with its own lessons, so that what the generation and the publication
+    // count as unstaffed (readUnstaffedRequirements) is what the panel shows
+    // and Tilldela can give a teacher. Per stored share (one per length),
+    // each its part of the teacherless lessons' minutes.
+    const teacherless = nobody.find((part) => part.role === 'SHARE');
+    if (teacherless && teacherless.minutes > 0) {
+      for (const share of canonicalShares(requirement.shares ?? [])) {
+        if (share.teacherId !== null) continue;
+        const part = (share.lessons * share.minutes) / teacherless.minutes;
+        unstaffedRequirements.push({
+          requirementId: requirement.id,
+          subjectId: requirement.subjectId,
+          subjectName: requirement.subjectName,
+          studentGroupId: requirement.studentGroupId,
+          groupName: requirement.groupName,
+          minutesPerWeek: Math.round(teacherless.lesson * part),
+          teacherMinutesPerWeek: Math.round(teacherless.charged * part),
+          gradeSpan: requirement.gradeSpan,
+          share: { lessons: share.lessons, minutes: share.minutes },
+        });
+      }
     }
     if (nobody.length > 0) {
       const subjectDemand = demand.get(requirement.subjectId) ?? {

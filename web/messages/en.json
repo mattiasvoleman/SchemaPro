@@ -2953,6 +2953,7 @@
     "unstaffedHint": "Curriculum entries without a teacher. Suggest teachers ranks the school's teachers by qualification, whether they already teach the group and how much room they have left — one click assigns.",
     "unstaffedEmpty": "Every curriculum entry has a teacher.",
     "unstaffedRow": "{group} · {subject} · {minutes} min/wk",
+    "unstaffedShareRow": "{group} · {subject} · {lessons, plural, one {# lesson} other {# lessons}} of {length} min without a teacher · {minutes} min/wk",
     "openRequirements": "Open the curriculum entries",
     "policyTitle": "Staffing settings",
     "policyHint": "One row for the school. The target decides what each teacher is compared with; the checks decide what happens when a teacher is put on a curriculum entry.",

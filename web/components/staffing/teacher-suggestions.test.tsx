@@ -15,6 +15,7 @@ const suggestions = vi.hoisted(() => ({
 vi.mock("@/lib/staffing-queries", () => ({
   useSuggestTeachers: () => suggestions,
   useAssignTeacher: () => ({ mutateAsync: assign, isPending: false }),
+  useAssignShare: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("next-intl", () => ({

@@ -4,6 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TeacherTravel } from "./staffing-travel";
 import { api } from "@/lib/api";
 import { STAFFING_KEYS } from "@/lib/staffing-keys";
+import { REQUIREMENT_SHARES_KEY } from "@/lib/requirement-shares";
+import type { LessonShare } from "@/lib/lesson-shares";
 import type { DutyBody } from "@/lib/duty-forms";
 import type { EmploymentPeriodBody } from "@/lib/employment-period-forms";
 import type {
@@ -229,13 +231,15 @@ export function useUnstaffedRequirements(academicYearId: string | null) {
  * whole year's load, and a page of forty unstaffed rows must not ask forty
  * times on load.
  */
-export function useSuggestTeachers(requirementId: string | null) {
+export function useSuggestTeachers(requirementId: string | null, shareMinutes: number | null = null) {
   return useQuery({
-    queryKey: [...STAFFING_KEYS.suggestions, requirementId],
+    queryKey: [...STAFFING_KEYS.suggestions, requirementId, shareMinutes],
     enabled: requirementId !== null,
     queryFn: () =>
       api.get<TeacherSuggestions>(
-        `/api/v1/staffing/suggest-teachers?requirementId=${encodeURIComponent(requirementId!)}`,
+        `/api/v1/staffing/suggest-teachers?requirementId=${encodeURIComponent(requirementId!)}${
+          shareMinutes === null ? "" : `&shareMinutes=${shareMinutes}`
+        }`,
       ),
   });
 }
@@ -264,6 +268,29 @@ export function useAssignTeacher() {
       api.patch<StaffedRequirement>(`/api/v1/teaching-requirements/${requirementId}`, { teacherId }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["requirements"] });
+      void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.load });
+      void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.unstaffed });
+      void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.suggestions });
+    },
+  });
+}
+
+/**
+ * Delade lektioner: gives a share nobody teaches a teacher, from the unstaffed
+ * panel. A PATCH states a post's whole list of shares, so this sends the
+ * stored list with that one share's teacher set — the same write, judged the
+ * same way (staffing policy, the trigger), as the post's dialog saves.
+ */
+export function useAssignShare() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ requirementId, shares }: { requirementId: string; shares: readonly LessonShare[] }) =>
+      api.patch<StaffedRequirement>(`/api/v1/teaching-requirements/${requirementId}`, {
+        shares: shares.map((share) => ({ teacherId: share.teacherId, lessons: share.lessons, minutes: share.minutes })),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["requirements"] });
+      void queryClient.invalidateQueries({ queryKey: REQUIREMENT_SHARES_KEY });
       void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.load });
       void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.unstaffed });
       void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.suggestions });

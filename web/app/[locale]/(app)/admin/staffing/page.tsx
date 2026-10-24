@@ -167,10 +167,12 @@ export default function StaffingPage() {
   // Delade lektioner: each post's shares beside it, from the gateway, so the
   // matrix's groups and a teacher's card name the posts they take lessons of.
   const { data: shareRows } = useRequirementShares(activeYearId);
-  const sharedRequirements = useMemo(() => {
-    const byPost = sharesByRequirement(shareRows);
-    return (requirements ?? []).map((row) => (byPost.has(row.id) ? { ...row, shares: byPost.get(row.id) } : row));
-  }, [requirements, shareRows]);
+  const sharesOfPost = useMemo(() => sharesByRequirement(shareRows), [shareRows]);
+  const sharedRequirements = useMemo(
+    () =>
+      (requirements ?? []).map((row) => (sharesOfPost.has(row.id) ? { ...row, shares: sharesOfPost.get(row.id) } : row)),
+    [requirements, sharesOfPost],
+  );
   const { data: employments } = useTeacherEmployments(activeYearId);
   const { data: predecessorEmployments } = useTeacherEmployments(predecessor?.id ?? null);
   const { data: duties } = useTeacherDuties(predecessor ? activeYearId : null);
@@ -440,7 +442,11 @@ export default function StaffingPage() {
             />
           )}
 
-          <UnstaffedPanel rows={report.unstaffedRequirements} teacherName={teacherName} />
+          <UnstaffedPanel
+            rows={report.unstaffedRequirements}
+            teacherName={teacherName}
+            sharesOf={(id) => sharesOfPost.get(id) ?? []}
+          />
 
           <BottlenecksPanel report={report} />
 

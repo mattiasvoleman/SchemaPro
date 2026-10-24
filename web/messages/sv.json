@@ -2953,6 +2953,7 @@
     "unstaffedHint": "Timplansposter utan lärare. Föreslå lärare rangordnar skolans lärare efter behörighet, om de redan undervisar gruppen och hur mycket plats de har kvar — ett klick tilldelar.",
     "unstaffedEmpty": "Alla timplansposter har en lärare.",
     "unstaffedRow": "{group} · {subject} · {minutes} min/v",
+    "unstaffedShareRow": "{group} · {subject} · {lessons, plural, one {# lektion} other {# lektioner}} à {length} min utan lärare · {minutes} min/v",
     "openRequirements": "Öppna timplansposterna",
     "policyTitle": "Inställningar för tjänstefördelning",
     "policyHint": "En rad för skolan. Riktmärket avgör vad varje lärare jämförs mot; kontrollerna avgör vad som händer när en lärare sätts på en timplanspost.",

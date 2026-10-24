@@ -1,4 +1,4 @@
-import { Controller, Get, ParseUUIDPipe, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, ParseIntPipe, ParseUUIDPipe, Query, UseGuards } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
@@ -76,7 +76,10 @@ export class StaffingLoadController {
   suggestTeachers(
     @Query('requirementId', uuid()) requirementId: string,
     @CurrentUser() user: AuthenticatedUser,
+    // Delade lektioner: `&shareMinutes=` ranks for the row's teacherless
+    // share of that length instead of its lead (the unstaffed panel's).
+    @Query('shareMinutes', new ParseIntPipe({ optional: true })) shareMinutes?: number,
   ): Promise<TeacherSuggestions> {
-    return this.loads.suggestTeachers(requirementId, user);
+    return this.loads.suggestTeachers(requirementId, user, shareMinutes ?? null);
   }
 }
