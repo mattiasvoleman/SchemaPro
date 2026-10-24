@@ -19790,6 +19790,7 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('TeacherSubjectQualifications', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('TeacherWorkRules', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('TeachingBlocks', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('TeachingRequirementShares', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('TeachingRequirements', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('TimetablePublications', '{PUBLICERING}', '{}', '{}', '{}'),
   ('TimplanCredits', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
@@ -27371,5 +27372,406 @@ BEGIN
   IF r.n <> 1 OR r.who IS DISTINCT FROM row_b::text THEN
     RAISE EXCEPTION 'flera 245b: school B''s delivery found % devices (%)', r.n, r.who;
   END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 205: lärarandelarna står i katalogen som migreringen säger
+-- (TeachingRequirementShares, 20261205090000).
+--
+-- Row security on; exactly four arms, all TO app_authenticated (the staff read
+-- and the planner's insert, update and delete); the update arm asks the area
+-- in WITH CHECK only; PostgREST's authenticated and anon hold nothing;
+-- service_role reads and writes nothing more; the API holds SELECT, INSERT,
+-- UPDATE and DELETE and no TRUNCATE, REFERENCES or TRIGGER; no API role holds
+-- MAINTAIN on 17. 1..39 lessons, 15..240 minutes on the grid; the post's key
+-- (requirementId, schoolId) cascades, the teacher's (teacherId, schoolId) sets
+-- the teacher alone to null; the post's own (id, schoolId) is unique; both
+-- triggers are there, on the function nobody else may call.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  r text;
+  p text;
+  n bigint;
+BEGIN
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = '"TeachingRequirementShares"'::regclass) THEN
+    RAISE EXCEPTION 'shares: row security is off on TeachingRequirementShares';
+  END IF;
+  SELECT count(*) INTO n FROM pg_policies WHERE schemaname = 'public' AND tablename = 'TeachingRequirementShares';
+  IF n <> 4
+     OR (SELECT count(*) FROM pg_policies WHERE schemaname = 'public' AND tablename = 'TeachingRequirementShares'
+          AND (policyname, cmd) IN (('teaching_requirement_shares_staff_select', 'SELECT'),
+                                    ('teaching_requirement_shares_admin_insert', 'INSERT'),
+                                    ('teaching_requirement_shares_admin_update', 'UPDATE'),
+                                    ('teaching_requirement_shares_admin_delete', 'DELETE'))
+          AND roles = '{app_authenticated}') <> 4 THEN
+    RAISE EXCEPTION 'shares: TeachingRequirementShares has % arms, not the staff read and the planner''s three writes TO app_authenticated', n;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'TeachingRequirementShares'
+                   AND policyname = 'teaching_requirement_shares_staff_select'
+                   AND qual LIKE '%SCHOOL_ADMIN%' AND qual LIKE '%TEACHER%' AND qual NOT LIKE '%STUDENT%'
+                   AND qual NOT LIKE '%GUARDIAN%' AND qual LIKE '%current_school_id()%') THEN
+    RAISE EXCEPTION 'shares: the read is not the school''s administrators and teachers';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'TeachingRequirementShares' AND cmd = 'UPDATE'
+               AND qual LIKE '%current_user_may%')
+     OR NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'TeachingRequirementShares' AND cmd = 'UPDATE'
+                      AND with_check LIKE '%current_user_may(''PLANERING''%')
+     OR (SELECT count(*) FROM pg_policies WHERE tablename = 'TeachingRequirementShares' AND cmd IN ('INSERT', 'DELETE')
+           AND coalesce(with_check, qual) LIKE '%current_user_may(''PLANERING''%') <> 2 THEN
+    RAISE EXCEPTION 'shares: the writes do not ask PLANERING, or the update asks it outside WITH CHECK';
+  END IF;
+  FOREACH r IN ARRAY ARRAY['authenticated', 'anon'] LOOP
+    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+    FOREACH p IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+      IF has_table_privilege(r, 'public."TeachingRequirementShares"', p) THEN
+        RAISE EXCEPTION 'shares: % holds % on TeachingRequirementShares', r, p;
+      END IF;
+    END LOOP;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    FOREACH p IN ARRAY ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+      IF has_table_privilege('service_role', 'public."TeachingRequirementShares"', p) THEN
+        RAISE EXCEPTION 'shares: service_role holds % on TeachingRequirementShares', p;
+      END IF;
+    END LOOP;
+  END IF;
+  FOREACH p IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE'] LOOP
+    IF NOT has_table_privilege('app_authenticated', 'public."TeachingRequirementShares"', p) THEN
+      RAISE EXCEPTION 'shares: the API lacks % on TeachingRequirementShares', p;
+    END IF;
+  END LOOP;
+  FOREACH p IN ARRAY ARRAY['TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+    IF has_table_privilege('app_authenticated', 'public."TeachingRequirementShares"', p) THEN
+      RAISE EXCEPTION 'shares: the API holds % on TeachingRequirementShares', p;
+    END IF;
+  END LOOP;
+  IF current_setting('server_version_num')::int >= 170000 THEN
+    FOREACH r IN ARRAY ARRAY['authenticated', 'app_authenticated', 'service_role', 'anon'] LOOP
+      CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+      IF has_table_privilege(r, 'public."TeachingRequirementShares"', 'MAINTAIN') THEN
+        RAISE EXCEPTION 'shares: % holds MAINTAIN on TeachingRequirementShares', r;
+      END IF;
+    END LOOP;
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'TeachingRequirementShares_lessons_is_sane' AND contype = 'c'
+                   AND pg_get_constraintdef(oid) LIKE '%lessons >= 1%' AND pg_get_constraintdef(oid) LIKE '%lessons <= 39%')
+     OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'TeachingRequirementShares_minutes_is_sane' AND contype = 'c'
+                   AND pg_get_constraintdef(oid) LIKE '%minutes >= 15%' AND pg_get_constraintdef(oid) LIKE '%minutes <= 240%'
+                   AND pg_get_constraintdef(oid) LIKE '%minutes % 5%') THEN
+    RAISE EXCEPTION 'shares: the lessons'' or the minutes'' check is missing';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint c
+     WHERE c.contype = 'f' AND c.conrelid = '"TeachingRequirementShares"'::regclass
+       AND c.confrelid = '"TeachingRequirements"'::regclass AND c.confdeltype = 'c'
+       AND (SELECT array_agg(a.attname::text ORDER BY k.ord) FROM unnest(c.conkey) WITH ORDINALITY k(attnum, ord)
+              JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum) = ARRAY['requirementId', 'schoolId']) THEN
+    RAISE EXCEPTION 'shares: the post''s key is not (requirementId, schoolId) ON DELETE CASCADE';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint c
+     WHERE c.contype = 'f' AND c.conrelid = '"TeachingRequirementShares"'::regclass
+       AND c.confrelid = '"Users"'::regclass AND c.confdeltype = 'n'
+       AND (SELECT array_agg(a.attname::text ORDER BY k.ord) FROM unnest(c.conkey) WITH ORDINALITY k(attnum, ord)
+              JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum) = ARRAY['teacherId', 'schoolId']
+       AND (SELECT array_agg(a.attname::text) FROM unnest(c.confdelsetcols) k(attnum)
+              JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum) = ARRAY['teacherId']) THEN
+    RAISE EXCEPTION 'shares: the teacher''s key is not (teacherId, schoolId) ON DELETE SET NULL ("teacherId")';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = '"TeachingRequirements"'::regclass AND i.indisunique
+                   AND (SELECT array_agg(a.attname::text ORDER BY k.ord) FROM unnest(i.indkey) WITH ORDINALITY k(attnum, ord)
+                          JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum) = ARRAY['id', 'schoolId']) THEN
+    RAISE EXCEPTION 'shares: TeachingRequirements has no unique (id, schoolId) for the shares'' key';
+  END IF;
+  SELECT count(*) INTO n FROM pg_trigger t
+   WHERE NOT t.tgisinternal AND t.tgfoid = 'app.teaching_requirement_shares_fit()'::regprocedure
+     AND t.tgrelid IN ('"TeachingRequirementShares"'::regclass, '"TeachingRequirements"'::regclass);
+  IF n <> 2 THEN RAISE EXCEPTION 'shares: % triggers call the fit check, not the two', n; END IF;
+  IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = 'app.teaching_requirement_shares_fit()'::regprocedure) THEN
+    RAISE EXCEPTION 'shares: the fit check is not SECURITY DEFINER, so it reads only what the writer may';
+  END IF;
+  FOREACH r IN ARRAY ARRAY['authenticated', 'anon', 'service_role', 'app_authenticated'] LOOP
+    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+    IF has_function_privilege(r, 'app.teaching_requirement_shares_fit()', 'EXECUTE') THEN
+      RAISE EXCEPTION 'shares: % may call the fit check', r;
+    END IF;
+  END LOOP;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 206: skolans administratör och lärare läser skolans lärarandelar,
+-- inga andras; elev och vårdnadshavare läser inga; den som skriver planering
+-- skriver dem, expeditionen och läraren inte; PostgREST:s roll når dem inte
+-- ens med administratörens anspråk; tjänsten och synken inget (20261205090000).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+SELECT set_config('app.test_dl_other_post', (SELECT "requirementId"::text FROM "TeachingRequirementShares" LIMIT 1), true);
+SELECT set_config('app.test_dl_other_school', app.current_school_id()::text, true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000002051')::text, true);
+SELECT set_config('app.test_dl_school', app.current_school_id()::text, true);
+DO $$
+DECLARE
+  n bigint;
+  who text;
+  post uuid;
+  cilla uuid;
+  ny uuid;
+BEGIN
+  IF coalesce(current_setting('app.test_dl_school', true), '') = ''
+     OR coalesce(current_setting('app.test_dl_other_post', true), '') = '' THEN
+    RAISE EXCEPTION 'shares: a fixture admin read no school, or the roller school''s admin none of its shares';
+  END IF;
+  SELECT count(*) INTO n FROM "TeachingRequirementShares";
+  IF n <> 1 THEN RAISE EXCEPTION 'shares: the admin reads % shares, not the school''s one', n; END IF;
+  SELECT "requirementId" INTO post FROM "TeachingRequirementShares";
+  SELECT id INTO cilla FROM "Users" WHERE email = 'delade-cilla@example.invalid';
+
+  -- The planner writes: Cilla's share, changed, gone again.
+  INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt")
+  VALUES (app.current_school_id(), post, cilla, 1, 60, now()) RETURNING id INTO ny;
+  UPDATE "TeachingRequirementShares" SET lessons = 1, "updatedAt" = now() WHERE id = ny;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'shares: the admin updated % of their own shares', n; END IF;
+  DELETE FROM "TeachingRequirementShares" WHERE id = ny;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'shares: the admin removed % of their own shares', n; END IF;
+
+  -- Another school's share: not seen, not changed, not removed, not written into.
+  SELECT count(*) INTO n FROM "TeachingRequirementShares" WHERE "requirementId" = current_setting('app.test_dl_other_post')::uuid;
+  IF n <> 0 THEN RAISE EXCEPTION 'shares: the admin reads another school''s share'; END IF;
+  UPDATE "TeachingRequirementShares" SET lessons = 1 WHERE "schoolId" = current_setting('app.test_dl_other_school')::uuid;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'shares: the admin changed another school''s share'; END IF;
+  DELETE FROM "TeachingRequirementShares" WHERE "schoolId" = current_setting('app.test_dl_other_school')::uuid;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'shares: the admin removed another school''s share'; END IF;
+  BEGIN
+    INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt")
+    VALUES (current_setting('app.test_dl_other_school')::uuid, current_setting('app.test_dl_other_post')::uuid, NULL, 1, 60, now());
+    RAISE EXCEPTION 'shares: the admin wrote a share into another school';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  -- Filed under their own school but naming another school's post, or a
+  -- teacher of another school: the composite keys refuse what row security
+  -- cannot, since a key check runs as the owner.
+  BEGIN
+    INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt")
+    VALUES (app.current_school_id(), current_setting('app.test_dl_other_post')::uuid, NULL, 1, 60, now());
+    RAISE EXCEPTION 'shares: a share named another school''s post';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt")
+    SELECT app.current_school_id(), post, t."teacherId", 1, 60, now()
+      FROM (SELECT '00000000-0000-4000-8000-0000000000aa'::uuid AS "teacherId") t;
+    RAISE EXCEPTION 'shares: a share named a teacher of no school of its own';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE "TeachingRequirementShares" SET "schoolId" = current_setting('app.test_dl_other_school')::uuid;
+    RAISE EXCEPTION 'shares: the admin moved a share into another school';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+
+  -- The expedition reads, as every administrator does, and writes nothing.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000002052')::text, true);
+  SELECT count(*) INTO n FROM "TeachingRequirementShares";
+  IF n <> 1 THEN RAISE EXCEPTION 'shares: the expedition reads % shares, not the school''s one', n; END IF;
+  BEGIN
+    INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt")
+    VALUES (app.current_school_id(), post, cilla, 1, 60, now());
+    RAISE EXCEPTION 'shares: the expedition created a share';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE "TeachingRequirementShares" SET lessons = 1;
+    RAISE EXCEPTION 'shares: the expedition changed a share';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  DELETE FROM "TeachingRequirementShares";
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'shares: the expedition removed % shares', n; END IF;
+
+  -- A teacher, Bo, reads them — Min tjänst counts his own — and writes none.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000002054')::text, true);
+  SELECT count(*) INTO n FROM "TeachingRequirementShares";
+  IF n <> 1 THEN RAISE EXCEPTION 'shares: the teacher reads % shares, not the school''s one', n; END IF;
+  UPDATE "TeachingRequirementShares" SET lessons = 1;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'shares: the teacher changed % shares', n; END IF;
+  DELETE FROM "TeachingRequirementShares";
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'shares: the teacher removed % shares', n; END IF;
+  BEGIN
+    INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt")
+    VALUES (app.current_school_id(), post, cilla, 1, 60, now());
+    RAISE EXCEPTION 'shares: the teacher created a share';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+
+  -- Pupil and guardian: nothing read, nothing written.
+  FOREACH who IN ARRAY ARRAY['00000000-0000-4000-8000-000000002056', '00000000-0000-4000-8000-000000002057'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', who)::text, true);
+    SELECT count(*) INTO n FROM "TeachingRequirementShares";
+    IF n <> 0 THEN RAISE EXCEPTION 'shares: % (%) reads % shares', who, app.current_user_role(), n; END IF;
+    BEGIN
+      INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt")
+      VALUES (app.current_school_id(), post, cilla, 1, 60, now());
+      RAISE EXCEPTION 'shares: % created a share', who;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+  END LOOP;
+
+  -- The service and the sync principal of the school: nothing.
+  PERFORM set_config('request.jwt.claims', '', true);
+  FOREACH who IN ARRAY ARRAY['app.service_school_id', 'app.sync_school_id'] LOOP
+    PERFORM set_config(who, current_setting('app.test_dl_school'), true);
+    SELECT count(*) INTO n FROM "TeachingRequirementShares";
+    IF n <> 0 THEN RAISE EXCEPTION 'shares: % reads % shares', who, n; END IF;
+    PERFORM set_config(who, '', true);
+  END LOOP;
+END $$;
+
+-- PostgREST's role, with the admin's claims: nothing at all.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000002051')::text, true);
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  IF current_user <> 'authenticated' THEN RAISE EXCEPTION 'shares: could not act as authenticated'; END IF;
+  BEGIN
+    PERFORM 1 FROM "TeachingRequirementShares";
+    RAISE EXCEPTION 'shares: PostgREST''s role reads the shares';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 207: andelarna ryms i postens lektioner (TS409,
+-- REQUIREMENT_SHARES_DO_NOT_FIT), vilken väg skrivningen än tar; en lärare som
+-- tas bort lämnar sin andel utan lärare, två sådana stoppar inte borttagningen;
+-- en borttagen post tar sina andelar med sig; postens skrivning i ordningen
+-- andelar bort, post, andelar in går igenom (20261205090000).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000002051')::text, true);
+DO $$
+DECLARE
+  post uuid;
+  anna uuid;
+  bo uuid;
+  cilla uuid;
+  n bigint;
+  st text;
+  msg text;
+  detail text;
+  con text;
+  rule text;
+BEGIN
+  SELECT "requirementId" INTO post FROM "TeachingRequirementShares";
+  SELECT id INTO anna FROM "Users" WHERE email = 'delade-anna@example.invalid';
+  SELECT id INTO bo FROM "Users" WHERE email = 'delade-bo@example.invalid';
+  SELECT id INTO cilla FROM "Users" WHERE email = 'delade-cilla@example.invalid';
+  IF post IS NULL OR anna IS NULL OR bo IS NULL OR cilla IS NULL THEN
+    RAISE EXCEPTION 'shares fit: the fixture school''s post or teachers are missing';
+  END IF;
+
+  -- Each rule, by the statement that breaks it. The post is 3 × 60 with Anna
+  -- its huvudlärare and Bo's 1 × 60.
+  -- Each case is "<the reason it must name>:<which write breaks it>".
+  FOR rule IN SELECT unnest(ARRAY['TEACHER_ON_POST:share is the lead', 'TEACHER_ON_POST:co-teacher is a share''s',
+                                  'TEACHER_ON_POST:lead is a share''s', 'LENGTH_NOT_ON_POST:share of 45',
+                                  'LENGTH_NOT_ON_POST:post becomes 55', 'TOO_MANY_OF_LENGTH:three more 60s',
+                                  'LEAD_KEEPS_NONE:two more 60s', 'LEAD_KEEPS_NONE:post becomes one lesson']) LOOP
+    BEGIN
+      CASE split_part(rule, ':', 2)
+        WHEN 'share is the lead' THEN
+          INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt")
+          VALUES (app.current_school_id(), post, anna, 1, 60, now());
+        WHEN 'co-teacher is a share''s' THEN
+          UPDATE "TeachingRequirements" SET "coTeacherId" = bo WHERE id = post;
+        WHEN 'lead is a share''s' THEN
+          UPDATE "TeachingRequirements" SET "teacherId" = bo WHERE id = post;
+        WHEN 'share of 45' THEN
+          INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt")
+          VALUES (app.current_school_id(), post, cilla, 1, 45, now());
+        WHEN 'post becomes 55' THEN
+          UPDATE "TeachingRequirements" SET "minutesPerLesson" = 55 WHERE id = post;
+        WHEN 'three more 60s' THEN
+          INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt")
+          VALUES (app.current_school_id(), post, cilla, 3, 60, now());
+        WHEN 'two more 60s' THEN
+          INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt")
+          VALUES (app.current_school_id(), post, cilla, 2, 60, now());
+        WHEN 'post becomes one lesson' THEN
+          UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 1 WHERE id = post;
+      END CASE;
+      RAISE EXCEPTION 'shares fit: "%" was let through', rule;
+    EXCEPTION WHEN SQLSTATE 'TS409' THEN
+      GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT, detail = PG_EXCEPTION_DETAIL;
+      IF msg NOT LIKE 'REQUIREMENT_SHARES_DO_NOT_FIT:%'
+         OR detail IS DISTINCT FROM format('requirementId=%s reason=%s', post, split_part(rule, ':', 1)) THEN
+        RAISE EXCEPTION 'shares fit: "%" was refused as "%" / "%"', rule, msg, detail;
+      END IF;
+    END;
+  END LOOP;
+
+  -- What fits passes: two lessons left the post, Bo's one stays, Anna keeps one.
+  UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 2 WHERE id = post;
+  -- The gateway's replacing write, in its order: shares out, post, shares in.
+  DELETE FROM "TeachingRequirementShares" WHERE "requirementId" = post;
+  UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 2, "minutesPerLesson" = 80,
+         "lessonLengths" = ARRAY[80, 40] WHERE id = post;
+  INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt")
+  VALUES (app.current_school_id(), post, bo, 1, 40, now());
+  -- On 1 × 80 + 1 × 40, a second share of the 40 is one too many.
+  BEGIN
+    INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt")
+    VALUES (app.current_school_id(), post, cilla, 1, 40, now());
+    RAISE EXCEPTION 'shares fit: two shares of the post''s one 40 were let through';
+  EXCEPTION WHEN SQLSTATE 'TS409' THEN
+    GET STACKED DIAGNOSTICS detail = PG_EXCEPTION_DETAIL;
+    IF detail NOT LIKE '%reason=TOO_MANY_OF_LENGTH' THEN RAISE EXCEPTION 'shares fit: the second 40 was refused as %', detail; END IF;
+  END;
+
+  -- The CHECKs, at their bounds.
+  FOREACH con IN ARRAY ARRAY['0:60', '40:60', '1:10', '1:245', '1:62'] LOOP
+    BEGIN
+      INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt")
+      VALUES (app.current_school_id(), post, cilla, split_part(con, ':', 1)::int, split_part(con, ':', 2)::int, now());
+      RAISE EXCEPTION 'shares fit: % lessons × % minutes were let through', split_part(con, ':', 1), split_part(con, ':', 2);
+    EXCEPTION WHEN check_violation THEN
+      GET STACKED DIAGNOSTICS st = CONSTRAINT_NAME;
+      IF st NOT IN ('TeachingRequirementShares_lessons_is_sane', 'TeachingRequirementShares_minutes_is_sane') THEN
+        RAISE EXCEPTION 'shares fit: % was refused by %', con, st;
+      END IF;
+    END;
+  END LOOP;
+
+  -- Back to 3 × 60 with Bo's and Cilla's ones; both teachers deleted leave two
+  -- teacherless shares, and neither deletion fails on the unique key.
+  DELETE FROM "TeachingRequirementShares" WHERE "requirementId" = post;
+  UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 3, "minutesPerLesson" = 60, "lessonLengths" = '{}' WHERE id = post;
+  INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt")
+  VALUES (app.current_school_id(), post, bo, 1, 60, now()), (app.current_school_id(), post, cilla, 1, 60, now());
+  DELETE FROM "Users" WHERE id IN (bo, cilla);
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 2 THEN RAISE EXCEPTION 'shares fit: the admin deleted % of the two teachers', n; END IF;
+  SELECT count(*) INTO n FROM "TeachingRequirementShares" WHERE "requirementId" = post AND "teacherId" IS NULL AND lessons = 1;
+  IF n <> 2 THEN RAISE EXCEPTION 'shares fit: deleting the two teachers left % teacherless shares, not two', n; END IF;
+  SELECT "teacherId" INTO st FROM "TeachingRequirements" WHERE id = post;
+  IF st IS DISTINCT FROM anna::text THEN RAISE EXCEPTION 'shares fit: the post''s lead moved to %', st; END IF;
+
+  -- A post deleted takes its shares with it.
+  DELETE FROM "TeachingRequirements" WHERE id = post;
+  SELECT count(*) INTO n FROM "TeachingRequirementShares" WHERE "requirementId" = post;
+  IF n <> 0 THEN RAISE EXCEPTION 'shares fit: a deleted post left % shares', n; END IF;
 END $$;
 ROLLBACK;

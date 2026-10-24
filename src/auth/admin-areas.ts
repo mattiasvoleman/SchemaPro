@@ -183,6 +183,8 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   TeacherWorkRules: only('PLANERING'),
   // Parallella block: requirements taught side by side, part of the timplan.
   TeachingBlocks: only('PLANERING'),
+  // Delade lektioner: which of a post's lessons another teacher takes, as the post.
+  TeachingRequirementShares: only('PLANERING'),
   TeachingRequirements: only('PLANERING'),
 
   // Schemaläggning: the grundschema, its versions, and what Generera writes.

@@ -1756,6 +1756,79 @@ BEGIN
     FROM "Users" g WHERE g."authId" = 'fe000000-0000-4000-8000-000000000243' AND g."schoolId" = m;
 END $$;
 
+-- Delade lektioner (20261205090000), sections 205–207: a school whose
+-- matematik 9A has three lessons, one of them Bo's, and every role; the
+-- roller school's post (section 116's matrix) gets a share too, so the matrix
+-- has a row to probe and this school's admin a foreign share to not see.
+-- Blocks of their own, each asking for what it plants: on a database that ran
+-- main's fixtures, the roller school's block has already returned.
+DO $$
+DECLARE
+  m uuid;
+  post uuid;
+  other uuid;
+BEGIN
+  SELECT id INTO m FROM "Schools" WHERE slug = 'rls-roller-school';
+  IF m IS NULL OR EXISTS (SELECT 1 FROM "TeachingRequirementShares" WHERE "schoolId" = m) THEN
+    RETURN;
+  END IF;
+  -- The school's one post (section 110 counts it), given a second lesson to share.
+  SELECT id INTO post FROM "TeachingRequirements" WHERE "schoolId" = m ORDER BY "createdAt" LIMIT 1;
+  UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 2 WHERE id = post;
+  -- The full administrator teaches the share: a small school's rektor often does.
+  SELECT id INTO other FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000105';
+  INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt")
+  VALUES (m, post, other, 1, 60, now());
+END $$;
+
+DO $$
+DECLARE
+  s1 uuid;
+  yr uuid;
+  subj uuid;
+  klass uuid;
+  anna uuid;
+  bo uuid;
+  cilla uuid;
+  pupil uuid;
+  post uuid;
+BEGIN
+  IF EXISTS (SELECT 1 FROM "Schools" WHERE slug = 'rls-delade-school') THEN
+    RETURN;
+  END IF;
+  INSERT INTO "Schools" (name, slug, "updatedAt") VALUES ('RLS Delade', 'rls-delade-school', now()) RETURNING id INTO s1;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s1, 'Delade 2030/31', '2030-08-15', '2031-06-15', true, now()) RETURNING id INTO yr;
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s1, 'Delade matematik', 'DLMA', now()) RETURNING id INTO subj;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s1, yr, 'DL9A', 9, now()) RETURNING id INTO klass;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt")
+  VALUES
+    (s1, 'delade-admin@example.invalid', 'Delade', 'Admin',      'SCHOOL_ADMIN', 'FULL',       '00000000-0000-4000-8000-000000002051', true, now()),
+    (s1, 'delade-exp@example.invalid',   'Delade', 'Expedition', 'SCHOOL_ADMIN', 'EXPEDITION', '00000000-0000-4000-8000-000000002052', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'delade-anna@example.invalid', 'Anna', 'Delade', 'TEACHER', '00000000-0000-4000-8000-000000002053', true, now())
+  RETURNING id INTO anna;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'delade-bo@example.invalid', 'Bo', 'Delade', 'TEACHER', '00000000-0000-4000-8000-000000002054', true, now())
+  RETURNING id INTO bo;
+  -- Cilla teaches nothing yet: the teacher sections 206–207 give a share to and delete.
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'delade-cilla@example.invalid', 'Cilla', 'Delade', 'TEACHER', '00000000-0000-4000-8000-000000002055', true, now())
+  RETURNING id INTO cilla;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES (s1, 'delade-pupil@example.invalid', 'Delade', 'Elev', 'STUDENT', '00000000-0000-4000-8000-000000002056', true, klass, now())
+  RETURNING id INTO pupil;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'delade-guardian@example.invalid', 'Delade', 'Vårdnadshavare', 'GUARDIAN', '00000000-0000-4000-8000-000000002057', true, now());
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId")
+  SELECT s1, id, pupil FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000002057';
+  INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "lessonsPerWeek", "minutesPerLesson", "updatedAt")
+  VALUES (s1, yr, subj, klass, anna, 3, 60, now()) RETURNING id INTO post;
+  INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt")
+  VALUES (s1, post, bo, 1, 60, now());
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.

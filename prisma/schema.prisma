@@ -206,6 +206,7 @@ model School {
   siteTravelTimes         SiteTravelTime[]
   studentGroups           StudentGroup[]
   teachingRequirements    TeachingRequirement[]
+  teachingRequirementShares TeachingRequirementShare[]
   teachingBlocks          TeachingBlock[]
   masterLessons           MasterLesson[]
   calendarLessons         CalendarLesson[]
@@ -330,6 +331,8 @@ model User {
   // Relations where this user acts as a teacher.
   teachingRequirements    TeachingRequirement[]    @relation("RequirementTeacher")
   coTeachingRequirements  TeachingRequirement[]    @relation("RequirementCoTeacher")
+  /// Delade lektioner: the lessons of other teachers' posts this user takes.
+  requirementShares       TeachingRequirementShare[] @relation("RequirementShareTeacher")
   masterLessons           MasterLesson[]           @relation("MasterLessonTeacher")
   coMasterLessons         MasterLesson[]           @relation("MasterLessonCoTeacher")
   calendarLessonTeachers  CalendarLessonTeacher[]  @relation("AssignedTeacher")
@@ -1695,16 +1698,60 @@ model TeachingRequirement {
   teacher      User?        @relation("RequirementTeacher", fields: [teacherId, schoolId], references: [id, schoolId], onDelete: SetNull)
   coTeacher    User?        @relation("RequirementCoTeacher", fields: [coTeacherId, schoolId], references: [id, schoolId], onDelete: SetNull)
   block        TeachingBlock? @relation(fields: [blockId, academicYearId, schoolId], references: [id, academicYearId, schoolId], onDelete: SetNull, onUpdate: NoAction)
+  /// Delade lektioner: the lessons other teachers take. The post's own
+  /// teacherId is its huvudlärare and takes every lesson no share takes, so a
+  /// post with none is the post it always was. See TeachingRequirementShare.
+  shares       TeachingRequirementShare[]
 
   /// `schoolId` leads the key so the slot a school occupies is its own. Without
   /// it one school's forged row took the (year, group, subject) slot of
   /// another, whose admin then got a 409 creating their real requirement while
   /// seeing no row anywhere that explained it.
   @@unique([schoolId, academicYearId, studentGroupId, subjectId])
+  /// The target the shares' composite key needs: a share OF ITS OWN SCHOOL.
+  @@unique([id, schoolId])
   @@index([schoolId])
   @@index([teacherId])
   @@index([blockId])
   @@map("TeachingRequirements")
+}
+
+/// Delade lektioner: `lessons` of a post's lessons of `minutes` each, taught
+/// by `teacherId` rather than by the post's huvudlärare — "Bo: 1 × 60" of
+/// 9A's three matematik. Each lesson has one teacher; the huvudlärare
+/// (TeachingRequirement.teacherId) takes every lesson no share takes.
+///
+/// The shares fit the post by trigger (SQLSTATE TS409,
+/// REQUIREMENT_SHARES_DO_NOT_FIT): every length is one of the post's, no more
+/// of a length than the post has, at most lessonsPerWeek − 1 in all (the
+/// huvudlärare keeps a lesson), and no share's teacher is the post's own
+/// teacher or co-teacher. A null teacher is a share whose teacher was deleted:
+/// that many unstaffed lessons, never silently the huvudlärare's (ON DELETE
+/// SET NULL ("teacherId"), which the SetNull below cannot say and the
+/// migration does). Read and written through the gateway only. See migration
+/// 20261205090000.
+model TeachingRequirementShare {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId      String   @db.Uuid
+  requirementId String   @db.Uuid
+  teacherId     String?  @db.Uuid
+  /// 1..39 by CHECK.
+  lessons       Int
+  /// The length of each of the share's lessons, one of the post's; 15..240 on
+  /// the five-minute grid by CHECK.
+  minutes       Int
+  createdAt     DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @db.Timestamptz(6)
+
+  school      School              @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  requirement TeachingRequirement @relation(fields: [requirementId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  teacher     User?               @relation("RequirementShareTeacher", fields: [teacherId, schoolId], references: [id, schoolId], onDelete: SetNull)
+
+  /// NULLS DISTINCT on purpose: two deleted teachers leave two teacherless shares.
+  @@unique([requirementId, teacherId, minutes])
+  @@index([teacherId])
+  @@index([schoolId])
+  @@map("TeachingRequirementShares")
 }
 
 /// Parallella block: rows of one läsår whose lessons are placed at the same
