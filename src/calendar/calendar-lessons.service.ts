@@ -676,12 +676,19 @@ export class CalendarLessonsService {
     const room = lesson.roomId
       ? await tx.room.findUnique({ where: { id: lesson.roomId }, select: { name: true } })
       : null;
+    // Whether the lesson's own teacher left the substitute a note (Lektionslogg):
+    // the booking's e-mail says there is one, never what it says.
+    const note = await tx.lessonSubstituteNote.findUnique({
+      where: { calendarLessonId: lesson.id },
+      select: { id: true },
+    });
     const details: NoticeLesson = {
       id: lesson.id,
       startsAt: lesson.startsAt,
       subjectName: lesson.subject.name,
       groupName: group?.name ?? '',
       roomName: room?.name ?? '—',
+      noted: note !== null && note !== undefined,
     };
     for (const notice of notices) {
       await this.notifications.notifyUsers(tx, {

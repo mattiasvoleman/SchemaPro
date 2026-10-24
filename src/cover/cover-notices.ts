@@ -11,6 +11,12 @@ import type { PendingNotice } from './cover-decisions';
  * Swedish, on the school's clock, because a timvikarie without the app reads
  * e-mail. No absence, no absent teacher, no reason: the notice is about the
  * substitute's own day.
+ *
+ * One addition (Lektionslogg, 20261203090000): when the lesson's own teacher
+ * has left a note to the substitute, the booking's e-mail says that there is
+ * one and where it is read, and not what it says. The note may name pupils,
+ * and an e-mail leaves the school's systems; the substitute reads it signed
+ * in, on the lesson or under Mina vikariepass.
  */
 
 export interface NoticeLesson {
@@ -19,6 +25,8 @@ export interface NoticeLesson {
   subjectName: string;
   groupName: string;
   roomName: string;
+  /** The lesson has a note to the substitute (LessonSubstituteNotes). */
+  noted: boolean;
 }
 
 /** "tis 14 okt 08:00" on the school's clock. */
@@ -55,7 +63,9 @@ export function coverEmail(lesson: NoticeLesson, timezone: string): { subject: s
   const when = swedishWhen(lesson.startsAt, timezone);
   return {
     subject: `Vikariepass: ${lesson.subjectName} ${when}`,
-    body: `Du är inbokad som vikarie: ${lesson.subjectName}, ${lesson.groupName}, ${lesson.roomName}, ${when}.`,
+    body:
+      `Du är inbokad som vikarie: ${lesson.subjectName}, ${lesson.groupName}, ${lesson.roomName}, ${when}.` +
+      (lesson.noted ? ' Lektionens lärare har lämnat en notis till dig. Du läser den på lektionen i Rastra.' : ''),
   };
 }
 
@@ -76,14 +86,19 @@ export async function readNoticeLessons(tx: PrismaClient, lessonIds: readonly st
       where: { id: { in: ids } },
       select: { id: true, startsAt: true, studentGroupId: true, roomId: true, subjectId: true },
     })) ?? [];
-  const [subjects, groups, rooms] = await Promise.all([
+  const [subjects, groups, rooms, notes] = await Promise.all([
     tx.subject.findMany({ where: { id: { in: lessons.map((l) => l.subjectId) } }, select: { id: true, name: true } }),
     tx.studentGroup.findMany({ where: { id: { in: lessons.map((l) => l.studentGroupId) } }, select: { id: true, name: true } }),
     tx.room.findMany({
       where: { id: { in: lessons.flatMap((l) => (l.roomId ? [l.roomId] : [])) } },
       select: { id: true, name: true },
     }),
+    tx.lessonSubstituteNote.findMany({
+      where: { calendarLessonId: { in: lessons.map((l) => l.id) } },
+      select: { calendarLessonId: true },
+    }),
   ]);
+  const noted = new Set((notes ?? []).map((row) => row.calendarLessonId));
   const name = (rows: { id: string; name: string }[] | undefined) => new Map((rows ?? []).map((row) => [row.id, row.name]));
   const subjectName = name(subjects);
   const groupName = name(groups);
@@ -97,6 +112,7 @@ export async function readNoticeLessons(tx: PrismaClient, lessonIds: readonly st
         subjectName: subjectName.get(lesson.subjectId) ?? '',
         groupName: groupName.get(lesson.studentGroupId) ?? '',
         roomName: lesson.roomId ? (roomName.get(lesson.roomId) ?? '—') : '—',
+        noted: noted.has(lesson.id),
       },
     ]),
   );

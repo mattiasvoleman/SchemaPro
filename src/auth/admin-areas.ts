@@ -224,6 +224,10 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   CancellationBatches: only('DRIFT'),
   CoverSettings: only('DRIFT'),
   LeaveRequests: only('DRIFT'),
+  // Lektionslogg (20261203090000): rektor removes a log or a note that
+  // should not stand; the lesson's teachers write them through arms of their own.
+  LessonLogs: only('DRIFT'),
+  LessonSubstituteNotes: only('DRIFT'),
   Notifications: just('DRIFT', 'insert'),
   RoomBookings: only('DRIFT'),
   SubstituteAvailabilities: only('DRIFT'),

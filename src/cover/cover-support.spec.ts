@@ -61,7 +61,7 @@ describe('cover support', () => {
   });
 
   describe('notices', () => {
-    const lesson = { id: 'l', startsAt: new Date('2026-10-26T08:00:00.000Z'), subjectName: 'Matematik', groupName: '7A', roomName: 'Sal 12' };
+    const lesson = { id: 'l', startsAt: new Date('2026-10-26T08:00:00.000Z'), subjectName: 'Matematik', groupName: '7A', roomName: 'Sal 12', noted: false };
 
     it('formats the school’s clock in Swedish, across the change to winter time', () => {
       expect(swedishWhen(lesson.startsAt, 'Europe/Stockholm')).toBe('mån 26 okt 09:00');
@@ -70,6 +70,14 @@ describe('cover support', () => {
         body: 'Du är inbokad som vikarie: Matematik, 7A, Sal 12, mån 26 okt 09:00.',
       });
       expect(withdrawnEmail(lesson, 'Europe/Stockholm').subject).toBe('Vikariepasset är avbokat: Matematik mån 26 okt 09:00');
+    });
+
+    it('says there is a note to the substitute, and never what it says (Lektionslogg)', () => {
+      const email = coverEmail({ ...lesson, noted: true }, 'Europe/Stockholm');
+      expect(email.body).toBe(
+        'Du är inbokad som vikarie: Matematik, 7A, Sal 12, mån 26 okt 09:00. Lektionens lärare har lämnat en notis till dig. Du läser den på lektionen i Rastra.',
+      );
+      expect(withdrawnEmail({ ...lesson, noted: true }, 'Europe/Stockholm').body).not.toContain('notis');
     });
 
     it('a booking and its withdrawal in one write cancel out; the last word stands otherwise', () => {
@@ -107,6 +115,31 @@ describe('cover support', () => {
       expect(Object.keys(notifyUsers.mock.calls[0][1].meta).sort()).toEqual(['groupName', 'roomName', 'startsAt', 'subjectName']);
       await sendNotices({ notifyUsers } as never, tx as never, 'school', 'Europe/Stockholm', []);
       expect(notifyUsers).toHaveBeenCalledTimes(1);
+    });
+
+    it('reads which lessons have a note to the substitute, and the booking’s e-mail says so; the meta does not change', async () => {
+      const tx = createTxMock();
+      tx.calendarLesson.findMany.mockResolvedValue([
+        { id: 'l', startsAt: lesson.startsAt, studentGroupId: 'g', roomId: 'r', subjectId: 's' },
+        { id: 'm', startsAt: lesson.startsAt, studentGroupId: 'g', roomId: 'r', subjectId: 's' },
+      ]);
+      tx.subject.findMany.mockResolvedValue([{ id: 's', name: 'Matematik' }]);
+      tx.studentGroup.findMany.mockResolvedValue([{ id: 'g', name: '7A' }]);
+      tx.room.findMany.mockResolvedValue([{ id: 'r', name: 'Sal 12' }]);
+      tx.lessonSubstituteNote.findMany.mockResolvedValue([{ calendarLessonId: 'l' }]);
+      const notifyUsers = jest.fn().mockResolvedValue(1);
+      await sendNotices({ notifyUsers } as never, tx as never, 'school', 'Europe/Stockholm', [
+        { kind: 'COVER', userId: 's', lessonId: 'l' },
+        { kind: 'COVER', userId: 't', lessonId: 'm' },
+      ]);
+      expect(tx.lessonSubstituteNote.findMany).toHaveBeenCalledWith({
+        where: { calendarLessonId: { in: ['l', 'm'] } },
+        select: { calendarLessonId: true },
+      });
+      const [first, second] = notifyUsers.mock.calls.map((call) => call[1]);
+      expect(first.email.body).toContain('Lektionens lärare har lämnat en notis till dig.');
+      expect(second.email.body).not.toContain('notis');
+      expect(Object.keys(first.meta).sort()).toEqual(['cover', 'groupName', 'roomName', 'startsAt', 'subjectName']);
     });
   });
 

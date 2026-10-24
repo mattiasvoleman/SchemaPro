@@ -97,6 +97,11 @@ export interface BoardResponse {
   summary: BoardSummary;
   /** The period only: never a reason. */
   absences: { id: string; userId: string; startsAt: string; endsAt: string }[];
+  /**
+   * The board's lessons whose own teacher has left a note to the substitute
+   * (Lektionslogg, 20261203090000): that there is one, never what it says.
+   */
+  notedLessonIds: string[];
 }
 
 /** One pair, read inside a write's transaction after its locks. */
@@ -172,11 +177,20 @@ export class CoverService {
         [...absences.map((absence) => absence.userId), ...items.map((item) => item.absentTeacherId)],
         user.channel,
       );
+      const lessonIds = [...new Set(items.map((item) => item.lessonId))];
+      const noted =
+        lessonIds.length === 0
+          ? []
+          : ((await tx.lessonSubstituteNote.findMany({
+              where: { calendarLessonId: { in: lessonIds } },
+              select: { calendarLessonId: true },
+            })) ?? []);
       return {
         from,
         to,
         items,
         summary: summaryOf(items),
+        notedLessonIds: noted.map((row) => row.calendarLessonId).sort(),
         absences: absences.map((a) => ({
           id: a.id,
           userId: a.userId,

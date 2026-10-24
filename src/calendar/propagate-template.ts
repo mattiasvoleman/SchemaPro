@@ -108,6 +108,12 @@ export interface LostDayOperation {
   substitute: boolean;
   roomChanged: boolean;
   note: boolean;
+  /**
+   * A topic, homework or a note to the substitute a teacher wrote for the
+   * lesson (Lektionslogg, 20261203090000), which go with it (ON DELETE
+   * CASCADE): homework planned for next week, named before it is lost.
+   */
+  lessonLog: boolean;
 }
 
 export interface PropagateResult {
@@ -186,6 +192,7 @@ export async function propagateTemplateChange(
           roomId: true,
           note: true,
           teachers: { select: { teacherId: true, role: true } },
+          _count: { select: { lessonLogs: true, substituteNotes: true } },
         },
       })
     : await tx.calendarLesson.findMany({
@@ -211,6 +218,7 @@ export async function propagateTemplateChange(
     roomId: string | null;
     note: string | null;
     teachers: { teacherId: string; role: string }[];
+    _count: { lessonLogs: number; substituteNotes: number };
   };
   const markStale = (row: { id: string; date: Date }) => {
     stale.push(row.id);
@@ -222,8 +230,11 @@ export async function propagateTemplateChange(
       substitute: full.teachers.some((teacher) => teacher.role === 'SUBSTITUTE'),
       roomChanged: (before.roomId ?? null) !== full.roomId,
       note: full.note !== null && full.note !== '',
+      lessonLog: full._count.lessonLogs > 0 || full._count.substituteNotes > 0,
     };
-    if (operation.substitute || operation.roomChanged || operation.note) lostDayOperations.push(operation);
+    if (operation.substitute || operation.roomChanged || operation.note || operation.lessonLog) {
+      lostDayOperations.push(operation);
+    }
   };
 
   for (const calendarLesson of futureLessons) {

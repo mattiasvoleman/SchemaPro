@@ -19657,6 +19657,8 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('IntegrationApiKeys', '{INTEGRATIONER}', '{INTEGRATIONER}', '{INTEGRATIONER}', '{}'),
   ('LeaveDelegationDecisions', '{DECIDES}', '{}', '{}', '{}'),
   ('LeaveRequests', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('LessonLogs', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('LessonSubstituteNotes', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
   ('LocalTimplanEntries', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('LocalTimplans', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('LunchServings', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),

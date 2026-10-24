@@ -1516,6 +1516,23 @@ BEGIN
   VALUES (run, m, 1, 'CLOSE', 'OPTIMAL', '[]');
 END $$;
 
+-- The matrix school's lesson log and note (Lektionslogg, 20261203090000), so the role
+-- matrix (section 116) has a row of each to probe. A block of its own: on a database that
+-- ran main's fixtures, the school's block has already returned.
+DO $$
+DECLARE
+  m uuid;
+  cl uuid;
+BEGIN
+  SELECT id INTO m FROM "Schools" WHERE slug = 'rls-roller-school';
+  IF m IS NULL OR EXISTS (SELECT 1 FROM "LessonLogs" WHERE "schoolId" = m) THEN
+    RETURN;
+  END IF;
+  SELECT id INTO cl FROM "CalendarLessons" WHERE "schoolId" = m AND date = '2030-09-02';
+  INSERT INTO "LessonLogs" ("schoolId", "calendarLessonId", topic, homework) VALUES (m, cl, 'Roller ämne', 'Roller läxa');
+  INSERT INTO "LessonSubstituteNotes" ("schoolId", "calendarLessonId", body) VALUES (m, cl, 'Roller notis');
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.
