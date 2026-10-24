@@ -9,7 +9,8 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { Role } from '../auth/enums/role.enum';
 import { PrismaService } from '../database/prisma.service';
 import { requireUserId } from '../common/utils/request-context';
-import { parseTimeString } from '../common/utils/time';
+import { parseTimeString, todayInZone } from '../common/utils/time';
+import { schoolTimezone } from '../cover/cover-context';
 import type { CreateAbsenceReportDto, CreateGuardianLinkDto } from './dto/family.dto';
 import { assertMayActForStudent, schoolIdOf } from './family-access';
 
@@ -127,7 +128,7 @@ export class FamilyService {
     return this.prisma.withRls(user, async (tx) => {
       const report = await tx.absenceReport.findUnique({
         where: { id },
-        select: { id: true, reportedById: true, date: true },
+        select: { id: true, schoolId: true, reportedById: true, date: true },
       });
       if (!report) throw new NotFoundException('Absence report not found.');
       if (
@@ -136,8 +137,12 @@ export class FamilyService {
       ) {
         throw new ForbiddenException('Only the reporter may remove this report.');
       }
-      const today = new Date();
-      today.setUTCHours(0, 0, 0, 0);
+      // The school's today, not UTC's: the report's date is a school-local
+      // day, and for the hour or two after midnight in Stockholm UTC is still
+      // on yesterday, which made yesterday's report removable in that window.
+      // The school row is read as the caller reads it, and one RLS hides
+      // falls back to Stockholm (schoolTimezone).
+      const today = todayInZone(await schoolTimezone(tx, report.schoolId));
       if (report.date < today) {
         throw new BadRequestException('Past absence reports cannot be removed.');
       }
