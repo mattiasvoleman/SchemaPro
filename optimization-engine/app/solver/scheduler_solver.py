@@ -311,8 +311,11 @@ class _LessonKind:
     the bare cuts _lesson_kinds makes; `reach` is day index -> the merged
     [a, b) slots a lesson of the kind can occupy there. Compared by identity:
     two requirements whose lessons have the same length and the same starts
-    share one kind, which is what keeps the rooms' count, every lesson of the
-    school at once, at a few dozen kinds rather than a few thousand lessons.
+    share one kind. The benchmark schools have one or two kinds in all; a
+    week whose teachers each have locks of their own has nearly one per
+    requirement (1,292 for the 969 of a 2,000-pupil week with locks off the
+    half hour, frames per year and teaching groups), which is why a gap
+    reads lengths and a day set reads totals, never the kinds one by one.
     """
 
     slots: int
@@ -343,16 +346,17 @@ class _GapFill:
     prefix: list[int]
 
     @classmethod
-    def of(cls, length: int, kinds: Iterable[tuple[_LessonKind, int]]) -> _GapFill:
+    def of(cls, length: int, lessons: Iterable[tuple[int, int]]) -> _GapFill:
+        """From (slots, how many) pairs: a gap reads lengths, not kinds."""
         sums, limit = 1, (1 << (length + 1)) - 1
         sizes: list[int] = []
-        for kind, count in kinds:
+        for slots, count in lessons:
             # Never more copies than the gap could take: a sixth 60-minute
             # lesson changes nothing about a five-hour gap.
-            copies = min(count, length // kind.slots)
-            sizes.extend([kind.slots] * copies)
+            copies = min(count, length // slots)
+            sizes.extend([slots] * copies)
             for _ in range(copies):
-                sums = (sums | (sums << kind.slots)) & limit
+                sums = (sums | (sums << slots)) & limit
         prefix = [0]
         for size in sorted(sizes):
             prefix.append(prefix[-1] + size)
@@ -442,12 +446,19 @@ class _Gaps:
                 spans[day_index].extend(reach)
         self.runs = {day_index: _merge_ranges(reach) for day_index, reach in spans.items()}
         self.days_of: dict[_LessonKind, int] = dict.fromkeys(kinds, 0)
-        self.fitting: dict[tuple[int, int], list[_LessonKind]] = {}
+        # Run -> lesson length -> how many of the lessons that fit it have it.
+        # A gap's fill reads lengths only, and a week whose teachers each have
+        # locks of their own has a kind per requirement but a handful of
+        # lengths, so the fills are built from these and not from the kinds.
+        self.lengths: dict[tuple[int, int], Counter[int]] = {}
         for day_index, runs in self.runs.items():
             for run in runs:
-                self.fitting[run] = [kind for kind in kinds if kind.fits(*run)]
-                for kind in self.fitting[run]:
-                    self.days_of[kind] |= 1 << day_index
+                lengths: Counter[int] = Counter()
+                for kind, count in kinds.items():
+                    if kind.fits(*run):
+                        lengths[kind.slots] += count
+                        self.days_of[kind] |= 1 << day_index
+                self.lengths[run] = lengths
         self._held: dict[int, tuple[dict[int, int], dict[int, int]]] = {}
 
     def held(self, shortest: int) -> tuple[dict[int, int], dict[int, int]]:
@@ -461,9 +472,9 @@ class _Gaps:
                 _GapFill.of(
                     end - start,
                     (
-                        (kind, self.kinds[kind])
-                        for kind in self.fitting[(start, end)]
-                        if kind.slots >= shortest
+                        (slots, count)
+                        for slots, count in self.lengths[(start, end)].items()
+                        if slots >= shortest
                     ),
                 )
                 for start, end in runs
@@ -521,12 +532,17 @@ class _Gaps:
         cause — "these lessons can only fall on Thursday". Within each, the
         shortest threshold first, so a refusal counts as many lessons as it can.
         """
-        found: list[tuple[tuple[bool, int, int, int], _Shortfall]] = []
+        found: list[tuple[tuple[bool, int, int, int], tuple[int, int, int, int, int, int]]] = []
         for shortest in sorted({kind.slots for kind in self.kinds}):
-            by_days: dict[int, list[_LessonKind]] = defaultdict(list)
-            for kind in self.kinds:
+            # Day set -> [lessons, slots] of the lessons of `shortest` or more
+            # whose days are exactly that set: a handful of sets, however
+            # many kinds.
+            by_days: dict[int, list[int]] = defaultdict(lambda: [0, 0])
+            for kind, count in self.kinds.items():
                 if kind.slots >= shortest:
-                    by_days[self.days_of[kind]].append(kind)
+                    totals = by_days[self.days_of[kind]]
+                    totals[0] += count
+                    totals[1] += count * kind.slots
             week = 0
             for days in by_days:
                 week |= days
@@ -535,33 +551,38 @@ class _Gaps:
                 for days in by_days:
                     candidates |= {union | days for union in candidates}
             for days in candidates:
-                kinds = self.counted(shortest, days)
-                lessons = sum(self.kinds[kind] for kind in kinds)
+                lessons = demand = 0
+                for held_on, (count, slots) in by_days.items():
+                    if held_on & ~days == 0:
+                        lessons += count
+                        demand += slots
                 if lessons == 0:
                     continue
-                demand = sum(self.kinds[kind] * kind.slots for kind in kinds)
                 fit_lessons, capacity = self.capacity(shortest, days)
                 if lessons > fit_lessons or demand > capacity:
                     found.append((
                         (days != week, bin(days).count("1"), shortest, days),
-                        _Shortfall(
-                            shortest=shortest,
-                            days=days,
-                            lessons=lessons,
-                            fit_lessons=fit_lessons,
-                            demand=demand,
-                            capacity=capacity,
-                            short_of=(
-                                "nowhere" if days == 0
-                                else "lessons" if lessons > fit_lessons
-                                else "minutes"
-                            ),
-                            kinds=frozenset(kinds),
-                        ),
+                        (shortest, days, lessons, fit_lessons, demand, capacity),
                     ))
         if not found:
             return None
-        return min(found, key=lambda item: item[0])[1]
+        shortest, days, lessons, fit_lessons, demand, capacity = min(
+            found, key=lambda item: item[0],
+        )[1]
+        return _Shortfall(
+            shortest=shortest,
+            days=days,
+            lessons=lessons,
+            fit_lessons=fit_lessons,
+            demand=demand,
+            capacity=capacity,
+            short_of=(
+                "nowhere" if days == 0
+                else "lessons" if lessons > fit_lessons
+                else "minutes"
+            ),
+            kinds=frozenset(self.counted(shortest, days)),
+        )
 
 
 def _spaced_capacity(caps: list[tuple[int, int]], apart: int | None) -> int:
@@ -1340,10 +1361,13 @@ class SchedulerSolver:
                 minutes = self._grid.slot_minutes
                 details = []
                 if lunch_on and demand <= capacity_without_lunch:
-                    # Both true, both said: the hours do not fit, and it is the
-                    # meal that takes the hour they needed. A school that reads
-                    # only "too many lessons" would go to the timplan; the
-                    # lever is the lunch window or the lock beside it.
+                    # The hours do not fit, and the same count without the meal
+                    # would let them through. A school that reads only "too
+                    # many lessons" would go to the timplan; the lever may be
+                    # the lunch window or the lock beside it. Said as a count
+                    # and no more: the count leaves out the margins between
+                    # lessons and every rule, so it cannot say the week would
+                    # fit without the lunch, and the sentence does not.
                     details.append(
                         ConflictDetail(
                             category="LUNCH_WINDOW",
@@ -1542,9 +1566,10 @@ class SchedulerSolver:
         because a group has a name to give, and a line that counts exactly the
         timplan rows an earlier line counted is not said twice. A teacher is
         never named, for the reason _teacher_hours_verdict gives: the line
-        names the teacher's rows. Where the week without its lunch would hold
-        the resource's lessons, LUNCH_BREAK_IS_THE_DIFFERENCE follows the line,
-        as it does for the clique's hours.
+        names the teacher's rows. Where the same count without the lunch lets
+        the resource's lessons through, LUNCH_BREAK_IS_THE_DIFFERENCE follows
+        the line, as it does for the clique's hours, and says that much and no
+        more: a count is not a timetable.
 
         After _teacher_hours_verdict, which it subsumes, so the weeks that
         verdict names keep their answer.
@@ -1614,11 +1639,16 @@ class SchedulerSolver:
             conflicts.append(line)
             bare = without_lunch.get((what, subject))
             if bare is not None and bare[0].shortfall() is None:
-                # Both true, both said, as the clique's hours say it: the
-                # lessons do not fit, and it is the meal that takes the room
-                # they needed. The figure is the same lessons' without the
-                # lunch, on the days they can fall on without it, which may be
-                # more days than with it.
+                # The same count without the lunch lets these lessons through,
+                # so the meal is part of what the count finds short. Never
+                # more than that: the count leaves out the pupils' margins
+                # between lessons, groups sharing pupils and the other
+                # resources the lessons meet, and the review of this verdict
+                # found weeks that stay impossible without their lunch (two
+                # lessons of 100 minutes with 40 after each in a morning of
+                # 270). The figure is the same lessons' without the lunch, on
+                # the days they can fall on without it, which may be more days
+                # than with it.
                 gaps_without, members_without, _ = bare
                 counted_ids = set(requirement_ids)
                 days_without = 0
@@ -1673,7 +1703,7 @@ class SchedulerSolver:
 
         Groups, then teachers, then the rooms, each in payload order. `lunch`
         False reads the week as if the school had asked for no lunch: the
-        question LUNCH_BREAK_IS_THE_DIFFERENCE answers.
+        count LUNCH_BREAK_IS_THE_DIFFERENCE reports.
 
         THE LUNCH IS THE MODEL'S, AND ONLY ITS BARE PART: the meal's own
         interval in the group's NoOverlap, on the starts its variable takes —
@@ -1813,10 +1843,23 @@ class SchedulerSolver:
 
         shared: dict[tuple[int, tuple[int, ...]], _LessonKind] = {}
         kinds_of: dict[UUID, list[_LessonKind]] = {}
+        # _start_domains reads a requirement's years, its margins and its
+        # lengths, and the week's frames, rasts and step; requirements alike in
+        # the first three share one computation. A field it starts to read
+        # belongs in this key.
+        domains_of: dict[tuple, dict[int, cp_model.Domain]] = {}
         for requirement in request.requirements:
-            domains = self._start_domains(
-                requirement, request.frame_times, request.rasts, lattice,
+            shape = (
+                span_of(requirement),
+                requirement.minutes_before,
+                requirement.minutes_after,
+                frozenset(requirement.lesson_minutes()),
             )
+            if shape not in domains_of:
+                domains_of[shape] = self._start_domains(
+                    requirement, request.frame_times, request.rasts, lattice,
+                )
+            domains = domains_of[shape]
             pupils = (requirement.student_group_id, *sharing.get(requirement.student_group_id, ()))
             windows = {
                 window
