@@ -73,6 +73,35 @@ describe('PrismaService', () => {
       });
     });
 
+    it("names the principal's own school to the database in the same statement (Flera skolor per inloggning)", async () => {
+      await service.withRls(testUser({ authId: AUTH_ID, schoolId: SCHOOL_ID }), () => Promise.resolve(null));
+
+      const call = executeRaw.mock.calls[0] as unknown[];
+      expect(rawSql(call)).toContain(`set_config('app.chosen_school_id'`);
+      expect(rawValues(call)[3]).toBe(SCHOOL_ID);
+    });
+
+    it("names no school for a principal without one, rather than the last request's", async () => {
+      await service.withRls(testUser({ schoolId: undefined }), () => Promise.resolve(null));
+
+      expect(rawValues(executeRaw.mock.calls[0] as unknown[])[3]).toBe('');
+    });
+
+    it("carries the access-token hook's closed schools inside the claims, and nothing when there are none", async () => {
+      const closed = { '44444444-4444-4444-8444-444444444444': 'sso_required' };
+      await service.withRls(testUser({ authId: AUTH_ID, closedSchools: closed }), () => Promise.resolve(null));
+      await service.withRls(testUser({ authId: AUTH_ID }), () => Promise.resolve(null));
+
+      expect(JSON.parse(rawValues(executeRaw.mock.calls[0] as unknown[])[0] as string)).toEqual({
+        sub: AUTH_ID,
+        role: 'authenticated',
+        rastra_closed_schools: closed,
+      });
+      expect(JSON.parse(rawValues(executeRaw.mock.calls[1] as unknown[])[0] as string)).not.toHaveProperty(
+        'rastra_closed_schools',
+      );
+    });
+
     it('sets the PostgreSQL role claim to the literal "authenticated", never the app role', async () => {
       // auth.role() distinguishes anon/authenticated at the DB level; the
       // application role (testUser's default is SCHOOL_ADMIN) must not leak

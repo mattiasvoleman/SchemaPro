@@ -65,6 +65,7 @@ describe('UsersService', () => {
     changeUserEmail: jest.Mock;
     deleteUser: jest.Mock;
     deleteOwnedUser: jest.Mock;
+    markSeveralSchools: jest.Mock;
   };
 
   beforeEach(() => {
@@ -77,12 +78,25 @@ describe('UsersService', () => {
       changeUserEmail: jest.fn().mockResolvedValue({ outcome: 'unchanged', confirmed: true }),
       deleteUser: jest.fn().mockResolvedValue(undefined),
       deleteOwnedUser: jest.fn().mockResolvedValue('deleted'),
+      markSeveralSchools: jest.fn().mockResolvedValue(undefined),
     };
     service = new UsersService(
       prisma as unknown as PrismaService,
       supabaseAdmin as unknown as SupabaseAdminService,
     );
+    answerHeldElsewhere(false);
   });
+
+  /**
+   * How app.login_is_held_elsewhere answers (Flera skolor per inloggning):
+   * whether another school's row holds the login. Every other raw statement
+   * answers as the shared mock does.
+   */
+  const answerHeldElsewhere = (held: boolean | 'fails') =>
+    tx.$queryRaw.mockImplementation((...call: unknown[]) => {
+      if (!rawSql(call).includes('app.login_is_held_elsewhere')) return Promise.resolve([]);
+      return held === 'fails' ? Promise.reject(new Error('connection reset')) : Promise.resolve([{ held }]);
+    });
 
   afterEach(() => {
     jest.restoreAllMocks();
@@ -133,6 +147,16 @@ describe('UsersService', () => {
       expect(data.authId).not.toBe(AUTH_ID);
       // The answer is what the admin just typed: no read to record.
       expect(recordedReads(tx)).toEqual([]);
+    });
+
+    it('marks the login when the person it invites has it from another school', async () => {
+      tx.user.create.mockResolvedValue({ id: USER_ID, email: 'anna@school.se' });
+      tx.user.update.mockResolvedValue({ id: USER_ID, authId: AUTH_ID });
+      answerHeldElsewhere(true);
+
+      await service.create(createDto({ sendInvitation: true }), testUser());
+
+      expect(supabaseAdmin.markSeveralSchools).toHaveBeenCalledWith(AUTH_ID);
     });
 
     it('persists first and invites second, then adopts the identity', async () => {
@@ -347,6 +371,7 @@ describe('UsersService', () => {
         id: USER_ID,
         emailSent: true,
         loginMoved: false,
+        sharedLogin: false,
       });
 
       expect(tx.user.findUnique).toHaveBeenCalledWith(
@@ -376,7 +401,53 @@ describe('UsersService', () => {
         id: USER_ID,
         emailSent: false,
         loginMoved: false,
+        sharedLogin: false,
       });
+    });
+
+    it('names the row in app.login_join before it gives the row the login, in the same transaction', async () => {
+      // The one writer that may give a row a login another school's row
+      // holds (trigger Users_a_login_joins_another_school_by_invitation).
+      arrangeUser(target());
+      tx.user.update.mockResolvedValue({ id: USER_ID });
+
+      await service.invite(USER_ID, testUser());
+
+      const joins = tx.$executeRaw.mock.calls.filter((call) => rawSql(call).includes("set_config('app.login_join'"));
+      expect(joins).toHaveLength(1);
+      expect(joins[0]!.slice(1)).toEqual([USER_ID]);
+      const joinOrder = tx.$executeRaw.mock.invocationCallOrder[tx.$executeRaw.mock.calls.indexOf(joins[0]!)]!;
+      expect(joinOrder).toBeLessThan(tx.user.update.mock.invocationCallOrder[0]!);
+    });
+
+    it('says when the login it adopted is another school\'s too', async () => {
+      arrangeUser(target());
+      tx.user.update.mockResolvedValue({ id: USER_ID });
+      supabaseAdmin.inviteUser.mockResolvedValue({ authId: AUTH_ID, emailSent: false });
+      answerHeldElsewhere(true);
+
+      await expect(service.invite(USER_ID, testUser())).resolves.toEqual({
+        id: USER_ID,
+        emailSent: false,
+        loginMoved: false,
+        sharedLogin: true,
+      });
+      const asked = tx.$queryRaw.mock.calls.find((call) => rawSql(call).includes('app.login_is_held_elsewhere'));
+      expect(asked?.slice(1)).toEqual([AUTH_ID, USER_ID]);
+      // Marked, after the row took it, so that the web shows the person the switcher.
+      expect(supabaseAdmin.markSeveralSchools).toHaveBeenCalledWith(AUTH_ID);
+      expect(supabaseAdmin.markSeveralSchools.mock.invocationCallOrder[0]).toBeGreaterThan(
+        tx.user.update.mock.invocationCallOrder[0]!,
+      );
+    });
+
+    it('marks no login that only this school\'s row holds', async () => {
+      arrangeUser(target());
+      tx.user.update.mockResolvedValue({ id: USER_ID });
+
+      await service.invite(USER_ID, testUser());
+
+      expect(supabaseAdmin.markSeveralSchools).not.toHaveBeenCalled();
     });
 
     it('404s an id the caller cannot see', async () => {
@@ -466,6 +537,44 @@ describe('UsersService', () => {
         tx.user.update.mockResolvedValue({ id: USER_ID });
       });
 
+      it('neither moves nor deletes a login another school\'s row holds, and invites the row\'s address', async () => {
+        // Flera skolor per inloggning: the login is the person's, and the
+        // other school still signs them in with it.
+        answerHeldElsewhere(true);
+        supabaseAdmin.inviteUser.mockResolvedValue({ authId: AUTH_ID, emailSent: true });
+
+        await expect(service.invite(USER_ID, testUser())).resolves.toEqual({
+          id: USER_ID,
+          emailSent: true,
+          loginMoved: false,
+          sharedLogin: true,
+        });
+        expect(supabaseAdmin.changeUserEmail).not.toHaveBeenCalled();
+        expect(supabaseAdmin.deleteOwnedUser).not.toHaveBeenCalled();
+        expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
+        expect(supabaseAdmin.inviteUser).toHaveBeenCalledWith('anna.ny@school.se', USER_ID);
+        const asked = tx.$queryRaw.mock.calls.find((call) => rawSql(call).includes('app.login_is_held_elsewhere'));
+        expect(asked?.slice(1)).toEqual([LOGIN, USER_ID]);
+      });
+
+      it('leaves the login as a shared one when it cannot ask whether it is', async () => {
+        const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+        // The question before anything is moved fails; the adoption's own
+        // question afterwards is answered.
+        let asked = 0;
+        tx.$queryRaw.mockImplementation((...call: unknown[]) => {
+          if (!rawSql(call).includes('app.login_is_held_elsewhere')) return Promise.resolve([]);
+          asked += 1;
+          return asked === 1 ? Promise.reject(new Error('connection reset')) : Promise.resolve([{ held: false }]);
+        });
+
+        await service.invite(USER_ID, testUser());
+
+        expect(supabaseAdmin.changeUserEmail).not.toHaveBeenCalled();
+        expect(supabaseAdmin.deleteOwnedUser).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining(`[authId=${LOGIN}]`));
+      });
+
       it('moves a login that has signed in to the new address, and says nobody told the person', async () => {
         supabaseAdmin.changeUserEmail.mockResolvedValue({ outcome: 'changed', confirmed: true });
 
@@ -473,6 +582,7 @@ describe('UsersService', () => {
           id: USER_ID,
           emailSent: false,
           loginMoved: true,
+          sharedLogin: false,
         });
 
         expect(supabaseAdmin.changeUserEmail).toHaveBeenCalledWith(LOGIN, 'anna.ny@school.se', OWNER);
@@ -492,6 +602,7 @@ describe('UsersService', () => {
           id: USER_ID,
           emailSent: true,
           loginMoved: true,
+          sharedLogin: false,
         });
 
         expect(supabaseAdmin.resendInvitation).toHaveBeenCalledWith('anna.ny@school.se');
@@ -523,6 +634,7 @@ describe('UsersService', () => {
           id: USER_ID,
           emailSent: false,
           loginMoved: false,
+          sharedLogin: false,
         });
 
         expect(supabaseAdmin.inviteUser).not.toHaveBeenCalled();
@@ -539,6 +651,7 @@ describe('UsersService', () => {
           id: USER_ID,
           emailSent: false,
           loginMoved: false,
+          sharedLogin: false,
         });
 
         expect(supabaseAdmin.inviteUser).toHaveBeenCalledWith('anna.ny@school.se', USER_ID);
@@ -575,6 +688,7 @@ describe('UsersService', () => {
           id: USER_ID,
           emailSent: true,
           loginMoved: false,
+          sharedLogin: false,
         });
         expect(warn).toHaveBeenCalledWith(expect.stringContaining('was not deleted'));
         expect(warn).toHaveBeenCalledWith(expect.stringContaining(`[user=${USER_ID}] [authId=${LOGIN}]`));
@@ -592,6 +706,7 @@ describe('UsersService', () => {
           id: USER_ID,
           emailSent: true,
           loginMoved: false,
+          sharedLogin: false,
         });
 
         expect(supabaseAdmin.resendInvitation).not.toHaveBeenCalled();
@@ -636,6 +751,7 @@ describe('UsersService', () => {
           id: USER_ID,
           emailSent: false,
           loginMoved: false,
+          sharedLogin: false,
         });
 
         expect(warn).toHaveBeenCalledTimes(1);
@@ -1221,6 +1337,32 @@ describe('UsersService', () => {
       });
       expect(tx.user.delete).toHaveBeenCalledWith({ where: { id: USER_ID } });
       expect(supabaseAdmin.deleteUser).toHaveBeenCalledWith(AUTH_ID);
+    });
+
+    it('keeps a login another school\'s row still holds, asking after the delete with no row excepted', async () => {
+      // Flera skolor per inloggning: the person signs in to the other school
+      // with it.
+      tx.user.findUnique.mockResolvedValue({ authId: AUTH_ID, invitedAt: new Date('2026-08-01T00:00:00.000Z') });
+      tx.user.delete.mockResolvedValue({ id: USER_ID });
+      answerHeldElsewhere(true);
+
+      await expect(service.remove(USER_ID, testUser())).resolves.toBeUndefined();
+
+      expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
+      const asked = tx.$queryRaw.mock.calls.findIndex((call) => rawSql(call).includes('app.login_is_held_elsewhere'));
+      expect(tx.$queryRaw.mock.calls[asked]!.slice(1)).toEqual([AUTH_ID, null]);
+      expect(tx.$queryRaw.mock.invocationCallOrder[asked]!).toBeGreaterThan(tx.user.delete.mock.invocationCallOrder[0]!);
+    });
+
+    it('keeps the login when it cannot ask whether another school holds it', async () => {
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      tx.user.findUnique.mockResolvedValue({ authId: AUTH_ID, invitedAt: new Date('2026-08-01T00:00:00.000Z') });
+      tx.user.delete.mockResolvedValue({ id: USER_ID });
+      answerHeldElsewhere('fails');
+
+      await expect(service.remove(USER_ID, testUser())).resolves.toBeUndefined();
+
+      expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
     });
 
     it('asks the provider for nothing when the person was never invited', async () => {

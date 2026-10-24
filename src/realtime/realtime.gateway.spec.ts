@@ -147,7 +147,7 @@ describe('RealtimeGateway', () => {
 
   /** The profile as the lookup returns it: only the columns it selected. */
   const arrangeProfile = (row: Record<string, unknown>) =>
-    tx.user.findUnique.mockImplementation(
+    tx.user.findFirst.mockImplementation(
       ({ select }: { select?: Record<string, unknown> }) =>
         Promise.resolve(asSelected(row, select)),
     );
@@ -207,17 +207,69 @@ describe('RealtimeGateway', () => {
       expect(prisma.withVerifiedSubject).toHaveBeenCalledWith(
         AUTH_ID,
         expect.any(Function),
+        {},
       );
       expect(prisma.withRls).not.toHaveBeenCalled();
       expect(prisma.withSystemTransaction).not.toHaveBeenCalled();
-      expect(tx.user.findUnique).toHaveBeenCalledWith(
+      expect(tx.user.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({ where: { authId: AUTH_ID } }),
       );
     });
 
+    it('looks the row up at the school the socket names, with the hook\'s closed schools (Flera skolor)', async () => {
+      const closed = { '44444444-4444-4444-8444-444444444444': 'sso_required' };
+      jwt.verifyAsync.mockResolvedValue({ sub: AUTH_ID, rastra_closed_schools: closed });
+      arrangeProfile(activeProfileRow());
+      const client = makeSocket({ token: TOKEN, school: SCHOOL_ID.toUpperCase() });
+
+      await connect(client);
+
+      expect(prisma.withVerifiedSubject).toHaveBeenCalledWith(AUTH_ID, expect.any(Function), {
+        school: SCHOOL_ID,
+        closedSchools: closed,
+      });
+      expect(client.join).toHaveBeenCalledWith(expect.arrayContaining([`staff:${SCHOOL_ID}`]));
+    });
+
+    it('puts each of a login\'s sockets in the rooms of the school it names, and no other (Flera skolor)', async () => {
+      // Two tabs of one login, at school A and at school B: the database
+      // answers each lookup with that school's row (RLS), and each socket
+      // joins that row's rooms only, so B's tab hears B's lessons and none
+      // of A's.
+      const OTHER = '44444444-4444-4444-8444-444444444444';
+      const OTHER_ROW = '55555555-5555-4555-8555-555555555555';
+      jwt.verifyAsync.mockResolvedValue({ sub: AUTH_ID });
+      prisma.withVerifiedSubject.mockImplementation(
+        (_sub: string, _fn: unknown, session: { school?: string }) =>
+          Promise.resolve(
+            session.school === OTHER
+              ? activeProfileRow({ id: OTHER_ROW, schoolId: OTHER, role: 'TEACHER' })
+              : activeProfileRow(),
+          ),
+      );
+      const atA = makeSocket({ token: TOKEN, school: SCHOOL_ID });
+      const atB = makeSocket({ token: TOKEN, school: OTHER });
+
+      await connect(atA);
+      await connect(atB);
+
+      expect(atA.join).toHaveBeenCalledWith([`user:${USER_ID}`, `staff:${SCHOOL_ID}`, `admin:${SCHOOL_ID}`]);
+      expect(atB.join).toHaveBeenCalledWith([`user:${OTHER_ROW}`, `staff:${OTHER}`]);
+    });
+
+    it('disconnects a socket that names a school in no form the database could match', async () => {
+      jwt.verifyAsync.mockResolvedValue({ sub: AUTH_ID });
+      const client = makeSocket({ token: TOKEN, school: 'skolan' });
+
+      await connect(client);
+
+      expect(client.disconnect).toHaveBeenCalledWith(true);
+      expect(prisma.withVerifiedSubject).not.toHaveBeenCalled();
+    });
+
     it('disconnects a subject with no profile row', async () => {
       jwt.verifyAsync.mockResolvedValue({ sub: AUTH_ID });
-      tx.user.findUnique.mockResolvedValue(null);
+      tx.user.findFirst.mockResolvedValue(null);
       const client = makeSocket({ token: TOKEN });
 
       await connect(client);

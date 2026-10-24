@@ -39,6 +39,20 @@ describe('DevicesService', () => {
     expect(sql.values).toEqual([TOKEN, 'ANDROID', 'en']);
   });
 
+  it('registers the phone for the row the request chose, so switching school moves it to the other row', async () => {
+    // Flera skolor: withRls names the principal's school in the transaction,
+    // and the claim function takes the token over from the login's other row.
+    const atB = testUser({ role: 'GUARDIAN' as never, userId: '55555555-5555-4555-8555-555555555555', schoolId: '66666666-6666-4666-8666-666666666666' });
+    await service().register({ token: TOKEN, platform: 'IOS', locale: 'sv' }, user);
+    await service().register({ token: TOKEN, platform: 'IOS', locale: 'sv' }, atB);
+    expect(prisma.withRls.mock.calls.map(([principal]) => principal)).toEqual([user, atB]);
+    const claims = tx.$queryRaw.mock.calls.map(([sql]) => (sql as { values: unknown[] }).values);
+    expect(claims).toEqual([
+      [TOKEN, 'IOS', 'sv'],
+      [TOKEN, 'IOS', 'sv'],
+    ]);
+  });
+
   it('answers a concurrent claim of the same token with 409 PUSH_TOKEN_BUSY, and rethrows anything else', async () => {
     const busy = new Prisma.PrismaClientKnownRequestError('Raw query failed. Code: `PU409`. Message: `PUSH_TOKEN_BUSY`', {
       code: 'P2010',

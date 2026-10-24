@@ -1,4 +1,4 @@
-import { UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { generateKeyPairSync } from 'node:crypto';
@@ -13,6 +13,7 @@ import type { PrismaService } from '../database/prisma.service';
 import { Role } from './enums/role.enum';
 import type { JwtPayload } from './interfaces/jwt-payload.interface';
 import { JwtStrategy } from './jwt.strategy';
+import { SCHOOL_ID_INVALID, SCHOOL_NOT_AVAILABLE } from './school-choice';
 import { ACCEPTED_ALGORITHMS } from './signing-key.provider';
 
 jest.mock('jwks-rsa', () => ({ passportJwtSecret: jest.fn() }));
@@ -48,6 +49,10 @@ function buildStrategy(jwt: Partial<Record<string, unknown>> = {}) {
 
 const payload = (overrides: Partial<JwtPayload> = {}): JwtPayload =>
   ({ sub: AUTH_ID, ...overrides }) as JwtPayload;
+
+/** A request that names no school (X-School-Id), as every request did before Flera skolor. */
+const NO_SCHOOL = { headers: {} };
+const naming = (school: string) => ({ headers: { 'x-school-id': school } });
 
 describe('JwtStrategy', () => {
   describe('constructor', () => {
@@ -114,7 +119,7 @@ describe('JwtStrategy', () => {
 
     it('accepts an ES256 Supabase token and yields the database principal', async () => {
       const { strategy, tx } = buildStrategy();
-      tx.user.findUnique.mockResolvedValue({
+      tx.user.findFirst.mockResolvedValue({
         id: USER_ID,
         schoolId: SCHOOL_ID,
         role: 'SCHOOL_ADMIN',
@@ -166,7 +171,7 @@ describe('JwtStrategy', () => {
 
     /** An active account, so that nothing but the token can be refused. */
     const withActiveAccount = (built: ReturnType<typeof buildStrategy>) => {
-      built.tx.user.findUnique.mockResolvedValue({
+      built.tx.user.findFirst.mockResolvedValue({
         id: USER_ID,
         schoolId: SCHOOL_ID,
         role: 'TEACHER',
@@ -243,11 +248,12 @@ describe('JwtStrategy', () => {
     });
 
     it('resolves the principal from the database, not the token', async () => {
-      tx.user.findUnique.mockResolvedValue(activeProfile());
+      tx.user.findFirst.mockResolvedValue(activeProfile());
 
       await expect(
         // A spoofed role/tenant in the token body must be ignored entirely.
         strategy.validate(
+          NO_SCHOOL,
           payload({
             role: Role.SCHOOL_ADMIN,
             schoolId: 'attacker-controlled',
@@ -262,10 +268,10 @@ describe('JwtStrategy', () => {
     });
 
     it("carries an administrator's profile and HR-läs from the database, and nobody else's", async () => {
-      tx.user.findUnique.mockResolvedValue(
+      tx.user.findFirst.mockResolvedValue(
         activeProfile({ role: 'SCHOOL_ADMIN', adminProfile: 'SCHEMALAGGARE', hrRead: true }),
       );
-      await expect(strategy.validate(payload())).resolves.toEqual({
+      await expect(strategy.validate(NO_SCHOOL, payload())).resolves.toEqual({
         authId: AUTH_ID,
         role: 'SCHOOL_ADMIN',
         userId: USER_ID,
@@ -274,18 +280,19 @@ describe('JwtStrategy', () => {
         hrRead: true,
       });
 
-      tx.user.findUnique.mockResolvedValue(activeProfile({ adminProfile: null, hrRead: false }));
-      const teacher = await strategy.validate(payload());
+      tx.user.findFirst.mockResolvedValue(activeProfile({ adminProfile: null, hrRead: false }));
+      const teacher = await strategy.validate(NO_SCHOOL, payload());
       expect(teacher).not.toHaveProperty('adminProfile');
       expect(teacher).not.toHaveProperty('hrRead');
     });
 
     it('names the school account a school-account session signed in with, and nothing for a password', async () => {
-      tx.user.findUnique.mockResolvedValue(activeProfile({ role: 'SCHOOL_ADMIN' }));
+      tx.user.findFirst.mockResolvedValue(activeProfile({ role: 'SCHOOL_ADMIN' }));
       const tenant = '2f6a1c3e-8b4d-4f5a-9c7e-1d2b3a4c5e6f';
 
       await expect(
         strategy.validate(
+          NO_SCHOOL,
           payload({
             amr: [{ method: 'oauth', timestamp: 1 }],
             user_metadata: { iss: `https://login.microsoftonline.com/${tenant}/v2.0`, custom_claims: { tid: tenant } },
@@ -300,6 +307,7 @@ describe('JwtStrategy', () => {
       });
 
       const password = await strategy.validate(
+          NO_SCHOOL,
         payload({
           amr: [{ method: 'password', timestamp: 1 }],
           user_metadata: { iss: `https://login.microsoftonline.com/${tenant}/v2.0` },
@@ -309,49 +317,120 @@ describe('JwtStrategy', () => {
     });
 
     it('scopes the lookup to the verified subject', async () => {
-      tx.user.findUnique.mockResolvedValue(activeProfile());
+      tx.user.findFirst.mockResolvedValue(activeProfile());
 
-      await strategy.validate(payload());
+      await strategy.validate(NO_SCHOOL, payload());
 
       // Regression guard: this used withSystemTransaction, which does not
       // bypass RLS and silently matched zero rows for every user.
       expect(prisma.withVerifiedSubject).toHaveBeenCalledWith(
         AUTH_ID,
         expect.any(Function),
+        {},
       );
       expect(prisma.withSystemTransaction).not.toHaveBeenCalled();
-      expect(tx.user.findUnique).toHaveBeenCalledWith({
+      expect(tx.user.findFirst).toHaveBeenCalledWith({
         where: { authId: AUTH_ID },
         select: { id: true, schoolId: true, role: true, isActive: true, adminProfile: true, hrRead: true },
       });
     });
 
+    describe('a login with rows at several schools (Flera skolor per inloggning)', () => {
+      const OTHER_SCHOOL = '44444444-4444-4444-8444-444444444444';
+
+      it('looks the row up at the school the request names, in lower case', async () => {
+        tx.user.findFirst.mockResolvedValue(activeProfile());
+
+        await expect(strategy.validate(naming(SCHOOL_ID.toUpperCase()), payload())).resolves.toMatchObject({
+          schoolId: SCHOOL_ID,
+          userId: USER_ID,
+        });
+        expect(prisma.withVerifiedSubject).toHaveBeenCalledTimes(1);
+        expect(prisma.withVerifiedSubject).toHaveBeenCalledWith(AUTH_ID, expect.any(Function), { school: SCHOOL_ID });
+      });
+
+      it('refuses a header that names no school before touching the database', async () => {
+        const error = await strategy.validate(naming('skolan'), payload()).catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(BadRequestException);
+        expect((error as BadRequestException).getResponse()).toMatchObject({ code: SCHOOL_ID_INVALID });
+        expect(prisma.withVerifiedSubject).not.toHaveBeenCalled();
+      });
+
+      it('answers SCHOOL_NOT_AVAILABLE, not another school, for a school the login has no row in', async () => {
+        // The named school's lookup finds nothing; the login has a row elsewhere.
+        tx.user.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: USER_ID });
+
+        const error = await strategy.validate(naming(OTHER_SCHOOL), payload()).catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(ForbiddenException);
+        expect((error as ForbiddenException).getResponse()).toMatchObject({ code: SCHOOL_NOT_AVAILABLE });
+        expect(prisma.withVerifiedSubject).toHaveBeenNthCalledWith(1, AUTH_ID, expect.any(Function), { school: OTHER_SCHOOL });
+        expect(prisma.withVerifiedSubject).toHaveBeenNthCalledWith(2, AUTH_ID, expect.any(Function), {});
+      });
+
+      it('still 401s a login with no row anywhere, whatever it names', async () => {
+        tx.user.findFirst.mockResolvedValue(null);
+
+        await expect(strategy.validate(naming(OTHER_SCHOOL), payload())).rejects.toThrow(UnauthorizedException);
+      });
+
+      it("forwards the hook's closed schools to the lookup and to every transaction after it", async () => {
+        tx.user.findFirst.mockResolvedValue(activeProfile());
+        const closed = { [OTHER_SCHOOL]: 'sso_required' };
+
+        await expect(
+          strategy.validate(NO_SCHOOL, payload({ rastra_closed_schools: closed } as Partial<JwtPayload>)),
+        ).resolves.toMatchObject({ closedSchools: closed });
+        expect(prisma.withVerifiedSubject).toHaveBeenCalledWith(AUTH_ID, expect.any(Function), { closedSchools: closed });
+      });
+
+      it('keeps every closed school, whatever its reason says', async () => {
+        tx.user.findFirst.mockResolvedValue(activeProfile());
+
+        const user = await strategy.validate(
+          NO_SCHOOL,
+          payload({ rastra_closed_schools: { [OTHER_SCHOOL]: 7 } } as Partial<JwtPayload>),
+        );
+        expect(user.closedSchools).toEqual({ [OTHER_SCHOOL]: 'closed' });
+      });
+
+      it('reads a claim that is no object as no closed school', async () => {
+        tx.user.findFirst.mockResolvedValue(activeProfile());
+
+        for (const claim of [[OTHER_SCHOOL], 'x', null, {}]) {
+          const user = await strategy.validate(NO_SCHOOL, payload({ rastra_closed_schools: claim } as Partial<JwtPayload>));
+          expect(user).not.toHaveProperty('closedSchools');
+        }
+      });
+    });
+
     it('rejects a token with no subject before touching the database', async () => {
-      await expect(strategy.validate(payload({ sub: undefined }))).rejects.toThrow(
+      await expect(strategy.validate(NO_SCHOOL, payload({ sub: undefined }))).rejects.toThrow(
         UnauthorizedException,
       );
       expect(prisma.withVerifiedSubject).not.toHaveBeenCalled();
     });
 
     it('rejects an empty-string subject', async () => {
-      await expect(strategy.validate(payload({ sub: '' }))).rejects.toThrow(
+      await expect(strategy.validate(NO_SCHOOL, payload({ sub: '' }))).rejects.toThrow(
         'Invalid authentication token.',
       );
       expect(prisma.withVerifiedSubject).not.toHaveBeenCalled();
     });
 
     it('rejects a deactivated account even though the row exists', async () => {
-      tx.user.findUnique.mockResolvedValue(activeProfile({ isActive: false }));
+      tx.user.findFirst.mockResolvedValue(activeProfile({ isActive: false }));
 
-      await expect(strategy.validate(payload())).rejects.toThrow(
+      await expect(strategy.validate(NO_SCHOOL, payload())).rejects.toThrow(
         'No active user profile is linked to this account.',
       );
     });
 
     it('rejects a subject with no profile row', async () => {
-      tx.user.findUnique.mockResolvedValue(null);
+      tx.user.findFirst.mockResolvedValue(null);
 
-      await expect(strategy.validate(payload())).rejects.toThrow(
+      await expect(strategy.validate(NO_SCHOOL, payload())).rejects.toThrow(
         UnauthorizedException,
       );
     });
@@ -359,10 +438,11 @@ describe('JwtStrategy', () => {
     describe('SYSTEM_ADMIN fallback', () => {
       it('honours a platform operator that has no tenant profile', async () => {
         // SYSTEM_ADMIN is deliberately absent from the per-tenant Users table.
-        tx.user.findUnique.mockResolvedValue(null);
+        tx.user.findFirst.mockResolvedValue(null);
 
         await expect(
           strategy.validate(
+          NO_SCHOOL,
             payload({
               role: Role.SYSTEM_ADMIN,
               userId: 'ops-1',
@@ -381,21 +461,22 @@ describe('JwtStrategy', () => {
         // The row exists but is inactive, and the token claims SYSTEM_ADMIN.
         // The fallback is reached — this documents that deactivating a user
         // does NOT revoke a token that carries the platform-operator role.
-        tx.user.findUnique.mockResolvedValue(activeProfile({ isActive: false }));
+        tx.user.findFirst.mockResolvedValue(activeProfile({ isActive: false }));
 
         await expect(
           strategy.validate(
+          NO_SCHOOL,
             payload({ role: Role.SYSTEM_ADMIN } as Partial<JwtPayload>),
           ),
         ).resolves.toMatchObject({ role: Role.SYSTEM_ADMIN });
       });
 
       it('ignores any other role claim when no profile exists', async () => {
-        tx.user.findUnique.mockResolvedValue(null);
+        tx.user.findFirst.mockResolvedValue(null);
 
         for (const role of [Role.SCHOOL_ADMIN, Role.TEACHER, Role.STUDENT]) {
           await expect(
-            strategy.validate(payload({ role } as Partial<JwtPayload>)),
+            strategy.validate(NO_SCHOOL, payload({ role } as Partial<JwtPayload>)),
           ).rejects.toThrow(UnauthorizedException);
         }
       });

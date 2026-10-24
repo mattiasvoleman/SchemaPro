@@ -36,6 +36,24 @@ interface CommitScope {
 const COMMIT_SCOPES = new WeakMap<object, CommitScope>();
 const commitLogger = new Logger('PrismaService');
 
+/**
+ * What a transaction says about the session beside its subject (Flera skolor
+ * per inloggning, src/auth/school-choice.ts): the school the request is
+ * about, and the schools the access-token hook closed for it.
+ */
+export interface SubjectSession {
+  school?: string;
+  closedSchools?: Readonly<Record<string, string>>;
+}
+
+/** A resolved principal's session: its own row's school, and the hook's claim. */
+function sessionOf(user: AuthenticatedUser): SubjectSession {
+  return {
+    ...(user.schoolId ? { school: user.schoolId } : {}),
+    ...(user.closedSchools ? { closedSchools: user.closedSchools } : {}),
+  };
+}
+
 /** The connecting role's RLS-relevant privileges, read from `pg_roles`. */
 interface ConnectionRole {
   name: string;
@@ -70,6 +88,14 @@ function runAfterCommit(scope: CommitScope): void {
  * (The migration also accepts the full JSON blob via `request.jwt.claims`,
  * but injecting individual claims is cheaper and avoids any JSON parsing
  * inside every policy evaluation.)
+ *
+ * A login has one Users row per school (Flera skolor per inloggning,
+ * 20261204090000), and app.current_user_id() picks the row a request names.
+ * Every transaction here names the school the gateway resolved
+ * (`app.chosen_school_id`, src/auth/school-choice.ts), so the database answers
+ * for exactly the row JwtStrategy found, and forwards the access-token hook's
+ * `rastra_closed_schools` claim, so a school the session may not enter stays
+ * shut below the API too.
  *
  * `withRls()` opens a transaction, sets those session variables with
  * `SET LOCAL` (scoped to the transaction, not the connection), runs the
@@ -255,7 +281,7 @@ export class PrismaService
     const result = await this.$transaction(
       async (tx) => {
         COMMIT_SCOPES.set(tx, scope);
-        await this.claimsFor(tx, user.authId);
+        await this.claimsFor(tx, user.authId, sessionOf(user));
         return fn(tx as unknown as PrismaClient);
       },
       {
@@ -323,19 +349,30 @@ export class PrismaService
    * set_config(..., true) is transaction-local — the values are never visible
    * across requests even when a pooled connection is reused.
    *
+   * Beside them the school the request is about, `app.chosen_school_id`
+   * (empty when it names none: the login's oldest row), and the hook's
+   * closed schools inside the claims JSON, which is where the database reads
+   * them (app.closed_schools).
+   *
    * Returned unexecuted, so it can open an interactive transaction's callback
    * or lead a batch.
    */
   private claimsFor(
     client: Pick<PrismaClient, '$executeRaw'>,
     authId: string,
+    session: SubjectSession = {},
   ): PrismaPromise<number> {
-    const claims = JSON.stringify({ sub: authId, role: 'authenticated' });
+    const claims = JSON.stringify({
+      sub: authId,
+      role: 'authenticated',
+      ...(session.closedSchools ? { rastra_closed_schools: session.closedSchools } : {}),
+    });
     return client.$executeRaw`
       SELECT
         set_config('request.jwt.claims', ${claims}, true),
         set_config('request.jwt.claim.sub', ${authId}, true),
-        set_config('request.jwt.claim.role', ${'authenticated'}, true)
+        set_config('request.jwt.claim.role', ${'authenticated'}, true),
+        set_config('app.chosen_school_id', ${session.school ?? ''}, true)
     `;
   }
 
@@ -374,8 +411,9 @@ export class PrismaService
   async withVerifiedSubject<T>(
     authId: string,
     query: (client: PrismaClient) => PrismaPromise<T>,
+    session: SubjectSession = {},
   ): Promise<T> {
-    return this.batchUnderClaims(authId, query);
+    return this.batchUnderClaims(authId, query, session);
   }
 
   /**
@@ -397,16 +435,17 @@ export class PrismaService
     user: AuthenticatedUser,
     query: (client: PrismaClient) => PrismaPromise<T>,
   ): Promise<T> {
-    return this.batchUnderClaims(user.authId, query);
+    return this.batchUnderClaims(user.authId, query, sessionOf(user));
   }
 
   /** BEGIN, the claims, `query`, COMMIT — handed to the client as one batch. */
   private async batchUnderClaims<T>(
     authId: string,
     query: (client: PrismaClient) => PrismaPromise<T>,
+    session: SubjectSession,
   ): Promise<T> {
     const [, result] = await this.$transaction(
-      [this.claimsFor(this, authId), query(this)],
+      [this.claimsFor(this, authId, session), query(this)],
       BATCH_TRANSACTION_OPTIONS,
     );
     return result;

@@ -1,6 +1,6 @@
 import { Logger } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
-import { SupabaseAdminService, UserLookupError } from './supabase-admin.service';
+import { SEVERAL_SCHOOLS, SupabaseAdminService, UserLookupError } from './supabase-admin.service';
 
 const SUPABASE_URL = 'https://supabase.test';
 const SERVICE_KEY = 'service-role-key';
@@ -631,6 +631,40 @@ describe('SupabaseAdminService', () => {
       await expect(makeService({}).changeUserEmail(AUTH_ID, EMAIL, OWNER)).rejects.toThrow(
         'Supabase admin client is not configured.',
       );
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('markSeveralSchools', () => {
+    it('sets the app_metadata mark on the login, which only the service role may write', async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse({ id: AUTH_ID }));
+
+      await expect(makeService().markSeveralSchools(AUTH_ID)).resolves.toBeUndefined();
+
+      const { url, init } = call(0);
+      expect(init.method).toBe('PUT');
+      expect(url.pathname).toBe(`/auth/v1/admin/users/${AUTH_ID}`);
+      // GoTrue merges app_metadata: the row's tag and the provider's keys stay.
+      expect(JSON.parse(init.body ?? '')).toEqual({ app_metadata: { [SEVERAL_SCHOOLS]: true } });
+      expect(header(init, 'authorization')).toBe(`Bearer ${SERVICE_KEY}`);
+    });
+
+    it('logs a refusal with the login and throws nothing: the rows are right without the mark', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      fetchMock.mockResolvedValueOnce(jsonResponse({ msg: 'boom' }, 500));
+      fetchMock.mockRejectedValueOnce(new TypeError('fetch failed'));
+
+      await expect(makeService().markSeveralSchools(AUTH_ID)).resolves.toBeUndefined();
+      await expect(makeService().markSeveralSchools(AUTH_ID)).resolves.toBeUndefined();
+
+      expect(warn).toHaveBeenCalledTimes(2);
+      expect(warn).toHaveBeenCalledWith(`A login held at several schools was not marked [authId=${AUTH_ID}]`);
+    });
+
+    it('calls nobody without the admin client', async () => {
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+      await expect(makeService({}).markSeveralSchools(AUTH_ID)).resolves.toBeUndefined();
       expect(fetchMock).not.toHaveBeenCalled();
     });
   });

@@ -11,6 +11,14 @@ import type { AppConfig, SupabaseAdminConfig } from '../config/configuration';
  */
 export const CREATED_FOR_ROW = 'schemaproUserId';
 
+/**
+ * The app_metadata key marking a login that rows at more than one school
+ * hold (Flera skolor per inloggning; see markSeveralSchools). The web asks
+ * the gateway for a login's schools only when it is set (web/lib/auth.ts,
+ * web/lib/school-choice.ts names it too).
+ */
+export const SEVERAL_SCHOOLS = 'rastraSeveralSchools';
+
 /** The user_metadata key carrying inviteUser()'s one-off value. */
 const INVITATION_NONCE = 'schemaproInvitation';
 
@@ -204,6 +212,28 @@ export class SupabaseAdminService {
     if (error.code === 'email_exists') return { outcome: 'taken' };
     if (error.status === 404) return { outcome: 'missing' };
     throw new Error(`Supabase e-mail change failed: ${error.message}`);
+  }
+
+  /**
+   * Marks a login that a row at another school took too (SEVERAL_SCHOOLS),
+   * so that the web renders the school switcher for it and asks the gateway
+   * for no other login's schools. Best effort, after the row took the login:
+   * unmarked, the person keeps seeing the school their login came from,
+   * without a switcher, until an invitation marks it; the failure is logged
+   * with the login. A mark left on a login one school holds again costs the
+   * web that question and nothing else.
+   */
+  async markSeveralSchools(authId: string): Promise<void> {
+    if (!this.client) return;
+    try {
+      const { error } = await this.client.auth.admin.updateUserById(authId, {
+        app_metadata: { [SEVERAL_SCHOOLS]: true },
+      });
+      if (!error) return;
+    } catch {
+      // Not marked all the same; the rows and the login are right without it.
+    }
+    this.logger.warn(`A login held at several schools was not marked [authId=${authId}]`);
   }
 
   /** Deletes a Supabase Auth user. Missing users are treated as success. */

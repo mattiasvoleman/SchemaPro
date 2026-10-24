@@ -244,6 +244,31 @@ describe('NotificationDeliveryService (push)', () => {
     expect(JSON.stringify(expo.send.mock.calls[0][0])).not.toContain('Matematik');
   });
 
+  it('asks each school for its own rows’ phones, so a login with a row at two schools hears only from the school its phone is registered at, never named', async () => {
+    // A phone has one owner row, the row the app claimed it under (the school
+    // the request chose); push_targets answers a school's rows' tokens only.
+    const OTHER = '44444444-4444-4444-8444-444444444444';
+    targets = [{ token_id: 't-a', user_id: 'row-at-a', token: 'ExponentPushToken[phoneaaaa]', locale: 'sv', timezone: 'Europe/Stockholm' }];
+    tx.$queryRaw.mockImplementation(async (sql: { strings: string[]; values: unknown[] }) => {
+      if (!sql.strings.join('?').includes('app.push_targets(')) return [];
+      targetCalls.push(sql);
+      const users = sql.values[1] as string[];
+      return sql.values[0] === SCHOOL ? targets.filter((t) => users.includes(t.user_id)) : [];
+    });
+    delivery.enqueue([
+      lesson({ recipients: [{ userId: 'row-at-a', notificationId: 'n-a' }] }),
+      lesson({ schoolId: OTHER, recipients: [{ userId: 'row-at-b', notificationId: 'n-b' }] }),
+    ]);
+    await delivery.idle();
+    expect(targetCalls.map((call) => call.values.slice(0, 2))).toEqual([
+      [SCHOOL, ['row-at-a']],
+      [OTHER, ['row-at-b']],
+    ]);
+    const sent = expo.send.mock.calls.flatMap(([messages]) => messages as Array<{ to: string; title: string; body: string; data: { notificationId: string } }>);
+    expect(sent.map((m) => [m.to, m.data.notificationId])).toEqual([['ExponentPushToken[phoneaaaa]', 'n-a']]);
+    expect(sent.map((m) => `${m.title} ${m.body}`).join(' ')).not.toMatch(/skola|school/i);
+  });
+
   it('coalesces one person’s notices of a kind in one transaction into one push', async () => {
     delivery.enqueue([lesson(), lesson({ recipients: [{ userId: 'u1', notificationId: 'n3' }] }), lesson({ recipients: [{ userId: 'u1', notificationId: 'n4' }] })]);
     await delivery.idle();

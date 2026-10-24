@@ -377,7 +377,7 @@ describe('Portal and platform surfaces (e2e)', () => {
         .set('x-test-user', admin())
         .expect(200);
 
-      expect(response.body).toEqual({ id: STUDENT_ID, emailSent: true, loginMoved: false });
+      expect(response.body).toEqual({ id: STUDENT_ID, emailSent: true, loginMoved: false, sharedLogin: false });
       expect(harness.supabase.inviteUser).toHaveBeenCalledWith(
         'karin.ek@example.com',
         STUDENT_ID,
@@ -484,6 +484,34 @@ describe('Portal and platform surfaces (e2e)', () => {
         // from is not the next one's.
         delete (harness.tx as Record<string, unknown>)['$queryRaw'];
       }
+    });
+  });
+
+  describe("the login's schools (Flera skolor per inloggning)", () => {
+    const OTHER = '44444444-4444-4444-8444-444444444444';
+
+    it('lists every role\'s schools from app.my_schools(), only the switcher\'s fields', async () => {
+      harness.tx.$queryRaw.mockResolvedValueOnce([
+        { school_id: SCHOOL_ID, school_name: 'Ekbacken', role: 'GUARDIAN', admin_profile: null, closed_reason: null, is_current: true, user_id: GUARDIAN_ID },
+        { school_id: OTHER, school_name: 'Granen', role: 'TEACHER', admin_profile: null, closed_reason: 'sso_required', is_current: false, user_id: STUDENT_ID },
+      ]);
+
+      const response = await request(http())
+        .get('/api/v1/me/schools')
+        .set('x-test-user', guardian())
+        .expect(200);
+
+      expect(response.body).toEqual([
+        { schoolId: SCHOOL_ID, schoolName: 'Ekbacken', role: 'GUARDIAN', adminProfile: null, closed: null, current: true },
+        { schoolId: OTHER, schoolName: 'Granen', role: 'TEACHER', adminProfile: null, closed: 'sso_required', current: false },
+      ]);
+    });
+
+    it('is every signed-in role\'s, and nobody else\'s', async () => {
+      for (const token of [admin(), teacher(), guardian(), asUser({ role: 'STUDENT' as never })]) {
+        await request(http()).get('/api/v1/me/schools').set('x-test-user', token).expect(200);
+      }
+      await request(http()).get('/api/v1/me/schools').expect(401);
     });
   });
 
