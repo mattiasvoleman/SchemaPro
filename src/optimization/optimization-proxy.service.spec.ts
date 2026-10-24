@@ -1168,9 +1168,10 @@ describe('OptimizationProxyService', () => {
       ['00:30 winter time', '2026-01-14T23:30:00.000Z', '2026-01-15'],
       ['23:30 summer time', '2026-08-12T21:30:00.000Z', '2026-08-12'],
       ['23:30 winter time', '2026-01-14T22:30:00.000Z', '2026-01-14'],
-      // The night summer time ends (25 October 2026): 02:30 comes twice, both the 25th.
-      ['02:30 CEST, the night summer time ends', '2026-10-25T00:30:00.000Z', '2026-10-25'],
-      ['02:30 CET, the same night', '2026-10-25T01:30:00.000Z', '2026-10-25'],
+      // 00:30 on the two nights the clock changes, still the old offset and
+      // already the new day; UTC's day is the one before.
+      ['00:30 the night summer time ends (CEST)', '2026-10-24T22:30:00.000Z', '2026-10-25'],
+      ['00:30 the night summer time begins (CET)', '2027-03-27T23:30:00.000Z', '2027-03-28'],
     ])('is the Stockholm day at %s', async (_label, instant, day) => {
       tx.school.findUnique.mockResolvedValue({ timezone: 'Europe/Stockholm' });
       await expect(regenerationSweepDay(tx as unknown as PrismaClient, THIS_SCHOOL, new Date(instant))).resolves.toEqual(
