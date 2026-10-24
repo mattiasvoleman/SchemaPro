@@ -15,7 +15,7 @@ import { fetchChildren } from '../../services/children';
 import { deciderOf, fetchLeaveRequests, requestLeave } from '../../services/leaveRequests';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/LocaleContext';
-import { localDate } from '../../i18n/format';
+import { schoolDate } from '../../i18n/format';
 import type { ChildRow, LeaveRequestRow, LeaveRequestStatus } from '../../types';
 
 const STATUS_COLORS: Record<LeaveRequestStatus, string> = {
@@ -31,8 +31,9 @@ export function LeaveRequestsScreen(): React.JSX.Element {
   const [children, setChildren] = useState<ChildRow[]>([]);
   const [leaves, setLeaves] = useState<LeaveRequestRow[]>([]);
   const [selectedChild, setSelectedChild] = useState<string | null>(null);
-  const [startDate, setStartDate] = useState(localDate());
-  const [endDate, setEndDate] = useState(localDate());
+  // Null until the guardian types a day: the selected child's today.
+  const [startInput, setStartDate] = useState<string | null>(null);
+  const [endInput, setEndDate] = useState<string | null>(null);
   const [reason, setReason] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -68,6 +69,11 @@ export function LeaveRequestsScreen(): React.JSX.Element {
     },
     [children, t],
   );
+
+  // The child's today is its school's (schoolToday), not the phone's.
+  const today = schoolDate(children.find((entry) => entry.id === selectedChild)?.schoolToday);
+  const startDate = startInput ?? today;
+  const endDate = endInput ?? today;
 
   const submit = useCallback(async () => {
     if (!selectedChild || reason.trim().length < 3) {

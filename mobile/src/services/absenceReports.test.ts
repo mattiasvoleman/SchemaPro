@@ -1,6 +1,7 @@
 import { getAccessToken, getSupabase } from './supabase';
 import { ApiError } from './api';
-import { fetchAbsenceReports, removeAbsenceReport, reportAbsence } from './absenceReports';
+import { fetchAbsenceReports, mayWithdraw, removeAbsenceReport, reportAbsence } from './absenceReports';
+import type { AbsenceReportRow } from '../types';
 
 jest.mock('./supabase', () => ({ getAccessToken: jest.fn(), getSupabase: jest.fn() }));
 
@@ -143,5 +144,35 @@ describe('removeAbsenceReport', () => {
       status: 400,
       message: 'Past absence reports cannot be removed.',
     });
+  });
+});
+
+/*
+ * Whether the home screen offers a withdrawal. The gateway's removable is its
+ * own rule in the school's day, so it decides wherever the phone is: a phone
+ * in New York at 20:00 (already tomorrow in Stockholm) or in Bangkok at 03:00
+ * (still yesterday there) is offered exactly what the gateway will do. Only
+ * an older gateway, without the field, leaves it to the phone's rule.
+ */
+describe('mayWithdraw', () => {
+  const row = (date: string, extra: Partial<AbsenceReportRow> = {}): AbsenceReportRow =>
+    ({ ...report('r-1', date, '2026-10-24T06:00:00.000Z'), ...extra }) as AbsenceReportRow;
+
+  it('follows the gateway’s removable over the phone’s day, west and east of Sweden', () => {
+    // New York, 20:00 on the 24th: the phone says the 24th, the school is on the 25th.
+    expect(mayWithdraw(row('2026-10-24', { removable: false }), 'g-1', '2026-10-24')).toBe(false);
+    // Bangkok, 03:00 on the 25th: the phone says the 25th, the school is still on the 24th.
+    expect(mayWithdraw(row('2026-10-24', { removable: true }), 'g-1', '2026-10-25')).toBe(true);
+  });
+
+  it('never offers another guardian’s report, as the gateway says', () => {
+    expect(mayWithdraw(row('2026-10-25', { reportedById: 'g-2', removable: false }), 'g-1', '2026-10-25')).toBe(false);
+  });
+
+  it('decides by the reporter and the day against today when the gateway said nothing', () => {
+    expect(mayWithdraw(row('2026-10-25'), 'g-1', '2026-10-25')).toBe(true);
+    expect(mayWithdraw(row('2026-10-24'), 'g-1', '2026-10-25')).toBe(false);
+    expect(mayWithdraw(row('2026-10-25', { reportedById: 'g-2' }), 'g-1', '2026-10-25')).toBe(false);
+    expect(mayWithdraw(row('2026-10-25'), null, '2026-10-25')).toBe(false);
   });
 });

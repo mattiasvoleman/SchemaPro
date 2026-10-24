@@ -59,6 +59,18 @@ describe('fetchChildren', () => {
     expect(getSupabase).not.toHaveBeenCalled();
   });
 
+  it('carries the school’s today when the gateway says one, and nothing when an older one does not', async () => {
+    fetchMock.mockResolvedValue(
+      answer(200, [
+        { linkId: 'link-1', id: 'c-1', firstName: 'Alva', lastName: 'Ek', isActive: true, studentGroupId: null, schoolToday: '2026-10-25' },
+        { linkId: 'link-2', id: 'c-2', firstName: 'Bo', lastName: 'Ek', isActive: true, studentGroupId: null },
+      ]),
+    );
+    const [alva, bo] = await fetchChildren();
+    expect(alva).toEqual({ linkId: 'link-1', id: 'c-1', firstName: 'Alva', lastName: 'Ek', isActive: true, schoolToday: '2026-10-25' });
+    expect(bo).not.toHaveProperty('schoolToday');
+  });
+
   it('answers no links with no children', async () => {
     fetchMock.mockResolvedValue(answer(200, []));
     await expect(fetchChildren()).resolves.toEqual([]);

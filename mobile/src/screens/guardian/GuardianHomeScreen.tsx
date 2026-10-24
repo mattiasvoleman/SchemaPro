@@ -12,10 +12,10 @@ import {
   SafeAreaView,
 } from 'react-native';
 import { fetchChildren } from '../../services/children';
-import { fetchAbsenceReports, removeAbsenceReport, reportAbsence } from '../../services/absenceReports';
+import { fetchAbsenceReports, mayWithdraw, removeAbsenceReport, reportAbsence } from '../../services/absenceReports';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/LocaleContext';
-import { localDate } from '../../i18n/format';
+import { schoolDate } from '../../i18n/format';
 import type { AbsenceReportRow, AbsenceReportType, ChildRow } from '../../types';
 
 const TYPES: readonly AbsenceReportType[] = ['SICK', 'APPOINTMENT', 'OTHER'];
@@ -27,7 +27,8 @@ export function GuardianHomeScreen(): React.JSX.Element {
   const [children, setChildren] = useState<ChildRow[]>([]);
   const [reports, setReports] = useState<AbsenceReportRow[]>([]);
   const [selectedChild, setSelectedChild] = useState<string | null>(null);
-  const [date, setDate] = useState(localDate());
+  // Null until the guardian types a day: the selected child's today.
+  const [date, setDate] = useState<string | null>(null);
   const [type, setType] = useState<AbsenceReportType>('SICK');
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -68,8 +69,16 @@ export function GuardianHomeScreen(): React.JSX.Element {
     [children, t],
   );
 
+  // A child's today is its school's (schoolToday), not the phone's: the
+  // gateway holds the report to the school's day, wherever the phone is.
+  const todayFor = useCallback(
+    (id: string | null): string => schoolDate(children.find((entry) => entry.id === id)?.schoolToday),
+    [children],
+  );
+  const reportDate = date ?? todayFor(selectedChild);
+
   const submit = useCallback(async () => {
-    if (!selectedChild || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    if (!selectedChild || !/^\d{4}-\d{2}-\d{2}$/.test(reportDate)) {
       Alert.alert(t('guardian.alertTitle'), t('guardian.pickChildAndDate'));
       return;
     }
@@ -77,7 +86,7 @@ export function GuardianHomeScreen(): React.JSX.Element {
     try {
       // The gateway takes the school from the child and the reporter from the
       // session, and refuses a child who is not this guardian's.
-      await reportAbsence({ studentId: selectedChild, date, type });
+      await reportAbsence({ studentId: selectedChild, date: reportDate, type });
       Alert.alert(t('guardian.alertTitle'), t('guardian.reported'));
       await load();
     } catch (submitError) {
@@ -87,7 +96,7 @@ export function GuardianHomeScreen(): React.JSX.Element {
     } finally {
       setIsSubmitting(false);
     }
-  }, [selectedChild, date, type, load, t]);
+  }, [selectedChild, reportDate, type, load, t]);
 
   const removeReport = useCallback(
     async (id: string) => {
@@ -156,7 +165,7 @@ export function GuardianHomeScreen(): React.JSX.Element {
             <Text style={styles.label}>{t('guardian.dateLabel')}</Text>
             <TextInput
               style={styles.input}
-              value={date}
+              value={reportDate}
               onChangeText={setDate}
               placeholder={t('guardian.datePlaceholder')}
               placeholderTextColor="#64748b"
@@ -215,9 +224,10 @@ export function GuardianHomeScreen(): React.JSX.Element {
                 </Text>
               </View>
               {/* Only the reporter takes a report back, and only before its day
-                  has passed: the gateway refuses anyone else, so the other
-                  guardian is not offered a button that can only fail. */}
-              {report.date.slice(0, 10) >= localDate() && report.reportedById === authState.teacherId ? (
+                  has passed in the school's day: the gateway says which
+                  (removable) and refuses the rest, so nobody is offered a
+                  button that can only fail, wherever the phone is. */}
+              {mayWithdraw(report, authState.teacherId, todayFor(report.studentId)) ? (
                 <TouchableOpacity
                   accessibilityRole="button"
                   accessibilityLabel={t('guardian.deleteA11y')}

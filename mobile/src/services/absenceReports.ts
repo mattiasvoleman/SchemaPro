@@ -47,6 +47,17 @@ export function reportAbsence(
 }
 
 /**
+ * Whether to offer taking a report back: the gateway's own answer when it
+ * gave one (removable, its withdrawal's rule in the school's day), else the
+ * rule as the phone knew it, against `today` (schoolDate): its reporter, and
+ * not a past day. The phone's clock and zone decide nothing the gateway
+ * already said, so a guardian abroad is not offered a withdrawal it refuses.
+ */
+export function mayWithdraw(report: AbsenceReportRow, me: string | null | undefined, today: string): boolean {
+  return report.removable ?? (report.reportedById === me && report.date.slice(0, 10) >= today);
+}
+
+/**
  * Withdraws a report for today or later. The gateway refuses a past one (400),
  * and one another guardian made (403): only the reporter may withdraw it.
  */

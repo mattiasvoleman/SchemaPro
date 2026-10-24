@@ -100,6 +100,12 @@ export interface ChildRow {
   readonly lastName: string;
   /** False for a pupil who has left: still linked, but no week to show. */
   readonly isActive: boolean;
+  /**
+   * The day the child's school is on, as the gateway said (YYYY-MM-DD): what
+   * "today" is for a report or a leave about this child. Absent from a
+   * gateway older than the field; schoolDate falls back to the phone's day.
+   */
+  readonly schoolToday?: string;
 }
 
 export type AbsenceReportType = 'SICK' | 'APPOINTMENT' | 'OTHER';
@@ -114,6 +120,12 @@ export interface AbsenceReportRow {
   readonly endTime: string | null;
   readonly type: AbsenceReportType;
   readonly note: string | null;
+  /**
+   * Whether the gateway would take it back now: the withdrawal's own rule,
+   * its reporter only and from the school's today on. Absent from a gateway
+   * older than the field (mayWithdraw).
+   */
+  readonly removable?: boolean;
 }
 
 export type LeaveRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
