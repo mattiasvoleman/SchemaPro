@@ -401,3 +401,57 @@ describe("draftHint", () => {
     expect(draftHint(input, "g-unknown", "s-ma", fields())).toBeNull();
   });
 });
+
+describe("ersättande grupper in Mål mode", () => {
+  // SvA7 replaces Svenska (lib/replacing-groups.ts): u-2 is credited SvA7's
+  // SvA instead of 7A's Svenska, as the gateway credits her, so the matrix
+  // and the coverage page agree about 7A.
+  const replacing: TargetSources = {
+    ...sources,
+    groups: groups.map((group) => (group.id === "g-sva7" ? { ...group, replacesSubjectId: "s-sv" } : group)),
+  };
+  const svLine = (given: TargetSources) =>
+    buildTargetView(computePlannedCoverage(targetInput(given)), given.plans)
+      .summary("g-7a")!
+      .lines.find((line) => line.key === "alt:SV_SVA")!;
+
+  it("hands the module the subject a group replaces, on that group alone", () => {
+    const input = targetInput(replacing);
+    expect(input.groups.find((group) => group.id === "g-sva7")).toEqual({
+      id: "g-sva7",
+      name: "SvA7",
+      kind: "TEACHING_GROUP",
+      gradeLevel: null,
+      replacesSubjectId: "s-sv",
+    });
+    expect(input.groups.filter((group) => "replacesSubjectId" in group).map((group) => group.id)).toEqual(["g-sva7"]);
+    expect(targetInput(sources).groups.some((group) => "replacesSubjectId" in group)).toBe(false);
+  });
+
+  it("credits a pupil of the replacing group 180 of 180 in Svenska/SvA, where both read 360", () => {
+    expect(svLine(sources).pupils).toEqual({ min: 180, median: 270, max: 360, below: 0 });
+    expect(svLine(replacing).pupils).toEqual({ min: 180, median: 180, max: 180, below: 0 });
+    // The class's own line is the same either way.
+    expect(svLine(replacing).status).toBe(svLine(sources).status);
+  });
+
+  it("does not warn that a class Svenska post gives the replacing group's pupils the time twice: they leave it", () => {
+    // 7A without its Svenska post, both its pupils in SvA7, which carries the line.
+    const carried: TargetSources = {
+      ...replacing,
+      requirements: requirements.filter((entry) => entry.id !== "r-sv7"),
+      memberships: [
+        { studentId: "u-1", studentGroupId: "g-sva7" },
+        { studentId: "u-2", studentGroupId: "g-sva7" },
+      ],
+    };
+    const input = targetInput(carried);
+    expect(draftHint(input, "g-7a", "s-sv", fields())).toMatchObject({ kind: "target", carriedBy: [] });
+    // An SvA post on the class would give them SvA twice: that is still said.
+    expect(draftHint(input, "g-7a", "s-sva", fields())).toMatchObject({ kind: "target", carriedBy: ["g-sva7"] });
+    // And with SvA7 an ordinary group, the Svenska warning stands as before.
+    expect(draftHint(targetInput({ ...carried, groups }), "g-7a", "s-sv", fields())).toMatchObject({
+      carriedBy: ["g-sva7"],
+    });
+  });
+});

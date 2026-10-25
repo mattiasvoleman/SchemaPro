@@ -8,6 +8,7 @@ import {
 } from '../staffing/teaching-weeks';
 import { TIMPLAN_ALTERNATIVE_CODES } from './timplan-coverage';
 import { planRowOf, type GradeNumbering } from './grade-numbering';
+import { leavesLesson, replacedSubjectOf, replacementsOf } from './replacing-groups';
 
 /*
  * Planerat mot timplan — layer 1 of the timplan coverage: what a läsår's
@@ -98,14 +99,24 @@ import { planRowOf, type GradeNumbering } from './grade-numbering';
  *
  * Σ over the home class's rows (User.studentGroupId) and the rows of every
  * TEACHING_GROUP the pupil is a member of, against the targets of the home
- * class's årskurs. A pupil getting the SAME subject from two groups (7A
+ * class's årskurs — less the rows an ersättande grupp takes them off
+ * (common/replacing-groups.ts, THE RULE there): SvA7 replaces Svenska, so a
+ * pupil in SvA7 is credited with SvA7's rows and with no other group's
+ * Svenska row, the home class's or a nivågrupp's. Without that, both reached
+ * the pupil and the SV_SVA line read 360 against a target of 180. The class's
+ * own lines are untouched: 7A's Svenska is still 7A's Svenska; only what
+ * reaches the pupil changes, and with it the class's pupil statistics and
+ * coverage. A school without a replacing group gets every figure it got
+ * before. A pupil getting the SAME subject from two groups (7A
  * matematik and Ma-fördjupning) is TIMPLAN_PUPIL_DOUBLE_PLANNED rather than
  * silently summed into "on target" — and so, with the alternativeCode set, is
  * a pupil getting two DIFFERENT subjects of an alternative line from their
  * teaching groups (Spanska 8 and Tyska 8, a Svenska group and an SvA group):
  * the line is met on the sum, but the pupil reads one OR the other. The home
  * class's rows are not counted there — class Svenska with an SvA-grupp on top
- * is the support model, and two alternatives on the class are the class's
+ * that does not replace it is the support model, an SvA group that replaces
+ * Svenska is read instead of the class's Svenska (whose rows then never reach
+ * the pupil), and two alternatives on the class are the class's
  * OVER. TIMPLAN_PUPIL_UNDERPLANNED, and a place
  * in the pupil list, are for a pupil's OWN finding: below target where the
  * class's line is not already UNDER/UNPLANNED (the språkval pupil in no
@@ -159,6 +170,13 @@ export interface PlannedGroup {
   name: string;
   kind: 'CLASS' | 'TEACHING_GROUP';
   gradeLevel: number | null;
+  /**
+   * Ersättande grupper (StudentGroups.replacesSubjectId): the subject whose
+   * other rows and lessons this teaching group's members leave — SvA7
+   * replaces Svenska. Absent or null replaces nothing, as for every group of
+   * a school that has none; the readers leave it out then.
+   */
+  replacesSubjectId?: string | null;
 }
 
 export interface PlannedRequirement extends TeachingPeriod {
@@ -395,6 +413,9 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
   const groupsById = new Map(input.groups.map((g) => [g.id, g]));
   const groupOrder = (a: string, b: string): number =>
     byName(groupsById.get(a)?.name ?? '', groupsById.get(b)?.name ?? '') || byCode(a, b);
+  // Ersättande grupper: groupId -> the subject it replaces. Empty for a
+  // school without one, and then no pupil's rows are filtered at all.
+  const replaced = replacedSubjectOf(input.groups);
   const plans = new Map(input.plans.map((p) => [p.id, p]));
   const planOfGrade = new Map<number, PlannedPlan>();
   for (const row of input.attachments) {
@@ -561,7 +582,17 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
       const own = teachingGroupsOf(pupil).sort(groupOrder);
       const groups = [classId, ...own];
       for (const id of own) carriers.add(id);
-      const rows = groups.flatMap((id) => rowsByGroup.get(id) ?? []);
+      const reaching = groups.flatMap((id) => rowsByGroup.get(id) ?? []);
+      // THE RULE for a row: its one group is all it carries. A row the rule
+      // takes the pupil off adds nothing to their line, their sources or the
+      // double-planning check — SvA7's pupil has no class Svenska row at all.
+      const replacements = replaced.size === 0 ? [] : replacementsOf(own, replaced);
+      const rows =
+        replacements.length === 0
+          ? reaching
+          : reaching.filter(
+              (row) => !leavesLesson(replacements, { subjectId: row.subjectId, groupIds: [row.studentGroupId] }),
+            );
       const perSource = new Map<string, Map<string, number>>();
       for (const row of rows) {
         const bySubject = perSource.get(row.subjectId) ?? new Map<string, number>();
@@ -864,8 +895,11 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
         // roster) is a roster to check, not a pupil comfortably on target.
         // The home class's rows are left out: a class Svenska with an
         // SvA-grupp on top is the support model the plan allows ("Svenska 200
-        // + SvA-grupp 60"), and a class planning two alternatives is the
-        // class's own OVER.
+        // + SvA-grupp 60") — an SvA group that does not replace Svenska. One
+        // that does is read instead of the class's Svenska, whose rows the
+        // rule above already kept from this pupil, so they are not here to
+        // leave out. A class planning two alternatives is the class's own
+        // OVER.
         const alternatives: string[] = [];
         if (draft.alternativeCode !== null) {
           const fromGroups = new Map<string, string[]>();

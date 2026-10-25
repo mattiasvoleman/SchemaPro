@@ -13,6 +13,7 @@ import {
 } from '../calendar/publish-days';
 import { teachingWeeks, type ClosedRange } from '../staffing/teaching-weeks';
 import { shortestLessonOf, weeklyMinutesOf } from './lesson-lengths';
+import { leavesLesson, replacedSubjectOf, replacementsOf, type Replacement } from './replacing-groups';
 import { planRowOfInput, type PlannedCoverageInput, type PlannedGroup, type PlannedRequirement } from './timplan-planned';
 import { lessonMinutes } from './timplan-scheduled';
 import { zonedTimeToUtc } from './utils/time';
@@ -102,6 +103,19 @@ import { zonedTimeToUtc } from './utils/time';
  * Statistics on a group line are over the pupils' projected delta (R17), with
  * raw delivered minutes beside them. Rosters are TODAY's (no history until
  * P4); a past year's classes read empty and say so.
+ *
+ * Ersättande grupper (common/replacing-groups.ts, THE RULE): what a replacing
+ * group takes a pupil off never reaches their tally — a calendar audience or
+ * a grundschema lesson by its owner and extra groups (a lesson naming the
+ * pupil kept), a post by its one group, a credit in its subject by the lines
+ * it reaches. A pupil of SvA7, which replaces Svenska, is credited none of
+ * 7A's Svenska on any side, so posts and lessons leave together and no
+ * TIMPLAN_PUPIL_NOTHING_DELIVERED is raised for a line they are not on. In
+ * TS over the audiences the SQL already returns: the SQL is not changed.
+ * Group lines are untouched, and so are their figures; their pupil statistics
+ * leave out the pupils the rule takes off the group's own lessons in the
+ * line's subject (SvA7's pupils are not 7A's Svenska line's). A school
+ * without one gets every figure it got before.
  */
 
 export type DeliveredBucket =
@@ -781,14 +795,30 @@ export function computeDeliveredCoverage(
     home: PlannedGroup;
     grade: number | null;
     groupIds: string[];
+    /** Their ersättande grupper; empty for nearly everyone, and for all in a school without one. */
+    replacements: Replacement[];
   }
+  const replaced = replacedSubjectOf(planned.groups);
+  /**
+   * THE RULE for one pupil and one lesson, post or credit; false at once
+   * without a replacement. A caller that builds the arguments per row tests
+   * pupil.replacements first, so a pupil without one builds nothing.
+   */
+  const leaves = (pupil: Pupil, subjectId: string, groupIds: readonly string[], named = false): boolean =>
+    pupil.replacements.length > 0 && leavesLesson(pupil.replacements, { subjectId, groupIds }, named);
   const pupils: Pupil[] = [];
   const membersOf = new Map<string, Pupil[]>();
   for (const entry of [...planned.pupils].sort((a, b) => byCode(a.id, b.id))) {
     const home = entry.homeGroupId === null ? undefined : groups.get(entry.homeGroupId);
     if (!home || home.kind !== 'CLASS') continue;
     const teaching = [...new Set(entry.groupIds)].filter((id) => groups.get(id)?.kind === 'TEACHING_GROUP');
-    const pupil: Pupil = { id: entry.id, home, grade: home.gradeLevel, groupIds: [home.id, ...teaching] };
+    const pupil: Pupil = {
+      id: entry.id,
+      home,
+      grade: home.gradeLevel,
+      groupIds: [home.id, ...teaching],
+      replacements: replaced.size === 0 ? [] : replacementsOf(teaching, replaced),
+    };
     pupils.push(pupil);
     for (const groupId of pupil.groupIds) {
       const list = membersOf.get(groupId) ?? [];
@@ -986,7 +1016,16 @@ export function computeDeliveredCoverage(
       if (credit.fromCancellationBatch) tally.batchCredits += credit.minutes;
       tally.creditIds.push(credit.id);
     }
-    reaches.push({ credit, key, past, groupIds, pupilIds: new Set(reached.map((p) => p.id)) });
+    // A credit in a subject leaves out the pupils a replacing group takes off
+    // it, its groups being the lines it reaches: a 7A credit in Svenska is
+    // 7A's Svenska, which SvA7's pupils do not attend, so it does not make up
+    // Svenska they never missed. Who it reaches as a scope (the notice
+    // above) is unchanged.
+    const credited =
+      credit.subjectId === null || replaced.size === 0
+        ? reached
+        : reached.filter((p) => !leaves(p, credit.subjectId!, groupIds));
+    reaches.push({ credit, key, past, groupIds, pupilIds: new Set(credited.map((p) => p.id)) });
     // Lessons delivered the same day by groups in the credit's scope (R6).
     const overlap = groupIds.reduce((sum, id) => sum + (datesByGroup.get(id)?.get(credit.date) ?? 0), 0);
     if (overlap > 0) {
@@ -1163,6 +1202,12 @@ export function computeDeliveredCoverage(
     for (const row of [...pupil.groupIds.flatMap((id) => audiencesByGroup.get(id) ?? []), ...(audiencesByPupil.get(pupil.id) ?? [])]) {
       if (seen.has(row)) continue;
       seen.add(row);
+      if (
+        pupil.replacements.length > 0 &&
+        leaves(pupil, row.subjectId, [row.studentGroupId, ...row.extraGroupIds], row.studentIds.includes(pupil.id))
+      ) {
+        continue;
+      }
       const tally = tallyFor(keyOf(row.subjectId));
       addBucket(tally, row.bucket, row.minutes);
       const through = [row.studentGroupId, ...row.extraGroupIds].filter((id) => own.has(id));
@@ -1180,6 +1225,12 @@ export function computeDeliveredCoverage(
     for (const m of [...pupil.groupIds.flatMap((id) => mastersByGroup.get(id) ?? []), ...(mastersByPupil.get(pupil.id) ?? [])]) {
       if (seenMasters.has(m.id)) continue;
       seenMasters.add(m.id);
+      if (
+        pupil.replacements.length > 0 &&
+        leaves(pupil, m.subjectId, [m.studentGroupId, ...m.extraGroupIds], m.studentIds.includes(pupil.id))
+      ) {
+        continue;
+      }
       const tally = tallyFor(keyOf(m.subjectId));
       addMaster(tally, m);
       tally.reachedBy!.add(m.studentGroupId);
@@ -1193,6 +1244,7 @@ export function computeDeliveredCoverage(
     }
     for (const groupId of pupil.groupIds) {
       for (const row of rowsByGroup.get(groupId) ?? []) {
+        if (leaves(pupil, row.subjectId, [row.studentGroupId])) continue;
         const tally = tallyFor(keyOf(row.subjectId));
         addPlanned(tally, row, pupil.grade);
         tally.reachedBy!.add(groupId);
@@ -1247,6 +1299,18 @@ export function computeDeliveredCoverage(
     const keys = [...tallies.keys()].filter((key) => keepLine(figuresByKey.get(key)!, tallies.get(key)!)).sort(keyOrder);
     if (group.kind === 'TEACHING_GROUP' && keys.length === 0) continue;
     const statPupils = (membersOf.get(group.id) ?? []).filter((p) => group.kind === 'TEACHING_GROUP' || p.home.id === group.id);
+    /**
+     * A line's pupils: the group's, less those THE RULE takes off the
+     * group's own lessons in the line's subject. 7A's Svenska line is not
+     * SvA7's pupils' — counted there at nothing, they sat among `below`, and
+     * a 7A mostly in SvA7 had a median of nothing, which kept
+     * TIMPLAN_PUPIL_NOTHING_DELIVERED from ever naming one of the rest. The
+     * group's pupilCount stays the group's.
+     */
+    const linePupils = (key: string): Pupil[] =>
+      key === NONE || replaced.size === 0
+        ? statPupils
+        : statPupils.filter((p) => !leaves(p, key.slice('subject:'.length), [group.id]));
     const totals = { published: 0, delivered: 0, lost: 0, credited: 0, projected: 0, plannedYear: 0, unrecorded: 0 };
     const lostByCause: Partial<Record<LostCause, number>> = {};
     let teacherless = 0;
@@ -1267,15 +1331,16 @@ export function computeDeliveredCoverage(
       }
       teacherless += figures.lostByCause.teacherless ?? 0;
       const line: DeliveredLineSummary | DeliveredLineDetail = summaryOf(key, figures);
-      if (includePupils && statPupils.length > 0) {
-        const delivered = statPupils.map((p) => pupilFigures.get(p.id)?.get(key)?.delivered ?? 0);
-        const deltas = statPupils.map((p) => pupilFigures.get(p.id)?.get(key)?.delta ?? 0);
+      const population = linePupils(key);
+      if (includePupils && population.length > 0) {
+        const delivered = population.map((p) => pupilFigures.get(p.id)?.get(key)?.delivered ?? 0);
+        const deltas = population.map((p) => pupilFigures.get(p.id)?.get(key)?.delta ?? 0);
         const stats = statsOf(delivered, delivered.filter((value) => value < figures.delivered).length);
         if (group.kind === 'CLASS') classMedian.set(`${group.id}|${key}`, stats.median);
         line.pupils = {
           delivered: stats,
           projectedDelta: statsOf(deltas, deltas.filter((value) => value < 0).length),
-          belowPlanned: statPupils.filter((p) => pupilFigures.get(p.id)?.get(key)?.status === 'SHORT').length,
+          belowPlanned: population.filter((p) => pupilFigures.get(p.id)?.get(key)?.status === 'SHORT').length,
           nothingDelivered: 0,
         };
       }

@@ -47,8 +47,12 @@ export interface TargetSources {
   attachments: { gradeLevel: number; localTimplanId: string }[];
   plans: PlannedPlan[];
   subjects: Pick<Subject, "id" | "name" | "nationalCode" | "countsTowardTimplan">[];
-  /** The picked läsår's groups only: two years may both own a "7A". */
-  groups: Pick<StudentGroup, "id" | "name" | "kind" | "gradeLevel">[];
+  /**
+   * The picked läsår's groups only: two years may both own a "7A". With
+   * replacesSubjectId (useGroups selects it), so a pupil of an ersättande
+   * grupp is judged here as the gateway judges them.
+   */
+  groups: Pick<StudentGroup, "id" | "name" | "kind" | "gradeLevel" | "replacesSubjectId">[];
   requirements: Pick<
     TeachingRequirement,
     | "id"
@@ -96,6 +100,9 @@ export function targetInput(sources: TargetSources): PlannedCoverageInput {
       name: group.name,
       kind: group.kind,
       gradeLevel: group.gradeLevel,
+      // Only on a group that replaces a subject, as the gateway's reader
+      // hands it in: every other group reaches the module as before.
+      ...(group.replacesSubjectId ? { replacesSubjectId: group.replacesSubjectId } : {}),
     })),
     requirements: sources.requirements.map(toPlannedRequirement),
     pupils: sources.people
@@ -373,7 +380,9 @@ export type DraftHint =
        * Teaching groups that carry the line for at least half the class
        * WITHOUT a class post in this subject — the cell the matrix draws
        * "i grupp". Non-empty means a class post would give those pupils the
-       * time twice, whatever the fields say.
+       * time twice, whatever the fields say. A group replacing this very
+       * subject is not named: its pupils leave the class's post in it
+       * (lib/replacing-groups.ts), so the post gives them nothing twice.
        */
       carriedBy: string[];
     };
@@ -484,6 +493,11 @@ export function draftHint(
     minutesPerLesson: valid?.minutes ?? 0,
     lessonLengths: valid?.lengths ?? [],
     partnerSubjectIds: line.subjectIds.filter((id) => id !== subjectId),
-    carriedBy: carried?.status === "PUPILS" ? carried.teachingGroupIds : [],
+    carriedBy:
+      carried?.status === "PUPILS"
+        ? carried.teachingGroupIds.filter(
+            (id) => teaching.find((entry) => entry.id === id)?.replacesSubjectId !== subjectId,
+          )
+        : [],
   };
 }

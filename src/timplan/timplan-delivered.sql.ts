@@ -16,7 +16,8 @@ import type {
  *      is the stronger statement, and a future "lesson held" mark must not
  *      make delivered minutes vanish);
  *   3. it has at least one CalendarLessonTeachers row — a substitute counts;
- *   4. the pupil is on its roster: its own group, an extra group, or named;
+ *   4. the pupil is on its roster: its own group, an extra group, or named —
+ *      less a pupil an ersättande grupp takes off it (common/replacing-groups.ts);
  *   5. its subject counts toward the timplan (Subjects.countsTowardTimplan).
  *
  * Plus the school's credits in scope dated before the school's today
@@ -26,7 +27,8 @@ import type {
  * The CASE below IS that definition, every other bucket is what the rest of a
  * published lesson became, and no TypeScript re-classifies a row. Rule 4 is
  * the one rule not in SQL: the statements return each lesson's audience, and
- * the pure module puts a pupil on it (home class and teaching groups).
+ * the pure module puts a pupil on it (home class and teaching groups, and the
+ * replacing groups' rule over the same audience).
  *
  *   DELIVERED                  past, SCHEDULED/COMPLETED, a teacher row
  *   TEACHERLESS                past, SCHEDULED/COMPLETED, no teacher row — lost

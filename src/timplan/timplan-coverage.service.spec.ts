@@ -10,7 +10,7 @@ import {
 import { recordedReads } from '../../test/utils/recorded-reads';
 import type { PlannedVerdict, PlannedVerdictCode } from '../common/timplan-planned';
 import type { PrismaService } from '../database/prisma.service';
-import { TimplanCoverageService, pupilsNamedBy } from './timplan-coverage.service';
+import { TimplanCoverageService, pupilsNamedBy, readPlannedRows } from './timplan-coverage.service';
 import { describePlannedVerdict } from './timplan-planned-messages';
 import type { ScheduledVerdict, ScheduledVerdictCode } from '../common/timplan-scheduled';
 import { describeScheduledVerdict } from './timplan-scheduled-messages';
@@ -160,6 +160,56 @@ describe('TimplanCoverageService', () => {
     expect(tx.teachingRequirement.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { academicYearId: YEAR_ID } }),
     );
+  });
+
+  it('reads which groups replace a subject and hands it on with those alone: a pupil of Ma 8 anpassad is judged on its Matematik, not 8A’s', async () => {
+    // Ersättande grupper (common/replacing-groups.ts): Ma 8 anpassad replaces
+    // Matematik, so Anna gets its 2 × 60 instead of 8A's 3 × 60 — short of
+    // her own, where both together read as the same subject planned twice.
+    const ADAPTED = 'c3c3c3c3-c3c3-4c3c-8c3c-c3c3c3c3c3c3';
+    givenTheYear();
+    tx.studentGroup.findMany.mockResolvedValue([
+      { id: CLASS_ID, name: '8A', kind: 'CLASS', gradeLevel: 8, replacesSubjectId: null },
+      { id: GROUP_ID, name: 'Spanska 8', kind: 'TEACHING_GROUP', gradeLevel: null, replacesSubjectId: null },
+      { id: ADAPTED, name: 'Ma 8 anpassad', kind: 'TEACHING_GROUP', gradeLevel: null, replacesSubjectId: MA },
+    ]);
+    const post = (id: string, studentGroupId: string, lessonsPerWeek: number) => ({
+      id,
+      studentGroupId,
+      subjectId: MA,
+      lessonsPerWeek,
+      minutesPerLesson: 60,
+      recurrence: 'ALL_WEEKS',
+      startDate: null,
+      endDate: null,
+    });
+    tx.teachingRequirement.findMany.mockResolvedValue([
+      post('f1f1f1f1-f1f1-4f1f-8f1f-f1f1f1f1f1f1', CLASS_ID, 3),
+      post('f3f3f3f3-f3f3-4f3f-8f3f-f3f3f3f3f3f3', ADAPTED, 2),
+    ]);
+    tx.studentGroupMember.findMany.mockResolvedValue([{ studentId: ANNA, studentGroupId: ADAPTED }]);
+
+    const rows = await readPlannedRows(tx as never, YEAR_ID);
+    expect(tx.studentGroup.findMany).toHaveBeenCalledWith({
+      where: { academicYearId: YEAR_ID },
+      select: { id: true, name: true, kind: true, gradeLevel: true, replacesSubjectId: true },
+    });
+    // Only the replacing group carries the field: the others reach the
+    // modules exactly as before.
+    expect(rows.groups).toEqual([
+      { id: CLASS_ID, name: '8A', kind: 'CLASS', gradeLevel: 8 },
+      { id: GROUP_ID, name: 'Spanska 8', kind: 'TEACHING_GROUP', gradeLevel: null },
+      { id: ADAPTED, name: 'Ma 8 anpassad', kind: 'TEACHING_GROUP', gradeLevel: null, replacesSubjectId: MA },
+    ]);
+
+    const answer = await service.planned({ academicYearId: YEAR_ID }, testUser());
+    expect(answer.verdicts.filter((verdict) => verdict.pupilId === ANNA)).toEqual([
+      expect.objectContaining({
+        code: 'TIMPLAN_PUPIL_UNDERPLANNED',
+        subjectIds: [MA],
+        message: 'En elev i 8A får 120 min/vecka Matematik, 60 under målet 180 min/vecka för åk 8.',
+      }),
+    ]);
   });
 
   describe('a past year with class history (timplan P4)', () => {
