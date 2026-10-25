@@ -56,13 +56,25 @@
 -- PostgREST, filtered by date alone: RLS is the only filter, so this is where
 -- the week must change, and every app version already in a pupil's pocket
 -- follows. A new helper, STABLE SECURITY DEFINER with search_path pinned,
--- answers '{}' for anyone who is not a STUDENT:
+-- answers '{}' for anyone who is not a STUDENT, and for a pupil in no
+-- replacing group after one indexed lookup:
 --
 --   app.current_student_replaced_lesson_ids(): the calendar lessons of the
 --   caller's school that carry the caller's home class or one of their
 --   teaching groups (own or extra group) and that the rule takes the caller
 --   off. Bounded by the caller's own groups: about a class's svenska per
 --   retained läsår, the size of #193's joined-lessons helper.
+--
+-- PL/pgSQL rather than SQL, unlike #193's helpers: each of the three arms
+-- asks it in an initplan of its own, so a pupil's read calls it three times,
+-- and a SQL function's statement is planned anew at every call. PL/pgSQL
+-- keeps its plans for the session, and returns early for a pupil in no
+-- replacing group. Measured (scripts/bench/replacing-arms.ts, scale a, PG17,
+-- paired): the SQL version cost a pupil in no replacing group +126 % on
+-- their own week (2.1 → 4.8 ms), which is every pupil of a school that uses
+-- none. This version, the same run's setup (61 paired rounds, 792 lessons in
+-- the week): a teacher's week +2.2 %, an administrator's +3.4 %, a pupil in no
+-- replacing group 2.15 → 2.40 ms, a pupil in one 2.23 → 6.52 ms.
 --
 -- Three arms gain, after their old predicate, verbatim,
 --
@@ -93,7 +105,8 @@
 -- condition is a row filter after each arm's own: the student and teaching
 -- group arms scan on "studentGroupId" (nobody's for staff), and the
 -- participant arm's row filter is reached after the staff arm has decided a
--- teacher's or an administrator's row. Measured paired A/B, see the PR.
+-- teacher's or an administrator's row. Measured paired A/B below, within the
+-- 5 % staff reads are held to; the pupil's own week pays, as for #193.
 --
 -- ## The guardian's week (one arm added)
 --
@@ -242,53 +255,71 @@ COMMENT ON COLUMN "StudentGroups"."replacesSubjectId" IS
 -- ---------------------------------------------------------------------------
 
 CREATE FUNCTION app.current_student_replaced_lesson_ids() RETURNS uuid[]
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
-  WITH me AS (
-    SELECT (select app.current_user_id()) AS id,
-           (select app.current_school_id()) AS school,
-           (select app.current_user_group_id()) AS home
-     WHERE (select app.current_user_role()) = 'STUDENT'
-  ),
-  -- The caller's replacing groups, and the subject each replaces.
-  replacing AS (
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+DECLARE
+  me uuid;
+  school uuid;
+  home uuid;
+  hidden uuid[];
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' THEN
+    RETURN '{}'::uuid[];
+  END IF;
+  me := app.current_user_id();
+  school := app.current_school_id();
+  IF me IS NULL OR school IS NULL THEN
+    RETURN '{}'::uuid[];
+  END IF;
+  -- No replacing group of theirs: nothing is hidden. Every pupil of a school
+  -- that uses none returns here, on one cached index lookup.
+  IF NOT EXISTS (SELECT 1
+                   FROM "StudentGroupMembers" m
+                   JOIN "StudentGroups" g ON g."id" = m."studentGroupId" AND g."schoolId" = school
+                  WHERE m."studentId" = me AND m."schoolId" = school AND g."replacesSubjectId" IS NOT NULL) THEN
+    RETURN '{}'::uuid[];
+  END IF;
+  home := app.current_user_group_id();
+  WITH replacing AS (
+    -- The caller's replacing groups, and the subject each replaces.
     SELECT g."id", g."replacesSubjectId" AS subject
-      FROM me
-      JOIN "StudentGroupMembers" m ON m."studentId" = me.id AND m."schoolId" = me.school
-      JOIN "StudentGroups" g ON g."id" = m."studentGroupId" AND g."schoolId" = me.school
-     WHERE g."replacesSubjectId" IS NOT NULL
+      FROM "StudentGroupMembers" m
+      JOIN "StudentGroups" g ON g."id" = m."studentGroupId" AND g."schoolId" = school
+     WHERE m."studentId" = me AND m."schoolId" = school AND g."replacesSubjectId" IS NOT NULL
   ),
-  -- The groups the caller reaches a lesson through: the home class and every
-  -- teaching group. Read only when the caller replaces something.
   mine AS (
-    SELECT me.home AS id FROM me WHERE me.home IS NOT NULL AND EXISTS (SELECT 1 FROM replacing)
+    -- The groups the caller reaches a lesson through: the home class and
+    -- every teaching group.
+    SELECT home AS id WHERE home IS NOT NULL
     UNION
-    SELECT m."studentGroupId"
-      FROM me JOIN "StudentGroupMembers" m ON m."studentId" = me.id AND m."schoolId" = me.school
-     WHERE EXISTS (SELECT 1 FROM replacing)
+    SELECT m."studentGroupId" FROM "StudentGroupMembers" m WHERE m."studentId" = me AND m."schoolId" = school
   ),
-  -- Their lessons in a replaced subject, by the lesson's own group or an
-  -- extra one.
   reached AS (
+    -- Their lessons in a replaced subject, by the lesson's own group or an
+    -- extra one.
     SELECT cl."id", cl."subjectId", cl."studentGroupId"
-      FROM me JOIN "CalendarLessons" cl ON cl."schoolId" = me.school
-     WHERE cl."studentGroupId" IN (SELECT id FROM mine)
+      FROM "CalendarLessons" cl
+     WHERE cl."schoolId" = school
+       AND cl."studentGroupId" IN (SELECT id FROM mine)
        AND cl."subjectId" IN (SELECT subject FROM replacing)
     UNION
     SELECT cl."id", cl."subjectId", cl."studentGroupId"
-      FROM me
-      JOIN "CalendarLessonGroups" x ON x."schoolId" = me.school AND x."studentGroupId" IN (SELECT id FROM mine)
-      JOIN "CalendarLessons" cl ON cl."id" = x."calendarLessonId" AND cl."schoolId" = me.school
-     WHERE cl."subjectId" IN (SELECT subject FROM replacing)
+      FROM "CalendarLessonGroups" x
+      JOIN "CalendarLessons" cl ON cl."id" = x."calendarLessonId" AND cl."schoolId" = school
+     WHERE x."schoolId" = school
+       AND x."studentGroupId" IN (SELECT id FROM mine)
+       AND cl."subjectId" IN (SELECT subject FROM replacing)
   )
-  SELECT coalesce(array_agg(DISTINCT r."id"), '{}'::uuid[])
-    FROM reached r, me
+  SELECT coalesce(array_agg(DISTINCT r."id"), '{}'::uuid[]) INTO hidden
+    FROM reached r
    WHERE EXISTS (SELECT 1 FROM replacing g
                   WHERE g.subject = r."subjectId"
                     AND g."id" <> r."studentGroupId"
                     AND NOT EXISTS (SELECT 1 FROM "CalendarLessonGroups" x
                                      WHERE x."calendarLessonId" = r."id" AND x."studentGroupId" = g."id"))
      AND NOT EXISTS (SELECT 1 FROM "CalendarLessonStudents" s
-                      WHERE s."calendarLessonId" = r."id" AND s."studentId" = me.id)
+                      WHERE s."calendarLessonId" = r."id" AND s."studentId" = me);
+  RETURN hidden;
+END
 $$;
 
 COMMENT ON FUNCTION app.current_student_replaced_lesson_ids() IS
