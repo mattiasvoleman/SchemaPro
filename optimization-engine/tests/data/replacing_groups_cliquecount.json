@@ -1,0 +1,190 @@
+{
+ "settings": {
+  "SCHEDULE_DAYS": "1",
+  "SCHEDULE_DAY_START_MINUTES": 480,
+  "SCHEDULE_DAY_END_MINUTES": 600
+ },
+ "on": {
+  "requestId": "574c1b20-ec66-41c6-b700-6b056e27f16f",
+  "academicYearId": "1c5d1794-2949-4bf6-b203-57bd74d58317",
+  "requirements": [
+   {
+    "id": "96f1d131-8950-4fba-be3e-b23dd49d0526",
+    "subjectId": "a06ac90b-e776-46fc-a0b8-09c120c05162",
+    "studentGroupId": "61bcf811-205c-441b-8bdf-ecf98d86b022",
+    "teacherId": "350f8643-7054-4d8b-911c-bde07236c6c0",
+    "lessonsPerWeek": 1,
+    "minutesPerLesson": 60,
+    "studentGroupSize": 4
+   },
+   {
+    "id": "e400373d-65e2-4aec-83c4-3ae1d8d0a487",
+    "subjectId": "6ff563ac-3681-49e2-a4e9-052748ea4fa6",
+    "studentGroupId": "61bcf811-205c-441b-8bdf-ecf98d86b022",
+    "teacherId": "e4ca8662-227e-4b95-b709-11d170e6136f",
+    "lessonsPerWeek": 1,
+    "minutesPerLesson": 60,
+    "studentGroupSize": 4,
+    "pupilGroupId": "ab2c25d1-3fc2-4f09-866f-61172ca7e1a5"
+   },
+   {
+    "id": "97d3b7c3-8a89-4a1c-aed3-6b8696c15ae8",
+    "subjectId": "1e0adc86-d4b1-4fa5-9236-e81449058f7f",
+    "studentGroupId": "0df87c39-e28a-4f99-991e-5dbaccf70096",
+    "teacherId": "38892403-4540-4005-9319-d586f32bdd24",
+    "lessonsPerWeek": 1,
+    "minutesPerLesson": 60,
+    "studentGroupSize": 4
+   },
+   {
+    "id": "489d2ca5-e767-4506-b30d-ea1862a01341",
+    "subjectId": "cedba40f-5f86-4b45-b39d-d35e5aed0a33",
+    "studentGroupId": "f62701e8-fbcf-40dd-abd1-c8a4dd03e8fd",
+    "teacherId": "12b4152d-3668-4b04-bd2a-c71a3686f273",
+    "lessonsPerWeek": 1,
+    "minutesPerLesson": 60,
+    "studentGroupSize": 4
+   },
+   {
+    "id": "93fe41a2-852f-4eda-b6de-3d3c4d3fc673",
+    "subjectId": "99a235e7-3c89-42a8-83b3-3c3c5136905b",
+    "studentGroupId": "8b6ec092-0375-45bb-8cdc-664f29b750e5",
+    "teacherId": "415474be-4aca-4b5a-b23b-053886c271d8",
+    "lessonsPerWeek": 1,
+    "minutesPerLesson": 60,
+    "studentGroupSize": 4
+   }
+  ],
+  "groups": [
+   {
+    "id": "61bcf811-205c-441b-8bdf-ecf98d86b022",
+    "lunchHeadcount": 4
+   }
+  ],
+  "rooms": [
+   {
+    "id": "f52f6f56-3b4c-413a-bc8e-811968cdec52",
+    "capacity": 30
+   },
+   {
+    "id": "e615369c-2597-4d51-990a-99f6baf3606e",
+    "capacity": 30
+   }
+  ],
+  "groupConflicts": [
+   [
+    "61bcf811-205c-441b-8bdf-ecf98d86b022",
+    "0df87c39-e28a-4f99-991e-5dbaccf70096"
+   ],
+   [
+    "61bcf811-205c-441b-8bdf-ecf98d86b022",
+    "f62701e8-fbcf-40dd-abd1-c8a4dd03e8fd"
+   ],
+   [
+    "61bcf811-205c-441b-8bdf-ecf98d86b022",
+    "8b6ec092-0375-45bb-8cdc-664f29b750e5"
+   ],
+   [
+    "f62701e8-fbcf-40dd-abd1-c8a4dd03e8fd",
+    "8b6ec092-0375-45bb-8cdc-664f29b750e5"
+   ],
+   [
+    "61bcf811-205c-441b-8bdf-ecf98d86b022",
+    "ab2c25d1-3fc2-4f09-866f-61172ca7e1a5"
+   ],
+   [
+    "ab2c25d1-3fc2-4f09-866f-61172ca7e1a5",
+    "0df87c39-e28a-4f99-991e-5dbaccf70096"
+   ],
+   [
+    "ab2c25d1-3fc2-4f09-866f-61172ca7e1a5",
+    "f62701e8-fbcf-40dd-abd1-c8a4dd03e8fd"
+   ]
+  ]
+ },
+ "off": {
+  "requestId": "574c1b20-ec66-41c6-b700-6b056e27f16f",
+  "academicYearId": "1c5d1794-2949-4bf6-b203-57bd74d58317",
+  "requirements": [
+   {
+    "id": "96f1d131-8950-4fba-be3e-b23dd49d0526",
+    "subjectId": "a06ac90b-e776-46fc-a0b8-09c120c05162",
+    "studentGroupId": "61bcf811-205c-441b-8bdf-ecf98d86b022",
+    "teacherId": "350f8643-7054-4d8b-911c-bde07236c6c0",
+    "lessonsPerWeek": 1,
+    "minutesPerLesson": 60,
+    "studentGroupSize": 4
+   },
+   {
+    "id": "e400373d-65e2-4aec-83c4-3ae1d8d0a487",
+    "subjectId": "6ff563ac-3681-49e2-a4e9-052748ea4fa6",
+    "studentGroupId": "61bcf811-205c-441b-8bdf-ecf98d86b022",
+    "teacherId": "e4ca8662-227e-4b95-b709-11d170e6136f",
+    "lessonsPerWeek": 1,
+    "minutesPerLesson": 60,
+    "studentGroupSize": 4
+   },
+   {
+    "id": "97d3b7c3-8a89-4a1c-aed3-6b8696c15ae8",
+    "subjectId": "1e0adc86-d4b1-4fa5-9236-e81449058f7f",
+    "studentGroupId": "0df87c39-e28a-4f99-991e-5dbaccf70096",
+    "teacherId": "38892403-4540-4005-9319-d586f32bdd24",
+    "lessonsPerWeek": 1,
+    "minutesPerLesson": 60,
+    "studentGroupSize": 4
+   },
+   {
+    "id": "489d2ca5-e767-4506-b30d-ea1862a01341",
+    "subjectId": "cedba40f-5f86-4b45-b39d-d35e5aed0a33",
+    "studentGroupId": "f62701e8-fbcf-40dd-abd1-c8a4dd03e8fd",
+    "teacherId": "12b4152d-3668-4b04-bd2a-c71a3686f273",
+    "lessonsPerWeek": 1,
+    "minutesPerLesson": 60,
+    "studentGroupSize": 4
+   },
+   {
+    "id": "93fe41a2-852f-4eda-b6de-3d3c4d3fc673",
+    "subjectId": "99a235e7-3c89-42a8-83b3-3c3c5136905b",
+    "studentGroupId": "8b6ec092-0375-45bb-8cdc-664f29b750e5",
+    "teacherId": "415474be-4aca-4b5a-b23b-053886c271d8",
+    "lessonsPerWeek": 1,
+    "minutesPerLesson": 60,
+    "studentGroupSize": 4
+   }
+  ],
+  "groups": [
+   {
+    "id": "61bcf811-205c-441b-8bdf-ecf98d86b022",
+    "lunchHeadcount": 4
+   }
+  ],
+  "rooms": [
+   {
+    "id": "f52f6f56-3b4c-413a-bc8e-811968cdec52",
+    "capacity": 30
+   },
+   {
+    "id": "e615369c-2597-4d51-990a-99f6baf3606e",
+    "capacity": 30
+   }
+  ],
+  "groupConflicts": [
+   [
+    "61bcf811-205c-441b-8bdf-ecf98d86b022",
+    "0df87c39-e28a-4f99-991e-5dbaccf70096"
+   ],
+   [
+    "61bcf811-205c-441b-8bdf-ecf98d86b022",
+    "f62701e8-fbcf-40dd-abd1-c8a4dd03e8fd"
+   ],
+   [
+    "61bcf811-205c-441b-8bdf-ecf98d86b022",
+    "8b6ec092-0375-45bb-8cdc-664f29b750e5"
+   ],
+   [
+    "f62701e8-fbcf-40dd-abd1-c8a4dd03e8fd",
+    "8b6ec092-0375-45bb-8cdc-664f29b750e5"
+   ]
+  ]
+ }
+}
