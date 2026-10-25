@@ -8,8 +8,10 @@
  * The school: 7A (Alva, Bo, Cim), 7B (Dag, Eva), 7C (Fia). SvA7 replaces
  * Svenska and holds Alva and Dag; EnS replaces Engelska and holds Alva; Ma7
  * (a nivågrupp) holds Bo and Eva; Sv7n (a nivågrupp in svenska) holds Alva
- * and Cim. The pairs are the groups that share a pupil, as every reader
- * computes them from the rosters.
+ * and Cim. Last läsår's SvA6 replaced Svenska and still holds Cim (the
+ * rollover keeps a membership), and 6A's svenska was that year's. The pairs
+ * are the groups that share a pupil, as every reader computes them from the
+ * rosters.
  */
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -21,21 +23,24 @@ import {
   replacementsOf,
   replacingBySubject,
   replacingGroupsOfNamed,
+  yearsOf,
 } from '../src/common/replacing-groups';
 
 const groups = [
-  { id: '7A', replacesSubjectId: null },
-  { id: '7B', replacesSubjectId: null },
-  { id: '7C', replacesSubjectId: null },
-  { id: 'SvA7', replacesSubjectId: 'SV' },
-  { id: 'EnS', replacesSubjectId: 'EN' },
-  { id: 'Ma7', replacesSubjectId: null },
-  { id: 'Sv7n', replacesSubjectId: null },
+  { id: '7A', replacesSubjectId: null, academicYearId: 'y26' },
+  { id: '7B', replacesSubjectId: null, academicYearId: 'y26' },
+  { id: '7C', replacesSubjectId: null, academicYearId: 'y26' },
+  { id: 'SvA7', replacesSubjectId: 'SV', academicYearId: 'y26' },
+  { id: 'EnS', replacesSubjectId: 'EN', academicYearId: 'y26' },
+  { id: 'Ma7', replacesSubjectId: null, academicYearId: 'y26' },
+  { id: 'Sv7n', replacesSubjectId: null, academicYearId: 'y26' },
+  { id: 'SvA6', replacesSubjectId: 'SV', academicYearId: 'y25' },
+  { id: '6A', replacesSubjectId: null, academicYearId: 'y25' },
 ];
 const groupsOfPupil: Record<string, string[]> = {
   Alva: ['7A', 'SvA7', 'EnS', 'Sv7n'],
   Bo: ['7A', 'Ma7'],
-  Cim: ['7A', 'Sv7n'],
+  Cim: ['7A', 'Sv7n', 'SvA6', '6A'],
   Dag: ['7B', 'SvA7'],
   Eva: ['7B', 'Ma7'],
   Fia: ['7C'],
@@ -59,9 +64,12 @@ const lessons = [
   { id: 'Sv7n-sv', subjectId: 'SV', groupIds: ['Sv7n'], named: [] },
   { id: '7C-sv', subjectId: 'SV', groupIds: ['7C'], named: [] },
   { id: 'Ma7-ma', subjectId: 'MA', groupIds: ['Ma7'], named: [] },
+  { id: '6A-sv', subjectId: 'SV', groupIds: ['6A'], named: [], academicYearId: 'y25' },
 ];
+for (const lesson of lessons) (lesson as { academicYearId?: string }).academicYearId ??= 'y26';
 
 const replaced = replacedSubjectOf(groups);
+const yearOf = yearsOf(groups);
 const bySubject = replacingBySubject(replaced);
 const share = new Set(pairs.map(([a, b]) => `${a} ${b}`));
 const shares = (a: string, b: string) => share.has(a < b ? `${a} ${b}` : `${b} ${a}`);
@@ -73,13 +81,19 @@ const leaves = lessons.flatMap((lesson) =>
     .map(([pupil, held]) => ({
       lesson: lesson.id,
       pupil,
-      leaves: leavesLesson(replacementsOf(held, replaced), lesson, lesson.named.includes(pupil)),
+      leaves: leavesLesson(replacementsOf(held, replaced, yearOf), lesson, lesson.named.includes(pupil)),
     })),
 );
 const keys = Object.fromEntries(
   lessons.map((lesson) => [
     lesson.id,
-    pupilKeysOf(lesson, bySubject, shares, replacingGroupsOfNamed(lesson.named, (pupil) => groupsOfPupil[pupil] ?? [], replaced)),
+    pupilKeysOf(
+      lesson,
+      bySubject,
+      shares,
+      replacingGroupsOfNamed(lesson.named, (pupil) => groupsOfPupil[pupil] ?? [], replaced),
+      yearOf,
+    ),
   ]),
 );
 const added = replacementPairs(Object.values(keys).flat(), partnersOf);

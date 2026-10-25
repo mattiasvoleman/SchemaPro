@@ -8,9 +8,9 @@
  *
  * THE RULE. A pupil is not on a lesson when they are not named on it and
  * they are a member of a replacing group R with R's subject = the lesson's
- * subject, and R is not one of the lesson's groups (its own or an extra one).
- * Otherwise the reader's own rule decides (home class, teaching groups, named
- * pupils).
+ * subject, R in the läsår of the lesson's own group, and R not one of the
+ * lesson's groups (its own or an extra one). Otherwise the reader's own rule
+ * decides (home class, teaching groups, named pupils).
  *
  *  - An extra group (CalendarLessonGroups, #193) puts its pupils ON a lesson;
  *    a replacing group takes its pupils OFF its subject's other lessons,
@@ -18,7 +18,14 @@
  *    subject. The two combine: SvA7 added to 7B's svenska puts its pupils on
  *    that lesson, because SvA7 is then one of the lesson's groups.
  *  - A named pupil always stays: the explicit beats the derived.
- *  - No dates: StudentGroupMembers carries none.
+ *  - No dates within a läsår: StudentGroupMembers carries none. But the
+ *    läsår holds: the rollover keeps last year's memberships as history, and
+ *    last year's SvA7 still replaces Svenska, so a pupil who left SvA would
+ *    otherwise leave this year's svenska too. A reader whose groups all
+ *    belong to one läsår (the engine's payload, the publish check, the
+ *    timplan) reads only that year's groups; one that reads across years
+ *    passes the groups' years (`yearOf`) and each lesson's
+ *    (`ReplacedScope.academicYearId`), and the rule compares them.
  *
  * Two levels, one rule:
  *
@@ -42,16 +49,18 @@
  * src/common/__fixtures__/replacing-groups-cases.json.
  */
 
-/** One replacing group a pupil is in, and the subject it replaces. */
+/** One replacing group a pupil is in, the subject it replaces, and its läsår when known. */
 export interface Replacement {
   groupId: string;
   subjectId: string;
+  academicYearId?: string;
 }
 
 /** A group as the rule reads it. */
 export interface ReplacingGroupRow {
   id: string;
   replacesSubjectId?: string | null;
+  academicYearId?: string | null;
 }
 
 /** A lesson (or a timplanspost, or a credit) as the rule reads it. */
@@ -59,6 +68,26 @@ export interface ReplacedScope {
   subjectId: string;
   /** Its own group and every extra group. */
   groupIds: readonly string[];
+  /**
+   * The läsår of its own group, for a reader whose groups span years; a
+   * replacing group of another läsår takes nobody off it. Absent: every
+   * replacing group the reader passes is of the lesson's year.
+   */
+  academicYearId?: string;
+}
+
+/** groupId -> its läsår, for the groups that carry one. */
+export function yearsOf(groups: Iterable<ReplacingGroupRow>): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const group of groups) if (group.academicYearId) out.set(group.id, group.academicYearId);
+  return out;
+}
+
+/** Is a replacing group of `groupId` in the scope's läsår (or is either unknown)? */
+function sameYear(groupId: string, scope: ReplacedScope, yearOf?: ReadonlyMap<string, string>): boolean {
+  if (scope.academicYearId === undefined || !yearOf) return true;
+  const year = yearOf.get(groupId);
+  return year === undefined || year === scope.academicYearId;
 }
 
 /** groupId -> the subject it replaces, for the groups that replace one. */
@@ -80,12 +109,18 @@ export function replacingBySubject(replaced: ReadonlyMap<string, string>): Map<s
   return out;
 }
 
-/** A pupil's replacements: those of their groups that replace a subject. */
-export function replacementsOf(groupIds: Iterable<string>, replaced: ReadonlyMap<string, string>): Replacement[] {
+/** A pupil's replacements: those of their groups that replace a subject, with their läsår when `yearOf` knows it. */
+export function replacementsOf(
+  groupIds: Iterable<string>,
+  replaced: ReadonlyMap<string, string>,
+  yearOf?: ReadonlyMap<string, string>,
+): Replacement[] {
   const out: Replacement[] = [];
   for (const groupId of new Set(groupIds)) {
     const subjectId = replaced.get(groupId);
-    if (subjectId) out.push({ groupId, subjectId });
+    if (!subjectId) continue;
+    const academicYearId = yearOf?.get(groupId);
+    out.push(academicYearId ? { groupId, subjectId, academicYearId } : { groupId, subjectId });
   }
   return out;
 }
@@ -97,7 +132,12 @@ export function replacementsOf(groupIds: Iterable<string>, replaced: ReadonlyMap
 export function leavesLesson(replacements: readonly Replacement[], scope: ReplacedScope, named = false): boolean {
   if (named || replacements.length === 0) return false;
   return replacements.some(
-    (replacement) => replacement.subjectId === scope.subjectId && !scope.groupIds.includes(replacement.groupId),
+    (replacement) =>
+      replacement.subjectId === scope.subjectId &&
+      (replacement.academicYearId === undefined ||
+        scope.academicYearId === undefined ||
+        replacement.academicYearId === scope.academicYearId) &&
+      !scope.groupIds.includes(replacement.groupId),
   );
 }
 
@@ -112,9 +152,12 @@ export function replacedPupils(
   named: ReadonlySet<string>,
   bySubject: ReadonlyMap<string, readonly string[]>,
   membersOf: ReadonlyMap<string, ReadonlySet<string>>,
+  yearOf?: ReadonlyMap<string, string>,
 ): Set<string> {
   const out = new Set<string>();
-  const replacing = (bySubject.get(scope.subjectId) ?? []).filter((groupId) => !scope.groupIds.includes(groupId));
+  const replacing = (bySubject.get(scope.subjectId) ?? []).filter(
+    (groupId) => !scope.groupIds.includes(groupId) && sameYear(groupId, scope, yearOf),
+  );
   if (replacing.length === 0) return out;
   for (const pupil of roster) {
     if (named.has(pupil)) continue;
@@ -163,10 +206,15 @@ export function pupilKeyOf(
   bySubject: ReadonlyMap<string, readonly string[]>,
   shares: (a: string, b: string) => boolean,
   namedIn: readonly string[] = [],
+  yearOf?: ReadonlyMap<string, string>,
 ): string {
   const replacing = (bySubject.get(scope.subjectId) ?? []).filter(
     (other) =>
-      other !== groupId && !scope.groupIds.includes(other) && !namedIn.includes(other) && shares(groupId, other),
+      other !== groupId &&
+      !scope.groupIds.includes(other) &&
+      !namedIn.includes(other) &&
+      sameYear(other, scope, yearOf) &&
+      shares(groupId, other),
   );
   return replacing.length === 0 ? groupId : derivedKey(groupId, replacing);
 }
@@ -177,8 +225,9 @@ export function pupilKeysOf(
   bySubject: ReadonlyMap<string, readonly string[]>,
   shares: (a: string, b: string) => boolean,
   namedIn: readonly string[] = [],
+  yearOf?: ReadonlyMap<string, string>,
 ): string[] {
-  return scope.groupIds.map((groupId) => pupilKeyOf(groupId, scope, bySubject, shares, namedIn));
+  return scope.groupIds.map((groupId) => pupilKeyOf(groupId, scope, bySubject, shares, namedIn, yearOf));
 }
 
 /** The replacing groups the named pupils of a lesson are in: pupilKeyOf's `namedIn`. */

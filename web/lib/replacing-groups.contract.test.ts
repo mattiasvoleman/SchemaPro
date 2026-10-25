@@ -8,6 +8,7 @@ import {
   replacementsOf,
   replacingBySubject,
   replacingGroupsOfNamed,
+  yearsOf,
 } from "./replacing-groups";
 
 /**
@@ -21,10 +22,10 @@ import {
  */
 
 interface Fixture {
-  groups: { id: string; replacesSubjectId: string | null }[];
+  groups: { id: string; replacesSubjectId: string | null; academicYearId: string }[];
   groupsOfPupil: Record<string, string[]>;
   pairs: [string, string][];
-  lessons: { id: string; subjectId: string; groupIds: string[]; named: string[] }[];
+  lessons: { id: string; subjectId: string; groupIds: string[]; named: string[]; academicYearId: string }[];
   expected: {
     leaves: { lesson: string; pupil: string; leaves: boolean }[];
     keys: Record<string, string[]>;
@@ -34,6 +35,7 @@ interface Fixture {
 
 const f = fixture as unknown as Fixture;
 const replaced = replacedSubjectOf(f.groups);
+const yearOf = yearsOf(f.groups);
 const bySubject = replacingBySubject(replaced);
 const pairs = new Set(f.pairs.map(([a, b]) => `${a} ${b}`));
 const shares = (a: string, b: string) => pairs.has(a < b ? `${a} ${b}` : `${b} ${a}`);
@@ -44,7 +46,7 @@ describe("the web's replacing groups agree with the gateway's", () => {
     const lessons = new Map(f.lessons.map((lesson) => [lesson.id, lesson]));
     for (const row of f.expected.leaves) {
       const lesson = lessons.get(row.lesson)!;
-      const got = leavesLesson(replacementsOf(f.groupsOfPupil[row.pupil]!, replaced), lesson, lesson.named.includes(row.pupil));
+      const got = leavesLesson(replacementsOf(f.groupsOfPupil[row.pupil]!, replaced, yearOf), lesson, lesson.named.includes(row.pupil));
       expect([row.lesson, row.pupil, got]).toEqual([row.lesson, row.pupil, row.leaves]);
     }
   });
@@ -53,7 +55,7 @@ describe("the web's replacing groups agree with the gateway's", () => {
     const keys = Object.fromEntries(
       f.lessons.map((lesson) => [
         lesson.id,
-        pupilKeysOf(lesson, bySubject, shares, replacingGroupsOfNamed(lesson.named, (pupil) => f.groupsOfPupil[pupil] ?? [], replaced)),
+        pupilKeysOf(lesson, bySubject, shares, replacingGroupsOfNamed(lesson.named, (pupil) => f.groupsOfPupil[pupil] ?? [], replaced), yearOf),
       ]),
     );
     expect(keys).toEqual(f.expected.keys);

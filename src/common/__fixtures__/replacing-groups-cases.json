@@ -3,31 +3,48 @@
   "groups": [
     {
       "id": "7A",
-      "replacesSubjectId": null
+      "replacesSubjectId": null,
+      "academicYearId": "y26"
     },
     {
       "id": "7B",
-      "replacesSubjectId": null
+      "replacesSubjectId": null,
+      "academicYearId": "y26"
     },
     {
       "id": "7C",
-      "replacesSubjectId": null
+      "replacesSubjectId": null,
+      "academicYearId": "y26"
     },
     {
       "id": "SvA7",
-      "replacesSubjectId": "SV"
+      "replacesSubjectId": "SV",
+      "academicYearId": "y26"
     },
     {
       "id": "EnS",
-      "replacesSubjectId": "EN"
+      "replacesSubjectId": "EN",
+      "academicYearId": "y26"
     },
     {
       "id": "Ma7",
-      "replacesSubjectId": null
+      "replacesSubjectId": null,
+      "academicYearId": "y26"
     },
     {
       "id": "Sv7n",
-      "replacesSubjectId": null
+      "replacesSubjectId": null,
+      "academicYearId": "y26"
+    },
+    {
+      "id": "SvA6",
+      "replacesSubjectId": "SV",
+      "academicYearId": "y25"
+    },
+    {
+      "id": "6A",
+      "replacesSubjectId": null,
+      "academicYearId": "y25"
     }
   ],
   "groupsOfPupil": {
@@ -43,7 +60,9 @@
     ],
     "Cim": [
       "7A",
-      "Sv7n"
+      "Sv7n",
+      "SvA6",
+      "6A"
     ],
     "Dag": [
       "7B",
@@ -59,6 +78,18 @@
   },
   "pairs": [
     [
+      "6A",
+      "7A"
+    ],
+    [
+      "6A",
+      "Sv7n"
+    ],
+    [
+      "6A",
+      "SvA6"
+    ],
+    [
       "7A",
       "EnS"
     ],
@@ -69,6 +100,10 @@
     [
       "7A",
       "Sv7n"
+    ],
+    [
+      "7A",
+      "SvA6"
     ],
     [
       "7A",
@@ -92,6 +127,10 @@
     ],
     [
       "Sv7n",
+      "SvA6"
+    ],
+    [
+      "Sv7n",
       "SvA7"
     ]
   ],
@@ -102,7 +141,8 @@
       "groupIds": [
         "7A"
       ],
-      "named": []
+      "named": [],
+      "academicYearId": "y26"
     },
     {
       "id": "7A-ma",
@@ -110,7 +150,8 @@
       "groupIds": [
         "7A"
       ],
-      "named": []
+      "named": [],
+      "academicYearId": "y26"
     },
     {
       "id": "7A-en",
@@ -118,7 +159,8 @@
       "groupIds": [
         "7A"
       ],
-      "named": []
+      "named": [],
+      "academicYearId": "y26"
     },
     {
       "id": "SvA7-sva",
@@ -126,7 +168,8 @@
       "groupIds": [
         "SvA7"
       ],
-      "named": []
+      "named": [],
+      "academicYearId": "y26"
     },
     {
       "id": "SvA7-sv",
@@ -134,7 +177,8 @@
       "groupIds": [
         "SvA7"
       ],
-      "named": []
+      "named": [],
+      "academicYearId": "y26"
     },
     {
       "id": "7B-sv+SvA7",
@@ -143,7 +187,8 @@
         "7B",
         "SvA7"
       ],
-      "named": []
+      "named": [],
+      "academicYearId": "y26"
     },
     {
       "id": "7A+7B-sv",
@@ -152,7 +197,8 @@
         "7A",
         "7B"
       ],
-      "named": []
+      "named": [],
+      "academicYearId": "y26"
     },
     {
       "id": "7A-sv-named-Alva",
@@ -162,7 +208,8 @@
       ],
       "named": [
         "Alva"
-      ]
+      ],
+      "academicYearId": "y26"
     },
     {
       "id": "Sv7n-sv",
@@ -170,7 +217,8 @@
       "groupIds": [
         "Sv7n"
       ],
-      "named": []
+      "named": [],
+      "academicYearId": "y26"
     },
     {
       "id": "7C-sv",
@@ -178,7 +226,8 @@
       "groupIds": [
         "7C"
       ],
-      "named": []
+      "named": [],
+      "academicYearId": "y26"
     },
     {
       "id": "Ma7-ma",
@@ -186,7 +235,17 @@
       "groupIds": [
         "Ma7"
       ],
-      "named": []
+      "named": [],
+      "academicYearId": "y26"
+    },
+    {
+      "id": "6A-sv",
+      "subjectId": "SV",
+      "groupIds": [
+        "6A"
+      ],
+      "named": [],
+      "academicYearId": "y25"
     }
   ],
   "expected": {
@@ -335,6 +394,11 @@
         "lesson": "Ma7-ma",
         "pupil": "Eva",
         "leaves": false
+      },
+      {
+        "lesson": "6A-sv",
+        "pupil": "Cim",
+        "leaves": true
       }
     ],
     "keys": {
@@ -372,11 +436,42 @@
       ],
       "Ma7-ma": [
         "Ma7"
+      ],
+      "6A-sv": [
+        "6A~SvA6"
       ]
     },
     "addedPairs": [
       [
+        "6A",
+        "6A~SvA6"
+      ],
+      [
+        "6A~SvA6",
+        "7A"
+      ],
+      [
+        "6A~SvA6",
+        "Sv7n"
+      ],
+      [
+        "6A~SvA6",
+        "7A~EnS"
+      ],
+      [
+        "6A~SvA6",
+        "7A~SvA7"
+      ],
+      [
+        "6A~SvA6",
+        "Sv7n~SvA7"
+      ],
+      [
         "7A",
+        "7A~EnS"
+      ],
+      [
+        "6A",
         "7A~EnS"
       ],
       [
@@ -386,6 +481,10 @@
       [
         "7A~EnS",
         "Sv7n"
+      ],
+      [
+        "7A~EnS",
+        "SvA6"
       ],
       [
         "7A~EnS",
@@ -404,6 +503,10 @@
         "7A~SvA7"
       ],
       [
+        "6A",
+        "7A~SvA7"
+      ],
+      [
         "7A~SvA7",
         "EnS"
       ],
@@ -414,6 +517,10 @@
       [
         "7A~SvA7",
         "Sv7n"
+      ],
+      [
+        "7A~SvA7",
+        "SvA6"
       ],
       [
         "7A~SvA7",
@@ -432,12 +539,20 @@
         "Sv7n~SvA7"
       ],
       [
+        "6A",
+        "Sv7n~SvA7"
+      ],
+      [
         "7A",
         "Sv7n~SvA7"
       ],
       [
         "EnS",
         "Sv7n~SvA7"
+      ],
+      [
+        "Sv7n~SvA7",
+        "SvA6"
       ]
     ]
   }
