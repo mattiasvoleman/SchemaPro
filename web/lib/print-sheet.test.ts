@@ -23,6 +23,30 @@ describe("the week arithmetic", () => {
 });
 
 describe("sheetFromGrid", () => {
+  it("carries a rastvaktspass as a duty, and one somebody else has as relieved (Rastvakt i vardagen)", () => {
+    const sheet = sheetFromGrid({
+      kind: "TEACHER",
+      title: "Anna Lind",
+      school: "Skolan",
+      weekStart: new Date(2026, 9, 12),
+      lessons: [
+        { dayOfWeek: 1, startMinutes: 550, endMinutes: 565, title: "Rastvakt", subtitle: "Vikarie tar passet · Skolgården", room: "Norra", duty: true, relieved: true },
+        { dayOfWeek: 2, startMinutes: 550, endMinutes: 565, title: "Rastvakt", subtitle: "Matsalen · Vikarie", duty: true },
+      ],
+    });
+    expect(sheet.days[0]!.lessons[0]).toMatchObject({
+      start: "09:10",
+      end: "09:25",
+      subject: "Rastvakt",
+      groups: ["Vikarie tar passet · Skolgården"],
+      room: "Norra",
+      duty: true,
+      relieved: true,
+    });
+    expect(sheet.days[1]!.lessons[0]).toMatchObject({ duty: true });
+    expect(sheet.days[1]!.lessons[0]).not.toHaveProperty("relieved");
+  });
+
   it("lays a page's lessons and meals into the week's seven days, sorted, with the line the page draws", () => {
     const sheet = sheetFromGrid({
       kind: "TEACHER",

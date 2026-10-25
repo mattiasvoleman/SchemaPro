@@ -185,7 +185,7 @@ export function weekSpan(days: readonly PublicDay[]): { start: number; end: numb
 }
 
 /** Monday to Friday always; a weekend day only when something is on it. */
-export function shownDays(days: readonly PublicDay[]): PublicDay[] {
+export function shownDays<D extends PublicDay>(days: readonly D[]): D[] {
   return days.filter((day, index) => index < 5 || day.lessons.length > 0 || (day.meals?.length ?? 0) > 0);
 }
 
@@ -199,7 +199,7 @@ export function placement(item: { start: string; end: string }, span: { start: n
 }
 
 /** The lessons with their minutes, for lib/day-lanes.ts. */
-export function timed(lessons: readonly PublicLesson[]): Array<PublicLesson & { startMinutes: number; endMinutes: number }> {
+export function timed<T extends PublicLesson>(lessons: readonly T[]): Array<T & { startMinutes: number; endMinutes: number }> {
   return lessons.map((lesson) => ({ ...lesson, startMinutes: toMinutes(lesson.start), endMinutes: toMinutes(lesson.end) }));
 }
 

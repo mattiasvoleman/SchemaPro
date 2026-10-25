@@ -248,7 +248,7 @@ describe("TimetableGrid time axis and vertical placement", () => {
               subtitle: "Vikarie tar passet · Skolgården",
               room: "Norra",
               startMinutes: 600,
-              endMinutes: 615,
+              endMinutes: 610,
               duty: true,
               relieved: true,
             }),
@@ -258,15 +258,20 @@ describe("TimetableGrid time axis and vertical placement", () => {
 
       const pass = document.querySelector<HTMLElement>('[data-lesson-id="p"]')!;
       const next = document.querySelector<HTMLElement>('[data-lesson-id="b"]')!;
-      // Fifteen minutes at 1.1 px, not a lesson's 28 px floor, and ending where 10:15 begins.
-      expect(pass.style.height).toBe("16.5px");
+      // Ten minutes at 1.1 px, not a lesson's 28 px floor, and ending before 10:15 begins.
+      expect(pass.style.height).toBe("11px");
       expect(parseFloat(pass.style.top) + parseFloat(pass.style.height)).toBeLessThanOrEqual(parseFloat(next.style.top));
-      // What the eye reads, not textContent: the line is outside every sr-only span.
-      const line = within(pass).getByText("Rastvakt · Vikarie tar passet · Skolgården · Norra");
-      expect(line.closest(".sr-only")).toBeNull();
+      // What the eye reads, not textContent: the line outside every sr-only span holds
+      // whose it is and where; "Rastvakt" is the edge's to say, and the screen reader's.
+      const line = pass.querySelector<HTMLElement>(".truncate")!;
+      const visible = [...line.childNodes].filter((node) => !(node instanceof HTMLElement && node.classList.contains("sr-only")));
+      expect(visible.map((node) => node.textContent).join("")).toBe("Vikarie tar passet · Skolgården · Norra");
+      expect(line.querySelector(".sr-only")!.textContent).toBe("Rastvakt · ");
       expect([...pass.querySelectorAll(".sr-only")].map((node) => node.textContent).join("")).not.toMatch(/Skolgården/);
-      // Nothing to stand at: dashed and untinted, but not struck through as a cancellation is.
-      expect(pass.className).toContain("border-dashed");
+      // Nothing to stand at: a dashed outline, which takes no height from ten minutes, and the
+      // edge solid; untinted, but not struck through as a cancellation is.
+      expect(pass.className).toContain("outline-dashed");
+      expect(pass.className).not.toContain("border-dashed");
       expect(pass.className).not.toContain("line-through");
       // On the card, never see-through: a duty's time is a rast's, and the band's label is under it.
       expect(pass.style.backgroundColor).toBe("hsl(var(--card))");

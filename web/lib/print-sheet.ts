@@ -21,6 +21,13 @@ export type SheetKind = "GROUP" | "TEACHER" | "ROOM" | "PUPIL";
 export interface SheetLesson extends PublicLesson {
   /** A person's own week only: "Vikarie" on a lesson their teacher covers, or they cover. */
   note?: string | null;
+  /**
+   * A teacher's own week only: a rastvaktspass (Rastvakt i vardagen), one
+   * line on paper — its time, "Rastvakt", whose it is that day and where —
+   * as a 15-minute block holds no more; `relieved` when somebody else has it.
+   */
+  duty?: boolean;
+  relieved?: boolean;
 }
 
 export interface SheetDay {
@@ -86,6 +93,8 @@ export interface GridLessonLike {
   subtitle?: string;
   room?: string;
   cancelled?: boolean;
+  duty?: boolean;
+  relieved?: boolean;
 }
 
 export interface GridBandLike {
@@ -122,6 +131,8 @@ export function sheetFromGrid(input: {
       room: lesson.room ?? null,
       teachers: [],
       cancelled: lesson.cancelled ?? false,
+      ...(lesson.duty ? { duty: true } : {}),
+      ...(lesson.relieved ? { relieved: true } : {}),
     });
   }
   for (const meal of input.meals ?? []) {
