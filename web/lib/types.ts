@@ -298,6 +298,11 @@ export interface StudentGroup {
   halfOfId?: string | null;
   /** Last year's group this one continues (läsårsrullning), or null. */
   predecessorId?: string | null;
+  /**
+   * Ersättande grupper: the subject whose other lessons this teaching group's
+   * members leave (SvA7 replaces Svenska), or null. lib/replacing-groups.ts.
+   */
+  replacesSubjectId?: string | null;
 }
 
 export interface Person {
