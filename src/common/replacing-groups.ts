@@ -6,17 +6,29 @@
  * in one subject: SvA7 replaces Svenska, so a pupil in SvA7 goes to SvA7's
  * lessons instead of 7A's svenska, and 7A's svenska does not list them.
  *
- * THE RULE. A pupil is not on a lesson when they are not named on it and
- * they are a member of a replacing group R with R's subject = the lesson's
- * subject, R in the läsår of the lesson's own group, and R not one of the
- * lesson's groups (its own or an extra one). Otherwise the reader's own rule
- * decides (home class, teaching groups, named pupils).
+ * THE RULE. A pupil is not on a lesson when
+ *
+ *   - they are not named on it;
+ *   - they are a member of a replacing group for the lesson's subject, in the
+ *     läsår of the lesson's own group;
+ *   - none of their replacing groups for that subject is one of the lesson's
+ *     groups (its own or an extra one);
+ *   - and the lesson's own group is not a teaching group they are placed in
+ *     by name (its `keptBy`): a fördjupning, a lässtöd, a nivågrupp — any
+ *     teaching group but a half.
+ *
+ * Otherwise the reader's own rule decides (home class, teaching groups, named
+ * pupils).
  *
  *  - An extra group (CalendarLessonGroups, #193) puts its pupils ON a lesson;
- *    a replacing group takes its pupils OFF its subject's other lessons,
- *    however they reach them — the home class, a half, a nivågrupp in the
- *    subject. The two combine: SvA7 added to 7B's svenska puts its pupils on
- *    that lesson, because SvA7 is then one of the lesson's groups.
+ *    a replacing group takes its pupils OFF the class's lessons in its
+ *    subject, however they reach them — the home class, a half. The two
+ *    combine: SvA7 added to 7B's svenska puts its pupils on that lesson,
+ *    because SvA7 is then one of the lesson's groups. A pupil in two groups
+ *    replacing Svenska (SvA7 and SvA7 stöd) goes to the lessons of either.
+ *  - A teaching group the pupil is placed in keeps them: placing an SvA pupil
+ *    in Svenska fördjupning says they go there. A half is the class's, and
+ *    places nobody by choice, so it does not.
  *  - A named pupil always stays: the explicit beats the derived.
  *  - No dates within a läsår: StudentGroupMembers carries none. But the
  *    läsår holds: the rollover keeps last year's memberships as history, and
@@ -69,11 +81,32 @@ export interface ReplacedScope {
   /** Its own group and every extra group. */
   groupIds: readonly string[];
   /**
+   * Its own group, when that is a teaching group pupils are placed in by name
+   * and not a half (keptByOf): its members keep the lesson whatever they
+   * replace. Absent for a class or a half.
+   */
+  keptBy?: string;
+  /**
    * The läsår of its own group, for a reader whose groups span years; a
    * replacing group of another läsår takes nobody off it. Absent: every
    * replacing group the reader passes is of the lesson's year.
    */
   academicYearId?: string;
+}
+
+/** A group as keptByOf reads it. */
+export interface KeptByRow {
+  id: string;
+  kind?: string | null;
+  halfOfId?: string | null;
+}
+
+/**
+ * A lesson's `keptBy`: its own group when that is a teaching group and not a
+ * half. Undefined for a class, a half, or a group the reader cannot see.
+ */
+export function keptByOf(own: KeptByRow | undefined | null): string | undefined {
+  return own && own.kind === 'TEACHING_GROUP' && !own.halfOfId ? own.id : undefined;
 }
 
 /** groupId -> its läsår, for the groups that carry one. */
@@ -127,24 +160,34 @@ export function replacementsOf(
 
 /**
  * THE RULE: does a pupil with these replacements leave this lesson? `named`
- * says the pupil is named on it, which keeps them on.
+ * says the pupil is named on it, which keeps them on; `pupilGroups` are the
+ * pupil's groups, of which the lesson's `keptBy` keeps them on too.
  */
-export function leavesLesson(replacements: readonly Replacement[], scope: ReplacedScope, named = false): boolean {
+export function leavesLesson(
+  replacements: readonly Replacement[],
+  scope: ReplacedScope,
+  named = false,
+  pupilGroups: Iterable<string> = [],
+): boolean {
   if (named || replacements.length === 0) return false;
-  return replacements.some(
+  const forSubject = replacements.filter(
     (replacement) =>
       replacement.subjectId === scope.subjectId &&
       (replacement.academicYearId === undefined ||
         scope.academicYearId === undefined ||
-        replacement.academicYearId === scope.academicYearId) &&
-      !scope.groupIds.includes(replacement.groupId),
+        replacement.academicYearId === scope.academicYearId),
   );
+  if (forSubject.length === 0) return false;
+  if (forSubject.some((replacement) => scope.groupIds.includes(replacement.groupId))) return false;
+  if (scope.keptBy !== undefined && [...pupilGroups].includes(scope.keptBy)) return false;
+  return true;
 }
 
 /**
  * The pupils of `roster` the rule takes off the lesson: members of a group
- * replacing its subject that is not on it, and not named on it. `membersOf`
- * needs only the replacing groups.
+ * replacing its subject, none of whose groups replacing it is on the lesson,
+ * who are neither in its `keptBy` nor named on it. `membersOf` needs the
+ * groups replacing the subject and the scope's `keptBy`.
  */
 export function replacedPupils(
   roster: Iterable<string>,
@@ -155,13 +198,15 @@ export function replacedPupils(
   yearOf?: ReadonlyMap<string, string>,
 ): Set<string> {
   const out = new Set<string>();
-  const replacing = (bySubject.get(scope.subjectId) ?? []).filter(
-    (groupId) => !scope.groupIds.includes(groupId) && sameYear(groupId, scope, yearOf),
-  );
-  if (replacing.length === 0) return out;
+  const forSubject = (bySubject.get(scope.subjectId) ?? []).filter((groupId) => sameYear(groupId, scope, yearOf));
+  const off = forSubject.filter((groupId) => !scope.groupIds.includes(groupId));
+  if (off.length === 0) return out;
+  const on = forSubject.filter((groupId) => scope.groupIds.includes(groupId));
+  const kept = scope.keptBy === undefined ? undefined : membersOf.get(scope.keptBy);
   for (const pupil of roster) {
-    if (named.has(pupil)) continue;
-    if (replacing.some((groupId) => membersOf.get(groupId)?.has(pupil))) out.add(pupil);
+    if (named.has(pupil) || kept?.has(pupil)) continue;
+    if (on.some((groupId) => membersOf.get(groupId)?.has(pupil))) continue;
+    if (off.some((groupId) => membersOf.get(groupId)?.has(pupil))) out.add(pupil);
   }
   return out;
 }
@@ -196,6 +241,12 @@ export function baseOf(key: string): string {
  * it — the derived key naming them. `shares(a, b)`: the reader's own relation
  * (do these two groups share a pupil).
  *
+ * A group whose members all keep the lesson answers for itself: the lesson's
+ * `keptBy`, and a group replacing its subject (SvA7 on 7B's svenska; SvA7 on
+ * its own lesson, which a pupil also in SvA7 stöd keeps). A pupil a derived
+ * key leaves out but who keeps the lesson through such a group is in that
+ * group's key, so the lesson's keys together still hold everyone on it.
+ *
  * `namedIn`: the replacing groups of the pupils NAMED on the lesson. A named
  * pupil stays on it, so their replacing group is not left out: 7A's svenska
  * naming Alva of SvA7 shares Alva with SvA7's lessons, and answers for 7A.
@@ -208,7 +259,10 @@ export function pupilKeyOf(
   namedIn: readonly string[] = [],
   yearOf?: ReadonlyMap<string, string>,
 ): string {
-  const replacing = (bySubject.get(scope.subjectId) ?? []).filter(
+  if (groupId === scope.keptBy) return groupId;
+  const forSubject = bySubject.get(scope.subjectId) ?? [];
+  if (forSubject.includes(groupId) && sameYear(groupId, scope, yearOf)) return groupId;
+  const replacing = forSubject.filter(
     (other) =>
       other !== groupId &&
       !scope.groupIds.includes(other) &&

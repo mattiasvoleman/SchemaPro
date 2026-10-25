@@ -6,16 +6,18 @@
  *   npx ts-node --transpile-only scripts/generate-replacing-groups-fixture.ts
  *
  * The school: 7A (Alva, Bo, Cim), 7B (Dag, Eva), 7C (Fia). SvA7 replaces
- * Svenska and holds Alva and Dag; EnS replaces Engelska and holds Alva; Ma7
- * (a nivågrupp) holds Bo and Eva; Sv7n (a nivågrupp in svenska) holds Alva
- * and Cim. Last läsår's SvA6 replaced Svenska and still holds Cim (the
- * rollover keeps a membership), and 6A's svenska was that year's. The pairs
- * are the groups that share a pupil, as every reader computes them from the
- * rosters.
+ * Svenska and holds Alva and Dag; SvA7s (SvA7 stöd) replaces Svenska too and
+ * holds Dag; EnS replaces Engelska and holds Alva; Ma7 (a nivågrupp) holds
+ * Bo and Eva; Sv7n (a nivågrupp in svenska, which keeps its members) holds
+ * Alva and Cim; 7A:1 is a half of 7A and holds Alva and Bo. Last läsår's
+ * SvA6 replaced Svenska and still holds Cim (the rollover keeps a
+ * membership), and 6A's svenska was that year's. The pairs are the groups
+ * that share a pupil, as every reader computes them from the rosters.
  */
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
+  keptByOf,
   leavesLesson,
   pupilKeysOf,
   replacedSubjectOf,
@@ -26,22 +28,26 @@ import {
   yearsOf,
 } from '../src/common/replacing-groups';
 
+const CLASS = 'CLASS';
+const TEACHING = 'TEACHING_GROUP';
 const groups = [
-  { id: '7A', replacesSubjectId: null, academicYearId: 'y26' },
-  { id: '7B', replacesSubjectId: null, academicYearId: 'y26' },
-  { id: '7C', replacesSubjectId: null, academicYearId: 'y26' },
-  { id: 'SvA7', replacesSubjectId: 'SV', academicYearId: 'y26' },
-  { id: 'EnS', replacesSubjectId: 'EN', academicYearId: 'y26' },
-  { id: 'Ma7', replacesSubjectId: null, academicYearId: 'y26' },
-  { id: 'Sv7n', replacesSubjectId: null, academicYearId: 'y26' },
-  { id: 'SvA6', replacesSubjectId: 'SV', academicYearId: 'y25' },
-  { id: '6A', replacesSubjectId: null, academicYearId: 'y25' },
+  { id: '7A', kind: CLASS, halfOfId: null, replacesSubjectId: null, academicYearId: 'y26' },
+  { id: '7B', kind: CLASS, halfOfId: null, replacesSubjectId: null, academicYearId: 'y26' },
+  { id: '7C', kind: CLASS, halfOfId: null, replacesSubjectId: null, academicYearId: 'y26' },
+  { id: '7A:1', kind: TEACHING, halfOfId: '7A', replacesSubjectId: null, academicYearId: 'y26' },
+  { id: 'SvA7', kind: TEACHING, halfOfId: null, replacesSubjectId: 'SV', academicYearId: 'y26' },
+  { id: 'SvA7s', kind: TEACHING, halfOfId: null, replacesSubjectId: 'SV', academicYearId: 'y26' },
+  { id: 'EnS', kind: TEACHING, halfOfId: null, replacesSubjectId: 'EN', academicYearId: 'y26' },
+  { id: 'Ma7', kind: TEACHING, halfOfId: null, replacesSubjectId: null, academicYearId: 'y26' },
+  { id: 'Sv7n', kind: TEACHING, halfOfId: null, replacesSubjectId: null, academicYearId: 'y26' },
+  { id: 'SvA6', kind: TEACHING, halfOfId: null, replacesSubjectId: 'SV', academicYearId: 'y25' },
+  { id: '6A', kind: CLASS, halfOfId: null, replacesSubjectId: null, academicYearId: 'y25' },
 ];
 const groupsOfPupil: Record<string, string[]> = {
-  Alva: ['7A', 'SvA7', 'EnS', 'Sv7n'],
-  Bo: ['7A', 'Ma7'],
+  Alva: ['7A', '7A:1', 'SvA7', 'EnS', 'Sv7n'],
+  Bo: ['7A', '7A:1', 'Ma7'],
   Cim: ['7A', 'Sv7n', 'SvA6', '6A'],
-  Dag: ['7B', 'SvA7'],
+  Dag: ['7B', 'SvA7', 'SvA7s'],
   Eva: ['7B', 'Ma7'],
   Fia: ['7C'],
 };
@@ -65,8 +71,18 @@ const lessons = [
   { id: '7C-sv', subjectId: 'SV', groupIds: ['7C'], named: [] },
   { id: 'Ma7-ma', subjectId: 'MA', groupIds: ['Ma7'], named: [] },
   { id: '6A-sv', subjectId: 'SV', groupIds: ['6A'], named: [], academicYearId: 'y25' },
+  { id: '7A:1-sv', subjectId: 'SV', groupIds: ['7A:1'], named: [] },
+  { id: 'SvA7s-sv', subjectId: 'SV', groupIds: ['SvA7s'], named: [] },
+  { id: '7B-sv+SvA7s', subjectId: 'SV', groupIds: ['7B', 'SvA7s'], named: [] },
+  { id: '7B-sv', subjectId: 'SV', groupIds: ['7B'], named: [] },
 ];
-for (const lesson of lessons) (lesson as { academicYearId?: string }).academicYearId ??= 'y26';
+const groupById = new Map(groups.map((group) => [group.id, group]));
+for (const lesson of lessons) {
+  const scope = lesson as { academicYearId?: string; keptBy?: string };
+  scope.academicYearId ??= 'y26';
+  const keptBy = keptByOf(groupById.get(lesson.groupIds[0]!));
+  if (keptBy) scope.keptBy = keptBy;
+}
 
 const replaced = replacedSubjectOf(groups);
 const yearOf = yearsOf(groups);
@@ -81,7 +97,7 @@ const leaves = lessons.flatMap((lesson) =>
     .map(([pupil, held]) => ({
       lesson: lesson.id,
       pupil,
-      leaves: leavesLesson(replacementsOf(held, replaced, yearOf), lesson, lesson.named.includes(pupil)),
+      leaves: leavesLesson(replacementsOf(held, replaced, yearOf), lesson, lesson.named.includes(pupil), held),
     })),
 );
 const keys = Object.fromEntries(
