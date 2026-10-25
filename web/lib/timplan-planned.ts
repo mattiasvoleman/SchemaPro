@@ -464,6 +464,11 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
     teachingGroupIds: string[];
     lines: Map<string, LineDraft>;
     perSource: Map<string, Map<string, number>>; // subjectId → groupId → week minutes
+    /**
+     * The lines whose class rows the rule took the pupil off (an SvA pupil"s
+     * SV_SVA line): the class"s shortfall there is not theirs.
+     */
+    classTakenOff: Set<string>;
   }
   const teachingGroupsOf = (pupil: PlannedPupilInput): string[] =>
     [...new Set(pupil.groupIds)].filter((id) => groupsById.get(id)?.kind === "TEACHING_GROUP");
@@ -500,7 +505,14 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
         );
         perSource.set(row.subjectId, bySubject);
       }
-      results.push({ pupil, grade, teachingGroupIds: own, lines: buildLines(targets, rows, grade), perSource });
+      const classTakenOff = new Set(
+        rows.length === reaching.length
+          ? []
+          : reaching
+              .filter((row) => row.studentGroupId === classId && !rows.includes(row))
+              .map((row) => lineKeyOf(row.subjectId).key),
+      );
+      results.push({ pupil, grade, teachingGroupIds: own, lines: buildLines(targets, rows, grade), perSource, classTakenOff });
     }
     pupilResults.set(classId, results);
     carriersByClass.set(classId, carriers);
@@ -828,8 +840,11 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
           }
         }
         // Short because the class is short: the class verdict and its pupil
-        // statistics say it, and the line is not repeated per pupil.
-        const ownFinding = status === "UNDER" && !flagged.has(draft.key);
+        // statistics say it, and the line is not repeated per pupil — unless
+        // a replacing group took the pupil off the class"s rows on this line
+        // (SvA7 instead of 7A"s svenska): then the shortfall is the pupil"s
+        // own, and fixing the class would not fix it.
+        const ownFinding = status === "UNDER" && (!flagged.has(draft.key) || result.classTakenOff.has(draft.key));
         if (status === "UNDER") {
           isBelow = true;
           if (ownFinding) {

@@ -763,6 +763,23 @@ describe('computePlannedCoverage', () => {
       ]);
     });
 
+    it('names the SvA pupil’s own shortfall even when the class’s Svenska is short too', () => {
+      // 7A's Svenska is 2 × 60 (UNDER, the class verdict says it) and SvA7
+      // plans 1 × 60. Bo reads SvA7's 60 alone: fixing 7A would not fix him,
+      // so his line is his own finding, not hidden behind the class's.
+      // Three classmates in no SvA group, so SvA7 reaches a quarter of 7A
+      // and the class line is the class's own (UNDER), not "i grupp".
+      const short = computePlannedCoverage({
+        ...world,
+        requirements: [req(a, S.SV, 2, 60), req(a, S.MA, 3, 60), req(sva7, S.SVA, 1, 60)],
+        pupils: [alva, bo, pupil(a), pupil(a)],
+      });
+      expect(short.verdicts.find((v) => v.code === 'TIMPLAN_GROUP_UNDERPLANNED')).toBeDefined();
+      expect(short.verdicts.filter((v) => v.pupilId === bo.id).map((v) => v.code)).toEqual(['TIMPLAN_PUPIL_UNDERPLANNED']);
+      // Alva is short because the class is: no verdict of her own, as before.
+      expect(short.verdicts.filter((v) => v.pupilId === alva.id)).toEqual([]);
+    });
+
     it('leaves the support model alone: an SvA group that replaces nothing stays on top of class Svenska, unflagged', () => {
       const coverage = computePlannedCoverage(world);
       // Dag: 7A's Svenska 180 and SvA-stöd's 60 — met, and not two alternatives.
