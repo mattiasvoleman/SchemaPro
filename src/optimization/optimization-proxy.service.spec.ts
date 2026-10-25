@@ -3277,6 +3277,114 @@ describe('OptimizationProxyService', () => {
       });
     });
 
+    describe('a replacing group (Ersättande grupper)', () => {
+      // 7A (four pupils): svenska and matematik. SvA7 holds 7A's first pupil
+      // and replaces Svenska; Ma7 holds 7A's second. Requirements in this
+      // order: 7A svenska, 7A matematik, SvA7's SvA, Ma7's matematik.
+      const SVA7 = '5a000007-0000-4000-8000-000000000007';
+      const MA7 = '99999999-9999-4999-8999-999999999999';
+      const SVENSKA = '5b000001-0000-4000-8000-000000000001';
+      const SVA = '5b000002-0000-4000-8000-000000000002';
+      const pupil = (n: number) => `aaaaaaa${n}-0000-4000-8000-00000000000${n}`;
+      const arrangeSvA = (replaces: string | null) =>
+        arrange({
+          requirements: [
+            requirement({ id: '88888888-8888-4888-8888-888888888880', subjectId: SVENSKA }),
+            requirement({ id: '88888888-8888-4888-8888-888888888881' }),
+            requirement({ id: '88888888-8888-4888-8888-888888888882', studentGroupId: SVA7, subjectId: SVA }),
+            requirement({ id: '88888888-8888-4888-8888-888888888883', studentGroupId: MA7 }),
+          ],
+          groups: [
+            { id: GROUP_ID, gradeLevel: 7, kind: 'CLASS', halfOfId: null, replacesSubjectId: null },
+            { id: SVA7, gradeLevel: null, kind: 'TEACHING_GROUP', halfOfId: null, replacesSubjectId: replaces },
+            { id: MA7, gradeLevel: null, kind: 'TEACHING_GROUP', halfOfId: null, replacesSubjectId: null },
+          ],
+          homeMembers: [1, 2, 3, 4].map((n) => ({ id: pupil(n), studentGroupId: GROUP_ID })),
+          teachingMembers: [
+            { studentId: pupil(1), studentGroupId: SVA7 },
+            { studentId: pupil(2), studentGroupId: MA7 },
+          ],
+        });
+      /** The payload's pairs as labels: 7A, SvA7, Ma7, and D for "7A without SvA7". */
+      const pairsByLabel = () => {
+        const payload = postedPayload();
+        const label = new Map<string, string>(
+          payload.requirements.map((r, i) => [r.studentGroupId, ['7A', '7A', 'SvA7', 'Ma7'][i]!]),
+        );
+        for (const r of payload.requirements) if (r.pupilGroupId) label.set(r.pupilGroupId, 'D');
+        return payload.groupConflicts.map(([a, b]) => [label.get(a)!, label.get(b)!].sort().join('-')).sort();
+      };
+
+      it('sends 7A’s svenska as sat by 7A without SvA7, paired with everything 7A is but SvA7', async () => {
+        arrangeSvA(SVENSKA);
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        const { requirements } = postedPayload();
+        // Only 7A's svenska carries a pupil group, and it is a fresh token: the
+        // class's own id stays its studentGroupId, for every rule about 7A.
+        expect(requirements.map((r) => r.pupilGroupId !== undefined)).toEqual([true, false, false, false]);
+        expect(requirements[0]!.studentGroupId).toBe(requirements[1]!.studentGroupId);
+        expect(requirements[0]!.pupilGroupId).not.toBe(requirements[0]!.studentGroupId);
+        // D-7A (its own class's other hours), D-Ma7 (7A's partner), and never
+        // D-SvA7: SvA7's lessons may run beside 7A's svenska and nowhere else.
+        expect(pairsByLabel()).toEqual(['7A-D', '7A-Ma7', '7A-SvA7', 'D-Ma7']);
+        // No real id leaks through the new token.
+        expect(JSON.stringify(postedPayload())).not.toContain('~');
+      });
+
+      it('sends a school whose SvA group replaces nothing exactly what it sent before', async () => {
+        arrangeSvA(null);
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        expect(postedPayload().requirements.every((r) => !('pupilGroupId' in r))).toBe(true);
+        expect(pairsByLabel()).toEqual(['7A-Ma7', '7A-SvA7']);
+      });
+
+      it('sends a locked 7A svenska with its pupil groups, and one naming a SvA pupil as 7A’s', async () => {
+        const lockedLesson = (id: string, participants: Row[]) => ({
+          id,
+          subjectId: SVENSKA,
+          studentGroupId: GROUP_ID,
+          teacherId: TEACHER_ID,
+          coTeacherId: null,
+          roomId: null,
+          dayOfWeek: 1,
+          startTime: new Date('1970-01-01T08:00:00.000Z'),
+          endTime: new Date('1970-01-01T09:00:00.000Z'),
+          recurrence: 'ALL_WEEKS',
+          startDate: null,
+          endDate: null,
+          isLocked: true,
+          isGenerated: false,
+          extraGroups: [],
+          participants,
+        });
+        arrange({
+          requirements: [requirement({ subjectId: SVA, studentGroupId: SVA7 })],
+          groups: [
+            { id: GROUP_ID, gradeLevel: 7, kind: 'CLASS', halfOfId: null, replacesSubjectId: null },
+            { id: SVA7, gradeLevel: null, kind: 'TEACHING_GROUP', halfOfId: null, replacesSubjectId: SVENSKA },
+          ],
+          homeMembers: [1, 2].map((n) => ({ id: pupil(n), studentGroupId: GROUP_ID })),
+          teachingMembers: [{ studentId: pupil(1), studentGroupId: SVA7 }],
+          lockedLessons: [lockedLesson('ml-plain', []), lockedLesson('ml-named', [{ studentId: pupil(1) }])],
+        });
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        const [plain, named] = postedPayload().fixedLessons;
+        expect(plain!.pupilGroupIds).toHaveLength(1);
+        expect(plain!.pupilGroupIds![0]).not.toBe(plain!.studentGroupId);
+        // The named SvA pupil is on it, so it answers for 7A as before.
+        expect(named).not.toHaveProperty('pupilGroupIds');
+      });
+    });
+
     it('emits no pair for groups without shared students', async () => {
       const OTHER = '99999999-9999-4999-8999-999999999999';
       arrange({

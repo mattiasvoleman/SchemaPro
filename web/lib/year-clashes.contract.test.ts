@@ -28,6 +28,8 @@ interface FixtureCase {
     memberships: Array<{ studentId: string; studentGroupId: string }>;
     pupilBuffers: Array<{ studentGroupId: string; subjectId: string; minutesBefore: number; minutesAfter: number }>;
     halves?: Array<{ id: string; halfOfId: string }>;
+    /** Ersättande grupper: the groups replacing a subject, which the page passes with its groups. */
+    replacing?: Array<{ id: string; replacesSubjectId: string }>;
   };
   clashes: Record<string, ConflictHit[]>;
 }
@@ -47,7 +49,9 @@ describe("the board paints what the publish gate counts", () => {
         ...row,
       })) as unknown as AvailabilityConstraint[],
       studentGroupOf,
-      buildGroupConflictMap(studentGroupOf, c.input.memberships, c.input.halves),
+      // The page passes the school's groups: the halves and the replacing
+      // groups among them are what the relation reads.
+      buildGroupConflictMap(studentGroupOf, c.input.memberships, [...(c.input.halves ?? []), ...(c.input.replacing ?? [])]),
       undefined,
       undefined,
       undefined,

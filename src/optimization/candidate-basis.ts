@@ -286,6 +286,9 @@ export function basisInputsOf(source: BasisSource): BasisInputs {
         id: realOf(requirement.id),
         subjectId: realOf(requirement.subjectId),
         studentGroupId: realOf(requirement.studentGroupId),
+        // Ersättande grupper: the derived key, in real ids ("7A~SvA7"). Only
+        // on a requirement sent with one, so every other part hashes as before.
+        ...(requirement.pupilGroupId !== undefined ? { pupilGroupId: realOf(requirement.pupilGroupId) } : {}),
         teacherId: realOrNull(requirement.teacherId),
         coTeacherId: realOrNull(requirement.coTeacherId),
         requiredRoomType: realOrNull(requirement.requiredRoomType),

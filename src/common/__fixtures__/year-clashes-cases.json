@@ -1604,6 +1604,583 @@
           }
         ]
       }
+    },
+    {
+      "name": "ersättande grupper: SvA7 beside 7A’s svenska, which it replaces, is no clash",
+      "input": {
+        "lessons": [
+          {
+            "id": "sv7a",
+            "subjectId": "sv",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "7a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "sva",
+            "subjectId": "sva",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t2",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "sva7",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [],
+        "studentGroupOf": [
+          [
+            "alva",
+            "7a"
+          ],
+          [
+            "bo",
+            "7a"
+          ],
+          [
+            "dag",
+            "7b"
+          ],
+          [
+            "eva",
+            "7b"
+          ]
+        ],
+        "memberships": [
+          {
+            "studentId": "alva",
+            "studentGroupId": "sva7"
+          },
+          {
+            "studentId": "dag",
+            "studentGroupId": "sva7"
+          },
+          {
+            "studentId": "bo",
+            "studentGroupId": "ma7"
+          }
+        ],
+        "pupilBuffers": [],
+        "replacing": [
+          {
+            "id": "sva7",
+            "replacesSubjectId": "sv"
+          }
+        ]
+      },
+      "clashes": {}
+    },
+    {
+      "name": "ersättande grupper: SvA7 beside 7A’s matematik clashes as before",
+      "input": {
+        "lessons": [
+          {
+            "id": "ma7a",
+            "subjectId": "ma",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "7a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "sva",
+            "subjectId": "sva",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t2",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "sva7",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [],
+        "studentGroupOf": [
+          [
+            "alva",
+            "7a"
+          ],
+          [
+            "bo",
+            "7a"
+          ],
+          [
+            "dag",
+            "7b"
+          ],
+          [
+            "eva",
+            "7b"
+          ]
+        ],
+        "memberships": [
+          {
+            "studentId": "alva",
+            "studentGroupId": "sva7"
+          },
+          {
+            "studentId": "dag",
+            "studentGroupId": "sva7"
+          },
+          {
+            "studentId": "bo",
+            "studentGroupId": "ma7"
+          }
+        ],
+        "pupilBuffers": [],
+        "replacing": [
+          {
+            "id": "sva7",
+            "replacesSubjectId": "sv"
+          }
+        ]
+      },
+      "clashes": {
+        "ma7a": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "sva"
+          }
+        ],
+        "sva": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "ma7a"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ersättande grupper: SvA7 beside a svenska it is added to clashes, its pupils are on it",
+      "input": {
+        "lessons": [
+          {
+            "id": "sv7b",
+            "subjectId": "sv",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "7b",
+            "extraGroupIds": [
+              "sva7"
+            ],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "sva",
+            "subjectId": "sva",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t2",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "sva7",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [],
+        "studentGroupOf": [
+          [
+            "alva",
+            "7a"
+          ],
+          [
+            "bo",
+            "7a"
+          ],
+          [
+            "dag",
+            "7b"
+          ],
+          [
+            "eva",
+            "7b"
+          ]
+        ],
+        "memberships": [
+          {
+            "studentId": "alva",
+            "studentGroupId": "sva7"
+          },
+          {
+            "studentId": "dag",
+            "studentGroupId": "sva7"
+          },
+          {
+            "studentId": "bo",
+            "studentGroupId": "ma7"
+          }
+        ],
+        "pupilBuffers": [],
+        "replacing": [
+          {
+            "id": "sva7",
+            "replacesSubjectId": "sv"
+          }
+        ]
+      },
+      "clashes": {
+        "sv7b": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "sva"
+          }
+        ],
+        "sva": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "sv7b"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ersättande grupper: a SvA pupil named on 7A’s svenska keeps it beside SvA7 a clash",
+      "input": {
+        "lessons": [
+          {
+            "id": "sv7a",
+            "subjectId": "sv",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "7a",
+            "extraGroupIds": [],
+            "studentIds": [
+              "alva"
+            ],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "sva",
+            "subjectId": "sva",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t2",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "sva7",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [],
+        "studentGroupOf": [
+          [
+            "alva",
+            "7a"
+          ],
+          [
+            "bo",
+            "7a"
+          ],
+          [
+            "dag",
+            "7b"
+          ],
+          [
+            "eva",
+            "7b"
+          ]
+        ],
+        "memberships": [
+          {
+            "studentId": "alva",
+            "studentGroupId": "sva7"
+          },
+          {
+            "studentId": "dag",
+            "studentGroupId": "sva7"
+          },
+          {
+            "studentId": "bo",
+            "studentGroupId": "ma7"
+          }
+        ],
+        "pupilBuffers": [],
+        "replacing": [
+          {
+            "id": "sva7",
+            "replacesSubjectId": "sv"
+          }
+        ]
+      },
+      "clashes": {
+        "sv7a": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "sva"
+          }
+        ],
+        "sva": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "sv7a"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ersättande grupper: 7A’s svenska still clashes with Ma7 and with 7A’s own matematik",
+      "input": {
+        "lessons": [
+          {
+            "id": "sv7a",
+            "subjectId": "sv",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "7a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "ma",
+            "subjectId": "ma",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t2",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "ma7",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "ma7a",
+            "subjectId": "ma",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t3",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "7a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [],
+        "studentGroupOf": [
+          [
+            "alva",
+            "7a"
+          ],
+          [
+            "bo",
+            "7a"
+          ],
+          [
+            "dag",
+            "7b"
+          ],
+          [
+            "eva",
+            "7b"
+          ]
+        ],
+        "memberships": [
+          {
+            "studentId": "alva",
+            "studentGroupId": "sva7"
+          },
+          {
+            "studentId": "dag",
+            "studentGroupId": "sva7"
+          },
+          {
+            "studentId": "bo",
+            "studentGroupId": "ma7"
+          }
+        ],
+        "pupilBuffers": [],
+        "replacing": [
+          {
+            "id": "sva7",
+            "replacesSubjectId": "sv"
+          }
+        ]
+      },
+      "clashes": {
+        "ma": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "sv7a"
+          },
+          {
+            "kind": "GROUP",
+            "otherLessonId": "ma7a"
+          }
+        ],
+        "ma7a": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "sv7a"
+          },
+          {
+            "kind": "GROUP",
+            "otherLessonId": "ma"
+          }
+        ],
+        "sv7a": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "ma"
+          },
+          {
+            "kind": "GROUP",
+            "otherLessonId": "ma7a"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ersättande grupper: the same SvA7 replacing nothing clashes with 7A’s svenska, as before the phase",
+      "input": {
+        "lessons": [
+          {
+            "id": "sv7a",
+            "subjectId": "sv",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "7a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "sva",
+            "subjectId": "sva",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t2",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "sva7",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [],
+        "studentGroupOf": [
+          [
+            "alva",
+            "7a"
+          ],
+          [
+            "bo",
+            "7a"
+          ],
+          [
+            "dag",
+            "7b"
+          ],
+          [
+            "eva",
+            "7b"
+          ]
+        ],
+        "memberships": [
+          {
+            "studentId": "alva",
+            "studentGroupId": "sva7"
+          },
+          {
+            "studentId": "dag",
+            "studentGroupId": "sva7"
+          },
+          {
+            "studentId": "bo",
+            "studentGroupId": "ma7"
+          }
+        ],
+        "pupilBuffers": []
+      },
+      "clashes": {
+        "sv7a": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "sva"
+          }
+        ],
+        "sva": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "sv7a"
+          }
+        ]
+      }
     }
   ]
 }

@@ -38,6 +38,17 @@ export interface AnonymousRequirement {
   id: string;
   subjectId: string;
   studentGroupId: string;
+  /**
+   * Ersättande grupper (common/replacing-groups.ts): the group whose pupils
+   * sit this requirement's lessons, when not all of studentGroupId's do — a
+   * derived key, "7A without SvA7", that appears nowhere else but in
+   * groupConflicts. The engine keeps pupils apart by it; every rule about
+   * the class (its daily maximum, its unavailable hours, its lunch) still
+   * reads studentGroupId. Sent only for a requirement a replacing group's
+   * members leave, so every other payload is what it always was. Optional on
+   * the engine (AnonymousRequirement.pupil_group_id), absent = studentGroupId.
+   */
+  pupilGroupId?: string;
   teacherId: string | null;
   lessonsPerWeek: number;
   minutesPerLesson: number;
@@ -446,6 +457,14 @@ export interface AnonymousFixedLesson {
   studentGroupId: string;
   /** Additional classes attending (multi-class lessons block them all). */
   extraGroupIds?: string[];
+  /**
+   * Ersättande grupper: who sits the lesson, group by group, when a replacing
+   * group takes some of its groups' pupils elsewhere — [studentGroupId,
+   * ...extraGroupIds] with each group that loses pupils replaced by its
+   * derived key. The engine reads it in place of those for every pupil
+   * question (FixedLesson.pupil_group_ids). Sent only then.
+   */
+  pupilGroupIds?: string[];
   roomId: string | null;
   dayOfWeek: DayOfWeek;
   /** HH:MM:SS */

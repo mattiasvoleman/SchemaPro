@@ -110,6 +110,8 @@ describe("toPlacement", () => {
       coTeacherId: "t2",
       roomId: "r1",
       studentGroupId: "gA",
+      // Ersättande grupper read it: a replacing group's pupils leave its subject.
+      subjectId: "subject-1",
       extraGroupIds: ["gB"],
       studentIds: ["s1", "s2"],
       recurrence: "ALL_WEEKS",

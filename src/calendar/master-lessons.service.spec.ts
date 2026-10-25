@@ -776,6 +776,66 @@ describe('MasterLessonsService', () => {
       );
     });
 
+    describe('Ersättande grupper: a replacing group’s members are not on its subject’s other lessons', () => {
+      // The candidate is 7A's svenska (SUBJECT_ID); the other lesson is the
+      // teaching group's, which holds Alva of 7A.
+      const replacing = (replacesSubjectId: string) =>
+        tx.studentGroup.findMany.mockResolvedValue([
+          { id: TEACHING_GROUP_ID, halfOfId: null, replacesSubjectId },
+        ]);
+
+      it('lets SvA7 sit beside 7A’s svenska, which it replaces', async () => {
+        arrangeCreate();
+        replacing(SUBJECT_ID);
+        sameDay([otherLesson({ studentGroupId: TEACHING_GROUP_ID })]);
+        arrangePupils(
+          [{ id: STUDENT_ID, studentGroupId: GROUP_ID }],
+          [{ studentId: STUDENT_ID, studentGroupId: TEACHING_GROUP_ID }],
+        );
+
+        await expect(service.create(createDto(), testUser())).resolves.toMatchObject({ id: LESSON_ID });
+        // The replacing groups came with the halves, in the one group read.
+        expect(tx.studentGroup.findMany).toHaveBeenCalledWith({
+          where: {
+            OR: [
+              { id: { in: expect.arrayContaining([GROUP_ID, TEACHING_GROUP_ID]) } },
+              { halfOfId: { in: expect.arrayContaining([GROUP_ID, TEACHING_GROUP_ID]) } },
+              { replacesSubjectId: { in: [SUBJECT_ID, OTHER_SUBJECT_ID] } },
+            ],
+          },
+          select: { id: true, halfOfId: true, replacesSubjectId: true },
+        });
+      });
+
+      it('still keeps it off every other lesson of 7A', async () => {
+        arrangeCreate();
+        replacing(OTHER_EXTRA_GROUP_ID);
+        sameDay([otherLesson({ studentGroupId: TEACHING_GROUP_ID })]);
+        arrangePupils(
+          [{ id: STUDENT_ID, studentGroupId: GROUP_ID }],
+          [{ studentId: STUDENT_ID, studentGroupId: TEACHING_GROUP_ID }],
+        );
+
+        await expect(service.create(createDto(), testUser())).rejects.toThrow(
+          new ConflictException('Students of this group already have Math in this slot.'),
+        );
+      });
+
+      it('keeps a pupil named on 7A’s svenska on it, so SvA7 may not sit beside it', async () => {
+        arrangeCreate();
+        replacing(SUBJECT_ID);
+        sameDay([otherLesson({ studentGroupId: TEACHING_GROUP_ID })]);
+        arrangePupils(
+          [{ id: STUDENT_ID, studentGroupId: GROUP_ID }],
+          [{ studentId: STUDENT_ID, studentGroupId: TEACHING_GROUP_ID }],
+        );
+
+        await expect(service.create(createDto({ studentIds: [STUDENT_ID] }), testUser())).rejects.toThrow(
+          ConflictException,
+        );
+      });
+    });
+
     it('does not hold a participant busy for a class that is elsewhere at that hour', async () => {
       // The pupil's home class has no lesson in this slot, so the pupil is
       // free, whatever the other lesson is.
