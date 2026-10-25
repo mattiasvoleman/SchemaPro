@@ -269,7 +269,9 @@ describe('CoverService', () => {
       world({ teachers: [{ teacherId: A, role: 'LEAD' }, { teacherId: B, role: 'ASSISTANT' }] });
       await cover.decide(LESSON, { absenceId: ABSENCE, kind: 'SUPERVISED_STUDY', expected: 'OPEN' }, testUser());
       // The class used to read it only in the lesson's note.
-      expect(notifications.recipientsForLessons).toHaveBeenCalledWith(tx, [{ groupIds: ['grp'], participantIds: [] }]);
+      expect(notifications.recipientsForLessons).toHaveBeenCalledWith(tx, [
+        { subjectId: 'subj', groupIds: ['grp'], participantIds: [] },
+      ]);
       expect(notifications.notifyUsers).toHaveBeenCalledTimes(1);
       expect(notifications.notifyUsers).toHaveBeenCalledWith(tx, {
         schoolId: SCHOOL,

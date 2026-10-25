@@ -8,9 +8,9 @@ describe('the avbokning digest', () => {
   const client = () => tx as unknown as PrismaClient;
   // Three lessons over two days: 9A Mon and Tue, the Ma9 group on Tue.
   const lessons = [
-    { id: 'mon-9a', date: '2026-10-19', studentGroupId: '9A', extraGroups: [] },
-    { id: 'tue-9a', date: '2026-10-20', studentGroupId: '9A', extraGroups: [] },
-    { id: 'tue-ma9', date: '2026-10-20', studentGroupId: 'Ma9', extraGroups: [] },
+    { id: 'mon-9a', date: '2026-10-19', subjectId: 'sv', studentGroupId: '9A', extraGroups: [] },
+    { id: 'tue-9a', date: '2026-10-20', subjectId: 'sv', studentGroupId: '9A', extraGroups: [] },
+    { id: 'tue-ma9', date: '2026-10-20', subjectId: 'ma', studentGroupId: 'Ma9', extraGroups: [] },
   ];
 
   beforeEach(() => {

@@ -135,6 +135,8 @@ export class ClassBookService {
             startsAt: true,
             endsAt: true,
             status: true,
+            // The roster reader's: a replacing group takes its pupils off its subject.
+            subjectId: true,
             studentGroupId: true,
             subject: { select: { name: true } },
             studentGroup: { select: { name: true } },

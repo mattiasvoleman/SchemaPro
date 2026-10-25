@@ -234,6 +234,48 @@ describe('FamilyScheduleService', () => {
     expect(staffCalls[0][0]).toMatchObject({ values: [['l-home', 'l-tg', 'l-extra', 'l-named']] });
   });
 
+  describe('Ersättande grupper: a replacing group takes the child off its subject’s other lessons', () => {
+    // TG replaces Svenska: the child goes to TG's lessons instead of the home
+    // class's svenska.
+    const SVENSKA = 'subject-sv';
+    beforeEach(() => {
+      tx.studentGroup.findMany.mockResolvedValue([{ id: TG, replacesSubjectId: SVENSKA }]);
+    });
+
+    it('drops the home class’s svenska and keeps every other lesson, the replacing group’s own included', async () => {
+      tx.calendarLesson.findMany.mockResolvedValue([
+        lesson('l-home-sv', '2026-10-13', { subjectId: SVENSKA }),
+        lesson('l-home-ma', '2026-10-13'),
+        lesson('l-tg', '2026-10-13', { studentGroupId: TG, subjectId: 'subject-sva' }),
+        lesson('l-joint-sv', '2026-10-13', { studentGroupId: OTHER, subjectId: SVENSKA, extraGroups: [{ studentGroupId: HOME }] }),
+      ]);
+      const result = await run('2026-10-13');
+      expect(result.lessons.map((l) => l.id)).toEqual(['l-home-ma', 'l-tg']);
+      // The child's replacing groups, asked once, among their teaching groups.
+      expect(tx.studentGroup.findMany).toHaveBeenCalledWith({
+        where: { id: { in: [TG] }, replacesSubjectId: { not: null } },
+        select: { id: true, replacesSubjectId: true },
+      });
+    });
+
+    it('keeps a svenska lesson the replacing group is added to, and one naming the child', async () => {
+      tx.calendarLesson.findMany.mockResolvedValue([
+        lesson('l-with-tg', '2026-10-13', { subjectId: SVENSKA, extraGroups: [{ studentGroupId: TG }] }),
+        lesson('l-named', '2026-10-13', { subjectId: SVENSKA, participants: [{ studentId: CHILD }] }),
+      ]);
+      const result = await run('2026-10-13');
+      expect(result.lessons.map((l) => l.id)).toEqual(['l-with-tg', 'l-named']);
+    });
+
+    it('asks nothing about replacing groups for a child in no teaching group', async () => {
+      tx.studentGroupMember.findMany.mockResolvedValue([]);
+      tx.calendarLesson.findMany.mockResolvedValue([lesson('l-home-sv', '2026-10-13', { subjectId: SVENSKA })]);
+      const result = await run('2026-10-13');
+      expect(result.lessons.map((l) => l.id)).toEqual(['l-home-sv']);
+      expect(tx.studentGroup.findMany).not.toHaveBeenCalled();
+    });
+  });
+
   it('whitelists every key, recursively: no note, cause, teacher id or roster', async () => {
     tx.calendarLesson.findMany.mockResolvedValue([
       lesson('l-1', '2026-10-13', { note: 'Inställd: Friluftsdag', cancelCause: 'EVENT', status: 'CANCELLED', teachers: [{ teacherId: 't' }] }),

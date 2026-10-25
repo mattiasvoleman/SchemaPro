@@ -19,6 +19,8 @@ const LESSON_SELECT = {
   subject: { select: { name: true } },
   room: { select: { name: true } },
   teachers: { select: { teacherId: true } },
+  // The roster reader's: a replacing group takes its pupils off its subject.
+  subjectId: true,
   studentGroupId: true,
   extraGroups: { select: { studentGroupId: true } },
 } as const satisfies Prisma.CalendarLessonSelect;

@@ -528,8 +528,8 @@ describe('NotificationsService', () => {
 
       await expect(
         service.recipientsForLessons(client(), [
-          { groupIds: ['group-1'], participantIds: [] },
-          { groupIds: ['group-2'], participantIds: ['named-1', 'named-gone'] },
+          { subjectId: 'subject-1', groupIds: ['group-1'], participantIds: [] },
+          { subjectId: 'subject-1', groupIds: ['group-2'], participantIds: ['named-1', 'named-gone'] },
         ]),
       ).resolves.toEqual(['home-1', 'member-1', 'named-1', 'guardian-1']);
 

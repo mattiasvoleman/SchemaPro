@@ -53,9 +53,9 @@ describe('lesson roster', () => {
     const rosters = await rostersOf(
       client(),
       [
-        { groupIds: ['7A'], participantIds: [] },
-        { groupIds: ['Ma7'], participantIds: ['eli', 'gus'] },
-        { groupIds: ['7A', 'Ma7'], participantIds: [] },
+        { subjectId: 'MA', groupIds: ['7A'], participantIds: [] },
+        { subjectId: 'MA', groupIds: ['Ma7'], participantIds: ['eli', 'gus'] },
+        { subjectId: 'MA', groupIds: ['7A', 'Ma7'], participantIds: [] },
       ],
       { pupils: 'ACTIVE' },
     );
@@ -83,7 +83,7 @@ describe('lesson roster', () => {
   });
 
   it('reads membership as recorded for a register, and only the pupils asked about', async () => {
-    const [roster] = await rostersOf(client(), [{ groupIds: ['7A', 'Ma7'], participantIds: ['gus'] }], {
+    const [roster] = await rostersOf(client(), [{ subjectId: 'MA', groupIds: ['7A', 'Ma7'], participantIds: ['gus'] }], {
       pupils: 'RECORDED',
       among: ['cy', 'gus', 'zed'],
     });
@@ -102,10 +102,10 @@ describe('lesson roster', () => {
 
   it('asks nothing for no lesson, or for nobody to ask about', async () => {
     await expect(rostersOf(client(), [], { pupils: 'ACTIVE' })).resolves.toEqual([]);
-    await expect(rostersOf(client(), [{ groupIds: ['7A'], participantIds: ['x'] }], { pupils: 'RECORDED', among: [] })).resolves.toEqual([
+    await expect(rostersOf(client(), [{ subjectId: 'MA', groupIds: ['7A'], participantIds: ['x'] }], { pupils: 'RECORDED', among: [] })).resolves.toEqual([
       new Set(),
     ]);
-    await expect(calendarLessonRosters(client(), [{ id: 'l1', studentGroupId: '7A', extraGroups: [] }], { pupils: 'RECORDED', among: [] })).resolves.toEqual(
+    await expect(calendarLessonRosters(client(), [{ id: 'l1', subjectId: 'MA', studentGroupId: '7A', extraGroups: [] }], { pupils: 'RECORDED', among: [] })).resolves.toEqual(
       new Map([['l1', new Set()]]),
     );
     expect(tx.user.findMany).not.toHaveBeenCalled();
@@ -121,8 +121,8 @@ describe('lesson roster', () => {
     const rosters = await calendarLessonRosters(
       client(),
       [
-        { id: 'l1', studentGroupId: '7A', extraGroups: [] },
-        { id: 'l2', studentGroupId: 'Ma7', extraGroups: [{ studentGroupId: '7A' }] },
+        { id: 'l1', subjectId: 'MA', studentGroupId: '7A', extraGroups: [] },
+        { id: 'l2', subjectId: 'MA', studentGroupId: 'Ma7', extraGroups: [{ studentGroupId: '7A' }] },
       ],
       { pupils: 'RECORDED' },
     );
@@ -134,10 +134,109 @@ describe('lesson roster', () => {
     });
   });
 
-  it('takes a lesson in hand as its class, the groups joined to it and the pupils named on it', () => {
+  it('takes a lesson in hand as its subject, its class, the groups joined to it and the pupils named on it', () => {
     expect(
-      scopeOf({ studentGroupId: '7A', extraGroups: [{ studentGroupId: 'Ma7' }], participants: [{ studentId: 'eli' }] }),
-    ).toEqual({ groupIds: ['7A', 'Ma7'], participantIds: ['eli'] });
-    expect(scopeOf({ studentGroupId: '7A' })).toEqual({ groupIds: ['7A'], participantIds: [] });
+      scopeOf({
+        subjectId: 'MA',
+        studentGroupId: '7A',
+        extraGroups: [{ studentGroupId: 'Ma7' }],
+        participants: [{ studentId: 'eli' }],
+      }),
+    ).toEqual({ subjectId: 'MA', groupIds: ['7A', 'Ma7'], participantIds: ['eli'] });
+    expect(scopeOf({ subjectId: 'MA', studentGroupId: '7A' })).toEqual({ subjectId: 'MA', groupIds: ['7A'], participantIds: [] });
+  });
+
+  describe('Ersättande grupper: a replacing group takes its members off its subject’s other lessons', () => {
+    // SvA7 replaces Svenska and holds Ada (of 7A) and Cy.
+    beforeEach(() => {
+      tx.studentGroup.findMany.mockImplementation(
+        answer([
+          { id: 'SvA7', replacesSubjectId: 'SV' },
+          { id: 'EnS', replacesSubjectId: 'EN' },
+        ]),
+      );
+      tx.studentGroupMember.findMany.mockImplementation(
+        answer([
+          { studentId: 'ada', studentGroupId: 'Ma7' },
+          { studentId: 'cy', studentGroupId: 'Ma7' },
+          { studentId: 'ada', studentGroupId: 'SvA7' },
+          { studentId: 'cy', studentGroupId: 'SvA7' },
+        ]),
+      );
+    });
+
+    it('lists 7A’s svenska without its SvA pupils, and every other lesson as before', async () => {
+      const rosters = await rostersOf(
+        client(),
+        [
+          { subjectId: 'SV', groupIds: ['7A'], participantIds: [] },
+          { subjectId: 'MA', groupIds: ['7A'], participantIds: [] },
+          { subjectId: 'SV', groupIds: ['Ma7'], participantIds: [] },
+        ],
+        { pupils: 'RECORDED' },
+      );
+      expect(rosters.map((roster) => [...roster].sort())).toEqual([['bo'], ['ada', 'bo'], []]);
+      // The replacing groups of the scopes' subjects (SvA7; EnS replaces
+      // Engelska, which no scope is in), in one statement, and their members
+      // in another.
+      expect(tx.studentGroup.findMany).toHaveBeenCalledTimes(1);
+      expect(tx.studentGroup.findMany).toHaveBeenCalledWith({
+        where: { replacesSubjectId: { in: ['SV', 'MA'] } },
+        select: { id: true, replacesSubjectId: true },
+      });
+      expect(tx.studentGroupMember.findMany).toHaveBeenCalledWith({
+        where: { studentGroupId: { in: ['SvA7'] } },
+        select: { studentId: true, studentGroupId: true },
+      });
+    });
+
+    it('keeps SvA7’s pupils on a lesson SvA7 is added to, and a named pupil on any lesson', async () => {
+      const rosters = await rostersOf(
+        client(),
+        [
+          { subjectId: 'SV', groupIds: ['7A', 'SvA7'], participantIds: [] },
+          { subjectId: 'SV', groupIds: ['7A'], participantIds: ['ada'] },
+          { subjectId: 'SV', groupIds: ['SvA7'], participantIds: [] },
+        ],
+        { pupils: 'RECORDED' },
+      );
+      expect(rosters.map((roster) => [...roster].sort())).toEqual([['ada', 'bo', 'cy'], ['ada', 'bo'], ['ada', 'cy']]);
+    });
+
+    it('asks the members only about the pupils asked about', async () => {
+      const [roster] = await rostersOf(client(), [{ subjectId: 'SV', groupIds: ['7A'], participantIds: [] }], {
+        pupils: 'RECORDED',
+        among: ['ada', 'bo'],
+      });
+      expect([...roster!].sort()).toEqual(['bo']);
+      expect(tx.studentGroupMember.findMany).toHaveBeenCalledWith({
+        where: { studentGroupId: { in: ['SvA7'] }, studentId: { in: ['ada', 'bo'] } },
+        select: { studentId: true, studentGroupId: true },
+      });
+    });
+
+    it('reads no member at a school with no replacing group in the lessons’ subjects', async () => {
+      tx.studentGroup.findMany.mockResolvedValue([]);
+      const [roster] = await rostersOf(client(), [{ subjectId: 'SV', groupIds: ['7A'], participantIds: [] }], {
+        pupils: 'RECORDED',
+      });
+      expect([...roster!].sort()).toEqual(['ada', 'bo']);
+      // The teaching groups' read only: no second one for replacing members.
+      expect(tx.studentGroupMember.findMany).toHaveBeenCalledTimes(1);
+    });
+
+    it('follows into the calendar lessons’ rosters, by each lesson’s subject', async () => {
+      const rosters = await calendarLessonRosters(
+        client(),
+        [
+          { id: 'sv', subjectId: 'SV', studentGroupId: '7A', extraGroups: [] },
+          { id: 'en', subjectId: 'EN', studentGroupId: '7A', extraGroups: [] },
+        ],
+        { pupils: 'RECORDED' },
+      );
+      expect([...rosters.get('sv')!].sort()).toEqual(['bo']);
+      // EnS replaces Engelska but holds nobody of 7A: 7A's engelska is whole.
+      expect([...rosters.get('en')!].sort()).toEqual(['ada', 'bo']);
+    });
   });
 });

@@ -84,6 +84,8 @@ export const GROUP_ATTENDANCE_MAX_DAYS = 400;
 const LESSON_SELECT = {
   id: true,
   schoolId: true,
+  // The roster reader's: a replacing group takes its pupils off its subject.
+  subjectId: true,
   studentGroupId: true,
   date: true,
   startsAt: true,

@@ -930,7 +930,11 @@ export class MasterLessonsService {
         // (lesson-roster.ts): the classes, their teaching groups and the
         // pupils named on the lesson, as they are now.
         const recipients = await this.notifications.recipientsForLessons(tx, [
-          { groupIds: [lesson.studentGroupId, ...after.extraGroupIds], participantIds: after.studentIds },
+          {
+            subjectId: after.subjectId,
+            groupIds: [lesson.studentGroupId, ...after.extraGroupIds],
+            participantIds: after.studentIds,
+          },
         ]);
         const subject = await tx.subject.findUnique({
           where: { id: lesson.subjectId },
@@ -1352,7 +1356,11 @@ export class MasterLessonsService {
       // member, to the roster attending it, about its own subject.
       for (const { lesson, after } of notices) {
         const recipients = await this.notifications.recipientsForLessons(tx, [
-          { groupIds: [lesson.studentGroupId, ...after.extraGroupIds], participantIds: after.studentIds },
+          {
+            subjectId: after.subjectId,
+            groupIds: [lesson.studentGroupId, ...after.extraGroupIds],
+            participantIds: after.studentIds,
+          },
         ]);
         await this.notifications.notifyUsers(tx, {
           schoolId: lesson.school.id,

@@ -260,7 +260,9 @@ describe('CalendarLessonsService', () => {
 
       expect(realtime.notifyLessonChanged).toHaveBeenCalledWith(tx, LESSON_ID);
       // The one roster reader's scope: the class, no joined group, nobody named.
-      expect(notifications.recipientsForLessons).toHaveBeenCalledWith(tx, [{ groupIds: [GROUP_ID], participantIds: [] }]);
+      expect(notifications.recipientsForLessons).toHaveBeenCalledWith(tx, [
+        { subjectId: SUBJECT_ID, groupIds: [GROUP_ID], participantIds: [] },
+      ]);
       expect(notifications.notifyUsers).toHaveBeenCalledWith(
         tx,
         expect.objectContaining({
@@ -338,7 +340,9 @@ describe('CalendarLessonsService', () => {
       );
       expect(realtime.notifyLessonChanged).toHaveBeenCalledWith(tx, LESSON_ID);
       // Told it was cancelled, so told it is not (it used to say nothing).
-      expect(notifications.recipientsForLessons).toHaveBeenCalledWith(tx, [{ groupIds: [GROUP_ID], participantIds: [] }]);
+      expect(notifications.recipientsForLessons).toHaveBeenCalledWith(tx, [
+        { subjectId: SUBJECT_ID, groupIds: [GROUP_ID], participantIds: [] },
+      ]);
       expect(notifications.notifyUsers).toHaveBeenCalledWith(tx, {
         schoolId: SCHOOL_ID,
         userIds: [STUDENT_ID, GUARDIAN_ID, TEACHER_ID],
