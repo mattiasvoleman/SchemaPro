@@ -9,10 +9,18 @@
 --
 -- A pupil is NOT on a lesson when they are not named on it and they are a
 -- member of a replacing group R with R."replacesSubjectId" = the lesson's
--- subject, and R is not one of the lesson's groups (its own group or an extra
--- one). Otherwise today's rule decides (the home class, the teaching groups,
--- the named pupils). The gateway's copy is src/common/replacing-groups.ts,
--- the web's web/lib/replacing-groups.ts; this migration states it three times
+-- subject, R in the läsår of the lesson's own group, and R not one of the
+-- lesson's groups (its own group or an extra one). Otherwise today's rule
+-- decides (the home class, the teaching groups, the named pupils).
+--
+-- The läsår matters because memberships outlive their year: the rollover
+-- copies a membership to the successor group and keeps the old one as
+-- history, and the old SvA7 keeps replacing Svenska. Without the condition a
+-- pupil who left SvA after last year would leave this year's class svenska
+-- too, and one who stayed would leave every svenska SvA8 is added to.
+--
+-- The gateway's copy is src/common/replacing-groups.ts, the web's
+-- web/lib/replacing-groups.ts; this migration states it three times
 -- in SQL, for the three readers that read neither:
 --
 --   * app.current_student_replaced_lesson_ids(), for the pupil's own week;
@@ -118,7 +126,13 @@
 -- groups their lesson arms already reach: app.current_guardian_group_ids(),
 -- the classes and teaching groups of their children. TO app_authenticated,
 -- like every guardian arm: a guardian reads someone else's rows, through the
--- gateway only.
+-- gateway only. The role is asked inside the initplan (a CASE), as #193's
+-- participant branch does: "id" = ANY (helper) is an index condition, so with
+-- the role in front of it the planner built the staff BitmapOr on the
+-- helper's array and the helper ran for every teacher's read of the groups
+-- (PG17, the independent review: 0.3 → 2.6 ms for a teacher's groups). For
+-- anyone but a guardian the CASE is NULL, and "id" = ANY (NULL) admits
+-- nothing.
 --
 -- ## The calendar feeds (one function replaced)
 --
@@ -280,31 +294,36 @@ BEGIN
   END IF;
   home := app.current_user_group_id();
   WITH replacing AS (
-    -- The caller's replacing groups, and the subject each replaces.
-    SELECT g."id", g."replacesSubjectId" AS subject
+    -- The caller's replacing groups, the subject each replaces and its läsår.
+    -- The membership row and the group both of the caller's school: a row
+    -- another school's administrator wrote changes nothing here.
+    SELECT g."id", g."replacesSubjectId" AS subject, g."academicYearId" AS year
       FROM "StudentGroupMembers" m
       JOIN "StudentGroups" g ON g."id" = m."studentGroupId" AND g."schoolId" = school
      WHERE m."studentId" = me AND m."schoolId" = school AND g."replacesSubjectId" IS NOT NULL
   ),
   mine AS (
     -- The groups the caller reaches a lesson through: the home class and
-    -- every teaching group.
+    -- every teaching group, as calendar_lessons_teaching_group_select reads
+    -- them (by the pupil alone), so no lesson an arm admits goes unasked.
     SELECT home AS id WHERE home IS NOT NULL
     UNION
-    SELECT m."studentGroupId" FROM "StudentGroupMembers" m WHERE m."studentId" = me AND m."schoolId" = school
+    SELECT m."studentGroupId" FROM "StudentGroupMembers" m WHERE m."studentId" = me
   ),
   reached AS (
     -- Their lessons in a replaced subject, by the lesson's own group or an
-    -- extra one.
-    SELECT cl."id", cl."subjectId", cl."studentGroupId"
+    -- extra one, with the läsår of the lesson's own group.
+    SELECT cl."id", cl."subjectId", cl."studentGroupId", og."academicYearId" AS year
       FROM "CalendarLessons" cl
+      JOIN "StudentGroups" og ON og."id" = cl."studentGroupId"
      WHERE cl."schoolId" = school
        AND cl."studentGroupId" IN (SELECT id FROM mine)
        AND cl."subjectId" IN (SELECT subject FROM replacing)
     UNION
-    SELECT cl."id", cl."subjectId", cl."studentGroupId"
+    SELECT cl."id", cl."subjectId", cl."studentGroupId", og."academicYearId"
       FROM "CalendarLessonGroups" x
       JOIN "CalendarLessons" cl ON cl."id" = x."calendarLessonId" AND cl."schoolId" = school
+      JOIN "StudentGroups" og ON og."id" = cl."studentGroupId"
      WHERE x."schoolId" = school
        AND x."studentGroupId" IN (SELECT id FROM mine)
        AND cl."subjectId" IN (SELECT subject FROM replacing)
@@ -313,6 +332,7 @@ BEGIN
     FROM reached r
    WHERE EXISTS (SELECT 1 FROM replacing g
                   WHERE g.subject = r."subjectId"
+                    AND g.year = r.year
                     AND g."id" <> r."studentGroupId"
                     AND NOT EXISTS (SELECT 1 FROM "CalendarLessonGroups" x
                                      WHERE x."calendarLessonId" = r."id" AND x."studentGroupId" = g."id"))
@@ -394,9 +414,9 @@ ALTER POLICY "calendar_lessons_participant_select" ON "CalendarLessons"
 CREATE POLICY "student_groups_guardian_select" ON "StudentGroups"
     FOR SELECT TO "app_authenticated"
     USING (
-        (select app.current_user_role()) = 'GUARDIAN'
-        AND "schoolId" = (select app.current_school_id())
-        AND "id" = ANY ((select app.current_guardian_group_ids())::uuid[])
+        "schoolId" = (select app.current_school_id())
+        AND "id" = ANY ((select CASE WHEN app.current_user_role() = 'GUARDIAN'
+                                     THEN app.current_guardian_group_ids() END)::uuid[])
     );
 
 -- ---------------------------------------------------------------------------
@@ -447,12 +467,14 @@ LANGUAGE sql STABLE SET search_path = "public", "pg_temp" AS $$
      WHERE EXISTS (SELECT 1 FROM homedays d
                     WHERE d."validFrom" <= h."date" AND (d."validTo" IS NULL OR h."date" < d."validTo"))
   ),
-  -- Ersättande grupper (20261211090000): the pupil's replacing groups, and
-  -- the subject each replaces.
+  -- Ersättande grupper (20261211090000): the pupil's replacing groups, the
+  -- subject each replaces and its läsår; the membership and the group both
+  -- of the school.
   replacing AS (
-    SELECT g."id", g."replacesSubjectId" AS subject
+    SELECT g."id", g."replacesSubjectId" AS subject, g."academicYearId" AS year
       FROM "StudentGroupMembers" m JOIN "StudentGroups" g ON g."id" = m."studentGroupId"
-     WHERE m."studentId" = p_pupil AND g."schoolId" = p_school AND g."replacesSubjectId" IS NOT NULL
+     WHERE m."studentId" = p_pupil AND m."schoolId" = p_school AND g."schoolId" = p_school
+       AND g."replacesSubjectId" IS NOT NULL
   ),
   theirs AS (
     SELECT cl."id", cl."date", cl."startsAt", cl."endsAt", cl."status", cl."subjectId", cl."roomId", cl."updatedAt"
@@ -461,12 +483,13 @@ LANGUAGE sql STABLE SET search_path = "public", "pg_temp" AS $$
        AND cl."schoolId" = p_school
        AND cl."date" BETWEEN p_from AND p_to
        AND cl."status" IN ('SCHEDULED', 'COMPLETED', 'CANCELLED')
-       -- A replacing group takes the pupil off its subject's other lessons:
-       -- those that neither carry it nor name the pupil.
+       -- A replacing group takes the pupil off its subject's other lessons
+       -- of its läsår: those that neither carry it nor name the pupil.
        AND (
              cl."id" IN (SELECT id FROM named)
           OR NOT EXISTS (SELECT 1 FROM replacing g
                           WHERE g.subject = cl."subjectId"
+                            AND g.year = (SELECT og."academicYearId" FROM "StudentGroups" og WHERE og."id" = cl."studentGroupId")
                             AND g."id" <> cl."studentGroupId"
                             AND NOT EXISTS (SELECT 1 FROM "CalendarLessonGroups" x
                                              WHERE x."calendarLessonId" = cl."id" AND x."studentGroupId" = g."id"))
