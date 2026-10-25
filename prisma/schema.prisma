@@ -4408,6 +4408,13 @@ model PersonalDataAccess {
   /// How many people of the school the read named, the reader aside, before
   /// the dedupe left out those already recorded: subjectIds is a subset.
   readSize   Int
+  /// Huvudman (20261212090100): the huvudman's reader who read, when the
+  /// reader is no Users row of the school (actorId is then NULL and
+  /// actorRole SCHOOL_ADMIN); NULL once the member is deleted.
+  huvudmanMemberId String? @db.Uuid
+  /// Huvudman (20261212090100): the huvudman's SS12000 key of an
+  /// integration read (apiKeyId is then NULL); NULL once the key is deleted.
+  huvudmanApiKeyId String? @db.Uuid
 
   @@index([subjectIds], type: Gin)
   @@index([schoolId, at])
@@ -4434,4 +4441,159 @@ model GallringRun {
 
   @@index([schoolId, startedAt(sort: Desc)])
   @@map("GallringRuns")
+}
+
+
+// =============================================================================
+// Huvudman (Kommun, 20261212090000). A huvudman owns schools; its members (a
+// kommunadministratör, central planners) read each school it owns as that
+// school's läsare without a Users row there, and its SS12000 key reads every
+// school it owns, one school per transaction. See the migration's preamble.
+// The keys to Schools and Users live in the migration.
+// =============================================================================
+
+/// What a member of a huvudman is. Both read every school the huvudman owns
+/// as a läsare; the kommunadministratör also keeps the huvudman's members,
+/// schools and keys.
+enum HuvudmanRole {
+  KOMMUNADMINISTRATOR
+  PLANERARE
+}
+
+/// What happened between a huvudman and a school (HuvudmanSchoolEvents).
+enum HuvudmanSchoolEventKind {
+  /// The huvudman asked to own the school.
+  REQUESTED
+  /// The huvudman took its question back.
+  WITHDRAWN
+  /// The school said no.
+  DECLINED
+  /// The school said yes: the huvudman owns it.
+  JOINED
+  /// The school left the huvudman.
+  LEFT
+  /// The huvudman let the school go.
+  RELEASED
+}
+
+/// A huvudman: a kommun or a friskola's owner. Made by the operator
+/// (docs/DEPLOYMENT.md §14), as a school is.
+model Huvudman {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name               String
+  /// Organisationsnummer, ten digits (SS12000 Organisation of type Huvudman).
+  organisationNumber String?  @unique
+  /// Kommunkod, four digits (SS12000 municipalityCode).
+  municipalityCode   String?
+  createdAt          DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  members  HuvudmanMember[]
+  schools  HuvudmanSchool[]
+  requests HuvudmanSchoolRequest[]
+  events   HuvudmanSchoolEvent[]
+  apiKeys  HuvudmanApiKey[]
+
+  @@map("Huvudmen")
+}
+
+/// A person of the huvudman, by their login. Written by the
+/// kommunadministratör through the gateway; the login (authId, invitedAt)
+/// only through app.huvudman_member_takes_login.
+model HuvudmanMember {
+  id         String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  huvudmanId String       @db.Uuid
+  /// The Supabase Auth user, once invited. The same login may hold Users
+  /// rows at schools; at a school where it does, the row is the person there.
+  authId     String?      @db.Uuid
+  email      String
+  firstName  String
+  lastName   String
+  role       HuvudmanRole
+  isActive   Boolean      @default(true)
+  invitedAt  DateTime?    @db.Timestamptz(6)
+  /// The database's: the API role may not name it (its INSERT grant), so
+  /// Prisma must leave it out of the INSERT.
+  createdAt  DateTime     @default(dbgenerated("now()")) @db.Timestamptz(6)
+  updatedAt  DateTime     @default(now()) @updatedAt @db.Timestamptz(6)
+
+  huvudman Huvudman @relation(fields: [huvudmanId], references: [id], onDelete: Cascade)
+
+  @@unique([huvudmanId, authId])
+  /// The target of the composite keys that name a member of the huvudman.
+  @@unique([id, huvudmanId])
+  @@index([authId])
+  @@map("HuvudmanMembers")
+}
+
+/// The huvudman owns the school: one huvudman per school, written only by
+/// the school's decision (app.school_accepts_huvudman) and ended by either
+/// side.
+model HuvudmanSchool {
+  schoolId      String   @id @db.Uuid
+  huvudmanId    String   @db.Uuid
+  since         DateTime @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+  /// The school's rektor or full administrator who said yes.
+  acceptedById  String?  @db.Uuid
+  /// The member of the huvudman who asked.
+  requestedById String?  @db.Uuid
+
+  huvudman Huvudman @relation(fields: [huvudmanId], references: [id], onDelete: Restrict)
+
+  @@index([huvudmanId])
+  @@map("HuvudmanSchools")
+}
+
+/// The huvudman asks to own the school; the school's decider answers.
+model HuvudmanSchoolRequest {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  huvudmanId    String   @db.Uuid
+  schoolId      String   @db.Uuid
+  requestedById String?  @db.Uuid
+  requestedAt   DateTime @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+
+  huvudman Huvudman @relation(fields: [huvudmanId], references: [id], onDelete: Cascade)
+
+  @@unique([schoolId, huvudmanId])
+  @@index([huvudmanId])
+  @@map("HuvudmanSchoolRequests")
+}
+
+/// Append-only: what happened between the huvudman and the school, and by
+/// whom (a person of the school or a member of the huvudman).
+model HuvudmanSchoolEvent {
+  id         String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  huvudmanId String                  @db.Uuid
+  schoolId   String                  @db.Uuid
+  kind       HuvudmanSchoolEventKind
+  at         DateTime                @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+  byUserId   String?                 @db.Uuid
+  byMemberId String?                 @db.Uuid
+
+  huvudman Huvudman @relation(fields: [huvudmanId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId, at])
+  @@index([huvudmanId, at])
+  @@map("HuvudmanSchoolEvents")
+}
+
+/// The huvudman's SS12000 key (sh_…): reads every school the huvudman owns,
+/// each read as that school's service principal. Read scopes only (CHECK).
+model HuvudmanApiKey {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  huvudmanId  String    @db.Uuid
+  name        String
+  /// SHA-256 hex of the key; the plaintext is shown once on create.
+  keyHash     String    @unique
+  scopes      String[]
+  createdById String?   @db.Uuid
+  lastUsedAt  DateTime? @db.Timestamptz(6)
+  revokedAt   DateTime? @db.Timestamptz(6)
+  /// The database's, as HuvudmanMember.createdAt.
+  createdAt   DateTime  @default(dbgenerated("now()")) @db.Timestamptz(6)
+
+  huvudman Huvudman @relation(fields: [huvudmanId], references: [id], onDelete: Cascade)
+
+  @@index([huvudmanId])
+  @@map("HuvudmanApiKeys")
 }

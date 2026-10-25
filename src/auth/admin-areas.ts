@@ -277,6 +277,13 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   StudentEnrollments: readOnly,
   TeacherEmploymentLogs: readOnly,
   UserRoleChanges: readOnly,
+  // Huvudman (20261212090000): who owns or asks for the school, and their
+  // history. Written only by the decision's functions (the school's decider,
+  // app.current_user_decides() inside app.school_accepts_huvudman and its
+  // siblings), never by an arm.
+  HuvudmanSchoolEvents: readOnly,
+  HuvudmanSchoolRequests: readOnly,
+  HuvudmanSchools: readOnly,
 
   // Read by those who decide: the läslogg (20261026091000), dataskydd's.
   PersonalDataAccess: { ...readOnly, read: ['DECIDES'] },

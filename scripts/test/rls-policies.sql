@@ -2732,10 +2732,44 @@ BEGIN
     SELECT p.proname, regexp_replace(p.prosrc, '\s+', ' ', 'g') AS src
       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
      WHERE n.nspname = 'app'
-       AND p.proname IN ('current_school_id', 'current_user_role', 'current_user_group_id', 'current_user_may', 'current_user_decides')
+       AND p.proname IN ('current_school_id', 'current_user_role', 'current_user_group_id', 'current_user_may', 'current_user_decides',
+                         'current_huvudman_member_id')
   LOOP
     IF strpos(helper.src, clause) = 0 THEN
       RAISE EXCEPTION 'app.%() does not pick the row with app.current_user_id()''s clause', helper.proname;
+    END IF;
+  END LOOP;
+
+  -- Huvudman (20261212090000): the second branch, the huvudman's reader, is
+  -- one clause too, from app.current_huvudman_member_id() (who the reader
+  -- is) into the three helpers that answer for them. current_user_id,
+  -- current_user_group_id and current_user_decides have no second branch:
+  -- the reader is nobody's row, in no class, and decides nothing.
+  SELECT regexp_replace(substring(p.prosrc FROM 'FROM "HuvudmanMembers" m.*LIMIT 1'), '\s+', ' ', 'g') INTO clause
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'app' AND p.proname = 'current_huvudman_member_id';
+  IF clause IS NULL OR clause NOT LIKE '%WHERE app.requested_school() IS NOT NULL%'
+     OR clause NOT LIKE '%m."authId" = (select auth.uid()) AND m."isActive"%'
+     OR clause NOT LIKE '%hs."schoolId"::text = app.requested_school()%'
+     -- closed for the school's own rows or for the reader (the hook's two keys)
+     OR clause NOT LIKE '%NOT (app.closed_schools() ?| ARRAY[hs."schoolId"::text, ''reader:'' || hs."schoolId"::text]) LIMIT 1' THEN
+    RAISE EXCEPTION 'app.current_huvudman_member_id() finds the huvudman''s reader in an unexpected way: %', clause;
+  END IF;
+  FOR helper IN
+    SELECT p.proname, regexp_replace(p.prosrc, '\s+', ' ', 'g') AS src
+      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname = 'app'
+       AND p.proname IN ('current_user_id', 'current_school_id', 'current_user_role', 'current_user_group_id',
+                         'current_user_may', 'current_user_decides')
+  LOOP
+    IF (strpos(helper.src, clause) > 0) IS DISTINCT FROM (helper.proname IN ('current_school_id', 'current_user_role', 'current_user_may')) THEN
+      RAISE EXCEPTION 'app.%() % the huvudman''s reader with app.current_huvudman_member_id()''s clause', helper.proname,
+        CASE WHEN strpos(helper.src, clause) > 0 THEN 'answers for' ELSE 'does not answer for' END;
+    END IF;
+    -- The first branch decides: the second only after it found no row.
+    IF strpos(helper.src, clause) > 0
+       AND strpos(helper.src, 'IF FOUND THEN RETURN') > strpos(helper.src, 'FROM "HuvudmanMembers" m') THEN
+      RAISE EXCEPTION 'app.%() asks for the huvudman''s reader before its own row has decided', helper.proname;
     END IF;
   END LOOP;
 
@@ -2792,7 +2826,20 @@ BEGIN
        -- Gallring: a departed person's login, which it deletes or replaces.
        ('app', 'gallring_claim_person'),
        ('app', 'gallring_departed_due'),
-       ('app', 'gallring_pseudonymise')
+       ('app', 'gallring_pseudonymise'),
+       -- Huvudman (20261212090000): the login's memberships, which are no
+       -- Users rows. Who the reader is (with the clause asserted above), the
+       -- memberships an arm asks for, the kommunadministratör's own member
+       -- id, and the one writer of a member's login.
+       ('app', 'current_huvudman_member_id'),
+       ('app', 'my_huvudman_ids'),
+       ('app', 'my_kommunadmin_huvudman_ids'),
+       ('app', 'huvudman_kommunadmin'),
+       ('app', 'huvudman_member_takes_login'),
+       -- The school's list of its huvudman's readers: whether a member's
+       -- login has a row of its own at the school (own_row), for the
+       -- school's decider; it resolves no caller.
+       ('app', 'school_huvudman_readers')
      );
   IF unexpected IS NOT NULL THEN
     RAISE EXCEPTION 'functions read "authId" without being named in section 10: % (resolve the caller through app.current_user_id())', unexpected;
@@ -4110,7 +4157,7 @@ BEGIN
     END IF;
     SELECT count(*) INTO n FROM pg_policy WHERE polrelid = format('public.%I', tbl)::regclass
        AND NOT (tbl = 'LocalTimplans' AND polname = 'local_timplans_service_select'
-                AND pg_get_expr(polqual, polrelid) = '("schoolId" = app.current_service_school_id())');
+                AND pg_get_expr(polqual, polrelid) = '("schoolId" = ( SELECT app.current_service_school_id() AS current_service_school_id))');
     -- The admin's arm is four since 20261110100000: select, insert, update, delete.
     IF n <> 6 THEN
       RAISE EXCEPTION 'timplan: % has % policies, expected the admin''s four, staff_select and family_select', tbl, n;
@@ -5105,7 +5152,7 @@ BEGIN
   -- school types, for the service principal of the row's school only.
   SELECT count(*) INTO n FROM pg_policy WHERE polrelid = 'public."AcademicYearTimplans"'::regclass
      AND NOT (polname = 'academic_year_timplans_service_select'
-              AND pg_get_expr(polqual, polrelid) = '("schoolId" = app.current_service_school_id())');
+              AND pg_get_expr(polqual, polrelid) = '("schoolId" = ( SELECT app.current_service_school_id() AS current_service_school_id))');
   -- The admin's arm is four since 20261110100000.
   IF n <> 6 THEN
     RAISE EXCEPTION 'year timplans: AcademicYearTimplans has % policies, expected the admin''s four, staff_select and family_select', n;
@@ -7702,7 +7749,7 @@ BEGIN
    WHERE polrelid = 'public."StudentEnrollments"'::regclass
      AND pg_get_expr(polqual, polrelid) NOT LIKE '%current_user_role%'
      AND NOT (polname = 'student_enrollments_service_select'
-              AND pg_get_expr(polqual, polrelid) = '("schoolId" = app.current_service_school_id())');
+              AND pg_get_expr(polqual, polrelid) = '("schoolId" = ( SELECT app.current_service_school_id() AS current_service_school_id))');
   IF bad IS NOT NULL THEN
     RAISE EXCEPTION 'enrolment: policies without the role in USING: %', bad;
   END IF;
@@ -19757,6 +19804,9 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('GallringRuns', '{}', '{}', '{}', '{}'),
   ('GuardianStudentHistory', '{}', '{}', '{}', '{}'),
   ('GuardianStudents', '{PERSONAL}', '{PERSONAL}', '{PERSONAL}', '{}'),
+  ('HuvudmanSchoolEvents', '{}', '{}', '{}', '{}'),
+  ('HuvudmanSchoolRequests', '{}', '{}', '{}', '{}'),
+  ('HuvudmanSchools', '{}', '{}', '{}', '{}'),
   ('IntegrationApiKeys', '{INTEGRATIONER}', '{INTEGRATIONER}', '{INTEGRATIONER}', '{}'),
   ('LeaveDelegationDecisions', '{DECIDES}', '{}', '{}', '{}'),
   ('LeaveRequests', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
@@ -29697,5 +29747,2315 @@ BEGIN
       RAISE EXCEPTION 'replacing: % (%) has hidden lessons', who, app.current_user_role();
     END IF;
   END LOOP;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 260: huvudmannen står i katalogen som migreringen skrev den
+-- (Huvudman, 20261212090000–090200).
+--
+--   260a  the six tables have row security, and only the gateway's role
+--         reaches them: SELECT on all six; on HuvudmanMembers INSERT and
+--         UPDATE of the columns the kommunadministratör writes, never the
+--         login (authId, invitedAt); on HuvudmanApiKeys INSERT of a new key
+--         and UPDATE of revokedAt and lastUsedAt only; no write at all on
+--         Huvudmen, HuvudmanSchools, HuvudmanSchoolRequests and
+--         HuvudmanSchoolEvents, and no DELETE anywhere. PostgREST's role and
+--         anon reach none;
+--   260b  the functions are SECURITY DEFINER with search_path public,
+--         pg_temp (the lock and the key's setting aside), and EXECUTE is
+--         exactly as granted: the gateway's role runs the acts, the reader's
+--         lookup and the arms' helpers; nobody runs who the reader is, the
+--         lock, the decider and kommunadministratör checks, or
+--         app.same_huvudman;
+--   260c  the three helpers without a second branch (current_user_id,
+--         current_user_group_id, current_user_decides) never name a
+--         huvudman; app.current_service_school_id() is SECURITY DEFINER,
+--         STABLE, with search_path public, pg_temp, executable as it was
+--         (by PUBLIC), and answers the setting at once, reading no table,
+--         when no huvudman's key is set (20261212090300); every one of the
+--         36 arms that name it calls it once, as an initplan;
+--   260d  the key's trigger is there, BEFORE UPDATE; the read log's two
+--         columns, their foreign keys and the CHECK are there and validated,
+--         and so are the six tables' CHECKs.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  bad text;
+BEGIN
+  SELECT string_agg(t, ', ') INTO bad
+    FROM unnest(ARRAY['Huvudmen', 'HuvudmanMembers', 'HuvudmanSchools', 'HuvudmanSchoolRequests',
+                      'HuvudmanSchoolEvents', 'HuvudmanApiKeys']) t
+   WHERE NOT (SELECT relrowsecurity FROM pg_class WHERE oid = format('public.%I', t)::regclass)
+      OR NOT has_table_privilege('app_authenticated', format('public.%I', t), 'SELECT')
+      OR has_table_privilege('app_authenticated', format('public.%I', t), 'DELETE')
+      OR has_table_privilege('app_authenticated', format('public.%I', t), 'TRUNCATE')
+      OR has_any_column_privilege('authenticated', format('public.%I', t), 'SELECT, INSERT, UPDATE')
+      OR has_table_privilege('authenticated', format('public.%I', t), 'DELETE')
+      OR (EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon')
+          AND has_any_column_privilege('anon', format('public.%I', t), 'SELECT, INSERT, UPDATE'))
+      OR (t NOT IN ('HuvudmanMembers', 'HuvudmanApiKeys')
+          AND has_any_column_privilege('app_authenticated', format('public.%I', t), 'INSERT, UPDATE'));
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION 'huvudman 260a: row security or table privileges wrong on %', bad;
+  END IF;
+
+  SELECT string_agg(format('%s.%s %s', tbl, col, priv), ', ') INTO bad
+    FROM (VALUES
+      ('HuvudmanMembers', 'huvudmanId', 'INSERT', true), ('HuvudmanMembers', 'email', 'INSERT', true),
+      ('HuvudmanMembers', 'firstName', 'INSERT', true), ('HuvudmanMembers', 'lastName', 'INSERT', true),
+      ('HuvudmanMembers', 'role', 'INSERT', true), ('HuvudmanMembers', 'isActive', 'INSERT', true),
+      ('HuvudmanMembers', 'authId', 'INSERT', false), ('HuvudmanMembers', 'invitedAt', 'INSERT', false),
+      ('HuvudmanMembers', 'id', 'INSERT', false),
+      ('HuvudmanMembers', 'firstName', 'UPDATE', true), ('HuvudmanMembers', 'lastName', 'UPDATE', true),
+      ('HuvudmanMembers', 'role', 'UPDATE', true), ('HuvudmanMembers', 'isActive', 'UPDATE', true),
+      ('HuvudmanMembers', 'authId', 'UPDATE', false), ('HuvudmanMembers', 'invitedAt', 'UPDATE', false),
+      ('HuvudmanMembers', 'huvudmanId', 'UPDATE', false), ('HuvudmanMembers', 'email', 'UPDATE', false),
+      ('HuvudmanApiKeys', 'huvudmanId', 'INSERT', true), ('HuvudmanApiKeys', 'name', 'INSERT', true),
+      ('HuvudmanApiKeys', 'keyHash', 'INSERT', true), ('HuvudmanApiKeys', 'scopes', 'INSERT', true),
+      ('HuvudmanApiKeys', 'createdById', 'INSERT', true),
+      ('HuvudmanApiKeys', 'revokedAt', 'INSERT', false), ('HuvudmanApiKeys', 'lastUsedAt', 'INSERT', false),
+      ('HuvudmanApiKeys', 'revokedAt', 'UPDATE', true), ('HuvudmanApiKeys', 'lastUsedAt', 'UPDATE', true),
+      ('HuvudmanApiKeys', 'name', 'UPDATE', false), ('HuvudmanApiKeys', 'scopes', 'UPDATE', false),
+      ('HuvudmanApiKeys', 'keyHash', 'UPDATE', false), ('HuvudmanApiKeys', 'huvudmanId', 'UPDATE', false)
+    ) v(tbl, col, priv, expected)
+   WHERE has_column_privilege('app_authenticated', format('public.%I', tbl), col, priv) IS DISTINCT FROM expected;
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION 'huvudman 260a: column privileges wrong: %', bad;
+  END IF;
+
+  SELECT string_agg(fn, ', ') INTO bad
+    FROM unnest(ARRAY['app.my_huvudman_ids()', 'app.my_kommunadmin_huvudman_ids()', 'app.school_huvudman_ids()',
+                      'app.current_huvudman_member_id()', 'app.huvudman_reader()', 'app.my_schools()',
+                      'app.huvudman_member_takes_login(uuid, uuid)', 'app.huvudman_kommunadmin(uuid)', 'app.school_decider()',
+                      'app.huvudman_request_school(uuid, text)', 'app.huvudman_withdraw_request(uuid, uuid)',
+                      'app.huvudman_release_school(uuid, uuid)', 'app.school_accepts_huvudman(uuid)',
+                      'app.school_declines_huvudman(uuid)', 'app.school_leaves_huvudman()',
+                      'app.school_huvudman_readers()', 'app.school_huvudman_keys()', 'app.same_huvudman(uuid, uuid)',
+                      'app.huvudman_schools(uuid)', 'app.huvudman_history(uuid, integer)', 'app.school_huvudman_history(integer)',
+                      'app.huvudman_key_schools()', 'app.huvudman_key_owner()', 'app.huvudman_key_opens_school(uuid, uuid)',
+                      'app.access_log_huvudman_names(uuid[], uuid[])', 'app.huvudman_api_keys_writes_are_narrow()',
+                      'app.current_school_id()', 'app.current_user_role()', 'app.current_user_may("AdminArea", boolean)']) fn
+   WHERE NOT (SELECT p.prosecdef AND p.proconfig = ARRAY['search_path=public, pg_temp'] FROM pg_proc p WHERE p.oid = fn::regprocedure);
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION 'huvudman 260b: not SECURITY DEFINER with search_path public, pg_temp: %', bad;
+  END IF;
+
+  SELECT string_agg(fn || ' for ' || r, ', ') INTO bad
+    FROM unnest(ARRAY['app.my_huvudman_ids()', 'app.my_kommunadmin_huvudman_ids()', 'app.school_huvudman_ids()',
+                      'app.current_huvudman_member_id()', 'app.huvudman_reader()', 'app.my_schools()',
+                      'app.huvudman_member_takes_login(uuid, uuid)', 'app.huvudman_school_lock(uuid)',
+                      'app.huvudman_kommunadmin(uuid)', 'app.school_decider()',
+                      'app.huvudman_request_school(uuid, text)', 'app.huvudman_withdraw_request(uuid, uuid)',
+                      'app.huvudman_release_school(uuid, uuid)', 'app.school_accepts_huvudman(uuid)',
+                      'app.school_declines_huvudman(uuid)', 'app.school_leaves_huvudman()',
+                      'app.school_huvudman_readers()', 'app.school_huvudman_keys()', 'app.same_huvudman(uuid, uuid)',
+                      'app.huvudman_schools(uuid)', 'app.huvudman_history(uuid, integer)', 'app.school_huvudman_history(integer)',
+                      'app.current_service_huvudman_key_id()', 'app.huvudman_key_schools()', 'app.huvudman_key_owner()',
+                      'app.huvudman_key_opens_school(uuid, uuid)', 'app.access_log_huvudman_names(uuid[], uuid[])',
+                      'app.huvudman_api_keys_writes_are_narrow()']) fn,
+         unnest(ARRAY['app_authenticated', 'authenticated', 'anon', 'service_role', 'supabase_auth_admin']) r
+   WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r)
+     AND has_function_privilege(r, fn::regprocedure, 'EXECUTE')
+         -- app.current_service_huvudman_key_id() is the gateway's role's since
+         -- 20261212090300, whose four service arms ask it.
+         IS DISTINCT FROM (r = 'app_authenticated' AND fn NOT IN (
+           'app.current_huvudman_member_id()', 'app.huvudman_school_lock(uuid)', 'app.huvudman_kommunadmin(uuid)',
+           'app.school_decider()', 'app.same_huvudman(uuid, uuid)',
+           'app.huvudman_api_keys_writes_are_narrow()'));
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION 'huvudman 260b: EXECUTE is wrong on %', bad;
+  END IF;
+
+  SELECT string_agg(p.proname, ', ') INTO bad
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'app' AND p.proname IN ('current_user_id', 'current_user_group_id', 'current_user_decides')
+     AND p.prosrc ~* 'huvudman';
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION 'huvudman 260c: % answer for the huvudman''s reader; they are to answer as for nobody', bad;
+  END IF;
+  IF (SELECT NOT (p.prosecdef AND p.provolatile = 's' AND p.proconfig = ARRAY['search_path=public, pg_temp']
+                  AND has_function_privilege('public', p.oid, 'EXECUTE'))
+        FROM pg_proc p WHERE p.oid = 'app.current_service_school_id()'::regprocedure) THEN
+    RAISE EXCEPTION 'huvudman 260c: app.current_service_school_id() is not SECURITY DEFINER, STABLE, search_path public, pg_temp, PUBLIC''s';
+  END IF;
+  -- With no huvudman's key the first statement returns, before any table:
+  -- the text up to the first RETURN names neither of the two tables.
+  IF (SELECT substring(p.prosrc FROM '^(.*?)RETURN v_school;') ~ '"HuvudmanApiKeys"|"HuvudmanSchools"|FROM'
+          OR substring(p.prosrc FROM '^(.*?)RETURN v_school;') IS NULL
+          OR p.prosrc !~ 'IF v_key IS NULL OR v_school IS NULL THEN\s+RETURN v_school;'
+        FROM pg_proc p WHERE p.oid = 'app.current_service_school_id()'::regprocedure) THEN
+    RAISE EXCEPTION 'huvudman 260c: app.current_service_school_id() reads a table before it answers a school''s own principal: %',
+      (SELECT prosrc FROM pg_proc WHERE oid = 'app.current_service_school_id()'::regprocedure);
+  END IF;
+  IF (SELECT count(*) FROM pg_policies WHERE schemaname = 'public'
+        AND (coalesce(qual, '') || coalesce(with_check, '')) ~ 'app\.current_service_school_id\(\)') < 36
+     OR EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public'
+        AND (coalesce(qual, '') || coalesce(with_check, '')) ~ '(?<!SELECT )app\.current_service_school_id\(\)') THEN
+    RAISE EXCEPTION 'huvudman 260c: the service arms are not the 36 initplans: %',
+      (SELECT string_agg(tablename || '.' || policyname, ', ') FROM pg_policies WHERE schemaname = 'public'
+        AND (coalesce(qual, '') || coalesce(with_check, '')) ~ '(?<!SELECT )app\.current_service_school_id\(\)');
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger tg WHERE tg.tgrelid = '"HuvudmanApiKeys"'::regclass
+                    AND tg.tgname = 'HuvudmanApiKeys_writes_are_narrow' AND tg.tgenabled = 'O'
+                    AND pg_get_triggerdef(tg.oid) LIKE '%BEFORE UPDATE ON public."HuvudmanApiKeys" FOR EACH ROW%') THEN
+    RAISE EXCEPTION 'huvudman 260d: the key''s trigger is missing or not as written';
+  END IF;
+  SELECT string_agg(conrelid::regclass || '.' || conname, ', ') INTO bad
+    FROM pg_constraint
+   WHERE (conrelid IN ('"Huvudmen"'::regclass, '"HuvudmanMembers"'::regclass, '"HuvudmanSchools"'::regclass,
+                       '"HuvudmanSchoolRequests"'::regclass, '"HuvudmanSchoolEvents"'::regclass, '"HuvudmanApiKeys"'::regclass)
+          OR conname IN ('PersonalDataAccess_huvudmanMemberId_fkey', 'PersonalDataAccess_huvudmanApiKeyId_fkey',
+                         'PersonalDataAccess_a_huvudman_reader_or_key'))
+     AND NOT convalidated;
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION 'huvudman 260d: not validated: %', bad;
+  END IF;
+  IF (SELECT count(*) FROM pg_constraint WHERE conname IN ('PersonalDataAccess_huvudmanMemberId_fkey',
+        'PersonalDataAccess_huvudmanApiKeyId_fkey', 'PersonalDataAccess_a_huvudman_reader_or_key')) <> 3
+     OR (SELECT count(*) FROM pg_constraint WHERE contype = 'c' AND conname IN ('Huvudmen_name_is_a_name',
+           'Huvudmen_organisation_number_is_ten_digits', 'Huvudmen_municipality_code_is_four_digits',
+           'HuvudmanMembers_email_is_an_address', 'HuvudmanMembers_names_are_names', 'HuvudmanMembers_a_login_was_invited',
+           'HuvudmanSchoolEvents_one_side_acts', 'HuvudmanApiKeys_name_is_a_name', 'HuvudmanApiKeys_hash_is_sha256',
+           'HuvudmanApiKeys_scopes_are_reads')) <> 10 THEN
+    RAISE EXCEPTION 'huvudman 260d: a constraint is missing';
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 261: lösaren svarar för huvudmannens läsare (20261212090000).
+--
+-- For both API roles, the school named by the gateway's setting for
+-- app_authenticated and by PostgREST's header for authenticated, all six
+-- helpers and who the reader is (app.huvudman_reader(), the gateway's view
+-- of app.current_huvudman_member_id()):
+--
+--   261a  the planner P of H, with no row anywhere, naming each school H
+--         owns (A, the roller school, C) is an administrator there who reads
+--         every area, writes none and decides nothing, with no user id and
+--         no class; in either case of the uuid, padded;
+--   261b  P naming nothing, a school H only asked for (B, D), or no uuid:
+--         no principal;
+--   261c  a deactivated member (X), and a member of a huvudman that owns
+--         nothing and only asked for the roller school (Q): no principal,
+--         named or not;
+--   261d  an own row wins: L, a teacher with a row at A, is the teacher at A
+--         (named or not) and H's reader in the roller school. A deactivated
+--         own row does not: G, whose guardian row in the roller school is
+--         deactivated, is under #190 nobody there, and with H owning the
+--         school is H's reader there, since the huvudman's access is its own
+--         decision, which the school took; nobody with nothing named. The
+--         school's deciders see it in the list of who reads the school
+--         (265a: own_row INACTIVE);
+--   261e  a school the hook closed is no reader's, by setting or header;
+--         the setting wins over the header as for a row;
+--   261f  the kommunadministratör K reads as P does;
+--   261g  app.my_schools(): P's three schools as the läsare, with the
+--         huvudman, its role and which is chosen; L's own row first and no
+--         reader's entry at A; nobody's for X; G's three as the reader, the
+--         roller school among them, where G's own row is deactivated; a
+--         closed school with its reason;
+--   261h  Ersättande grupper's helper (20261211090000) answers the reader '{}'
+--         at a school with replacing groups: H takes rls-ersattande-school
+--         for the transaction, its SvA pupil has lessons hidden (the
+--         control), and P, naming the school by the setting and by the
+--         header, has none.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_rls261_a', :'school_a', true),
+       set_config('app.test_rls261_b', :'school_b', true);
+DO $$
+DECLARE
+  a uuid := current_setting('app.test_rls261_a')::uuid;
+  b uuid := current_setting('app.test_rls261_b')::uuid;
+  m uuid;
+  c uuid;
+  d uuid;
+  via text;
+  r record;
+  got record;
+  rd record;
+  n int := 0;
+  p  constant text := 'fe000000-0000-4000-8000-000000000260';
+  k  constant text := 'fe000000-0000-4000-8000-000000000261';
+  x  constant text := 'fe000000-0000-4000-8000-000000000262';
+  q  constant text := 'fe000000-0000-4000-8000-000000000263';
+  l  constant text := 'fe000000-0000-4000-8000-000000000264';
+  g  constant text := 'fe000000-0000-4000-8000-000000000265';
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+  m := app.current_school_id();
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000269')::text, true);
+  c := app.current_school_id();
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000266')::text, true);
+  d := app.current_school_id();
+  IF m IS NULL OR c IS NULL OR d IS NULL OR c IN (a, b, m) OR d IN (a, b, m, c) THEN
+    RAISE EXCEPTION 'huvudman 261: schools m %, c %, d %; fixtures did not run', m, c, d;
+  END IF;
+
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    IF current_user <> via THEN
+      RAISE EXCEPTION 'huvudman 261: running as %, not %', current_user, via;
+    END IF;
+    FOR r IN
+      SELECT * FROM (VALUES
+        -- sub, closed, named, the other channel's value (261e), expected school, role, reader?, case
+        (p, NULL::jsonb, a::text,                '',     a,          'SCHOOL_ADMIN', true,  '261a P names A'),
+        (p, NULL,        m::text,                '',     m,          'SCHOOL_ADMIN', true,  '261a P names the roller school'),
+        (p, NULL,        c::text,                '',     c,          'SCHOOL_ADMIN', true,  '261a P names C'),
+        (p, NULL,        upper(m::text),         '',     m,          'SCHOOL_ADMIN', true,  '261a P names it in upper case'),
+        (p, NULL,        ' ' || c::text || ' ',  '',     c,          'SCHOOL_ADMIN', true,  '261a P names it padded'),
+        (p, NULL,        '',                     '',     NULL::uuid, NULL,           false, '261b P names nothing'),
+        (p, NULL,        b::text,                '',     NULL,       NULL,           false, '261b P names B, only asked for'),
+        (p, NULL,        d::text,                '',     NULL,       NULL,           false, '261b P names D, only asked for'),
+        (p, NULL,        'not-a-uuid',           '',     NULL,       NULL,           false, '261b P names no uuid'),
+        (x, NULL,        a::text,                '',     NULL,       NULL,           false, '261c a deactivated member names A'),
+        (x, NULL,        '',                     '',     NULL,       NULL,           false, '261c a deactivated member names nothing'),
+        (q, NULL,        m::text,                '',     NULL,       NULL,           false, '261c H2''s planner names the school H2 asked for'),
+        (q, NULL,        a::text,                '',     NULL,       NULL,           false, '261c H2''s planner names H''s school'),
+        (l, NULL,        a::text,                '',     a,          'TEACHER',      false, '261d L names A, where L is a teacher'),
+        (l, NULL,        '',                     '',     a,          'TEACHER',      false, '261d L names nothing: the own row'),
+        (l, NULL,        m::text,                '',     m,          'SCHOOL_ADMIN', true,  '261d L names the roller school: H''s reader'),
+        (g, NULL,        m::text,                '',     m,          'SCHOOL_ADMIN', true,  '261d G''s row there is deactivated: H''s reader'),
+        (g, NULL,        '',                     '',     NULL,       NULL,           false, '261d G names nothing: nobody'),
+        (p, jsonb_build_object(c::text, 'sso_required'), c::text, '', NULL, NULL,    false, '261e C closed, named'),
+        (p, jsonb_build_object(c::text, 'sso_required'), m::text, '', m,    'SCHOOL_ADMIN', true, '261e C closed, the roller school named'),
+        (p, NULL,        m::text,                c::text, m,         'SCHOOL_ADMIN', true,  '261e the setting wins over the header'),
+        (k, NULL,        m::text,                '',     m,          'SCHOOL_ADMIN', true,  '261f K names the roller school'),
+        (k, NULL,        '',                     '',     NULL,       NULL,           false, '261f K names nothing')
+      ) v(sub, closed, named, other, school, role, reader, label)
+    LOOP
+      -- 261e's "setting wins" is the gateway's alone: PostgREST's role has
+      -- the header only.
+      CONTINUE WHEN r.other <> '' AND via = 'authenticated';
+      PERFORM set_config('request.jwt.claims',
+        (jsonb_build_object('sub', r.sub, 'role', 'authenticated')
+          || CASE WHEN r.closed IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('rastra_closed_schools', r.closed) END)::text,
+        true);
+      PERFORM set_config('app.chosen_school_id', CASE via WHEN 'app_authenticated' THEN r.named ELSE '' END, true);
+      PERFORM set_config('request.headers',
+        CASE WHEN via = 'authenticated' AND r.named <> '' THEN json_build_object('x-school-id', r.named)::text
+             WHEN via = 'app_authenticated' AND r.other <> '' THEN json_build_object('x-school-id', r.other)::text
+             ELSE '' END, true);
+      SELECT app.current_user_id() AS id, app.current_school_id() AS school, app.current_user_role()::text AS role,
+             app.current_user_may('PERSONAL', true) AS may_write, app.current_user_may('PERSONAL', false) AS may_read,
+             app.current_user_may('PLANERING', true) AS may_write2, app.current_user_may(NULL, false) AS may_null,
+             app.current_user_decides() AS decides, app.current_user_group_id() AS grp
+        INTO got;
+      IF got.school IS DISTINCT FROM r.school OR got.role IS DISTINCT FROM r.role
+         OR got.decides OR got.grp IS NOT NULL OR got.may_null
+         OR (r.reader AND (got.id IS NOT NULL OR NOT got.may_read OR got.may_write OR got.may_write2))
+         OR (NOT r.reader AND r.school IS NULL AND (got.id IS NOT NULL OR got.may_read))
+         OR (NOT r.reader AND r.school IS NOT NULL AND got.id IS NULL) THEN
+        RAISE EXCEPTION 'huvudman % %: school %, role %, id %, may read %, may write % / %, may(NULL) %, decides %, class %; expected school %, role %, reader %',
+          via, r.label, got.school, got.role, got.id, got.may_read, got.may_write, got.may_write2, got.may_null, got.decides, got.grp,
+          r.school, r.role, r.reader;
+      END IF;
+      -- Who the reader is, as the gateway asks it.
+      IF via = 'app_authenticated' THEN
+        SELECT count(*) AS n, min(huvudman_name) AS hm, min(school_id::text) AS school, min(member_role::text) AS mrole
+          INTO rd FROM app.huvudman_reader();
+        IF (rd.n = 1) IS DISTINCT FROM r.reader
+           OR (r.reader AND (rd.school IS DISTINCT FROM r.school::text
+                             OR rd.hm IS DISTINCT FROM 'RLS Kommun'
+                             OR rd.mrole IS DISTINCT FROM CASE r.sub WHEN k THEN 'KOMMUNADMINISTRATOR' ELSE 'PLANERARE' END)) THEN
+          RAISE EXCEPTION 'huvudman % %: huvudman_reader gave % rows (%, %, %)', via, r.label, rd.n, rd.hm, rd.school, rd.mrole;
+        END IF;
+      END IF;
+      n := n + 1;
+    END LOOP;
+    SET LOCAL ROLE app_authenticated;
+  END LOOP;
+  PERFORM set_config('app.chosen_school_id', '', true);
+  PERFORM set_config('request.headers', '', true);
+
+  -- 261g, as the API role (the only one that may execute it).
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', p)::text, true);
+  IF (SELECT array_agg(school_id ORDER BY school_id) FROM app.my_schools()) IS DISTINCT FROM (SELECT array_agg(s ORDER BY s) FROM unnest(ARRAY[a, m, c]) s)
+     OR EXISTS (SELECT 1 FROM app.my_schools() WHERE user_id IS NOT NULL OR role <> 'SCHOOL_ADMIN' OR admin_profile <> 'LASARE'
+                   OR huvudman_name IS DISTINCT FROM 'RLS Kommun' OR huvudman_role IS DISTINCT FROM 'PLANERARE'
+                   OR huvudman_member_id IS NULL OR is_current OR closed_reason IS NOT NULL) THEN
+    RAISE EXCEPTION 'huvudman 261g: P''s my_schools said %', (SELECT json_agg(ms) FROM app.my_schools() ms);
+  END IF;
+  PERFORM set_config('app.chosen_school_id', m::text, true);
+  IF (SELECT array_agg(school_id) FROM app.my_schools() WHERE is_current) IS DISTINCT FROM ARRAY[m] THEN
+    RAISE EXCEPTION 'huvudman 261g: with the roller school named, P''s chosen school is %', (SELECT array_agg(school_id) FROM app.my_schools() WHERE is_current);
+  END IF;
+  PERFORM set_config('app.chosen_school_id', '', true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', p, 'rastra_closed_schools', json_build_object(c, 'sso_required'))::text, true);
+  IF (SELECT closed_reason FROM app.my_schools() WHERE school_id = c) IS DISTINCT FROM 'sso_required' THEN
+    RAISE EXCEPTION 'huvudman 261g: with C closed, my_schools said %', (SELECT json_agg(ms) FROM app.my_schools() ms);
+  END IF;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', l)::text, true);
+  IF (SELECT array_agg(school_id::text || '/' || role::text || '/' || (huvudman_member_id IS NOT NULL)::text) FROM app.my_schools())
+     IS DISTINCT FROM ARRAY[a::text || '/TEACHER/false']
+                      || (SELECT array_agg(s::text || '/SCHOOL_ADMIN/true' ORDER BY (SELECT name FROM "Schools" WHERE id = s), s)
+                            FROM unnest(ARRAY[m, c]) s) THEN
+    -- The order of the reader's entries is by the school's name, which L
+    -- cannot read; compare as a set after the own row instead.
+    IF (SELECT (array_agg(school_id))[1] FROM app.my_schools()) IS DISTINCT FROM a
+       OR (SELECT count(*) FROM app.my_schools()) <> 3
+       OR (SELECT count(*) FROM app.my_schools() WHERE school_id = a) <> 1
+       OR (SELECT role FROM app.my_schools() WHERE school_id = a) <> 'TEACHER'
+       OR (SELECT count(*) FROM app.my_schools() WHERE school_id IN (m, c) AND huvudman_member_id IS NOT NULL) <> 2 THEN
+      RAISE EXCEPTION 'huvudman 261g: L''s my_schools said %', (SELECT json_agg(ms) FROM app.my_schools() ms);
+    END IF;
+  END IF;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', x)::text, true);
+  IF EXISTS (SELECT 1 FROM app.my_schools()) THEN
+    RAISE EXCEPTION 'huvudman 261g: a deactivated member lists %', (SELECT json_agg(ms) FROM app.my_schools() ms);
+  END IF;
+  -- G, whose own row in the roller school is deactivated: no own entry, and
+  -- the roller school among the reader's three, as the resolver answers.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', g)::text, true);
+  IF (SELECT count(*) FROM app.my_schools() WHERE user_id IS NOT NULL) <> 0
+     OR (SELECT array_agg(school_id ORDER BY school_id) FROM app.my_schools() WHERE huvudman_member_id IS NOT NULL)
+        IS DISTINCT FROM (SELECT array_agg(s ORDER BY s) FROM unnest(ARRAY[a, m, c]) s) THEN
+    RAISE EXCEPTION 'huvudman 261g: G''s my_schools said %', (SELECT json_agg(ms) FROM app.my_schools() ms);
+  END IF;
+  PERFORM set_config('request.jwt.claims', '', true);
+  RAISE NOTICE 'huvudman 261: % resolutions', n;
+END $$;
+ROLLBACK;
+
+-- 261h
+BEGIN;
+DO $$
+DECLARE
+  h uuid;
+  eg uuid;
+  via text;
+  hidden uuid[];
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000261')::text, true);
+  SELECT "huvudmanId" INTO h FROM "HuvudmanMembers" WHERE "authId" = 'fe000000-0000-4000-8000-000000000261';
+  PERFORM app.huvudman_request_school(h, 'rls-ersattande-school');
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001500')::text, true);
+  eg := app.current_school_id();
+  PERFORM app.school_accepts_huvudman(h);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001502')::text, true);
+  IF cardinality(app.current_student_replaced_lesson_ids()) = 0 THEN
+    RAISE EXCEPTION 'huvudman 261h: the SvA pupil has no lesson hidden, so the reader''s answer proves nothing';
+  END IF;
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000260')::text, true);
+    PERFORM set_config('app.chosen_school_id', CASE via WHEN 'app_authenticated' THEN eg::text ELSE '' END, true);
+    PERFORM set_config('request.headers', CASE via WHEN 'authenticated' THEN json_build_object('x-school-id', eg)::text ELSE '' END, true);
+    IF app.current_school_id() IS DISTINCT FROM eg OR app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN
+      RAISE EXCEPTION 'huvudman 261h: as %, P is not the reader at the replacing school (school %, role %)', via,
+        app.current_school_id(), app.current_user_role();
+    END IF;
+    hidden := app.current_student_replaced_lesson_ids();
+    IF hidden IS DISTINCT FROM '{}'::uuid[] THEN
+      RAISE EXCEPTION 'huvudman 261h: as %, the reader has % lessons hidden by the pupils'' branch', via, cardinality(hidden);
+    END IF;
+    SET LOCAL ROLE app_authenticated;
+  END LOOP;
+  PERFORM set_config(g, '', true) FROM unnest(ARRAY['request.jwt.claims', 'app.chosen_school_id', 'request.headers']) g;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 262: huvudmannens läsare läser det skolans läsare läser, och inget
+-- annat (20261212090000).
+--
+-- Every table with row security, for both API roles, the school named by
+-- setting for app_authenticated and by header for authenticated:
+--
+--   262a  P naming the roller school reads exactly what the roller school's
+--         läsare (…0115) reads, and P naming A what A's läsare (…0241, A
+--         named) reads; the tables of a person's own rows (notices, devices,
+--         feeds, a private schedule proposal, the read log) are compared by
+--         whether they answer at all, and P's own notices, devices, feeds
+--         and opt-outs are none. The huvudman's own tables answer for the
+--         huvudman and are section 265's;
+--   262b  P sees no row filed under another school than the one named;
+--   262c  nothing named, a school H only asked for (B, D), a deactivated
+--         member (X) and H2's planner naming the school H2 asked for (Q):
+--         no row in any table but the huvudman's own (and X not even there).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_rls262_a', :'school_a', true),
+       set_config('app.test_rls262_b', :'school_b', true);
+DO $$
+DECLARE
+  a uuid := current_setting('app.test_rls262_a')::uuid;
+  b uuid := current_setting('app.test_rls262_b')::uuid;
+  m uuid;
+  d uuid;
+  via text;
+  t record;
+  cs record;
+  n bigint;
+  twin_n bigint;
+  key_col text;
+  wrong text[] := '{}';
+  cells int := 0;
+  own_rows constant text[] := ARRAY['Notifications', 'NotificationOptOuts', 'PushDevices', 'CalendarFeeds',
+                                    'ScheduleCandidateRuns', 'ScheduleCandidates', 'PersonalDataAccess'];
+  -- Notifications aside: every administrator reads the school's notices
+  -- (notifications_admin_select), the läsare and the reader alike.
+  none_of_own constant text[] := ARRAY['NotificationOptOuts', 'PushDevices', 'CalendarFeeds'];
+  huvudmans constant text[] := ARRAY['Huvudmen', 'HuvudmanMembers', 'HuvudmanSchools', 'HuvudmanSchoolRequests',
+                                     'HuvudmanSchoolEvents', 'HuvudmanApiKeys'];
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+  m := app.current_school_id();
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000266')::text, true);
+  d := app.current_school_id();
+  IF m IS NULL OR d IS NULL THEN
+    RAISE EXCEPTION 'huvudman 262: the roller school or D is not there; fixtures did not run';
+  END IF;
+
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    FOR cs IN
+      SELECT * FROM (VALUES
+        ('fe000000-0000-4000-8000-000000000260', m::text, m,          '00000000-0000-4000-8000-000000000115', '',      'P in the roller school'),
+        ('fe000000-0000-4000-8000-000000000260', a::text, a,          'fe000000-0000-4000-8000-000000000241', a::text, 'P at A'),
+        ('fe000000-0000-4000-8000-000000000261', m::text, m,          '00000000-0000-4000-8000-000000000115', '',      'K in the roller school'),
+        ('fe000000-0000-4000-8000-000000000260', '',      NULL::uuid, NULL,                                   NULL,    'P naming nothing'),
+        ('fe000000-0000-4000-8000-000000000260', b::text, NULL,       NULL,                                   NULL,    'P naming B'),
+        ('fe000000-0000-4000-8000-000000000260', d::text, NULL,       NULL,                                   NULL,    'P naming D'),
+        ('fe000000-0000-4000-8000-000000000262', a::text, NULL,       NULL,                                   NULL,    'X naming A'),
+        ('fe000000-0000-4000-8000-000000000263', m::text, NULL,       NULL,                                   NULL,    'Q naming the roller school')
+      ) v(sub, named, school, twin, twin_named, label)
+    LOOP
+      FOR t IN
+        SELECT cl.relname AS tbl,
+               EXISTS (SELECT 1 FROM pg_attribute at WHERE at.attrelid = cl.oid AND at.attname = 'schoolId' AND NOT at.attisdropped) AS has_school
+          FROM pg_class cl JOIN pg_namespace ns ON ns.oid = cl.relnamespace
+         WHERE ns.nspname = 'public' AND cl.relkind = 'r' AND cl.relrowsecurity
+         ORDER BY 1
+      LOOP
+        key_col := CASE WHEN t.tbl = 'Schools' THEN 'id' WHEN t.has_school THEN 'schoolId' END;
+        PERFORM set_config('request.jwt.claims', json_build_object('sub', cs.sub)::text, true);
+        PERFORM set_config('app.chosen_school_id', CASE via WHEN 'app_authenticated' THEN cs.named ELSE '' END, true);
+        PERFORM set_config('request.headers', CASE WHEN via = 'authenticated' AND cs.named <> '' THEN json_build_object('x-school-id', cs.named)::text ELSE '' END, true);
+        IF app.current_school_id() IS DISTINCT FROM cs.school THEN
+          RAISE EXCEPTION 'huvudman 262: % resolved to % as %', cs.label, app.current_school_id(), via;
+        END IF;
+        BEGIN
+          IF key_col IS NOT NULL AND NOT (t.tbl = ANY (huvudmans)) THEN
+            EXECUTE format('SELECT count(*) FROM %I WHERE %I IS DISTINCT FROM $1 AND %I IS NOT NULL', t.tbl, key_col, key_col)
+              INTO n USING cs.school;
+            IF n > 0 THEN
+              wrong := wrong || format('%s as %s sees %s rows of %s filed under another school', cs.label, via, n, t.tbl);
+            END IF;
+          END IF;
+          EXECUTE format('SELECT count(*) FROM %I', t.tbl) INTO n;
+        EXCEPTION WHEN insufficient_privilege THEN
+          n := -1;
+        END;
+        cells := cells + 1;
+
+        -- 262c: no principal, so nothing (the huvudman's own tables aside,
+        -- which answer for a membership; a deactivated one has none).
+        IF cs.school IS NULL THEN
+          IF n > 0 AND NOT (t.tbl = ANY (huvudmans) AND cs.label <> 'X naming A') THEN
+            wrong := wrong || format('%s as %s reads %s rows of %s', cs.label, via, n, t.tbl);
+          END IF;
+          CONTINUE;
+        END IF;
+        CONTINUE WHEN t.tbl = ANY (huvudmans);
+        IF t.tbl = ANY (none_of_own) AND n > 0 THEN
+          wrong := wrong || format('%s as %s reads %s of its own %s, which it cannot have', cs.label, via, n, t.tbl);
+        END IF;
+
+        -- 262a: the school's läsare, who has a row there.
+        PERFORM set_config('request.jwt.claims', json_build_object('sub', cs.twin)::text, true);
+        PERFORM set_config('app.chosen_school_id', CASE via WHEN 'app_authenticated' THEN cs.twin_named ELSE '' END, true);
+        PERFORM set_config('request.headers', CASE WHEN via = 'authenticated' AND cs.twin_named <> '' THEN json_build_object('x-school-id', cs.twin_named)::text ELSE '' END, true);
+        IF app.current_school_id() IS DISTINCT FROM cs.school OR NOT app.current_user_may('PERSONAL', false)
+           OR app.current_user_may('PERSONAL', true) THEN
+          RAISE EXCEPTION 'huvudman 262: the läsare twin of % is not a läsare in its school', cs.label;
+        END IF;
+        BEGIN
+          EXECUTE format('SELECT count(*) FROM %I', t.tbl) INTO twin_n;
+        EXCEPTION WHEN insufficient_privilege THEN
+          twin_n := -1;
+        END;
+        -- Users, through PostgREST, is a person's own row: the läsare reads
+        -- theirs, the reader has none.
+        IF t.tbl = ANY (own_rows) OR (t.tbl = 'Users' AND via = 'authenticated') THEN
+          IF (n = -1) IS DISTINCT FROM (twin_n = -1) THEN
+            wrong := wrong || format('%s as %s: %s answers %s, the läsare %s', cs.label, via, t.tbl, n, twin_n);
+          END IF;
+          IF t.tbl = 'Users' AND n > 0 THEN
+            wrong := wrong || format('%s as %s reads %s Users rows through PostgREST', cs.label, via, n);
+          END IF;
+        ELSIF n IS DISTINCT FROM twin_n THEN
+          wrong := wrong || format('%s as %s sees %s rows of %s, the läsare %s', cs.label, via, n, t.tbl, twin_n);
+        END IF;
+        cells := cells + 1;
+      END LOOP;
+    END LOOP;
+    SET LOCAL ROLE app_authenticated;
+  END LOOP;
+  PERFORM set_config('app.chosen_school_id', '', true);
+  PERFORM set_config('request.headers', '', true);
+
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION 'huvudman 262: % of % cells wrong: %', cardinality(wrong), cells, array_to_string(wrong, '; ');
+  END IF;
+  RAISE NOTICE 'huvudman 262: % cells', cells;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 263: huvudmannens läsare skriver ingenting (20261212090000).
+--
+--   263a  every table with row security, from the catalogue (114), every
+--         write verb, both API roles, P naming the roller school and A
+--         through the setting and the header: an INSERT of a row of the
+--         school read as its full administrator through the gateway's role
+--         (who reads the most), an INSERT of a new row of the school with
+--         every other column its default, and an UPDATE and a DELETE of
+--         every row the reader's USING meets. None is admitted: refused by
+--         row security (42501), denied by the role's grants, or meeting no
+--         row. The counts are printed; the section fails when fewer than
+--         114 tables, or fewer than 95 and 24 rows to copy, are tried;
+--   263b  the functions the gateway's role may run that write on a
+--         caller's behalf, called as P naming the roller school, refuse (an
+--         error, or a refusal in the answer: the feed's NO_PRINCIPAL, the
+--         referral's false) or write nothing: a calendar feed, a device, an integration key's
+--         webhook secret, an SS12000 source's secrets, a leave request's
+--         referral, the new mentors' notices, and the school's answers to a
+--         huvudman. (The publication and grundschema locks take a lock and
+--         answer the school's publish mode, and write nothing.)
+--   263c  every function either API role may run that may write, from the
+--         catalogue (see the block), refuses or writes nothing for P, or is
+--         one of the gateway's jobs, named in the block, and writes no more
+--         than it writes with no principal;
+--   263d  (scripts/test/rls-owner-checks.sql, run as the tables' owner after
+--         this file, since it reads every row past row security) every
+--         write policy's WITH CHECK, and every USING a DELETE takes,
+--         evaluated over every row as P, K and the läsare: none admits one.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_rls263_a', :'school_a', true),
+       set_config('app.test_rls263_admin', :'admin_auth_id', true);
+DO $$
+DECLARE
+  a uuid := current_setting('app.test_rls263_a')::uuid;
+  admin_a constant text := current_setting('app.test_rls263_admin');
+  p constant text := 'fe000000-0000-4000-8000-000000000260';
+  m uuid;
+  via text;
+  d record;
+  t record;
+  key_col text;
+  ins_cols text;
+  upd_col text;
+  school_ins boolean;
+  stashed jsonb;
+  n bigint;
+  st text;
+  msg text;
+  outcome text;
+  cmd text;
+  probed int;
+  copied int;
+  tables int;
+  floor_copies int;
+  tried text[] := '{}';
+  wrong text[] := '{}';
+  others text[] := '{}';
+  cells int := 0;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+  m := app.current_school_id();
+  SELECT count(*) INTO tables
+    FROM pg_class cl JOIN pg_namespace ns ON ns.oid = cl.relnamespace
+   WHERE ns.nspname = 'public' AND cl.relkind = 'r' AND cl.relrowsecurity;
+
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    FOR d IN SELECT * FROM (VALUES
+        ('00000000-0000-4000-8000-000000000105', m, 'P in the roller school'),
+        (admin_a,                               a, 'P at A')
+      ) v(reader, school, label)
+    LOOP
+      probed := 0;
+      copied := 0;
+      -- Every table with row security, from the catalogue.
+      FOR t IN
+        SELECT cl.relname AS tbl,
+               EXISTS (SELECT 1 FROM pg_attribute at WHERE at.attrelid = cl.oid AND at.attname = 'schoolId' AND NOT at.attisdropped) AS has_school
+          FROM pg_class cl JOIN pg_namespace ns ON ns.oid = cl.relnamespace
+         WHERE ns.nspname = 'public' AND cl.relkind = 'r' AND cl.relrowsecurity
+         ORDER BY 1
+      LOOP
+        key_col := CASE WHEN t.tbl = 'Schools' THEN 'id' WHEN t.has_school THEN 'schoolId' END;
+        -- A row to copy: one of the school's (or, without a "schoolId", any
+        -- the administrator reads), read as its full administrator through
+        -- the gateway's role, which reads the most.
+        SET LOCAL ROLE app_authenticated;
+        PERFORM set_config('request.jwt.claims', json_build_object('sub', d.reader)::text, true);
+        PERFORM set_config('app.chosen_school_id', '', true);
+        PERFORM set_config('request.headers', '', true);
+        stashed := NULL;
+        BEGIN
+          IF key_col IS NULL THEN
+            EXECUTE format('SELECT to_jsonb(x) FROM %I x LIMIT 1', t.tbl) INTO stashed;
+          ELSE
+            EXECUTE format('SELECT to_jsonb(x) FROM %I x WHERE x.%I = $1 LIMIT 1', t.tbl, key_col) INTO stashed USING d.school;
+          END IF;
+        EXCEPTION WHEN insufficient_privilege THEN stashed := NULL;
+        END;
+        EXECUTE format('SET LOCAL ROLE %I', via);
+        SELECT string_agg(quote_ident(at.attname), ', ' ORDER BY at.attnum) INTO ins_cols
+          FROM pg_attribute at
+         WHERE at.attrelid = format('public.%I', t.tbl)::regclass AND at.attnum > 0 AND NOT at.attisdropped
+           AND has_column_privilege(format('public.%I', t.tbl), at.attname, 'INSERT');
+        SELECT quote_ident(at.attname) INTO upd_col
+          FROM pg_attribute at
+         WHERE at.attrelid = format('public.%I', t.tbl)::regclass AND at.attnum > 0 AND NOT at.attisdropped
+           AND has_column_privilege(format('public.%I', t.tbl), at.attname, 'UPDATE')
+         ORDER BY at.attnum LIMIT 1;
+        school_ins := t.has_school AND has_column_privilege(format('public.%I', t.tbl), 'schoolId', 'INSERT');
+
+        -- Now P, naming the school.
+        PERFORM set_config('request.jwt.claims', json_build_object('sub', p)::text, true);
+        PERFORM set_config('app.chosen_school_id', CASE via WHEN 'app_authenticated' THEN d.school::text ELSE '' END, true);
+        PERFORM set_config('request.headers', CASE via WHEN 'authenticated' THEN json_build_object('x-school-id', d.school)::text ELSE '' END, true);
+        IF app.current_school_id() IS DISTINCT FROM d.school OR app.current_user_id() IS NOT NULL THEN
+          RAISE EXCEPTION 'huvudman 263a: P is not the reader in % as %', d.label, via;
+        END IF;
+        probed := probed + 1;
+        IF stashed IS NOT NULL THEN copied := copied + 1; END IF;
+        -- A copy of the row whole; a new row of the school, every other
+        -- column its default (row security is asked before any NOT NULL);
+        -- and every row the reader's USING lets an UPDATE and a DELETE meet.
+        FOREACH cmd IN ARRAY ARRAY['insert a copy', 'insert a new row', 'update', 'delete'] LOOP
+          CONTINUE WHEN cmd = 'insert a copy' AND stashed IS NULL;
+          outcome := NULL;
+          BEGIN
+            IF cmd = 'insert a copy' THEN
+              IF ins_cols IS NULL THEN
+                outcome := 'denied';
+              ELSE
+                EXECUTE format('INSERT INTO %I (%s) SELECT %s FROM jsonb_populate_record(NULL::%I, $1)',
+                               t.tbl, ins_cols, ins_cols, t.tbl) USING stashed;
+                GET DIAGNOSTICS n = ROW_COUNT;
+                outcome := CASE WHEN n = 1 THEN 'admitted' ELSE 'none' END;
+              END IF;
+            ELSIF cmd = 'insert a new row' THEN
+              IF school_ins THEN
+                EXECUTE format('INSERT INTO %I ("schoolId") VALUES ($1)', t.tbl) USING d.school;
+              ELSE
+                EXECUTE format('INSERT INTO %I DEFAULT VALUES', t.tbl);
+              END IF;
+              GET DIAGNOSTICS n = ROW_COUNT;
+              outcome := CASE WHEN n = 1 THEN 'admitted' ELSE 'none' END;
+            ELSIF cmd = 'update' THEN
+              IF upd_col IS NULL THEN
+                outcome := 'denied';
+              ELSE
+                EXECUTE format('UPDATE %I SET %s = %s', t.tbl, upd_col, upd_col);
+                GET DIAGNOSTICS n = ROW_COUNT;
+                outcome := CASE WHEN n = 0 THEN 'none' ELSE 'admitted' END;
+              END IF;
+            ELSE
+              EXECUTE format('DELETE FROM %I', t.tbl);
+              GET DIAGNOSTICS n = ROW_COUNT;
+              outcome := CASE WHEN n = 0 THEN 'none' ELSE 'admitted' END;
+            END IF;
+            RAISE EXCEPTION USING ERRCODE = 'ZH263';
+          EXCEPTION
+            WHEN SQLSTATE 'ZH263' THEN NULL;
+            WHEN unique_violation OR foreign_key_violation OR exclusion_violation OR check_violation OR not_null_violation THEN
+              -- Past row security, which PostgreSQL checks before the
+              -- table's constraints: the row reached them.
+              outcome := 'admitted';
+            WHEN insufficient_privilege THEN
+              GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT;
+              outcome := CASE WHEN msg LIKE '%row-level security%' THEN 'refused' ELSE 'denied' END;
+            WHEN OTHERS THEN
+              GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT;
+              outcome := 'other ' || st;
+          END;
+          IF outcome LIKE 'other %' THEN
+            others := others || format('%s %s %s', t.tbl, cmd, outcome);
+          END IF;
+          IF outcome = 'admitted' THEN
+            wrong := wrong || format('%s as %s: %s %s was admitted', d.label, via, cmd, t.tbl);
+          END IF;
+          cells := cells + 1;
+        END LOOP;
+      END LOOP;
+      -- Every table with row security is tried; the floors fail the section
+      -- when a table, or a fixture row to copy, goes missing.
+      IF probed <> tables OR tables < 114 THEN
+        wrong := wrong || format('%s as %s: %s of %s tables with row security tried (at least 114)', d.label, via, probed, tables);
+      END IF;
+      floor_copies := CASE WHEN d.school = m THEN 95 ELSE 24 END;
+      IF copied < floor_copies THEN
+        wrong := wrong || format('%s as %s: only %s tables had a row to copy (at least %s)', d.label, via, copied, floor_copies);
+      END IF;
+      tried := tried || format('%s %s: %s tables, %s with a row to copy', via, d.label, probed, copied);
+    END LOOP;
+    SET LOCAL ROLE app_authenticated;
+  END LOOP;
+  PERFORM set_config('app.chosen_school_id', '', true);
+  PERFORM set_config('request.headers', '', true);
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION 'huvudman 263a: % of % cells wrong: %', cardinality(wrong), cells, array_to_string(wrong, '; ');
+  END IF;
+  RAISE NOTICE 'huvudman 263a: % cells (%); refused by a trigger before row security: %', cells,
+    array_to_string(tried, '; '), coalesce(nullif(array_to_string(others, ', '), ''), 'none');
+END $$;
+ROLLBACK;
+
+BEGIN;
+DO $$
+DECLARE
+  p constant text := 'fe000000-0000-4000-8000-000000000260';
+  m uuid;
+  pupil uuid;
+  ikey uuid;
+  src uuid;
+  req uuid;
+  feed uuid;
+  h2 uuid;
+  r record;
+  refused text;
+  ran text[] := '{}';
+  wrong text[] := '{}';
+BEGIN
+  -- What the calls name, read as the roller school's full administrator.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+  m := app.current_school_id();
+  SELECT id INTO pupil FROM "Users" WHERE "schoolId" = m AND role = 'STUDENT' AND "isActive" ORDER BY "authId" LIMIT 1;
+  SELECT id INTO ikey FROM "IntegrationApiKeys" WHERE "schoolId" = m ORDER BY "createdAt" LIMIT 1;
+  SELECT id INTO src FROM "Ss12000Sources" WHERE "schoolId" = m ORDER BY "createdAt" LIMIT 1;
+  SELECT id INTO req FROM "LeaveRequests" WHERE "schoolId" = m ORDER BY "createdAt" LIMIT 1;
+  SELECT id INTO feed FROM "CalendarFeeds" WHERE "schoolId" = m ORDER BY "createdAt" LIMIT 1;
+  SELECT "huvudmanId" INTO h2 FROM "HuvudmanSchoolRequests" WHERE "schoolId" = m LIMIT 1;
+  IF pupil IS NULL OR ikey IS NULL OR src IS NULL OR h2 IS NULL THEN
+    RAISE EXCEPTION 'huvudman 263b: the roller school lacks a pupil (%), a key (%), a source (%) or a question (%); fixtures did not run',
+      pupil, ikey, src, h2;
+  END IF;
+
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', p)::text, true);
+  PERFORM set_config('app.chosen_school_id', m::text, true);
+  IF app.current_school_id() IS DISTINCT FROM m OR app.current_user_id() IS NOT NULL THEN
+    RAISE EXCEPTION 'huvudman 263b: P is not the reader in the roller school';
+  END IF;
+
+  -- Two refuse in their answer: a feed for nobody, and a referral that
+  -- updates no request.
+  IF app.calendar_feed_create(pupil, repeat('f', 64), 'sv') ->> 'refused' IS DISTINCT FROM 'NO_PRINCIPAL'
+     OR app.calendar_feed_create(NULL, repeat('e', 64), 'sv') ->> 'refused' IS DISTINCT FROM 'NO_PRINCIPAL' THEN
+    wrong := wrong || format('calendar_feed_create answered the reader %s', app.calendar_feed_create(NULL, repeat('d', 64), 'sv'));
+  END IF;
+  IF req IS NOT NULL AND app.leave_request_refer(req) THEN
+    wrong := wrong || 'leave_request_refer referred a request for the reader'::text;
+  END IF;
+
+  FOR r IN SELECT * FROM (VALUES
+      ('claim_device_push_token',            'SELECT app.claim_device_push_token(''ExponentPushToken[rls263]'', ''IOS'', ''sv'')'),
+      ('integration_key_set_webhook_secret', format('SELECT app.integration_key_set_webhook_secret(%L::uuid, %L::bytea, %L::bytea, %L::bytea, %L)',
+                                                    ikey, '\x00', '\x00', '\x00', 'k1')),
+      ('ss12000_set_source_secret',          format('SELECT app.ss12000_set_source_secret(%L::uuid, %L::"Ss12000SecretKind", %L::bytea, %L::bytea, %L::bytea, %L)',
+                                                    src, (SELECT enumlabel FROM pg_enum WHERE enumtypid = '"Ss12000SecretKind"'::regtype ORDER BY enumsortorder LIMIT 1),
+                                                    '\x00', '\x00', '\x00', 'k1')),
+      ('ss12000_clear_source_secrets',       format('SELECT app.ss12000_clear_source_secrets(%L::uuid, NULL)', src)),
+      ('school_accepts_huvudman',            format('SELECT app.school_accepts_huvudman(%L::uuid)', h2)),
+      ('school_declines_huvudman',           format('SELECT app.school_declines_huvudman(%L::uuid)', h2)),
+      ('school_leaves_huvudman',             'SELECT app.school_leaves_huvudman()')
+    ) v(fn, stmt)
+  LOOP
+    refused := NULL;
+    BEGIN
+      EXECUTE r.stmt;
+      RAISE EXCEPTION USING ERRCODE = 'ZH263';
+    EXCEPTION
+      WHEN SQLSTATE 'ZH263' THEN refused := NULL;
+      WHEN OTHERS THEN GET STACKED DIAGNOSTICS refused = RETURNED_SQLSTATE;
+    END;
+    IF refused IS NULL THEN
+      wrong := wrong || format('%s ran for the reader', r.fn);
+    END IF;
+    ran := ran || format('%s %s', r.fn, coalesce(refused, 'ran'));
+  END LOOP;
+
+  -- Those that answer a caller with no row by doing nothing.
+  IF (SELECT count(*) FROM app.leave_requests_tell_new_mentors()) <> 0 THEN
+    wrong := wrong || 'leave_requests_tell_new_mentors told mentors for the reader'::text;
+  END IF;
+  IF feed IS NOT NULL THEN
+    BEGIN
+      PERFORM app.calendar_feed_revoke(feed);
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+    PERFORM set_config('app.chosen_school_id', '', true);
+    IF (SELECT "revokedAt" FROM "CalendarFeeds" WHERE id = feed) IS NOT NULL THEN
+      wrong := wrong || 'calendar_feed_revoke revoked the school''s feed for the reader'::text;
+    END IF;
+  END IF;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+  PERFORM set_config('app.chosen_school_id', '', true);
+  IF EXISTS (SELECT 1 FROM "HuvudmanSchoolRequests" WHERE "schoolId" = m AND "huvudmanId" = h2) IS DISTINCT FROM true
+     OR NOT EXISTS (SELECT 1 FROM "HuvudmanSchools" WHERE "schoolId" = m) THEN
+    wrong := wrong || 'the reader changed the roller school''s huvudman'::text;
+  END IF;
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION 'huvudman 263b: %', array_to_string(wrong, '; ');
+  END IF;
+  RAISE NOTICE 'huvudman 263b: %', array_to_string(ran, ', ');
+END $$;
+ROLLBACK;
+
+-- 263c: every function either API role may run that may write (VOLATILE, in
+-- app and public, triggers aside, from the catalogue), called as P naming
+-- the roller school, through the setting and the header: once with every
+-- argument NULL and once with the reader's school for every uuid. Each call
+-- runs in a subtransaction that is rolled back after it, and either refuses
+-- (an error) or returns; one that returns has written nothing, by the
+-- transaction's own counters of rows inserted, updated and deleted
+-- (pg_stat_xact_all_tables), or is one of the gateway's jobs below and
+-- writes no more than the same call writes with no principal at all. The
+-- jobs (gallring, the job runner, push receipts, the candidates' sweep,
+-- SS12000 housekeeping and delivery) ask for no principal and no route
+-- calls them: the reader gets nothing through them that an empty session
+-- would not. They are named rather than inferred from the writes, since
+-- which of them write depends on the arguments a call happens to get; a
+-- function that writes for the reader and is not named fails, and so does
+-- a name the catalogue no longer has. app.personal_data_read writes the
+-- reader's own read log, by design (266). The counts are printed, with
+-- floors.
+BEGIN;
+DO $$
+DECLARE
+  p constant text := 'fe000000-0000-4000-8000-000000000260';
+  m uuid;
+  via text;
+  f record;
+  variant int;
+  args text;
+  call text;
+  before bigint;
+  delta bigint;
+  delta0 bigint;
+  outcome text;
+  called int;
+  refused int;
+  floor_calls int;
+  counted bigint;
+  jobs text[] := '{}';
+  ran text[] := '{}';
+  wrong text[] := '{}';
+  writes_by_design constant text[] := ARRAY['app.personal_data_read'];
+  job_functions constant text[] := ARRAY[
+    'app.gallring_begin', 'app.gallring_claim_person', 'app.gallring_departed_due', 'app.gallring_finish',
+    'app.gallring_pseudonymise', 'app.gallring_purge',
+    'app.job_claim_finished', 'app.job_claim_nightly', 'app.job_run_settled',
+    'app.push_due_receipts', 'app.push_receipts_settled', 'app.push_settle',
+    'app.schedule_candidates_sweep',
+    'app.ss12000_due_notifications', 'app.ss12000_due_sources', 'app.ss12000_housekeeping',
+    'app.ss12000_notification_settled', 'app.ss12000_provider_housekeeping'];
+  gone text;
+BEGIN
+  SELECT string_agg(j, ', ') INTO gone FROM unnest(job_functions) j
+   WHERE NOT EXISTS (SELECT 1 FROM pg_proc p2 JOIN pg_namespace n ON n.oid = p2.pronamespace
+                      WHERE n.nspname || '.' || p2.proname = j AND p2.provolatile = 'v'
+                        AND has_function_privilege('app_authenticated', p2.oid, 'EXECUTE'));
+  IF gone IS NOT NULL THEN
+    wrong := wrong || format('the jobs named here are no longer in the catalogue as the API''s: %s', gone);
+  END IF;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+  m := app.current_school_id();
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    called := 0;
+    refused := 0;
+    FOR f IN
+      SELECT p2.oid, n.nspname || '.' || p2.proname AS name, p2.proargtypes::oid[] AS types
+        FROM pg_proc p2 JOIN pg_namespace n ON n.oid = p2.pronamespace
+       WHERE n.nspname IN ('app', 'public') AND p2.prokind = 'f' AND p2.provolatile = 'v'
+         AND p2.prorettype <> 'trigger'::regtype
+         AND has_function_privilege(via, p2.oid, 'EXECUTE')
+       ORDER BY 2, p2.oid
+    LOOP
+      FOREACH variant IN ARRAY ARRAY[1, 2] LOOP
+        SELECT coalesce(string_agg(
+                 CASE WHEN variant = 1 THEN 'NULL::' || format_type(ty.oid, NULL)
+                      WHEN ty.oid = 'uuid'::regtype THEN quote_literal(m) || '::uuid'
+                      WHEN ty.oid = 'uuid[]'::regtype THEN 'ARRAY[' || quote_literal(m) || ']::uuid[]'
+                      WHEN ty.oid = 'text'::regtype THEN '''rls263c'''
+                      WHEN ty.oid IN ('integer'::regtype, 'bigint'::regtype, 'smallint'::regtype) THEN '1'
+                      WHEN ty.oid = 'boolean'::regtype THEN 'true'
+                      WHEN ty.oid = 'date'::regtype THEN 'current_date'
+                      WHEN ty.oid = 'timestamp with time zone'::regtype THEN 'now()'
+                      WHEN ty.oid = 'jsonb'::regtype THEN '''{}''::jsonb'
+                      WHEN ty.oid = 'bytea'::regtype THEN '''\x00''::bytea'
+                      WHEN ty.typtype = 'e' THEN quote_literal((SELECT e.enumlabel FROM pg_enum e WHERE e.enumtypid = ty.oid ORDER BY e.enumsortorder LIMIT 1)) || '::' || format_type(ty.oid, NULL)
+                      ELSE 'NULL::' || format_type(ty.oid, NULL) END,
+                 ', ' ORDER BY a.ord), '')
+          INTO args
+          FROM unnest(f.types) WITH ORDINALITY a(t, ord) JOIN pg_type ty ON ty.oid = a.t;
+        call := format('SELECT count(*) FROM %s(%s) x', f.name, args);
+        -- As P, naming the school as each role names it; then, for a call
+        -- that wrote, as nobody.
+        FOREACH outcome IN ARRAY ARRAY['reader', 'nobody'] LOOP
+          EXIT WHEN outcome = 'nobody' AND (delta IS NULL OR delta = 0 OR f.name = ANY (writes_by_design));
+          IF outcome = 'reader' THEN
+            delta := NULL;
+            PERFORM set_config('request.jwt.claims', json_build_object('sub', p)::text, true);
+            PERFORM set_config('app.chosen_school_id', CASE via WHEN 'app_authenticated' THEN m::text ELSE '' END, true);
+            PERFORM set_config('request.headers', CASE via WHEN 'authenticated' THEN json_build_object('x-school-id', m)::text ELSE '' END, true);
+          ELSE
+            delta0 := NULL;
+            PERFORM set_config('request.jwt.claims', '', true);
+            PERFORM set_config('app.chosen_school_id', '', true);
+            PERFORM set_config('request.headers', '', true);
+          END IF;
+          BEGIN
+            SELECT coalesce(sum(n_tup_ins + n_tup_upd + n_tup_del), 0) INTO before FROM pg_stat_xact_all_tables;
+            EXECUTE call INTO counted;
+            IF outcome = 'reader' THEN
+              SELECT coalesce(sum(n_tup_ins + n_tup_upd + n_tup_del), 0) - before INTO delta FROM pg_stat_xact_all_tables;
+            ELSE
+              SELECT coalesce(sum(n_tup_ins + n_tup_upd + n_tup_del), 0) - before INTO delta0 FROM pg_stat_xact_all_tables;
+            END IF;
+            RAISE EXCEPTION USING ERRCODE = 'ZH26C';
+          EXCEPTION
+            WHEN SQLSTATE 'ZH26C' THEN NULL;
+            WHEN OTHERS THEN
+              IF outcome = 'reader' THEN refused := refused + 1; END IF;
+          END;
+          -- Whatever a call set, the next starts from its principal alone.
+          PERFORM set_config(g, '', true)
+             FROM unnest(ARRAY['app.service_school_id', 'app.service_huvudman_key_id', 'app.service_key_id', 'app.sync_school_id',
+                               'app.service_key_lookup', 'app.login_join']) g;
+        END LOOP;
+        IF delta > 0 AND NOT f.name = ANY (writes_by_design) THEN
+          IF NOT f.name = ANY (job_functions) THEN
+            wrong := wrong || format('%s as %s wrote %s rows for the reader, and is no job named here', call, via, delta);
+          ELSIF delta0 IS NOT NULL AND delta0 >= delta THEN
+            jobs := jobs || format('%s (%s rows, as many with no principal)', f.name, delta);
+          ELSE
+            wrong := wrong || format('%s as %s wrote %s rows for the reader, %s with no principal', call, via, delta, coalesce(delta0::text, 'an error'));
+          END IF;
+        END IF;
+        called := called + 1;
+      END LOOP;
+    END LOOP;
+    floor_calls := CASE via WHEN 'app_authenticated' THEN 2 * 54 ELSE 2 * 12 END;
+    IF called < floor_calls THEN
+      wrong := wrong || format('as %s only %s calls were made (at least %s)', via, called, floor_calls);
+    END IF;
+    ran := ran || format('%s: %s calls of %s functions, %s refused', via, called, called / 2, refused);
+    SET LOCAL ROLE app_authenticated;
+  END LOOP;
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('app.chosen_school_id', '', true);
+  PERFORM set_config('request.headers', '', true);
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION 'huvudman 263c: %', array_to_string(wrong, '; ');
+  END IF;
+  RAISE NOTICE 'huvudman 263c: %; the jobs'' writes, the same with no principal: %', array_to_string(ran, '; '),
+    coalesce(nullif(array_to_string(jobs, ', '), ''), 'none');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 264: en förfalskad header ger ingen läsare (20261212090000).
+--
+-- Through PostgREST's role and its header alone, as a client would forge
+-- it: every helper, and every table with row security read whole.
+--
+--   264a  no principal, and no row in any table but the huvudman's own,
+--         for a school the login has neither a row nor a membership at
+--         (the läslogg school), a school its huvudman only asked for (D), a
+--         deactivated membership (X naming A), a member of a huvudman that
+--         does not own the school (Q naming the roller school), and a school
+--         whose ownership ended in this transaction (C, which left);
+--   264b  a school where the login has a row of another role: L naming A is
+--         the teacher there, and reads what a teacher at A reads (…0244
+--         naming A), not what the huvudman's reader would.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_rls264_a', :'school_a', true);
+DO $$
+DECLARE
+  a uuid := current_setting('app.test_rls264_a')::uuid;
+  m uuid;
+  c uuid;
+  d uuid;
+  ll uuid;
+  cs record;
+  t record;
+  got record;
+  n bigint;
+  twin_n bigint;
+  wrong text[] := '{}';
+  cells int := 0;
+  huvudmans constant text[] := ARRAY['Huvudmen', 'HuvudmanMembers', 'HuvudmanSchools', 'HuvudmanSchoolRequests',
+                                     'HuvudmanSchoolEvents', 'HuvudmanApiKeys'];
+  own_rows constant text[] := ARRAY['Notifications', 'NotificationOptOuts', 'PushDevices', 'CalendarFeeds',
+                                    'ScheduleCandidateRuns', 'ScheduleCandidates', 'PersonalDataAccess', 'Users'];
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+  m := app.current_school_id();
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000266')::text, true);
+  d := app.current_school_id();
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000121')::text, true);
+  ll := app.current_school_id();
+  -- C leaves its huvudman, in this transaction: the reader is gone at the
+  -- next statement.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000269')::text, true);
+  c := app.current_school_id();
+  PERFORM app.school_leaves_huvudman();
+  IF m IS NULL OR d IS NULL OR ll IS NULL OR c IS NULL OR ll IN (a, m, c, d) THEN
+    RAISE EXCEPTION 'huvudman 264: schools m %, d %, läslogg %, c %; fixtures did not run', m, d, ll, c;
+  END IF;
+
+  SET LOCAL ROLE authenticated;
+  PERFORM set_config('app.chosen_school_id', '', true);
+  FOR cs IN
+    SELECT * FROM (VALUES
+      ('fe000000-0000-4000-8000-000000000260', ll, NULL::uuid, NULL::text, '264a P names a school it has nothing at'),
+      ('fe000000-0000-4000-8000-000000000260', d,  NULL,       NULL,       '264a P names D, only asked for'),
+      ('fe000000-0000-4000-8000-000000000262', a,  NULL,       NULL,       '264a X, deactivated, names A'),
+      ('fe000000-0000-4000-8000-000000000263', m,  NULL,       NULL,       '264a Q names the school H2 asked for'),
+      ('fe000000-0000-4000-8000-000000000260', c,  NULL,       NULL,       '264a P names C, which left'),
+      ('fe000000-0000-4000-8000-000000000264', a,  a,          'fe000000-0000-4000-8000-000000000244', '264b L names A, a teacher there')
+    ) v(sub, named, school, twin, label)
+  LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', cs.sub, 'role', 'authenticated')::text, true);
+    PERFORM set_config('request.headers', json_build_object('x-school-id', cs.named, 'accept', '*/*')::text, true);
+    SELECT app.current_user_id() AS id, app.current_school_id() AS school, app.current_user_role()::text AS role,
+           app.current_user_may('PERSONAL', false) AS may_read, app.current_user_decides() AS decides
+      INTO got;
+    IF cs.school IS NULL AND (got.id IS NOT NULL OR got.school IS NOT NULL OR got.role IS NOT NULL OR got.may_read OR got.decides) THEN
+      RAISE EXCEPTION 'huvudman %: resolved to %', cs.label, row_to_json(got);
+    END IF;
+    IF cs.school IS NOT NULL AND (got.school IS DISTINCT FROM cs.school OR got.role IS DISTINCT FROM 'TEACHER'
+                                  OR got.id IS NULL OR got.may_read) THEN
+      RAISE EXCEPTION 'huvudman %: resolved to %, not the teacher''s own row', cs.label, row_to_json(got);
+    END IF;
+    FOR t IN
+      SELECT cl.relname AS tbl FROM pg_class cl JOIN pg_namespace ns ON ns.oid = cl.relnamespace
+       WHERE ns.nspname = 'public' AND cl.relkind = 'r' AND cl.relrowsecurity ORDER BY 1
+    LOOP
+      PERFORM set_config('request.jwt.claims', json_build_object('sub', cs.sub, 'role', 'authenticated')::text, true);
+      PERFORM set_config('request.headers', json_build_object('x-school-id', cs.named)::text, true);
+      BEGIN
+        EXECUTE format('SELECT count(*) FROM %I', t.tbl) INTO n;
+      EXCEPTION WHEN insufficient_privilege THEN n := -1;
+      END;
+      cells := cells + 1;
+      IF cs.school IS NULL THEN
+        IF n > 0 AND NOT t.tbl = ANY (huvudmans) THEN
+          wrong := wrong || format('%s reads %s rows of %s', cs.label, n, t.tbl);
+        END IF;
+        CONTINUE;
+      END IF;
+      PERFORM set_config('request.jwt.claims', json_build_object('sub', cs.twin, 'role', 'authenticated')::text, true);
+      BEGIN
+        EXECUTE format('SELECT count(*) FROM %I', t.tbl) INTO twin_n;
+      EXCEPTION WHEN insufficient_privilege THEN twin_n := -1;
+      END;
+      IF t.tbl = ANY (own_rows) THEN
+        IF (n = -1) IS DISTINCT FROM (twin_n = -1) THEN
+          wrong := wrong || format('%s: %s answers %s, the teacher %s', cs.label, t.tbl, n, twin_n);
+        END IF;
+      ELSIF n IS DISTINCT FROM twin_n THEN
+        wrong := wrong || format('%s sees %s rows of %s, a teacher at A %s', cs.label, n, t.tbl, twin_n);
+      END IF;
+    END LOOP;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+  PERFORM set_config('request.headers', '', true);
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION 'huvudman 264: % of % cells wrong: %', cardinality(wrong), cells, array_to_string(wrong, '; ');
+  END IF;
+  RAISE NOTICE 'huvudman 264: % cells', cells;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 265: huvudmannens egna tabeller, och vem som frågar, svarar och
+-- avslutar (20261212090000).
+--
+--   265a  reads: a member reads their huvudman, its members, schools,
+--         questions and history, and nobody else's; only the
+--         kommunadministratör reads the keys; a deactivated member reads
+--         nothing; a school's administrators read their own school's
+--         ownership, questions and history, the names of who owns or asks;
+--         its deciders (rektor or full, as the gateway's Dataskydd), through
+--         the three functions, the owner's readers and keys and the school's
+--         history with its huvudmän; its läsare does not, nor does anybody
+--         else at the school: its teacher, pupil and guardian read none of
+--         the six;
+--   265b  the kommunadministratör writes members (never a login, never
+--         another huvudman's) and keys (read scopes only; a revoked key
+--         stays revoked); a planner writes neither; the login only through
+--         app.huvudman_member_takes_login, and only for the
+--         kommunadministratör's own huvudman;
+--   265c  the questions: by slug, once; HM409 for the huvudman's own school
+--         and for a school with another huvudman, HM404 for no school, HM403
+--         for anybody but a kommunadministratör of the huvudman;
+--   265d  the answers: the school's decider says yes (the huvudman owns the
+--         school from the next statement, and the question is gone), no, or
+--         leaves; nobody else at the school may, the huvudman's reader
+--         included; a yes to a second huvudman is HM409; the
+--         kommunadministratör withdraws and lets go. Every act is in the
+--         history, by its side.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_rls265_a', :'school_a', true),
+       set_config('app.test_rls265_b', :'school_b', true);
+DO $$
+DECLARE
+  a uuid := current_setting('app.test_rls265_a')::uuid;
+  b uuid := current_setting('app.test_rls265_b')::uuid;
+  m uuid;
+  c uuid;
+  d uuid;
+  ll uuid;
+  h uuid;
+  h2 uuid;
+  newbie uuid;
+  qid uuid;
+  key uuid;
+  r record;
+  st text;
+  n bigint;
+  wrong text[] := '{}';
+  k constant text := 'fe000000-0000-4000-8000-000000000261';
+  p constant text := 'fe000000-0000-4000-8000-000000000260';
+  k2 constant text := 'fe000000-0000-4000-8000-000000000268';
+
+  -- The outcome of a statement: 'ok' and its row count, or the SQLSTATE.
+  outcome text;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+  m := app.current_school_id();
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000269')::text, true);
+  c := app.current_school_id();
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000266')::text, true);
+  d := app.current_school_id();
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000121')::text, true);
+  ll := app.current_school_id();
+
+  -- 265a, as each reader with nothing named.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', k)::text, true);
+  SELECT id INTO h FROM "Huvudmen";
+  FOR r IN SELECT * FROM (VALUES
+      -- sub, Huvudmen, members, schools, questions, history, keys, case
+      (k,                                       1, 6, 3, 2, 8, 2, 'K, H''s kommunadministratör'),
+      (p,                                       1, 6, 3, 2, 8, 0, 'P, H''s planner'),
+      ('fe000000-0000-4000-8000-000000000262',  0, 0, 0, 0, 0, 0, 'X, deactivated'),
+      ('fe000000-0000-4000-8000-000000000263',  1, 2, 0, 1, 1, 0, 'Q, H2''s planner'),
+      (k2,                                      1, 2, 0, 1, 1, 1, 'K2, H2''s kommunadministratör'),
+      ('00000000-0000-4000-8000-000000000105',  2, 0, 1, 1, 3, 0, 'the roller school''s full administrator'),
+      ('00000000-0000-4000-8000-000000000115',  2, 0, 1, 1, 3, 0, 'the roller school''s läsare'),
+      ('fe000000-0000-4000-8000-000000000266',  1, 0, 0, 1, 1, 0, 'D''s full administrator'),
+      ('00000000-0000-4000-8000-000000000121',  0, 0, 0, 0, 0, 0, 'the läslogg school''s administrator'),
+      -- Nobody at an owned school but its administrators reads its huvudman.
+      ('00000000-0000-4000-8000-000000000111',  0, 0, 0, 0, 0, 0, 'a teacher of the roller school'),
+      ('00000000-0000-4000-8000-000000000112',  0, 0, 0, 0, 0, 0, 'a pupil of the roller school'),
+      ('00000000-0000-4000-8000-000000000113',  0, 0, 0, 0, 0, 0, 'a guardian of the roller school')
+    ) v(sub, huvudmen, members, schools, questions, history, keys, label)
+  LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', r.sub)::text, true);
+    IF (SELECT count(*) FROM "Huvudmen") <> r.huvudmen OR (SELECT count(*) FROM "HuvudmanMembers") <> r.members
+       OR (SELECT count(*) FROM "HuvudmanSchools") <> r.schools OR (SELECT count(*) FROM "HuvudmanSchoolRequests") <> r.questions
+       OR (SELECT count(*) FROM "HuvudmanSchoolEvents") <> r.history OR (SELECT count(*) FROM "HuvudmanApiKeys") <> r.keys THEN
+      wrong := wrong || format('265a %s reads %s/%s/%s/%s/%s/%s, expected %s/%s/%s/%s/%s/%s', r.label,
+        (SELECT count(*) FROM "Huvudmen"), (SELECT count(*) FROM "HuvudmanMembers"), (SELECT count(*) FROM "HuvudmanSchools"),
+        (SELECT count(*) FROM "HuvudmanSchoolRequests"), (SELECT count(*) FROM "HuvudmanSchoolEvents"), (SELECT count(*) FROM "HuvudmanApiKeys"),
+        r.huvudmen, r.members, r.schools, r.questions, r.history, r.keys);
+    END IF;
+  END LOOP;
+  -- The owner's readers and keys, for the school's deciders only.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+  IF (SELECT count(*) FROM app.school_huvudman_readers()) <> 6 OR (SELECT count(*) FROM app.school_huvudman_keys()) <> 2
+     OR EXISTS (SELECT 1 FROM app.school_huvudman_readers() WHERE first_name IS NULL OR role IS NULL) THEN
+    wrong := wrong || format('265a the roller school''s rektor reads %s readers and %s keys of its huvudman',
+      (SELECT count(*) FROM app.school_huvudman_readers()), (SELECT count(*) FROM app.school_huvudman_keys()));
+  END IF;
+  -- Who of them has a row of their own here: G, deactivated; nobody else.
+  IF (SELECT string_agg(last_name || ':' || coalesce(own_row, '-'), ',' ORDER BY last_name)
+        FROM app.school_huvudman_readers() WHERE own_row IS NOT NULL) IS DISTINCT FROM 'Vårdnadshavare:INACTIVE' THEN
+    wrong := wrong || format('265a the readers'' own rows in the roller school are %s',
+      (SELECT json_agg(x) FROM app.school_huvudman_readers() x));
+  END IF;
+  IF (SELECT count(*) FROM app.school_huvudman_history(100)) <> 3
+     OR EXISTS (SELECT 1 FROM app.school_huvudman_history(100) WHERE huvudman_name IS NULL) THEN
+    wrong := wrong || format('265a the roller school''s history with its huvudmän: %s',
+      (SELECT json_agg(x) FROM app.school_huvudman_history(100) x));
+  END IF;
+  -- The huvudman's side: its schools with their names, and its history.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', p)::text, true);
+  IF (SELECT string_agg(state || ':' || CASE WHEN school_id = a THEN 'A' ELSE slug END, ',' ORDER BY state, CASE WHEN school_id = a THEN 'A' ELSE slug END)
+        FROM app.huvudman_schools(h))
+       IS DISTINCT FROM 'OWNED:A,OWNED:rls-huvudman-c,OWNED:rls-roller-school,REQUESTED:rls-fixture-school,REQUESTED:rls-huvudman-d'
+     OR (SELECT count(*) FROM app.huvudman_history(h, 100)) <> 8
+     OR (SELECT count(*) FROM app.huvudman_history(h, 1)) <> 1 THEN
+    wrong := wrong || format('265a P reads H''s schools %s and %s events',
+      (SELECT string_agg(state || ':' || slug, ',') FROM app.huvudman_schools(h)), (SELECT count(*) FROM app.huvudman_history(h, 100)));
+  END IF;
+  FOREACH st IN ARRAY ARRAY['fe000000-0000-4000-8000-000000000263', 'fe000000-0000-4000-8000-000000000262',
+                             '00000000-0000-4000-8000-000000000105'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', st)::text, true);
+    IF EXISTS (SELECT 1 FROM app.huvudman_schools(h)) OR EXISTS (SELECT 1 FROM app.huvudman_history(h, 100)) THEN
+      wrong := wrong || format('265a %s, no member of H, reads H''s schools or history', st);
+    END IF;
+  END LOOP;
+  FOREACH st IN ARRAY ARRAY['fe000000-0000-4000-8000-000000000266', '00000000-0000-4000-8000-000000000121',
+                             '00000000-0000-4000-8000-000000000112', '00000000-0000-4000-8000-000000000115', k] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', st)::text, true);
+    IF EXISTS (SELECT 1 FROM app.school_huvudman_readers()) OR EXISTS (SELECT 1 FROM app.school_huvudman_keys())
+       OR (st = '00000000-0000-4000-8000-000000000115' AND EXISTS (SELECT 1 FROM app.school_huvudman_history(100))) THEN
+      wrong := wrong || format('265a %s reads a huvudman''s readers or keys of a school it does not decide for, or that has none', st);
+    END IF;
+  END LOOP;
+
+  -- 265b, the kommunadministratör's writes.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', k2)::text, true);
+  SELECT id INTO h2 FROM "Huvudmen";
+  SELECT id INTO qid FROM "HuvudmanMembers" WHERE "authId" = 'fe000000-0000-4000-8000-000000000263';
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', k)::text, true);
+  SELECT id INTO newbie FROM "HuvudmanMembers" WHERE "authId" IS NULL;
+  IF h IS NULL OR h2 IS NULL OR newbie IS NULL OR qid IS NULL OR h = h2 THEN
+    RAISE EXCEPTION 'huvudman 265: H %, H2 %, the newcomer %, Q %; fixtures did not run', h, h2, newbie, qid;
+  END IF;
+  FOR r IN SELECT * FROM (VALUES
+      (k,  format('INSERT INTO "HuvudmanMembers" ("huvudmanId", email, "firstName", "lastName", role) VALUES (%L, ''rls265-new@example.invalid'', ''Ny'', ''Planerare'', ''PLANERARE'')', h), 'ok 1', 'K adds a planner to H'),
+      (k,  format('INSERT INTO "HuvudmanMembers" ("huvudmanId", email, "firstName", "lastName", role) VALUES (%L, ''rls265-h2@example.invalid'', ''Ny'', ''Planerare'', ''PLANERARE'')', h2), '42501', 'K adds a planner to H2'),
+      (k,  format('INSERT INTO "HuvudmanMembers" ("huvudmanId", "authId", email, "firstName", "lastName", role, "invitedAt") VALUES (%L, gen_random_uuid(), ''rls265-login@example.invalid'', ''Ny'', ''Login'', ''PLANERARE'', now())', h), '42501', 'K adds a member with a login'),
+      (k,  format('UPDATE "HuvudmanMembers" SET role = ''KOMMUNADMINISTRATOR'' WHERE id = %L', newbie), 'ok 1', 'K makes the newcomer a kommunadministratör'),
+      (k,  format('UPDATE "HuvudmanMembers" SET "isActive" = false WHERE id = %L', qid), 'ok 0', 'K deactivates H2''s planner'),
+      (k,  format('UPDATE "HuvudmanMembers" SET "authId" = gen_random_uuid() WHERE id = %L', newbie), '42501', 'K hands a login by hand'),
+      (k,  format('UPDATE "HuvudmanMembers" SET email = ''rls265-moved@example.invalid'' WHERE id = %L', newbie), '42501', 'K moves an address'),
+      (k,  format('DELETE FROM "HuvudmanMembers" WHERE id = %L', newbie), '42501', 'K deletes a member'),
+      (p,  format('INSERT INTO "HuvudmanMembers" ("huvudmanId", email, "firstName", "lastName", role) VALUES (%L, ''rls265-p@example.invalid'', ''Ny'', ''Planerare'', ''PLANERARE'')', h), '42501', 'P adds a member'),
+      (p,  format('UPDATE "HuvudmanMembers" SET "isActive" = false WHERE "huvudmanId" = %L', h), 'ok 0', 'P deactivates H''s members'),
+      (p,  format('SELECT app.huvudman_member_takes_login(%L, gen_random_uuid())', newbie), 'HM403', 'P hands the newcomer a login'),
+      (k,  format('SELECT app.huvudman_member_takes_login(%L, gen_random_uuid())', qid), 'HM403', 'K hands H2''s planner a login'),
+      (k,  format('SELECT app.huvudman_member_takes_login(%L, NULL)', newbie), 'HM400', 'K hands the newcomer no login'),
+      (k,  format('SELECT app.huvudman_member_takes_login(%L, %L)', newbie, p), '23505', 'K hands the newcomer P''s login, which H''s member holds'),
+      (k,  format('SELECT app.huvudman_member_takes_login(%L, ''fe000000-0000-4000-8000-000000000270'')', newbie), 'ok 1', 'K hands the newcomer a login'),
+      (k,  format('INSERT INTO "HuvudmanApiKeys" ("huvudmanId", name, "keyHash", scopes) VALUES (%L, ''rls265'', repeat(''1'', 64), ARRAY[''persons.read''])', h), 'ok 1', 'K makes a key'),
+      (k,  format('INSERT INTO "HuvudmanApiKeys" ("huvudmanId", name, "keyHash", scopes) VALUES (%L, ''rls265'', repeat(''2'', 64), ARRAY[''attendances.read''])', h), '23514', 'K makes a key that reads attendance'),
+      (k,  format('INSERT INTO "HuvudmanApiKeys" ("huvudmanId", name, "keyHash", scopes) VALUES (%L, ''rls265'', repeat(''3'', 64), ARRAY[''subscriptions.write''])', h), '23514', 'K makes a key that subscribes'),
+      (k,  format('INSERT INTO "HuvudmanApiKeys" ("huvudmanId", name, "keyHash", scopes) VALUES (%L, ''rls265'', repeat(''4'', 64), ARRAY[''persons.read''])', h2), '42501', 'K makes H2 a key'),
+      (k,  format('INSERT INTO "HuvudmanApiKeys" ("huvudmanId", name, "keyHash", scopes, "revokedAt") VALUES (%L, ''rls265'', repeat(''5'', 64), ARRAY[''persons.read''], now())', h), '42501', 'K makes a key born revoked'),
+      (k,  'UPDATE "HuvudmanApiKeys" SET "revokedAt" = now() WHERE name = ''RLS H nyckel''', 'ok 1', 'K revokes H''s key'),
+      (k,  'UPDATE "HuvudmanApiKeys" SET "revokedAt" = NULL WHERE name = ''RLS H återkallad''', 'HM409', 'K brings a revoked key back'),
+      (k,  'UPDATE "HuvudmanApiKeys" SET name = ''omdöpt'' WHERE name = ''RLS H återkallad''', '42501', 'K renames a key'),
+      (k2, 'UPDATE "HuvudmanApiKeys" SET "revokedAt" = now() WHERE name = ''rls265''', 'ok 0', 'K2 revokes H''s new key'),
+      (p,  format('INSERT INTO "HuvudmanApiKeys" ("huvudmanId", name, "keyHash", scopes) VALUES (%L, ''rls265p'', repeat(''6'', 64), ARRAY[''persons.read''])', h), '42501', 'P makes a key'),
+      (k,  format('INSERT INTO "HuvudmanSchools" ("schoolId", "huvudmanId") VALUES (%L, %L)', b, h), '42501', 'K owns B by hand'),
+      (k,  format('INSERT INTO "HuvudmanSchoolEvents" ("huvudmanId", "schoolId", kind) VALUES (%L, %L, ''JOINED'')', h, b), '42501', 'K writes the history by hand'),
+      ('00000000-0000-4000-8000-000000000105', format('DELETE FROM "HuvudmanSchools" WHERE "schoolId" = %L', m), '42501', 'the roller school''s full administrator ends it by hand')
+    ) v(sub, stmt, expected, label)
+  LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', r.sub)::text, true);
+    BEGIN
+      EXECUTE r.stmt;
+      GET DIAGNOSTICS n = ROW_COUNT;
+      outcome := 'ok ' || n;
+    EXCEPTION WHEN OTHERS THEN
+      GET STACKED DIAGNOSTICS outcome = RETURNED_SQLSTATE;
+    END;
+    -- A function's SELECT counts its one row.
+    IF outcome IS DISTINCT FROM r.expected THEN
+      wrong := wrong || format('265b %s: %s, expected %s', r.label, outcome, r.expected);
+    END IF;
+  END LOOP;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', k)::text, true);
+  IF (SELECT "authId"::text || '/' || ("invitedAt" IS NOT NULL)::text FROM "HuvudmanMembers" WHERE id = newbie)
+     IS DISTINCT FROM 'fe000000-0000-4000-8000-000000000270/true' THEN
+    wrong := wrong || '265b the newcomer''s login is not the one handed, or not stamped'::text;
+  END IF;
+
+  -- 265c, the questions.
+  FOR r IN SELECT * FROM (VALUES
+      (k,  h,  'rls-huvudman-d',     'ok',    'K asks again for D'),
+      (k,  h,  'rls-roller-school',  'HM409', 'K asks for the roller school, which H owns'),
+      (k,  h,  'rls-no-such-school', 'HM404', 'K asks for no school'),
+      (k,  h2, 'rls-laslogg-school', 'HM403', 'K asks for H2'),
+      (p,  h,  'rls-laslogg-school', 'HM403', 'P asks'),
+      (k2, h2, 'rls-roller-school',  'HM409', 'K2 asks for a school H owns'),
+      (k,  h,  'rls-laslogg-school', 'ok',    'K asks for the läslogg school')
+    ) v(sub, huvudman, slug, expected, label)
+  LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', r.sub)::text, true);
+    BEGIN
+      PERFORM app.huvudman_request_school(r.huvudman, r.slug);
+      outcome := 'ok';
+    EXCEPTION WHEN OTHERS THEN
+      GET STACKED DIAGNOSTICS outcome = RETURNED_SQLSTATE;
+    END;
+    IF outcome IS DISTINCT FROM r.expected THEN
+      wrong := wrong || format('265c %s: %s, expected %s', r.label, outcome, r.expected);
+    END IF;
+  END LOOP;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', k)::text, true);
+  IF (SELECT count(*) FROM "HuvudmanSchoolRequests" WHERE "schoolId" = d) <> 1
+     OR (SELECT count(*) FROM "HuvudmanSchoolEvents" WHERE "schoolId" = d AND kind = 'REQUESTED') <> 1
+     OR (SELECT count(*) FROM "HuvudmanSchoolRequests" WHERE "schoolId" = ll) <> 1
+     OR (SELECT count(*) FROM "HuvudmanSchoolEvents" WHERE "schoolId" = ll AND kind = 'REQUESTED' AND "byMemberId" IS NOT NULL) <> 1 THEN
+    wrong := wrong || '265c a question was not asked once, or not written in the history by its member'::text;
+  END IF;
+
+  -- 265d, the answers.
+  FOR r IN SELECT * FROM (VALUES
+      ('fe000000-0000-4000-8000-000000000267', format('SELECT app.school_accepts_huvudman(%L)', h),  'HM403', 'D''s schemaläggare says yes'),
+      ('00000000-0000-4000-8000-000000000115', format('SELECT app.school_declines_huvudman(%L)', h2), 'HM403', 'the roller school''s läsare says no'),
+      ('00000000-0000-4000-8000-000000000115', 'SELECT app.school_leaves_huvudman()',                  'HM403', 'the roller school''s läsare leaves'),
+      ('00000000-0000-4000-8000-000000000105', format('SELECT app.school_accepts_huvudman(%L)', h2), 'HM409', 'the roller school says yes to a second huvudman'),
+      ('00000000-0000-4000-8000-000000000105', format('SELECT app.school_declines_huvudman(%L)', h2), 'ok',    'the roller school says no to H2'),
+      ('00000000-0000-4000-8000-000000000105', format('SELECT app.school_declines_huvudman(%L)', h2), 'HM404', 'the roller school says no again'),
+      ('fe000000-0000-4000-8000-000000000266', format('SELECT app.school_accepts_huvudman(%L)', h),  'ok',    'D says yes to H'),
+      ('fe000000-0000-4000-8000-000000000266', format('SELECT app.school_accepts_huvudman(%L)', h),  'HM404', 'D says yes again'),
+      (k,                                      format('SELECT app.huvudman_withdraw_request(%L, %L)', h, b), 'ok', 'K withdraws the question to B'),
+      (k,                                      format('SELECT app.huvudman_withdraw_request(%L, %L)', h, b), 'HM404', 'K withdraws it again'),
+      (p,                                      format('SELECT app.huvudman_release_school(%L, %L)', h, a), 'HM403', 'P lets A go'),
+      (k,                                      format('SELECT app.huvudman_release_school(%L, %L)', h, a), 'ok',    'K lets A go'),
+      (k,                                      format('SELECT app.huvudman_release_school(%L, %L)', h, a), 'HM404', 'K lets A go again'),
+      ('fe000000-0000-4000-8000-000000000269', 'SELECT app.school_leaves_huvudman()',                  'ok',    'C leaves H'),
+      ('fe000000-0000-4000-8000-000000000269', 'SELECT app.school_leaves_huvudman()',                  'HM404', 'C leaves again')
+    ) v(sub, stmt, expected, label)
+  LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', r.sub)::text, true);
+    PERFORM set_config('app.chosen_school_id', '', true);
+    BEGIN
+      EXECUTE r.stmt;
+      outcome := 'ok';
+    EXCEPTION WHEN OTHERS THEN
+      GET STACKED DIAGNOSTICS outcome = RETURNED_SQLSTATE;
+    END;
+    IF outcome IS DISTINCT FROM r.expected THEN
+      wrong := wrong || format('265d %s: %s, expected %s', r.label, outcome, r.expected);
+    END IF;
+  END LOOP;
+  -- The huvudman's reader says nothing for the school either.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', p)::text, true);
+  PERFORM set_config('app.chosen_school_id', m::text, true);
+  BEGIN
+    PERFORM app.school_leaves_huvudman();
+    wrong := wrong || '265d H''s reader made the roller school leave H'::text;
+  EXCEPTION WHEN OTHERS THEN NULL;
+  END;
+  -- What the answers did, from the next statement: P reads D, and not A or C.
+  PERFORM set_config('app.chosen_school_id', d::text, true);
+  IF app.current_school_id() IS DISTINCT FROM d THEN
+    wrong := wrong || '265d D said yes, and P does not read it'::text;
+  END IF;
+  PERFORM set_config('app.chosen_school_id', a::text, true);
+  IF app.current_school_id() IS NOT NULL THEN
+    wrong := wrong || '265d H let A go, and P still reads it'::text;
+  END IF;
+  PERFORM set_config('app.chosen_school_id', c::text, true);
+  IF app.current_school_id() IS NOT NULL THEN
+    wrong := wrong || '265d C left H, and P still reads it'::text;
+  END IF;
+  PERFORM set_config('app.chosen_school_id', '', true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', k)::text, true);
+  IF (SELECT string_agg(kind::text || ':' || CASE WHEN "byUserId" IS NOT NULL THEN 'school' WHEN "byMemberId" IS NOT NULL THEN 'huvudman' ELSE '-' END,
+                        ',' ORDER BY "schoolId", at, id)
+        FROM "HuvudmanSchoolEvents" WHERE kind IN ('JOINED', 'WITHDRAWN', 'RELEASED', 'LEFT') AND at > now() - interval '1 hour'
+         AND "schoolId" IN (b, d, a, c) AND at >= transaction_timestamp())
+     IS DISTINCT FROM (SELECT string_agg(e, ',' ORDER BY s, o)
+                         FROM (VALUES (b, 1, 'WITHDRAWN:huvudman'), (d, 1, 'JOINED:school'), (a, 1, 'RELEASED:huvudman'), (c, 1, 'LEFT:school')) v(s, o, e)) THEN
+    wrong := wrong || format('265d the history says %s',
+      (SELECT string_agg(kind::text || '@' || "schoolId", ',') FROM "HuvudmanSchoolEvents" WHERE at >= transaction_timestamp()));
+  END IF;
+  IF EXISTS (SELECT 1 FROM "HuvudmanSchoolRequests" WHERE "schoolId" IN (b, d)) THEN
+    wrong := wrong || '265d an answered or withdrawn question is still asked'::text;
+  END IF;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+  IF (SELECT count(*) FROM "HuvudmanSchoolEvents" WHERE kind = 'DECLINED' AND "byUserId" IS NOT NULL) <> 1 THEN
+    wrong := wrong || '265d the roller school''s no is not in its history'::text;
+  END IF;
+
+  PERFORM set_config('request.jwt.claims', '', true);
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION 'huvudman 265: %', array_to_string(wrong, '; ');
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 266: läsloggen namnger huvudmannens läsare och nyckel
+-- (20261212090100).
+--
+--   266a  P's read in the roller school is written in the school's own log:
+--         the member, no Users row, the administrator's role, the client's
+--         channel; the same read within the quarter-hour adds nothing;
+--   266b  H's key, opened for the roller school, reads as an integration:
+--         the key, no school key, no role; opening it for a school H does
+--         not own (B), with the revoked key or with H2's key is HM403 with
+--         nothing set, and a key set beside the school by hand (as a broken
+--         gateway would) is PD403, for H2's key and for the revoked one;
+--   266c  the school's decider reads the names of both in its log
+--         (app.access_log_huvudman_names); the läsare and the reader do not;
+--   266d  once the school has left the huvudman, P reads nothing there, and
+--         its read is refused for having no reader (PD403); the names in
+--         the school's log stay;
+--   266e  P's read is P's own in the log: the school's administrator's read
+--         of the same pupil a moment before leaves P's to be written;
+--   266f  H's key beside the school's own key, by hand, is PD403;
+--   266g  the decider of D, which H only asked for, reads no names of H's;
+--   266h  the four arms where the service principal writes: H's key,
+--         opened for the roller school, updates no Users or
+--         GuardianStudents row and inserts no GuardianStudents or
+--         StudentGroups row (20261212090300); the school's own principal
+--         passes each. Nor does it write, read an address or take the
+--         school's catch-up lock through app.leave_requests_tell_new_mentors(),
+--         which the school's own principal takes;
+--   266i  the read log's quarter-hour is each reader's and each key's own:
+--         K's read of a pupil P read a moment before is written, and so is
+--         a second key of H's after the first;
+--   266j  the source's secrets are refused the reader and the läsare, and
+--         the delivery job's context is neither the reader's nor a
+--         huvudman's key's, set without a school (20261212090300);
+--   266k  from the catalogue: every SECURITY DEFINER function that may
+--         write and asks app.current_service_school_id() either refuses a
+--         huvudman's key or is named here with why.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  p constant text := 'fe000000-0000-4000-8000-000000000260';
+  m uuid;
+  b uuid;
+  d_school uuid;
+  pupil uuid;
+  pupil2 uuid;
+  member uuid;
+  hkey uuid;
+  ikey uuid;
+  revoked uuid;
+  h2key uuid;
+  got record;
+  w record;
+  via text;
+  cols text;
+  pupil3 uuid;
+  hkey2 uuid;
+  counted bigint;
+  got_n bigint;
+  outcome text;
+  msg text;
+  n int;
+  st text;
+  wrong text[] := '{}';
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+  m := app.current_school_id();
+  SELECT id INTO pupil FROM "Users" WHERE "schoolId" = m AND role = 'STUDENT' AND "isActive" ORDER BY "authId" LIMIT 1;
+  SELECT id INTO pupil2 FROM "Users" WHERE "schoolId" = m AND role = 'STUDENT' AND "isActive" AND id <> pupil ORDER BY "authId" LIMIT 1;
+  SELECT id INTO pupil3 FROM "Users" WHERE "schoolId" = m AND role = 'STUDENT' AND "isActive" AND id NOT IN (pupil, pupil2) ORDER BY "authId" LIMIT 1;
+  SELECT id INTO ikey FROM "IntegrationApiKeys" WHERE name = 'Roller nyckel';
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000266')::text, true);
+  d_school := app.current_school_id();
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000261')::text, true);
+  SELECT id INTO hkey FROM "HuvudmanApiKeys" WHERE name = 'RLS H nyckel';
+  SELECT id INTO revoked FROM "HuvudmanApiKeys" WHERE name = 'RLS H återkallad';
+  SELECT school_id INTO b FROM app.huvudman_schools((SELECT "huvudmanId" FROM "HuvudmanApiKeys" WHERE id = hkey))
+   WHERE slug = 'rls-fixture-school' AND state = 'REQUESTED';
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000268')::text, true);
+  SELECT id INTO h2key FROM "HuvudmanApiKeys" WHERE name = 'RLS H2 nyckel';
+  IF pupil IS NULL OR pupil2 IS NULL OR pupil3 IS NULL OR hkey IS NULL OR revoked IS NULL OR h2key IS NULL OR ikey IS NULL OR b IS NULL OR d_school IS NULL THEN
+    RAISE EXCEPTION 'huvudman 266: pupils % % %, keys % % % %, schools % %; fixtures did not run',
+      pupil, pupil2, pupil3, hkey, revoked, h2key, ikey, b, d_school;
+  END IF;
+
+  -- 266a
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', p)::text, true);
+  PERFORM set_config('app.chosen_school_id', m::text, true);
+  SELECT member_id INTO member FROM app.huvudman_reader();
+  IF app.personal_data_read('PEOPLE', 'WEB', ARRAY[pupil]) <> 1 THEN
+    wrong := wrong || '266a P''s read wrote no row'::text;
+  END IF;
+  IF app.personal_data_read('PEOPLE', 'WEB', ARRAY[pupil]) <> 0 THEN
+    wrong := wrong || '266a P''s second read within the quarter-hour wrote a row'::text;
+  END IF;
+  IF app.personal_data_read('ROSTER', 'APP', ARRAY[pupil]) <> 1 THEN
+    wrong := wrong || '266a P''s read of another kind wrote no row'::text;
+  END IF;
+
+  -- 266b, as the service: no claims.
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('app.chosen_school_id', '', true);
+  FOR got IN SELECT * FROM (VALUES
+      (hkey, b, 'a school H only asked for (B)'),
+      (hkey, NULL::uuid, 'no school'),
+      (revoked, m, 'the revoked key'),
+      (h2key, m, 'H2''s key')
+    ) v(k, s, label)
+  LOOP
+    BEGIN
+      PERFORM app.huvudman_key_opens_school(got.k, got.s);
+      wrong := wrong || format('266b opening %s was allowed', got.label);
+    EXCEPTION WHEN OTHERS THEN
+      GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE;
+      IF st <> 'HM403' THEN wrong := wrong || format('266b opening %s: %s, not HM403', got.label, st); END IF;
+    END;
+    IF app.current_service_school_id() IS NOT NULL OR nullif(current_setting('app.service_huvudman_key_id', true), '') IS NOT NULL THEN
+      wrong := wrong || format('266b opening %s set the principal', got.label);
+    END IF;
+  END LOOP;
+  -- By hand, beside the school: refused by the read log.
+  FOREACH st IN ARRAY ARRAY[h2key::text, revoked::text] LOOP
+    PERFORM set_config('app.service_school_id', m::text, true);
+    PERFORM set_config('app.service_huvudman_key_id', st, true);
+    BEGIN
+      PERFORM app.personal_data_read('PEOPLE', NULL, ARRAY[pupil]);
+      wrong := wrong || format('266b a read with the key %s by hand was written', st);
+    EXCEPTION WHEN SQLSTATE 'PD403' THEN NULL;
+    END;
+  END LOOP;
+  -- 266f: H's key beside the school's own.
+  PERFORM set_config('app.service_school_id', m::text, true);
+  PERFORM set_config('app.service_key_id', ikey::text, true);
+  PERFORM set_config('app.service_huvudman_key_id', hkey::text, true);
+  BEGIN
+    PERFORM app.personal_data_read('PEOPLE', NULL, ARRAY[pupil]);
+    wrong := wrong || '266f a read with H''s key beside the school''s own was written'::text;
+  EXCEPTION WHEN SQLSTATE 'PD403' THEN NULL;
+  END;
+  PERFORM set_config('app.service_key_id', '', true);
+  PERFORM set_config('app.service_school_id', '', true);
+  PERFORM set_config('app.service_huvudman_key_id', '', true);
+  PERFORM app.huvudman_key_opens_school(hkey, m);
+  IF app.current_service_school_id() IS DISTINCT FROM m OR nullif(current_setting('app.service_huvudman_key_id', true), '')::uuid IS DISTINCT FROM hkey THEN
+    wrong := wrong || '266b H''s key did not open the roller school'::text;
+  END IF;
+  IF app.personal_data_read('PEOPLE', NULL, ARRAY[pupil]) <> 1 OR app.personal_data_read('PEOPLE', NULL, ARRAY[pupil]) <> 0 THEN
+    wrong := wrong || '266b the key''s read wrote no row, or two'::text;
+  END IF;
+  PERFORM set_config('app.service_school_id', '', true);
+  PERFORM set_config('app.service_huvudman_key_id', '', true);
+
+  -- What was written, and 266c, as the school's decider.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+  SELECT count(*) FILTER (WHERE "huvudmanMemberId" = member AND "actorId" IS NULL AND "actorRole" = 'SCHOOL_ADMIN'
+                            AND "apiKeyId" IS NULL AND "huvudmanApiKeyId" IS NULL AND channel IN ('WEB', 'APP')) AS readers,
+         count(*) FILTER (WHERE "huvudmanApiKeyId" = hkey AND "apiKeyId" IS NULL AND "actorId" IS NULL AND "actorRole" IS NULL
+                            AND "huvudmanMemberId" IS NULL AND channel = 'INTEGRATION') AS keys,
+         count(*) AS total
+    INTO got FROM "PersonalDataAccess" WHERE at >= transaction_timestamp() AND "schoolId" = m;
+  IF got.readers <> 2 OR got.keys <> 1 OR got.total <> 3 THEN
+    wrong := wrong || format('266a/b the log holds %s rows of the reader and %s of the key, of %s', got.readers, got.keys, got.total);
+  END IF;
+  IF (SELECT string_agg(kind || ':' || name || ':' || huvudman_name, ',' ORDER BY kind)
+        FROM app.access_log_huvudman_names(ARRAY[member, gen_random_uuid()], ARRAY[hkey, h2key]))
+     IS DISTINCT FROM 'KEY:RLS H nyckel:RLS Kommun,MEMBER:Huvudman Planerare:RLS Kommun' THEN
+    wrong := wrong || format('266c the decider reads the names %s',
+      (SELECT json_agg(x) FROM app.access_log_huvudman_names(ARRAY[member], ARRAY[hkey, h2key]) x));
+  END IF;
+  FOREACH st IN ARRAY ARRAY['00000000-0000-4000-8000-000000000115', p] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', st)::text, true);
+    PERFORM set_config('app.chosen_school_id', m::text, true);
+    IF EXISTS (SELECT 1 FROM app.access_log_huvudman_names(ARRAY[member], ARRAY[hkey])) THEN
+      wrong := wrong || format('266c %s, who does not decide, reads the names', st);
+    END IF;
+  END LOOP;
+  PERFORM set_config('app.chosen_school_id', '', true);
+
+  -- 266g
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000266')::text, true);
+  IF app.current_school_id() IS DISTINCT FROM d_school OR NOT app.current_user_decides() THEN
+    wrong := wrong || '266g D''s rektor is not D''s decider'::text;
+  ELSIF EXISTS (SELECT 1 FROM app.access_log_huvudman_names(ARRAY[member], ARRAY[hkey])) THEN
+    wrong := wrong || '266g D''s decider reads the names of a huvudman that never owned D'::text;
+  END IF;
+
+  -- 266e: the school's administrator reads pupil2, then P does.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+  IF app.personal_data_read('PEOPLE', 'WEB', ARRAY[pupil2]) <> 1 THEN
+    wrong := wrong || '266e the administrator''s read wrote no row'::text;
+  END IF;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', p)::text, true);
+  PERFORM set_config('app.chosen_school_id', m::text, true);
+  IF app.personal_data_read('PEOPLE', 'WEB', ARRAY[pupil2]) <> 1 THEN
+    wrong := wrong || '266e P''s read was taken for the administrator''s'::text;
+  END IF;
+  PERFORM set_config('app.chosen_school_id', '', true);
+
+  -- 266h, as the service: the school's own principal, then H's key.
+  PERFORM set_config('request.jwt.claims', '', true);
+  FOREACH via IN ARRAY ARRAY['school', 'key'] LOOP
+    PERFORM set_config('app.service_school_id', '', true);
+    PERFORM set_config('app.service_huvudman_key_id', '', true);
+    IF via = 'key' THEN
+      PERFORM app.huvudman_key_opens_school(hkey, m);
+    ELSE
+      PERFORM set_config('app.service_school_id', m::text, true);
+    END IF;
+    FOR w IN SELECT * FROM (VALUES ('Users', 'update', 'firstName'), ('GuardianStudents', 'update', 'origin'),
+                                   ('GuardianStudents', 'insert', NULL), ('StudentGroups', 'insert', NULL)) v(tbl, cmd, col) LOOP
+      outcome := NULL;
+      BEGIN
+        IF w.cmd = 'update' THEN
+          EXECUTE format('UPDATE %I SET %I = %I WHERE "schoolId" = $1', w.tbl, w.col, w.col) USING m;
+        ELSE
+          SELECT string_agg(quote_ident(at.attname), ', ' ORDER BY at.attnum) INTO cols
+            FROM pg_attribute at
+           WHERE at.attrelid = format('public.%I', w.tbl)::regclass AND at.attnum > 0 AND NOT at.attisdropped
+             AND at.attname <> 'id' AND has_column_privilege(format('public.%I', w.tbl), at.attname, 'INSERT');
+          EXECUTE format('INSERT INTO %I (%s) SELECT %s FROM %I x WHERE x."schoolId" = $1 LIMIT 1', w.tbl, cols, cols, w.tbl) USING m;
+        END IF;
+        GET DIAGNOSTICS n = ROW_COUNT;
+        outcome := CASE WHEN n > 0 THEN 'admitted' ELSE 'none' END;
+        RAISE EXCEPTION USING ERRCODE = 'ZH266';
+      EXCEPTION
+        WHEN SQLSTATE 'ZH266' THEN NULL;
+        WHEN unique_violation OR foreign_key_violation OR exclusion_violation OR check_violation OR not_null_violation THEN
+          outcome := 'admitted';  -- past row security
+        WHEN insufficient_privilege THEN
+          GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT;
+          outcome := CASE WHEN msg LIKE '%row-level security%' THEN 'refused' ELSE 'denied: ' || msg END;
+      END;
+      IF via = 'key' AND outcome NOT IN ('refused', 'none') THEN
+        wrong := wrong || format('266h H''s key: %s %s was %s', w.cmd, w.tbl, outcome);
+      ELSIF via = 'school' AND outcome IS DISTINCT FROM 'admitted' THEN
+        wrong := wrong || format('266h the school''s own principal: %s %s was %s', w.cmd, w.tbl, outcome);
+      END IF;
+    END LOOP;
+  END LOOP;
+  PERFORM set_config('app.service_school_id', '', true);
+  PERFORM set_config('app.service_huvudman_key_id', '', true);
+  -- 266h: the mentors' notices, which took any service principal. A
+  -- principal the function takes is a school it catches up, under the
+  -- school's advisory lock, whether or not anybody is owed a notice there:
+  -- H's key takes no lock, writes nothing and tells nobody; the school's own
+  -- principal, after it, takes the lock (the control; a lock the key took
+  -- would already be held).
+  outcome := NULL;
+  FOREACH via IN ARRAY ARRAY['key', 'school'] LOOP
+    IF via = 'key' THEN
+      PERFORM app.huvudman_key_opens_school(hkey, m);
+    ELSE
+      PERFORM set_config('app.service_school_id', m::text, true);
+    END IF;
+    SELECT count(*) INTO n FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid();
+    SELECT coalesce(sum(n_tup_ins + n_tup_upd + n_tup_del), 0) INTO counted FROM pg_stat_xact_all_tables;
+    SELECT count(*) INTO got_n FROM app.leave_requests_tell_new_mentors();
+    IF via = 'key' AND got_n <> 0 THEN
+      wrong := wrong || '266h H''s key reads the new mentors'' addresses'::text;
+    END IF;
+    IF via = 'key' AND (SELECT coalesce(sum(n_tup_ins + n_tup_upd + n_tup_del), 0) FROM pg_stat_xact_all_tables) <> counted THEN
+      wrong := wrong || '266h H''s key wrote the new mentors'' notices'::text;
+    END IF;
+    IF via = 'key' AND (SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid()) <> n THEN
+      wrong := wrong || '266h the mentors'' catch-up took H''s key for the school''s principal (it locked the school)'::text;
+      outcome := 'locked';
+    ELSIF via = 'school' AND outcome IS DISTINCT FROM 'locked'
+          AND (SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid()) <= n THEN
+      wrong := wrong || '266h the school''s own principal took no catch-up lock: the key''s check above proves nothing'::text;
+    END IF;
+    PERFORM set_config('app.service_school_id', '', true);
+    PERFORM set_config('app.service_huvudman_key_id', '', true);
+  END LOOP;
+
+  -- 266i: P reads pupil3, then K does; then H's key, then a second key of H's.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', p)::text, true);
+  PERFORM set_config('app.chosen_school_id', m::text, true);
+  IF app.personal_data_read('PEOPLE', 'WEB', ARRAY[pupil3]) <> 1 THEN wrong := wrong || '266i P''s read of pupil3 wrote no row'::text; END IF;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000261')::text, true);
+  IF app.personal_data_read('PEOPLE', 'WEB', ARRAY[pupil3]) <> 1 THEN
+    wrong := wrong || '266i K''s read was taken for P''s, a moment before'::text;
+  END IF;
+  PERFORM set_config('app.chosen_school_id', '', true);
+  -- K makes a second key of H's.
+  INSERT INTO "HuvudmanApiKeys" ("huvudmanId", name, "keyHash", scopes, "createdById")
+  SELECT "huvudmanId", 'RLS H nyckel 2', encode(sha256(convert_to('sh_' || repeat('e', 48), 'UTF8')), 'hex'), ARRAY['persons.read'], id
+    FROM "HuvudmanMembers" WHERE "authId" = 'fe000000-0000-4000-8000-000000000261'
+  RETURNING id INTO hkey2;
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM app.huvudman_key_opens_school(hkey, m);
+  PERFORM app.personal_data_read('PEOPLE', NULL, ARRAY[pupil3]);
+  PERFORM set_config('app.service_school_id', '', true);
+  PERFORM set_config('app.service_huvudman_key_id', '', true);
+  PERFORM app.huvudman_key_opens_school(hkey2, m);
+  IF app.personal_data_read('PEOPLE', NULL, ARRAY[pupil3]) <> 1 THEN
+    wrong := wrong || '266i the second key''s read was taken for the first key''s'::text;
+  END IF;
+  PERFORM set_config('app.service_school_id', '', true);
+  PERFORM set_config('app.service_huvudman_key_id', '', true);
+
+  -- 266j
+  FOREACH st IN ARRAY ARRAY[p, '00000000-0000-4000-8000-000000000115'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', st)::text, true);
+    PERFORM set_config('app.chosen_school_id', m::text, true);
+    BEGIN
+      PERFORM * FROM app.ss12000_source_secrets(gen_random_uuid());
+      wrong := wrong || format('266j %s may read a source''s secrets', st);
+    EXCEPTION WHEN SQLSTATE 'SS403' THEN NULL;
+    END;
+  END LOOP;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+  BEGIN
+    PERFORM * FROM app.ss12000_source_secrets(gen_random_uuid());
+  EXCEPTION WHEN SQLSTATE 'SS403' THEN
+    wrong := wrong || '266j the roller school''s full administrator may not read its sources'' secrets'::text;
+  END;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', p)::text, true);
+  IF app.ss12000_is_delivery_context() THEN
+    wrong := wrong || '266j the reader''s claims are taken for the delivery job'::text;
+  END IF;
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('app.chosen_school_id', '', true);
+  IF NOT app.ss12000_is_delivery_context() THEN
+    wrong := wrong || '266j an empty transaction is no longer the delivery job''s'::text;
+  END IF;
+  -- A huvudman's key set alone, no school opened (a broken gateway would).
+  PERFORM set_config('app.service_huvudman_key_id', hkey::text, true);
+  IF app.ss12000_is_delivery_context() THEN
+    wrong := wrong || '266j a huvudman''s key set without a school is taken for the delivery job'::text;
+  END IF;
+  PERFORM set_config('app.service_huvudman_key_id', '', true);
+
+  -- 266k
+  SELECT string_agg(n.nspname || '.' || p2.proname, ', ' ORDER BY 1) INTO cols
+    FROM pg_proc p2 JOIN pg_namespace n ON n.oid = p2.pronamespace
+   WHERE n.nspname IN ('app', 'public', 'sign_in') AND p2.prosecdef AND p2.provolatile = 'v'
+     AND p2.prosrc ~ 'current_service_school_id\(\)'
+     AND p2.prosrc !~ 'current_service_huvudman_key_id\(\)'
+     AND (n.nspname, p2.proname) NOT IN (
+       -- Triggers: they run on a write, and the four arms where the service
+       -- principal writes refuse a huvudman's key (266h).
+       ('app', 'ss12000_ids_are_written_by_an_admin'),
+       ('app', 'ss12000_subscription_writes_are_narrow'),
+       ('app', 'staffing_policies_sharing_is_decided'),
+       ('app', 'teacher_work_rules_day_is_planned'),
+       ('app', 'users_administrators_are_decided'),
+       ('app', 'users_class_moves_are_narrow')
+     );
+  IF cols IS NOT NULL THEN
+    wrong := wrong || format('266k these may write for any service principal, a huvudman''s key too: %s', cols);
+  END IF;
+
+  -- 266d
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+  PERFORM set_config('app.chosen_school_id', '', true);
+  PERFORM app.school_leaves_huvudman();
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', p)::text, true);
+  PERFORM set_config('app.chosen_school_id', m::text, true);
+  IF app.current_school_id() IS NOT NULL OR (SELECT count(*) FROM "Users") <> 0 THEN
+    wrong := wrong || '266d P reads the roller school after it left'::text;
+  END IF;
+  BEGIN
+    PERFORM app.personal_data_read('PEOPLE', 'WEB', ARRAY[pupil]);
+    wrong := wrong || '266d P''s read after the school left was written'::text;
+  EXCEPTION WHEN SQLSTATE 'PD403' THEN NULL;
+  END;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+  PERFORM set_config('app.chosen_school_id', '', true);
+  IF (SELECT count(*) FROM app.access_log_huvudman_names(ARRAY[member], ARRAY[hkey])) <> 2 THEN
+    wrong := wrong || '266d the names left the log with the huvudman'::text;
+  END IF;
+  PERFORM set_config('request.jwt.claims', '', true);
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION 'huvudman 266: %', array_to_string(wrong, '; ');
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 267: huvudmannens nyckel, uppslaget och tjänsteprincipalen
+-- (20261212090000).
+--
+--   267a  the key lookup reads the live keys of every huvudman and nothing
+--         revoked, stamps lastUsedAt and nothing else (SS403), and touches
+--         no revoked key; without the lookup, and with nobody signed in, no
+--         key is read;
+--   267b  the key's schools, by id: H's three for H's key, none for the
+--         revoked one, H2's key, or no key;
+--   267c  a school opened for H's key is that school's service principal and
+--         no more: the seven tables the service reads answer exactly what
+--         they answer for the school's own principal;
+--   267d  the database holds the key to its huvudman's schools without the
+--         gateway (20261212090300): with the two settings written by hand,
+--         app.current_service_school_id() is the school for H's key at a
+--         school H owns, and NULL, with no Users row read, at B (which H only
+--         asked for), with the revoked key and with H2's key; with no key it
+--         is the setting, as for the school's own principal.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_rls267_a', :'school_a', true);
+DO $$
+DECLARE
+  a uuid := current_setting('app.test_rls267_a')::uuid;
+  m uuid;
+  c uuid;
+  hkey uuid;
+  revoked uuid;
+  h2key uuid;
+  b uuid;
+  r record;
+  t text;
+  expected uuid[];
+  want_owner text;
+  n bigint;
+  own bigint;
+  st text;
+  wrong text[] := '{}';
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+  m := app.current_school_id();
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000269')::text, true);
+  c := app.current_school_id();
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000261')::text, true);
+  SELECT id INTO hkey FROM "HuvudmanApiKeys" WHERE name = 'RLS H nyckel';
+  SELECT id INTO revoked FROM "HuvudmanApiKeys" WHERE name = 'RLS H återkallad';
+  SELECT school_id INTO b FROM app.huvudman_schools((SELECT "huvudmanId" FROM "HuvudmanApiKeys" WHERE id = hkey))
+   WHERE slug = 'rls-fixture-school' AND state = 'REQUESTED';
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000268')::text, true);
+  SELECT id INTO h2key FROM "HuvudmanApiKeys" WHERE name = 'RLS H2 nyckel';
+  IF b IS NULL THEN RAISE EXCEPTION 'huvudman 267: B is not among H''s questions; fixtures did not run'; END IF;
+
+  -- 267a
+  PERFORM set_config('request.jwt.claims', '', true);
+  IF (SELECT count(*) FROM "HuvudmanApiKeys") <> 0 THEN
+    wrong := wrong || '267a nobody reads a key'::text;
+  END IF;
+  PERFORM set_config('app.service_key_lookup', 'on', true);
+  IF (SELECT array_agg(name ORDER BY name) FROM "HuvudmanApiKeys") IS DISTINCT FROM ARRAY['RLS H nyckel', 'RLS H2 nyckel'] THEN
+    wrong := wrong || format('267a the lookup reads %s', (SELECT array_agg(name ORDER BY name) FROM "HuvudmanApiKeys"));
+  END IF;
+  UPDATE "HuvudmanApiKeys" SET "lastUsedAt" = now() WHERE id = hkey;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN wrong := wrong || '267a the lookup did not stamp the key'::text; END IF;
+  UPDATE "HuvudmanApiKeys" SET "lastUsedAt" = now() WHERE id = revoked;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN wrong := wrong || '267a the lookup stamped a revoked key'::text; END IF;
+  BEGIN
+    UPDATE "HuvudmanApiKeys" SET "revokedAt" = now() WHERE id = hkey;
+    wrong := wrong || '267a the lookup revoked a key'::text;
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE;
+    IF st NOT IN ('SS403', '42501') THEN wrong := wrong || format('267a the lookup''s revocation: %s', st); END IF;
+  END;
+  PERFORM set_config('app.service_key_lookup', '', true);
+
+  -- 267b
+  FOR t IN SELECT unnest(ARRAY[hkey::text, revoked::text, h2key::text, '']) LOOP
+    PERFORM set_config('app.service_huvudman_key_id', t, true);
+    expected := '{}';
+    IF t = hkey::text THEN
+      expected := (SELECT array_agg(s ORDER BY s) FROM unnest(ARRAY[a, m, c]) s);
+    END IF;
+    -- In the function's own order, which is by id.
+    IF (SELECT coalesce(array_agg(school_id), '{}') FROM app.huvudman_key_schools()) IS DISTINCT FROM expected THEN
+      wrong := wrong || format('267b the key %s reads the schools %s', t, (SELECT array_agg(school_id) FROM app.huvudman_key_schools()));
+    END IF;
+    want_owner := CASE WHEN t = hkey::text THEN 'RLS Kommun/2121000001/0884'
+                       WHEN t = h2key::text THEN 'RLS Annan huvudman/2121000002/-' ELSE '' END;
+    IF (SELECT coalesce(string_agg(name || '/' || coalesce(organisation_number, '-') || '/' || coalesce(municipality_code, '-'), ','), '')
+          FROM app.huvudman_key_owner()) IS DISTINCT FROM want_owner THEN
+      wrong := wrong || format('267b the key %s is of the huvudman %s', t, (SELECT json_agg(x) FROM app.huvudman_key_owner() x));
+    END IF;
+  END LOOP;
+  PERFORM set_config('app.service_huvudman_key_id', '', true);
+
+  -- 267c
+  FOREACH t IN ARRAY ARRAY['Schools', 'AcademicYears', 'MasterLessons', 'CalendarLessons', 'Users', 'StudentGroups', 'GuardianStudents'] LOOP
+    PERFORM set_config('app.service_school_id', m::text, true);
+    EXECUTE format('SELECT count(*) FROM %I', t) INTO own;
+    PERFORM set_config('app.service_school_id', '', true);
+    PERFORM app.huvudman_key_opens_school(hkey, m);
+    EXECUTE format('SELECT count(*) FROM %I', t) INTO n;
+    PERFORM set_config('app.service_school_id', '', true);
+    PERFORM set_config('app.service_huvudman_key_id', '', true);
+    IF n IS DISTINCT FROM own OR own = 0 THEN
+      wrong := wrong || format('267c %s: %s rows for H''s key, %s for the school''s own principal', t, n, own);
+    END IF;
+  END LOOP;
+
+  -- 267d, by hand: no app.huvudman_key_opens_school.
+  FOR r IN SELECT * FROM (VALUES
+      (m, hkey::text, m, 'H''s key at the roller school'),
+      (a, hkey::text, a, 'H''s key at A'),
+      (b, hkey::text, NULL::uuid, 'H''s key at B, only asked for'),
+      (m, revoked::text, NULL::uuid, 'the revoked key at the roller school'),
+      (m, h2key::text, NULL::uuid, 'H2''s key at the roller school'),
+      (b, '', b, 'no key at B: the school''s own principal')
+    ) v(school, k, expected, label)
+  LOOP
+    PERFORM set_config('app.service_school_id', r.school::text, true);
+    PERFORM set_config('app.service_huvudman_key_id', r.k, true);
+    IF app.current_service_school_id() IS DISTINCT FROM r.expected THEN
+      wrong := wrong || format('267d %s is the school %s', r.label, app.current_service_school_id());
+    END IF;
+    SELECT count(*) INTO n FROM "Users";
+    IF (r.expected IS NULL) <> (n = 0) THEN
+      wrong := wrong || format('267d %s reads %s Users rows', r.label, n);
+    END IF;
+  END LOOP;
+  PERFORM set_config('app.service_school_id', '', true);
+  PERFORM set_config('app.service_huvudman_key_id', '', true);
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION 'huvudman 267: %', array_to_string(wrong, '; ');
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 268: kroken dömer huvudmannens skolor, var och en för sig
+-- (20261212090000).
+--
+-- As supabase_auth_admin, like section 243. H owns A (no school-account
+-- row), the roller school (Entra, optional for staff) and C (Entra, required
+-- for staff):
+--
+--   268a  sign_in.rules: P's three schools as the reader's, staff, after
+--         every own row ('infinity'); L's own row at A first and the
+--         reader's rows at all three, A's too; G's deactivated own row in
+--         the roller school and the reader's three;
+--   268b  P by password: the claims, with {reader:C: sso_required}; L and G
+--         the same, their own rows judged first and open;
+--   268c  P by school account with C's tenant: the reader closed at A and
+--         in the roller school (A has no school account; the roller school's
+--         tenant is another), open at C;
+--   268d  Q, whose huvudman owns nothing, and a login with one row: exactly
+--         the claims Auth signed;
+--   268e  P with an active guardian row at C (which requires a school
+--         account of staff only) by password: C closed to the reader alone,
+--         {reader:C: sso_required}; under those claims P naming C is the
+--         guardian there, and once C deactivates the row, P naming C is no
+--         principal at all: not the reader that was never let in;
+--   268f  X, whose membership is inactive, by password: its schools are
+--         judged all the same, {reader:C: sso_required}; once the
+--         membership is made active, X naming C is no principal and X
+--         naming A is the reader;
+--   268g  P, when the one school H owns requires a school account of staff:
+--         by password the token is refused (sso_required), by school account
+--         issued.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_rls268_a', :'school_a', true);
+DO $$
+DECLARE
+  a constant text := current_setting('app.test_rls268_a');
+  now_s bigint := extract(epoch FROM now())::bigint;
+  c_tenant constant text := '7b0c2a9e-3c1d-4e5f-8a6b-0c1d2e3f4a5d';
+  p constant text := 'fe000000-0000-4000-8000-000000000260';
+  l constant text := 'fe000000-0000-4000-8000-000000000264';
+  g constant text := 'fe000000-0000-4000-8000-000000000265';
+  m text;
+  c text;
+  r record;
+  claims jsonb;
+  got jsonb;
+  expected jsonb;
+  cases int := 0;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+  m := app.current_school_id()::text;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000269')::text, true);
+  c := app.current_school_id()::text;
+  PERFORM set_config('request.jwt.claims', '', true);
+  SET LOCAL ROLE supabase_auth_admin;
+  IF current_user <> 'supabase_auth_admin' THEN RAISE EXCEPTION 'huvudman 268: running as %', current_user; END IF;
+
+  -- 268a
+  IF (SELECT array_agg("schoolId"::text || '/' || "role"::text || '/' || ("loginSince" = 'infinity')::text || '/' || "isActive"::text
+                       || '/' || "huvudmanReader"::text ORDER BY "loginSince", "schoolId")
+        FROM sign_in.rules(p::uuid)) IS DISTINCT FROM
+     (SELECT array_agg(s || '/SCHOOL_ADMIN/true/true/true' ORDER BY s) FROM unnest(ARRAY[a, m, c]) s) THEN
+    RAISE EXCEPTION 'huvudman 268a: P''s rules are %', (SELECT json_agg(x) FROM sign_in.rules(p::uuid) x);
+  END IF;
+  IF (SELECT array_agg("schoolId"::text || '/' || "role"::text || '/' || "huvudmanReader"::text ORDER BY "loginSince", "schoolId")
+        FROM sign_in.rules(l::uuid))
+     IS DISTINCT FROM ARRAY[a || '/TEACHER/false'] || (SELECT array_agg(s || '/SCHOOL_ADMIN/true' ORDER BY s) FROM unnest(ARRAY[a, m, c]) s) THEN
+    RAISE EXCEPTION 'huvudman 268a: L''s rules are %', (SELECT json_agg(x) FROM sign_in.rules(l::uuid) x);
+  END IF;
+  IF (SELECT count(*) FROM sign_in.rules(g::uuid) WHERE "schoolId"::text = m) <> 2
+     OR (SELECT count(*) FROM sign_in.rules(g::uuid) WHERE "schoolId"::text = m AND "role" = 'GUARDIAN' AND NOT "isActive" AND NOT "huvudmanReader") <> 1
+     OR (SELECT count(*) FROM sign_in.rules(g::uuid) WHERE "huvudmanReader") <> 3
+     OR (SELECT count(*) FROM sign_in.rules(g::uuid)) <> 4 THEN
+    RAISE EXCEPTION 'huvudman 268a: G''s rules are %', (SELECT json_agg(x) FROM sign_in.rules(g::uuid) x);
+  END IF;
+
+  FOR r IN SELECT * FROM (VALUES
+      ('268b P by password',                      p, 'password', '["password"]'::jsonb, jsonb_build_object('reader:' || c, 'sso_required'), NULL::text[], false),
+      ('268b P refreshed',                        p, 'token_refresh', '["password"]', jsonb_build_object('reader:' || c, 'sso_required'), NULL, false),
+      ('268b L by password',                      l, 'password', '["password"]', jsonb_build_object('reader:' || c, 'sso_required'), NULL, false),
+      ('268b G by password',                      g, 'password', '["password"]', jsonb_build_object('reader:' || c, 'sso_required'), NULL, false),
+      ('268d Q, whose huvudman owns nothing',     'fe000000-0000-4000-8000-000000000263', 'password', '["password"]', NULL, NULL, false),
+      ('268d a login with one row',               '00000000-0000-4000-8000-000000000105', 'password', '["password"]', NULL, NULL, false),
+      ('268c P by school account, C''s tenant',   p, 'oauth', '["oauth"]', NULL, ARRAY['reader:' || a, 'reader:' || m], true)
+    ) AS v(label, sub, method, amr, closed, closed_keys, needs_identity)
+  LOOP
+    IF r.needs_identity THEN
+      INSERT INTO auth.identities (provider_id, user_id, identity_data, provider)
+      VALUES ('rls268-entra', r.sub::uuid,
+              jsonb_build_object('iss', 'https://login.microsoftonline.com/' || c_tenant || '/v2.0', 'sub', 'rls268-entra',
+                                 'custom_claims', jsonb_build_object('tid', c_tenant)),
+              'azure');
+    END IF;
+    claims := jsonb_build_object(
+      'aud', 'authenticated', 'sub', r.sub, 'role', 'authenticated', 'email', 'rls268@example.invalid',
+      'session_id', gen_random_uuid(), 'aal', 'aal1', 'is_anonymous', false,
+      'app_metadata', jsonb_build_object('provider', 'email'), 'user_metadata', '{}'::jsonb,
+      'amr', (SELECT jsonb_agg(jsonb_build_object('method', e #>> '{}', 'timestamp', now_s - 60)) FROM jsonb_array_elements(r.amr) e));
+    got := sign_in.custom_access_token_hook(jsonb_build_object('user_id', r.sub, 'claims', claims, 'authentication_method', r.method));
+    expected := CASE WHEN r.closed IS NULL THEN jsonb_build_object('claims', claims)
+                     ELSE jsonb_build_object('claims', claims || jsonb_build_object('rastra_closed_schools', r.closed)) END;
+    IF r.closed_keys IS NOT NULL THEN
+      IF got ? 'error' OR (SELECT array_agg(k ORDER BY k) FROM jsonb_object_keys(got #> '{claims,rastra_closed_schools}') k)
+                           IS DISTINCT FROM (SELECT array_agg(k ORDER BY k) FROM unnest(r.closed_keys) k) THEN
+        RAISE EXCEPTION 'huvudman %: gave %, expected % closed', r.label, got, r.closed_keys;
+      END IF;
+    ELSIF got IS DISTINCT FROM expected THEN
+      RAISE EXCEPTION 'huvudman %: gave %, expected %', r.label, got, expected;
+    END IF;
+    cases := cases + 1;
+  END LOOP;
+  IF cases <> 7 THEN RAISE EXCEPTION 'huvudman 268: only % cases ran', cases; END IF;
+  SET LOCAL ROLE app_authenticated;
+END $$;
+ROLLBACK;
+
+-- 268e and 268f: a verdict of the token's, and a row or membership changed
+-- during the token's life.
+BEGIN;
+SELECT set_config('app.test_rls268_a', :'school_a', true);
+DO $$
+DECLARE
+  a constant text := current_setting('app.test_rls268_a');
+  now_s bigint := extract(epoch FROM now())::bigint;
+  p constant text := 'fe000000-0000-4000-8000-000000000260';
+  x constant text := 'fe000000-0000-4000-8000-000000000262';
+  c text;
+  guardian uuid := gen_random_uuid();
+  r record;
+  claims jsonb;
+  got jsonb;
+  n int;
+  wrong text[] := '{}';
+BEGIN
+  -- C's rektor gives P's login a guardian row at C, as an invitation does.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000269')::text, true);
+  c := app.current_school_id()::text;
+  PERFORM set_config('app.login_join', guardian::text, true);
+  INSERT INTO "Users" (id, "schoolId", email, "firstName", "lastName", role, "authId", "invitedAt", "updatedAt")
+  VALUES (guardian, c::uuid, 'hm-p-c-guardian@example.invalid', 'Huvudman', 'Förälder', 'GUARDIAN', p::uuid, now(), now());
+  PERFORM set_config('app.login_join', '', true);
+  PERFORM set_config('request.jwt.claims', '', true);
+
+  FOR r IN SELECT * FROM (VALUES ('268e', p), ('268f', x)) v(label, sub) LOOP
+    claims := jsonb_build_object(
+      'aud', 'authenticated', 'sub', r.sub, 'role', 'authenticated', 'email', 'rls268@example.invalid',
+      'session_id', gen_random_uuid(), 'aal', 'aal1', 'is_anonymous', false,
+      'app_metadata', jsonb_build_object('provider', 'email'), 'user_metadata', '{}'::jsonb,
+      'amr', jsonb_build_array(jsonb_build_object('method', 'password', 'timestamp', now_s - 60)));
+    SET LOCAL ROLE supabase_auth_admin;
+    got := sign_in.custom_access_token_hook(jsonb_build_object('user_id', r.sub, 'claims', claims, 'authentication_method', 'password'));
+    SET LOCAL ROLE app_authenticated;
+    IF got IS DISTINCT FROM jsonb_build_object('claims', claims || jsonb_build_object('rastra_closed_schools', jsonb_build_object('reader:' || c, 'sso_required'))) THEN
+      wrong := wrong || format('%s by password: %s', r.label, got);
+    END IF;
+    PERFORM set_config('app.test_rls268_' || replace(r.label, '268', ''), (got -> 'claims')::text, true);
+  END LOOP;
+
+  -- 268e: under P's token, P naming C is the guardian there.
+  PERFORM set_config('request.jwt.claims', current_setting('app.test_rls268_e'), true);
+  PERFORM set_config('app.chosen_school_id', c, true);
+  IF app.current_school_id()::text IS DISTINCT FROM c OR app.current_user_role() IS DISTINCT FROM 'GUARDIAN'
+     OR app.current_user_id() IS DISTINCT FROM guardian OR EXISTS (SELECT 1 FROM app.huvudman_reader()) THEN
+    wrong := wrong || format('268e P naming C is %s %s, not the guardian', app.current_school_id(), app.current_user_role());
+  END IF;
+  -- C deactivates the row; P's token is unchanged.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000269')::text, true);
+  PERFORM set_config('app.chosen_school_id', '', true);
+  UPDATE "Users" SET "isActive" = false WHERE id = guardian;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN wrong := wrong || '268e C''s rektor could not deactivate the row'::text; END IF;
+  PERFORM set_config('request.jwt.claims', current_setting('app.test_rls268_e'), true);
+  PERFORM set_config('app.chosen_school_id', c, true);
+  IF app.current_school_id() IS NOT NULL OR app.current_user_role() IS NOT NULL
+     OR app.current_user_may('PERSONAL', false) OR EXISTS (SELECT 1 FROM app.huvudman_reader()) THEN
+    wrong := wrong || format('268e P naming C after the row went is %s %s: the reader the token never let in', app.current_school_id(), app.current_user_role());
+  END IF;
+
+  -- 268f: X's membership is made active during the token's life.
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('app.chosen_school_id', '', true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000261')::text, true);
+  UPDATE "HuvudmanMembers" SET "isActive" = true WHERE "authId" = x::uuid;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN wrong := wrong || '268f the kommunadministratör could not make X active'::text; END IF;
+  PERFORM set_config('request.jwt.claims', current_setting('app.test_rls268_f'), true);
+  PERFORM set_config('app.chosen_school_id', c, true);
+  IF app.current_school_id() IS NOT NULL OR EXISTS (SELECT 1 FROM app.huvudman_reader()) THEN
+    wrong := wrong || '268f X naming C, which the token closed to the reader, reads it'::text;
+  END IF;
+  PERFORM set_config('app.chosen_school_id', a, true);
+  IF app.current_school_id()::text IS DISTINCT FROM a OR NOT EXISTS (SELECT 1 FROM app.huvudman_reader()) THEN
+    wrong := wrong || '268f X naming A, which the token let the reader into, is not the reader'::text;
+  END IF;
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('app.chosen_school_id', '', true);
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION 'huvudman 268: %', array_to_string(wrong, '; ');
+  END IF;
+END $$;
+ROLLBACK;
+
+-- 268g: H owns C alone.
+BEGIN;
+SELECT set_config('app.test_rls268_a', :'school_a', true);
+DO $$
+DECLARE
+  now_s bigint := extract(epoch FROM now())::bigint;
+  c_tenant constant text := '7b0c2a9e-3c1d-4e5f-8a6b-0c1d2e3f4a5d';
+  p constant text := 'fe000000-0000-4000-8000-000000000260';
+  c uuid;
+  claims jsonb;
+  got jsonb;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000261')::text, true);
+  FOR c IN SELECT school_id FROM app.huvudman_schools((SELECT "huvudmanId" FROM "HuvudmanMembers" WHERE "authId" = p::uuid))
+            WHERE state = 'OWNED' AND slug <> 'rls-huvudman-c' LOOP
+    PERFORM app.huvudman_release_school((SELECT "huvudmanId" FROM "HuvudmanMembers" WHERE "authId" = p::uuid), c);
+  END LOOP;
+  PERFORM set_config('request.jwt.claims', '', true);
+  claims := jsonb_build_object(
+    'aud', 'authenticated', 'sub', p, 'role', 'authenticated', 'email', 'rls268@example.invalid',
+    'session_id', gen_random_uuid(), 'aal', 'aal1', 'is_anonymous', false,
+    'app_metadata', jsonb_build_object('provider', 'email'), 'user_metadata', '{}'::jsonb,
+    'amr', jsonb_build_array(jsonb_build_object('method', 'password', 'timestamp', now_s - 60)));
+  SET LOCAL ROLE supabase_auth_admin;
+  IF (SELECT count(*) FROM sign_in.rules(p::uuid)) <> 1 THEN
+    RAISE EXCEPTION 'huvudman 268g: P''s rules are %', (SELECT json_agg(x) FROM sign_in.rules(p::uuid) x);
+  END IF;
+  got := sign_in.custom_access_token_hook(jsonb_build_object('user_id', p, 'claims', claims, 'authentication_method', 'password'));
+  IF got IS DISTINCT FROM jsonb_build_object('error', jsonb_build_object('http_code', 403, 'message', 'sso_required')) THEN
+    RAISE EXCEPTION 'huvudman 268g: P by password, with only C, gave %', got;
+  END IF;
+  INSERT INTO auth.identities (provider_id, user_id, identity_data, provider)
+  VALUES ('rls268g-entra', p::uuid,
+          jsonb_build_object('iss', 'https://login.microsoftonline.com/' || c_tenant || '/v2.0', 'sub', 'rls268g-entra',
+                             'custom_claims', jsonb_build_object('tid', c_tenant)),
+          'azure');
+  claims := jsonb_set(claims, '{amr}', jsonb_build_array(jsonb_build_object('method', 'oauth', 'timestamp', now_s - 60)));
+  got := sign_in.custom_access_token_hook(jsonb_build_object('user_id', p, 'claims', claims, 'authentication_method', 'oauth'));
+  IF got IS DISTINCT FROM jsonb_build_object('claims', claims) THEN
+    RAISE EXCEPTION 'huvudman 268g: P by school account, with only C, gave %', got;
+  END IF;
+  SET LOCAL ROLE app_authenticated;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 268, continued: en medlems inloggning hålls, och skolans sida av
+-- huvudmannen är beslutsfattarens (20261212090000). In 268 because 260–268
+-- are this phase's.
+--
+--   268h  app.login_is_held_elsewhere counts a membership: L's login, held
+--         by L's row at A and by L's membership, is held beside the row;
+--         P's, held by the membership alone, is held with no row named;
+--   268i  gallring leaves a login a membership holds: with the gallring
+--         school's departed pupil's login handed to a member of H,
+--         app.gallring_claim_person answers invited = false;
+--   268j  what the school reads of its huvudman (its readers, keys and
+--         history) is its deciders': the roller school's rektor reads them,
+--         its läsare and P, the huvudman's reader there, read nothing.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  l constant text := 'fe000000-0000-4000-8000-000000000264';
+  p constant text := 'fe000000-0000-4000-8000-000000000260';
+  l_row uuid;
+  m uuid;
+  sub text;
+  wrong text[] := '{}';
+BEGIN
+  -- 268h
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', l)::text, true);
+  l_row := app.current_user_id();
+  PERFORM set_config('request.jwt.claims', '', true);
+  IF l_row IS NULL THEN RAISE EXCEPTION 'huvudman 268h: L has no row at A'; END IF;
+  IF NOT app.login_is_held_elsewhere(l::uuid, l_row) THEN
+    wrong := wrong || '268h L''s login, which L''s membership holds, was taken for the row''s alone'::text;
+  END IF;
+  IF NOT app.login_is_held_elsewhere(p::uuid, NULL) THEN
+    wrong := wrong || '268h P''s login, which only a membership holds, was taken for nobody''s'::text;
+  END IF;
+
+  -- 268j
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+  m := app.current_school_id();
+  IF (SELECT count(*) FROM app.school_huvudman_keys()) <> 2 OR (SELECT count(*) FROM app.school_huvudman_readers()) = 0
+     OR (SELECT count(*) FROM app.school_huvudman_history(50)) = 0 THEN
+    wrong := wrong || '268j the roller school''s rektor does not read its huvudman'::text;
+  END IF;
+  FOREACH sub IN ARRAY ARRAY['00000000-0000-4000-8000-000000000115', p] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', sub)::text, true);
+    PERFORM set_config('app.chosen_school_id', m::text, true);
+    IF app.current_school_id() IS DISTINCT FROM m THEN
+      wrong := wrong || format('268j %s is not in the roller school', sub);
+    ELSIF EXISTS (SELECT 1 FROM app.school_huvudman_keys()) OR EXISTS (SELECT 1 FROM app.school_huvudman_readers())
+          OR EXISTS (SELECT 1 FROM app.school_huvudman_history(50)) THEN
+      wrong := wrong || format('268j %s, who does not decide, reads the school''s huvudman', sub);
+    END IF;
+  END LOOP;
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('app.chosen_school_id', '', true);
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION 'huvudman 268h/j: %', array_to_string(wrong, '; ');
+  END IF;
+END $$;
+ROLLBACK;
+
+-- 268i, after 242c.
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000081')::text, true);
+DO $$
+BEGIN
+  PERFORM set_config('app.test_rls268i_school', app.current_school_id()::text, true);
+  PERFORM set_config('app.test_rls268i_pupil', (SELECT id::text FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000085'), true);
+  IF current_setting('app.test_rls268i_pupil', true) IS NULL THEN
+    RAISE EXCEPTION 'huvudman 268i: the gallring school''s departed pupil is not in the fixtures';
+  END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000261')::text, true);
+DO $$
+DECLARE
+  h uuid := (SELECT "huvudmanId" FROM "HuvudmanMembers" WHERE "authId" = 'fe000000-0000-4000-8000-000000000261');
+  member uuid;
+BEGIN
+  -- H's kommunadministratör invites the pupil's address, and the member
+  -- takes the login the address has, as the gateway's invitation does.
+  INSERT INTO "HuvudmanMembers" ("huvudmanId", email, "firstName", "lastName", role, "updatedAt")
+  VALUES (h, 'hm-268i@example.invalid', 'Huvudman', 'Elev', 'PLANERARE', now())
+  RETURNING id INTO member;
+  PERFORM app.huvudman_member_takes_login(member, '00000000-0000-4000-8000-000000000085');
+END $$;
+SELECT set_config('request.jwt.claims', '', true);
+DO $$
+DECLARE
+  run uuid := app.gallring_begin(current_setting('app.test_rls268i_school')::uuid, clock_timestamp());
+  c record;
+BEGIN
+  SELECT * INTO c FROM app.gallring_claim_person(run, current_setting('app.test_rls268i_pupil')::uuid);
+  IF c.auth_id IS DISTINCT FROM '00000000-0000-4000-8000-000000000085' OR c.invited IS DISTINCT FROM false THEN
+    RAISE EXCEPTION 'huvudman 268i: the departed pupil whose login a membership holds was claimed as % %', c.auth_id, c.invited;
+  END IF;
 END $$;
 ROLLBACK;
