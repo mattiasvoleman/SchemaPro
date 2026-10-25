@@ -200,16 +200,24 @@ export class FamilyScheduleService {
       // it. A guardian reads only the child's groups, so a lesson the child
       // reaches as an extra group (7B's svenska with 7A added) takes the läsår
       // its date lies in instead: a lesson is published within its group's
-      // läsår, so the two agree. Read only when a replacing group exists.
+      // läsår, so the two agree. Where two läsår overlap on the date, the one
+      // of the child's group on the lesson decides, else the earlier start
+      // (and then the id), so the answer never depends on the read's order.
+      // Read only when a replacing group exists.
       const years =
         replacements.length === 0
           ? []
           : ((await tx.academicYear.findMany({
               where: { startDate: { lte: dayDate(to) }, endDate: { gte: dayDate(from) } },
               select: { id: true, startDate: true, endDate: true },
+              orderBy: [{ startDate: 'asc' }, { id: 'asc' }],
             })) ?? []);
-      const yearOfDate = (date: string) =>
-        years.find((year) => asDay(year.startDate) <= date && date <= asDay(year.endDate))?.id;
+      const yearOfDate = (date: string, groupIds: readonly string[]): string | undefined => {
+        const holding = years.filter((year) => asDay(year.startDate) <= date && date <= asDay(year.endDate));
+        if (holding.length <= 1) return holding[0]?.id;
+        const childs = new Set(groupIds.map((id) => yearOf.get(id)).filter((year): year is string => year !== undefined));
+        return (holding.find((year) => childs.has(year.id)) ?? holding[0])!.id;
+      };
 
       const rows =
         (await tx.calendarLesson.findMany({
@@ -250,7 +258,7 @@ export class FamilyScheduleService {
         if (!viaTeaching && !(viaHome && homeDays.has(date))) return false;
         if (replacements.length === 0) return true;
         const groupIds = [row.studentGroupId, ...row.extraGroups.map((x) => x.studentGroupId)];
-        const year = yearOf.get(row.studentGroupId) ?? yearOfDate(date);
+        const year = yearOf.get(row.studentGroupId) ?? yearOfDate(date, groupIds);
         // A läsår it cannot tell takes nobody off: no answer beats last year's.
         if (year === undefined) return true;
         const keptBy = keptByOf(childGroupById.get(row.studentGroupId));
