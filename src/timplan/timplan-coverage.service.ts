@@ -532,7 +532,7 @@ export async function readPlannedRows(
   });
   const groups = await tx.studentGroup.findMany({
     where: { academicYearId },
-    select: { id: true, name: true, kind: true, gradeLevel: true, replacesSubjectId: true },
+    select: { id: true, name: true, kind: true, gradeLevel: true, replacesSubjectId: true, halfOfId: true },
   });
   const requirements = await tx.teachingRequirement.findMany({
     where: { academicYearId },
@@ -571,11 +571,15 @@ export async function readPlannedRows(
     subjects,
     // Ersättande grupper: the subject a teaching group's members leave, on the
     // groups that replace one (common/replacing-groups.ts) — the pupil lines
-    // of P2, layer 2, P3 and P4 apply THE RULE with it. Left off every other
-    // group, so a school without one hands the modules the rows it always did.
-    groups: groups.map(({ replacesSubjectId, ...group }) =>
-      replacesSubjectId ? { ...group, replacesSubjectId } : group,
-    ),
+    // of P2, layer 2, P3 and P4 apply THE RULE with it — and the class of a
+    // half, on halves, since every other teaching group keeps its members on
+    // its own rows (keptByOf). Left off every other group, so a school without
+    // either hands the modules the rows it always did.
+    groups: groups.map(({ replacesSubjectId, halfOfId, ...group }) => ({
+      ...group,
+      ...(replacesSubjectId ? { replacesSubjectId } : {}),
+      ...(halfOfId ? { halfOfId } : {}),
+    })),
     requirements: requirements.map((row) => ({
       ...row,
       startDate: asDayOrNull(row.startDate),

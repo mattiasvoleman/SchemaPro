@@ -192,7 +192,7 @@ describe('TimplanCoverageService', () => {
     const rows = await readPlannedRows(tx as never, YEAR_ID);
     expect(tx.studentGroup.findMany).toHaveBeenCalledWith({
       where: { academicYearId: YEAR_ID },
-      select: { id: true, name: true, kind: true, gradeLevel: true, replacesSubjectId: true },
+      select: { id: true, name: true, kind: true, gradeLevel: true, replacesSubjectId: true, halfOfId: true },
     });
     // Only the replacing group carries the field: the others reach the
     // modules exactly as before.

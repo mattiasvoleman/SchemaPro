@@ -9445,7 +9445,7 @@
    }
   },
   {
-   "name": "ersättande grupper: SvA7 replaces Svenska — its pupils in 7A and 7B are credited SvA7's SvA and none of their class's or a nivågrupp's Svenska, 180 of 180; an SvA support group that does not replace stays on top of class Svenska",
+   "name": "ersättande grupper: SvA7 replaces Svenska — its pupils in 7A and 7B are credited SvA7's SvA and none of their class's Svenska, 180 of 180, and a nivågrupp they are placed in keeps theirs; an SvA support group that does not replace stays on top of class Svenska",
    "input": {
     "year": {
      "startDate": "2026-08-17",
@@ -9715,7 +9715,7 @@
         ],
         "pupils": {
          "min": 180,
-         "median": 180,
+         "median": 240,
          "max": 240,
          "below": 0
         }
@@ -9861,6 +9861,41 @@
     ],
     "pupils": [
      {
+      "pupilId": "00000000-0000-4000-8000-000000001403",
+      "homeGroupId": "00000000-0000-4000-8000-000000001101",
+      "gradeLevel": 7,
+      "lines": [
+       {
+        "key": "alt:SV_SVA",
+        "alternativeCode": "SV_SVA",
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000000002",
+         "00000000-0000-4000-8000-000000000003"
+        ],
+        "targetMinutesPerWeek": 180,
+        "plannedMinutesPerWeek": 240,
+        "status": "MET",
+        "sources": [
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000001104",
+          "subjectId": "00000000-0000-4000-8000-000000000002",
+          "minutesPerWeek": 60
+         },
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000001103",
+          "subjectId": "00000000-0000-4000-8000-000000000003",
+          "minutesPerWeek": 180
+         }
+        ],
+        "doublePlannedSubjectIds": [],
+        "alternativeSubjectIds": [
+         "00000000-0000-4000-8000-000000000002",
+         "00000000-0000-4000-8000-000000000003"
+        ]
+       }
+      ]
+     },
+     {
       "pupilId": "00000000-0000-4000-8000-000000001405",
       "homeGroupId": "00000000-0000-4000-8000-000000001101",
       "gradeLevel": 7,
@@ -9899,6 +9934,27 @@
     "pupilsBelowTarget": 0,
     "pupilsOutsideClasses": 0,
     "verdicts": [
+     {
+      "code": "TIMPLAN_PUPIL_DOUBLE_PLANNED",
+      "severity": "warning",
+      "pupilId": "00000000-0000-4000-8000-000000001403",
+      "studentGroupId": "00000000-0000-4000-8000-000000001101",
+      "studentGroupIds": [
+       "00000000-0000-4000-8000-000000001104",
+       "00000000-0000-4000-8000-000000001103"
+      ],
+      "subjectIds": [
+       "00000000-0000-4000-8000-000000000002",
+       "00000000-0000-4000-8000-000000000003"
+      ],
+      "alternativeCode": "SV_SVA",
+      "params": {
+       "groupName": "7A",
+       "subjectName": "Svenska / Svenska som andraspråk",
+       "groupNames": "Sv7 nivå, SvA7",
+       "plannedMinutesPerWeek": 240
+      }
+     },
      {
       "code": "TIMPLAN_PUPIL_DOUBLE_PLANNED",
       "severity": "warning",
@@ -10192,9 +10248,9 @@
         ],
         "pupils": {
          "min": 150,
-         "median": 180,
+         "median": 210,
          "max": 240,
-         "below": 2
+         "below": 1
         }
        }
       ]
@@ -10377,9 +10433,14 @@
          "00000000-0000-4000-8000-000000000003"
         ],
         "targetMinutesPerWeek": 180,
-        "plannedMinutesPerWeek": 150,
-        "status": "UNDER",
+        "plannedMinutesPerWeek": 210,
+        "status": "MET",
         "sources": [
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000001104",
+          "subjectId": "00000000-0000-4000-8000-000000000002",
+          "minutesPerWeek": 60
+         },
          {
           "studentGroupId": "00000000-0000-4000-8000-000000001103",
           "subjectId": "00000000-0000-4000-8000-000000000003",
@@ -10387,7 +10448,10 @@
          }
         ],
         "doublePlannedSubjectIds": [],
-        "alternativeSubjectIds": []
+        "alternativeSubjectIds": [
+         "00000000-0000-4000-8000-000000000002",
+         "00000000-0000-4000-8000-000000000003"
+        ]
        }
       ]
      },
@@ -10454,32 +10518,13 @@
      }
     ],
     "pupilCount": 7,
-    "pupilsBelowTarget": 3,
+    "pupilsBelowTarget": 2,
     "pupilsOutsideClasses": 0,
     "verdicts": [
      {
       "code": "TIMPLAN_PUPIL_UNDERPLANNED",
       "severity": "warning",
       "pupilId": "00000000-0000-4000-8000-000000001402",
-      "studentGroupId": "00000000-0000-4000-8000-000000001101",
-      "subjectIds": [
-       "00000000-0000-4000-8000-000000000002",
-       "00000000-0000-4000-8000-000000000003"
-      ],
-      "alternativeCode": "SV_SVA",
-      "params": {
-       "groupName": "7A",
-       "gradeLevel": 7,
-       "subjectName": "Svenska / Svenska som andraspråk",
-       "targetMinutesPerWeek": 180,
-       "plannedMinutesPerWeek": 150,
-       "deficitMinutesPerWeek": 30
-      }
-     },
-     {
-      "code": "TIMPLAN_PUPIL_UNDERPLANNED",
-      "severity": "warning",
-      "pupilId": "00000000-0000-4000-8000-000000001403",
       "studentGroupId": "00000000-0000-4000-8000-000000001101",
       "subjectIds": [
        "00000000-0000-4000-8000-000000000002",
@@ -10512,6 +10557,27 @@
        "targetMinutesPerWeek": 180,
        "plannedMinutesPerWeek": 150,
        "deficitMinutesPerWeek": 30
+      }
+     },
+     {
+      "code": "TIMPLAN_PUPIL_DOUBLE_PLANNED",
+      "severity": "warning",
+      "pupilId": "00000000-0000-4000-8000-000000001403",
+      "studentGroupId": "00000000-0000-4000-8000-000000001101",
+      "studentGroupIds": [
+       "00000000-0000-4000-8000-000000001104",
+       "00000000-0000-4000-8000-000000001103"
+      ],
+      "subjectIds": [
+       "00000000-0000-4000-8000-000000000002",
+       "00000000-0000-4000-8000-000000000003"
+      ],
+      "alternativeCode": "SV_SVA",
+      "params": {
+       "groupName": "7A",
+       "subjectName": "Svenska / Svenska som andraspråk",
+       "groupNames": "Sv7 nivå, SvA7",
+       "plannedMinutesPerWeek": 210
       }
      },
      {

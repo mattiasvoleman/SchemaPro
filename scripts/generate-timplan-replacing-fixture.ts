@@ -93,7 +93,7 @@ const plannedInput = (svaMinutes: number): PlannedCoverageInput => {
     pupils: [
       pupil(1401, g7A.id, []), // Alva: class Svenska only
       pupil(1402, g7A.id, [SvA7.id]), // Bo: SvA7 instead of 7A's Svenska
-      pupil(1403, g7A.id, [SvA7.id, Sv7n.id]), // Cim: SvA7 takes him off the nivågrupp's Svenska too
+      pupil(1403, g7A.id, [SvA7.id, Sv7n.id]), // Cim: SvA7, and the nivågrupp he is placed in keeps him on its Svenska
       pupil(1404, g7A.id, [stod.id]), // Dag: the support model, SvA on top of class Svenska
       pupil(1405, g7A.id, [Sv7n.id]), // Eva: the nivågrupp on top of 7A's Svenska, double planned as before
       pupil(1406, g7B.id, [SvA7.id]), // Fia: SvA7 spans 7A and 7B
@@ -105,7 +105,7 @@ const plannedInput = (svaMinutes: number): PlannedCoverageInput => {
 
 regenerate('timplan-planned-cases.json', computePlannedCoverage, [
   {
-    name: `${PREFIX} SvA7 replaces Svenska — its pupils in 7A and 7B are credited SvA7's SvA and none of their class's or a nivågrupp's Svenska, 180 of 180; an SvA support group that does not replace stays on top of class Svenska`,
+    name: `${PREFIX} SvA7 replaces Svenska — its pupils in 7A and 7B are credited SvA7's SvA and none of their class's Svenska, 180 of 180, and a nivågrupp they are placed in keeps theirs; an SvA support group that does not replace stays on top of class Svenska`,
     input: plannedInput(60),
   },
   {

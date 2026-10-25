@@ -13,7 +13,7 @@ import {
 } from '../calendar/publish-days';
 import { teachingWeeks, type ClosedRange } from '../staffing/teaching-weeks';
 import { shortestLessonOf, weeklyMinutesOf } from './lesson-lengths';
-import { leavesLesson, replacedSubjectOf, replacementsOf, type Replacement } from './replacing-groups';
+import { keptByOf, leavesLesson, replacedSubjectOf, replacementsOf, type Replacement } from './replacing-groups';
 import { planRowOfInput, type PlannedCoverageInput, type PlannedGroup, type PlannedRequirement } from './timplan-planned';
 import { lessonMinutes } from './timplan-scheduled';
 import { zonedTimeToUtc } from './utils/time';
@@ -804,8 +804,12 @@ export function computeDeliveredCoverage(
    * without a replacement. A caller that builds the arguments per row tests
    * pupil.replacements first, so a pupil without one builds nothing.
    */
-  const leaves = (pupil: Pupil, subjectId: string, groupIds: readonly string[], named = false): boolean =>
-    pupil.replacements.length > 0 && leavesLesson(pupil.replacements, { subjectId, groupIds }, named);
+  const leaves = (pupil: Pupil, subjectId: string, groupIds: readonly string[], named = false): boolean => {
+    if (pupil.replacements.length === 0) return false;
+    // The own group's keptBy (a teaching group, not a half) keeps its members on.
+    const keptBy = keptByOf(groups.get(groupIds[0]!));
+    return leavesLesson(pupil.replacements, { subjectId, groupIds, ...(keptBy ? { keptBy } : {}) }, named, pupil.groupIds);
+  };
   const pupils: Pupil[] = [];
   const membersOf = new Map<string, Pupil[]>();
   for (const entry of [...planned.pupils].sort((a, b) => byCode(a.id, b.id))) {

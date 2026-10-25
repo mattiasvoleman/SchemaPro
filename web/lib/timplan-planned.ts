@@ -28,7 +28,7 @@ import {
 } from "@/lib/teaching-hours";
 import { TIMPLAN_ALTERNATIVE_CODES } from "@/lib/timplan-coverage";
 import { planRowOf, type GradeNumbering } from "@/lib/grade-numbering";
-import { leavesLesson, replacedSubjectOf, replacementsOf } from "@/lib/replacing-groups";
+import { keptByOf, leavesLesson, replacedSubjectOf, replacementsOf } from "@/lib/replacing-groups";
 
 export type PlannedStatus = "MET" | "OVER" | "UNDER" | "UNPLANNED" | "PUPILS" | "NO_TARGET";
 
@@ -75,6 +75,12 @@ export interface PlannedGroup {
    * a school that has none; the readers leave it out then.
    */
   replacesSubjectId?: string | null;
+  /**
+   * The class a half belongs to (Halvklasser), on halves only. Every other
+   * teaching group keeps its members on its own rows and lessons
+   * (replacing-groups.ts keptByOf); a half is the class's, and does not.
+   */
+  halfOfId?: string | null;
 }
 
 export interface PlannedRequirement extends TeachingPeriod {
@@ -494,7 +500,11 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
         replacements.length === 0
           ? reaching
           : reaching.filter(
-              (row) => !leavesLesson(replacements, { subjectId: row.subjectId, groupIds: [row.studentGroupId] }),
+              (row) => {
+                const keptBy = keptByOf(groupsById.get(row.studentGroupId));
+                const scope = { subjectId: row.subjectId, groupIds: [row.studentGroupId], ...(keptBy ? { keptBy } : {}) };
+                return !leavesLesson(replacements, scope, false, own);
+              },
             );
       const perSource = new Map<string, Map<string, number>>();
       for (const row of rows) {
