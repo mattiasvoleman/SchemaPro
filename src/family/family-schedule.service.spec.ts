@@ -234,15 +234,19 @@ describe('FamilyScheduleService', () => {
     expect(staffCalls[0][0]).toMatchObject({ values: [['l-home', 'l-tg', 'l-extra', 'l-named']] });
   });
 
-  describe('Ersättande grupper: a replacing group takes the child off its subject’s other lessons', () => {
+  describe('Ersättande grupper: a replacing group takes the child off the class’s lessons in its subject', () => {
     // TG replaces Svenska: the child goes to TG's lessons instead of the home
     // class's svenska.
     const SVENSKA = 'subject-sv';
+    const FD = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+    const HALF = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+    const TG2 = '99999999-9999-4999-8999-999999999999';
     beforeEach(() => {
       tx.studentGroup.findMany.mockResolvedValue([
-        { id: HOME, replacesSubjectId: null, academicYearId: 'y26' },
-        { id: TG, replacesSubjectId: SVENSKA, academicYearId: 'y26' },
+        { id: HOME, replacesSubjectId: null, academicYearId: 'y26', kind: 'CLASS', halfOfId: null },
+        { id: TG, replacesSubjectId: SVENSKA, academicYearId: 'y26', kind: 'TEACHING_GROUP', halfOfId: null },
       ]);
+      tx.academicYear.findMany.mockResolvedValue([{ id: 'y26', startDate: day('2026-08-17'), endDate: day('2027-06-11') }]);
     });
 
     it('drops the home class’s svenska and keeps every other lesson, the replacing group’s own included', async () => {
@@ -254,11 +258,58 @@ describe('FamilyScheduleService', () => {
       ]);
       const result = await run('2026-10-13');
       expect(result.lessons.map((l) => l.id)).toEqual(['l-home-ma', 'l-tg']);
-      // The child's groups, asked once: which replace a subject, and their läsår.
+      // The child's groups, asked once: which replace a subject, their läsår,
+      // and which keep the child on their own lessons.
       expect(tx.studentGroup.findMany).toHaveBeenCalledWith({
         where: { id: { in: [HOME, TG] } },
-        select: { id: true, replacesSubjectId: true, academicYearId: true },
+        select: { id: true, replacesSubjectId: true, academicYearId: true, kind: true, halfOfId: true },
       });
+      // l-joint-sv's own group is not the child's: its läsår is its date's.
+      expect(tx.academicYear.findMany).toHaveBeenCalledWith({
+        where: { startDate: { lte: day('2026-10-18') }, endDate: { gte: day('2026-10-12') } },
+        select: { id: true, startDate: true, endDate: true },
+      });
+    });
+
+    it('keeps the child on a teaching group’s own svenska they are placed in, and off their class half’s', async () => {
+      tx.studentGroupMember.findMany.mockResolvedValue([{ studentGroupId: TG }, { studentGroupId: FD }, { studentGroupId: HALF }]);
+      tx.studentGroup.findMany.mockResolvedValue([
+        { id: HOME, replacesSubjectId: null, academicYearId: 'y26', kind: 'CLASS', halfOfId: null },
+        { id: TG, replacesSubjectId: SVENSKA, academicYearId: 'y26', kind: 'TEACHING_GROUP', halfOfId: null },
+        { id: FD, replacesSubjectId: null, academicYearId: 'y26', kind: 'TEACHING_GROUP', halfOfId: null },
+        { id: HALF, replacesSubjectId: null, academicYearId: 'y26', kind: 'TEACHING_GROUP', halfOfId: HOME },
+      ]);
+      tx.calendarLesson.findMany.mockResolvedValue([
+        lesson('l-fordjupning', '2026-10-13', { studentGroupId: FD, subjectId: SVENSKA }),
+        lesson('l-half-sv', '2026-10-13', { studentGroupId: HALF, subjectId: SVENSKA }),
+      ]);
+      const result = await run('2026-10-13');
+      expect(result.lessons.map((l) => l.id)).toEqual(['l-fordjupning']);
+    });
+
+    it('keeps a child in two groups replacing svenska on the lessons of either, and off the class’s', async () => {
+      tx.studentGroupMember.findMany.mockResolvedValue([{ studentGroupId: TG }, { studentGroupId: TG2 }]);
+      tx.studentGroup.findMany.mockResolvedValue([
+        { id: HOME, replacesSubjectId: null, academicYearId: 'y26', kind: 'CLASS', halfOfId: null },
+        { id: TG, replacesSubjectId: SVENSKA, academicYearId: 'y26', kind: 'TEACHING_GROUP', halfOfId: null },
+        { id: TG2, replacesSubjectId: SVENSKA, academicYearId: 'y26', kind: 'TEACHING_GROUP', halfOfId: null },
+      ]);
+      tx.calendarLesson.findMany.mockResolvedValue([
+        lesson('l-tg-sv', '2026-10-13', { studentGroupId: TG, subjectId: SVENSKA }),
+        lesson('l-with-tg2', '2026-10-13', { studentGroupId: OTHER, subjectId: SVENSKA, extraGroups: [{ studentGroupId: TG2 }] }),
+        lesson('l-home-sv', '2026-10-13', { subjectId: SVENSKA }),
+      ]);
+      const result = await run('2026-10-13');
+      expect(result.lessons.map((l) => l.id)).toEqual(['l-tg-sv', 'l-with-tg2']);
+    });
+
+    it('takes the child off nothing whose läsår it cannot tell', async () => {
+      tx.academicYear.findMany.mockResolvedValue([]);
+      tx.calendarLesson.findMany.mockResolvedValue([
+        lesson('l-joint-sv', '2026-10-13', { studentGroupId: OTHER, subjectId: SVENSKA, extraGroups: [{ studentGroupId: HOME }] }),
+      ]);
+      const result = await run('2026-10-13');
+      expect(result.lessons.map((l) => l.id)).toEqual(['l-joint-sv']);
     });
 
     it('keeps a svenska lesson the replacing group is added to, and one naming the child', async () => {
@@ -274,8 +325,8 @@ describe('FamilyScheduleService', () => {
       // TG is last year's SvA6: the membership stays as history, and it
       // replaced Svenska then.
       tx.studentGroup.findMany.mockResolvedValue([
-        { id: HOME, replacesSubjectId: null, academicYearId: 'y26' },
-        { id: TG, replacesSubjectId: SVENSKA, academicYearId: 'y25' },
+        { id: HOME, replacesSubjectId: null, academicYearId: 'y26', kind: 'CLASS', halfOfId: null },
+        { id: TG, replacesSubjectId: SVENSKA, academicYearId: 'y25', kind: 'TEACHING_GROUP', halfOfId: null },
       ]);
       tx.calendarLesson.findMany.mockResolvedValue([lesson('l-home-sv', '2026-10-13', { subjectId: SVENSKA })]);
       const result = await run('2026-10-13');
