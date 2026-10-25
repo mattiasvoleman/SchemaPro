@@ -1175,6 +1175,46 @@ a sign-in through one organisation into a school that requires another.
   (the gateway's log names it). Invite the person again from either school,
   which marks the login; nothing else about the rows changes.
 
+## 13. Replacing groups ("Ersättande grupper")
+
+A teaching group can replace a subject for its pupils (SvA7 replaces
+Svenska): its members leave the class's lessons in that subject. The
+migration `20261211090000_en_ersattande_grupp_tar_sina_elever_fran_klassens_lektion`
+adds the column, narrows three of the pupil's arms on CalendarLessons, adds
+the guardian's arm on StudentGroups and replaces the pupil's calendar feed.
+The engine takes two new optional fields, `AnonymousRequirement.pupilGroupId`
+and `FixedLesson.pupilGroupIds`.
+
+### 13.1 Deploy order
+
+1. Run the migration before the merge (section 2). The API before this
+   release works with it: it never reads the column, and no group is marked
+   until the new group dialog marks one.
+2. Merge. The API and the engine deploy from `main` within about two
+   minutes of each other. A school that marks a group in that window may see
+   one run refused, as below.
+3. Verify that `https://<solver-host>/openapi.json` names `pupilGroupId`.
+
+### 13.2 Rolling back
+
+- **The engine alone, past this release.** Its request models forbid
+  unknown fields (`extra="forbid"`), so an older engine answers 422 to every
+  run whose payload carries `pupilGroupId` or `pupilGroupIds`: every run of a
+  school with at least one replacing group, and only those. Generera fails
+  with the engine's 422, and a schemaförslag run fails the same way. Every
+  other school's payload is byte for byte what it was before the release,
+  and its runs are unaffected. Redeploy the engine, or roll the API back
+  with it.
+- **The API, past this release, with the database still migrated.** The
+  older API does not read the column. Its class lists, notices, family week,
+  timplan and generator treat a replacing group's pupils as on the class's
+  lessons again. The pupil's own week and the calendar feeds, which the
+  database answers, still leave them off. Until the release is back, those
+  schools see the two disagree. Nothing is written wrongly: attendance can
+  be recorded for either list.
+- **Which schools are affected** (as the owner):
+  `SELECT "schoolId", count(*) FROM "StudentGroups" WHERE "replacesSubjectId" IS NOT NULL GROUP BY 1;`
+
 ---
 
 # Future improvements
