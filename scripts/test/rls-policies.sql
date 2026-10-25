@@ -29372,10 +29372,12 @@ ROLLBACK;
 -- EnS7, som ersätter engelska: varje grupp tar hen av sitt eget ämne och
 -- inget annat. En elev som gick i SvA6 i fjol läser årets svenska: en
 -- ersättande grupp tar bara av lektioner i sitt eget läsår. En elev i
--- ingen ersättande grupp läser som förut. Som PostgREST:s roll och som
--- API:ts. Personalen läser allt som förut. En inloggning med en rad på varje
--- skola läser efter den skola anropet namnger: här i ingen ersättande grupp,
--- där i den skolans SvA7 (20261211090000).
+-- ingen ersättande grupp läser som förut, också när en annan skolas
+-- administratör skrivit en medlemsrad för hen i en ersättande grupp här
+-- (EG SvA7 tom): hjälparen läser bara skolans egna rader. Som PostgREST:s
+-- roll och som API:ts. Personalen läser allt som förut. En inloggning med
+-- en rad på varje skola läser efter den skola anropet namnger: här i ingen
+-- ersättande grupp, där i den skolans SvA7 (20261211090000).
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -29553,7 +29555,8 @@ ROLLBACK;
 -- Section 273: kalenderprenumerationen tillämpar regeln: SvA-elevens eget
 -- flöde och vårdnadshavarens flöde för hen visar inte klassens svenska men
 -- SvA7:s, den dit SvA7 är tillagd och den som namnger hen; 7A-elevens flöde
--- visar klassens svenska (20261211090000).
+-- visar klassens svenska, också med den andra skolans medlemsrad för hen i
+-- EG SvA7 tom (20261211090000).
 -- ---------------------------------------------------------------------------
 
 BEGIN;

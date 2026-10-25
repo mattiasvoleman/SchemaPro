@@ -2205,6 +2205,7 @@ DECLARE
   r7 uuid;
   k2 uuid;
   r2 uuid;
+  rtom uuid;
   t uuid;
   p1 uuid;
   p2 uuid;
@@ -2314,6 +2315,16 @@ BEGIN
   VALUES (s2, 'eg-annan-admin@example.invalid', 'EG annan', 'Admin', 'SCHOOL_ADMIN', 'FULL', '00000000-0000-4000-8000-000000001508', true, now());
   INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
   VALUES (s2, sv2, k2, current_date + 1, (current_date + 1) + time '08:00', (current_date + 1) + time '09:00', 'EG-9', now());
+
+  -- A row the other school's administrator wrote: its insert arm checks the
+  -- row's school alone, and the keys to the group and the pupil are not
+  -- composite, so it may point at a group and a pupil of this school. The
+  -- group replaces svenska and has no lessons, so the arms reach nothing
+  -- through the row. Were the helper or the calendar feed to read it (both
+  -- DEFINER, past the member arms), P2 would leave 7A's svenska.
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "replacesSubjectId", "updatedAt")
+  VALUES (s1, y, 'EG SvA7 tom', 7, 'TEACHING_GROUP', sv, now()) RETURNING id INTO rtom;
+  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (s2, rtom, p2);
 
   -- M: a pupil here in 7A, and there in 7A and that school's SvA7.
   FOR rec IN SELECT * FROM (VALUES
