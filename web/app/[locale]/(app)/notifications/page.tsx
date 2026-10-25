@@ -39,8 +39,14 @@ export default function NotificationSettingsPage() {
   const save = useSaveNotificationPreferences();
   const staff = STAFF.has(profile.role);
 
+  // A type added after this build (the gateway's list grows first) is
+  // another notice, never its key.
   const label = (entry: NotificationPreference) =>
-    entry.type === "LESSON_SUBSTITUTE" && staff ? t("types.LESSON_SUBSTITUTE_STAFF") : t(`types.${entry.type}`);
+    entry.type === "LESSON_SUBSTITUTE" && staff
+      ? t("types.LESSON_SUBSTITUTE_STAFF")
+      : t.has(`types.${entry.type}`)
+        ? t(`types.${entry.type}`)
+        : t("typeOther");
   const hint = (entry: NotificationPreference): string | null => {
     if (entry.type === "ABSENCE_UNREPORTED") return t("requiredAbsence");
     if (entry.type === "LESSON_COVER_WITHDRAWN") return t("requiredCover");

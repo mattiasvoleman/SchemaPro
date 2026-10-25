@@ -551,6 +551,56 @@ Walk the full product loop once, in order:
   the owner), and tell the schools it was. The column itself can stay through
   a rollback: nothing before the release reads it, and the migration is not
   undone.
+- **Rastvakt i vardagen**: 20261210090000 adds `SupervisionCovers` (the
+  vikarietavla's decision on an absent rastvakt's pass on one date: a
+  vikarie, or none), the enum `SupervisionCoverDecision`, an `(id,
+  schoolId)` key on `SupervisionShifts`, two `NotificationType` values
+  (`SUPERVISION_COVER`, `SUPERVISION_COVER_WITHDRAWN`), and
+  `app.teacher_absences_own_writes_are_narrow` again with the pass decisions
+  asked beside the lessons'. It takes `Schools`, `Users`, `TeacherAbsences`,
+  `SupervisionAreas` and `SupervisionShifts` in SHARE ROW EXCLUSIVE, NOWAIT,
+  all at once in a loop: reads and foreign-key checks go on, writes to the
+  five wait for the file, and if the five are not free at once in 30 s it
+  stops with nothing changed — `prisma migrate resolve --rolled-back
+  20261210090000_en_franvarande_rastvakts_pass_hamnar_pa_vikarietavlan`,
+  then deploy again. Run it outside an SS12000 sync window. The two enum
+  values are added in the migration's own transaction, and nothing in it
+  uses them (Postgres refuses a value before its commit). Adding them holds
+  up no notice of another type, and no other session sees them before the
+  commit. The API before the release names neither the table nor the
+  values, so it keeps working between the migration and the deploy. The
+  migration goes in first, then the merge.
+  **Clients from before the release:** an app build from before it shows
+  the two notices with its fallback text ("Notis"), and in Settings it
+  shows their two rows by catalogue key, on and not switchable (both are
+  always delivered to staff). This release's web says "Ny notis" for any
+  type it has no words for, and its settings say "Andra notiser". The web
+  before it draws such a notice as an empty line in the bell.
+  **Rolling it back:** the migration stays. Prisma's client throws on any
+  read that selects a notice's type from a row holding a value it does not
+  know (`Value 'SUPERVISION_COVER' not found in enum 'NotificationType'`).
+  That was tried with main's client against a database holding such rows.
+  The API before the release has no such read, so a rolled-back API
+  answers as before:
+  - the bell and the app read `Notifications` through PostgREST;
+  - the one Prisma read of the enum is the person's opt-outs
+    (`NotificationOptOuts`), which never hold the two types, because this
+    release refuses opting out of them (400).
+
+  What a rollback does change:
+  - The board's pass decisions stay in the database with nothing reading
+    them, and a booked vikarie is not told. Before rolling back, list the
+    bookings ahead, as the owner, and tell those schools:
+    `SELECT "schoolId", "date", "substituteId" FROM "SupervisionCovers"
+    WHERE "decision" = 'SUBSTITUTE' AND "endsAt" > now();`
+  - The lessons' candidates before the release do not see a vikarie's or
+    a teacher's pass, so they can propose somebody on the yard at that
+    time.
+  - Removing a person no longer asks about their pass bookings.
+  - The teacher's week shows no passes.
+  - The guard on a teacher's own absence keeps asking the pass decisions,
+    which the API before the release reports as its existing
+    `ABSENCE_SELF_EDIT_NARROW`.
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).
   `GET /health/ready` adds three counts, never names: how many jobs this

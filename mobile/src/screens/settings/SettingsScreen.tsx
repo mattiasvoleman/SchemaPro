@@ -16,6 +16,7 @@ import { useI18n } from '../../context/LocaleContext';
 import { LOCALES, translatorFor, type Locale, type MessageKey } from '../../i18n';
 import {
   fetchPreferences,
+  preferenceLabel,
   savePreferences,
   withChoice,
   type NotificationPreference,
@@ -135,8 +136,7 @@ export function SettingsScreen(): React.JSX.Element {
     [types, t],
   );
 
-  const typeLabel = (entry: NotificationPreference): string =>
-    entry.type === 'LESSON_SUBSTITUTE' && staff ? t('settings.types.LESSON_SUBSTITUTE_STAFF') : t(`settings.types.${entry.type}`);
+  const typeLabel = (entry: NotificationPreference): string => preferenceLabel(t, entry.type, staff);
   const typeHint = (entry: NotificationPreference): string | null => {
     if (entry.type === 'ABSENCE_UNREPORTED') return t('settings.requiredAbsence');
     if (entry.type === 'LESSON_COVER_WITHDRAWN') return t('settings.requiredCover');

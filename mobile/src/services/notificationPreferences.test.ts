@@ -1,5 +1,13 @@
 import { apiRequest } from './api';
-import { fetchPreferences, optOutOf, savePreferences, withChoice, type NotificationPreference } from './notificationPreferences';
+import { translatorFor } from '../i18n';
+import {
+  fetchPreferences,
+  optOutOf,
+  preferenceLabel,
+  savePreferences,
+  withChoice,
+  type NotificationPreference,
+} from './notificationPreferences';
 
 jest.mock('./api', () => ({ apiRequest: jest.fn() }));
 
@@ -28,5 +36,13 @@ describe('notification preferences', () => {
   it('never moves or names a required type', () => {
     expect(withChoice(family, 'ABSENCE_UNREPORTED', false)).toEqual(family);
     expect(optOutOf([{ type: 'ABSENCE_UNREPORTED', enabled: false, required: true }])).toEqual([]);
+  });
+
+  it('names a type this build does not know as another notice, never by its key', () => {
+    const t = translatorFor('sv');
+    expect(preferenceLabel(t, 'SUPERVISION_COVER', true)).toBe('Rastvaktspass som vikarie');
+    expect(preferenceLabel(t, 'LESSON_SUBSTITUTE', true)).toBe('Vikarier på mina lektioner');
+    expect(preferenceLabel(t, 'FROM_A_NEWER_GATEWAY', false)).toBe('Andra notiser');
+    expect(preferenceLabel(translatorFor('en'), 'FROM_A_NEWER_GATEWAY', false)).toBe('Other notifications');
   });
 });

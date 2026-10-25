@@ -2048,6 +2048,7 @@
     "delegationSaved": "Delegeringen är sparad"
   },
   "notifications": {
+    "fallback": "Ny notis",
     "title": "Notiser",
     "titleUnread": "Notiser, {count, plural, one {# oläst} other {# olästa}}",
     "titleUnreadAtLeast": "Notiser, minst {count, plural, one {# oläst} other {# olästa}}",
@@ -5302,6 +5303,7 @@
     "editNote": "Ändra notisen till vikarien"
   },
   "notificationSettings": {
+    "typeOther": "Andra notiser",
     "title": "Notiser",
     "subtitle": "Välj vad som skickas till dig utanför Rastra Schema",
     "cardTitle": "E-post och push",

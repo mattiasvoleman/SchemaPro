@@ -184,6 +184,10 @@ export function NotificationBell() {
           str("status") === "APPROVED" ? "roomBookingApproved" : "roomBookingRejected",
           { room: str("roomName"), when: new Date(str("startsAt")).toLocaleString() },
         );
+      default:
+        // A type added after this build (the gateway's enum grows first): a
+        // notice, said as one, rather than an empty line in the list.
+        return t("fallback");
     }
   };
 

@@ -454,6 +454,17 @@ describe("NotificationBell inbox", () => {
     expect(screen.getByText(`supervisionCoverWithdrawn(area=Matsalen|when=${when}|end=${end})`)).toBeInTheDocument();
   });
 
+  it("says a notice of a type this build does not know as a notice, never an empty line", async () => {
+    const user = userEvent.setup();
+    supabaseState.selectResults.push(ok([notif({ type: "FROM_A_NEWER_GATEWAY" as BellRow["type"], meta: {} })]));
+    renderBell();
+
+    await waitFor(() => expect(argsFor("select")).toHaveLength(1));
+    await user.click(bellButton());
+
+    expect(screen.getByText("fallback")).toBeInTheDocument();
+  });
+
   it("tells the class a lesson goes ahead after all, becomes självstudier, and an avbokning's count and days", async () => {
     const user = userEvent.setup();
     const startsAt = "2026-10-14T06:00:00.000Z";

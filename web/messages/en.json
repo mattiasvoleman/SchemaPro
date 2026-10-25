@@ -2048,6 +2048,7 @@
     "delegationSaved": "The delegation is saved"
   },
   "notifications": {
+    "fallback": "New notification",
     "title": "Notifications",
     "titleUnread": "Notifications, {count} unread",
     "titleUnreadAtLeast": "Notifications, at least {count} unread",
@@ -5302,6 +5303,7 @@
     "editNote": "Change the note to the substitute"
   },
   "notificationSettings": {
+    "typeOther": "Other notifications",
     "title": "Notifications",
     "subtitle": "Choose what is sent to you outside Rastra timetable",
     "cardTitle": "E-mail and push",
