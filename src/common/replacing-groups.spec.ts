@@ -13,6 +13,7 @@ import {
   replacementsOf,
   replacingBySubject,
   replacingGroupsOfNamed,
+  yearsOf,
 } from './replacing-groups';
 
 /**
@@ -143,10 +144,10 @@ describe('the rule, per group', () => {
 
 describe('the shared fixture (the web replays it)', () => {
   interface Fixture {
-    groups: { id: string; replacesSubjectId: string | null }[];
+    groups: { id: string; replacesSubjectId: string | null; academicYearId: string }[];
     groupsOfPupil: Record<string, string[]>;
     pairs: [string, string][];
-    lessons: { id: string; subjectId: string; groupIds: string[]; named: string[] }[];
+    lessons: { id: string; subjectId: string; groupIds: string[]; named: string[]; academicYearId: string }[];
     expected: {
       leaves: { lesson: string; pupil: string; leaves: boolean }[];
       keys: Record<string, string[]>;
@@ -155,6 +156,7 @@ describe('the shared fixture (the web replays it)', () => {
   }
   const f = fixture as unknown as Fixture;
   const fReplaced = replacedSubjectOf(f.groups);
+  const fYearOf = yearsOf(f.groups);
   const fBySubject = replacingBySubject(fReplaced);
   const fPairs = new Set(f.pairs.map(([a, b]) => `${a} ${b}`));
   const fShares = (a: string, b: string) => fPairs.has(a < b ? `${a} ${b}` : `${b} ${a}`);
@@ -164,7 +166,7 @@ describe('the shared fixture (the web replays it)', () => {
     const lessons = new Map(f.lessons.map((lesson) => [lesson.id, lesson]));
     for (const row of f.expected.leaves) {
       const lesson = lessons.get(row.lesson)!;
-      const got = leavesLesson(replacementsOf(f.groupsOfPupil[row.pupil]!, fReplaced), lesson, lesson.named.includes(row.pupil));
+      const got = leavesLesson(replacementsOf(f.groupsOfPupil[row.pupil]!, fReplaced, fYearOf), lesson, lesson.named.includes(row.pupil));
       expect([row.lesson, row.pupil, got]).toEqual([row.lesson, row.pupil, row.leaves]);
     }
   });
@@ -178,6 +180,7 @@ describe('the shared fixture (the web replays it)', () => {
           fBySubject,
           fShares,
           replacingGroupsOfNamed(lesson.named, (pupil) => f.groupsOfPupil[pupil] ?? [], fReplaced),
+          fYearOf,
         ),
       ]),
     );

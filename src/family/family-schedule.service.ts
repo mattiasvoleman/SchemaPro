@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { recordRead } from '../access-log/access-log';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
-import { leavesLesson, replacedSubjectOf, replacementsOf } from '../common/replacing-groups';
+import { leavesLesson, replacedSubjectOf, replacementsOf, yearsOf } from '../common/replacing-groups';
 import { requireSchoolId } from '../common/utils/request-context';
 import { asDay, dayDate, isoWeekOf, localDateOf, schoolTimezone, shiftDay } from '../cover/cover-context';
 import { PrismaService } from '../database/prisma.service';
@@ -180,21 +180,20 @@ export class FamilyScheduleService {
       const groups = [...new Set([...(home ? [home] : []), ...teaching])];
       const homeDays = await this.homeClassDays(tx, child.id, home, from, to);
       // Ersättande grupper: the child's replacing groups take them off their
-      // subject's other lessons (common/replacing-groups.ts). A guardian reads
-      // the child's groups through student_groups_guardian_select
-      // (20261211090000); a child in no teaching group asks nothing.
-      const replacements =
+      // subject's other lessons of their läsår (common/replacing-groups.ts).
+      // The child's groups, read through student_groups_guardian_select for a
+      // guardian (20261211090000), give both: which replace a subject, and
+      // the läsår of each, which is the läsår of a lesson they bring the child
+      // to. A child in no teaching group asks nothing.
+      const childGroups =
         teaching.length === 0
           ? []
-          : replacementsOf(
-              teaching,
-              replacedSubjectOf(
-                (await tx.studentGroup.findMany({
-                  where: { id: { in: teaching }, replacesSubjectId: { not: null } },
-                  select: { id: true, replacesSubjectId: true },
-                })) ?? [],
-              ),
-            );
+          : ((await tx.studentGroup.findMany({
+              where: { id: { in: groups } },
+              select: { id: true, replacesSubjectId: true, academicYearId: true },
+            })) ?? []);
+      const yearOf = yearsOf(childGroups);
+      const replacements = replacementsOf(teaching, replacedSubjectOf(childGroups), yearOf);
 
       const rows =
         (await tx.calendarLesson.findMany({
@@ -233,9 +232,14 @@ export class FamilyScheduleService {
         const viaHome = home !== null && (row.studentGroupId === home || row.extraGroups.some((x) => x.studentGroupId === home));
         if (named) return true;
         if (!viaTeaching && !(viaHome && homeDays.has(date))) return false;
+        if (replacements.length === 0) return true;
+        const groupIds = [row.studentGroupId, ...row.extraGroups.map((x) => x.studentGroupId)];
+        // The lesson's läsår: that of the child's group that brings them to it.
+        const year = groupIds.map((id) => yearOf.get(id)).find((found) => found !== undefined);
         return !leavesLesson(replacements, {
           subjectId: row.subjectId,
-          groupIds: [row.studentGroupId, ...row.extraGroups.map((x) => x.studentGroupId)],
+          groupIds,
+          ...(year ? { academicYearId: year } : {}),
         });
       });
 

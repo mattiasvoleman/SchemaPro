@@ -239,7 +239,10 @@ describe('FamilyScheduleService', () => {
     // class's svenska.
     const SVENSKA = 'subject-sv';
     beforeEach(() => {
-      tx.studentGroup.findMany.mockResolvedValue([{ id: TG, replacesSubjectId: SVENSKA }]);
+      tx.studentGroup.findMany.mockResolvedValue([
+        { id: HOME, replacesSubjectId: null, academicYearId: 'y26' },
+        { id: TG, replacesSubjectId: SVENSKA, academicYearId: 'y26' },
+      ]);
     });
 
     it('drops the home class’s svenska and keeps every other lesson, the replacing group’s own included', async () => {
@@ -251,10 +254,10 @@ describe('FamilyScheduleService', () => {
       ]);
       const result = await run('2026-10-13');
       expect(result.lessons.map((l) => l.id)).toEqual(['l-home-ma', 'l-tg']);
-      // The child's replacing groups, asked once, among their teaching groups.
+      // The child's groups, asked once: which replace a subject, and their läsår.
       expect(tx.studentGroup.findMany).toHaveBeenCalledWith({
-        where: { id: { in: [TG] }, replacesSubjectId: { not: null } },
-        select: { id: true, replacesSubjectId: true },
+        where: { id: { in: [HOME, TG] } },
+        select: { id: true, replacesSubjectId: true, academicYearId: true },
       });
     });
 
@@ -265,6 +268,18 @@ describe('FamilyScheduleService', () => {
       ]);
       const result = await run('2026-10-13');
       expect(result.lessons.map((l) => l.id)).toEqual(['l-with-tg', 'l-named']);
+    });
+
+    it('lets last year’s replacing group take the child off nothing of this year’s', async () => {
+      // TG is last year's SvA6: the membership stays as history, and it
+      // replaced Svenska then.
+      tx.studentGroup.findMany.mockResolvedValue([
+        { id: HOME, replacesSubjectId: null, academicYearId: 'y26' },
+        { id: TG, replacesSubjectId: SVENSKA, academicYearId: 'y25' },
+      ]);
+      tx.calendarLesson.findMany.mockResolvedValue([lesson('l-home-sv', '2026-10-13', { subjectId: SVENSKA })]);
+      const result = await run('2026-10-13');
+      expect(result.lessons.map((l) => l.id)).toEqual(['l-home-sv']);
     });
 
     it('asks nothing about replacing groups for a child in no teaching group', async () => {
