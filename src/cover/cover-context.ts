@@ -218,7 +218,7 @@ export async function readPersonDays(tx: PrismaClient, options: DayReadOptions):
   //
   // An own pass holds its time on a date between its Från and Till unless a
   // decision of the day has relieved its teacher of it (a vikarie takes it,
-  // or it is left without one). A pass on a day a lov closes its area still
+  // or it is left without one) — a decision on an ACTIVE absence. A pass on a day a lov closes its area still
   // holds its time here: excluding a colleague for twenty minutes is the
   // smaller mistake beside putting them in two places.
   const passes =
@@ -246,12 +246,28 @@ export async function readPersonDays(tx: PrismaClient, options: DayReadOptions):
     passes.length > 0
       ? ((await tx.supervisionCover.findMany({
           where: { shiftId: { in: passes.map((pass) => pass.id) }, date: dayDate(date) },
-          select: { shiftId: true, decision: true, substituteId: true, startsAt: true, endsAt: true },
+          select: { shiftId: true, decision: true, substituteId: true, startsAt: true, endsAt: true, absenceId: true },
         })) ?? [])
       : [];
+  // A decision on an absence no longer ACTIVE (left by an API from before
+  // this release: a rollback, or containers side by side) relieves nobody —
+  // its teacher is back — but its vikarie stays booked until Ångra. Asked only
+  // of the decisions there are; one RLS hides reads as ACTIVE, as before.
+  const leftBehind =
+    decided.length > 0
+      ? new Set(
+          (
+            (await tx.teacherAbsence.findMany({
+              where: { id: { in: [...new Set(decided.map((row) => row.absenceId))] }, status: { not: 'ACTIVE' } },
+              select: { id: true },
+            })) ?? []
+          ).map((row) => row.id),
+        )
+      : new Set<string>();
   for (const pass of passes) {
     if (!pass?.id) continue;
     const decisions = decided.filter((row) => row?.shiftId === pass.id);
+    const relieving = decisions.filter((row) => !leftBehind.has(row.absenceId));
     const own = days.get(pass.userId);
     const runs =
       own !== undefined &&
@@ -260,7 +276,7 @@ export async function readPersonDays(tx: PrismaClient, options: DayReadOptions):
       pass.dayOfWeek === weekday &&
       (!pass.validFrom || asDay(pass.validFrom) <= date) &&
       (!pass.validTo || asDay(pass.validTo) >= date);
-    if (runs && decisions.length === 0 && pass.startTime && pass.endTime) {
+    if (runs && relieving.length === 0 && pass.startTime && pass.endTime) {
       const span = liftWindow(date, pass.startTime, pass.endTime, timezone);
       own!.supervision!.push({ id: passTargetId(pass.id, date), date, start: span.start, end: span.end });
     }

@@ -1460,8 +1460,10 @@ describe('UsersService', () => {
       );
       const locked = tx.$executeRaw.mock.calls.findIndex((call) => rawSql(call).includes("'cover-teacher:'"));
       expect(locked).toBeGreaterThanOrEqual(0);
+      // Before any row is read or locked: a pass written for the person takes
+      // it before their Users row.
       expect(tx.$executeRaw.mock.invocationCallOrder[locked]!).toBeLessThan(
-        tx.supervisionCover.findFirst.mock.invocationCallOrder[0]!,
+        tx.user.findUnique.mock.invocationCallOrder[0]!,
       );
       expect(tx.user.delete).not.toHaveBeenCalled();
     });

@@ -27,6 +27,7 @@ import { chargedShift, rastvaktRam, supervisionOfTeachers, type LoadShift, type 
 import { requireUserId } from '../common/utils/request-context';
 import { readPassCalendar } from '../cover/supervision-cover-reads';
 import { schoolTimezone } from '../cover/cover-context';
+import { lockTeachers } from '../cover/cover-decisions';
 import { passDates, passRunsOn, passSpan } from './pass-days';
 
 /**
@@ -169,6 +170,8 @@ export const SUPERVISION_SHIFT_LIMIT = 'SUPERVISION_SHIFT_LIMIT';
 export const SUPERVISION_YEAR_NOT_FOUND = 'SUPERVISION_YEAR_NOT_FOUND';
 export const SUPERVISION_TEACHER_INACTIVE = 'SUPERVISION_TEACHER_INACTIVE';
 export const SUPERVISION_SHIFT_HAS_COVERS = 'SUPERVISION_SHIFT_HAS_COVERS';
+/** The pass was handed to another teacher between this request's read and its locks: read it again. */
+export const SUPERVISION_SHIFT_MOVED = 'SUPERVISION_SHIFT_MOVED';
 
 /** More places than any school watches; the page lists them all at once. */
 export const MAX_AREAS = 100;
@@ -546,6 +549,12 @@ export class SupervisionService {
     const note = dto.note?.trim() || null;
     try {
       return await this.prisma.withRls(user, async (tx) => {
+        // The vikarietavla's per-teacher lock FIRST (Rastvakt i vardagen): a
+        // decision booking this teacher as vikarie at the same time takes it
+        // too, so one of the two sees the other's row (assertOnePlace here,
+        // BUSY_SUPERVISION there). Before every row lock, as every holder of
+        // it takes it: the teacher, then the pass, never the other way round.
+        await lockTeachers(tx, [dto.userId]);
         await lockSchedule(tx, dto.academicYearId);
         // The person is staff, and stays staff (and active) until this commits.
         await lockStaffRow(tx, dto.userId, 'rastvaktspass');
@@ -587,11 +596,19 @@ export class SupervisionService {
       return await this.prisma.withRls(user, async (tx) => {
         const current = await tx.supervisionShift.findUnique({ where: { id } });
         if (!current) throw new NotFoundException({ message: 'Passet finns inte.', code: SUPERVISION_SHIFT_NOT_FOUND });
+        // The vikarietavla's per-teacher locks first, for the teacher it has
+        // and the one it is given (see createShift): before the schedule and
+        // the pass row, which a decision holding them takes after them.
+        await lockTeachers(tx, [current.userId, ...(dto.userId ? [dto.userId] : [])]);
         await lockSchedule(tx, current.academicYearId);
         await lockShiftsForUpdate(tx, { id });
         // The row again, under the schedule's lock: a PATCH beside it may have moved it.
         const locked = await tx.supervisionShift.findUnique({ where: { id } });
         if (!locked) throw new NotFoundException({ message: 'Passet finns inte.', code: SUPERVISION_SHIFT_NOT_FOUND });
+        // Handed on between the read and the locks: the locks are the wrong teacher's.
+        if (locked.userId !== current.userId) {
+          throw new ConflictException({ message: 'Passet har ändrats sedan det lästes. Läs om sidan.', code: SUPERVISION_SHIFT_MOVED });
+        }
         // The window and the dates as they will END UP: a PATCH may carry one end.
         const startTime = dto.startTime ?? toWallClock(locked.startTime);
         const endTime = dto.endTime ?? toWallClock(locked.endTime);

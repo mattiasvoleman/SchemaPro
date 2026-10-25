@@ -676,6 +676,10 @@ export class UsersService {
     let authId: string | null = null;
     try {
       authId = await this.prisma.withRls(user, async (tx) => {
+        // The vikarietavla's per-teacher lock before any row lock (the
+        // deciders' below): a pass written for this person takes it before
+        // their Users row, so taking it after a row lock could wait in a circle.
+        await lockTeachers(tx, [id]);
         const target = await tx.user.findUnique({
           where: { id },
           select: { authId: true, invitedAt: true, role: true, adminProfile: true, isActive: true, schoolId: true },
@@ -704,9 +708,8 @@ export class UsersService {
         // Rastvakt i vardagen (20261210090000): a vikarie booked ahead for
         // this person's rastvaktspass. The delete takes the pass, the absence
         // and the decision with it, and the vikarie would stand there unasked;
-        // Ångra on the vikarietavla tells them. The board's per-teacher lock
-        // first, so a booking made meanwhile is seen here.
-        await lockTeachers(tx, [id]);
+        // Ångra on the vikarietavla tells them. (The board's per-teacher lock
+        // is taken at the top, so a booking made meanwhile is seen here.)
         const booked = await tx.supervisionCover.findFirst({
           where: { absentTeacherId: id, decision: 'SUBSTITUTE', endsAt: { gt: new Date() } },
           select: { date: true },
