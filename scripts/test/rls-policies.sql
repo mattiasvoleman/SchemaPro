@@ -29368,9 +29368,13 @@ ROLLBACK;
 -- svenska: varken 7A:s egen, 7B:s med 7A tillagd, halvklassens 7A:1 eller 7B:s
 -- med 7A:1 tillagd, och inte dess logg eller lärarrader; den läser SvA7:s
 -- (också dess lektion i ämnet svenska), 7B:s svenska dit SvA7 är tillagd,
--- svenskan som namnger hen och klassens övriga lektioner. Hen går också i
--- EnS7, som ersätter engelska: varje grupp tar hen av sitt eget ämne och
--- inget annat. En elev som gick i SvA6 i fjol läser årets svenska: en
+-- svenskan som namnger hen, svenskan i EG Sv7 fördjupning (en
+-- undervisningsgrupp hen är placerad i) och klassens övriga lektioner. Hen
+-- går också i EnS7, som ersätter engelska: varje grupp tar hen av sitt eget
+-- ämne och inget annat, och EnS7 tillagd på klassens svenska (EG-14)
+-- behåller hen inte där. P3 går i både SvA7 och EG SvA7 stöd, som båda
+-- ersätter svenska, och läser lektionerna som bär någon av dem. En elev som
+-- gick i SvA6 i fjol läser årets svenska: en
 -- ersättande grupp tar bara av lektioner i sitt eget läsår. En elev i
 -- ingen ersättande grupp läser som förut, också när en annan skolas
 -- administratör skrivit en medlemsrad för hen i en ersättande grupp här
@@ -29420,17 +29424,17 @@ DECLARE
   -- lessons | logs (the API's) | teacher rows' lessons | the helper's lessons.
   -- The helper's lessons are the ones the caller cannot read, so they show by id.
   cases constant text[][] := ARRAY[
-    ['00000000-0000-4000-8000-000000001502', 'EG-11,EG-2,EG-3,EG-4,EG-5,EG-8 |  | EG-2,EG-5 | 5 hidden',
-                                             'EG-11,EG-2,EG-3,EG-4,EG-5,EG-8 |  | EG-2,EG-5 | 5 hidden'],               -- P1: 7A, SvA7, EnS7, 7A:1
+    ['00000000-0000-4000-8000-000000001502', 'EG-11,EG-13,EG-2,EG-3,EG-4,EG-5,EG-8 |  | EG-2,EG-5 | 6 hidden',
+                                             'EG-11,EG-13,EG-2,EG-3,EG-4,EG-5,EG-8 |  | EG-2,EG-5 | 6 hidden'],               -- P1: 7A, SvA7, EnS7, 7A:1
     -- P2: 7A, 7A:1; last year in Sv6n and SvA6, which takes P2 off EG-0 (that
     -- year's) and off nothing of this year's.
-    ['00000000-0000-4000-8000-000000001503', 'EG-1,EG-10,EG-12,EG-2,EG-5,EG-6,EG-7,EG-8 | EG ett | EG-1,EG-10,EG-2,EG-5 | 1 hidden',
-                                             'EG-1,EG-10,EG-12,EG-2,EG-5,EG-6,EG-7,EG-8 |  | EG-1,EG-10,EG-2,EG-5 | 1 hidden'],
+    ['00000000-0000-4000-8000-000000001503', 'EG-1,EG-10,EG-12,EG-14,EG-2,EG-5,EG-6,EG-7,EG-8 | EG ett | EG-1,EG-10,EG-14,EG-2,EG-5 | 1 hidden',
+                                             'EG-1,EG-10,EG-12,EG-14,EG-2,EG-5,EG-6,EG-7,EG-8 |  | EG-1,EG-10,EG-14,EG-2,EG-5 | 1 hidden'],
     -- P3: 7B, SvA7. The teacher rows of 7B's own svenska with SvA7 added
     -- (EG-4), and not of 7B's with 7A added (EG-6), which P3 does not attend.
     ['00000000-0000-4000-8000-000000001504', 'EG-11,EG-3,EG-4 |  | EG-4 | 2 hidden', 'EG-11,EG-3,EG-4 |  | EG-4 | 2 hidden'],
-    ['00000000-0000-4000-8000-000000001501', 'EG-0,EG-1,EG-10,EG-11,EG-12,EG-2,EG-3,EG-4,EG-5,EG-6,EG-7,EG-8 | EG ett | EG-0,EG-1,EG-10,EG-11,EG-12,EG-2,EG-3,EG-4,EG-5,EG-6,EG-7,EG-8 | ',
-                                             'EG-0,EG-1,EG-10,EG-11,EG-12,EG-2,EG-3,EG-4,EG-5,EG-6,EG-7,EG-8 |  | EG-0,EG-1,EG-10,EG-11,EG-12,EG-2,EG-3,EG-4,EG-5,EG-6,EG-7,EG-8 | ']];  -- the teacher
+    ['00000000-0000-4000-8000-000000001501', 'EG-0,EG-1,EG-10,EG-11,EG-12,EG-13,EG-14,EG-2,EG-3,EG-4,EG-5,EG-6,EG-7,EG-8 | EG ett | EG-0,EG-1,EG-10,EG-11,EG-12,EG-13,EG-14,EG-2,EG-3,EG-4,EG-5,EG-6,EG-7,EG-8 | ',
+                                             'EG-0,EG-1,EG-10,EG-11,EG-12,EG-13,EG-14,EG-2,EG-3,EG-4,EG-5,EG-6,EG-7,EG-8 |  | EG-0,EG-1,EG-10,EG-11,EG-12,EG-13,EG-14,EG-2,EG-3,EG-4,EG-5,EG-6,EG-7,EG-8 | ']];  -- the teacher
 BEGIN
   IF coalesce(current_setting('app.test_eg_school', true), '') = '' OR coalesce(current_setting('app.test_eg_school2', true), '') = '' THEN
     RAISE EXCEPTION 'replacing: the fixture schools did not resolve; fixtures did not run';
@@ -29463,8 +29467,8 @@ BEGIN
   CREATE TEMP TABLE eg_hidden ON COMMIT DROP AS SELECT unnest(app.current_student_replaced_lesson_ids()) AS id;
   PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001500')::text, true);
   SELECT string_agg(l.note, ',' ORDER BY l.note) INTO got FROM eg_hidden h JOIN "CalendarLessons" l ON l.id = h.id;
-  IF got IS DISTINCT FROM 'EG-1,EG-10,EG-12,EG-6,EG-7' THEN
-    RAISE EXCEPTION 'replacing: P1''s helper takes them off %, not EG-1,EG-10,EG-12,EG-6,EG-7', coalesce(got, '(nothing)');
+  IF got IS DISTINCT FROM 'EG-1,EG-10,EG-12,EG-14,EG-6,EG-7' THEN
+    RAISE EXCEPTION 'replacing: P1''s helper takes them off %, not EG-1,EG-10,EG-12,EG-14,EG-6,EG-7', coalesce(got, '(nothing)');
   END IF;
 END $$;
 
@@ -29477,8 +29481,8 @@ DECLARE
   named text;
   seen text;
   cases constant text[][] := ARRAY[
-    ['',   'EG-1,EG-10,EG-2,EG-5,EG-6'],
-    ['S1', 'EG-1,EG-10,EG-2,EG-5,EG-6'],
+    ['',   'EG-1,EG-10,EG-14,EG-2,EG-5,EG-6'],
+    ['S1', 'EG-1,EG-10,EG-14,EG-2,EG-5,EG-6'],
     ['S2', '']];
 BEGIN
   FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
@@ -29517,11 +29521,11 @@ DECLARE
   expected text;
   cases constant text[][] := ARRAY[
     -- authId; groups as the API; lessons as the API; groups as PostgREST.
-    ['00000000-0000-4000-8000-000000001505', 'EG EnS7,EG SvA7,EG7A,EG7A:1', 'EG-1,EG-10,EG-11,EG-12,EG-2,EG-3,EG-4,EG-5,EG-6,EG-7,EG-8', ''],
-    ['00000000-0000-4000-8000-000000001506', 'EG Sv6n,EG SvA6,EG7A,EG7A:1', 'EG-0,EG-1,EG-10,EG-12,EG-2,EG-5,EG-6,EG-7,EG-8', ''],
-    ['00000000-0000-4000-8000-000000001507', 'EG EnS7,EG Sv6n,EG SvA6,EG SvA7,EG7A,EG7A:1', 'EG-0,EG-1,EG-10,EG-11,EG-12,EG-2,EG-3,EG-4,EG-5,EG-6,EG-7,EG-8', ''],
+    ['00000000-0000-4000-8000-000000001505', 'EG EnS7,EG Sv7 fördjupning,EG SvA7,EG7A,EG7A:1', 'EG-1,EG-10,EG-11,EG-12,EG-13,EG-14,EG-2,EG-3,EG-4,EG-5,EG-6,EG-7,EG-8', ''],
+    ['00000000-0000-4000-8000-000000001506', 'EG Sv6n,EG SvA6,EG7A,EG7A:1', 'EG-0,EG-1,EG-10,EG-12,EG-14,EG-2,EG-5,EG-6,EG-7,EG-8', ''],
+    ['00000000-0000-4000-8000-000000001507', 'EG EnS7,EG Sv6n,EG Sv7 fördjupning,EG SvA6,EG SvA7,EG7A,EG7A:1', 'EG-0,EG-1,EG-10,EG-11,EG-12,EG-13,EG-14,EG-2,EG-3,EG-4,EG-5,EG-6,EG-7,EG-8', ''],
     -- A pupil reads its home class's row as before, and no teaching group's.
-    ['00000000-0000-4000-8000-000000001502', 'EG7A', 'EG-11,EG-2,EG-3,EG-4,EG-5,EG-8', 'EG7A']];
+    ['00000000-0000-4000-8000-000000001502', 'EG7A', 'EG-11,EG-13,EG-2,EG-3,EG-4,EG-5,EG-8', 'EG7A']];
 BEGIN
   FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
     EXECUTE format('SET LOCAL ROLE %I', via);
@@ -29554,9 +29558,11 @@ ROLLBACK;
 -- ---------------------------------------------------------------------------
 -- Section 273: kalenderprenumerationen tillämpar regeln: SvA-elevens eget
 -- flöde och vårdnadshavarens flöde för hen visar inte klassens svenska men
--- SvA7:s, den dit SvA7 är tillagd och den som namnger hen; 7A-elevens flöde
--- visar klassens svenska, också med den andra skolans medlemsrad för hen i
--- EG SvA7 tom (20261211090000).
+-- SvA7:s, den dit SvA7 är tillagd, den som namnger hen och svenskan i EG Sv7
+-- fördjupning, där hen är placerad; 7A-elevens flöde visar klassens svenska,
+-- också med den andra skolans medlemsrad för hen i EG SvA7 tom; P3, som går
+-- i både SvA7 och EG SvA7 stöd, behåller lektionerna som bär någon av dem
+-- (20261211090000).
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -29592,16 +29598,22 @@ BEGIN
   PERFORM app.calendar_feed_create(NULL, repeat('a', 64), 'sv');
   PERFORM pg_temp.eg_as('00000000-0000-4000-8000-000000001503');
   PERFORM app.calendar_feed_create(NULL, repeat('b', 64), 'sv');
+  PERFORM pg_temp.eg_as('00000000-0000-4000-8000-000000001504');
+  PERFORM app.calendar_feed_create(NULL, repeat('d', 64), 'sv');
   PERFORM pg_temp.eg_as('00000000-0000-4000-8000-000000001505');
   PERFORM app.calendar_feed_create(p1, repeat('c', 64), 'sv');
 
   got := pg_temp.eg_feed(repeat('a', 64));
-  IF got IS DISTINCT FROM 'EG-11,EG-2,EG-3,EG-4,EG-5,EG-8' THEN RAISE EXCEPTION 'replacing: the SvA pupil''s feed shows %', got; END IF;
+  IF got IS DISTINCT FROM 'EG-11,EG-13,EG-2,EG-3,EG-4,EG-5,EG-8' THEN RAISE EXCEPTION 'replacing: the SvA pupil''s feed shows %', got; END IF;
   got := pg_temp.eg_feed(repeat('c', 64));
-  IF got IS DISTINCT FROM 'EG-11,EG-2,EG-3,EG-4,EG-5,EG-8' THEN RAISE EXCEPTION 'replacing: the guardian''s feed for the SvA pupil shows %', got; END IF;
+  IF got IS DISTINCT FROM 'EG-11,EG-13,EG-2,EG-3,EG-4,EG-5,EG-8' THEN RAISE EXCEPTION 'replacing: the guardian''s feed for the SvA pupil shows %', got; END IF;
   -- The 7A pupil was in SvA6 last year: this year's svenska is theirs.
   got := pg_temp.eg_feed(repeat('b', 64));
-  IF got IS DISTINCT FROM 'EG-1,EG-10,EG-12,EG-2,EG-5,EG-6,EG-7,EG-8' THEN RAISE EXCEPTION 'replacing: the 7A pupil''s feed shows %', got; END IF;
+  IF got IS DISTINCT FROM 'EG-1,EG-10,EG-12,EG-14,EG-2,EG-5,EG-6,EG-7,EG-8' THEN RAISE EXCEPTION 'replacing: the 7A pupil''s feed shows %', got; END IF;
+  -- P3 is in SvA7 and in SvA7 stöd, which both replace svenska: P3 keeps the
+  -- lessons that carry either, and leaves 7B's own svenska.
+  got := pg_temp.eg_feed(repeat('d', 64));
+  IF got IS DISTINCT FROM 'EG-11,EG-3,EG-4' THEN RAISE EXCEPTION 'replacing: the feed of the pupil in two groups replacing svenska shows %', got; END IF;
 END $$;
 ROLLBACK;
 
