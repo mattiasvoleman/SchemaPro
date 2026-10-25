@@ -210,7 +210,9 @@ class AnonymousRequirement(CamelModel):
     #: building a model that cannot hold: the same lesson lengths
     #: (BLOCK_MEMBERS_DIFFER), no teacher in two of them
     #: (BLOCK_MEMBERS_SHARE_TEACHER) and no pupil in two of them
-    #: (BLOCK_MEMBERS_SHARE_PUPILS). See SchedulerSolver._validate_blocks.
+    #: (BLOCK_MEMBERS_SHARE_PUPILS), read on each member's pupils
+    #: (pupilGroupId below): 7A's svenska sat by "7A without SvA7" and SvA7
+    #: share none, and may run as one block. See SchedulerSolver._validate_blocks.
     block_id: UUID4 | None = Field(default=None, alias="blockId")
     #: Delade lektioner: the lead teacher of each lesson of the week, when the
     #: lessons are NOT all one person's — [A, A, B] is Matematik för 7A with
@@ -240,6 +242,39 @@ class AnonymousRequirement(CamelModel):
     lesson_teacher_ids: list[UUID4 | None] | None = Field(
         default=None, alias="lessonTeacherIds", max_length=40,
     )
+    #: Ersättande grupper: the group whose pupils sit this requirement's
+    #: lessons, when not all of studentGroupId's do. SvA7 (svenska som
+    #: andraspråk) REPLACES 7A's svenska for its members, so 7A's svenska is
+    #: sat by 7A without SvA7's pupils — a set of children no group in the
+    #: school is, and which the gateway names with an anonymous id of its own
+    #: (Halvklasser-style: one id per group and replaced subject). That id
+    #: appears here and in groupConflicts and nowhere else: paired with 7A
+    #: (its pupils are 7A's), with every partner of 7A but SvA7, and with the
+    #: other derived ids near 7A — and NEVER with SvA7, which shares no pupil
+    #: with it. So SvA7's lessons may run beside 7A's svenska and beside no
+    #: other lesson of 7A's, which is the whole feature; there is no parallel
+    #: block, and a school that wants the two at one hour writes one.
+    #:
+    #: OPTIONAL AND ADDITIVE. Absent (None) is a requirement every pupil of
+    #: studentGroupId sits, which is every requirement of every school until
+    #: one writes a replacing group; the gateway sends the key only on a
+    #: requirement whose subject a replacing group replaces for some of the
+    #: class, so a payload without one is byte for byte what it was, builds
+    #: the model it built and is answered with the bytes it was answered with.
+    #: Equal to studentGroupId it is the same requirement as absent.
+    #:
+    #: TWO KEY SPACES, AND EVERY RULE READS EXACTLY ONE. Who may not overlap
+    #: whom because a pupil sits in both — the pairs' no-overlap, the locked
+    #: lessons' blocking, the walk's families, the cliques the verdicts count,
+    #: a block's shared pupils — reads THIS key (scheduler_solver.pupil_key_of).
+    #: Rules about the CLASS read studentGroupId as they always did: 7A's
+    #: svenska still counts toward 7A's maxLessonsPerDayPerGroup, a
+    #: reservation on 7A still keeps it out, 7A's rasts and 7A's lunch still
+    #: read it as 7A's, and every refusal names 7A. A builder that mixed the
+    #: two inside one rule would put 7A's svenska into one no-overlap twice,
+    #: through 7A and through the derived id — an interval asked not to
+    #: overlap itself, and an INFEASIBLE for every school with SvA.
+    pupil_group_id: UUID4 | None = Field(default=None, alias="pupilGroupId")
 
     @model_validator(mode="after")
     def validate_lesson_lengths(self) -> AnonymousRequirement:
@@ -806,6 +841,12 @@ class FixedLesson(CamelModel):
     Fixed lessons are hard blockers: no generated lesson may overlap a fixed
     lesson that shares its teacher, student group, or room. Times need not be
     slot-aligned — the solver rounds the blocked window outward to whole slots.
+
+    "Shares its student group" is read in the PUPIL space — the pupils the
+    lock holds (pupilGroupIds below, or the groups it names) against the
+    generated lesson's pupils and the groups sharing them — while the rules
+    about the class (its lunch, its rasts) keep reading the groups it names.
+    See AnonymousRequirement.pupil_group_id for the two spaces.
     """
 
     id: UUID4
@@ -822,6 +863,26 @@ class FixedLesson(CamelModel):
     day_of_week: DayOfWeek = Field(alias="dayOfWeek")
     start_time: str = Field(alias="startTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
     end_time: str = Field(alias="endTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
+    #: Ersättande grupper, for a lesson the school locked: the groups whose
+    #: pupils sit it, when they are not studentGroupId's and extraGroupIds'.
+    #: A locked 7A svenska is sat by 7A without SvA7's pupils, the derived id
+    #: AnonymousRequirement.pupil_group_id describes, so it keeps 7A's matte
+    #: and every group sharing those pupils out of its window — and lets
+    #: SvA7, which shares none of them, be placed beside it.
+    #:
+    #: WHEN PRESENT IT REPLACES [studentGroupId, *extraGroupIds] IN EVERY
+    #: PUPIL QUESTION (scheduler_solver.pupil_keys_of): whom the lock blocks,
+    #: whose walk it is, which clique it closes. The class questions keep the
+    #: groups it names: a locked 7A svenska still takes 7A's lunch window and
+    #: still counts as 7A's lesson before a rast. Absent is today's reading
+    #: exactly, and the gateway sends the key only on a lock whose subject a
+    #: replacing group replaces, so every other payload is byte for byte what
+    #: it was. An empty list is a lock no pupil sits in a pupil question:
+    #: honest for a lesson every pupil of which a replacing group has taken.
+    #: At most the 21 groups the two fields above can name between them.
+    pupil_group_ids: list[UUID4] | None = Field(
+        default=None, alias="pupilGroupIds", max_length=21,
+    )
 
 
 class PreviousLesson(CamelModel):
@@ -997,6 +1058,12 @@ class OptimizeScheduleRequest(CamelModel):
     # such a pair are hard-forbidden from overlapping — a shared student
     # cannot be in two rooms. The gateway derives these from real membership
     # data; the engine never sees student ids.
+    #
+    # The relation is the PUPIL space's, and its ids may be derived ones that
+    # name no group: "7A's svenska without SvA7" (a requirement's
+    # pupilGroupId, a lock's pupilGroupIds) is paired with 7A and its partners
+    # and never with SvA7. A derived id no requirement or lock carries is a
+    # pair that keeps nothing apart, as any group without lessons is.
     group_conflicts: list[tuple[UUID4, UUID4]] = Field(
         default_factory=list, alias="groupConflicts", max_length=5000,
     )

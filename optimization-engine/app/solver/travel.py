@@ -325,7 +325,15 @@ def families_of(
       in G's family, and in no other — the arriving lesson names its hub.
     - by PAIR, a group's own lessons among themselves, and for each pair of
       groups sharing a pupil each group's lessons leaving for the other's.
+
+    THE GROUPS ARE THE PUPIL SPACE'S (scheduler_solver.pupil_key_of), as
+    _add_group_no_overlap keys them: the pupils of 7A's svenska are "7A
+    without SvA7", who walk to 7A's matte and never to SvA7's lesson, which
+    none of them sits. Keyed by the class, the pair (7A, SvA7) would hold
+    the svenska a walk away from SvA beside it — a walk nobody takes.
     """
+    from app.solver.scheduler_solver import pupil_key_of
+
     cut = cut or PUPIL_FAMILIES
     by_teacher: dict[UUID, list[LessonDecision]] = defaultdict(list)
     by_group: dict[UUID, list[LessonDecision]] = defaultdict(list)
@@ -333,7 +341,7 @@ def families_of(
         requirement = decision.lesson.requirement
         for teacher_id in dict.fromkeys(_lesson_teachers(decision)):
             by_teacher[teacher_id].append(decision)
-        by_group[requirement.student_group_id].append(decision)
+        by_group[pupil_key_of(requirement)].append(decision)
     families: list[Family] = []
     for teacher_id, lessons in by_teacher.items():
         families.append(Family("TEACHER", (teacher_id,), tuple(lessons), tuple(lessons)))
@@ -717,11 +725,15 @@ def _capacity(party: Party, walk: int, leaving: list[LessonDecision]) -> int:
     their trails of `walk` cover one instant at most ceil(walk / shortest)
     deep. A teacher's lessons never overlap; a group's never overlap one
     another, but two groups' may (a språkval's groups run together), so for
-    the pupils the depth is summed over the groups the trails come from.
+    the pupils the depth is summed over the groups the trails come from —
+    the PUPIL space's groups (pupil_key_of), the ones a no-overlap holds
+    apart: 7A's svenska and SvA beside it are two groups' trails here.
     """
+    from app.solver.scheduler_solver import pupil_key_of
+
     by_group: dict[object, list[int]] = defaultdict(list)
     for decision in leaving:
-        key = decision.lesson.requirement.student_group_id if party == "PUPILS" else None
+        key = pupil_key_of(decision.lesson.requirement) if party == "PUPILS" else None
         by_group[key].append(decision.duration)
     return max(1, sum(math.ceil(walk / min(lengths)) for lengths in by_group.values()))
 

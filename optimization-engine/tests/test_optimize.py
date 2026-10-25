@@ -4770,6 +4770,7 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         AnonymousRoomPreference,
         AnonymousTeacherDayLimit,
         AnonymousTeacherWorkRule,
+        FixedLesson,
         FrameTime,
         LunchPlacement,
         LunchServing,
@@ -4931,6 +4932,10 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
     # place, pinned there as REQUIREMENT_FIELDS_BLOCKED. lessonTeacherIds is
     # sent only for a post whose lessons still to place have two or more
     # leads (delade lektioner); every other requirement's keys are unchanged.
+    # pupilGroupId is sent only on a requirement whose subject a replacing
+    # group replaces for some of the class (Ersättande grupper): the derived
+    # id of "7A's svenska without SvA7", which appears nowhere but here, in a
+    # lock's pupilGroupIds and in groupConflicts.
     assert _field_names(AnonymousRequirement) == {
         "id",
         "subjectId",
@@ -4951,6 +4956,24 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "lockedDays",
         "blockId",
         "lessonTeacherIds",
+        "pupilGroupId",
+    }
+    # A locked lesson, which no half of the contract pinned until a field was
+    # added to it. pupilGroupIds is sent only on a lock whose subject a
+    # replacing group replaces, and then REPLACES studentGroupId and
+    # extraGroupIds in every question about whose pupils it holds; the class
+    # questions (its lunch, its rasts) keep reading the groups it names.
+    assert _field_names(FixedLesson) == {
+        "id",
+        "teacherId",
+        "coTeacherId",
+        "studentGroupId",
+        "extraGroupIds",
+        "roomId",
+        "dayOfWeek",
+        "startTime",
+        "endTime",
+        "pupilGroupIds",
     }
     # The response's one row. teacherId is a split post's lead of THIS lesson,
     # and omitted wherever it is None — on every lesson of every other post —
