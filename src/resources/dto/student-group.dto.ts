@@ -39,6 +39,17 @@ export class CreateStudentGroupDto {
   @Min(0)
   @Max(12)
   gradeLevel?: number | null;
+
+  /**
+   * Ersättande grupper: the subject whose other lessons this teaching group's
+   * members leave (SvA7 replaces Svenska), or null for none. Only a teaching
+   * group that is not a half may replace (400 REPLACING_GROUP_NOT_A_TEACHING_GROUP;
+   * the CHECK StudentGroups_only_a_teaching_group_replaces is the second
+   * line), and the subject is one of the school's.
+   */
+  @IsOptional()
+  @IsUUID('4')
+  replacesSubjectId?: string | null;
 }
 
 export class UpdateStudentGroupDto {
@@ -61,6 +72,17 @@ export class UpdateStudentGroupDto {
   @Min(0)
   @Max(12)
   gradeLevel?: number | null;
+
+  /**
+   * Ersättande grupper: the subject whose other lessons this teaching group's
+   * members leave (SvA7 replaces Svenska), or null for none. Only a teaching
+   * group that is not a half may replace (400 REPLACING_GROUP_NOT_A_TEACHING_GROUP;
+   * the CHECK StudentGroups_only_a_teaching_group_replaces is the second
+   * line), and the subject is one of the school's.
+   */
+  @IsOptional()
+  @IsUUID('4')
+  replacesSubjectId?: string | null;
 }
 
 /**

@@ -137,6 +137,12 @@ export interface RolloverWrites {
      * so a school without halves writes what it always wrote.
      */
     halfOfKey?: GroupKey;
+    /**
+     * The subject a replacing group replaces (Ersättande grupper), carried as
+     * it is. Absent on every group that replaces nothing, so a school without
+     * one writes, and hashes, what it always did.
+     */
+    replacesSubjectId?: string;
   }[];
   members: { groupKey: GroupKey; studentId: string }[];
   requirements: {
@@ -489,6 +495,7 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
         gradeLevel: row.successor.gradeLevel,
         predecessorId: group.id,
         ...(halfOf ? { halfOfKey: halfOf } : {}),
+        ...(group.replacesSubjectId ? { replacesSubjectId: group.replacesSubjectId } : {}),
       });
     }
     if (row.intake) {
@@ -499,6 +506,7 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
         gradeLevel: row.intake.gradeLevel,
         predecessorId: null,
         ...(halfOf ? { halfOfKey: intakeKey(halfOf) } : {}),
+        ...(group.replacesSubjectId ? { replacesSubjectId: group.replacesSubjectId } : {}),
       });
     }
   }

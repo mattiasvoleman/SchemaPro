@@ -97,6 +97,7 @@ export const ROLLOVER_STEPS: Record<RolloverStepName, (context: StepContext) => 
           gradeLevel: group.gradeLevel,
           predecessorId: group.predecessorId,
           ...(group.halfOfKey ? { halfOfId: groupOf(context, group.halfOfKey) } : {}),
+          ...(group.replacesSubjectId ? { replacesSubjectId: group.replacesSubjectId } : {}),
         })),
         select: { id: true, name: true },
       });

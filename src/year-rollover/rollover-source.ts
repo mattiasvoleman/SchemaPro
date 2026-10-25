@@ -53,6 +53,8 @@ export interface SourceGroup {
   gradeLevel: number | null;
   /** The class this group is a half of (Halvklasser), or null. */
   halfOfId: string | null;
+  /** The subject it replaces (Ersättande grupper), or null. */
+  replacesSubjectId?: string | null;
 }
 
 export interface SourceRequirement {
@@ -207,7 +209,7 @@ export async function readRolloverSource(
 
   const groups = await tx.studentGroup.findMany({
     where: { academicYearId: sourceYearId },
-    select: { id: true, name: true, kind: true, gradeLevel: true, halfOfId: true },
+    select: { id: true, name: true, kind: true, gradeLevel: true, halfOfId: true, replacesSubjectId: true },
     orderBy: { id: 'asc' },
   });
   const groupIds = (groups ?? []).map((group) => group.id);

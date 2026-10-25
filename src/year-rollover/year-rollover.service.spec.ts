@@ -1315,7 +1315,9 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
       }
       if (groupReads.includes(call)) {
         const args = call.args as { select: Record<string, unknown> };
-        const { halfOfId: _half, ...select } = args.select;
+        // Halvklasser's halfOfId, and Ersättande grupper's replacesSubjectId
+        // (20261211090000): read since, and the same plan without them.
+        const { halfOfId: _half, replacesSubjectId: _replaces, ...select } = args.select;
         return { ...call, args: { ...args, select } };
       }
       if (call.model !== 'teachingRequirement' || call.method !== 'findMany') return call;
@@ -2273,6 +2275,21 @@ describe('YearRolloverService, carrying tjänster', () => {
   it('lets the planner roll the year without them', async () => {
     withRls.mockRejectedValueOnce(new Error('reached the database'));
     await expect(service.previewRollover('year', OPTIONS, planner)).rejects.toThrow('reached the database');
+  });
+});
+
+describe('YearRolloverService — a replacing group (Ersättande grupper)', () => {
+  it('carries what a teaching group replaces to its successor, and writes nothing about it for any other group', async () => {
+    const rows = defaultRolloverRows();
+    const teaching = rows['studentGroup']!.find((group) => group['kind'] === 'TEACHING_GROUP')!;
+    const subject = rows['teachingRequirement']![0]!['subjectId'];
+    teaching['replacesSubjectId'] = subject;
+    const { world, service } = setup(rows);
+    const { result } = await previewAndExecute(world, service, { ...OPTIONS, carryTeachingGroups: true });
+    const next = world.rows['studentGroup']!.filter((group) => group['academicYearId'] === result.academicYear.id);
+    const successor = next.find((group) => group['predecessorId'] === teaching['id'])!;
+    expect(successor).toMatchObject({ kind: 'TEACHING_GROUP', replacesSubjectId: subject });
+    expect(next.filter((group) => group !== successor).every((group) => !('replacesSubjectId' in group))).toBe(true);
   });
 });
 

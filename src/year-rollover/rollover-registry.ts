@@ -261,6 +261,11 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
       // or the class's intake twin for the half's twin. Written only on a
       // half, in a second statement after the classes.
       halfOfId: 'MAP_GROUP',
+      // Ersättande grupper (20261211090000): SvA7 becomes SvA8 and still
+      // replaces Svenska — a subject is the school's, not the year's. Written
+      // only where set, so a school whose groups replace nothing writes, and
+      // hashes, what it always did.
+      replacesSubjectId: 'COPY_UNLESS_DEFAULT',
       ...timestamps,
     },
   },

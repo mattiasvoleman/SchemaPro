@@ -464,6 +464,8 @@ const NAMED_CHECKS: Record<string, string> = {
   SupervisionShifts_dates_are_ordered: 'validTo: Till ligger före Från.',
   SupervisionShifts_dates_on_the_weekday: 'validFrom: Från och Till är dagar då passet går, alltså passets veckodag.',
   SupervisionShifts_note_is_short: 'note: anteckningen kan vara högst 200 tecken.',
+  StudentGroups_only_a_teaching_group_replaces:
+    'replacesSubjectId: bara en undervisningsgrupp som inte är en halvklass kan ersätta klassens lektioner i ett ämne.',
   TeachingRequirements_lesson_lengths_are_canonical:
     'lessonLengths: en längd per lektion, längsta först, 15–240 minuter i femminuterssteg och ' +
     'två eller tre olika längder — och lessonsPerWeek och minutesPerLesson ska vara antalet och den längsta.',
