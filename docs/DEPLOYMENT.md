@@ -1215,6 +1215,135 @@ and `FixedLesson.pupilGroupIds`.
 - **Which schools are affected** (as the owner):
   `SELECT "schoolId", count(*) FROM "StudentGroups" WHERE "replacesSubjectId" IS NOT NULL GROUP BY 1;`
 
+## 14. A huvudman owns schools ("Huvudman")
+
+A huvudman (a kommun, or a friskola's owner) owns schools, and its people
+read each school it owns: a **kommunadministratör** keeps the huvudman's
+members, its schools and its SS12000 keys, and **planerare** (central
+planners) read. Both read every school the huvudman owns as that school's
+*läsare* (Läsbehörighet): every area, and nothing written, nothing decided,
+no HR-läs. They get no `"Users"` row at the schools: a school's register,
+its SS12000 export, its notices and its gallring know nothing of them.
+
+**How a school is read.** The request names the school (`X-School-Id`, §12).
+Where the login has no active row of its own there and its huvudman owns the
+school, the database answers for the huvudman's reader: three of the six
+helpers (`app.current_school_id`, `current_user_role`, `current_user_may`)
+have a second branch for it, and `app.current_user_id()` is NULL, as for
+anybody without a row, so nothing keyed on the caller's own row is theirs.
+The gateway refuses the reader every write but the huvudman's own routes
+(403 `HUVUDMAN_READS_ONLY`), and a member with no school named reaches only
+`/api/v1/huvudman/*` and `/api/v1/me/*` (403 `HUVUDMAN_NO_SCHOOL`). An own
+active row wins: a planner who is a teacher at a school is the teacher there.
+A row the school has deactivated does not: the member reads the school as
+the huvudman's reader, since the school took the huvudman, and Dataskydd
+shows which of the huvudman's people have a row of their own there. Each read of personal data is written in the
+school's own read log, naming the member (and, for the key, the huvudman's
+key); the school's deciders read it under Dataskydd as they read the others.
+
+**Ownership takes both sides.** The kommunadministratör asks for a school by
+its slug on `/huvudman`; the school's rektor or a full administrator answers
+under Dataskydd. Either side ends it, at once. A school has one huvudman.
+
+**With the access-token hook on (§11.2).** The hook judges each school a
+membership reaches under that school's rules, as staff, also where the login
+has a row of its own: a school that requires its school account is closed
+for a planner's password session as for its own staff. The verdict is the
+reader's alone (`rastra_closed_schools` names it `reader:<schoolId>`), so a
+guardian who is also a planner keeps their own guardian row there.
+
+**A member's login is held.** The invitation finds the login an address
+already has, so a teacher's login can also be a member's. A school that
+removes its row, and gallring, leave such a login alone, as they leave a
+login another school's row holds (§12).
+
+**The huvudman's SS12000 key** (`sh_…`, made on `/huvudman`) reads every
+school the huvudman owns through `/ss12000/v2.0`, one school at a time, as
+that school's service principal (`app.huvudman_key_opens_school`, which the
+database refuses for a school the huvudman does not own). Read scopes only:
+no attendance or absence, no subscriptions, nothing of v1; the database
+holds the key to the huvudman's schools on its own and lets it write
+nothing (20261212090300). A school's own keys are
+unchanged; the school's deciders see the huvudman's keys under Dataskydd and
+Integrationer and their reads in the read log. See docs/integration-api.md.
+
+### 14.1 Deploy order
+
+0. Before the series, look for autovacuum, as the owner:
+   `SELECT relid::regclass, phase FROM pg_stat_progress_vacuum;`. The
+   three loops below take no turn behind it: a NOWAIT lock never waits, so
+   it never asks an autovacuum to give way, and one still running on a
+   table a loop locks makes that migration give up after 30 s. That is
+   `"Users"` and `"Schools"` for the first, `"PersonalDataAccess"` for the
+   second, and the arms' 30 tables (`"Users"` and `"GuardianStudents"` the
+   large ones) for the fourth. If any of them is listed, deploy when it is
+   done.
+1. Run the four migrations before the code (§2):
+   `20261212090000_en_huvudman_ager_skolor`,
+   `20261212090100_lasloggen_namner_huvudmannens_lasare`,
+   `20261212090200_huvudmannens_villkor_i_lasloggen_valideras` and
+   `20261212090300_tjanstearmarna_provar_huvudmannens_nyckel`. The first,
+   second and fourth take their locks NOWAIT in a retry loop for at most
+   30 s and change no data; if one gives up, nothing changed: `prisma
+   migrate resolve --rolled-back <name>` and deploy again. The fourth makes
+   `app.current_service_school_id()` check, for a huvudman's key, that the
+   huvudman owns the school, rewrites the 36 service arms to call it once
+   per statement, and closes the four that write to a huvudman's key: it
+   holds ACCESS EXCLUSIVE on the arms' 30 tables for the catalogue changes
+   only (milliseconds); run it outside the SS12000 sync's window. The third validates two foreign keys and a CHECK on the read log,
+   blocking no read and no write (5 s lock_timeout: if it stops, run it
+   again). The API before this release keeps working on the new schema: no
+   huvudman exists until one is made.
+2. Deploy the API and the web of the release together.
+3. Only then make the first huvudman (14.2).
+
+### 14.2 Bootstrap a huvudman and its kommunadministratör
+
+As for a school (§7), there is no public signup. Create the auth user in the
+Supabase dashboard (Authentication → Users → *Send invitation*), copy its
+UUID, and as the owner:
+
+```sql
+insert into "Huvudmen" (name, "organisationNumber", "municipalityCode")
+values ('Exempelkommun', '2120000001', '0884');
+
+insert into "HuvudmanMembers" ("huvudmanId", "authId", email, "firstName", "lastName", role, "invitedAt")
+values (
+  (select id from "Huvudmen" where "organisationNumber" = '2120000001'),
+  '<AUTH_USER_UUID>', '<same email as the auth user>', 'Karin', 'Kommun',
+  'KOMMUNADMINISTRATOR', now()
+);
+```
+
+The login needs no mark by hand. A login with no row at any school asks the
+gateway for its schools, finds the huvudman's and is sent to `/huvudman`,
+and the gateway marks it there (`rastraHuvudman`, `rastraSeveralSchools` in
+its app metadata) from the next token on; the school switcher asks the
+gateway itself as well. Members the kommunadministratör invites from
+`/huvudman` are marked when invited, and again if they are invited a second
+time, in case a mark was lost. Marking a login by hand (Authentication →
+Users → the user → *Raw app meta data*) only saves its first page a request.
+
+### 14.3 Operations
+
+- **Which schools a huvudman owns** (as the owner):
+  `SELECT h.name, s.name FROM "HuvudmanSchools" hs JOIN "Huvudmen" h ON h.id = hs."huvudmanId" JOIN "Schools" s ON s.id = hs."schoolId";`
+- **A school must stop being read now** (a decider is not reachable): delete
+  its `"HuvudmanSchools"` row as the owner; its huvudman's people and keys
+  read nothing there from the next statement.
+- **A rollback past this release**: delete the `"HuvudmanSchools"` rows
+  first, so that no reader is left that the older code would not know.
+- **A member who should no longer read**: the kommunadministratör
+  deactivates them on `/huvudman`; their login stays (it may be a school's
+  too). The huvudman keeps at least one active kommunadministratör.
+- **Deleting a member, a key or a huvudman** (as the owner; the product
+  only deactivates and revokes): the read log's rows that name them keep
+  the read and lose the name (`ON DELETE SET NULL`), and the log has no
+  index on `"huvudmanMemberId"` or `"huvudmanApiKeyId"`, so each deletion
+  reads the whole log under the deleted row's lock. Deactivate or revoke
+  instead; if a row must go, delete it outside school hours, and read the
+  school's log first if the name should be kept.
+
 ---
 
 # Future improvements

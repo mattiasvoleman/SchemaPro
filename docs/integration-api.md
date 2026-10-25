@@ -212,6 +212,56 @@ until the minute passes. A request with a valid key never counts toward the
 address. Past either limit the answer is 429 `TOO_MANY_REQUESTS` with
 `Retry-After`.
 
+### A huvudman's key: every school the huvudman owns
+
+A huvudman (a kommun, a friskola's owner; docs/DEPLOYMENT.md §14) has keys of
+its own, `sh_…`, made by its kommunadministratör. Presented exactly as a
+school's key (`Authorization: Bearer sh_…` or `X-API-Key`), such a key reads
+**every school the huvudman owns now**, through the same `/ss12000/v2.0`
+paths and in the same shapes:
+
+- **One school at a time.** Each school is read as that school's own service
+  principal, opened for the key: the database refuses a school the huvudman
+  does not own (`app.huvudman_key_opens_school`, and every service arm asks
+  it again), and no transaction ever holds two schools. A school that leaves the huvudman drops out of the key
+  at the next request; one that leaves, or a key revoked, while a request is
+  under way answers **409 `HUVUDMAN_CHANGED`**: ask again. The key writes
+  nothing, in the gateway or in the database.
+- **Lists** walk the schools in a fixed order (by the school's id). A page
+  comes from one school; `pageToken` carries the school and the school's own
+  token, bound to the key and the operation, so only `limit` may change
+  between pages, as for a school's key. A school with nothing for the query
+  is passed over; at most five are passed over in one request, which then
+  answers an empty page with a `pageToken` for the next school. Keep reading
+  while there is a `pageToken`, as S1 asks of every list. A `sortkey` is
+  **400 `SORTKEY_NOT_SUPPORTED`**: no order can hold across schools read one
+  at a time.
+- **`/x/{id}`** asks school after school; **`/x/lookup`** asks every school
+  and puts the answers together.
+- **`/organisations`** begins with the huvudman itself, an Organisation of
+  `organisationType` `Huvudman` with its `organisationNumber` and
+  `municipalityCode`, and every school's Organisation names it as its
+  `parentOrganisation`. `/organisations/{id}` answers the huvudman's id. The
+  first page holds `limit` items with the huvudman among them; with
+  `limit=1` it is the huvudman alone.
+- **Scopes:** the reads only, `organisations.read`, `persons.read`,
+  `responsibles.read`, `groups.read`, `duties.read`, `activities.read`,
+  `calendarEvents.read`, `rooms.read` and `syllabuses.read`, with
+  `/deletedEntities` for those. Not `attendances.read` or `absences.read`
+  (each school decides about its own keys), not `subscriptions.write` (a
+  subscription holds one school's signing secret and address), not v1.
+- **The read log:** each read of personal data is written in the school's
+  own read log as the huvudman's key, which the school's deciders read under
+  Dataskydd. The school also sees the huvudman's keys on Integrationer.
+- **Limits:** 120 a minute for the key, as for any key, and each school a
+  request reads after its first counts as one request more: `/x/{id}` that
+  finds its entity at the fortieth school, or a lookup across forty, costs
+  forty. A list costs one per page, and one more for each empty school it
+  passes over.
+
+An id is the school's own (S1 L5061), so a person who is at two of the
+huvudman's schools is two Persons, each with its school's id.
+
 ### Paging, filters, meta and errors
 
 * **Paging (S1 `limit`/`pageToken`).** Each list answers `{data, pageToken}`.
