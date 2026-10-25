@@ -52,7 +52,7 @@ export interface TargetSources {
    * replacesSubjectId (useGroups selects it), so a pupil of an ersättande
    * grupp is judged here as the gateway judges them.
    */
-  groups: Pick<StudentGroup, "id" | "name" | "kind" | "gradeLevel" | "replacesSubjectId">[];
+  groups: Pick<StudentGroup, "id" | "name" | "kind" | "gradeLevel" | "replacesSubjectId" | "halfOfId">[];
   requirements: Pick<
     TeachingRequirement,
     | "id"
@@ -103,6 +103,9 @@ export function targetInput(sources: TargetSources): PlannedCoverageInput {
       // Only on a group that replaces a subject, as the gateway's reader
       // hands it in: every other group reaches the module as before.
       ...(group.replacesSubjectId ? { replacesSubjectId: group.replacesSubjectId } : {}),
+      // And the class of a half, on halves: every other teaching group keeps
+      // its members on its own rows (replacing-groups.ts keptByOf).
+      ...(group.halfOfId ? { halfOfId: group.halfOfId } : {}),
     })),
     requirements: sources.requirements.map(toPlannedRequirement),
     pupils: sources.people

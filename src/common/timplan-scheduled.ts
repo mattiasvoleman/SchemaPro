@@ -1,6 +1,6 @@
 import { standardWeekWeight } from '../staffing/teacher-load';
 import { shortestLessonOf, weeklyMinutesOf } from './lesson-lengths';
-import { leavesLesson, replacedSubjectOf, replacementsOf, type Replacement } from './replacing-groups';
+import { keptByOf, leavesLesson, replacedSubjectOf, replacementsOf, type Replacement } from './replacing-groups';
 import type { ClosedRange, YearBounds } from '../staffing/teaching-weeks';
 import type {
   PlannedGroup,
@@ -424,6 +424,11 @@ export function computeScheduledCoverage(input: ScheduledCoverageInput): Schedul
     // THE RULE, on both sides: a post by its one group, a lesson by its own
     // and extra groups, a lesson naming the pupil kept.
     const replacements = replaced.size === 0 ? [] : replacementsOf(teaching, replaced);
+    /** A post or a lesson as THE RULE reads it, with its own group's keptBy. */
+    const scopeOf = (subjectId: string, groupIds: string[]) => {
+      const keptBy = keptByOf(groupsById.get(groupIds[0]!));
+      return { subjectId, groupIds, ...(keptBy ? { keptBy } : {}) };
+    };
     const lines = new Map<string, PupilLineDraft>();
     const lineFor = (subjectId: string): PupilLineDraft => {
       let line = lines.get(subjectId);
@@ -437,7 +442,7 @@ export function computeScheduledCoverage(input: ScheduledCoverageInput): Schedul
       for (const row of rowsByGroup.get(groupId) ?? []) {
         if (
           replacements.length > 0 &&
-          leavesLesson(replacements, { subjectId: row.subjectId, groupIds: [row.studentGroupId] })
+          leavesLesson(replacements, scopeOf(row.subjectId, [row.studentGroupId]), false, teaching)
         ) {
           continue;
         }
@@ -460,8 +465,9 @@ export function computeScheduledCoverage(input: ScheduledCoverageInput): Schedul
         replacements.length > 0 &&
         leavesLesson(
           replacements,
-          { subjectId: lesson.subjectId, groupIds: [lesson.studentGroupId, ...lesson.extraGroupIds] },
+          scopeOf(lesson.subjectId, [lesson.studentGroupId, ...lesson.extraGroupIds]),
           lesson.studentIds.includes(pupil.id),
+          teaching,
         )
       ) {
         continue;
@@ -524,8 +530,9 @@ export function computeScheduledCoverage(input: ScheduledCoverageInput): Schedul
     // group's own lessons in the line's subject — SvA7's pupils are not 7A's
     // Svenska line's, and counted there at a delta of nothing they pulled its
     // median to nothing. The group's pupilCount stays the group's.
+    // A teaching group that keeps its members on (keptByOf) loses none of them.
     const linePupils = (subjectId: string): PupilResult[] =>
-      replaced.size === 0
+      replaced.size === 0 || keptByOf(group) !== undefined
         ? statPupils
         : statPupils.filter(
             (r) =>

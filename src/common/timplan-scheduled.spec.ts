@@ -525,7 +525,7 @@ describe('ersättande grupper (a replacing group)', () => {
     expect(pupilLine(coverage, dag, S.SV)!.sources).toEqual([{ studentGroupId: b.id, masterLessonIds: [shared.id], minutesPerWeek: 60 }]);
   });
 
-  it('keeps a line’s statistics to the pupils its group’s lessons reach, a class mostly in SvA7 and a nivågrupp alike', () => {
+  it('keeps a line’s statistics to the pupils its group’s lessons reach: the class’s without its SvA7 pupils, the nivågrupp’s with all its members', () => {
     const nivå = group('Sv7 nivå', 'TEACHING_GROUP', null);
     const inSva = [pupil(a, [sva7, nivå]), pupil(a, [sva7]), pupil(a, [sva7])];
     const rest = [pupil(a, [nivå]), pupil(a)];
@@ -539,8 +539,10 @@ describe('ersättande grupper (a replacing group)', () => {
     // Counted at nothing, the three SvA7 pupils made 7A's median 0 and hid a
     // line short for everybody it reaches.
     expect(lineOf(coverage, a, S.SV).pupils).toEqual({ min: -120, median: -90, max: -60, below: 2 });
-    // The nivågrupp's line is the one member it reaches; the group still has two.
-    expect(lineOf(coverage, nivå, S.SV).pupils).toEqual({ min: -120, median: -120, max: -120, below: 1 });
+    // The nivågrupp's line is both its members: the SvA7 pupil placed in it
+    // keeps its Svenska (a teaching group, not a half), short 60 of it; the
+    // other, short 120 of 7A's and its together.
+    expect(lineOf(coverage, nivå, S.SV).pupils).toEqual({ min: -120, median: -90, max: -60, below: 2 });
     expect(coverage.groups.find((g) => g.studentGroupId === nivå.id)!.pupilCount).toBe(2);
     expect(coverage.groups.find((g) => g.studentGroupId === a.id)!.pupilCount).toBe(5);
   });

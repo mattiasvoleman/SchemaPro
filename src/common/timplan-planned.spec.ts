@@ -736,31 +736,42 @@ describe('computePlannedCoverage', () => {
       // 360 and Cim 420 (the nivågrupp too), and Bo's 360 passed as met.
       expect(lineOf(both, a.id, 'alt:SV_SVA').pupils).toEqual({ min: 180, median: 300, max: 420, below: 0 });
       expect(both.verdicts.filter((v) => v.pupilId === bo.id)).toEqual([]);
-      // Replacing Svenska, SvA7 is read instead of it: 180 each, Dag's
-      // support group on top of class Svenska the only 240.
-      expect(lineOf(replaced, a.id, 'alt:SV_SVA').pupils).toEqual({ min: 180, median: 180, max: 240, below: 0 });
-      expect(replaced.pupils).toEqual([]);
+      // Replacing Svenska, SvA7 is read instead of 7A's: Alva and Bo 180,
+      // Cim 240 (SvA7 and the nivågrupp he is placed in), Dag 240 (his
+      // support group on top of class Svenska).
+      expect(lineOf(replaced, a.id, 'alt:SV_SVA').pupils).toEqual({ min: 180, median: 210, max: 240, below: 0 });
+      // Only Cim is listed: placed in the Svenska nivågrupp and in SvA7, he
+      // reads both alternatives from two groups, a roster to check.
+      expect(replaced.pupils!.map((p) => p.pupilId)).toEqual([cim.id]);
+      expect(replaced.verdicts.filter((v) => v.pupilId !== undefined).map((v) => [v.pupilId, v.code])).toEqual([
+        [cim.id, 'TIMPLAN_PUPIL_DOUBLE_PLANNED'],
+      ]);
     });
 
-    it('takes the pupil off every other group’s Svenska — a nivågrupp’s as well as the class’s — and keeps his own group’s', () => {
-      // Cim is in SvA7 and the nivågrupp: neither 7A's nor the nivågrupp's
-      // Svenska reaches him, so he is not double planned in Svenska.
+    it('takes the pupil off the class’s Svenska, keeps his own groups’: SvA7’s and the nivågrupp he is placed in', () => {
+      // Cim is in SvA7 and the nivågrupp. 7A's Svenska does not reach him;
+      // the nivågrupp's does, a teaching group he is placed in, and so does
+      // SvA7's own Svenska row, SvA7 being its group. Two groups plan him
+      // Svenska: a roster to check.
       const short = computePlannedCoverage({
         ...world,
         requirements: [...world.requirements.filter((row) => row.studentGroupId !== sva7.id), req(sva7, S.SVA, 2, 60), req(sva7, S.SV, 1, 30)],
       });
       const cimLine = short.pupils!.find((p) => p.pupilId === cim.id)!.lines[0]!;
-      // SvA7's own Svenska row stays: SvA7 is the row's group.
-      expect(cimLine).toMatchObject({ key: 'alt:SV_SVA', plannedMinutesPerWeek: 150, status: 'UNDER', doublePlannedSubjectIds: [] });
+      expect(cimLine).toMatchObject({ key: 'alt:SV_SVA', plannedMinutesPerWeek: 210, status: 'MET', doublePlannedSubjectIds: [S.SV] });
       expect(cimLine.sources).toEqual([
+        { studentGroupId: nivå.id, subjectId: S.SV, minutesPerWeek: 60 },
         { studentGroupId: sva7.id, subjectId: S.SV, minutesPerWeek: 30 },
         { studentGroupId: sva7.id, subjectId: S.SVA, minutesPerWeek: 120 },
       ]);
       expect(short.verdicts.filter((v) => v.pupilId === cim.id).map((v) => v.code)).toEqual([
-        'TIMPLAN_PUPIL_UNDERPLANNED',
-        // SvA7 plans both alternatives itself: a roster to check, as before.
+        // Svenska from two groups, and SvA7 planning both alternatives itself.
+        'TIMPLAN_PUPIL_DOUBLE_PLANNED',
         'TIMPLAN_PUPIL_DOUBLE_PLANNED',
       ]);
+      // Bo, in SvA7 alone, reads none of 7A's Svenska.
+      const boLine = short.pupils!.find((p) => p.pupilId === bo.id)!.lines[0]!;
+      expect(boLine.sources.map((row) => row.studentGroupId)).toEqual([sva7.id, sva7.id]);
     });
 
     it('names the SvA pupil’s own shortfall even when the class’s Svenska is short too', () => {
