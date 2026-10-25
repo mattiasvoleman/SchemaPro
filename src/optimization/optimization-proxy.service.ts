@@ -43,6 +43,15 @@ import { canonicalShape, lessonMinutesOf } from '../common/lesson-lengths';
 import { canonicalShares, hasShares, lessonTeachersOf, type LessonShare } from '../common/lesson-shares';
 import { effectiveDistribution, hasDistributionRule, type DistributionRule } from '../common/subject-distribution';
 import { minutesOf } from '../common/solver-grid';
+import {
+  parseDerivedKey,
+  pupilKeyOf,
+  pupilKeysOf,
+  replacedSubjectOf,
+  replacementPairs,
+  replacingBySubject,
+  replacingGroupsOfNamed,
+} from '../common/replacing-groups';
 import { lockedWeekdaySets, type YearSpan } from '../common/teacher-day';
 import { computeScheduledCoverage, type ScheduledLessonInput } from '../common/timplan-scheduled';
 import type { PlannedGroup, PlannedRequirement, PlannedSubject } from '../common/timplan-planned';
@@ -2095,7 +2104,7 @@ export class OptimizationProxyService {
      */
     const allGroups = await tx.studentGroup.findMany({
       where: { academicYearId },
-      select: { id: true, gradeLevel: true, kind: true, name: true, halfOfId: true },
+      select: { id: true, gradeLevel: true, kind: true, name: true, halfOfId: true, replacesSubjectId: true },
     });
     // What the school calls each thing, for the refusal on its way back.
     //
@@ -2253,6 +2262,69 @@ export class OptimizationProxyService {
       if (!conflictPairKeys.has(key)) {
         conflictPairKeys.add(key);
         realGroupConflicts.push([first, second]);
+      }
+    }
+
+    /*
+     * Ersättande grupper (common/replacing-groups.ts): a group's lessons in a
+     * subject a replacing group replaces are sat by the group's pupils LESS
+     * the replacing group's members — SvA7's pupils are at SvA, not at 7A's
+     * svenska. Such a requirement (and such a locked lesson, group by group)
+     * answers for a derived key, "7A without SvA7", sent as its pupilGroupId
+     * (pupilGroupIds); the key pairs with 7A and everything 7A pairs with but
+     * SvA7, so the engine may put SvA7's lessons beside 7A's svenska and
+     * nowhere else in 7A's week. Every rule about the class itself — its
+     * daily maximum, its unavailable hours, its lunch — still reads the
+     * requirement's studentGroupId.
+     *
+     * A school with no replacing group sends no pupilGroupId and no new
+     * pair: the payload is byte for byte what it was.
+     */
+    const replacedSubjects = replacedSubjectOf(allGroups);
+    const replacingOf = replacingBySubject(replacedSubjects);
+    const pupilKeyByRequirement = new Map<string, string>();
+    const pupilKeysByLesson = new Map<string, string[]>();
+    if (replacingOf.size > 0) {
+      const partners = new Map<string, Set<string>>();
+      for (const [first, second] of realGroupConflicts) {
+        for (const [a, b] of [[first, second], [second, first]] as const) {
+          const set = partners.get(a);
+          if (set) set.add(b);
+          else partners.set(a, new Set([b]));
+        }
+      }
+      const shares = (a: string, b: string) => partners.get(a)?.has(b) ?? false;
+      for (const r of rawRequirements) {
+        const key = pupilKeyOf(r.studentGroupId, { subjectId: r.subjectId, groupIds: [r.studentGroupId] }, replacingOf, shares);
+        if (key !== r.studentGroupId) pupilKeyByRequirement.set(r.id, key);
+      }
+      for (const lesson of preservedLessons) {
+        const groupIds = [lesson.studentGroupId, ...lesson.extraGroups.map((entry) => entry.studentGroupId)];
+        // A pupil named on the lesson stays on it, so their replacing group
+        // is not left out of it (the engine is told nothing else of them).
+        const namedIn = replacingGroupsOfNamed(
+          (lesson.participants ?? []).map((entry) => entry.studentId),
+          (pupil) => groupsByStudent.get(pupil) ?? [],
+          replacedSubjects,
+        );
+        const keys = pupilKeysOf({ subjectId: lesson.subjectId, groupIds }, replacingOf, shares, namedIn);
+        if (keys.some((key, index) => key !== groupIds[index])) pupilKeysByLesson.set(lesson.id, keys);
+      }
+      const derived = [...pupilKeyByRequirement.values(), ...[...pupilKeysByLesson.values()].flat()];
+      for (const [first, second] of replacementPairs(derived, (groupId) => partners.get(groupId) ?? [])) {
+        const key = `${first}:${second}`;
+        if (!conflictPairKeys.has(key)) {
+          conflictPairKeys.add(key);
+          realGroupConflicts.push([first, second]);
+        }
+      }
+      // Named for a refusal that reaches the school through one: "7A utan SvA7".
+      for (const key of derived) {
+        const parsed = parseDerivedKey(key);
+        if (!parsed || nameById.has(key)) continue;
+        const base = nameById.get(parsed.groupId);
+        const without = parsed.replacing.map((id) => nameById.get(id)).filter((name): name is string => !!name);
+        if (base) nameById.set(key, without.length > 0 ? `${base} utan ${without.join(' och ')}` : base);
       }
     }
 
@@ -2498,6 +2570,10 @@ export class OptimizationProxyService {
           id: anonId(requirementAnonMap, r.id),
           subjectId: anonId(subjectAnonMap, r.subjectId),
           studentGroupId: anonId(groupAnonMap, r.studentGroupId),
+          // Ersättande grupper: who sits it, when not all of the group (above).
+          ...(pupilKeyByRequirement.has(r.id)
+            ? { pupilGroupId: anonId(groupAnonMap, pupilKeyByRequirement.get(r.id)!) }
+            : {}),
           teacherId: leadTeacher ? anonId(teacherAnonMap, leadTeacher) : null,
           lessonsPerWeek: remaining,
           // The longest REMAINING length: r.minutesPerLesson for a uniform
@@ -2578,6 +2654,11 @@ export class OptimizationProxyService {
       extraGroupIds: lesson.extraGroups.map((entry) =>
         anonId(groupAnonMap, entry.studentGroupId),
       ),
+      // Ersättande grupper: who sits it, group by group, when a replacing
+      // group takes some of them elsewhere (above).
+      ...(pupilKeysByLesson.has(lesson.id)
+        ? { pupilGroupIds: pupilKeysByLesson.get(lesson.id)!.map((key) => anonId(groupAnonMap, key)) }
+        : {}),
     }));
 
     /*

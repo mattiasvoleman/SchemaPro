@@ -805,6 +805,8 @@ export default function TimetablePage() {
             coTeacherId: lesson.coTeacherId,
             roomId: lesson.roomId,
             studentGroupId: lesson.studentGroupId,
+            // Ersättande grupper: SvA7 may be dragged beside 7A's svenska.
+            subjectId: lesson.subjectId,
             extraGroupIds: lesson.extraGroupIds,
             studentIds: lesson.studentIds,
             // The dragged lesson's OWN ombyte and dusch. Left off, the
@@ -1429,6 +1431,7 @@ export default function TimetablePage() {
         coTeacherId: lesson.coTeacherId,
         roomId: lesson.roomId,
         studentGroupId: lesson.studentGroupId,
+        subjectId: lesson.subjectId,
         extraGroupIds: lesson.extraGroupIds,
         studentIds: lesson.studentIds,
         // The same buffer validateChange checks with. Without it the search

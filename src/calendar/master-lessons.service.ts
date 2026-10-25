@@ -46,6 +46,7 @@ import { requirementName } from '../optimization/optimization-proxy.service';
 import { BLOCK_SPLIT, blockMoveOf, readLessonBlock, sameSlot, type BlockSlot } from './block-lessons';
 import { isWriteConflict, writeConflict } from '../common/utils/prisma-errors';
 import { groupsOfPupils, halfPairs, type GroupHalf } from '../common/class-halves';
+import { leavesLesson, replacedPupils, replacedSubjectOf, replacementsOf, replacingBySubject } from '../common/replacing-groups';
 import {
   hasTeacherDayRule,
   teacherDayBreaches,
@@ -1519,6 +1520,7 @@ export class MasterLessonsService {
           recurrence: true,
           startDate: true,
           endDate: true,
+          subjectId: true,
           subject: { select: { name: true } },
           extraGroups: { select: { studentGroupId: true } },
           participants: { select: { studentId: true } },
@@ -1528,16 +1530,22 @@ export class MasterLessonsService {
       const teacherIds = [...new Set(rows.flatMap((row) => [row.teacherId, row.coTeacherId]))].filter(
         (id): id is string => id !== null,
       );
-      const [{ membersOf, halves }, groups, teachers] = await Promise.all([
-        this.rosterOf(tx, basis, groupIds),
+      const [{ membersOf, halves, replaced }, groups, teachers] = await Promise.all([
+        this.rosterOf(tx, basis, groupIds, [...new Set(rows.map((row) => row.subjectId))]),
         tx.studentGroup.findMany({ where: { id: { in: [...groupIds] } }, select: { id: true, name: true } }),
         tx.user.findMany({ where: { id: { in: teacherIds } }, select: { id: true, firstName: true, lastName: true } }),
       ]);
       const halfPairKeys = new Set(
         halfPairs(halves, membersOf, groupsOfPupils(membersOf)).map(([a, b]) => `${a}:${b}`),
       );
+      const replacingOf = replacingBySubject(replaced);
       const day = rows.map((row): TravelDayLesson => {
         const attending = [row.studentGroupId, ...row.extraGroups.map((g) => g.studentGroupId)];
+        // Ersättande grupper: a replacing group's members are not on its
+        // subject's other lessons, and walk to nothing from them.
+        const named = new Set(row.participants.map((p) => p.studentId));
+        const fromGroups = new Set(attending.flatMap((groupId) => [...(membersOf.get(groupId) ?? [])]));
+        const elsewhere = replacedPupils(fromGroups, { subjectId: row.subjectId, groupIds: attending }, named, replacingOf, membersOf);
         return {
           id: row.id,
           start: toMinutes(row.startTime),
@@ -1546,10 +1554,7 @@ export class MasterLessonsService {
           subjectName: row.subject.name,
           teacherIds: [row.teacherId, row.coTeacherId].filter((id): id is string => id !== null),
           groupIds: attending,
-          pupils: new Set([
-            ...attending.flatMap((groupId) => [...(membersOf.get(groupId) ?? [])]),
-            ...row.participants.map((p) => p.studentId),
-          ]),
+          pupils: new Set([...[...fromGroups].filter((pupil) => !elsewhere.has(pupil)), ...named]),
           weeks: {
             recurrence: row.recurrence,
             startDate: toDateStringOrNull(row.startDate),
@@ -1947,15 +1952,31 @@ export class MasterLessonsService {
     tx: PrismaClient,
     basis: RosterBasis,
     groupIds: Set<string>,
-  ): Promise<{ membersOf: Map<string, Set<string>>; halves: GroupHalf[] }> {
+    /**
+     * Ersättande grupper: the subjects of the lessons in play. The groups
+     * replacing one of them are read in the same statement as the halves, and
+     * their members with every other group's, so the rule asks the database
+     * nothing more (common/replacing-groups.ts).
+     */
+    subjectIds: readonly string[] = [],
+  ): Promise<{ membersOf: Map<string, Set<string>>; halves: GroupHalf[]; replaced: Map<string, string> }> {
     const membersOf = new Map<string, Set<string>>();
-    if (groupIds.size === 0) return { membersOf, halves: [] };
+    if (groupIds.size === 0) return { membersOf, halves: [], replaced: new Map() };
     const asked = [...groupIds];
-    const select = { id: true, halfOfId: true } as const;
+    const select = { id: true, halfOfId: true, replacesSubjectId: true } as const;
     const read = await tx.studentGroup.findMany({
-      where: { OR: [{ id: { in: asked } }, { halfOfId: { in: asked } }] },
+      where: {
+        OR: [
+          { id: { in: asked } },
+          { halfOfId: { in: asked } },
+          ...(subjectIds.length > 0 ? [{ replacesSubjectId: { in: [...subjectIds] } }] : []),
+        ],
+      },
       select,
     });
+    const replaced = replacedSubjectOf(
+      read.filter((group) => group.replacesSubjectId && subjectIds.includes(group.replacesSubjectId)),
+    );
     const known = new Set(read.map((group) => group.id));
     const classes = [...new Set(read.flatMap((group) => (group.halfOfId ? [group.halfOfId] : [])))];
     const unread = classes.filter((classId) => !groupIds.has(classId));
@@ -1964,7 +1985,7 @@ export class MasterLessonsService {
     const halves = [...read, ...siblings.filter((group) => !known.has(group.id))].filter(
       (group) => group.halfOfId !== null,
     );
-    const ids = [...new Set([...asked, ...halves.map((half) => half.id), ...classes])];
+    const ids = [...new Set([...asked, ...halves.map((half) => half.id), ...classes, ...replaced.keys()])];
     const add = (groupId: string, studentId: string) => {
       const set = membersOf.get(groupId);
       if (set) set.add(studentId);
@@ -1991,7 +2012,7 @@ export class MasterLessonsService {
       if (pupil.studentGroupId) add(pupil.studentGroupId, pupil.id);
     }
     for (const row of teachingGroups) add(row.studentGroupId, row.studentId);
-    return { membersOf, halves };
+    return { membersOf, halves, replaced };
   }
 
   /**
@@ -2252,13 +2273,29 @@ export class MasterLessonsService {
             ...candidateGroups,
             ...clashing.flatMap(groupsAttending),
           ]);
-    const { membersOf, halves } = await this.rosterOf(tx, basis, groupsInPlay);
-    const candidatePupils = new Set<string>();
-    for (const groupId of candidateGroups) {
-      for (const studentId of membersOf.get(groupId) ?? []) {
-        candidatePupils.add(studentId);
-      }
-    }
+    const { membersOf, halves, replaced } = await this.rosterOf(tx, basis, groupsInPlay, [
+      ...new Set([lesson.subjectId, ...clashing.map((other) => other.subjectId)]),
+    ]);
+    // Ersättande grupper (common/replacing-groups.ts): a replacing group's
+    // members are not on its subject's other lessons, so 7A's svenska and
+    // SvA7's lessons share no pupil and may sit side by side. A school with
+    // no replacing group finds none, and every answer below is as before.
+    const replacingOf = replacingBySubject(replaced);
+    const pupilsOn = (groups: Iterable<string>, subjectId: string, named: Iterable<string>): Set<string> => {
+      const scope = { subjectId, groupIds: [...groups] };
+      const pupils = new Set<string>();
+      for (const groupId of scope.groupIds) for (const studentId of membersOf.get(groupId) ?? []) pupils.add(studentId);
+      for (const studentId of replacedPupils(pupils, scope, new Set(named), replacingOf, membersOf)) pupils.delete(studentId);
+      return pupils;
+    };
+    /** The replacing groups of a lesson's subject that take pupils off it: its derived key's. */
+    const leftOut = (groups: Iterable<string>, subjectId: string): Set<string> => {
+      const on = new Set(groups);
+      return new Set((replacingOf.get(subjectId) ?? []).filter((groupId) => !on.has(groupId)));
+    };
+    const candidatePupils = pupilsOn(candidateGroups, lesson.subjectId, candidateStudents);
+    const candidateLeftOut = leftOut(candidateGroups, lesson.subjectId);
+    const groupsOfPupil = groupsOfPupils(membersOf);
     // What a class's halves add to "these share pupils" (class-halves.ts): a
     // half and its class, and a half and every group of the class's pupils
     // still placed in no half — never the two halves of one class. The
@@ -2346,15 +2383,16 @@ export class MasterLessonsService {
       } else {
         // Different groups, same pupils: 4.1 against 4ma1. The clash is the
         // pupil's, not the group's, and it is exactly as hard. A half answers
-        // for the pupils it may hold (halvesPair).
+        // for the pupils it may hold (halvesPair) — but never for the members
+        // of a group replacing either lesson's subject, who are elsewhere.
+        const otherPupils = pupilsOn(otherGroups, other.subjectId, other.participants.map((entry) => entry.studentId));
+        const otherLeftOut = leftOut(otherGroups, other.subjectId);
         const shared =
-          [...otherGroups].some((groupId) =>
-            [...(membersOf.get(groupId) ?? [])].some((studentId) =>
-              candidatePupils.has(studentId),
-            ),
-          ) ||
+          [...otherPupils].some((studentId) => candidatePupils.has(studentId)) ||
           [...candidateGroups].some((groupId) =>
-            [...otherGroups].some((otherId) => halvesPair(groupId, otherId)),
+            [...otherGroups].some(
+              (otherId) => halvesPair(groupId, otherId) && !candidateLeftOut.has(otherId) && !otherLeftOut.has(groupId),
+            ),
           );
         if (shared) {
           conflicts.push({
@@ -2380,7 +2418,13 @@ export class MasterLessonsService {
           otherStudents.has(studentId) ||
           (homeGroup !== null &&
             homeGroup !== undefined &&
-            otherGroups.has(homeGroup))
+            otherGroups.has(homeGroup) &&
+            // A named pupil's class has the other lesson, unless a replacing
+            // group of theirs takes them off it.
+            !leavesLesson(replacementsOf(groupsOfPupil.get(studentId) ?? [], replaced), {
+              subjectId: other.subjectId,
+              groupIds: [...otherGroups],
+            }))
         );
       });
       if (busyStudent) {

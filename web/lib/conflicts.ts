@@ -14,6 +14,15 @@ import type {
 import { breaksFrame, type FrameTime } from "@/lib/frame-times";
 import { spanMeetsRule, type GradeSpan } from "@/lib/grade-span";
 import { timeToMinutes } from "@/lib/utils";
+import {
+  keysShare,
+  leavesLesson,
+  pupilKeysOf,
+  replacedSubjectOf,
+  replacementsOf,
+  replacingBySubject,
+  replacingGroupsOfNamed,
+} from "@/lib/replacing-groups";
 
 /**
  * FRAME is its own kind rather than a second AVAILABILITY.
@@ -79,6 +88,12 @@ export interface Placement {
   coTeacherId?: string | null;
   roomId: string | null;
   studentGroupId: string;
+  /**
+   * The lesson's subject. Ersättande grupper (lib/replacing-groups.ts): a
+   * replacing group's members are on none of its subject's other lessons.
+   * Absent, the lesson answers for all of its groups' pupils, as before.
+   */
+  subjectId?: string;
   /** Additional classes attending. */
   extraGroupIds?: string[];
   /** Individual participating students. */
@@ -265,6 +280,7 @@ export function toPlacement(lesson: MasterLesson, buffers?: PupilBufferMap): Pla
     coTeacherId: lesson.coTeacherId,
     roomId: lesson.roomId,
     studentGroupId: lesson.studentGroupId,
+    subjectId: lesson.subjectId,
     extraGroupIds: lesson.extraGroupIds,
     studentIds: lesson.studentIds,
     recurrence: lesson.recurrence,
@@ -302,18 +318,39 @@ function pupilsOverlap(a: Placement, b: Placement): boolean {
  * the manual editor must forbid exactly what generation forbids, or a drag
  * can create the clash the solver just avoided.
  */
-export type GroupConflictMap = Map<string, Set<string>>;
+export type GroupConflictMap = Map<string, Set<string>> & {
+  /**
+   * The school's replacing groups (Ersättande grupper), when it has any: the
+   * groups beside the relation that the check reads with each lesson's subject.
+   * Absent at a school with none, and every answer is the relation's alone.
+   */
+  replacing?: ReplacingContext;
+};
+
+/** What the clash check needs to apply lib/replacing-groups.ts. */
+export interface ReplacingContext {
+  /** groupId → the subject it replaces. */
+  replaced: Map<string, string>;
+  /** subjectId → the groups replacing it. */
+  bySubject: Map<string, string[]>;
+  /** pupil → their groups, for a named pupil's replacing groups. */
+  groupsOfStudent: Map<string, Set<string>>;
+}
 
 /**
  * Build the relation from home classes and teaching-group memberships, and
  * from a class's halves (Halvklasser, src/common/class-halves.ts): a half
  * pairs with its class and with every group of the class's pupils placed in
  * no half, and never with another half of its class.
+ *
+ * `halves` is the school's groups, or any of them: the halves among them are
+ * read by halfOfId, and the groups replacing a subject (Ersättande grupper)
+ * by replacesSubjectId, which travel with the relation for the check to read.
  */
 export function buildGroupConflictMap(
   studentGroupOf: Map<string, string | null>,
   memberships: Array<{ studentId: string; studentGroupId: string }>,
-  halves: ReadonlyArray<{ id: string; halfOfId?: string | null }> = [],
+  halves: ReadonlyArray<{ id: string; halfOfId?: string | null; replacesSubjectId?: string | null }> = [],
 ): GroupConflictMap {
   const groupsByStudent = new Map<string, Set<string>>();
   const add = (studentId: string, groupId: string | null) => {
@@ -350,7 +387,37 @@ export function buildGroupConflictMap(
       if (groups.has(classId) && ![...groups].some((group) => own.has(group))) groups.forEach(pair);
     }
   }
+  const replaced = replacedSubjectOf(halves);
+  if (replaced.size > 0) {
+    relation.replacing = { replaced, bySubject: replacingBySubject(replaced), groupsOfStudent: groupsByStudent };
+  }
   return relation;
+}
+
+/**
+ * The keys a placement's groups answer for (lib/replacing-groups.ts): its
+ * groups themselves without a replacing group or without its subject.
+ */
+function keysOf(placement: Placement, relation: GroupConflictMap | undefined): string[] {
+  const groups = groupsOf(placement);
+  const replacing = relation?.replacing;
+  if (!replacing || !placement.subjectId) return groups;
+  return pupilKeysOf(
+    { subjectId: placement.subjectId, groupIds: groups },
+    replacing.bySubject,
+    (a, b) => relation.get(a)?.has(b) ?? false,
+    replacingGroupsOfNamed(placement.studentIds ?? [], (pupil) => replacing.groupsOfStudent.get(pupil) ?? [], replacing.replaced),
+  );
+}
+
+/** Is a pupil whose class is on the placement taken off it by a replacing group of theirs? */
+function elsewhere(studentId: string, placement: Placement, relation: GroupConflictMap | undefined): boolean {
+  const replacing = relation?.replacing;
+  if (!replacing || !placement.subjectId) return false;
+  return leavesLesson(replacementsOf(replacing.groupsOfStudent.get(studentId) ?? [], replacing.replaced), {
+    subjectId: placement.subjectId,
+    groupIds: groupsOf(placement),
+  });
 }
 
 function groupsShareStudents(
@@ -458,10 +525,14 @@ export function validatePlacement(
     }
     const candidateGroups = groupsOf(candidate);
     const otherGroups = groupsOf(other);
-    const groupClash =
-      candidateGroups.some((groupId) => otherGroups.includes(groupId)) ||
-      // Distinct groups, shared students: 7A vs Ma71. Same hard clash.
-      groupsShareStudents(candidateGroups, otherGroups, groupConflicts);
+    const groupClash = groupConflicts?.replacing
+      ? // Ersättande grupper: SvA7's lessons and 7A's svenska share no pupil.
+        keysOf(candidate, groupConflicts).some((a) =>
+          keysOf(other, groupConflicts).some((b) => keysShare(a, b, (x, y) => groupConflicts.get(x)?.has(y) ?? false)),
+        )
+      : candidateGroups.some((groupId) => otherGroups.includes(groupId)) ||
+        // Distinct groups, shared students: 7A vs Ma71. Same hard clash.
+        groupsShareStudents(candidateGroups, otherGroups, groupConflicts);
 
     // Individual participants: busy when their own class attends the other
     // lesson, when they attend it individually, or symmetric.
@@ -471,11 +542,11 @@ export function validatePlacement(
       candidateStudents.some((studentId) => {
         if (otherStudents.includes(studentId)) return true;
         const home = studentGroupOf?.get(studentId);
-        return Boolean(home && otherGroups.includes(home));
+        return Boolean(home && otherGroups.includes(home)) && !elsewhere(studentId, other, groupConflicts);
       }) ||
       otherStudents.some((studentId) => {
         const home = studentGroupOf?.get(studentId);
-        return Boolean(home && candidateGroups.includes(home));
+        return Boolean(home && candidateGroups.includes(home)) && !elsewhere(studentId, candidate, groupConflicts);
       });
 
     // One clash with this lesson is one hit, whichever check found it. The

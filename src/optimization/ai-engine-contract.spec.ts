@@ -169,6 +169,19 @@ const REQUIREMENT_FIELDS_BLOCKED = [...REQUIREMENT_FIELDS_DISTRIBUTED, 'blockId'
  */
 const REQUIREMENT_FIELDS_SHARED = [...REQUIREMENT_FIELDS_BLOCKED, 'lessonTeacherIds'].sort();
 
+/**
+ * Ersättande grupper: a requirement a replacing group's members leave (7A's
+ * svenska beside SvA7) carries the derived key its pupils answer for; every
+ * other one never does. optimization-engine/tests/test_optimize.py's
+ * `_field_names(AnonymousRequirement)` must equal THIS set, and its
+ * `_field_names(FixedLesson)` FIXED_LESSON_FIELDS_REPLACED below.
+ */
+const REQUIREMENT_FIELDS_REPLACED = [...REQUIREMENT_FIELDS_SHARED, 'pupilGroupId'].sort();
+
+/** A locked lesson as the engine is told it; `pupilGroupIds` only beside a replacing group. */
+const FIXED_LESSON_FIELDS = ['coTeacherId', 'dayOfWeek', 'endTime', 'extraGroupIds', 'id', 'roomId', 'startTime', 'studentGroupId', 'teacherId'];
+const FIXED_LESSON_FIELDS_REPLACED = [...FIXED_LESSON_FIELDS, 'pupilGroupIds'].sort();
+
 /** No resourceId: a year range names no resource, and sending one is refused. */
 const GRADE_CONSTRAINT_FIELDS = [
   'date',
@@ -759,14 +772,22 @@ describe('AI engine wire contract', () => {
     expect(Object.keys(requirements[0]!).sort()).toEqual(REQUIREMENT_FIELDS);
   });
 
-  it('names the engine’s whole requirement set, the shared post’s key included', () => {
-    expect(REQUIREMENT_FIELDS_SHARED).toEqual(
+  it('names the engine’s whole requirement set, the shared post’s and the replaced lesson’s keys included', () => {
+    expect(REQUIREMENT_FIELDS_REPLACED).toEqual(
       [
         'blockId', 'coTeacherId', 'id', 'lessonLengths', 'lessonTeacherIds', 'lessonsPerWeek', 'lockedDays',
         'maxGradeLevel', 'maxLessonsPerDay', 'minDaysBetween', 'minGradeLevel', 'minutesAfter', 'minutesBefore',
-        'minutesPerLesson', 'requiredRoomType', 'studentGroupId', 'studentGroupSize', 'subjectId', 'teacherId',
+        'minutesPerLesson', 'pupilGroupId', 'requiredRoomType', 'studentGroupId', 'studentGroupSize', 'subjectId',
+        'teacherId',
       ],
     );
+  });
+
+  it('names the engine’s whole locked-lesson set, the replaced lesson’s key included', () => {
+    expect(FIXED_LESSON_FIELDS_REPLACED).toEqual([
+      'coTeacherId', 'dayOfWeek', 'endTime', 'extraGroupIds', 'id', 'pupilGroupIds', 'roomId', 'startTime',
+      'studentGroupId', 'teacherId',
+    ]);
   });
 
   it('delade lektioner: sends each lesson of a shared post its own teacher, and writes each lesson with it', async () => {
@@ -857,6 +878,8 @@ describe('AI engine wire contract', () => {
     expect(requirements[0]!['lessonsPerWeek']).toBe(1);
     // The scalar is Bo, not the post's lead: the fixed lessons are Anna's.
     const fixed = payload['fixedLessons'] as Array<Record<string, unknown>>;
+    // A locked lesson beside no replacing group: the shape it always had.
+    expect(Object.keys(fixed[0]!).sort()).toEqual(FIXED_LESSON_FIELDS);
     expect(fixed.map((lesson) => lesson['teacherId'])).not.toContain(requirements[0]!['teacherId']);
     // And the lesson is written Bo's: a post sent with one teacher who is not
     // its lead is that teacher's, never stamped with the lead.

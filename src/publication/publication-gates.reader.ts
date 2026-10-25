@@ -157,6 +157,17 @@ export async function clashFinding(
   const halfClassIds = new Set(classes);
   const allHalves = yearHalves.filter((half) => halfClassIds.has(half.halfOfId));
   groupIds.push(...[...classes, ...allHalves.map((half) => half.id)].filter((id) => !inPlay.has(id)));
+  // Ersättande grupper: the year's groups replacing a subject, and their
+  // members with every other group's, so SvA7 beside 7A's svenska is no
+  // double booking (replacing-groups.ts) — as the board and the generator see it.
+  const replacing = (
+    (await tx.studentGroup.findMany({
+      where: { academicYearId, replacesSubjectId: { not: null } },
+      select: { id: true, replacesSubjectId: true },
+    })) ?? []
+  ).flatMap((group) => (group.replacesSubjectId ? [{ id: group.id, replacesSubjectId: group.replacesSubjectId }] : []));
+  const known = new Set(groupIds);
+  groupIds.push(...replacing.map((group) => group.id).filter((id) => !known.has(id)));
   // Active STUDENTs, on both sides, as the generator and the hand edit read
   // them: a pupil who left a split class unplaced would otherwise pair both
   // halves with all their groups at every publish, on the generator's own
@@ -195,6 +206,7 @@ export async function clashFinding(
     memberships,
     pupilBuffers: buffers,
     halves: allHalves,
+    ...(replacing.length > 0 ? { replacing } : {}),
   });
   const byId = new Map(placed.map((lesson) => [lesson.id, lesson]));
   const pairs = clashPairs(clashes);
