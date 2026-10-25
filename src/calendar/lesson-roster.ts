@@ -1,5 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
-import { replacedPupils, replacingBySubject, yearsOf } from '../common/replacing-groups';
+import { keptByOf, replacedPupils, replacingBySubject, yearsOf } from '../common/replacing-groups';
 
 /**
  * WHO ATTENDS A LESSON: one reader, for every caller.
@@ -15,11 +15,15 @@ import { replacedPupils, replacingBySubject, yearsOf } from '../common/replacing
  *   3. the pupils named on the lesson itself (CalendarLessonStudents,
  *      MasterLessonStudents);
  *
- * less the pupils a replacing group takes off it (Ersättande grupper,
- * common/replacing-groups.ts): a member of a group replacing the lesson's
- * subject (SvA7 replaces Svenska), in the läsår of the lesson's own group,
- * that is not one of the lesson's groups, and who is not named on it. So 7A's svenska does not list 7A's SvA pupils, and
- * the register, the notices and the broadcast agree that they are at SvA.
+ * less, for ACTIVE, the pupils a replacing group takes off it (Ersättande
+ * grupper, common/replacing-groups.ts): a member of a group replacing the
+ * lesson's subject (SvA7 replaces Svenska), in the läsår of the lesson's own
+ * group, none of whose groups replacing it is on the lesson, who is not in
+ * the lesson's own teaching group and not named on it. So 7A's svenska does
+ * not list 7A's SvA pupils, and the register, the notices and the broadcast
+ * agree that they are at SvA. RECORDED takes nobody off (see RosterOptions),
+ * and a lesson whose own group's läsår cannot be read takes nobody off
+ * either: no answer is better than last year's.
  *
  * The attendance check asks it, and so do the register's list (GET
  * attendance/lessons/:id/roster, which the web register and the teacher app
@@ -69,6 +73,11 @@ export interface RosterOptions {
    * status, which is what a register may name. A batch queued on a teacher's
    * phone must still drain after the pupil has been deactivated, and being
    * wrongly listed in a group is a catalogue problem, not a forged register.
+   * It is a superset of ACTIVE: no replacing group takes anyone off it. A
+   * membership carries no dates, so marking SvA7 as replacing Svenska would
+   * otherwise refuse every queued batch and every correction naming its
+   * pupils on class svenska, past lessons included, while the marks already
+   * made still count in reports and SS12000.
    */
   pupils: 'ACTIVE' | 'RECORDED';
   /**
@@ -108,12 +117,12 @@ export function scopeOf(lesson: {
 }
 
 /**
- * The roster of each scope, in the order given. Four statements however
- * many lessons there are (home classes, teaching-group members, the groups
- * replacing the scopes' subjects, and, for ACTIVE, which named pupils are
- * active pupils) and two more only when a replacing group exists (its
- * members, and the läsår of the scopes' own groups): an avbokning of a whole
- * school's week asks no more than one lesson does.
+ * The roster of each scope, in the order given. Two statements however
+ * many lessons there are (home classes and teaching-group members), and for
+ * ACTIVE two more (which named pupils are active pupils, and the groups
+ * replacing the scopes' subjects) and another two only when a replacing
+ * group exists (its members, and the scopes' own groups): an avbokning of a
+ * whole school's week asks no more than one lesson does.
  */
 export async function rostersOf(tx: Tx, scopes: readonly RosterScope[], options: RosterOptions): Promise<Set<string>[]> {
   const among = options.among ? new Set(options.among) : null;
@@ -158,23 +167,26 @@ export async function rostersOf(tx: Tx, scopes: readonly RosterScope[], options:
   // members among the asked. A school with none reads one empty answer and
   // gets the rosters it got before.
   const subjectIds = [...new Set(scopes.map((scope) => scope.subjectId))];
-  const replacing =
-    ((await tx.studentGroup.findMany({
-      where: { replacesSubjectId: { in: subjectIds } },
-      select: { id: true, replacesSubjectId: true, academicYearId: true },
-    })) ?? []) as { id: string; replacesSubjectId: string | null; academicYearId: string }[];
-  // The läsår of each scope's own group, beside the replacing groups' own: a
-  // group replacing Svenska last year takes nobody off this year's svenska
-  // (the rollover keeps last year's memberships as history). Read only when
+  const replacing = !active
+    ? []
+    : (((await tx.studentGroup.findMany({
+        where: { replacesSubjectId: { in: subjectIds } },
+        select: { id: true, replacesSubjectId: true, academicYearId: true },
+      })) ?? []) as { id: string; replacesSubjectId: string | null; academicYearId: string }[]);
+  // Each scope's own group: its läsår, beside the replacing groups' own (a
+  // group replacing Svenska last year takes nobody off this year's svenska;
+  // the rollover keeps last year's memberships as history), and whether it is
+  // a teaching group whose members keep the lesson (keptByOf). Read only when
   // some group replaces a scope's subject.
   const ownGroups =
     replacing.length === 0
       ? []
       : (((await tx.studentGroup.findMany({
           where: { id: { in: [...new Set(scopes.map((scope) => scope.groupIds[0]).filter((id): id is string => !!id))] } },
-          select: { id: true, academicYearId: true },
-        })) ?? []) as { id: string; academicYearId: string }[]);
+          select: { id: true, academicYearId: true, kind: true, halfOfId: true },
+        })) ?? []) as { id: string; academicYearId: string; kind: string; halfOfId: string | null }[]);
   const yearOf = yearsOf([...replacing, ...ownGroups]);
+  const ownById = new Map(ownGroups.map((group) => [group.id, group]));
   const replacingMembers =
     replacing.length === 0
       ? []
@@ -201,20 +213,31 @@ export async function rostersOf(tx: Tx, scopes: readonly RosterScope[], options:
   };
   for (const row of homeClass) add(row.studentGroupId, row.id);
   for (const row of teachingGroups) add(row.studentGroupId, row.studentId);
+  const membersOfTeaching = new Map<string, Set<string>>();
+  for (const row of teachingGroups) {
+    const members = membersOfTeaching.get(row.studentGroupId);
+    if (members) members.add(row.studentId);
+    else membersOfTeaching.set(row.studentGroupId, new Set([row.studentId]));
+  }
 
   return scopes.map((scope) => {
     const roster = new Set<string>();
     for (const groupId of scope.groupIds) for (const studentId of byGroup.get(groupId) ?? []) roster.add(studentId);
     for (const studentId of scope.participantIds) if (namedPupils.has(studentId)) roster.add(studentId);
-    if (replacing.length > 0) {
-      const own = scope.groupIds[0];
-      const year = own === undefined ? undefined : yearOf.get(own);
+    const own = scope.groupIds[0];
+    const year = own === undefined ? undefined : yearOf.get(own);
+    if (replacing.length > 0 && year !== undefined) {
+      const keptBy = keptByOf(ownById.get(own!));
+      const membersOf =
+        keptBy === undefined
+          ? membersOfReplacing
+          : new Map([...membersOfReplacing, [keptBy, membersOfTeaching.get(keptBy) ?? new Set<string>()]]);
       for (const studentId of replacedPupils(
         roster,
-        year === undefined ? scope : { ...scope, academicYearId: year },
+        { ...scope, academicYearId: year, ...(keptBy === undefined ? {} : { keptBy }) },
         new Set(scope.participantIds),
         bySubject,
-        membersOfReplacing,
+        membersOf,
         yearOf,
       )) {
         roster.delete(studentId);

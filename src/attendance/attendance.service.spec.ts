@@ -547,6 +547,37 @@ describe('AttendanceService', () => {
       ).resolves.toEqual({ created: 1, updated: 0 });
     });
 
+    it('accepts a mark on class svenska for a pupil a replacing group takes off it: a queued batch drains, an old mark is corrected', async () => {
+      // Ersättande grupper: SvA7 replaces the lesson's subject and holds
+      // Student A, so the register's list (ACTIVE) leaves A out. What a
+      // register may NAME (RECORDED) is a superset of it: a membership has no
+      // dates, so marking SvA7 as replacing would otherwise refuse a batch
+      // queued before it, and every correction to a mark A already has.
+      const SVA7 = '11111111-1111-4111-8111-cccccccccccc';
+      const SVENSKA = '99999999-9999-4999-8999-999999999999';
+      storeLesson({ subjectId: SVENSKA });
+      arrangeUsers({ homeClass: [STUDENT_A, STUDENT_B] });
+      tx.studentGroup.findMany.mockResolvedValue([
+        { id: SVA7, replacesSubjectId: SVENSKA, academicYearId: 'y', kind: 'TEACHING_GROUP', halfOfId: null },
+        { id: PRIMARY_GROUP, replacesSubjectId: null, academicYearId: 'y', kind: 'CLASS', halfOfId: null },
+      ]);
+      tx.studentGroupMember.findMany.mockImplementation((query: Query) =>
+        answerRows([{ studentId: STUDENT_A, studentGroupId: SVA7 }])(query),
+      );
+
+      await expect(
+        service.reportAttendance(
+          dto([
+            { studentId: STUDENT_A, status: 'PRESENT' as never },
+            { studentId: STUDENT_B, status: 'ABSENT' as never },
+          ]),
+          teacher(),
+        ),
+      ).resolves.toEqual({ created: 2, updated: 0 });
+      // The check never asks which groups replace a subject.
+      expect(tx.studentGroup.findMany).not.toHaveBeenCalled();
+    });
+
     it('rejects a student on none of the membership sources, naming the id', async () => {
       arrangeUsers({ homeClass: [] });
 
