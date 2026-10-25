@@ -17,6 +17,7 @@ import {
   useGroups,
   usePeople,
   useSetGroupMembers,
+  useSubjects,
 } from "@/lib/queries";
 import type { StudentGroup } from "@/lib/types";
 import { GROUP_WRITE_KEYS } from "@/lib/projected-rosters";
@@ -63,7 +64,12 @@ interface GroupForm {
   gradeLevel: string;
   kind: "CLASS" | "TEACHING_GROUP";
   academicYearId: string;
+  /** Ersättande grupper: the subject it replaces, NO_SUBJECT for none. */
+  replacesSubjectId: string;
 }
+
+/** The select's "replaces nothing": a Radix select item cannot carry "". */
+const NO_SUBJECT = "__none__";
 
 /**
  * Klasser: every läsår's groups in one list, with a Läsår column.
@@ -87,11 +93,14 @@ export default function GroupsPage() {
   const years = useMemo(() => yearsQuery.data ?? [], [yearsQuery.data]);
   const peopleQuery = usePeople();
   const people = peopleQuery.data;
+  const subjectsQuery = useSubjects();
+  const subjects = subjectsQuery.data;
   const mutations = useCrudMutations<{
     name: string;
     gradeLevel?: number | null;
     kind?: "CLASS" | "TEACHING_GROUP";
     academicYearId: string;
+    replacesSubjectId?: string | null;
   }>("/api/v1/student-groups", GROUP_WRITE_KEYS);
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -176,7 +185,10 @@ export default function GroupsPage() {
     gradeLevel: "",
     kind: "CLASS",
     academicYearId: "",
+    replacesSubjectId: NO_SUBJECT,
   });
+  /** Subject id → its name, for the "Ersätter Svenska" badge. */
+  const subjectNames = useMemo(() => new Map((subjects ?? []).map((subject) => [subject.id, subject.name])), [subjects]);
 
   // Group id → the people in it, so the search below can find a group by the
   // name of a student in it. See lib/group-sections.ts.
@@ -229,7 +241,7 @@ export default function GroupsPage() {
 
   const openCreate = () => {
     setEditing(null);
-    setForm({ name: "", gradeLevel: "", kind: "CLASS", academicYearId: defaultYearId });
+    setForm({ name: "", gradeLevel: "", kind: "CLASS", academicYearId: defaultYearId, replacesSubjectId: NO_SUBJECT });
     setDialogOpen(true);
   };
 
@@ -240,17 +252,29 @@ export default function GroupsPage() {
       gradeLevel: group.gradeLevel !== null ? String(group.gradeLevel) : "",
       kind: group.kind,
       academicYearId: group.academicYearId,
+      replacesSubjectId: group.replacesSubjectId ?? NO_SUBJECT,
     });
     setDialogOpen(true);
   };
 
+  /*
+   * Ersättande grupper: only a teaching group that is not a half may replace a
+   * subject (the API's 400, the database's CHECK). The field shows only then.
+   */
+  const mayReplace = form.kind === "TEACHING_GROUP" && !editing?.halfOfId;
+
   const submit = async () => {
     const gradeLevel = form.gradeLevel.trim() === "" ? null : Number(form.gradeLevel);
+    const replaces = mayReplace && form.replacesSubjectId !== NO_SUBJECT ? form.replacesSubjectId : null;
     const body = {
       name: form.name.trim(),
       gradeLevel: gradeLevel !== null && Number.isFinite(gradeLevel) ? gradeLevel : null,
       kind: form.kind,
       academicYearId: form.academicYearId,
+      // Sent when it is set, or to clear what the group replaced (a group
+      // made a class lets go of its subject in the same save); a group that
+      // replaces nothing saves the body it always did.
+      ...(replaces !== null || editing?.replacesSubjectId ? { replacesSubjectId: replaces } : {}),
     };
     try {
       if (editing) {
@@ -492,6 +516,11 @@ export default function GroupsPage() {
                             {t("halves.badge", { name: groupById.get(group.halfOfId)?.name ?? "" })}
                           </Badge>
                         ) : null}
+                        {group.replacesSubjectId ? (
+                          <Badge variant="outline">
+                            {t("replacesBadge", { subject: subjectNames.get(group.replacesSubjectId) ?? "…" })}
+                          </Badge>
+                        ) : null}
                         {group.gradeLevel !== null ? (
                           <Badge variant="secondary">
                             {tYears("gradeShort", { grade: group.gradeLevel })}
@@ -593,6 +622,28 @@ export default function GroupsPage() {
                 />
               </FormField>
             </div>
+            {mayReplace ? (
+              <FormField id="group-replaces" label={t("replacesLabel")} hint={t("replacesHelp")} optional>
+                {(control) => (
+                  <Select
+                    value={form.replacesSubjectId}
+                    onValueChange={(value) => setForm({ ...form, replacesSubjectId: value })}
+                  >
+                    <SelectTrigger {...control}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NO_SUBJECT}>{t("replacesNone")}</SelectItem>
+                      {(subjects ?? []).map((subject) => (
+                        <SelectItem key={subject.id} value={subject.id}>
+                          {subject.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </FormField>
+            ) : null}
             <FormField id="group-year" label={t("year")}>
               {(control) => (
                 <Select
