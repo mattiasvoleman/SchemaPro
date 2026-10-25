@@ -44,6 +44,7 @@ import { canonicalShares, hasShares, lessonTeachersOf, type LessonShare } from '
 import { effectiveDistribution, hasDistributionRule, type DistributionRule } from '../common/subject-distribution';
 import { minutesOf } from '../common/solver-grid';
 import {
+  keptByOf,
   parseDerivedKey,
   pupilKeyOf,
   pupilKeysOf,
@@ -2294,8 +2295,15 @@ export class OptimizationProxyService {
         }
       }
       const shares = (a: string, b: string) => partners.get(a)?.has(b) ?? false;
+      // A teaching group (not a half) keeps its members on its own lessons
+      // (keptByOf): Svenska fördjupning answers for itself, SvA pupils and all.
+      const groupById = new Map(allGroups.map((group) => [group.id, group]));
+      const scopeOf = (subjectId: string, groupIds: string[]) => {
+        const keptBy = keptByOf(groupById.get(groupIds[0]!));
+        return { subjectId, groupIds, ...(keptBy === undefined ? {} : { keptBy }) };
+      };
       for (const r of rawRequirements) {
-        const key = pupilKeyOf(r.studentGroupId, { subjectId: r.subjectId, groupIds: [r.studentGroupId] }, replacingOf, shares);
+        const key = pupilKeyOf(r.studentGroupId, scopeOf(r.subjectId, [r.studentGroupId]), replacingOf, shares);
         if (key !== r.studentGroupId) pupilKeyByRequirement.set(r.id, key);
       }
       for (const lesson of preservedLessons) {
@@ -2307,7 +2315,7 @@ export class OptimizationProxyService {
           (pupil) => groupsByStudent.get(pupil) ?? [],
           replacedSubjects,
         );
-        const keys = pupilKeysOf({ subjectId: lesson.subjectId, groupIds }, replacingOf, shares, namedIn);
+        const keys = pupilKeysOf(scopeOf(lesson.subjectId, groupIds), replacingOf, shares, namedIn);
         if (keys.some((key, index) => key !== groupIds[index])) pupilKeysByLesson.set(lesson.id, keys);
       }
       const derived = [...pupilKeyByRequirement.values(), ...[...pupilKeysByLesson.values()].flat()];
