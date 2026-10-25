@@ -358,6 +358,17 @@ describe('StudentGroupsService', () => {
       expect(tx.studentGroup.update).toHaveBeenLastCalledWith({ where: { id: GROUP_ID }, data: { replacesSubjectId: null } });
     });
 
+    it('refuses turning a teaching group into a class in the same PATCH that makes it replace, by the new kind', async () => {
+      // The group is a teaching group now; the PATCH makes it a class AND a
+      // replacing group. The kind it is judged by is the one it will have.
+      tx.subject.findUnique.mockResolvedValue({ id: SUBJECT_ID });
+      tx.studentGroup.findUnique.mockResolvedValueOnce({ kind: 'TEACHING_GROUP', halfOfId: null });
+      await expect(service.update(GROUP_ID, { kind: 'CLASS', replacesSubjectId: SUBJECT_ID }, testUser())).rejects.toMatchObject({
+        response: { code: 'REPLACING_GROUP_NOT_A_TEACHING_GROUP' },
+      });
+      expect(tx.studentGroup.update).not.toHaveBeenCalled();
+    });
+
     it('answers the CHECK’s refusal of a class that keeps replacing with a 400 naming the field', async () => {
       tx.studentGroup.update.mockRejectedValue(
         new Prisma.PrismaClientKnownRequestError('check', {
