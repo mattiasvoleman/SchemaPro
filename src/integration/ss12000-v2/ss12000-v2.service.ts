@@ -1,9 +1,10 @@
 import { unitSpanIn } from '../../common/grade-numbering';
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { inTurn } from './in-turn';
 import type { PrismaClient } from '@prisma/client';
 import { recordRead, type AccessKind } from '../../access-log/access-log';
 import { PrismaService } from '../../database/prisma.service';
+import { huvudmanRefusal } from '../../huvudman/huvudman-errors';
 import { todayInZone } from '../../common/utils/time';
 import { adhocActivityId, normaliseUuid } from './ids';
 import { v2Errors } from './errors';
@@ -51,6 +52,13 @@ export interface V2Caller {
   schoolId: string;
   keyId: string;
   scopes: ReadonlySet<Scope>;
+  /**
+   * Huvudman (20261212090000): the key is a huvudman's, reading this one
+   * school of its own (Ss12000HuvudmanReads). The school is opened for the
+   * key by the database, which refuses a school the huvudman does not own,
+   * and no app.service_key_id is set: that names a school's own key.
+   */
+  viaHuvudman?: true;
 }
 
 export interface V2Page<T> {
@@ -318,17 +326,24 @@ export class Ss12000V2Service {
   constructor(private readonly prisma: PrismaService) {}
 
   private async run<T>(caller: V2Caller, params: Params, fn: (model: Model) => Promise<T>): Promise<T> {
-    return this.prisma.withServicePrincipal(
-      caller.schoolId,
-      async (tx) => {
-        const school = await (tx as PrismaClient).school.findUnique({ where: { id: caller.schoolId }, select: { timezone: true } });
-        const today = dayOf(todayInZone(school?.timezone ?? 'Europe/Stockholm'));
-        const slice = new SchoolSlice(tx as PrismaClient, caller.schoolId, today);
-        const reach: Reach = { scopes: caller.scopes, names: flag(params, 'expandReferenceNames') };
-        return fn(await Model.load(slice, reach));
-      },
-      { keyId: caller.keyId, timeoutMs: 30_000 },
-    );
+    const work = async (tx: PrismaClient) => {
+      const school = await tx.school.findUnique({ where: { id: caller.schoolId }, select: { timezone: true } });
+      const today = dayOf(todayInZone(school?.timezone ?? 'Europe/Stockholm'));
+      const slice = new SchoolSlice(tx, caller.schoolId, today);
+      const reach: Reach = { scopes: caller.scopes, names: flag(params, 'expandReferenceNames') };
+      return fn(await Model.load(slice, reach));
+    };
+    if (caller.viaHuvudman) {
+      try {
+        return await this.prisma.withHuvudmanKeyPrincipal(caller.keyId, caller.schoolId, work, { timeoutMs: 30_000 });
+      } catch (error) {
+        // The school left the huvudman, or the key was revoked, after the
+        // guard read them: the next request reads what holds then.
+        if (huvudmanRefusal(error) instanceof ForbiddenException) throw v2Errors.huvudmanChanged();
+        throw error;
+      }
+    }
+    return this.prisma.withServicePrincipal(caller.schoolId, work, { keyId: caller.keyId, timeoutMs: 30_000 });
   }
 
   /**

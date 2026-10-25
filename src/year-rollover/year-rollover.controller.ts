@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AnyAdministrator, Area, Decides } from '../auth/decorators/area.decorator';
+import { ReadsOnly } from '../auth/huvudman-reader';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -105,6 +106,8 @@ export class YearRolloverController {
   // the läsare among them (Läsbehörighet), so it asks no area.
   @Post(':id/activation/preview')
   @AnyAdministrator('a preview that writes nothing: the pending moves /admin/years shows every administrator')
+  // The huvudman's reader reads /admin/years as the läsare does (Huvudman).
+  @ReadsOnly('a preview that writes nothing')
   @HttpCode(HttpStatus.OK)
   previewActivation(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,

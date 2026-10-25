@@ -319,6 +319,17 @@ jobs:
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
         run: npx ts-node --transpile-only scripts/test/prisma-adapter-probe.ts
 
+      # Huvudman (20261212090000): every GET a school administrator reaches,
+      # through the real gateway and this database, as the roller school's
+      # own läsare and as the huvudman's reader with that school chosen. Each
+      # answers both alike (status, shape, lengths), or is named in the spec's
+      # DIFFERS with why; a route that answers the reader otherwise fails here.
+      # The spec runs only with a database, which this job is the one to have.
+      - name: Huvudman's reader against the läsare (every GET)
+        env:
+          HUVUDMAN_SWEEP_DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
+        run: TZ=UTC npx jest test/huvudman-gets.e2e-spec.ts --selectProjects e2e
+
       - name: Database logs
         if: failure()
         run: docker compose logs db --no-color --tail=100

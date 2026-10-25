@@ -30,6 +30,7 @@ import { DatabaseModule } from '../../src/database/database.module';
 import { HttpExceptionFilter } from '../../src/common/filters/http-exception.filter';
 import { WindowedThrottlerStorage } from '../../src/common/windowed-throttler-storage';
 import { RolesGuard } from '../../src/auth/roles.guard';
+import { HuvudmanGuard } from '../../src/auth/huvudman.guard';
 import { IS_PUBLIC_KEY } from '../../src/auth/decorators/public.decorator';
 import { NotificationsModule } from '../../src/notifications/notifications.module';
 import { AttendanceModule } from '../../src/attendance/attendance.module';
@@ -54,6 +55,8 @@ import { LessonLogModule } from '../../src/lesson-log/lesson-log.module';
 import { SupervisionModule } from '../../src/supervision/supervision.module';
 import { GallringModule } from '../../src/gallring/gallring.module';
 import { CalendarFeedModule } from '../../src/calendar-feed/calendar-feed.module';
+import { HuvudmanModule } from '../../src/huvudman/huvudman.module';
+import { AccessLogModule } from '../../src/access-log/access-log.module';
 import { JwtAuthGuard } from '../../src/auth/jwt-auth.guard';
 import { PrismaService } from '../../src/database/prisma.service';
 import { RealtimeService } from '../../src/realtime/realtime.service';
@@ -135,7 +138,7 @@ class HeaderAuthGuard implements CanActivate {
 class TestRealtimeModule {}
 
 /** The feature modules, in the order AppModule declares them. */
-const FEATURE_MODULES = [
+export const FEATURE_MODULES = [
   // Test-only, and behaviour-free: it exposes the routing table so
   // route-guards.e2e-spec.ts can assert over every route rather than the
   // handful somebody remembered to write a spec for.
@@ -170,11 +173,14 @@ const FEATURE_MODULES = [
   // registers nothing, so the controller is routed and no timer starts.
   GallringModule,
   SignInModule,
+  HuvudmanModule,
+  AccessLogModule,
 ];
 
 /** Everything global AppModule applies, minus the throttler (see below). */
-const GLOBAL_PROVIDERS = [
+export const GLOBAL_PROVIDERS = [
   { provide: APP_GUARD, useClass: HeaderAuthGuard },
+  { provide: APP_GUARD, useClass: HuvudmanGuard },
   { provide: APP_GUARD, useClass: RolesGuard },
   {
     provide: APP_PIPE,
@@ -230,6 +236,8 @@ export interface SupabaseAdminMock {
   changeUserEmail: jest.Mock;
   deleteUser: jest.Mock;
   deleteOwnedUser: jest.Mock;
+  /** Huvudman: the mark on a member's login (SupabaseAdminService.markHuvudman). */
+  markHuvudman: jest.Mock;
 }
 
 /** Stand-in for the outbound call to the CP-SAT service. */
@@ -241,6 +249,8 @@ export interface HttpServiceMock {
 export interface TestHarness {
   app: INestApplication;
   tx: TxMock;
+  /** The PrismaService stand-in, for a spec that asks which principal a read took. */
+  prisma: ReturnType<typeof createPrismaMock>;
   http: HttpServiceMock;
   supabase: SupabaseAdminMock;
   close: () => Promise<void>;
@@ -299,6 +309,7 @@ export async function createTestApp(
     changeUserEmail: jest.fn(async () => ({ outcome: 'unchanged', confirmed: true })),
     deleteUser: jest.fn(async () => undefined),
     deleteOwnedUser: jest.fn(async () => 'deleted'),
+    markHuvudman: jest.fn(async () => undefined),
   };
 
   const builder: TestingModuleBuilder = Test.createTestingModule({
@@ -325,6 +336,7 @@ export async function createTestApp(
   return {
     app,
     tx: txProxy,
+    prisma: prismaMock,
     http,
     supabase,
     close: async () => {

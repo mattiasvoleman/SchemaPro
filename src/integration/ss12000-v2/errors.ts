@@ -65,6 +65,10 @@ export const v2Errors = {
   webhookSecretMissing: () => new Ss12000V2Error(409, 'WEBHOOK_SECRET_MISSING', 'Skolan har inte skapat någon signeringsnyckel för den här nyckeln ännu.'),
   subscriptionLimit: () => new Ss12000V2Error(409, 'SUBSCRIPTION_LIMIT', 'Nyckeln har redan tio aktiva prenumerationer.'),
   tooMany: () => new Ss12000V2Error(429, 'TOO_MANY_REQUESTS', 'För många anrop med den här nyckeln; försök igen om en stund.'),
+  notASchoolKey: () =>
+    new Ss12000V2Error(403, 'NOT_A_SCHOOL_KEY', 'Prenumerationer hör till en skolas egna nycklar. En huvudmans nyckel läser bara.'),
+  huvudmanChanged: () =>
+    new Ss12000V2Error(409, 'HUVUDMAN_CHANGED', 'Huvudmannens skolor eller nyckeln ändrades under anropet; försök igen.'),
   tooLarge: () => new Ss12000V2Error(503, 'TOO_LARGE', 'Svaret är för stort; använd limit och pageToken eller ett snävare urval.'),
 } as const;
 

@@ -739,6 +739,15 @@ describe('SupervisionService', () => {
       await expect(service.week('2026-10-19', '2026-11-02', me)).rejects.toBeInstanceOf(BadRequestException);
       await expect(service.week('2026-10-19', '2026-11-01', me)).resolves.toMatchObject({ passes: [] });
     });
+
+    it("answers the huvudman's reader, who has no row at the school, an empty week, and keeps the range", async () => {
+      const reader = testUser({ role: 'SCHOOL_ADMIN' as never, userId: undefined, huvudman: { id: 'h', name: 'Kommunen', memberId: 'member', role: 'PLANERARE', firstName: 'P', lastName: 'Planerare' } as never });
+      await expect(service.week('2026-10-19', '2026-10-25', reader)).resolves.toEqual({ from: '2026-10-19', to: '2026-10-25', passes: [] });
+      expect(tx.supervisionShift.findMany).not.toHaveBeenCalled();
+      await expect(service.week('2026-10-25', '2026-10-19', reader)).rejects.toBeInstanceOf(BadRequestException);
+      // Anybody else without a row is refused, as before.
+      await expect(service.week('2026-10-19', '2026-10-25', testUser({ role: 'SCHOOL_ADMIN' as never, userId: undefined }))).rejects.toThrow();
+    });
   });
 
   describe('the schedule', () => {

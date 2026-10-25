@@ -23,6 +23,7 @@ import { ImportModule } from './import/import.module';
 import { IntegrationModule } from './integration/integration.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { RolesGuard } from './auth/roles.guard';
+import { HuvudmanGuard } from './auth/huvudman.guard';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { WindowedThrottlerStorage } from './common/windowed-throttler-storage';
 import { OptimizationModule } from './optimization/optimization.module';
@@ -40,6 +41,7 @@ import { CoverModule } from './cover/cover.module';
 import { GallringModule } from './gallring/gallring.module';
 import { AccessLogModule } from './access-log/access-log.module';
 import { SchoolUnitsModule } from './school-units/school-units.module';
+import { HuvudmanModule } from './huvudman/huvudman.module';
 import { SitesModule } from './sites/sites.module';
 import { LessonLogModule } from './lesson-log/lesson-log.module';
 import { SupervisionModule } from './supervision/supervision.module';
@@ -59,6 +61,7 @@ import type { ThrottleConfig } from './config/configuration';
  * | Background jobs          | `JobsModule` (global JobRunner)               | Global |
  * | JWT authentication       | `AuthModule` (JwtStrategy + PassportModule)   | Global |
  * | Authentication guard     | `JwtAuthGuard` via APP_GUARD                  | Global |
+ * | Huvudman's member guard  | `HuvudmanGuard` via APP_GUARD                 | Global |
  * | RBAC guard               | `RolesGuard` via APP_GUARD                    | Global |
  * | Rate limiting            | `ThrottlerModule` + `ThrottlerGuard`          | Global |
  * | Input validation         | `ValidationPipe` via APP_PIPE                 | Global |
@@ -137,6 +140,7 @@ import type { ThrottleConfig } from './config/configuration';
     GallringModule,
     AccessLogModule,
     SchoolUnitsModule,
+    HuvudmanModule,
     SitesModule,
     LessonLogModule,
     SupervisionModule,
@@ -149,6 +153,12 @@ import type { ThrottleConfig } from './config/configuration';
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
+    },
+    // Huvudman: a member with no school named reaches the huvudman's own
+    // routes and /me, and nothing else, before RolesGuard.
+    {
+      provide: APP_GUARD,
+      useClass: HuvudmanGuard,
     },
     {
       provide: APP_GUARD,

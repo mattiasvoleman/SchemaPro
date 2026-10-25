@@ -13,6 +13,7 @@ import type { Server, Socket } from 'socket.io';
 import type { UserRole } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
+import { huvudmanReaderOf } from '../auth/huvudman-reader';
 import { SCHOOL_HEADER, closedSchoolsOf, schoolChoiceOf } from '../auth/school-choice';
 import {
   COVER_BOARD_UPDATED_EVENT,
@@ -32,6 +33,11 @@ interface SocketProfile {
   label: string;
   /** Master-lesson id this user is currently editing, if any. */
   editingLessonId: string | null;
+  /**
+   * Huvudman (20261212090000): the huvudman's reader, who has no row at the
+   * school and edits nothing: never an editor in the roster.
+   */
+  reader?: true;
 }
 
 /**
@@ -135,6 +141,7 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
       return;
     }
     const closedSchools = closedSchoolsOf(payload.rastra_closed_schools);
+    const session = { ...(school ? { school } : {}), ...(closedSchools ? { closedSchools } : {}) };
     const profile = await this.prisma.withVerifiedSubject(
       payload.sub,
       (db) =>
@@ -149,10 +156,29 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
             lastName: true,
           },
         }),
-      { ...(school ? { school } : {}), ...(closedSchools ? { closedSchools } : {}) },
+      session,
     );
     if (!profile || !profile.isActive) {
-      client.disconnect(true);
+      // Huvudman (20261212090000): no row at the school named, which the
+      // login's huvudman may own. The reader is in that school's staff and
+      // admin rooms, as its läsare is, and in no other school's: a socket is
+      // no wider a way in than the database's answer for the same choice.
+      const reader = await huvudmanReaderOf(this.prisma, payload.sub, session);
+      if (!reader) {
+        client.disconnect(true);
+        return;
+      }
+      const readerProfile: SocketProfile = {
+        userId: reader.memberId,
+        schoolId: reader.schoolId,
+        role: 'SCHOOL_ADMIN',
+        label: `${reader.firstName} ${reader.lastName.charAt(0)}.`,
+        editingLessonId: null,
+        reader: true,
+      };
+      client.data['profile'] = readerProfile;
+      await client.join([`staff:${reader.schoolId}`, `admin:${reader.schoolId}`]);
+      this.logger.log(`Socket connected [huvudmanMember=${reader.memberId}]`);
       return;
     }
 
@@ -201,8 +227,9 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     // never sends this, so anything that does is either a stale build or
     // somebody probing, and neither deserves a reply that confirms the room.
     if (!profile || !isStaff(profile)) return;
+    // The huvudman's reader edits nothing, so holds no lesson.
     profile.editingLessonId =
-      typeof body?.editingLessonId === 'string' ? body.editingLessonId : null;
+      typeof body?.editingLessonId === 'string' && !profile.reader ? body.editingLessonId : null;
     this.schedulePresence(profile.schoolId);
   }
 

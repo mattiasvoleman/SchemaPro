@@ -14,6 +14,7 @@ import {
   writersOf,
 } from './admin-areas';
 import { AREA_KEY, type AreaRequirement } from './decorators/area.decorator';
+import { HUVUDMAN_ROUTE_KEY, READS_ONLY_KEY, huvudmanReadsOnly } from './huvudman-reader';
 import { ROLES_KEY } from './decorators/roles.decorator';
 import { Role } from './enums/role.enum';
 import type { AuthenticatedUser } from './interfaces/authenticated-user.interface';
@@ -50,6 +51,27 @@ export class RolesGuard implements CanActivate {
       context.getHandler(),
       context.getClass(),
     ]);
+
+    // Huvudman (20261212090000): reading across schools never gives a write.
+    // The huvudman's reader at a school, and a member at none, may write
+    // only the huvudman's own tables; every other write is refused here,
+    // before any route's roles or areas, the routes with no @Roles and the
+    // person's-own ones (@AnyAdministrator: devices, feeds, notice choices)
+    // included. The database refuses the same writes on its own: the reader
+    // writes no area (app.current_user_may) and has no row to own anything.
+    {
+      const request = context.switchToHttp().getRequest<Request>();
+      const user = request.user as AuthenticatedUser | undefined;
+      if (
+        user &&
+        (user.huvudman !== undefined || user.role === Role.HUVUDMAN) &&
+        !READS.has((request.method ?? '').toUpperCase()) &&
+        !this.reflector.getAllAndOverride<boolean | undefined>(HUVUDMAN_ROUTE_KEY, [context.getHandler(), context.getClass()]) &&
+        !this.reflector.getAllAndOverride<string | undefined>(READS_ONLY_KEY, [context.getHandler(), context.getClass()])
+      ) {
+        throw huvudmanReadsOnly(user.huvudman);
+      }
+    }
 
     if (!requiredRoles || requiredRoles.length === 0) {
       return true;

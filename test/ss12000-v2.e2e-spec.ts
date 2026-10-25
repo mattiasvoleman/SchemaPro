@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createServer, type Server } from 'node:https';
 import type { AddressInfo } from 'node:net';
 import { Logger } from '@nestjs/common';
@@ -6,7 +7,7 @@ import { Role } from '../src/auth/enums/role.enum';
 import { Ss12000Service } from '../src/integration/ss12000.service';
 import { adhocActivityId } from '../src/integration/ss12000-v2/ids';
 import { verifySignature } from '../src/integration/ss12000-v2/signing';
-import { Ss12000V2Guard } from '../src/integration/ss12000-v2/ss12000-v2.guard';
+import { PER_KEY, Ss12000V2Guard } from '../src/integration/ss12000-v2/ss12000-v2.guard';
 import { Ss12000WebhookDeliveryService } from '../src/integration/ss12000-v2/webhook-delivery.service';
 import type { ClientOptions } from '../src/integration/ss12000-sync/client';
 import { Ss12000Outbound } from '../src/integration/ss12000-sync/ss12000-sync.providers';
@@ -647,6 +648,140 @@ describe('SS12000 v2.0 provider (e2e)', () => {
       await http().post(`/api/v1/integration-keys/${W.keyFull}/subscriptions/${made.body.id}/resume`).set('x-test-user', admin).expect(200);
       expect(world.subscriptions[0]).toMatchObject({ suspendedReason: null, suspendedAt: null });
       await http().post(`/api/v1/integration-keys/${W.keyFull}/subscriptions/${made.body.id}/explode`).set('x-test-user', admin).expect(404);
+    });
+  });
+
+  // Huvudman (20261212090000): a huvudman's key, sh_…, through the guard and
+  // the controller (Ss12000HuvudmanReads over the provider): its huvudman owns
+  // the world's school and a second one, read as the same world.
+  describe("a huvudman's key (sh_)", () => {
+    const HKEY = `sh_${'a'.repeat(48)}`;
+    const REVOKED_HKEY = `sh_${'b'.repeat(48)}`;
+    const HKEY_ID = '99999999-9999-4999-8999-999999999999';
+    const SECOND = '44444444-4444-4444-8444-444444444445';
+    const HUVUDMAN = '88888888-8888-4888-8888-888888888888';
+    const hashOf = (key: string) => createHash('sha256').update(key).digest('hex');
+
+    beforeEach(() => {
+      const tx = harness.tx as unknown as Record<string, Record<string, jest.Mock>> & { $queryRaw: jest.Mock };
+      tx['huvudmanApiKey']!['findFirst']!.mockImplementation(async (args: { where: { keyHash: string } }) =>
+        args.where.keyHash === hashOf(HKEY) ? { id: HKEY_ID, scopes: ['organisations.read', 'persons.read', 'groups.read'] } : null,
+      );
+      tx['huvudmanApiKey']!['update']!.mockResolvedValue({});
+      const world$ = tx.$queryRaw.getMockImplementation()!;
+      tx.$queryRaw.mockImplementation(async (statement: { strings?: string[] } | readonly string[], ...rest: unknown[]) => {
+        // A tagged template's strings (the key resolver's), or Prisma.sql's.
+        const text = (Array.isArray(statement) ? statement : ((statement as { strings?: string[] }).strings ?? [])).join('?');
+        if (text.includes('app.huvudman_key_owner()')) {
+          return [{ huvudman_id: HUVUDMAN, name: 'Vimmerby kommun', organisation_number: '2120000688', municipality_code: '0884',
+                    created_at: new Date('2026-01-01T00:00:00Z'), updated_at: new Date('2026-01-01T00:00:00Z') }];
+        }
+        if (text.includes('app.huvudman_key_schools()')) return [W.school, SECOND].sort().map((school_id) => ({ school_id }));
+        return world$(statement, ...rest);
+      });
+      // The second school is the world's own, under its own id.
+      const school$ = tx['school']!['findUnique']!.getMockImplementation()!;
+      tx['school']!['findUnique']!.mockImplementation(async (args: { where: { id: string } }) =>
+        args.where.id === SECOND ? { ...(await school$({ ...args, where: { id: W.school } })), id: SECOND } : school$(args));
+    });
+
+    const walk = async (path: string, key = HKEY) => {
+      const pages: Array<{ school: string; ids: string[] }> = [];
+      let token: string | null = null;
+      do {
+        const res: request.Response = await v2(`${path}${token ? `${path.includes('?') ? '&' : '?'}pageToken=${encodeURIComponent(token)}` : ''}`, key).expect(200);
+        const inner = token ? (JSON.parse(Buffer.from(token, 'base64url').toString('utf8')) as { s: string }).s : [W.school, SECOND].sort()[0]!;
+        pages.push({ school: inner, ids: (res.body.data as Array<{ id: string }>).map((item) => item.id) });
+        token = res.body.pageToken as string | null;
+      } while (token && pages.length < 40);
+      return pages;
+    };
+
+    it('walks /persons over both of its schools, a page from one school at a time, opening each for the key', async () => {
+      const pages = await walk('/persons?limit=2');
+      const schools = [...new Set(pages.map((page) => page.school))];
+      expect(schools).toEqual([W.school, SECOND].sort());
+      const perSchool = (school: string) => pages.filter((page) => page.school === school).flatMap((page) => page.ids);
+      // The world's school's people, each once, over pages of two; then the second school's.
+      expect(perSchool(W.school).length).toBeGreaterThan(2);
+      expect(new Set(perSchool(W.school)).size).toBe(perSchool(W.school).length);
+      expect(pages.filter((page) => page.school === W.school).length).toBeGreaterThan(1);
+      const opened = (harness.prisma.withHuvudmanKeyPrincipal as jest.Mock).mock.calls.map(([keyId, school]) => `${keyId}@${school}`);
+      expect(new Set(opened)).toEqual(new Set([`${HKEY_ID}@${W.school}`, `${HKEY_ID}@${SECOND}`]));
+      expect(harness.prisma.withServicePrincipal).not.toHaveBeenCalled();
+    });
+
+    it('begins /organisations with the huvudman', async () => {
+      const res = await v2('/organisations', HKEY).expect(200);
+      expect(res.body.data[0]).toMatchObject({ id: HUVUDMAN, organisationType: 'Huvudman', displayName: 'Vimmerby kommun' });
+    });
+
+    it("gives a school's employment figures only where that school shares them, as the school's own key would", async () => {
+      const tx = harness.tx as unknown as Record<string, Record<string, jest.Mock>>;
+      tx['huvudmanApiKey']!['findFirst']!.mockImplementation(async (args: { where: { keyHash: string } }) =>
+        args.where.keyHash === hashOf(HKEY) ? { id: HKEY_ID, scopes: ['organisations.read', 'persons.read', 'duties.read'] } : null,
+      );
+      // The second school is the world's school under its own id: the same
+      // people and posts, its own sharing setting.
+      for (const [name, model] of Object.entries(tx)) {
+        if (['staffingPolicy', 'huvudmanApiKey', 'school'].includes(name) || typeof model !== 'object' || model === null) continue;
+        for (const method of ['findMany', 'findFirst', 'findUnique', 'count']) {
+          const mock = model[method];
+          const impl = mock?.getMockImplementation();
+          if (!mock || !impl) continue;
+          mock.mockImplementation(async (args?: { where?: Record<string, unknown> }) =>
+            impl(args?.where?.['schoolId'] === SECOND ? { ...args, where: { ...args.where, schoolId: W.school } } : args),
+          );
+        }
+      }
+      const sharer = W.school;
+      const duties = async () => {
+        tx['staffingPolicy']!['findUnique']!.mockReset().mockImplementation(async (args: { where: { schoolId: string } }) =>
+          args.where.schoolId === sharer ? { shareEmploymentWithIntegrations: true, fullTimeAnnualHours: 1767 } : null,
+        );
+        // Each page is one school's, the one its token names (the first page: the first school's).
+        const bySchool = new Map<string, Array<Record<string, unknown>>>();
+        let token: string | null = null;
+        do {
+          const school = token ? (JSON.parse(Buffer.from(token, 'base64url').toString('utf8')) as { s: string }).s : [W.school, SECOND].sort()[0]!;
+          const res: request.Response = await v2(`/duties${token ? `?pageToken=${encodeURIComponent(token)}` : ''}`, HKEY).expect(200);
+          bySchool.set(school, [...(bySchool.get(school) ?? []), ...(res.body.data as Array<Record<string, unknown>>)]);
+          token = res.body.pageToken as string | null;
+        } while (token && bySchool.size <= 2 && [...bySchool.values()].flat().length < 400);
+        const asked = new Set((tx['staffingPolicy']!['findUnique']!.mock.calls as Array<[{ where: { schoolId: string } }]>).map(([args]) => args.where.schoolId));
+        return { bySchool, asked };
+      };
+      const { bySchool, asked } = await duties();
+      expect([...bySchool.keys()].sort()).toEqual([W.school, SECOND].sort());
+      expect(asked).toEqual(new Set([W.school, SECOND]));
+      // The school that shares: its posts carry their percent.
+      expect(bySchool.get(sharer)!.some((duty) => typeof duty['dutyPercent'] === 'number')).toBe(true);
+      // The other school's posts, the same people, carry none.
+      const other = bySchool.get(SECOND)!;
+      expect(other.length).toBeGreaterThan(0);
+      expect(allKeys(other).has('dutyPercent')).toBe(false);
+      expect(allKeys(other).has('hoursPerYear')).toBe(false);
+    });
+
+    it('is no school key: /subscriptions is refused with its own code', async () => {
+      for (const res of [await v2('/subscriptions', HKEY), await v2post('/subscriptions', { modifiedEntites: ['Person'], target: 'https://x.example/hook' }, HKEY)]) {
+        expect({ status: res.status, code: res.body.code }).toEqual({ status: 403, code: 'NOT_A_SCHOOL_KEY' });
+      }
+    });
+
+    it('401s a revoked or unknown huvudman key, with S1\'s Error', async () => {
+      const res = await v2('/persons', REVOKED_HKEY);
+      expect(res.status).toBe(401);
+      expect(res.body).toEqual({ code: 'UNAUTHENTICATED', message: expect.any(String) });
+    });
+
+    it('counts each further school against the key\'s bound, and answers 429 across them', async () => {
+      // One request short of the bound: the guard's own count takes it to the
+      // bound, and the second school's read is one over.
+      for (let i = 0; i < PER_KEY.limit - 1; i++) await Ss12000V2Guard.chargeSchool(HKEY_ID);
+      const res = await v2('/persons/00000000-0000-4000-8000-00000000dead', HKEY);
+      expect(res.status).toBe(429);
+      expect(res.body.code).toBe('TOO_MANY_REQUESTS');
     });
   });
 });

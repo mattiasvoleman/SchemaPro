@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { createPrismaMock, createTxMock } from '../../../test/utils/prisma-mock';
 import { recordedReads } from '../../../test/utils/recorded-reads';
 import { ALL_V2_SCOPES, ProviderWorld, W } from '../../../test/utils/ss12000-provider-world';
@@ -23,6 +24,26 @@ function setup() {
   const service = new Ss12000V2Service(createPrismaMock(tx) as unknown as PrismaService);
   return { world, service };
 }
+
+describe("a huvudman's key (Huvudman, 20261212090000)", () => {
+  it('answers 409 HUVUDMAN_CHANGED when the school left, or the key was revoked, after the guard read them', async () => {
+    const tx = createTxMock();
+    new ProviderWorld().install(tx);
+    const prisma = createPrismaMock(tx) as unknown as Record<string, unknown>;
+    const refused = new Prisma.PrismaClientKnownRequestError('HUVUDMAN_KEY_DOES_NOT_READ_THE_SCHOOL', {
+      code: 'P2039',
+      clientVersion: 'test',
+      meta: { driverAdapterError: { cause: { originalCode: 'HM403', originalMessage: 'HUVUDMAN_KEY_DOES_NOT_READ_THE_SCHOOL' } } },
+    });
+    prisma['withHuvudmanKeyPrincipal'] = jest.fn().mockRejectedValue(refused);
+    const service = new Ss12000V2Service(prisma as unknown as PrismaService);
+
+    await expect(service.listPersons({ ...caller(), viaHuvudman: true }, {})).rejects.toMatchObject({ status: 409, code: 'HUVUDMAN_CHANGED' });
+    // Anything else is what it was.
+    prisma['withHuvudmanKeyPrincipal'] = jest.fn().mockRejectedValue(new Error('boom'));
+    await expect(service.listPersons({ ...caller(), viaHuvudman: true }, {})).rejects.toThrow('boom');
+  });
+});
 
 describe('organisations', () => {
   it('filters on what S1 defines, and answers empty for what SchemaPro never holds', async () => {

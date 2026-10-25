@@ -30,6 +30,10 @@ export class NotificationPreferencesService {
   constructor(private readonly prisma: PrismaService) {}
 
   async get(user: AuthenticatedUser): Promise<{ types: NotificationPreference[] }> {
+    // Huvudman: the huvudman's reader has no row at the school, so nothing to
+    // be told and nothing opted out of; the page reads, and saving is
+    // refused (RolesGuard, HUVUDMAN_READS_ONLY).
+    if (user.huvudman && !user.userId) return { types: this.listFor(user.role, new Set()) };
     const userId = requireUserId(user);
     const rows = await this.prisma.queryWithRls(user, (db) =>
       db.notificationOptOut.findMany({ where: { userId }, select: { type: true } }),

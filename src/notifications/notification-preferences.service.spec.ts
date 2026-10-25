@@ -56,6 +56,15 @@ describe('NotificationPreferencesService', () => {
     expect(pupil.types.map((t) => t.type)).not.toContain('ABSENCE_UNREPORTED');
   });
 
+  it('lists the huvudman’s läsare the school administrator’s types, all on, and reads no row (Huvudman)', async () => {
+    const reader = testUser({ role: 'SCHOOL_ADMIN' as never, userId: undefined, schoolId: SCHOOL });
+    (reader as { huvudman?: unknown }).huvudman = { huvudmanId: 'h', memberId: 'm' };
+    const { types } = await service.get(reader);
+    expect(types.map((t) => t.type)).toEqual(TYPES_BY_ROLE.SCHOOL_ADMIN);
+    expect(types.every((t) => t.enabled)).toBe(true);
+    expect(prisma.queryWithRls).not.toHaveBeenCalled();
+  });
+
   it('lists nothing for a role it does not know', async () => {
     await expect(service.get(as('SERVICE'))).resolves.toEqual({ types: [] });
   });

@@ -514,6 +514,46 @@ export class PrismaService
   }
 
   /**
+   * Execute `fn` as one school's SS12000 service principal for a huvudman's
+   * key (Huvudman, 20261212090000): app.huvudman_key_opens_school sets the
+   * school's app.service_school_id beside app.service_huvudman_key_id, and
+   * only when the key is live and its huvudman owns the school (HM403
+   * otherwise, with nothing set). So the key never opens more than that one
+   * school in a transaction, and every service arm holds it there as it holds
+   * a school's own key. No app.service_key_id: that names a school's key.
+   *
+   * `keyId` MUST come from a verified huvudman key (Ss12000V2Guard), and
+   * `schoolId` from app.huvudman_key_schools() for it.
+   */
+  async withHuvudmanKeyPrincipal<T>(
+    keyId: string,
+    schoolId: string,
+    fn: (tx: PrismaClient) => Promise<T>,
+    options?: { timeoutMs?: number },
+  ): Promise<T> {
+    return this.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SELECT app.huvudman_key_opens_school(${keyId}::uuid, ${schoolId}::uuid)`;
+        return fn(tx as unknown as PrismaClient);
+      },
+      { timeout: options?.timeoutMs ?? 30_000 },
+    );
+  }
+
+  /**
+   * A transaction naming a huvudman's key and no school
+   * (app.service_huvudman_key_id alone): in it app.huvudman_key_schools()
+   * and app.huvudman_key_owner() answer for the key, and no row of any
+   * school is readable. `keyId` MUST come from a verified huvudman key.
+   */
+  async withHuvudmanKey<T>(keyId: string, fn: (tx: PrismaClient) => Promise<T>): Promise<T> {
+    return this.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.service_huvudman_key_id', ${keyId}, true)`;
+      return fn(tx as unknown as PrismaClient);
+    });
+  }
+
+  /**
    * Execute `fn` as the SS12000 SYNC acting for one school (migrations
    * 20261014090000–20261014110000): the run that reads the school's source,
    * writes its diff and, when the admin enabled it, auto-applies the safe
