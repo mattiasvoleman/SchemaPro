@@ -268,7 +268,23 @@ describe('FamilyScheduleService', () => {
       expect(tx.academicYear.findMany).toHaveBeenCalledWith({
         where: { startDate: { lte: day('2026-10-18') }, endDate: { gte: day('2026-10-12') } },
         select: { id: true, startDate: true, endDate: true },
+        orderBy: [{ startDate: 'asc' }, { id: 'asc' }],
       });
+    });
+
+    it('takes, where two läsår overlap on the date, the one of the child’s group on the lesson', async () => {
+      // Last year's läsår runs into this autumn. The lesson's own group is not
+      // the child's; the child's class on it is this year's, so is the lesson.
+      tx.academicYear.findMany.mockResolvedValue([
+        { id: 'y25', startDate: day('2025-08-18'), endDate: day('2026-12-31') },
+        { id: 'y26', startDate: day('2026-08-17'), endDate: day('2027-06-11') },
+      ]);
+      tx.calendarLesson.findMany.mockResolvedValue([
+        lesson('l-joint-sv', '2026-10-13', { studentGroupId: OTHER, subjectId: SVENSKA, extraGroups: [{ studentGroupId: HOME }] }),
+      ]);
+      const result = await run('2026-10-13');
+      // y26, TG's läsår: the child is at TG, not at the joint svenska.
+      expect(result.lessons.map((l) => l.id)).toEqual([]);
     });
 
     it('keeps the child on a teaching group’s own svenska they are placed in, and off their class half’s', async () => {
