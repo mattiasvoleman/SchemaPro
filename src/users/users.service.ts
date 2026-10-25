@@ -8,7 +8,7 @@ import {
   Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { Prisma, type AdminProfile, type User, type UserRole } from '@prisma/client';
+import { Prisma, type AdminProfile, type PrismaClient, type User, type UserRole } from '@prisma/client';
 import { profileDecides } from '../auth/admin-areas';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { recordRead } from '../access-log/access-log';
@@ -279,8 +279,9 @@ export class UsersService {
     // insert either succeeds or nobody has been contacted.
     let created: User;
     try {
-      created = await this.prisma.withRls(user, (tx) =>
-        tx.user.create({
+      created = await this.prisma.withRls(user, async (tx) => {
+        if (dto.role === 'STUDENT' && dto.studentGroupId) await assertHomeIsAClass(tx, dto.studentGroupId);
+        return tx.user.create({
           data: {
             schoolId,
             authId: randomUUID(),
@@ -294,8 +295,8 @@ export class UsersService {
             phone: dto.phone ?? null,
             studentGroupId: dto.role === 'STUDENT' ? (dto.studentGroupId ?? null) : null,
           },
-        }),
-      );
+        });
+      });
     } catch (error) {
       rethrowPrismaError(error);
     }
@@ -555,6 +556,9 @@ export class UsersService {
           throw new BadRequestException(
             'Only students can be assigned to a student group.',
           );
+        }
+        if (dto.studentGroupId && dto.studentGroupId !== current.studentGroupId) {
+          await assertHomeIsAClass(tx, dto.studentGroupId);
         }
 
         if (isStaff(current.role) && !isStaff(role)) {
@@ -994,6 +998,27 @@ async function keepADecider(tx: Prisma.TransactionClient, schoolId: string, leav
       message:
         'Skolan behöver minst en aktiv rektor eller fullständig administratör. Ge någon annan den rollen först.',
       code: LAST_DECIDER,
+    });
+  }
+}
+
+export const STUDENT_HOME_GROUP_NOT_A_CLASS = 'STUDENT_HOME_GROUP_NOT_A_CLASS';
+
+/**
+ * A pupil's home class (Users.studentGroupId) is a class. A teaching group's
+ * pupils are its members (StudentGroupMembers), and the readers say so: the
+ * rule of Ersättande grupper keeps a pupil on a teaching group's lessons by
+ * membership, and the database's helper, the roster, the family's week and
+ * the timplan would otherwise disagree about a pupil whose "home" is a
+ * teaching group (20261211090000). Asked only when the home group is set or
+ * changed, so a row written before this check stays editable.
+ */
+async function assertHomeIsAClass(tx: PrismaClient, groupId: string): Promise<void> {
+  const group = await tx.studentGroup.findUnique({ where: { id: groupId }, select: { kind: true } });
+  if (group && group.kind !== 'CLASS') {
+    throw new BadRequestException({
+      message: "A pupil's home class must be a class. Add the pupil to a teaching group under Medlemmar instead.",
+      code: STUDENT_HOME_GROUP_NOT_A_CLASS,
     });
   }
 }
