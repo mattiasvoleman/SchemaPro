@@ -211,6 +211,32 @@ export class DecisionDto {
   expected!: CoverStatusValue;
 }
 
+export const PASS_DECISION_KINDS = ['SUBSTITUTE', 'NO_COVER'] as const;
+export const PASS_STATUSES = ['OPEN', 'COVERED', 'HANDLED'] as const;
+
+/**
+ * A decision on a rastvaktspass whose teacher is away (Rastvakt i vardagen,
+ * 20261210090000): a vikarie takes it, or it is left without one.
+ */
+export class PassDecisionDto {
+  @Transform(lower)
+  @IsUUID('4', { message: 'absenceId: frånvaron anges med sitt id.' })
+  absenceId!: string;
+
+  @IsIn(PASS_DECISION_KINDS, { message: "kind: 'SUBSTITUTE' eller 'NO_COVER'." })
+  kind!: (typeof PASS_DECISION_KINDS)[number];
+
+  /** Required for SUBSTITUTE, refused otherwise (the service names it). */
+  @IsOptional()
+  @Transform(lower)
+  @IsUUID('4', { message: 'substituteId: vikarien anges med sitt id.' })
+  substituteId?: string;
+
+  /** The status the admin saw: a decision on anything else is COVER_STALE. */
+  @IsIn(PASS_STATUSES, { message: "expected: 'OPEN', 'COVERED' eller 'HANDLED'." })
+  expected!: (typeof PASS_STATUSES)[number];
+}
+
 export class UndoQueryDto {
   @Transform(lower)
   @IsUUID('4', { message: 'absenceId: frånvaron anges med sitt id.' })

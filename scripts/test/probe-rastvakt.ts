@@ -23,7 +23,15 @@
  *         state) and the lessons a pass runs during, through the adapter:
  *         the teacher's lesson is named beside the pass, and a teacher
  *         deactivated today is so from the school's date, gets no new pass,
- *         and their own pass can still be ended.
+ *         and their own pass can still be ended;
+ *   rv-e  Rastvakt i vardagen (20261210090000): an absent rastvakt's pass
+ *         reaches the board and its candidates through the adapter, a
+ *         vikarie's decision is written (a @db.Date and two instants) and
+ *         read back COVERED, the vikarie's week (their own arm, as a
+ *         TEACHER) and the absent teacher's both say so, the pass does not
+ *         move under it, the vikarie is told with the new notice types, the
+ *         cover rules hold the pass in the vikarie's day (the relation
+ *         filter), and an undo tells them it is off.
  *
  * And in rv-a, the dates a pass is stored with are on its weekday: a typed
  * Friday Till is the Wednesday before, a Tuesday Från the Wednesday after.
@@ -37,8 +45,16 @@ import { Role } from '../../src/auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
 import type { PrismaService } from '../../src/database/prisma.service';
 import { StaffingLoadService } from '../../src/staffing/staffing-load.service';
+import type { CalendarLessonsService } from '../../src/calendar/calendar-lessons.service';
+import { readPersonDays } from '../../src/cover/cover-context';
+import { CoverService } from '../../src/cover/cover.service';
+import { SupervisionCoverService } from '../../src/cover/supervision-cover.service';
+import { NotificationDeliveryService } from '../../src/notifications/notification-delivery.service';
+import { NotificationsService } from '../../src/notifications/notifications.service';
+import type { RealtimeService } from '../../src/realtime/realtime.service';
 import {
   SUPERVISION_SHIFT_CLASH,
+  SUPERVISION_SHIFT_HAS_COVERS,
   SUPERVISION_TEACHER_INACTIVE,
   SupervisionService,
 } from '../../src/supervision/supervision.service';
@@ -233,6 +249,98 @@ export async function rastvaktChecks(owner: Client, api: PrismaService, marker: 
       // His own pass is ended all the same, on its weekday.
       const ended = await supervision.updateShift(tuesday.id, { validTo: '2031-01-16' }, asAdmin);
       assert.deepEqual([ended.validTo, ended.inactiveFrom], ['2031-01-14', today]);
+    });
+
+    await check('(rv-e) an absent rastvakt’s pass reaches the board and its candidates, a vikarie is booked and read back, both weeks say so, the pass stays put, the vikarie is told, the cover rules hold it, and an undo tells them it is off', async () => {
+      const cilla = await person('TEACHER', 'cilla');
+      const asCilla: AuthenticatedUser = { authId: cilla.authId, role: Role.TEACHER, userId: cilla.id, schoolId: s, channel: 'APP' };
+      // Anna is away all of Monday 2 September 2030; her pass on the yard runs 10:00–10:20 (08:00 UTC).
+      const absence = (
+        await one<{ id: string }>(
+          `INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt")
+           VALUES ($1, $2, timestamptz '2030-09-01 22:00 UTC', timestamptz '2030-09-02 22:00 UTC') RETURNING id`,
+          [s, anna.id],
+        )
+      ).id;
+      const notifications = new NotificationsService(api, new NotificationDeliveryService(api));
+      const realtime = { notifyCoverBoardChanged: () => undefined, notifyLessonsChanged: async () => undefined } as unknown as RealtimeService;
+      const cover = new CoverService(api, realtime, notifications, {} as CalendarLessonsService);
+      const passes = new SupervisionCoverService(api, cover);
+
+      const board = await cover.board('2030-09-02', '2030-09-02', asAdmin);
+      assert.equal(board.supervision.length, 1, JSON.stringify(board.supervision));
+      const [item] = board.supervision;
+      assert.deepEqual(
+        [item!.absentTeacherId, item!.absenceId, item!.areaId, item!.startsAt, item!.endsAt, item!.status],
+        [anna.id, absence, garden.id, '2030-09-02T08:00:00.000Z', '2030-09-02T08:20:00.000Z', 'OPEN'],
+      );
+      const shiftId = item!.shiftId;
+
+      const candidates = await passes.candidates(shiftId, '2030-09-02', asAdmin);
+      assert.deepEqual(candidates.candidates.map((row) => row.userId), [cilla.id]);
+      assert.deepEqual(
+        candidates.excluded.find((row) => row.userId === anna.id)?.codes.map((code) => code.code),
+        ['ON_LESSON', 'ABSENT'],
+      );
+
+      await passes.decide(shiftId, '2030-09-02', { absenceId: absence, kind: 'SUBSTITUTE', substituteId: cilla.id, expected: 'OPEN' }, asAdmin);
+      const stored = await one<{ date: string; startsAt: Date; endsAt: Date; decision: string }>(
+        `SELECT date::text AS date, "startsAt", "endsAt", decision::text AS decision FROM "SupervisionCovers" WHERE "shiftId" = $1`,
+        [shiftId],
+      );
+      assert.deepEqual(
+        [stored.date, stored.startsAt.toISOString(), stored.endsAt.toISOString(), stored.decision],
+        ['2030-09-02', '2030-09-02T08:00:00.000Z', '2030-09-02T08:20:00.000Z', 'SUBSTITUTE'],
+      );
+      const covered = await cover.board('2030-09-02', '2030-09-02', asAdmin);
+      assert.deepEqual([covered.supervision[0]!.status, covered.supervision[0]!.substituteId], ['COVERED', cilla.id]);
+
+      // Cilla's week, read as herself: the pass she takes, and nobody's name.
+      const hers = await supervision.week('2030-09-02', '2030-09-08', asCilla);
+      assert.deepEqual(
+        hers.passes.map((row) => [row.kind, row.date, row.areaName, row.handover]),
+        [['COVER', '2030-09-02', 'Rv Skolgården', null]],
+      );
+      // Anna's: the Monday handed over, the autumn's Wednesday in the hall hers.
+      const annas = await supervision.week('2030-09-02', '2030-09-08', asAnna);
+      assert.deepEqual(
+        annas.passes.map((row) => [row.kind, row.date, row.areaName, row.handover]),
+        [
+          ['OWN', '2030-09-02', 'Rv Skolgården', 'SUBSTITUTE'],
+          ['OWN', '2030-09-04', 'Rv Matsalen', null],
+        ],
+      );
+
+      await assert.rejects(
+        supervision.updateShift(shiftId, { startTime: '10:05' }, asAdmin),
+        (error: unknown) => codeOf(error) === SUPERVISION_SHIFT_HAS_COVERS,
+      );
+
+      // The cover rules hold the pass in Cilla's day: the OR's relation filter through the adapter.
+      const day = await api.withRls(asAdmin, (tx) =>
+        readPersonDays(tx, { date: '2030-09-02', timezone: 'Europe/Stockholm', academicYearId: year, userIds: [cilla.id] }),
+      );
+      assert.deepEqual(
+        day.days.get(cilla.id)!.supervision!.map((pass) => [new Date(pass.start).toISOString(), new Date(pass.end).toISOString()]),
+        [['2030-09-02T08:00:00.000Z', '2030-09-02T08:20:00.000Z']],
+      );
+
+      await passes.undo(shiftId, '2030-09-02', asAdmin);
+      const reopened = await cover.board('2030-09-02', '2030-09-02', asAdmin);
+      assert.equal(reopened.supervision[0]!.status, 'OPEN');
+      // Told twice, with the new types and the place and the time, no name.
+      const told = await owner.query<{ type: string; meta: Record<string, unknown> }>(
+        `SELECT type::text AS type, meta FROM "Notifications" WHERE "userId" = $1 ORDER BY "createdAt", type`,
+        [cilla.id],
+      );
+      assert.deepEqual(
+        told.rows.map((row) => [row.type, row.meta['areaName'], row.meta['startsAt']]),
+        [
+          ['SUPERVISION_COVER', 'Rv Skolgården', '2030-09-02T08:00:00.000Z'],
+          ['SUPERVISION_COVER_WITHDRAWN', 'Rv Skolgården', '2030-09-02T08:00:00.000Z'],
+        ],
+      );
+      assert.deepEqual(Object.keys(told.rows[0]!.meta).sort(), ['areaName', 'endsAt', 'startsAt']);
     });
   } finally {
     await sweepRastvaktSchool(owner, marker);

@@ -94,7 +94,10 @@ export type RankReasonCode =
   | 'POOL'
   | 'POOL_LAST'
   | 'PREFERS_FREE'
-  | 'FREE_DAY_WISH';
+  | 'FREE_DAY_WISH'
+  /** A rastvaktspass's own terms (pass-rank.ts, 20261210090000). */
+  | 'KNOWS_AREA'
+  | 'TEACHES_STAGE';
 
 export interface RankReason {
   code: RankReasonCode;

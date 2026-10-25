@@ -97,6 +97,18 @@ enum NotificationType {
   CANCELLATION_DIGEST
   /// A leave request the school's delegation gives the pupil's mentor to decide; to those mentors, no reason (20261023090000).
   LEAVE_REQUESTED
+  /// A vikarie booked for an absent rastvakt's pass: the place and the time, nobody's name (20261210090000).
+  SUPERVISION_COVER
+  /// A booked rastvaktspass no longer needed: the decision undone or handed to somebody else (20261210090000).
+  SUPERVISION_COVER_WITHDRAWN
+}
+
+/// A decision on an absent rastvakt's pass (20261210090000).
+enum SupervisionCoverDecision {
+  /// A vikarie takes the pass that day.
+  SUBSTITUTE
+  /// The pass is left without one that day (another rastvakt is enough).
+  NO_COVER
 }
 
 enum RoomBookingStatus {
@@ -3223,10 +3235,55 @@ model SupervisionShift {
   area         SupervisionArea @relation(fields: [areaId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
   user         User            @relation("SupervisionShiftTeacher", fields: [userId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
 
+  /// The board's decisions on the pass's dates (SupervisionCover).
+  covers SupervisionCover[]
+
+  /// The target the cover's tenant-scoped key needs; see User (20261210090000).
+  @@unique([id, schoolId])
   @@index([academicYearId, schoolId])
   @@index([areaId, schoolId])
   @@index([userId, schoolId])
   @@map("SupervisionShifts")
+}
+
+/// What the board decided about one pass on one date whose teacher is away
+/// (Rastvakt i vardagen, 20261210090000): a vikarie takes it, or it is left
+/// without one. The vacancy itself is derived when the board is read
+/// (src/cover/supervision-board.ts); only the decision is stored. The keys to
+/// SupervisionAreas, TeacherAbsences ((absenceId, absentTeacherId, schoolId)
+/// -> (id, userId, schoolId)) and Users (substituteId) are the migration's,
+/// all ON DELETE CASCADE, and named here only where a read needs the relation.
+model SupervisionCover {
+  id              String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId        String                   @db.Uuid
+  /// Composite (shiftId, schoolId) key to SupervisionShifts.
+  shiftId         String                   @db.Uuid
+  /// The school-local date of the occurrence; unique with shiftId.
+  date            DateTime                 @db.Date
+  /// The occurrence as decided: the pass's area, and its start and end that
+  /// day. The vikarie reads the place and the time from here, since the
+  /// pass itself is its own teacher's to read.
+  areaId          String                   @db.Uuid
+  startsAt        DateTime                 @db.Timestamptz(6)
+  endsAt          DateTime                 @db.Timestamptz(6)
+  /// The absence that put the pass on the board, and its person.
+  absenceId       String                   @db.Uuid
+  absentTeacherId String                   @db.Uuid
+  decision        SupervisionCoverDecision
+  /// Set for SUBSTITUTE and only then (CHECK); never the absent teacher.
+  substituteId    String?                  @db.Uuid
+  /// Audit only.
+  decidedByUserId String?                  @db.Uuid
+  decidedAt       DateTime                 @default(now()) @db.Timestamptz(6)
+
+  shift SupervisionShift @relation(fields: [shiftId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([shiftId, date])
+  @@index([schoolId, date])
+  @@index([substituteId, date])
+  @@index([absenceId, absentTeacherId, schoolId])
+  @@index([areaId, schoolId])
+  @@map("SupervisionCovers")
 }
 
 /// What a TeacherEmploymentLog row is about.

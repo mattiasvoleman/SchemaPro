@@ -21,6 +21,10 @@ import { asDay, dayDate, localDateOf, schoolTimezone, shiftDay } from './cover-c
 import { lockLessons, lockTeachers } from './cover-decisions';
 import { ABSENCE_OVERLAPS, ABSENCE_SELF_REPORT_OFF, rethrowCoverError } from './cover-errors';
 import { CoverService, emptyEffects, merge, type CoverEffects } from './cover.service';
+import { passSummaryOf, type PassSummary } from './supervision-board';
+import { coversOfAbsence, readPassBoard, type CoverRow } from './supervision-cover-reads';
+import { undoCover } from './supervision-cover.service';
+import { spansMeet } from '../supervision/pass-days';
 import type { CreateAbsenceDto, EndAbsenceDto, ListAbsencesQueryDto, UpdateAbsenceDto } from './dto/cover.dto';
 
 export const ABSENCE_RANGE = 'ABSENCE_RANGE';
@@ -56,6 +60,8 @@ export interface AbsenceView {
   selfReported: boolean;
   createdAt: string;
   counts: { open: number; covered: number; cancelled: number; handled: number; passedOpen: number };
+  /** The absent teacher's rastvaktspass over the absence, as the board derives them (20261210090000). */
+  passCounts: PassSummary;
 }
 
 const ABSENCE_SELECT = {
@@ -128,15 +134,13 @@ export class TeacherAbsencesService {
         ...(query.to ? { startsAt: { lt: zonedTimeToUtc(shiftDay(query.to, 1), '00:00', timezone) } } : {}),
       };
       const rows = await tx.teacherAbsence.findMany({ where, select: ABSENCE_SELECT, orderBy: [{ startsAt: 'asc' }, { id: 'asc' }] });
-      const counts = await this.countsOf(
-        tx,
-        rows.filter((row) => row.status === 'ACTIVE').map((row) => row.id),
-        now,
-      );
+      const active = rows.filter((row) => row.status === 'ACTIVE');
+      const counts = await this.countsOf(tx, active.map((row) => row.id), now);
+      const passCounts = await this.passCountsOf(tx, active, timezone, now);
       // When a colleague is away, and why: STAFF_ABSENCES in the läslogg. A
       // teacher's own absences are their own (left out by the log).
       await recordRead(tx, 'STAFF_ABSENCES', rows.map((row) => row.userId), user.channel);
-      return rows.map((row) => viewOf(row, now, counts.get(row.id)));
+      return rows.map((row) => viewOf(row, now, counts.get(row.id), passCounts.get(row.id)));
     });
   }
 
@@ -307,10 +311,16 @@ export class TeacherAbsencesService {
         where: { absenceId: id },
         select: { calendarLessonId: true, decision: true },
       });
+      // A rastvaktspass decided on is a decision too (20261210090000), as the
+      // guard trigger reads it.
+      const passDecisions = (await tx.supervisionCover.count({ where: { absenceId: id } })) ?? 0;
       if (!isAdmin) {
         await this.requireSelfReport(tx, schoolId);
         const early = current.startsAt.getTime() > now.getTime();
-        const fresh = now.getTime() - current.createdAt.getTime() <= SELF_WITHDRAW_MINUTES * 60_000 && decisions.length === 0;
+        const fresh =
+          now.getTime() - current.createdAt.getTime() <= SELF_WITHDRAW_MINUTES * 60_000 &&
+          decisions.length === 0 &&
+          passDecisions === 0;
         if (!early && !fresh) {
           throw new ConflictException({
             message: 'Frånvaron har börjat. Avsluta den i förtid i stället.',
@@ -346,7 +356,10 @@ export class TeacherAbsencesService {
    * The decisions a new period leaves behind (null = all of them, for a
    * withdrawal): a held one refuses a withdrawal outright and stays with an
    * edit (outsideAbsence on the board); one still ahead is a 409 listing
-   * them, or is undone here when asked.
+   * them, or is undone here when asked. A rastvaktspass's decisions
+   * (20261210090000) are asked the same, against the occurrence each
+   * stored, and counted in the same 409 (`passes` of `count`); their undo
+   * tells the vikarie the pass is off.
    */
   private async settleDecisionsOutside(
     tx: PrismaClient,
@@ -363,11 +376,15 @@ export class TeacherAbsencesService {
         decision: true,
       },
     });
-    if (rows.length === 0) return emptyEffects();
-    const lessons = await tx.calendarLesson.findMany({
-      where: { id: { in: rows.map((row) => row.calendarLessonId) } },
-      select: { id: true, startsAt: true, endsAt: true },
-    });
+    const passes = await coversOfAbsence(tx, absenceId);
+    if (rows.length === 0 && passes.length === 0) return emptyEffects();
+    const lessons =
+      rows.length > 0
+        ? await tx.calendarLesson.findMany({
+            where: { id: { in: rows.map((row) => row.calendarLessonId) } },
+            select: { id: true, startsAt: true, endsAt: true },
+          })
+        : [];
     const lessonOf = new Map(lessons.map((lesson) => [lesson.id, lesson]));
     const outside = rows.filter((row) => {
       const lesson = lessonOf.get(row.calendarLessonId);
@@ -375,29 +392,34 @@ export class TeacherAbsencesService {
       if (period === null) return true;
       return !(lesson.startsAt < period.endsAt && lesson.endsAt > period.startsAt);
     });
+    const passesOutside = passes.filter((pass) => period === null || !spansMeet(pass, period));
     const held = outside.filter((row) => lessonOf.get(row.calendarLessonId)!.endsAt.getTime() <= now.getTime());
-    if (period === null && held.length > 0) {
+    const passesHeld = passesOutside.filter((pass) => pass.endsAt.getTime() <= now.getTime());
+    if (period === null && (held.length > 0 || passesHeld.length > 0)) {
       throw new ConflictException({
-        message: 'Beslut finns på lektioner som redan hållits. Avsluta frånvaron i förtid i stället.',
+        message: 'Beslut finns på lektioner eller rastvaktspass som redan varit. Avsluta frånvaron i förtid i stället.',
         code: ABSENCE_HAS_HELD_DECISIONS,
-        params: paramsOf(held),
+        params: paramsOf(held, passesHeld),
       });
     }
     const ahead = outside.filter((row) => lessonOf.get(row.calendarLessonId)!.endsAt.getTime() > now.getTime());
-    if (ahead.length === 0) return emptyEffects();
+    const passesAhead = passesOutside.filter((pass) => pass.endsAt.getTime() > now.getTime());
+    if (ahead.length === 0 && passesAhead.length === 0) return emptyEffects();
     if (!undo) {
       throw new ConflictException({
-        message: 'Det finns beslut på lektioner som inte längre ingår. Ångra dem, eller skicka undoDecisions.',
+        message: 'Det finns beslut på lektioner eller rastvaktspass som inte längre ingår. Ångra dem, eller skicka undoDecisions.',
         code: ABSENCE_HAS_DECISIONS,
-        params: paramsOf(ahead),
+        params: paramsOf(ahead, passesAhead),
       });
     }
-    // Undone newest first per lesson, under the lessons' locks.
+    // Undone newest first per lesson, under the lessons' locks. The passes'
+    // own locks (the absent teacher's cover lock) are held already.
     await lockLessons(tx, ahead.map((row) => row.calendarLessonId));
     const all = emptyEffects();
     for (const row of ahead) {
       merge(all, await this.cover.undoInTransaction(tx, { lessonId: row.calendarLessonId, absenceId }, user));
     }
+    for (const pass of passesAhead) merge(all, await undoCover(tx, pass));
     return all;
   }
 
@@ -416,6 +438,23 @@ export class TeacherAbsencesService {
       else if (item.status === 'CANCELLED') entry.cancelled++;
       else entry.handled++;
       counts.set(item.absenceId, entry);
+    }
+    return counts;
+  }
+
+  /** The absent teachers' rastvaktspass over each ACTIVE absence's own days, by the board's own derivation. */
+  private async passCountsOf(
+    tx: PrismaClient,
+    absences: readonly AbsenceRow[],
+    timezone: string,
+    now: Date,
+  ): Promise<Map<string, PassSummary>> {
+    const counts = new Map<string, PassSummary>();
+    if (absences.length === 0) return counts;
+    const items = await readPassBoard(tx, { kind: 'absences', absences }, timezone, now);
+    for (const absence of absences) {
+      const mine = items.filter((item) => item.absenceId === absence.id);
+      if (mine.length > 0) counts.set(absence.id, passSummaryOf(mine));
     }
     return counts;
   }
@@ -567,7 +606,12 @@ export function fieldsOf(
   };
 }
 
-function viewOf(row: AbsenceRow, now: Date, counts: AbsenceView['counts'] | undefined): AbsenceView {
+function viewOf(
+  row: AbsenceRow,
+  now: Date,
+  counts: AbsenceView['counts'] | undefined,
+  passCounts?: PassSummary,
+): AbsenceView {
   const phase: AbsencePhase =
     row.status === 'WITHDRAWN'
       ? 'WITHDRAWN'
@@ -588,16 +632,26 @@ function viewOf(row: AbsenceRow, now: Date, counts: AbsenceView['counts'] | unde
     selfReported: row.createdByUserId !== null && row.createdByUserId === row.userId,
     createdAt: row.createdAt.toISOString(),
     counts: counts ?? { open: 0, covered: 0, cancelled: 0, handled: 0, passedOpen: 0 },
+    passCounts: passCounts ?? { open: 0, covered: 0, handled: 0, passedOpen: 0 },
   };
 }
 
 /**
- * The decisions a 409 names, as the error filter's scalar params: how many,
- * and the first lesson (the register opens the board on its day).
+ * The decisions a 409 names, as the error filter's scalar params: how many
+ * (`count`, lessons and passes together; `passes` of them rastvaktspass),
+ * and the first lesson (the register opens the board on its day) — or, with
+ * no lesson, the first pass's date.
  */
-function paramsOf(rows: { calendarLessonId: string; decision: string }[]): Record<string, string | number> {
-  const first = [...rows].sort((a, b) => a.calendarLessonId.localeCompare(b.calendarLessonId))[0]!;
-  return { count: rows.length, lessonId: first.calendarLessonId, decision: first.decision };
+function paramsOf(
+  rows: { calendarLessonId: string; decision: string }[],
+  passes: readonly CoverRow[] = [],
+): Record<string, string | number> {
+  const first = [...rows].sort((a, b) => a.calendarLessonId.localeCompare(b.calendarLessonId))[0];
+  if (first) {
+    return { count: rows.length + passes.length, passes: passes.length, lessonId: first.calendarLessonId, decision: first.decision };
+  }
+  const pass = passes[0]!;
+  return { count: passes.length, passes: passes.length, date: pass.date, decision: pass.decision };
 }
 
 function selfReportOff(): ForbiddenException {

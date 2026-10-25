@@ -43,9 +43,13 @@ describe('NotificationPreferencesService', () => {
     expect(tx.notificationOptOut.findMany).toHaveBeenCalledWith({ where: { userId: USER }, select: { type: true } });
   });
 
-  it('lists staff the cover withdrawal as required, a pupil nothing required', async () => {
+  it('lists staff the cover withdrawal and a rastvaktspass booked and withdrawn as required, a pupil nothing required', async () => {
     const teacher = await service.get(as('TEACHER'));
-    expect(teacher.types.filter((t) => t.required).map((t) => t.type)).toEqual(['LESSON_COVER_WITHDRAWN']);
+    expect(teacher.types.filter((t) => t.required).map((t) => t.type)).toEqual([
+      'LESSON_COVER_WITHDRAWN',
+      'SUPERVISION_COVER',
+      'SUPERVISION_COVER_WITHDRAWN',
+    ]);
     expect(teacher.types.map((t) => t.type)).toEqual(TYPES_BY_ROLE.TEACHER);
     const pupil = await service.get(as('STUDENT'));
     expect(pupil.types.some((t) => t.required)).toBe(false);

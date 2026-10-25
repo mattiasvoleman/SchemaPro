@@ -4706,7 +4706,11 @@ async function runChecks(
           // the school's clock, the day's lessons of the candidates with
           // their rows, their closures, bookings, work rules, absences, pool
           // memberships and posts — one read each, for all candidates).
-          'suggest a substitute': 30,
+          // +1 since Rastvakt i vardagen (20261210090000): the candidates'
+          // rastvaktspass of the day, their own or taken as vikarie, one
+          // SELECT; the day's decisions on them are asked only when it
+          // returns a pass, and this school has none.
+          'suggest a substitute': 31,
           // The assignment enters the publication lock and locks the lesson
           // row and the substitute (+3: two writers cannot both put one
           // person on two lessons at one hour, nor cover during a DRAFT
@@ -4724,7 +4728,10 @@ async function runChecks(
           // +1 since Lektionslogg (20261203090000): whether the lesson's own
           // teacher left the substitute a note, for the booking's e-mail (one
           // SELECT by the unique calendarLessonId).
-          'assign a substitute': 36,
+          // +1 since Rastvakt i vardagen (20261210090000): the substitute's
+          // rastvaktspass of the day for the warning a pass then gives
+          // (COVER_TEACHER_ON_SUPERVISION), one SELECT, as in the suggestion.
+          'assign a substitute': 37,
           // +1 each since Publicering: app.enter_grundschema_write, the shared
           // publication lock and the mode in one statement, first (below).
           // +1 since Halvklasser on a PATCH that meets another group's lesson

@@ -674,6 +674,40 @@ describe('CoverService', () => {
     expect(recordedReads(tx)).toEqual([{ kind: 'STAFF_ABSENCES', channel: null, ids: [A, B] }]);
   });
 
+  it('the board lists the absent teachers’ rastvaktspass beside the lessons, and records their teachers (Rastvakt i vardagen)', async () => {
+    tx.$queryRaw.mockResolvedValue([]);
+    // B is away all Wednesday; her pass on the yard runs 10:00–10:20.
+    tx.teacherAbsence.findMany.mockResolvedValue([
+      { id: ABSENCE, userId: B, startsAt: new Date('2026-10-13T22:00:00.000Z'), endsAt: new Date('2026-10-14T22:00:00.000Z') },
+    ]);
+    tx.supervisionShift.findMany.mockResolvedValue([
+      {
+        id: 'shift', academicYearId: 'year', areaId: 'area', userId: B, dayOfWeek: 3,
+        startTime: new Date('1970-01-01T10:00:00Z'), endTime: new Date('1970-01-01T10:20:00Z'), validFrom: null, validTo: null,
+      },
+    ]);
+    tx.supervisionArea.findMany.mockResolvedValue([{ id: 'area', name: 'Skolgården', siteId: null, minGradeLevel: null, maxGradeLevel: null }]);
+    tx.academicYear.findMany.mockResolvedValue([
+      { id: 'year', startDate: new Date('2026-08-17T00:00:00Z'), endDate: new Date('2027-06-11T00:00:00Z'), gradeNumbering: 'NIOARIG' },
+    ]);
+    const board = await cover.board('2026-10-14', '2026-10-14', testUser());
+    expect(board.supervision).toEqual([
+      expect.objectContaining({
+        shiftId: 'shift',
+        date: '2026-10-14',
+        absenceId: ABSENCE,
+        absentTeacherId: B,
+        areaId: 'area',
+        startsAt: '2026-10-14T08:00:00.000Z',
+        endsAt: '2026-10-14T08:20:00.000Z',
+        status: 'OPEN',
+      }),
+    ]);
+    expect(board.supervisionSummary).toEqual({ open: 1, covered: 0, handled: 0, passedOpen: 0 });
+    expect(recordedReads(tx)).toEqual([{ kind: 'STAFF_ABSENCES', channel: null, ids: [B] }]);
+    expect(JSON.stringify(board)).not.toMatch(/"(reason(Id)?|note)":/);
+  });
+
   it('after the commit a failing notice is logged by count and never fails the write', async () => {
     world();
     notifications.notifyUsers.mockRejectedValue(new Error('down'));

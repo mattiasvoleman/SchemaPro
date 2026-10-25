@@ -225,8 +225,16 @@ function weekdaysOf(input: CoverageInput): number[] {
   return [...days].sort((a, b) => a - b);
 }
 
-/** Whether a closure shuts the area on `day`: the whole school, or every årskurs of its span. */
-function closedFor(area: CoverageArea, closures: readonly ClosedRange[], day: string): boolean {
+/**
+ * Whether a closure shuts the area on `day`: the whole school, or every
+ * årskurs of its span. Exported for the pass's own days (pass-days.ts): a
+ * pass on a date its area is closed is no vacancy, and no duty in the week.
+ */
+export function closedFor(
+  area: Pick<CoverageArea, 'minGradeLevel' | 'maxGradeLevel'>,
+  closures: readonly ClosedRange[],
+  day: string,
+): boolean {
   return closures.some((closure) => {
     if (day < closure.startDate || day > closure.endDate) return false;
     const min = closure.minGradeLevel ?? null;

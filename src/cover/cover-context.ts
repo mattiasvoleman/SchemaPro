@@ -4,7 +4,7 @@ import { isFullDay, isoWeekday, timeToString } from '../calendar/publish-days';
 import { dayOf, dutyRunsOn } from '../staffing/duty-dates';
 import { toLoadPeriod } from '../staffing/load-input';
 import type { LoadEmployment } from '../staffing/teacher-load';
-import type { LessonStatusValue, PersonClosure, PersonDay, PersonLesson, Span } from './cover-rules';
+import { passTargetId, type LessonStatusValue, type PersonClosure, type PersonDay, type PersonLesson, type Span } from './cover-rules';
 
 /**
  * WHAT THE COVER RULES AND THE RANKING READ, BY SCHOOL-WIDE SET.
@@ -20,8 +20,9 @@ import type { LessonStatusValue, PersonClosure, PersonDay, PersonLesson, Span } 
  * these readers without moving any raw statement their specs queue.
  *
  * PRIVACY: nothing here selects an absence's reasonId, an
- * AvailabilityConstraint's free-text reason, or a TeacherDuty's note. An
- * absence is a span; a closure is a span with the uppdrag's label at most.
+ * AvailabilityConstraint's free-text reason, a TeacherDuty's note or a
+ * rastvaktspass's note. An absence is a span; a closure is a span with the
+ * uppdrag's label at most; a pass is a span.
  */
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -123,6 +124,7 @@ export async function readPersonDays(tx: PrismaClient, options: DayReadOptions):
       maxTeachingDaysPerWeek: null,
       weekTeachingDates: [],
       preferredFreeDay: null,
+      supervision: [],
       pool: { member: false, hasEmployment: false, windows: [] },
     });
   }
@@ -204,6 +206,74 @@ export async function readPersonDays(tx: PrismaClient, options: DayReadOptions):
       ? { span, kind: 'DUTY', label: duty.label }
       : { span, kind: 'UNAVAILABLE', label: null };
     day.closures.push(closure);
+  }
+
+  // THE RASTVAKTSPASS OF THE DAY (Rastvakt i vardagen, 20261210090000): ONE
+  // statement for the year's own passes of these people on the weekday, or a
+  // pass one of them has taken as vikarie on the date; and only when it
+  // returns a pass, one more for the date's decisions on those passes. (A
+  // selected relation would be that second statement always: Prisma 7 sends
+  // it for an empty parent too, which the adapter probe's (z) measured.) A
+  // school without passes sends the one SELECT. Never a pass's note.
+  //
+  // An own pass holds its time on a date between its Från and Till unless a
+  // decision of the day has relieved its teacher of it (a vikarie takes it,
+  // or it is left without one). A pass on a day a lov closes its area still
+  // holds its time here: excluding a colleague for twenty minutes is the
+  // smaller mistake beside putting them in two places.
+  const passes =
+    (await tx.supervisionShift.findMany({
+      where: {
+        OR: [
+          ...(options.academicYearId !== null
+            ? [{ userId: people, academicYearId: options.academicYearId, dayOfWeek: weekday }]
+            : []),
+          { covers: { some: { date: dayDate(date), decision: 'SUBSTITUTE' as const, substituteId: people } } },
+        ],
+      },
+      select: {
+        id: true,
+        userId: true,
+        academicYearId: true,
+        dayOfWeek: true,
+        startTime: true,
+        endTime: true,
+        validFrom: true,
+        validTo: true,
+      },
+    })) ?? [];
+  const decided =
+    passes.length > 0
+      ? ((await tx.supervisionCover.findMany({
+          where: { shiftId: { in: passes.map((pass) => pass.id) }, date: dayDate(date) },
+          select: { shiftId: true, decision: true, substituteId: true, startsAt: true, endsAt: true },
+        })) ?? [])
+      : [];
+  for (const pass of passes) {
+    if (!pass?.id) continue;
+    const decisions = decided.filter((row) => row?.shiftId === pass.id);
+    const own = days.get(pass.userId);
+    const runs =
+      own !== undefined &&
+      options.academicYearId !== null &&
+      pass.academicYearId === options.academicYearId &&
+      pass.dayOfWeek === weekday &&
+      (!pass.validFrom || asDay(pass.validFrom) <= date) &&
+      (!pass.validTo || asDay(pass.validTo) >= date);
+    if (runs && decisions.length === 0 && pass.startTime && pass.endTime) {
+      const span = liftWindow(date, pass.startTime, pass.endTime, timezone);
+      own!.supervision!.push({ id: passTargetId(pass.id, date), date, start: span.start, end: span.end });
+    }
+    for (const decision of decisions) {
+      const vikarie = decision.decision === 'SUBSTITUTE' && decision.substituteId ? days.get(decision.substituteId) : undefined;
+      if (!vikarie || !decision.startsAt || !decision.endsAt) continue;
+      vikarie.supervision!.push({
+        id: passTargetId(pass.id, date),
+        date,
+        start: decision.startsAt.getTime(),
+        end: decision.endsAt.getTime(),
+      });
+    }
   }
 
   const bookings =

@@ -19,7 +19,9 @@ export type NotificationKind =
   | 'LESSON_REINSTATED'
   | 'LESSON_SUPERVISED_STUDY'
   | 'CANCELLATION_DIGEST'
-  | 'LEAVE_REQUESTED';
+  | 'LEAVE_REQUESTED'
+  | 'SUPERVISION_COVER'
+  | 'SUPERVISION_COVER_WITHDRAWN';
 
 
 /** Where a transaction's outbox is kept (PrismaService.commitLocal). */

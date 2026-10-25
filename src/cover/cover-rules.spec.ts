@@ -6,11 +6,13 @@ import {
   isFeasible,
   maskFindings,
   maskWarnings,
+  passTargetId,
   prefersFree,
   softWarnings,
   type CoverTarget,
   type PersonDay,
   type PersonLesson,
+  type PersonPass,
   type RuleFinding,
 } from './cover-rules';
 
@@ -330,6 +332,57 @@ describe('cover rules', () => {
         { code: 'COVER_BREAKS_LUNCH', params: { minutes: 30 } },
       ]);
       expect(maskWarnings(warnings, true)).toEqual(warnings);
+    });
+  });
+
+  describe('rastvaktspass (Rastvakt i vardagen)', () => {
+    const pass = (from: string, to: string, id = passTargetId('shift', D)): PersonPass => ({
+      id,
+      date: D,
+      start: at(from),
+      end: at(to),
+    });
+    const passTarget = (from: string, to: string): CoverTarget => ({
+      ...target(from, to),
+      id: passTargetId('yard', D),
+      kind: 'PASS',
+    });
+
+    it('a pass of theirs that shares a minute excludes a lesson; one ending at the start is free', () => {
+      expect(codes(day({ supervision: [pass('09:50', '10:10')] }))).toEqual(['BUSY_SUPERVISION']);
+      expect(codes(day({ supervision: [pass('09:40', '10:00')] }))).toEqual([]);
+    });
+
+    it('excludes a pass target as it excludes a lesson, and never the pass being covered itself', () => {
+      expect(codes(day({ supervision: [pass('10:00', '10:20', passTargetId('yard', D))] }), passTarget('10:00', '10:20'))).toEqual([]);
+      expect(codes(day({ supervision: [pass('10:10', '10:30')] }), passTarget('10:00', '10:20'))).toEqual(['BUSY_SUPERVISION']);
+      expect(codes(day({ lessons: [lesson('a', '10:00', '11:00')] }), passTarget('10:00', '10:20'))).toEqual(['BUSY_LESSON']);
+    });
+
+    it('a pass takes the lunch’s time, for a lesson and for a pass alike', () => {
+      const lunch = { minutes: 30, window: { start: at('11:00'), end: at('12:00') } };
+      // The pass 11:30–12:00 leaves 11:00–11:30 for lunch, which the lesson takes.
+      expect(codes(day({ lunch, supervision: [pass('11:30', '12:00')] }), target('11:00', '11:30'))).toEqual(['LUNCH']);
+      expect(codes(day({ lunch }), target('11:00', '11:30'))).toEqual([]);
+      // And a pass at lunch is judged as a lesson there is.
+      expect(codes(day({ lunch, lessons: [lesson('a', '11:00', '11:30')] }), passTarget('11:30', '12:00'))).toEqual(['LUNCH']);
+    });
+
+    it('a pass is not teaching: the daily cap does not judge it', () => {
+      const capped = day({ dailyCapMinutes: 60, lessons: [lesson('a', '08:00', '09:00')] });
+      expect(codes(capped, target('10:00', '10:20'))).toEqual(['DAILY_CAP']);
+      expect(codes(capped, passTarget('10:00', '10:20'))).toEqual([]);
+    });
+
+    it('the deltid in days judges a pass as a working day', () => {
+      const partTimer = day({ maxTeachingDaysPerWeek: 1, weekTeachingDates: ['2026-10-12'] });
+      expect(codes(partTimer, passTarget('10:00', '10:20'))).toEqual(['WORK_DAYS']);
+    });
+
+    it('a manual pick hears a pass of theirs as a warning a rektor may override', () => {
+      expect(softWarnings([{ code: 'BUSY_SUPERVISION', params: {} }])).toEqual([
+        { code: 'COVER_TEACHER_ON_SUPERVISION', params: {} },
+      ]);
     });
   });
 

@@ -23,10 +23,11 @@ import {
   CreateSupervisionAreaDto,
   CreateSupervisionShiftDto,
   SupervisionRotaQueryDto,
+  SupervisionWeekQueryDto,
   UpdateSupervisionAreaDto,
   UpdateSupervisionShiftDto,
 } from './dto/supervision.dto';
-import { SupervisionService } from './supervision.service';
+import { SupervisionService, type WeekPass } from './supervision.service';
 
 const uuid = () => new ParseUUIDPipe({ version: '4' });
 
@@ -95,5 +96,26 @@ export class SupervisionShiftsController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async remove(@Param('id', uuid()) id: string, @CurrentUser() user: AuthenticatedUser): Promise<void> {
     await this.supervision.removeShift(id, user);
+  }
+}
+
+/**
+ * The signed-in person's own passes over a few days (Rastvakt i vardagen):
+ * their week on the web and in the app. Every member of staff, for
+ * themself only; a read, so no area.
+ */
+@Controller('api/v1/supervision')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(Role.SCHOOL_ADMIN, Role.TEACHER)
+export class SupervisionWeekController {
+  constructor(private readonly supervision: SupervisionService) {}
+
+  /** `?from=&to=` — at most fourteen days. */
+  @Get('week')
+  week(
+    @Query() query: SupervisionWeekQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<{ from: string; to: string; passes: WeekPass[] }> {
+    return this.supervision.week(query.from, query.to, user);
   }
 }

@@ -293,6 +293,68 @@ describe('TeacherAbsencesService', () => {
       expect(await code(service.withdraw(ABSENCE, true, admin))).toBe('ABSENCE_HAS_HELD_DECISIONS');
     });
 
+    describe('a rastvaktspass decided on (Rastvakt i vardagen)', () => {
+      const pass = (overrides: Record<string, unknown> = {}) => ({
+        id: 'cov-1',
+        shiftId: 'shift',
+        date: new Date('2026-10-16T00:00:00Z'),
+        areaId: 'area',
+        startsAt: new Date('2026-10-16T08:00:00Z'),
+        endsAt: new Date('2026-10-16T08:20:00Z'),
+        absenceId: ABSENCE,
+        absentTeacherId: ME,
+        decision: 'SUBSTITUTE',
+        substituteId: OTHER,
+        decidedAt: NOW,
+        ...overrides,
+      });
+
+      it('outside the new period and still ahead: counted in the 409, or undone when asked and its vikarie told', async () => {
+        tx.teacherAbsence.findUnique.mockResolvedValue(current());
+        tx.supervisionCover.findMany.mockResolvedValue([pass()]);
+        const error = await service.end(ABSENCE, { at: '2026-10-15T00:00:00Z' }, admin).catch((e: unknown) => e);
+        expect((error as { getResponse: () => unknown }).getResponse()).toMatchObject({
+          code: 'ABSENCE_HAS_DECISIONS',
+          params: { count: 1, passes: 1, date: '2026-10-16', decision: 'SUBSTITUTE' },
+        });
+        // With a lesson beside it, the lesson is named and both are counted.
+        tx.teacherAbsenceCover.findMany.mockResolvedValue([{ calendarLessonId: 'l-ahead', decision: 'SUPERVISED_STUDY' }]);
+        tx.calendarLesson.findMany.mockResolvedValue([
+          { id: 'l-ahead', startsAt: new Date('2026-10-16T09:00:00Z'), endsAt: new Date('2026-10-16T10:00:00Z') },
+        ]);
+        const both = await service.end(ABSENCE, { at: '2026-10-15T00:00:00Z' }, admin).catch((e: unknown) => e);
+        expect((both as { getResponse: () => unknown }).getResponse()).toMatchObject({
+          params: { count: 2, passes: 1, lessonId: 'l-ahead' },
+        });
+        expect(tx.teacherAbsence.update).not.toHaveBeenCalled();
+
+        tx.teacherAbsenceCover.findMany.mockResolvedValue([]);
+        await service.end(ABSENCE, { at: '2026-10-15T00:00:00Z', undoDecisions: true }, admin);
+        expect(tx.supervisionCover.delete).toHaveBeenCalledWith({ where: { id: 'cov-1' } });
+        expect(notifications.notifyUsers).toHaveBeenCalledWith(
+          tx,
+          expect.objectContaining({ userIds: [OTHER], type: 'SUPERVISION_COVER_WITHDRAWN' }),
+        );
+      });
+
+      it('inside the new period it stays; a pass already lived refuses a withdrawal outright', async () => {
+        tx.teacherAbsence.findUnique.mockResolvedValue(current());
+        tx.supervisionCover.findMany.mockResolvedValue([pass()]);
+        await service.end(ABSENCE, { at: '2026-10-16T12:00:00Z' }, admin);
+        expect(tx.supervisionCover.delete).not.toHaveBeenCalled();
+        tx.supervisionCover.findMany.mockResolvedValue([
+          pass({ date: new Date('2026-10-14T00:00:00Z'), startsAt: new Date('2026-10-14T03:00:00Z'), endsAt: new Date('2026-10-14T03:20:00Z') }),
+        ]);
+        expect(await code(service.withdraw(ABSENCE, true, admin))).toBe('ABSENCE_HAS_HELD_DECISIONS');
+      });
+
+      it('keeps a teacher from withdrawing within the hour once a pass is decided on', async () => {
+        tx.teacherAbsence.findUnique.mockResolvedValue(current());
+        tx.supervisionCover.count.mockResolvedValue(1);
+        expect(await code(service.withdraw(ABSENCE, false, teacher))).toBe('ABSENCE_WITHDRAW_TOO_LATE');
+      });
+    });
+
     it('a teacher withdraws within the hour when nothing is decided, and not after it has started otherwise', async () => {
       tx.teacherAbsence.findUnique.mockResolvedValue(current());
       tx.teacherAbsenceCover.findMany.mockResolvedValue([]);
