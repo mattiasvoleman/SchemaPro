@@ -14,7 +14,7 @@ export default async function Page({
   if (!session) {
     redirect({ href: "/login", locale });
   } else if (!session.profile) {
-    redirect({ href: "/no-profile", locale });
+    redirect({ href: session.huvudmanMember ? "/huvudman" : "/no-profile", locale });
   } else {
     redirect({ href: homePathForRole(session.profile.role), locale });
   }

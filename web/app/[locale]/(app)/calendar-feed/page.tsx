@@ -52,6 +52,8 @@ function feedErrorText(error: unknown, t: Translate, fallback: string): string {
     if (error.code === "CALENDAR_FEEDS_OFF") return t("errors.off");
     if (error.code === "CALENDAR_FEED_NOT_FOUND") return t("errors.gone");
     if (error.code === "STUDENT_NOT_FOUND") return t("errors.notYours");
+    // Huvudman: the huvudman's reader has no row at the school to feed.
+    if (error.code === "HUVUDMAN_READS_ONLY") return t("errors.huvudmanReader");
     if (error.status === 429) return t("errors.tooMany");
   }
   return fallback;

@@ -131,3 +131,142 @@ describe("getSession, the login's schools", () => {
     expect(session?.namedSchool).toBeNull();
   });
 });
+
+describe("getSession, the huvudman's reader (Huvudman)", () => {
+  const fetchMock = vi.fn();
+  const HUVUDMAN = { id: "h-1", name: "Vimmerby kommun", role: "PLANERARE" as const, memberId: "m-1", firstName: "Pia", lastName: "Planerare" };
+  const reads = (schoolId: string, current = false): MySchool => ({
+    schoolId,
+    schoolName: "Granen",
+    role: "SCHOOL_ADMIN",
+    adminProfile: "LASARE",
+    closed: null,
+    current,
+    huvudman: HUVUDMAN,
+  });
+
+  beforeEach(() => {
+    state.cookie = undefined;
+    state.appMetadata = { provider: "email", rastraHuvudman: true };
+    // A member with no row anywhere.
+    state.rows = { "": null };
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const load = async () => (await import("./auth")).getSession();
+
+  it("asks the gateway for a member's schools, and leaves a member with no school chosen without a profile", async () => {
+    fetchMock.mockResolvedValue(answer([reads(B)]));
+
+    const session = await load();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(session?.profile).toBeNull();
+    expect(session?.huvudmanMember).toBe(true);
+    expect(session?.huvudman).toBeNull();
+  });
+
+  it("reads a school its huvudman owns as the läsare, with the membership's id and the member's name", async () => {
+    state.cookie = B;
+    fetchMock.mockResolvedValue(answer([reads(B, true)]));
+
+    const session = await load();
+
+    expect(session?.profile).toMatchObject({
+      id: "m-1",
+      schoolId: B,
+      role: "SCHOOL_ADMIN",
+      adminProfile: "LASARE",
+      hrRead: false,
+      firstName: "Pia",
+      lastName: "Planerare",
+      studentGroupId: null,
+    });
+    expect(session?.huvudman).toEqual(HUVUDMAN);
+    // The browser names the school, so PostgREST and the gateway answer for the reader there.
+    expect(session?.namedSchool).toBe(B);
+    expect(session?.school?.id).toBe(B);
+  });
+
+  it("does not read a school as the huvudman's when the session may not enter it", async () => {
+    state.cookie = B;
+    fetchMock.mockResolvedValue(answer([{ ...reads(B), closed: "sso_required" }]));
+
+    const session = await load();
+
+    expect(session?.profile).toBeNull();
+    expect(session?.huvudman).toBeNull();
+    // Read again with no school named, which the browser then follows.
+    const named = fetchMock.mock.calls.map(([, init]) => (init as { headers: Record<string, string> }).headers["x-school-id"] ?? null);
+    expect(named).toEqual([B, null]);
+    expect(session?.namedSchool).toBeNull();
+  });
+
+  it("asks a second time, for longer, when the first ask found nothing at the school chosen", async () => {
+    state.cookie = B;
+    // The first ask times out (the page's 1 s); the second answers.
+    fetchMock.mockRejectedValueOnce(new DOMException("timed out", "TimeoutError")).mockResolvedValueOnce(answer([reads(B, true)]));
+
+    const session = await load();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(session?.profile).toMatchObject({ id: "m-1", schoolId: B, adminProfile: "LASARE" });
+    expect(session?.namedSchool).toBe(B);
+  });
+
+  it("keeps the choice and says the school could not be read when neither ask answers, sending the member nowhere else", async () => {
+    state.cookie = B;
+    fetchMock.mockResolvedValue(answer({ code: "TOO_MANY_REQUESTS" }, 429));
+
+    const session = await load();
+
+    // The first ask and the second: a 429 is no list, and no third read with no school named.
+    const named = fetchMock.mock.calls.map(([, init]) => (init as { headers: Record<string, string> }).headers["x-school-id"] ?? null);
+    expect(named).toEqual([B, B]);
+    expect(session?.schoolsUnavailable).toBe(true);
+    expect(session?.profile).toBeNull();
+    expect(session?.huvudmanMember).toBe(true);
+  });
+
+  it("finds a member whose mark was lost through the login's list, when the login has no row at all", async () => {
+    state.appMetadata = { provider: "email" };
+    fetchMock.mockResolvedValue(answer([reads(B)]));
+
+    const session = await load();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(session?.profile).toBeNull();
+    // The start page then sends them to the huvudman's pages, whose read marks the login.
+    expect(session?.huvudmanMember).toBe(true);
+    expect(session?.schoolsUnavailable).toBe(false);
+  });
+
+  it("asks only once for a login that is no member, whose own row is the only profile there is", async () => {
+    state.cookie = B;
+    state.appMetadata = { provider: "email" };
+    state.rows = { "": row(A) };
+    fetchMock.mockRejectedValue(new DOMException("timed out", "TimeoutError"));
+
+    await load();
+
+    // The first ask, then the read with no school named: no second, longer ask.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const named = fetchMock.mock.calls.map(([, init]) => (init as { headers: Record<string, string> }).headers["x-school-id"] ?? null);
+    expect(named).toEqual([B, null]);
+  });
+
+  it("keeps an own row first: a member with a row at the school chosen is that row there", async () => {
+    state.cookie = A;
+    state.rows = { [A]: row(A) };
+    fetchMock.mockResolvedValue(answer([school(A, true)]));
+
+    const session = await load();
+
+    expect(session?.profile?.id).toBe(`row-${A}`);
+    expect(session?.huvudman).toBeNull();
+  });
+});

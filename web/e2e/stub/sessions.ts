@@ -117,6 +117,22 @@ export const MULTI_GUARDIAN: SignedInPerson = {
 };
 
 /**
+ * Huvudman (20261212090000): a kommunadministratör of the stub's huvudman,
+ * Exempelkommun, which owns the fixture school. No row at any school: at the
+ * fixture school she reads as its läsare (the admin's persona, so the stub's
+ * gateway answers her as it answers the administrator), and with no school
+ * chosen she starts on /huvudman. A login of its own, so every other suite
+ * sees the school it always saw.
+ */
+export const HUVUDMAN_MEMBER: SignedInPerson = {
+  persona: "admin",
+  role: "SCHOOL_ADMIN",
+  authId: uid(KIND.auth, 7),
+  userId: uid(KIND.user, 701),
+  email: "kommunadmin@exempelkommun.example",
+};
+
+/**
  * Someone signed in whom no school knows: an auth user with no Users row, so
  * the (app) layout sends them to /no-profile — the one way to reach that page.
  * Their persona is a pupil's, but no page reads anything for them.
@@ -162,6 +178,8 @@ export function authUser(person: SignedInPerson) {
       provider: "email",
       providers: ["email"],
       ...(person.authId === MULTI_GUARDIAN.authId ? { rastraSeveralSchools: true } : {}),
+      // A huvudman's member (SupabaseAdminService.markHuvudman).
+      ...(person.authId === HUVUDMAN_MEMBER.authId ? { rastraSeveralSchools: true, rastraHuvudman: true } : {}),
     },
     user_metadata: {},
     created_at: "2026-08-01T08:00:00.000Z",
@@ -173,7 +191,7 @@ export function personForToken(token: string | null | undefined): SignedInPerson
   if (!token) return null;
   try {
     const payload = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString()) as { sub?: string };
-    return [...Object.values(PEOPLE), READER, MULTI_GUARDIAN, ORPHAN].find((person) => person.authId === payload.sub) ?? null;
+    return [...Object.values(PEOPLE), READER, MULTI_GUARDIAN, HUVUDMAN_MEMBER, ORPHAN].find((person) => person.authId === payload.sub) ?? null;
   } catch {
     return null;
   }

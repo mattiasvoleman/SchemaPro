@@ -31,15 +31,25 @@ export type AccessKind = (typeof ACCESS_KINDS)[number];
 /** CALENDAR: a guardian's calendar feed of their child (Kalenderprenumeration). */
 export type AccessChannel = "WEB" | "APP" | "INTEGRATION" | "OTHER" | "CALENDAR";
 
+/** Who of a huvudman read: its name, and the member's role (none for a key). */
+export interface HuvudmanOfReader {
+  name: string | null;
+  role: "KOMMUNADMINISTRATOR" | "PLANERARE" | null;
+}
+
 export interface AccessLogEntry {
   id: string;
   /** ISO instant. */
   at: string;
   kind: AccessKind;
   channel: AccessChannel;
+  /**
+   * A huvudman's reader or key (Huvudman, 20261212090100) carries `huvudman`:
+   * the huvudman's name, and the member's role there.
+   */
   reader:
-    | { type: "PERSON"; id: string | null; name: string | null; role: UserRole | null }
-    | { type: "KEY"; id: string | null; name: string | null };
+    | { type: "PERSON"; id: string | null; name: string | null; role: UserRole | null; huvudman?: HuvudmanOfReader }
+    | { type: "KEY"; id: string | null; name: string | null; huvudman?: HuvudmanOfReader };
   /** How many other people the same read named. */
   others: number;
 }

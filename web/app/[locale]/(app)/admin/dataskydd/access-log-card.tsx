@@ -60,14 +60,19 @@ export function AccessLogCard() {
   const data = answer.data;
   const name = data ? `${data.person.firstName} ${data.person.lastName}`.trim() : "";
   const when = (entry: AccessLogEntry) => formatRetentionInstant(entry.at, locale, data?.timezone ?? "Europe/Stockholm");
+  // Huvudman: the huvudman's reader and key are named with their huvudman.
+  const ofHuvudman = (entry: AccessLogEntry, named: string) =>
+    entry.reader.huvudman ? t("ofHuvudman", { reader: named, huvudman: entry.reader.huvudman.name ?? t("removedHuvudman") }) : named;
   const reader = (entry: AccessLogEntry) =>
     entry.reader.type === "KEY"
-      ? entry.reader.name
-        ? t("key", { name: entry.reader.name })
-        : t("removedKey")
-      : (entry.reader.name ?? t("removedPerson"));
+      ? ofHuvudman(entry, entry.reader.name ? t("key", { name: entry.reader.name }) : t("removedKey"))
+      : ofHuvudman(entry, entry.reader.name ?? t("removedPerson"));
   const role = (entry: AccessLogEntry) =>
-    entry.reader.type === "PERSON" && entry.reader.role ? tRoles(entry.reader.role) : "–";
+    entry.reader.type === "PERSON" && entry.reader.huvudman?.role
+      ? t(`huvudmanRoles.${entry.reader.huvudman.role}`)
+      : entry.reader.type === "PERSON" && entry.reader.role
+        ? tRoles(entry.reader.role)
+        : "–";
   const kind = (entry: AccessLogEntry) => t(`kinds.${entry.kind}`);
   const channel = (entry: AccessLogEntry) => t(`channels.${entry.channel}`);
   const readers = data ? new Set(data.entries.map((entry) => `${entry.reader.type}:${entry.reader.id ?? reader(entry)}`)).size : 0;

@@ -70,4 +70,25 @@ describe("SchoolSwitcher", () => {
     expect(closed).toBeDisabled();
     expect(closed).toHaveTextContent("Skolan kräver skolkonto");
   });
+
+  it("says for whom a school is read as its huvudman's läsare (Huvudman)", async () => {
+    const read = school("66666666-6666-4666-8666-666666666666", "Lunden", {
+      role: "SCHOOL_ADMIN",
+      adminProfile: "LASARE",
+      huvudman: { id: "h", name: "Vimmerby kommun", role: "PLANERARE", memberId: "m", firstName: "Pia", lastName: "P" },
+    });
+    render(await SchoolSwitcher({ schools: [A, read], currentName: "Ekbacken", locale: "sv" }));
+    const button = screen.getByRole("button", { name: /Lunden/ });
+    expect(button.textContent).toContain("Läsare för Vimmerby kommun");
+    expect(button).not.toBeDisabled();
+  });
+
+  it("links a huvudman's member back to the huvudman's pages, even with one school (Huvudman)", async () => {
+    const { container } = render(await SchoolSwitcher({ schools: [A], currentName: "Ekbacken", locale: "sv", huvudmanHref: "/sv/huvudman" }));
+    expect(container.querySelector("details")).not.toBeNull();
+    const link = screen.getByRole("link", { name: sv.schoolSwitcher.huvudmanPages });
+    expect(link).toHaveAttribute("href", "/sv/huvudman");
+    // Outside the switcher's form: following it posts nothing.
+    expect(link.closest("form")).toBeNull();
+  });
 });

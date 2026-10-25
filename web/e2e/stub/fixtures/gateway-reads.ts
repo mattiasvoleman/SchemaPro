@@ -3,7 +3,8 @@ import type { GuardianChild } from "../../../lib/guardian-queries";
 import type { GroupAttendanceRow, GroupMembershipRow } from "../../../lib/queries";
 import type { AbsenceReport, AttendanceRecordRow, Person } from "../../../lib/types";
 import { Reply, route, type GatewayContext, type GatewayRoute } from "../gateway-routes";
-import { MULTI_GUARDIAN, type SignedInPerson } from "../sessions";
+import { HUVUDMAN_MEMBER, MULTI_GUARDIAN, type SignedInPerson } from "../sessions";
+import { HUVUDMAN_OF_STUB, HUVUDMAN_READER } from "./gateway-huvudman";
 import { CALENDAR_LESSONS_WITH_COVER } from "./cover-world";
 import { ABSENCE_REPORTS, ATTENDANCE_RECORDS, GROUP_MEMBERS } from "./school-days";
 import { ALL_PEOPLE, byId, GUARDIAN_LINKS, SCHOOL, SECOND_SCHOOL, STUDENT_LIST } from "./world";
@@ -91,6 +92,20 @@ export const readRoutes: GatewayRoute[] = [
       current: (context.school ?? SCHOOL.id) === school.id,
     });
     const role = ROLE_OF[context.person.persona];
+    // Huvudman: the member reads the fixture school as its läsare, with no row there.
+    if (context.person.authId === HUVUDMAN_MEMBER.authId) {
+      return [
+        {
+          schoolId: SCHOOL.id,
+          schoolName: SCHOOL.name,
+          role: "SCHOOL_ADMIN",
+          adminProfile: "LASARE",
+          closed: null,
+          current: context.school === SCHOOL.id,
+          huvudman: { ...HUVUDMAN_READER, id: HUVUDMAN_OF_STUB.id, name: HUVUDMAN_OF_STUB.name },
+        },
+      ];
+    }
     if (context.person.authId !== MULTI_GUARDIAN.authId) return [own(SCHOOL, role)];
     return [own(SCHOOL, "GUARDIAN"), own(SECOND_SCHOOL, "GUARDIAN")];
   }),

@@ -23,13 +23,19 @@ export async function SchoolSwitcher({
   schools,
   currentName,
   locale,
+  huvudmanHref = null,
 }: {
   schools: MySchool[];
   /** The page's school, as the session read it; the list's own name is the same school's. */
   currentName: string;
   locale: string;
+  /**
+   * Huvudman (20261212090000): the huvudman's own pages, for a login that is
+   * a huvudman's member: offered in the list, also beside one school.
+   */
+  huvudmanHref?: string | null;
 }) {
-  if (schools.length < 2) return <>{currentName}</>;
+  if (schools.length < 2 && !huvudmanHref) return <>{currentName}</>;
   const t = await getTranslations("schoolSwitcher");
   const tRoles = await getTranslations("roles");
 
@@ -48,6 +54,10 @@ export async function SchoolSwitcher({
     }
   };
 
+  // Huvudman: a school read as the huvudman's läsare says for whom.
+  const roleOf = (school: MySchool): string =>
+    school.huvudman ? t("viaHuvudman", { huvudman: school.huvudman.name }) : tRoles(school.role);
+
   return (
     <details className="group">
       <summary className="flex cursor-pointer list-none items-center gap-1 rounded-sm hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
@@ -55,11 +65,8 @@ export async function SchoolSwitcher({
         <ChevronsUpDown className="size-3 shrink-0" aria-hidden="true" />
         <span className="sr-only">{t("change")}</span>
       </summary>
-      <form
-        method="post"
-        action={`/${locale}/skola`}
-        className="absolute z-50 mt-2 w-56 whitespace-normal rounded-md border bg-popover p-1 text-sm text-popover-foreground shadow-md"
-      >
+      <div className="absolute z-50 mt-2 w-56 whitespace-normal rounded-md border bg-popover p-1 text-sm text-popover-foreground shadow-md">
+      <form method="post" action={`/${locale}/skola`}>
         <p className="px-2 py-1 text-xs font-medium text-muted-foreground">{t("label")}</p>
         <ul className="space-y-0.5">
           {schools.map((school) => (
@@ -75,16 +82,25 @@ export async function SchoolSwitcher({
                 <span>{school.schoolName}</span>
                 <span className="text-xs text-muted-foreground">
                   {school.current
-                    ? t("currentRole", { role: tRoles(school.role) })
+                    ? t("currentRole", { role: roleOf(school) })
                     : school.closed !== null
                       ? closedReason(school.closed)
-                      : tRoles(school.role)}
+                      : roleOf(school)}
                 </span>
               </button>
             </li>
           ))}
         </ul>
       </form>
+      {huvudmanHref ? (
+        <a
+          href={huvudmanHref}
+          className="mt-1 block rounded-sm border-t px-2 py-1.5 hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {t("huvudmanPages")}
+        </a>
+      ) : null}
+      </div>
     </details>
   );
 }

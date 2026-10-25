@@ -2,6 +2,7 @@ import { route, type GatewayRoute } from "../gateway-routes";
 import { candidateRoutes } from "./gateway-candidates";
 import { coverRoutes } from "./gateway-cover";
 import { familyRoutes } from "./gateway-family";
+import { huvudmanRoutes } from "./gateway-huvudman";
 import { leaveRoutes } from "./gateway-leave";
 import { lessonLogRoutes } from "./gateway-lesson-logs";
 import { miscRoutes } from "./gateway-misc";
@@ -32,6 +33,7 @@ export const ROUTE_FILES: Array<{ file: string; routes: GatewayRoute[] }> = [
   { file: "gateway-roles.ts", routes: roleRoutes },
   { file: "gateway-candidates.ts", routes: candidateRoutes },
   { file: "gateway-lesson-logs.ts", routes: lessonLogRoutes },
+  { file: "gateway-huvudman.ts", routes: huvudmanRoutes },
 ];
 
 export const gatewayRoutes: GatewayRoute[] = ROUTE_FILES.flatMap((entry) => entry.routes);
