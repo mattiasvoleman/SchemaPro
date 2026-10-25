@@ -353,8 +353,11 @@ BEGIN
                                      WHERE x."calendarLessonId" = r."id" AND x."studentGroupId" = g."id"))
      -- ... nor is the lesson's own group a teaching group they are placed in
      -- (a replacing group of theirs as the lesson's own is one: the CHECK
-     -- makes it a teaching group and never a half) ...
-     AND NOT (r.teaching AND r."studentGroupId" IN (SELECT id FROM mine))
+     -- makes it a teaching group and never a half). Placed in means a
+     -- membership, as every other reader asks it, and not the home class: a
+     -- pupil whose home row names a teaching group is not placed in it ...
+     AND NOT (r.teaching AND r."studentGroupId" IN (SELECT m."studentGroupId" FROM "StudentGroupMembers" m
+                                                     WHERE m."studentId" = me))
      -- ... and they are not named on it.
      AND NOT EXISTS (SELECT 1 FROM "CalendarLessonStudents" s
                       WHERE s."calendarLessonId" = r."id" AND s."studentId" = me);

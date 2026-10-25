@@ -2208,6 +2208,7 @@ DECLARE
   rtom uuid;
   rstod uuid;
   k6a uuid;
+  p5 uuid;
   rfd uuid;
   t uuid;
   p1 uuid;
@@ -2310,6 +2311,22 @@ BEGIN
   INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "updatedAt")
   VALUES (s1, y0, 'EG Sv6n', 6, 'TEACHING_GROUP', now()) RETURNING id INTO n6;
   INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (s1, r6, p2), (s1, n6, p2), (s1, r6, p3);
+  -- EG-15 is this year's 7B svenska with last year's SvA6 added: SvA6 keeps
+  -- nobody on a lesson of another läsår, so P3 (in SvA6 then, SvA7 now)
+  -- leaves it, and P2 (in SvA6 then, in no replacing group now) reads it.
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+  VALUES (s1, sv, k7b, current_date + 6, (current_date + 6) + time '10:00', (current_date + 6) + time '11:00', 'EG-15', now())
+  RETURNING id INTO l;
+  INSERT INTO "CalendarLessonGroups" ("schoolId", "calendarLessonId", "studentGroupId") VALUES (s1, l, r6);
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (s1, l, t, 'LEAD');
+  -- P5's home row names EG Sv7 fördjupning, a teaching group (the API's
+  -- user update allowed it before 20261211090000's release refused it), and
+  -- P5 is in SvA7. Not a member of the fördjupning, P5 is not placed in it,
+  -- and leaves its svenska (EG-13) as every reader says.
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES (s1, 'eg-p5@example.invalid', 'EG', 'Elev hemma i en undervisningsgrupp', 'STUDENT', '00000000-0000-4000-8000-000000001510', true, rfd, now())
+  RETURNING id INTO p5;
+  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (s1, r7, p5);
   -- EG-0 is last year's class's svenska, with Sv6n added: P2 reaches it
   -- through Sv6n, and last year's SvA6 takes P2 off it (a teaching group
   -- added to a lesson keeps nobody on; only the lesson's own one does).
