@@ -28884,7 +28884,11 @@ ROLLBACK;
 -- (20261208090000): elevens två armar är vidgade som migreringen skrev dem,
 -- för authenticated som förut, och ingen annan arm frågar elevens hjälpare;
 -- hjälparna SECURITY DEFINER, STABLE, med fäst search_path, körbara av
--- authenticated och app_authenticated och av ingen annan.
+-- authenticated och app_authenticated och av ingen annan. Sedan
+-- 20261211090000 (Ersättande grupper) frågar också elevens hem- och
+-- undervisningsgruppsarm en current_student_-hjälpare, och participant-armen
+-- bär efter sitt predikat den avsmalning den migreringen skrev; avsnitt 270
+-- prövar den.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -28908,7 +28912,9 @@ BEGIN
     FROM pg_policies
    WHERE schemaname = 'public' AND (coalesce(qual, '') || coalesce(with_check, '')) LIKE '%current\_student\_%';
   IF bad IS DISTINCT FROM 'CalendarLessonGroups.calendar_lesson_groups_member_select SELECT PERMISSIVE {authenticated}, '
-                          'CalendarLessons.calendar_lessons_participant_select SELECT PERMISSIVE {authenticated}' THEN
+                          'CalendarLessons.calendar_lessons_participant_select SELECT PERMISSIVE {authenticated}, '
+                          'CalendarLessons.calendar_lessons_student_select SELECT PERMISSIVE {authenticated}, '
+                          'CalendarLessons.calendar_lessons_teaching_group_select SELECT PERMISSIVE {authenticated}' THEN
     RAISE EXCEPTION 'joined group: the arms that ask a current_student_ helper are %', bad;
   END IF;
   IF (SELECT regexp_replace(qual, '\s+', ' ', 'g') FROM pg_policies
@@ -28918,8 +28924,10 @@ BEGIN
                       'OR (EXISTS ( SELECT 1 FROM "CalendarLessonGroups" clg WHERE ((clg."calendarLessonId" = "CalendarLessons".id) '
                       'AND (clg."studentGroupId" = ( SELECT app.current_user_group_id() AS current_user_group_id))))) '
                       'OR (id = ANY (( SELECT CASE WHEN (app.current_user_role() = ''STUDENT''::"UserRole") THEN app.current_student_joined_lesson_ids() '
-                      'ELSE NULL::uuid[] END AS "case")::uuid[]))))' THEN
-    RAISE EXCEPTION 'joined group: calendar_lessons_participant_select is not as 20261208090000 wrote it';
+                      'ELSE NULL::uuid[] END AS "case")::uuid[]))) '
+                      'AND (NOT (id = ANY (( SELECT CASE WHEN (app.current_user_role() = ''STUDENT''::"UserRole") THEN app.current_student_replaced_lesson_ids() '
+                      'ELSE ''{}''::uuid[] END AS "case")::uuid[]))))' THEN
+    RAISE EXCEPTION 'joined group: calendar_lessons_participant_select is not as 20261208090000 and 20261211090000 wrote it';
   END IF;
   IF (SELECT regexp_replace(qual, '\s+', ' ', 'g') FROM pg_policies
        WHERE schemaname = 'public' AND tablename = 'CalendarLessonGroups' AND policyname = 'calendar_lesson_groups_member_select')
@@ -29268,5 +29276,390 @@ BEGIN
   IF (SELECT "generatorKeepsTravelTime" FROM "LunchSettings" WHERE "schoolId" = app.current_school_id()) IS DISTINCT FROM true THEN
     RAISE EXCEPTION 'travel switch: a profile without PLANERING moved it after all';
   END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 270: Ersättande grupper, katalogen (20261211090000). Kolumnen
+-- StudentGroups."replacesSubjectId", dess CHECK och sammansatta nyckel;
+-- elevens hjälpare SECURITY DEFINER, STABLE, med fäst search_path, körbar av
+-- authenticated och app_authenticated och av ingen annan; tre av elevens armar
+-- på CalendarLessons avsmalnade och ingen annan arm som frågar hjälparen;
+-- vårdnadshavarens grupparm för API:ts roll ensam; ICS-funktionens kropp
+-- tillämpar regeln.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  bad text;
+  r text;
+  fn constant text := 'app.current_student_replaced_lesson_ids()';
+BEGIN
+  PERFORM set_config('search_path', 'public, pg_temp', true);
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                  WHERE table_schema = 'public' AND table_name = 'StudentGroups' AND column_name = 'replacesSubjectId'
+                    AND data_type = 'uuid' AND is_nullable = 'YES') THEN
+    RAISE EXCEPTION 'replacing: StudentGroups."replacesSubjectId" is not a nullable uuid';
+  END IF;
+  IF (SELECT convalidated FROM pg_constraint WHERE conname = 'StudentGroups_only_a_teaching_group_replaces') IS DISTINCT FROM true THEN
+    RAISE EXCEPTION 'replacing: the CHECK is missing or not validated';
+  END IF;
+  IF (SELECT confdeltype FROM pg_constraint WHERE conname = 'StudentGroups_replacesSubjectId_schoolId_fkey') IS DISTINCT FROM 'n'
+     OR (SELECT array_length(confdelsetcols, 1) FROM pg_constraint WHERE conname = 'StudentGroups_replacesSubjectId_schoolId_fkey') IS DISTINCT FROM 1 THEN
+    RAISE EXCEPTION 'replacing: the subject key is not ON DELETE SET NULL of the column alone';
+  END IF;
+
+  SELECT string_agg(tablename || '.' || policyname || ' ' || cmd || ' ' || roles::text, ', ' ORDER BY tablename, policyname)
+    INTO bad
+    FROM pg_policies
+   WHERE schemaname = 'public' AND (coalesce(qual, '') || coalesce(with_check, '')) LIKE '%current\_student\_replaced\_lesson\_ids%';
+  IF bad IS DISTINCT FROM 'CalendarLessons.calendar_lessons_participant_select SELECT {authenticated}, '
+                          'CalendarLessons.calendar_lessons_student_select SELECT {authenticated}, '
+                          'CalendarLessons.calendar_lessons_teaching_group_select SELECT {authenticated}' THEN
+    RAISE EXCEPTION 'replacing: the arms that ask the pupil''s helper are %', bad;
+  END IF;
+  -- Each narrowing in front of a NULL-free array: NOT (id = ANY (NULL)) would drop the row.
+  IF EXISTS (SELECT 1 FROM pg_policies
+              WHERE schemaname = 'public' AND tablename = 'CalendarLessons'
+                AND qual LIKE '%current\_student\_replaced\_lesson\_ids%'
+                AND regexp_replace(qual, '\s+', ' ', 'g') NOT LIKE '%THEN app.current_student_replaced_lesson_ids() ELSE ''{}''::uuid[] END%') THEN
+    RAISE EXCEPTION 'replacing: a narrowed arm''s helper has an ELSE other than ''{}''';
+  END IF;
+  IF (SELECT string_agg(policyname || ' ' || cmd || ' ' || roles::text, ', ') FROM pg_policies
+       WHERE schemaname = 'public' AND tablename = 'StudentGroups' AND policyname = 'student_groups_guardian_select')
+     IS DISTINCT FROM 'student_groups_guardian_select SELECT {app_authenticated}' THEN
+    RAISE EXCEPTION 'replacing: the guardian''s group arm is not SELECT for app_authenticated alone';
+  END IF;
+
+  IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = fn::regprocedure) THEN RAISE EXCEPTION 'replacing: % is not SECURITY DEFINER', fn; END IF;
+  IF (SELECT provolatile FROM pg_proc WHERE oid = fn::regprocedure) <> 's' THEN RAISE EXCEPTION 'replacing: % is not STABLE', fn; END IF;
+  IF (SELECT proconfig FROM pg_proc WHERE oid = fn::regprocedure) IS DISTINCT FROM ARRAY['search_path=public, pg_temp'] THEN
+    RAISE EXCEPTION 'replacing: % does not pin its search_path', fn;
+  END IF;
+  FOREACH r IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+    IF NOT has_function_privilege(r, fn, 'EXECUTE') THEN RAISE EXCEPTION 'replacing: % may not call %', r, fn; END IF;
+  END LOOP;
+  FOREACH r IN ARRAY ARRAY['anon', 'service_role'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) AND has_function_privilege(r, fn, 'EXECUTE') THEN
+      RAISE EXCEPTION 'replacing: % may call %', r, fn;
+    END IF;
+  END LOOP;
+  IF (SELECT proacl::text FROM pg_proc WHERE oid = fn::regprocedure) ~ '[{,]=X/' THEN
+    RAISE EXCEPTION 'replacing: PUBLIC may call %', fn;
+  END IF;
+
+  IF (SELECT prosrc FROM pg_proc WHERE oid = 'app.calendar_feed_pupil_lessons(uuid, uuid, date, date, text, "TeacherDisplay")'::regprocedure)
+     NOT LIKE '%g.subject = cl."subjectId"%' THEN
+    RAISE EXCEPTION 'replacing: the pupil''s calendar feed does not apply the rule';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 271: en elev i SvA7, som ersätter svenska, läser inte klassens
+-- svenska: varken 7A:s egen, 7B:s med 7A tillagd eller halvklassens 7A:1, och
+-- inte dess logg eller lärarrader; den läser SvA7:s, 7B:s svenska dit SvA7 är
+-- tillagd, svenskan som namnger hen och klassens övriga lektioner. En elev i
+-- ingen ersättande grupp läser som förut. Som PostgREST:s roll och som
+-- API:ts. Personalen läser allt som förut. En inloggning med en rad på varje
+-- skola läser efter den skola anropet namnger: här i ingen ersättande grupp,
+-- där i den skolans SvA7 (20261211090000).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001500')::text, true);
+SELECT set_config('app.test_eg_school', app.current_school_id()::text, true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001508')::text, true);
+SELECT set_config('app.test_eg_school2', app.current_school_id()::text, true);
+-- What the caller reads of this section's lessons, as one line: the lessons,
+-- the logs (the API's only), the lessons whose teacher rows they read, and
+-- the helper's answer. A row of no name here shows as its id, so a leak fails.
+CREATE FUNCTION pg_temp.eg_reads(api boolean) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE
+  lessons text;
+  logs text := '';
+  teachers text;
+  helper text;
+BEGIN
+  SELECT coalesce(string_agg(coalesce(note, id::text), ',' ORDER BY coalesce(note, id::text)), '') INTO lessons
+    FROM "CalendarLessons" WHERE note LIKE 'EG-%' OR note IS NULL;
+  IF api THEN
+    SELECT coalesce(string_agg(topic, ',' ORDER BY topic), '') INTO logs FROM "LessonLogs" WHERE topic LIKE 'EG %';
+  END IF;
+  SELECT coalesce(string_agg(DISTINCT coalesce(l.note, t."calendarLessonId"::text), ',' ORDER BY coalesce(l.note, t."calendarLessonId"::text)), '')
+    INTO teachers
+    FROM "CalendarLessonTeachers" t LEFT JOIN "CalendarLessons" l ON l.id = t."calendarLessonId"
+   WHERE l.note LIKE 'EG-%' OR l.id IS NULL;
+  SELECT coalesce(string_agg(coalesce(l.note, x::text), ',' ORDER BY coalesce(l.note, x::text)), '') INTO helper
+    FROM unnest(app.current_student_replaced_lesson_ids()) x LEFT JOIN "CalendarLessons" l ON l.id = x;
+  RETURN lessons || ' | ' || logs || ' | ' || teachers || ' | ' || helper;
+END
+$f$;
+GRANT EXECUTE ON FUNCTION pg_temp.eg_reads(boolean) TO PUBLIC;
+DO $$
+DECLARE
+  via text;
+  i int;
+  seen text;
+  expected text;
+  -- authId; what they read as the API and as PostgREST:
+  -- lessons | logs (the API's) | teacher rows' lessons | the helper's lessons.
+  -- The helper's lessons are the ones the caller cannot read, so they show by id.
+  cases constant text[][] := ARRAY[
+    ['00000000-0000-4000-8000-000000001502', 'EG-2,EG-3,EG-4,EG-5,EG-8 |  | EG-2,EG-5 | 3 hidden',
+                                             'EG-2,EG-3,EG-4,EG-5,EG-8 |  | EG-2,EG-5 | 3 hidden'],                     -- P1: 7A, SvA7, 7A:1
+    ['00000000-0000-4000-8000-000000001503', 'EG-1,EG-2,EG-5,EG-6,EG-7,EG-8 | EG ett | EG-1,EG-2,EG-5 | ',
+                                             'EG-1,EG-2,EG-5,EG-6,EG-7,EG-8 |  | EG-1,EG-2,EG-5 | '],                    -- P2: 7A, 7A:1
+    -- P3: 7B, SvA7. The teacher rows of 7B's own svenska with SvA7 added
+    -- (EG-4), and not of 7B's with 7A added (EG-6), which P3 does not attend.
+    ['00000000-0000-4000-8000-000000001504', 'EG-3,EG-4 |  | EG-4 | 1 hidden', 'EG-3,EG-4 |  | EG-4 | 1 hidden'],
+    ['00000000-0000-4000-8000-000000001501', 'EG-1,EG-2,EG-3,EG-4,EG-5,EG-6,EG-7,EG-8 | EG ett | EG-1,EG-2,EG-3,EG-4,EG-5,EG-6,EG-7,EG-8 | ',
+                                             'EG-1,EG-2,EG-3,EG-4,EG-5,EG-6,EG-7,EG-8 |  | EG-1,EG-2,EG-3,EG-4,EG-5,EG-6,EG-7,EG-8 | ']];  -- the teacher
+BEGIN
+  IF coalesce(current_setting('app.test_eg_school', true), '') = '' OR coalesce(current_setting('app.test_eg_school2', true), '') = '' THEN
+    RAISE EXCEPTION 'replacing: the fixture schools did not resolve; fixtures did not run';
+  END IF;
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    IF current_user <> via THEN RAISE EXCEPTION 'replacing: could not act as %', via; END IF;
+    FOR i IN 1 .. array_length(cases, 1) LOOP
+      PERFORM set_config('request.jwt.claims', json_build_object('sub', cases[i][1])::text, true);
+      seen := pg_temp.eg_reads(via = 'app_authenticated');
+      -- The helper's lessons are unreadable to the pupil: count them.
+      seen := regexp_replace(seen, '\| ([0-9a-f-]{36}(,[0-9a-f-]{36})*)$',
+                             '| ' || coalesce(array_length(app.current_student_replaced_lesson_ids(), 1), 0)::text || ' hidden');
+      expected := CASE via WHEN 'app_authenticated' THEN cases[i][2] ELSE cases[i][3] END;
+      IF seen IS DISTINCT FROM expected THEN
+        RAISE EXCEPTION 'replacing: % (%) as % reads "%", not "%"', cases[i][1], app.current_user_role(), via, seen, expected;
+      END IF;
+    END LOOP;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+END $$;
+
+-- The helper's lessons, named, read by the school's administrator.
+DO $$
+DECLARE
+  p1 uuid;
+  got text;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001502')::text, true);
+  CREATE TEMP TABLE eg_hidden ON COMMIT DROP AS SELECT unnest(app.current_student_replaced_lesson_ids()) AS id;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001500')::text, true);
+  SELECT string_agg(l.note, ',' ORDER BY l.note) INTO got FROM eg_hidden h JOIN "CalendarLessons" l ON l.id = h.id;
+  IF got IS DISTINCT FROM 'EG-1,EG-6,EG-7' THEN
+    RAISE EXCEPTION 'replacing: P1''s helper takes them off %, not EG-1,EG-6,EG-7', coalesce(got, '(nothing)');
+  END IF;
+END $$;
+
+-- M, a pupil at both schools: here in no replacing group (reads EG-1), there
+-- in that school's SvA7 (does not read EG-9, its svenska).
+DO $$
+DECLARE
+  via text;
+  i int;
+  named text;
+  seen text;
+  cases constant text[][] := ARRAY[
+    ['',   'EG-1,EG-2,EG-5,EG-6'],
+    ['S1', 'EG-1,EG-2,EG-5,EG-6'],
+    ['S2', '']];
+BEGIN
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    FOR i IN 1 .. array_length(cases, 1) LOOP
+      named := CASE cases[i][1] WHEN 'S1' THEN current_setting('app.test_eg_school') WHEN 'S2' THEN current_setting('app.test_eg_school2') ELSE '' END;
+      PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001509')::text, true);
+      PERFORM set_config('app.chosen_school_id', CASE WHEN via = 'app_authenticated' THEN named ELSE '' END, true);
+      PERFORM set_config('request.headers', CASE WHEN via = 'authenticated' AND named <> '' THEN json_build_object('x-school-id', named)::text ELSE '' END, true);
+      SELECT coalesce(string_agg(note, ',' ORDER BY note), '') INTO seen FROM "CalendarLessons" WHERE note LIKE 'EG-%';
+      IF seen IS DISTINCT FROM cases[i][2] THEN
+        RAISE EXCEPTION 'replacing: M naming "%" as % reads "%", not "%"', cases[i][1], via, seen, cases[i][2];
+      END IF;
+    END LOOP;
+  END LOOP;
+  PERFORM set_config('app.chosen_school_id', '', true);
+  PERFORM set_config('request.headers', '', true);
+  SET LOCAL ROLE app_authenticated;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 272: vårdnadshavaren läser sina barns grupper genom API:ts roll,
+-- och bara dem: G1 SvA-barnets 7A, 7A:1 och SvA7, G2 7A-barnets 7A och 7A:1,
+-- tvillingarnas vårdnadshavare båda barnens; genom PostgREST:s roll inga.
+-- Vårdnadshavarens lektionsarmar är oförändrade: G1 läser fortfarande 7A:s
+-- svenska, och familjeveckan filtrerar per barn (20261211090000).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  via text;
+  i int;
+  seen text;
+  expected text;
+  cases constant text[][] := ARRAY[
+    -- authId; groups as the API; lessons as the API; groups as PostgREST.
+    ['00000000-0000-4000-8000-000000001505', 'EG SvA7,EG7A,EG7A:1', 'EG-1,EG-2,EG-3,EG-4,EG-5,EG-6,EG-7,EG-8', ''],
+    ['00000000-0000-4000-8000-000000001506', 'EG7A,EG7A:1', 'EG-1,EG-2,EG-5,EG-6,EG-7,EG-8', ''],
+    ['00000000-0000-4000-8000-000000001507', 'EG SvA7,EG7A,EG7A:1', 'EG-1,EG-2,EG-3,EG-4,EG-5,EG-6,EG-7,EG-8', ''],
+    -- A pupil reads its home class's row as before, and no teaching group's.
+    ['00000000-0000-4000-8000-000000001502', 'EG7A', 'EG-2,EG-3,EG-4,EG-5,EG-8', 'EG7A']];
+BEGIN
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    IF current_user <> via THEN RAISE EXCEPTION 'replacing: could not act as %', via; END IF;
+    FOR i IN 1 .. array_length(cases, 1) LOOP
+      PERFORM set_config('request.jwt.claims', json_build_object('sub', cases[i][1])::text, true);
+      SELECT coalesce(string_agg(name, ',' ORDER BY name), '') INTO seen FROM "StudentGroups" WHERE name LIKE 'EG%';
+      expected := CASE via WHEN 'app_authenticated' THEN cases[i][2] ELSE cases[i][4] END;
+      IF seen IS DISTINCT FROM expected THEN
+        RAISE EXCEPTION 'replacing: % (%) as % reads the groups "%"', cases[i][1], app.current_user_role(), via, seen;
+      END IF;
+      IF via = 'app_authenticated' THEN
+        SELECT coalesce(string_agg(note, ',' ORDER BY note), '') INTO seen FROM "CalendarLessons" WHERE note LIKE 'EG-%';
+        IF seen IS DISTINCT FROM cases[i][3] THEN
+          RAISE EXCEPTION 'replacing: % (%) reads the lessons "%", not "%"', cases[i][1], app.current_user_role(), seen, cases[i][3];
+        END IF;
+      END IF;
+    END LOOP;
+  END LOOP;
+  -- The other school's administrator reads none of these groups, and this
+  -- school's guardian none of that school's.
+  SET LOCAL ROLE app_authenticated;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001505')::text, true);
+  IF EXISTS (SELECT 1 FROM "StudentGroups" WHERE name LIKE 'EG annan%') THEN
+    RAISE EXCEPTION 'replacing: a guardian reads another school''s groups';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 273: kalenderprenumerationen tillämpar regeln: SvA-elevens eget
+-- flöde och vårdnadshavarens flöde för hen visar inte klassens svenska men
+-- SvA7:s, den dit SvA7 är tillagd och den som namnger hen; 7A-elevens flöde
+-- visar klassens svenska (20261211090000).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+CREATE FUNCTION pg_temp.eg_as(sub text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', sub)::text, true);
+END $$;
+-- The feed's lessons by note, read as the school's administrator; the door
+-- asked as a calendar asks it, with no principal.
+CREATE FUNCTION pg_temp.eg_feed(hash text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE got jsonb; ids uuid[]; notes text;
+BEGIN
+  PERFORM set_config('request.jwt.claims', '', true);
+  got := app.calendar_feed(hash);
+  PERFORM pg_temp.eg_as('00000000-0000-4000-8000-000000001500');
+  IF got IS NULL THEN RETURN '(no feed)'; END IF;
+  SELECT array_agg((e->>'id')::uuid) INTO ids FROM jsonb_array_elements(got->'lessons') e;
+  SELECT coalesce(string_agg(l.note, ',' ORDER BY l.note), '') INTO notes FROM "CalendarLessons" l WHERE l.id = ANY (coalesce(ids, '{}'));
+  RETURN notes;
+END $$;
+DO $$
+DECLARE
+  school uuid;
+  p1 uuid;
+  got text;
+BEGIN
+  PERFORM pg_temp.eg_as('00000000-0000-4000-8000-000000001500');
+  school := app.current_school_id();
+  p1 := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000001502');
+  INSERT INTO "PublicationSettings" ("schoolId") VALUES (school) ON CONFLICT ("schoolId") DO NOTHING;
+  UPDATE "PublicationSettings" SET "calendarFeedStudents" = true, "calendarFeedGuardians" = true WHERE "schoolId" = school;
+  PERFORM pg_temp.eg_as('00000000-0000-4000-8000-000000001502');
+  PERFORM app.calendar_feed_create(NULL, repeat('a', 64), 'sv');
+  PERFORM pg_temp.eg_as('00000000-0000-4000-8000-000000001503');
+  PERFORM app.calendar_feed_create(NULL, repeat('b', 64), 'sv');
+  PERFORM pg_temp.eg_as('00000000-0000-4000-8000-000000001505');
+  PERFORM app.calendar_feed_create(p1, repeat('c', 64), 'sv');
+
+  got := pg_temp.eg_feed(repeat('a', 64));
+  IF got IS DISTINCT FROM 'EG-2,EG-3,EG-4,EG-5,EG-8' THEN RAISE EXCEPTION 'replacing: the SvA pupil''s feed shows %', got; END IF;
+  got := pg_temp.eg_feed(repeat('c', 64));
+  IF got IS DISTINCT FROM 'EG-2,EG-3,EG-4,EG-5,EG-8' THEN RAISE EXCEPTION 'replacing: the guardian''s feed for the SvA pupil shows %', got; END IF;
+  got := pg_temp.eg_feed(repeat('b', 64));
+  IF got IS DISTINCT FROM 'EG-1,EG-2,EG-5,EG-6,EG-7,EG-8' THEN RAISE EXCEPTION 'replacing: the 7A pupil''s feed shows %', got; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 274: en ersättande grupp skrivs bara som undervisningsgrupp, med
+-- ett av skolans egna ämnen: CHECK-villkoret vägrar en klass och en
+-- halvklass, nyckeln ett ämne från en annan skola, och ett borttaget ämne
+-- lämnar gruppen kvar utan ersättning. En skola utan ersättande grupp: varje
+-- elevs hjälpare svarar '{}' (20261211090000).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001500')::text, true);
+DO $$
+DECLARE
+  sv uuid := (SELECT id FROM "Subjects" WHERE code = 'RLSEGSV');
+  other uuid;
+BEGIN
+  BEGIN
+    UPDATE "StudentGroups" SET "replacesSubjectId" = sv WHERE name = 'EG7A';
+    RAISE EXCEPTION 'replacing: a class was made to replace a subject';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE "StudentGroups" SET "replacesSubjectId" = sv WHERE name = 'EG7A:1';
+    RAISE EXCEPTION 'replacing: a half was made to replace a subject';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE "StudentGroups" SET kind = 'CLASS' WHERE name = 'EG SvA7';
+    RAISE EXCEPTION 'replacing: a replacing group was made a class';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  -- Another school's subject: invisible here, so read as the owner sees it
+  -- would be; the key refuses it.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001508')::text, true);
+  other := (SELECT id FROM "Subjects" WHERE code = 'RLSEGSV2');
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001500')::text, true);
+  IF other IS NULL THEN RAISE EXCEPTION 'replacing: the other school''s subject did not resolve'; END IF;
+  BEGIN
+    UPDATE "StudentGroups" SET "replacesSubjectId" = other WHERE name = 'EG SvA7';
+    RAISE EXCEPTION 'replacing: another school''s subject was taken';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  -- The subject deleted: SvA7 stays, replacing nothing.
+  DELETE FROM "Subjects" WHERE id = sv;
+  IF (SELECT "replacesSubjectId" FROM "StudentGroups" WHERE name = 'EG SvA7') IS NOT NULL THEN
+    RAISE EXCEPTION 'replacing: a deleted subject is still replaced';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM "StudentGroups" WHERE name = 'EG SvA7') THEN
+    RAISE EXCEPTION 'replacing: deleting the subject deleted the group';
+  END IF;
+END $$;
+ROLLBACK;
+
+BEGIN;
+DO $$
+DECLARE
+  who text;
+BEGIN
+  -- Pupils of #193's school, which has no replacing group: nothing hidden.
+  FOREACH who IN ARRAY ARRAY['00000000-0000-4000-8000-000000001402', '00000000-0000-4000-8000-000000001403',
+                             '00000000-0000-4000-8000-000000001404', '00000000-0000-4000-8000-000000001411'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', who)::text, true);
+    IF app.current_student_replaced_lesson_ids() IS DISTINCT FROM '{}'::uuid[] THEN
+      RAISE EXCEPTION 'replacing: % at a school with no replacing group has hidden lessons', who;
+    END IF;
+  END LOOP;
+  -- Staff and guardians: '{}' whatever their school.
+  FOREACH who IN ARRAY ARRAY['00000000-0000-4000-8000-000000001500', '00000000-0000-4000-8000-000000001501',
+                             '00000000-0000-4000-8000-000000001505'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', who)::text, true);
+    IF app.current_student_replaced_lesson_ids() IS DISTINCT FROM '{}'::uuid[] THEN
+      RAISE EXCEPTION 'replacing: % (%) has hidden lessons', who, app.current_user_role();
+    END IF;
+  END LOOP;
 END $$;
 ROLLBACK;
