@@ -2919,6 +2919,7 @@
       "errors": {
         "SUPERVISION_SHIFT_CLASH": "The teacher already has a shift sharing a minute with this one that day. A teacher supervises one place at a time.",
         "SUPERVISION_SHIFT_COVER_CLASH": "The teacher covers the break duty in {area} as a substitute on {date}, at the same time as this shift. A supervisor is in one place at a time: undo the decision on the cover board first.",
+        "SUPERVISION_SHIFT_MOVED": "The shift was handed to another teacher since the page was read. Reload the page and try again.",
         "SUPERVISION_SHIFT_LIMIT": "A school year has at most 2,000 supervision shifts.",
         "SUPERVISION_AREA_NOT_FOUND": "The area no longer exists. Reload the page.",
         "SUPERVISION_SHIFT_NOT_FOUND": "The shift no longer exists. Reload the page.",

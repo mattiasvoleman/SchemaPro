@@ -2919,6 +2919,7 @@
       "errors": {
         "SUPERVISION_SHIFT_CLASH": "Läraren har redan ett pass som delar en minut med det här samma dag. En rastvakt är på ett ställe i taget.",
         "SUPERVISION_SHIFT_COVER_CLASH": "Läraren tar rastvakten i {area} som vikarie {date}, samtidigt som passet. En rastvakt är på ett ställe i taget: ångra beslutet på vikarietavlan först.",
+        "SUPERVISION_SHIFT_MOVED": "Passet har lämnats över till en annan lärare sedan sidan lästes. Ladda om sidan och försök igen.",
         "SUPERVISION_SHIFT_LIMIT": "Ett läsår har högst 2 000 rastvaktspass.",
         "SUPERVISION_AREA_NOT_FOUND": "Området finns inte längre. Ladda om sidan.",
         "SUPERVISION_SHIFT_NOT_FOUND": "Passet finns inte längre. Ladda om sidan.",

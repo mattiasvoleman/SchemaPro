@@ -612,15 +612,18 @@ Walk the full product loop once, in order:
   **Rolling forward again** (or after old and new containers ran side by
   side in a deploy): the API before the release withdraws or shortens an
   absence without its pass decisions, so a decision can stand on an absence
-  that is no longer ACTIVE, its vikarie still booked. This release shows such
-  a decision on the vikarietavla, noted *Frånvaron är återkallad*, with
-  Ångra alone, which tells the vikarie. Until it is undone it holds as a
+  that is no longer ACTIVE, or outside an ACTIVE one that was shortened, its
+  vikarie still booked. This release shows both on the vikarietavla, noted
+  *Frånvaron är återkallad* or *Ligger inte längre inom frånvaron*, and
+  Ångra tells the vikarie. Until it is undone such a decision holds as a
   decision does (the pass cannot be moved, its teacher cannot be removed,
-  its vikarie is busy then). List them, as the owner, and have each school
-  undo its own:
+  its vikarie is busy then), except that a withdrawn absence's relieves the
+  pass's own teacher of nothing. List them, as the owner, and have each
+  school undo its own:
   `SELECT c."schoolId", c."date", c."shiftId" FROM "SupervisionCovers" c
-  JOIN "TeacherAbsences" a ON a."id" = c."absenceId" WHERE a."status" <>
-  'ACTIVE' AND c."endsAt" > now() ORDER BY 1, 2;`
+  JOIN "TeacherAbsences" a ON a."id" = c."absenceId" WHERE c."endsAt" > now()
+  AND (a."status" <> 'ACTIVE' OR NOT (c."startsAt" < a."endsAt" AND
+  c."endsAt" > a."startsAt")) ORDER BY 1, 2;`
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).
   `GET /health/ready` adds three counts, never names: how many jobs this

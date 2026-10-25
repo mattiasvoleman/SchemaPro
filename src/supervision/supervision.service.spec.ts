@@ -11,6 +11,7 @@ import {
   SUPERVISION_AREA_NOT_FOUND,
   SUPERVISION_SHIFT_CLASH,
   SUPERVISION_SHIFT_COVER_CLASH,
+  SUPERVISION_SHIFT_MOVED,
   SUPERVISION_SHIFT_HAS_COVERS,
   SUPERVISION_SHIFT_LIMIT,
   SUPERVISION_SHIFT_NOT_FOUND,
@@ -261,9 +262,10 @@ describe('SupervisionService', () => {
           lessonClashes: [],
         }),
       );
-      // The schedule's lock first, then the teacher's row and the year.
-      const lock = tx.$executeRaw.mock.calls[0]![0] as { values: unknown[] };
-      expect(lock.values).toEqual([`SupervisionShifts:${YEAR_ID}`]);
+      // The vikarietavla's teacher lock first (a decision booking Anna takes
+      // it too), then the schedule's, then the teacher's row and the year.
+      const locks = tx.$executeRaw.mock.calls.map((call) => (call[0] as { values: unknown[] }).values);
+      expect(locks.slice(0, 2)).toEqual([[ANNA], [`SupervisionShifts:${YEAR_ID}`]]);
     });
 
     it('refuses a pass at the time the teacher takes another’s pass as vikarie on a date ahead (Rastvakt i vardagen)', async () => {
@@ -575,6 +577,34 @@ describe('SupervisionService', () => {
         if (sql.includes('deactivatedAt')) return [];
         return [{ role: 'TEACHER' }];
       });
+    });
+
+    it('takes the vikarietavla’s teacher locks, the old teacher’s and the new, before the schedule and the pass row', async () => {
+      tx.supervisionCover.findMany.mockResolvedValue([]);
+      await service.updateShift(SHIFT, { userId: BO }, testUser());
+      const order = rawText();
+      const teachers = (tx.$executeRaw as jest.Mock).mock.calls
+        .filter(([sql]) => ((sql as { strings?: string[] }).strings ?? []).join('?').includes('cover-teacher:'))
+        .map(([sql]) => (sql as { values: unknown[] }).values[0]);
+      expect(teachers).toEqual([ANNA, BO].sort());
+      const lastTeacher = order.map((sql) => sql.includes('cover-teacher:')).lastIndexOf(true);
+      // The schedule's lock names its key in the values, the pass row its FOR UPDATE in the text.
+      const schedule = (tx.$executeRaw as jest.Mock).mock.calls.findIndex(([sql]) =>
+        String((sql as { values?: unknown[] }).values?.[0] ?? '').startsWith('SupervisionShifts:'),
+      );
+      expect(schedule).toBeGreaterThan(-1);
+      expect(lastTeacher).toBeLessThan(schedule);
+      expect(lastTeacher).toBeLessThan(order.findIndex((sql) => sql.includes('FOR UPDATE')));
+    });
+
+    it('answers 409 SUPERVISION_SHIFT_MOVED when the pass was handed on between its read and the locks', async () => {
+      tx.supervisionShift.findUnique
+        .mockResolvedValueOnce(storedShift())
+        .mockResolvedValueOnce(storedShift({ userId: BO }));
+      await expect(service.updateShift(SHIFT, { note: 'Grinden' }, testUser())).rejects.toMatchObject({
+        response: { code: SUPERVISION_SHIFT_MOVED },
+      });
+      expect(tx.supervisionShift.update).not.toHaveBeenCalled();
     });
 
     it('moves no pass, and hands none on, under a decision still ahead; the pass locked before it asks', async () => {

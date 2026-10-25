@@ -359,6 +359,7 @@ describe('cover support', () => {
           substituteId: 'b',
           startsAt: new Date('2026-10-14T10:00:00Z'),
           endsAt: new Date('2026-10-14T10:30:00Z'),
+          absenceId: 'abs-c',
         };
         tx.supervisionShift.findMany.mockResolvedValue([
           shift('own', 'a'),
@@ -371,7 +372,7 @@ describe('cover support', () => {
         const read = await readPersonDays(tx as never, { date: '2026-10-14', timezone: 'Europe/Stockholm', academicYearId: 'y' });
         expect(tx.supervisionCover.findMany).toHaveBeenCalledWith({
           where: { shiftId: { in: ['own', 'relieved', 'ended'] }, date: new Date('2026-10-14T00:00:00.000Z') },
-          select: { shiftId: true, decision: true, substituteId: true, startsAt: true, endsAt: true },
+          select: { shiftId: true, decision: true, substituteId: true, startsAt: true, endsAt: true, absenceId: true },
         });
         expect(read.days.get('a')!.supervision).toEqual([
           { id: 'pass:own:2026-10-14', date: '2026-10-14', start: Date.parse('2026-10-14T08:00:00Z'), end: Date.parse('2026-10-14T08:20:00Z') },
@@ -380,6 +381,20 @@ describe('cover support', () => {
           { id: 'pass:relieved:2026-10-14', date: '2026-10-14', start: taken.startsAt.getTime(), end: taken.endsAt.getTime() },
         ]);
         expect(read.days.get('c')!.supervision).toEqual([]);
+
+        // C's absence withdrawn by an API from before the release, the decision
+        // left standing: C is back on her pass, and B is still booked until Ångra.
+        // The question about the decisions' absences; the day's ACTIVE absences read none.
+        tx.teacherAbsence.findMany.mockImplementation(async (args: { where: { status?: { not?: string } } }) =>
+          args.where.status?.not === 'ACTIVE' ? [{ id: 'abs-c' }] : [],
+        );
+        const back = await readPersonDays(tx as never, { date: '2026-10-14', timezone: 'Europe/Stockholm', academicYearId: 'y' });
+        expect(tx.teacherAbsence.findMany).toHaveBeenCalledWith({
+          where: { id: { in: ['abs-c'] }, status: { not: 'ACTIVE' } },
+          select: { id: true },
+        });
+        expect(back.days.get('c')!.supervision!.map((pass) => pass.id)).toEqual(['pass:relieved:2026-10-14']);
+        expect(back.days.get('b')!.supervision!.map((pass) => pass.id)).toEqual(['pass:relieved:2026-10-14']);
       });
     });
   });
