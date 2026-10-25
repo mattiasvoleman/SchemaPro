@@ -1,7 +1,8 @@
 /**
- * The pupil's three arms 20261211090000 narrows (Ersättande grupper), measured
- * where they cost: the staff reads of the calendar they are ORed into, and the
- * pupil's own week.
+ * The pupil's three arms 20261211090000 narrows (Ersättande grupper), and the
+ * guardian's new arm on StudentGroups, measured where they cost: the staff
+ * reads of the calendar and of the groups they are ORed into, and the pupil's
+ * own week.
  *
  *   BENCH_OWNER_URL='postgresql://postgres:postgres_local@localhost:5441/schemapro' \
  *     npx ts-node --transpile-only scripts/bench/replacing-arms.ts [a|b]
@@ -41,18 +42,26 @@ const statement = (start: string) => {
   return MIGRATION.slice(from, MIGRATION.indexOf(';\n\n', from) + 1);
 };
 // As the migration writes them, read from the file so the bench cannot drift.
-const NEW_ARMS = [
+const NEW_LESSON_ARMS = [
   statement('ALTER POLICY "calendar_lessons_student_select"'),
   statement('ALTER POLICY "calendar_lessons_teaching_group_select"'),
   statement('ALTER POLICY "calendar_lessons_participant_select"'),
 ].join('\n');
 // As 20260822120000 and 20261208090000 left them: the same statements, the
 // narrowing taken off.
-const OLD_ARMS = NEW_ARMS.replace(
+const OLD_LESSON_ARMS = NEW_LESSON_ARMS.replace(
   /\n {8}AND NOT \("id" = ANY \(\(select CASE WHEN app\.current_user_role\(\) = 'STUDENT'\n {42}THEN app\.current_student_replaced_lesson_ids\(\)\n {42}ELSE '\{\}'::uuid\[\] END\)::uuid\[\]\)\)\n/g,
   '\n',
 );
-if (OLD_ARMS === NEW_ARMS || OLD_ARMS.includes('replaced_lesson_ids')) throw new Error('bench: the old arms did not come out of the migration');
+if (OLD_LESSON_ARMS === NEW_LESSON_ARMS || OLD_LESSON_ARMS.includes('replaced_lesson_ids')) {
+  throw new Error('bench: the old arms did not come out of the migration');
+}
+// The guardian's arm on StudentGroups, ORed into every staff read of the
+// groups: before the migration there is none. Dropped and created on both
+// sides, so both pay the same DDL.
+const DROP_GUARDIAN = 'DROP POLICY IF EXISTS "student_groups_guardian_select" ON "StudentGroups";';
+const NEW_ARMS = [NEW_LESSON_ARMS, DROP_GUARDIAN, statement('CREATE POLICY "student_groups_guardian_select"')].join('\n');
+const OLD_ARMS = [OLD_LESSON_ARMS, DROP_GUARDIAN].join('\n');
 
 interface Read {
   name: string;
@@ -143,6 +152,13 @@ async function main(): Promise<void> {
         sub: () => world.admin,
         sql: pupilWeek,
         params: () => [WEEK.from, WEEK.to],
+      },
+      {
+        name: 'teacher groups (useGroups)',
+        sub: () => world.teacher,
+        sql: `SELECT id, "academicYearId", name, kind, "gradeLevel", "halfOfId", "predecessorId", "replacesSubjectId"
+                FROM "StudentGroups" ORDER BY name`,
+        params: () => [],
       },
     ];
     const pupilReads: Read[] = [
