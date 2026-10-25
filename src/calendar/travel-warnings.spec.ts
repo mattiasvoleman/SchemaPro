@@ -49,6 +49,7 @@ const lesson = (
   groupIds: rest.groupIds ?? [],
   pupils: new Set(rest.pupils ?? []),
   weeks: rest.weeks ?? EVERY_WEEK,
+  ...(rest.leftOut ? { leftOut: rest.leftOut } : {}),
 });
 
 const EVERY_WEEK: TravelWeeks = { recurrence: 'ALL_WEEKS', startDate: null, endDate: null };
@@ -217,5 +218,15 @@ describe('sharePupils', () => {
     expect(sharePupils(a, lesson('b', '10:00', '11:00', null, { groupIds: ['spa'], pupils: ['p1'] }), () => false)).toBe(true);
     expect(sharePupils(a, lesson('b', '10:00', '11:00', null, { groupIds: ['h1'] }), () => false)).toBe(false);
     expect(sharePupils(a, lesson('b', '10:00', '11:00', null, { groupIds: ['h1'] }), () => true)).toBe(true);
+  });
+
+  it('takes no half pair with a group replacing the lesson’s subject (Ersättande grupper): its members are elsewhere', () => {
+    // 7A:1's svenska, SvA7 not on it: SvA7's lesson pairs with the half only
+    // through 7A's unplaced pupils, who are at SvA7, not at the svenska.
+    const half = lesson('sv', '09:00', '10:00', null, { groupIds: ['h1'], leftOut: new Set(['sva7']) });
+    const sva = lesson('sva', '10:00', '11:00', null, { groupIds: ['sva7'] });
+    expect(sharePupils(half, sva, () => true)).toBe(false);
+    expect(sharePupils(sva, half, () => true)).toBe(false);
+    expect(sharePupils(lesson('ma', '09:00', '10:00', null, { groupIds: ['h1'] }), sva, () => true)).toBe(true);
   });
 });

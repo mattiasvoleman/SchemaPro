@@ -22,6 +22,7 @@ import {
   replacementsOf,
   replacingBySubject,
   replacingGroupsOfNamed,
+  yearsOf,
 } from "@/lib/replacing-groups";
 
 /**
@@ -335,6 +336,12 @@ export interface ReplacingContext {
   bySubject: Map<string, string[]>;
   /** pupil → their groups, for a named pupil's replacing groups. */
   groupsOfStudent: Map<string, Set<string>>;
+  /**
+   * groupId → its läsår. The page passes every läsår's groups, and last
+   * year's SvA7 (its memberships kept as history by the rollover) takes
+   * nobody off this year's svenska: a lesson's läsår is its own group's.
+   */
+  yearOf: Map<string, string>;
 }
 
 /**
@@ -350,7 +357,12 @@ export interface ReplacingContext {
 export function buildGroupConflictMap(
   studentGroupOf: Map<string, string | null>,
   memberships: Array<{ studentId: string; studentGroupId: string }>,
-  halves: ReadonlyArray<{ id: string; halfOfId?: string | null; replacesSubjectId?: string | null }> = [],
+  halves: ReadonlyArray<{
+    id: string;
+    halfOfId?: string | null;
+    replacesSubjectId?: string | null;
+    academicYearId?: string | null;
+  }> = [],
 ): GroupConflictMap {
   const groupsByStudent = new Map<string, Set<string>>();
   const add = (studentId: string, groupId: string | null) => {
@@ -389,7 +401,12 @@ export function buildGroupConflictMap(
   }
   const replaced = replacedSubjectOf(halves);
   if (replaced.size > 0) {
-    relation.replacing = { replaced, bySubject: replacingBySubject(replaced), groupsOfStudent: groupsByStudent };
+    relation.replacing = {
+      replaced,
+      bySubject: replacingBySubject(replaced),
+      groupsOfStudent: groupsByStudent,
+      yearOf: yearsOf(halves),
+    };
   }
   return relation;
 }
@@ -403,21 +420,28 @@ function keysOf(placement: Placement, relation: GroupConflictMap | undefined): s
   const replacing = relation?.replacing;
   if (!replacing || !placement.subjectId) return groups;
   return pupilKeysOf(
-    { subjectId: placement.subjectId, groupIds: groups },
+    scopeOf({ ...placement, subjectId: placement.subjectId }, replacing),
     replacing.bySubject,
     (a, b) => relation.get(a)?.has(b) ?? false,
     replacingGroupsOfNamed(placement.studentIds ?? [], (pupil) => replacing.groupsOfStudent.get(pupil) ?? [], replacing.replaced),
+    replacing.yearOf,
   );
+}
+
+/** A placement as the rule reads it: its subject, its groups and its own group's läsår. */
+function scopeOf(placement: Placement & { subjectId: string }, replacing: ReplacingContext) {
+  const year = replacing.yearOf.get(placement.studentGroupId);
+  return { subjectId: placement.subjectId, groupIds: groupsOf(placement), ...(year ? { academicYearId: year } : {}) };
 }
 
 /** Is a pupil whose class is on the placement taken off it by a replacing group of theirs? */
 function elsewhere(studentId: string, placement: Placement, relation: GroupConflictMap | undefined): boolean {
   const replacing = relation?.replacing;
   if (!replacing || !placement.subjectId) return false;
-  return leavesLesson(replacementsOf(replacing.groupsOfStudent.get(studentId) ?? [], replacing.replaced), {
-    subjectId: placement.subjectId,
-    groupIds: groupsOf(placement),
-  });
+  return leavesLesson(
+    replacementsOf(replacing.groupsOfStudent.get(studentId) ?? [], replacing.replaced, replacing.yearOf),
+    scopeOf({ ...placement, subjectId: placement.subjectId }, replacing),
+  );
 }
 
 function groupsShareStudents(

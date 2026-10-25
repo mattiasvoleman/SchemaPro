@@ -779,9 +779,9 @@ describe('MasterLessonsService', () => {
     describe('Ersättande grupper: a replacing group’s members are not on its subject’s other lessons', () => {
       // The candidate is 7A's svenska (SUBJECT_ID); the other lesson is the
       // teaching group's, which holds Alva of 7A.
-      const replacing = (replacesSubjectId: string) =>
+      const replacing = (replacesSubjectId: string, academicYearId = YEAR_ID) =>
         tx.studentGroup.findMany.mockResolvedValue([
-          { id: TEACHING_GROUP_ID, halfOfId: null, replacesSubjectId },
+          { id: TEACHING_GROUP_ID, halfOfId: null, replacesSubjectId, academicYearId },
         ]);
 
       it('lets SvA7 sit beside 7A’s svenska, which it replaces', async () => {
@@ -800,11 +800,60 @@ describe('MasterLessonsService', () => {
             OR: [
               { id: { in: expect.arrayContaining([GROUP_ID, TEACHING_GROUP_ID]) } },
               { halfOfId: { in: expect.arrayContaining([GROUP_ID, TEACHING_GROUP_ID]) } },
-              { replacesSubjectId: { in: [SUBJECT_ID, OTHER_SUBJECT_ID] } },
+              { replacesSubjectId: { in: [SUBJECT_ID, OTHER_SUBJECT_ID] }, academicYearId: YEAR_ID },
             ],
           },
-          select: { id: true, halfOfId: true, replacesSubjectId: true },
+          select: { id: true, halfOfId: true, replacesSubjectId: true, academicYearId: true },
         });
+      });
+
+      it('lets last year’s replacing group take nobody off this year’s svenska', async () => {
+        arrangeCreate();
+        replacing(SUBJECT_ID, 'last-year');
+        sameDay([otherLesson({ studentGroupId: TEACHING_GROUP_ID })]);
+        arrangePupils(
+          [{ id: STUDENT_ID, studentGroupId: GROUP_ID }],
+          [{ studentId: STUDENT_ID, studentGroupId: TEACHING_GROUP_ID }],
+        );
+
+        await expect(service.create(createDto(), testUser())).rejects.toThrow(
+          new ConflictException('Students of this group already have Math in this slot.'),
+        );
+      });
+
+      it('refuses what the board refuses: a group whose shared pupils are all in SvA7 still keeps off 7A’s svenska', async () => {
+        // Ma7 holds only Alva, who is in SvA7: the exact pupils share nobody,
+        // but 7A's svenska answers for "7A without SvA7", which pairs with
+        // every partner of 7A's but SvA7 — the board's and the engine's rule.
+        arrangeCreate();
+        replacing(SUBJECT_ID);
+        sameDay([otherLesson({ studentGroupId: OTHER_EXTRA_GROUP_ID })]);
+        arrangePupils(
+          [
+            { id: STUDENT_ID, studentGroupId: GROUP_ID },
+            { id: OTHER_STUDENT_ID, studentGroupId: GROUP_ID },
+          ],
+          [
+            { studentId: STUDENT_ID, studentGroupId: TEACHING_GROUP_ID },
+            { studentId: STUDENT_ID, studentGroupId: OTHER_EXTRA_GROUP_ID },
+          ],
+        );
+
+        await expect(service.create(createDto(), testUser())).rejects.toThrow(ConflictException);
+      });
+
+      it('does not hold a SvA pupil named on another lesson against 7A’s svenska', async () => {
+        // Alva (7A, in SvA7) is named on the other lesson; she is not on 7A's
+        // svenska, so the class is free at that hour.
+        arrangeCreate();
+        replacing(SUBJECT_ID);
+        sameDay([otherLesson({ studentGroupId: OTHER_EXTRA_GROUP_ID, participants: [{ studentId: STUDENT_ID }] })]);
+        arrangePupils(
+          [{ id: STUDENT_ID, studentGroupId: GROUP_ID }],
+          [{ studentId: STUDENT_ID, studentGroupId: TEACHING_GROUP_ID }],
+        );
+
+        await expect(service.create(createDto(), testUser())).resolves.toMatchObject({ id: LESSON_ID });
       });
 
       it('still keeps it off every other lesson of 7A', async () => {

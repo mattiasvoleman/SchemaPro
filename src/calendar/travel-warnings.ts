@@ -64,6 +64,12 @@ export interface TravelDayLesson extends PlacedLesson {
   teacherIds: readonly string[];
   /** The groups attending it: its own and the ones joining. */
   groupIds: readonly string[];
+  /**
+   * Ersättande grupper: the groups replacing its subject that are not on it
+   * (common/replacing-groups.ts). Their members are elsewhere, so a half pair
+   * with one of them says nothing about this lesson's pupils.
+   */
+  leftOut?: ReadonlySet<string>;
   /** Every pupil it holds: the groups' members and the pupils named on it. */
   pupils: ReadonlySet<string>;
   weeks: TravelWeeks;
@@ -105,7 +111,9 @@ const hhmm = (minutes: number): string =>
 export function sharePupils(a: TravelDayLesson, b: TravelDayLesson, halvesPair: (x: string, y: string) => boolean): boolean {
   if (a.groupIds.some((group) => b.groupIds.includes(group))) return true;
   for (const pupil of a.pupils) if (b.pupils.has(pupil)) return true;
-  return a.groupIds.some((x) => b.groupIds.some((y) => halvesPair(x, y)));
+  return a.groupIds.some((x) =>
+    b.groupIds.some((y) => halvesPair(x, y) && !a.leftOut?.has(y) && !b.leftOut?.has(x)),
+  );
 }
 
 export function travelWarningsOf(
