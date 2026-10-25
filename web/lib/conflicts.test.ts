@@ -884,6 +884,53 @@ describe("validatePlacement replacing groups (Ersättande grupper)", () => {
     const alva = makePlacement({ id: "alva", studentGroupId: "gOther", subjectId: "ma", studentIds: ["alva"] });
     expect(validatePlacement(makePlacement({ studentGroupId: "g7a", subjectId: "sv" }), [alva], [], home, relation)).toEqual([]);
   });
+
+  it("keeps a teaching group's own svenska apart from SvA7 when they share a pupil, but not a half's", () => {
+    // Sv7n is Svenska fördjupning (a teaching group, not a half), 7A:1 a half
+    // of 7A; Alva is in both and in SvA7. Placed in Sv7n, she goes there.
+    const withKept = buildGroupConflictMap(
+      home,
+      [
+        { studentId: "alva", studentGroupId: "sva7" },
+        { studentId: "alva", studentGroupId: "sv7n" },
+        { studentId: "alva", studentGroupId: "half" },
+      ],
+      [
+        ...groups,
+        { id: "sv7n", academicYearId: "y26", kind: "TEACHING_GROUP", halfOfId: null },
+        { id: "half", academicYearId: "y26", kind: "TEACHING_GROUP", halfOfId: "g7a" },
+      ],
+    );
+    const sva = makePlacement({ id: "sva", studentGroupId: "sva7", subjectId: "sva" });
+    expect(validatePlacement(makePlacement({ studentGroupId: "sv7n", subjectId: "sv" }), [sva], [], home, withKept)).toEqual([
+      { kind: "GROUP", otherLessonId: "sva" },
+    ]);
+    expect(validatePlacement(makePlacement({ studentGroupId: "half", subjectId: "sv" }), [sva], [], home, withKept)).toEqual([]);
+  });
+
+  it("keeps the lessons of two groups replacing svenska apart when a pupil is in both", () => {
+    const both = buildGroupConflictMap(
+      home,
+      [
+        { studentId: "alva", studentGroupId: "sva7" },
+        { studentId: "alva", studentGroupId: "sva7s" },
+      ],
+      [...groups, { id: "sva7s", academicYearId: "y26", replacesSubjectId: "sv", kind: "TEACHING_GROUP", halfOfId: null }],
+    );
+    const stod = makePlacement({ id: "stod", studentGroupId: "sva7s", subjectId: "sv" });
+    expect(validatePlacement(makePlacement({ studentGroupId: "sva7", subjectId: "sv" }), [stod], [], home, both)).toEqual([
+      { kind: "GROUP", otherLessonId: "stod" },
+    ]);
+  });
+
+  it("takes nobody off a lesson whose own group's läsår it does not know", () => {
+    // gUnknown is not among the groups the page passed: no läsår, no rule.
+    const unknown = buildGroupConflictMap(new Map([["alva", "gUnknown"]]), [{ studentId: "alva", studentGroupId: "sva7" }], groups);
+    const sva = makePlacement({ id: "sva", studentGroupId: "sva7", subjectId: "sva" });
+    expect(
+      validatePlacement(makePlacement({ studentGroupId: "gUnknown", subjectId: "sv" }), [sva], [], new Map([["alva", "gUnknown"]]), unknown),
+    ).toEqual([{ kind: "GROUP", otherLessonId: "sva" }]);
+  });
 });
 
 describe("validatePlacement combined conflicts", () => {

@@ -47,6 +47,7 @@ import { BLOCK_SPLIT, blockMoveOf, readLessonBlock, sameSlot, type BlockSlot } f
 import { isWriteConflict, writeConflict } from '../common/utils/prisma-errors';
 import { groupsOfPupils, halfPairs, type GroupHalf } from '../common/class-halves';
 import {
+  keptByOf,
   keysShare,
   leavesLesson,
   pupilKeysOf,
@@ -1539,7 +1540,7 @@ export class MasterLessonsService {
       const teacherIds = [...new Set(rows.flatMap((row) => [row.teacherId, row.coTeacherId]))].filter(
         (id): id is string => id !== null,
       );
-      const [{ membersOf, halves, replaced }, groups, teachers] = await Promise.all([
+      const [{ membersOf, halves, replaced, kept }, groups, teachers] = await Promise.all([
         this.rosterOf(tx, basis, groupIds, { subjectIds: [...new Set(rows.map((row) => row.subjectId))], academicYearId }),
         tx.studentGroup.findMany({ where: { id: { in: [...groupIds] } }, select: { id: true, name: true } }),
         tx.user.findMany({ where: { id: { in: teacherIds } }, select: { id: true, firstName: true, lastName: true } }),
@@ -1550,14 +1551,23 @@ export class MasterLessonsService {
       const replacingOf = replacingBySubject(replaced);
       const day = rows.map((row): TravelDayLesson => {
         const attending = [row.studentGroupId, ...row.extraGroups.map((g) => g.studentGroupId)];
-        // Ersättande grupper: a replacing group's members are not on its
-        // subject's other lessons, and walk to nothing from them.
+        // Ersättande grupper: a replacing group's members are not on the
+        // class's lessons in its subject, and walk to nothing from them.
         const named = new Set(row.participants.map((p) => p.studentId));
         const fromGroups = new Set(attending.flatMap((groupId) => [...(membersOf.get(groupId) ?? [])]));
-        const elsewhere = replacedPupils(fromGroups, { subjectId: row.subjectId, groupIds: attending }, named, replacingOf, membersOf);
+        const keptBy = kept.has(row.studentGroupId) ? row.studentGroupId : undefined;
+        const scope = { subjectId: row.subjectId, groupIds: attending, ...(keptBy === undefined ? {} : { keptBy }) };
+        const elsewhere = replacedPupils(fromGroups, scope, named, replacingOf, membersOf);
         // The replacing groups that take pupils off it, whose half pairs
-        // (class-halves.ts) say nothing about its pupils.
-        const leftOut = new Set((replacingOf.get(row.subjectId) ?? []).filter((groupId) => !attending.includes(groupId)));
+        // (class-halves.ts) say nothing about its pupils: only when every
+        // member of theirs leaves it, so not beside a replacing group on the
+        // lesson or a teaching group that keeps some of them on.
+        const forSubject = replacingOf.get(row.subjectId) ?? [];
+        const leftOut = new Set(
+          keptBy !== undefined || forSubject.some((groupId) => attending.includes(groupId))
+            ? []
+            : forSubject.filter((groupId) => !attending.includes(groupId)),
+        );
         return {
           id: row.id,
           start: toMinutes(row.startTime),
@@ -1974,12 +1984,18 @@ export class MasterLessonsService {
      * rollover keeps as history, takes nobody off this year's svenska.
      */
     replacing: { subjectIds: readonly string[]; academicYearId: string } | null = null,
-  ): Promise<{ membersOf: Map<string, Set<string>>; halves: GroupHalf[]; replaced: Map<string, string> }> {
+  ): Promise<{
+    membersOf: Map<string, Set<string>>;
+    halves: GroupHalf[];
+    replaced: Map<string, string>;
+    /** The asked groups whose members keep their own lessons (keptByOf): teaching groups, not halves. */
+    kept: Set<string>;
+  }> {
     const subjectIds = replacing?.subjectIds ?? [];
     const membersOf = new Map<string, Set<string>>();
-    if (groupIds.size === 0) return { membersOf, halves: [], replaced: new Map() };
+    if (groupIds.size === 0) return { membersOf, halves: [], replaced: new Map(), kept: new Set() };
     const asked = [...groupIds];
-    const select = { id: true, halfOfId: true, replacesSubjectId: true, academicYearId: true } as const;
+    const select = { id: true, halfOfId: true, replacesSubjectId: true, academicYearId: true, kind: true } as const;
     const read = await tx.studentGroup.findMany({
       where: {
         OR: [
@@ -2035,7 +2051,13 @@ export class MasterLessonsService {
       if (pupil.studentGroupId) add(pupil.studentGroupId, pupil.id);
     }
     for (const row of teachingGroups) add(row.studentGroupId, row.studentId);
-    return { membersOf, halves, replaced };
+    const kept = new Set(
+      read.flatMap((group) => {
+        const keptBy = groupIds.has(group.id) ? keptByOf(group) : undefined;
+        return keptBy === undefined ? [] : [keptBy];
+      }),
+    );
+    return { membersOf, halves, replaced, kept };
   }
 
   /**
@@ -2296,7 +2318,7 @@ export class MasterLessonsService {
             ...candidateGroups,
             ...clashing.flatMap(groupsAttending),
           ]);
-    const { membersOf, halves, replaced } = await this.rosterOf(tx, basis, groupsInPlay, {
+    const { membersOf, halves, replaced, kept } = await this.rosterOf(tx, basis, groupsInPlay, {
       subjectIds: [...new Set([lesson.subjectId, ...clashing.map((other) => other.subjectId)])],
       academicYearId: lesson.academicYearId,
     });
@@ -2305,8 +2327,14 @@ export class MasterLessonsService {
     // SvA7's lessons share no pupil and may sit side by side. A school with
     // no replacing group finds none, and every answer below is as before.
     const replacingOf = replacingBySubject(replaced);
+    /** A lesson as the rule reads it; its own group comes first in `groups`. */
+    const scopeOf = (groups: Iterable<string>, subjectId: string) => {
+      const groupIds = [...groups];
+      const keptBy = groupIds[0] !== undefined && kept.has(groupIds[0]) ? groupIds[0] : undefined;
+      return { subjectId, groupIds, ...(keptBy === undefined ? {} : { keptBy }) };
+    };
     const pupilsOn = (groups: Iterable<string>, subjectId: string, named: Iterable<string>): Set<string> => {
-      const scope = { subjectId, groupIds: [...groups] };
+      const scope = scopeOf(groups, subjectId);
       const pupils = new Set<string>();
       for (const groupId of scope.groupIds) for (const studentId of membersOf.get(groupId) ?? []) pupils.add(studentId);
       for (const studentId of replacedPupils(pupils, scope, new Set(named), replacingOf, membersOf)) pupils.delete(studentId);
@@ -2333,7 +2361,7 @@ export class MasterLessonsService {
     };
     const keysOf = (groups: Iterable<string>, subjectId: string, named: Iterable<string>): string[] =>
       pupilKeysOf(
-        { subjectId, groupIds: [...groups] },
+        scopeOf(groups, subjectId),
         replacingOf,
         sharesGroups,
         replacingGroupsOfNamed(named, (pupil) => groupsOfPupil.get(pupil) ?? [], replaced),
@@ -2465,10 +2493,12 @@ export class MasterLessonsService {
             otherGroups.has(homeGroup) &&
             // A named pupil's class has the other lesson, unless a replacing
             // group of theirs takes them off it.
-            !leavesLesson(replacementsOf(groupsOfPupil.get(studentId) ?? [], replaced), {
-              subjectId: other.subjectId,
-              groupIds: [...otherGroups],
-            }))
+            !leavesLesson(
+              replacementsOf(groupsOfPupil.get(studentId) ?? [], replaced),
+              scopeOf(otherGroups, other.subjectId),
+              false,
+              groupsOfPupil.get(studentId) ?? [],
+            ))
         );
       });
       if (busyStudent) {
@@ -2501,8 +2531,9 @@ export class MasterLessonsService {
                   candidateGroups.has(pupil.studentGroupId) &&
                   !leavesLesson(
                     replacementsOf(groupsOfPupil.get(pupil.id) ?? [], replaced),
-                    { subjectId: lesson.subjectId, groupIds: [...candidateGroups] },
+                    scopeOf(candidateGroups, lesson.subjectId),
                     candidateStudents.includes(pupil.id),
+                    groupsOfPupil.get(pupil.id) ?? [],
                   ),
               ).length;
         if (reverse > 0) {

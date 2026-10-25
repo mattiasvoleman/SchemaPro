@@ -163,9 +163,24 @@ export async function clashFinding(
   const replacing = (
     (await tx.studentGroup.findMany({
       where: { academicYearId, replacesSubjectId: { not: null } },
-      select: { id: true, replacesSubjectId: true },
+      select: { id: true, replacesSubjectId: true, academicYearId: true },
     })) ?? []
-  ).flatMap((group) => (group.replacesSubjectId ? [{ id: group.id, replacesSubjectId: group.replacesSubjectId }] : []));
+  ).flatMap((group) =>
+    group.replacesSubjectId
+      ? [{ id: group.id, replacesSubjectId: group.replacesSubjectId, academicYearId: group.academicYearId }]
+      : [],
+  );
+  // The lessons' own groups that keep their members on their own lessons
+  // (keptByOf: teaching groups, not halves). Read only beside a replacing group.
+  const kept =
+    replacing.length === 0
+      ? []
+      : (
+          (await tx.studentGroup.findMany({
+            where: { id: { in: [...new Set(placed.map((lesson) => lesson.studentGroupId))] }, kind: 'TEACHING_GROUP', halfOfId: null },
+            select: { id: true },
+          })) ?? []
+        ).map((group) => group.id);
   const known = new Set(groupIds);
   groupIds.push(...replacing.map((group) => group.id).filter((id) => !known.has(id)));
   // Active STUDENTs, on both sides, as the generator and the hand edit read
@@ -206,7 +221,7 @@ export async function clashFinding(
     memberships,
     pupilBuffers: buffers,
     halves: allHalves,
-    ...(replacing.length > 0 ? { replacing } : {}),
+    ...(replacing.length > 0 ? { replacing, academicYearId, kept } : {}),
   });
   const byId = new Map(placed.map((lesson) => [lesson.id, lesson]));
   const pairs = clashPairs(clashes);

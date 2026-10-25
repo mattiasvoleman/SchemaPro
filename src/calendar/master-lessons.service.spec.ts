@@ -803,7 +803,7 @@ describe('MasterLessonsService', () => {
               { replacesSubjectId: { in: [SUBJECT_ID, OTHER_SUBJECT_ID] }, academicYearId: YEAR_ID },
             ],
           },
-          select: { id: true, halfOfId: true, replacesSubjectId: true, academicYearId: true },
+          select: { id: true, halfOfId: true, replacesSubjectId: true, academicYearId: true, kind: true },
         });
       });
 
@@ -867,6 +867,50 @@ describe('MasterLessonsService', () => {
 
         await expect(service.create(createDto(), testUser())).rejects.toThrow(
           new ConflictException('Students of this group already have Math in this slot.'),
+        );
+      });
+
+      it('keeps a teaching group’s own svenska apart from SvA7 when they share a pupil: placed in it, she goes there', async () => {
+        // The candidate is Ma7's svenska (a fördjupning, a teaching group and
+        // not a half); Alva is in it and in SvA7, whose lesson is the other.
+        arrangeCreate();
+        tx.studentGroup.findMany.mockResolvedValue([
+          { id: TEACHING_GROUP_ID, halfOfId: null, replacesSubjectId: SUBJECT_ID, academicYearId: YEAR_ID, kind: 'TEACHING_GROUP' },
+          { id: OTHER_EXTRA_GROUP_ID, halfOfId: null, replacesSubjectId: null, academicYearId: YEAR_ID, kind: 'TEACHING_GROUP' },
+        ]);
+        sameDay([otherLesson({ studentGroupId: TEACHING_GROUP_ID, subjectId: SUBJECT_ID })]);
+        arrangePupils(
+          [{ id: STUDENT_ID, studentGroupId: GROUP_ID }],
+          [
+            { studentId: STUDENT_ID, studentGroupId: TEACHING_GROUP_ID },
+            { studentId: STUDENT_ID, studentGroupId: OTHER_EXTRA_GROUP_ID },
+          ],
+        );
+
+        await expect(service.create(createDto({ studentGroupId: OTHER_EXTRA_GROUP_ID }), testUser())).rejects.toThrow(
+          ConflictException,
+        );
+      });
+
+      it('keeps the lessons of two groups replacing svenska apart when a pupil is in both', async () => {
+        // SvA7 and SvA7 stöd both replace svenska, and Alva is in both: she
+        // keeps the lessons of either, so they may not sit side by side.
+        arrangeCreate();
+        tx.studentGroup.findMany.mockResolvedValue([
+          { id: TEACHING_GROUP_ID, halfOfId: null, replacesSubjectId: SUBJECT_ID, academicYearId: YEAR_ID, kind: 'TEACHING_GROUP' },
+          { id: OTHER_EXTRA_GROUP_ID, halfOfId: null, replacesSubjectId: SUBJECT_ID, academicYearId: YEAR_ID, kind: 'TEACHING_GROUP' },
+        ]);
+        sameDay([otherLesson({ studentGroupId: TEACHING_GROUP_ID, subjectId: SUBJECT_ID })]);
+        arrangePupils(
+          [{ id: STUDENT_ID, studentGroupId: GROUP_ID }],
+          [
+            { studentId: STUDENT_ID, studentGroupId: TEACHING_GROUP_ID },
+            { studentId: STUDENT_ID, studentGroupId: OTHER_EXTRA_GROUP_ID },
+          ],
+        );
+
+        await expect(service.create(createDto({ studentGroupId: OTHER_EXTRA_GROUP_ID }), testUser())).rejects.toThrow(
+          ConflictException,
         );
       });
 

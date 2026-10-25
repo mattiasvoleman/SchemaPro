@@ -36,6 +36,21 @@ interface FixtureCase {
 
 const { cases } = fixture as unknown as { cases: FixtureCase[] };
 
+/** Every group of a case, as the page's useGroups hands them over: with the läsår. */
+function groupsOfCase(c: FixtureCase) {
+  const special = new Map<string, Record<string, unknown>>();
+  for (const half of c.input.halves ?? []) special.set(half.id, { ...half });
+  for (const group of c.input.replacing ?? []) special.set(group.id, { ...special.get(group.id), ...group });
+  const ids = new Set<string>([
+    ...c.input.lessons.flatMap((lesson) => [
+      lesson["studentGroupId"] as string,
+      ...((lesson["extraGroupIds"] as string[] | undefined) ?? []),
+    ]),
+    ...special.keys(),
+  ]);
+  return [...ids].map((id) => ({ id, academicYearId: "y", ...special.get(id) }));
+}
+
 describe("the board paints what the publish gate counts", () => {
   it.each(cases.map((c) => [c.name, c] as const))("%s", (_name, c) => {
     const studentGroupOf = new Map(c.input.studentGroupOf);
@@ -49,9 +64,10 @@ describe("the board paints what the publish gate counts", () => {
         ...row,
       })) as unknown as AvailabilityConstraint[],
       studentGroupOf,
-      // The page passes the school's groups: the halves and the replacing
-      // groups among them are what the relation reads.
-      buildGroupConflictMap(studentGroupOf, c.input.memberships, [...(c.input.halves ?? []), ...(c.input.replacing ?? [])]),
+      // The page passes the school's groups, each with its läsår ("y", the
+      // lessons'): the halves and the replacing groups among them are what
+      // the relation reads, and a lesson's läsår is its own group's.
+      buildGroupConflictMap(studentGroupOf, c.input.memberships, groupsOfCase(c)),
       undefined,
       undefined,
       undefined,
