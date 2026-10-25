@@ -260,6 +260,15 @@ describe('UsersService', () => {
       );
     });
 
+    it('refuses a teaching group as a new pupil’s home class', async () => {
+      tx.studentGroup.findUnique.mockResolvedValue({ kind: 'TEACHING_GROUP' });
+      await expect(
+        service.create(createDto({ role: UserRole.STUDENT, studentGroupId: GROUP_ID }), testUser()),
+      ).rejects.toMatchObject({ response: { code: 'STUDENT_HOME_GROUP_NOT_A_CLASS' } });
+      expect(tx.user.create).not.toHaveBeenCalled();
+      expect(supabaseAdmin.inviteUser).not.toHaveBeenCalled();
+    });
+
     it('rejects a group assignment for a non-student before touching anything', async () => {
       await expect(
         service.create(createDto({ studentGroupId: GROUP_ID }), testUser()),
@@ -1039,6 +1048,22 @@ describe('UsersService', () => {
           isActive: false,
         },
       });
+    });
+
+    it('refuses a teaching group as a pupil’s home class, named; and leaves an unchanged home unasked', async () => {
+      // Ersättande grupper: a teaching group keeps its MEMBERS on its own
+      // lessons, and every reader asks membership. A "home" that is a
+      // teaching group would let the database's helper and the rest disagree.
+      tx.studentGroup.findUnique.mockResolvedValue({ kind: 'TEACHING_GROUP' });
+      await expect(service.update(USER_ID, { role: UserRole.STUDENT, studentGroupId: GROUP_ID }, testUser())).rejects.toMatchObject({
+        response: { code: 'STUDENT_HOME_GROUP_NOT_A_CLASS' },
+      });
+      expect(tx.user.update).not.toHaveBeenCalled();
+
+      tx.studentGroup.findUnique.mockClear();
+      tx.user.update.mockResolvedValue({ id: USER_ID });
+      await service.update(USER_ID, { phone: null }, testUser());
+      expect(tx.studentGroup.findUnique).not.toHaveBeenCalled();
     });
 
     it('rejects assigning a group while switching to a non-student role', async () => {
