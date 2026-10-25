@@ -1,4 +1,5 @@
 import { teachingWeeks } from '../staffing/teaching-weeks';
+import plannedFixture from './__fixtures__/timplan-planned-cases.json';
 import {
   computePlannedCoverage,
   type PlannedCoverageInput,
@@ -699,6 +700,94 @@ describe('computePlannedCoverage', () => {
       expect(coverage.pupilCount).toBe(600);
       expect(coverage.groups).toHaveLength(24);
       expect(elapsed).toBeLessThan(2000);
+    });
+  });
+
+  describe('ersättande grupper (a replacing group)', () => {
+    // SvA7 replaces Svenska (common/replacing-groups.ts): its pupils go to
+    // SvA7's lessons instead of their class's Svenska. Svenska and SvA are
+    // one line (SV_SVA), target 180, so a pupil credited with both read 360.
+    const targets = plan([
+      [S.SV, 7, 180],
+      [S.SVA, 7, 180],
+      [S.MA, 7, 180],
+    ]);
+    const a = group('7A');
+    const sva7: PlannedGroup = { ...group('SvA7', 'TEACHING_GROUP', null), replacesSubjectId: S.SV };
+    const nivå = group('Sv7 nivå', 'TEACHING_GROUP', null);
+    const stöd = group('SvA-stöd 7', 'TEACHING_GROUP', null);
+    const alva = pupil(a);
+    const bo = pupil(a, [sva7]);
+    const cim = pupil(a, [sva7, nivå]);
+    const dag = pupil(a, [stöd]);
+    const world = input({
+      plans: [targets],
+      groups: [a, sva7, nivå, stöd],
+      requirements: [req(a, S.SV, 3, 60), req(a, S.MA, 3, 60), req(sva7, S.SVA, 3, 60), req(nivå, S.SV, 1, 60), req(stöd, S.SVA, 1, 60)],
+      pupils: [alva, bo, cim, dag],
+    });
+    /** The same school, SvA7 an ordinary teaching group. */
+    const ordinary = { ...world, groups: world.groups.map(({ replacesSubjectId: _r, ...g }) => g) };
+
+    it('credits a pupil of SvA7 with its SvA and none of 7A’s Svenska: 180 of 180, where both read 360', () => {
+      const both = computePlannedCoverage(ordinary);
+      const replaced = computePlannedCoverage(world);
+      // As an ordinary group, SvA7's SvA came on top of 7A's Svenska: Bo read
+      // 360 and Cim 420 (the nivågrupp too), and Bo's 360 passed as met.
+      expect(lineOf(both, a.id, 'alt:SV_SVA').pupils).toEqual({ min: 180, median: 300, max: 420, below: 0 });
+      expect(both.verdicts.filter((v) => v.pupilId === bo.id)).toEqual([]);
+      // Replacing Svenska, SvA7 is read instead of it: 180 each, Dag's
+      // support group on top of class Svenska the only 240.
+      expect(lineOf(replaced, a.id, 'alt:SV_SVA').pupils).toEqual({ min: 180, median: 180, max: 240, below: 0 });
+      expect(replaced.pupils).toEqual([]);
+    });
+
+    it('takes the pupil off every other group’s Svenska — a nivågrupp’s as well as the class’s — and keeps his own group’s', () => {
+      // Cim is in SvA7 and the nivågrupp: neither 7A's nor the nivågrupp's
+      // Svenska reaches him, so he is not double planned in Svenska.
+      const short = computePlannedCoverage({
+        ...world,
+        requirements: [...world.requirements.filter((row) => row.studentGroupId !== sva7.id), req(sva7, S.SVA, 2, 60), req(sva7, S.SV, 1, 30)],
+      });
+      const cimLine = short.pupils!.find((p) => p.pupilId === cim.id)!.lines[0]!;
+      // SvA7's own Svenska row stays: SvA7 is the row's group.
+      expect(cimLine).toMatchObject({ key: 'alt:SV_SVA', plannedMinutesPerWeek: 150, status: 'UNDER', doublePlannedSubjectIds: [] });
+      expect(cimLine.sources).toEqual([
+        { studentGroupId: sva7.id, subjectId: S.SV, minutesPerWeek: 30 },
+        { studentGroupId: sva7.id, subjectId: S.SVA, minutesPerWeek: 120 },
+      ]);
+      expect(short.verdicts.filter((v) => v.pupilId === cim.id).map((v) => v.code)).toEqual([
+        'TIMPLAN_PUPIL_UNDERPLANNED',
+        // SvA7 plans both alternatives itself: a roster to check, as before.
+        'TIMPLAN_PUPIL_DOUBLE_PLANNED',
+      ]);
+    });
+
+    it('leaves the support model alone: an SvA group that replaces nothing stays on top of class Svenska, unflagged', () => {
+      const coverage = computePlannedCoverage(world);
+      // Dag: 7A's Svenska 180 and SvA-stöd's 60 — met, and not two alternatives.
+      expect(coverage.verdicts.filter((v) => v.pupilId === dag.id)).toEqual([]);
+      expect(lineOf(coverage, a.id, 'alt:SV_SVA').pupils!.max).toBe(240);
+    });
+
+    it('leaves the class’s own lines, cells and verdicts as they are: only what reaches a pupil changes', () => {
+      const replaced = computePlannedCoverage({ ...world, includePupils: false });
+      const both = computePlannedCoverage({ ...ordinary, includePupils: false });
+      expect(replaced.cells).toEqual(both.cells);
+      expect(replaced.verdicts).toEqual(both.verdicts);
+      expect(replaced.groups.map((g) => g.lines.map((l) => [l.key, l.status, l.plannedMinutesPerWeek, l.teachingGroupIds]))).toEqual(
+        both.groups.map((g) => g.lines.map((l) => [l.key, l.status, l.plannedMinutesPerWeek, l.teachingGroupIds])),
+      );
+    });
+
+    it('gives a school without a replacing group the same answer whether its groups say null or nothing, for every case of the fixture', () => {
+      const { cases } = plannedFixture as unknown as { cases: { name: string; input: PlannedCoverageInput }[] };
+      const plain = cases.filter((c) => !c.input.groups.some((g) => g.replacesSubjectId));
+      expect(plain.length).toBeGreaterThanOrEqual(19);
+      for (const { input: given } of plain) {
+        const empty = { ...given, groups: given.groups.map((g) => ({ ...g, replacesSubjectId: null })) };
+        expect(computePlannedCoverage(empty)).toEqual(computePlannedCoverage(given));
+      }
     });
   });
 });

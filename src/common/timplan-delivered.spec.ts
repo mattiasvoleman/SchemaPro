@@ -757,3 +757,169 @@ describe('a class target read in the plan’s numbering (SFS 2025:729)', () => {
     expect(target(tio) / target(nio)).toBeCloseTo(180 / 120, 5);
   });
 });
+
+describe('ersättande grupper (a replacing group)', () => {
+  // SvA7 replaces Svenska (common/replacing-groups.ts): its pupils go to
+  // SvA7's lessons instead of their class's Svenska. Alva is in 7A and SvA7,
+  // Bo in 7A only, Dag in 7B and SvA7. 7A held 20 Svenska lessons and one
+  // more naming Alva; 7B held 18 of its own and 2 SvA7 attended as an extra
+  // group; SvA7 held 20 SvA lessons. A 7A Läsdag credits Svenska.
+  const SVA = id(5);
+  const subjects = [...SUBJECTS, { id: SVA, name: 'Svenska som andraspråk', nationalCode: 'SV_SVA', countsTowardTimplan: true }];
+  const a = group('7A');
+  const b = group('7B');
+  const sva7: PlannedGroup = { ...group('SvA7', 'TEACHING_GROUP', null), replacesSubjectId: S.SV };
+  const alva = pupil(a, [sva7]);
+  const bo = pupil(a);
+  const dag = pupil(b, [sva7]);
+  const sv = `subject:${S.SV}`;
+  const world = (groups: PlannedGroup[] = [a, b, sva7]): DeliveredCoverageInput => ({
+    audiences: [
+      row(a, S.SV, 'DELIVERED', 20),
+      row(a, S.SV, 'DELIVERED', 1, { studentIds: [alva.id] }),
+      row(b, S.SV, 'DELIVERED', 18),
+      row(b, S.SV, 'DELIVERED', 2, { extraGroupIds: [sva7.id] }),
+      row(sva7, SVA, 'DELIVERED', 20),
+    ],
+    horizon: [],
+    dates: [],
+    // Ahead of today: 7A's Monday Svenska, and SvA7's Tuesday SvA.
+    masterLessons: [master(a, S.SV, 1), master(sva7, SVA, 2)],
+    publish: { breaks: BREAKS, closures: [], timezone: 'Europe/Stockholm' },
+    credits: [
+      { id: id(8100), date: '2026-09-30', minutes: 60, subjectId: S.SV, studentGroupId: a.id, minGradeLevel: null, maxGradeLevel: null, name: 'Läsdag 7A' },
+    ],
+    asOf: AS_OF,
+    asOfDate: AS_OF_DATE,
+    published: { from: '2026-08-17', through: '2026-10-23' },
+    drillGroupId: null,
+    planned: {
+      year: YEAR,
+      closures: CLOSURES,
+      plans: [],
+      attachments: [],
+      subjects,
+      groups,
+      requirements: [req(a, S.SV, 3, 60), req(b, S.SV, 3, 60), req(sva7, SVA, 3, 60)],
+      pupils: [alva, bo, dag],
+      includePupils: true,
+    },
+  });
+  const ordinary = () => world([a, b, { ...sva7, replacesSubjectId: undefined }]);
+
+  it('credits a pupil of SvA7 none of 7A’s Svenska — posts, lessons, the grundschema ahead, the class’s credit', () => {
+    const figures = deliveredPupilFigures(world());
+    const boSv = figures.get(bo.id)!.get(sv)!;
+    const alvaSv = figures.get(alva.id)!.get(sv)!;
+    // Bo: 7A's 21 lessons and its Läsdag, against 7A's post.
+    expect(boSv).toMatchObject({ delivered: 21 * 60, credited: 60 });
+    expect(boSv.plannedYear).toBeGreaterThan(0);
+    expect(boSv.ahead).toBeGreaterThan(0);
+    // Alva: only the lesson naming her and 7B's two SvA7 attended; no post,
+    // nothing of 7A's grundschema ahead, no Läsdag.
+    expect(alvaSv).toEqual({ plannedYear: 0, delivered: 3 * 60, credited: 0, atPlan: 0, ahead: 0 });
+    // Her SvA is SvA7's, untouched.
+    expect(figures.get(alva.id)!.get(`subject:${SVA}`)).toMatchObject({ delivered: 20 * 60 });
+    // As an ordinary group, SvA7 left her 7A's Svenska and its Läsdag as well.
+    expect(deliveredPupilFigures(ordinary()).get(alva.id)!.get(sv)).toMatchObject({ delivered: 23 * 60, credited: 60 });
+  });
+
+  it('reads a credit’s groups as the lines it reaches: a whole-school Svenska credit reaches SvA7’s pupils only where SvA7 studies Svenska', () => {
+    const schoolDay = { id: id(8101), date: '2026-09-23', minutes: 90, subjectId: S.SV, studentGroupId: null, minGradeLevel: null, maxGradeLevel: null, name: 'Bokens dag' };
+    // SvA7 attends 7B's Svenska: SvA7 has a Svenska line, the credit reaches
+    // it, and its pupils with it.
+    const attending = deliveredPupilFigures({ ...world(), credits: [schoolDay] });
+    expect(attending.get(alva.id)!.get(sv)).toMatchObject({ credited: 90 });
+    // Without that lesson SvA7 studies no Svenska: the day is the classes'
+    // Svenska, which its pupils do not attend.
+    const apart = deliveredPupilFigures({ ...world(), credits: [schoolDay], audiences: world().audiences.filter((r) => r.extraGroupIds.length === 0) });
+    expect(apart.get(alva.id)!.get(sv)).toMatchObject({ credited: 0 });
+    expect(apart.get(bo.id)!.get(sv)).toMatchObject({ credited: 90 });
+  });
+
+  it('keeps SvA7’s pupils on 7B’s Svenska that SvA7 attends, and off 7B’s own', () => {
+    expect(deliveredPupilFigures(world()).get(dag.id)!.get(sv)).toMatchObject({ plannedYear: 0, delivered: 2 * 60 });
+  });
+
+  it('says nothing delivered of a pupil only about a line they are on: posts and lessons leave together', () => {
+    // 7A delivers nothing to Alva but one named lesson; were 7A's post still
+    // hers, an empty 7A would read as her personal loss.
+    const coverage = computeDeliveredCoverage({ ...world(), drillGroupId: a.id });
+    expect(coverage.verdicts.filter((v) => v.pupilId === alva.id)).toEqual([]);
+    const alvaListed = coverage.pupils!.find((p) => p.pupilId === alva.id)!;
+    expect(alvaListed.lines.find((l) => l.key === sv)).toMatchObject({
+      plannedYearMinutes: 0,
+      deliveredMinutes: 180,
+      sources: [
+        { studentGroupId: a.id, deliveredMinutes: 60, sharedWith: [] },
+        { studentGroupId: sva7.id, deliveredMinutes: 120, sharedWith: [] },
+      ],
+    });
+  });
+
+  it('leaves every group line as it was: the credit, the lessons and the posts stay 7A’s', () => {
+    const lines = (input: DeliveredCoverageInput) =>
+      computeDeliveredCoverage({ ...input, planned: { ...input.planned, includePupils: false } }).groups;
+    expect(lines(world())).toEqual(lines(ordinary()));
+    expect(lineOf(computeDeliveredCoverage(world()), a, sv)).toMatchObject({ deliveredMinutes: 21 * 60, creditedMinutes: 60 });
+  });
+
+  it('keeps a line’s statistics to the pupils its group’s lessons reach: 7A’s Svenska line is not SvA7’s pupils’', () => {
+    const coverage = computeDeliveredCoverage(world());
+    // Bo alone: Alva, at 180 of 7A's 1 260, is not among those 7A gave
+    // less. (Bo is short of 7A's year — one Monday a week ahead against
+    // 3 × 60 — and is the one below plan.)
+    expect(lineOf(coverage, a, sv).pupils).toMatchObject({
+      delivered: { min: 1260, median: 1260, max: 1260, below: 0 },
+      belowPlanned: 1,
+    });
+    expect(coverage.groups.find((g) => g.studentGroupId === a.id)!.pupilCount).toBe(2);
+  });
+
+  it('still names the pupil nothing was delivered to when most of 7A is in SvA7', () => {
+    // 7A plans 3 × 60 Svenska, taught in Sv 7A-gruppen, which holds Bo and
+    // Dag; Cim is in no Svenska group. Four of 7A's seven are in SvA7.
+    // Counted at nothing, they made 7A's median nothing, and a median of
+    // nothing names nobody: Cim's empty year went unsaid.
+    const svGroup = group('Sv 7A-gruppen', 'TEACHING_GROUP', null);
+    const inSva = [pupil(a, [sva7]), pupil(a, [sva7]), pupil(a, [sva7]), pupil(a, [sva7])];
+    const cim = pupil(a);
+    const rest = [pupil(a, [svGroup]), cim, pupil(a, [svGroup])];
+    const coverage = computeDeliveredCoverage({
+      ...world([a, sva7, svGroup]),
+      audiences: [row(svGroup, S.SV, 'DELIVERED', 20), row(sva7, SVA, 'DELIVERED', 20)],
+      masterLessons: [],
+      credits: [],
+      planned: {
+        ...world().planned,
+        groups: [a, sva7, svGroup],
+        requirements: [req(a, S.SV, 3, 60), req(sva7, SVA, 3, 60)],
+        pupils: [...inSva, ...rest],
+      },
+    });
+    expect(lineOf(coverage, a, sv).pupils).toMatchObject({ delivered: { min: 0, median: 1200, max: 1200 }, nothingDelivered: 1 });
+    expect(coverage.verdicts.filter((v) => v.code === 'TIMPLAN_PUPIL_NOTHING_DELIVERED').map((v) => [v.pupilId, v.params.classMedianMinutes])).toEqual([
+      [cim.id, 1200],
+    ]);
+  });
+
+  it('gives a school without a replacing group the same answer whether its groups say null or nothing', () => {
+    // The worked example's school, whole: coverage and every pupil's figures.
+    const fd = group('Ma7-fördjupning', 'TEACHING_GROUP', null);
+    const plain: DeliveredCoverageInput = {
+      ...ordinary(),
+      planned: {
+        ...ordinary().planned,
+        groups: [a, b, fd],
+        requirements: [req(a, S.MA, 3, 60), req(fd, S.MA, 1, 60), req(b, S.SV, 3, 60)],
+        pupils: [pupil(a, [fd]), pupil(a), pupil(b)],
+      },
+      audiences: [row(a, S.MA, 'DELIVERED', 11), row(a, S.MA, 'DELIVERED', 8, { extraGroupIds: [fd.id] }), row(b, S.SV, 'DELIVERED', 20)],
+      masterLessons: [master(a, S.MA, 1), master(a, S.MA, 3, { extraGroupIds: [fd.id] })],
+      drillGroupId: a.id,
+    };
+    const empty = { ...plain, planned: { ...plain.planned, groups: plain.planned.groups.map((g) => ({ ...g, replacesSubjectId: null })) } };
+    expect(computeDeliveredCoverage(empty)).toEqual(computeDeliveredCoverage(plain));
+    expect(deliveredPupilFigures(empty)).toEqual(deliveredPupilFigures(plain));
+  });
+});

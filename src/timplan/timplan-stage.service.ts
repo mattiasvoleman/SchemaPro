@@ -144,7 +144,10 @@ export interface TeachingTimeCardResponse {
  * recorded year loses that group's whole year, one who joined mid-year gets
  * all of it. This is P2's and P3's own reading of a group (inherited, not
  * new); it can create or hide a finding in an M2 or nivågrupp cell of a
- * complete stage. A membership history is a later step.
+ * complete stage. A membership history is a later step. An ersättande grupp
+ * is read the same way — each year's group with the subject it replaces
+ * (readPlannedRows), today's members — and THE RULE has no dates either
+ * (common/replacing-groups.ts).
  *
  * THE ACTIVE YEAR ONLY. The view answers for the active year as of the
  * school's today; any other year answers isActiveYear: false and nothing

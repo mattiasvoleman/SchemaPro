@@ -8,6 +8,7 @@ import type {
 } from './timplan-planned';
 import { computePlannedCoverage } from './timplan-planned';
 import plannedFixture from './__fixtures__/timplan-planned-cases.json';
+import scheduledFixture from './__fixtures__/timplan-scheduled-cases.json';
 import {
   computeScheduledCoverage,
   lessonMinutes,
@@ -451,5 +452,111 @@ describe('schemalagt mot planerat', () => {
     });
     expect(Date.now() - started).toBeLessThan(1000);
     expect(coverage.pupilCount).toBe(600);
+  });
+});
+
+describe('ersättande grupper (a replacing group)', () => {
+  // SvA7 replaces Svenska (common/replacing-groups.ts): its pupils go to
+  // SvA7's lessons instead of their class's Svenska. 7A plans 3 × 60 Svenska
+  // and schedules two: a short line. Alva is in 7A and SvA7, Bo in 7A only.
+  const SVA = id(6);
+  const subjects = [...SUBJECTS, { id: SVA, name: 'Svenska som andraspråk', nationalCode: 'SV_SVA', countsTowardTimplan: true }];
+  const a = group('7A');
+  const b = group('7B');
+  const sva7: PlannedGroup = { ...group('SvA7', 'TEACHING_GROUP', null), replacesSubjectId: S.SV };
+  const alva = pupil(a, [sva7]);
+  const bo = pupil(a);
+  const dag = pupil(b, [sva7]);
+  const sv1 = lesson(a, S.SV, '08:00', '09:00');
+  const sv2 = lesson(a, S.SV, '09:00', '10:00');
+  const world: Partial<ScheduledCoverageInput> = {
+    subjects,
+    groups: [a, b, sva7],
+    requirements: [req(a, S.SV, 3, 60), req(b, S.SV, 2, 60), req(sva7, SVA, 3, 60)],
+    lessons: [
+      sv1,
+      sv2,
+      lesson(sva7, SVA, '08:00', '09:00'),
+      lesson(sva7, SVA, '09:00', '10:00'),
+      lesson(sva7, SVA, '10:00', '11:00'),
+      lesson(b, S.SV, '08:00', '09:00'),
+      lesson(b, S.SV, '09:00', '10:00'),
+    ],
+    pupils: [alva, bo, dag],
+  };
+  const ordinary = { ...world, groups: world.groups!.map(({ replacesSubjectId: _r, ...g }) => g) };
+  const pupilLine = (coverage: ReturnType<typeof compute>, who: PlannedPupilInput, subjectId: string) =>
+    coverage.pupils!.find((p) => p.pupilId === who.id)?.lines.find((l) => l.subjectId === subjectId);
+
+  it('plans and schedules a pupil of SvA7 none of 7A’s Svenska, so 7A’s short Svenska is not hers', () => {
+    const coverage = compute({ ...world, drillGroupId: a.id });
+    expect(pupilLine(coverage, alva, S.SV)).toBeUndefined();
+    expect(pupilLine(coverage, bo, S.SV)).toMatchObject({ plannedMinutesPerWeek: 180, scheduledMinutesPerWeek: 120 });
+    // Bo is the one pupil below: Alva's SvA is whole, Dag's 7B Svenska is not his.
+    expect(coverage.pupilsBelowPlanned).toBe(1);
+    // 7A's Svenska statistics are over the home pupils its lessons reach:
+    // Bo alone, not Alva at a delta of nothing.
+    expect(lineOf(coverage, a, S.SV).pupils).toEqual({ min: -60, median: -60, max: -60, below: 1 });
+    // As an ordinary group, SvA7 left Alva 60 short in Svenska too.
+    const both = compute({ ...ordinary, drillGroupId: a.id });
+    expect(pupilLine(both, alva, S.SV)).toMatchObject({ plannedMinutesPerWeek: 180, scheduledMinutesPerWeek: 120 });
+    expect(both.pupilsBelowPlanned).toBe(2);
+  });
+
+  it('keeps a pupil named on 7A’s Svenska on that lesson: the explicit beats the derived', () => {
+    const named = lesson(a, S.SV, '13:00', '14:00', { studentIds: [alva.id] });
+    const coverage = compute({ ...world, lessons: [...world.lessons!, named], drillGroupId: sva7.id });
+    expect(pupilLine(coverage, alva, S.SV)).toEqual({
+      subjectId: S.SV,
+      plannedMinutesPerWeek: 0,
+      scheduledMinutesPerWeek: 60,
+      groupDeficitMinutesPerWeek: 0,
+      // Through 7A, the owner and her home class; her other 7A lessons are not hers.
+      sources: [{ studentGroupId: a.id, masterLessonIds: [named.id], minutesPerWeek: 60 }],
+    });
+  });
+
+  it('keeps SvA7’s pupils on 7B’s Svenska when SvA7 attends it as an extra group', () => {
+    const shared = lesson(b, S.SV, '13:00', '14:00', { extraGroupIds: [sva7.id] });
+    const coverage = compute({ ...world, lessons: [...world.lessons!, shared], drillGroupId: sva7.id });
+    // Alva, of 7A, reaches it through SvA7; Dag, of 7B, through his class —
+    // and 7B's two own lessons, which SvA7 does not attend, are not his.
+    expect(pupilLine(coverage, alva, S.SV)!.sources).toEqual([{ studentGroupId: sva7.id, masterLessonIds: [shared.id], minutesPerWeek: 60 }]);
+    expect(pupilLine(coverage, dag, S.SV)!.sources).toEqual([{ studentGroupId: b.id, masterLessonIds: [shared.id], minutesPerWeek: 60 }]);
+  });
+
+  it('keeps a line’s statistics to the pupils its group’s lessons reach, a class mostly in SvA7 and a nivågrupp alike', () => {
+    const nivå = group('Sv7 nivå', 'TEACHING_GROUP', null);
+    const inSva = [pupil(a, [sva7, nivå]), pupil(a, [sva7]), pupil(a, [sva7])];
+    const rest = [pupil(a, [nivå]), pupil(a)];
+    const coverage = compute({
+      subjects,
+      groups: [a, sva7, nivå],
+      requirements: [req(a, S.SV, 3, 60), req(sva7, SVA, 3, 60), req(nivå, S.SV, 2, 60)],
+      lessons: [sv1, sv2, lesson(nivå, S.SV, '13:00', '14:00')],
+      pupils: [...inSva, ...rest],
+    });
+    // Counted at nothing, the three SvA7 pupils made 7A's median 0 and hid a
+    // line short for everybody it reaches.
+    expect(lineOf(coverage, a, S.SV).pupils).toEqual({ min: -120, median: -90, max: -60, below: 2 });
+    // The nivågrupp's line is the one member it reaches; the group still has two.
+    expect(lineOf(coverage, nivå, S.SV).pupils).toEqual({ min: -120, median: -120, max: -120, below: 1 });
+    expect(coverage.groups.find((g) => g.studentGroupId === nivå.id)!.pupilCount).toBe(2);
+    expect(coverage.groups.find((g) => g.studentGroupId === a.id)!.pupilCount).toBe(5);
+  });
+
+  it('leaves every group line as it was: group lines read no roster', () => {
+    const strip = (c: ReturnType<typeof compute>) => c.groups;
+    expect(strip(compute({ ...world, includePupils: false }))).toEqual(strip(compute({ ...ordinary, includePupils: false })));
+  });
+
+  it('gives a school without a replacing group the same answer whether its groups say null or nothing, for every case of the fixture', () => {
+    const { cases } = scheduledFixture as unknown as { cases: { name: string; input: ScheduledCoverageInput }[] };
+    const plain = cases.filter((c) => !c.input.groups.some((g) => g.replacesSubjectId));
+    expect(plain.length).toBeGreaterThanOrEqual(9);
+    for (const { input: given } of plain) {
+      const empty = { ...given, groups: given.groups.map((g) => ({ ...g, replacesSubjectId: null })) };
+      expect(computeScheduledCoverage(empty)).toEqual(computeScheduledCoverage(given));
+    }
   });
 });

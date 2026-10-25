@@ -228,6 +228,47 @@ describe('recordedBlocksOfYear', () => {
     expect(blocks.get(bo)![0]!.backfilled).toBe(false);
     expect(blocks.get(bo)![0]!.historyFrom ?? null).toBeNull();
   });
+
+  describe('ersättande grupper (a replacing group)', () => {
+    // SvA7 replaces Svenska (common/replacing-groups.ts), and Svenska and SvA
+    // are one national cell, SV_SVA. Anna is in 7A and SvA7, Bo in 7A only;
+    // both read 3 × 60 a week in the cell. Nothing published: at plan. (This
+    // file's SVA is its Svenska; ANDRASPRAK is svenska som andraspråk.)
+    const ANDRASPRAK = id(4);
+    const sva7: PlannedGroup = { id: id(73), name: 'SvA7', kind: 'TEACHING_GROUP', gradeLevel: null, replacesSubjectId: SVA };
+    const anna = id(101);
+    const bo = id(102);
+    const segments = [seg(anna, g7a, '2026-08-17', null), seg(bo, g7a, '2026-08-17', null)];
+    const school = (groups: PlannedGroup[]) =>
+      read({
+        planned: {
+          ...read().planned,
+          subjects: [...read().planned.subjects, { id: ANDRASPRAK, name: 'Svenska som andraspråk', nationalCode: 'SV_SVA', countsTowardTimplan: true }],
+          groups,
+          requirements: [req(g7a, SVA, 3), req(sva7, ANDRASPRAK, 3)],
+        },
+        memberships: [{ studentId: anna, studentGroupId: sva7.id }],
+      });
+    const cell = (blocks: ReturnType<typeof recordedBlocksOfYear>, pupil: string) =>
+      blocks.get(pupil)![0]!.lines.find((line) => line.code === 'SV_SVA')!;
+
+    it('totals SvA7’s SvA for its pupil in the SV_SVA cell, and none of 7A’s Svenska: what a classmate gets, not twice it', () => {
+      const blocks = recordedBlocksOfYear(school([g7a, g7b, sva7]), segments, '2026-10-10T08:00:00.000Z', '2026-10-10');
+      expect(cell(blocks, anna).plannedMinutes).toBe(cell(blocks, bo).plannedMinutes);
+      // As an ordinary group, SvA7's SvA came on top of 7A's Svenska.
+      const both = recordedBlocksOfYear(school([g7a, g7b, { ...sva7, replacesSubjectId: null }]), segments, '2026-10-10T08:00:00.000Z', '2026-10-10');
+      expect(cell(both, anna).plannedMinutes).toBe(2 * cell(both, bo).plannedMinutes);
+    });
+
+    it('gives a school without a replacing group the same blocks whether its groups say null or nothing', () => {
+      const moved = [seg(anna, g7a, '2026-08-17', '2026-11-02'), seg(anna, g7b, '2026-11-02', null), seg(bo, g7a, '2026-08-17', null)];
+      const plain = read({ boundaries: boundariesOf(moved, YEAR) });
+      const empty = { ...plain, planned: { ...plain.planned, groups: plain.planned.groups.map((g) => ({ ...g, replacesSubjectId: null })) } };
+      expect(recordedBlocksOfYear(empty, moved, '2026-10-10T08:00:00.000Z', '2026-10-10')).toEqual(
+        recordedBlocksOfYear(plain, moved, '2026-10-10T08:00:00.000Z', '2026-10-10'),
+      );
+    });
+  });
 });
 
 describe('futureBlocks', () => {

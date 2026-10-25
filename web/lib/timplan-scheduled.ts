@@ -15,13 +15,15 @@
 // counting owned and extra-attended lessons and reading no roster, a pupil
 // listed only for a shortfall of their own, statistics over the pupils' delta
 // — is argued in the gateway file's header and not repeated here. The imports
-// are lesson-lengths, teacher-load's standardWeekWeight and types only: P2's
-// planned module is not pulled into the panel's chunk. The body below is that
+// are lesson-lengths, teacher-load's standardWeekWeight, the replacing-groups
+// rule and types only: P2's planned module is not pulled into the panel's
+// chunk. The body below is that
 // file with the quotes this package's style uses; keep it that way, so a diff
 // of the two shows only the header.
 
 import { standardWeekWeight } from "@/lib/standard-week";
 import { shortestLessonOf, weeklyMinutesOf } from "@/lib/lesson-lengths";
+import { leavesLesson, replacedSubjectOf, replacementsOf, type Replacement } from "@/lib/replacing-groups";
 import type { ClosedRange, YearBounds } from "@/lib/teaching-hours";
 import type {
   PlannedGroup,
@@ -212,6 +214,9 @@ export function computeScheduledCoverage(input: ScheduledCoverageInput): Schedul
     byName(groupsById.get(a)?.name ?? "", groupsById.get(b)?.name ?? "") || byCode(a, b);
   const gradeOfGroup = (group: PlannedGroup): number | null =>
     group.kind === "CLASS" ? group.gradeLevel : null;
+  // Ersättande grupper: groupId -> the subject it replaces. Empty for a
+  // school without one, and then no pupil's posts or lessons are filtered.
+  const replaced = replacedSubjectOf(input.groups);
 
   // Weights, cached per (row or lesson, grade): a board refetch re-runs this
   // over every lesson, and a dated window's teaching weeks walk the year.
@@ -331,6 +336,8 @@ export function computeScheduledCoverage(input: ScheduledCoverageInput): Schedul
     homeGroupId: string;
     grade: number | null;
     groupIds: string[];
+    /** Their ersättande grupper; empty for all in a school without one. */
+    replacements: Replacement[];
     lines: Map<string, PupilLineDraft>;
   }
   const results: PupilResult[] = [];
@@ -342,6 +349,9 @@ export function computeScheduledCoverage(input: ScheduledCoverageInput): Schedul
     const teaching = [...new Set(pupil.groupIds)].filter((id) => groupsById.get(id)?.kind === "TEACHING_GROUP");
     const groupIds = [home.id, ...teaching];
     const own = new Set(groupIds);
+    // THE RULE, on both sides: a post by its one group, a lesson by its own
+    // and extra groups, a lesson naming the pupil kept.
+    const replacements = replaced.size === 0 ? [] : replacementsOf(teaching, replaced);
     const lines = new Map<string, PupilLineDraft>();
     const lineFor = (subjectId: string): PupilLineDraft => {
       let line = lines.get(subjectId);
@@ -353,6 +363,12 @@ export function computeScheduledCoverage(input: ScheduledCoverageInput): Schedul
     };
     for (const groupId of groupIds) {
       for (const row of rowsByGroup.get(groupId) ?? []) {
+        if (
+          replacements.length > 0 &&
+          leavesLesson(replacements, { subjectId: row.subjectId, groupIds: [row.studentGroupId] })
+        ) {
+          continue;
+        }
         const line = lineFor(row.subjectId);
         line.planned += rowWeek(row, grade);
         const lesson = rowLesson(row, grade);
@@ -368,6 +384,16 @@ export function computeScheduledCoverage(input: ScheduledCoverageInput): Schedul
     for (const lesson of reaching) {
       if (lesson.isParked || seen.has(lesson.id)) continue;
       seen.add(lesson.id);
+      if (
+        replacements.length > 0 &&
+        leavesLesson(
+          replacements,
+          { subjectId: lesson.subjectId, groupIds: [lesson.studentGroupId, ...lesson.extraGroupIds] },
+          lesson.studentIds.includes(pupil.id),
+        )
+      ) {
+        continue;
+      }
       const line = lineFor(lesson.subjectId);
       const minutes = lessonWeek(lesson, grade);
       line.scheduled += minutes;
@@ -384,7 +410,7 @@ export function computeScheduledCoverage(input: ScheduledCoverageInput): Schedul
       line.reachedBy.add(lesson.studentGroupId);
       for (const id of lesson.extraGroupIds) if (own.has(id)) line.reachedBy.add(id);
     }
-    const result: PupilResult = { pupil, homeGroupId: home.id, grade, groupIds, lines };
+    const result: PupilResult = { pupil, homeGroupId: home.id, grade, groupIds, replacements, lines };
     results.push(result);
     for (const groupId of groupIds) {
       const list = pupilsByGroup.get(groupId) ?? [];
@@ -422,6 +448,17 @@ export function computeScheduledCoverage(input: ScheduledCoverageInput): Schedul
     const members = pupilsByGroup.get(group.id) ?? [];
     // A class's statistics are over its home pupils, a teaching group's over its members.
     const statPupils = group.kind === "CLASS" ? members.filter((r) => r.homeGroupId === group.id) : members;
+    // A line's pupils: the group's, less those THE RULE takes off the
+    // group's own lessons in the line's subject — SvA7's pupils are not 7A's
+    // Svenska line's, and counted there at a delta of nothing they pulled its
+    // median to nothing. The group's pupilCount stays the group's.
+    const linePupils = (subjectId: string): PupilResult[] =>
+      replaced.size === 0
+        ? statPupils
+        : statPupils.filter(
+            (r) =>
+              !(r.replacements.length > 0 && leavesLesson(r.replacements, { subjectId, groupIds: [group.id] })),
+          );
     let totalPlanned = 0;
     let totalScheduled = 0;
     let matching = 0;
@@ -447,7 +484,7 @@ export function computeScheduledCoverage(input: ScheduledCoverageInput): Schedul
       };
       if (input.includePupils) {
         const stats = statsOf(
-          statPupils.map((result) => {
+          linePupils(draft.subjectId).map((result) => {
             const own = result.lines.get(draft.subjectId);
             return own ? Math.round(own.scheduled) - Math.round(own.planned) : 0;
           }),
