@@ -2172,7 +2172,10 @@ END $$;
 --   EG-3 SvA7's SvA              EG-4 7B's svenska, SvA7 added
 --   EG-5 7A's svenska naming P1  EG-6 7B's svenska, 7A added
 --   EG-7 7A:1's svenska          EG-8 7A:1's matematik
--- EG-1 carries a log; the teacher leads every lesson. Another school has its
+--   EG-10 7A's engelska
+-- P1 is also in EnS7, which replaces Engelska: a pupil in two replacing
+-- groups leaves each one's subject only (EG-4 carries SvA7, not EnS7, and
+-- stays theirs). EG-1 carries a log; the teacher leads every lesson. Another school has its
 -- own SvA7 replacing its svenska, and a login (M) has a pupil row at each:
 -- here in 7A and in no replacing group, there in that school's SvA7.
 DO $$
@@ -2184,6 +2187,8 @@ DECLARE
   sv uuid;
   sva uuid;
   ma uuid;
+  en uuid;
+  rens uuid;
   sv2 uuid;
   k7a uuid;
   k7b uuid;
@@ -2212,6 +2217,7 @@ BEGIN
   INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s1, 'EG Svenska', 'RLSEGSV', now()) RETURNING id INTO sv;
   INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s1, 'EG SvA', 'RLSEGSVA', now()) RETURNING id INTO sva;
   INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s1, 'EG Matematik', 'RLSEGMA', now()) RETURNING id INTO ma;
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s1, 'EG Engelska', 'RLSEGEN', now()) RETURNING id INTO en;
   INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
   VALUES (s1, y, 'EG7A', 7, now()) RETURNING id INTO k7a;
   INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
@@ -2220,6 +2226,8 @@ BEGIN
   VALUES (s1, y, 'EG7A:1', 7, 'TEACHING_GROUP', k7a, now()) RETURNING id INTO half;
   INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "replacesSubjectId", "updatedAt")
   VALUES (s1, y, 'EG SvA7', 7, 'TEACHING_GROUP', sv, now()) RETURNING id INTO r7;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "replacesSubjectId", "updatedAt")
+  VALUES (s1, y, 'EG EnS7', 7, 'TEACHING_GROUP', en, now()) RETURNING id INTO rens;
 
   INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt")
   VALUES (s1, 'eg-admin@example.invalid', 'EG', 'Admin', 'SCHOOL_ADMIN', 'FULL', '00000000-0000-4000-8000-000000001500', true, now());
@@ -2239,7 +2247,7 @@ BEGIN
   VALUES (s1, 'eg-g12@example.invalid', 'EG', 'Vårdnadshavare tvillingar', 'GUARDIAN', '00000000-0000-4000-8000-000000001507', true, now()) RETURNING id INTO g12;
   INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES (s1, g1, p1), (s1, g2, p2), (s1, g12, p1), (s1, g12, p2);
   INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES
-    (s1, r7, p1), (s1, r7, p3), (s1, half, p1), (s1, half, p2);
+    (s1, r7, p1), (s1, r7, p3), (s1, half, p1), (s1, half, p2), (s1, rens, p1);
 
   FOR rec IN SELECT * FROM (VALUES
     ('EG-1', sv,  k7a,  NULL::uuid, NULL::uuid, 1),
@@ -2249,7 +2257,8 @@ BEGIN
     ('EG-5', sv,  k7a,  NULL,       p1,         3),
     ('EG-6', sv,  k7b,  k7a,        NULL,       3),
     ('EG-7', sv,  half, NULL,       NULL,       4),
-    ('EG-8', ma,  half, NULL,       NULL,       4)
+    ('EG-8', ma,  half, NULL,       NULL,       4),
+    ('EG-10', en, k7a,  NULL,       NULL,       5)
   ) v(note, subject, grp, extra, named, day_offset) LOOP
     INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
     VALUES (s1, rec.subject, rec.grp, current_date + rec.day_offset,
