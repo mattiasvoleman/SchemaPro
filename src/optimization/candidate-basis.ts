@@ -387,6 +387,18 @@ export function basisInputsOf(source: BasisSource): BasisInputs {
     rosters: {
       groups: payload.groups.map((group) => ({ ...group, id: realOf(group.id) })),
       groupConflicts: payload.groupConflicts.map(([first, second]) => [realOf(first), realOf(second)]),
+      // Ersättande grupper: who sits each locked lesson, when a replacing
+      // group takes some of its groups' pupils elsewhere ("7A without SvA7"),
+      // beside the lesson it is of. Not in the preserved part, which the
+      // apply compares with database rows that know no such key. Only when a
+      // lock carries one, so every other school's part hashes as before.
+      ...(payload.fixedLessons.some((lesson) => lesson.pupilGroupIds !== undefined)
+        ? {
+            lockedPupils: payload.fixedLessons
+              .filter((lesson) => lesson.pupilGroupIds !== undefined)
+              .map((lesson) => ({ ...fixedLessonContent(lesson, realOf), pupilGroupIds: lesson.pupilGroupIds!.map(realOf) })),
+          }
+        : {}),
     },
   };
 }
