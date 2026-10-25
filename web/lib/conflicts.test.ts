@@ -853,6 +853,39 @@ describe("validatePlacement student participants", () => {
 // validatePlacement — multiple kinds and multiple others
 // ---------------------------------------------------------------------------
 
+describe("validatePlacement replacing groups (Ersättande grupper)", () => {
+  // 7A: Alva (in this year's SvA7) and Bo (in last year's SvA6, a membership
+  // the rollover kept). Both groups replaced Svenska in their year.
+  const groups = [
+    { id: "g7a", academicYearId: "y26" },
+    { id: "sva7", academicYearId: "y26", replacesSubjectId: "sv" },
+    { id: "sva6", academicYearId: "y25", replacesSubjectId: "sv" },
+  ];
+  const home = new Map<string, string | null>([["alva", "g7a"], ["bo", "g7a"]]);
+  const relation = buildGroupConflictMap(home, [
+    { studentId: "alva", studentGroupId: "sva7" },
+    { studentId: "bo", studentGroupId: "sva6" },
+  ], groups);
+
+  it("lets SvA7 sit beside 7A's svenska and nothing else of 7A's", () => {
+    const sva = makePlacement({ id: "sva", studentGroupId: "sva7", subjectId: "sva" });
+    expect(validatePlacement(makePlacement({ studentGroupId: "g7a", subjectId: "sv" }), [sva], [], home, relation)).toEqual([]);
+    expect(validatePlacement(makePlacement({ studentGroupId: "g7a", subjectId: "ma" }), [sva], [], home, relation)).toEqual([
+      { kind: "GROUP", otherLessonId: "sva" },
+    ]);
+  });
+
+  it("holds a pupil of last year's SvA6, named on another lesson, to this year's svenska of their class", () => {
+    const named = makePlacement({ id: "named", studentGroupId: "gOther", subjectId: "ma", studentIds: ["bo"] });
+    expect(validatePlacement(makePlacement({ studentGroupId: "g7a", subjectId: "sv" }), [named], [], home, relation)).toEqual([
+      { kind: "GROUP", otherLessonId: "named" },
+    ]);
+    // Alva is at SvA7 instead: named elsewhere, she clashes with nothing of 7A's svenska.
+    const alva = makePlacement({ id: "alva", studentGroupId: "gOther", subjectId: "ma", studentIds: ["alva"] });
+    expect(validatePlacement(makePlacement({ studentGroupId: "g7a", subjectId: "sv" }), [alva], [], home, relation)).toEqual([]);
+  });
+});
+
 describe("validatePlacement combined conflicts", () => {
   it("reports every clashing resource kind against one lesson, in TEACHER/ROOM/GROUP order", () => {
     const candidate = makePlacement({
