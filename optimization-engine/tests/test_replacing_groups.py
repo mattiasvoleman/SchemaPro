@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import sys
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -676,3 +677,20 @@ def test_a_derived_key_no_lesson_carries_is_a_group_without_lessons() -> None:
     for objective in (True, False):
         assert _proto(stray, objective=objective) == _proto(lessonless, objective=objective)
     assert _solve(stray).status in _SOLVED
+
+
+def test_the_clique_hours_refusal_counts_a_derived_key_as_its_class() -> None:
+    """The independent review's reproduction (cliquecount): the same day,
+    refused by the clique's hours with the field and without it. The refusal
+    names how many groups share the class's pupils; "7A without SvA7" is 7A's
+    own pupils, not a group of its own, so the count is the one the school
+    knows — the same with the field as without it."""
+    data = json.loads((Path(__file__).parent / "data" / "replacing_groups_cliquecount.json").read_text())
+    on = _solve(data["on"], **data["settings"])
+    off = _solve(data["off"], **data["settings"])
+
+    for response in (on, off):
+        assert response.status == "INFEASIBLE"
+        assert response.conflicts is not None
+        assert response.conflicts.summary_code == "DEMAND_CLIQUE_HOURS_SHORT"
+    assert on.conflicts.summary_params["sharingGroups"] == off.conflicts.summary_params["sharingGroups"] == 1

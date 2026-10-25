@@ -1414,6 +1414,7 @@ class SchedulerSolver:
         """
         if not request.groups:
             return None
+        classes = _derived_key_classes(request)
         rules = request.rules
         lunch_on = rules is not None and _lunch_window_is_set(rules)
         if lunch_on:
@@ -1480,11 +1481,20 @@ class SchedulerSolver:
                             resource_ids=[group.id],
                         ),
                     )
+                # The groups sharing the class's pupils, as the school names
+                # them: a derived key ("7A without SvA7") is its class, not a
+                # group of its own (_derived_key_classes, empty without
+                # pupilGroupId, when the count is the one it always was).
+                sharing_groups = (
+                    len({classes.get(member, member) for member in clique.members} - {group.id})
+                    if classes
+                    else len(clique.members) - 1
+                )
                 return ConflictAnalysis(
                     summary_code="DEMAND_CLIQUE_HOURS_SHORT",
                     summary_params={
                         "group": str(group.id),
-                        "sharingGroups": len(clique.members) - 1,
+                        "sharingGroups": sharing_groups,
                         "demandMinutes": demand * minutes,
                         "capacityMinutes": capacity * minutes,
                     },
@@ -5502,14 +5512,17 @@ class SchedulerSolver:
         for group, clique in self._cliques(request):
             if group.min_grade_level is None or group.max_grade_level is None:
                 continue
-            # The rule is the CLASS's (_add_rast_ordering_constraints reads
-            # every lesson filed under the class and the groups sharing its
-            # pupils), the clique the pupils'. A day is closed only when no
-            # lesson the rule reads can sit in the stretch, so every one of
-            # them this can see is tried: those filed under a member (7A's
-            # svenska under 7A, whoever sits it) and the clique's own (a
-            # derived key's lessons filed under a class outside it). The same
-            # list, in the same order, for a payload without pupilGroupId.
+            # The rule is the CLASS's: _add_rast_ordering_constraints reads
+            # every lesson filed under the class and under every group sharing
+            # its pupils. This verdict tries fewer: the lessons filed under a
+            # member of the clique (7A's svenska under 7A, whoever sits it)
+            # and the clique's own requirements (a derived key's lessons filed
+            # under a class outside it). A partner the greedy clique left out
+            # (M2b, when M2a was chosen) can fill the stretch unseen, and the
+            # verdict then refuses a week the model solves. That gap is
+            # main's, and it is left as it is here, so that a payload without
+            # pupilGroupId gets main's list, in main's order, and main's
+            # answer; closing it is a change of its own.
             owned = [r for member in clique.members for r in by_group.get(member, [])]
             seen = {r.id for r in owned}
             owned += [r for r in clique.requirements if r.id not in seen]
