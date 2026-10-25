@@ -146,25 +146,28 @@ describe('lesson roster', () => {
     expect(scopeOf({ subjectId: 'MA', studentGroupId: '7A' })).toEqual({ subjectId: 'MA', groupIds: ['7A'], participantIds: [] });
   });
 
-  describe('Ersättande grupper: a replacing group takes its members off its subject’s other lessons', () => {
-    // SvA7 replaces Svenska and holds Ada (of 7A) and Cy.
+  describe('Ersättande grupper: a replacing group takes its members off the class’s lessons in its subject', () => {
+    // SvA7 replaces Svenska and holds Ada (of 7A) and Cy. 7A:1 is a half of
+    // 7A and holds Ada; Ma7 is a teaching group (not a half) of Ada and Cy.
     beforeEach(() => {
       // Every group of this year (y26) but last year's SvA6, which replaced
       // Svenska then and still holds Bo (the rollover keeps a membership).
       tx.studentGroup.findMany.mockImplementation(
         answer([
-          { id: 'SvA7', replacesSubjectId: 'SV', academicYearId: 'y26' },
-          { id: 'EnS', replacesSubjectId: 'EN', academicYearId: 'y26' },
-          { id: 'SvA6', replacesSubjectId: 'SV', academicYearId: 'y25' },
-          { id: '7A', replacesSubjectId: null, academicYearId: 'y26' },
-          { id: 'Ma7', replacesSubjectId: null, academicYearId: 'y26' },
-          { id: '6A', replacesSubjectId: null, academicYearId: 'y25' },
+          { id: 'SvA7', replacesSubjectId: 'SV', academicYearId: 'y26', kind: 'TEACHING_GROUP', halfOfId: null },
+          { id: 'EnS', replacesSubjectId: 'EN', academicYearId: 'y26', kind: 'TEACHING_GROUP', halfOfId: null },
+          { id: 'SvA6', replacesSubjectId: 'SV', academicYearId: 'y25', kind: 'TEACHING_GROUP', halfOfId: null },
+          { id: '7A', replacesSubjectId: null, academicYearId: 'y26', kind: 'CLASS', halfOfId: null },
+          { id: '7A:1', replacesSubjectId: null, academicYearId: 'y26', kind: 'TEACHING_GROUP', halfOfId: '7A' },
+          { id: 'Ma7', replacesSubjectId: null, academicYearId: 'y26', kind: 'TEACHING_GROUP', halfOfId: null },
+          { id: '6A', replacesSubjectId: null, academicYearId: 'y25', kind: 'CLASS', halfOfId: null },
         ]),
       );
       tx.studentGroupMember.findMany.mockImplementation(
         answer([
           { studentId: 'ada', studentGroupId: 'Ma7' },
           { studentId: 'cy', studentGroupId: 'Ma7' },
+          { studentId: 'ada', studentGroupId: '7A:1' },
           { studentId: 'ada', studentGroupId: 'SvA7' },
           { studentId: 'cy', studentGroupId: 'SvA7' },
           { studentId: 'bo', studentGroupId: 'SvA6' },
@@ -174,40 +177,45 @@ describe('lesson roster', () => {
 
     it('takes nobody off a lesson of another läsår: last year’s SvA6 leaves Bo on this year’s svenska', async () => {
       const [thisYear] = await rostersOf(client(), [{ subjectId: 'SV', groupIds: ['7A'], participantIds: [] }], {
-        pupils: 'RECORDED',
+        pupils: 'ACTIVE',
       });
       // Ada is in SvA7 (this year's), Bo only in last year's SvA6.
       expect([...thisYear!].sort()).toEqual(['bo']);
     });
 
-    it('lists 7A’s svenska without its SvA pupils, and every other lesson as before', async () => {
+    it('lists 7A’s and its half’s svenska without the SvA pupils, and every other lesson as before', async () => {
       const rosters = await rostersOf(
         client(),
         [
           { subjectId: 'SV', groupIds: ['7A'], participantIds: [] },
           { subjectId: 'MA', groupIds: ['7A'], participantIds: [] },
-          { subjectId: 'SV', groupIds: ['Ma7'], participantIds: [] },
+          { subjectId: 'SV', groupIds: ['7A:1'], participantIds: [] },
         ],
-        { pupils: 'RECORDED' },
+        { pupils: 'ACTIVE' },
       );
       expect(rosters.map((roster) => [...roster].sort())).toEqual([['bo'], ['ada', 'bo'], []]);
       // The replacing groups of the scopes' subjects (SvA7 and last year's
       // SvA6; EnS replaces Engelska, which no scope is in), in one statement,
-      // the läsår of the scopes' own groups in a second, and the replacing
-      // groups' members in a third.
+      // the scopes' own groups in a second, and the replacing groups' members
+      // in a third.
       expect(tx.studentGroup.findMany).toHaveBeenCalledTimes(2);
       expect(tx.studentGroup.findMany).toHaveBeenCalledWith({
         where: { replacesSubjectId: { in: ['SV', 'MA'] } },
         select: { id: true, replacesSubjectId: true, academicYearId: true },
       });
       expect(tx.studentGroup.findMany).toHaveBeenCalledWith({
-        where: { id: { in: ['7A', 'Ma7'] } },
-        select: { id: true, academicYearId: true },
+        where: { id: { in: ['7A', '7A:1'] } },
+        select: { id: true, academicYearId: true, kind: true, halfOfId: true },
       });
       expect(tx.studentGroupMember.findMany).toHaveBeenCalledWith({
         where: { studentGroupId: { in: ['SvA7', 'SvA6'] } },
         select: { studentId: true, studentGroupId: true },
       });
+    });
+
+    it('keeps the members of a teaching group on its own lessons in the subject: placed there, they go there', async () => {
+      const [ma7] = await rostersOf(client(), [{ subjectId: 'SV', groupIds: ['Ma7'], participantIds: [] }], { pupils: 'ACTIVE' });
+      expect([...ma7!].sort()).toEqual(['ada', 'cy']);
     });
 
     it('keeps SvA7’s pupils on a lesson SvA7 is added to, and a named pupil on any lesson', async () => {
@@ -218,14 +226,56 @@ describe('lesson roster', () => {
           { subjectId: 'SV', groupIds: ['7A'], participantIds: ['ada'] },
           { subjectId: 'SV', groupIds: ['SvA7'], participantIds: [] },
         ],
-        { pupils: 'RECORDED' },
+        { pupils: 'ACTIVE' },
       );
       expect(rosters.map((roster) => [...roster].sort())).toEqual([['ada', 'bo', 'cy'], ['ada', 'bo'], ['ada', 'cy']]);
     });
 
+    it('keeps a pupil in two groups replacing one subject on the lessons of either', async () => {
+      tx.studentGroup.findMany.mockImplementation(
+        answer([
+          { id: 'SvA7', replacesSubjectId: 'SV', academicYearId: 'y26', kind: 'TEACHING_GROUP', halfOfId: null },
+          { id: 'SvA7s', replacesSubjectId: 'SV', academicYearId: 'y26', kind: 'TEACHING_GROUP', halfOfId: null },
+          { id: '7A', replacesSubjectId: null, academicYearId: 'y26', kind: 'CLASS', halfOfId: null },
+        ]),
+      );
+      tx.studentGroupMember.findMany.mockImplementation(
+        answer([
+          { studentId: 'ada', studentGroupId: 'SvA7' },
+          { studentId: 'ada', studentGroupId: 'SvA7s' },
+        ]),
+      );
+      const rosters = await rostersOf(
+        client(),
+        [
+          { subjectId: 'SV', groupIds: ['7A', 'SvA7'], participantIds: [] },
+          { subjectId: 'SV', groupIds: ['7A', 'SvA7s'], participantIds: [] },
+          { subjectId: 'SV', groupIds: ['7A'], participantIds: [] },
+        ],
+        { pupils: 'ACTIVE' },
+      );
+      expect(rosters.map((roster) => [...roster].sort())).toEqual([['ada', 'bo'], ['ada', 'bo'], ['bo']]);
+    });
+
+    it('takes nobody off a lesson whose own group’s läsår it cannot read', async () => {
+      tx.user.findMany.mockImplementation(answer([{ id: 'ada', studentGroupId: '9X' }]));
+      const [unknown] = await rostersOf(client(), [{ subjectId: 'SV', groupIds: ['9X'], participantIds: [] }], { pupils: 'ACTIVE' });
+      expect([...unknown!]).toEqual(['ada']);
+    });
+
+    it('takes nobody off what a register may name (RECORDED), and reads no replacing group for it', async () => {
+      const [recorded] = await rostersOf(client(), [{ subjectId: 'SV', groupIds: ['7A'], participantIds: [] }], {
+        pupils: 'RECORDED',
+      });
+      // A superset of the list: Ada's queued mark on 7A's svenska drains, and
+      // an old one can still be corrected.
+      expect([...recorded!].sort()).toEqual(['ada', 'bo']);
+      expect(tx.studentGroup.findMany).not.toHaveBeenCalled();
+    });
+
     it('asks the members only about the pupils asked about', async () => {
       const [roster] = await rostersOf(client(), [{ subjectId: 'SV', groupIds: ['7A'], participantIds: [] }], {
-        pupils: 'RECORDED',
+        pupils: 'ACTIVE',
         among: ['ada', 'bo'],
       });
       expect([...roster!].sort()).toEqual(['bo']);
@@ -238,7 +288,7 @@ describe('lesson roster', () => {
     it('reads no member at a school with no replacing group in the lessons’ subjects', async () => {
       tx.studentGroup.findMany.mockResolvedValue([]);
       const [roster] = await rostersOf(client(), [{ subjectId: 'SV', groupIds: ['7A'], participantIds: [] }], {
-        pupils: 'RECORDED',
+        pupils: 'ACTIVE',
       });
       expect([...roster!].sort()).toEqual(['ada', 'bo']);
       // The teaching groups' read only: no second one for replacing members.
@@ -252,7 +302,7 @@ describe('lesson roster', () => {
           { id: 'sv', subjectId: 'SV', studentGroupId: '7A', extraGroups: [] },
           { id: 'en', subjectId: 'EN', studentGroupId: '7A', extraGroups: [] },
         ],
-        { pupils: 'RECORDED' },
+        { pupils: 'ACTIVE' },
       );
       expect([...rosters.get('sv')!].sort()).toEqual(['bo']);
       // EnS replaces Engelska but holds nobody of 7A: 7A's engelska is whole.
