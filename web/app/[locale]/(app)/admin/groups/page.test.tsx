@@ -73,6 +73,8 @@ const memberships = [
 
 /** What each useCrudMutations was told to invalidate, by path. */
 const crudKeys = vi.hoisted(() => new Map<string, string[][]>());
+/** The group writes, for the save's body (Ersättande grupper). */
+const groupWrites = vi.hoisted(() => ({ create: [] as unknown[], update: [] as unknown[] }));
 /** The school's läsår; a test empties it for a school that has none yet. */
 const yearState = vi.hoisted(() => ({ years: [] as unknown[] }));
 /** The school's groups; a test empties it for a school that has none yet. */
@@ -97,11 +99,17 @@ vi.mock("@/lib/queries", () => ({
   useGroupMemberships: () => ({ data: memberships, ...membershipsState }),
   useGroupMembers: () => membersState,
   useSetGroupMembers: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useSubjects: () => ({
+    data: [
+      { id: "s-sv", name: "Svenska" },
+      { id: "s-sva", name: "Svenska som andraspråk" },
+    ],
+  }),
   useCrudMutations: (path: string, keys: string[][]) => {
     crudKeys.set(path, keys);
     return {
-      create: { mutateAsync: vi.fn(), isPending: false },
-      update: { mutateAsync: vi.fn(), isPending: false },
+      create: { mutateAsync: vi.fn(async (body: unknown) => groupWrites.create.push(body)), isPending: false },
+      update: { mutateAsync: vi.fn(async (body: unknown) => groupWrites.update.push(body)), isPending: false },
       remove: { mutateAsync: vi.fn(), isPending: false },
     };
   },
@@ -155,6 +163,8 @@ const rowNames = () =>
 describe("Groups page", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    groupWrites.create = [];
+    groupWrites.update = [];
     yearState.years = [YEAR, NEXT_YEAR];
     groupState.groups = groups;
     membersState.data = [];
@@ -267,6 +277,55 @@ describe("Groups page", () => {
 
     await user.click(screen.getByRole("button", { name: "addGroup" }));
     expect(screen.getByRole("combobox", { name: "year" })).toHaveTextContent("2026/2027");
+  });
+
+  describe("Ersättande grupper: a teaching group replaces a subject", () => {
+    it("offers the subject for a teaching group, and saves it", async () => {
+      const user = userEvent.setup();
+      render(<GroupsPage />);
+
+      await user.click(screen.getByRole("button", { name: "editNamed(Ma71)" }));
+      await user.click(screen.getByRole("combobox", { name: /replacesLabel/ }));
+      await user.click(screen.getByRole("option", { name: "Svenska" }));
+      await user.click(screen.getByRole("button", { name: "save" }));
+      expect(groupWrites.update).toEqual([expect.objectContaining({ id: "g-ma71", replacesSubjectId: "s-sv" })]);
+    });
+
+    it("does not offer it for a class, nor for a half", async () => {
+      groupState.groups = [...groups, { id: "h-1", academicYearId: "year-1", name: "7A:1", kind: "TEACHING_GROUP", gradeLevel: 7, halfOfId: "g-7a" }];
+      const user = userEvent.setup();
+      render(<GroupsPage />);
+
+      await user.click(screen.getByRole("button", { name: "editNamed(7A)" }));
+      expect(screen.queryByRole("combobox", { name: /replacesLabel/ })).toBeNull();
+      await user.click(screen.getByRole("button", { name: "cancel" }));
+      await user.click(screen.getByRole("button", { name: "editNamed(7A:1)" }));
+      expect(screen.queryByRole("combobox", { name: /replacesLabel/ })).toBeNull();
+    });
+
+    it("saves a group that replaces nothing with the body it always had", async () => {
+      const user = userEvent.setup();
+      render(<GroupsPage />);
+
+      await user.click(screen.getByRole("button", { name: "editNamed(En74)" }));
+      await user.click(screen.getByRole("button", { name: "save" }));
+      expect(groupWrites.update).toHaveLength(1);
+      expect(groupWrites.update[0]).not.toHaveProperty("replacesSubjectId");
+    });
+
+    it("names what a group replaces in its row, and lets go of it when the group is made a class", async () => {
+      groupState.groups = groups.map((group) => (group.id === "g-ma71" ? { ...group, name: "SvA7", replacesSubjectId: "s-sv" } : group));
+      const user = userEvent.setup();
+      render(<GroupsPage />);
+
+      const row = screen.getAllByRole("row").find((candidate) => candidate.textContent?.includes("SvA7"))!;
+      expect(row).toHaveTextContent("replacesBadge(Svenska)");
+      await user.click(screen.getByRole("button", { name: "editNamed(SvA7)" }));
+      await user.click(screen.getByRole("combobox", { name: "kindLabel" }));
+      await user.click(screen.getByRole("option", { name: "kindClass" }));
+      await user.click(screen.getByRole("button", { name: "save" }));
+      expect(groupWrites.update).toEqual([expect.objectContaining({ kind: "CLASS", replacesSubjectId: null })]);
+    });
   });
 
   it("says the school has no classes yet, with the way to add one, when there are none", () => {
