@@ -837,6 +837,30 @@ describe('ersättande grupper (a replacing group)', () => {
     expect(apart.get(bo.id)!.get(sv)).toMatchObject({ credited: 90 });
   });
 
+  it('keeps a SvA7 pupil on a teaching group’s own Svenska she is placed in, and off her class half’s', () => {
+    // Sv7 fördjupning is a teaching group (not a half): Alva, placed in it,
+    // goes there, SvA7 or not. 7A:1 is a half of 7A: its Svenska is the
+    // class's, and she is at SvA.
+    const fd = group('Sv7 fördjupning', 'TEACHING_GROUP', null);
+    const half: PlannedGroup = { ...group('7A:1', 'TEACHING_GROUP', null), halfOfId: a.id };
+    const placed = { ...alva, groupIds: [...alva.groupIds, fd.id, half.id] };
+    const base = world([a, b, sva7, fd, half]);
+    const input: DeliveredCoverageInput = {
+      ...base,
+      audiences: [...base.audiences, row(fd, S.SV, 'DELIVERED', 5), row(half, S.SV, 'DELIVERED', 4)],
+      planned: {
+        ...base.planned,
+        requirements: [...base.planned.requirements, req(fd, S.SV, 1, 60), req(half, S.SV, 1, 60)],
+        pupils: [placed, bo, dag],
+      },
+    };
+    const alvaSv = deliveredPupilFigures(input).get(alva.id)!.get(sv)!;
+    // Her named lesson and 7B's two SvA7 attended, as before, and the
+    // fördjupning's five; not the half's four. Its post is hers too.
+    expect(alvaSv).toMatchObject({ delivered: (3 + 5) * 60 });
+    expect(alvaSv.plannedYear).toBeGreaterThan(0);
+  });
+
   it('keeps SvA7’s pupils on 7B’s Svenska that SvA7 attends, and off 7B’s own', () => {
     expect(deliveredPupilFigures(world()).get(dag.id)!.get(sv)).toMatchObject({ plannedYear: 0, delivered: 2 * 60 });
   });
