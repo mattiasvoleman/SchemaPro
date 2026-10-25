@@ -23,6 +23,16 @@ WHAT IS COMPARED, per payload, each build on its own line:
     response    for a week of at most RESPOND_LESSONS lessons: phase 1a solved
                 on one worker, seed 0, a deterministic-time budget, and the
                 response it makes, as JSON bytes
+    solve       for the same weeks: the whole of solve() — the verdicts, the
+                lunch stage, every phase, the explanation, the probes and the
+                measured verdicts — with EVERY model it hands _solve_guarded
+                hashed as it is handed over, each solved on one worker, seed
+                0, a deterministic-time budget (SOLVE_DETERMINISTIC_SECONDS)
+                and no wall-clock limit, under a budget no wall clock reaches
+                (SOLVE_SETTINGS); then the response's JSON bytes. Every solve
+                in the engine goes through _solve_guarded
+                (test_solve_guard.py keeps that true), so this is every model
+                a solve builds and searches, in the order it searches them
 
 THE PAYLOADS come from two places:
 
@@ -74,6 +84,12 @@ RESPOND_LESSONS = 240
 #: The deterministic-time budget of that solve: the same proto searched the same
 #: way stops at the same point on any machine and under any load.
 RESPOND_DETERMINISTIC_SECONDS = 1.0
+#: Each search of the `solve` build, on the same terms.
+SOLVE_DETERMINISTIC_SECONDS = 0.5
+#: The `solve` build's budgets, so large that no wall-clock test in solve()
+#: (a phase's remainder, a probe's deadline, a cap's `left`) decides a path
+#: differently on a loaded machine: the deterministic budget above decides.
+SOLVE_SETTINGS = {"SOLVER_MAX_TIME_SECONDS": 3600.0, "SOLVER_PROBE_SECONDS": 600.0}
 #: The methods whose first argument is the request, wrapped by the harvest.
 RECORDED = (
     "solve",
@@ -438,6 +454,34 @@ def _hash_one(record: dict[str, Any]) -> dict[str, str]:
         return _digest(response.model_dump_json())
 
     attempt("response", respond)
+
+    def solved() -> str:
+        if sum(r.lessons_per_week for r in request.requirements) > RESPOND_LESSONS:
+            return "not solved: too big"
+        taken: list[str] = []
+        original = module._solve_guarded
+
+        def searched(search: Any, candidate: Any, **kwargs: Any) -> Any:
+            taken.append(_proto_digest(candidate))
+            search.parameters.num_workers = 1
+            search.parameters.random_seed = 0
+            search.parameters.max_time_in_seconds = 3600.0
+            search.parameters.max_deterministic_time = SOLVE_DETERMINISTIC_SECONDS
+            return original(search, candidate, **kwargs)
+
+        module._solve_guarded = searched
+        try:
+            response = module.SchedulerSolver(
+                Settings(**{**record["settings"], **SOLVE_SETTINGS}),
+            ).solve(request)
+        finally:
+            module._solve_guarded = original
+        # The status leads, so the summary tallies what the solves came to.
+        return f"{response.status.lower()} {len(taken)} " + _digest(
+            "|".join(taken) + "|" + response.model_dump_json(),
+        )
+
+    attempt("solve", solved)
     return out
 
 
@@ -508,7 +552,8 @@ def compare(base: Path, head: Path, files: list[Path]) -> int:
     for digests in base_d.values():
         for build, value in digests.items():
             kind = value.split(" ", 1)[0] if value.startswith(
-                ("refused", "raised", "not", "status")) else "built"
+                ("refused", "raised", "not", "status",
+                 "optimal", "feasible", "infeasible", "timeout")) else "built"
             outcomes.setdefault(build, {}).setdefault(kind, 0)
             outcomes[build][kind] += 1
     for build in sorted(outcomes):
