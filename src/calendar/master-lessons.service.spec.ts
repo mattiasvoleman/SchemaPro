@@ -3749,7 +3749,7 @@ describe('MasterLessonsService', () => {
       // The one roster reader's scope: the classes, and the pupils named on
       // the lesson (none here).
       expect(notifications.recipientsForLessons).toHaveBeenCalledWith(tx, [
-        { groupIds: [GROUP_ID, EXTRA_GROUP_ID], participantIds: [] },
+        { subjectId: SUBJECT_ID, groupIds: [GROUP_ID, EXTRA_GROUP_ID], participantIds: [] },
       ]);
       expect(tx.subject.findUnique).toHaveBeenCalledWith({
         where: { id: SUBJECT_ID },
@@ -3794,7 +3794,7 @@ describe('MasterLessonsService', () => {
 
       expect(notifications.recipientsForLessons).toHaveBeenCalledWith(tx, [
         // the attached group — not the one it replaced
-        { groupIds: [GROUP_ID, OTHER_EXTRA_GROUP_ID], participantIds: [] },
+        { subjectId: SUBJECT_ID, groupIds: [GROUP_ID, OTHER_EXTRA_GROUP_ID], participantIds: [] },
       ]);
     });
 
@@ -3813,7 +3813,7 @@ describe('MasterLessonsService', () => {
       await service.update(LESSON_ID, { dayOfWeek: 3 }, testUser());
 
       expect(notifications.recipientsForLessons).toHaveBeenCalledWith(tx, [
-        { groupIds: [GROUP_ID], participantIds: [STUDENT_ID] },
+        { subjectId: SUBJECT_ID, groupIds: [GROUP_ID], participantIds: [STUDENT_ID] },
       ]);
     });
 

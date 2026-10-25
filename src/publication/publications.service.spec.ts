@@ -126,8 +126,8 @@ describe('PublicationsService (DIRECT)', () => {
     const tell = (service as unknown as { tellClasses: (...args: unknown[]) => Promise<void> }).tellClasses.bind(service);
     await tell(tx, SCHOOL_ID, [first, second], ['m1', 'm2', 'gone']);
     expect(notifications.recipientsForLessons.mock.calls.map(([, scopes]) => scopes)).toEqual([
-      [{ groupIds: ['grp', 'Ma7'], participantIds: [] }],
-      [{ groupIds: ['8B'], participantIds: ['eli'] }],
+      [{ subjectId: 'sub', groupIds: ['grp', 'Ma7'], participantIds: [] }],
+      [{ subjectId: 'sub', groupIds: ['8B'], participantIds: ['eli'] }],
     ]);
     expect(notifications.notifyUsers.mock.calls.map(([, options]) => [options.userIds, options.meta.subjectName])).toEqual([
       [['ada', 'ada-guardian'], 'Matematik'],

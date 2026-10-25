@@ -380,7 +380,7 @@ export class LessonLogService {
         const lessons =
           (await tx.calendarLesson.findMany({
             where: { date: dates },
-            select: { id: true, studentGroupId: true, extraGroups: { select: { studentGroupId: true } } },
+            select: { id: true, subjectId: true, studentGroupId: true, extraGroups: { select: { studentGroupId: true } } },
           })) ?? [];
         const rosters = await calendarLessonRosters(tx, lessons, { pupils: 'ACTIVE', among: [me] });
         const mine = lessons.filter((lesson) => rosters.get(lesson.id)?.has(me)).map((lesson) => lesson.id);

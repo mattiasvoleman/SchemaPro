@@ -35,6 +35,8 @@ export interface SelectionCandidate {
   studentGroupId: string;
   gradeLevel: number | null;
   groupName: string;
+  /** The roster reader's (the avbokning digest): a replacing group takes its pupils off its subject. */
+  subjectId: string;
   subjectName: string;
   extraGroups: { studentGroupId: string; gradeLevel: number | null }[];
   note: string | null;

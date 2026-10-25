@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { recordRead } from '../access-log/access-log';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+import { leavesLesson, replacedSubjectOf, replacementsOf } from '../common/replacing-groups';
 import { requireSchoolId } from '../common/utils/request-context';
 import { asDay, dayDate, isoWeekOf, localDateOf, schoolTimezone, shiftDay } from '../cover/cover-context';
 import { PrismaService } from '../database/prisma.service';
@@ -178,6 +179,22 @@ export class FamilyScheduleService {
       ).map((row) => row.studentGroupId);
       const groups = [...new Set([...(home ? [home] : []), ...teaching])];
       const homeDays = await this.homeClassDays(tx, child.id, home, from, to);
+      // Ersättande grupper: the child's replacing groups take them off their
+      // subject's other lessons (common/replacing-groups.ts). A guardian reads
+      // the child's groups through student_groups_guardian_select
+      // (20261211090000); a child in no teaching group asks nothing.
+      const replacements =
+        teaching.length === 0
+          ? []
+          : replacementsOf(
+              teaching,
+              replacedSubjectOf(
+                (await tx.studentGroup.findMany({
+                  where: { id: { in: teaching }, replacesSubjectId: { not: null } },
+                  select: { id: true, replacesSubjectId: true },
+                })) ?? [],
+              ),
+            );
 
       const rows =
         (await tx.calendarLesson.findMany({
@@ -214,7 +231,12 @@ export class FamilyScheduleService {
         const viaTeaching =
           teachingSet.has(row.studentGroupId) || row.extraGroups.some((x) => teachingSet.has(x.studentGroupId));
         const viaHome = home !== null && (row.studentGroupId === home || row.extraGroups.some((x) => x.studentGroupId === home));
-        return named || viaTeaching || (viaHome && homeDays.has(date));
+        if (named) return true;
+        if (!viaTeaching && !(viaHome && homeDays.has(date))) return false;
+        return !leavesLesson(replacements, {
+          subjectId: row.subjectId,
+          groupIds: [row.studentGroupId, ...row.extraGroups.map((x) => x.studentGroupId)],
+        });
       });
 
       const staff = await this.staff(

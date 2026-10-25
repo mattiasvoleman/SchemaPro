@@ -1065,7 +1065,10 @@ export class CalendarLessonsService {
    */
   private async notifyLessonAudience(
     tx: PrismaClient,
-    lesson: Pick<LessonForAction, 'schoolId' | 'studentGroupId' | 'startsAt' | 'subject' | 'extraGroups' | 'participants'>,
+    lesson: Pick<
+      LessonForAction,
+      'schoolId' | 'subjectId' | 'studentGroupId' | 'startsAt' | 'subject' | 'extraGroups' | 'participants'
+    >,
     options: {
       type: LessonNoticeType;
       teacherIds: string[];

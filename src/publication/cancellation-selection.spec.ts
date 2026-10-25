@@ -12,6 +12,7 @@ const lesson = (id: string, overrides: Partial<SelectionCandidate> = {}): Select
   studentGroupId: '9a',
   gradeLevel: 9,
   groupName: '9A',
+  subjectId: 'ma',
   subjectName: 'Matematik',
   extraGroups: [],
   note: null,

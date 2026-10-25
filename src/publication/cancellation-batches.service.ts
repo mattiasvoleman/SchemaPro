@@ -115,6 +115,7 @@ const CANDIDATE_SELECT = {
   endsAt: true,
   status: true,
   note: true,
+  subjectId: true,
   studentGroupId: true,
   studentGroup: { select: { name: true, gradeLevel: true } },
   subject: { select: { name: true } },
@@ -134,6 +135,7 @@ const toCandidate = (row: CandidateRow): SelectionCandidate => ({
   studentGroupId: row.studentGroupId,
   gradeLevel: row.studentGroup.gradeLevel,
   groupName: row.studentGroup.name,
+  subjectId: row.subjectId,
   subjectName: row.subject.name,
   extraGroups: row.extraGroups.map((entry) => ({
     studentGroupId: entry.studentGroupId,
@@ -584,6 +586,7 @@ function storedSelection(row: BatchRow): StoredSelection {
 const digestLessonOf = (lesson: SelectionCandidate): DigestLesson => ({
   id: lesson.id,
   date: lesson.date,
+  subjectId: lesson.subjectId,
   studentGroupId: lesson.studentGroupId,
   extraGroups: lesson.extraGroups,
 });
@@ -593,7 +596,13 @@ async function digestLessonsOf(tx: PrismaClient, rows: ReadonlyArray<{ id: strin
   if (rows.length === 0) return [];
   const lessons = await tx.calendarLesson.findMany({
     where: { id: { in: rows.map((row) => row.id) } },
-    select: { id: true, date: true, studentGroupId: true, extraGroups: { select: { studentGroupId: true } } },
+    select: {
+      id: true,
+      date: true,
+      subjectId: true,
+      studentGroupId: true,
+      extraGroups: { select: { studentGroupId: true } },
+    },
   });
   return lessons.map((lesson) => ({ ...lesson, date: asDay(lesson.date) }));
 }

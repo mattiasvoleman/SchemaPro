@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { replacedPupils, replacingBySubject } from '../common/replacing-groups';
 
 /**
  * WHO ATTENDS A LESSON: one reader, for every caller.
@@ -12,7 +13,13 @@ import type { Prisma, PrismaClient } from '@prisma/client';
  *      a nivågrupp or a språkval group has no home-class pupils at all, its
  *      roster lives entirely here;
  *   3. the pupils named on the lesson itself (CalendarLessonStudents,
- *      MasterLessonStudents).
+ *      MasterLessonStudents);
+ *
+ * less the pupils a replacing group takes off it (Ersättande grupper,
+ * common/replacing-groups.ts): a member of a group replacing the lesson's
+ * subject (SvA7 replaces Svenska) that is not one of the lesson's groups, and
+ * who is not named on it. So 7A's svenska does not list 7A's SvA pupils, and
+ * the register, the notices and the broadcast agree that they are at SvA.
  *
  * The attendance check asks it, and so do the register's list (GET
  * attendance/lessons/:id/roster, which the web register and the teacher app
@@ -24,7 +31,8 @@ import type { Prisma, PrismaClient } from '@prisma/client';
  * taught to a teaching group told nobody in it, and a pupil named on a
  * lesson heard nothing. A later phase that changes who attends a lesson (a
  * SvA pupil who leaves class svenska) changes it here, once, and the
- * register, the broadcast and the notices keep agreeing.
+ * register, the broadcast and the notices keep agreeing — as Ersättande
+ * grupper did.
  *
  * Its basis is CURRENT (roster-readers.inventory.spec.ts): real people at
  * dated lessons, read as they are now. It writes no row itself, but its
@@ -32,11 +40,21 @@ import type { Prisma, PrismaClient } from '@prisma/client';
  * year's class before the activation.
  *
  * Every read runs inside the caller's RLS transaction. A cross-tenant id is
- * simply absent from the results.
+ * simply absent from the results. Under a pupil's RLS a teaching group's own
+ * row is not readable (student_groups_student_select shows the home class
+ * only), so no replacing group is found and none is applied: the pupil's
+ * lesson reads are already narrowed by RLS (20261211090000), so a lesson the
+ * rule takes them off never reaches this reader in the first place.
  */
 
 /** The parts of a lesson that decide who attends it. */
 export interface RosterScope {
+  /**
+   * The lesson's subject: a replacing group takes its members off its
+   * subject's other lessons. Required, so a caller cannot forget it and list
+   * SvA pupils on class svenska.
+   */
+  subjectId: string;
   /** The lesson's own class and every group joined to it. */
   groupIds: readonly string[];
   /** Pupils named on the lesson itself. */
@@ -70,27 +88,32 @@ const PUPIL = { role: 'STUDENT', isActive: true } as const;
 /** A calendar lesson as the readers below take it: its class and the groups joined to it. */
 export interface CalendarRosterLesson {
   id: string;
+  subjectId: string;
   studentGroupId: string;
   extraGroups: readonly { studentGroupId: string }[];
 }
 
 /** A lesson with its named pupils already in hand (a requireLesson row, a master or a published master). */
 export function scopeOf(lesson: {
+  subjectId: string;
   studentGroupId: string;
   extraGroups?: readonly { studentGroupId: string }[];
   participants?: readonly { studentId: string }[];
 }): RosterScope {
   return {
+    subjectId: lesson.subjectId,
     groupIds: [lesson.studentGroupId, ...(lesson.extraGroups ?? []).map((group) => group.studentGroupId)],
     participantIds: (lesson.participants ?? []).map((row) => row.studentId),
   };
 }
 
 /**
- * The roster of each scope, in the order given. Three statements however
- * many lessons there are (home classes, teaching-group members, and, for
- * ACTIVE, which named pupils are active pupils): an avbokning of a whole
- * school's week asks no more than one lesson does.
+ * The roster of each scope, in the order given. Four statements however
+ * many lessons there are (home classes, teaching-group members, the groups
+ * replacing the scopes' subjects, and, for ACTIVE, which named pupils are
+ * active pupils) and a fifth only when a replacing group exists (its
+ * members): an avbokning of a whole school's week asks no more than one
+ * lesson does.
  */
 export async function rostersOf(tx: Tx, scopes: readonly RosterScope[], options: RosterOptions): Promise<Set<string>[]> {
   const among = options.among ? new Set(options.among) : null;
@@ -131,6 +154,32 @@ export async function rostersOf(tx: Tx, scopes: readonly RosterScope[], options:
           ),
         );
 
+  // Ersättande grupper: the groups replacing a scope's subject, and their
+  // members among the asked. A school with none reads one empty answer and
+  // gets the rosters it got before.
+  const subjectIds = [...new Set(scopes.map((scope) => scope.subjectId))];
+  const replacing =
+    ((await tx.studentGroup.findMany({
+      where: { replacesSubjectId: { in: subjectIds } },
+      select: { id: true, replacesSubjectId: true },
+    })) ?? []) as { id: string; replacesSubjectId: string | null }[];
+  const replacingMembers =
+    replacing.length === 0
+      ? []
+      : ((await tx.studentGroupMember.findMany({
+          where: { studentGroupId: { in: replacing.map((group) => group.id) }, ...(asked ? { studentId: asked } : {}) },
+          select: { studentId: true, studentGroupId: true },
+        })) ?? []);
+  const bySubject = replacingBySubject(
+    new Map(replacing.flatMap((group) => (group.replacesSubjectId ? [[group.id, group.replacesSubjectId] as const] : []))),
+  );
+  const membersOfReplacing = new Map<string, Set<string>>();
+  for (const row of replacingMembers) {
+    const members = membersOfReplacing.get(row.studentGroupId);
+    if (members) members.add(row.studentId);
+    else membersOfReplacing.set(row.studentGroupId, new Set([row.studentId]));
+  }
+
   const byGroup = new Map<string, string[]>();
   const add = (groupId: string | null, studentId: string) => {
     if (groupId === null) return;
@@ -145,6 +194,11 @@ export async function rostersOf(tx: Tx, scopes: readonly RosterScope[], options:
     const roster = new Set<string>();
     for (const groupId of scope.groupIds) for (const studentId of byGroup.get(groupId) ?? []) roster.add(studentId);
     for (const studentId of scope.participantIds) if (namedPupils.has(studentId)) roster.add(studentId);
+    if (replacing.length > 0) {
+      for (const studentId of replacedPupils(roster, scope, new Set(scope.participantIds), bySubject, membersOfReplacing)) {
+        roster.delete(studentId);
+      }
+    }
     return roster;
   });
 }
