@@ -10,8 +10,11 @@ import type { ClosedRange, YearBounds } from '../staffing/teaching-weeks';
  * A pair is on the board when the pass RUNS on the date (pass-days.ts: its
  * weekday, its dates, no lov closing its area, its teacher not deactivated)
  * and its teacher has an ACTIVE absence sharing a minute with it there — or
- * when a decision exists for the pass on the date whose absence is ACTIVE (a
- * decision of a withdrawn absence is not read; the withdrawal settled it).
+ * when a decision exists for the pass on the date. A withdrawal settles its
+ * decisions in its own transaction, so a decision whose absence is no longer
+ * ACTIVE is one an API from before this release left behind (a rollback, or
+ * old and new containers side by side in a deploy): it is on the board with
+ * `absenceActive` false and Ångra alone, never stuck where nobody sees it.
  *
  * Its status comes from the decision:
  *
@@ -27,7 +30,8 @@ import type { ClosedRange, YearBounds } from '../staffing/teaching-weeks';
  * `runs` false: a decision on a day its pass no longer runs — a lov added
  * since, the area's årskurser changed, its teacher deactivated or the läsår
  * shortened. Nothing refuses those writes, so the board says it, and Ångra
- * tells the vikarie the pass is off.
+ * tells the vikarie the pass is off. `areaName` is the area's name, read with
+ * the board, so the board never needs a read of its own for it.
  *
  * The time and the area are the pass's on the date; a decision without a
  * live pair shows the occurrence it stored. No row carries a reason, a note
@@ -42,6 +46,7 @@ export interface PassBoardItem {
   absenceId: string;
   absentTeacherId: string;
   areaId: string;
+  areaName: string;
   startsAt: string;
   endsAt: string;
   decision: SupervisionCoverDecision | null;
@@ -54,6 +59,8 @@ export interface PassBoardItem {
   outsideAbsence: boolean;
   /** Whether the pass runs on the date (its weekday, dates, lov, teacher); false only for a decision left on a day it no longer runs. */
   runs: boolean;
+  /** False only for a decision whose absence is no longer ACTIVE (left by an older API): Ångra alone. */
+  absenceActive: boolean;
 }
 
 export interface PassSummary {
@@ -85,9 +92,11 @@ export interface BoardCover {
   endsAt: Date;
   absenceId: string;
   absentTeacherId: string;
-  /** The period of the decision's own absence (ACTIVE: the reader drops the rest). */
+  /** The period of the decision's own absence. */
   absenceStartsAt: Date;
   absenceEndsAt: Date;
+  /** False when that absence is no longer ACTIVE; absent means it is. */
+  absenceActive?: boolean;
   decision: SupervisionCoverDecision;
   substituteId: string | null;
   decidedAt: Date;
@@ -104,7 +113,7 @@ export interface PassBoardInput {
   absences: readonly BoardAbsence[];
   /** The absent teachers' passes, and the passes the decisions name. */
   shifts: readonly BoardShift[];
-  areas: ReadonlyMap<string, PassArea>;
+  areas: ReadonlyMap<string, PassArea & { name?: string }>;
   years: ReadonlyMap<string, YearBounds>;
   /** Each year's lov, in NIOARIG. */
   closures: ReadonlyMap<string, readonly ClosedRange[]>;
@@ -174,6 +183,7 @@ export function passBoardItems(input: PassBoardInput): PassBoardItem[] {
       absenceId: cover?.absenceId ?? pair!.absence.id,
       absentTeacherId: cover?.absentTeacherId ?? pair!.absence.userId,
       areaId: pair?.shift.areaId ?? cover!.areaId,
+      areaName: input.areas.get(pair?.shift.areaId ?? cover!.areaId)?.name ?? '',
       startsAt: span.startsAt.toISOString(),
       endsAt: span.endsAt.toISOString(),
       decision: cover?.decision ?? null,
@@ -185,6 +195,7 @@ export function passBoardItems(input: PassBoardInput): PassBoardItem[] {
       outsideAbsence:
         cover !== undefined && !spansMeet(span, { startsAt: cover.absenceStartsAt, endsAt: cover.absenceEndsAt }),
       runs: pair !== undefined || stillRuns(cover!),
+      absenceActive: cover?.absenceActive !== false,
     };
   });
   return items.sort(

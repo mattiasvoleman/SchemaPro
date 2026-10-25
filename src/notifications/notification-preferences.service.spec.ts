@@ -98,6 +98,9 @@ describe('NotificationPreferencesService', () => {
   it('knows which notices are delivered regardless', () => {
     expect(deliveredRegardless('ABSENCE_UNREPORTED', {})).toBe(true);
     expect(deliveredRegardless('LESSON_COVER_WITHDRAWN', {})).toBe(true);
+    // Rastvakt i vardagen: a pass booked or withdrawn reaches the vikarie whatever they chose.
+    expect(deliveredRegardless('SUPERVISION_COVER', {})).toBe(true);
+    expect(deliveredRegardless('SUPERVISION_COVER_WITHDRAWN', {})).toBe(true);
     expect(deliveredRegardless('LESSON_SUBSTITUTE', { cover: true })).toBe(true);
     expect(deliveredRegardless('LESSON_SUBSTITUTE', {})).toBe(false);
     expect(deliveredRegardless('LESSON_SUBSTITUTE', { cover: 'true' })).toBe(false);

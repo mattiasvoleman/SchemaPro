@@ -1447,7 +1447,11 @@ describe('UsersService', () => {
       const error = await service.remove(USER_ID, testUser()).catch((e: unknown) => e);
 
       expect(error).toBeInstanceOf(ConflictException);
-      expect((error as ConflictException).getResponse()).toMatchObject({ code: 'USER_HAS_BOOKED_PASS_COVERS' });
+      expect((error as ConflictException).getResponse()).toMatchObject({
+        code: 'USER_HAS_BOOKED_PASS_COVERS',
+        params: { date: '2030-09-02' },
+      });
+      expect((error as ConflictException).message).not.toMatch(/inaktivera/i);
       expect((error as ConflictException).message).toContain('första gången 2030-09-02');
       expect(tx.supervisionCover.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({

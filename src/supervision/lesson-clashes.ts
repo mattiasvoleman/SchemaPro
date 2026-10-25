@@ -1,11 +1,11 @@
 /**
  * A PASS DURING THE TEACHER'S OWN LESSON (Rastvaktsschema, 20261207090000):
  * the lessons of the grundschema a pass shares a minute with, on its weekday
- * and on a date both run. Nothing outside the rastvaktsschema reads the
- * passes yet — the generator places lessons over them and the vikarieförslag
- * offers the teacher during them — so the gateway says it when a pass is
- * written and when the schedule is read, and saves the pass all the same: a
- * school may move the lesson rather than the pass.
+ * and on a date both run. The generator does not read the passes yet — it
+ * places lessons over them (the vikarieförslag does since Rastvakt i
+ * vardagen, 20261210090000: BUSY_SUPERVISION) — so the gateway says it when a
+ * pass is written and when the schedule is read, and saves the pass all the
+ * same: a school may move the lesson rather than the pass.
  *
  * A lesson is the teacher's when they teach it or co-teach it (teacherId,
  * coTeacherId). A parked lesson is on no week and clashes with nothing. A

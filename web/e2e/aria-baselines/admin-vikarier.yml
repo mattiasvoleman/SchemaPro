@@ -1,6 +1,6 @@
 - main:
   - heading "Vikarietavla" [level=1]
-  - paragraph: Alla lektioner som behöver vikarie, per dag och vecka
+  - paragraph: Alla lektioner och rastvaktspass som behöver vikarie, per dag och vecka
   - button "Fördela dagen" [disabled]
   - tablist "Visa":
     - tab "Dag" [selected]

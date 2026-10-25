@@ -16,6 +16,7 @@ describe("an absent rastvakt's pass (Rastvakt i vardagen)", () => {
       absenceId: "a-1",
       absentTeacherId: "t-anna",
       areaId: "area-1",
+      areaName: "Skolgården",
       startsAt: "2026-10-12T08:00:00Z",
       endsAt: "2026-10-12T08:20:00Z",
       decision: null,
@@ -55,6 +56,15 @@ describe("an absent rastvakt's pass (Rastvakt i vardagen)", () => {
       noCover: false,
       undo: false,
     });
+  });
+
+  it("offers only Ångra on a decision left on an absence an older API withdrew", () => {
+    expect(passActions(pass({ decision: "SUBSTITUTE", status: "COVERED", absenceActive: false }), before)).toEqual({
+      assign: false,
+      noCover: false,
+      undo: true,
+    });
+    expect(passActions(pass({ decision: "SUBSTITUTE", decisionStale: true, absenceActive: false }), before).assign).toBe(false);
   });
 
   it("offers only Ångra on a decision left on a day the pass no longer runs, even with its vikarie away", () => {

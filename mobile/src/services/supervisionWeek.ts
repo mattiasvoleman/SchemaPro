@@ -1,4 +1,4 @@
-import { apiRequest } from './api';
+import { ApiError, apiRequest } from './api';
 
 /**
  * The signed-in teacher's rastvaktspass over a few days (Rastvakt i vardagen,
@@ -41,12 +41,25 @@ export interface PassCard {
   readonly siteName: string | null;
   /** The catalogue key of the line under the place, or null when the pass is simply theirs. */
   readonly marker: 'schedule.passCover' | 'schedule.passHandedOver' | 'schedule.passNoCover' | null;
+  /** Their own pass that somebody else has that day, or nobody: drawn as nothing to stand at. */
+  readonly relieved: boolean;
 }
 
+/**
+ * A 404 WITHOUT a code is a gateway that has no such route — one from before
+ * Rastvakt i vardagen, or rolled back past it — and it has no passes to give:
+ * an empty week, not an error on every load. The route's own refusals carry
+ * a code.
+ */
 export async function fetchSupervisionWeek(from: string, to: string): Promise<WeekPass[]> {
   const query = new URLSearchParams({ from, to }).toString();
-  const answer = await apiRequest<{ from: string; to: string; passes: WeekPass[] }>(`/api/v1/supervision/week?${query}`);
-  return answer?.passes ?? [];
+  try {
+    const answer = await apiRequest<{ from: string; to: string; passes: WeekPass[] }>(`/api/v1/supervision/week?${query}`);
+    return answer?.passes ?? [];
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404 && !error.code) return [];
+    throw error;
+  }
 }
 
 export function passCardsOf(passes: readonly WeekPass[]): PassCard[] {
@@ -65,5 +78,6 @@ export function passCardsOf(passes: readonly WeekPass[]): PassCard[] {
           : pass.handover === 'NO_COVER'
             ? 'schedule.passNoCover'
             : null,
+    relieved: pass.kind === 'OWN' && pass.handover !== null,
   }));
 }

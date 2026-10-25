@@ -143,8 +143,10 @@ describe("the teacher's week", () => {
     expect(own!.textContent).toContain("schedule.passTitle");
     expect(own!.textContent).toContain("Skolgården");
     expect(own!.textContent).toContain("Norra");
-    expect(cover!.textContent).toContain("Matsalen · schedule.passCover");
-    expect(handed!.textContent).toContain("Skolgården · schedule.passHandedOver");
+    // Whose it is that day before the place, on the strip's one line.
+    expect(cover!.textContent).toContain("schedule.passTitle · schedule.passCover · Matsalen");
+    expect(handed!.textContent).toContain("schedule.passTitle · schedule.passHandedOver · Skolgården");
+    expect(handed!.className).toContain("border-dashed");
     await user.click(own!);
     expect(nav.push).not.toHaveBeenCalled();
   });

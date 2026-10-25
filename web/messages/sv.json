@@ -495,6 +495,7 @@
     }
   },
   "people": {
+    "removeHasPassCovers": "Personens rastvaktspass har en inbokad vikarie framåt, första gången {date}. Ångra besluten på vikarietavlan först, så att vikarien får veta det.",
     "title": "Personer",
     "subtitle": "Lärare, elever och administratörer",
     "addPerson": "Lägg till person",
@@ -2917,6 +2918,7 @@
       },
       "errors": {
         "SUPERVISION_SHIFT_CLASH": "Läraren har redan ett pass som delar en minut med det här samma dag. En rastvakt är på ett ställe i taget.",
+        "SUPERVISION_SHIFT_COVER_CLASH": "Läraren tar rastvakten i {area} som vikarie {date}, samtidigt som passet. En rastvakt är på ett ställe i taget: ångra beslutet på vikarietavlan först.",
         "SUPERVISION_SHIFT_LIMIT": "Ett läsår har högst 2 000 rastvaktspass.",
         "SUPERVISION_AREA_NOT_FOUND": "Området finns inte längre. Ladda om sidan.",
         "SUPERVISION_SHIFT_NOT_FOUND": "Passet finns inte längre. Ladda om sidan.",
@@ -2930,7 +2932,7 @@
       "lessonClashTitle": "Passet ligger under en av lärarens lektioner",
       "lessonClashSavedTitle": "Passet är sparat, men det ligger under en av lärarens lektioner",
       "lessonClashItem": "{subject} med {group}, {day} {start}–{end}",
-      "lessonClashBody": "Generatorn och vikarieförslaget känner ännu inte till rastvaktspassen: generatorn kan lägga lektioner på passets tid, och vikarieförslaget kan föreslå läraren då. Flytta passet eller lektionen. Behåll också tiderna i lärarens uppdrag Rastvakt, så håller generatorn dem fria.",
+      "lessonClashBody": "Generatorn känner ännu inte till rastvaktspassen och kan lägga lektioner på passets tid. Flytta passet eller lektionen. Behåll också tiderna i lärarens uppdrag Rastvakt, så håller generatorn dem fria.",
       "inactiveNotice": "{name} avaktiverades {date}. Passet vaktar till och med dagen före. Behöver rasten en rastvakt efter det lägger du ett pass på en annan lärare från {date}.",
       "inactiveNoticeNever": "{name} avaktiverades {date}, innan passet började, så passet vaktar ingenting."
     },
@@ -4910,7 +4912,7 @@
       "fromToday": "Du kan anmäla frånvaro från och med i dag."
     },
     "undoTitle": "Ångra besluten utanför perioden?",
-    "undoBody": "{count, plural, one {# lektion eller rastvaktspass} other {# lektioner och rastvaktspass}} som inte längre ingår i frånvaron har redan en vikarie eller ett annat beslut. Ångra {count, plural, one {beslutet} other {besluten}} och spara?",
+    "undoBody": "{lessons, plural, =0 {} one {# lektion} other {# lektioner}}{lessons, plural, =0 {} other {{passes, plural, =0 {} other { och }}}}{passes, plural, =0 {} other {# rastvaktspass}} som inte längre ingår i frånvaron har redan en vikarie eller ett annat beslut. Ångra {count, plural, one {beslutet} other {besluten}} och spara?",
     "undoConfirm": "Ångra och spara"
   },
   "absenceReasons": {
@@ -4935,7 +4937,7 @@
       "past": "Du kan inte avsluta frånvaron bakåt i tiden."
     },
     "undoTitle": "Ångra besluten efter den nya sluttiden?",
-    "undoBody": "{count, plural, one {# lektion eller rastvaktspass} other {# lektioner och rastvaktspass}} efter tidpunkten har redan en vikarie eller ett annat beslut. Ångra {count, plural, one {beslutet} other {besluten}} och avsluta?",
+    "undoBody": "{lessons, plural, =0 {} one {# lektion} other {# lektioner}}{lessons, plural, =0 {} other {{passes, plural, =0 {} other { och }}}}{passes, plural, =0 {} other {# rastvaktspass}} efter tidpunkten har redan en vikarie eller ett annat beslut. Ångra {count, plural, one {beslutet} other {besluten}} och avsluta?",
     "undoConfirm": "Ångra och avsluta",
     "teacherHasDecisions": "Skolledningen har redan ordnat vikarie eller något annat för lektioner eller rastvaktspass efter tidpunkten. Be dem avsluta frånvaron."
   },
@@ -4945,7 +4947,7 @@
     "confirm": "Återkalla",
     "done": "Frånvaron är återkallad",
     "undoTitle": "Ångra besluten och återkalla?",
-    "undoBody": "{count, plural, one {# lektion eller rastvaktspass} other {# lektioner och rastvaktspass}} har redan en vikarie eller ett annat beslut. Ångra {count, plural, one {det} other {dem}} och återkalla frånvaron?",
+    "undoBody": "{lessons, plural, =0 {} one {# lektion} other {# lektioner}}{lessons, plural, =0 {} other {{passes, plural, =0 {} other { och }}}}{passes, plural, =0 {} other {# rastvaktspass}} har redan en vikarie eller ett annat beslut. Ångra {count, plural, one {det} other {dem}} och återkalla frånvaron?",
     "undoConfirm": "Ångra och återkalla",
     "teacherHasDecisions": "Skolledningen har redan ordnat vikarie eller något annat för dina lektioner eller rastvaktspass. Be dem återkalla frånvaron."
   },
@@ -4959,7 +4961,7 @@
   },
   "coverBoard": {
     "title": "Vikarietavla",
-    "subtitle": "Alla lektioner som behöver vikarie, per dag och vecka",
+    "subtitle": "Alla lektioner och rastvaktspass som behöver vikarie, per dag och vecka",
     "viewLabel": "Visa",
     "day": "Dag",
     "week": "Vecka",
@@ -4979,8 +4981,8 @@
     "bulkUndoBody": "Lektionerna behöver vikarie igen. En inställd lektion hålls som vanligt, och en vikarie som inte längre behövs får veta det.",
     "bulkClear": "Avmarkera",
     "bulkDone": "{count, plural, one {# lektion uppdaterad} other {# lektioner uppdaterade}}",
-    "emptyTitle": "Inga lektioner behöver vikarie",
-    "emptyBody": "Ingen registrerad frånvaro berör lektioner här. Registrera frånvaro under Lärarfrånvaro, så hamnar lärarens lektioner på tavlan.",
+    "emptyTitle": "Inga lektioner eller rastvaktspass behöver vikarie",
+    "emptyBody": "Ingen registrerad frånvaro berör lektioner eller rastvaktspass här. Registrera frånvaro under Lärarfrånvaro, så hamnar lärarens lektioner och pass på tavlan.",
     "columnSelect": "Välj",
     "columnAbsent": "Frånvarande",
     "columnSubstitute": "Vikarie",
@@ -5066,6 +5068,7 @@
     },
     "decisionStale": "Vikarien är själv borta: välj en ny.",
     "outsideAbsence": "Ligger inte längre inom frånvaron.",
+    "absenceGone": "Frånvaron är återkallad. Ångra beslutet; en inbokad vikarie får då en notis.",
     "notRunning": "Passet går inte längre den dagen. Ångra beslutet; en inbokad vikarie får då en notis.",
     "toastCovered": "Vikarien är inbokad. Hen får en notis om passet.",
     "toastNoCover": "Passet står utan ersättare.",
@@ -5102,7 +5105,7 @@
     "POOL_LAST": "Vikariepoolen – används sist",
     "PREFERS_FREE": "Har önskat att vara ledig då",
     "FREE_DAY_WISH": "Har önskat att vara ledig den veckodagen",
-    "TRAVEL_TOO_SHORT": "Hinner inte från {from} till {to}: {gap} min mellan lektionerna, restiden är {minutes} min",
+    "TRAVEL_TOO_SHORT": "Hinner inte från {from} till {to}: {gap} min emellan, restiden är {minutes} min",
     "KNOWS_AREA": "Har egna pass i {area}",
     "TEACHES_STAGE": "Undervisar åk {grades}",
     "INACTIVE": "Inte en aktiv lärare",
@@ -5160,7 +5163,7 @@
     "SUBSTITUTE_HAS_LESSON": "Vikarien har en egen lektion då och kan inte tillsättas.",
     "PUBLISH_IN_PROGRESS": "En publicering pågår just nu. Försök igen om en stund.",
     "ABSENCE_OVERLAPS": "Läraren är redan registrerad som frånvarande under en del av perioden.",
-    "ABSENCE_HAS_DECISIONS": "{count, plural, one {# lektion eller rastvaktspass} other {# lektioner och rastvaktspass}} har redan ett beslut. Ångra dem först.",
+    "ABSENCE_HAS_DECISIONS": "{lessons, plural, =0 {} one {# lektion} other {# lektioner}}{lessons, plural, =0 {} other {{passes, plural, =0 {} other { och }}}}{passes, plural, =0 {} other {# rastvaktspass}} har redan ett beslut. Ångra {count, plural, one {det} other {dem}} först.",
     "ABSENCE_HAS_HELD_DECISIONS": "Det finns beslut på lektioner eller rastvaktspass som redan har varit. Avsluta frånvaron i förtid i stället.",
     "ABSENCE_NOT_YOURS": "Du kan bara registrera din egen frånvaro.",
     "ABSENCE_PERSON": "Frånvaro registreras för en aktiv lärare.",
@@ -5187,7 +5190,7 @@
     "COVER_TEACHER_BOOKED": "Vikarien har bokat en lokal då.",
     "COVER_POOL_NOT_DECLARED": "Vikarien har inte sagt att hen kan då.",
     "COVER_TRAVEL_TIME_SHORT": "Vikarien hinner inte från {from} till {to}: {gap} min emellan, och restiden är {minutes} min.",
-    "SUPERVISION_COVER_NOT_AFFECTED": "Passet berörs inte längre av frånvaron. Läs om tavlan.",
+    "SUPERVISION_COVER_NOT_AFFECTED": "Passet berörs inte längre av frånvaron. Tavlan är uppdaterad.",
     "SUPERVISION_COVER_HELD": "Passet har redan gått och ändras inte.",
     "SUPERVISION_SUBSTITUTE_REQUIRED": "Välj vem som tar passet.",
     "SUPERVISION_SUBSTITUTE_NOT_TEACHER": "Vikarien är inte en aktiv lärare.",

@@ -239,23 +239,31 @@ export async function readPassBoard(
           : { absenceId: { in: absences.map((absence) => absence.id) } },
       select: COVER_SELECT,
     })) ?? [];
-  // A decision is read only while its absence is ACTIVE; its period says
-  // whether its pass still falls inside it.
-  const known = new Map(absences.map((absence) => [absence.id, absence]));
+  // Each decision's own absence: its period says whether the pass still falls
+  // inside it. One no longer ACTIVE was left by an API from before this
+  // release (it settles a withdrawal's decisions with it): on the board's
+  // window it is shown for Ångra; the register's counts leave it out.
+  const known = new Map(absences.map((absence) => [absence.id, { ...absence, active: true }]));
   const others = [...new Set(coverRows.map((row) => row.absenceId))].filter((id) => !known.has(id));
   if (others.length > 0) {
     const rows =
       (await tx.teacherAbsence.findMany({
-        where: { id: { in: others }, status: 'ACTIVE' },
-        select: { id: true, userId: true, startsAt: true, endsAt: true },
+        where: { id: { in: others } },
+        select: { id: true, userId: true, startsAt: true, endsAt: true, status: true },
       })) ?? [];
-    for (const row of rows) known.set(row.id, row);
+    for (const row of rows) known.set(row.id, { ...row, active: row.status === 'ACTIVE' });
   }
   const covers: BoardCover[] = coverRows.flatMap((row) => {
     const absence = known.get(row.absenceId);
-    return absence
-      ? [{ ...toCoverRow(row), absenceStartsAt: absence.startsAt, absenceEndsAt: absence.endsAt }]
-      : [];
+    if (!absence || (!absence.active && scope.kind !== 'window')) return [];
+    return [
+      {
+        ...toCoverRow(row),
+        absenceStartsAt: absence.startsAt,
+        absenceEndsAt: absence.endsAt,
+        ...(absence.active ? {} : { absenceActive: false }),
+      },
+    ];
   });
   const teacherIds = [...new Set(absences.map((absence) => absence.userId))];
   if (teacherIds.length === 0 && covers.length === 0) return [];
@@ -280,7 +288,7 @@ export async function readPassBoard(
     })) ?? [];
   if (shiftRows.length === 0 && covers.length === 0) return [];
   const calendar = await readPassCalendar(tx, {
-    areaIds: shiftRows.map((row) => row.areaId),
+    areaIds: [...shiftRows.map((row) => row.areaId), ...covers.map((cover) => cover.areaId)],
     yearIds: shiftRows.map((row) => row.academicYearId),
     teacherIds: shiftRows.map((row) => row.userId),
     timezone,

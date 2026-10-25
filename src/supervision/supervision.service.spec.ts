@@ -10,6 +10,7 @@ import {
   SUPERVISION_AREA_NAME_TAKEN,
   SUPERVISION_AREA_NOT_FOUND,
   SUPERVISION_SHIFT_CLASH,
+  SUPERVISION_SHIFT_COVER_CLASH,
   SUPERVISION_SHIFT_HAS_COVERS,
   SUPERVISION_SHIFT_LIMIT,
   SUPERVISION_SHIFT_NOT_FOUND,
@@ -263,6 +264,27 @@ describe('SupervisionService', () => {
       // The schedule's lock first, then the teacher's row and the year.
       const lock = tx.$executeRaw.mock.calls[0]![0] as { values: unknown[] };
       expect(lock.values).toEqual([`SupervisionShifts:${YEAR_ID}`]);
+    });
+
+    it('refuses a pass at the time the teacher takes another’s pass as vikarie on a date ahead (Rastvakt i vardagen)', async () => {
+      givenStaffAndYear();
+      tx.academicYear.findUnique.mockResolvedValue({ ...YEAR, schoolId: SCHOOL_ID });
+      tx.school.findUnique.mockResolvedValue({ timezone: 'Europe/Stockholm' });
+      tx.supervisionArea.findUnique.mockResolvedValue({ id: GARDEN, name: 'Matsalen' });
+      // Anna covers Bo's hall on Monday 2 November, 10:10–10:30 local.
+      tx.supervisionCover.findMany.mockResolvedValue([
+        { date: day('2026-11-02'), startsAt: new Date('2026-11-02T09:10:00Z'), endsAt: new Date('2026-11-02T09:30:00Z'), areaId: HALL },
+      ]);
+      await expect(service.createShift(PASS, testUser())).rejects.toMatchObject({
+        response: { code: SUPERVISION_SHIFT_COVER_CLASH, params: { date: '2026-11-02', area: 'Matsalen' } },
+      });
+      expect(tx.supervisionShift.create).not.toHaveBeenCalled();
+      // From 9 November the Monday pass no longer meets that date; nor does a Tuesday one.
+      givenStaffAndYear();
+      await service.createShift({ ...PASS, validFrom: '2026-11-09' }, testUser());
+      givenStaffAndYear();
+      await service.createShift({ ...PASS, dayOfWeek: 2 }, testUser());
+      expect(tx.supervisionShift.create).toHaveBeenCalledTimes(2);
     });
 
     it('refuses seconds, an end not after the start and Till before Från before it opens a transaction', async () => {
@@ -620,9 +642,9 @@ describe('SupervisionService', () => {
     it('lists their own passes on the dates they run, with what the board decided, and the passes they take as vikarie', async () => {
       tx.supervisionCover.findMany.mockResolvedValue([
         // Anna is away Monday 19 October: Bo takes her pass.
-        { shiftId: SHIFT, date: day('2026-10-19'), areaId: GARDEN, startsAt: new Date('2026-10-19T08:00:00Z'), endsAt: new Date('2026-10-19T08:20:00Z'), decision: 'SUBSTITUTE', substituteId: BO },
+        { shiftId: SHIFT, date: day('2026-10-19'), areaId: GARDEN, startsAt: new Date('2026-10-19T08:00:00Z'), endsAt: new Date('2026-10-19T08:20:00Z'), decision: 'SUBSTITUTE', substituteId: BO, absenceId: 'abs-anna', absentTeacherId: ANNA },
         // Anna takes somebody's pass in the hall on Wednesday.
-        { shiftId: 'other', date: day('2026-10-21'), areaId: HALL, startsAt: new Date('2026-10-21T10:30:00Z'), endsAt: new Date('2026-10-21T11:00:00Z'), decision: 'SUBSTITUTE', substituteId: ANNA },
+        { shiftId: 'other', date: day('2026-10-21'), areaId: HALL, startsAt: new Date('2026-10-21T10:30:00Z'), endsAt: new Date('2026-10-21T11:00:00Z'), decision: 'SUBSTITUTE', substituteId: ANNA, absenceId: 'abs-cilla', absentTeacherId: 'cilla' },
       ]);
       // Höstlov the week after: no Monday pass on the 26th.
       tx.schoolBreak.findMany.mockResolvedValue([
@@ -647,6 +669,35 @@ describe('SupervisionService', () => {
       ]);
       // Nothing for the läslogg: their own data.
       expect(recordedReads(tx)).toEqual([]);
+    });
+
+    it('reads a decision as the board does: not on an absence left behind, not by a vikarie gone, and no taken pass on a lov', async () => {
+      tx.supervisionCover.findMany.mockResolvedValue([
+        // Left on a withdrawn absence by an older API: relieves nobody.
+        { shiftId: SHIFT, date: day('2026-10-19'), areaId: GARDEN, startsAt: new Date('2026-10-19T08:00:00Z'), endsAt: new Date('2026-10-19T08:20:00Z'), decision: 'SUBSTITUTE', substituteId: BO, absenceId: 'abs-old', absentTeacherId: ANNA },
+        // Anna took Cilla's hall pass on Wednesday the 28th, and höstlov has been added since.
+        { shiftId: 'other', date: day('2026-10-28'), areaId: HALL, startsAt: new Date('2026-10-28T10:30:00Z'), endsAt: new Date('2026-10-28T11:00:00Z'), decision: 'SUBSTITUTE', substituteId: ANNA, absenceId: 'abs-cilla', absentTeacherId: 'cilla' },
+      ]);
+      tx.schoolBreak.findMany.mockResolvedValue([
+        { academicYearId: YEAR_ID, startDate: day('2026-10-26'), endDate: day('2026-10-30'), minGradeLevel: null, maxGradeLevel: null },
+      ]);
+      tx.teacherAbsence.findMany.mockResolvedValue([{ id: 'abs-old' }]);
+      const week = await service.week('2026-10-19', '2026-10-30', me);
+      // The Monday is Anna's again, and the hall on höstlov is nobody's to stand in.
+      expect(week.passes.map((pass) => [pass.kind, pass.date, pass.handover])).toEqual([['OWN', '2026-10-19', null]]);
+      expect(tx.teacherAbsence.findMany).toHaveBeenCalledWith({
+        where: { id: { in: ['abs-old'] }, status: { not: 'ACTIVE' } },
+        select: { id: true },
+      });
+
+      // A vikarie no longer an active teacher relieves nobody either.
+      tx.supervisionCover.findMany.mockResolvedValue([
+        { shiftId: SHIFT, date: day('2026-10-19'), areaId: GARDEN, startsAt: new Date('2026-10-19T08:00:00Z'), endsAt: new Date('2026-10-19T08:20:00Z'), decision: 'SUBSTITUTE', substituteId: BO, absenceId: 'abs-anna', absentTeacherId: ANNA },
+      ]);
+      tx.teacherAbsence.findMany.mockResolvedValue([]);
+      tx.user.findMany.mockImplementation(async (args: { where: { OR?: unknown } }) => (args.where.OR ? [{ id: BO }] : []));
+      const again = await service.week('2026-10-19', '2026-10-25', me);
+      expect(again.passes.map((pass) => [pass.kind, pass.date, pass.handover])).toEqual([['OWN', '2026-10-19', null]]);
     });
 
     it('answers nothing more when they have no pass, and keeps the range to fourteen days in order', async () => {

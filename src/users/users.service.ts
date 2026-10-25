@@ -948,12 +948,18 @@ function recordedATimplanDecision(planNames: string[]): ConflictException {
   );
 }
 
+/**
+ * Undo on the vikarietavla is the one way out that tells the vikarie.
+ * Deactivating instead would leave the bookings ahead standing unannounced
+ * too (the board then says the pass no longer runs), so it is not offered.
+ */
 function hasBookedPassCovers(firstDate: string): ConflictException {
   return new ConflictException({
     message:
       `Personens rastvaktspass har en inbokad vikarie framåt, första gången ${firstDate}. ` +
-      'Ångra besluten på vikarietavlan först, så att vikarien får veta det, eller inaktivera kontot i stället.',
+      'Ångra besluten på vikarietavlan först, så att vikarien får veta det.',
     code: 'USER_HAS_BOOKED_PASS_COVERS',
+    params: { date: firstDate },
   });
 }
 

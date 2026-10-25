@@ -236,7 +236,8 @@ export function ScheduleScreen(): React.JSX.Element {
             // A rastvaktspass: the place and the time, and whose it is that
             // day. Nothing to open: the card is all there is to it.
             const card = entry.card;
-            const meta = [card.siteName, card.marker ? t(card.marker) : null].filter(Boolean).join('  ·  ');
+            // Whose it is that day first: a narrow screen cuts the site, never that.
+            const meta = [card.marker ? t(card.marker) : null, card.siteName].filter(Boolean).join('  ·  ');
             // Read aloud whole: the time, the place, the site and whose it is that day.
             const spoken = [
               t('schedule.passA11y', { area: card.areaName }),
@@ -246,7 +247,11 @@ export function ScheduleScreen(): React.JSX.Element {
               .filter(Boolean)
               .join(', ');
             return (
-              <View style={[styles.card, styles.cardPass]} accessible accessibilityLabel={spoken}>
+              <View
+                style={[styles.card, styles.cardPass, card.relieved && styles.cardPassRelieved]}
+                accessible
+                accessibilityLabel={spoken}
+              >
                 <View style={styles.cardTime}>
                   <Text style={styles.cardTimeText}>{formatTime(card.startsAt)}</Text>
                   <Text style={styles.cardTimeSub}>{formatTime(card.endsAt)}</Text>
@@ -377,6 +382,15 @@ const styles = StyleSheet.create({
   cardPass: {
     borderColor: '#b45309',
     borderLeftWidth: 4,
+  },
+  // A pass somebody else has that day, or nobody: dashed and untinted, as
+  // nothing to stand at. Not faded: the 45 % of a cancelled lesson would take
+  // the text below AA. iOS draws a dashed border only at one width all round.
+  cardPassRelieved: {
+    borderStyle: 'dashed',
+    borderWidth: 2,
+    borderLeftWidth: 2,
+    backgroundColor: 'transparent',
   },
   cardTime: {
     alignItems: 'center',

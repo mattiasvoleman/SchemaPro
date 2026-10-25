@@ -16,7 +16,7 @@ import {
   NO_REASON,
   type AbsenceForm,
 } from "@/lib/cover-absence-form";
-import { coverErrorText, errorCode, errorParams, reasonName } from "@/lib/cover-view";
+import { coverErrorText, decisionCounts, errorCode, reasonName, type DecisionCounts } from "@/lib/cover-view";
 import { toDateString } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -85,7 +85,7 @@ export function AbsenceDialog({
 
   const [form, setForm] = useState<AbsenceForm>(() => emptyAbsenceForm(today));
   const [shown, setShown] = useState(false);
-  const [askUndo, setAskUndo] = useState<number | null>(null);
+  const [askUndo, setAskUndo] = useState<DecisionCounts | null>(null);
   const { data: reasons } = useAbsenceReasons(open);
   const { create, update } = useAbsenceActions();
 
@@ -127,8 +127,7 @@ export function AbsenceDialog({
       onOpenChange(false);
     } catch (error) {
       if (errorCode(error) === "ABSENCE_HAS_DECISIONS" && absence && !undoDecisionsOutside) {
-        const count = errorParams(error).count;
-        setAskUndo(typeof count === "number" ? count : 1);
+        setAskUndo(decisionCounts(error));
         return;
       }
       toast.error(coverErrorText(tErrors, error, tCommon("error")));
@@ -267,7 +266,7 @@ export function AbsenceDialog({
         open={askUndo !== null}
         onOpenChange={(next) => !next && setAskUndo(null)}
         title={t("undoTitle")}
-        description={t("undoBody", { count: askUndo ?? 0 })}
+        description={t("undoBody", { ...(askUndo ?? { count: 0, lessons: 0, passes: 0 }) })}
         confirmLabel={t("undoConfirm")}
         loading={pending}
         onConfirm={() => void save(true)}

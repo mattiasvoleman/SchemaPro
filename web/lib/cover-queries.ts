@@ -234,7 +234,9 @@ export function usePassActions() {
       api.delete<{ shiftId: string; date: string }>(`/api/v1/cover/supervision/${shiftId}/${date}/decision`),
     onSettled: () => invalidate([ALL_COVER, COVER_KEYS.candidates, ["supervisionWeek"]]),
   });
-  return { decide, undo };
+  /** The board read again: a pass the gateway says is no longer the board's. */
+  const refresh = () => invalidate([ALL_COVER, ["supervisionWeek"]]);
+  return { decide, undo, refresh };
 }
 
 /**

@@ -15,7 +15,9 @@ import type { CoverMessage, PassBoardItem } from "@/lib/cover-types";
  *     who is away themself, `decisionStale`) and not ended;
  *   - "Ångra" needs a decision and a pass not ended;
  *   - a decision left on a day the pass no longer runs (`runs` false: a lov
- *     added since, its teacher deactivated) is undone, never replaced;
+ *     added since, its teacher deactivated), or on an absence no longer
+ *     ACTIVE (`absenceActive` false: left by an API from before this
+ *     release), is undone, never replaced;
  *   - switching decisions is Ångra, then decide.
  */
 
@@ -35,7 +37,7 @@ export interface PassActions {
 
 export function passActions(item: PassBoardItem, now: number): PassActions {
   const live = new Date(item.endsAt).getTime() > now;
-  const open = item.status === "OPEN" && live && item.runs !== false;
+  const open = item.status === "OPEN" && live && item.runs !== false && item.absenceActive !== false;
   return { assign: open, noCover: open, undo: item.decision !== null && live };
 }
 

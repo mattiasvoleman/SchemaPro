@@ -3,6 +3,7 @@
 import { Fragment, Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
+import { ApiError } from "@/lib/api";
 import {
   ChevronRight,
   Clock,
@@ -761,6 +762,12 @@ export default function PeoplePage() {
       toast.success(tCommon("deleted"));
       setDeleting(null);
     } catch (error) {
+      // A booked rastvaktspass ahead (Rastvakt i vardagen): said in the
+      // reader's language, with the first date, rather than the gateway's Swedish.
+      if (error instanceof ApiError && error.code === "USER_HAS_BOOKED_PASS_COVERS") {
+        toast.error(t("removeHasPassCovers", { date: String(error.params?.date ?? "") }));
+        return;
+      }
       toast.error(error instanceof Error ? error.message : tCommon("error"));
     }
   };

@@ -584,8 +584,15 @@ Walk the full product loop once, in order:
   answers as before:
   - the bell and the app read `Notifications` through PostgREST;
   - the one Prisma read of the enum is the person's opt-outs
-    (`NotificationOptOuts`), which never hold the two types, because this
-    release refuses opting out of them (400).
+    (`NotificationOptOuts`), which never hold the two types through the
+    gateway: this release refuses opting out of them (400). A row written
+    past the gateway (the table's own insert arm for `authenticated` admits
+    any type) would make that person's `GET /notification-preferences` a 500
+    on the API before the release. Before rolling back, as the owner, count
+    them; nonzero means delete those rows (both types are always delivered,
+    so an opt-out of them means nothing):
+    `SELECT count(*) FROM "NotificationOptOuts" WHERE "type"::text IN
+    ('SUPERVISION_COVER', 'SUPERVISION_COVER_WITHDRAWN');`
 
   What a rollback does change:
   - The board's pass decisions stay in the database with nothing reading
@@ -601,6 +608,19 @@ Walk the full product loop once, in order:
   - The guard on a teacher's own absence keeps asking the pass decisions,
     which the API before the release reports as its existing
     `ABSENCE_SELF_EDIT_NARROW`.
+
+  **Rolling forward again** (or after old and new containers ran side by
+  side in a deploy): the API before the release withdraws or shortens an
+  absence without its pass decisions, so a decision can stand on an absence
+  that is no longer ACTIVE, its vikarie still booked. This release shows such
+  a decision on the vikarietavla, noted *Frånvaron är återkallad*, with
+  Ångra alone, which tells the vikarie. Until it is undone it holds as a
+  decision does (the pass cannot be moved, its teacher cannot be removed,
+  its vikarie is busy then). List them, as the owner, and have each school
+  undo its own:
+  `SELECT c."schoolId", c."date", c."shiftId" FROM "SupervisionCovers" c
+  JOIN "TeacherAbsences" a ON a."id" = c."absenceId" WHERE a."status" <>
+  'ACTIVE' AND c."endsAt" > now() ORDER BY 1, 2;`
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).
   `GET /health/ready` adds three counts, never names: how many jobs this

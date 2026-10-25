@@ -366,3 +366,13 @@ describe("a rastvaktspass's reasons (Rastvakt i vardagen)", () => {
     );
   });
 });
+
+describe("the counts of the decisions an absence's change would undo", () => {
+  it("names the lessons and the rastvaktspass apart, and reads a total alone as lessons", async () => {
+    const { ApiError } = await import("@/lib/api");
+    const { decisionCounts } = await import("./cover-view");
+    expect(decisionCounts(new ApiError(409, "", "ABSENCE_HAS_DECISIONS", { count: 3, lessons: 1, passes: 2 }))).toEqual({ count: 3, lessons: 1, passes: 2 });
+    expect(decisionCounts(new ApiError(409, "", "ABSENCE_HAS_DECISIONS", { count: 2 }))).toEqual({ count: 2, lessons: 2, passes: 0 });
+    expect(decisionCounts(new Error("x"))).toEqual({ count: 1, lessons: 1, passes: 0 });
+  });
+});
