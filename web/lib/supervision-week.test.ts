@@ -50,8 +50,8 @@ describe("the teacher's passes in their week", () => {
       ],
       labels,
     );
-    // Whose it is that day before the place: a narrow column cuts the place, never that.
-    expect(cover).toMatchObject({ id: "pass:COVER:s-2:2026-10-12", subtitle: "Vikarie · Skolgården" });
+    // What a narrow column must keep first: where to go for a pass taken, who has it for one handed on.
+    expect(cover).toMatchObject({ id: "pass:COVER:s-2:2026-10-12", subtitle: "Skolgården · Vikarie" });
     expect(cover).not.toHaveProperty("room");
     expect(cover).not.toHaveProperty("relieved");
     expect(handed).toMatchObject({ subtitle: "Vikarie tar passet · Skolgården", relieved: true });

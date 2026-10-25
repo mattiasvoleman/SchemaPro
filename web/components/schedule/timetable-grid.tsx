@@ -80,15 +80,19 @@ export interface TimetableLesson {
    * reader's text (a div, so no tooltip reached it by touch or keyboard),
    * and reached into the lesson that starts as the rast ends — the lanes are
    * shared by the minute, not by the pixel. So a duty is its own length, and
-   * everything it says is one visible line: title, then the subtitle (whose
-   * it is that day first, so a narrow column cuts the place, not that), then
-   * the room.
+   * what it says is one visible line: the subtitle (its caller puts first
+   * what a narrow column must keep), then the room. The title is not on the
+   * line — the edge in the duty's colour says what it is, and a phone's
+   * column has no room for a word every strip repeats — but the screen
+   * reader hears it first, and the hover text and the paper carry it.
    */
   duty?: boolean;
   /**
    * A duty that is not the reader's that day — handed to a vikarie, or left
-   * without one while they are away: drawn dashed and untinted, as nothing
-   * to stand at, without the strike-through a cancelled lesson has.
+   * without one while they are away: drawn with a dashed outline and
+   * untinted, as nothing to stand at, without the strike-through a cancelled
+   * lesson has. An outline and not a border: it takes no height from a
+   * ten-minute strip, and the edge stays solid in the duty's colour.
    */
   relieved?: boolean;
 }
@@ -1085,7 +1089,7 @@ function TimetableGridInner({
                       className={cn(
                         "absolute overflow-hidden rounded-md border-l-4 text-left text-xs shadow-sm transition-shadow",
                         lesson.duty ? "flex items-center px-1.5 py-0" : "p-1.5",
-                        lesson.relieved && "border border-dashed border-l-4 shadow-none",
+                        lesson.relieved && "shadow-none outline-dashed outline-1 -outline-offset-1 outline-muted-foreground",
                         (onLessonClick || editable) && !lesson.duty
                           ? "cursor-pointer hover:shadow-md"
                           : "cursor-default",
@@ -1155,7 +1159,8 @@ function TimetableGridInner({
                             lesson.relieved ? "text-muted-foreground" : "font-medium text-foreground",
                           )}
                         >
-                          {[lesson.title, ...facts].join(" · ")}
+                          <span className="sr-only">{lesson.title} · </span>
+                          {facts.join(" · ")}
                         </div>
                       ) : (
                         <>

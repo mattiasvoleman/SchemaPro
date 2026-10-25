@@ -246,6 +246,29 @@ export function WeekSheet({ document, locale, t, tDays, variant, actions, headin
                     {lessons.map((lesson, index) => {
                       const at = placement(lesson, span);
                       const text = lessonText(lesson, t, document, notes);
+                      if (lesson.duty) {
+                        // A rastvaktspass: one line, as fifteen minutes on paper holds
+                        // no more — the time, "Rastvakt", whose it is and where.
+                        return (
+                          <li
+                            key={`${lesson.start}-${index}`}
+                            className={`viewer-block absolute overflow-hidden whitespace-nowrap text-ellipsis rounded-sm border border-l-4 border-l-amber-700 px-1 leading-none text-neutral-900 ${
+                              lesson.relieved ? "border-dashed border-neutral-500 bg-white text-neutral-700" : "border-amber-300 bg-amber-50"
+                            }`}
+                            style={{
+                              top: `${at.top}%`,
+                              height: `${at.height}%`,
+                              left: `${(lesson.lane * 100) / lesson.laneCount}%`,
+                              width: `${100 / lesson.laneCount}%`,
+                            }}
+                          >
+                            <span className="tabular-nums">
+                              {lesson.start}–{lesson.end}
+                            </span>{" "}
+                            {[text.main, text.detail].filter(Boolean).join(" · ")}
+                          </li>
+                        );
+                      }
                       return (
                           <li
                             key={`${lesson.start}-${index}`}

@@ -67,6 +67,45 @@ describe("WeekSheet", () => {
     expect(screen.getByText("Lunch 11:00–11:30")).toBeInTheDocument();
   });
 
+  it("prints a rastvaktspass as one line, its time, what it is, whose it is and where, and one somebody else has dashed", () => {
+    const TEACHER_WEEK: SheetDocument = {
+      kind: "TEACHER",
+      title: "Anna Lind",
+      school: "Skolan",
+      week: WEEK.week,
+      days: [
+        {
+          date: "2026-10-12",
+          lessons: [
+            { start: "08:10", end: "09:10", subject: "Svenska", groups: ["7A"], room: "Sal 101", teachers: [], cancelled: false },
+            {
+              start: "09:10",
+              end: "09:25",
+              subject: "Rastvakt",
+              groups: ["Vikarie tar passet · Skolgården"],
+              room: "Norra",
+              teachers: [],
+              cancelled: false,
+              duty: true,
+              relieved: true,
+            },
+            { start: "12:00", end: "12:15", subject: "Rastvakt", groups: ["Matsalen · Vikarie"], room: null, teachers: [], cancelled: false, duty: true },
+          ],
+        },
+        ...["13", "14", "15", "16", "17", "18"].map((day) => ({ date: `2026-10-${day}`, lessons: [] })),
+      ],
+    };
+    const { container } = render(<WeekSheet document={TEACHER_WEEK} locale="sv" t={t} tDays={tDays} variant="print" headingLevel={2} idPrefix="s1" />);
+    const monday = container.querySelector('ol[aria-labelledby="s1-day-2026-10-12"]') as HTMLElement;
+    const [, handed, cover] = [...monday.querySelectorAll("li")];
+    // One line each: no block of its own height for a time alone.
+    expect(handed!.textContent).toBe("09:10–09:25 Rastvakt · Vikarie tar passet · Skolgården · Norra");
+    expect(handed!.className).toContain("whitespace-nowrap");
+    expect(handed!.className).toContain("border-dashed");
+    expect(cover!.textContent).toBe("12:00–12:15 Rastvakt · Matsalen · Vikarie");
+    expect(cover!.className).not.toContain("border-dashed");
+  });
+
   it("draws a note only where the page asked for notes: a document from the gateway carries none", () => {
     const { unmount } = render(<WeekSheet document={WEEK} locale="sv" t={t} tDays={tDays} variant="print" />);
     expect(screen.queryByText(/Vikarie/)).not.toBeInTheDocument();

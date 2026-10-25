@@ -68,11 +68,13 @@ const minutesOf = (timestamp: string) => {
 /**
  * The passes as strips of the week's grid, on the reader's clock as the
  * lessons are (lib/lesson-mapper.ts), each one line (timetable-grid.tsx
- * `duty`): "Rastvakt · Vikarie tar passet · Skolgården · Norra". Whose it is
- * that day comes before the place, so a narrow column cuts the place and
- * never that. A pass taken as vikarie says "Vikarie", as a covered lesson
- * does; one the reader is relieved of says who has it — a vikarie, or
- * nobody — never which person, and is drawn dashed: nothing to stand at.
+ * `duty`; the amber edge says it is a pass, "Rastvakt" is the screen
+ * reader's and the paper's). What a narrow column must keep comes first:
+ *   - one taken as vikarie: the place, then "Vikarie" — where to go;
+ *   - one the reader is relieved of: who has it — a vikarie, or nobody,
+ *     never which person — then the place; drawn dashed, nothing to stand at;
+ *   - their own: the place.
+ * The skolområde is the room, after.
  */
 export function weekPassesToGrid(
   passes: readonly WeekPass[],
@@ -93,7 +95,12 @@ export function weekPassesToGrid(
       startMinutes: minutesOf(pass.startsAt),
       endMinutes: minutesOf(pass.endsAt),
       title: labels.title,
-      subtitle: marker ? `${marker} · ${pass.areaName}` : pass.areaName,
+      subtitle:
+        pass.kind === "COVER"
+          ? `${pass.areaName} · ${marker}`
+          : marker
+            ? `${marker} · ${pass.areaName}`
+            : pass.areaName,
       ...(pass.siteName ? { room: pass.siteName } : {}),
       color: PASS_COLOR,
       // A strip that opens nothing, and no length the grid is measured for.
