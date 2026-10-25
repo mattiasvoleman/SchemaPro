@@ -2172,7 +2172,13 @@ END $$;
 --   EG-3 SvA7's SvA              EG-4 7B's svenska, SvA7 added
 --   EG-5 7A's svenska naming P1  EG-6 7B's svenska, 7A added
 --   EG-7 7A:1's svenska          EG-8 7A:1's matematik
---   EG-10 7A's engelska
+--   EG-10 7A's engelska           EG-11 SvA7's svenska (its own lesson in the subject)
+--   EG-12 7B's svenska, the half 7A:1 added
+-- Last läsår (ended): EG Sv6n (a nivågrupp in svenska) and EG SvA6, which
+-- replaced Svenska then; P2 is still a member of both, as the rollover leaves
+-- a membership, and P3 of SvA6. EG-0 is Sv6n's svenska of that year: P2 is
+-- off it (SvA6 replaced it then), and SvA6 takes P2 and P3 off nothing of
+-- this year's.
 -- P1 is also in EnS7, which replaces Engelska: a pupil in two replacing
 -- groups leaves each one's subject only (EG-4 carries SvA7, not EnS7, and
 -- stays theirs). EG-1 carries a log; the teacher leads every lesson. Another school has its
@@ -2189,6 +2195,9 @@ DECLARE
   ma uuid;
   en uuid;
   rens uuid;
+  y0 uuid;
+  r6 uuid;
+  n6 uuid;
   sv2 uuid;
   k7a uuid;
   k7b uuid;
@@ -2258,7 +2267,9 @@ BEGIN
     ('EG-6', sv,  k7b,  k7a,        NULL,       3),
     ('EG-7', sv,  half, NULL,       NULL,       4),
     ('EG-8', ma,  half, NULL,       NULL,       4),
-    ('EG-10', en, k7a,  NULL,       NULL,       5)
+    ('EG-10', en, k7a,  NULL,       NULL,       5),
+    ('EG-11', sv, r7,   NULL,       NULL,       5),
+    ('EG-12', sv, k7b,  half,       NULL,       6)
   ) v(note, subject, grp, extra, named, day_offset) LOOP
     INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
     VALUES (s1, rec.subject, rec.grp, current_date + rec.day_offset,
@@ -2276,6 +2287,19 @@ BEGIN
       VALUES (s1, l, 'EG ett', 'EG läxa ett', t);
     END IF;
   END LOOP;
+
+  -- Last läsår.
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s1, 'Ersättande i fjol', current_date - 400, current_date - 31, false, now()) RETURNING id INTO y0;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "replacesSubjectId", "updatedAt")
+  VALUES (s1, y0, 'EG SvA6', 6, 'TEACHING_GROUP', sv, now()) RETURNING id INTO r6;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "updatedAt")
+  VALUES (s1, y0, 'EG Sv6n', 6, 'TEACHING_GROUP', now()) RETURNING id INTO n6;
+  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (s1, r6, p2), (s1, n6, p2), (s1, r6, p3);
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+  VALUES (s1, sv, n6, current_date - 100, (current_date - 100) + time '08:00', (current_date - 100) + time '09:00', 'EG-0', now())
+  RETURNING id INTO l;
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (s1, l, t, 'LEAD');
 
   INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
   VALUES ('RLS Ersättande annan', 'rls-ersattande-annan', 'Europe/Stockholm', now()) RETURNING id INTO s2;

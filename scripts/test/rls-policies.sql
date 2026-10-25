@@ -29331,6 +29331,13 @@ BEGIN
      IS DISTINCT FROM 'student_groups_guardian_select SELECT {app_authenticated}' THEN
     RAISE EXCEPTION 'replacing: the guardian''s group arm is not SELECT for app_authenticated alone';
   END IF;
+  -- The role inside the initplan, so no staff read of the groups runs the
+  -- guardian's helper (the arm's array is an index condition).
+  IF (SELECT regexp_replace(qual, '\s+', ' ', 'g') FROM pg_policies
+       WHERE schemaname = 'public' AND tablename = 'StudentGroups' AND policyname = 'student_groups_guardian_select')
+     NOT LIKE '%CASE WHEN (app.current_user_role() = ''GUARDIAN''::"UserRole") THEN app.current_guardian_group_ids() ELSE NULL::uuid[] END%' THEN
+    RAISE EXCEPTION 'replacing: the guardian''s group arm asks its helper outside a CASE on the role';
+  END IF;
 
   IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = fn::regprocedure) THEN RAISE EXCEPTION 'replacing: % is not SECURITY DEFINER', fn; END IF;
   IF (SELECT provolatile FROM pg_proc WHERE oid = fn::regprocedure) <> 's' THEN RAISE EXCEPTION 'replacing: % is not STABLE', fn; END IF;
@@ -29358,11 +29365,13 @@ ROLLBACK;
 
 -- ---------------------------------------------------------------------------
 -- Section 271: en elev i SvA7, som ersätter svenska, läser inte klassens
--- svenska: varken 7A:s egen, 7B:s med 7A tillagd eller halvklassens 7A:1, och
--- inte dess logg eller lärarrader; den läser SvA7:s, 7B:s svenska dit SvA7 är
--- tillagd, svenskan som namnger hen och klassens övriga lektioner. Hen går
--- också i EnS7, som ersätter engelska: varje grupp tar hen av sitt eget ämne
--- och inget annat. En elev i
+-- svenska: varken 7A:s egen, 7B:s med 7A tillagd, halvklassens 7A:1 eller 7B:s
+-- med 7A:1 tillagd, och inte dess logg eller lärarrader; den läser SvA7:s
+-- (också dess lektion i ämnet svenska), 7B:s svenska dit SvA7 är tillagd,
+-- svenskan som namnger hen och klassens övriga lektioner. Hen går också i
+-- EnS7, som ersätter engelska: varje grupp tar hen av sitt eget ämne och
+-- inget annat. En elev som gick i SvA6 i fjol läser årets svenska: en
+-- ersättande grupp tar bara av lektioner i sitt eget läsår. En elev i
 -- ingen ersättande grupp läser som förut. Som PostgREST:s roll och som
 -- API:ts. Personalen läser allt som förut. En inloggning med en rad på varje
 -- skola läser efter den skola anropet namnger: här i ingen ersättande grupp,
@@ -29409,15 +29418,17 @@ DECLARE
   -- lessons | logs (the API's) | teacher rows' lessons | the helper's lessons.
   -- The helper's lessons are the ones the caller cannot read, so they show by id.
   cases constant text[][] := ARRAY[
-    ['00000000-0000-4000-8000-000000001502', 'EG-2,EG-3,EG-4,EG-5,EG-8 |  | EG-2,EG-5 | 4 hidden',
-                                             'EG-2,EG-3,EG-4,EG-5,EG-8 |  | EG-2,EG-5 | 4 hidden'],                     -- P1: 7A, SvA7, EnS7, 7A:1
-    ['00000000-0000-4000-8000-000000001503', 'EG-1,EG-10,EG-2,EG-5,EG-6,EG-7,EG-8 | EG ett | EG-1,EG-10,EG-2,EG-5 | ',
-                                             'EG-1,EG-10,EG-2,EG-5,EG-6,EG-7,EG-8 |  | EG-1,EG-10,EG-2,EG-5 | '],         -- P2: 7A, 7A:1
+    ['00000000-0000-4000-8000-000000001502', 'EG-11,EG-2,EG-3,EG-4,EG-5,EG-8 |  | EG-2,EG-5 | 5 hidden',
+                                             'EG-11,EG-2,EG-3,EG-4,EG-5,EG-8 |  | EG-2,EG-5 | 5 hidden'],               -- P1: 7A, SvA7, EnS7, 7A:1
+    -- P2: 7A, 7A:1; last year in Sv6n and SvA6, which takes P2 off EG-0 (that
+    -- year's) and off nothing of this year's.
+    ['00000000-0000-4000-8000-000000001503', 'EG-1,EG-10,EG-12,EG-2,EG-5,EG-6,EG-7,EG-8 | EG ett | EG-1,EG-10,EG-2,EG-5 | 1 hidden',
+                                             'EG-1,EG-10,EG-12,EG-2,EG-5,EG-6,EG-7,EG-8 |  | EG-1,EG-10,EG-2,EG-5 | 1 hidden'],
     -- P3: 7B, SvA7. The teacher rows of 7B's own svenska with SvA7 added
     -- (EG-4), and not of 7B's with 7A added (EG-6), which P3 does not attend.
-    ['00000000-0000-4000-8000-000000001504', 'EG-3,EG-4 |  | EG-4 | 1 hidden', 'EG-3,EG-4 |  | EG-4 | 1 hidden'],
-    ['00000000-0000-4000-8000-000000001501', 'EG-1,EG-10,EG-2,EG-3,EG-4,EG-5,EG-6,EG-7,EG-8 | EG ett | EG-1,EG-10,EG-2,EG-3,EG-4,EG-5,EG-6,EG-7,EG-8 | ',
-                                             'EG-1,EG-10,EG-2,EG-3,EG-4,EG-5,EG-6,EG-7,EG-8 |  | EG-1,EG-10,EG-2,EG-3,EG-4,EG-5,EG-6,EG-7,EG-8 | ']];  -- the teacher
+    ['00000000-0000-4000-8000-000000001504', 'EG-11,EG-3,EG-4 |  | EG-4 | 2 hidden', 'EG-11,EG-3,EG-4 |  | EG-4 | 2 hidden'],
+    ['00000000-0000-4000-8000-000000001501', 'EG-0,EG-1,EG-10,EG-11,EG-12,EG-2,EG-3,EG-4,EG-5,EG-6,EG-7,EG-8 | EG ett | EG-0,EG-1,EG-10,EG-11,EG-12,EG-2,EG-3,EG-4,EG-5,EG-6,EG-7,EG-8 | ',
+                                             'EG-0,EG-1,EG-10,EG-11,EG-12,EG-2,EG-3,EG-4,EG-5,EG-6,EG-7,EG-8 |  | EG-0,EG-1,EG-10,EG-11,EG-12,EG-2,EG-3,EG-4,EG-5,EG-6,EG-7,EG-8 | ']];  -- the teacher
 BEGIN
   IF coalesce(current_setting('app.test_eg_school', true), '') = '' OR coalesce(current_setting('app.test_eg_school2', true), '') = '' THEN
     RAISE EXCEPTION 'replacing: the fixture schools did not resolve; fixtures did not run';
@@ -29450,8 +29461,8 @@ BEGIN
   CREATE TEMP TABLE eg_hidden ON COMMIT DROP AS SELECT unnest(app.current_student_replaced_lesson_ids()) AS id;
   PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001500')::text, true);
   SELECT string_agg(l.note, ',' ORDER BY l.note) INTO got FROM eg_hidden h JOIN "CalendarLessons" l ON l.id = h.id;
-  IF got IS DISTINCT FROM 'EG-1,EG-10,EG-6,EG-7' THEN
-    RAISE EXCEPTION 'replacing: P1''s helper takes them off %, not EG-1,EG-10,EG-6,EG-7', coalesce(got, '(nothing)');
+  IF got IS DISTINCT FROM 'EG-1,EG-10,EG-12,EG-6,EG-7' THEN
+    RAISE EXCEPTION 'replacing: P1''s helper takes them off %, not EG-1,EG-10,EG-12,EG-6,EG-7', coalesce(got, '(nothing)');
   END IF;
 END $$;
 
@@ -29504,11 +29515,11 @@ DECLARE
   expected text;
   cases constant text[][] := ARRAY[
     -- authId; groups as the API; lessons as the API; groups as PostgREST.
-    ['00000000-0000-4000-8000-000000001505', 'EG EnS7,EG SvA7,EG7A,EG7A:1', 'EG-1,EG-10,EG-2,EG-3,EG-4,EG-5,EG-6,EG-7,EG-8', ''],
-    ['00000000-0000-4000-8000-000000001506', 'EG7A,EG7A:1', 'EG-1,EG-10,EG-2,EG-5,EG-6,EG-7,EG-8', ''],
-    ['00000000-0000-4000-8000-000000001507', 'EG EnS7,EG SvA7,EG7A,EG7A:1', 'EG-1,EG-10,EG-2,EG-3,EG-4,EG-5,EG-6,EG-7,EG-8', ''],
+    ['00000000-0000-4000-8000-000000001505', 'EG EnS7,EG SvA7,EG7A,EG7A:1', 'EG-1,EG-10,EG-11,EG-12,EG-2,EG-3,EG-4,EG-5,EG-6,EG-7,EG-8', ''],
+    ['00000000-0000-4000-8000-000000001506', 'EG Sv6n,EG SvA6,EG7A,EG7A:1', 'EG-0,EG-1,EG-10,EG-12,EG-2,EG-5,EG-6,EG-7,EG-8', ''],
+    ['00000000-0000-4000-8000-000000001507', 'EG EnS7,EG Sv6n,EG SvA6,EG SvA7,EG7A,EG7A:1', 'EG-0,EG-1,EG-10,EG-11,EG-12,EG-2,EG-3,EG-4,EG-5,EG-6,EG-7,EG-8', ''],
     -- A pupil reads its home class's row as before, and no teaching group's.
-    ['00000000-0000-4000-8000-000000001502', 'EG7A', 'EG-2,EG-3,EG-4,EG-5,EG-8', 'EG7A']];
+    ['00000000-0000-4000-8000-000000001502', 'EG7A', 'EG-11,EG-2,EG-3,EG-4,EG-5,EG-8', 'EG7A']];
 BEGIN
   FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
     EXECUTE format('SET LOCAL ROLE %I', via);
@@ -29582,11 +29593,12 @@ BEGIN
   PERFORM app.calendar_feed_create(p1, repeat('c', 64), 'sv');
 
   got := pg_temp.eg_feed(repeat('a', 64));
-  IF got IS DISTINCT FROM 'EG-2,EG-3,EG-4,EG-5,EG-8' THEN RAISE EXCEPTION 'replacing: the SvA pupil''s feed shows %', got; END IF;
+  IF got IS DISTINCT FROM 'EG-11,EG-2,EG-3,EG-4,EG-5,EG-8' THEN RAISE EXCEPTION 'replacing: the SvA pupil''s feed shows %', got; END IF;
   got := pg_temp.eg_feed(repeat('c', 64));
-  IF got IS DISTINCT FROM 'EG-2,EG-3,EG-4,EG-5,EG-8' THEN RAISE EXCEPTION 'replacing: the guardian''s feed for the SvA pupil shows %', got; END IF;
+  IF got IS DISTINCT FROM 'EG-11,EG-2,EG-3,EG-4,EG-5,EG-8' THEN RAISE EXCEPTION 'replacing: the guardian''s feed for the SvA pupil shows %', got; END IF;
+  -- The 7A pupil was in SvA6 last year: this year's svenska is theirs.
   got := pg_temp.eg_feed(repeat('b', 64));
-  IF got IS DISTINCT FROM 'EG-1,EG-10,EG-2,EG-5,EG-6,EG-7,EG-8' THEN RAISE EXCEPTION 'replacing: the 7A pupil''s feed shows %', got; END IF;
+  IF got IS DISTINCT FROM 'EG-1,EG-10,EG-12,EG-2,EG-5,EG-6,EG-7,EG-8' THEN RAISE EXCEPTION 'replacing: the 7A pupil''s feed shows %', got; END IF;
 END $$;
 ROLLBACK;
 
