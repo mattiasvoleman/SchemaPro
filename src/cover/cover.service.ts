@@ -569,7 +569,7 @@ export class CoverService {
     const schoolId = requireSchoolId(user);
     const notices = settleNotices(effects.notices);
     const passNotices = settlePassNotices(effects.passNotices ?? []);
-    if (notices.length > 0 || effects.lessonIds.length > 0 || passNotices.length > 0) {
+    if (notices.length > 0 || effects.lessonIds.length > 0) {
       await this.prisma
         .withRls(user, async (tx) => {
           const timezone = await schoolTimezone(tx, schoolId);
@@ -577,12 +577,19 @@ export class CoverService {
           for (const notice of settleClassNotices(effects.classNotices)) {
             await this.calendarLessons.notifyLessonClass(tx, notice.lessonId, notice.type, notice.teacherIds, timezone);
           }
-          await sendPassNotices(this.notifications, tx, schoolId, timezone, passNotices);
           await this.realtime.notifyLessonsChanged(tx, [...new Set(effects.lessonIds)]);
         })
-        .catch(() =>
-          this.logger.warn(`Cover notices failed after commit [lessons=${effects.lessonIds.length}, passes=${passNotices.length}]`),
-        );
+        .catch(() => this.logger.warn(`Cover notices failed after commit [lessons=${effects.lessonIds.length}]`));
+    }
+    // The rastvaktspass' vikarier in a transaction of their own: a lesson's
+    // class notice that fails takes none of them with it (Rastvakt i vardagen).
+    if (passNotices.length > 0) {
+      await this.prisma
+        .withRls(user, async (tx) => {
+          const timezone = await schoolTimezone(tx, schoolId);
+          await sendPassNotices(this.notifications, tx, schoolId, timezone, passNotices);
+        })
+        .catch(() => this.logger.warn(`Pass notices failed after commit [passes=${passNotices.length}]`));
     }
     const dates = [...new Set(effects.dates)].sort();
     if (dates.length > 0) {

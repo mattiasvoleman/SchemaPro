@@ -17,7 +17,8 @@
  */
 
 import type { AbsencePhase } from "@/lib/cover-types";
-import type { StatusKey as CoverStatusKey, PassStatusKey } from "@/lib/cover-view";
+import type { StatusKey as CoverStatusKey } from "@/lib/cover-view";
+import type { PassStatusKey } from "@/lib/pass-view";
 import type { OptimizationJob } from "@/lib/queries";
 import type { LoadStatus } from "@/lib/teacher-load";
 import type { LocalTimplanStatus } from "@/lib/timplan-queries";

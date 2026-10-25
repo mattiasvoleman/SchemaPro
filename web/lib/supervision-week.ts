@@ -79,6 +79,8 @@ export function weekPassesToGrid(
       subtitle: marker ? `${pass.areaName} · ${marker}` : pass.areaName,
       ...(pass.siteName ? { room: pass.siteName } : {}),
       color: PASS_COLOR,
+      // A block that opens nothing, and no length the grid is measured for.
+      duty: true,
     };
   });
 }

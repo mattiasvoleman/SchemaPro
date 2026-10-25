@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   RefreshControl,
@@ -105,6 +105,8 @@ export function ScheduleScreen(): React.JSX.Element {
   const [rows, setRows] = useState<ScheduleRow[]>([]);
   const [passes, setPasses] = useState<PassCard[]>([]);
   const [passesFailed, setPassesFailed] = useState(false);
+  /** The newest pass read: an older answer arriving late never replaces it. */
+  const passRead = useRef(0);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -114,13 +116,18 @@ export function ScheduleScreen(): React.JSX.Element {
   const load = useCallback(async (): Promise<boolean> => {
     if (!authState.teacherId) return false;
     const { from, to } = scheduleWindow();
-    // The passes beside the lessons, and never in their way.
-    const passRead = fetchSupervisionWeek(from, to).then(
+    // The passes beside the lessons, and never in their way: not awaited, so
+    // a slow gateway keeps neither the spinner nor a refresh waiting, and
+    // only the newest read lands.
+    const read = ++passRead.current;
+    void fetchSupervisionWeek(from, to).then(
       (fetched) => {
+        if (read !== passRead.current) return;
         setPasses(passCardsOf(fetched));
         setPassesFailed(false);
       },
       () => {
+        if (read !== passRead.current) return;
         setPasses([]);
         setPassesFailed(true);
       },
@@ -133,8 +140,6 @@ export function ScheduleScreen(): React.JSX.Element {
     } catch (err) {
       setError(t('schedule.loadError'));
       return false;
-    } finally {
-      await passRead;
     }
   }, [authState.teacherId, t]);
 
@@ -152,13 +157,15 @@ export function ScheduleScreen(): React.JSX.Element {
     const add = (date: string, item: ScheduleItem) => byDate.set(date, [...(byDate.get(date) ?? []), item]);
     for (const row of rows) add(row.date, { kind: 'LESSON', row });
     for (const card of passes) add(card.date, { kind: 'PASS', card });
-    const startOf = (item: ScheduleItem) => (item.kind === 'LESSON' ? item.row.startsAt : item.card.startsAt);
+    // As instants: the lessons' times come from PostgREST (+00:00) and the
+    // passes' from the gateway (Z), so the strings do not compare.
+    const startOf = (item: ScheduleItem) => Date.parse(item.kind === 'LESSON' ? item.row.startsAt : item.card.startsAt);
     return [...byDate.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([date, data]) => ({
         key: date,
         title: formatDayHeading(date, locale),
-        data: [...data].sort((a, b) => startOf(a).localeCompare(startOf(b))),
+        data: [...data].sort((a, b) => startOf(a) - startOf(b)),
       }));
   }, [rows, passes, locale]);
 
@@ -230,8 +237,16 @@ export function ScheduleScreen(): React.JSX.Element {
             // day. Nothing to open: the card is all there is to it.
             const card = entry.card;
             const meta = [card.siteName, card.marker ? t(card.marker) : null].filter(Boolean).join('  ·  ');
+            // Read aloud whole: the time, the place, the site and whose it is that day.
+            const spoken = [
+              t('schedule.passA11y', { area: card.areaName }),
+              `${formatTime(card.startsAt)}–${formatTime(card.endsAt)}`,
+              meta,
+            ]
+              .filter(Boolean)
+              .join(', ');
             return (
-              <View style={[styles.card, styles.cardPass]} accessible accessibilityLabel={t('schedule.passA11y', { area: card.areaName })}>
+              <View style={[styles.card, styles.cardPass]} accessible accessibilityLabel={spoken}>
                 <View style={styles.cardTime}>
                   <Text style={styles.cardTimeText}>{formatTime(card.startsAt)}</Text>
                   <Text style={styles.cardTimeSub}>{formatTime(card.endsAt)}</Text>

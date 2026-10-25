@@ -63,8 +63,10 @@ import {
 
 const uuid = () => new ParseUUIDPipe({ version: '4' });
 
+/** A calendar date that exists: 2026-02-30 is refused, not read as 2 March. */
 function isoDate(value: string): string {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(new Date(`${value}T00:00:00.000Z`).getTime())) {
+  const day = new Date(`${value}T00:00:00.000Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(day.getTime()) || day.toISOString().slice(0, 10) !== value) {
     throw new BadRequestException('date: YYYY-MM-DD.');
   }
   return value;

@@ -1,5 +1,5 @@
 import type { SupervisionCoverDecision } from '@prisma/client';
-import { passDates, passSpan, spansMeet, type PassArea, type PassRule } from '../supervision/pass-days';
+import { passDates, passRunsOn, passSpan, spansMeet, type PassArea, type PassRule } from '../supervision/pass-days';
 import type { ClosedRange, YearBounds } from '../staffing/teaching-weeks';
 
 /**
@@ -24,6 +24,10 @@ import type { ClosedRange, YearBounds } from '../staffing/teaching-weeks';
  *
  * `outsideAbsence`: a decision whose pass no longer shares a minute with its
  * own absence (the period was shortened past it, a pass already lived).
+ * `runs` false: a decision on a day its pass no longer runs — a lov added
+ * since, the area's årskurser changed, its teacher deactivated or the läsår
+ * shortened. Nothing refuses those writes, so the board says it, and Ångra
+ * tells the vikarie the pass is off.
  *
  * The time and the area are the pass's on the date; a decision without a
  * live pair shows the occurrence it stored. No row carries a reason, a note
@@ -48,6 +52,8 @@ export interface PassBoardItem {
   decisionStale: boolean;
   passed: boolean;
   outsideAbsence: boolean;
+  /** Whether the pass runs on the date (its weekday, dates, lov, teacher); false only for a decision left on a day it no longer runs. */
+  runs: boolean;
 }
 
 export interface PassSummary {
@@ -118,7 +124,12 @@ export function absenceDates(absence: { startsAt: Date; endsAt: Date }, timezone
 
 const keyOf = (shiftId: string, date: string) => `${shiftId}:${date}`;
 
-/** Every pair, earliest first. */
+/**
+ * Every pair, earliest first. One item per pass and date: two adjacent
+ * absences of one teacher (one ends 10:10, the next starts there) both touch
+ * a 10:00–10:20 pass, and the pair is the earlier one's; a decision keeps the
+ * absence it was made under, which then names the item.
+ */
 export function passBoardItems(input: PassBoardInput): PassBoardItem[] {
   const live = new Map<string, { absence: BoardAbsence; shift: BoardShift; date: string; span: { startsAt: Date; endsAt: Date } }>();
   const byTeacher = new Map<string, BoardShift[]>();
@@ -139,6 +150,16 @@ export function passBoardItems(input: PassBoardInput): PassBoardItem[] {
     }
   }
   const decided = new Map(input.covers.map((cover) => [keyOf(cover.shiftId, cover.date), cover]));
+  const shiftById = new Map(input.shifts.map((shift) => [shift.id, shift]));
+  /** A decision without a live pair: does its pass still run that day? */
+  const stillRuns = (cover: BoardCover): boolean => {
+    const shift = shiftById.get(cover.shiftId);
+    const year = shift ? input.years.get(shift.academicYearId) : undefined;
+    const area = shift ? input.areas.get(shift.areaId) : undefined;
+    return Boolean(
+      shift && year && area && passRunsOn(shift, area, year, input.closures.get(shift.academicYearId) ?? [], cover.date),
+    );
+  };
   const keys = [...new Set([...live.keys(), ...decided.keys()])];
   const items = keys.map((key): PassBoardItem => {
     const pair = live.get(key);
@@ -163,6 +184,7 @@ export function passBoardItems(input: PassBoardInput): PassBoardItem[] {
       passed: span.endsAt.getTime() <= input.now.getTime(),
       outsideAbsence:
         cover !== undefined && !spansMeet(span, { startsAt: cover.absenceStartsAt, endsAt: cover.absenceEndsAt }),
+      runs: pair !== undefined || stillRuns(cover!),
     };
   });
   return items.sort(

@@ -110,7 +110,9 @@ export class SupervisionCoverService {
     return this.prisma.withRls(user, async (tx) => {
       const timezone = await schoolTimezone(tx, schoolId);
       const occurrence = await readPassOccurrence(tx, shiftId, date, timezone);
-      if (!occurrence || !occurrence.runs) throw notAffected();
+      // A pass that no longer runs that day (a lov added since the booking,
+      // its teacher deactivated) needs nobody: the board offers Ångra alone.
+      if (!occurrence?.runs) throw notAffected();
       const { shift, area, year } = occurrence;
       const read = await readPersonDays(tx, { date, timezone, academicYearId: shift.academicYearId });
       const target = targetOf(occurrence, date);
@@ -221,6 +223,9 @@ export class SupervisionCoverService {
     const effects = await this.cover.write(user, async (tx) => {
       const timezone = await schoolTimezone(tx, schoolId);
       const state = await this.lockedPair(tx, shiftId, date, timezone, dto.absenceId, dto.substituteId ?? null);
+      // A decision left on a day the pass no longer runs is undone, never
+      // replaced: nobody is needed there (supervision-board.ts `runs`).
+      if (!state.occurrence.runs) throw notAffected();
       const now = this.cover.now();
       if (state.span.endsAt.getTime() <= now.getTime()) throw held();
       if (state.status !== 'OPEN' || dto.expected !== 'OPEN') throw stale(state.status);
@@ -233,7 +238,7 @@ export class SupervisionCoverService {
         if (substituteId === occurrence.shift.userId) {
           throw new ConflictException({ message: 'Läraren är själv frånvarande då.', code: SUBSTITUTE_IS_ABSENT });
         }
-        warnings.push(...(await this.checkVikarie(tx, user, occurrence, date, timezone, substituteId)));
+        warnings.push(...(await this.checkVikarie(tx, user, occurrence, state.span, date, timezone, substituteId)));
       }
       // A stale decision's vikarie (away, or gone) is told the pass is off.
       if (cover?.decision === 'SUBSTITUTE' && cover.substituteId && cover.substituteId !== dto.substituteId) {
@@ -341,6 +346,7 @@ export class SupervisionCoverService {
     tx: PrismaClient,
     user: AuthenticatedUser,
     occurrence: PassOccurrence,
+    span: { startsAt: Date; endsAt: Date },
     date: string,
     timezone: string,
     substituteId: string,
@@ -352,7 +358,7 @@ export class SupervisionCoverService {
       userIds: [substituteId],
     });
     const day = read.days.get(substituteId);
-    const target = targetOf(occurrence, date);
+    const target = targetOf(occurrence, date, span);
     const findings = day ? hardFindings(day, target) : [{ code: 'INACTIVE' as const, params: {} }];
     const codes = new Set(findings.map((finding) => finding.code));
     if (codes.has('INACTIVE')) {
@@ -406,14 +412,20 @@ export async function undoCover(tx: PrismaClient, cover: CoverRow): Promise<Cove
   return effects;
 }
 
-/** The pass on its date as a cover target: no cap (cover-rules.ts). */
-function targetOf(occurrence: PassOccurrence, date: string): CoverTarget {
+/**
+ * The pass on its date as a cover target: no cap (cover-rules.ts), and its
+ * time the pair's (the time a standing decision stored, when the absence no
+ * longer reaches the pass). Nobody is "on" a pass as a teacher is on a
+ * lesson: its own teacher is left out as ABSENT, and refused by name.
+ */
+function targetOf(occurrence: PassOccurrence, date: string, span?: { startsAt: Date; endsAt: Date }): CoverTarget {
+  const when = span ?? occurrence.span;
   return {
     id: passTargetId(occurrence.shift.id, date),
     date,
-    start: occurrence.span.startsAt.getTime(),
-    end: occurrence.span.endsAt.getTime(),
-    teacherIds: [occurrence.shift.userId],
+    start: when.startsAt.getTime(),
+    end: when.endsAt.getTime(),
+    teacherIds: [],
     kind: 'PASS',
   };
 }

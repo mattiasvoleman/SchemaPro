@@ -48,7 +48,10 @@
 --     service refuses to move a pass with decisions ahead.
 --   * decision SUBSTITUTE carries a substituteId, NO_COVER none, and the
 --     vikarie is never the absent teacher (CHECKs). decidedByUserId is audit,
---     as on TeacherAbsenceCovers. No column holds free text or a reason.
+--     as on TeacherAbsenceCovers, with its key: ("decidedByUserId",
+--     "schoolId") -> Users, ON DELETE SET NULL ("decidedByUserId"), so the
+--     decider is a person of the school and their removal keeps the
+--     decision. No column holds free text or a reason.
 --
 -- Every key ON UPDATE NO ACTION, as 20261207090000's: ids are never
 -- rewritten, and a cascade would carry an owner's change of a row's school
@@ -180,7 +183,7 @@ CREATE TABLE "SupervisionCovers" (
 );
 
 CREATE UNIQUE INDEX "SupervisionCovers_shiftId_date_key" ON "SupervisionCovers"("shiftId", "date");
--- The board's window, and a day's decisions in the proposal's basis.
+-- The board's window and the week's counter.
 CREATE INDEX "SupervisionCovers_schoolId_date_idx" ON "SupervisionCovers"("schoolId", "date");
 -- The vikarie's week and their day in the cover rules; the users key's cascade.
 CREATE INDEX "SupervisionCovers_substituteId_date_idx" ON "SupervisionCovers"("substituteId", "date");
@@ -189,6 +192,8 @@ CREATE INDEX "SupervisionCovers_absenceId_absentTeacherId_schoolId_idx"
     ON "SupervisionCovers"("absenceId", "absentTeacherId", "schoolId");
 -- The area key's cascade.
 CREATE INDEX "SupervisionCovers_areaId_schoolId_idx" ON "SupervisionCovers"("areaId", "schoolId");
+-- The decider key's SET NULL when a person is removed.
+CREATE INDEX "SupervisionCovers_decidedByUserId_schoolId_idx" ON "SupervisionCovers"("decidedByUserId", "schoolId");
 
 ALTER TABLE "SupervisionCovers"
     ADD CONSTRAINT "SupervisionCovers_schoolId_fkey" FOREIGN KEY ("schoolId")
@@ -205,6 +210,9 @@ ALTER TABLE "SupervisionCovers"
 ALTER TABLE "SupervisionCovers"
     ADD CONSTRAINT "SupervisionCovers_substituteId_schoolId_fkey" FOREIGN KEY ("substituteId", "schoolId")
     REFERENCES "Users"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION;
+ALTER TABLE "SupervisionCovers"
+    ADD CONSTRAINT "SupervisionCovers_decidedByUserId_schoolId_fkey" FOREIGN KEY ("decidedByUserId", "schoolId")
+    REFERENCES "Users"("id", "schoolId") ON DELETE SET NULL ("decidedByUserId") ON UPDATE NO ACTION;
 
 -- ---------------------------------------------------------------------------
 -- Row-level security and grants. See the preamble.
@@ -361,7 +369,10 @@ REVOKE ALL ON FUNCTION app.teacher_absences_own_writes_are_narrow() FROM PUBLIC;
 
 -- ---------------------------------------------------------------------------
 -- SUPERVISION_COVER_REACH: the six arms above and no other; none for a
--- PostgREST role, the service or the sync principal.
+-- PostgREST role, the service or the sync principal. Each expression an arm
+-- has (USING, WITH CHECK) names the caller's school and the arm's role, has
+-- no OR and no NOT, and a teacher's arm anchors its own column to the
+-- caller: a name and a command alone would let `USING (true)` through.
 -- ---------------------------------------------------------------------------
 
 DO $$
@@ -374,17 +385,33 @@ BEGIN
   SELECT string_agg(p.policyname || ' ' || p.cmd || ' ' || p.roles::text, ', ' ORDER BY p.policyname) INTO bad
     FROM pg_policies p
    WHERE p.schemaname = 'public' AND p.tablename = 'SupervisionCovers'
-     AND NOT (p.roles = '{app_authenticated}'::name[]
-              AND p.permissive = 'PERMISSIVE'
-              AND (p.policyname, p.cmd) IN (
-                    ('supervision_covers_admin_select', 'SELECT'),
-                    ('supervision_covers_substitute_select', 'SELECT'),
-                    ('supervision_covers_absent_select', 'SELECT'),
-                    ('supervision_covers_admin_insert', 'INSERT'),
-                    ('supervision_covers_admin_update', 'UPDATE'),
-                    ('supervision_covers_admin_delete', 'DELETE'))
-              AND coalesce(p.qual, '') NOT LIKE '% OR %'
-              AND (p.cmd = 'SELECT' OR coalesce(p.with_check, p.qual) LIKE '%current_user_may(''DRIFT''%'));
+     AND NOT coalesce(
+           p.roles = '{app_authenticated}'::name[]
+           AND p.permissive = 'PERMISSIVE'
+           AND (p.policyname, p.cmd) IN (
+                 ('supervision_covers_admin_select', 'SELECT'),
+                 ('supervision_covers_substitute_select', 'SELECT'),
+                 ('supervision_covers_absent_select', 'SELECT'),
+                 ('supervision_covers_admin_insert', 'INSERT'),
+                 ('supervision_covers_admin_update', 'UPDATE'),
+                 ('supervision_covers_admin_delete', 'DELETE'))
+           AND (SELECT bool_and(
+                         e LIKE '%current_school_id()%'
+                         AND e NOT LIKE '% OR %'
+                         AND e NOT LIKE '%NOT %'
+                         AND e LIKE CASE WHEN p.policyname LIKE 'supervision_covers_admin_%'
+                                         THEN '%current_user_role()%= ''SCHOOL_ADMIN''::"UserRole"%'
+                                         ELSE '%current_user_role()%= ''TEACHER''::"UserRole"%' END
+                         AND e LIKE CASE p.policyname
+                                      WHEN 'supervision_covers_substitute_select'
+                                        THEN '%("substituteId" = ( SELECT app.current_user_id() AS current_user_id))%'
+                                      WHEN 'supervision_covers_absent_select'
+                                        THEN '%("absentTeacherId" = ( SELECT app.current_user_id() AS current_user_id))%'
+                                      ELSE '%' END)
+                  FROM unnest(ARRAY[p.qual, p.with_check]) e
+                 WHERE e IS NOT NULL)
+           AND (p.cmd = 'SELECT' OR coalesce(p.with_check, p.qual) LIKE '%current_user_may(''DRIFT''%'),
+         false);
   IF bad IS NOT NULL THEN
     RAISE EXCEPTION 'SUPERVISION_COVER_REACH: these arms reach SupervisionCovers beyond the admin''s read, the teacher''s own and Drift''s writes: %', bad;
   END IF;

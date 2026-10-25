@@ -35,6 +35,7 @@ describe("the teacher's passes in their week", () => {
         subtitle: "Skolgården",
         room: "Norra",
         color: PASS_COLOR,
+        duty: true,
       },
     ]);
   });

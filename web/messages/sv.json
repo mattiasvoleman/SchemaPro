@@ -4936,7 +4936,7 @@
     "undoTitle": "Ångra besluten efter den nya sluttiden?",
     "undoBody": "{count, plural, one {# lektion eller rastvaktspass} other {# lektioner och rastvaktspass}} efter tidpunkten har redan en vikarie eller ett annat beslut. Ångra {count, plural, one {beslutet} other {besluten}} och avsluta?",
     "undoConfirm": "Ångra och avsluta",
-    "teacherHasDecisions": "Skolledningen har redan ordnat vikarie eller något annat för lektioner efter tidpunkten. Be dem avsluta frånvaron."
+    "teacherHasDecisions": "Skolledningen har redan ordnat vikarie eller något annat för lektioner eller rastvaktspass efter tidpunkten. Be dem avsluta frånvaron."
   },
   "absenceWithdraw": {
     "title": "Återkalla frånvaron?",
@@ -4946,7 +4946,7 @@
     "undoTitle": "Ångra besluten och återkalla?",
     "undoBody": "{count, plural, one {# lektion eller rastvaktspass} other {# lektioner och rastvaktspass}} har redan en vikarie eller ett annat beslut. Ångra {count, plural, one {det} other {dem}} och återkalla frånvaron?",
     "undoConfirm": "Ångra och återkalla",
-    "teacherHasDecisions": "Skolledningen har redan ordnat vikarie eller något annat för dina lektioner. Be dem återkalla frånvaron."
+    "teacherHasDecisions": "Skolledningen har redan ordnat vikarie eller något annat för dina lektioner eller rastvaktspass. Be dem återkalla frånvaron."
   },
   "coverStatus": {
     "OPEN": "Behöver vikarie",
@@ -5043,7 +5043,7 @@
     "loadTarget": "{minutes} av {target} min i veckan",
     "excludedTitle": "Kan inte ({count})",
     "other": "Annan lärare",
-    "otherHint": "Utanför förslagen: om den du väljer inte är behörig, förlorar lunch eller dygnsvila, går över sitt dagstak eller sina arbetsdagar, har ett uppdrag eller en lokalbokning då, eller inte har sagt att hen kan, får du en varning. Den som har en egen lektion då eller själv är frånvarande kan aldrig tillsättas och finns inte i listan.",
+    "otherHint": "Utanför förslagen: om den du väljer inte är behörig, förlorar lunch eller dygnsvila, går över sitt dagstak eller sina arbetsdagar, har ett uppdrag, ett rastvaktspass eller en lokalbokning då, eller inte har sagt att hen kan, får du en varning. Den som har en egen lektion då eller själv är frånvarande kan aldrig tillsättas och finns inte i listan.",
     "assign": "Tillsätt",
     "loadFailed": "Förslagen kunde inte hämtas",
     "loadFailedHint": "Ingen vikarie är tillsatt. Du kan fortfarande välja en annan lärare nedan, eller stänga och försöka igen om en stund."
@@ -5051,7 +5051,7 @@
   "coverPasses": {
     "title": "Rastvakt",
     "body": "Rastvaktspass där läraren är frånvarande.",
-    "summary": "{open} behöver rastvakt · {covered} med vikarie · {handled} utan ersättare · {passed} passerade utan beslut",
+    "summary": "{open} behöver rastvakt · {covered} med vikarie · {handled} utan ersättare · {passed, plural, one {# passerat} other {# passerade}} utan beslut",
     "tableCaption": "Rastvaktspass där läraren är frånvarande",
     "columnArea": "Område",
     "assign": "Tillsätt vikarie",
@@ -5065,7 +5065,8 @@
     },
     "decisionStale": "Vikarien är själv borta: välj en ny.",
     "outsideAbsence": "Ligger inte längre inom frånvaron.",
-    "toastCovered": "Vikarien är inbokad och har fått en notis.",
+    "notRunning": "Passet går inte längre den dagen. Ångra beslutet; en inbokad vikarie får då en notis.",
+    "toastCovered": "Vikarien är inbokad. Hen får en notis om passet.",
     "toastNoCover": "Passet står utan ersättare.",
     "toastUndone": "Beslutet är ångrat.",
     "candidatesTitle": "Tillsätt vikarie för rastvakt",
@@ -5073,7 +5074,8 @@
     "candidatesEmpty": "Ingen kan ta passet utan att bryta mot en regel. Välj någon under Annan lärare, eller låt passet stå utan ersättare.",
     "candidatesLoadFailedHint": "Ingen vikarie är tillsatt. Du kan fortfarande välja en annan lärare nedan, eller stänga och försöka igen om en stund.",
     "counter": "{week} vikariepass i veckan · {term} i terminen",
-    "otherHint": "Utanför förslagen får du en varning om personen förlorar lunch eller dygnsvila, går över sina arbetsdagar, har ett uppdrag eller en lokalbokning då, eller inte har sagt att hen kan. Den som har en lektion eller ett annat rastvaktspass då, eller själv är frånvarande, kan aldrig tillsättas och finns inte i listan."
+    "otherHint": "Utanför förslagen får du en varning om personen förlorar lunch eller dygnsvila, går över sina arbetsdagar, har ett uppdrag eller en lokalbokning då, inte är tillgänglig då eller inte har sagt att hen kan. Den som har en lektion eller ett annat rastvaktspass då, eller själv är frånvarande, kan aldrig tillsättas och finns inte i listan.",
+    "staleRefetched": "Passet har ändrats sedan tavlan lästes. Tavlan är uppdaterad – titta igen innan du bestämmer."
   },
   "coverReasons": {
     "QUAL_LEGITIMATION": "Legitimerad i {subject} för åk {grades}",
@@ -5183,7 +5185,7 @@
     "COVER_TEACHER_ON_SUPERVISION": "Personen har rastvakt då. Be någon ta passet, eller välj en annan vikarie.",
     "COVER_TEACHER_BOOKED": "Vikarien har bokat en lokal då.",
     "COVER_POOL_NOT_DECLARED": "Vikarien har inte sagt att hen kan då.",
-    "COVER_TRAVEL_TIME_SHORT": "Vikarien hinner inte från {from} till {to}: {gap} min mellan lektionerna, och restiden är {minutes} min.",
+    "COVER_TRAVEL_TIME_SHORT": "Vikarien hinner inte från {from} till {to}: {gap} min emellan, och restiden är {minutes} min.",
     "SUPERVISION_COVER_NOT_AFFECTED": "Passet berörs inte längre av frånvaron. Läs om tavlan.",
     "SUPERVISION_COVER_HELD": "Passet har redan gått och ändras inte.",
     "SUPERVISION_SUBSTITUTE_REQUIRED": "Välj vem som tar passet.",

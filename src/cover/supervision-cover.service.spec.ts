@@ -259,7 +259,14 @@ describe('SupervisionCoverService', () => {
       await expect(decide()).rejects.toMatchObject({ response: { code: 'SUPERVISION_COVER_NOT_AFFECTED' } });
       // A Thursday: the Wednesday pass does not run.
       await expect(decide('2026-10-15')).rejects.toMatchObject({ response: { code: 'SUPERVISION_COVER_NOT_AFFECTED' } });
+      // Nor with a decision of this absence left there (a lov added since):
+      // it is undone, never replaced.
+      tx.supervisionCover.findUnique.mockResolvedValue(
+        coverRow({ date: new Date('2026-10-15T00:00:00Z'), startsAt: new Date('2026-10-15T08:00:00Z'), endsAt: new Date('2026-10-15T08:20:00Z') }),
+      );
+      await expect(decide('2026-10-15')).rejects.toMatchObject({ response: { code: 'SUPERVISION_COVER_NOT_AFFECTED' } });
       expect(tx.supervisionCover.create).not.toHaveBeenCalled();
+      expect(tx.supervisionCover.update).not.toHaveBeenCalled();
     });
 
     it('changes nothing once the pass has ended', async () => {
@@ -283,6 +290,19 @@ describe('SupervisionCoverService', () => {
       // The absent teacher's cover lock first, then the pass.
       const locks = statements(tx).filter((s) => s.text.includes('cover-teacher:') || s.text.includes('FOR SHARE'));
       expect(locks.map((s) => (s.text.includes('FOR SHARE') ? 'pass' : s.values[0]))).toEqual([A, 'pass']);
+    });
+
+    it('undoes a decision left on a day the pass no longer runs, and tells the vikarie', async () => {
+      tx.supervisionCover.findUnique.mockResolvedValue(
+        coverRow({ date: new Date('2026-10-15T00:00:00Z'), startsAt: new Date('2026-10-15T08:00:00Z'), endsAt: new Date('2026-10-15T08:20:00Z') }),
+      );
+      tx.teacherAbsence.findUnique.mockResolvedValue({ status: 'ACTIVE' });
+      await expect(service.undo(SHIFT, '2026-10-15', admin)).resolves.toEqual({ shiftId: SHIFT, date: '2026-10-15' });
+      expect(tx.supervisionCover.delete).toHaveBeenCalledWith({ where: { id: 'cov-1' } });
+      expect(notifications.notifyUsers).toHaveBeenCalledWith(
+        tx,
+        expect.objectContaining({ userIds: [S], type: 'SUPERVISION_COVER_WITHDRAWN' }),
+      );
     });
 
     it('answers 404 without a decision or with one of a withdrawn absence, and 409 once the pass has ended', async () => {
@@ -318,7 +338,8 @@ describe('SupervisionCoverService', () => {
       const answer = await service.candidates(SHIFT, DATE, admin);
       expect(answer.candidates.map((c) => [c.userId, c.reasons.map((r) => r.code)])).toEqual([[S, ['KNOWS_AREA', 'NOT_ON_SITE']]]);
       expect(answer.excluded).toEqual([
-        { userId: A, codes: [{ code: 'ON_LESSON', params: {} }, { code: 'ABSENT', params: {} }] },
+        // The pass's own teacher is away, and said only to be away: nobody is "on" a pass.
+        { userId: A, codes: [{ code: 'ABSENT', params: {} }] },
         { userId: T, codes: [{ code: 'BUSY_LESSON', params: { lessonId: 'l' } }] },
       ]);
       expect(recordedReads(tx)).toEqual([
@@ -327,7 +348,14 @@ describe('SupervisionCoverService', () => {
       ]);
     });
 
-    it('answers 404 for a pass that does not run that day', async () => {
+    it('answers 404 for a pass that does not run that day, even with a decision standing on it', async () => {
+      await expect(service.candidates(SHIFT, '2026-10-15', admin)).rejects.toMatchObject({
+        response: { code: 'SUPERVISION_COVER_NOT_AFFECTED' },
+      });
+      // A lov added since the vikarie was booked: the board offers Ångra alone.
+      tx.supervisionCover.findUnique.mockResolvedValue(
+        coverRow({ date: new Date('2026-10-15T00:00:00Z'), startsAt: new Date('2026-10-15T08:00:00Z'), endsAt: new Date('2026-10-15T08:20:00Z') }),
+      );
       await expect(service.candidates(SHIFT, '2026-10-15', admin)).rejects.toMatchObject({
         response: { code: 'SUPERVISION_COVER_NOT_AFFECTED' },
       });
