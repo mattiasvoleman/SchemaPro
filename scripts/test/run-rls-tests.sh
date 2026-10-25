@@ -333,4 +333,11 @@ compose exec -T "$DB_SERVICE" env "PGPASSWORD=${APP_PASSWORD}" \
   -v "inactive_auth_id=00000000-0000-4000-8000-000000000003" -tA -f /dev/stdin \
   < scripts/test/rls-policies.sql
 
+# What a policy would admit among every row, the rows the API's role cannot
+# see included, is asked as the owner (rls-owner-checks.sql explains why).
+echo "==> Evaluating the write policies over every row as ${DB_OWNER}"
+compose exec -T "$DB_SERVICE" psql -U "$DB_OWNER" -d "$DB_NAME" \
+  -v ON_ERROR_STOP=1 -tA -f /dev/stdin \
+  < scripts/test/rls-owner-checks.sql
+
 echo "==> RLS policy tests passed"

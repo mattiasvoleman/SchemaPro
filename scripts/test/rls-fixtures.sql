@@ -2379,6 +2379,107 @@ BEGIN
   PERFORM set_config('app.login_join', '', true);
 END $$;
 
+-- Huvudman (20261212090000), sections 260–268. Huvudmannen H ("RLS Kommun")
+-- owns school A (the seed's), rls-roller-school and rls-huvudman-c, whose
+-- staff must sign in with the school account; it has asked for school B
+-- (rls-fixture-school) and rls-huvudman-d, which has a decider of its own.
+-- H2 ("RLS Annan huvudman") owns nothing and has asked for the roller
+-- school, which H owns: a state the functions never make (an answer deletes
+-- every question, and an owned school cannot be asked for), planted so that
+-- section 116's matrix reads a question in the roller school and section 265
+-- has a yes to refuse. Logins, sorting last by authId:
+--
+--   …0260  P, planerare in H, no row anywhere
+--   …0261  K, kommunadministratör in H, no row anywhere
+--   …0262  X, a deactivated planerare in H
+--   …0263  Q, planerare in H2
+--   …0264  L, planerare in H, and a teacher with a row of their own at A
+--   …0265  G, planerare in H, with a deactivated guardian row in the roller
+--          school (no active row there: H's reader there)
+--   …0266  rls-huvudman-d's full administrator (its decider), no member
+--   …0267  rls-huvudman-d's schemaläggare, no member
+--   …0268  K2, kommunadministratör in H2
+--   …0269  rls-huvudman-c's full administrator (its decider), no member
+--
+-- Keys: H's live key (sh_ + 48 × 'a'), H's revoked key, H2's live key.
+DO $$
+DECLARE
+  a uuid := (SELECT id FROM "Schools" WHERE slug <> 'rls-fixture-school' ORDER BY "createdAt" LIMIT 1);
+  b uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-fixture-school');
+  m uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-roller-school');
+  c uuid;
+  d uuid;
+  h uuid;
+  h2 uuid;
+  k uuid;
+  k2 uuid;
+  row_id uuid;
+BEGIN
+  IF EXISTS (SELECT 1 FROM "Huvudmen" WHERE "organisationNumber" = '2121000001') THEN
+    RETURN;
+  END IF;
+  IF a IS NULL OR b IS NULL OR m IS NULL THEN
+    RAISE EXCEPTION 'huvudman: schools A, B and rls-roller-school must exist first';
+  END IF;
+
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ('RLS Huvudman C', 'rls-huvudman-c', 'Europe/Stockholm', now())
+  RETURNING id INTO c;
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ('RLS Huvudman D', 'rls-huvudman-d', 'Europe/Stockholm', now())
+  RETURNING id INTO d;
+  INSERT INTO "SchoolSignInMethods" ("schoolId", provider, domains, "entraTenantId", "ssoOnlyForStaff", "updatedAt")
+  VALUES (c, 'azure', ARRAY['rls-huvudman-c.example'], '7b0c2a9e-3c1d-4e5f-8a6b-0c1d2e3f4a5d', true, now());
+
+  INSERT INTO "Huvudmen" (name, "organisationNumber", "municipalityCode") VALUES ('RLS Kommun', '2121000001', '0884')
+  RETURNING id INTO h;
+  INSERT INTO "Huvudmen" (name, "organisationNumber") VALUES ('RLS Annan huvudman', '2121000002')
+  RETURNING id INTO h2;
+
+  INSERT INTO "HuvudmanMembers" ("huvudmanId", "authId", email, "firstName", "lastName", role, "isActive", "invitedAt")
+  VALUES (h,  'fe000000-0000-4000-8000-000000000260', 'hm-p@example.invalid',  'Huvudman', 'Planerare',      'PLANERARE',           true,  now()),
+         (h,  'fe000000-0000-4000-8000-000000000261', 'hm-k@example.invalid',  'Huvudman', 'Kommunadmin',    'KOMMUNADMINISTRATOR', true,  now()),
+         (h,  'fe000000-0000-4000-8000-000000000262', 'hm-x@example.invalid',  'Huvudman', 'Avaktiverad',    'PLANERARE',           false, now()),
+         (h2, 'fe000000-0000-4000-8000-000000000263', 'hm-q@example.invalid',  'Annan',    'Planerare',      'PLANERARE',           true,  now()),
+         (h,  'fe000000-0000-4000-8000-000000000264', 'hm-l@example.invalid',  'Huvudman', 'Lärare',         'PLANERARE',           true,  now()),
+         (h,  'fe000000-0000-4000-8000-000000000265', 'hm-g@example.invalid',  'Huvudman', 'Vårdnadshavare', 'PLANERARE',           true,  now()),
+         (h2, 'fe000000-0000-4000-8000-000000000268', 'hm-k2@example.invalid', 'Annan',    'Kommunadmin',    'KOMMUNADMINISTRATOR', true,  now()),
+         (h,  NULL,                                   'hm-new@example.invalid', 'Huvudman', 'Inbjuds',       'PLANERARE',           true,  NULL);
+  SELECT id INTO k FROM "HuvudmanMembers" WHERE "authId" = 'fe000000-0000-4000-8000-000000000261';
+  SELECT id INTO k2 FROM "HuvudmanMembers" WHERE "authId" = 'fe000000-0000-4000-8000-000000000268';
+
+  -- L's own teacher row at A, G's deactivated guardian row in the roller
+  -- school, and D's two administrators.
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "invitedAt", "updatedAt")
+  VALUES (a, 'hm-l-a@example.invalid', 'Huvudman', 'Lärare', 'TEACHER', 'fe000000-0000-4000-8000-000000000264', true, now(), now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "invitedAt", "updatedAt")
+  VALUES (m, 'hm-g-m@example.invalid', 'Huvudman', 'Vårdnadshavare', 'GUARDIAN', 'fe000000-0000-4000-8000-000000000265', true, now(), now())
+  RETURNING id INTO row_id;
+  UPDATE "Users" SET "isActive" = false WHERE id = row_id;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "invitedAt", "updatedAt")
+  VALUES (d, 'hm-d-full@example.invalid',  'Skola D', 'Rektor',        'SCHOOL_ADMIN', 'FULL',          'fe000000-0000-4000-8000-000000000266', true, now(), now()),
+         (d, 'hm-d-schema@example.invalid', 'Skola D', 'Schemaläggare', 'SCHOOL_ADMIN', 'SCHEMALAGGARE', 'fe000000-0000-4000-8000-000000000267', true, now(), now()),
+         (c, 'hm-c-full@example.invalid',  'Skola C', 'Rektor',        'SCHOOL_ADMIN', 'FULL',          'fe000000-0000-4000-8000-000000000269', true, now(), now());
+
+  INSERT INTO "HuvudmanSchools" ("schoolId", "huvudmanId", "requestedById")
+  VALUES (a, h, k), (m, h, k), (c, h, k);
+  INSERT INTO "HuvudmanSchoolRequests" ("huvudmanId", "schoolId", "requestedById")
+  VALUES (h, b, k), (h, d, k), (h2, m, k2);
+  INSERT INTO "HuvudmanSchoolEvents" ("huvudmanId", "schoolId", kind, "byMemberId")
+  VALUES (h, a, 'REQUESTED', k), (h, m, 'REQUESTED', k), (h, c, 'REQUESTED', k),
+         (h, b, 'REQUESTED', k), (h, d, 'REQUESTED', k), (h2, m, 'REQUESTED', k2);
+  INSERT INTO "HuvudmanSchoolEvents" ("huvudmanId", "schoolId", kind, "byUserId")
+  VALUES (h, a, 'JOINED', NULL), (h, m, 'JOINED', (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000105')),
+         (h, c, 'JOINED', NULL);
+
+  INSERT INTO "HuvudmanApiKeys" ("huvudmanId", name, "keyHash", scopes, "createdById")
+  VALUES (h,  'RLS H nyckel',          encode(sha256(convert_to('sh_' || repeat('a', 48), 'UTF8')), 'hex'),
+          ARRAY['organisations.read', 'persons.read', 'groups.read'], k),
+         (h,  'RLS H återkallad',      encode(sha256(convert_to('sh_' || repeat('b', 48), 'UTF8')), 'hex'),
+          ARRAY['persons.read'], k),
+         (h2, 'RLS H2 nyckel',         encode(sha256(convert_to('sh_' || repeat('c', 48), 'UTF8')), 'hex'),
+          ARRAY['persons.read'], k2);
+  UPDATE "HuvudmanApiKeys" SET "revokedAt" = now() WHERE name = 'RLS H återkallad';
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.
