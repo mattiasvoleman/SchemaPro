@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { recordRead } from '../access-log/access-log';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
-import { leavesLesson, replacedSubjectOf, replacementsOf, yearsOf } from '../common/replacing-groups';
+import { keptByOf, leavesLesson, replacedSubjectOf, replacementsOf, yearsOf } from '../common/replacing-groups';
 import { requireSchoolId } from '../common/utils/request-context';
 import { asDay, dayDate, isoWeekOf, localDateOf, schoolTimezone, shiftDay } from '../cover/cover-context';
 import { PrismaService } from '../database/prisma.service';
@@ -179,21 +179,37 @@ export class FamilyScheduleService {
       ).map((row) => row.studentGroupId);
       const groups = [...new Set([...(home ? [home] : []), ...teaching])];
       const homeDays = await this.homeClassDays(tx, child.id, home, from, to);
-      // Ersättande grupper: the child's replacing groups take them off their
-      // subject's other lessons of their läsår (common/replacing-groups.ts).
-      // The child's groups, read through student_groups_guardian_select for a
-      // guardian (20261211090000), give both: which replace a subject, and
-      // the läsår of each, which is the läsår of a lesson they bring the child
-      // to. A child in no teaching group asks nothing.
+      // Ersättande grupper: the child's replacing groups take them off the
+      // class's lessons in their subject, of their läsår
+      // (common/replacing-groups.ts). The child's groups, read through
+      // student_groups_guardian_select for a guardian (20261211090000), say
+      // which replace a subject, the läsår of each, and which are teaching
+      // groups that keep the child on their own lessons (keptByOf). A child
+      // in no teaching group asks nothing.
       const childGroups =
         teaching.length === 0
           ? []
           : ((await tx.studentGroup.findMany({
               where: { id: { in: groups } },
-              select: { id: true, replacesSubjectId: true, academicYearId: true },
+              select: { id: true, replacesSubjectId: true, academicYearId: true, kind: true, halfOfId: true },
             })) ?? []);
       const yearOf = yearsOf(childGroups);
+      const childGroupById = new Map(childGroups.map((group) => [group.id, group]));
       const replacements = replacementsOf(teaching, replacedSubjectOf(childGroups), yearOf);
+      // A lesson's läsår is its own group's, as the database's readers take
+      // it. A guardian reads only the child's groups, so a lesson the child
+      // reaches as an extra group (7B's svenska with 7A added) takes the läsår
+      // its date lies in instead: a lesson is published within its group's
+      // läsår, so the two agree. Read only when a replacing group exists.
+      const years =
+        replacements.length === 0
+          ? []
+          : ((await tx.academicYear.findMany({
+              where: { startDate: { lte: dayDate(to) }, endDate: { gte: dayDate(from) } },
+              select: { id: true, startDate: true, endDate: true },
+            })) ?? []);
+      const yearOfDate = (date: string) =>
+        years.find((year) => asDay(year.startDate) <= date && date <= asDay(year.endDate))?.id;
 
       const rows =
         (await tx.calendarLesson.findMany({
@@ -234,13 +250,16 @@ export class FamilyScheduleService {
         if (!viaTeaching && !(viaHome && homeDays.has(date))) return false;
         if (replacements.length === 0) return true;
         const groupIds = [row.studentGroupId, ...row.extraGroups.map((x) => x.studentGroupId)];
-        // The lesson's läsår: that of the child's group that brings them to it.
-        const year = groupIds.map((id) => yearOf.get(id)).find((found) => found !== undefined);
-        return !leavesLesson(replacements, {
-          subjectId: row.subjectId,
-          groupIds,
-          ...(year ? { academicYearId: year } : {}),
-        });
+        const year = yearOf.get(row.studentGroupId) ?? yearOfDate(date);
+        // A läsår it cannot tell takes nobody off: no answer beats last year's.
+        if (year === undefined) return true;
+        const keptBy = keptByOf(childGroupById.get(row.studentGroupId));
+        return !leavesLesson(
+          replacements,
+          { subjectId: row.subjectId, groupIds, academicYearId: year, ...(keptBy === undefined ? {} : { keptBy }) },
+          false,
+          teaching,
+        );
       });
 
       const staff = await this.staff(
