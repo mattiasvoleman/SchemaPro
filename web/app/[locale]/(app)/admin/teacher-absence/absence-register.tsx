@@ -5,10 +5,10 @@ import { useLocale, useTranslations } from "next-intl";
 import { CalendarClock, Settings2 } from "lucide-react";
 import { Link } from "@/i18n/navigation";
 import { useAbsenceReasons, useAbsences } from "@/lib/cover-queries";
-import type { Absence, AbsenceCounts } from "@/lib/cover-types";
+import type { Absence, AbsenceCounts, PassSummary } from "@/lib/cover-types";
 import { absenceFormOf, absencePeriodText, shiftDate } from "@/lib/cover-absence-form";
 import { reasonName } from "@/lib/cover-view";
-import { ABSENCE_PHASE_VARIANT, COVER_STATUS_VARIANT } from "@/lib/status-variants";
+import { ABSENCE_PHASE_VARIANT, COVER_STATUS_VARIANT, PASS_STATUS_VARIANT } from "@/lib/status-variants";
 import { cn, toDateString } from "@/lib/utils";
 import { usePurgedBefore } from "@/lib/retention-queries";
 import { isBeforePurge } from "@/lib/retention-types";
@@ -67,8 +67,11 @@ export function boardDateOf(absence: Absence, today: string): string {
   return absence.phase === "ONGOING" && first < today ? today : first;
 }
 
-/** The lessons' cover state as chips, in the board's colours (lib/status-variants.ts). */
-function CountsCell({ counts }: { counts: AbsenceCounts }) {
+/**
+ * The lessons' cover state as chips, in the board's colours (lib/status-variants.ts),
+ * and the absent teacher's rastvaktspass beside them (Rastvakt i vardagen).
+ */
+function CountsCell({ counts, passes }: { counts: AbsenceCounts; passes?: PassSummary }) {
   const t = useTranslations("teacherAbsence");
   const parts: { key: string; text: string; variant: (typeof COVER_STATUS_VARIANT)[keyof typeof COVER_STATUS_VARIANT] }[] = [];
   if (counts.open > 0) parts.push({ key: "open", text: t("countOpen", { count: counts.open }), variant: COVER_STATUS_VARIANT.OPEN });
@@ -76,6 +79,10 @@ function CountsCell({ counts }: { counts: AbsenceCounts }) {
   if (counts.cancelled > 0) parts.push({ key: "cancelled", text: t("countCancelled", { count: counts.cancelled }), variant: COVER_STATUS_VARIANT.CANCELLED });
   if (counts.handled > 0) parts.push({ key: "handled", text: t("countHandled", { count: counts.handled }), variant: COVER_STATUS_VARIANT.HANDLED_SUPERVISED_STUDY });
   if (counts.passedOpen > 0) parts.push({ key: "passed", text: t("countPassed", { count: counts.passedOpen }), variant: COVER_STATUS_VARIANT.PASSED });
+  if (passes && passes.open > 0) parts.push({ key: "passesOpen", text: t("countPassesOpen", { count: passes.open }), variant: PASS_STATUS_VARIANT.OPEN });
+  if (passes && passes.covered > 0) parts.push({ key: "passesCovered", text: t("countPassesCovered", { count: passes.covered }), variant: PASS_STATUS_VARIANT.COVERED });
+  if (passes && passes.handled > 0) parts.push({ key: "passesHandled", text: t("countPassesHandled", { count: passes.handled }), variant: PASS_STATUS_VARIANT.NO_COVER });
+  if (passes && passes.passedOpen > 0) parts.push({ key: "passesPassed", text: t("countPassesPassed", { count: passes.passedOpen }), variant: PASS_STATUS_VARIANT.PASSED });
   if (parts.length === 0) return <span className="text-muted-foreground">{t("countNone")}</span>;
   return (
     <div className="flex flex-wrap gap-1">
@@ -213,7 +220,7 @@ export function AbsenceRegister({ teachers }: { teachers: { id: string; name: st
                       <Badge variant={ABSENCE_PHASE_VARIANT[absence.phase]}>{t(`phases.${absence.phase}`)}</Badge>
                     </TableCell>
                     <TableCell className={cn(INNER_TD, WIDE)}>
-                      {absence.status === "ACTIVE" ? <CountsCell counts={absence.counts} /> : null}
+                      {absence.status === "ACTIVE" ? <CountsCell counts={absence.counts} passes={absence.passCounts} /> : null}
                     </TableCell>
                     <TableCell className={cn(INNER_TD, "pr-0 text-right")}>
                       {/* Words, not RowActions' icons: the manual (6.2) sends the reader

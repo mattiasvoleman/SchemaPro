@@ -39,6 +39,11 @@ export interface Absence {
   selfReported: boolean;
   createdAt: string;
   counts: AbsenceCounts;
+  /**
+   * The absent teacher's rastvaktspass over the absence (Rastvakt i vardagen,
+   * 20261210090000). Absent from a gateway before it.
+   */
+  passCounts?: PassSummary;
 }
 
 /** CreateAbsenceDto. Times absent = whole days. */
@@ -115,6 +120,68 @@ export interface Board {
    * 20261203090000.
    */
   notedLessonIds?: string[];
+  /**
+   * Rastvakt i vardagen (20261210090000): the absent teachers' rastvaktspass
+   * over the window and what has been decided about each. Absent from a
+   * gateway before it.
+   */
+  supervision?: PassBoardItem[];
+  supervisionSummary?: PassSummary;
+}
+
+export type PassStatus = "OPEN" | "COVERED" | "HANDLED";
+export type PassDecisionKind = "SUBSTITUTE" | "NO_COVER";
+
+/** supervision-board.ts PassBoardItem: one (absence, pass on a date) pair. Never a reason or a note. */
+export interface PassBoardItem {
+  shiftId: string;
+  date: string;
+  absenceId: string;
+  absentTeacherId: string;
+  areaId: string;
+  startsAt: string;
+  endsAt: string;
+  decision: PassDecisionKind | null;
+  decidedAt: string | null;
+  substituteId: string | null;
+  status: PassStatus;
+  decisionStale: boolean;
+  passed: boolean;
+  outsideAbsence: boolean;
+}
+
+/** supervision-board.ts PassSummary. */
+export interface PassSummary {
+  open: number;
+  covered: number;
+  handled: number;
+  passedOpen: number;
+}
+
+/** supervision-cover.service.ts PassCandidate. */
+export interface PassCandidate {
+  userId: string;
+  kind: CoverPersonKind;
+  score: number;
+  reasons: RankReason[];
+  counter: { weekLessons: number; termLessons: number; weekPasses: number; termPasses: number };
+}
+
+export interface PassCandidates {
+  shiftId: string;
+  date: string;
+  candidates: PassCandidate[];
+  excluded: { userId: string; codes: CoverMessage[] }[];
+}
+
+/** PassDecisionDto, with the pass and the date of the route. */
+export interface PassDecisionInput {
+  shiftId: string;
+  date: string;
+  absenceId: string;
+  kind: PassDecisionKind;
+  substituteId?: string;
+  expected: PassStatus;
 }
 
 export interface CoverMessage {

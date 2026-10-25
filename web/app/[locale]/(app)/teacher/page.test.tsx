@@ -64,6 +64,18 @@ vi.mock("@/lib/queries", () => ({
   useCalendarRasts: () => ({ data: [] }),
 }));
 
+/** The week's rastvaktspass (Rastvakt i vardagen): her own on Monday, one she takes as vikarie, one handed over. */
+const passes = vi.hoisted(() => ({
+  state: {
+    data: undefined as unknown,
+    isError: false,
+  },
+}));
+vi.mock("@/lib/supervision-week", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/supervision-week")>();
+  return { ...actual, useSupervisionWeek: () => passes.state };
+});
+
 vi.mock("@/components/profile-context", () => ({
   useProfile: () => ({
     profile: { id: "t-1", role: "TEACHER", firstName: "Anna", lastName: "Lind" },
@@ -81,6 +93,27 @@ vi.mock("next-intl", () => ({
 beforeEach(() => {
   cleanup();
   nav.push.mockReset();
+  passes.state = {
+    data: {
+      from: MONDAY,
+      to: "2026-09-13",
+      passes: [
+        {
+          kind: "OWN", shiftId: "s-own", date: MONDAY, startsAt: `${MONDAY}T07:00:00.000Z`, endsAt: `${MONDAY}T07:20:00.000Z`,
+          areaName: "Skolgården", siteName: "Norra", handover: null,
+        },
+        {
+          kind: "COVER", shiftId: "s-other", date: "2026-09-08", startsAt: "2026-09-08T09:30:00.000Z", endsAt: "2026-09-08T10:00:00.000Z",
+          areaName: "Matsalen", siteName: null, handover: null,
+        },
+        {
+          kind: "OWN", shiftId: "s-wed", date: "2026-09-09", startsAt: "2026-09-09T07:00:00.000Z", endsAt: "2026-09-09T07:20:00.000Z",
+          areaName: "Skolgården", siteName: "Norra", handover: "SUBSTITUTE",
+        },
+      ],
+    },
+    isError: false,
+  };
 });
 
 describe("the teacher's week", () => {
@@ -96,5 +129,30 @@ describe("the teacher's week", () => {
     await user.click(covered!);
     expect(nav.push).toHaveBeenLastCalledWith("/teacher/lektion/l-cover");
     expect(screen.getAllByText(/schedule\.substituteMarker/).length).toBeGreaterThan(0);
+  });
+
+  it("draws the week's rastvaktspass beside the lessons, opens no page for one, and says a vikarie and a handover", async () => {
+    const user = userEvent.setup();
+    render(<TeacherSchedulePage />);
+    const own = document.querySelector<HTMLElement>('[data-lesson-id="pass:OWN:s-own:2026-09-07"]');
+    const cover = document.querySelector<HTMLElement>('[data-lesson-id="pass:COVER:s-other:2026-09-08"]');
+    const handed = document.querySelector<HTMLElement>('[data-lesson-id="pass:OWN:s-wed:2026-09-09"]');
+    expect(own).not.toBeNull();
+    expect(cover).not.toBeNull();
+    expect(handed).not.toBeNull();
+    expect(own!.textContent).toContain("schedule.passTitle");
+    expect(own!.textContent).toContain("Skolgården");
+    expect(own!.textContent).toContain("Norra");
+    expect(cover!.textContent).toContain("Matsalen · schedule.passCover");
+    expect(handed!.textContent).toContain("Skolgården · schedule.passHandedOver");
+    await user.click(own!);
+    expect(nav.push).not.toHaveBeenCalled();
+  });
+
+  it("says when the passes could not be read, and keeps the lessons", () => {
+    passes.state = { data: undefined, isError: true };
+    render(<TeacherSchedulePage />);
+    expect(screen.getByText("schedule.passesLoadFailed")).toBeInTheDocument();
+    expect(document.querySelector('[data-lesson-id="l-own"]')).not.toBeNull();
   });
 });

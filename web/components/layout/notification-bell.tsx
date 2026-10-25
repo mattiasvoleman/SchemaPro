@@ -31,7 +31,9 @@ interface NotificationRow {
     | "LESSON_REINSTATED"
     | "LESSON_SUPERVISED_STUDY"
     | "CANCELLATION_DIGEST"
-    | "LEAVE_REQUESTED";
+    | "LEAVE_REQUESTED"
+    | "SUPERVISION_COVER"
+    | "SUPERVISION_COVER_WITHDRAWN";
   meta: Record<string, unknown> | null;
   readAt: string | null;
   createdAt: string;
@@ -147,6 +149,17 @@ export function NotificationBell() {
         const own = { subject: str("subjectName"), when, group: str("groupName"), room: str("roomName") };
         if (entry.type === "LESSON_COVER_WITHDRAWN") return t("lessonCoverWithdrawn", own);
         return meta.cover === true ? t("lessonSubstituteCover", own) : t("lessonSubstitute", { subject: own.subject, when });
+      }
+      case "SUPERVISION_COVER":
+      case "SUPERVISION_COVER_WITHDRAWN": {
+        // A rastvaktspass the reader takes as vikarie (Rastvakt i vardagen):
+        // the place and the time, never whose pass it is or why.
+        const pass = {
+          area: str("areaName"),
+          when: new Date(str("startsAt")).toLocaleString(),
+          end: new Date(str("endsAt")).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        };
+        return t(entry.type === "SUPERVISION_COVER" ? "supervisionCover" : "supervisionCoverWithdrawn", pass);
       }
       case "TEACHER_ABSENCE_REPORTED": {
         // Who and when; the reason is never in a notice. Whole days end at

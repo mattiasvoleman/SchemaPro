@@ -245,7 +245,7 @@ function ShiftForm({
             field,
             message:
               caught.code && t.has(`errors.${caught.code}`)
-                ? t(`errors.${caught.code}`)
+                ? (caught.params ? t(`errors.${caught.code}`, caught.params) : t(`errors.${caught.code}`))
                 : prefix
                   ? caught.message.slice(prefix[0].length)
                   : caught.message,
@@ -256,7 +256,7 @@ function ShiftForm({
       }
       setError(
         caught instanceof ApiError && caught.code && t.has(`errors.${caught.code}`)
-          ? t(`errors.${caught.code}`)
+          ? (caught.params ? t(`errors.${caught.code}`, caught.params) : t(`errors.${caught.code}`))
           : caught instanceof ApiError && caught.status === 404
             ? t("errors.notFound")
             : caught instanceof Error

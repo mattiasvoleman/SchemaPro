@@ -83,6 +83,14 @@ const CandidatesDialog = lazy(() =>
 const ProposalDialog = lazy(() =>
   import("./proposal-dialog").then((module) => ({ default: module.ProposalDialog })),
 );
+/*
+ * An absent rastvakt's passes (Rastvakt i vardagen), lazy too: mounted when
+ * the board has one, so a school without a rastvaktsschema downloads none of
+ * it, nor its candidates dialog.
+ */
+const SupervisionPasses = lazy(() =>
+  import("./supervision-passes").then((module) => ({ default: module.SupervisionPasses })),
+);
 
 /** The clock the buttons follow, a minute at a time: a lesson that starts closes its cancel. */
 function useMinuteClock(): number {
@@ -295,6 +303,7 @@ export function CoverBoard({ initialDate, initialView }: { initialDate: string |
   );
 
   const items = useMemo(() => board?.items ?? [], [board]);
+  const passes = useMemo(() => board?.supervision ?? [], [board]);
   const lessons = useMemo(() => groupByLesson(items), [items]);
   const days = useMemo(() => groupByDate(lessons), [lessons]);
   const lessonById = useMemo(() => new Map(lessons.map((lesson) => [lesson.lessonId, lesson])), [lessons]);
@@ -675,9 +684,9 @@ export function CoverBoard({ initialDate, initialView }: { initialDate: string |
             </div>
           ) : isError ? (
             <LoadError title={t("loadFailed")} hint={t("loadFailedHint")} headingLevel={2} />
-          ) : lessons.length === 0 ? (
+          ) : lessons.length === 0 && passes.length === 0 ? (
             <EmptyState icon={CalendarClock} title={t("emptyTitle")} description={t("emptyBody")} headingLevel={2} />
-          ) : (
+          ) : lessons.length === 0 ? null : (
             <>
               {/* Two renderings split by CSS alone, no matchMedia: the list on a
                   phone, the table from sm. display:none takes the other out of
@@ -732,6 +741,22 @@ export function CoverBoard({ initialDate, initialView }: { initialDate: string |
               </TableCard>
             </>
           )}
+          {!isLoading && !isError && passes.length > 0 ? (
+            <Suspense fallback={null}>
+              <div className={lessons.length > 0 ? "mt-4" : undefined}>
+                <SupervisionPasses
+                  items={passes}
+                  summary={board?.supervisionSummary}
+                  view={view}
+                  dayText={dayText}
+                  timeText={timeText}
+                  nameOf={nameOf}
+                  teachers={teachers}
+                  now={now}
+                />
+              </div>
+            </Suspense>
+          ) : null}
         </div>
         <CounterPanel date={date} nameOf={nameOf} />
       </div>

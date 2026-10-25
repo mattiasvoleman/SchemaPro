@@ -12,9 +12,13 @@ import type {
   CoverStatus,
   Hours,
   HoursRow,
+  PassBoardItem,
+  PassCandidates,
+  PassSummary,
   RankReason,
   TeacherRole,
 } from "../../../lib/cover-types";
+import type { WeekPass } from "../../../lib/supervision-week";
 import { Reply, route, type GatewayRoute } from "../gateway-routes";
 import { addDays, mondayOf, NOW, stockholmInstant, THIS_MONDAY } from "./calendar";
 import {
@@ -30,7 +34,8 @@ import {
   type StoredAbsence,
 } from "./cover-world";
 import { SUBSTITUTE_POOL } from "./school-days";
-import { byId, GROUP_LIST, MASTER_LESSONS, REQUIREMENTS, SUBJECT_LIST, TEACHER_LIST } from "./world";
+import { byId, GROUP_LIST, MASTER_LESSONS, REQUIREMENTS, SUBJECT_LIST, TEACHER_LIST, TEACHERS, YEAR } from "./world";
+import { supervisionAreaName, supervisionShifts, supervisionSiteName } from "./supervision";
 
 /**
  * Vikarieplanering's reads (src/cover/cover.controller.ts): the absence
@@ -161,7 +166,13 @@ function viewOf(absence: StoredAbsence, now: number): Absence {
         : at(absence.startsAt) <= now
           ? "ONGOING"
           : "PLANNED";
-  return { ...stored, phase, selfReported: createdById === absence.userId, counts: summaryOf(pairsOf([absence], now)) };
+  return {
+    ...stored,
+    phase,
+    selfReported: createdById === absence.userId,
+    counts: summaryOf(pairsOf([absence], now)),
+    passCounts: passSummaryOf(absence.status === "ACTIVE" ? passesOf([absence], ownDays, now) : []),
+  };
 }
 
 /**
@@ -189,6 +200,132 @@ function absences(query: URLSearchParams, person: { role: string; userId: string
     .map((row) => viewOf(row, now));
 }
 
+// --- An absent rastvakt's passes (Rastvakt i vardagen) ---------------------------------
+
+/**
+ * supervision-board.ts: each pass of an absent teacher on each date of the
+ * window it runs (its weekday, Från and Till) sharing a minute with an
+ * ACTIVE absence, and the board's decisions. The one decision here: Anna
+ * takes Bo's Monday on the yard this week. No lov falls in the fixture's week.
+ */
+const PASS_DECISIONS: { shiftId: string; date: string; decision: "SUBSTITUTE" | "NO_COVER"; substituteId: string | null }[] = [
+  {
+    shiftId: supervisionShifts(YEAR.id).find((row) => row.userId === TEACHERS.bo.id && row.dayOfWeek === 1)!.id,
+    date: THIS_MONDAY,
+    decision: "SUBSTITUTE",
+    substituteId: TEACHERS.anna.id,
+  },
+];
+
+const isoDay = (date: string) => new Date(`${date}T00:00:00Z`).getUTCDay() || 7;
+
+function passesOf(absences: readonly StoredAbsence[], days: () => { from: string; to: string }, now: number): PassBoardItem[] {
+  const items: PassBoardItem[] = [];
+  for (const absence of absences) {
+    const window = days();
+    for (const shift of supervisionShifts(YEAR.id).filter((row) => row.userId === absence.userId)) {
+      for (let date = window.from; date <= window.to; date = addDays(date, 1)) {
+        if (isoDay(date) !== shift.dayOfWeek) continue;
+        if ((shift.validFrom && date < shift.validFrom) || (shift.validTo && date > shift.validTo)) continue;
+        const span = { startsAt: stockholmInstant(date, shift.startTime), endsAt: stockholmInstant(date, shift.endTime) };
+        if (!overlaps(span, absence)) continue;
+        const decided = PASS_DECISIONS.find((row) => row.shiftId === shift.id && row.date === date);
+        items.push({
+          shiftId: shift.id,
+          date,
+          absenceId: absence.id,
+          absentTeacherId: absence.userId,
+          areaId: shift.areaId,
+          ...span,
+          decision: decided?.decision ?? null,
+          decidedAt: decided ? stockholmInstant(addDays(THIS_MONDAY, -1), "18:00") : null,
+          substituteId: decided?.substituteId ?? null,
+          status: !decided ? "OPEN" : decided.decision === "SUBSTITUTE" ? "COVERED" : "HANDLED",
+          decisionStale: false,
+          passed: at(span.endsAt) <= now,
+          outsideAbsence: false,
+        });
+      }
+    }
+  }
+  return items.sort((a, b) => a.startsAt.localeCompare(b.startsAt) || a.shiftId.localeCompare(b.shiftId));
+}
+
+function passSummaryOf(items: readonly PassBoardItem[]): PassSummary {
+  const summary: PassSummary = { open: 0, covered: 0, handled: 0, passedOpen: 0 };
+  for (const item of items) {
+    if (item.status === "OPEN") {
+      if (item.passed) summary.passedOpen++;
+      else summary.open++;
+    } else if (item.status === "COVERED") summary.covered++;
+    else summary.handled++;
+  }
+  return summary;
+}
+
+/** The dates looked at for an absence's own passes: every fixture absence lies inside them, and the overlap does the rest. */
+const ownDays = () => ({ from: addDays(THIS_MONDAY, -60), to: addDays(THIS_MONDAY, 60) });
+
+/** supervision-cover.service.ts candidates: Cecilia free and on the hall's other days; Eva in the pool. */
+function passCandidatesFor(shiftId: string, date: string): PassCandidates {
+  return {
+    shiftId,
+    date,
+    candidates: [
+      {
+        userId: TEACHERS.cecilia.id,
+        kind: "STAFF",
+        score: 16,
+        reasons: [
+          { code: "KNOWS_AREA", params: { area: "Matsalen" }, points: 10 },
+          { code: "ON_SITE", params: {}, points: 6 },
+        ],
+        counter: { weekLessons: 0, termLessons: 1, weekPasses: 0, termPasses: 0 },
+      },
+    ],
+    excluded: [
+      { userId: TEACHERS.bo.id, codes: [{ code: "ON_LESSON", params: {} }, { code: "ABSENT", params: {} }] },
+      { userId: TEACHERS.anna.id, codes: [{ code: "BUSY_LESSON", params: {} }] },
+    ],
+  };
+}
+
+/** supervision.service.ts week: the person's own passes on their dates, and those they take as vikarie. */
+function weekOf(userId: string, from: string, to: string): WeekPass[] {
+  const passes: WeekPass[] = [];
+  for (const shift of supervisionShifts(YEAR.id).filter((row) => row.userId === userId)) {
+    for (let date = from; date <= to; date = addDays(date, 1)) {
+      if (isoDay(date) !== shift.dayOfWeek) continue;
+      if ((shift.validFrom && date < shift.validFrom) || (shift.validTo && date > shift.validTo)) continue;
+      const decided = PASS_DECISIONS.find((row) => row.shiftId === shift.id && row.date === date);
+      passes.push({
+        kind: "OWN",
+        shiftId: shift.id,
+        date,
+        startsAt: stockholmInstant(date, shift.startTime),
+        endsAt: stockholmInstant(date, shift.endTime),
+        areaName: supervisionAreaName(shift.areaId),
+        siteName: supervisionSiteName(shift.areaId),
+        handover: decided?.decision ?? null,
+      });
+    }
+  }
+  for (const decided of PASS_DECISIONS.filter((row) => row.substituteId === userId && row.date >= from && row.date <= to)) {
+    const shift = supervisionShifts(YEAR.id).find((row) => row.id === decided.shiftId)!;
+    passes.push({
+      kind: "COVER",
+      shiftId: shift.id,
+      date: decided.date,
+      startsAt: stockholmInstant(decided.date, shift.startTime),
+      endsAt: stockholmInstant(decided.date, shift.endTime),
+      areaName: supervisionAreaName(shift.areaId),
+      siteName: supervisionSiteName(shift.areaId),
+      handover: null,
+    });
+  }
+  return passes.sort((a, b) => a.startsAt.localeCompare(b.startsAt) || a.kind.localeCompare(b.kind));
+}
+
 // --- The board -------------------------------------------------------------------------
 
 /** cover.service.ts board: the pairs of the window's days, and the ACTIVE absences touching it. */
@@ -197,6 +334,7 @@ function boardOf(from: string, to: string): Board {
   const days = { startsAt: stockholmInstant(from, "00:00"), endsAt: stockholmInstant(addDays(to, 1), "00:00") };
   const active = ABSENCE_LIST.filter((row) => row.status === "ACTIVE" && overlaps(row, days));
   const items = pairsOf(active, now).filter((item) => item.date >= from && item.date <= to);
+  const passes = passesOf(active, () => ({ from, to }), now);
   return {
     from,
     to,
@@ -205,6 +343,8 @@ function boardOf(from: string, to: string): Board {
     absences: active.map(({ id, userId, startsAt, endsAt }) => ({ id, userId, startsAt, endsAt })),
     // Lektionslogg: the board's lessons with a note to the substitute.
     notedLessonIds: [...new Set(items.map((item) => item.lessonId))].filter((id) => SUBSTITUTE_NOTES.has(id)).sort(),
+    supervision: passes,
+    supervisionSummary: passSummaryOf(passes),
   };
 }
 
@@ -419,6 +559,16 @@ export const coverRoutes: GatewayRoute[] = [
   route("GET", "/api/v1/cover/lessons/:lessonId/candidates", ({ params }) => {
     const lesson = byId(COVER_LESSONS, params.lessonId);
     return lesson ? candidatesFor(lesson) : new Reply(404, { message: "Lektionen finns inte." });
+  }),
+  route("GET", "/api/v1/cover/supervision/:shiftId/:date/candidates", ({ params }) =>
+    passCandidatesFor(params.shiftId!, params.date!),
+  ),
+  // The signed-in person's own passes, whatever their role (supervision.service.ts week).
+  route("GET", "/api/v1/supervision/week", ({ person, query }) => {
+    const from = query.get("from");
+    const to = query.get("to");
+    if (!from || !to) return missing("from, to");
+    return { from, to, passes: person ? weekOf(person.userId, from, to) : [] };
   }),
   route("GET", "/api/v1/cover/pool", () =>
     SUBSTITUTE_POOL.map((member) => ({ userId: member.userId, createdAt: POOL_JOINED })),

@@ -136,7 +136,7 @@ function AreaForm({ onOpenChange, area, sites, saving, onSave }: Omit<AreaDialog
       }
       setError(
         caught instanceof ApiError && caught.code && t.has(`errors.${caught.code}`)
-          ? t(`errors.${caught.code}`)
+          ? (caught.params ? t(`errors.${caught.code}`, caught.params) : t(`errors.${caught.code}`))
           : caught instanceof Error
             ? caught.message
             : tCommon("error"),

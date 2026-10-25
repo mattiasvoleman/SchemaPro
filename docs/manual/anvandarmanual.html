@@ -2820,10 +2820,11 @@
       Ligger ett pass under en av lärarens lektioner i grundschemat, som
       lärare eller medlärare, sparas det ändå. Dialogen säger vilken lektion
       det gäller innan den stängs, och passet visar det i schemat. Generatorn
-      och vikarieförslaget känner ännu inte till passen. Generatorn kan alltså
-      lägga lektioner på passets tid, och vikarieförslaget kan föreslå läraren
-      då. Flytta passet eller lektionen. Behåll också tiderna i lärarens
-      uppdrag Rastvakt (4.3), så håller generatorn dem fria.
+      känner ännu inte till passen och kan alltså lägga lektioner på passets
+      tid. Flytta passet eller lektionen. Behåll också tiderna i lärarens
+      uppdrag Rastvakt (4.3), så håller generatorn dem fria. Vikarieförslaget
+      känner däremot till passen: en lärare som har rastvakt föreslås inte
+      för en lektion samtidigt (6.3).
     </p>
   </div>
 
@@ -2850,6 +2851,20 @@
     men du kan fortfarande ge lärarens pass ett slutdatum.
   </p>
 
+  <h4>Passen i vardagen</h4>
+  <p>
+    Passen står i lärarens vecka under <span class="path">Mitt schema</span>
+    och i appens schema, märkta <em>Rastvakt</em> med område och skolområde.
+    Är läraren frånvarande när ett pass går hamnar passet på vikarietavlan
+    (6.3). Ett pass som har ett beslut på vikarietavlan, en vikarie eller
+    <em>Utan ersättare</em>, på en dag som inte har varit kan inte flyttas,
+    lämnas över till en annan lärare, få datum som lämnar dagen utanför eller
+    tas bort, och inte heller dess område. Systemet säger hur många beslut
+    det gäller och från vilket datum. Ångra besluten på vikarietavlan först,
+    så får vikarien veta att passet är avbokat. Anteckningen går alltid att
+    ändra.
+  </p>
+
   <h4>Rastvakten i belastningen</h4>
   <p>
     Varje pass är ett uppdrag i lärarens tjänst. Det räknas med sina minuter
@@ -2874,12 +2889,10 @@
     <p>
       Passen följer inte med till nästa läsår. Områdena står kvar, men
       passen planeras om mot det nya läsårets personal och raster.
-      Generatorn och vikarieförslaget känner inte till passen. Vill du att
-      generatorn håller lärarens passtider fria anger du tiderna på uppdraget
-      Rastvakt (4.3). Passen syns ännu inte i lärarens veckoschema, och en
-      frånvarande rastvakt hamnar inte på vikarietavlan. Passen har ingen
-      historik: en ändring syns inte under <span class="ui">Historik</span>
-      (4.3).
+      Generatorn känner inte till passen. Vill du att generatorn håller
+      lärarens passtider fria anger du tiderna på uppdraget Rastvakt (4.3).
+      Passen har ingen historik: en ändring syns inte under
+      <span class="ui">Historik</span> (4.3).
     </p>
   </div>
 </section>
@@ -3868,7 +3881,9 @@
     registret: pågående och kommande frånvaro (avslutad och återkallad med
     <span class="ui">Visa avslutade</span>), med lärare, period, orsak, läge och
     hur långt skolan har kommit med lektionerna — hur många som behöver
-    vikarie, har vikarie, är inställda eller hanterade på annat sätt.
+    vikarie, har vikarie, är inställda eller hanterade på annat sätt — och
+    med lärarens rastvaktspass under perioden: hur många som ska täckas, har
+    vikarie eller står utan ersättare.
   </p>
   <p>
     <span class="ui">Registrera frånvaro</span> öppnar formuläret med läraren
@@ -3908,14 +3923,16 @@
   <h4>Ändra, avsluta i förtid, återkalla</h4>
   <ul>
     <li><span class="ui">Ändra</span> flyttar perioden eller byter orsak.
-      Faller lektioner som redan har en vikarie eller ett annat beslut utanför
-      den nya perioden frågar systemet om besluten ska ångras.</li>
+      Faller lektioner eller rastvaktspass som redan har en vikarie eller ett
+      annat beslut utanför den nya perioden frågar systemet om besluten ska
+      ångras. En vikarie som inte längre behövs får notisen att passet är
+      avbokat.</li>
     <li><span class="ui">Avsluta i förtid</span> gäller från en dag och en tid
       du väljer, även bakåt (”kom tillbaka i går”), men inte före frånvarons
       början. Lektioner efter tidpunkten lämnar tavlan.</li>
     <li><span class="ui">Återkalla</span> används när frånvaron registrerades
-      av misstag. Har lektioner som redan hållits beslut på sig går det inte —
-      avsluta i förtid i stället.</li>
+      av misstag. Har lektioner eller rastvaktspass som redan varit beslut på
+      sig går det inte — avsluta i förtid i stället.</li>
   </ul>
 
   <h4>Förhandsvisningen nedanför</h4>
@@ -4009,7 +4026,7 @@
   <h4>Förslagen</h4>
   <p>
     Förslagen bryter aldrig mot en hård regel: personen är ledig då (inga egna
-    lektioner, uppdrag, spärrar eller lokalbokningar), behåller sin lunch och
+    lektioner, rastvaktspass, uppdrag, spärrar eller lokalbokningar), behåller sin lunch och
     sin dygnsvila enligt arbetstidsreglerna, är inte själv frånvarande och har
     — om hen står i vikariepoolen utan tjänst — sagt att hen kan just då. De
     rangordnas efter behörighet i ämnet och årskursen, om personen känner
@@ -4036,7 +4053,7 @@
     varför — en frånvarande kollega står som <em>Är själv frånvarande</em>, utan
     orsak. Vill du ändå välja någon annan finns <span class="ui">Annan
     lärare</span>: du får en varning för lunch, dygnsvila, tillgänglighet,
-    ett uppdrag, en lokalbokning eller behörighet, men vikarien sätts in. En
+    ett uppdrag, ett rastvaktspass, en lokalbokning eller behörighet, men vikarien sätts in. En
     lärare som har en egen lektion då, eller som själv är frånvarande, kan
     aldrig sättas in och finns därför inte i listan.
   </p>
@@ -4050,6 +4067,52 @@
     det du inte vill ha, eller uteslut en person och räkna om, och tillämpa
     resten i ett svep. Har dagen ändrats sedan förslaget gjordes tillämpas
     ingenting, och ett nytt förslag räknas fram.
+  </p>
+
+  <h4>Rastvakt</h4>
+  <p>
+    Har en frånvarande lärare rastvaktspass (4.6) under frånvaron står de i
+    en egen del under lektionerna, <span class="ui">Rastvakt</span>, med tid,
+    område, vem som är borta, status och vikarie. Ett pass står där de dagar
+    det går: på sin veckodag, mellan sina datum och inte på ett lov som
+    stänger området. Rubriken säger hur många pass som behöver rastvakt, har
+    vikarie, står utan ersättare och har passerat utan beslut.
+  </p>
+  <table>
+    <thead><tr><th style="width:30%">Status</th><th>Betyder</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Behöver rastvakt</td><td>Inget är bestämt. Passet är fortfarande den frånvarande lärarens.</td></tr>
+      <tr><td class="k">Vikarie tillsatt</td><td>En vikarie tar passet. Står det <em>Vikarien är själv borta</em> behöver passet en ny vikarie.</td></tr>
+      <tr><td class="k">Utan ersättare</td><td>Passet lämnas utan vikarie, till exempel när området har två rastvakter och en räcker den dagen.</td></tr>
+      <tr><td class="k">Passerad utan beslut</td><td>Passet har gått utan att något bestämdes. Det ändras inte i efterhand.</td></tr>
+    </tbody>
+  </table>
+  <p>
+    <span class="ui">Tillsätt vikarie</span> öppnar förslagen för passet.
+    Vikarien får notisen <em>Du är inbokad som rastvakt</em> med område och
+    tid, och ett mejl om skolan skickar e-post — aldrig vem hen ersätter eller
+    varför. <span class="ui">Utan ersättare</span> stänger passet utan
+    vikarie. <span class="ui">Ångra</span> tar bort beslutet, och en vikarie
+    som inte längre behövs får notisen att rastvaktspasset är avbokat.
+  </p>
+  <p>
+    Förslagen följer samma hårda regler som för en lektion: personen har
+    ingen lektion, inget annat rastvaktspass, uppdrag, spärr eller
+    lokalbokning då, behåller lunch och dygnsvila, går inte över sina
+    arbetsdagar och är inte själv frånvarande. Taket för undervisning per dag
+    gäller inte, eftersom ett pass inte är undervisning. Ordningen bygger på
+    om personen ändå är på skolan, restiden från lektionen före och efter
+    till områdets skolområde, om hen har egna pass i samma område eller
+    undervisar en klass i områdets årskurser, och hur många vikariepass
+    (lektioner och rastvakt) hen redan har haft den här veckan och terminen.
+    Under <span class="ui">Annan lärare</span> kan du välja någon utanför
+    förslagen och få en varning, men en lärare som har en lektion eller ett
+    annat pass då, eller som själv är borta, kan inte tillsättas.
+  </p>
+  <p>
+    Dagens förslag (<span class="ui">Fördela dagen</span>) gäller bara
+    lektionerna. Passen bestämmer du ett i taget. En lärare som har tagit ett
+    pass föreslås inte för en lektion samtidigt.
   </p>
 
   <h4>Vikarieräknaren och två administratörer samtidigt</h4>
@@ -4525,14 +4588,15 @@
     <tbody>
       <tr><td class="k">Vårdnadshavare</td><td>Inställd lektion, sammanfattning av avbokning, lektion som blir av igen, vikarie, självstudier, bytt sal, ändrat schema, beslut om ledighet</td><td>Oanmäld frånvaro</td></tr>
       <tr><td class="k">Elev</td><td>Inställd lektion, sammanfattning av avbokning, lektion som blir av igen, vikarie, självstudier, bytt sal, ändrat schema, beslut om ledighet</td><td>—</td></tr>
-      <tr><td class="k">Lärare och administratör</td><td>Inställd lektion, sammanfattning av avbokning, lektion som blir av igen, vikarier på mina lektioner, självstudier, bytt sal, beslut om lokalbokning, och för lärare ledighetsansökningar att besluta om som mentor</td><td>Egna vikariepass och avbokade vikariepass</td></tr>
+      <tr><td class="k">Lärare och administratör</td><td>Inställd lektion, sammanfattning av avbokning, lektion som blir av igen, vikarier på mina lektioner, självstudier, bytt sal, beslut om lokalbokning, och för lärare ledighetsansökningar att besluta om som mentor</td><td>Egna vikariepass och avbokade vikariepass, rastvaktspass som vikarie och avbokade rastvaktspass</td></tr>
     </tbody>
   </table>
   <p>
     Oanmäld frånvaro skickas alltid, eftersom skolan ska underrätta
-    vårdnadshavarna samma dag. En lärares egna vikariepass och avbokningar
-    skickas alltid, eftersom vikarietavlan (6.3) räknar med att den inbokade
-    får veta. Notisen <em>En lärare har anmält frånvaro</em> lämnar aldrig
+    vårdnadshavarna samma dag. En lärares egna vikariepass och rastvaktspass
+    som vikarie, och avbokningarna av dem, skickas alltid, eftersom
+    vikarietavlan (6.3) räknar med att den inbokade får veta. Pushen om ett
+    rastvaktspass säger när men inte var. Notisen <em>En lärare har anmält frånvaro</em> lämnar aldrig
     Rastra Schema: den mejlas inte och skickas inte som push.
   </p>
   <div class="warn">

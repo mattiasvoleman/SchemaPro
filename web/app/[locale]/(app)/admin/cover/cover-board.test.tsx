@@ -491,6 +491,127 @@ describe("Vikarietavla", () => {
   });
 });
 
+describe("an absent rastvakt's passes (Rastvakt i vardagen)", () => {
+  const PASS = {
+    shiftId: "s-gard",
+    date: DATE,
+    absenceId: "a-anna",
+    absentTeacherId: "t-anna",
+    areaId: "area-gard",
+    startsAt: `${DATE}T08:00:00.000Z`,
+    endsAt: `${DATE}T08:20:00.000Z`,
+    decision: null,
+    decidedAt: null,
+    substituteId: null,
+    status: "OPEN" as const,
+    decisionStale: false,
+    passed: false,
+    outsideAbsence: false,
+  };
+  const WITH_PASS: Board = {
+    ...BOARD,
+    items: [],
+    summary: { open: 0, covered: 0, cancelled: 0, handled: 0, passedOpen: 0 },
+    supervision: [PASS, { ...PASS, shiftId: "s-hall", areaId: "area-hall", startsAt: `${DATE}T10:30:00.000Z`, endsAt: `${DATE}T11:00:00.000Z`, decision: "SUBSTITUTE", substituteId: "t-dan", status: "COVERED" }],
+    supervisionSummary: { open: 1, covered: 1, handled: 0, passedOpen: 0 },
+  };
+  const passTable = () => screen.getByRole("table", { name: /^Rastvaktspass där läraren är frånvarande/ });
+  const passRow = (area: string) => within(passTable()).getByRole("cell", { name: area }).closest("tr")!;
+
+  beforeEach(() => {
+    get.mockImplementation(async (path: string) => {
+      if (path.startsWith("/api/v1/cover/board")) return WITH_PASS;
+      if (path.startsWith("/api/v1/cover/counter")) return { date: DATE, rows: [] };
+      if (path === "/api/v1/supervision-areas") {
+        return [
+          { id: "area-gard", name: "Skolgården" },
+          { id: "area-hall", name: "Matsalen" },
+        ];
+      }
+      if (path === `/api/v1/cover/supervision/s-gard/${DATE}/candidates`) {
+        return {
+          shiftId: "s-gard",
+          date: DATE,
+          candidates: [
+            {
+              userId: "t-bo",
+              kind: "STAFF",
+              score: 16,
+              reasons: [
+                { code: "KNOWS_AREA", params: { area: "Skolgården" }, points: 10 },
+                { code: "ON_SITE", params: {}, points: 6 },
+              ],
+              counter: { weekLessons: 1, termLessons: 3, weekPasses: 1, termPasses: 2 },
+            },
+          ],
+          excluded: [{ userId: "t-cia", codes: [{ code: "BUSY_SUPERVISION", params: {} }] }],
+        };
+      }
+      throw new Error(`unexpected GET ${path}`);
+    });
+  });
+
+  it("lists the passes when no lesson needs cover, each with its place, absent teacher, state and vikarie, never a reason", async () => {
+    renderBoard();
+    expect(await screen.findByRole("heading", { name: "Rastvakt" })).toBeInTheDocument();
+    // The areas' names arrive with their own read.
+    await within(passTable()).findByRole("cell", { name: "Skolgården" });
+    expect(screen.queryByText(/Inget att täcka|Inga lektioner/)).not.toBeInTheDocument();
+    expect(within(passRow("Skolgården")).getByText("Behöver rastvakt")).toBeInTheDocument();
+    expect(within(passRow("Skolgården")).getByText("Anna Lind")).toBeInTheDocument();
+    expect(within(passRow("Matsalen")).getByText("Vikarie tillsatt")).toBeInTheDocument();
+    expect(within(passRow("Matsalen")).getByText("Dan Ström")).toBeInTheDocument();
+    expect(screen.getByText(/^1 behöver rastvakt · 1 med vikarie/)).toBeInTheDocument();
+    // An open pass is offered a vikarie or none; a covered one only Ångra.
+    expect(within(passRow("Matsalen")).queryByRole("button", { name: /Tillsätt vikarie/ })).not.toBeInTheDocument();
+    expect(within(passRow("Matsalen")).getByRole("button", { name: /Ångra/ })).toBeInTheDocument();
+    expect(screen.queryByText(/Sjuk|Vård av barn/)).not.toBeInTheDocument();
+  });
+
+  it("books a ranked vikarie for a pass with the status the admin saw, and leaves another without one", async () => {
+    post.mockResolvedValue({ shiftId: "s-gard", date: DATE, warnings: [] });
+    const user = userEvent.setup();
+    renderBoard();
+    await within(await screen.findByRole("table", { name: /^Rastvaktspass/ })).findByRole("cell", { name: "Skolgården" });
+    await user.click(within(passRow("Skolgården")).getByRole("button", { name: /Tillsätt vikarie/ }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText("Har egna pass i Skolgården")).toBeInTheDocument();
+    expect(within(dialog).getByText("2 vikariepass i veckan · 5 i terminen")).toBeInTheDocument();
+    await user.click(within(dialog).getByText(/Kan inte/));
+    expect(within(dialog).getByText("Har rastvakt då")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: /^Bo Ek/ }));
+    await user.click(within(dialog).getByRole("button", { name: "Tillsätt" }));
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith(`/api/v1/cover/supervision/s-gard/${DATE}/decision`, {
+        absenceId: "a-anna",
+        kind: "SUBSTITUTE",
+        substituteId: "t-bo",
+        expected: "OPEN",
+      }),
+    );
+    expect(toast.success).toHaveBeenCalledWith("Vikarien är inbokad och har fått en notis.");
+
+    await user.click(within(passRow("Skolgården")).getByRole("button", { name: /Utan ersättare/ }));
+    await waitFor(() =>
+      expect(post).toHaveBeenLastCalledWith(`/api/v1/cover/supervision/s-gard/${DATE}/decision`, {
+        absenceId: "a-anna",
+        kind: "NO_COVER",
+        expected: "OPEN",
+      }),
+    );
+  });
+
+  it("undoes a pass's decision by its pass and date", async () => {
+    del.mockResolvedValue({ shiftId: "s-hall", date: DATE });
+    const user = userEvent.setup();
+    renderBoard();
+    await within(await screen.findByRole("table", { name: /^Rastvaktspass/ })).findByRole("cell", { name: "Matsalen" });
+    await user.click(within(passRow("Matsalen")).getByRole("button", { name: /Ångra/ }));
+    await waitFor(() => expect(del).toHaveBeenCalledWith(`/api/v1/cover/supervision/s-hall/${DATE}/decision`));
+    expect(toast.success).toHaveBeenCalledWith("Beslutet är ångrat.");
+  });
+});
+
 describe("the board's realtime", () => {
   const window = { from: "2030-10-14", to: "2030-10-20" };
 

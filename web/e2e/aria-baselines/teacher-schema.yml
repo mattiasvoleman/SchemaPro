@@ -1,6 +1,6 @@
 - main:
   - heading "Mitt schema" [level=1]
-  - paragraph: Dina lektioner vecka för vecka, också de du tar som vikarie
+  - paragraph: Dina lektioner och rastvaktspass vecka för vecka, också de du tar som vikarie
   - button "Föregående vecka"
   - text: Vecka <n>
   - button "Nästa vecka"
@@ -8,6 +8,7 @@
   - button "Skriv ut veckan"
   - text: Mån <datum> Tis <datum> Ons <datum> Tor <datum> Fre <datum> 09:00 10:00 11:00 12:00 13:00 14:00 15:00 Förmiddagsrast
   - button "Måndag 08:10–09:10, Svenska 7A Sal 101"
+  - button "Måndag 09:10–09:25, Rastvakt Skolgården · Vikarie · Huvudbyggnaden"
   - button "Måndag 10:40–11:40, Svenska 7B Sal 102"
   - text: Förmiddagsrast
   - button "Tisdag 08:10–09:10, Engelska 7A Sal 101"
@@ -17,3 +18,4 @@
   - button "Torsdag 08:10–08:40, Mentorstid 7A · Sal 101"
   - button "Torsdag 09:25–10:25, Matematik 9A · Vikarie Sal 201"
   - text: Förmiddagsrast
+  - button "Fredag 11:30–12:15, Rastvakt Matsalen"

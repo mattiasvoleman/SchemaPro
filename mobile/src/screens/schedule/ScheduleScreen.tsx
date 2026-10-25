@@ -16,6 +16,7 @@ import { useSync } from '../../context/SyncContext';
 import { formatDayHeading, formatTime } from '../../i18n/format';
 import { getSupabase } from '../../services/supabase';
 import { openLessonForAttendance } from '../../services/roster';
+import { fetchSupervisionWeek, passCardsOf, type PassCard } from '../../services/supervisionWeek';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Read-only schedule for the signed-in teacher.
@@ -24,6 +25,11 @@ import { openLessonForAttendance } from '../../services/roster';
 // round-trip). Selecting a lesson asks the gateway for its roster and caches
 // both into the encrypted local SQLite store, so the register can be taken
 // offline (services/roster.ts).
+//
+// The teacher's rastvaktspass (Rastvakt i vardagen) come from the gateway
+// beside them (services/supervisionWeek.ts) and are drawn among the lessons
+// as cards that open nothing. A pass read that fails says so and costs the
+// schedule none of its lessons.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DAYS_AHEAD = 7;
@@ -51,9 +57,19 @@ interface RawLessonRow {
   } | null;
 }
 
+/** The days the screen shows: today and the seven after it. */
+function scheduleWindow(): { from: string; to: string } {
+  return {
+    from: new Date().toISOString().slice(0, 10),
+    to: new Date(Date.now() + DAYS_AHEAD * 86_400_000).toISOString().slice(0, 10),
+  };
+}
+
+/** A lesson or a pass, as the list draws them. */
+type ScheduleItem = { readonly kind: 'LESSON'; readonly row: ScheduleRow } | { readonly kind: 'PASS'; readonly card: PassCard };
+
 async function fetchSchedule(teacherId: string): Promise<ScheduleRow[]> {
-  const from = new Date().toISOString().slice(0, 10);
-  const to = new Date(Date.now() + DAYS_AHEAD * 86_400_000).toISOString().slice(0, 10);
+  const { from, to } = scheduleWindow();
 
   const { data, error } = await getSupabase()
     .from('CalendarLessonTeachers')
@@ -87,6 +103,8 @@ export function ScheduleScreen(): React.JSX.Element {
   const router = useRouter();
 
   const [rows, setRows] = useState<ScheduleRow[]>([]);
+  const [passes, setPasses] = useState<PassCard[]>([]);
+  const [passesFailed, setPassesFailed] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -95,6 +113,18 @@ export function ScheduleScreen(): React.JSX.Element {
   /** True when the schedule shown is the one just read. */
   const load = useCallback(async (): Promise<boolean> => {
     if (!authState.teacherId) return false;
+    const { from, to } = scheduleWindow();
+    // The passes beside the lessons, and never in their way.
+    const passRead = fetchSupervisionWeek(from, to).then(
+      (fetched) => {
+        setPasses(passCardsOf(fetched));
+        setPassesFailed(false);
+      },
+      () => {
+        setPasses([]);
+        setPassesFailed(true);
+      },
+    );
     try {
       setError(null);
       const fetched = await fetchSchedule(authState.teacherId);
@@ -103,6 +133,8 @@ export function ScheduleScreen(): React.JSX.Element {
     } catch (err) {
       setError(t('schedule.loadError'));
       return false;
+    } finally {
+      await passRead;
     }
   }, [authState.teacherId, t]);
 
@@ -116,16 +148,19 @@ export function ScheduleScreen(): React.JSX.Element {
   }, [load]);
 
   const sections = useMemo(() => {
-    const byDate = new Map<string, ScheduleRow[]>();
-    for (const row of rows) {
-      const list = byDate.get(row.date) ?? [];
-      list.push(row);
-      byDate.set(row.date, list);
-    }
+    const byDate = new Map<string, ScheduleItem[]>();
+    const add = (date: string, item: ScheduleItem) => byDate.set(date, [...(byDate.get(date) ?? []), item]);
+    for (const row of rows) add(row.date, { kind: 'LESSON', row });
+    for (const card of passes) add(card.date, { kind: 'PASS', card });
+    const startOf = (item: ScheduleItem) => (item.kind === 'LESSON' ? item.row.startsAt : item.card.startsAt);
     return [...byDate.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([date, data]) => ({ key: date, title: formatDayHeading(date, locale), data }));
-  }, [rows, locale]);
+      .map(([date, data]) => ({
+        key: date,
+        title: formatDayHeading(date, locale),
+        data: [...data].sort((a, b) => startOf(a).localeCompare(startOf(b))),
+      }));
+  }, [rows, passes, locale]);
 
   const openLesson = useCallback(
     async (row: ScheduleRow): Promise<void> => {
@@ -178,17 +213,43 @@ export function ScheduleScreen(): React.JSX.Element {
       </View>
 
       {error !== null && <Text style={styles.errorText}>{error}</Text>}
+      {passesFailed && error === null && <Text style={styles.errorText}>{t('schedule.passesError')}</Text>}
 
       <SectionList
         sections={sections}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => (item.kind === 'LESSON' ? item.row.id : item.card.key)}
         refreshControl={
           <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor="#6366f1" />
         }
         renderSectionHeader={({ section }) => (
           <Text style={styles.sectionHeader}>{section.title}</Text>
         )}
-        renderItem={({ item }) => {
+        renderItem={({ item: entry }) => {
+          if (entry.kind === 'PASS') {
+            // A rastvaktspass: the place and the time, and whose it is that
+            // day. Nothing to open: the card is all there is to it.
+            const card = entry.card;
+            const meta = [card.siteName, card.marker ? t(card.marker) : null].filter(Boolean).join('  ·  ');
+            return (
+              <View style={[styles.card, styles.cardPass]} accessible accessibilityLabel={t('schedule.passA11y', { area: card.areaName })}>
+                <View style={styles.cardTime}>
+                  <Text style={styles.cardTimeText}>{formatTime(card.startsAt)}</Text>
+                  <Text style={styles.cardTimeSub}>{formatTime(card.endsAt)}</Text>
+                </View>
+                <View style={styles.cardBody}>
+                  <Text style={styles.cardSubject} numberOfLines={1}>
+                    {`${t('schedule.passTitle')}  ·  ${card.areaName}`}
+                  </Text>
+                  {meta ? (
+                    <Text style={styles.cardMeta} numberOfLines={1}>
+                      {meta}
+                    </Text>
+                  ) : null}
+                </View>
+              </View>
+            );
+          }
+          const item = entry.row;
           const cancelled = item.status === 'CANCELLED';
           return (
             <TouchableOpacity
@@ -226,7 +287,7 @@ export function ScheduleScreen(): React.JSX.Element {
             <Text style={styles.emptySubtitle}>{t('schedule.emptyBody', { count: DAYS_AHEAD })}</Text>
           </View>
         }
-        contentContainerStyle={rows.length === 0 ? styles.listEmpty : styles.list}
+        contentContainerStyle={rows.length === 0 && passes.length === 0 ? styles.listEmpty : styles.list}
       />
     </SafeAreaView>
   );
@@ -297,6 +358,10 @@ const styles = StyleSheet.create({
   },
   cardCancelled: {
     opacity: 0.45,
+  },
+  cardPass: {
+    borderColor: '#b45309',
+    borderLeftWidth: 4,
   },
   cardTime: {
     alignItems: 'center',

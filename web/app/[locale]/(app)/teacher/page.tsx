@@ -14,8 +14,10 @@ import {
 import { calendarLessonToGrid, calendarRastToBand } from "@/lib/lesson-mapper";
 import { teacherRastBands } from "@/lib/teacher-rast-bands";
 import { sheetFromGrid } from "@/lib/print-sheet";
+import { isPassEntry, useSupervisionWeek, weekPassesToGrid } from "@/lib/supervision-week";
 import { addDays, startOfIsoWeek, toDateString } from "@/lib/utils";
 import { Page } from "@/components/layout/page";
+import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/layout/page-header";
 import { WeekSchedule } from "@/components/schedule/week-schedule";
 
@@ -33,6 +35,9 @@ export default function TeacherSchedulePage() {
   const { data: groups } = useGroups();
   const { data: rooms } = useRooms();
   const { data: rasts } = useCalendarRasts(fromDate, toDate);
+  // The week's rastvaktspass (Rastvakt i vardagen), through the gateway: a
+  // read that fails is said beside the week and costs it none of its lessons.
+  const passesQuery = useSupervisionWeek(fromDate, toDate);
 
   const subjectById = useMemo(
     () => new Map((subjects ?? []).map((subject) => [subject.id, subject])),
@@ -61,6 +66,24 @@ export default function TeacherSchedulePage() {
     [lessons, subjectById, groupById, roomById, substituteMarker],
   );
 
+  // Their passes as blocks beside the lessons, and on the printed week.
+  const passTitle = t("passTitle");
+  const passCover = t("passCover");
+  const passHandedOver = t("passHandedOver");
+  const passNoCover = t("passNoCover");
+  const weekEntries = useMemo(
+    () => [
+      ...gridLessons,
+      ...weekPassesToGrid(passesQuery.data?.passes ?? [], {
+        title: passTitle,
+        cover: passCover,
+        handedOver: passHandedOver,
+        noCover: passNoCover,
+      }),
+    ],
+    [gridLessons, passesQuery.data, passTitle, passCover, passHandedOver, passNoCover],
+  );
+
   /**
    * The rasts of the classes this teacher actually takes this week.
    *
@@ -85,6 +108,7 @@ export default function TeacherSchedulePage() {
   return (
     <Page>
       <PageHeader title={t("title")} subtitle={t("subtitleTeacher")} />
+      {passesQuery.isError ? <Notice tone="warning">{t("passesLoadFailed")}</Notice> : null}
       {/* A failed read is said as one, under the week's own arrows, never
           drawn as "Inga lektioner denna vecka": a teacher would take an
           empty week at its word. The arrows stay, so a week that failed
@@ -92,20 +116,23 @@ export default function TeacherSchedulePage() {
       <WeekSchedule
         weekStart={weekStart}
         onWeekChange={setWeekStart}
-        lessons={gridLessons}
+        lessons={weekEntries}
         isLoading={isLoading}
         isError={isError}
         bands={rastBands}
         // A lesson opens its page: ämne och läxa, the note to the substitute
         // (Lektionslogg), and from there its register.
-        onLessonClick={(lesson) => router.push(`/teacher/lektion/${lesson.id}`)}
+        // A pass has no page of its own: its block says all there is.
+        onLessonClick={(lesson) => {
+          if (!isPassEntry(lesson)) router.push(`/teacher/lektion/${lesson.id}`);
+        }}
         printSheet={() =>
           sheetFromGrid({
             kind: "TEACHER",
             title: `${profile.firstName} ${profile.lastName}`,
             school: school?.name ?? "",
             weekStart,
-            lessons: gridLessons,
+            lessons: weekEntries,
           })
         }
       />

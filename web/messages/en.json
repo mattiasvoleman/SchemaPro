@@ -1662,6 +1662,10 @@
     "countCancelled": "{count} cancelled",
     "countHandled": "{count} handled otherwise",
     "countPassed": "{count} passed without a decision",
+    "countPassesOpen": "{count, plural, one {# break duty} other {# break duties}} to cover",
+    "countPassesCovered": "{count, plural, one {# break duty} other {# break duties}} with a substitute",
+    "countPassesHandled": "{count, plural, one {# break duty} other {# break duties}} left uncovered",
+    "countPassesPassed": "{count, plural, one {# break duty} other {# break duties}} passed without a decision",
     "countNone": "No lessons",
     "previewTitle": "Preview lessons",
     "previewBody": "Choose a teacher and a period to see the lessons and handle them one at a time – assign a substitute, change room or cancel. With Register absence they go to the cover board instead.",
@@ -1884,11 +1888,16 @@
     "noLessons": "No lessons this week.",
     "cancelled": "Cancelled",
     "substituteMarker": "Cover",
-    "subtitleTeacher": "Your lessons week by week, including the ones you cover",
+    "subtitleTeacher": "Your lessons and break duties week by week, including the ones you cover",
     "subtitleStudent": "Your lessons, lunch and breaks week by week",
     "loadFailed": "This week's lessons could not be loaded",
     "loadFailedHint": "Nothing in the schedule has changed. Try again in a moment.",
-    "thisWeek": "This week"
+    "thisWeek": "This week",
+    "passTitle": "Break duty",
+    "passCover": "Substitute",
+    "passHandedOver": "A substitute takes it",
+    "passNoCover": "Left uncovered",
+    "passesLoadFailed": "Your break duties could not be loaded. The lessons below are right; try again in a while for the break duties."
   },
   "teacherAttendance": {
     "title": "Attendance",
@@ -2062,6 +2071,8 @@
     "teacherAbsenceReported": "{teacher} has reported an absence {period}. See Teacher absence.",
     "settingsLink": "Choose what is sent to you",
     "leaveRequested": "A new leave request for {student} ({from} – {to}, {days, plural, one {# school day} other {# school days}}) is waiting for your decision.",
+    "supervisionCover": "You have break duty: {area} on {when}–{end}.",
+    "supervisionCoverWithdrawn": "Break duty cancelled: {area} on {when}–{end}. You do not need to take it.",
     "leaveApprovedByMentor": "Leave for {student} ({from} – {to}) was approved by the mentor.",
     "leaveRejectedByMentor": "Leave for {student} ({from} – {to}) was rejected by the mentor.",
     "unreadMarker": "Unread."
@@ -2864,7 +2875,8 @@
         "SUPERVISION_AREA_NAME_TAKEN": "The school already has a supervision area with that name.",
         "SUPERVISION_AREA_LIMIT": "A school has at most 100 supervision areas.",
         "SUPERVISION_SITE_NOT_FOUND": "The site no longer exists. Reload the page.",
-        "SUPERVISION_AREA_NOT_FOUND": "The area no longer exists. Reload the page."
+        "SUPERVISION_AREA_NOT_FOUND": "The area no longer exists. Reload the page.",
+        "SUPERVISION_SHIFT_HAS_COVERS": "The cover board has {count, plural, one {a decision} other {# decisions}} on break duties in this area from {date}. Undo {count, plural, one {it} other {them}} on the cover board first, so the substitute is told."
       },
       "nameHint": "The name is unique across the school, sites included. Write Playground north, for instance."
     },
@@ -2909,7 +2921,8 @@
         "SUPERVISION_SHIFT_NOT_FOUND": "The shift no longer exists. Reload the page.",
         "SUPERVISION_YEAR_NOT_FOUND": "The school year no longer exists. Reload the page.",
         "notFound": "The teacher, the area or the shift no longer exists. Reload the page.",
-        "SUPERVISION_TEACHER_INACTIVE": "The teacher is deactivated and cannot be given a shift. Choose another teacher."
+        "SUPERVISION_TEACHER_INACTIVE": "The teacher is deactivated and cannot be given a shift. Choose another teacher.",
+        "SUPERVISION_SHIFT_HAS_COVERS": "The cover board has {count, plural, one {a decision} other {# decisions}} on this break duty from {date}. Undo {count, plural, one {it} other {them}} on the cover board first, so the substitute is told."
       },
       "firstRun": "The shift runs first on {date}.",
       "lastRun": "The shift runs last on {date}.",
@@ -4896,7 +4909,7 @@
       "fromToday": "You can report an absence from today on."
     },
     "undoTitle": "Undo the decisions outside the period?",
-    "undoBody": "{count, plural, one {# lesson no longer in the absence already has} other {# lessons no longer in the absence already have}} a substitute or another decision. Undo {count, plural, one {it} other {them}} and save?",
+    "undoBody": "{count, plural, one {# lesson or break duty no longer in the absence already has} other {# lessons and break duties no longer in the absence already have}} a substitute or another decision. Undo {count, plural, one {it} other {them}} and save?",
     "undoConfirm": "Undo and save"
   },
   "absenceReasons": {
@@ -4921,7 +4934,7 @@
       "past": "You cannot end the absence in the past."
     },
     "undoTitle": "Undo the decisions after the new end?",
-    "undoBody": "{count, plural, one {# lesson after that moment already has} other {# lessons after that moment already have}} a substitute or another decision. Undo {count, plural, one {it} other {them}} and end?",
+    "undoBody": "{count, plural, one {# lesson or break duty after that moment already has} other {# lessons and break duties after that moment already have}} a substitute or another decision. Undo {count, plural, one {it} other {them}} and end?",
     "undoConfirm": "Undo and end",
     "teacherHasDecisions": "The school leadership has already arranged cover or something else for lessons after that moment. Ask them to end the absence."
   },
@@ -4931,7 +4944,7 @@
     "confirm": "Withdraw",
     "done": "The absence is withdrawn",
     "undoTitle": "Undo the decisions and withdraw?",
-    "undoBody": "{count, plural, one {# lesson already has} other {# lessons already have}} a substitute or another decision. Undo {count, plural, one {it} other {them}} and withdraw the absence?",
+    "undoBody": "{count, plural, one {# lesson or break duty already has} other {# lessons and break duties already have}} a substitute or another decision. Undo {count, plural, one {it} other {them}} and withdraw the absence?",
     "undoConfirm": "Undo and withdraw",
     "teacherHasDecisions": "The school leadership has already arranged cover or something else for your lessons. Ask them to withdraw the absence."
   },
@@ -5035,6 +5048,33 @@
     "loadFailed": "The suggestions could not be loaded",
     "loadFailedHint": "No substitute has been assigned. You can still choose another teacher below, or close and try again in a moment."
   },
+  "coverPasses": {
+    "title": "Break duty",
+    "body": "Break duties whose teacher is absent.",
+    "summary": "{open} need a teacher · {covered} with a substitute · {handled} left uncovered · {passed} passed without a decision",
+    "tableCaption": "Break duties whose teacher is absent",
+    "columnArea": "Area",
+    "assign": "Assign substitute",
+    "noCover": "Leave uncovered",
+    "undo": "Undo",
+    "status": {
+      "OPEN": "Needs a teacher",
+      "COVERED": "Substitute assigned",
+      "NO_COVER": "Left uncovered",
+      "PASSED": "Passed without a decision"
+    },
+    "decisionStale": "The substitute is away too: choose a new one.",
+    "outsideAbsence": "No longer within the absence.",
+    "toastCovered": "The substitute is booked and has been notified.",
+    "toastNoCover": "The break duty is left uncovered.",
+    "toastUndone": "The decision is undone.",
+    "candidatesTitle": "Assign a substitute for break duty",
+    "candidatesBody": "{pass}. The suggestions never break a hard rule: the person has no lesson or other break duty then, keeps their lunch and daily rest, stays within their working days, is not absent themself and — in the substitute pool — has said they can.",
+    "candidatesEmpty": "Nobody can take the break duty without breaking a rule. Choose someone under Another teacher, or leave it uncovered.",
+    "candidatesLoadFailedHint": "No substitute is assigned. You can still choose another teacher below, or close and try again in a while.",
+    "counter": "{week} covers this week · {term} this term",
+    "otherHint": "Outside the suggestions you are warned if the person loses their lunch or daily rest, goes beyond their working days, has an assignment or a room booking then, or has not said they can. Someone with a lesson or another break duty then, or who is absent themself, can never be assigned and is not in the list."
+  },
   "coverReasons": {
     "QUAL_LEGITIMATION": "Certified in {subject} for grades {grades}",
     "QUAL_LEGITIMATION_ALL": "Certified in {subject}",
@@ -5060,10 +5100,13 @@
     "PREFERS_FREE": "Has asked to be free then",
     "FREE_DAY_WISH": "Has asked to have that weekday free",
     "TRAVEL_TOO_SHORT": "Cannot make it from {from} to {to}: {gap} min between the lessons, the walk takes {minutes} min",
+    "KNOWS_AREA": "Has break duty of their own in {area}",
+    "TEACHES_STAGE": "Teaches year {grades}",
     "INACTIVE": "Not an active teacher",
     "ON_LESSON": "Already on the lesson",
     "ABSENT": "Is absent themselves",
     "BUSY_LESSON": "Has a lesson of their own then",
+    "BUSY_SUPERVISION": "Has break duty then",
     "BUSY_DUTY": "Has a duty then",
     "UNAVAILABLE": "Is not available then",
     "BOOKED_ROOM": "Has booked a room then",
@@ -5114,8 +5157,8 @@
     "SUBSTITUTE_HAS_LESSON": "The substitute has a lesson of their own then and cannot be assigned.",
     "PUBLISH_IN_PROGRESS": "A publish is in progress right now. Try again in a moment.",
     "ABSENCE_OVERLAPS": "The teacher is already registered as absent for part of the period.",
-    "ABSENCE_HAS_DECISIONS": "{count, plural, one {# lesson already has} other {# lessons already have}} a decision. Undo them first.",
-    "ABSENCE_HAS_HELD_DECISIONS": "Decisions exist on lessons that have been held. End the absence early instead.",
+    "ABSENCE_HAS_DECISIONS": "{count, plural, one {# lesson or break duty has} other {# lessons and break duties have}} a decision already. Undo them first.",
+    "ABSENCE_HAS_HELD_DECISIONS": "There are decisions on lessons or break duties that have already taken place. End the absence early instead.",
     "ABSENCE_NOT_YOURS": "You can only register your own absence.",
     "ABSENCE_PERSON": "An absence is registered for an active teacher.",
     "ABSENCE_PERSON_IS_FIXED": "An absence does not change person.",
@@ -5137,9 +5180,15 @@
     "COVER_BEYOND_WORK_DAYS": "The substitute gets more than {days, plural, one {# teaching day} other {# teaching days}} that week.",
     "COVER_BEYOND_WORK_DAYS_HIDDEN": "The substitute gets more teaching days that week than their post allows. The days are shown to the principal, a full administrator and anyone with HR read.",
     "COVER_TEACHER_UNAVAILABLE": "The substitute is not available then, by their availability or a duty.",
+    "COVER_TEACHER_ON_SUPERVISION": "The person has break duty then. Ask someone to take it, or choose another substitute.",
     "COVER_TEACHER_BOOKED": "The substitute has booked a room then.",
     "COVER_POOL_NOT_DECLARED": "The substitute has not said they can then.",
-    "COVER_TRAVEL_TIME_SHORT": "The substitute cannot make it from {from} to {to}: {gap} min between the lessons, and the walk takes {minutes} min."
+    "COVER_TRAVEL_TIME_SHORT": "The substitute cannot make it from {from} to {to}: {gap} min between the lessons, and the walk takes {minutes} min.",
+    "SUPERVISION_COVER_NOT_AFFECTED": "The absence no longer touches this break duty. Reload the board.",
+    "SUPERVISION_COVER_HELD": "The break duty has already taken place and is not changed.",
+    "SUPERVISION_SUBSTITUTE_REQUIRED": "Choose who takes the break duty.",
+    "SUPERVISION_SUBSTITUTE_NOT_TEACHER": "The substitute is not an active teacher.",
+    "SUPERVISION_SUBSTITUTE_BUSY": "The substitute has a lesson or another break duty then and cannot take it."
   },
   "coverSettings": {
     "title": "Absence and cover",
@@ -5276,7 +5325,9 @@
       "ROOM_BOOKING_DECIDED": "Room booking decisions",
       "TEACHER_ABSENCE_REPORTED": "Teacher absence",
       "LESSON_COVER_WITHDRAWN": "Withdrawn cover lessons",
-      "LEAVE_REQUESTED": "Leave requests to decide"
+      "LEAVE_REQUESTED": "Leave requests to decide",
+      "SUPERVISION_COVER": "Break duty as a substitute",
+      "SUPERVISION_COVER_WITHDRAWN": "Withdrawn break duties"
     },
     "loadFailed": "Your choices could not be loaded",
     "loadFailedHint": "Nothing has changed in what is sent to you. Reload the page in a moment."

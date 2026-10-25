@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { createClient } from "@/utils/supabase/client";
-import { AFTER_COVER_WRITE, COVER_KEYS } from "@/lib/cover-keys";
+import { AFTER_COVER_WRITE, ALL_COVER, COVER_KEYS } from "@/lib/cover-keys";
 import type {
   Absence,
   AbsenceInput,
@@ -17,6 +17,8 @@ import type {
   DayProposal,
   DecisionInput,
   Hours,
+  PassCandidates,
+  PassDecisionInput,
   PoolWindow,
   PoolWindowInput,
 } from "@/lib/cover-types";
@@ -200,6 +202,39 @@ export function useCoverCandidates(lessonId: string | null) {
     retry: false,
     queryFn: () => api.get<Candidates>(`/api/v1/cover/lessons/${lessonId}/candidates`),
   });
+}
+
+/**
+ * An absent rastvakt's pass on a date (Rastvakt i vardagen, 20261210090000):
+ * its ranked candidates, and the decisions on it — a vikarie, or left
+ * without one — each undoable. The board's own invalidation, since a pass
+ * decided moves the board, the register's counts and the vikarie's week.
+ */
+export function usePassCandidates(pass: { shiftId: string; date: string } | null) {
+  return useQuery({
+    queryKey: [...COVER_KEYS.candidates, "pass", pass?.shiftId, pass?.date],
+    enabled: pass !== null,
+    retry: false,
+    queryFn: () => api.get<PassCandidates>(`/api/v1/cover/supervision/${pass!.shiftId}/${pass!.date}/candidates`),
+  });
+}
+
+export function usePassActions() {
+  const invalidate = useInvalidate();
+  const decide = useMutation({
+    mutationFn: ({ shiftId, date, ...body }: PassDecisionInput) =>
+      api.post<{ shiftId: string; date: string; warnings?: StaffingWarning[] }>(
+        `/api/v1/cover/supervision/${shiftId}/${date}/decision`,
+        body,
+      ),
+    onSettled: () => invalidate([ALL_COVER, COVER_KEYS.candidates, ["supervisionWeek"]]),
+  });
+  const undo = useMutation({
+    mutationFn: ({ shiftId, date }: { shiftId: string; date: string }) =>
+      api.delete<{ shiftId: string; date: string }>(`/api/v1/cover/supervision/${shiftId}/${date}/decision`),
+    onSettled: () => invalidate([ALL_COVER, COVER_KEYS.candidates, ["supervisionWeek"]]),
+  });
+  return { decide, undo };
 }
 
 /**

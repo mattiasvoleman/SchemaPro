@@ -24,6 +24,9 @@ const SUB_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const LESSON = '44444444-4444-4444-8444-444444444444';
 const ABSENCE = '55555555-5555-4555-8555-555555555555';
 const REASON = '88888888-8888-4888-8888-888888888888';
+const SHIFT = '99999999-9999-4999-8999-999999999999';
+const AREA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const YEAR = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 
 const DAY = 86_400_000;
 // Days counted from the school's today (the mocked school is in Stockholm), as
@@ -118,6 +121,10 @@ describe('Vikarieplanering (e2e)', () => {
       ['patch', `/api/v1/teacher-absences/${ABSENCE}`, { to: FUTURE }],
       ['post', '/api/v1/teacher-absence-reasons', { label: 'Egen' }],
       ['patch', `/api/v1/teacher-absence-reasons/${REASON}`, { archived: true }],
+      // Rastvakt i vardagen: an absent rastvakt's pass on a date.
+      ['get', `/api/v1/cover/supervision/${SHIFT}/${FUTURE}/candidates`],
+      ['post', `/api/v1/cover/supervision/${SHIFT}/${FUTURE}/decision`, { absenceId: ABSENCE, kind: 'NO_COVER', expected: 'OPEN' }],
+      ['delete', `/api/v1/cover/supervision/${SHIFT}/${FUTURE}/decision`],
     ];
     const staff: Array<[string, string, Record<string, unknown>?]> = [
       ['get', '/api/v1/teacher-absences'],
@@ -129,6 +136,8 @@ describe('Vikarieplanering (e2e)', () => {
       ['get', '/api/v1/cover/availability'],
       ['post', '/api/v1/cover/availability', { dayOfWeek: 1, startTime: '08:00', endTime: '12:00' }],
       ['delete', `/api/v1/cover/availability/${REASON}`],
+      // The signed-in person's own passes (Rastvakt i vardagen).
+      ['get', `/api/v1/supervision/week?from=${FUTURE}&to=${FUTURE}`],
     ];
     // Three arguments always: a row of two would make jest read the test's
     // third parameter as a done() callback and wait for it.
@@ -169,6 +178,77 @@ describe('Vikarieplanering (e2e)', () => {
       const notice = harness.tx.notification.createMany.mock.calls.at(-1)![0] as { data: { type: string; meta: object }[] };
       expect(notice.data[0]).toMatchObject({ type: 'TEACHER_ABSENCE_REPORTED' });
       expect(Object.keys(notice.data[0]!.meta).sort()).toEqual(['absenceId', 'endsAt', 'startsAt', 'teacherName', 'userId', 'wholeDays']);
+    });
+  });
+
+  describe('an absent rastvakt’s pass (Rastvakt i vardagen)', () => {
+    const FUTURE_DOW = ((new Date(`${FUTURE}T00:00:00Z`).getUTCDay() + 6) % 7) + 1;
+    beforeEach(() => {
+      const { tx } = harness;
+      // The teacher's pass on FUTURE's weekday, 10:00–10:20 on the school's clock.
+      tx.supervisionShift.findUnique.mockResolvedValue({
+        id: SHIFT,
+        academicYearId: YEAR,
+        areaId: AREA,
+        userId: TEACHER_ID,
+        dayOfWeek: FUTURE_DOW,
+        startTime: new Date('1970-01-01T10:00:00Z'),
+        endTime: new Date('1970-01-01T10:20:00Z'),
+        validFrom: null,
+        validTo: null,
+      });
+      tx.supervisionArea.findMany.mockResolvedValue([{ id: AREA, name: 'Skolgården', siteId: null, minGradeLevel: null, maxGradeLevel: null }]);
+      tx.academicYear.findMany.mockResolvedValue([
+        { id: YEAR, startDate: new Date(`${isoDay(-60)}T00:00:00Z`), endDate: new Date(`${isoDay(200)}T00:00:00Z`), gradeNumbering: 'NIOARIG' },
+      ]);
+      tx.supervisionCover.findUnique.mockResolvedValue(null);
+      tx.user.findMany.mockImplementation(async (args: { where: { id?: { in: string[] }; isActive?: boolean } }) =>
+        args.where.isActive === false ? [] : (args.where.id?.in ?? []).map((id) => ({ id, role: 'TEACHER', isActive: true })),
+      );
+    });
+
+    it('books a vikarie through the route, and the notice names the place and the time, never the absent teacher or why', async () => {
+      const answer = await request(http())
+        .post(`/api/v1/cover/supervision/${SHIFT}/${FUTURE}/decision`)
+        .set('x-test-user', admin())
+        .send({ absenceId: ABSENCE, kind: 'SUBSTITUTE', substituteId: SUB_ID, expected: 'OPEN' })
+        .expect(200);
+      expect(answer.body).toEqual({ shiftId: SHIFT, date: FUTURE, warnings: [] });
+      expect(harness.tx.supervisionCover.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ shiftId: SHIFT, absentTeacherId: TEACHER_ID, decision: 'SUBSTITUTE', substituteId: SUB_ID }),
+      });
+      const notice = harness.tx.notification.createMany.mock.calls.at(-1)![0] as { data: { userId: string; type: string; meta: object }[] };
+      expect(notice.data).toEqual([expect.objectContaining({ userId: SUB_ID, type: 'SUPERVISION_COVER' })]);
+      expect(Object.keys(notice.data[0]!.meta).sort()).toEqual(['areaName', 'endsAt', 'startsAt']);
+      expect(JSON.stringify(notice.data[0]!.meta)).not.toContain(TEACHER_ID);
+    });
+
+    it('refuses an unknown kind, a vikarie on NO_COVER, a date that is no date and a shift id that is no uuid', async () => {
+      const post = (url: string, body: Record<string, unknown>) =>
+        request(http()).post(url).set('x-test-user', admin()).send(body).expect(400);
+      await post(`/api/v1/cover/supervision/${SHIFT}/${FUTURE}/decision`, { absenceId: ABSENCE, kind: 'CANCELLED', expected: 'OPEN' });
+      await post(`/api/v1/cover/supervision/${SHIFT}/${FUTURE}/decision`, {
+        absenceId: ABSENCE,
+        kind: 'NO_COVER',
+        substituteId: SUB_ID,
+        expected: 'OPEN',
+      });
+      await post(`/api/v1/cover/supervision/${SHIFT}/14-10-2026/decision`, { absenceId: ABSENCE, kind: 'NO_COVER', expected: 'OPEN' });
+      await post(`/api/v1/cover/supervision/not-a-uuid/${FUTURE}/decision`, { absenceId: ABSENCE, kind: 'NO_COVER', expected: 'OPEN' });
+      expect(harness.tx.supervisionCover.create).not.toHaveBeenCalled();
+    });
+
+    it('answers a teacher their own week, at most fourteen days', async () => {
+      harness.tx.supervisionShift.findMany.mockResolvedValue([]);
+      harness.tx.supervisionCover.findMany.mockResolvedValue([]);
+      const week = await request(http())
+        .get(`/api/v1/supervision/week?from=${FUTURE}&to=${isoDay(9)}`)
+        .set('x-test-user', teacher())
+        .expect(200);
+      expect(week.body).toEqual({ from: FUTURE, to: isoDay(9), passes: [] });
+      expect(harness.tx.supervisionShift.findMany.mock.calls[0]![0].where.userId).toBe(TEACHER_ID);
+      await request(http()).get(`/api/v1/supervision/week?from=${FUTURE}&to=${isoDay(30)}`).set('x-test-user', teacher()).expect(400);
+      await request(http()).get(`/api/v1/supervision/week?from=${FUTURE}&to=31-12-2026`).set('x-test-user', teacher()).expect(400);
     });
   });
 

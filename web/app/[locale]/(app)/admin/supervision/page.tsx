@@ -136,7 +136,7 @@ export default function SupervisionPage() {
 
   const errorText = (error: unknown, scopeKey: "areas" | "shift") =>
     error instanceof ApiError && error.code && t.has(`${scopeKey}.errors.${error.code}`)
-      ? t(`${scopeKey}.errors.${error.code}`)
+      ? (error.params ? t(`${scopeKey}.errors.${error.code}`, error.params) : t(`${scopeKey}.errors.${error.code}`))
       : error instanceof Error
         ? error.message
         : tCommon("error");

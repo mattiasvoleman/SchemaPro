@@ -433,6 +433,27 @@ describe("NotificationBell inbox", () => {
     ).toBeInTheDocument();
   });
 
+  it("tells a vikarie a rastvaktspass booked and withdrawn by its place and time, nobody's name (Rastvakt i vardagen)", async () => {
+    const user = userEvent.setup();
+    const startsAt = "2026-10-14T08:00:00.000Z";
+    const endsAt = "2026-10-14T08:20:00.000Z";
+    const when = new Date(startsAt).toLocaleString();
+    const end = new Date(endsAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    supabaseState.selectResults.push(
+      ok([
+        notif({ type: "SUPERVISION_COVER", meta: { areaName: "Skolgården", startsAt, endsAt } }),
+        notif({ type: "SUPERVISION_COVER_WITHDRAWN", meta: { areaName: "Matsalen", startsAt, endsAt } }),
+      ]),
+    );
+    renderBell();
+
+    await waitFor(() => expect(argsFor("select")).toHaveLength(1));
+    await user.click(bellButton());
+
+    expect(screen.getByText(`supervisionCover(area=Skolgården|when=${when}|end=${end})`)).toBeInTheDocument();
+    expect(screen.getByText(`supervisionCoverWithdrawn(area=Matsalen|when=${when}|end=${end})`)).toBeInTheDocument();
+  });
+
   it("tells the class a lesson goes ahead after all, becomes självstudier, and an avbokning's count and days", async () => {
     const user = userEvent.setup();
     const startsAt = "2026-10-14T06:00:00.000Z";

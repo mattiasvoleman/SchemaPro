@@ -118,6 +118,22 @@ test("the notification menu names its unread count, lists the notices, and passe
   await expect(page.getByRole("menu")).toBeVisible();
 });
 
+test("an absent rastvakt's pass on the Vikarietavla opens its candidates, named with their reasons, and passes axe open", async ({
+  page,
+  baseURL,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const misses = await open(page, { url: "/sv/admin/cover", persona: "admin" }, baseURL!);
+  // Rastvakt i vardagen: Bo's Wednesday in the hall, open at the suite's 10:00.
+  await page.getByRole("button", { name: /^Tillsätt vikarie Bo Ek: Matsalen/ }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("button", { name: /^Cecilia/ })).toBeVisible();
+  await settle(page);
+  expect(misses, MISSES).toEqual([]);
+  await expectAriaBaseline(dialog, "admin-rastvakt-kandidater");
+  expect((await scanBothSchemes(page, "pass candidates open", true)).join("\n"), "WCAG 2.1 AA violations").toBe("");
+});
+
 test("the parallel blocks panel on Timplansposter names its block and what each action does, and passes axe open", async ({
   page,
   baseURL,

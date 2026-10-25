@@ -18,6 +18,13 @@ import { TEACHERS } from "./world";
  * teachers' card are all on the page for the a11y gate, and Anna's own
  * tjänst and uppdragsbeskrivning carry a rastvakt line. The gateway resolves
  * the breaks; the stub states them as it would.
+ *
+ * Rastvakt i vardagen (20261210090000): Bo also clears the hall after lunch
+ * on Wednesdays, in no break of its own. He is away all this week
+ * (cover-world.ts), so the board has his passes — the Monday's taken by
+ * Anna, the Wednesday entrance passed without a decision, and the Wednesday
+ * hall still open at the suite's 10:00 — and Anna's week has her Friday
+ * lunch and the Monday she takes for him (gateway-cover.ts).
  */
 
 const garden = uid(KIND.misc, 9701);
@@ -34,7 +41,7 @@ export const SUPERVISION_AREAS: SupervisionArea[] = [
     duringLunch: true,
     guardsNeeded: 2,
     countsAsTeaching: false,
-    shiftCount: 5,
+    shiftCount: 6,
   },
   {
     id: garden,
@@ -76,7 +83,22 @@ const SHIFTS = [
   shift(7, hall, TEACHERS.anna.id, 5, "11:30", "12:15", {
     lessonClashes: [{ subject: "Svenska", group: "7A", dayOfWeek: 5, startTime: "11:00", endTime: "12:00" }],
   }),
+  // After the lunch, in no break of the hall's.
+  shift(8, hall, TEACHERS.bo.id, 3, "12:30", "12:45"),
 ];
+
+/** The year's passes, as the gateway holds them (Rastvakt i vardagen's board and week read them). */
+export const supervisionShifts = (yearId: string): SupervisionShift[] => SHIFTS.map((make) => make(yearId));
+
+/** An area's name, as GET /supervision-areas answers it. */
+export const supervisionAreaName = (areaId: string): string =>
+  SUPERVISION_AREAS.find((area) => area.id === areaId)?.name ?? "";
+
+/** An area's skolområde's name, or null. */
+export const supervisionSiteName = (areaId: string): string | null => {
+  const siteId = SUPERVISION_AREAS.find((area) => area.id === areaId)?.siteId ?? null;
+  return siteId ? (SITES.sites.find((site) => site.id === siteId)?.name ?? null) : null;
+};
 
 const brk = (areaId: string, dayOfWeek: number, startTime: string, endTime: string, names: string[], needed: number, shiftIds: string[]): SupervisionBreak => ({
   areaId,
@@ -100,7 +122,9 @@ function weekdayFrom(date: string, day: number, direction: 1 | -1): string {
 export function supervisionRota(year: AcademicYear, current: boolean): SupervisionRota {
   const shifts = current ? SHIFTS.map((make) => make(year.id)) : [];
   const idOf = (areaId: string, day: number) =>
-    shifts.filter((row) => row.areaId === areaId && row.dayOfWeek === day && row.startTime !== "07:45").map((row) => row.id);
+    shifts
+      .filter((row) => row.areaId === areaId && row.dayOfWeek === day && row.startTime !== "07:45" && row.startTime !== "12:30")
+      .map((row) => row.id);
   const days = [1, 2, 3, 4, 5];
   const breaks = [
     ...days.map((day) => brk(garden, day, "09:10", "09:25", ["Förmiddagsrast"], 1, idOf(garden, day))),
@@ -143,7 +167,7 @@ export function supervisionRota(year: AcademicYear, current: boolean): Supervisi
     gaps,
     teachers: current
       ? [
-          { userId: TEACHERS.bo.id, shiftCount: 2, minutesPerWeek: 22, countedMinutesPerWeek: 0, peakMinutesPerWeek: 30, hoursPerYear: 9.3, ramMinutesPerWeek: 12, ramCountedMinutesPerWeek: 0 },
+          { userId: TEACHERS.bo.id, shiftCount: 3, minutesPerWeek: 37, countedMinutesPerWeek: 0, peakMinutesPerWeek: 45, hoursPerYear: 18.8, ramMinutesPerWeek: 12, ramCountedMinutesPerWeek: 0 },
           { userId: TEACHERS.cecilia.id, shiftCount: 4, minutesPerWeek: 180, countedMinutesPerWeek: 0, peakMinutesPerWeek: 180, hoursPerYear: 114, ramMinutesPerWeek: null, ramCountedMinutesPerWeek: 0 },
           ANNA_LINE,
         ]
@@ -166,7 +190,7 @@ const ANNA_LINE = {
 /** Bo's and Anna's lines in the load: the rastvaktsschema's part of their uppdrag. */
 export const SUPERVISION_LOAD = {
   teachers: [
-    { userId: TEACHERS.bo.id, shiftCount: 2, minutesPerWeek: 22, countedMinutesPerWeek: 0, peakMinutesPerWeek: 30, hoursPerYear: 9.3, ramMinutesPerWeek: 12, ramCountedMinutesPerWeek: 0 },
+    { userId: TEACHERS.bo.id, shiftCount: 3, minutesPerWeek: 37, countedMinutesPerWeek: 0, peakMinutesPerWeek: 45, hoursPerYear: 18.8, ramMinutesPerWeek: 12, ramCountedMinutesPerWeek: 0 },
     ANNA_LINE,
   ],
 };

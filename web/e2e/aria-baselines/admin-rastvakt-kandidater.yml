@@ -1,0 +1,20 @@
+- dialog "Tillsätt vikarie för rastvakt":
+  - heading "Tillsätt vikarie för rastvakt" [level=2]
+  - paragraph: "Matsalen, 12:30–12:45. Förslagen bryter aldrig mot en hård regel: personen har ingen lektion eller annan rastvakt då, behåller lunch och dygnsvila, håller sig inom sina arbetsdagar, är inte själv frånvarande och – i vikariepoolen – har sagt att hen kan."
+  - list "Föreslagna vikarier":
+    - listitem:
+      - button "Cecilia Ås 16 p"
+      - list:
+        - listitem: Har egna pass i Matsalen +10
+        - listitem: Är på skolan den dagen +6
+      - paragraph: 0 vikariepass i veckan · 1 i terminen
+  - group: Kan inte (2)
+  - text: Annan lärare
+  - combobox "Annan lärare":
+    - option "Välj…" [selected]
+    - option "David Berg"
+    - option "Eva Holm"
+  - paragraph: Utanför förslagen får du en varning om personen förlorar lunch eller dygnsvila, går över sina arbetsdagar, har ett uppdrag eller en lokalbokning då, eller inte har sagt att hen kan. Den som har en lektion eller ett annat rastvaktspass då, eller själv är frånvarande, kan aldrig tillsättas och finns inte i listan.
+  - button "Avbryt"
+  - button "Tillsätt" [disabled]
+  - button "Stäng"

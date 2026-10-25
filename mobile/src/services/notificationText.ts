@@ -1,9 +1,9 @@
-import { formatDateTime, formatDayOfInstant, formatShortDate } from '../i18n/format';
+import { formatDateTime, formatDayOfInstant, formatShortDate, formatTime } from '../i18n/format';
 import type { Locale, Translate } from '../i18n';
 import type { NotificationRow } from '../types';
 
 /**
- * One inbox row as a sentence in the reader's language — all twelve types the
+ * One inbox row as a sentence in the reader's language — every type the
  * gateway writes, as the web's bell words them. The app used to know five and
  * show "Notification" for the rest, so a teacher's cover booking (which the
  * inbox is the only record of on the phone) read as nothing at all.
@@ -56,6 +56,15 @@ export function notificationText(entry: NotificationRow, t: Translate, locale: L
       return meta['cover'] === true
         ? t('notifications.text.lessonSubstituteCover', own)
         : t('notifications.text.lessonSubstitute', { subject: own.subject, when: own.when });
+    }
+    case 'SUPERVISION_COVER':
+    case 'SUPERVISION_COVER_WITHDRAWN': {
+      // A rastvaktspass the reader takes as vikarie (Rastvakt i vardagen): the
+      // place and the time, never whose pass it is or why.
+      const pass = { area: str('areaName'), when: when('startsAt'), end: str('endsAt') ? formatTime(str('endsAt')) : '' };
+      return entry.type === 'SUPERVISION_COVER'
+        ? t('notifications.text.supervisionCover', pass)
+        : t('notifications.text.supervisionCoverWithdrawn', pass);
     }
     case 'LESSON_REINSTATED':
       return t('notifications.text.lessonReinstated', { subject: str('subjectName'), when: when('startsAt') });
