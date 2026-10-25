@@ -14,7 +14,9 @@ import type { NotificationKind } from './notifications.service';
  * behind the login has the rest. `data` is { notificationId, type } only.
  *
  * A leave request waiting for the mentor (LEAVE_REQUESTED) says its days and
- * nothing of the pupil or the reason.
+ * nothing of the pupil or the reason. A rastvaktspass booked or withdrawn
+ * (SUPERVISION_COVER, _WITHDRAWN) says when, and not where: an area's name is
+ * the school's own words.
  *
  * TEACHER_ABSENCE_REPORTED has no text here: it is never pushed. An
  * avbokning digest (CANCELLATION_DIGEST) says how many of the person's
@@ -135,6 +137,18 @@ const SV: Record<PushKind, Template> = {
     bare: 'En ledighetsansökan väntar på ditt beslut.',
     many: '{count} ledighetsansökningar väntar på ditt beslut.',
   },
+  SUPERVISION_COVER: {
+    title: 'Rastvaktspass',
+    one: 'Du har ett rastvaktspass {when}.',
+    bare: 'Du har ett nytt rastvaktspass.',
+    many: 'Du har {count} nya rastvaktspass.',
+  },
+  SUPERVISION_COVER_WITHDRAWN: {
+    title: 'Avbokat rastvaktspass',
+    one: 'Rastvaktspasset {when} är avbokat.',
+    bare: 'Ett rastvaktspass är avbokat.',
+    many: '{count} rastvaktspass är avbokade.',
+  },
   CANCELLATION_DIGEST_REVERSED: {
     title: 'Lektioner blir av',
     one: ({ lessons }) =>
@@ -224,6 +238,18 @@ const EN: Record<PushKind, Template> = {
     one: 'A leave request {span} is waiting for your decision.',
     bare: 'A leave request is waiting for your decision.',
     many: '{count} leave requests are waiting for your decision.',
+  },
+  SUPERVISION_COVER: {
+    title: 'Break duty',
+    one: 'You have break duty {when}.',
+    bare: 'You have a new break duty.',
+    many: 'You have {count} new break duties.',
+  },
+  SUPERVISION_COVER_WITHDRAWN: {
+    title: 'Break duty withdrawn',
+    one: 'The break duty {when} is withdrawn.',
+    bare: 'A break duty is withdrawn.',
+    many: '{count} break duties are withdrawn.',
   },
   CANCELLATION_DIGEST_REVERSED: {
     title: 'Lessons back on',

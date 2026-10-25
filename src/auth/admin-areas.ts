@@ -238,6 +238,9 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   RoomBookings: only('DRIFT'),
   SubstituteAvailabilities: only('DRIFT'),
   SubstitutePoolMembers: only('DRIFT'),
+  // Rastvakt i vardagen (20261210090000): the board's decisions on an
+  // absent rastvakt's passes, Drift's as the lessons' are.
+  SupervisionCovers: only('DRIFT'),
   TeacherAbsenceCovers: only('DRIFT'),
   TeacherAbsenceReasons: only('DRIFT'),
   TeacherAbsences: only('DRIFT'),

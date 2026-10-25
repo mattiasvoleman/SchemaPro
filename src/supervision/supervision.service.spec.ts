@@ -10,6 +10,7 @@ import {
   SUPERVISION_AREA_NAME_TAKEN,
   SUPERVISION_AREA_NOT_FOUND,
   SUPERVISION_SHIFT_CLASH,
+  SUPERVISION_SHIFT_HAS_COVERS,
   SUPERVISION_SHIFT_LIMIT,
   SUPERVISION_SHIFT_NOT_FOUND,
   SUPERVISION_SITE_NOT_FOUND,
@@ -529,6 +530,133 @@ describe('SupervisionService', () => {
       await service.removeShift(SHIFT, testUser());
       tx.supervisionShift.deleteMany.mockResolvedValue({ count: 0 });
       await expect(service.removeShift(SHIFT, testUser())).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('the vikarietavla’s decisions on a pass (Rastvakt i vardagen)', () => {
+    const rawText = () =>
+      (tx.$executeRaw as jest.Mock).mock.calls.map(([sql]) => ((sql as { strings?: string[] }).strings ?? []).join('?'));
+
+    beforeEach(() => {
+      tx.supervisionArea.findUnique.mockResolvedValue({ id: GARDEN });
+      tx.supervisionShift.findFirst.mockResolvedValue(null);
+      tx.supervisionShift.findUnique.mockResolvedValue(storedShift({ validTo: day('2027-03-01') }));
+      tx.supervisionShift.update.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+        Promise.resolve(storedShift({ ...data })),
+      );
+      // Two Mondays decided on ahead: 2 and 9 November.
+      tx.supervisionCover.findMany.mockResolvedValue([{ date: day('2026-11-02') }, { date: day('2026-11-09') }]);
+      // The teacher's row (lockStaffRow), the year FOR SHARE, the teacher's state (none: active).
+      tx.$queryRaw.mockImplementation(async (strings: readonly string[]) => {
+        const sql = strings.join('?');
+        if (sql.includes('"AcademicYears"')) return [YEAR];
+        if (sql.includes('deactivatedAt')) return [];
+        return [{ role: 'TEACHER' }];
+      });
+    });
+
+    it('moves no pass, and hands none on, under a decision still ahead; the pass locked before it asks', async () => {
+      await expect(service.updateShift(SHIFT, { startTime: '10:05' }, testUser())).rejects.toMatchObject({
+        response: { code: SUPERVISION_SHIFT_HAS_COVERS, params: { count: 2, date: '2026-11-02' } },
+      });
+      await expect(service.updateShift(SHIFT, { userId: BO }, testUser())).rejects.toBeInstanceOf(ConflictException);
+      await expect(service.updateShift(SHIFT, { areaId: HALL }, testUser())).rejects.toBeInstanceOf(ConflictException);
+      expect(tx.supervisionShift.update).not.toHaveBeenCalled();
+      // Asked of the decisions that have not passed, after the row's FOR UPDATE.
+      expect(tx.supervisionCover.findMany).toHaveBeenCalledWith({
+        where: { shiftId: SHIFT, endsAt: { gt: expect.any(Date) } },
+        select: { date: true },
+        orderBy: [{ date: 'asc' }],
+      });
+      expect(rawText().some((sql) => sql.includes('"SupervisionShifts" WHERE "id" =') && sql.includes('FOR UPDATE'))).toBe(true);
+      // The note is free.
+      tx.supervisionCover.findMany.mockClear();
+      await service.updateShift(SHIFT, { note: 'Grinden mot parkeringen' }, testUser());
+      expect(tx.supervisionCover.findMany).not.toHaveBeenCalled();
+    });
+
+    it('lets new dates keep every decision inside them, and refuses those that leave one outside', async () => {
+      await service.updateShift(SHIFT, { validTo: '2026-11-30' }, testUser());
+      expect(tx.supervisionShift.update).toHaveBeenCalledTimes(1);
+      await expect(service.updateShift(SHIFT, { validTo: '2026-11-03' }, testUser())).rejects.toMatchObject({
+        response: { code: SUPERVISION_SHIFT_HAS_COVERS, params: { count: 1, date: '2026-11-09' } },
+      });
+      await expect(service.updateShift(SHIFT, { validFrom: '2026-11-05' }, testUser())).rejects.toMatchObject({
+        response: { params: { count: 1, date: '2026-11-02' } },
+      });
+    });
+
+    it('deletes no pass and no area with a decision still ahead, the area’s passes locked first', async () => {
+      tx.supervisionShift.deleteMany.mockResolvedValue({ count: 1 });
+      tx.supervisionArea.deleteMany.mockResolvedValue({ count: 1 });
+      await expect(service.removeShift(SHIFT, testUser())).rejects.toMatchObject({ response: { code: SUPERVISION_SHIFT_HAS_COVERS } });
+      await expect(service.removeArea(GARDEN, testUser())).rejects.toMatchObject({ response: { code: SUPERVISION_SHIFT_HAS_COVERS } });
+      expect(tx.supervisionCover.findMany).toHaveBeenLastCalledWith(expect.objectContaining({ where: { areaId: GARDEN, endsAt: { gt: expect.any(Date) } } }));
+      expect(rawText().some((sql) => sql.includes('WHERE "areaId" =') && sql.includes('FOR UPDATE'))).toBe(true);
+      expect(tx.supervisionShift.deleteMany).not.toHaveBeenCalled();
+      expect(tx.supervisionArea.deleteMany).not.toHaveBeenCalled();
+      tx.supervisionCover.findMany.mockResolvedValue([]);
+      await service.removeShift(SHIFT, testUser());
+      await service.removeArea(GARDEN, testUser());
+      expect(tx.supervisionShift.deleteMany).toHaveBeenCalled();
+      expect(tx.supervisionArea.deleteMany).toHaveBeenCalled();
+    });
+  });
+
+  describe('the week of the signed-in person', () => {
+    const me = testUser({ role: 'TEACHER' as never, userId: ANNA });
+
+    beforeEach(() => {
+      tx.school.findUnique.mockResolvedValue({ timezone: 'Europe/Stockholm' });
+      tx.supervisionShift.findMany.mockResolvedValue([storedShift()]);
+      tx.supervisionArea.findMany.mockResolvedValue([
+        { id: GARDEN, name: 'Skolgården', siteId: SITE, minGradeLevel: null, maxGradeLevel: null },
+        { id: HALL, name: 'Matsalen', siteId: null, minGradeLevel: null, maxGradeLevel: null },
+      ]);
+      tx.academicYear.findMany.mockResolvedValue([{ id: YEAR_ID, ...YEAR, gradeNumbering: 'NIOARIG' }]);
+      tx.site.findMany.mockResolvedValue([{ id: SITE, name: 'Norra' }]);
+    });
+
+    it('lists their own passes on the dates they run, with what the board decided, and the passes they take as vikarie', async () => {
+      tx.supervisionCover.findMany.mockResolvedValue([
+        // Anna is away Monday 19 October: Bo takes her pass.
+        { shiftId: SHIFT, date: day('2026-10-19'), areaId: GARDEN, startsAt: new Date('2026-10-19T08:00:00Z'), endsAt: new Date('2026-10-19T08:20:00Z'), decision: 'SUBSTITUTE', substituteId: BO },
+        // Anna takes somebody's pass in the hall on Wednesday.
+        { shiftId: 'other', date: day('2026-10-21'), areaId: HALL, startsAt: new Date('2026-10-21T10:30:00Z'), endsAt: new Date('2026-10-21T11:00:00Z'), decision: 'SUBSTITUTE', substituteId: ANNA },
+      ]);
+      // Höstlov the week after: no Monday pass on the 26th.
+      tx.schoolBreak.findMany.mockResolvedValue([
+        { academicYearId: YEAR_ID, startDate: day('2026-10-26'), endDate: day('2026-10-30'), minGradeLevel: null, maxGradeLevel: null },
+      ]);
+      const week = await service.week('2026-10-19', '2026-10-30', me);
+      expect(week.passes).toEqual([
+        {
+          kind: 'OWN', shiftId: SHIFT, date: '2026-10-19', startsAt: '2026-10-19T08:00:00.000Z', endsAt: '2026-10-19T08:20:00.000Z',
+          areaName: 'Skolgården', siteName: 'Norra', handover: 'SUBSTITUTE',
+        },
+        {
+          kind: 'COVER', shiftId: 'other', date: '2026-10-21', startsAt: '2026-10-21T10:30:00.000Z', endsAt: '2026-10-21T11:00:00.000Z',
+          areaName: 'Matsalen', siteName: null, handover: null,
+        },
+      ]);
+      // Their own, whatever the role, and the decisions that name them or their passes.
+      expect(tx.supervisionShift.findMany.mock.calls[0][0].where.userId).toBe(ANNA);
+      expect(tx.supervisionCover.findMany.mock.calls[0][0].where.OR).toEqual([
+        { substituteId: ANNA, decision: 'SUBSTITUTE' },
+        { shiftId: { in: [SHIFT] } },
+      ]);
+      // Nothing for the läslogg: their own data.
+      expect(recordedReads(tx)).toEqual([]);
+    });
+
+    it('answers nothing more when they have no pass, and keeps the range to fourteen days in order', async () => {
+      tx.supervisionShift.findMany.mockResolvedValue([]);
+      tx.supervisionCover.findMany.mockResolvedValue([]);
+      await expect(service.week('2026-10-19', '2026-10-25', me)).resolves.toEqual({ from: '2026-10-19', to: '2026-10-25', passes: [] });
+      expect(tx.supervisionArea.findMany).not.toHaveBeenCalled();
+      await expect(service.week('2026-10-25', '2026-10-19', me)).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.week('2026-10-19', '2026-11-02', me)).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.week('2026-10-19', '2026-11-01', me)).resolves.toMatchObject({ passes: [] });
     });
   });
 

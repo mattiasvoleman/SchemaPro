@@ -14,6 +14,11 @@
  *   ABSENT             has an ACTIVE absence overlapping the lesson
  *   BUSY_LESSON        a SCHEDULED or COMPLETED lesson overlapping; end ==
  *                      start is free, a cancelled lesson frees its time
+ *   BUSY_SUPERVISION   a rastvaktspass of theirs runs then: their own pass
+ *                      on its date (unless a decision has relieved them of
+ *                      it that day), or one they have taken as vikarie
+ *                      (Rastvakt i vardagen, 20261210090000). One place at a
+ *                      time, as the rastvaktsschema's own rule
  *   BUSY_DUTY          an uppdrag's fixed slot covers the time (the duty's
  *                      label and kind, never its note)
  *   UNAVAILABLE        a TEACHER UNAVAILABLE row covers the time (never its
@@ -64,6 +69,13 @@
  * here: the rule cannot both bind and say nothing. The cap is the work rule's,
  * which every member of staff reads, and keeps its minutes.
  *
+ * A PASS IS A TARGET TOO (Rastvakt i vardagen). The board asks the same rules
+ * of a rastvaktspass whose teacher is away (`kind: 'PASS'`), with one rule
+ * left out: the cap counts a day's teaching, and a pass is not teaching. The
+ * rest hold as they stand — a part-timer is not called in on their day off
+ * for twenty minutes on the yard either, and a pass at lunch takes the
+ * lunch's time as a lesson does.
+ *
  * Times are epoch milliseconds, lifted from the school's wall clock by the
  * reader (publish-days.ts' coversTime does the same for publish), so this
  * module has no timezone in it.
@@ -76,6 +88,7 @@ export type HardRuleCode =
   | 'ON_LESSON'
   | 'ABSENT'
   | 'BUSY_LESSON'
+  | 'BUSY_SUPERVISION'
   | 'BUSY_DUTY'
   | 'UNAVAILABLE'
   | 'BOOKED_ROOM'
@@ -115,6 +128,24 @@ export interface PersonLesson {
   roomId?: string | null;
 }
 
+/**
+ * A rastvaktspass that holds the person's time on the day (20261210090000):
+ * one of their own on its date, or one they have taken as vikarie. Its id is
+ * passTargetId(shiftId, date), so the pass being covered is never its own
+ * clash.
+ */
+export interface PersonPass {
+  id: string;
+  date: string;
+  start: number;
+  end: number;
+}
+
+/** The id a pass occurrence has as a cover target and as a PersonPass. */
+export function passTargetId(shiftId: string, date: string): string {
+  return `pass:${shiftId}:${date}`;
+}
+
 export interface PersonClosure {
   span: Span;
   kind: 'DUTY' | 'UNAVAILABLE';
@@ -128,6 +159,8 @@ export interface PersonDay {
   isActiveTeacher: boolean;
   lessons: PersonLesson[];
   closures: PersonClosure[];
+  /** Their rastvaktspass on the day (20261210090000); absent is none. */
+  supervision?: PersonPass[];
   preferredFree: Span[];
   bookings: Span[];
   absences: Span[];
@@ -159,6 +192,8 @@ export interface CoverTarget {
   teacherIds: readonly string[];
   /** Where it is held; read by the ranking's walk between sites, never by a hard rule. */
   roomId?: string | null;
+  /** A rastvaktspass (20261210090000) rather than a lesson: the cap does not apply. Absent is a lesson. */
+  kind?: 'LESSON' | 'PASS';
 }
 
 const MINUTE = 60_000;
@@ -210,6 +245,7 @@ function lunchBroken(day: PersonDay, target: CoverTarget, lessons: readonly Pers
   if (!overlaps(cover, window)) return false;
   const busy: Span[] = [
     ...lessons.filter((lesson) => holdsTime(lesson) && lesson.date === target.date && lesson.id !== target.id),
+    ...(day.supervision ?? []).filter((pass) => pass.date === target.date && pass.id !== target.id),
     ...day.bookings,
     ...day.closures.map((closure) => closure.span),
   ];
@@ -253,6 +289,7 @@ function teachingMinutesWith(target: CoverTarget, lessons: readonly PersonLesson
 }
 
 function capBroken(day: PersonDay, target: CoverTarget, lessons: readonly PersonLesson[]): boolean {
+  if (target.kind === 'PASS') return false;
   const cap = day.dailyCapMinutes ?? null;
   return cap !== null && teachingMinutesWith(target, lessons) > cap;
 }
@@ -284,6 +321,9 @@ export function hardFindings(
   if (day.absences.some((span) => overlaps(span, cover))) findings.push({ code: 'ABSENT', params: {} });
   const busy = lessons.find((lesson) => lesson.id !== target.id && holdsTime(lesson) && overlaps(lesson, cover));
   if (busy) findings.push({ code: 'BUSY_LESSON', params: { lessonId: busy.id } });
+  if ((day.supervision ?? []).some((pass) => pass.id !== target.id && overlaps(pass, cover))) {
+    findings.push({ code: 'BUSY_SUPERVISION', params: {} });
+  }
   for (const closure of day.closures) {
     if (!overlaps(closure.span, cover)) continue;
     if (closure.kind === 'DUTY') findings.push({ code: 'BUSY_DUTY', params: { label: closure.label ?? '' } });
@@ -332,6 +372,7 @@ export type CoverWarningCode =
   /** Never from softWarnings: maskWarnings' COVER_BEYOND_WORK_DAYS, without the figure. */
   | 'COVER_BEYOND_WORK_DAYS_HIDDEN'
   | 'COVER_TEACHER_UNAVAILABLE'
+  | 'COVER_TEACHER_ON_SUPERVISION'
   | 'COVER_TEACHER_BOOKED'
   | 'COVER_POOL_NOT_DECLARED'
   | 'COVER_TRAVEL_TIME_SHORT';
@@ -347,6 +388,8 @@ const WARNING_OF: Partial<Record<HardRuleCode, CoverWarningCode>> = {
   DAILY_CAP: 'COVER_EXCEEDS_DAILY_CAP',
   WORK_DAYS: 'COVER_BEYOND_WORK_DAYS',
   BUSY_DUTY: 'COVER_TEACHER_UNAVAILABLE',
+  // A pass, as an uppdrag's slot: a rektor may ask the rastvakt to swap.
+  BUSY_SUPERVISION: 'COVER_TEACHER_ON_SUPERVISION',
   UNAVAILABLE: 'COVER_TEACHER_UNAVAILABLE',
   BOOKED_ROOM: 'COVER_TEACHER_BOOKED',
   POOL_NOT_DECLARED: 'COVER_POOL_NOT_DECLARED',

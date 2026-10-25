@@ -307,5 +307,80 @@ describe('cover support', () => {
       expect(await read('2027-01-07')).toEqual(['Rastvakt']);
       expect(await read('2027-03-03')).toEqual(['Rastvakt']);
     });
+
+    describe('rastvaktspass (Rastvakt i vardagen)', () => {
+      const clock = (time: string) => new Date(`1970-01-01T${time}:00.000Z`);
+      const shift = (id: string, userId: string, overrides: Record<string, unknown> = {}) => ({
+        id,
+        userId,
+        academicYearId: 'y',
+        dayOfWeek: 3,
+        startTime: clock('10:00'),
+        endTime: clock('10:20'),
+        validFrom: null,
+        validTo: null,
+        ...overrides,
+      });
+
+      it('asks in one statement for the year’s own passes on the weekday and the passes taken as vikarie on the date, and no more without one', async () => {
+        const tx = createTxMock();
+        tx.user.findMany.mockResolvedValue([{ id: 'a', role: 'TEACHER', isActive: true }]);
+        await readPersonDays(tx as never, { date: '2026-10-14', timezone: 'Europe/Stockholm', academicYearId: 'y' });
+        expect(tx.supervisionShift.findMany).toHaveBeenCalledTimes(1);
+        const { where, select } = tx.supervisionShift.findMany.mock.calls[0][0];
+        expect(where).toEqual({
+          OR: [
+            { userId: { in: ['a'] }, academicYearId: 'y', dayOfWeek: 3 },
+            { covers: { some: { date: new Date('2026-10-14T00:00:00.000Z'), decision: 'SUBSTITUTE', substituteId: { in: ['a'] } } } },
+          ],
+        });
+        // Never a pass's note, and no relation (a statement of its own even for no pass).
+        expect(select.note).toBeUndefined();
+        expect(select.covers).toBeUndefined();
+        // No pass: no decision is asked.
+        expect(tx.supervisionCover.findMany).not.toHaveBeenCalled();
+        // Without a läsår only the vikarie's passes are asked.
+        const none = createTxMock();
+        none.user.findMany.mockResolvedValue([{ id: 'a', role: 'TEACHER', isActive: true }]);
+        await readPersonDays(none as never, { date: '2026-10-14', timezone: 'Europe/Stockholm', academicYearId: null });
+        expect(none.supervisionShift.findMany.mock.calls[0][0].where.OR).toHaveLength(1);
+      });
+
+      it('holds an own pass’s time on its dates unless a decision relieved its teacher, and a taken pass’s for its vikarie', async () => {
+        const tx = createTxMock();
+        tx.user.findMany.mockResolvedValue([
+          { id: 'a', role: 'TEACHER', isActive: true },
+          { id: 'b', role: 'TEACHER', isActive: true },
+          { id: 'c', role: 'TEACHER', isActive: true },
+        ]);
+        const taken = {
+          shiftId: 'relieved',
+          decision: 'SUBSTITUTE',
+          substituteId: 'b',
+          startsAt: new Date('2026-10-14T10:00:00Z'),
+          endsAt: new Date('2026-10-14T10:30:00Z'),
+        };
+        tx.supervisionShift.findMany.mockResolvedValue([
+          shift('own', 'a'),
+          // C is relieved of her pass that day: B takes it.
+          shift('relieved', 'c'),
+          // A's pass that has ended by the date runs no more.
+          shift('ended', 'a', { validTo: new Date('2026-10-07T00:00:00Z') }),
+        ]);
+        tx.supervisionCover.findMany.mockResolvedValue([taken]);
+        const read = await readPersonDays(tx as never, { date: '2026-10-14', timezone: 'Europe/Stockholm', academicYearId: 'y' });
+        expect(tx.supervisionCover.findMany).toHaveBeenCalledWith({
+          where: { shiftId: { in: ['own', 'relieved', 'ended'] }, date: new Date('2026-10-14T00:00:00.000Z') },
+          select: { shiftId: true, decision: true, substituteId: true, startsAt: true, endsAt: true },
+        });
+        expect(read.days.get('a')!.supervision).toEqual([
+          { id: 'pass:own:2026-10-14', date: '2026-10-14', start: Date.parse('2026-10-14T08:00:00Z'), end: Date.parse('2026-10-14T08:20:00Z') },
+        ]);
+        expect(read.days.get('b')!.supervision).toEqual([
+          { id: 'pass:relieved:2026-10-14', date: '2026-10-14', start: taken.startsAt.getTime(), end: taken.endsAt.getTime() },
+        ]);
+        expect(read.days.get('c')!.supervision).toEqual([]);
+      });
+    });
   });
 });

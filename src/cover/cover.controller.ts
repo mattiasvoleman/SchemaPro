@@ -32,6 +32,11 @@ import {
   type ReasonView,
 } from './cover-settings.service';
 import { TeacherAbsencesService, type AbsenceView } from './teacher-absences.service';
+import {
+  SupervisionCoverService,
+  type PassCandidatesResponse,
+  type PassWarning,
+} from './supervision-cover.service';
 import type { DayProposal } from './day-proposal';
 import {
   ApplyDto,
@@ -47,6 +52,7 @@ import {
   EndAbsenceDto,
   HoursQueryDto,
   ListAbsencesQueryDto,
+  PassDecisionDto,
   PoolMemberDto,
   ProposalDto,
   UndoQueryDto,
@@ -153,8 +159,9 @@ export class TeacherAbsenceReasonsController {
 
 /**
  * The cover board (Vikarietavla), its suggestions, the day proposal, the
- * counter, the hour statement and the pool. ADMIN ONLY, except the settings
- * a teacher reads and the availability a pool member keeps.
+ * counter, the hour statement and the pool, and an absent rastvakt's passes
+ * (Rastvakt i vardagen). ADMIN ONLY, except the settings a teacher reads and
+ * the availability a pool member keeps.
  */
 @Controller('api/v1/cover')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -166,6 +173,7 @@ export class CoverController {
     private readonly suggestions: CoverSuggestionsService,
     private readonly reports: CoverReportsService,
     private readonly settings: CoverSettingsService,
+    private readonly passes: SupervisionCoverService,
   ) {}
 
   @Get('settings')
@@ -238,6 +246,38 @@ export class CoverController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<{ applied: number }> {
     return this.suggestions.apply(isoDate(date), dto, user);
+  }
+
+  // Rastvakt i vardagen (20261210090000): an absent rastvakt's pass on a
+  // date, its candidates and the decisions on it. Drift's, as the lessons'.
+
+  @Get('supervision/:shiftId/:date/candidates')
+  passCandidates(
+    @Param('shiftId', uuid()) shiftId: string,
+    @Param('date') date: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<PassCandidatesResponse> {
+    return this.passes.candidates(shiftId, isoDate(date), user);
+  }
+
+  @Post('supervision/:shiftId/:date/decision')
+  @HttpCode(HttpStatus.OK)
+  passDecide(
+    @Param('shiftId', uuid()) shiftId: string,
+    @Param('date') date: string,
+    @Body() dto: PassDecisionDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<{ shiftId: string; date: string; warnings: PassWarning[] }> {
+    return this.passes.decide(shiftId, isoDate(date), dto, user);
+  }
+
+  @Delete('supervision/:shiftId/:date/decision')
+  passUndo(
+    @Param('shiftId', uuid()) shiftId: string,
+    @Param('date') date: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<{ shiftId: string; date: string }> {
+    return this.passes.undo(shiftId, isoDate(date), user);
   }
 
   @Get('counter')

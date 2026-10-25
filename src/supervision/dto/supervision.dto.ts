@@ -210,3 +210,12 @@ export class SupervisionRotaQueryDto {
   @IsUUID('4', { message: 'academicYearId: anges som läsårets id.' })
   academicYearId!: string;
 }
+
+/** GET /supervision/week?from=&to= — the signed-in person's own passes (Rastvakt i vardagen). */
+export class SupervisionWeekQueryDto {
+  @IsCalendarDate({ message: 'from: anges som ett datum (ÅÅÅÅ-MM-DD).' })
+  from!: string;
+
+  @IsCalendarDate({ message: 'to: anges som ett datum (ÅÅÅÅ-MM-DD).' })
+  to!: string;
+}

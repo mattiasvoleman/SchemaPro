@@ -43,6 +43,9 @@ import {
 } from './cover-decisions';
 import { rethrowCoverError } from './cover-errors';
 import { sendNotices, settleNotices } from './cover-notices';
+import { passSummaryOf, type PassBoardItem, type PassSummary } from './supervision-board';
+import { readPassBoard } from './supervision-cover-reads';
+import { sendPassNotices, settlePassNotices, type PassNotice } from './supervision-notices';
 import { substituteNotedLessons } from '../lesson-log/substitute-noted';
 import type { BulkDto, CoverDecisionKindValue, CoverStatusValue, DecisionDto } from './dto/cover.dto';
 
@@ -89,6 +92,8 @@ export interface CoverEffects {
   notices: PendingNotice[];
   classNotices: ClassNotice[];
   warnings: Array<StaffingWarning | CoverWarning>;
+  /** A rastvaktspass's vikarier, booked or no longer needed (Rastvakt i vardagen, 20261210090000). */
+  passNotices: PassNotice[];
 }
 
 export interface BoardResponse {
@@ -103,6 +108,13 @@ export interface BoardResponse {
    * (Lektionslogg, 20261203090000): that there is one, never what it says.
    */
   notedLessonIds: string[];
+  /**
+   * The rastvaktspass of the absent teachers over the window, and what has
+   * been decided about each (Rastvakt i vardagen, 20261210090000;
+   * supervision-board.ts). Never a reason or a pass's note.
+   */
+  supervision: PassBoardItem[];
+  supervisionSummary: PassSummary;
 }
 
 /** One pair, read inside a write's transaction after its locks. */
@@ -118,7 +130,14 @@ interface PairState {
 
 const LIVE_STATUSES = ['SCHEDULED', 'CANCELLED', 'COMPLETED'];
 
-export const emptyEffects = (): CoverEffects => ({ lessonIds: [], dates: [], notices: [], classNotices: [], warnings: [] });
+export const emptyEffects = (): CoverEffects => ({
+  lessonIds: [],
+  dates: [],
+  notices: [],
+  classNotices: [],
+  warnings: [],
+  passNotices: [],
+});
 
 /**
  * THE COVER BOARD (Vikarietavla): the pairs of a day or a week, and the
@@ -169,13 +188,20 @@ export class CoverService {
           select: { id: true, userId: true, startsAt: true, endsAt: true },
           orderBy: [{ startsAt: 'asc' }, { id: 'asc' }],
         })) ?? [];
+      // The absent teachers' passes over the same window, from the same
+      // absences (supervision-cover-reads.ts).
+      const supervision = await readPassBoard(tx, { kind: 'window', from, to, absences }, timezone, now);
       // Who is away over the window, the period without the reason
       // (STAFF_ABSENCES): the absences' people and the board's absent
       // teachers, which an ended absence's decisions can still show.
       await recordRead(
         tx,
         'STAFF_ABSENCES',
-        [...absences.map((absence) => absence.userId), ...items.map((item) => item.absentTeacherId)],
+        [
+          ...absences.map((absence) => absence.userId),
+          ...items.map((item) => item.absentTeacherId),
+          ...supervision.map((item) => item.absentTeacherId),
+        ],
         user.channel,
       );
       const lessonIds = [...new Set(items.map((item) => item.lessonId))];
@@ -192,6 +218,8 @@ export class CoverService {
           startsAt: a.startsAt.toISOString(),
           endsAt: a.endsAt.toISOString(),
         })),
+        supervision,
+        supervisionSummary: passSummaryOf(supervision),
       };
     });
   }
@@ -540,7 +568,8 @@ export class CoverService {
   async afterCommit(user: AuthenticatedUser, effects: CoverEffects): Promise<void> {
     const schoolId = requireSchoolId(user);
     const notices = settleNotices(effects.notices);
-    if (notices.length > 0 || effects.lessonIds.length > 0) {
+    const passNotices = settlePassNotices(effects.passNotices ?? []);
+    if (notices.length > 0 || effects.lessonIds.length > 0 || passNotices.length > 0) {
       await this.prisma
         .withRls(user, async (tx) => {
           const timezone = await schoolTimezone(tx, schoolId);
@@ -548,9 +577,12 @@ export class CoverService {
           for (const notice of settleClassNotices(effects.classNotices)) {
             await this.calendarLessons.notifyLessonClass(tx, notice.lessonId, notice.type, notice.teacherIds, timezone);
           }
+          await sendPassNotices(this.notifications, tx, schoolId, timezone, passNotices);
           await this.realtime.notifyLessonsChanged(tx, [...new Set(effects.lessonIds)]);
         })
-        .catch(() => this.logger.warn(`Cover notices failed after commit [lessons=${effects.lessonIds.length}]`));
+        .catch(() =>
+          this.logger.warn(`Cover notices failed after commit [lessons=${effects.lessonIds.length}, passes=${passNotices.length}]`),
+        );
     }
     const dates = [...new Set(effects.dates)].sort();
     if (dates.length > 0) {
@@ -622,6 +654,7 @@ export function merge(into: CoverEffects, from: CoverEffects): void {
   into.notices.push(...from.notices);
   into.classNotices.push(...from.classNotices);
   into.warnings.push(...from.warnings);
+  into.passNotices.push(...(from.passNotices ?? []));
 }
 
 /** One class notice per lesson and kind: two pairs of one lesson covered in a batch tell the class once. */

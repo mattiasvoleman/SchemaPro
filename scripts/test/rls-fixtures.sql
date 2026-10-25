@@ -1921,6 +1921,69 @@ BEGIN
   INSERT INTO "SupervisionShifts" ("schoolId", "academicYearId", "areaId", "userId", "dayOfWeek", "startTime", "endTime")
   VALUES (m, yr, area, teacher, 1, '10:00', '10:20');
 END $$;
+
+-- Rastvakt i vardagen (20261210090000), sections 210–213: Anna is away
+-- Monday 2 September 2030 and Bo takes her Monday pass on the yard; Bo is
+-- away Monday 9 September and his pass in the hall is left without a
+-- vikarie; the other school's teacher is away on the 2nd and their pass is
+-- left without one. And the matrix school's teacher is away on Monday the
+-- 9th and their pass on Roller gården is left without one, so section 116
+-- has a row to probe. A block of its own: it plants into schools the blocks above made.
+DO $$
+DECLARE
+  s1 uuid;
+  s2 uuid;
+  anna uuid;
+  bo uuid;
+  other uuid;
+  pass uuid;
+  hall_pass uuid;
+  other_pass uuid;
+  garden uuid;
+  hall uuid;
+  away uuid;
+  a uuid;
+  b uuid;
+  o uuid;
+  m uuid;
+  m_teacher uuid;
+  m_pass uuid;
+  m_area uuid;
+  m_absence uuid;
+BEGIN
+  SELECT id INTO s1 FROM "Schools" WHERE slug = 'rls-rastvakt-school';
+  IF s1 IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "SupervisionCovers" WHERE "schoolId" = s1) THEN
+    SELECT id INTO s2 FROM "Schools" WHERE slug = 'rls-rastvakt-annan';
+    SELECT id INTO anna FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000002021';
+    SELECT id INTO bo FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000002026';
+    SELECT id INTO other FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000002027';
+    SELECT id, "areaId" INTO pass, garden FROM "SupervisionShifts" WHERE "userId" = anna AND "dayOfWeek" = 1;
+    SELECT id, "areaId" INTO hall_pass, hall FROM "SupervisionShifts" WHERE "userId" = bo;
+    SELECT id, "areaId" INTO other_pass, away FROM "SupervisionShifts" WHERE "userId" = other;
+    INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt")
+    VALUES (s1, anna, timestamptz '2030-09-01 22:00 UTC', timestamptz '2030-09-02 22:00 UTC') RETURNING id INTO a;
+    INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt")
+    VALUES (s1, bo, timestamptz '2030-09-08 22:00 UTC', timestamptz '2030-09-09 22:00 UTC') RETURNING id INTO b;
+    INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt")
+    VALUES (s2, other, timestamptz '2030-09-01 22:00 UTC', timestamptz '2030-09-02 22:00 UTC') RETURNING id INTO o;
+    INSERT INTO "SupervisionCovers" ("schoolId", "shiftId", date, "areaId", "startsAt", "endsAt", "absenceId", "absentTeacherId", decision, "substituteId") VALUES
+      (s1, pass, DATE '2030-09-02', garden, timestamptz '2030-09-02 08:00 UTC', timestamptz '2030-09-02 08:20 UTC', a, anna, 'SUBSTITUTE', bo),
+      (s1, hall_pass, DATE '2030-09-09', hall, timestamptz '2030-09-09 09:00 UTC', timestamptz '2030-09-09 09:30 UTC', b, bo, 'NO_COVER', NULL),
+      (s2, other_pass, DATE '2030-09-02', away, timestamptz '2030-09-02 08:00 UTC', timestamptz '2030-09-02 08:20 UTC', o, other, 'NO_COVER', NULL);
+  END IF;
+
+  SELECT id INTO m FROM "Schools" WHERE slug = 'rls-roller-school';
+  IF m IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "SupervisionCovers" WHERE "schoolId" = m) THEN
+    SELECT id, "userId", "areaId" INTO m_pass, m_teacher, m_area FROM "SupervisionShifts" WHERE "schoolId" = m ORDER BY "createdAt", id LIMIT 1;
+    IF m_pass IS NOT NULL THEN
+      -- The 9th: the matrix's own absence fixture holds the 2nd.
+      INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt")
+      VALUES (m, m_teacher, timestamptz '2030-09-08 22:00 UTC', timestamptz '2030-09-09 22:00 UTC') RETURNING id INTO m_absence;
+      INSERT INTO "SupervisionCovers" ("schoolId", "shiftId", date, "areaId", "startsAt", "endsAt", "absenceId", "absentTeacherId", decision)
+      VALUES (m, m_pass, DATE '2030-09-09', m_area, timestamptz '2030-09-09 08:00 UTC', timestamptz '2030-09-09 08:20 UTC', m_absence, m_teacher, 'NO_COVER');
+    END IF;
+  END IF;
+END $$;
 -- En elev i en tillagd undervisningsgrupp (20261208090000), sections 250–251:
 -- 7B's svenska with the teaching group SvA7 joined to it (TG-1), a 7A pupil
 -- in SvA7 (P1), a 7A pupil in no group (P2), a 7B pupil (P3), and each one's

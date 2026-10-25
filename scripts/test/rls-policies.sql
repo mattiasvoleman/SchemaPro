@@ -19808,6 +19808,7 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('SubstituteAvailabilities', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
   ('SubstitutePoolMembers', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
   ('SupervisionAreas', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('SupervisionCovers', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
   ('SupervisionShifts', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('TeacherAbsenceCovers', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
   ('TeacherAbsenceReasons', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
@@ -28433,6 +28434,435 @@ BEGIN
   IF n <> 1 THEN RAISE EXCEPTION 'supervision: the fixture''s teacher was not removed (%)', n; END IF;
   SELECT count(*) INTO n FROM "SupervisionShifts";
   IF n <> 0 THEN RAISE EXCEPTION 'supervision: % passes outlived their teacher', n; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 210: vikarietavlans beslut om en frånvarande rastvakts pass står i
+-- katalogen som migreringen säger (SupervisionCovers, 20261210090000).
+--
+-- Row security, every arm TO app_authenticated and permissive: the
+-- administrators' read, the teacher's read as vikarie and as the absent, each
+-- an AND anchored to the caller with no OR, and Drift's three writes, the
+-- update asking the area in WITH CHECK alone. PostgREST's authenticated and
+-- anon hold nothing, service_role reads and nothing more, the API holds
+-- SELECT, INSERT, UPDATE and DELETE and no TRUNCATE, REFERENCES or TRIGGER,
+-- and no API role holds MAINTAIN on 17. Each CHECK says what the migration
+-- says, a pass has one decision a date, every key cascades and is composite
+-- with the school, the two notice types exist, and the guard on a teacher's
+-- own absence asks the pass decisions beside the lessons'.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  r text;
+  p text;
+  n bigint;
+  def text;
+BEGIN
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public."SupervisionCovers"'::regclass) THEN
+    RAISE EXCEPTION 'pass covers: row security is off';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'SupervisionCovers'
+               AND (roles <> '{app_authenticated}' OR permissive <> 'PERMISSIVE')) THEN
+    RAISE EXCEPTION 'pass covers: an arm for another role than the API''s, or a restrictive one';
+  END IF;
+  FOREACH r IN ARRAY ARRAY['authenticated', 'anon'] LOOP
+    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+    FOREACH p IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+      IF has_table_privilege(r, 'public."SupervisionCovers"', p) THEN RAISE EXCEPTION 'pass covers: % holds %', r, p; END IF;
+    END LOOP;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    FOREACH p IN ARRAY ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+      IF has_table_privilege('service_role', 'public."SupervisionCovers"', p) THEN RAISE EXCEPTION 'pass covers: service_role holds %', p; END IF;
+    END LOOP;
+  END IF;
+  FOREACH p IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE'] LOOP
+    IF NOT has_table_privilege('app_authenticated', 'public."SupervisionCovers"', p) THEN RAISE EXCEPTION 'pass covers: the API lacks %', p; END IF;
+  END LOOP;
+  FOREACH p IN ARRAY ARRAY['TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+    IF has_table_privilege('app_authenticated', 'public."SupervisionCovers"', p) THEN RAISE EXCEPTION 'pass covers: the API holds %', p; END IF;
+  END LOOP;
+  IF current_setting('server_version_num')::int >= 170000 THEN
+    FOREACH r IN ARRAY ARRAY['authenticated', 'app_authenticated', 'service_role', 'anon'] LOOP
+      CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+      IF has_table_privilege(r, 'public."SupervisionCovers"', 'MAINTAIN') THEN RAISE EXCEPTION 'pass covers: % holds MAINTAIN', r; END IF;
+    END LOOP;
+  END IF;
+
+  SELECT count(*) INTO n FROM pg_policies WHERE schemaname = 'public' AND tablename = 'SupervisionCovers'
+     AND (policyname, cmd) IN (('supervision_covers_admin_select', 'SELECT'), ('supervision_covers_substitute_select', 'SELECT'),
+                               ('supervision_covers_absent_select', 'SELECT'), ('supervision_covers_admin_insert', 'INSERT'),
+                               ('supervision_covers_admin_update', 'UPDATE'), ('supervision_covers_admin_delete', 'DELETE'));
+  IF n <> 6 OR (SELECT count(*) FROM pg_policies WHERE tablename = 'SupervisionCovers') <> 6 THEN
+    RAISE EXCEPTION 'pass covers: not exactly the three reads and Drift''s three writes';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'supervision_covers_admin_select'
+                   AND qual LIKE '%''SCHOOL_ADMIN''%' AND qual NOT LIKE '%TEACHER%' AND qual LIKE '%current_school_id()%'
+                   AND qual NOT LIKE '% OR %')
+     OR NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'supervision_covers_substitute_select'
+                   AND qual LIKE '%''TEACHER''%' AND qual NOT LIKE '%SCHOOL_ADMIN%' AND qual LIKE '%current_school_id()%'
+                   AND qual LIKE '%("substituteId" = ( SELECT app.current_user_id() AS current_user_id))%' AND qual NOT LIKE '% OR %')
+     OR NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'supervision_covers_absent_select'
+                   AND qual LIKE '%''TEACHER''%' AND qual NOT LIKE '%SCHOOL_ADMIN%' AND qual LIKE '%current_school_id()%'
+                   AND qual LIKE '%("absentTeacherId" = ( SELECT app.current_user_id() AS current_user_id))%' AND qual NOT LIKE '% OR %') THEN
+    RAISE EXCEPTION 'pass covers: the reads are not the administrators'', the vikarie''s own and the absent teacher''s own';
+  END IF;
+  IF (SELECT count(*) FROM pg_policies WHERE tablename = 'SupervisionCovers' AND cmd IN ('INSERT', 'UPDATE', 'DELETE')
+        AND coalesce(with_check, qual) LIKE '%current_user_may(''DRIFT''%'
+        AND coalesce(with_check, qual) LIKE '%SCHOOL_ADMIN%' AND coalesce(with_check, qual) LIKE '%current_school_id()%') <> 3
+     OR EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'SupervisionCovers' AND cmd = 'UPDATE' AND qual LIKE '%current_user_may%') THEN
+    RAISE EXCEPTION 'pass covers: the writes are not Drift''s three, with the update asking in WITH CHECK alone';
+  END IF;
+
+  FOR def IN SELECT unnest(ARRAY[
+      'SupervisionCovers_window_is_ordered|"endsAt" > "startsAt"|"endsAt" > "startsAt"',
+      'SupervisionCovers_substitute_iff_substitute|''SUBSTITUTE''|"substituteId" IS NOT NULL',
+      'SupervisionCovers_substitute_is_not_the_absent|"substituteId" <> "absentTeacherId"|"substituteId" IS NULL'])
+  LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = split_part(def, '|', 1) AND contype = 'c' AND convalidated
+                     AND pg_get_constraintdef(oid) ILIKE '%' || split_part(def, '|', 2) || '%'
+                     AND pg_get_constraintdef(oid) ILIKE '%' || split_part(def, '|', 3) || '%') THEN
+      RAISE EXCEPTION 'pass covers: the check % is missing or says something else', split_part(def, '|', 1);
+    END IF;
+  END LOOP;
+  IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE tablename = 'SupervisionCovers' AND indexname = 'SupervisionCovers_shiftId_date_key'
+                   AND indexdef LIKE 'CREATE UNIQUE INDEX%("shiftId", date)') THEN
+    RAISE EXCEPTION 'pass covers: a pass may hold more than one decision a date';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE tablename = 'SupervisionShifts' AND indexname = 'SupervisionShifts_id_schoolId_key'
+                   AND indexdef LIKE 'CREATE UNIQUE INDEX%(id, "schoolId")') THEN
+    RAISE EXCEPTION 'pass covers: the pass has no (id, schoolId) key for the decision''s';
+  END IF;
+
+  -- The keys: composite with the school, ON UPDATE NO ACTION, ON DELETE CASCADE.
+  FOR def IN SELECT unnest(ARRAY[
+      'SupervisionShifts|shiftId,schoolId|id,schoolId',
+      'SupervisionAreas|areaId,schoolId|id,schoolId',
+      'TeacherAbsences|absenceId,absentTeacherId,schoolId|id,userId,schoolId',
+      'Users|substituteId,schoolId|id,schoolId'])
+  LOOP
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint c
+       WHERE c.contype = 'f' AND c.conrelid = 'public."SupervisionCovers"'::regclass
+         AND c.confrelid = format('public.%I', split_part(def, '|', 1))::regclass
+         AND c.confupdtype = 'a' AND c.confdeltype = 'c' AND c.convalidated
+         AND (SELECT string_agg(a.attname::text, ',' ORDER BY k.ord) FROM unnest(c.conkey) WITH ORDINALITY k(attnum, ord)
+                JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum) = split_part(def, '|', 2)
+         AND (SELECT string_agg(a.attname::text, ',' ORDER BY k.ord) FROM unnest(c.confkey) WITH ORDINALITY k(attnum, ord)
+                JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = k.attnum) = split_part(def, '|', 3)) THEN
+      RAISE EXCEPTION 'pass covers: the key % is not as the migration writes it', def;
+    END IF;
+  END LOOP;
+
+  IF (SELECT count(*) FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid
+       WHERE t.typname = 'NotificationType' AND e.enumlabel IN ('SUPERVISION_COVER', 'SUPERVISION_COVER_WITHDRAWN')) <> 2 THEN
+    RAISE EXCEPTION 'pass covers: the notice types are missing';
+  END IF;
+
+  -- The guard on a teacher's own absence (20261012130000) asks both kinds of
+  -- decision, in the early end and in the withdrawal, and is the trigger's.
+  SELECT p.prosrc INTO def FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
+   WHERE ns.nspname = 'app' AND p.proname = 'teacher_absences_own_writes_are_narrow' AND p.prosecdef;
+  IF def IS NULL
+     OR (length(def) - length(replace(def, 'FROM "SupervisionCovers" s', ''))) / length('FROM "SupervisionCovers" s') <> 2
+     OR (length(def) - length(replace(def, 'FROM "TeacherAbsenceCovers" c', ''))) / length('FROM "TeacherAbsenceCovers" c') <> 2
+     OR def NOT LIKE '%NOT (s."startsAt" < NEW."endsAt" AND s."endsAt" > NEW."startsAt")%' THEN
+    RAISE EXCEPTION 'pass covers: the guard on a teacher''s own absence does not ask the pass decisions beside the lessons''';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'TeacherAbsences_own_writes_are_narrow'
+                   AND tgrelid = 'public."TeacherAbsences"'::regclass AND tgenabled = 'O') THEN
+    RAISE EXCEPTION 'pass covers: the guard''s trigger is gone or off';
+  END IF;
+  IF has_function_privilege('app_authenticated', 'app.teacher_absences_own_writes_are_narrow()', 'EXECUTE') THEN
+    RAISE EXCEPTION 'pass covers: the API may call the guard';
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 211: skolans administratörer läser varje beslut om ett pass, den
+-- som skriver Drift skriver dem, och expeditionen gör det; en lärare läser
+-- bara de beslut där hen är vikarie eller den frånvarande; elev,
+-- vårdnadshavare, tjänsten och synken läser inget; en annan skolas
+-- administratör når inget här; PostgREST:s roll når inget ens med
+-- administratörens anspråk (20261210090000).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000002025')::text, true);
+SELECT set_config('app.test_pc_other', app.current_school_id()::text, true);
+SELECT set_config('app.test_pc_other_cover', (SELECT min(id::text) FROM "SupervisionCovers"), true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000002020')::text, true);
+SELECT set_config('app.test_pc_school', app.current_school_id()::text, true);
+DO $$
+DECLARE
+  n bigint;
+  who text;
+  anna uuid;
+  bo uuid;
+  annas uuid;
+  bos uuid;
+  pass uuid;
+  garden uuid;
+  absence uuid;
+  ny uuid;
+BEGIN
+  IF coalesce(current_setting('app.test_pc_school', true), '') = '' OR coalesce(current_setting('app.test_pc_other_cover', true), '') = '' THEN
+    RAISE EXCEPTION 'pass covers: a fixture admin read no school, or the other school''s admin none of its decisions';
+  END IF;
+  SELECT count(*) INTO n FROM "SupervisionCovers";
+  IF n <> 2 THEN RAISE EXCEPTION 'pass covers: the admin reads % decisions, not the school''s two', n; END IF;
+  SELECT id INTO anna FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000002021';
+  SELECT id INTO bo FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000002026';
+  SELECT id, "shiftId", "areaId", "absenceId" INTO annas, pass, garden, absence FROM "SupervisionCovers" WHERE "absentTeacherId" = anna;
+  SELECT id INTO bos FROM "SupervisionCovers" WHERE "absentTeacherId" = bo;
+
+  -- Drift writes: a decision on the next Monday, changed, removed.
+  INSERT INTO "SupervisionCovers" ("schoolId", "shiftId", date, "areaId", "startsAt", "endsAt", "absenceId", "absentTeacherId", decision)
+  VALUES (app.current_school_id(), pass, DATE '2030-09-16', garden, timestamptz '2030-09-16 08:00 UTC', timestamptz '2030-09-16 08:20 UTC',
+          absence, anna, 'NO_COVER')
+  RETURNING id INTO ny;
+  UPDATE "SupervisionCovers" SET decision = 'SUBSTITUTE', "substituteId" = bo WHERE id = ny;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'pass covers: the admin changed % of the school''s decisions', n; END IF;
+  DELETE FROM "SupervisionCovers" WHERE id = ny;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'pass covers: the admin removed % of the school''s decisions', n; END IF;
+
+  -- Another school's decision: not seen, not changed, not removed, not written into.
+  UPDATE "SupervisionCovers" SET "decidedAt" = now() WHERE id = current_setting('app.test_pc_other_cover')::uuid;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'pass covers: the admin changed another school''s decision'; END IF;
+  DELETE FROM "SupervisionCovers" WHERE id = current_setting('app.test_pc_other_cover')::uuid;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'pass covers: the admin removed another school''s decision'; END IF;
+  BEGIN
+    UPDATE "SupervisionCovers" SET "schoolId" = current_setting('app.test_pc_other')::uuid WHERE id = annas;
+    RAISE EXCEPTION 'pass covers: the admin moved a decision into another school';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+
+  -- The expedition writes Drift: it reads the two and changes one.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000002024')::text, true);
+  SELECT count(*) INTO n FROM "SupervisionCovers";
+  IF n <> 2 THEN RAISE EXCEPTION 'pass covers: the expedition reads % decisions, not the school''s two', n; END IF;
+  UPDATE "SupervisionCovers" SET "decidedAt" = now() WHERE id = bos;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'pass covers: the expedition changed % decisions', n; END IF;
+
+  -- Anna reads the decision on her absence, not Bo's; Bo reads the one he
+  -- is the vikarie of and the one on his own absence. Neither writes.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000002021')::text, true);
+  IF (SELECT count(*) FROM "SupervisionCovers") <> 1 OR NOT EXISTS (SELECT 1 FROM "SupervisionCovers" WHERE id = annas) THEN
+    RAISE EXCEPTION 'pass covers: the absent teacher reads % decisions, not the one on her absence', (SELECT count(*) FROM "SupervisionCovers");
+  END IF;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000002026')::text, true);
+  IF (SELECT count(*) FROM "SupervisionCovers") <> 2 THEN
+    RAISE EXCEPTION 'pass covers: the vikarie reads % decisions, not his as vikarie and his as the absent', (SELECT count(*) FROM "SupervisionCovers");
+  END IF;
+  FOREACH who IN ARRAY ARRAY['00000000-0000-4000-8000-000000002021', '00000000-0000-4000-8000-000000002026'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', who)::text, true);
+    UPDATE "SupervisionCovers" SET "decidedAt" = now();
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'pass covers: teacher % changed % decisions', who, n; END IF;
+    DELETE FROM "SupervisionCovers";
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'pass covers: teacher % removed % decisions', who, n; END IF;
+    BEGIN
+      INSERT INTO "SupervisionCovers" ("schoolId", "shiftId", date, "areaId", "startsAt", "endsAt", "absenceId", "absentTeacherId", decision)
+      VALUES (app.current_school_id(), pass, DATE '2030-09-23', garden, timestamptz '2030-09-23 08:00 UTC', timestamptz '2030-09-23 08:20 UTC',
+              absence, anna, 'NO_COVER');
+      RAISE EXCEPTION 'pass covers: teacher % wrote a decision', who;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+  END LOOP;
+
+  -- The other school's teacher, absent there: their own decision, none here.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000002027')::text, true);
+  IF (SELECT count(*) FROM "SupervisionCovers") <> 1 OR EXISTS (SELECT 1 FROM "SupervisionCovers" WHERE "schoolId" = current_setting('app.test_pc_school')::uuid) THEN
+    RAISE EXCEPTION 'pass covers: the other school''s teacher reads % decisions, not her own alone', (SELECT count(*) FROM "SupervisionCovers");
+  END IF;
+
+  -- Pupil and guardian: nothing read, nothing written.
+  FOREACH who IN ARRAY ARRAY['00000000-0000-4000-8000-000000002022', '00000000-0000-4000-8000-000000002023'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', who)::text, true);
+    SELECT count(*) INTO n FROM "SupervisionCovers";
+    IF n <> 0 THEN RAISE EXCEPTION 'pass covers: % (%) reads % decisions', who, app.current_user_role(), n; END IF;
+    BEGIN
+      INSERT INTO "SupervisionCovers" ("schoolId", "shiftId", date, "areaId", "startsAt", "endsAt", "absenceId", "absentTeacherId", decision)
+      VALUES (app.current_school_id(), pass, DATE '2030-09-23', garden, timestamptz '2030-09-23 08:00 UTC', timestamptz '2030-09-23 08:20 UTC',
+              absence, anna, 'NO_COVER');
+      RAISE EXCEPTION 'pass covers: % wrote a decision', who;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+  END LOOP;
+
+  -- The service and the sync principal of the school: nothing.
+  PERFORM set_config('request.jwt.claims', '', true);
+  FOREACH who IN ARRAY ARRAY['app.service_school_id', 'app.sync_school_id'] LOOP
+    PERFORM set_config(who, current_setting('app.test_pc_school'), true);
+    SELECT count(*) INTO n FROM "SupervisionCovers";
+    IF n <> 0 THEN RAISE EXCEPTION 'pass covers: % reads % decisions', who, n; END IF;
+    PERFORM set_config(who, '', true);
+  END LOOP;
+END $$;
+
+-- PostgREST's role, with the admin's claims: nothing at all.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000002020')::text, true);
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  IF current_user <> 'authenticated' THEN RAISE EXCEPTION 'pass covers: could not act as authenticated'; END IF;
+  BEGIN
+    PERFORM 1 FROM "SupervisionCovers";
+    RAISE EXCEPTION 'pass covers: PostgREST''s role reads the decisions';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 212: ett beslut håller sina gränser — en vikarie bara för
+-- SUBSTITUTE och aldrig den frånvarande, ett slut efter starten, ett beslut
+-- om dagen per pass — och hör till sin skolas pass, område, frånvaro med dess
+-- person och vikarie; passet, området och frånvaron tar sina beslut med sig
+-- (20261210090000).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000002025')::text, true);
+SELECT set_config('app.test_pc_other_pass', (SELECT min(id::text) FROM "SupervisionShifts"), true);
+SELECT set_config('app.test_pc_other_area', (SELECT min(id::text) FROM "SupervisionAreas"), true);
+SELECT set_config('app.test_pc_other_absence', (SELECT min(id::text) FROM "TeacherAbsences" WHERE "startsAt" = timestamptz '2030-09-01 22:00 UTC'), true);
+SELECT set_config('app.test_pc_other_teacher', (SELECT id::text FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000002027'), true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000002020')::text, true);
+CREATE OR REPLACE FUNCTION pg_temp.pc_refused(label text, stmt text, expected text) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+  EXCEPTION
+    WHEN check_violation THEN
+      IF expected <> 'check' THEN RAISE EXCEPTION 'pass covers: % met a CHECK, not %: %', label, expected, SQLERRM USING ERRCODE = 'P0001'; END IF;
+      RETURN;
+    WHEN unique_violation THEN
+      IF expected <> 'unique' THEN RAISE EXCEPTION 'pass covers: % met a key, not %: %', label, expected, SQLERRM USING ERRCODE = 'P0001'; END IF;
+      RETURN;
+    WHEN foreign_key_violation THEN
+      IF expected <> 'foreign' THEN RAISE EXCEPTION 'pass covers: % met a foreign key, not %: %', label, expected, SQLERRM USING ERRCODE = 'P0001'; END IF;
+      RETURN;
+  END;
+  RAISE EXCEPTION 'pass covers: % was let through', label USING ERRCODE = 'P0001';
+END $$;
+DO $$
+DECLARE
+  n bigint;
+  anna uuid;
+  bo uuid;
+  pass uuid;
+  garden uuid;
+  absence uuid;
+  bos_absence uuid;
+  values_of text;
+BEGIN
+  SELECT id INTO anna FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000002021';
+  SELECT id INTO bo FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000002026';
+  SELECT "shiftId", "areaId", "absenceId" INTO pass, garden, absence FROM "SupervisionCovers" WHERE "absentTeacherId" = anna;
+  SELECT "absenceId" INTO bos_absence FROM "SupervisionCovers" WHERE "absentTeacherId" = bo;
+  -- A fresh Monday's row, and every column the statements vary.
+  values_of := format('INSERT INTO "SupervisionCovers" ("schoolId", "shiftId", date, "areaId", "startsAt", "endsAt", "absenceId", "absentTeacherId", decision, "substituteId") '
+                      'VALUES (%L, %%s, DATE %%L, %%s, %%L, %%L, %%s, %%s, %%L, %%s)', app.current_school_id());
+
+  PERFORM pg_temp.pc_refused('a vikarie for NO_COVER',
+    format(values_of, quote_literal(pass), '2030-09-16', quote_literal(garden), '2030-09-16 08:00Z', '2030-09-16 08:20Z',
+           quote_literal(absence), quote_literal(anna), 'NO_COVER', quote_literal(bo)), 'check');
+  PERFORM pg_temp.pc_refused('SUBSTITUTE without a vikarie',
+    format(values_of, quote_literal(pass), '2030-09-16', quote_literal(garden), '2030-09-16 08:00Z', '2030-09-16 08:20Z',
+           quote_literal(absence), quote_literal(anna), 'SUBSTITUTE', 'NULL'), 'check');
+  PERFORM pg_temp.pc_refused('the absent teacher as her own vikarie',
+    format(values_of, quote_literal(pass), '2030-09-16', quote_literal(garden), '2030-09-16 08:00Z', '2030-09-16 08:20Z',
+           quote_literal(absence), quote_literal(anna), 'SUBSTITUTE', quote_literal(anna)), 'check');
+  PERFORM pg_temp.pc_refused('an end not after the start',
+    format(values_of, quote_literal(pass), '2030-09-16', quote_literal(garden), '2030-09-16 08:20Z', '2030-09-16 08:20Z',
+           quote_literal(absence), quote_literal(anna), 'NO_COVER', 'NULL'), 'check');
+  PERFORM pg_temp.pc_refused('a second decision on the pass that day',
+    format(values_of, quote_literal(pass), '2030-09-02', quote_literal(garden), '2030-09-02 08:00Z', '2030-09-02 08:20Z',
+           quote_literal(absence), quote_literal(anna), 'NO_COVER', 'NULL'), 'unique');
+  PERFORM pg_temp.pc_refused('an absence of another person than the one named',
+    format(values_of, quote_literal(pass), '2030-09-16', quote_literal(garden), '2030-09-16 08:00Z', '2030-09-16 08:20Z',
+           quote_literal(bos_absence), quote_literal(anna), 'NO_COVER', 'NULL'), 'foreign');
+  PERFORM pg_temp.pc_refused('another school''s pass',
+    format(values_of, quote_literal(current_setting('app.test_pc_other_pass')), '2030-09-16', quote_literal(garden), '2030-09-16 08:00Z',
+           '2030-09-16 08:20Z', quote_literal(absence), quote_literal(anna), 'NO_COVER', 'NULL'), 'foreign');
+  PERFORM pg_temp.pc_refused('another school''s area',
+    format(values_of, quote_literal(pass), '2030-09-16', quote_literal(current_setting('app.test_pc_other_area')), '2030-09-16 08:00Z',
+           '2030-09-16 08:20Z', quote_literal(absence), quote_literal(anna), 'NO_COVER', 'NULL'), 'foreign');
+  PERFORM pg_temp.pc_refused('another school''s absence',
+    format(values_of, quote_literal(pass), '2030-09-16', quote_literal(garden), '2030-09-16 08:00Z', '2030-09-16 08:20Z',
+           quote_literal(current_setting('app.test_pc_other_absence')), quote_literal(current_setting('app.test_pc_other_teacher')),
+           'NO_COVER', 'NULL'), 'foreign');
+  PERFORM pg_temp.pc_refused('another school''s vikarie',
+    format(values_of, quote_literal(pass), '2030-09-16', quote_literal(garden), '2030-09-16 08:00Z', '2030-09-16 08:20Z',
+           quote_literal(absence), quote_literal(anna), 'SUBSTITUTE', quote_literal(current_setting('app.test_pc_other_teacher'))), 'foreign');
+
+  -- The pass removed takes its decision; so do the absence and the area.
+  DELETE FROM "SupervisionShifts" WHERE id = pass;
+  SELECT count(*) INTO n FROM "SupervisionCovers" WHERE "shiftId" = pass;
+  IF n <> 0 THEN RAISE EXCEPTION 'pass covers: % decisions outlived their pass', n; END IF;
+  DELETE FROM "TeacherAbsences" WHERE id = bos_absence;
+  SELECT count(*) INTO n FROM "SupervisionCovers";
+  IF n <> 0 THEN RAISE EXCEPTION 'pass covers: % decisions outlived their absence', n; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 213: en lärares egen frånvaro går inte förbi ett beslut om ett pass
+-- (20261012130000, utvidgad i 20261210090000): Anna kan inte återkalla en
+-- frånvaro som ett pass har ett beslut på, inte avsluta den före ett beslutat
+-- pass som ligger framför, men väl efter det; utan beslut återkallar hon den.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000002020')::text, true);
+INSERT INTO "CoverSettings" ("schoolId", "teacherSelfReport") VALUES (app.current_school_id(), true)
+ON CONFLICT ("schoolId") DO UPDATE SET "teacherSelfReport" = true;
+SELECT set_config('app.test_pc_absence',
+  (SELECT "absenceId"::text FROM "SupervisionCovers" WHERE "absentTeacherId" =
+     (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000002021')), true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000002021')::text, true);
+DO $$
+DECLARE
+  own uuid := current_setting('app.test_pc_absence')::uuid;
+  n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN RAISE EXCEPTION 'pass covers: expected Anna, a TEACHER'; END IF;
+  BEGIN
+    UPDATE "TeacherAbsences" SET status = 'WITHDRAWN', "withdrawnAt" = now(), "withdrawnByUserId" = app.current_user_id() WHERE id = own;
+    RAISE EXCEPTION 'pass covers: a teacher withdrew an absence a pass decision references';
+  EXCEPTION WHEN SQLSTATE 'TA403' THEN NULL;
+  END;
+  -- The decided pass runs 08:00–08:20 UTC on the 2nd: ending at 07:00 leaves it outside.
+  BEGIN
+    UPDATE "TeacherAbsences" SET "endsAt" = timestamptz '2030-09-02 07:00 UTC' WHERE id = own;
+    RAISE EXCEPTION 'pass covers: a teacher ended an absence before a decided pass still ahead';
+  EXCEPTION WHEN SQLSTATE 'TA403' THEN NULL;
+  END;
+  UPDATE "TeacherAbsences" SET "endsAt" = timestamptz '2030-09-02 12:00 UTC' WHERE id = own;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'pass covers: a teacher could not end early with the decided pass still inside'; END IF;
+END $$;
+-- The board undoes its decision; then the withdrawal is hers.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000002020')::text, true);
+DELETE FROM "SupervisionCovers" WHERE "absenceId" = current_setting('app.test_pc_absence')::uuid;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000002021')::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  UPDATE "TeacherAbsences" SET status = 'WITHDRAWN', "withdrawnAt" = now(), "withdrawnByUserId" = app.current_user_id()
+   WHERE id = current_setting('app.test_pc_absence')::uuid;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'pass covers: a teacher could not withdraw an absence nothing references any more'; END IF;
 END $$;
 ROLLBACK;
 

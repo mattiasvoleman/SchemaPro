@@ -24,6 +24,10 @@ import type {
 import { lessonClashesOf, type ClashLesson, type LessonClash } from './lesson-clashes';
 import { supervisionCoverage, type AreaBreak, type CoverageGap } from './supervision-coverage';
 import { chargedShift, rastvaktRam, supervisionOfTeachers, type LoadShift, type TeacherSupervision } from './supervision-load';
+import { requireUserId } from '../common/utils/request-context';
+import { readPassCalendar } from '../cover/supervision-cover-reads';
+import { schoolTimezone } from '../cover/cover-context';
+import { passDates, passSpan } from './pass-days';
 
 /**
  * Rastvaktsschema (migration 20261207090000): the school's rastvaktsområden,
@@ -78,6 +82,32 @@ export interface SupervisionShiftView {
   lessonClashes: LessonClash[];
 }
 
+/**
+ * One of the signed-in person's own passes on a date (Rastvakt i vardagen,
+ * 20261210090000): their own pass (OWN), or one they take as vikarie
+ * (COVER). Never another person's name, a reason or a note.
+ */
+export interface WeekPass {
+  kind: 'OWN' | 'COVER';
+  /** The pass and the date, as the key of the entry. */
+  shiftId: string;
+  date: string;
+  startsAt: string;
+  endsAt: string;
+  areaName: string;
+  siteName: string | null;
+  /**
+   * OWN: what the vikarietavla decided about the pass that day, when its
+   * teacher is relieved of it — a vikarie takes it, or it is left without
+   * one. Null when it is theirs to take. Always null for COVER.
+   */
+  handover: 'SUBSTITUTE' | 'NO_COVER' | null;
+}
+
+/** The most days the week read answers at once: two weeks, the app's eight days and the web's seven. */
+export const MAX_WEEK_DAYS = 14;
+export const SUPERVISION_WEEK_RANGE = 'SUPERVISION_WEEK_RANGE';
+
 /** A break or a gap as the page reads it: clocks, not minutes. */
 type Clocked<T> = Omit<T, 'start' | 'end' | 'shortFrom' | 'shortTo'> & {
   startTime: string;
@@ -129,6 +159,7 @@ export const SUPERVISION_SHIFT_CLASH = 'SUPERVISION_SHIFT_CLASH';
 export const SUPERVISION_SHIFT_LIMIT = 'SUPERVISION_SHIFT_LIMIT';
 export const SUPERVISION_YEAR_NOT_FOUND = 'SUPERVISION_YEAR_NOT_FOUND';
 export const SUPERVISION_TEACHER_INACTIVE = 'SUPERVISION_TEACHER_INACTIVE';
+export const SUPERVISION_SHIFT_HAS_COVERS = 'SUPERVISION_SHIFT_HAS_COVERS';
 
 /** More places than any school watches; the page lists them all at once. */
 export const MAX_AREAS = 100;
@@ -318,6 +349,55 @@ async function lockAreas(tx: PrismaClient, schoolId: string): Promise<void> {
   await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${`SupervisionAreas:${schoolId}`}, 0))`);
 }
 
+/**
+ * The rows of the passes an edit is about, FOR UPDATE, before it asks for the
+ * board's decisions: a decision being written holds its pass FOR SHARE
+ * (src/cover/supervision-cover-reads.ts lockShiftForShare), so the two wait
+ * for each other and the question below sees every decision there is. Id
+ * order, so two editors never deadlock on each other. $executeRaw: nothing
+ * is read back.
+ */
+async function lockShiftsForUpdate(tx: PrismaClient, where: { id: string } | { areaId: string }): Promise<void> {
+  if ('id' in where) {
+    await tx.$executeRaw(Prisma.sql`SELECT 1 FROM "SupervisionShifts" WHERE "id" = ${where.id}::uuid FOR UPDATE`);
+  } else {
+    await tx.$executeRaw(
+      Prisma.sql`SELECT 1 FROM "SupervisionShifts" WHERE "areaId" = ${where.areaId}::uuid ORDER BY "id" FOR UPDATE`,
+    );
+  }
+}
+
+/**
+ * Rastvakt i vardagen (20261210090000): a pass or an area with a decision of
+ * the vikarietavla on a date not yet passed is not moved, handed on or
+ * deleted under it. The decision holds the time and the place the vikarie
+ * was told; changing the pass would leave them watching a pass that is no
+ * longer there, or the yard empty. `left` says which of the decisions the
+ * edit would leave behind; the 409 names how many and the first date, and
+ * the board is where they are undone (and the vikarie told).
+ */
+async function refuseCoversLeftBehind(
+  tx: PrismaClient,
+  where: { shiftId: string } | { areaId: string },
+  left: (date: string) => boolean = () => true,
+): Promise<void> {
+  const rows = await tx.supervisionCover.findMany({
+    where: { ...where, endsAt: { gt: new Date() } },
+    select: { date: true },
+    orderBy: [{ date: 'asc' }],
+  });
+  const behind = rows.map((row) => asDay(row.date)).filter(left);
+  if (behind.length > 0) {
+    throw new ConflictException({
+      message:
+        `Vikarietavlan har ${behind.length === 1 ? 'ett beslut' : `${behind.length} beslut`} om passet från ${behind[0]}. ` +
+        'Ångra dem på vikarietavlan först, så får vikarien veta det.',
+      code: SUPERVISION_SHIFT_HAS_COVERS,
+      params: { count: behind.length, date: behind[0]! },
+    });
+  }
+}
+
 /** One writer of a läsår's schedule at a time, for the count against MAX_SHIFTS_PER_YEAR. */
 async function lockSchedule(tx: PrismaClient, academicYearId: string): Promise<void> {
   await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${`SupervisionShifts:${academicYearId}`}, 0))`);
@@ -418,6 +498,9 @@ export class SupervisionService {
     try {
       await this.prisma.withRls(user, async (tx) => {
         await lockAreas(tx, schoolId);
+        // Its passes go with it, and with them the board's decisions on them.
+        await lockShiftsForUpdate(tx, { areaId: id });
+        await refuseCoversLeftBehind(tx, { areaId: id });
         const { count } = await tx.supervisionArea.deleteMany({ where: { id, schoolId } });
         if (count === 0) throw new NotFoundException({ message: 'Rastvaktsområdet finns inte.', code: SUPERVISION_AREA_NOT_FOUND });
       });
@@ -495,6 +578,7 @@ export class SupervisionService {
         const current = await tx.supervisionShift.findUnique({ where: { id } });
         if (!current) throw new NotFoundException({ message: 'Passet finns inte.', code: SUPERVISION_SHIFT_NOT_FOUND });
         await lockSchedule(tx, current.academicYearId);
+        await lockShiftsForUpdate(tx, { id });
         // The row again, under the schedule's lock: a PATCH beside it may have moved it.
         const locked = await tx.supervisionShift.findUnique({ where: { id } });
         if (!locked) throw new NotFoundException({ message: 'Passet finns inte.', code: SUPERVISION_SHIFT_NOT_FOUND });
@@ -513,8 +597,10 @@ export class SupervisionService {
         // page ends it there before the break is handed on.
         if (userId !== locked.userId) await this.assertActive(tx, userId);
         // New dates, or a new weekday the stored dates must move onto.
+        let bounds: YearBounds | null = null;
         if (dto.validFrom !== undefined || dto.validTo !== undefined || dayOfWeek !== locked.dayOfWeek) {
           const year = await readYearBoundsForShare(tx, locked.academicYearId);
+          bounds = year;
           if (!year) throw new NotFoundException({ message: 'Läsåret finns inte.', code: SUPERVISION_YEAR_NOT_FOUND });
           // A stored date the PATCH does not retype follows the pass to its
           // new weekday within its week; a retyped one is the admin's.
@@ -536,6 +622,21 @@ export class SupervisionService {
           validTo,
         };
         await this.assertOnePlace(tx, id, candidate);
+        // The board's decisions ahead hold this pass's teacher, place and
+        // time; new dates may leave some of them outside. The note is free.
+        const moved =
+          candidate.userId !== locked.userId ||
+          (dto.areaId !== undefined && dto.areaId !== locked.areaId) ||
+          candidate.dayOfWeek !== locked.dayOfWeek ||
+          toWallClock(candidate.startTime) !== toWallClock(locked.startTime) ||
+          toWallClock(candidate.endTime) !== toWallClock(locked.endTime);
+        if (moved) {
+          await refuseCoversLeftBehind(tx, { shiftId: id });
+        } else if (bounds) {
+          const first = asDay(validFrom ?? bounds.startDate);
+          const last = asDay(validTo ?? bounds.endDate);
+          await refuseCoversLeftBehind(tx, { shiftId: id }, (date) => date < first || date > last);
+        }
         const row = await tx.supervisionShift.update({
           where: { id },
           data: {
@@ -560,6 +661,8 @@ export class SupervisionService {
     requireSchoolId(user);
     try {
       await this.prisma.withRls(user, async (tx) => {
+        await lockShiftsForUpdate(tx, { id });
+        await refuseCoversLeftBehind(tx, { shiftId: id });
         const { count } = await tx.supervisionShift.deleteMany({ where: { id } });
         if (count === 0) throw new NotFoundException({ message: 'Passet finns inte.', code: SUPERVISION_SHIFT_NOT_FOUND });
       });
@@ -687,6 +790,119 @@ export class SupervisionService {
   // ---------------------------------------------------------------------------
   // The schedule
   // ---------------------------------------------------------------------------
+
+  /**
+   * THE SIGNED-IN PERSON'S OWN PASSES over a few days (Rastvakt i vardagen,
+   * 20261210090000), for their week on the web and in the app: each date
+   * their own passes run (pass-days.ts: weekday, dates, no lov closing the
+   * area, until a deactivation), with what the vikarietavla decided when they
+   * are away, and the passes they take as vikarie for somebody else.
+   *
+   * Read as themself, under their own arms (their passes, the decisions that
+   * name them as the vikarie or the absent, the areas and the sites every
+   * member of staff reads), and always for themself whatever their role: no
+   * query parameter names anybody, so there is nothing to log in the
+   * läslogg. A vikarie's entry names the place and the time and never whose
+   * pass it is; the absent teacher's says that a vikarie takes it and never
+   * who.
+   */
+  async week(from: string, to: string, user: AuthenticatedUser): Promise<{ from: string; to: string; passes: WeekPass[] }> {
+    const schoolId = requireSchoolId(user);
+    const me = requireUserId(user);
+    if (to < from) {
+      throw new BadRequestException({ message: 'to: tidigast samma dag som from.', code: SUPERVISION_WEEK_RANGE });
+    }
+    if (parseDateString(to).getTime() - parseDateString(from).getTime() > (MAX_WEEK_DAYS - 1) * DAY_MS) {
+      throw new BadRequestException({ message: `Högst ${MAX_WEEK_DAYS} dagar åt gången.`, code: SUPERVISION_WEEK_RANGE });
+    }
+    return this.prisma.withRls(user, async (tx) => {
+      const timezone = await schoolTimezone(tx, schoolId);
+      const shifts = await tx.supervisionShift.findMany({
+        where: {
+          userId: me,
+          academicYear: { startDate: { lte: parseDateString(to) }, endDate: { gte: parseDateString(from) } },
+        },
+        select: {
+          id: true,
+          academicYearId: true,
+          areaId: true,
+          userId: true,
+          dayOfWeek: true,
+          startTime: true,
+          endTime: true,
+          validFrom: true,
+          validTo: true,
+        },
+      });
+      const covers = await tx.supervisionCover.findMany({
+        where: {
+          date: { gte: parseDateString(from), lte: parseDateString(to) },
+          OR: [
+            { substituteId: me, decision: 'SUBSTITUTE' },
+            ...(shifts.length > 0 ? [{ shiftId: { in: shifts.map((row) => row.id) } }] : []),
+          ],
+        },
+        select: { shiftId: true, date: true, areaId: true, startsAt: true, endsAt: true, decision: true, substituteId: true },
+      });
+      if (shifts.length === 0 && covers.length === 0) return { from, to, passes: [] };
+      const calendar = await readPassCalendar(tx, {
+        areaIds: [...shifts.map((row) => row.areaId), ...covers.map((row) => row.areaId)],
+        yearIds: shifts.map((row) => row.academicYearId),
+        teacherIds: shifts.map((row) => row.userId),
+        timezone,
+      });
+      const siteIds = [...new Set([...calendar.areas.values()].flatMap((area) => (area.siteId ? [area.siteId] : [])))];
+      const sites =
+        siteIds.length > 0 ? await tx.site.findMany({ where: { id: { in: siteIds } }, select: { id: true, name: true } }) : [];
+      const siteName = new Map(sites.map((site) => [site.id, site.name]));
+      const placeOf = (areaId: string) => {
+        const area = calendar.areas.get(areaId);
+        return { areaName: area?.name ?? '', siteName: area?.siteId ? (siteName.get(area.siteId) ?? null) : null };
+      };
+      const decided = new Map(covers.map((row) => [`${row.shiftId}:${asDay(row.date)}`, row]));
+      const passes: WeekPass[] = [];
+      for (const row of shifts) {
+        const year = calendar.years.get(row.academicYearId);
+        const area = calendar.areas.get(row.areaId);
+        if (!year || !area) continue;
+        const rule = {
+          dayOfWeek: row.dayOfWeek,
+          start: minutesOfTime(row.startTime),
+          end: minutesOfTime(row.endTime),
+          validFrom: dayOrNull(row.validFrom),
+          validTo: dayOrNull(row.validTo),
+          inactiveFrom: calendar.inactiveFrom.get(row.userId) ?? null,
+        };
+        for (const date of passDates(rule, area, year, calendar.closures.get(row.academicYearId) ?? [], from, to)) {
+          const span = passSpan(rule, date, timezone);
+          const decision = decided.get(`${row.id}:${date}`);
+          passes.push({
+            kind: 'OWN',
+            shiftId: row.id,
+            date,
+            startsAt: span.startsAt.toISOString(),
+            endsAt: span.endsAt.toISOString(),
+            ...placeOf(row.areaId),
+            handover: decision ? decision.decision : null,
+          });
+        }
+      }
+      for (const row of covers) {
+        if (row.decision !== 'SUBSTITUTE' || row.substituteId !== me) continue;
+        passes.push({
+          kind: 'COVER',
+          shiftId: row.shiftId,
+          date: asDay(row.date),
+          startsAt: row.startsAt.toISOString(),
+          endsAt: row.endsAt.toISOString(),
+          ...placeOf(row.areaId),
+          handover: null,
+        });
+      }
+      passes.sort((a, b) => a.startsAt.localeCompare(b.startsAt) || a.kind.localeCompare(b.kind) || a.shiftId.localeCompare(b.shiftId));
+      return { from, to, passes };
+    });
+  }
 
   /**
    * The läsår's schedule over its breaks: the areas, the year's passes, the
