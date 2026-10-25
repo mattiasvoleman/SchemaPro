@@ -1001,6 +1001,30 @@ function sortedIds(ids: readonly string[]): string[] {
 /** The engine refuses a request carrying `search` — it is older than the field. */
 export const ENGINE_LACKS_CANDIDATES = 'ENGINE_LACKS_CANDIDATES';
 
+/**
+ * The most groupConflicts pairs the engine takes in one request
+ * (OptimizeScheduleRequest.group_conflicts, max_length in
+ * optimization-engine/app/schemas/schedule.py). Ersättande grupper adds pairs
+ * for each derived key, and a large school's week could pass the limit; the
+ * engine would then answer a nameless 422. The gateway refuses it first, by
+ * name (GROUP_CONFLICTS_OVER_ENGINE_LIMIT), with nothing sent or written.
+ */
+export const ENGINE_GROUP_CONFLICTS_LIMIT = 5000;
+export const GROUP_CONFLICTS_OVER_ENGINE_LIMIT = 'GROUP_CONFLICTS_OVER_ENGINE_LIMIT';
+
+/** The refusal for a week whose pairs pass the engine's limit; English as in messages.py. */
+export function groupConflictsRefusal(pairs: number): AiEngineConflictAnalysis {
+  return {
+    summary:
+      `The groups that share pupils make ${pairs} pairs, more than the ${ENGINE_GROUP_CONFLICTS_LIMIT} the ` +
+      'timetable engine takes in one run, so the week was not sent. Fewer groups that share pupils, or fewer ' +
+      'replacing groups, bring the number down.',
+    summaryCode: GROUP_CONFLICTS_OVER_ENGINE_LIMIT,
+    summaryParams: { pairs, limit: ENGINE_GROUP_CONFLICTS_LIMIT },
+    conflicts: [],
+  };
+}
+
 @Injectable()
 export class OptimizationProxyService {
   private readonly logger = new Logger(OptimizationProxyService.name);
@@ -1201,6 +1225,23 @@ export class OptimizationProxyService {
           conflicts: this.realiseConflicts(data.blockRefusal, anonMaps),
         },
         refusalCode: data.blockRefusal.summaryCode,
+      };
+    }
+    // More pairs than the engine takes: refused here by name, as above, so a
+    // large school meets a sentence and not the engine's nameless 422.
+    if (data.pairsRefusal) {
+      return {
+        ready: false,
+        requestId,
+        academicYearId,
+        refusal: {
+          requestId,
+          status: 'INFEASIBLE',
+          lessons: [],
+          lunches: [],
+          conflicts: this.realiseConflicts(data.pairsRefusal, anonMaps),
+        },
+        refusalCode: data.pairsRefusal.summaryCode,
       };
     }
     // Two blocks on the same times that no longer fit together: refused as
@@ -1900,6 +1941,8 @@ export class OptimizationProxyService {
     blockAnonMap: Map<string, string>;
     /** BLOCK_PARTLY_LOCKED, in anonymous ids, or null to go on. */
     blockRefusal: AiEngineConflictAnalysis | null;
+    /** GROUP_CONFLICTS_OVER_ENGINE_LIMIT, or null to go on. */
+    pairsRefusal: AiEngineConflictAnalysis | null;
     /** The follower posts written at their leader posts' times, in real ids (same-times.ts). */
     mirrors: Mirror[];
     /** Two blocks on the same times that no longer fit together, named; null to go on. */
@@ -3321,6 +3364,7 @@ export class OptimizationProxyService {
       nameById,
       blockAnonMap,
       blockRefusal,
+      pairsRefusal: groupConflicts.length > ENGINE_GROUP_CONFLICTS_LIMIT ? groupConflictsRefusal(groupConflicts.length) : null,
       mirrors,
       // The two ways a block cannot be held, answered the same way.
       sameTimesRefusal: sameTimesRefusal ?? splitBlockRefusal,
