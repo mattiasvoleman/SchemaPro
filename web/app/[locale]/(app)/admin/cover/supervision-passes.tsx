@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useCallback, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Ban, ShieldCheck, Undo2, UserPlus } from "lucide-react";
@@ -11,7 +11,6 @@ import type { PassBoardItem, PassSummary } from "@/lib/cover-types";
 import { chainLookup, coverErrorText, errorCode } from "@/lib/cover-view";
 import { passActions, passesByDate, passKey, passStatusKey } from "@/lib/pass-view";
 import { PASS_STATUS_VARIANT } from "@/lib/status-variants";
-import { useSupervisionAreas } from "../supervision/use-supervision";
 import { PassCandidatesDialog } from "./pass-candidates-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -50,13 +49,13 @@ export function SupervisionPasses({ items, summary, view, dayText, timeText, nam
   const tEngine = useTranslations("engineMessages") as unknown as MessageLookup;
   const tCommon = useTranslations("common");
   const tWarnings = chainLookup(tErrors, tEngine);
-  const { data: areas } = useSupervisionAreas();
-  const areaName = useMemo(() => new Map((areas ?? []).map((area) => [area.id, area.name])), [areas]);
-  const { decide, undo } = usePassActions();
+  const { decide, undo, refresh } = usePassActions();
   const [candidatesFor, setCandidatesFor] = useState<PassBoardItem | null>(null);
   const busy = decide.isPending || undo.isPending;
 
-  const placeOf = (item: PassBoardItem) => areaName.get(item.areaId) ?? "—";
+  // The board names the area itself: no read of the rastvaktsschema's own,
+  // which a Drift-only administrator may not hold, and nothing to fail apart.
+  const placeOf = (item: PassBoardItem) => item.areaName || "—";
   const passText = (item: PassBoardItem) => `${placeOf(item)}, ${timeText(item)}`;
 
   const failed = (error: unknown) =>
@@ -83,6 +82,17 @@ export function SupervisionPasses({ items, summary, view, dayText, timeText, nam
     }
   };
 
+  const gone = useCallback(
+    (error: unknown) => {
+      toast.error(coverErrorText(tErrors, error, tCommon("error")));
+      refresh();
+      setCandidatesFor(null);
+    },
+    // Once: the dialog calls it from an effect, and a new function every
+    // render would say the same thing again before the dialog has closed.
+    [],
+  );
+
   const runUndo = async (item: PassBoardItem) => {
     try {
       await undo.mutateAsync({ shiftId: item.shiftId, date: item.date });
@@ -104,6 +114,9 @@ export function SupervisionPasses({ items, summary, view, dayText, timeText, nam
       {/* Nothing refuses a lov or a deactivation over a booked pass: the board says it, and Ångra tells the vikarie. */}
       {item.runs === false && !item.passed ? (
         <span className="block whitespace-normal text-xs text-muted-foreground">{t("notRunning")}</span>
+      ) : null}
+      {item.absenceActive === false && !item.passed ? (
+        <span className="block whitespace-normal text-xs text-muted-foreground">{t("absenceGone")}</span>
       ) : null}
     </>
   );
@@ -246,6 +259,7 @@ export function SupervisionPasses({ items, summary, view, dayText, timeText, nam
         pending={decide.isPending}
         onOpenChange={(open) => !open && setCandidatesFor(null)}
         onAssign={(item, substituteId) => void run(item, "SUBSTITUTE", substituteId)}
+        onGone={gone}
       />
     </SectionCard>
   );

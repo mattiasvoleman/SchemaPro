@@ -305,11 +305,22 @@ describe('SupervisionCoverService', () => {
       );
     });
 
-    it('answers 404 without a decision or with one of a withdrawn absence, and 409 once the pass has ended', async () => {
-      await expect(service.undo(SHIFT, DATE, admin)).rejects.toMatchObject({ response: { code: 'COVER_NO_DECISION' } });
+    it('undoes a decision left on a withdrawn absence by an older API, and tells the vikarie', async () => {
+      // A withdrawal settles its decisions in its own transaction: one still
+      // standing on a WITHDRAWN absence came from before this release.
       tx.supervisionCover.findUnique.mockResolvedValue(coverRow());
       tx.teacherAbsence.findUnique.mockResolvedValue({ status: 'WITHDRAWN' });
-      await expect(service.undo(SHIFT, DATE, admin)).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.undo(SHIFT, DATE, admin)).resolves.toEqual({ shiftId: SHIFT, date: DATE });
+      expect(tx.supervisionCover.delete).toHaveBeenCalledWith({ where: { id: 'cov-1' } });
+      expect(notifications.notifyUsers).toHaveBeenCalledWith(
+        tx,
+        expect.objectContaining({ userIds: [S], type: 'SUPERVISION_COVER_WITHDRAWN' }),
+      );
+    });
+
+    it('answers 404 without a decision, and 409 once the pass has ended', async () => {
+      await expect(service.undo(SHIFT, DATE, admin)).rejects.toMatchObject({ response: { code: 'COVER_NO_DECISION' } });
+      tx.supervisionCover.findUnique.mockResolvedValue(coverRow());
       tx.teacherAbsence.findUnique.mockResolvedValue({ status: 'ACTIVE' });
       jest.spyOn(cover, 'now').mockReturnValue(PASS_END);
       await expect(service.undo(SHIFT, DATE, admin)).rejects.toBeInstanceOf(ConflictException);

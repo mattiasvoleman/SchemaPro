@@ -27,7 +27,7 @@ import { chargedShift, rastvaktRam, supervisionOfTeachers, type LoadShift, type 
 import { requireUserId } from '../common/utils/request-context';
 import { readPassCalendar } from '../cover/supervision-cover-reads';
 import { schoolTimezone } from '../cover/cover-context';
-import { passDates, passSpan } from './pass-days';
+import { passDates, passRunsOn, passSpan } from './pass-days';
 
 /**
  * Rastvaktsschema (migration 20261207090000): the school's rastvaktsområden,
@@ -76,8 +76,8 @@ export interface SupervisionShiftView {
   inactiveFrom: string | null;
   /**
    * The teacher's lessons of the grundschema the pass runs during. A warning,
-   * not a refusal: the pass is saved, and the generator and the vikarieförslag
-   * do not read passes yet (lesson-clashes.ts).
+   * not a refusal: the pass is saved, and the generator does not read passes
+   * yet (lesson-clashes.ts).
    */
   lessonClashes: LessonClash[];
 }
@@ -100,6 +100,13 @@ export interface WeekPass {
    * OWN: what the vikarietavla decided about the pass that day, when its
    * teacher is relieved of it — a vikarie takes it, or it is left without
    * one. Null when it is theirs to take. Always null for COVER.
+   *
+   * As the board reads it, so far as the teacher's own rows let it: a
+   * decision on an absence no longer ACTIVE (left by an older API) relieves
+   * nobody, and neither does a vikarie who is no longer an active teacher.
+   * A vikarie who is away themself is the board's to see (another person's
+   * absence is not the teacher's to read): until it books a new one, the
+   * week still says a vikarie takes the pass, which stays true of the plan.
    */
   handover: 'SUBSTITUTE' | 'NO_COVER' | null;
 }
@@ -156,6 +163,8 @@ export const SUPERVISION_AREA_NOT_FOUND = 'SUPERVISION_AREA_NOT_FOUND';
 export const SUPERVISION_SITE_NOT_FOUND = 'SUPERVISION_SITE_NOT_FOUND';
 export const SUPERVISION_SHIFT_NOT_FOUND = 'SUPERVISION_SHIFT_NOT_FOUND';
 export const SUPERVISION_SHIFT_CLASH = 'SUPERVISION_SHIFT_CLASH';
+/** The teacher takes another teacher's pass as vikarie at that time on a date ahead (Rastvakt i vardagen). */
+export const SUPERVISION_SHIFT_COVER_CLASH = 'SUPERVISION_SHIFT_COVER_CLASH';
 export const SUPERVISION_SHIFT_LIMIT = 'SUPERVISION_SHIFT_LIMIT';
 export const SUPERVISION_YEAR_NOT_FOUND = 'SUPERVISION_YEAR_NOT_FOUND';
 export const SUPERVISION_TEACHER_INACTIVE = 'SUPERVISION_TEACHER_INACTIVE';
@@ -168,6 +177,7 @@ export const MAX_SHIFTS_PER_YEAR = 2000;
 
 const WEEKDAY = ['', 'måndag', 'tisdag', 'onsdag', 'torsdag', 'fredag', 'lördag', 'söndag'];
 const asDay = (value: Date) => value.toISOString().slice(0, 10);
+const asDayOrNull = (value: Date | null) => (value ? asDay(value) : null);
 const dayOrNull = (value: Date | null) => (value === null ? null : asDay(value));
 const clock = (minutes: number) =>
   `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
@@ -621,7 +631,17 @@ export class SupervisionService {
           validFrom,
           validTo,
         };
-        await this.assertOnePlace(tx, id, candidate);
+        // The passes taken as vikarie are asked only when the teacher, the
+        // weekday, the time or the dates change: the board never books a
+        // teacher over their own pass (BUSY_SUPERVISION), so a note cannot clash.
+        const placed =
+          candidate.userId !== locked.userId ||
+          candidate.dayOfWeek !== locked.dayOfWeek ||
+          toWallClock(candidate.startTime) !== toWallClock(locked.startTime) ||
+          toWallClock(candidate.endTime) !== toWallClock(locked.endTime) ||
+          asDayOrNull(candidate.validFrom) !== asDayOrNull(locked.validFrom) ||
+          asDayOrNull(candidate.validTo) !== asDayOrNull(locked.validTo);
+        await this.assertOnePlace(tx, id, candidate, placed);
         // The board's decisions ahead hold this pass's teacher, place and
         // time; new dates may leave some of them outside. The note is free.
         const moved =
@@ -761,6 +781,7 @@ export class SupervisionService {
       validFrom: Date | null;
       validTo: Date | null;
     },
+    asksCovers = true,
   ): Promise<void> {
     const other = await tx.supervisionShift.findFirst({
       where: {
@@ -783,6 +804,48 @@ export class SupervisionService {
           `Läraren har redan rastvakt i ${other.area.name} ${WEEKDAY[other.dayOfWeek]} ` +
           `${toWallClock(other.startTime)}–${toWallClock(other.endTime)}. En rastvakt är på ett ställe i taget.`,
         code: SUPERVISION_SHIFT_CLASH,
+      });
+    }
+    // The passes they take as vikarie on the vikarietavla, on a date ahead
+    // (Rastvakt i vardagen, 20261210090000): the same one place at a time.
+    // Asked only of the decisions that exist, which most schools have none of.
+    if (!asksCovers) return;
+    const taken = await tx.supervisionCover.findMany({
+      where: { substituteId: candidate.userId, decision: 'SUBSTITUTE', endsAt: { gt: new Date() } },
+      select: { date: true, startsAt: true, endsAt: true, areaId: true },
+      orderBy: { date: 'asc' },
+    });
+    if (taken.length === 0) return;
+    const year = await tx.academicYear.findUnique({
+      where: { id: candidate.academicYearId },
+      select: { startDate: true, endDate: true, schoolId: true },
+    });
+    if (!year) return;
+    const timezone = await schoolTimezone(tx, year.schoolId);
+    const first = asDay(candidate.validFrom ?? year.startDate);
+    const last = asDay(candidate.validTo ?? year.endDate);
+    const rule = {
+      dayOfWeek: candidate.dayOfWeek,
+      start: minutesOfTime(candidate.startTime),
+      end: minutesOfTime(candidate.endTime),
+      validFrom: null,
+      validTo: null,
+    };
+    const clash = taken.find((row) => {
+      const date = asDay(row.date);
+      if (date < first || date > last || (parseDateString(date).getUTCDay() || 7) !== candidate.dayOfWeek) return false;
+      const span = passSpan(rule, date, timezone);
+      return span.startsAt < row.endsAt && span.endsAt > row.startsAt;
+    });
+    if (clash) {
+      const area = await tx.supervisionArea.findUnique({ where: { id: clash.areaId }, select: { name: true } });
+      const date = asDay(clash.date);
+      throw new ConflictException({
+        message:
+          `Läraren tar rastvakten i ${area?.name ?? 'ett annat område'} som vikarie ${date}, samtidigt som passet. ` +
+          'En rastvakt är på ett ställe i taget: ångra beslutet på vikarietavlan först.',
+        code: SUPERVISION_SHIFT_COVER_CLASH,
+        params: { date, area: area?.name ?? '' },
       });
     }
   }
@@ -842,15 +905,64 @@ export class SupervisionService {
             ...(shifts.length > 0 ? [{ shiftId: { in: shifts.map((row) => row.id) } }] : []),
           ],
         },
-        select: { shiftId: true, date: true, areaId: true, startsAt: true, endsAt: true, decision: true, substituteId: true },
+        select: {
+          shiftId: true,
+          date: true,
+          areaId: true,
+          startsAt: true,
+          endsAt: true,
+          decision: true,
+          substituteId: true,
+          absenceId: true,
+          absentTeacherId: true,
+        },
       });
       if (shifts.length === 0 && covers.length === 0) return { from, to, passes: [] };
+      const taken = covers.filter((row) => row.decision === 'SUBSTITUTE' && row.substituteId === me);
+      // The years a pass taken as vikarie falls in: whether it still runs that
+      // day is the area's, the year's and its teacher's, never the pass row
+      // (another teacher's, which is not the vikarie's to read). Its weekday
+      // and dates cannot move while the decision stands (SUPERVISION_SHIFT_HAS_COVERS).
+      const takenYears =
+        taken.length > 0
+          ? await tx.academicYear.findMany({
+              where: { startDate: { lte: parseDateString(to) }, endDate: { gte: parseDateString(from) } },
+              select: { id: true, startDate: true, endDate: true },
+            })
+          : [];
       const calendar = await readPassCalendar(tx, {
         areaIds: [...shifts.map((row) => row.areaId), ...covers.map((row) => row.areaId)],
-        yearIds: shifts.map((row) => row.academicYearId),
-        teacherIds: shifts.map((row) => row.userId),
+        yearIds: [...shifts.map((row) => row.academicYearId), ...takenYears.map((row) => row.id)],
+        teacherIds: [...shifts.map((row) => row.userId), ...taken.map((row) => row.absentTeacherId)],
         timezone,
       });
+      // What relieves the teacher of their own pass, as the board reads it.
+      const own = covers.filter((row) => row.absentTeacherId === me);
+      const leftBehind =
+        own.length > 0
+          ? new Set(
+              (
+                await tx.teacherAbsence.findMany({
+                  where: { id: { in: [...new Set(own.map((row) => row.absenceId))] }, status: { not: 'ACTIVE' } },
+                  select: { id: true },
+                })
+              ).map((row) => row.id),
+            )
+          : new Set<string>();
+      const vikarier = [...new Set(own.flatMap((row) => (row.decision === 'SUBSTITUTE' && row.substituteId ? [row.substituteId] : [])))];
+      const gone =
+        vikarier.length > 0
+          ? new Set(
+              (
+                await tx.user.findMany({
+                  where: { id: { in: vikarier }, OR: [{ isActive: false }, { role: { not: 'TEACHER' } }] },
+                  select: { id: true },
+                })
+              ).map((row) => row.id),
+            )
+          : new Set<string>();
+      const relieves = (row: (typeof covers)[number]) =>
+        !leftBehind.has(row.absenceId) && !(row.decision === 'SUBSTITUTE' && row.substituteId !== null && gone.has(row.substituteId));
       const siteIds = [...new Set([...calendar.areas.values()].flatMap((area) => (area.siteId ? [area.siteId] : [])))];
       const sites =
         siteIds.length > 0 ? await tx.site.findMany({ where: { id: { in: siteIds } }, select: { id: true, name: true } }) : [];
@@ -859,7 +971,7 @@ export class SupervisionService {
         const area = calendar.areas.get(areaId);
         return { areaName: area?.name ?? '', siteName: area?.siteId ? (siteName.get(area.siteId) ?? null) : null };
       };
-      const decided = new Map(covers.map((row) => [`${row.shiftId}:${asDay(row.date)}`, row]));
+      const decided = new Map(own.filter(relieves).map((row) => [`${row.shiftId}:${asDay(row.date)}`, row]));
       const passes: WeekPass[] = [];
       for (const row of shifts) {
         const year = calendar.years.get(row.academicYearId);
@@ -887,8 +999,25 @@ export class SupervisionService {
           });
         }
       }
-      for (const row of covers) {
-        if (row.decision !== 'SUBSTITUTE' || row.substituteId !== me) continue;
+      for (const row of taken) {
+        const date = asDay(row.date);
+        const area = calendar.areas.get(row.areaId);
+        const year = takenYears.find((candidate) => asDay(candidate.startDate) <= date && asDay(candidate.endDate) >= date);
+        const weekday = parseDateString(date).getUTCDay() || 7;
+        // A lov added since, the area's årskurser changed, its teacher
+        // deactivated or the läsår shortened: nobody is needed there, and the
+        // board offers Ångra, which tells the vikarie. Until then, not in their week.
+        const runs =
+          area !== undefined &&
+          year !== undefined &&
+          passRunsOn(
+            { dayOfWeek: weekday, start: 0, end: 1, validFrom: null, validTo: null, inactiveFrom: calendar.inactiveFrom.get(row.absentTeacherId) ?? null },
+            area,
+            { startDate: asDay(year.startDate), endDate: asDay(year.endDate) },
+            calendar.closures.get(year.id) ?? [],
+            date,
+          );
+        if (!runs) continue;
         passes.push({
           kind: 'COVER',
           shiftId: row.shiftId,

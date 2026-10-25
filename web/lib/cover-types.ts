@@ -139,6 +139,8 @@ export interface PassBoardItem {
   absenceId: string;
   absentTeacherId: string;
   areaId: string;
+  /** The area's name, read with the board. */
+  areaName: string;
   startsAt: string;
   endsAt: string;
   decision: PassDecisionKind | null;
@@ -150,6 +152,8 @@ export interface PassBoardItem {
   outsideAbsence: boolean;
   /** False for a decision left on a day the pass no longer runs (a lov added since, its teacher deactivated): Ångra alone. */
   runs?: boolean;
+  /** False for a decision whose absence is no longer ACTIVE (left by an older API): Ångra alone. */
+  absenceActive?: boolean;
 }
 
 /** supervision-board.ts PassSummary. */

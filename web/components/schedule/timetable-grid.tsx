@@ -73,8 +73,24 @@ export interface TimetableLesson {
    * (Rastvakt i vardagen): drawn as a block that opens nothing (no button,
    * no pointer), and left out of the length the grid is measured for, so a
    * fifteen-minute pass does not double the height of a week of lessons.
+   *
+   * A STRIP, not a lesson's box. A pass is 15–20 minutes, which at the
+   * grid's scale is one line: a box held to a lesson's 28 px minimum drew
+   * only its title, hid the place and whose it is that day in the screen
+   * reader's text (a div, so no tooltip reached it by touch or keyboard),
+   * and reached into the lesson that starts as the rast ends — the lanes are
+   * shared by the minute, not by the pixel. So a duty is its own length, and
+   * everything it says is one visible line: title, then the subtitle (whose
+   * it is that day first, so a narrow column cuts the place, not that), then
+   * the room.
    */
   duty?: boolean;
+  /**
+   * A duty that is not the reader's that day — handed to a vikarie, or left
+   * without one while they are away: drawn dashed and untinted, as nothing
+   * to stand at, without the strike-through a cancelled lesson has.
+   */
+  relieved?: boolean;
 }
 
 export interface LessonChange {
@@ -984,10 +1000,9 @@ function TimetableGridInner({
                   // editable pointer path already hands out the original.
                   const source = lessonById.get(lesson.id) ?? lesson;
                   const top = (lesson.startMinutes - startHour * 60) * pxPerMinute;
-                  const height = Math.max(
-                    28,
-                    (lesson.endMinutes - lesson.startMinutes) * pxPerMinute,
-                  );
+                  const length = (lesson.endMinutes - lesson.startMinutes) * pxPerMinute;
+                  // A duty is its own length, never into the next box (see `duty`).
+                  const height = lesson.duty ? length : Math.max(28, length);
                   /*
                    * WHAT THE BOX CAN HOLD, and what to do when it holds less
                    * than the lesson has to say.
@@ -1068,7 +1083,9 @@ function TimetableGridInner({
                         .filter((fact): fact is string => Boolean(fact))
                         .join(" · ")}
                       className={cn(
-                        "absolute overflow-hidden rounded-md border-l-4 p-1.5 text-left text-xs shadow-sm transition-shadow",
+                        "absolute overflow-hidden rounded-md border-l-4 text-left text-xs shadow-sm transition-shadow",
+                        lesson.duty ? "flex items-center px-1.5 py-0" : "p-1.5",
+                        lesson.relieved && "border border-dashed border-l-4 shadow-none",
                         (onLessonClick || editable) && !lesson.duty
                           ? "cursor-pointer hover:shadow-md"
                           : "cursor-default",
@@ -1106,7 +1123,16 @@ function TimetableGridInner({
                         height: `${height}px`,
                         left: `calc(${lesson.lane * widthPct}% + 3px)`,
                         width: `calc(${widthPct}% - 6px)`,
-                        backgroundColor: lesson.cancelled ? "transparent" : `${lesson.color}1a`,
+                        // A duty sits on the rast's band (its time is a rast's), whose label
+                        // would read through a tint: the card underneath, the tint on top.
+                        ...(lesson.duty
+                          ? {
+                              backgroundColor: "hsl(var(--card))",
+                              backgroundImage: lesson.relieved
+                                ? undefined
+                                : `linear-gradient(${lesson.color}1a, ${lesson.color}1a)`,
+                            }
+                          : { backgroundColor: lesson.cancelled ? "transparent" : `${lesson.color}1a` }),
                         borderLeftColor: lesson.color,
                       }}
                     >
@@ -1121,6 +1147,18 @@ function TimetableGridInner({
                         {tDays(String(lesson.dayOfWeek))} {clockOf(lesson.startMinutes)}–{clockOf(lesson.endMinutes)},{" "}
                         {lesson.cancelled ? `${tStatus("CANCELLED")}, ` : null}
                       </span>
+                      {lesson.duty ? (
+                        // One line the eye reads as the screen reader does.
+                        <div
+                          className={cn(
+                            "truncate text-[11px] leading-none",
+                            lesson.relieved ? "text-muted-foreground" : "font-medium text-foreground",
+                          )}
+                        >
+                          {[lesson.title, ...facts].join(" · ")}
+                        </div>
+                      ) : (
+                        <>
                       <div className="flex items-start justify-between gap-1">
                         {/*
                           The subject's colour is the edge and the tint, never
@@ -1194,6 +1232,8 @@ function TimetableGridInner({
                         // sighted reader has the same text on the tooltip.
                         <span className="sr-only">{facts.join(" · ")}</span>
                       ) : null}
+                        </>
+                      )}
                       {editable ? (
                         <div className="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize" />
                       ) : null}

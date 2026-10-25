@@ -6,7 +6,7 @@ import { Loader2, Sparkles } from "lucide-react";
 import type { MessageLookup } from "@/lib/engine-message";
 import { usePassCandidates } from "@/lib/cover-queries";
 import type { PassBoardItem, PassCandidate } from "@/lib/cover-types";
-import { reasonText } from "@/lib/cover-view";
+import { errorCode, reasonText } from "@/lib/cover-view";
 import { otherPassTeacherOptions } from "@/lib/pass-view";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -34,6 +34,8 @@ export interface PassCandidatesDialogProps {
   pending: boolean;
   onOpenChange: (open: boolean) => void;
   onAssign: (item: PassBoardItem, substituteId: string) => void;
+  /** The gateway says the pass is no longer the board's (404 SUPERVISION_COVER_NOT_AFFECTED). */
+  onGone: (error: unknown) => void;
 }
 
 /** One candidate's line under their name: the week's and term's covers, lessons and passes. */
@@ -68,12 +70,13 @@ export function PassCandidatesDialog({
   pending,
   onOpenChange,
   onAssign,
+  onGone,
 }: PassCandidatesDialogProps) {
   const t = useTranslations("coverPasses");
   const tCandidates = useTranslations("coverCandidates");
   const tReasons = useTranslations("coverReasons") as unknown as MessageLookup;
   const tCommon = useTranslations("common");
-  const { data, isLoading, isError } = usePassCandidates(item ? { shiftId: item.shiftId, date: item.date } : null);
+  const { data, isLoading, isError, error } = usePassCandidates(item ? { shiftId: item.shiftId, date: item.date } : null);
   const [chosen, setChosen] = useState("");
   const [other, setOther] = useState("");
 
@@ -81,6 +84,14 @@ export function PassCandidatesDialog({
     setChosen("");
     setOther("");
   }, [item?.shiftId, item?.date]);
+
+  // Not "the suggestions could not be read": the pass no longer needs anyone
+  // (the absence ended, a lov was added). Said as that, the board read again,
+  // and the dialog closed: there is nobody left to choose.
+  const gone = isError && errorCode(error) === "SUPERVISION_COVER_NOT_AFFECTED";
+  useEffect(() => {
+    if (gone) onGone(error);
+  }, [gone, error, onGone]);
 
   const others = otherPassTeacherOptions(teachers, item, data);
   const pick = chosen || other;

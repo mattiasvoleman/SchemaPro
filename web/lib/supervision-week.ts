@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import { isoWeekdayOf } from "@/lib/lesson-mapper";
 import type { TimetableLesson } from "@/components/schedule/timetable-grid";
 
@@ -29,11 +29,26 @@ export interface WeekPass {
   handover: "SUBSTITUTE" | "NO_COVER" | null;
 }
 
+/**
+ * A 404 WITHOUT a code is a gateway that has no such route — one from before
+ * Rastvakt i vardagen, or rolled back past it — and it has no passes to give:
+ * an empty week, not "the passes could not be read" on every load. The
+ * route's own refusals carry a code.
+ */
+export async function readSupervisionWeek(from: string, to: string): Promise<{ from: string; to: string; passes: WeekPass[] }> {
+  try {
+    return await api.get<{ from: string; to: string; passes: WeekPass[] }>(`/api/v1/supervision/week?from=${from}&to=${to}`);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404 && !error.code) return { from, to, passes: [] };
+    throw error;
+  }
+}
+
 export function useSupervisionWeek(from: string, to: string) {
   return useQuery({
     queryKey: ["supervisionWeek", from, to],
     retry: false,
-    queryFn: () => api.get<{ from: string; to: string; passes: WeekPass[] }>(`/api/v1/supervision/week?from=${from}&to=${to}`),
+    queryFn: () => readSupervisionWeek(from, to),
   });
 }
 
@@ -51,11 +66,13 @@ const minutesOf = (timestamp: string) => {
 };
 
 /**
- * The passes as blocks of the week's grid, on the reader's clock as the
- * lessons are (lib/lesson-mapper.ts): "Rastvakt" over the area, and the
- * skolområde as the room. A pass taken as vikarie says so under the area, as
- * a covered lesson says "Vikarie"; one the reader is relieved of says who has
- * it — a vikarie, or nobody — never which person.
+ * The passes as strips of the week's grid, on the reader's clock as the
+ * lessons are (lib/lesson-mapper.ts), each one line (timetable-grid.tsx
+ * `duty`): "Rastvakt · Vikarie tar passet · Skolgården · Norra". Whose it is
+ * that day comes before the place, so a narrow column cuts the place and
+ * never that. A pass taken as vikarie says "Vikarie", as a covered lesson
+ * does; one the reader is relieved of says who has it — a vikarie, or
+ * nobody — never which person, and is drawn dashed: nothing to stand at.
  */
 export function weekPassesToGrid(
   passes: readonly WeekPass[],
@@ -76,11 +93,12 @@ export function weekPassesToGrid(
       startMinutes: minutesOf(pass.startsAt),
       endMinutes: minutesOf(pass.endsAt),
       title: labels.title,
-      subtitle: marker ? `${pass.areaName} · ${marker}` : pass.areaName,
+      subtitle: marker ? `${marker} · ${pass.areaName}` : pass.areaName,
       ...(pass.siteName ? { room: pass.siteName } : {}),
       color: PASS_COLOR,
-      // A block that opens nothing, and no length the grid is measured for.
+      // A strip that opens nothing, and no length the grid is measured for.
       duty: true,
+      ...(pass.kind === "OWN" && pass.handover !== null ? { relieved: true } : {}),
     };
   });
 }

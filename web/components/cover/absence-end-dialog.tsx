@@ -8,7 +8,7 @@ import type { MessageLookup } from "@/lib/engine-message";
 import { useAbsenceActions } from "@/lib/cover-queries";
 import type { Absence } from "@/lib/cover-types";
 import { localParts } from "@/lib/cover-absence-form";
-import { coverErrorText, errorCode, errorParams } from "@/lib/cover-view";
+import { coverErrorText, decisionCounts, errorCode, type DecisionCounts } from "@/lib/cover-view";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DateField } from "@/components/ui/date-field";
@@ -60,7 +60,7 @@ export function AbsenceEndDialog({
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
   const [shown, setShown] = useState(false);
-  const [askUndo, setAskUndo] = useState<number | null>(null);
+  const [askUndo, setAskUndo] = useState<DecisionCounts | null>(null);
 
   useEffect(() => {
     if (!absence) return;
@@ -91,8 +91,7 @@ export function AbsenceEndDialog({
           toast.error(t("teacherHasDecisions"));
           return;
         }
-        const count = errorParams(error).count;
-        setAskUndo(typeof count === "number" ? count : 1);
+        setAskUndo(decisionCounts(error));
         return;
       }
       toast.error(coverErrorText(tErrors, error, tCommon("error")));
@@ -133,7 +132,7 @@ export function AbsenceEndDialog({
         open={askUndo !== null}
         onOpenChange={(next) => !next && setAskUndo(null)}
         title={t("undoTitle")}
-        description={t("undoBody", { count: askUndo ?? 0 })}
+        description={t("undoBody", { ...(askUndo ?? { count: 0, lessons: 0, passes: 0 }) })}
         confirmLabel={t("undoConfirm")}
         loading={end.isPending}
         onConfirm={() => void submit(true)}
@@ -161,7 +160,7 @@ export function AbsenceWithdrawDialog({
   const tErrors = useTranslations("coverErrors") as unknown as MessageLookup;
   const tCommon = useTranslations("common");
   const { withdraw } = useAbsenceActions();
-  const [askUndo, setAskUndo] = useState<number | null>(null);
+  const [askUndo, setAskUndo] = useState<DecisionCounts | null>(null);
 
   useEffect(() => setAskUndo(null), [absence]);
 
@@ -179,8 +178,7 @@ export function AbsenceWithdrawDialog({
           onOpenChange(false);
           return;
         }
-        const count = errorParams(error).count;
-        setAskUndo(typeof count === "number" ? count : 1);
+        setAskUndo(decisionCounts(error));
         return;
       }
       toast.error(coverErrorText(tErrors, error, tCommon("error")));
@@ -192,7 +190,7 @@ export function AbsenceWithdrawDialog({
       open={absence !== null}
       onOpenChange={onOpenChange}
       title={askUndo === null ? tWithdraw("title") : tWithdraw("undoTitle")}
-      description={askUndo === null ? tWithdraw("body") : tWithdraw("undoBody", { count: askUndo })}
+      description={askUndo === null ? tWithdraw("body") : tWithdraw("undoBody", { ...askUndo })}
       confirmLabel={askUndo === null ? tWithdraw("confirm") : tWithdraw("undoConfirm")}
       loading={withdraw.isPending}
       onConfirm={() => void submit(askUndo !== null)}

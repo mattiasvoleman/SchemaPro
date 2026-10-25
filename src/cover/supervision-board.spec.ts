@@ -117,6 +117,15 @@ describe('the board’s passes', () => {
     expect(passBoardItems(gone).map((item) => [item.date, item.runs])).toEqual([['2026-10-19', false]]);
   });
 
+  it('shows a decision left on a withdrawn absence for Ångra, and every item with its area’s name', () => {
+    const left = cover({ absenceId: 'abs-old', absenceActive: false });
+    const items = passBoardItems(input({ covers: [left], areas: new Map([[GARD, { minGradeLevel: 0, maxGradeLevel: 3, name: 'Skolgården' }]]) }));
+    expect(items.map((item) => [item.date, item.absenceId, item.status, item.absenceActive, item.areaName])).toEqual([
+      ['2026-10-19', 'abs-old', 'COVERED', false, 'Skolgården'],
+      ['2026-10-20', 'abs-1', 'OPEN', true, 'Skolgården'],
+    ]);
+  });
+
   it('reads each absence’s own days when there is no window (the register’s counts)', () => {
     const items = passBoardItems(input({ window: null }));
     expect(items.map((item) => item.date)).toEqual(['2026-10-19', '2026-10-20']);

@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { PASS_COLOR, isPassEntry, weekPassesToGrid, type WeekPass } from "./supervision-week";
+import { describe, expect, it, vi } from "vitest";
+import { ApiError, api } from "@/lib/api";
+import { PASS_COLOR, isPassEntry, readSupervisionWeek, weekPassesToGrid, type WeekPass } from "./supervision-week";
 
 /**
  * The teacher's own rastvaktspass as blocks of their week (Rastvakt i
@@ -49,14 +50,29 @@ describe("the teacher's passes in their week", () => {
       ],
       labels,
     );
-    expect(cover).toMatchObject({ id: "pass:COVER:s-2:2026-10-12", subtitle: "Skolgården · Vikarie" });
+    // Whose it is that day before the place: a narrow column cuts the place, never that.
+    expect(cover).toMatchObject({ id: "pass:COVER:s-2:2026-10-12", subtitle: "Vikarie · Skolgården" });
     expect(cover).not.toHaveProperty("room");
-    expect(handed!.subtitle).toBe("Skolgården · Vikarie tar passet");
-    expect(none!.subtitle).toBe("Skolgården · Utan ersättare");
+    expect(cover).not.toHaveProperty("relieved");
+    expect(handed).toMatchObject({ subtitle: "Vikarie tar passet · Skolgården", relieved: true });
+    expect(none).toMatchObject({ subtitle: "Utan ersättare · Skolgården", relieved: true });
   });
 
   it("tells a pass's block from a lesson's", () => {
     expect(isPassEntry({ id: "pass:OWN:s-1:2026-10-12" })).toBe(true);
     expect(isPassEntry({ id: "0b1e…-lesson" })).toBe(false);
+  });
+});
+
+describe("the week's read", () => {
+  it("reads a gateway without the route (a 404 without a code) as no passes, and any refusal of its own as one", async () => {
+    const get = vi.spyOn(api, "get");
+    get.mockRejectedValueOnce(new ApiError(404, "Cannot GET /api/v1/supervision/week"));
+    await expect(readSupervisionWeek("2026-10-12", "2026-10-18")).resolves.toEqual({ from: "2026-10-12", to: "2026-10-18", passes: [] });
+    get.mockRejectedValueOnce(new ApiError(400, "Högst 14 dagar åt gången.", "SUPERVISION_WEEK_RANGE"));
+    await expect(readSupervisionWeek("2026-10-12", "2026-11-18")).rejects.toBeInstanceOf(ApiError);
+    get.mockRejectedValueOnce(new ApiError(500, "boom"));
+    await expect(readSupervisionWeek("2026-10-12", "2026-10-18")).rejects.toBeInstanceOf(ApiError);
+    get.mockRestore();
   });
 });

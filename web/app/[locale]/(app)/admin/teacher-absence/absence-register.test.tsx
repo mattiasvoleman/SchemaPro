@@ -111,7 +111,7 @@ describe("the absence register", () => {
 
   it("ends an absence early, and undoes the decisions after the new end only when the admin says so", async () => {
     post
-      .mockRejectedValueOnce(new ApiError(409, "Det finns beslut…", "ABSENCE_HAS_DECISIONS", { count: 2, lessonId: "l-1", decision: "SUBSTITUTE" }))
+      .mockRejectedValueOnce(new ApiError(409, "Det finns beslut…", "ABSENCE_HAS_DECISIONS", { count: 2, lessons: 1, passes: 1, lessonId: "l-1", decision: "SUBSTITUTE" }))
       .mockResolvedValueOnce({ ...ONGOING, phase: "ENDED" });
     const user = userEvent.setup();
     wrap(<AbsenceRegister teachers={TEACHERS} />);
@@ -128,7 +128,8 @@ describe("the absence register", () => {
     );
     expect(await screen.findByText("Ångra besluten efter den nya sluttiden?")).toBeInTheDocument();
     // The count is lessons and rastvaktspass together (Rastvakt i vardagen).
-    expect(screen.getByText(/^2 lektioner och rastvaktspass efter tidpunkten/)).toBeInTheDocument();
+    // Named as what they are: a lesson and a rastvaktspass, not "lessons and passes" of two.
+    expect(screen.getByText(/^1 lektion och 1 rastvaktspass efter tidpunkten har redan/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Ångra och avsluta" }));
     await waitFor(() =>
       expect(post).toHaveBeenLastCalledWith("/api/v1/teacher-absences/a-1/end", {

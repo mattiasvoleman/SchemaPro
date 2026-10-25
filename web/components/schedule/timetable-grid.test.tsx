@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRef } from "react";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   TimetableGrid,
@@ -234,6 +234,43 @@ describe("TimetableGrid time axis and vertical placement", () => {
       expect(pass.className).toContain("cursor-default");
       await userEvent.click(pass);
       expect(onLessonClick).not.toHaveBeenCalled();
+    });
+
+    it("draws a duty as one visible line of its own length, never into the lesson after it, and a relieved one dashed", () => {
+      render(
+        <TimetableGrid
+          lessons={[
+            makeLesson({ id: "a", startMinutes: 540, endMinutes: 600 }),
+            makeLesson({ id: "b", startMinutes: 615, endMinutes: 675 }),
+            makeLesson({
+              id: "p",
+              title: "Rastvakt",
+              subtitle: "Vikarie tar passet · Skolgården",
+              room: "Norra",
+              startMinutes: 600,
+              endMinutes: 615,
+              duty: true,
+              relieved: true,
+            }),
+          ]}
+        />,
+      );
+
+      const pass = document.querySelector<HTMLElement>('[data-lesson-id="p"]')!;
+      const next = document.querySelector<HTMLElement>('[data-lesson-id="b"]')!;
+      // Fifteen minutes at 1.1 px, not a lesson's 28 px floor, and ending where 10:15 begins.
+      expect(pass.style.height).toBe("16.5px");
+      expect(parseFloat(pass.style.top) + parseFloat(pass.style.height)).toBeLessThanOrEqual(parseFloat(next.style.top));
+      // What the eye reads, not textContent: the line is outside every sr-only span.
+      const line = within(pass).getByText("Rastvakt · Vikarie tar passet · Skolgården · Norra");
+      expect(line.closest(".sr-only")).toBeNull();
+      expect([...pass.querySelectorAll(".sr-only")].map((node) => node.textContent).join("")).not.toMatch(/Skolgården/);
+      // Nothing to stand at: dashed and untinted, but not struck through as a cancellation is.
+      expect(pass.className).toContain("border-dashed");
+      expect(pass.className).not.toContain("line-through");
+      // On the card, never see-through: a duty's time is a rast's, and the band's label is under it.
+      expect(pass.style.backgroundColor).toBe("hsl(var(--card))");
+      expect(pass.style.backgroundImage).toBe("");
     });
 
     it("caps the stretch so a short pass cannot run the day off the screen", () => {

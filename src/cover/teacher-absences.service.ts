@@ -647,11 +647,19 @@ function paramsOf(
   passes: readonly CoverRow[] = [],
 ): Record<string, string | number> {
   const first = [...rows].sort((a, b) => a.calendarLessonId.localeCompare(b.calendarLessonId))[0];
+  // `lessons` and `passes` beside the total, so the question names what it is
+  // about: lessons, rastvaktspass, or both.
   if (first) {
-    return { count: rows.length + passes.length, passes: passes.length, lessonId: first.calendarLessonId, decision: first.decision };
+    return {
+      count: rows.length + passes.length,
+      lessons: rows.length,
+      passes: passes.length,
+      lessonId: first.calendarLessonId,
+      decision: first.decision,
+    };
   }
   const pass = passes[0]!;
-  return { count: passes.length, passes: passes.length, date: pass.date, decision: pass.decision };
+  return { count: passes.length, lessons: 0, passes: passes.length, date: pass.date, decision: pass.decision };
 }
 
 function selfReportOff(): ForbiddenException {

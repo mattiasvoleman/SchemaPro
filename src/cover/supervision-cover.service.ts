@@ -284,9 +284,10 @@ export class SupervisionCoverService {
       await lockShiftForShare(tx, shiftId);
       const cover = await readCover(tx, shiftId, date);
       if (!cover) throw noDecision();
-      // Settled with its absence (a withdrawal undoes it there): not the board's.
-      const absence = await tx.teacherAbsence.findUnique({ where: { id: cover.absenceId }, select: { status: true } });
-      if (absence?.status !== 'ACTIVE') throw noDecision();
+      // Whatever its absence's state: a withdrawal settles its decisions in
+      // its own transaction, so one still standing on a withdrawn absence was
+      // left by an API from before this release (a rollback, or old and new
+      // containers side by side), and the board shows it for exactly this.
       if (cover.endsAt.getTime() <= this.cover.now().getTime()) throw held();
       return undoCover(tx, cover);
     });

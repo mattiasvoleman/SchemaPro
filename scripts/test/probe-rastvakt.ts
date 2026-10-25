@@ -32,7 +32,9 @@
  *         move under it, the vikarie is told with the new notice types, the
  *         cover rules hold the pass in the vikarie's day (the relation
  *         filter), removing the absent teacher is refused while the
- *         booking stands, and an undo tells them it is off.
+ *         booking stands, a decision an older API left on a withdrawn
+ *         absence is on the board for Ångra and relieves nobody in the
+ *         week, and an undo tells them it is off.
  *
  * And in rv-a, the dates a pass is stored with are on its weekday: a typed
  * Friday Till is the Wednesday before, a Tuesday Från the Wednesday after.
@@ -333,7 +335,21 @@ export async function rastvaktChecks(owner: Client, api: PrismaService, marker: 
         (error: unknown) => codeOf(error) === 'USER_HAS_BOOKED_PASS_COVERS',
       );
 
+      // An API from before the release withdraws the absence without its pass
+      // decisions (a rollback, or containers side by side): the decision stays
+      // on the board for Ångra, and relieves Anna of nothing in her week.
+      await owner.query(`UPDATE "TeacherAbsences" SET status = 'WITHDRAWN', "withdrawnAt" = now() WHERE id = $1`, [absence]);
+      const left = await cover.board('2030-09-02', '2030-09-02', asAdmin);
+      assert.deepEqual(
+        left.supervision.map((row) => [row.absenceId, row.status, row.absenceActive, row.areaName]),
+        [[absence, 'COVERED', false, 'Rv Skolgården']],
+      );
+      const annasLeft = await supervision.week('2030-09-02', '2030-09-02', asAnna);
+      assert.deepEqual(annasLeft.passes.map((row) => [row.kind, row.handover]), [['OWN', null]]);
+
       await passes.undo(shiftId, '2030-09-02', asAdmin);
+      assert.equal((await cover.board('2030-09-02', '2030-09-02', asAdmin)).supervision.length, 0);
+      await owner.query(`UPDATE "TeacherAbsences" SET status = 'ACTIVE', "withdrawnAt" = NULL WHERE id = $1`, [absence]);
       const reopened = await cover.board('2030-09-02', '2030-09-02', asAdmin);
       assert.equal(reopened.supervision[0]!.status, 'OPEN');
       // Told twice, with the new types and the place and the time, no name.

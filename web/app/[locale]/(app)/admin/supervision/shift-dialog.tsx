@@ -74,6 +74,7 @@ const FIELD_ORDER: readonly ShiftField[] = ["area", "teacher", "start", "end", "
 /** A refusal's code, said at its field rather than above the form. */
 const FIELD_OF_CODE: Readonly<Record<string, ShiftField>> = {
   SUPERVISION_SHIFT_CLASH: "teacher",
+  SUPERVISION_SHIFT_COVER_CLASH: "teacher",
   SUPERVISION_TEACHER_INACTIVE: "teacher",
   SUPERVISION_AREA_NOT_FOUND: "area",
 };
@@ -117,8 +118,8 @@ const draftOf = (shift: SupervisionShift | null, seed: ShiftSeed): ShiftDraft =>
  * says, beside the field, the day the pass first or last runs.
  *
  * A pass during the teacher's own lesson is saved, and the dialog stays open
- * to say so (the gateway's lessonClashes): the generator and the
- * vikarieförslag do not read passes yet. An existing pass that runs during
+ * to say so (the gateway's lessonClashes): the generator does not read
+ * passes yet. An existing pass that runs during
  * one says it on opening; so does a deactivated teacher's pass, which
  * watches until the day before they were deactivated.
  *

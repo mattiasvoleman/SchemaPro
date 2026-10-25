@@ -315,7 +315,7 @@ describe('TeacherAbsencesService', () => {
         const error = await service.end(ABSENCE, { at: '2026-10-15T00:00:00Z' }, admin).catch((e: unknown) => e);
         expect((error as { getResponse: () => unknown }).getResponse()).toMatchObject({
           code: 'ABSENCE_HAS_DECISIONS',
-          params: { count: 1, passes: 1, date: '2026-10-16', decision: 'SUBSTITUTE' },
+          params: { count: 1, lessons: 0, passes: 1, date: '2026-10-16', decision: 'SUBSTITUTE' },
         });
         // With a lesson beside it, the lesson is named and both are counted.
         tx.teacherAbsenceCover.findMany.mockResolvedValue([{ calendarLessonId: 'l-ahead', decision: 'SUPERVISED_STUDY' }]);
@@ -324,7 +324,7 @@ describe('TeacherAbsencesService', () => {
         ]);
         const both = await service.end(ABSENCE, { at: '2026-10-15T00:00:00Z' }, admin).catch((e: unknown) => e);
         expect((both as { getResponse: () => unknown }).getResponse()).toMatchObject({
-          params: { count: 2, passes: 1, lessonId: 'l-ahead' },
+          params: { count: 2, lessons: 1, passes: 1, lessonId: 'l-ahead' },
         });
         expect(tx.teacherAbsence.update).not.toHaveBeenCalled();
 

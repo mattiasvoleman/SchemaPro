@@ -236,6 +236,7 @@ function passesOf(absences: readonly StoredAbsence[], days: () => { from: string
           absenceId: absence.id,
           absentTeacherId: absence.userId,
           areaId: shift.areaId,
+          areaName: supervisionAreaName(shift.areaId),
           ...span,
           decision: decided?.decision ?? null,
           decidedAt: decided ? stockholmInstant(addDays(THIS_MONDAY, -1), "18:00") : null,
@@ -246,6 +247,8 @@ function passesOf(absences: readonly StoredAbsence[], days: () => { from: string
           outsideAbsence: false,
           // Every stub pass runs on its dates; no lov falls in the stub's weeks.
           runs: true,
+          // Every stub decision's absence is ACTIVE: cover-world.ts withdraws none.
+          absenceActive: true,
         });
       }
     }

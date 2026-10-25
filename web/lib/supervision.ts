@@ -54,7 +54,7 @@ export interface SupervisionShift {
   note: string | null;
   /** The day the teacher was deactivated; the pass watches until the day before. Null while active. */
   inactiveFrom: string | null;
-  /** The teacher's lessons the pass runs during; the generator and the vikarieförslag do not see passes yet. */
+  /** The teacher's lessons the pass runs during; the generator does not see passes yet. */
   lessonClashes: LessonClash[];
 }
 

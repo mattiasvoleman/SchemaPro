@@ -222,6 +222,25 @@ export function errorParams(error: unknown): Record<string, string | number> {
   return error instanceof ApiError ? (error.params ?? {}) : {};
 }
 
+export interface DecisionCounts {
+  count: number;
+  lessons: number;
+  passes: number;
+}
+
+/**
+ * ABSENCE_HAS_DECISIONS' counts, for the question that offers to undo them:
+ * the total, and how many are lessons and how many rastvaktspass, so it names
+ * what it is about. Without the split, all of them are lessons.
+ */
+export function decisionCounts(error: unknown): DecisionCounts {
+  const params = errorParams(error);
+  const count = typeof params.count === "number" ? params.count : 1;
+  const passes = typeof params.passes === "number" ? params.passes : 0;
+  const lessons = typeof params.lessons === "number" ? params.lessons : count - passes;
+  return { count, lessons, passes };
+}
+
 /** The cover's sentences first, the engine's second: see lib/chain-lookup.ts. */
 export { chainLookup } from "@/lib/chain-lookup";
 
