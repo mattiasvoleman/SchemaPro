@@ -2,7 +2,7 @@ import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { WindowedThrottlerStorage } from '../../common/windowed-throttler-storage';
 import { PrismaService } from '../../database/prisma.service';
-import { KEY_SHAPE, resolveIntegrationKey } from '../integration-key';
+import { HUVUDMAN_KEY_SHAPE, KEY_SHAPE, resolveHuvudmanKey, resolveIntegrationKey, type KeyHuvudman } from '../integration-key';
 import { v2Errors } from './errors';
 import type { Scope } from './scopes';
 
@@ -17,7 +17,17 @@ export const PER_KEY = { limit: 120, ttl: 60_000 };
 export const PER_ADDRESS = { limit: 600, ttl: 60_000 };
 
 export interface Ss12000V2Request extends Request {
-  ss12000?: { schoolId: string; keyId: string; scopes: ReadonlySet<Scope> };
+  ss12000?: {
+    schoolId: string;
+    keyId: string;
+    scopes: ReadonlySet<Scope>;
+    /**
+     * Huvudman (20261212090000): the key is a huvudman's (sh_…), and reads
+     * these schools one at a time (Ss12000HuvudmanReads); schoolId is then
+     * empty, which no service principal opens.
+     */
+    huvudman?: { huvudman: KeyHuvudman; schools: readonly string[] };
+  };
 }
 
 /** The presented key: S1's BearerAuth (`Authorization: Bearer sp_…`) or the house's `X-API-Key`. */
@@ -29,7 +39,7 @@ export function presentedKey(request: Request): string | null {
   const apiKey = typeof header === 'string' ? header.trim() : null;
   if (bearer && apiKey && bearer !== apiKey) return null;
   const key = bearer ?? apiKey;
-  return key && KEY_SHAPE.test(key) ? key : null;
+  return key && (KEY_SHAPE.test(key) || HUVUDMAN_KEY_SHAPE.test(key)) ? key : null;
 }
 
 /**
@@ -72,7 +82,9 @@ export class Ss12000V2Guard implements CanActivate {
     }
 
     const key = presentedKey(request);
-    const resolved = key ? await resolveIntegrationKey(this.prisma, key, { touch: true }) : null;
+    // A huvudman's key (sh_…) or a school's (sp_…), by its prefix.
+    const ofHuvudman = key && HUVUDMAN_KEY_SHAPE.test(key) ? await resolveHuvudmanKey(this.prisma, key, { touch: true }) : null;
+    const resolved = ofHuvudman ?? (key && KEY_SHAPE.test(key) ? await resolveIntegrationKey(this.prisma, key, { touch: true }) : null);
     if (!resolved) {
       const failed = await Ss12000V2Guard.addresses.increment(address, PER_ADDRESS.ttl, PER_ADDRESS.limit, PER_ADDRESS.ttl, 'v2-address');
       if (failed.isBlocked) {
@@ -86,8 +98,26 @@ export class Ss12000V2Guard implements CanActivate {
     const byKey = await Ss12000V2Guard.keys.increment(resolved.id, PER_KEY.ttl, PER_KEY.limit, PER_KEY.ttl, 'v2-key');
     if (byKey.isBlocked) this.refuse(response, byKey.timeToBlockExpire);
 
-    request.ss12000 = { schoolId: resolved.schoolId, keyId: resolved.id, scopes: new Set(resolved.scopes) };
+    request.ss12000 = ofHuvudman
+      ? {
+          schoolId: '',
+          keyId: ofHuvudman.id,
+          scopes: new Set(ofHuvudman.scopes),
+          huvudman: { huvudman: ofHuvudman.huvudman, schools: ofHuvudman.schools },
+        }
+      : { schoolId: (resolved as { schoolId: string }).schoolId, keyId: resolved.id, scopes: new Set(resolved.scopes) };
     return true;
+  }
+
+  /**
+   * One more school read by a huvudman's key's request (Ss12000HuvudmanReads):
+   * the key pays the per-key bound once for each school after the first, so
+   * a /x/{id} that asks every school, or a lookup, costs what that many
+   * requests of a school's key would. 429 when that is over the bound.
+   */
+  static async chargeSchool(keyId: string): Promise<void> {
+    const byKey = await Ss12000V2Guard.keys.increment(keyId, PER_KEY.ttl, PER_KEY.limit, PER_KEY.ttl, 'v2-key');
+    if (byKey.isBlocked) throw v2Errors.tooMany();
   }
 
   /** Forgets every count: the e2e suite's, between specs that share one app. */

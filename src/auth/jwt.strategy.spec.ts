@@ -366,7 +366,121 @@ describe('JwtStrategy', () => {
         expect(error).toBeInstanceOf(ForbiddenException);
         expect((error as ForbiddenException).getResponse()).toMatchObject({ code: SCHOOL_NOT_AVAILABLE });
         expect(prisma.withVerifiedSubject).toHaveBeenNthCalledWith(1, AUTH_ID, expect.any(Function), { school: OTHER_SCHOOL });
-        expect(prisma.withVerifiedSubject).toHaveBeenNthCalledWith(2, AUTH_ID, expect.any(Function), {});
+        // Huvudman: whether the login reads the school as its huvudman's, under the same choice.
+        expect(prisma.withVerifiedSubject).toHaveBeenNthCalledWith(2, AUTH_ID, expect.any(Function), { school: OTHER_SCHOOL });
+        expect(prisma.withVerifiedSubject).toHaveBeenNthCalledWith(3, AUTH_ID, expect.any(Function), {});
+      });
+
+      describe('the huvudman\'s reader (Huvudman, 20261212090000)', () => {
+        const READER = {
+          member_id: '44444444-4444-4444-8444-444444444444',
+          huvudman_id: '55555555-5555-4555-8555-555555555555',
+          huvudman_name: 'Vimmerby kommun',
+          member_role: 'PLANERARE',
+          first_name: 'Pia',
+          last_name: 'Planerare',
+          school_id: OTHER_SCHOOL,
+        };
+
+        it('reads a school its huvudman owns as the läsare: no user id, no HR-läs, the huvudman named', async () => {
+          tx.user.findFirst.mockResolvedValue(null);
+          tx.$queryRaw.mockResolvedValueOnce([READER]);
+
+          const principal = await strategy.validate(naming(OTHER_SCHOOL), payload());
+
+          expect(principal).toEqual({
+            authId: AUTH_ID,
+            role: Role.SCHOOL_ADMIN,
+            schoolId: OTHER_SCHOOL,
+            adminProfile: 'LASARE',
+            hrRead: false,
+            huvudman: {
+              id: READER.huvudman_id,
+              name: READER.huvudman_name,
+              memberId: READER.member_id,
+              role: 'PLANERARE',
+              firstName: 'Pia',
+              lastName: 'Planerare',
+            },
+          });
+          expect(principal.userId).toBeUndefined();
+          expect(prisma.withVerifiedSubject).toHaveBeenNthCalledWith(2, AUTH_ID, expect.any(Function), { school: OTHER_SCHOOL });
+        });
+
+        it('never asks for the reader when the login has a row at the school: an own row wins', async () => {
+          tx.user.findFirst.mockResolvedValue(activeProfile());
+
+          await expect(strategy.validate(naming(SCHOOL_ID), payload())).resolves.not.toHaveProperty('huvudman');
+          expect(prisma.withVerifiedSubject).toHaveBeenCalledTimes(1);
+          expect(tx.$queryRaw).not.toHaveBeenCalled();
+        });
+
+        it('never asks for the reader with no school named', async () => {
+          tx.user.findFirst.mockResolvedValue(null);
+          tx.huvudmanMember.findFirst.mockResolvedValue(null);
+
+          await expect(strategy.validate(NO_SCHOOL, payload())).rejects.toThrow(UnauthorizedException);
+          expect(tx.$queryRaw).not.toHaveBeenCalled();
+        });
+
+        it('makes a member at no school the HUVUDMAN principal, whom the database answers nothing', async () => {
+          tx.user.findFirst.mockResolvedValue(null);
+          tx.huvudmanMember.findFirst.mockResolvedValue({ id: READER.member_id });
+
+          await expect(strategy.validate(NO_SCHOOL, payload())).resolves.toEqual({ authId: AUTH_ID, role: Role.HUVUDMAN, huvudmanMarked: false });
+        });
+
+        it("says whether the token carries the login's mark as a member, which GET /huvudman puts back when it is lost", async () => {
+          tx.user.findFirst.mockResolvedValue(null);
+          tx.huvudmanMember.findFirst.mockResolvedValue({ id: READER.member_id });
+          const marked = payload({ app_metadata: { provider: 'email', rastraHuvudman: true } } as Partial<JwtPayload>);
+
+          await expect(strategy.validate(NO_SCHOOL, marked)).resolves.toMatchObject({ role: Role.HUVUDMAN, huvudmanMarked: true });
+        });
+
+        it('gives the HUVUDMAN principal the closed schools, so /me/schools can say which', async () => {
+          tx.user.findFirst.mockResolvedValue(null);
+          tx.huvudmanMember.findFirst.mockResolvedValue({ id: READER.member_id });
+          const closed = { [OTHER_SCHOOL]: 'sso_required' };
+
+          await expect(
+            strategy.validate(NO_SCHOOL, payload({ rastra_closed_schools: closed } as Partial<JwtPayload>)),
+          ).resolves.toEqual({ authId: AUTH_ID, role: Role.HUVUDMAN, huvudmanMarked: false, closedSchools: closed });
+        });
+
+        it('answers a platform operator as before: no reader lookup, never the HUVUDMAN principal', async () => {
+          tx.user.findFirst.mockResolvedValue(null);
+          tx.huvudmanMember.findFirst.mockResolvedValue({ id: READER.member_id });
+          const operator = payload({ role: Role.SYSTEM_ADMIN } as Partial<JwtPayload>);
+
+          await expect(strategy.validate(naming(OTHER_SCHOOL), operator)).resolves.toMatchObject({ role: Role.SYSTEM_ADMIN });
+          await expect(strategy.validate(NO_SCHOOL, operator)).resolves.toMatchObject({ role: Role.SYSTEM_ADMIN });
+          expect(tx.$queryRaw).not.toHaveBeenCalled();
+          expect(tx.huvudmanMember.findFirst).not.toHaveBeenCalled();
+        });
+
+        it('answers SCHOOL_NOT_AVAILABLE to a member naming a school the huvudman does not own', async () => {
+          tx.user.findFirst.mockResolvedValue(null);
+          tx.huvudmanMember.findFirst.mockResolvedValue({ id: READER.member_id });
+
+          const error = await strategy.validate(naming(OTHER_SCHOOL), payload()).catch((e: unknown) => e);
+          expect((error as ForbiddenException).getResponse()).toMatchObject({ code: SCHOOL_NOT_AVAILABLE });
+        });
+
+        it("forwards the hook's closed schools to the reader's lookup", async () => {
+          tx.user.findFirst.mockResolvedValue(null);
+          tx.$queryRaw.mockResolvedValueOnce([]);
+          tx.huvudmanMember.findFirst.mockResolvedValue(null);
+          const closed = { [OTHER_SCHOOL]: 'sso_required' };
+
+          await expect(
+            strategy.validate(naming(OTHER_SCHOOL), payload({ rastra_closed_schools: closed } as Partial<JwtPayload>)),
+          ).rejects.toThrow(UnauthorizedException);
+          expect(prisma.withVerifiedSubject).toHaveBeenNthCalledWith(2, AUTH_ID, expect.any(Function), {
+            school: OTHER_SCHOOL,
+            closedSchools: closed,
+          });
+        });
       });
 
       it('still 401s a login with no row anywhere, whatever it names', async () => {

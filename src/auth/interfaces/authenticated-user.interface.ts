@@ -1,6 +1,7 @@
 import type { AdminProfile } from '@prisma/client';
 import type { AccessChannel } from '../../access-log/access-log';
 import type { Role } from '../enums/role.enum';
+import type { HuvudmanReader } from '../huvudman-reader';
 import type { SchoolAccountSession } from '../school-account';
 
 /**
@@ -42,6 +43,22 @@ export interface AuthenticatedUser {
    * person can rewrite, so it is a self-lockout check and never a permission.
    */
   schoolAccount?: SchoolAccountSession;
+  /**
+   * Huvudman (20261212090000): set exactly when this request is the
+   * huvudman's reader at schoolId, a member of the huvudman that owns the
+   * school with no row of the login's own there. role is then SCHOOL_ADMIN,
+   * adminProfile LASARE, hrRead false and userId absent, as the database
+   * answers (app.current_user_id() is NULL for the reader). RolesGuard
+   * refuses every write but the huvudman's own routes.
+   */
+  huvudman?: HuvudmanReader;
+  /**
+   * Huvudman: whether the token carries the login's mark as a huvudman's
+   * member (app_metadata.rastraHuvudman), which the web asks for the
+   * huvudman's pages by. Set on the HUVUDMAN principal only; one without it
+   * is marked on its next read of /api/v1/huvudman.
+   */
+  huvudmanMarked?: boolean;
   /**
    * The client the request came through: APP (X-SchemaPro-Client: app), WEB
    * (a browser's Origin) or OTHER (src/access-log). Set by JwtAuthGuard; read

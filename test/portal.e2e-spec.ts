@@ -502,8 +502,8 @@ describe('Portal and platform surfaces (e2e)', () => {
         .expect(200);
 
       expect(response.body).toEqual([
-        { schoolId: SCHOOL_ID, schoolName: 'Ekbacken', role: 'GUARDIAN', adminProfile: null, closed: null, current: true },
-        { schoolId: OTHER, schoolName: 'Granen', role: 'TEACHER', adminProfile: null, closed: 'sso_required', current: false },
+        { schoolId: SCHOOL_ID, schoolName: 'Ekbacken', role: 'GUARDIAN', adminProfile: null, closed: null, current: true, huvudman: null },
+        { schoolId: OTHER, schoolName: 'Granen', role: 'TEACHER', adminProfile: null, closed: 'sso_required', current: false, huvudman: null },
       ]);
     });
 

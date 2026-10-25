@@ -21,6 +21,8 @@ export interface PrismaMock {
   queryWithRls: jest.Mock;
   withVerifiedSubject: jest.Mock;
   withServiceKeyLookup: jest.Mock;
+  withHuvudmanKey: jest.Mock;
+  withHuvudmanKeyPrincipal: jest.Mock;
   withServicePrincipal: jest.Mock;
   withSyncPrincipal: jest.Mock;
   withSystemTransaction: jest.Mock;
@@ -151,6 +153,11 @@ export function createPrismaMock(tx: TxMock): PrismaMock {
       <T>(_authId: string, fn: (client: PrismaClient) => Promise<T>) => run(fn),
     ),
     withServiceKeyLookup: jest.fn(run),
+    // Huvudman: the key's own transaction, and a school opened for it.
+    withHuvudmanKey: jest.fn(<T>(_keyId: string, fn: (client: PrismaClient) => Promise<T>) => run(fn)),
+    withHuvudmanKeyPrincipal: jest.fn(
+      <T>(_keyId: string, _schoolId: string, fn: (client: PrismaClient) => Promise<T>) => run(fn),
+    ),
     withServicePrincipal: jest.fn(
       <T>(_schoolId: string, fn: (client: PrismaClient) => Promise<T>, options?: { keyId?: string }) => {
         SERVICE_KEYS.set(tx, options?.keyId ?? null);

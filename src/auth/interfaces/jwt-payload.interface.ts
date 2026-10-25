@@ -29,6 +29,8 @@ export interface JwtPayload {
   amr?: unknown;
   /** Supabase: the user's metadata, which a school-account sign-in merges its identity into. */
   user_metadata?: unknown;
+  /** Supabase: the service role's metadata of the login (the gateway's marks, SupabaseAdminService). */
+  app_metadata?: unknown;
   /**
    * The access-token hook's schools this session may not enter, {schoolId:
    * reason} (20261204090000). Set by the hook only when one is closed.

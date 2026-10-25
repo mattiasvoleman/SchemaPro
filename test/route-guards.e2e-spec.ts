@@ -4,6 +4,8 @@ import { RequestMethod } from '@nestjs/common';
 import { AREA_KEY, type AreaRequirement } from '../src/auth/decorators/area.decorator';
 import request from 'supertest';
 import { IS_PUBLIC_KEY } from '../src/auth/decorators/public.decorator';
+import { HUVUDMAN_NO_SCHOOL } from '../src/auth/huvudman.guard';
+import { READS_ONLY_KEY } from '../src/auth/huvudman-reader';
 import { ROLES_KEY } from '../src/auth/decorators/roles.decorator';
 import { createTestApp, type TestHarness } from './utils/test-app';
 
@@ -37,6 +39,10 @@ interface RouteInfo {
   roles: unknown;
   area: AreaRequirement | undefined;
   isPublic: boolean;
+  /** The whole path as Express routes it, the handler's part included. */
+  full: string;
+  /** @ReadsOnly's reason, on a write verb that only reads (Huvudman). */
+  readsOnly: string | undefined;
 }
 
 describe('Route guard coverage (e2e)', () => {
@@ -63,7 +69,12 @@ describe('Route guard coverage (e2e)', () => {
         )
         .map((name) => {
           const handler = (instance as never)[name] as () => unknown;
+          const own = Reflect.getMetadata(PATH_METADATA, handler) as string | string[] | undefined;
+          const ownPath = (Array.isArray(own) ? own[0] : own) ?? '';
+          const full = `/${[basePath, ownPath].map((part) => String(part ?? '').replace(/^\/+|\/+$/g, '')).filter(Boolean).join('/')}`;
           return {
+            full,
+            readsOnly: reflector.getAllAndOverride<string | undefined>(READS_ONLY_KEY, [handler, cls]),
             controller: cls.name,
             method: name,
             verb: RequestMethod[Reflect.getMetadata(METHOD_METADATA, handler) as RequestMethod],
@@ -142,6 +153,65 @@ describe('Route guard coverage (e2e)', () => {
     ].sort();
 
     expect(publicPaths).toEqual([...PUBLIC_PATHS].sort());
+  });
+
+  // Huvudman (20261212090000): a member with no school named reaches the
+  // huvudman's own routes and /me and nothing else, by HuvudmanGuard's own
+  // refusal (its code, not RolesGuard's), on every verb: asked of every
+  // route of the table, with each path parameter a uuid. @Public routes are
+  // anybody's, the member's as anonymous's, and are listed above.
+  // What a member with no school may ask, by name: the huvudman's own pages
+  // and the login's schools. Written out, not read from the guard, so that a
+  // guard that allowed more (or less) fails here.
+  const HUVUDMAN_MAY = [
+    'HuvudmanController.mine',
+    'HuvudmanController.view',
+    'HuvudmanController.requestSchool',
+    'HuvudmanController.withdrawRequest',
+    'HuvudmanController.releaseSchool',
+    'HuvudmanController.invite',
+    'HuvudmanController.updateMember',
+    'HuvudmanController.createKey',
+    'HuvudmanController.revokeKey',
+    'MeController.mySchools',
+  ];
+
+  it("refuses a huvudman's member with no school every route but the huvudman's own and /me", async () => {
+    const member = JSON.stringify({ authId: '11111111-1111-4111-8111-111111111111', role: 'HUVUDMAN' });
+    const uuid = '44444444-4444-4444-8444-444444444444';
+    const named = new Set(routes.map((route) => `${route.controller}.${route.method}`));
+    expect(HUVUDMAN_MAY.filter((name) => !named.has(name))).toEqual([]);
+    const allowed = (route: RouteInfo) => HUVUDMAN_MAY.includes(`${route.controller}.${route.method}`);
+    const wrong: string[] = [];
+    let refused = 0;
+    let reached = 0;
+    for (const route of routes) {
+      if (route.isPublic) continue;
+      const url = route.full.replace(/:[A-Za-z0-9_]+(\([^)]*\))?\??/g, uuid);
+      const verb = route.verb.toLowerCase() as 'get' | 'post' | 'put' | 'patch' | 'delete';
+      if (!['get', 'post', 'put', 'patch', 'delete'].includes(verb)) continue;
+      const response = await request(harness.app.getHttpServer())[verb](url).set('x-test-user', member).send({});
+      const code = (response.body as { code?: unknown } | undefined)?.code;
+      if (allowed(route)) {
+        reached += 1;
+        if (code === HUVUDMAN_NO_SCHOOL) wrong.push(`${route.verb} ${route.full} refused on the huvudman's own list`);
+      } else {
+        refused += 1;
+        if (response.status !== 403 || code !== HUVUDMAN_NO_SCHOOL) wrong.push(`${route.verb} ${route.full} answered ${response.status} ${String(code)}`);
+      }
+    }
+    expect(wrong).toEqual([]);
+    // Not a vacuous pass: most of the table refused, the huvudman's own reached.
+    expect(refused).toBeGreaterThanOrEqual(295);
+    expect(reached).toBeGreaterThanOrEqual(10);
+  });
+
+  // The one write verb the huvudman's reader may use is the activation
+  // preview, a POST that only reads (RolesGuard, READS_ONLY_KEY). A second
+  // fails here until it is listed, with its reason.
+  it('marks one route @ReadsOnly, the year activation preview', () => {
+    const marked = routes.filter((route) => route.readsOnly !== undefined).map((route) => `${route.verb} ${route.controller}.${route.method}`);
+    expect(marked).toEqual(['POST YearRolloverController.previewActivation']);
   });
 
   it('answers 401 on an authenticated route with no principal at all', async () => {

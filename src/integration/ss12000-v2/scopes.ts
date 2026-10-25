@@ -36,6 +36,25 @@ export const SCOPES = [
 ] as const;
 export type Scope = (typeof SCOPES)[number];
 
+/**
+ * What a huvudman's key may hold (Huvudman, 20261212090000; the CHECK
+ * HuvudmanApiKeys_scopes_are_reads is this list): the provider's reads, and
+ * not attendances.read or absences.read (each school decides about its own
+ * keys), subscriptions.write (a subscription holds a school's secret and
+ * address) or v1's.
+ */
+export const HUVUDMAN_SCOPES = [
+  'organisations.read',
+  'persons.read',
+  'responsibles.read',
+  'groups.read',
+  'duties.read',
+  'activities.read',
+  'calendarEvents.read',
+  'rooms.read',
+  'syllabuses.read',
+] as const satisfies readonly Scope[];
+
 /** The scopes a key created without a choice gets: today's v1 reach. */
 export const DEFAULT_SCOPES: readonly Scope[] = ['ss12000.v1', 'ss12000.v1.import'];
 

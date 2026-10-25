@@ -800,6 +800,8 @@ export function prismaFor(world: RolloverWorld): PrismaMock {
     queryWithRls: jest.fn((_user: unknown, fn: (client: PrismaClient) => Promise<unknown>) => run(fn)),
     withVerifiedSubject: jest.fn(),
     withServiceKeyLookup: jest.fn(),
+    withHuvudmanKey: jest.fn((_keyId: string, fn: (client: PrismaClient) => Promise<unknown>) => run(fn)),
+    withHuvudmanKeyPrincipal: jest.fn((_keyId: string, _schoolId: string, fn: (client: PrismaClient) => Promise<unknown>) => run(fn)),
     withServicePrincipal: jest.fn(),
     withSyncPrincipal: jest.fn((_schoolId: string, fn: (client: PrismaClient) => Promise<unknown>) => run(fn)),
     withSystemTransaction: jest.fn(),

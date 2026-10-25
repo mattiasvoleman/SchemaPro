@@ -6,6 +6,8 @@ import { ExtractJwt, Strategy, StrategyOptionsWithRequest } from 'passport-jwt';
 import type { JwtConfig } from '../config/configuration';
 import { PrismaService } from '../database/prisma.service';
 import { Role } from './enums/role.enum';
+import { HUVUDMAN_MEMBER } from '../users/supabase-admin.service';
+import { huvudmanReaderOf, isHuvudmanMember } from './huvudman-reader';
 import type { AuthenticatedUser } from './interfaces/authenticated-user.interface';
 import type { JwtPayload } from './interfaces/jwt-payload.interface';
 import { schoolAccountOf } from './school-account';
@@ -127,6 +129,30 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       };
     }
 
+    // Huvudman (20261212090000): no row of the login's own at the school
+    // named, which its huvudman may own. Then the request is the huvudman's
+    // reader there, the läsare the database answers for (app.huvudman_reader
+    // under the same claims and choice): an administrator who reads every
+    // area, writes none and decides nothing, with no user id. Asked only on
+    // this rare path.
+    // A platform operator's token (SYSTEM_ADMIN, below) is answered as it was
+    // before huvudmän: never as a member, and with no lookups of them.
+    const operator = payload.role === Role.SYSTEM_ADMIN;
+    const session = { ...(school ? { school } : {}), ...(closedSchools ? { closedSchools } : {}) };
+    const reader = school && !operator ? await huvudmanReaderOf(this.prisma, payload.sub, session) : null;
+    if (reader) {
+      const { schoolId, ...huvudman } = reader;
+      return {
+        authId: payload.sub,
+        role: Role.SCHOOL_ADMIN,
+        schoolId,
+        adminProfile: 'LASARE',
+        hrRead: false,
+        huvudman,
+        ...(closedSchools ? { closedSchools } : {}),
+      };
+    }
+
     // A school was named and gave no row: the login has a row somewhere,
     // just not one this request may use there. Asked only on this rare path,
     // so a session's ordinary request stays one lookup.
@@ -136,9 +162,23 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         (db) => db.user.findFirst({ where: { authId: payload.sub }, select: { id: true } }),
         closedSchools ? { closedSchools } : {},
       );
-      if (elsewhere) {
+      if (elsewhere || (!operator && (await isHuvudmanMember(this.prisma, payload.sub)))) {
         throw schoolNotAvailable();
       }
+    }
+
+    // A member of a huvudman with no school named and no row anywhere: the
+    // huvudman's own pages, and the database sees no principal.
+    // The closed schools go with it, so that /me/schools says which of the
+    // huvudman's schools this session may not enter.
+    if (!school && !operator && (await isHuvudmanMember(this.prisma, payload.sub))) {
+      const marks = payload.app_metadata && typeof payload.app_metadata === 'object' ? (payload.app_metadata as Record<string, unknown>) : {};
+      return {
+        authId: payload.sub,
+        role: Role.HUVUDMAN,
+        huvudmanMarked: marks[HUVUDMAN_MEMBER] === true,
+        ...(closedSchools ? { closedSchools } : {}),
+      };
     }
 
     // No tenant profile exists for this subject. A genuine cross-tenant

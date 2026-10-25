@@ -132,6 +132,7 @@ import { calendarFeedChecks, sweepCalendarFeedSchool } from './probe-calendar-fe
 import { leaveChecks, sweepLeaveSchool } from './probe-leave';
 import { skolenheterChecks, sweepSkolenheterSchool } from './probe-skolenheter';
 import { adminAreaChecks, sweepRollerSchool } from './probe-admin-areas';
+import { huvudmanChecks } from './probe-huvudman';
 import { scbFileChecks, sweepScbSchool } from './probe-scb-file';
 import { ss12000NarvaroChecks, sweepSs12000NarvaroSchool } from './probe-ss12000-narvaro';
 import { scheduleCandidateChecks } from './probe-schedule-candidates';
@@ -5171,6 +5172,7 @@ async function runChecks(
   await leaveChecks(owner, api, MARKER, check);
   await skolenheterChecks(owner, api, MARKER, check);
   await adminAreaChecks(owner, api, MARKER, check);
+  await huvudmanChecks(owner, api, check);
   await scbFileChecks(owner, api, MARKER, check);
   await ss12000NarvaroChecks(owner, api, MARKER, check);
   await scheduleCandidateChecks(owner, api, MARKER, check, open, appUrl);

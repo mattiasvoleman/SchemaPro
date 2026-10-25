@@ -257,6 +257,58 @@ describe('RealtimeGateway', () => {
       expect(atB.join).toHaveBeenCalledWith([`user:${OTHER_ROW}`, `staff:${OTHER}`]);
     });
 
+    it("puts the huvudman's reader in the school's staff and admin rooms only, never as an editor (Huvudman)", async () => {
+      // No row at the school named: the database answers the lookup with
+      // nothing, and the reader's lookup with the reader there.
+      const MEMBER = '66666666-6666-4666-8666-666666666666';
+      jwt.verifyAsync.mockResolvedValue({ sub: AUTH_ID });
+      tx.user.findFirst.mockResolvedValue(null);
+      tx.$queryRaw.mockResolvedValue([
+        { member_id: MEMBER, huvudman_id: 'h', huvudman_name: 'Vimmerby kommun', member_role: 'PLANERARE',
+          first_name: 'Pia', last_name: 'Planerare', school_id: SCHOOL_ID },
+      ]);
+      const client = makeSocket({ token: TOKEN, school: SCHOOL_ID });
+
+      await connect(client);
+
+      expect(client.join).toHaveBeenCalledWith([`staff:${SCHOOL_ID}`, `admin:${SCHOOL_ID}`]);
+      expect(client.disconnect).not.toHaveBeenCalled();
+      const profile = client.data['profile'] as { label: string; reader?: true; editingLessonId: string | null };
+      expect(profile).toMatchObject({ label: 'Pia P.', reader: true });
+      await gateway.onPresence(client as unknown as Socket, { editingLessonId: 'lesson-1' });
+      expect(profile.editingLessonId).toBeNull();
+    });
+
+    it("asks for the reader under the hook's closed schools too, as JwtStrategy does (Huvudman)", async () => {
+      const closed = { [SCHOOL_ID]: 'sso_required' };
+      jwt.verifyAsync.mockResolvedValue({ sub: AUTH_ID, rastra_closed_schools: closed });
+      tx.user.findFirst.mockResolvedValue(null);
+      // The database answers no reader at a school the hook closed.
+      tx.$queryRaw.mockResolvedValue([]);
+      const client = makeSocket({ token: TOKEN, school: SCHOOL_ID });
+
+      await connect(client);
+
+      // The row's lookup and the reader's, both under the same choice and closures.
+      expect(prisma.withVerifiedSubject).toHaveBeenCalledTimes(2);
+      for (const call of prisma.withVerifiedSubject.mock.calls) {
+        expect(call[2]).toEqual({ school: SCHOOL_ID, closedSchools: closed });
+      }
+      expect(client.disconnect).toHaveBeenCalledWith(true);
+      expect(client.join).not.toHaveBeenCalled();
+    });
+
+    it("asks for no reader when the socket names no school", async () => {
+      jwt.verifyAsync.mockResolvedValue({ sub: AUTH_ID });
+      tx.user.findFirst.mockResolvedValue(null);
+      const client = makeSocket({ token: TOKEN });
+
+      await connect(client);
+
+      expect(client.disconnect).toHaveBeenCalledWith(true);
+      expect(tx.$queryRaw).not.toHaveBeenCalled();
+    });
+
     it('disconnects a socket that names a school in no form the database could match', async () => {
       jwt.verifyAsync.mockResolvedValue({ sub: AUTH_ID });
       const client = makeSocket({ token: TOKEN, school: 'skolan' });

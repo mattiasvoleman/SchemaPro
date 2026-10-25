@@ -19,6 +19,14 @@ export const CREATED_FOR_ROW = 'schemaproUserId';
  */
 export const SEVERAL_SCHOOLS = 'rastraSeveralSchools';
 
+/**
+ * The app_metadata key marking a login that is a huvudman's member (Huvudman,
+ * 20261212090000; see markHuvudman). The web shows the huvudman's pages, and
+ * builds the reader's profile at a school it owns, only when it is set
+ * (web/lib/auth.ts names it too).
+ */
+export const HUVUDMAN_MEMBER = 'rastraHuvudman';
+
 /** The user_metadata key carrying inviteUser()'s one-off value. */
 const INVITATION_NONCE = 'schemaproInvitation';
 
@@ -234,6 +242,25 @@ export class SupabaseAdminService {
       // Not marked all the same; the rows and the login are right without it.
     }
     this.logger.warn(`A login held at several schools was not marked [authId=${authId}]`);
+  }
+
+  /**
+   * Marks a login as a huvudman's member, and as several schools' (the
+   * huvudman's schools are the reader's): best effort, after the member took
+   * the login, like markSeveralSchools. Unmarked, the person sees their own
+   * schools only until an invitation marks it.
+   */
+  async markHuvudman(authId: string): Promise<void> {
+    if (!this.client) return;
+    try {
+      const { error } = await this.client.auth.admin.updateUserById(authId, {
+        app_metadata: { [SEVERAL_SCHOOLS]: true, [HUVUDMAN_MEMBER]: true },
+      });
+      if (!error) return;
+    } catch {
+      // Not marked all the same; the member and the login are right without it.
+    }
+    this.logger.warn(`A huvudman's member's login was not marked [authId=${authId}]`);
   }
 
   /** Deletes a Supabase Auth user. Missing users are treated as success. */

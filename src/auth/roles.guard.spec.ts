@@ -7,6 +7,7 @@ import { Roles } from './decorators/roles.decorator';
 import { Role } from './enums/role.enum';
 import type { AuthenticatedUser } from './interfaces/authenticated-user.interface';
 import { AREA_NOT_YOURS, DECISION_NOT_YOURS, RolesGuard } from './roles.guard';
+import { HUVUDMAN_READS_ONLY, HuvudmanRoute, ReadsOnly } from './huvudman-reader';
 
 /*
  * The guard is driven through the real Reflector and the real @Roles
@@ -221,5 +222,95 @@ describe('RolesGuard', () => {
         code: DECISION_NOT_YOURS,
       });
     });
+  });
+});
+
+// Huvudman (20261212090000): reading across schools never gives a write.
+describe('RolesGuard and the huvudman\'s reader', () => {
+  const guard = new RolesGuard(new Reflector());
+  const reader: AuthenticatedUser = {
+    authId: 'auth-h',
+    role: Role.SCHOOL_ADMIN,
+    schoolId: 'school-1',
+    adminProfile: 'LASARE',
+    hrRead: false,
+    huvudman: { id: 'h-1', name: 'Vimmerby kommun', memberId: 'm-1', role: 'PLANERARE', firstName: 'Pia', lastName: 'P' },
+  };
+  const member: AuthenticatedUser = { authId: 'auth-h', role: Role.HUVUDMAN };
+
+  @Roles(Role.SCHOOL_ADMIN, Role.TEACHER)
+  @AnyAdministrator("the caller's own devices")
+  class DevicesController {
+    register(): void {}
+  }
+
+  class OpenController {
+    anything(): void {}
+  }
+
+  @Roles(Role.HUVUDMAN, Role.SCHOOL_ADMIN)
+  @HuvudmanRoute()
+  @AnyAdministrator("the huvudman's own tables")
+  class HuvudmanController {
+    invite(): void {}
+  }
+
+  @Roles(Role.SCHOOL_ADMIN)
+  @AnyAdministrator('a preview')
+  class YearsController {
+    @ReadsOnly('a preview that writes nothing')
+    preview(): void {}
+  }
+
+  const readsOnly = (thrown: unknown) =>
+    thrown instanceof ForbiddenException && (thrown.getResponse() as { code?: string }).code === HUVUDMAN_READS_ONLY;
+
+  it.each(['POST', 'PUT', 'PATCH', 'DELETE'])('refuses the reader every %s outside the huvudman\'s own routes', (method) => {
+    for (const [controller, handler] of [
+      [PeopleController, 'edit'],
+      [DevicesController, 'register'],
+      [OpenController, 'anything'],
+    ] as const) {
+      let thrown: unknown;
+      try {
+        guard.canActivate(routeTo(controller as never, handler, reader, method));
+      } catch (error) {
+        thrown = error;
+      }
+      expect(readsOnly(thrown)).toBe(true);
+    }
+  });
+
+  it('names the huvudman the reader reads for', () => {
+    expect(() => guard.canActivate(routeTo(DevicesController, 'register', reader))).toThrow(/Vimmerby kommun/);
+  });
+
+  it('lets the reader read, as the läsare reads', () => {
+    expect(guard.canActivate(routeTo(PeopleController, 'edit', reader, 'GET'))).toBe(true);
+  });
+
+  it("lets the reader and a member at no school write the huvudman's own tables", () => {
+    expect(guard.canActivate(routeTo(HuvudmanController, 'invite', reader))).toBe(true);
+    expect(guard.canActivate(routeTo(HuvudmanController, 'invite', member))).toBe(true);
+  });
+
+  it('lets the reader make a POST that only reads', () => {
+    expect(guard.canActivate(routeTo(YearsController, 'preview', reader))).toBe(true);
+  });
+
+  it('refuses a member at no school every other write, the open routes included', () => {
+    let thrown: unknown;
+    try {
+      guard.canActivate(routeTo(OpenController, 'anything', member));
+    } catch (error) {
+      thrown = error;
+    }
+    expect(readsOnly(thrown)).toBe(true);
+  });
+
+  it('leaves everybody else as they were', () => {
+    const full = { ...user(Role.SCHOOL_ADMIN), adminProfile: 'FULL' as AdminProfile };
+    expect(guard.canActivate(routeTo(DevicesController, 'register', full))).toBe(true);
+    expect(guard.canActivate(routeTo(OpenController, 'anything', user(Role.TEACHER)))).toBe(true);
   });
 });

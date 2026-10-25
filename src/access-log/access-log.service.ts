@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, type UserRole } from '@prisma/client';
+import { Prisma, type HuvudmanRole, type UserRole } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { requireSchoolId } from '../common/utils/request-context';
 import { assertAdministratorMay } from '../auth/roles.guard';
@@ -21,12 +21,22 @@ export interface AccessLogEntry {
   kind: AccessKind;
   /** CALENDAR: a guardian's calendar feed of their child (20261112090000). */
   channel: 'WEB' | 'APP' | 'INTEGRATION' | 'OTHER' | 'CALENDAR';
-  /** The reader: a person (their name now; null once their row is gone), or an integration key. */
+  /**
+   * The reader: a person (their name now; null once their row is gone), or an
+   * integration key. A huvudman's reader or key (Huvudman, 20261212090100)
+   * carries `huvudman`: the huvudman's name, and the member's role there.
+   */
   reader:
-    | { type: 'PERSON'; id: string | null; name: string | null; role: UserRole | null }
-    | { type: 'KEY'; id: string | null; name: string | null };
+    | { type: 'PERSON'; id: string | null; name: string | null; role: UserRole | null; huvudman?: HuvudmanOfReader }
+    | { type: 'KEY'; id: string | null; name: string | null; huvudman?: HuvudmanOfReader };
   /** How many other people the same read named (its readSize less this person). */
   others: number;
+}
+
+/** Who of a huvudman read: the huvudman's name, and the member's role (none for a key). */
+export interface HuvudmanOfReader {
+  name: string | null;
+  role: HuvudmanRole | null;
 }
 
 export interface AccessLogAnswer {
@@ -47,6 +57,8 @@ interface LogRow {
   actorId: string | null;
   actorRole: UserRole | null;
   apiKeyId: string | null;
+  huvudmanMemberId: string | null;
+  huvudmanApiKeyId: string | null;
   readSize: number;
 }
 
@@ -100,6 +112,7 @@ export class AccessLogService {
       const rows = await tx.$queryRaw<LogRow[]>(Prisma.sql`
         SELECT a."id", a."at", a."kind"::text AS "kind", a."channel"::text AS "channel",
                a."actorId", a."actorRole"::text AS "actorRole", a."apiKeyId",
+               a."huvudmanMemberId", a."huvudmanApiKeyId",
                a."readSize"
           FROM "PersonalDataAccess" a
          WHERE a."subjectIds" @> ARRAY[${person.id}]::uuid[]
@@ -121,6 +134,18 @@ export class AccessLogService {
       ]);
       const nameOf = new Map(actors.map((actor) => [actor.id, `${actor.firstName} ${actor.lastName}`.trim()]));
       const keyName = new Map(keys.map((key) => [key.id, key.name]));
+      // Huvudman: the huvudman's readers and keys, which are no rows of the
+      // school, named by the one function that names them to its decider.
+      const memberIds = [...new Set(shown.flatMap((row) => (row.huvudmanMemberId ? [row.huvudmanMemberId] : [])))];
+      const huvudmanKeyIds = [...new Set(shown.flatMap((row) => (row.huvudmanApiKeyId ? [row.huvudmanApiKeyId] : [])))];
+      const ofHuvudman =
+        memberIds.length > 0 || huvudmanKeyIds.length > 0
+          ? await tx.$queryRaw<Array<{ id: string; kind: 'MEMBER' | 'KEY'; name: string; role: HuvudmanRole | null; huvudman_name: string }>>(
+              Prisma.sql`SELECT id, kind, name, role, huvudman_name
+                           FROM app.access_log_huvudman_names(${memberIds}::uuid[], ${huvudmanKeyIds}::uuid[])`,
+            )
+          : [];
+      const huvudmanOf = new Map(ofHuvudman.map((row) => [`${row.kind}:${row.id}`, row]));
 
       await recordRead(tx, 'ACCESS_LOG', [person.id], user.channel);
 
@@ -137,13 +162,31 @@ export class AccessLogService {
           channel: row.channel,
           reader:
             row.channel === 'INTEGRATION'
-              ? { type: 'KEY' as const, id: row.apiKeyId, name: row.apiKeyId ? (keyName.get(row.apiKeyId) ?? null) : null }
-              : {
-                  type: 'PERSON' as const,
-                  id: row.actorId,
-                  name: row.actorId ? (nameOf.get(row.actorId) ?? null) : null,
-                  role: row.actorRole,
-                },
+              ? row.huvudmanApiKeyId
+                ? {
+                    type: 'KEY' as const,
+                    id: row.huvudmanApiKeyId,
+                    name: huvudmanOf.get(`KEY:${row.huvudmanApiKeyId}`)?.name ?? null,
+                    huvudman: { name: huvudmanOf.get(`KEY:${row.huvudmanApiKeyId}`)?.huvudman_name ?? null, role: null },
+                  }
+                : { type: 'KEY' as const, id: row.apiKeyId, name: row.apiKeyId ? (keyName.get(row.apiKeyId) ?? null) : null }
+              : row.huvudmanMemberId
+                ? {
+                    type: 'PERSON' as const,
+                    id: row.huvudmanMemberId,
+                    name: huvudmanOf.get(`MEMBER:${row.huvudmanMemberId}`)?.name ?? null,
+                    role: row.actorRole,
+                    huvudman: {
+                      name: huvudmanOf.get(`MEMBER:${row.huvudmanMemberId}`)?.huvudman_name ?? null,
+                      role: huvudmanOf.get(`MEMBER:${row.huvudmanMemberId}`)?.role ?? null,
+                    },
+                  }
+                : {
+                    type: 'PERSON' as const,
+                    id: row.actorId,
+                    name: row.actorId ? (nameOf.get(row.actorId) ?? null) : null,
+                    role: row.actorRole,
+                  },
           // The read's size, not the row's: the dedupe may have kept fewer.
           others: Math.max(row.readSize - 1, 0),
         })),

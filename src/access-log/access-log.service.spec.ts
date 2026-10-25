@@ -64,6 +64,37 @@ describe('AccessLogService', () => {
     expect(recordedReads(tx)).toEqual([{ kind: 'ACCESS_LOG', channel: 'WEB', ids: [PUPIL] }]);
   });
 
+  it("names the huvudman's reader and the huvudman's key, with their huvudman (Huvudman)", async () => {
+    const MEMBER = 'c3c3c3c3-c3c3-43c3-83c3-c3c3c3c3c3c3';
+    const HKEY = 'd4d4d4d4-d4d4-44d4-84d4-d4d4d4d4d4d4';
+    const raw = (tx as unknown as { $queryRaw: jest.Mock }).$queryRaw;
+    raw.mockResolvedValueOnce([
+      row({ id: 'h2', actorId: null, actorRole: 'SCHOOL_ADMIN', channel: 'WEB', huvudmanMemberId: MEMBER, huvudmanApiKeyId: null }),
+      row({ id: 'h1', actorId: null, actorRole: null, channel: 'INTEGRATION', apiKeyId: null, huvudmanMemberId: null, huvudmanApiKeyId: HKEY }),
+    ]);
+    raw.mockResolvedValueOnce([
+      { id: MEMBER, kind: 'MEMBER', name: 'Pia Planerare', role: 'PLANERARE', huvudman_name: 'Vimmerby kommun' },
+      { id: HKEY, kind: 'KEY', name: 'Elevregistret', role: null, huvudman_name: 'Vimmerby kommun' },
+    ]);
+
+    const answer = await service.forPerson({ personId: PUPIL }, testUser());
+
+    expect(answer.entries.map((entry) => entry.reader)).toEqual([
+      { type: 'PERSON', id: MEMBER, name: 'Pia Planerare', role: 'SCHOOL_ADMIN', huvudman: { name: 'Vimmerby kommun', role: 'PLANERARE' } },
+      { type: 'KEY', id: HKEY, name: 'Elevregistret', huvudman: { name: 'Vimmerby kommun', role: null } },
+    ]);
+    const [names] = raw.mock.calls[1] as [{ strings: string[]; values: unknown[] }];
+    expect(names.strings.join('?')).toContain('app.access_log_huvudman_names');
+    expect(names.values).toEqual([[MEMBER], [HKEY]]);
+  });
+
+  it("asks for no huvudman's names when the log names none", async () => {
+    (tx as unknown as { $queryRaw: jest.Mock }).$queryRaw.mockResolvedValue([row({ id: 'e' })]);
+    tx.user.findMany.mockResolvedValue([]);
+    await service.forPerson({ personId: PUPIL }, testUser());
+    expect((tx as unknown as { $queryRaw: jest.Mock }).$queryRaw).toHaveBeenCalledTimes(1);
+  });
+
   it('reads school days from..to as the school\'s local midnights', async () => {
     await service.forPerson({ personId: PUPIL, from: '2026-10-01', to: '2026-10-13' }, testUser());
     // CEST: midnight is 22:00 UTC the day before; to is inclusive.

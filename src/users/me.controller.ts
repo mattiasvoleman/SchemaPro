@@ -18,7 +18,9 @@ import { PER_ADDRESS, PerLoginThrottlerGuard } from './per-login-throttler.guard
 @Controller('api/v1/me')
 @Throttle({ default: PER_ADDRESS })
 @UseGuards(JwtAuthGuard, RolesGuard, PerLoginThrottlerGuard)
-@Roles(Role.SCHOOL_ADMIN, Role.TEACHER, Role.STUDENT, Role.GUARDIAN)
+// HUVUDMAN: a member of a huvudman at no school, choosing one (Huvudman,
+// 20261212090000).
+@Roles(Role.SCHOOL_ADMIN, Role.TEACHER, Role.STUDENT, Role.GUARDIAN, Role.HUVUDMAN)
 export class MeController {
   constructor(private readonly schools: MySchoolsService) {}
 

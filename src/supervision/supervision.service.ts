@@ -888,13 +888,16 @@ export class SupervisionService {
    */
   async week(from: string, to: string, user: AuthenticatedUser): Promise<{ from: string; to: string; passes: WeekPass[] }> {
     const schoolId = requireSchoolId(user);
-    const me = requireUserId(user);
     if (to < from) {
       throw new BadRequestException({ message: 'to: tidigast samma dag som from.', code: SUPERVISION_WEEK_RANGE });
     }
     if (parseDateString(to).getTime() - parseDateString(from).getTime() > (MAX_WEEK_DAYS - 1) * DAY_MS) {
       throw new BadRequestException({ message: `Högst ${MAX_WEEK_DAYS} dagar åt gången.`, code: SUPERVISION_WEEK_RANGE });
     }
+    // Huvudman (20261212090000): the huvudman's reader has no row at the
+    // school, so no pass of their own: the week of a läsare who has none.
+    if (user.huvudman && !user.userId) return { from, to, passes: [] };
+    const me = requireUserId(user);
     return this.prisma.withRls(user, async (tx) => {
       const timezone = await schoolTimezone(tx, schoolId);
       const shifts = await tx.supervisionShift.findMany({
