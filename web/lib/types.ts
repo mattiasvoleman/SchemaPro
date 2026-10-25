@@ -75,6 +75,22 @@ export interface MySchool {
   /** Why this session may not enter the school (sso_required, …); null when it may. */
   closed: string | null;
   current: boolean;
+  /**
+   * Huvudman (20261212090000): set when the login reads this school as its
+   * huvudman's läsare, with no row of its own there; the member's own name.
+   * Null (or absent, from a gateway before it) for the login's own rows.
+   */
+  huvudman?: HuvudmanOfSchool | null;
+}
+
+/** Who a login reads a school for, as /me/schools names it. */
+export interface HuvudmanOfSchool {
+  id: string;
+  name: string;
+  role: "KOMMUNADMINISTRATOR" | "PLANERARE";
+  memberId: string;
+  firstName: string;
+  lastName: string;
 }
 
 export interface School {

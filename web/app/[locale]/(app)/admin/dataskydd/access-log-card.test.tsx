@@ -105,6 +105,39 @@ describe("Vem har läst om en person?", () => {
     expect(asked()).toEqual([`/api/v1/access-log?personId=${PUPIL}&from=2026-10-01`]);
   });
 
+  it("names the huvudman's reader and key with their huvudman (Huvudman)", async () => {
+    get.mockImplementation(async (path: string) => {
+      if (path === "/api/v1/users") return PEOPLE;
+      if (path === "/api/v1/retention/purged-before") return [];
+      if (path.startsWith("/api/v1/access-log"))
+        return answer({
+          entries: [
+            {
+              id: "h2", at: "2026-10-13T07:15:00.000Z", kind: "PEOPLE", channel: "WEB",
+              reader: { type: "PERSON", id: "m", name: "Pia Planerare", role: "SCHOOL_ADMIN", huvudman: { name: "Vimmerby kommun", role: "PLANERARE" } },
+              others: 0,
+            },
+            {
+              id: "h1", at: "2026-10-12T10:00:00.000Z", kind: "PEOPLE", channel: "INTEGRATION",
+              reader: { type: "KEY", id: "hk", name: "Elevregistret", huvudman: { name: "Vimmerby kommun", role: null } },
+              others: 0,
+            },
+          ],
+        });
+      throw new Error(`unexpected GET ${path}`);
+    });
+    const user = userEvent.setup();
+    renderCard();
+    await choosePupil(user);
+    await user.click(screen.getByRole("button", { name: "Visa läsningar" }));
+    const table = await screen.findByRole("table", { name: "Läsningar om Ada Ek" });
+    const rows = within(table).getAllByRole("row").slice(1).map((row) => within(row).getAllByRole("cell").map((cell) => cell.textContent));
+    expect(rows.map((row) => row.slice(1, 3))).toEqual([
+      ["Pia Planerare (Vimmerby kommun)", "Huvudmannens planerare"],
+      ["Integration: Elevregistret (Vimmerby kommun)", "–"],
+    ]);
+  });
+
   it("names each reader: a person with their role, an integration by its key, and one whose row is gone", async () => {
     const user = userEvent.setup();
     renderCard();

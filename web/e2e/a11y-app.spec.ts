@@ -3,7 +3,9 @@ import { gateOfPath } from "../lib/admin-areas";
 import { APP_ROUTES, PAGES, STALE_QUERIES } from "./app-routes";
 import { DESKTOP, PHONE, scanBothSchemes, setScheme, type Violation } from "./axe";
 import { freezeClock, settle, signIn, signInAs, watchStubMisses } from "./signed-in";
-import { MULTI_GUARDIAN, READER, STUB_ORIGIN } from "./stub/sessions";
+import { SCHOOL_COOKIE } from "../lib/school-choice";
+import { SCHOOL } from "./stub/fixtures/world";
+import { HUVUDMAN_MEMBER, MULTI_GUARDIAN, READER, STUB_ORIGIN } from "./stub/sessions";
 
 /**
  * Violations the suite lets through, each with the reason it is not fixed
@@ -87,10 +89,24 @@ const READ_CONTROLS: Array<{ page: string; name: RegExp; reason: string }> = [];
 /** Reads the gateway takes as a POST: the activation plan /admin/years shows every administrator. */
 const READ_POSTS = [/\/activation\/preview$/];
 
+/*
+ * Huvudman (20261212090000): every /admin page as the huvudman's reader too,
+ * a kommunadministratör with no row at the school, the school chosen with
+ * the switcher's cookie. The page is the läsare's: the same notices, no
+ * control that starts a write, nothing but reads sent. Axe runs once, for
+ * the school's läsare, whose markup the reader's is.
+ */
+const READ_ONLY_AS = [
+  { label: "läsare", session: READER, school: null, axe: true },
+  { label: "huvudmannens läsare", session: HUVUDMAN_MEMBER, school: SCHOOL.id, axe: false },
+] as const;
+
+for (const as of READ_ONLY_AS)
 for (const route of APP_ROUTES.filter((entry) => entry.page.startsWith("/admin") && entry.personas.includes("admin"))) {
-  test(`läsare ${route.page}`, async ({ page, context, baseURL }) => {
+  test(`${as.label} ${route.page}`, async ({ page, context, baseURL }) => {
     test.slow();
-    await signInAs(context, READER, baseURL!);
+    await signInAs(context, as.session, baseURL!);
+    if (as.school) await context.addCookies([{ name: SCHOOL_COOKIE, value: as.school, url: baseURL! }]);
     await freezeClock(page);
     const misses = watchStubMisses(page);
     await page.setViewportSize(DESKTOP);
@@ -163,7 +179,12 @@ for (const route of APP_ROUTES.filter((entry) => entry.page.startsWith("/admin")
     expect(sent, "what a läsare's keyboard sent beyond reads").toEqual([]);
 
     // The notice in both schemes, at desktop width.
-    expect((await scanBothSchemes(page, "desktop", true, (violations) => unexplained(violations, route.page))).join("\n")).toBe("");
+    if (as.axe) {
+      expect((await scanBothSchemes(page, "desktop", true, (violations) => unexplained(violations, route.page))).join("\n")).toBe("");
+    } else {
+      // The huvudman's reader, named so in the switcher.
+      await expect(page.locator('meta[name="rastra-school"]')).toHaveAttribute("content", as.school!);
+    }
   });
 }
 
@@ -202,4 +223,56 @@ test("a guardian at two schools: the switcher and the other school's children", 
   await page.waitForURL(/\/sv\/guardian$/);
   const cookie = (await context.cookies()).find((one) => one.name === "rastra_school");
   expect(cookie?.value, "the switch is remembered in the browser").toMatch(/^[0-9a-f-]{36}$/);
+});
+
+/*
+ * Huvudman (20261212090000): a kommunadministratör with no row at any school
+ * starts on the huvudman's own pages, and opens the school the huvudman owns
+ * as its läsare: the admin pages read-only, every write control hidden, as a
+ * läsare's (READER above).
+ */
+test("a huvudman's kommunadministratör: the huvudman's pages, and the school read as its läsare", async ({ page, context, baseURL }) => {
+  test.slow();
+  await signInAs(context, HUVUDMAN_MEMBER, baseURL!);
+  await freezeClock(page);
+  const misses = watchStubMisses(page);
+  await page.setViewportSize(DESKTOP);
+  await setScheme(page, "light", false);
+
+  // No school chosen: the start page sends her to the huvudman's.
+  await page.goto("/sv");
+  await page.waitForURL(/\/sv\/huvudman$/);
+  await settle(page);
+  await expect(page.getByRole("heading", { level: 1, name: "Exempelkommun" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Öppna Exempelskolan" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Dra tillbaka förfrågan till Granskolan" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 2, name: "SS12000-nycklar" })).toBeVisible();
+  let results = await scanBothSchemes(page, "desktop", true, (violations) => unexplained(violations, "/huvudman"));
+  expect(results.join("\n"), "WCAG 2.1 AA violations").toBe("");
+
+  // Letting a school go is asked about first, through the act route, with
+  // the question where the browser lands; nothing is sent until "Ja".
+  await page.getByRole("button", { name: "Släpp Exempelskolan" }).click();
+  await page.waitForURL(/\/sv\/huvudman\?.*confirm=release/);
+  await settle(page);
+  const question = page.getByRole("region", { name: "Är du säker?" });
+  await expect(question).toBeVisible();
+  await expect(question.getByRole("button", { name: "Ja, gör det" })).toBeVisible();
+  results = await scanBothSchemes(page, "desktop", true, (violations) => unexplained(violations, "/huvudman"));
+  expect(results.join("\n"), "WCAG 2.1 AA violations").toBe("");
+  await question.getByRole("link", { name: "Avbryt" }).click();
+  await page.waitForURL(/\/sv\/huvudman\?h=/);
+
+  await page.getByRole("button", { name: "Öppna Exempelskolan" }).click();
+  await page.waitForURL(/\/sv\/admin$/);
+  await settle(page);
+  expect.soft(misses, "the backend stub could not answer these reads").toEqual([]);
+  // The school's own, read-only: the page names the school, and no write is offered.
+  await expect(page.locator('meta[name="rastra-school"]')).toHaveAttribute("content", /^[0-9a-f-]{36}$/);
+  // The läsare's profile: the page's style hides every area's write controls
+  // and the decider's (lib/admin-areas.ts, as for a school's own läsare).
+  const hidden = await page.locator("style").evaluateAll((styles) => styles.map((style) => style.textContent ?? "").join("\n"));
+  for (const gate of ["PERSONAL", "PLANERING", "DECIDES"]) expect(hidden).toContain(`[data-writes~="${gate}"]`);
+  results = await scanBothSchemes(page, "desktop", true, (violations) => unexplained(violations, "/admin"));
+  expect(results.join("\n"), "WCAG 2.1 AA violations").toBe("");
 });

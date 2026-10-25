@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { localePath } from "@/i18n/paths";
 import { routing } from "@/i18n/routing";
-import { getSession, homePathForRole } from "@/lib/auth";
+import { getSession, homePathForRole, switchableSchools, type MySchool } from "@/lib/auth";
+import { fromThisApp } from "@/lib/request-origin";
 import { SCHOOL_COOKIE, schoolIdOf } from "@/lib/school-choice";
 
 /** A year: the browser remembers its school as long as it remembers the login. */
@@ -40,7 +41,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const form = await request.formData().catch(() => null);
   const field = form?.get("school");
   const chosen = schoolIdOf(typeof field === "string" ? field : null);
-  const school = session.schools.find((one) => one.schoolId === chosen && one.closed === null);
+  // The session's list, or, for a login whose session asked for none (a
+  // huvudman's member whose mark was lost), the gateway's: this is a rare
+  // POST, and the list is what the choice is held to.
+  const listed = (list: readonly MySchool[]) => list.find((one) => one.schoolId === chosen && one.closed === null);
+  const school = listed(session.schools) ?? (chosen ? listed((await switchableSchools(session.accessToken)) ?? []) : undefined);
   if (!school) return to("/");
 
   const response = to(homePathForRole(school.role) as `/${string}`);
@@ -54,19 +59,4 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     httpOnly: false,
   });
   return response;
-}
-
-function fromThisApp(request: NextRequest): boolean {
-  const site = request.headers.get("sec-fetch-site");
-  if (site && site !== "same-origin") return false;
-  const origin = request.headers.get("origin");
-  if (!origin) return site === "same-origin";
-  let host: string;
-  try {
-    host = new URL(origin).host;
-  } catch {
-    return false;
-  }
-  const hosts = [request.headers.get("x-forwarded-host"), request.headers.get("host"), request.nextUrl.host];
-  return hosts.some((candidate) => candidate !== null && candidate.split(",")[0]!.trim() === host);
 }

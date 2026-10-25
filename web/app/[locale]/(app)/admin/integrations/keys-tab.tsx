@@ -18,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { CHECKBOX } from "./form-styles";
 import { errorText, formatWhen } from "./ss12000-messages";
 import { AttendanceSharingCard } from "./attendance-sharing-card";
+import { HuvudmanKeysNote } from "./huvudman-keys-note";
 import { ATTENDANCE_SCOPES, DEFAULT_SCOPES, SCOPES, type ProviderKey, type ProviderSubscription, type Scope } from "./ss12000-types";
 import {
   useAttendanceSharing,
@@ -195,6 +196,8 @@ export function KeysTab() {
           </ul>
         )}
       </SectionCard>
+      {/* Huvudman: the keys of the school's huvudman, read only, last. */}
+      <HuvudmanKeysNote />
     </div>
   );
 }

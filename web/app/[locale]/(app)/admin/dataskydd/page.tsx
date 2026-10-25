@@ -19,6 +19,7 @@ import { LoadError } from "@/components/ui/load-error";
 import { Notice } from "@/components/ui/notice";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AccessLogCard } from "./access-log-card";
+import { HuvudmanCard } from "./huvudman-card";
 import { HistoryCard } from "./history-card";
 import { KindsCard } from "./kinds-card";
 import { RunsCard } from "./runs-card";
@@ -56,6 +57,9 @@ export default function DataProtectionPage() {
           <HistoryCard history={data.history} timeZone={data.timezone} />
         </>
       ) : null}
+
+      {/* Huvudman: who owns the school and reads it; answered on its own read. */}
+      <HuvudmanCard />
 
       {/* Its own reads: the question is answered whether or not the
           retention overview above could be read. */}

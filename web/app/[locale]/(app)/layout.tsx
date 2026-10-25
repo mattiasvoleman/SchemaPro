@@ -1,6 +1,7 @@
 import { NextIntlClientProvider } from "next-intl";
 import { getTranslations } from "next-intl/server";
 import { redirect } from "@/i18n/navigation";
+import { localePath } from "@/i18n/paths";
 import { getSession } from "@/lib/auth";
 import { AppShell } from "@/components/layout/app-shell";
 import { SchoolSwitcher } from "@/components/layout/school-switcher";
@@ -26,8 +27,25 @@ export default async function AppLayout({
     redirect({ href: "/login", locale });
     return null;
   }
+  if (!session.profile && session.schoolsUnavailable) {
+    // Huvudman: the gateway did not answer for the school the browser chose,
+    // which the login has no row at. Said, with the choice kept, rather than
+    // sending the person to another school or to /no-profile.
+    const tUnavailable = await getTranslations("schoolSwitcher");
+    return (
+      <main className="mx-auto max-w-md space-y-3 px-4 py-16 text-sm">
+        <h1 className="text-lg font-semibold">{tUnavailable("unavailableTitle")}</h1>
+        <p>{tUnavailable("unavailableBody")}</p>
+        <a href={localePath(locale, "/")} className="underline underline-offset-2">
+          {tUnavailable("unavailableRetry")}
+        </a>
+      </main>
+    );
+  }
   if (!session.profile) {
-    redirect({ href: "/no-profile", locale });
+    // Huvudman: a member with no school chosen, and no row of their own,
+    // starts on the huvudman's own pages.
+    redirect({ href: session.huvudmanMember ? "/huvudman" : "/no-profile", locale });
     return null;
   }
 
@@ -75,7 +93,14 @@ export default async function AppLayout({
             role={profile.role}
             userName={`${profile.firstName} ${profile.lastName}`}
             email={profile.email}
-            schoolName={<SchoolSwitcher schools={schools} currentName={school?.name ?? ""} locale={locale} />}
+            schoolName={
+              <SchoolSwitcher
+                schools={schools}
+                currentName={school?.name ?? ""}
+                locale={locale}
+                huvudmanHref={session.huvudmanMember ? localePath(locale, "/huvudman") : null}
+              />
+            }
           >
             <ClosedPageGate>
               {admin ? readOnlyNoticesFor(readOnly, adminProfile) : null}
