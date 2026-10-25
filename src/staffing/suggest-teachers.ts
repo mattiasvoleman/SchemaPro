@@ -94,6 +94,10 @@ export interface LastYearTeachers {
  * with no target sorts last within their tier, because "unknown" is not
  * "plenty". Then by id, so two loads of the panel agree.
  *
+ * The timplanspost dialog's pickers on /admin/requirements order by key (1)
+ * alone, from the same badge (web/lib/staffing-candidates.ts, strongestFirst):
+ * a change to the tiers here is a change to that list too.
+ *
  * WHY CONTINUITY SITS BETWEEN (1) AND (3). Below behörighet, because that is
  * the legal question (who may set the grade), REFUSE refuses the write anyway,
  * and the badge, the report and the substitute picker keep one order —

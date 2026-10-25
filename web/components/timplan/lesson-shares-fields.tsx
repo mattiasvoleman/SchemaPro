@@ -85,6 +85,7 @@ export function LessonSharesFields({
   teacherId: string;
   coTeacherId: string;
   noTeacher: string;
+  /** The active teachers, in the order the pickers list them (the page's, behörighet first). */
   teachers: Person[];
   /** How a teacher reads in a picker: the page's name and candidate badge. */
   teacherLine: (teacher: Person) => ReactNode;
@@ -169,15 +170,20 @@ export function LessonSharesFields({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value={noTeacher}>{tCommon("notAssigned")}</SelectItem>
-                {/* A stored teacher no longer among the active ones, kept as stored. */}
-                {draft.teacherId !== noTeacher && !teachers.some((teacher) => teacher.id === draft.teacherId) ? (
-                  <SelectItem value={draft.teacherId}>{nameOf(draft.teacherId)}</SelectItem>
-                ) : null}
                 {candidates(index).map((teacher) => (
                   <SelectItem key={teacher.id} value={teacher.id}>
                     {teacherLine(teacher)}
                   </SelectItem>
                 ))}
+                {/*
+                  A stored teacher no longer among the active ones, kept as
+                  stored — last, after everybody who can be given the lessons
+                  now: someone who has left is no candidate at any rank of
+                  the page's order.
+                */}
+                {draft.teacherId !== noTeacher && !teachers.some((teacher) => teacher.id === draft.teacherId) ? (
+                  <SelectItem value={draft.teacherId}>{nameOf(draft.teacherId)}</SelectItem>
+                ) : null}
               </SelectContent>
             </Select>
           </div>

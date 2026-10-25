@@ -2148,6 +2148,72 @@ describe("Timplan cell dialog candidates", () => {
     expect(annaOption?.textContent).toContain("candidateRemaining(120)");
   });
 
+  /*
+   * The order, which the admin asked for: names arrive by surname, so
+   * "Saknar behörighet" and "Legitimation" alternated and the one legitimerad
+   * teacher sat mid-list. Bild in 7A: Bo behörig, Cilla tillåten (the
+   * fixture's), Anna nothing — the roster's Anna, Bo, Cilla turned over.
+   */
+  describe("the order", () => {
+    const NAMES = ["Anna Svensson", "Bo Lind", "Cilla Ek"];
+    const listed = () =>
+      screen.getAllByRole("option").map((option) => NAMES.find((name) => option.textContent?.includes(name)) ?? option.textContent);
+
+    beforeEach(() => {
+      state.qualifications = loaded([
+        qualification({ id: "q-anna-so" }),
+        qualification({ id: "q-bo-bi", userId: "t-bo", subjectId: "s-bi", kind: "BEHORIG" }),
+        qualification({ id: "q-cilla-bi", userId: "t-cilla", subjectId: "s-bi", kind: "TILLATEN" }),
+      ]);
+    });
+
+    it("lists the strongest behörighet for the cell first, as Föreslå lärare ranks it", async () => {
+      await openTeacherPicker("cellLabel(7A|Bild)");
+      expect(listed()).toEqual(["notAssigned", "Bo Lind", "Cilla Ek", "Anna Svensson"]);
+    });
+
+    it("orders by the cell's own subject: under SO it is Anna who comes first", async () => {
+      await openTeacherPicker("cellLabelPeriod(7A|Samhällsorientering|2|60|badgeOdd)");
+      expect(listed()).toEqual(["notAssigned", "Anna Svensson", "Bo Lind", "Cilla Ek"]);
+    });
+
+    it("keeps the roster's order for a school that has recorded no behörighet", async () => {
+      state.qualifications = loaded([]);
+      await openTeacherPicker("cellLabel(7A|Bild)");
+      expect(listed()).toEqual(["notAssigned", "Anna Svensson", "Bo Lind", "Cilla Ek"]);
+    });
+
+    it("is still chosen from the keyboard, and the medlärare's list is the same order without the lärare", async () => {
+      render(<RequirementsPage />);
+      const user = userEvent.setup();
+      await user.click(screen.getByLabelText("cellLabel(7A|Bild)"));
+      // Radix aria-hides the dialog while a list is open: take both triggers first.
+      const lead = screen.getByRole("combobox", { name: "teacher" });
+      const co = screen.getByRole("combobox", { name: "coTeacher" });
+
+      // Enter opens on Ej tilldelad; one arrow down is the strongest candidate.
+      lead.focus();
+      await user.keyboard("{Enter}");
+      expect(screen.getByRole("listbox")).toBeInTheDocument();
+      await user.keyboard("{ArrowDown}{Enter}");
+      expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+      expect(lead).toHaveTextContent("Bo Lind");
+      // The trigger repeats the chosen line, badge words and all.
+      expect(lead).toHaveTextContent("kindBEHORIG");
+
+      // Typing a name still finds it wherever the order put it: the option's
+      // text starts with the name, the badge after it.
+      lead.focus();
+      await user.keyboard("{Enter}");
+      await user.keyboard("Anna");
+      await user.keyboard("{Enter}");
+      expect(lead).toHaveTextContent("Anna Svensson");
+
+      await user.click(co);
+      expect(listed()).toEqual(["notAssigned", "Bo Lind", "Cilla Ek"]);
+    });
+  });
+
   it("says the badge is a note and not a gate, in the dialog itself", async () => {
     render(<RequirementsPage />);
     const user = userEvent.setup();
@@ -2803,6 +2869,37 @@ describe("Delade lektioner in the cell dialog", () => {
     await open();
     expect(screen.getByText("shares.loadFailed")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "shares.open" })).not.toBeInTheDocument();
+  });
+
+  it("lists a share's candidates behörighet first, and a stored teacher who has left after them all", async () => {
+    // Anna leads; Bo has left and keeps his stored lesson; David is
+    // legitimerad in SO for 7–9 and Cilla has nothing.
+    const cilla: PersonFixture = { ...anna, id: "t-cilla", firstName: "Cilla", lastName: "Ek", email: "cilla@example.test" };
+    const david: PersonFixture = { ...anna, id: "t-david", firstName: "David", lastName: "Öberg", email: "david@example.test" };
+    state.people = loaded([anna, { ...bo, isActive: false }, cilla, david]);
+    state.qualifications = loaded([
+      {
+        id: "q-david-so",
+        userId: "t-david",
+        subjectId: "s-so",
+        minGradeLevel: 7,
+        maxGradeLevel: 9,
+        kind: "LEGITIMATION",
+        validFrom: null,
+        validTo: null,
+        note: null,
+      },
+    ]);
+    state.shares = loaded([{ requirementId: "r-so", teacherId: "t-bo", lessons: 1, minutes: 60 }]);
+    const user = await open();
+    await screen.findByText("part(inactiveTeacher(Bo Lind)|1|3|60|33)");
+
+    const pickers = screen.getAllByRole("combobox", { name: "teacher" });
+    await user.click(pickers[pickers.length - 1]!);
+    const names = ["Anna Svensson", "Cilla Ek", "David Öberg", "inactiveTeacher(Bo Lind)"];
+    expect(
+      screen.getAllByRole("option").map((option) => names.find((name) => option.textContent?.includes(name)) ?? option.textContent),
+    ).toEqual(["notAssigned", "David Öberg", "Cilla Ek", "inactiveTeacher(Bo Lind)"]);
   });
 
   it("names a share's teacher who has left, as inactive, rather than as nobody", async () => {

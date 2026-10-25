@@ -16,7 +16,7 @@ import type { TeacherQualification, TeacherQualificationKind } from "@/lib/types
  * about them, and a second arithmetic here would be a second answer.
  */
 
-/** Strongest first, so the badge names the best claim the teacher has. */
+/** Strongest first, so the badge names the best claim the teacher has and the pickers list it first. */
 const KIND_RANK: Record<TeacherQualificationKind, number> = {
   LEGITIMATION: 3,
   BEHORIG: 2,
@@ -66,6 +66,37 @@ export function candidateQualification(
     if (best === null || KIND_RANK[row.kind] > KIND_RANK[best]) best = row.kind;
   }
   return { recorded: true, kind: best };
+}
+
+/**
+ * The order the pickers list the candidates in: the strongest behörighet for
+ * the row first — Legitimation, Behörig, Tillåten, then none — and within
+ * each, the order the teachers came in (the roster's, by name).
+ *
+ * KEY (1) OF FÖRESLÅ LÄRARE and nothing more. The gateway ranks by the same
+ * kinds in the same order (suggest-teachers.ts) from the same cover rule, so
+ * the dialog and the tjänstefördelning's list never disagree about who comes
+ * first on behörighet. Its later keys stay there: last year's teacher is not
+ * computed on this route (it sits at its budget), and sorting by minutes left
+ * would move names for a reason the admin weighs themselves.
+ *
+ * STABLE, so a teacher moves only for the word written beside them: two
+ * names with the same badge keep their places. A school with no behörighet
+ * rows has no badge to sort by and keeps the roster's order — the gateway
+ * falls back to "already teaches the subject" there, which this line does not
+ * say, and a list ordered by something it does not show reads as shuffled.
+ */
+export function strongestFirst<T>(
+  teachers: readonly T[],
+  qualificationOf: (teacher: T) => CandidateQualification,
+): T[] {
+  return teachers
+    .map((teacher) => {
+      const qualification = qualificationOf(teacher);
+      return { teacher, rank: qualification.recorded && qualification.kind ? KIND_RANK[qualification.kind] : 0 };
+    })
+    .sort((a, b) => b.rank - a.rank)
+    .map((entry) => entry.teacher);
 }
 
 export type CandidateRemaining =

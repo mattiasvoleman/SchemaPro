@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { candidateQualification, candidateRemaining } from "./staffing-candidates";
+import { candidateQualification, candidateRemaining, strongestFirst, type CandidateQualification } from "./staffing-candidates";
 
 const YEAR = { startDate: "2026-08-17", endDate: "2027-06-11" };
 
@@ -100,6 +100,52 @@ describe("candidateQualification", () => {
         });
       }
     });
+  });
+});
+
+describe("strongestFirst", () => {
+  // The roster's order, by surname, as usePeople hands it over.
+  const roster = ["Eldgaile", "Engdahl", "Feili", "Fernkvist", "Hasth", "Homberg", "Höglund"];
+  const badge: Record<string, CandidateQualification> = {
+    Eldgaile: { recorded: true, kind: null },
+    Engdahl: { recorded: true, kind: "TILLATEN" },
+    Feili: { recorded: true, kind: null },
+    Fernkvist: { recorded: true, kind: "BEHORIG" },
+    Hasth: { recorded: true, kind: null },
+    Homberg: { recorded: true, kind: "LEGITIMATION" },
+    Höglund: { recorded: true, kind: "LEGITIMATION" },
+  };
+
+  it("lists the strongest behörighet first, Föreslå lärare's tiers, and keeps the roster's order inside each", () => {
+    expect(strongestFirst(roster, (name) => badge[name]!)).toEqual([
+      "Homberg",
+      "Höglund",
+      "Fernkvist",
+      "Engdahl",
+      "Eldgaile",
+      "Feili",
+      "Hasth",
+    ]);
+  });
+
+  it("moves nobody when the badges do not separate them", () => {
+    expect(strongestFirst(roster, () => ({ recorded: true, kind: null }))).toEqual(roster);
+    expect(strongestFirst(roster, () => ({ recorded: true, kind: "LEGITIMATION" }))).toEqual(roster);
+  });
+
+  it("keeps the roster's order for a school that has recorded no behörighet", () => {
+    expect(strongestFirst(roster, () => ({ recorded: false }))).toEqual(roster);
+  });
+
+  it("asks once per teacher and leaves the list it was given as it was", () => {
+    const given = [...roster];
+    const asked: string[] = [];
+    strongestFirst(given, (name) => {
+      asked.push(name);
+      return badge[name]!;
+    });
+    expect(asked).toEqual(roster);
+    expect(given).toEqual(roster);
   });
 });
 
