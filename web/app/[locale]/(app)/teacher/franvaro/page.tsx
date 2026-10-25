@@ -74,7 +74,13 @@ const WITHDRAW_WINDOW_MS = 60 * 60_000;
 export function mayWithdraw(absence: Absence, now: number): boolean {
   if (absence.status !== "ACTIVE") return false;
   if (new Date(absence.startsAt).getTime() > now) return true;
-  const decided = absence.counts.covered + absence.counts.cancelled + absence.counts.handled;
+  // A rastvaktspass decided on is a decision too (Rastvakt i vardagen), as the gateway counts it.
+  const decided =
+    absence.counts.covered +
+    absence.counts.cancelled +
+    absence.counts.handled +
+    (absence.passCounts?.covered ?? 0) +
+    (absence.passCounts?.handled ?? 0);
   return decided === 0 && now - new Date(absence.createdAt).getTime() < WITHDRAW_WINDOW_MS;
 }
 

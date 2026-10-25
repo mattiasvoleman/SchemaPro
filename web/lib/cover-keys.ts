@@ -44,4 +44,7 @@ export const AFTER_COVER_WRITE: readonly (readonly string[])[] = [
   ["teacherAbsenceLessons"],
   ["timplanCoverage"],
   ["staffingLoad"],
+  // An absence edited or withdrawn settles the board's decisions on its
+  // rastvaktspass too (Rastvakt i vardagen): the weeks that show them.
+  ["supervisionWeek"],
 ];

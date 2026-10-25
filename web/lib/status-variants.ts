@@ -17,7 +17,7 @@
  */
 
 import type { AbsencePhase } from "@/lib/cover-types";
-import type { StatusKey as CoverStatusKey } from "@/lib/cover-view";
+import type { StatusKey as CoverStatusKey, PassStatusKey } from "@/lib/cover-view";
 import type { OptimizationJob } from "@/lib/queries";
 import type { LoadStatus } from "@/lib/teacher-load";
 import type { LocalTimplanStatus } from "@/lib/timplan-queries";
@@ -49,6 +49,14 @@ export const COVER_STATUS_VARIANT = {
   HANDLED_CO_TEACHER: "secondary",
   PASSED: "destructive",
 } as const satisfies Record<CoverStatusKey, StatusVariant>;
+
+/** An absent rastvakt's pass on the board (Rastvakt i vardagen), in the lessons' colours. */
+export const PASS_STATUS_VARIANT = {
+  OPEN: "warning",
+  COVERED: "success",
+  NO_COVER: "secondary",
+  PASSED: "destructive",
+} as const satisfies Record<PassStatusKey, StatusVariant>;
 
 /** A registered teacher absence. */
 export const ABSENCE_PHASE_VARIANT = {

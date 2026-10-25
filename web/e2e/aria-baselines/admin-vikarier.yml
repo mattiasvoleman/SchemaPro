@@ -61,6 +61,36 @@
         - cell "—"
         - 'cell "Ångra Bo Ek: 13:00–14:00 · Matematik · 7A"':
           - 'button "Ångra Bo Ek: 13:00–14:00 · Matematik · 7A"': Ångra
+  - region "Rastvakt":
+    - heading "Rastvakt" [level=2]
+    - text: 1 behöver rastvakt · 0 med vikarie · 0 utan ersättare · 1 passerade utan beslut
+    - table "Rastvaktspass där läraren är frånvarande":
+      - caption: Rastvaktspass där läraren är frånvarande
+      - rowgroup:
+        - row "Tid Område Frånvarande Status Vikarie Åtgärder":
+          - columnheader "Tid"
+          - columnheader "Område"
+          - columnheader "Frånvarande"
+          - columnheader "Status"
+          - columnheader "Vikarie"
+          - columnheader "Åtgärder"
+      - rowgroup:
+        - row "07:45–08:00 Skolgården Bo Ek Passerad utan beslut —":
+          - cell "07:45–08:00"
+          - cell "Skolgården"
+          - cell "Bo Ek"
+          - cell "Passerad utan beslut"
+          - cell "—"
+          - cell
+        - 'row "12:30–12:45 Matsalen Bo Ek Behöver rastvakt — Tillsätt vikarie Bo Ek: Matsalen, 12:30–12:45 Utan ersättare Bo Ek: Matsalen, 12:30–12:45"':
+          - cell "12:30–12:45"
+          - cell "Matsalen"
+          - cell "Bo Ek"
+          - cell "Behöver rastvakt"
+          - cell "—"
+          - 'cell "Tillsätt vikarie Bo Ek: Matsalen, 12:30–12:45 Utan ersättare Bo Ek: Matsalen, 12:30–12:45"':
+            - 'button "Tillsätt vikarie Bo Ek: Matsalen, 12:30–12:45"': Tillsätt vikarie
+            - 'button "Utan ersättare Bo Ek: Matsalen, 12:30–12:45"': Utan ersättare
   - region "Vikarieräknare":
     - heading "Vikarieräknare" [level=2]
     - text: Vikariepass per person den här veckan och terminen. Fler pass flyttar ner personen i förslagen.

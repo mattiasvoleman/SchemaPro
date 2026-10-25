@@ -127,7 +127,8 @@ describe("the absence register", () => {
       expect(post).toHaveBeenCalledWith("/api/v1/teacher-absences/a-1/end", { at: local("2030-10-02", "12:00") }),
     );
     expect(await screen.findByText("Ångra besluten efter den nya sluttiden?")).toBeInTheDocument();
-    expect(screen.getByText(/^2 lektioner efter tidpunkten/)).toBeInTheDocument();
+    // The count is lessons and rastvaktspass together (Rastvakt i vardagen).
+    expect(screen.getByText(/^2 lektioner och rastvaktspass efter tidpunkten/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Ångra och avsluta" }));
     await waitFor(() =>
       expect(post).toHaveBeenLastCalledWith("/api/v1/teacher-absences/a-1/end", {
@@ -165,7 +166,7 @@ describe("the absence register", () => {
     await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Återkalla" }));
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(
-        "Det finns beslut på lektioner som redan har hållits. Avsluta frånvaron i förtid i stället.",
+        "Det finns beslut på lektioner eller rastvaktspass som redan har varit. Avsluta frånvaron i förtid i stället.",
       ),
     );
     expect(screen.queryByRole("button", { name: "Ångra och återkalla" })).not.toBeInTheDocument();

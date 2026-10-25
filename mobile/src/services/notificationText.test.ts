@@ -86,6 +86,18 @@ const CASES: Array<[string, NotificationRow, string, string]> = [
     'The cover lesson is withdrawn: Matematik (Tue 13 Oct 08:00), 7A, B204. You do not need to come.',
   ],
   [
+    'SUPERVISION_COVER',
+    row('SUPERVISION_COVER', { areaName: 'Skolgården', startsAt: at, endsAt: '2026-10-13T08:20:00.000Z' }),
+    'Du är inbokad som rastvakt: Skolgården (tis 13 okt 08:00–08:20).',
+    'You have break duty: Skolgården (Tue 13 Oct 08:00–08:20).',
+  ],
+  [
+    'SUPERVISION_COVER_WITHDRAWN',
+    row('SUPERVISION_COVER_WITHDRAWN', { areaName: 'Matsalen', startsAt: at, endsAt: '2026-10-13T08:20:00.000Z' }),
+    'Rastvaktspasset är avbokat: Matsalen (tis 13 okt 08:00–08:20). Du behöver inte ta det.',
+    'The break duty is withdrawn: Matsalen (Tue 13 Oct 08:00–08:20). You do not need to take it.',
+  ],
+  [
     'LESSON_ROOM_CHANGED',
     row('LESSON_ROOM_CHANGED', { subjectName: 'Matematik', startsAt: at }),
     'Matematik (tis 13 okt 08:00) har flyttat till en annan sal.',
@@ -169,9 +181,9 @@ describe('notificationText', () => {
     expect(notificationText(entry, translatorFor('en'), 'en')).toBe(enText);
   });
 
-  it('covers all thirteen types the gateway writes', () => {
+  it('covers all fifteen types the gateway writes', () => {
     const types = new Set(CASES.map(([, entry]) => entry.type));
-    expect(types.size).toBe(13);
+    expect(types.size).toBe(15);
   });
 
   it('never carries a leave request’s reason to the mentor, whatever the meta holds', () => {
