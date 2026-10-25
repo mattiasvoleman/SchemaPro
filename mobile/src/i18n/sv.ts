@@ -233,6 +233,7 @@ export const sv = {
     requiredAbsence: 'Skickas alltid. Skolan ska meddela vårdnadshavare samma dag när en elev är borta utan anmälan.',
     requiredCover: 'Skickas alltid, så att du inte går till ett pass som inte längre är ditt.',
     substituteStaffHint: 'Dina egna vikariepass kommer alltid fram, vad du än väljer här.',
+    typeOther: 'Andra notiser',
     saveFailed: 'Valet gick inte att spara.',
     types: {
       ABSENCE_UNREPORTED: 'Oanmäld frånvaro',

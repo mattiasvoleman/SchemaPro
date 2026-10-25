@@ -229,6 +229,7 @@ export const en: Messages = {
     requiredAbsence: 'Always sent. The school must tell guardians the same day when a pupil is absent without notice.',
     requiredCover: 'Always sent, so that you do not go to a lesson that is no longer yours.',
     substituteStaffHint: 'Your own cover lessons always arrive, whatever you choose here.',
+    typeOther: 'Other notifications',
     saveFailed: 'Your choice could not be saved.',
     types: {
       ABSENCE_UNREPORTED: 'Unreported absence',

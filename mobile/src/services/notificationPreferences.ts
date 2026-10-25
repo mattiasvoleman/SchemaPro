@@ -1,4 +1,5 @@
 import { apiRequest } from './api';
+import type { MessageKey, Translate } from '../i18n';
 import type { NotificationType } from '../types';
 
 /**
@@ -42,4 +43,16 @@ export async function savePreferences(types: readonly NotificationPreference[]):
     body: { optOut: optOutOf(types) },
   });
   return answer.types;
+}
+
+/**
+ * A type's name in the list. The gateway's list grows before the apps in the
+ * field do: a type this build has no words for is "Andra notiser", never its
+ * catalogue key, and its switch still works (the gateway knows it).
+ */
+export function preferenceLabel(t: Translate, type: string, staff: boolean): string {
+  if (type === 'LESSON_SUBSTITUTE' && staff) return t('settings.types.LESSON_SUBSTITUTE_STAFF');
+  const key = `settings.types.${type}` as MessageKey;
+  const named = t(key);
+  return named === key ? t('settings.typeOther') : named;
 }

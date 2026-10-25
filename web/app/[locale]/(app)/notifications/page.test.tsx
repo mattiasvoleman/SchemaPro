@@ -39,7 +39,9 @@ vi.mock("@/components/profile-context", () => ({
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("next-intl", () => ({
   useLocale: () => "sv",
-  useTranslations: (namespace: string) => (key: string) => `${namespace}.${key}`,
+  // `has` as the catalogue answers it: every type of this build, and none added after it.
+  useTranslations: (namespace: string) =>
+    Object.assign((key: string) => `${namespace}.${key}`, { has: (key: string) => !key.includes("FROM_A_NEWER_GATEWAY") }),
 }));
 
 const family: NotificationPreference[] = [
@@ -83,6 +85,16 @@ describe("the choice of what leaves SchemaPro", () => {
     renderPage();
     await user.click(await screen.findByRole("switch", { name: "notificationSettings.types.LESSON_CANCELLED" }));
     await waitFor(() => expect(state.puts).toEqual([{ optOut: ["LESSON_CANCELLED", "LESSON_SUBSTITUTE"] }]));
+  });
+
+  it("labels a type this build does not know as another notice, never by its key, and still sends it back", async () => {
+    const user = userEvent.setup();
+    state.types = [...family, { type: "FROM_A_NEWER_GATEWAY" as NotificationPreference["type"], enabled: true, required: false }];
+    renderPage();
+    const other = await screen.findByRole("switch", { name: "notificationSettings.typeOther" });
+    expect(screen.queryByText(/FROM_A_NEWER_GATEWAY/)).not.toBeInTheDocument();
+    await user.click(other);
+    await waitFor(() => expect((state.puts.at(-1) as { optOut: string[] } | undefined)?.optOut).toContain("FROM_A_NEWER_GATEWAY"));
   });
 
   it("names LESSON_SUBSTITUTE as substitutes on my lessons for staff, and the withdrawal as always sent", async () => {
