@@ -36,6 +36,7 @@
       <li><span>2.1 Arbetets fyra faser</span><span class="dots"></span><span class="pg" data-pg="s21"></span></li>
       <li><span>2.2 Roller och behörigheter</span><span class="dots"></span><span class="pg" data-pg="s22"></span></li>
       <li><span>2.3 Flera skolor med en inloggning</span><span class="dots"></span><span class="pg" data-pg="s23"></span></li>
+      <li><span>2.4 Huvudmannen och dess skolor</span><span class="dots"></span><span class="pg" data-pg="s24"></span></li>
     </ol>
     <li><span>3 · Fas 1 — Kom igång</span><span class="dots"></span><span class="pg" data-pg="ch3"></span></li>
     <li><span>4 · Fas 2 — Planering</span><span class="dots"></span><span class="pg" data-pg="ch4"></span></li>
@@ -358,6 +359,63 @@
     <p>
       Appen får sin skolväljare i en senare version. Fram till dess visar
       appen den skola där du först fick din inloggning, och inte en skola som har lagt till dig senare.
+    </p>
+  </div>
+
+  <h3 id="s24"><span class="num">2.4</span>Huvudmannen och dess skolor</h3>
+  <p>
+    En huvudman, till exempel en kommun, kan äga flera skolor i Rastra Schema.
+    Huvudmannen har två slags personer. <strong>Kommunadministratören</strong>
+    bjuder in huvudmannens personer, frågar skolor om att bli deras huvudman
+    och skapar huvudmannens SS12000-nycklar. <strong>Planerare</strong>, till
+    exempel kommunens centrala schemaläggare, läser skolorna. Båda läser varje
+    skola som huvudmannen äger som skolans läsare (2.2): alla
+    administratörssidor utom Dataskydd, utan HR-läs, och de ändrar ingenting
+    och fattar inga beslut på skolan.
+  </p>
+  <p>
+    <strong>Huvudmannens sidor.</strong> Under
+    <span class="path">Huvudmannens sidor</span> (adressen
+    <code>/huvudman</code>) finns skolorna som huvudmannen äger, förfrågningar
+    som väntar på svar, huvudmannens personer, nycklarna och historiken. Har du
+    ingen egen roll på någon skola öppnas de här sidorna när du loggar in. Med
+    <span class="ui">Öppna</span> vid en skola läser du skolan, och skolan
+    finns sedan i skolväljaren med texten <em>Läsare för</em> och huvudmannens
+    namn. I skolväljaren finns också länken
+    <span class="ui">Huvudmannens sidor</span>, och på huvudmannens sidor leder
+    <span class="ui">Till skolan</span> tillbaka till skolan du senast läste.
+  </p>
+  <p>
+    Att släppa en skola, återkalla en nyckel och avaktivera en person går inte
+    att ångra med en knapp. Sidan frågar därför först
+    <em>Är du säker?</em> och gör det först när du svarar
+    <span class="ui">Ja, gör det</span>. En ny nyckel visas en enda gång, med
+    knappen <span class="ui">Kopiera nyckeln</span>.
+  </p>
+  <p>
+    <strong>En skola blir huvudmannens på skolans beslut.</strong>
+    Kommunadministratören frågar efter skolan med skolans adress i Rastra
+    Schema. Skolans rektor eller en fullständig administratör svarar under
+    <span class="path">Dataskydd</span> (7.4), och först efter ett ja läser
+    huvudmannen skolan. Både skolan och huvudmannen kan avsluta ägandet, och
+    huvudmannens personer läser då ingenting där från och med nästa sida. En
+    skola har en huvudman i taget.
+  </p>
+  <div class="note">
+    <span class="label">Bra att veta</span>
+    <p>
+      Har du en egen roll på en skola, till exempel som lärare, är du lärare
+      där och inte huvudmannens läsare. Huvudmannens läsning gäller de skolor
+      där du inte har någon egen aktiv roll. Har skolan avaktiverat din egen
+      roll läser du skolan som huvudmannens läsare, eftersom skolan har
+      godkänt huvudmannen. Under <span class="path">Dataskydd</span> ser
+      skolan vilka av huvudmannens personer som har en egen roll där, aktiv
+      eller avaktiverad.
+    </p>
+    <p>
+      Varje gång huvudmannens personer läser uppgifter om en person skrivs det
+      i skolans läslogg, med personens namn och huvudmannens namn. Kräver
+      skolan skolkonto (7.5) gäller det huvudmannens personer också.
     </p>
   </div>
 </section>
@@ -5210,6 +5268,14 @@
     bara det det behöver: en lärplattform behöver sällan vårdnadshavare.
   </p>
   <p>
+    <strong>Huvudmannens nycklar.</strong> Har skolan en huvudman (2.4) ser
+    rektor och fullständiga administratörer huvudmannens SS12000-nycklar också
+    här, med namn, omfång och när de senast användes. En sådan nyckel läser skolan som skolans egen nyckel gör, men
+    aldrig närvaro eller frånvaro och utan prenumerationer. Skolan kan inte
+    återkalla den, men den slutar läsa skolan när skolan lämnar huvudmannen.
+    Dess läsningar står i läsloggen med nyckelns och huvudmannens namn.
+  </p>
+  <p>
     Bara det <em>publicerade</em> schemat lämnas ut, aldrig ett utkast. Ingen
     frånvaroorsak, anteckning eller personnummer lämnas någonsin ut, och
     tjänstgöringsgrader bara när skolan har valt att dela dem (se ovan).
@@ -5397,6 +5463,18 @@
     </p>
   </div>
 
+  <h4>Skolans huvudman</h4>
+  <p>
+    Under <span class="ui">Huvudman</span> står vem som är skolans huvudman
+    (2.4), sedan när och vem som godkände, vilka av huvudmannens personer som
+    läser skolan och huvudmannens nycklar. Frågar en huvudman om att bli
+    skolans huvudman står förfrågan här. Som rektor eller fullständig
+    administratör svarar du med <span class="ui">Godkänn</span> eller
+    <span class="ui">Avböj</span>. Har skolan redan en huvudman kan du bara
+    avböja en annan, tills skolan har lämnat den första. Med
+    <span class="ui">Lämna</span> avslutar du ägandet. Huvudmannens personer och nycklar läser då inte skolan längre,
+    men det de har läst står kvar i läsloggen.
+  </p>
   <h4>Vem har läst om en person?</h4>
   <p>
     Varje gång någon läser en annan persons uppgifter i Rastra Schema skrivs det
