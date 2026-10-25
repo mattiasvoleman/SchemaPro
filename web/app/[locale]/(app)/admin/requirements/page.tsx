@@ -158,7 +158,7 @@ import type { LessonShare } from "@/lib/lesson-shares";
 import { buildGradeSpans } from "@/lib/grade-span";
 import { useYearRosters } from "@/lib/planning-year";
 import { withProjectedHomes } from "@/lib/projected-rosters";
-import { candidateQualification, candidateRemaining } from "@/lib/staffing-candidates";
+import { candidateQualification, candidateRemaining, strongestFirst } from "@/lib/staffing-candidates";
 import { CandidateBadge } from "@/components/staffing/candidate-badge";
 import { RefusalNotice, WarningsNotice } from "@/components/staffing/staffing-notices";
 import {
@@ -1171,6 +1171,21 @@ export default function RequirementsPage() {
     groups === undefined;
 
   /**
+   * The active teachers in the order every picker in the dialog lists them:
+   * the strongest behörighet for this cell first, by the badge each name
+   * carries, and otherwise the roster's order (strongestFirst says why that
+   * is all it sorts by). One list for the lärare, the medlärare and the
+   * delade lektioner, so a name sits at the same height in all three.
+   */
+  const candidates = useMemo(() => {
+    if (!cell || !yearBounds) return teachers;
+    const span = gradeSpanOf.get(cell.groupId) ?? null;
+    return strongestFirst(teachers, (teacher) =>
+      candidateQualification(qualifications ?? [], teacher.id, cell.subjectId, span, yearBounds),
+    );
+  }, [teachers, cell, yearBounds, gradeSpanOf, qualifications]);
+
+  /**
    * One candidate as the picker shows them: the name, then the behörighet badge
    * for THIS cell's subject and group and the minutes left to their mål.
    *
@@ -1895,7 +1910,7 @@ export default function RequirementsPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={NO_TEACHER}>{tCommon("notAssigned")}</SelectItem>
-                  {teachers.map((teacher) => (
+                  {candidates.map((teacher) => (
                     <SelectItem key={teacher.id} value={teacher.id}>
                       {candidateLine(teacher)}
                     </SelectItem>
@@ -1915,7 +1930,7 @@ export default function RequirementsPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={NO_TEACHER}>{tCommon("notAssigned")}</SelectItem>
-                  {teachers
+                  {candidates
                     .filter((teacher) => teacher.id !== form.teacherId)
                     .map((teacher) => (
                       <SelectItem key={teacher.id} value={teacher.id}>
@@ -1936,7 +1951,7 @@ export default function RequirementsPage() {
                   teacherId={form.teacherId}
                   coTeacherId={form.coTeacherId}
                   noTeacher={NO_TEACHER}
-                  teachers={teachers}
+                  teachers={candidates}
                   teacherLine={candidateLine}
                   personName={personName}
                   onValidity={setSharesOk}
