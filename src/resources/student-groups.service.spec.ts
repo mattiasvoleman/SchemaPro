@@ -306,6 +306,78 @@ describe('StudentGroupsService', () => {
     });
   });
 
+  describe('Ersättande grupper: a teaching group replaces a subject', () => {
+    const SUBJECT_ID = '77777777-7777-4777-8777-777777777777';
+
+    it('creates a teaching group replacing a subject of the school', async () => {
+      tx.subject.findUnique.mockResolvedValue({ id: SUBJECT_ID });
+      tx.studentGroup.create.mockResolvedValue({ id: GROUP_ID });
+      await service.create(dto({ name: 'SvA7', kind: 'TEACHING_GROUP', replacesSubjectId: SUBJECT_ID }), testUser());
+      expect(tx.subject.findUnique).toHaveBeenCalledWith({ where: { id: SUBJECT_ID }, select: { id: true } });
+      expect(tx.studentGroup.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ kind: 'TEACHING_GROUP', replacesSubjectId: SUBJECT_ID }),
+      });
+    });
+
+    it('refuses a class, writing nothing', async () => {
+      await expect(service.create(dto({ replacesSubjectId: SUBJECT_ID }), testUser())).rejects.toMatchObject({
+        response: { code: 'REPLACING_GROUP_NOT_A_TEACHING_GROUP' },
+      });
+      expect(tx.studentGroup.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses a subject the school does not have (another school’s is invisible under RLS)', async () => {
+      tx.subject.findUnique.mockResolvedValue(null);
+      await expect(
+        service.create(dto({ kind: 'TEACHING_GROUP', replacesSubjectId: SUBJECT_ID }), testUser()),
+      ).rejects.toThrow(BadRequestException);
+      expect(tx.studentGroup.create).not.toHaveBeenCalled();
+    });
+
+    it('writes nothing about it for a group that replaces nothing', async () => {
+      tx.studentGroup.create.mockResolvedValue({ id: GROUP_ID });
+      await service.create(dto({ kind: 'TEACHING_GROUP' }), testUser());
+      expect(tx.studentGroup.create.mock.calls[0][0].data).not.toHaveProperty('replacesSubjectId');
+      expect(tx.subject.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('refuses a half on update, and lets a teaching group start or stop replacing', async () => {
+      tx.subject.findUnique.mockResolvedValue({ id: SUBJECT_ID });
+      tx.studentGroup.findUnique.mockResolvedValueOnce({ kind: 'TEACHING_GROUP', halfOfId: 'class-7a' });
+      await expect(service.update(GROUP_ID, { replacesSubjectId: SUBJECT_ID }, testUser())).rejects.toMatchObject({
+        response: { code: 'REPLACING_GROUP_NOT_A_TEACHING_GROUP' },
+      });
+      expect(tx.studentGroup.update).not.toHaveBeenCalled();
+
+      tx.studentGroup.findUnique.mockResolvedValueOnce({ kind: 'TEACHING_GROUP', halfOfId: null });
+      tx.studentGroup.update.mockResolvedValue({ id: GROUP_ID, kind: 'TEACHING_GROUP' });
+      await service.update(GROUP_ID, { replacesSubjectId: SUBJECT_ID }, testUser());
+      expect(tx.studentGroup.update).toHaveBeenLastCalledWith({ where: { id: GROUP_ID }, data: { replacesSubjectId: SUBJECT_ID } });
+
+      await service.update(GROUP_ID, { replacesSubjectId: null }, testUser());
+      expect(tx.studentGroup.update).toHaveBeenLastCalledWith({ where: { id: GROUP_ID }, data: { replacesSubjectId: null } });
+    });
+
+    it('answers the CHECK’s refusal of a class that keeps replacing with a 400 naming the field', async () => {
+      tx.studentGroup.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('check', {
+          code: 'P2039',
+          clientVersion: Prisma.prismaVersion.client,
+          meta: {
+            driverAdapterError: {
+              cause: {
+                originalCode: '23514',
+                originalMessage:
+                  'new row for relation "StudentGroups" violates check constraint "StudentGroups_only_a_teaching_group_replaces"',
+              },
+            },
+          },
+        }),
+      );
+      await expect(service.update(GROUP_ID, { kind: 'CLASS' }, testUser())).rejects.toThrow(/replacesSubjectId/);
+    });
+  });
+
   describe('remove', () => {
     it('deletes by id under the caller’s RLS context', async () => {
       tx.studentGroup.delete.mockResolvedValue({ id: GROUP_ID });

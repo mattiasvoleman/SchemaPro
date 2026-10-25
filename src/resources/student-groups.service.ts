@@ -29,6 +29,33 @@ export const GROUP_NAME_TAKEN = 'GROUP_NAME_TAKEN';
 export const NOT_THE_CLASS_HALVES = 'NOT_THE_CLASS_HALVES';
 export const PUPIL_IN_TWO_HALVES = 'PUPIL_IN_TWO_HALVES';
 export const PUPIL_NOT_IN_CLASS = 'PUPIL_NOT_IN_CLASS';
+/** The problem code of a class or a half asked to replace a subject (Ersättande grupper). */
+export const REPLACING_GROUP_NOT_A_TEACHING_GROUP = 'REPLACING_GROUP_NOT_A_TEACHING_GROUP';
+
+/**
+ * Ersättande grupper (20261211090000): a group may replace a subject only as
+ * a teaching group that is not a half, and only one of its school's
+ * subjects. Asked before the write so the 400 can say which; the CHECK and
+ * the composite foreign key refuse a race or a PostgREST writer the same way.
+ */
+async function assertMayReplace(
+  tx: Prisma.TransactionClient,
+  group: { kind: string; halfOfId: string | null },
+  subjectId: string | null | undefined,
+): Promise<void> {
+  if (!subjectId) return;
+  if (group.kind !== 'TEACHING_GROUP' || group.halfOfId !== null) {
+    throw new BadRequestException({
+      message:
+        group.kind === 'TEACHING_GROUP'
+          ? 'En halvklass är en del av klassen och kan inte ersätta klassens lektioner i ett ämne.'
+          : 'En klass är elevernas hemklass och kan inte ersätta sina egna lektioner i ett ämne. Gör en undervisningsgrupp för SvA.',
+      code: REPLACING_GROUP_NOT_A_TEACHING_GROUP,
+    });
+  }
+  const subject = await tx.subject.findUnique({ where: { id: subjectId }, select: { id: true } });
+  if (!subject) throw new BadRequestException('replacesSubjectId: ämnet finns inte i skolan.');
+}
 
 /**
  * The pupils a half of `theClass` may hold: the active pupils whose home
@@ -181,18 +208,23 @@ export class StudentGroupsService {
   ): Promise<StudentGroup> {
     const schoolId = requireSchoolId(user);
     try {
-      return await this.prisma.withRls(user, (tx) =>
-        tx.studentGroup.create({
+      return await this.prisma.withRls(user, async (tx) => {
+        await assertMayReplace(tx, { kind: dto.kind ?? 'CLASS', halfOfId: null }, dto.replacesSubjectId);
+        return tx.studentGroup.create({
           data: {
             schoolId,
             academicYearId: dto.academicYearId,
             name: dto.name,
             kind: dto.kind ?? 'CLASS',
             gradeLevel: dto.gradeLevel ?? null,
+            // Named only when set, so the write of a group that replaces
+            // nothing is the write it always was.
+            ...(dto.replacesSubjectId ? { replacesSubjectId: dto.replacesSubjectId } : {}),
           },
-        }),
-      );
+        });
+      });
     } catch (error) {
+      if (error instanceof BadRequestException) throw error;
       rethrowPrismaError(error);
     }
   }
@@ -229,6 +261,10 @@ export class StudentGroupsService {
             if (history > 0) throw studentGroupHasEnrolmentHistory(current.academicYear.name);
           }
         }
+        if (dto.replacesSubjectId) {
+          const current = await tx.studentGroup.findUnique({ where: { id }, select: { kind: true, halfOfId: true } });
+          if (current) await assertMayReplace(tx, { kind: dto.kind ?? current.kind, halfOfId: current.halfOfId }, dto.replacesSubjectId);
+        }
         const group = await tx.studentGroup.update({
           where: { id },
           data: {
@@ -238,6 +274,7 @@ export class StudentGroupsService {
             ...(dto.name !== undefined ? { name: dto.name } : {}),
             ...(dto.kind !== undefined ? { kind: dto.kind } : {}),
             ...(dto.gradeLevel !== undefined ? { gradeLevel: dto.gradeLevel } : {}),
+            ...(dto.replacesSubjectId !== undefined ? { replacesSubjectId: dto.replacesSubjectId } : {}),
           },
         });
         // A half is cut from its class (Halvklasser) and reads its class's
@@ -251,7 +288,7 @@ export class StudentGroupsService {
         return group;
       });
     } catch (error) {
-      if (error instanceof ConflictException) throw error;
+      if (error instanceof ConflictException || error instanceof BadRequestException) throw error;
       rethrowPrismaError(error);
     }
   }
