@@ -1102,6 +1102,15 @@ MESSAGES: dict[str, str] = {
         "{tolerance} % tolerance. The minutes are shown to the principal, a full "
         "administrator and anyone with HR read access."
     ),
+    # Refused by the GATEWAY before the engine is woken
+    # (optimization-proxy.service.ts groupConflictsRefusal): a week whose
+    # groupConflicts pass the request's max_length. Here because this is the
+    # one catalogue the web renders a school's sentences from.
+    "GROUP_CONFLICTS_OVER_ENGINE_LIMIT": (
+        "The groups that share pupils make {pairs} pairs, more than the {limit} the timetable "
+        "engine takes in one run, so the week was not sent. Fewer groups that share pupils, or "
+        "fewer replacing groups, bring the number down."
+    ),
     # "Curriculum entry", the English the web's nav uses for a timplanspost.
     "STAFF_UNSTAFFED_REQUIREMENTS": (
         "{count, plural, one {# curriculum entry has} other {# curriculum entries have}} no "

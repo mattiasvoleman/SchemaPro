@@ -3334,6 +3334,32 @@ describe('OptimizationProxyService', () => {
         expect(JSON.stringify(postedPayload())).not.toContain('~');
       });
 
+      it('refuses a week whose pairs pass the engine’s limit by name, before anything is sent', async () => {
+        // One pupil in 7A and in 101 teaching groups, each with a post: the 102
+        // groups pair two by two, 5 151 pairs, past the 5 000 the engine takes.
+        const many = Array.from({ length: 101 }, (_, i) => `6c${String(i).padStart(6, '0')}-0000-4000-8000-000000000000`);
+        arrange({
+          requirements: many.map((studentGroupId, i) =>
+            requirement({ id: `88${String(i).padStart(6, '0')}-8888-4888-8888-888888888888`, studentGroupId }),
+          ),
+          groups: [
+            { id: GROUP_ID, gradeLevel: 7, kind: 'CLASS', halfOfId: null, replacesSubjectId: null },
+            ...many.map((id) => ({ id, gradeLevel: null, kind: 'TEACHING_GROUP', halfOfId: null, replacesSubjectId: null })),
+          ],
+          homeMembers: [{ id: pupil(1), studentGroupId: GROUP_ID }],
+          teachingMembers: many.map((studentGroupId) => ({ studentId: pupil(1), studentGroupId })),
+        });
+
+        const result = await service.prepareSchedule(tx as unknown as PrismaClient, ACADEMIC_YEAR, testUser());
+
+        expect(result).toMatchObject({
+          ready: false,
+          refusalCode: 'GROUP_CONFLICTS_OVER_ENGINE_LIMIT',
+          refusal: { status: 'INFEASIBLE', lessons: [], conflicts: { summaryCode: 'GROUP_CONFLICTS_OVER_ENGINE_LIMIT', summaryParams: { pairs: 5151, limit: 5000 } } },
+        });
+        expect(http.post).not.toHaveBeenCalled();
+      });
+
       it('sends a school whose SvA group replaces nothing exactly what it sent before', async () => {
         arrangeSvA(null);
         echoEngine();
