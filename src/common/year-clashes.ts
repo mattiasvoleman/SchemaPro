@@ -77,10 +77,21 @@ export interface YearClashInput {
   halves?: GroupHalf[];
   /**
    * The groups replacing a subject (Ersättande grupper, replacing-groups.ts):
-   * their members are on none of the subject's other lessons, so SvA7 beside
-   * 7A's svenska is no double booking. Absent or empty: none.
+   * their members are not on the class's lessons in the subject, so SvA7
+   * beside 7A's svenska is no double booking. Absent or empty: none.
    */
-  replacing?: Array<{ id: string; replacesSubjectId: string }>;
+  replacing?: Array<{ id: string; replacesSubjectId: string; academicYearId?: string }>;
+  /**
+   * The lessons' läsår. A group replacing a subject in another läsår (last
+   * year's SvA6, whose memberships the rollover keeps) takes nobody off them,
+   * whatever the reader passed in `replacing`.
+   */
+  academicYearId?: string;
+  /**
+   * The teaching groups among the lessons' own groups that are not halves:
+   * their members keep their own lessons whatever they replace (keptByOf).
+   */
+  kept?: string[];
 }
 
 export interface YearClashHit {
@@ -223,13 +234,28 @@ export function yearClashes(input: YearClashInput): Map<string, YearClashHit[]> 
   // Ersättande grupper: each lesson's groups answer for their keys, and a
   // named pupil leaves the lessons a replacing group of theirs takes them
   // off. Without a replacing group none of this runs.
-  const replaced = replacedSubjectOf(input.replacing ?? []);
+  const replaced = replacedSubjectOf(
+    (input.replacing ?? []).filter(
+      (group) =>
+        input.academicYearId === undefined || group.academicYearId === undefined || group.academicYearId === input.academicYearId,
+    ),
+  );
   const bySubject = replacingBySubject(replaced);
   const sharesGroups = (a: string, b: string) => relation.get(a)?.has(b) ?? false;
+  const kept = new Set(input.kept ?? []);
+  /** A placement as the rule reads it: its own group first, and that group's keptBy. */
+  const scopeOf = (placement: Placement) => {
+    const own = placement.groups[0];
+    return {
+      subjectId: placement.subjectId,
+      groupIds: placement.groups,
+      ...(own !== undefined && kept.has(own) ? { keptBy: own } : {}),
+    };
+  };
   if (replaced.size > 0) {
     for (const placement of placements) {
       placement.keys = pupilKeysOf(
-        { subjectId: placement.subjectId, groupIds: placement.groups },
+        scopeOf(placement),
         bySubject,
         sharesGroups,
         replacingGroupsOfNamed(placement.students, (student) => groupsByStudent.get(student) ?? [], replaced),
@@ -239,10 +265,12 @@ export function yearClashes(input: YearClashInput): Map<string, YearClashHit[]> 
   /** Is a pupil whose class is on `lesson` taken off it by a replacing group? */
   const elsewhere = (studentId: string, lesson: Placement): boolean =>
     replaced.size > 0 &&
-    leavesLesson(replacementsOf(groupsByStudent.get(studentId) ?? [], replaced), {
-      subjectId: lesson.subjectId,
-      groupIds: lesson.groups,
-    });
+    leavesLesson(
+      replacementsOf(groupsByStudent.get(studentId) ?? [], replaced),
+      scopeOf(lesson),
+      false,
+      groupsByStudent.get(studentId) ?? [],
+    );
 
   const byDay = new Map<number, Placement[]>();
   for (const placement of placements) {

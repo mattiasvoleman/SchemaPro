@@ -15,6 +15,7 @@ import { breaksFrame, type FrameTime } from "@/lib/frame-times";
 import { spanMeetsRule, type GradeSpan } from "@/lib/grade-span";
 import { timeToMinutes } from "@/lib/utils";
 import {
+  keptByOf,
   keysShare,
   leavesLesson,
   pupilKeysOf,
@@ -342,6 +343,12 @@ export interface ReplacingContext {
    * nobody off this year's svenska: a lesson's läsår is its own group's.
    */
   yearOf: Map<string, string>;
+  /**
+   * The teaching groups that are not halves: their members keep their own
+   * lessons whatever they replace (keptByOf) — Svenska fördjupning keeps its
+   * SvA pupils.
+   */
+  kept: Set<string>;
 }
 
 /**
@@ -359,6 +366,7 @@ export function buildGroupConflictMap(
   memberships: Array<{ studentId: string; studentGroupId: string }>,
   halves: ReadonlyArray<{
     id: string;
+    kind?: string | null;
     halfOfId?: string | null;
     replacesSubjectId?: string | null;
     academicYearId?: string | null;
@@ -406,6 +414,7 @@ export function buildGroupConflictMap(
       bySubject: replacingBySubject(replaced),
       groupsOfStudent: groupsByStudent,
       yearOf: yearsOf(halves),
+      kept: new Set(halves.flatMap((group) => keptByOf(group) ?? [])),
     };
   }
   return relation;
@@ -418,9 +427,10 @@ export function buildGroupConflictMap(
 function keysOf(placement: Placement, relation: GroupConflictMap | undefined): string[] {
   const groups = groupsOf(placement);
   const replacing = relation?.replacing;
-  if (!replacing || !placement.subjectId) return groups;
+  const scope = replacing && placement.subjectId ? scopeOf({ ...placement, subjectId: placement.subjectId }, replacing) : null;
+  if (!replacing || !scope) return groups;
   return pupilKeysOf(
-    scopeOf({ ...placement, subjectId: placement.subjectId }, replacing),
+    scope,
     replacing.bySubject,
     (a, b) => relation.get(a)?.has(b) ?? false,
     replacingGroupsOfNamed(placement.studentIds ?? [], (pupil) => replacing.groupsOfStudent.get(pupil) ?? [], replacing.replaced),
@@ -428,20 +438,31 @@ function keysOf(placement: Placement, relation: GroupConflictMap | undefined): s
   );
 }
 
-/** A placement as the rule reads it: its subject, its groups and its own group's läsår. */
+/**
+ * A placement as the rule reads it: its subject, its groups, its own group's
+ * läsår and keptBy. Null when the läsår is unknown: a lesson the rule cannot
+ * place in a year takes nobody off, and its groups answer for themselves.
+ */
 function scopeOf(placement: Placement & { subjectId: string }, replacing: ReplacingContext) {
   const year = replacing.yearOf.get(placement.studentGroupId);
-  return { subjectId: placement.subjectId, groupIds: groupsOf(placement), ...(year ? { academicYearId: year } : {}) };
+  if (!year) return null;
+  const keptBy = replacing.kept.has(placement.studentGroupId) ? placement.studentGroupId : undefined;
+  return {
+    subjectId: placement.subjectId,
+    groupIds: groupsOf(placement),
+    academicYearId: year,
+    ...(keptBy ? { keptBy } : {}),
+  };
 }
 
 /** Is a pupil whose class is on the placement taken off it by a replacing group of theirs? */
 function elsewhere(studentId: string, placement: Placement, relation: GroupConflictMap | undefined): boolean {
   const replacing = relation?.replacing;
   if (!replacing || !placement.subjectId) return false;
-  return leavesLesson(
-    replacementsOf(replacing.groupsOfStudent.get(studentId) ?? [], replacing.replaced, replacing.yearOf),
-    scopeOf({ ...placement, subjectId: placement.subjectId }, replacing),
-  );
+  const scope = scopeOf({ ...placement, subjectId: placement.subjectId }, replacing);
+  if (!scope) return false;
+  const groups = replacing.groupsOfStudent.get(studentId) ?? [];
+  return leavesLesson(replacementsOf(groups, replacing.replaced, replacing.yearOf), scope, false, groups);
 }
 
 function groupsShareStudents(
