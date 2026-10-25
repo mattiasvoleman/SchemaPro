@@ -25,7 +25,7 @@ interface Fixture {
   groups: { id: string; replacesSubjectId: string | null; academicYearId: string }[];
   groupsOfPupil: Record<string, string[]>;
   pairs: [string, string][];
-  lessons: { id: string; subjectId: string; groupIds: string[]; named: string[]; academicYearId: string }[];
+  lessons: { id: string; subjectId: string; groupIds: string[]; named: string[]; academicYearId: string; keptBy?: string }[];
   expected: {
     leaves: { lesson: string; pupil: string; leaves: boolean }[];
     keys: Record<string, string[]>;
@@ -46,7 +46,8 @@ describe("the web's replacing groups agree with the gateway's", () => {
     const lessons = new Map(f.lessons.map((lesson) => [lesson.id, lesson]));
     for (const row of f.expected.leaves) {
       const lesson = lessons.get(row.lesson)!;
-      const got = leavesLesson(replacementsOf(f.groupsOfPupil[row.pupil]!, replaced, yearOf), lesson, lesson.named.includes(row.pupil));
+      const held = f.groupsOfPupil[row.pupil]!;
+      const got = leavesLesson(replacementsOf(held, replaced, yearOf), lesson, lesson.named.includes(row.pupil), held);
       expect([row.lesson, row.pupil, got]).toEqual([row.lesson, row.pupil, row.leaves]);
     }
   });

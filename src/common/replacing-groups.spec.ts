@@ -3,6 +3,7 @@ import {
   baseOf,
   keysShare,
   derivedKey,
+  keptByOf,
   leavesLesson,
   parseDerivedKey,
   pupilKeyOf,
@@ -66,6 +67,43 @@ describe('the rule, per pupil', () => {
     expect(leavesLesson(bo, { subjectId: 'SV', groupIds: ['7A'] })).toBe(false);
   });
 
+  it('keeps a pupil in two groups replacing one subject on the lessons of either, and off the class’s', () => {
+    // Dag is in SvA7 and in SvA7 stöd, which both replace Svenska.
+    const both = replacedSubjectOf([...groups, { id: 'SvA7s', replacesSubjectId: 'SV' }]);
+    const dag = replacementsOf(['7B', 'SvA7', 'SvA7s'], both);
+    expect(leavesLesson(dag, { subjectId: 'SV', groupIds: ['SvA7'] })).toBe(false);
+    expect(leavesLesson(dag, { subjectId: 'SV', groupIds: ['SvA7s'] })).toBe(false);
+    expect(leavesLesson(dag, { subjectId: 'SV', groupIds: ['7B', 'SvA7'] })).toBe(false);
+    expect(leavesLesson(dag, { subjectId: 'SV', groupIds: ['7B'] })).toBe(true);
+    const membersOf = new Map([
+      ['SvA7', new Set(['Alva', 'Dag'])],
+      ['SvA7s', new Set(['Dag'])],
+    ]);
+    const twice = replacingBySubject(both);
+    expect([...replacedPupils(['Dag', 'Eva'], { subjectId: 'SV', groupIds: ['7B', 'SvA7'] }, new Set(), twice, membersOf)]).toEqual([]);
+    expect([...replacedPupils(['Dag', 'Eva'], { subjectId: 'SV', groupIds: ['7B'] }, new Set(), twice, membersOf)]).toEqual(['Dag']);
+  });
+
+  it('keeps a pupil on the lessons of a teaching group they are placed in, but not on a half’s', () => {
+    expect(keptByOf({ id: 'Sv7n', kind: 'TEACHING_GROUP', halfOfId: null })).toBe('Sv7n');
+    expect(keptByOf({ id: '7A:1', kind: 'TEACHING_GROUP', halfOfId: '7A' })).toBeUndefined();
+    expect(keptByOf({ id: '7A', kind: 'CLASS', halfOfId: null })).toBeUndefined();
+    expect(keptByOf(undefined)).toBeUndefined();
+    // Alva of SvA7 is placed in Sv7n, Svenska fördjupning: she goes there.
+    const fordjupning = { subjectId: 'SV', groupIds: ['Sv7n'], keptBy: 'Sv7n' };
+    expect(leavesLesson(alva, fordjupning, false, ['7A', 'SvA7', 'Sv7n'])).toBe(false);
+    // Without her membership in hand the reader cannot tell, and takes her off.
+    expect(leavesLesson(alva, fordjupning)).toBe(true);
+    // 7A:1 is a half of 7A: it is the class's svenska, and she is at SvA.
+    expect(leavesLesson(alva, { subjectId: 'SV', groupIds: ['7A:1'] }, false, ['7A', '7A:1', 'SvA7'])).toBe(true);
+    const membersOf = new Map([
+      ['SvA7', new Set(['Alva', 'Dag'])],
+      ['Sv7n', new Set(['Alva', 'Cim'])],
+    ]);
+    expect(replacedPupils(['Alva', 'Cim'], fordjupning, new Set(), bySubject, membersOf).size).toBe(0);
+    expect(pupilKeyOf('Sv7n', fordjupning, bySubject, (a, b) => shares(a, b) || [a, b].sort().join() === 'Sv7n,SvA7')).toBe('Sv7n');
+  });
+
   it('takes the same pupils off a roster', () => {
     const membersOf = new Map([['SvA7', new Set(['Alva', 'Dag'])]]);
     const roster = ['Alva', 'Bo', 'Cim'];
@@ -84,6 +122,11 @@ describe('the rule, per group', () => {
     expect(pupilKeyOf('7A', { subjectId: 'MA', groupIds: ['7A'] }, bySubject, shares)).toBe('7A');
     // SvA7 on the lesson: its pupils are on it, nothing is left out.
     expect(pupilKeysOf({ subjectId: 'SV', groupIds: ['7B', 'SvA7'] }, bySubject, shares)).toEqual(['7B', 'SvA7']);
+    // A group replacing the subject answers for itself on its own lesson, even
+    // beside another group replacing it that shares pupils with it.
+    const both = replacingBySubject(replacedSubjectOf([...groups, { id: 'SvA7s', replacesSubjectId: 'SV' }]));
+    const withStod = (a: string, b: string) => shares(a, b) || [a, b].sort().join() === 'SvA7,SvA7s';
+    expect(pupilKeyOf('SvA7', { subjectId: 'SV', groupIds: ['SvA7'] }, both, withStod)).toBe('SvA7');
     // A named pupil of SvA7 is on it too.
     expect(pupilKeyOf('7A', { subjectId: 'SV', groupIds: ['7A'] }, bySubject, shares, ['SvA7'])).toBe('7A');
     expect(
@@ -147,7 +190,7 @@ describe('the shared fixture (the web replays it)', () => {
     groups: { id: string; replacesSubjectId: string | null; academicYearId: string }[];
     groupsOfPupil: Record<string, string[]>;
     pairs: [string, string][];
-    lessons: { id: string; subjectId: string; groupIds: string[]; named: string[]; academicYearId: string }[];
+    lessons: { id: string; subjectId: string; groupIds: string[]; named: string[]; academicYearId: string; keptBy?: string }[];
     expected: {
       leaves: { lesson: string; pupil: string; leaves: boolean }[];
       keys: Record<string, string[]>;
@@ -166,7 +209,8 @@ describe('the shared fixture (the web replays it)', () => {
     const lessons = new Map(f.lessons.map((lesson) => [lesson.id, lesson]));
     for (const row of f.expected.leaves) {
       const lesson = lessons.get(row.lesson)!;
-      const got = leavesLesson(replacementsOf(f.groupsOfPupil[row.pupil]!, fReplaced, fYearOf), lesson, lesson.named.includes(row.pupil));
+      const held = f.groupsOfPupil[row.pupil]!;
+      const got = leavesLesson(replacementsOf(held, fReplaced, fYearOf), lesson, lesson.named.includes(row.pupil), held);
       expect([row.lesson, row.pupil, got]).toEqual([row.lesson, row.pupil, row.leaves]);
     }
   });
