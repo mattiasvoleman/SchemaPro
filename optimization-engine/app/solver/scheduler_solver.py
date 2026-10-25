@@ -225,6 +225,67 @@ def pupil_padded_of(
     return decision._pupils
 
 
+def pupil_key_of(requirement: AnonymousRequirement) -> UUID:
+    """The requirement's key in the PUPIL space: who sits its lessons.
+
+    Ersättande grupper. The engine keeps two key spaces, and every rule reads
+    exactly one of them for its own lessons, its locked lessons and its
+    partners alike:
+
+    - THE PUPIL SPACE: who may not overlap whom because a pupil sits in both.
+      This key, pupil_keys_of for a lock, and `groupConflicts` as the
+      relation. The pairs' no-overlap, the locks' blocking, the walk's
+      families, the cliques and every count that leans on "these lessons
+      share pupils" read it.
+    - THE CLASS SPACE: rules about the class — its daily maximum, the
+      reservations on it, its rasts and its lunch, and every name a refusal
+      gives. `student_group_id`, and a lock's studentGroupId and
+      extraGroupIds, exactly as before.
+
+    7A's svenska with pupilGroupId X is X's here and 7A's there. A rule that
+    read its own lessons in one space and its partners' in the other would
+    put the svenska into one no-overlap twice, through 7A and through X — an
+    interval asked not to overlap itself, INFEASIBLE for every school with
+    SvA (_add_group_no_overlap's docstring has the self-pair version) — or,
+    the other way round, drop a constraint without a word. So every reader of
+    this key says so by calling it, and a grep for pupil_key_of is the list of
+    the pupil space's rules.
+
+    Absent pupilGroupId is today's key, so a payload without the field reads
+    every rule exactly as it did.
+    """
+    if requirement.pupil_group_id is not None:
+        return requirement.pupil_group_id
+    return requirement.student_group_id
+
+
+def pupil_keys_of(fixed: FixedLesson) -> list[UUID]:
+    """A locked lesson's keys in the PUPIL space: the groups whose pupils sit it.
+
+    Its pupilGroupIds when the gateway sent them, which then REPLACE the
+    groups the lock names; [studentGroupId, *extraGroupIds] otherwise, in
+    that order, which is the reading every pupil rule made before. See
+    pupil_key_of for the two spaces.
+    """
+    if fixed.pupil_group_ids is not None:
+        return list(fixed.pupil_group_ids)
+    return [fixed.student_group_id, *fixed.extra_group_ids]
+
+
+def _by_pupils(decisions: list[LessonDecision]) -> list[list[LessonDecision]]:
+    """The lessons split by pupil key, each part in the order given, parts by first seen.
+
+    For a class-space rule that must say something about each lesson without
+    saying anything about two of them together: every lesson filed under one
+    class is ONE part when no pupilGroupId splits it, so such a rule posts
+    exactly what it posted before.
+    """
+    parts: dict[UUID, list[LessonDecision]] = {}
+    for decision in decisions:
+        parts.setdefault(pupil_key_of(decision.lesson.requirement), []).append(decision)
+    return list(parts.values())
+
+
 def _grade_span_text(low: int | None, high: int | None) -> str:
     """A year span as a sentence shows it: "7", "4–6", or "" when unknown.
 
@@ -1213,11 +1274,20 @@ class SchedulerSolver:
         requirement's own years, see below — and only a locked lesson that
         blocks EVERY member is subtracted; one that blocks some leaves the
         others free, and subtracting it would refuse a week the model accepts.
+
+        THE MEMBERS ARE THE PUPIL SPACE'S (pupil_key_of, pupil_keys_of), the
+        keys the pairwise no-overlap and the locks' blocking are posted on,
+        which is what makes "pairwise share" mean "may never overlap". 7A's
+        svenska sat by "7A without SvA7" is X's: X and SvA7 are no pair, so
+        no clique holds both, and a week that fits only with SvA beside the
+        svenska is not refused for 7A's hours plus SvA7's. The class still
+        leads its clique (its group entry is the class); its lessons a
+        derived key holds join through that key, a pair of the class's.
         """
         sharing = _groups_sharing_students(request.group_conflicts)
         requirements_of: dict[UUID, list[AnonymousRequirement]] = defaultdict(list)
         for requirement in request.requirements:
-            requirements_of[requirement.student_group_id].append(requirement)
+            requirements_of[pupil_key_of(requirement)].append(requirement)
         slots_per_day = self._grid.slots_per_day
         fixed_windows = [
             (fixed, self._fixed_window(fixed))
@@ -1272,7 +1342,7 @@ class SchedulerSolver:
                 for fixed, window in fixed_windows:
                     if window is None:
                         continue
-                    blocked_groups = {fixed.student_group_id, *fixed.extra_group_ids}
+                    blocked_groups = set(pupil_keys_of(fixed))
                     blocks_all = all(
                         member in blocked_groups
                         or any(g in sharing.get(member, ()) for g in blocked_groups)
@@ -1612,6 +1682,10 @@ class SchedulerSolver:
         lunch_on = rules is not None and _lunch_window_is_set(rules)
         without_lunch = self._gap_resources(request, lunch=False) if lunch_on else {}
         minutes = self._grid.slot_minutes
+        # A group resource is a PUPIL-space key, and a derived one names no
+        # group a school has: the line names the class its lessons are filed
+        # under instead (_derived_key_classes; empty without pupilGroupId).
+        classes = _derived_key_classes(request)
         conflicts: list[ConflictDetail] = []
         said: set[frozenset[UUID]] = set()
         for (what, subject), gaps, members, room_ids, shortfall in found:
@@ -1624,12 +1698,13 @@ class SchedulerSolver:
                 continue
             said.add(frozenset(requirement_ids))
             if what == "group":
-                resource_ids = [subject]
+                named = classes.get(subject, subject)  # type: ignore[call-overload]
+                resource_ids = [named]
                 line = ConflictDetail(
                     category="REQUIREMENT_DEMAND",
                     code="DEMAND_GROUP_LESSONS_EXCEED_GAPS",
                     params={
-                        "group": str(subject),
+                        "group": str(named),
                         **self._gap_params(shortfall, len(requirement_ids)),
                     },
                     requirement_ids=requirement_ids,
@@ -1743,6 +1818,15 @@ class SchedulerSolver:
         class pools do (add_room_allocation). So the lessons that may use only
         rooms of one set, each set some lesson has and the whole school's, are
         counted against that many rooms at once.
+
+        A GROUP IS THE PUPIL SPACE'S KEY (pupil_key_of): its lessons are one
+        no-overlap in the model (_add_group_no_overlap), which is what lets
+        them be counted end to end. The class's lessons are not, any more:
+        two derived keys of one class that share no pupil may run at once.
+        Its meals are the class's (the CLASS space), so a key's gaps take them
+        only when every lesson it holds is filed under that class — every key
+        of a payload without pupilGroupId — and a derived key's take none,
+        which only lets more through.
         """
         meals: dict[tuple[UUID, int], list[tuple[int, int]]] = {}
         lunch_slots = 0
@@ -1770,7 +1854,7 @@ class SchedulerSolver:
         by_teacher: dict[UUID, list[tuple[AnonymousRequirement, list[_LessonKind]]]] = {}
         for requirement in request.requirements:
             member = (requirement, kinds_of[requirement.id])
-            by_group.setdefault(requirement.student_group_id, []).append(member)
+            by_group.setdefault(pupil_key_of(requirement), []).append(member)
             if requirement.lesson_teacher_ids is None:
                 for teacher_id in dict.fromkeys(_teachers_of(requirement)):
                     by_teacher.setdefault(teacher_id, []).append(member)
@@ -1793,8 +1877,14 @@ class SchedulerSolver:
             tuple[_Gaps, list[tuple[AnonymousRequirement, list[_LessonKind]]], list[UUID]],
         ] = {}
         for group_id, members in by_group.items():
+            # The class's meals on a key only the class's own lessons hold.
+            meals_here = (
+                meals_of.get(group_id, {})
+                if all(requirement.student_group_id == group_id for requirement, _ in members)
+                else {}
+            )
             resources[("group", group_id)] = (
-                _Gaps(counts(members), meals_of.get(group_id, {}), lunch_slots), members, [],
+                _Gaps(counts(members), meals_here, lunch_slots), members, [],
             )
         for teacher_id, members in by_teacher.items():
             resources[("teacher", teacher_id)] = (_Gaps(counts(members), {}, 0), members, [])
@@ -1858,6 +1948,17 @@ class SchedulerSolver:
           lunch - 1]. A meal whose starts have a hole in the middle is read by
           its ends, which again only leaves more.
 
+        EACH CUT IN THE SPACE ITS ROW IS POSTED IN, and they are two. The
+        locks' disjunctions are the PUPIL space's (_add_fixed_lesson_constraints:
+        the lock's pupil_keys_of against the lesson's pupil_key_of and the
+        groups sharing it), so a locked 7A svenska sat by "7A without SvA7"
+        cuts no start of SvA7's. The meals' no-overlaps are the CLASS space's
+        (_add_rules_constraints: a class's lunch beside the lessons filed
+        under it and under the groups sharing its pupils), so 7A's svenska is
+        cut by 7A's meal whoever sits it. One `pupils` tuple for both, as this
+        read before, would cut SvA by the locked svenska — a start the model
+        allows, and a gaps refusal of a week that has a timetable.
+
         Requirements whose lessons of one length end on the same starts share
         a kind; see _LessonKind.
         """
@@ -1866,12 +1967,13 @@ class SchedulerSolver:
         teacher_windows: dict[UUID, list[tuple[int, int]]] = defaultdict(list)
         for (teacher_id, _), windows in self._teacher_busy_from_locks(request.fixed_lessons).items():
             teacher_windows[teacher_id].extend(windows)
+        # The locks by the pupils they hold: the PUPIL space.
         group_windows: dict[UUID, list[tuple[int, int]]] = defaultdict(list)
         for fixed in request.fixed_lessons:
             window = self._fixed_window(fixed)
             if window is None:
                 continue
-            for group_id in {fixed.student_group_id, *fixed.extra_group_ids}:
+            for group_id in set(pupil_keys_of(fixed)):
                 group_windows[group_id].append(window)
         meal_spans: dict[UUID, list[tuple[int, int]]] = defaultdict(list)
         for (group_id, _), starts in meals.items():
@@ -1897,7 +1999,13 @@ class SchedulerSolver:
                     requirement, request.frame_times, request.rasts, lattice,
                 )
             domains = domains_of[shape]
-            pupils = (requirement.student_group_id, *sharing.get(requirement.student_group_id, ()))
+            # Whose locks cut the lesson (the PUPIL space) and whose meals do
+            # (the CLASS space): see the docstring. The same tuple twice for
+            # every requirement without a pupilGroupId.
+            sat_by = pupil_key_of(requirement)
+            pupils = (sat_by, *sharing.get(sat_by, ()))
+            filed = requirement.student_group_id
+            eaters = (filed, *sharing.get(filed, ()))
             # A kind is per length, not per lesson, so a teacher's locks cut
             # it only when they are on every lesson (_teachers_on_every_lesson):
             # Bo's locked Monday is no Monday shut to Anna's lessons of a split
@@ -1908,7 +2016,7 @@ class SchedulerSolver:
                 for window in teacher_windows.get(teacher_id, ())
             }
             windows.update(window for group_id in pupils for window in group_windows.get(group_id, ()))
-            spans = {span for group_id in pupils for span in meal_spans.get(group_id, ())}
+            spans = {span for group_id in eaters for span in meal_spans.get(group_id, ())}
             by_length: dict[int, _LessonKind] = {}
             for duration in sorted({grid.minutes_to_slots(m) for m in requirement.lesson_minutes()}):
                 cuts = [[start - duration + 1, end - 1] for start, end in windows]
@@ -2420,6 +2528,11 @@ class SchedulerSolver:
         for group, clique in self._cliques(request):
             window_texts[group.id] = clique.window_text
             measure = clique.measure
+            # THE CLASS SPACE, deliberately, though the clique is the pupils':
+            # this bound reads the school's daily maximum, which the model
+            # counts per class (7A's svenska is 7A's lesson there, whoever sits
+            # it). Every requirement of the clique is in exactly one class, so
+            # the sum over classes still bounds the clique's day.
             by_member: dict[UUID, list[AnonymousRequirement]] = defaultdict(list)
             for requirement in clique.requirements:
                 by_member[requirement.student_group_id].append(requirement)
@@ -2747,7 +2860,9 @@ class SchedulerSolver:
             request_id=request.request_id,
             status="INFEASIBLE",
             lessons=[],
-            conflicts=conflicts,
+            # The walk's pupils are keyed in the pupil space; a derived key
+            # leaves named by its class (_named_by_class).
+            conflicts=_named_by_class(request, conflicts),
         )
 
     # A phase below this gets no real search done — it is all presolve — so a
@@ -2876,7 +2991,9 @@ class SchedulerSolver:
             if site is None:
                 continue
             teachers = {tid for tid in (fixed.teacher_id, fixed.co_teacher_id) if tid}
-            groups = {fixed.student_group_id, *fixed.extra_group_ids}
+            # The families are the pupil space's (families_of), so the lock's
+            # pupils are read in it too.
+            groups = set(pupil_keys_of(fixed))
             for family in families:
                 ids = set(family.resource_ids)
                 if (family.party == "TEACHER" and ids & teachers) or (
@@ -3919,7 +4036,9 @@ class SchedulerSolver:
             )
             + 2 * total_lessons
             + len(lessons_by_teacher)
-            + len(lessons_by_group)
+            # A literal per pupils' family: one per PUPIL-space group
+            # (travel.families_of), which a derived key adds to the classes.
+            + len({pupil_key_of(requirement) for requirement in request.requirements})
             + len(request.group_conflicts)
             if travel is not None
             else 0
@@ -4632,11 +4751,16 @@ class SchedulerSolver:
         co-teacher: one body, two rooms, the same minute.
 
         NO PUPIL IN TWO MEMBERS (BLOCK_MEMBERS_SHARE_PUPILS): two members on
-        one group, or a pair the gateway's groupConflicts says share a pupil.
-        SvA beside class svenska is the case a school will meet first, and it
-        is refused until Ersättande grupper settles whether an SvA pupil leaves
-        class svenska; a block is not the place to decide that a pupil may be
-        in two rooms.
+        one group, or a pair the gateway's groupConflicts says share a pupil —
+        read in the PUPIL space (pupil_key_of), as the no-overlap that would
+        otherwise make the block impossible is posted. SvA beside class
+        svenska is the case a school meets first, and Ersättande grupper
+        settled it: an SvA pupil leaves class svenska. Once the gateway sends
+        7A's svenska with its pupilGroupId ("7A without SvA7", never paired
+        with SvA7), the two members share no pupil, the block is accepted and
+        their lessons start together. Sent without it, 7A's svenska is all of
+        7A's and 7A pairs SvA7, and the block is refused as before: a block is
+        still not the place to decide that a pupil may be in two rooms.
 
         A START IN COMMON (BLOCK_NO_COMMON_START). Each member's starts are
         its own domain — frames, rasts, margins, the week's step — and the
@@ -4667,10 +4791,10 @@ class SchedulerSolver:
                             "requirement": str(first.id),
                             "other": str(second.id),
                         })
+                    first_pupils, second_pupils = pupil_key_of(first), pupil_key_of(second)
                     if (
-                        first.student_group_id == second.student_group_id
-                        or frozenset((first.student_group_id, second.student_group_id))
-                        in conflicts
+                        first_pupils == second_pupils
+                        or frozenset((first_pupils, second_pupils)) in conflicts
                     ):
                         raise InvalidScheduleInputError.of("BLOCK_MEMBERS_SHARE_PUPILS", {
                             "block": str(block_id),
@@ -5378,7 +5502,17 @@ class SchedulerSolver:
         for group, clique in self._cliques(request):
             if group.min_grade_level is None or group.max_grade_level is None:
                 continue
+            # The rule is the CLASS's (_add_rast_ordering_constraints reads
+            # every lesson filed under the class and the groups sharing its
+            # pupils), the clique the pupils'. A day is closed only when no
+            # lesson the rule reads can sit in the stretch, so every one of
+            # them this can see is tried: those filed under a member (7A's
+            # svenska under 7A, whoever sits it) and the clique's own (a
+            # derived key's lessons filed under a class outside it). The same
+            # list, in the same order, for a payload without pupilGroupId.
             owned = [r for member in clique.members for r in by_group.get(member, [])]
+            seen = {r.id for r in owned}
+            owned += [r for r in clique.requirements if r.id not in seen]
             if not owned:
                 continue
 
@@ -5665,6 +5799,9 @@ class SchedulerSolver:
         grid = self._grid
         slots_per_day = grid.slots_per_day
         sharing = _groups_sharing_students(request.group_conflicts)
+        # The CLASS space (pupil_key_of has the two): a rast is the class's,
+        # and its lessons are the ones filed under it and under the groups
+        # sharing its pupils. A derived key among those partners files none.
         by_group: dict[UUID, list[LessonDecision]] = defaultdict(list)
         for decision in decisions:
             by_group[decision.lesson.requirement.student_group_id].append(decision)
@@ -6024,6 +6161,13 @@ class SchedulerSolver:
           weeks named such a group). The same count without the cap rules most
           of them out first, a solve the rest; a solve that cannot answer in
           the time left proves nothing, and the group is not named.
+
+        THE GROUP IS THE CLASS (student_group_id), because the maximum is the
+        class's: 7A's svenska counts toward 7A's day whoever sits it. "Never
+        overlap" is the PUPIL space's: the class's lessons are one no-overlap
+        per pupil key (_by_pupils), so a day's lessons are counted end to end
+        per key and summed — an upper bound either way, and the count it
+        always was for a class without a pupilGroupId.
         """
         by_group: dict[UUID, list[LessonDecision]] = defaultdict(list)
         for decision in decisions:
@@ -6037,26 +6181,30 @@ class SchedulerSolver:
         for group_id, group in by_group.items():
             if len(group) <= cap:
                 continue
-            durations: dict[int, list[int]] = defaultdict(list)
-            spans: dict[int, list[tuple[int, int]]] = defaultdict(list)
-            for decision in group:
-                reach = (
-                    _day_reach(decision.starts, decision.duration, slots_per_day)
-                    if decision.starts is not None
-                    else whole_day
-                )
-                for day_index, ranges in reach.items():
-                    durations[day_index].append(decision.duration)
-                    spans[day_index].extend(ranges)
+            fits_by_day: dict[int, int] = defaultdict(int)
+            for part in _by_pupils(group):
+                durations: dict[int, list[int]] = defaultdict(list)
+                spans: dict[int, list[tuple[int, int]]] = defaultdict(list)
+                for decision in part:
+                    reach = (
+                        _day_reach(decision.starts, decision.duration, slots_per_day)
+                        if decision.starts is not None
+                        else whole_day
+                    )
+                    for day_index, ranges in reach.items():
+                        durations[day_index].append(decision.duration)
+                        spans[day_index].extend(ranges)
+                for day_index, lengths in durations.items():
+                    time_there = _covered(spans[day_index])
+                    fits = 0
+                    for length in sorted(lengths):
+                        if time_there < length:
+                            break
+                        time_there -= length
+                        fits += 1
+                    fits_by_day[day_index] += fits
             capped = uncapped = 0
-            for day_index, lengths in durations.items():
-                time_there = _covered(spans[day_index])
-                fits = 0
-                for length in sorted(lengths):
-                    if time_there < length:
-                        break
-                    time_there -= length
-                    fits += 1
+            for fits in fits_by_day.values():
                 capped += min(cap, fits)
                 uncapped += fits
             if capped < len(group) <= uncapped and self._placeable_without_the_maximum(
@@ -6089,16 +6237,27 @@ class SchedulerSolver:
         so a group that fits here may still clash with them; what this rules
         out is a group no week could ever hold, which is the false accusation.
         True only for a placement found inside the time left.
+
+        The group is the class; its no-overlap and its locks are the PUPIL
+        space's, as the model posts them: one no-overlap per pupil key among
+        its lessons and one per pair of them groupConflicts names, and a lock
+        holding the pupils of some of its lessons (pupil_keys_of) in those
+        lessons' no-overlaps and in no other's — a locked SvA7 lesson keeps
+        7A's matte off it and not 7A's svenska that SvA replaces. For a class
+        without a pupilGroupId that is the one no-overlap it always was.
         """
         left = min(self.PLACEABLE_CAP_SECONDS, deadline - time.monotonic())
         if left <= 0:
             return False
         model = cp_model.CpModel()
-        group_id = group[0].lesson.requirement.student_group_id
-        sharing = {group_id}
-        for first_id, second_id in request.group_conflicts or []:
-            if group_id in (first_id, second_id):
-                sharing.update((first_id, second_id))
+        keys = [pupil_key_of(decision.lesson.requirement) for decision in group]
+        sharing_of: dict[UUID, set[UUID]] = {}
+        for key in dict.fromkeys(keys):
+            sharing = {key}
+            for first_id, second_id in request.group_conflicts or []:
+                if key in (first_id, second_id):
+                    sharing.update((first_id, second_id))
+            sharing_of[key] = sharing
         pupils: list[cp_model.IntervalVar] = []
         lessons: list[tuple[set[UUID], cp_model.IntervalVar]] = []
         for k, decision in enumerate(group):
@@ -6118,6 +6277,11 @@ class SchedulerSolver:
                     start, decision.duration + decision.changeover, f"lesson_{k}",
                 ),
             ))
+        # One no-overlap per pupil key, each its lessons' pupils' intervals
+        # and then the locks that hold those pupils.
+        parts: dict[UUID, list[cp_model.IntervalVar]] = {key: [] for key in sharing_of}
+        for key, interval in zip(keys, pupils):
+            parts[key].append(interval)
         for fixed in request.fixed_lessons:
             window = self._fixed_window(fixed)
             if window is None:
@@ -6125,14 +6289,34 @@ class SchedulerSolver:
             blocked = model.NewFixedSizeIntervalVar(
                 window[0], window[1] - window[0], f"locked_{fixed.id}",
             )
-            if {fixed.student_group_id, *fixed.extra_group_ids} & sharing:
-                pupils.append(blocked)
+            held = set(pupil_keys_of(fixed))
+            reached = {key for key, sharing in sharing_of.items() if held & sharing}
+            for key in parts:
+                if key in reached:
+                    parts[key].append(blocked)
+            if len(reached) == len(parts):
                 continue
             teachers = {tid for tid in (fixed.teacher_id, fixed.co_teacher_id) if tid}
-            for own, interval in lessons:
-                if own & teachers:
+            for key, (own, interval) in zip(keys, lessons):
+                if key not in reached and own & teachers:
                     model.AddNoOverlap([interval, blocked])
-        model.AddNoOverlap(pupils)
+        for part in parts.values():
+            model.AddNoOverlap(part)
+        # And each pair of the class's keys the model holds apart.
+        joined: set[frozenset[UUID]] = set()
+        for first_id, second_id in request.group_conflicts or []:
+            pair = frozenset((first_id, second_id))
+            if (
+                first_id == second_id
+                or pair in joined
+                or not all(key in parts for key in pair)
+            ):
+                continue
+            joined.add(pair)
+            model.AddNoOverlap([
+                interval for key, interval in zip(keys, pupils)
+                if key in pair
+            ])
         solver = cp_model.CpSolver()
         solver.parameters.num_workers = 1
         solver.parameters.max_time_in_seconds = left
@@ -6745,9 +6929,10 @@ class SchedulerSolver:
         if party == "TEACHER":
             model.AddNoOverlap([padded_of(model, lesson) for lesson in lessons])
         else:
+            # The PUPIL space, as _add_group_no_overlap and families_of key it.
             by_group: dict[UUID, list[LessonDecision]] = defaultdict(list)
             for lesson in lessons:
-                by_group[lesson.lesson.requirement.student_group_id].append(lesson)
+                by_group[pupil_key_of(lesson.lesson.requirement)].append(lesson)
             for members_of_group in by_group.values():
                 model.AddNoOverlap([pupil_padded_of(model, lesson) for lesson in members_of_group])
             for first_id, second_id in request.group_conflicts or []:
@@ -7792,10 +7977,20 @@ class SchedulerSolver:
         class changing for idrotten is as unavailable as a class being taught,
         and the pupils Ma71 shares with 7A are the ones in the changing room.
         The teacher's family next door reads padded_of instead — see there.
+
+        BOTH LAYERS ARE KEYED IN THE PUPIL SPACE (pupil_key_of), own lessons
+        and partners alike. 7A's svenska sat by "7A without SvA7" (X) is X's
+        lesson here: X's own layer holds it, the pair (X, 7A) keeps it off
+        7A's matte, and no pair (X, SvA7) exists, so SvA7 may run beside it
+        and beside nothing else of 7A's. Keyed by the class on one side and
+        by the pupils on the other, the svenska would sit in the pair (X, 7A)
+        twice — the self-pair failure above. Nothing new hangs on a literal:
+        a derived key only moves lessons between no-overlaps that were
+        always posted bare.
         """
         grouped: dict[UUID, list[LessonDecision]] = {}
         for decision in decisions:
-            group_id = decision.lesson.requirement.student_group_id
+            group_id = pupil_key_of(decision.lesson.requirement)
             grouped.setdefault(group_id, []).append(decision)
 
         for group_decisions in grouped.values():
@@ -7993,6 +8188,8 @@ class SchedulerSolver:
             return affected
 
         if constraint.resource_kind == "STUDENT_GROUP":
+            # The CLASS space: a reservation on 7A keeps out every lesson
+            # filed under 7A, its svenska too whoever sits it (pupil_key_of).
             for decision in decisions:
                 if decision.lesson.requirement.student_group_id == constraint.resource_id:
                     affected.append((decision, None))
@@ -8070,6 +8267,13 @@ class SchedulerSolver:
         before/after literals (travel.TravelRows.fixed_rows), so it costs no
         boolean either; two locked lessons are never held apart, as nothing
         here ever compares two of them.
+
+        "SHARES ITS GROUP" IS THE PUPIL SPACE, on both sides: the lock's
+        pupil_keys_of against the lesson's pupil_key_of and the groups sharing
+        it. A locked 7A svenska sat by "7A without SvA7" keeps 7A's matte out
+        (the pair (X, 7A)) and lets SvA7 in; a locked 7A matte keeps SvA7 out
+        (the pair (7A, SvA7)). These disjunctions are posted bare as they
+        always were; a derived key only changes which lessons meet which lock.
         """
         room_index_by_id = {room.id: idx for idx, room in enumerate(rooms)}
 
@@ -8110,8 +8314,8 @@ class SchedulerSolver:
                 # his lesson of a split post and of none of Anna's.
                 own_teachers = set(_lesson_teachers(decision.lesson))
                 shares_teacher = bool(fixed_teachers & own_teachers)
-                fixed_groups = {fixed.student_group_id, *fixed.extra_group_ids}
-                own_group = requirement.student_group_id
+                fixed_groups = set(pupil_keys_of(fixed))
+                own_group = pupil_key_of(requirement)
                 shares_group = own_group in fixed_groups or any(
                     fixed_group in conflicts_with.get(own_group, ())
                     for fixed_group in fixed_groups
@@ -9276,6 +9480,8 @@ class SchedulerSolver:
                 # inadmissible to begin with.
                 continue
 
+            # The CLASS space, as the meal is the class's: a locked 7A svenska
+            # takes 7A's window whoever sits it, and pupilGroupIds is not read.
             reached: list[UUID] = []
             for named_id in (fixed.student_group_id, *fixed.extra_group_ids):
                 for group_id in (named_id, *shares_students.get(named_id, ())):
@@ -9324,6 +9530,9 @@ class SchedulerSolver:
         if rules is None:
             return lunch_starts
 
+        # THE CLASS SPACE (pupil_key_of has the two): the maximum and the
+        # lunch are rules about the class, so 7A's svenska is 7A's lesson here
+        # whoever sits it, and a derived pupil key has no lessons at all.
         by_group: dict[UUID, list[LessonDecision]] = {}
         for decision in decisions:
             by_group.setdefault(
@@ -9730,10 +9939,25 @@ class SchedulerSolver:
                     # they are showering is a meal the model records and nobody
                     # eats. Twenty minutes of shower is worth more of a lunch
                     # break than a corridor ever was.
-                    model.AddNoOverlap(
-                        [pupil_padded_of(model, decision) for decision in lessons]
-                        + lunch_intervals,
-                    )
+                    #
+                    # THE CLASS SPACE FOR WHO EATS, THE PUPIL SPACE FOR NOTHING
+                    # ELSE. The meal is the class's, so it avoids every lesson
+                    # filed under the class, its svenska too whoever sits it.
+                    # But one no-overlap over all of them would also hold them
+                    # apart from EACH OTHER, a lesson-against-lesson row the
+                    # pupils' own relation may not have: two derived keys of
+                    # one class sharing no pupil may run at once. So one
+                    # no-overlap per pupil key among them (_by_pupils), which
+                    # is one, the one it always was, for every class without a
+                    # pupilGroupId — and the bare lunch row for a class with no
+                    # lessons, as before. Bare no-overlaps of the kind always
+                    # posted here, so no literal is owed: a derived key only
+                    # takes rows away from the one this was.
+                    for part in _by_pupils(lessons) or [lessons]:
+                        model.AddNoOverlap(
+                            [pupil_padded_of(model, decision) for decision in part]
+                            + lunch_intervals,
+                        )
                     # The break also has to be free of the lessons this group's
                     # own children sit in elsewhere. 7A cannot be eating while
                     # Ma71 is taught: those are the same thirty pupils, and the
@@ -9751,15 +9975,17 @@ class SchedulerSolver:
                     # _add_group_no_overlap, and so is every lesson pair across
                     # a sharing pair. The one new fact is lunch-against-lesson,
                     # so do not "simplify" this by folding it into the pair
-                    # NoOverlap over there — that one carries no lunch.
+                    # NoOverlap over there — that one carries no lunch. Split
+                    # by pupil key for the reason just above.
                     for other_id in sharing:
-                        model.AddNoOverlap(
-                            [
-                                pupil_padded_of(model, decision)
-                                for decision in by_group[other_id]
-                            ]
-                            + lunch_intervals,
-                        )
+                        for part in _by_pupils(by_group[other_id]):
+                            model.AddNoOverlap(
+                                [
+                                    pupil_padded_of(model, decision)
+                                    for decision in part
+                                ]
+                                + lunch_intervals,
+                            )
 
             if sittings:
                 # One cumulative for the whole week, not one per day. Every
@@ -11678,6 +11904,10 @@ def _fixed_relations(
     The teachers ON THE LESSON (_lesson_teachers), as that test reads them: a
     lock of Bertil's holds his lesson of a split post a walk away and none of
     Anna's, which the row's union of leads would hold too.
+
+    The pupils in the PUPIL space (pupil_key_of, pupil_keys_of), as that test
+    and travel.families_of read them, so the key a lock's walk hangs on is a
+    family the week has.
     """
     requirement = lesson.requirement
     relations: list[tuple[Party, tuple[UUID, ...]]] = []
@@ -11685,8 +11915,8 @@ def _fixed_relations(
     for teacher_id in dict.fromkeys(_lesson_teachers(lesson)):
         if teacher_id in fixed_teachers:
             relations.append(("TEACHER", (teacher_id,)))
-    own = requirement.student_group_id
-    fixed_groups = [fixed.student_group_id, *fixed.extra_group_ids]
+    own = pupil_key_of(requirement)
+    fixed_groups = pupil_keys_of(fixed)
     if own in fixed_groups or any(
         fixed_group in conflicts_with.get(own, ()) for fixed_group in fixed_groups
     ):
@@ -12064,6 +12294,75 @@ def _groups_sharing_students(
             if other_id not in partners:
                 partners.append(other_id)
     return shares_students
+
+
+def _derived_key_classes(request: OptimizeScheduleRequest) -> dict[UUID, UUID]:
+    """Each DERIVED pupil key, and the class whose lessons it sits.
+
+    A derived key ("7A without SvA7") is a pupil key that no class key is: no
+    requirement is filed under it, no lock names it and no group entry is it.
+    Its class is the one the first requirement it sits is filed under, else
+    the first lock carrying it names. A pupilGroupId that IS a group — a
+    real teaching group named as a lesson's pupils — is no derived key and is
+    named as itself.
+
+    Empty for every payload without pupilGroupId or pupilGroupIds, which is
+    what keeps every refusal of those payloads the bytes it was.
+    """
+    if not any(r.pupil_group_id is not None for r in request.requirements) and not any(
+        f.pupil_group_ids is not None for f in request.fixed_lessons
+    ):
+        return {}
+    classes = {r.student_group_id for r in request.requirements}
+    classes.update(
+        group_id
+        for fixed in request.fixed_lessons
+        for group_id in (fixed.student_group_id, *fixed.extra_group_ids)
+    )
+    classes.update(group.id for group in request.groups)
+    derived: dict[UUID, UUID] = {}
+    for requirement in request.requirements:
+        key = pupil_key_of(requirement)
+        if key not in classes:
+            derived.setdefault(key, requirement.student_group_id)
+    for fixed in request.fixed_lessons:
+        for key in fixed.pupil_group_ids or ():
+            if key not in classes:
+                derived.setdefault(key, fixed.student_group_id)
+    return derived
+
+
+def _named_by_class(
+    request: OptimizeScheduleRequest, conflicts: ConflictAnalysis | None,
+) -> ConflictAnalysis | None:
+    """A refusal with every derived pupil key named by its class instead.
+
+    THE DERIVED KEY IS INPUT ONLY. The gateway coins "7A without SvA7" for
+    groupConflicts and pupilGroupId and keeps no name for it, so a refusal
+    that said it would name nobody. The rules of the pupil space key what
+    they register by it — the walk's PUPILS families above all, whose lines
+    the measured verdict also builds from the family keys — so the names are
+    turned back here, once, where the refusal leaves _explain_infeasible:
+    "the pupils of 7A's svenska" are 7A's. A line naming (X, 7A) then names
+    7A once.
+
+    The same object back when nothing is derived, so a payload without the
+    fields is answered with exactly the refusal it always got.
+    """
+    if conflicts is None:
+        return None
+    classes = _derived_key_classes(request)
+    if not classes:
+        return conflicts
+    details = []
+    for detail in conflicts.conflicts:
+        named = list(dict.fromkeys(classes.get(rid, rid) for rid in detail.resource_ids))
+        details.append(
+            detail
+            if named == list(detail.resource_ids)
+            else detail.model_copy(update={"resource_ids": named}),
+        )
+    return conflicts.model_copy(update={"conflicts": details})
 
 
 def _grade_span_overlaps(

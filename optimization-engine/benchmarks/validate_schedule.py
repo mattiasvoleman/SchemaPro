@@ -16,7 +16,13 @@ Checks, all derived from the request:
 
     within-day        a lesson may not run past the end of its own day
     teacher overlap   one teacher, one place at a time
-    group overlap     one student group, one place at a time
+    group overlap     one student group, one place at a time, and two groups
+                      sharing a pupil (groupConflicts) never at once — the
+                      group of a lesson being the pupils who sit it: its
+                      pupilGroupId (a lock's pupilGroupIds) when it carries
+                      one (Ersättande grupper: 7A's svenska sat by 7A without
+                      SvA7, whom SvA may run beside), else its own group;
+                      the lunch and the cap per day stay the class's
     room overlap      one room, one lesson at a time
     room eligibility  capacity >= group size, and required type matches
     availability      no lesson inside a recurring UNAVAILABLE window — every
@@ -80,6 +86,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 os.environ.setdefault("API_KEY", "validate-key-0000000000000000000000")
 os.environ.setdefault("ALLOWED_ORIGINS", "http://localhost")
+
+
+def _pupils_of(requirement):
+    """Who sits the requirement's lessons: its pupilGroupId, else its group.
+
+    Ersättande grupper, re-read from the request: the pupils' checks (overlap,
+    the pairs, the walk) key a lesson by who sits it, the class's checks
+    (lunch, the cap per day, a reservation) by the group it is filed under.
+    """
+    return getattr(requirement, "pupil_group_id", None) or requirement.student_group_id
+
+
+def _lock_pupils(fixed) -> set:
+    """Who sits a locked lesson: its pupilGroupIds, else the groups it names."""
+    pupils = getattr(fixed, "pupil_group_ids", None)
+    if pupils is not None:
+        return set(pupils)
+    return {fixed.student_group_id, *fixed.extra_group_ids}
 
 
 def _lesson_slots(grid, requirement, lesson):
@@ -468,7 +492,8 @@ def _travel_problems(request, lessons) -> list[str]:
 
     WHO WALKS: a teacher between their lessons (lead or co-teacher); the
     pupils between two lessons of one group, and between a lesson of a group
-    and one of a group sharing a pupil with it (groupConflicts). For pupils
+    and one of a group sharing a pupil with it (groupConflicts), a lesson's
+    group being the pupils who sit it (_pupils_of, _lock_pupils). For pupils
     the walk comes after the earlier lesson's minutesAfter and before the
     later one's minutesBefore — a class showers, changes, then walks. A
     locked lesson is in the day at its own clock times and room, and two
@@ -504,14 +529,14 @@ def _travel_problems(request, lessons) -> list[str]:
         entries.append((
             lesson.day_of_week, _clock(lesson.start_time), _clock(lesson.end_time),
             site_of.get(lesson.room_id), _lesson_teachers(requirement, lesson),
-            {requirement.student_group_id}, requirement.minutes_before,
+            {_pupils_of(requirement)}, requirement.minutes_before,
             requirement.minutes_after, False, f"lesson {lesson.requirement_id}",
         ))
     for fixed in request.fixed_lessons:
         entries.append((
             fixed.day_of_week, _clock(fixed.start_time), _clock(fixed.end_time),
             site_of.get(fixed.room_id), {fixed.teacher_id, fixed.co_teacher_id} - {None},
-            {fixed.student_group_id, *fixed.extra_group_ids}, 0, 0, True,
+            _lock_pupils(fixed), 0, 0, True,
             f"locked lesson {fixed.id}",
         ))
 
@@ -589,7 +614,7 @@ def validate(grid, request, lessons) -> list[str]:
 
         for kind, resource in (
             ("teacher", _lesson_lead(requirement, lesson)),
-            ("student group", requirement.student_group_id),
+            ("student group", _pupils_of(requirement)),
             ("room", lesson.room_id),
         ):
             if resource is None:
@@ -658,7 +683,7 @@ def validate(grid, request, lessons) -> list[str]:
                 grid, lesson.day_of_week, lesson.start_time, duration)
         except ValueError:
             continue
-        lessons_by_group[requirement.student_group_id].append(
+        lessons_by_group[_pupils_of(requirement)].append(
             (day_idx * grid.slots_per_day + start_slot,
              day_idx * grid.slots_per_day + start_slot + duration))
     for first_id, second_id in getattr(request, "group_conflicts", []) or []:
