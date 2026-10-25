@@ -126,14 +126,19 @@ export default function TeacherSchedulePage() {
         onLessonClick={(lesson) => {
           if (!isPassEntry(lesson)) router.push(`/teacher/lektion/${lesson.id}`);
         }}
-        printSheet={() =>
-          sheetFromGrid({
-            kind: "TEACHER",
-            title: `${profile.firstName} ${profile.lastName}`,
-            school: school?.name ?? "",
-            weekStart,
-            lessons: weekEntries,
-          })
+        // Not while the passes load or could not be read: a printed week
+        // without its rastvakt would say less than the page and not say so.
+        printSheet={
+          passesQuery.isLoading || passesQuery.isError
+            ? undefined
+            : () =>
+                sheetFromGrid({
+                  kind: "TEACHER",
+                  title: `${profile.firstName} ${profile.lastName}`,
+                  school: school?.name ?? "",
+                  weekStart,
+                  lessons: weekEntries,
+                })
         }
       />
     </Page>

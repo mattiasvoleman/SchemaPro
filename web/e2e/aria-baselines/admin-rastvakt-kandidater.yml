@@ -14,7 +14,7 @@
     - option "Välj…" [selected]
     - option "David Berg"
     - option "Eva Holm"
-  - paragraph: Utanför förslagen får du en varning om personen förlorar lunch eller dygnsvila, går över sina arbetsdagar, har ett uppdrag eller en lokalbokning då, eller inte har sagt att hen kan. Den som har en lektion eller ett annat rastvaktspass då, eller själv är frånvarande, kan aldrig tillsättas och finns inte i listan.
+  - paragraph: Utanför förslagen får du en varning om personen förlorar lunch eller dygnsvila, går över sina arbetsdagar, har ett uppdrag eller en lokalbokning då, inte är tillgänglig då eller inte har sagt att hen kan. Den som har en lektion eller ett annat rastvaktspass då, eller själv är frånvarande, kan aldrig tillsättas och finns inte i listan.
   - button "Avbryt"
   - button "Tillsätt" [disabled]
   - button "Stäng"

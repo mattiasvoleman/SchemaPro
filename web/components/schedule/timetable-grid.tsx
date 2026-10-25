@@ -68,6 +68,13 @@ export interface TimetableLesson {
    * makes, which the axis is too coarse to show either.
    */
   pupilTimeNote?: string;
+  /**
+   * A duty beside the lessons — a rastvaktspass in a teacher's own week
+   * (Rastvakt i vardagen): drawn as a block that opens nothing (no button,
+   * no pointer), and left out of the length the grid is measured for, so a
+   * fifteen-minute pass does not double the height of a week of lessons.
+   */
+  duty?: boolean;
 }
 
 export interface LessonChange {
@@ -362,6 +369,7 @@ function TimetableGridInner({
   const pxPerMinute = useMemo(() => {
     const counts = new Map<number, number>();
     for (const lesson of lessons) {
+      if (lesson.duty) continue;
       const minutes = lesson.endMinutes - lesson.startMinutes;
       if (minutes > 0) counts.set(minutes, (counts.get(minutes) ?? 0) + 1);
     }
@@ -1013,17 +1021,18 @@ function TimetableGridInner({
                   // foreground at 80 % keeps the step below the title and
                   // clears AA on any tint. A cancelled lesson has no tint.
                   const factInk = lesson.cancelled ? "text-muted-foreground" : "text-foreground/80";
+                  // A duty opens nothing: a block, not a button (see `duty`).
+                  const Block = lesson.duty ? "div" : "button";
+                  const opens = !editable && !lesson.duty && onLessonClick;
                   return (
-                    <button
+                    <Block
                       key={lesson.id}
-                      type="button"
+                      {...(lesson.duty ? {} : { type: "button" as const })}
                       data-lesson-id={lesson.id}
                       onClick={
                         // In editable mode clicks are resolved on pointerup
                         // (drag vs click); otherwise plain click-to-open.
-                        !editable && onLessonClick
-                          ? () => onLessonClick(source)
-                          : undefined
+                        opens ? () => onLessonClick(source) : undefined
                       }
                       onPointerDown={
                         editable ? (event) => startDrag(event, source) : undefined
@@ -1060,7 +1069,7 @@ function TimetableGridInner({
                         .join(" · ")}
                       className={cn(
                         "absolute overflow-hidden rounded-md border-l-4 p-1.5 text-left text-xs shadow-sm transition-shadow",
-                        onLessonClick || editable
+                        (onLessonClick || editable) && !lesson.duty
                           ? "cursor-pointer hover:shadow-md"
                           : "cursor-default",
                         editable && "touch-none",
@@ -1188,7 +1197,7 @@ function TimetableGridInner({
                       {editable ? (
                         <div className="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize" />
                       ) : null}
-                    </button>
+                    </Block>
                   );
                 })}
 

@@ -102,7 +102,19 @@ describe('the board’s passes', () => {
       input({ absences: [shortened], covers: [cover({ absenceEndsAt: shortened.endsAt })] }),
     );
     expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({ shiftId: MON, date: '2026-10-19', status: 'COVERED', outsideAbsence: true });
+    expect(items[0]).toMatchObject({ shiftId: MON, date: '2026-10-19', status: 'COVERED', outsideAbsence: true, runs: true });
+  });
+
+  it('says a decision is left on a day its pass no longer runs: a lov added since, or its teacher deactivated', () => {
+    const lov = new Map([[YEAR, [{ startDate: '2026-10-19', endDate: '2026-10-19' }]]]);
+    const items = passBoardItems(input({ closures: lov, covers: [cover()] }));
+    expect(items.map((item) => [item.date, item.status, item.runs])).toEqual([
+      ['2026-10-19', 'COVERED', false],
+      ['2026-10-20', 'OPEN', true],
+    ]);
+    const gone = input({ covers: [cover()] });
+    gone.shifts = gone.shifts.map((shift) => ({ ...shift, inactiveFrom: '2026-10-19' }));
+    expect(passBoardItems(gone).map((item) => [item.date, item.runs])).toEqual([['2026-10-19', false]]);
   });
 
   it('reads each absence’s own days when there is no window (the register’s counts)', () => {

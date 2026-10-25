@@ -244,6 +244,8 @@ function passesOf(absences: readonly StoredAbsence[], days: () => { from: string
           decisionStale: false,
           passed: at(span.endsAt) <= now,
           outsideAbsence: false,
+          // Every stub pass runs on its dates; no lov falls in the stub's weeks.
+          runs: true,
         });
       }
     }
@@ -266,7 +268,12 @@ function passSummaryOf(items: readonly PassBoardItem[]): PassSummary {
 /** The dates looked at for an absence's own passes: every fixture absence lies inside them, and the overlap does the rest. */
 const ownDays = () => ({ from: addDays(THIS_MONDAY, -60), to: addDays(THIS_MONDAY, 60) });
 
-/** supervision-cover.service.ts candidates: Cecilia free and on the hall's other days; Eva in the pool. */
+/**
+ * supervision-cover.service.ts candidates, STATED rather than derived: the
+ * same answer for any pass and date (Cecilia, who watches the hall on its
+ * other days), enough for the dialog's accessibility tree. The board's pairs
+ * and the week above are derived; this is not.
+ */
 function passCandidatesFor(shiftId: string, date: string): PassCandidates {
   return {
     shiftId,
@@ -284,7 +291,7 @@ function passCandidatesFor(shiftId: string, date: string): PassCandidates {
       },
     ],
     excluded: [
-      { userId: TEACHERS.bo.id, codes: [{ code: "ON_LESSON", params: {} }, { code: "ABSENT", params: {} }] },
+      { userId: TEACHERS.bo.id, codes: [{ code: "ABSENT", params: {} }] },
       { userId: TEACHERS.anna.id, codes: [{ code: "BUSY_LESSON", params: {} }] },
     ],
   };

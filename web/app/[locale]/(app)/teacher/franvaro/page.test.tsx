@@ -226,7 +226,7 @@ describe("/teacher/franvaro", () => {
     await user.click(within(dialog).getByRole("button", { name: "Avsluta" }));
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(
-        "Skolledningen har redan ordnat vikarie eller något annat för lektioner efter tidpunkten. Be dem avsluta frånvaron.",
+        "Skolledningen har redan ordnat vikarie eller något annat för lektioner eller rastvaktspass efter tidpunkten. Be dem avsluta frånvaron.",
       ),
     );
     expect(screen.queryByText("Ångra besluten efter den nya sluttiden?")).not.toBeInTheDocument();

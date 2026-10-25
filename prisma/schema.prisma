@@ -3283,6 +3283,7 @@ model SupervisionCover {
   @@index([substituteId, date])
   @@index([absenceId, absentTeacherId, schoolId])
   @@index([areaId, schoolId])
+  @@index([decidedByUserId, schoolId])
   @@map("SupervisionCovers")
 }
 

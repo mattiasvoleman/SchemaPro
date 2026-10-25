@@ -31,7 +31,8 @@
  *         TEACHER) and the absent teacher's both say so, the pass does not
  *         move under it, the vikarie is told with the new notice types, the
  *         cover rules hold the pass in the vikarie's day (the relation
- *         filter), and an undo tells them it is off.
+ *         filter), removing the absent teacher is refused while the
+ *         booking stands, and an undo tells them it is off.
  *
  * And in rv-a, the dates a pass is stored with are on its weekday: a typed
  * Friday Till is the Wednesday before, a Tuesday Från the Wednesday after.
@@ -251,7 +252,7 @@ export async function rastvaktChecks(owner: Client, api: PrismaService, marker: 
       assert.deepEqual([ended.validTo, ended.inactiveFrom], ['2031-01-14', today]);
     });
 
-    await check('(rv-e) an absent rastvakt’s pass reaches the board and its candidates, a vikarie is booked and read back, both weeks say so, the pass stays put, the vikarie is told, the cover rules hold it, and an undo tells them it is off', async () => {
+    await check('(rv-e) an absent rastvakt’s pass reaches the board and its candidates, a vikarie is booked and read back, both weeks say so, the pass stays put, the vikarie is told, the cover rules hold it, removing the absent teacher is refused, and an undo tells them it is off', async () => {
       const cilla = await person('TEACHER', 'cilla');
       const asCilla: AuthenticatedUser = { authId: cilla.authId, role: Role.TEACHER, userId: cilla.id, schoolId: s, channel: 'APP' };
       // Anna is away all of Monday 2 September 2030; her pass on the yard runs 10:00–10:20 (08:00 UTC).
@@ -280,7 +281,7 @@ export async function rastvaktChecks(owner: Client, api: PrismaService, marker: 
       assert.deepEqual(candidates.candidates.map((row) => row.userId), [cilla.id]);
       assert.deepEqual(
         candidates.excluded.find((row) => row.userId === anna.id)?.codes.map((code) => code.code),
-        ['ON_LESSON', 'ABSENT'],
+        ['ABSENT'],
       );
 
       await passes.decide(shiftId, '2030-09-02', { absenceId: absence, kind: 'SUBSTITUTE', substituteId: cilla.id, expected: 'OPEN' }, asAdmin);
@@ -323,6 +324,13 @@ export async function rastvaktChecks(owner: Client, api: PrismaService, marker: 
       assert.deepEqual(
         day.days.get(cilla.id)!.supervision!.map((pass) => [new Date(pass.start).toISOString(), new Date(pass.end).toISOString()]),
         [['2030-09-02T08:00:00.000Z', '2030-09-02T08:20:00.000Z']],
+      );
+
+      // Removing Anna would cascade her pass and the booking with nobody told:
+      // refused, the booking read through the adapter under the teacher lock.
+      await assert.rejects(
+        new UsersService(api, {} as SupabaseAdminService).remove(anna.id, asAdmin),
+        (error: unknown) => codeOf(error) === 'USER_HAS_BOOKED_PASS_COVERS',
       );
 
       await passes.undo(shiftId, '2030-09-02', asAdmin);

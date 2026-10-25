@@ -437,7 +437,7 @@ describe("NotificationBell inbox", () => {
     const user = userEvent.setup();
     const startsAt = "2026-10-14T08:00:00.000Z";
     const endsAt = "2026-10-14T08:20:00.000Z";
-    const when = new Date(startsAt).toLocaleString();
+    const when = new Date(startsAt).toLocaleString([], { dateStyle: "short", timeStyle: "short" });
     const end = new Date(endsAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     supabaseState.selectResults.push(
       ok([

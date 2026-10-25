@@ -63,7 +63,7 @@
           - 'button "Ångra Bo Ek: 13:00–14:00 · Matematik · 7A"': Ångra
   - region "Rastvakt":
     - heading "Rastvakt" [level=2]
-    - text: 1 behöver rastvakt · 0 med vikarie · 0 utan ersättare · 1 passerade utan beslut
+    - text: 1 behöver rastvakt · 0 med vikarie · 0 utan ersättare · 1 passerat utan beslut
     - table "Rastvaktspass där läraren är frånvarande":
       - caption: Rastvaktspass där läraren är frånvarande
       - rowgroup:

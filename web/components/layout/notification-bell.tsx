@@ -154,10 +154,11 @@ export function NotificationBell() {
       case "SUPERVISION_COVER_WITHDRAWN": {
         // A rastvaktspass the reader takes as vikarie (Rastvakt i vardagen):
         // the place and the time, never whose pass it is or why.
+        const clock = { hour: "2-digit", minute: "2-digit" } as const;
         const pass = {
           area: str("areaName"),
-          when: new Date(str("startsAt")).toLocaleString(),
-          end: new Date(str("endsAt")).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          when: new Date(str("startsAt")).toLocaleString([], { dateStyle: "short", timeStyle: "short" }),
+          end: new Date(str("endsAt")).toLocaleTimeString([], clock),
         };
         return t(entry.type === "SUPERVISION_COVER" ? "supervisionCover" : "supervisionCoverWithdrawn", pass);
       }

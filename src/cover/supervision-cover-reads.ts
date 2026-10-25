@@ -189,7 +189,11 @@ export async function readPassCalendar(
   };
 }
 
-/** Of these vikarier, whether each is away or gone over a span: inactive, or an ACTIVE absence sharing a minute. */
+/**
+ * Of these vikarier, whether each is away or gone over a span: inactive, no
+ * longer a teacher (a role changed since the booking), or an ACTIVE absence
+ * sharing a minute.
+ */
 async function readVikarieState(
   tx: PrismaClient,
   covers: readonly { substituteId: string | null; startsAt: Date; endsAt: Date }[],
@@ -198,14 +202,14 @@ async function readVikarieState(
   if (ids.length === 0) return () => false;
   const from = new Date(Math.min(...covers.map((cover) => cover.startsAt.getTime())));
   const to = new Date(Math.max(...covers.map((cover) => cover.endsAt.getTime())));
-  const people = (await tx.user.findMany({ where: { id: { in: ids } }, select: { id: true, isActive: true } })) ?? [];
+  const people = (await tx.user.findMany({ where: { id: { in: ids } }, select: { id: true, isActive: true, role: true } })) ?? [];
   const absences =
     (await tx.teacherAbsence.findMany({
       where: { userId: { in: ids }, status: 'ACTIVE', startsAt: { lt: to }, endsAt: { gt: from } },
       // The period only; never the reason.
       select: { userId: true, startsAt: true, endsAt: true },
     })) ?? [];
-  const active = new Set(people.filter((person) => person.isActive).map((person) => person.id));
+  const active = new Set(people.filter((person) => person.isActive && person.role === 'TEACHER').map((person) => person.id));
   return (substituteId, span) =>
     !active.has(substituteId) || absences.some((absence) => absence.userId === substituteId && spansMeet(span, absence));
 }

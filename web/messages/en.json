@@ -4936,7 +4936,7 @@
     "undoTitle": "Undo the decisions after the new end?",
     "undoBody": "{count, plural, one {# lesson or break duty after that moment already has} other {# lessons and break duties after that moment already have}} a substitute or another decision. Undo {count, plural, one {it} other {them}} and end?",
     "undoConfirm": "Undo and end",
-    "teacherHasDecisions": "The school leadership has already arranged cover or something else for lessons after that moment. Ask them to end the absence."
+    "teacherHasDecisions": "The school leadership has already arranged cover or something else for lessons or break duties after that moment. Ask them to end the absence."
   },
   "absenceWithdraw": {
     "title": "Withdraw the absence?",
@@ -4946,7 +4946,7 @@
     "undoTitle": "Undo the decisions and withdraw?",
     "undoBody": "{count, plural, one {# lesson or break duty already has} other {# lessons and break duties already have}} a substitute or another decision. Undo {count, plural, one {it} other {them}} and withdraw the absence?",
     "undoConfirm": "Undo and withdraw",
-    "teacherHasDecisions": "The school leadership has already arranged cover or something else for your lessons. Ask them to withdraw the absence."
+    "teacherHasDecisions": "The school leadership has already arranged cover or something else for your lessons or break duties. Ask them to withdraw the absence."
   },
   "coverStatus": {
     "OPEN": "Needs cover",
@@ -5043,7 +5043,7 @@
     "loadTarget": "{minutes} of {target} min this week",
     "excludedTitle": "Cannot ({count})",
     "other": "Other teacher",
-    "otherHint": "Outside the suggestions: you get a warning if the person you choose is not qualified, loses lunch or daily rest, goes over their daily cap or their working days, has a duty or a room booking then, or has not said they can come. Someone with a lesson of their own then, or who is absent themself, can never be assigned and is not listed.",
+    "otherHint": "Outside the suggestions: you get a warning if the person you choose is not qualified, loses lunch or daily rest, goes over their daily cap or their working days, has a duty, a break duty or a room booking then, or has not said they can come. Someone with a lesson of their own then, or who is absent themself, can never be assigned and is not listed.",
     "assign": "Assign",
     "loadFailed": "The suggestions could not be loaded",
     "loadFailedHint": "No substitute has been assigned. You can still choose another teacher below, or close and try again in a moment."
@@ -5051,7 +5051,7 @@
   "coverPasses": {
     "title": "Break duty",
     "body": "Break duties whose teacher is absent.",
-    "summary": "{open} need a teacher · {covered} with a substitute · {handled} left uncovered · {passed} passed without a decision",
+    "summary": "{open, plural, one {# needs} other {# need}} a teacher · {covered} with a substitute · {handled} left uncovered · {passed} passed without a decision",
     "tableCaption": "Break duties whose teacher is absent",
     "columnArea": "Area",
     "assign": "Assign substitute",
@@ -5065,7 +5065,8 @@
     },
     "decisionStale": "The substitute is away too: choose a new one.",
     "outsideAbsence": "No longer within the absence.",
-    "toastCovered": "The substitute is booked and has been notified.",
+    "notRunning": "The pass no longer runs that day. Undo the decision; a booked substitute is then notified.",
+    "toastCovered": "The substitute is booked. They get a notice about the break duty.",
     "toastNoCover": "The break duty is left uncovered.",
     "toastUndone": "The decision is undone.",
     "candidatesTitle": "Assign a substitute for break duty",
@@ -5073,7 +5074,8 @@
     "candidatesEmpty": "Nobody can take the break duty without breaking a rule. Choose someone under Another teacher, or leave it uncovered.",
     "candidatesLoadFailedHint": "No substitute is assigned. You can still choose another teacher below, or close and try again in a while.",
     "counter": "{week} covers this week · {term} this term",
-    "otherHint": "Outside the suggestions you are warned if the person loses their lunch or daily rest, goes beyond their working days, has an assignment or a room booking then, or has not said they can. Someone with a lesson or another break duty then, or who is absent themself, can never be assigned and is not in the list."
+    "otherHint": "Outside the suggestions you are warned if the person loses their lunch or daily rest, goes beyond their working days, has an assignment or a room booking then, is unavailable then, or has not said they can. Someone with a lesson or another break duty then, or who is absent themself, can never be assigned and is not in the list.",
+    "staleRefetched": "The break duty changed after the board was read. The board is updated – look again before you decide."
   },
   "coverReasons": {
     "QUAL_LEGITIMATION": "Certified in {subject} for grades {grades}",
@@ -5183,7 +5185,7 @@
     "COVER_TEACHER_ON_SUPERVISION": "The person has break duty then. Ask someone to take it, or choose another substitute.",
     "COVER_TEACHER_BOOKED": "The substitute has booked a room then.",
     "COVER_POOL_NOT_DECLARED": "The substitute has not said they can then.",
-    "COVER_TRAVEL_TIME_SHORT": "The substitute cannot make it from {from} to {to}: {gap} min between the lessons, and the walk takes {minutes} min.",
+    "COVER_TRAVEL_TIME_SHORT": "The substitute cannot make it from {from} to {to}: {gap} min in between, and the walk takes {minutes} min.",
     "SUPERVISION_COVER_NOT_AFFECTED": "The absence no longer touches this break duty. Reload the board.",
     "SUPERVISION_COVER_HELD": "The break duty has already taken place and is not changed.",
     "SUPERVISION_SUBSTITUTE_REQUIRED": "Choose who takes the break duty.",

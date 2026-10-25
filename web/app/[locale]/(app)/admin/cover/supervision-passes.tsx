@@ -8,15 +8,8 @@ import type { MessageLookup } from "@/lib/engine-message";
 import { savedToast } from "@/lib/staffing-warnings";
 import { usePassActions } from "@/lib/cover-queries";
 import type { PassBoardItem, PassSummary } from "@/lib/cover-types";
-import {
-  chainLookup,
-  coverErrorText,
-  errorCode,
-  passActions,
-  passesByDate,
-  passKey,
-  passStatusKey,
-} from "@/lib/cover-view";
+import { chainLookup, coverErrorText, errorCode } from "@/lib/cover-view";
+import { passActions, passesByDate, passKey, passStatusKey } from "@/lib/pass-view";
 import { PASS_STATUS_VARIANT } from "@/lib/status-variants";
 import { useSupervisionAreas } from "../supervision/use-supervision";
 import { PassCandidatesDialog } from "./pass-candidates-dialog";
@@ -67,7 +60,7 @@ export function SupervisionPasses({ items, summary, view, dayText, timeText, nam
   const passText = (item: PassBoardItem) => `${placeOf(item)}, ${timeText(item)}`;
 
   const failed = (error: unknown) =>
-    toast.error(errorCode(error) === "COVER_STALE" ? tCover("staleRefetched") : coverErrorText(tErrors, error, tCommon("error")));
+    toast.error(errorCode(error) === "COVER_STALE" ? t("staleRefetched") : coverErrorText(tErrors, error, tCommon("error")));
 
   const run = async (item: PassBoardItem, kind: "SUBSTITUTE" | "NO_COVER", substituteId?: string) => {
     try {
@@ -101,11 +94,16 @@ export function SupervisionPasses({ items, summary, view, dayText, timeText, nam
 
   const notes = (item: PassBoardItem) => (
     <>
-      {item.decisionStale ? (
+      {/* A vikarie away is news only while a new one can still be chosen. */}
+      {item.decisionStale && !item.passed ? (
         <span className="block whitespace-normal text-xs text-muted-foreground">{t("decisionStale")}</span>
       ) : null}
       {item.outsideAbsence ? (
         <span className="block whitespace-normal text-xs text-muted-foreground">{t("outsideAbsence")}</span>
+      ) : null}
+      {/* Nothing refuses a lov or a deactivation over a booked pass: the board says it, and Ångra tells the vikarie. */}
+      {item.runs === false && !item.passed ? (
+        <span className="block whitespace-normal text-xs text-muted-foreground">{t("notRunning")}</span>
       ) : null}
     </>
   );

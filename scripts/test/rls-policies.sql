@@ -28448,9 +28448,10 @@ ROLLBACK;
 -- anon hold nothing, service_role reads and nothing more, the API holds
 -- SELECT, INSERT, UPDATE and DELETE and no TRUNCATE, REFERENCES or TRIGGER,
 -- and no API role holds MAINTAIN on 17. Each CHECK says what the migration
--- says, a pass has one decision a date, every key cascades and is composite
--- with the school, the two notice types exist, and the guard on a teacher's
--- own absence asks the pass decisions beside the lessons'.
+-- says, a pass has one decision a date, every key is composite with the
+-- school and cascades but the decider's, which empties that column alone, the
+-- two notice types exist, and the guard on a teacher's own absence asks the
+-- pass decisions beside the lessons'.
 -- ---------------------------------------------------------------------------
 
 DO $$
@@ -28555,6 +28556,18 @@ BEGIN
       RAISE EXCEPTION 'pass covers: the key % is not as the migration writes it', def;
     END IF;
   END LOOP;
+  -- The decider: a person of the school, whose removal keeps the decision.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint c
+     WHERE c.contype = 'f' AND c.conrelid = 'public."SupervisionCovers"'::regclass
+       AND c.confrelid = 'public."Users"'::regclass
+       AND c.confupdtype = 'a' AND c.confdeltype = 'n' AND c.convalidated
+       AND (SELECT string_agg(a.attname::text, ',' ORDER BY k.ord) FROM unnest(c.conkey) WITH ORDINALITY k(attnum, ord)
+              JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum) = 'decidedByUserId,schoolId'
+       AND (SELECT string_agg(a.attname::text, ',') FROM unnest(c.confdelsetcols) k(attnum)
+              JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum) = 'decidedByUserId') THEN
+    RAISE EXCEPTION 'pass covers: the decider is not keyed to a person of the school, emptied on their removal';
+  END IF;
 
   IF (SELECT count(*) FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid
        WHERE t.typname = 'NotificationType' AND e.enumlabel IN ('SUPERVISION_COVER', 'SUPERVISION_COVER_WITHDRAWN')) <> 2 THEN

@@ -589,7 +589,7 @@ describe("an absent rastvakt's passes (Rastvakt i vardagen)", () => {
         expected: "OPEN",
       }),
     );
-    expect(toast.success).toHaveBeenCalledWith("Vikarien är inbokad och har fått en notis.");
+    expect(toast.success).toHaveBeenCalledWith("Vikarien är inbokad. Hen får en notis om passet.");
 
     await user.click(within(passRow("Skolgården")).getByRole("button", { name: /Utan ersättare/ }));
     await waitFor(() =>
@@ -599,6 +599,25 @@ describe("an absent rastvakt's passes (Rastvakt i vardagen)", () => {
         expected: "OPEN",
       }),
     );
+  });
+
+  it("says a decision is left on a day its pass no longer runs, and offers Ångra alone, even with the vikarie away", async () => {
+    const answer = get.getMockImplementation()!;
+    get.mockImplementation(async (path: string) =>
+      path.startsWith("/api/v1/cover/board")
+        ? {
+            ...WITH_PASS,
+            supervision: [{ ...PASS, decision: "SUBSTITUTE", substituteId: "t-dan", decisionStale: true, runs: false }],
+            supervisionSummary: { open: 1, covered: 0, handled: 0, passedOpen: 0 },
+          }
+        : answer(path),
+    );
+    renderBoard();
+    await within(await screen.findByRole("table", { name: /^Rastvaktspass/ })).findByRole("cell", { name: "Skolgården" });
+    expect(within(passRow("Skolgården")).getByText(/Passet går inte längre den dagen/)).toBeInTheDocument();
+    expect(within(passRow("Skolgården")).queryByRole("button", { name: /Tillsätt vikarie/ })).not.toBeInTheDocument();
+    expect(within(passRow("Skolgården")).queryByRole("button", { name: /Utan ersättare/ })).not.toBeInTheDocument();
+    expect(within(passRow("Skolgården")).getByRole("button", { name: /Ångra/ })).toBeInTheDocument();
   });
 
   it("undoes a pass's decision by its pass and date", async () => {

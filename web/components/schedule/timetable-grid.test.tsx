@@ -211,6 +211,31 @@ describe("TimetableGrid time axis and vertical placement", () => {
       expect(heights).toEqual(["90px", "90px", "60px", "60px"]);
     });
 
+    it("measures for the lessons and never for a duty beside them, which opens nothing (Rastvakt i vardagen)", async () => {
+      const onLessonClick = vi.fn();
+      render(
+        <TimetableGrid
+          onLessonClick={onLessonClick}
+          lessons={[
+            makeLesson({ id: "a" }),
+            // Two fifteen-minute rastvaktspass would outnumber the one lesson.
+            makeLesson({ id: "p1", title: "Rastvakt", dayOfWeek: 2, startMinutes: 600, endMinutes: 615, duty: true }),
+            makeLesson({ id: "p2", title: "Rastvakt", dayOfWeek: 3, startMinutes: 600, endMinutes: 615, duty: true }),
+          ]}
+        />,
+      );
+
+      // The hour's 1.1 px a minute, not the pass's 2.2.
+      expect(screen.getByRole("button", { name: /Math/ })!.style.height).toBe("66px");
+      // A block, not a button: no role, no click, no pointer.
+      expect(screen.queryByRole("button", { name: /Rastvakt/ })).toBeNull();
+      const pass = document.querySelector<HTMLElement>('[data-lesson-id="p1"]')!;
+      expect(pass.tagName).toBe("DIV");
+      expect(pass.className).toContain("cursor-default");
+      await userEvent.click(pass);
+      expect(onLessonClick).not.toHaveBeenCalled();
+    });
+
     it("caps the stretch so a short pass cannot run the day off the screen", () => {
       render(
         <TimetableGrid

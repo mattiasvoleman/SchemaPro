@@ -18,6 +18,7 @@ import { tellNewMentors } from '../family/leave-notices';
 import { NotificationsService } from '../notifications/notifications.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { listNames, rethrowPrismaError } from '../common/utils/prisma-errors';
+import { lockTeachers } from '../cover/cover-decisions';
 import {
   SupabaseAdminService,
   UserLookupError,
@@ -700,6 +701,20 @@ export class UsersService {
         if (decided.length > 0) {
           throw recordedATimplanDecision(decided.map((plan) => plan.name));
         }
+        // Rastvakt i vardagen (20261210090000): a vikarie booked ahead for
+        // this person's rastvaktspass. The delete takes the pass, the absence
+        // and the decision with it, and the vikarie would stand there unasked;
+        // Ångra on the vikarietavla tells them. The board's per-teacher lock
+        // first, so a booking made meanwhile is seen here.
+        await lockTeachers(tx, [id]);
+        const booked = await tx.supervisionCover.findFirst({
+          where: { absentTeacherId: id, decision: 'SUBSTITUTE', endsAt: { gt: new Date() } },
+          select: { date: true },
+          orderBy: { date: 'asc' },
+        });
+        if (booked) {
+          throw hasBookedPassCovers(booked.date.toISOString().slice(0, 10));
+        }
         await tx.user.delete({ where: { id } });
         // Somebody who was never contacted has no identity to delete: `authId`
         // is a placeholder uuid written at create time and matching nothing at
@@ -931,6 +946,15 @@ function recordedATimplanDecision(planNames: string[]): ConflictException {
     `Personen står som den som registrerade beslutet om ${which} och kan inte tas bort. ` +
       'Inaktivera kontot i stället; beslutet behåller sitt namn.',
   );
+}
+
+function hasBookedPassCovers(firstDate: string): ConflictException {
+  return new ConflictException({
+    message:
+      `Personens rastvaktspass har en inbokad vikarie framåt, första gången ${firstDate}. ` +
+      'Ångra besluten på vikarietavlan först, så att vikarien får veta det, eller inaktivera kontot i stället.',
+    code: 'USER_HAS_BOOKED_PASS_COVERS',
+  });
 }
 
 /** The restrict foreign key from a decided plan to its decider, as the pg adapter reports it. */

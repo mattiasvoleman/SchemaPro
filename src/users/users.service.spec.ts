@@ -1438,6 +1438,30 @@ describe('UsersService', () => {
       expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
     });
 
+    it('409s removing a person whose rastvaktspass has a vikarie booked ahead, under the board\'s teacher lock', async () => {
+      // Rastvakt i vardagen: the delete would cascade the pass, the absence
+      // and the decision, and the vikarie would never be told.
+      tx.user.findUnique.mockResolvedValue({ authId: AUTH_ID, invitedAt: null, role: 'TEACHER' });
+      tx.supervisionCover.findFirst.mockResolvedValue({ date: new Date('2030-09-02T00:00:00.000Z') });
+
+      const error = await service.remove(USER_ID, testUser()).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ConflictException);
+      expect((error as ConflictException).getResponse()).toMatchObject({ code: 'USER_HAS_BOOKED_PASS_COVERS' });
+      expect((error as ConflictException).message).toContain('första gången 2030-09-02');
+      expect(tx.supervisionCover.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { absentTeacherId: USER_ID, decision: 'SUBSTITUTE', endsAt: { gt: expect.any(Date) } },
+        }),
+      );
+      const locked = tx.$executeRaw.mock.calls.findIndex((call) => rawSql(call).includes("'cover-teacher:'"));
+      expect(locked).toBeGreaterThanOrEqual(0);
+      expect(tx.$executeRaw.mock.invocationCallOrder[locked]!).toBeLessThan(
+        tx.supervisionCover.findFirst.mock.invocationCallOrder[0]!,
+      );
+      expect(tx.user.delete).not.toHaveBeenCalled();
+    });
+
     it('says the same when the restrict key refuses a decision recorded after the question', async () => {
       tx.user.findUnique.mockResolvedValue({ authId: AUTH_ID, invitedAt: null });
       tx.user.delete.mockRejectedValue(

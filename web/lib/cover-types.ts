@@ -148,6 +148,8 @@ export interface PassBoardItem {
   decisionStale: boolean;
   passed: boolean;
   outsideAbsence: boolean;
+  /** False for a decision left on a day the pass no longer runs (a lov added since, its teacher deactivated): Ångra alone. */
+  runs?: boolean;
 }
 
 /** supervision-board.ts PassSummary. */

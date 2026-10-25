@@ -73,9 +73,16 @@ function useInvalidate() {
   const queryClient = useQueryClient();
   return () =>
     Promise.all(
-      [SUPERVISION_KEYS.areas, SUPERVISION_KEYS.rota, STAFFING_KEYS.load, STAFFING_KEYS.suggestions].map((key) =>
-        queryClient.invalidateQueries({ queryKey: key }),
-      ),
+      [
+        SUPERVISION_KEYS.areas,
+        SUPERVISION_KEYS.rota,
+        STAFFING_KEYS.load,
+        STAFFING_KEYS.suggestions,
+        // A pass moved is a vacancy moved on the Vikarietavla and a week
+        // changed (Rastvakt i vardagen): the board and the teacher's week.
+        ["coverBoard"],
+        ["supervisionWeek"],
+      ].map((key) => queryClient.invalidateQueries({ queryKey: key })),
     );
 }
 
