@@ -2206,6 +2206,9 @@ DECLARE
   k2 uuid;
   r2 uuid;
   rtom uuid;
+  rstod uuid;
+  k6a uuid;
+  rfd uuid;
   t uuid;
   p1 uuid;
   p2 uuid;
@@ -2238,6 +2241,14 @@ BEGIN
   VALUES (s1, y, 'EG SvA7', 7, 'TEACHING_GROUP', sv, now()) RETURNING id INTO r7;
   INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "replacesSubjectId", "updatedAt")
   VALUES (s1, y, 'EG EnS7', 7, 'TEACHING_GROUP', en, now()) RETURNING id INTO rens;
+  -- A second group replacing svenska, for P3, who is also in SvA7: P3 keeps
+  -- the lessons that carry either (SvA7's own EG-11, 7B's EG-4 with SvA7).
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "replacesSubjectId", "updatedAt")
+  VALUES (s1, y, 'EG SvA7 stöd', 7, 'TEACHING_GROUP', sv, now()) RETURNING id INTO rstod;
+  -- Svenska fördjupning, a teaching group (not a half) that P1 is placed in:
+  -- P1 keeps its svenska (EG-13), SvA7 or not.
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "updatedAt")
+  VALUES (s1, y, 'EG Sv7 fördjupning', 7, 'TEACHING_GROUP', now()) RETURNING id INTO rfd;
 
   INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt")
   VALUES (s1, 'eg-admin@example.invalid', 'EG', 'Admin', 'SCHOOL_ADMIN', 'FULL', '00000000-0000-4000-8000-000000001500', true, now());
@@ -2257,7 +2268,7 @@ BEGIN
   VALUES (s1, 'eg-g12@example.invalid', 'EG', 'Vårdnadshavare tvillingar', 'GUARDIAN', '00000000-0000-4000-8000-000000001507', true, now()) RETURNING id INTO g12;
   INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES (s1, g1, p1), (s1, g2, p2), (s1, g12, p1), (s1, g12, p2);
   INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES
-    (s1, r7, p1), (s1, r7, p3), (s1, half, p1), (s1, half, p2), (s1, rens, p1);
+    (s1, r7, p1), (s1, r7, p3), (s1, half, p1), (s1, half, p2), (s1, rens, p1), (s1, rstod, p3), (s1, rfd, p1);
 
   FOR rec IN SELECT * FROM (VALUES
     ('EG-1', sv,  k7a,  NULL::uuid, NULL::uuid, 1),
@@ -2270,7 +2281,9 @@ BEGIN
     ('EG-8', ma,  half, NULL,       NULL,       4),
     ('EG-10', en, k7a,  NULL,       NULL,       5),
     ('EG-11', sv, r7,   NULL,       NULL,       5),
-    ('EG-12', sv, k7b,  half,       NULL,       6)
+    ('EG-12', sv, k7b,  half,       NULL,       6),
+    ('EG-13', sv, rfd,  NULL,       NULL,       6),
+    ('EG-14', sv, k7a,  rens,       NULL,       6)
   ) v(note, subject, grp, extra, named, day_offset) LOOP
     INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
     VALUES (s1, rec.subject, rec.grp, current_date + rec.day_offset,
@@ -2297,9 +2310,15 @@ BEGIN
   INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "updatedAt")
   VALUES (s1, y0, 'EG Sv6n', 6, 'TEACHING_GROUP', now()) RETURNING id INTO n6;
   INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (s1, r6, p2), (s1, n6, p2), (s1, r6, p3);
+  -- EG-0 is last year's class's svenska, with Sv6n added: P2 reaches it
+  -- through Sv6n, and last year's SvA6 takes P2 off it (a teaching group
+  -- added to a lesson keeps nobody on; only the lesson's own one does).
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s1, y0, 'EG6A', 6, now()) RETURNING id INTO k6a;
   INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
-  VALUES (s1, sv, n6, current_date - 100, (current_date - 100) + time '08:00', (current_date - 100) + time '09:00', 'EG-0', now())
+  VALUES (s1, sv, k6a, current_date - 100, (current_date - 100) + time '08:00', (current_date - 100) + time '09:00', 'EG-0', now())
   RETURNING id INTO l;
+  INSERT INTO "CalendarLessonGroups" ("schoolId", "calendarLessonId", "studentGroupId") VALUES (s1, l, n6);
   INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (s1, l, t, 'LEAD');
 
   INSERT INTO "Schools" (name, slug, timezone, "updatedAt")

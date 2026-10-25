@@ -7,11 +7,20 @@
 --
 -- ## The rule, once
 --
--- A pupil is NOT on a lesson when they are not named on it and they are a
--- member of a replacing group R with R."replacesSubjectId" = the lesson's
--- subject, R in the läsår of the lesson's own group, and R not one of the
--- lesson's groups (its own group or an extra one). Otherwise today's rule
--- decides (the home class, the teaching groups, the named pupils).
+-- A pupil is NOT on a lesson when
+--
+--   * they are not named on it;
+--   * they are a member of a replacing group R with R."replacesSubjectId" =
+--     the lesson's subject, R in the läsår of the lesson's own group;
+--   * none of their replacing groups for that subject and läsår is one of the
+--     lesson's groups (its own group or an extra one): a pupil in SvA7 and in
+--     SvA7 stöd, which both replace Svenska, keeps the lessons of either;
+--   * and the lesson's own group is not a teaching group they are placed in
+--     that is not a half (Svenska fördjupning keeps its SvA pupils; a half is
+--     the class's).
+--
+-- Otherwise today's rule decides (the home class, the teaching groups, the
+-- named pupils).
 --
 -- The läsår matters because memberships outlive their year: the rollover
 -- copies a membership to the successor group and keeps the old one as
@@ -312,15 +321,18 @@ BEGIN
   ),
   reached AS (
     -- Their lessons in a replaced subject, by the lesson's own group or an
-    -- extra one, with the läsår of the lesson's own group.
-    SELECT cl."id", cl."subjectId", cl."studentGroupId", og."academicYearId" AS year
+    -- extra one, with the läsår of the lesson's own group and whether that
+    -- group is a teaching group and not a half (its members keep its lessons).
+    SELECT cl."id", cl."subjectId", cl."studentGroupId", og."academicYearId" AS year,
+           (og."kind" = 'TEACHING_GROUP' AND og."halfOfId" IS NULL) AS teaching
       FROM "CalendarLessons" cl
       JOIN "StudentGroups" og ON og."id" = cl."studentGroupId"
      WHERE cl."schoolId" = school
        AND cl."studentGroupId" IN (SELECT id FROM mine)
        AND cl."subjectId" IN (SELECT subject FROM replacing)
     UNION
-    SELECT cl."id", cl."subjectId", cl."studentGroupId", og."academicYearId"
+    SELECT cl."id", cl."subjectId", cl."studentGroupId", og."academicYearId",
+           (og."kind" = 'TEACHING_GROUP' AND og."halfOfId" IS NULL)
       FROM "CalendarLessonGroups" x
       JOIN "CalendarLessons" cl ON cl."id" = x."calendarLessonId" AND cl."schoolId" = school
       JOIN "StudentGroups" og ON og."id" = cl."studentGroupId"
@@ -330,12 +342,20 @@ BEGIN
   )
   SELECT coalesce(array_agg(DISTINCT r."id"), '{}'::uuid[]) INTO hidden
     FROM reached r
-   WHERE EXISTS (SELECT 1 FROM replacing g
-                  WHERE g.subject = r."subjectId"
-                    AND g.year = r.year
-                    AND g."id" <> r."studentGroupId"
-                    AND NOT EXISTS (SELECT 1 FROM "CalendarLessonGroups" x
+   -- A replacing group of theirs for the lesson's subject and läsår ...
+   WHERE EXISTS (SELECT 1 FROM replacing g WHERE g.subject = r."subjectId" AND g.year = r.year)
+     -- ... none of which is added to the lesson (SvA7 and SvA7 stöd both
+     -- replace svenska: a pupil in both keeps the lessons of either) ...
+     AND NOT EXISTS (SELECT 1 FROM replacing g
+                      WHERE g.subject = r."subjectId"
+                        AND g.year = r.year
+                        AND EXISTS (SELECT 1 FROM "CalendarLessonGroups" x
                                      WHERE x."calendarLessonId" = r."id" AND x."studentGroupId" = g."id"))
+     -- ... nor is the lesson's own group a teaching group they are placed in
+     -- (a replacing group of theirs as the lesson's own is one: the CHECK
+     -- makes it a teaching group and never a half) ...
+     AND NOT (r.teaching AND r."studentGroupId" IN (SELECT id FROM mine))
+     -- ... and they are not named on it.
      AND NOT EXISTS (SELECT 1 FROM "CalendarLessonStudents" s
                       WHERE s."calendarLessonId" = r."id" AND s."studentId" = me);
   RETURN hidden;
@@ -343,7 +363,7 @@ END
 $$;
 
 COMMENT ON FUNCTION app.current_student_replaced_lesson_ids() IS
-  'The calendar lessons of the calling STUDENT''s school that carry their home class or one of their teaching groups and that a replacing group of theirs takes them off (Ersättande grupper: the subject replaced, the group not on the lesson, the caller not named); empty for every other role.';
+  'The calendar lessons of the calling STUDENT''s school that carry their home class or one of their teaching groups and that a replacing group of theirs takes them off (Ersättande grupper: the subject replaced in the lesson''s läsår, none of their groups replacing it on the lesson, the lesson''s own group not a teaching group they are in, the caller not named); empty for every other role.';
 
 REVOKE ALL ON FUNCTION app.current_student_replaced_lesson_ids() FROM PUBLIC;
 
@@ -483,16 +503,27 @@ LANGUAGE sql STABLE SET search_path = "public", "pg_temp" AS $$
        AND cl."schoolId" = p_school
        AND cl."date" BETWEEN p_from AND p_to
        AND cl."status" IN ('SCHEDULED', 'COMPLETED', 'CANCELLED')
-       -- A replacing group takes the pupil off its subject's other lessons
-       -- of its läsår: those that neither carry it nor name the pupil.
+       -- A replacing group takes the pupil off the class's lessons in its
+       -- subject, of its läsår. The pupil keeps one that names them, one with
+       -- no replacing group of theirs for its subject, one any of them is
+       -- added to, and one whose own group is a teaching group (not a half)
+       -- they are placed in.
        AND (
              cl."id" IN (SELECT id FROM named)
           OR NOT EXISTS (SELECT 1 FROM replacing g
                           WHERE g.subject = cl."subjectId"
-                            AND g.year = (SELECT og."academicYearId" FROM "StudentGroups" og WHERE og."id" = cl."studentGroupId")
-                            AND g."id" <> cl."studentGroupId"
-                            AND NOT EXISTS (SELECT 1 FROM "CalendarLessonGroups" x
-                                             WHERE x."calendarLessonId" = cl."id" AND x."studentGroupId" = g."id"))
+                            AND g.year = (SELECT og."academicYearId" FROM "StudentGroups" og WHERE og."id" = cl."studentGroupId"))
+          OR EXISTS (SELECT 1 FROM replacing g
+                      WHERE g.subject = cl."subjectId"
+                        AND g.year = (SELECT og."academicYearId" FROM "StudentGroups" og WHERE og."id" = cl."studentGroupId")
+                        AND EXISTS (SELECT 1 FROM "CalendarLessonGroups" x
+                                     WHERE x."calendarLessonId" = cl."id" AND x."studentGroupId" = g."id"))
+          -- (a replacing group of theirs as the lesson's own group is a
+          -- teaching group they are placed in: the next branch keeps them.)
+          OR EXISTS (SELECT 1 FROM "StudentGroups" og
+                      WHERE og."id" = cl."studentGroupId"
+                        AND og."kind" = 'TEACHING_GROUP' AND og."halfOfId" IS NULL
+                        AND og."id" IN (SELECT t.g FROM teaching t))
        )
   )
   SELECT coalesce(jsonb_agg(jsonb_build_object(
