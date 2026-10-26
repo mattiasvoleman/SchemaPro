@@ -5702,6 +5702,7 @@ class SchedulerSolver:
         """
         if not any(rast.requires_lesson_before for rast in request.rasts):
             return
+        sharing = _groups_sharing_students(request.group_conflicts)
         by_group: dict[UUID, list[AnonymousRequirement]] = defaultdict(list)
         for requirement in request.requirements:
             by_group[requirement.student_group_id].append(requirement)
@@ -5709,22 +5710,40 @@ class SchedulerSolver:
         for group, clique in self._cliques(request):
             if group.min_grade_level is None or group.max_grade_level is None:
                 continue
-            # The rule is the CLASS's: _add_rast_ordering_constraints reads
-            # every lesson filed under the class and under every group sharing
-            # its pupils. This verdict tries fewer: the lessons filed under a
-            # member of the clique (7A's svenska under 7A, whoever sits it)
-            # and the clique's own requirements (a derived key's lessons filed
-            # under a class outside it). A partner the greedy clique left out
-            # (M2b, when M2a was chosen) can fill the stretch unseen, and the
-            # verdict then refuses a week the model solves. That gap is
-            # main's, and it is left as it is here, so that a payload without
-            # pupilGroupId gets main's list, in main's order, and main's
-            # answer; closing it is a change of its own.
-            owned = [r for member in clique.members for r in by_group.get(member, [])]
-            seen = {r.id for r in owned}
-            owned += [r for r in clique.requirements if r.id not in seen]
-            if not owned:
+            # TWO LISTS, because the question has two halves and the model
+            # answers each from a different set.
+            #
+            # WHETHER THE DAY IS CLOSED is asked of the class space, exactly
+            # as _add_rast_ordering_constraints reads it: every lesson and
+            # every lock filed under the class or under a group sharing its
+            # pupils answers the break. The clique is fewer than that — it is
+            # greedy, and two partners that share no pupil never sit in one —
+            # so a verdict reading the clique closed a day M2b could fill when
+            # the clique had taken M2a. Measured on the review's week: only
+            # M2b's teacher free before 09:40, the bare model OPTIMAL with
+            # M2b at 08:00, and the week refused here by name.
+            space = [group.id, *sharing.get(group.id, ())]
+            asked = [r for member in space for r in by_group.get(member, [])]
+            # WHAT A CLOSED DAY HOLDS is counted for the clique's lessons the
+            # rule sends home, and no others. The clique is the pupil space
+            # (pupil_key_of); a lesson of it filed under a class outside the
+            # space — pupils who are 7B's partner, filed under 7A — is not
+            # among the lessons the rule reads, may sit after the break, and
+            # held to the morning it refused a week that solves. For every
+            # payload without pupilGroupId, and every derived key the gateway
+            # coins, this is the whole clique: its members are all partners
+            # of the class, and their lessons are filed under them.
+            members = set(space)
+            sent_home = [r for r in clique.requirements if r.student_group_id in members]
+            if not asked or not sent_home:
                 continue
+            lengths = [
+                self._grid.minutes_to_slots(minutes)
+                for r in sent_home
+                for minutes in r.lesson_minutes()
+            ]
+            demand = sum(lengths)
+            measure = math.gcd(*lengths)
 
             # The days this class is shut out of the rest of, and the break that
             # shuts it — the first one found, which is the one to name.
@@ -5744,14 +5763,12 @@ class SchedulerSolver:
                     self._room_in_stretch(
                         self._reserved_ranges(request, requirement, day_index), room, first,
                     ) >= self._grid.minutes_to_slots(requirement.shortest_lesson_minutes())
-                    for requirement in owned
+                    for requirement in asked
                 ):
                     continue
                 # A lesson the school placed by hand is a lesson, so a stretch
                 # a lock already fills is not closed at all.
-                if self._locks_in_stretch(
-                    request, set(clique.members), day_index, room, first,
-                ):
+                if self._locks_in_stretch(request, members, day_index, room, first):
                     continue
                 closed.setdefault(day_index, (first, last, room, meal))
             if not closed:
@@ -5774,10 +5791,10 @@ class SchedulerSolver:
                 # teacher leaves the hour open to music, and subtracting it
                 # would count a week as smaller than it is — which is the
                 # direction that refuses a timetable.
-                for start, end in self._reserved_for_all(request, owned, day_index):
+                for start, end in self._reserved_for_all(request, sent_home, day_index):
                     free = _subtract_range(free, (start, end))
                 if not lunch_on:
-                    capacity += _holds(free, clique.measure)
+                    capacity += _holds(free, measure)
                     continue
                 # The meal placed where it wastes least, the same search the
                 # hours verdict makes: the class must eat, and counting a day
@@ -5791,12 +5808,12 @@ class SchedulerSolver:
                         fits = True
                         best = max(best, _holds(
                             _subtract_range(free, (start, start + lunch_slots)),
-                            clique.measure,
+                            measure,
                         ))
                 # No meal fits this day at all: a refusal of its own, made
                 # elsewhere by name, and not this one's to make.
-                capacity += best if fits else _holds(free, clique.measure)
-            if clique.demand <= capacity:
+                capacity += best if fits else _holds(free, measure)
+            if demand <= capacity:
                 continue
 
             day_index, (first, _last, room, meal) = next(iter(closed.items()))
@@ -5804,7 +5821,7 @@ class SchedulerSolver:
                 self._room_in_stretch(
                     self._reserved_ranges(request, requirement, day_index), room, first,
                 )
-                for requirement in owned
+                for requirement in asked
             )
             minutes = self._grid.slot_minutes
             raise InvalidScheduleInputError.of("RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT", {
@@ -5814,14 +5831,14 @@ class SchedulerSolver:
                 "opens": self._grid.format_hhmmss(room, 0)[0][:5],
                 "remaining": widest * minutes,
                 "minutes": min(
-                    self._grid.minutes_to_slots(r.shortest_lesson_minutes()) for r in owned
+                    self._grid.minutes_to_slots(r.shortest_lesson_minutes()) for r in asked
                 ) * minutes,
                 # Which of the three took the minutes, so the school is sent to
                 # the screen that holds the lever.
                 "bound": (
                     "closed" if widest < first - room else "lunch" if meal else "day"
                 ),
-                "demandMinutes": clique.demand * minutes,
+                "demandMinutes": demand * minutes,
                 "capacityMinutes": capacity * minutes,
             })
 

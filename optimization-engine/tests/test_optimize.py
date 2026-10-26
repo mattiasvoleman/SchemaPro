@@ -8761,6 +8761,156 @@ def test_a_class_answers_with_its_teaching_groups_lessons() -> None:
     assert _refusal(payload).code == "RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT"
 
 
+#: 08:00-13:00, Monday only: the språkval week's day.
+SPRAKVAL_DAY = {"SCHEDULE_DAYS": "1", "SCHEDULE_DAY_START_MINUTES": 480, "SCHEDULE_DAY_END_MINUTES": 780}
+
+
+def _sprakval_payload(
+    away: tuple[str, ...] = ("MA", "M2a"),
+) -> tuple[dict[str, object], dict[str, str]]:
+    """7A and its two språkval groups, and a break only one of them can answer.
+
+    7A's pupils split between M2a and M2b, so both groups are 7A's partners
+    and neither is the other's: (7A, M2a) and (7A, M2b) are pairs, (M2a, M2b)
+    is none. The greedy clique takes M2a, the first partner, and cannot take
+    M2b beside it. One lesson of an hour each, a Monday of 08:00-13:00 and a
+    break at 09:40 asking for a lesson before it; the teachers in `away` are
+    reserved over the whole stretch. Returns the payload and the ids by name.
+    """
+    ids = {name: str(uuid4()) for name in ("7A", "M2a", "M2b", "r-MA", "r-M2a", "r-M2b")}
+    teachers = {name: str(uuid4()) for name in ("MA", "M2a", "M2b")}
+
+    def requirement(name: str, group: str) -> dict[str, object]:
+        return {
+            "id": ids[f"r-{name}"], "subjectId": str(uuid4()), "studentGroupId": ids[group],
+            "teacherId": teachers[name], "lessonsPerWeek": 1, "minutesPerLesson": 60,
+            "studentGroupSize": 4, "minGradeLevel": 7, "maxGradeLevel": 7,
+        }
+
+    payload: dict[str, object] = {
+        "requestId": str(uuid4()),
+        "academicYearId": str(uuid4()),
+        "requirements": [requirement("MA", "7A"), requirement("M2a", "M2a"), requirement("M2b", "M2b")],
+        "groups": [{"id": ids["7A"], "lunchHeadcount": 4, "minGradeLevel": 7, "maxGradeLevel": 7}],
+        "rooms": [{"id": str(uuid4()), "capacity": 30} for _ in range(2)],
+        "constraints": [
+            {
+                "id": str(uuid4()), "resourceKind": "TEACHER", "resourceId": teachers[name],
+                "kind": "UNAVAILABLE", "dayOfWeek": 1, "startTime": "08:00:00", "endTime": "09:40:00",
+            }
+            for name in away
+        ],
+        "groupConflicts": [[ids["7A"], ids["M2a"]], [ids["7A"], ids["M2b"]]],
+        "rasts": [_rast("09:40", "10:00", asks=True, grades=(7, 7))],
+    }
+    return payload, ids
+
+
+def test_a_sprakval_group_the_clique_left_out_answers_the_classs_break() -> None:
+    """The rule reads every group sharing the class's pupils, so the verdict must too.
+
+    The week from the review of Ersättande grupper. Only M2b's teacher is free
+    before the break, and M2b 08:00-09:00 answers it: the model's rule reads
+    7A's lessons and its partners', and a lesson of M2b is a lesson 7A's
+    pupils are taught. MA and M2a then go after the break, and the bare model
+    is OPTIMAL. The verdict tried only the clique's requirements, which hold
+    M2a and not M2b: it found nothing that fits, closed the day, counted two
+    hours against none and refused a week that has a timetable.
+    """
+    payload, ids = _sprakval_payload()
+
+    response = _solve(payload, **SPRAKVAL_DAY)
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    starts = {str(lesson.requirement_id): lesson for lesson in response.lessons}
+    assert starts[ids["r-M2b"]].end_time <= "09:40:00", "M2b is the lesson before the break"
+    assert starts[ids["r-MA"]].start_time >= "10:00:00"
+    assert starts[ids["r-M2a"]].start_time >= "10:00:00"
+
+
+def test_the_same_week_with_m2bs_teacher_away_too_is_still_refused() -> None:
+    """The control: with nobody free before the break, the day is closed for all of them.
+
+    No lesson of 7A or of a group sharing its pupils fits before 09:40, so the
+    class can never be at school after it; its two clique hours have nowhere
+    left but the stretch nobody can teach in. That is a week without a
+    timetable, and it is refused by the name it always had.
+    """
+    payload, _ids = _sprakval_payload(away=("MA", "M2a", "M2b"))
+
+    refusal = _refusal(payload, **SPRAKVAL_DAY)
+
+    assert refusal.code == "RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT"
+    assert refusal.params["bound"] == "closed"
+    assert refusal.params["demandMinutes"] > refusal.params["capacityMinutes"]
+
+
+def test_a_lock_of_a_group_the_clique_left_out_answers_the_classs_break() -> None:
+    """A hand-placed lesson of M2b is a lesson 7A's pupils are taught, too.
+
+    M2b has no requirement here, only a lesson the school locked to
+    08:00-09:00, so no clique holds it. The model's rule finds the lock in the
+    stretch and writes no demand at all; the verdict looked for locks of the
+    clique's members only, missed it and refused.
+    """
+    payload, ids = _sprakval_payload()
+    payload["requirements"] = [
+        r for r in payload["requirements"] if r["id"] != ids["r-M2b"]  # type: ignore[union-attr,index]
+    ]
+    payload["fixedLessons"] = [
+        {
+            "id": str(uuid4()),
+            "studentGroupId": ids["M2b"],
+            "teacherId": str(uuid4()),
+            "roomId": payload["rooms"][0]["id"],  # type: ignore[index]
+            "dayOfWeek": 1,
+            "startTime": "08:00:00",
+            "endTime": "09:00:00",
+        },
+    ]
+
+    assert _solve(payload, **SPRAKVAL_DAY).status in {"OPTIMAL", "FEASIBLE"}
+
+
+def test_a_clique_lesson_the_classs_rule_never_reads_is_not_held_to_its_morning() -> None:
+    """The count holds to the morning only the lessons the rule sends home.
+
+    A closed day keeps the lessons filed under the class and its partners from
+    starting after the break; that is the model's rule, and nothing else. 7B's
+    clique also holds a lesson whose pupils are M2a, 7B's partner, filed under
+    7A, which is no partner of 7B: the rule for 7B never reads it, and it may
+    sit after 7B's break. Counted against 7B's morning it makes two hours
+    against one, and the week — 7B's lesson 08:00-09:00, the other 10:00-11:00
+    — was refused.
+    """
+    class_7a, class_7b, m2a = str(uuid4()), str(uuid4()), str(uuid4())
+
+    def requirement(group: str, **values: object) -> dict[str, object]:
+        return {
+            "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": group,
+            "teacherId": str(uuid4()), "lessonsPerWeek": 1, "minutesPerLesson": 60,
+            "studentGroupSize": 4, "minGradeLevel": 7, "maxGradeLevel": 7, **values,
+        }
+
+    payload = {
+        "requestId": str(uuid4()),
+        "academicYearId": str(uuid4()),
+        "requirements": [requirement(class_7b), requirement(class_7a, pupilGroupId=m2a)],
+        "groups": [{"id": class_7b, "lunchHeadcount": 4, "minGradeLevel": 7, "maxGradeLevel": 7}],
+        "rooms": [{"id": str(uuid4()), "capacity": 30}],
+        "groupConflicts": [[class_7b, m2a]],
+        # Thirty minutes between the breaks: no lesson of an hour fits there.
+        "rasts": [
+            _rast("09:00", "09:10", grades=(7, 7)),
+            _rast("09:40", "10:00", asks=True, grades=(7, 7)),
+        ],
+    }
+
+    response = _solve(payload, SCHEDULE_DAYS="1", SCHEDULE_DAY_START_MINUTES=480, SCHEDULE_DAY_END_MINUTES=660)
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+
+
 # ---------------------------------------------------------------------------
 # Kortegen: the margin a body needs between two lessons inside one block.
 # ---------------------------------------------------------------------------
