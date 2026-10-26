@@ -720,6 +720,8 @@ class _LunchStage:
 
     `literals` is keyed (cause, group id): "eats", "lessons", "declared",
     "locked" and "closed" per class, and "hall" for the school with no group.
+    "lessons" is there for a class that eats on no day too, with no "eats"
+    beside it (_name_lunch_causes asks about those first).
     pinned() fixes every literal for one solve — true unless relaxed — on a
     clone, so the stage is built once and solved as many times as the
     naming needs. Clone() keeps variable indices, which is what lets the
@@ -2389,7 +2391,9 @@ class SchedulerSolver:
         a plain school with seats, 1.04x without). On UNKNOWN it costs the cap
         and decides nothing, and the full solve proceeds unhinted. Returns
         (verdict, hints): a verdict when the week is refused, else the chosen
-        starts, empty when the stage could not decide.
+        starts, empty when the stage could not decide — or when it proved the
+        week impossible on lessons no lunch is among (_name_lunch_causes says
+        why that is the full model's to explain).
 
         ON THE FULL MODEL'S STEP, and still a relaxation of it: every start the
         stage may choose is one the model's own variable may take. A refusal
@@ -2591,17 +2595,19 @@ class SchedulerSolver:
 
     def _name_lunch_causes(
         self, request: OptimizeScheduleRequest, stage: _LunchStage,
-    ) -> ConflictAnalysis:
+    ) -> ConflictAnalysis | None:
         """Which sentences the refusal needs, by dropping the ones it does not.
 
         Every solve here re-proves the week impossible with fewer sentences
         pinned, so the set still pinned is sufficient at every step — which
         is what lets the deadline cut the search anywhere and the answer stay
-        true. Coarse before fine: the hall alone, then each kind of narrowing
-        for the whole school, then the lessons for the whole school, then the
-        classes in chunks that split only when a chunk turns out to matter.
-        A solve that cannot decide in the time left counts as "needed", the
-        conservative reading.
+        true. Coarse before fine: the classes that eat on no day, the hall
+        alone, then each kind of narrowing for the whole school, then the
+        lessons for the whole school, then the classes in chunks that split
+        only when a chunk turns out to matter. A solve that cannot decide in
+        the time left counts as "needed", the conservative reading.
+
+        None when the refusal is not the lunch's: see the first question.
         """
         rules = request.rules
         seats = rules.dining_seats
@@ -2628,6 +2634,43 @@ class SchedulerSolver:
         def drop_if_unneeded(candidates: set[tuple[str, UUID | None]]) -> None:
             if candidates and still_impossible(candidates):
                 relaxed.update(candidates)
+
+        # A CLASS THAT EATS ON NO DAY still has a "lessons" sentence. _cliques
+        # makes one for every class with lessons, and a reservation over the
+        # whole lunch window on every school day exempts the class from lunch
+        # (_lunch_starts_blocked_by_constraints), so it has no start and no
+        # "eats". Its sentence then reads no lunch start at all: it is the
+        # hours count with the daily maximum on top, a part of the model on
+        # its own. The pruning below walks the classes that eat and never
+        # reaches it, so whenever the lessons were needed it stayed pinned,
+        # was named, and the sort by `classes` raised ValueError — a 500 where
+        # the school should have read a verdict. A class away at lunch all
+        # week, seven lessons and at most two a day on two days: the stage
+        # proved that, and every lunch sentence about it would be false.
+        #
+        # So it is asked first, before the hall, whose answer it would
+        # otherwise decide: the week impossible without those sentences, and
+        # they go and the naming goes on over the classes that eat. Possible
+        # without them, and the refusal rests on lessons no lunch is among:
+        # the stage gives no verdict. The full model keeps every rule the
+        # stage relaxes, so it is just as impossible, and its own explanation
+        # names the cause (GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT in that week, in
+        # 0.03 s); at worst it runs out of time, a TIMEOUT where there was a
+        # 500. Undecided in the time left, the same: sufficiency drops nothing
+        # unproved, and what stays pinned would be named.
+        eating = {group_id for (cause, group_id) in stage.literals if cause == "eats"}
+        lunch_free = {
+            key for key in stage.literals if key[1] is not None and key[1] not in eating
+        }
+        if lunch_free:
+            if still_impossible(lunch_free) is not True:
+                logger.info(
+                    "lunch stage: the refusal rests on %d class(es) that eat on no day; "
+                    "the full model decides the week",
+                    len(lunch_free),
+                )
+                return None
+            relaxed.update(lunch_free)
 
         by_cause: dict[str, set[tuple[str, UUID | None]]] = defaultdict(set)
         for key in stage.literals:
@@ -2672,10 +2715,11 @@ class SchedulerSolver:
             prune(classes[index:index + chunk_size])
 
         kept = {key for key in stage.literals if key not in relaxed}
-        named = sorted(
-            {group_id for (_, group_id) in kept if group_id is not None},
-            key=lambda group_id: classes.index(group_id),
-        )
+        # Read off the classes that eat, in their order, so that no group the
+        # lunch sentences cannot be about is ever among them; the question
+        # above leaves no other group's sentence pinned.
+        kept_groups = {group_id for (_, group_id) in kept}
+        named = [group_id for group_id in classes if group_id in kept_groups]
         children = sum(stage.headcounts.get(group_id, 0) for group_id in named)
 
         def named_for(cause: str) -> list[UUID]:

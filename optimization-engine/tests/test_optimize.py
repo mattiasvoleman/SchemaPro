@@ -10621,6 +10621,167 @@ def test_the_naming_stays_true_when_the_clock_runs_out(monkeypatch: pytest.Monke
     assert named == {g["id"] for g in payload["groups"]}  # type: ignore[index]
 
 
+def _away_at_lunch(payload: dict[str, object], cls: str, days: tuple[int, ...],
+                   start: str, end: str) -> None:
+    """Reservations over the whole lunch window: the class is not here then,
+    so it takes no lunch those days (_lunch_starts_blocked_by_constraints)."""
+    payload.setdefault("constraints", [])
+    for day in days:
+        payload["constraints"].append({  # type: ignore[union-attr]
+            "id": str(uuid4()), "resourceKind": "STUDENT_GROUP", "resourceId": cls,
+            "dayOfWeek": day, "startTime": start, "endTime": end, "kind": "UNAVAILABLE",
+        })
+
+
+def _a_class_that_eats_on_no_day() -> dict[str, object]:
+    """The production crash's week (gen.py mixed:746, repaired), shrunk by
+    loosening only: every lock, teacher rule, frame, block, co-teacher and
+    margin dropped, the other classes and their lessons dropped, and the
+    class's reservations narrowed from the whole day to the lunch window. The
+    days and the rooms are the week's own.
+
+    Tuesday and Thursday 08:00-14:00, one class away over 10:40-12:10 both
+    days, seven lessons and at most two a day. No class eats, so the lunch
+    stage has no lunch start at all, and still proves the week impossible:
+    the class's lessons sentence counts two days of two lessons against
+    seven."""
+    cls, teacher = str(uuid4()), str(uuid4())
+    payload: dict[str, object] = {
+        "requestId": str(uuid4()), "academicYearId": str(uuid4()),
+        "requirements": [
+            {
+                "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": cls,
+                "teacherId": teacher, "lessonsPerWeek": 3, "minutesPerLesson": 80,
+                "studentGroupSize": 24, "minGradeLevel": 7, "maxGradeLevel": 7,
+                "lessonLengths": [70, 30, 80],
+            },
+            {
+                "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": cls,
+                "teacherId": teacher, "lessonsPerWeek": 4, "minutesPerLesson": 40,
+                "studentGroupSize": 24, "minGradeLevel": 7, "maxGradeLevel": 7,
+            },
+        ],
+        "rooms": [{"id": str(uuid4()), "capacity": 30} for _ in range(3)],
+        "fixedLessons": [],
+        "constraints": [],
+        "groups": [{"id": cls, "lunchHeadcount": 24, "minGradeLevel": 7, "maxGradeLevel": 7}],
+        "rules": {
+            "lunchMinutes": 30, "lunchStartTime": "10:40:00", "lunchEndTime": "12:10:00",
+            "maxLessonsPerDayPerGroup": 2,
+        },
+    }
+    _away_at_lunch(payload, cls, (4, 2), "10:40:00", "12:10:00")
+    return payload
+
+
+def _two_school_days_settings() -> Settings:
+    return _settings(
+        SCHEDULE_DAYS="2,4", SCHEDULE_DAY_START_MINUTES=480, SCHEDULE_DAY_END_MINUTES=840,
+    )
+
+
+def test_a_lunch_stage_refusal_with_no_lunch_in_it_is_left_to_the_full_model() -> None:
+    """The production crash: the stage builds a lessons sentence for every
+    class with lessons, a class that eats on no day has no "eats" beside it,
+    the naming never reached it, and sorting the classes named by the classes
+    that eat raised ValueError — solve() answered 500. Every lunch sentence
+    about this class would be false, so the stage gives no verdict, and the
+    full model refuses the week naming the daily maximum, which is what makes
+    it impossible."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_two_school_days_settings())
+    payload = _a_class_that_eats_on_no_day()
+    request = OptimizeScheduleRequest.model_validate(payload)
+    # Neither counting verdict sees it: the hours fit, the maximum is not theirs.
+    assert solver._clique_hours_verdict(request) is None
+    assert solver._lesson_gaps_verdict(request) is None
+
+    assert solver._lunch_stage_one(request) == (None, {})
+
+    response = solver.solve(request)
+
+    assert response.status == "INFEASIBLE"
+    assert response.conflicts is not None
+    assert not response.conflicts.summary_code.startswith("LUNCH_")
+    assert not [d.code for d in response.conflicts.conflicts if d.code.startswith("LUNCH_")]
+    cls = payload["groups"][0]["id"]  # type: ignore[index]
+    assert [
+        [str(g) for g in d.resource_ids]
+        for d in response.conflicts.conflicts
+        if d.code == "GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT"
+    ] == [[cls]]
+
+
+def test_a_class_that_eats_on_no_day_is_never_named_beside_a_lunch_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reproduction B — locks that pin one class's lunch — with a fifth class
+    away over the lunch window every day and two lessons that fit anywhere.
+    Its lessons sentence is no cause, and on main the naming still crashed on
+    it: the lessons were needed for the whole school, the pruning walks only
+    the classes that eat, so the away class's sentence stayed pinned and was
+    named. Now it is dropped first, and the verdict is reproduction B's own:
+    three sentences about the pinned class, nothing about the away class."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    monkeypatch.setattr(SchedulerSolver, "_clique_hours_verdict", lambda self, request: None)
+    solver = SchedulerSolver(_settings())
+    payload = _teaching_group_school(classes=4)
+    payload["rules"] = {"lunchStartTime": "10:30:00", "lunchEndTime": "13:00:00", "lunchMinutes": 30}
+    _pin_lunch_with_locked_lessons(payload)
+    away = str(uuid4())
+    payload["groups"].append(  # type: ignore[union-attr]
+        {"id": away, "lunchHeadcount": 24, "minGradeLevel": 6, "maxGradeLevel": 6},
+    )
+    payload["requirements"].append({  # type: ignore[union-attr]
+        "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": away,
+        "teacherId": str(uuid4()), "lessonsPerWeek": 2, "minutesPerLesson": 60,
+        "studentGroupSize": 24, "minGradeLevel": 6, "maxGradeLevel": 6,
+    })
+    _away_at_lunch(payload, away, (1, 2, 3, 4, 5), "10:30:00", "13:00:00")
+    _the_full_model_is_never_built(monkeypatch)
+
+    response = solver.solve(OptimizeScheduleRequest.model_validate(payload))
+
+    assert response.status == "INFEASIBLE"
+    assert response.conflicts is not None
+    assert "for the 1 class named" in response.conflicts.summary
+    pinned = payload["groups"][0]["id"]  # type: ignore[index]
+    assert [
+        (d.category, [str(g) for g in d.resource_ids]) for d in response.conflicts.conflicts
+    ] == [
+        ("LUNCH_WINDOW", [pinned]), ("LUNCH_WINDOW", [pinned]), ("GROUP_OVERLAP", [pinned]),
+    ]
+
+
+def test_a_class_that_eats_on_no_day_is_not_dropped_unproved(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The first naming question runs out of time: whether the refusal needs
+    the away class's lessons is undecided, so they cannot be dropped, and kept
+    they would be named under a lunch sentence. The stage gives no verdict
+    and leaves the week to the full model."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    calls = {"n": 0}
+    original = cp_model.CpSolver.Solve
+
+    def solve(self: cp_model.CpSolver, model: cp_model.CpModel, *args: object, **kwargs: object) -> int:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return original(self, model, *args, **kwargs)  # the stage's own proof
+        return cp_model.UNKNOWN
+
+    monkeypatch.setattr(cp_model.CpSolver, "Solve", solve)
+    solver = SchedulerSolver(_two_school_days_settings())
+    request = OptimizeScheduleRequest.model_validate(_a_class_that_eats_on_no_day())
+
+    assert solver._lunch_stage_one(request) == (None, {})
+    assert calls["n"] == 2
+
+
 def test_the_lunch_stage_asks_for_its_own_search_on_every_machine(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
