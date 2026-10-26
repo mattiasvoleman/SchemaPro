@@ -371,6 +371,10 @@ class _Clique:
     #: The one frame window every open day shares, as "08:00-13:30", for a
     #: sentence to quote; None when the days differ or nothing narrows them.
     window_text: str | None
+    #: Slots of lessons one day can hold at the school's daily maximum: each
+    #: class places at most min(weekly, maximum) lessons a day, none longer
+    #: than its longest. Its weekly lessons when the school sets no maximum.
+    day_cap: int
 
 
 def _holds(ranges: list[tuple[int, int]], measure: int) -> int:
@@ -1269,6 +1273,8 @@ class SchedulerSolver:
         Greedy, in payload order — any clique is sound, and the whole set is
         not. Two readers, the hours verdict and the lunch stage, and one
         builder, so they can never disagree about who may not overlap whom.
+        The lunch stage reads day_cap twice, in its sentence and in its count
+        with no meal, and the field is what keeps the two the same bound.
 
         EVERYTHING LEANS THE OPTIMISTIC WAY, so a refusal built on these
         numbers is a refusal the model would have made: the free time is the
@@ -1291,6 +1297,7 @@ class SchedulerSolver:
         for requirement in request.requirements:
             requirements_of[pupil_key_of(requirement)].append(requirement)
         slots_per_day = self._grid.slots_per_day
+        max_per_day = request.rules.max_lessons_per_day_per_group if request.rules else None
         fixed_windows = [
             (fixed, self._fixed_window(fixed))
             for fixed in request.fixed_lessons
@@ -1358,6 +1365,26 @@ class SchedulerSolver:
                     free = _subtract_range(free, (max(lo, 0), min(hi, slots_per_day)))
                 free_by_day[day_index] = free
 
+            # THE CLASS SPACE, deliberately, though the clique is the pupils':
+            # this bound reads the school's daily maximum, which the model
+            # counts per class (7A's svenska is 7A's lesson there, whoever sits
+            # it). Every requirement of the clique is in exactly one class, so
+            # the sum over classes still bounds the clique's day. Each places
+            # at most its weekly lessons, and at most the maximum, on one day
+            # — each no longer than its longest. A bound on the count, not a
+            # placement.
+            by_class: dict[UUID, list[AnonymousRequirement]] = defaultdict(list)
+            for requirement in requirements:
+                by_class[requirement.student_group_id].append(requirement)
+            day_cap = 0
+            for class_requirements in by_class.values():
+                weekly = sum(r.lessons_per_week for r in class_requirements)
+                longest = max(
+                    self._grid.minutes_to_slots(r.minutes_per_lesson) for r in class_requirements
+                )
+                per_day = weekly if max_per_day is None else min(weekly, max_per_day)
+                day_cap += per_day * longest
+
             cliques.append((
                 group,
                 _Clique(
@@ -1367,6 +1394,7 @@ class SchedulerSolver:
                     measure=math.gcd(*lengths),
                     free_by_day=free_by_day,
                     window_text=self._shared_window_text(open_by_day),
+                    day_cap=day_cap,
                 ),
             ))
         return cliques
@@ -2430,7 +2458,83 @@ class SchedulerSolver:
             return None, {key: solver.Value(start) for key, start in stage.starts.items()}
         if code != cp_model.INFEASIBLE:
             return None, {}
-        return self._name_lunch_causes(request, stage), {}
+        # IMPOSSIBLE WITH NO MEAL AT ALL is no lunch's refusal. The stage
+        # counts each clique's lessons around its lunch, under the daily
+        # maximum, and a clique whose lessons the days cannot hold even with
+        # every lunch gone was named "no placement of the lunch breaks", with
+        # advice — widen the frame or the lunch window — about the wrong rule.
+        # Among 37,923 gen.py weeks that was every one of the 170 such
+        # refusals; one class at school and eating, seven lessons on two days
+        # at most two a day, is OPTIMAL as soon as the maximum goes.
+        #
+        # NAMED HERE, from the same count, and never left to the full model.
+        # Standing aside was tried, and is safe only where the shortage is
+        # the trivial one — more lessons than the maximum times the open
+        # days, which presolve refutes at once. Where the frames take part —
+        # one class of 30 hour-long lessons, Monday and Tuesday framed to
+        # four, at most seven a day — the full model cannot assemble the
+        # pigeonhole from its per-slot encoding: TIMEOUT at 80 s, and at 620 s
+        # on a ten-minute budget, where this count answers at once.
+        #
+        # So the clique the maximum holds back gets the maximum's own line,
+        # GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT, at `measured` 3: what this count
+        # shows and nothing more (_cliques_short_at_the_maximum). The rest of
+        # the refusal is named as before over what is left
+        # (_name_lunch_causes). A clique short even without the maximum is not
+        # the maximum's to name; with none held back the stage names exactly
+        # as it did.
+        held_back, short_anyway = self._cliques_short_at_the_maximum(request)
+        if not held_back:
+            return self._name_lunch_causes(request, stage), {}
+        logger.info(
+            "lunch stage: the daily maximum holds back %d class(es)%s",
+            len(held_back),
+            f" and {len(short_anyway)} more fit not even without it" if short_anyway else "",
+        )
+        return self._name_lunch_causes(
+            request, stage, held_back=held_back, short_anyway=short_anyway,
+        ), {}
+
+    def _cliques_short_at_the_maximum(
+        self, request: OptimizeScheduleRequest,
+    ) -> tuple[list[UUID], list[UUID]]:
+        """Classes whose lessons sentence fails with no meal: held back, or short anyway.
+
+        _build_lunch_stage bounds each day's count of a clique's lessons by
+        held(): its free time with the lunch cut out, rounded down to whole
+        measures and capped at the daily maximum (_Clique.day_cap). With no
+        lunch anywhere the cut goes, and the sentence holds exactly when the
+        days' counts can sum to the clique's demand.
+
+        Returns (held back, short anyway), each a list of the cliques' classes.
+        HELD BACK: short with the cap and not without it — the maximum, and
+        nothing the count reads but the maximum, is the difference. SHORT
+        ANYWAY: short without the cap too, so the frames and the locks alone
+        cannot hold the lessons; the hours verdict refuses such a clique before
+        the stage runs, unless a day of it has no room for a lunch at all,
+        which it leaves to be refused by name elsewhere.
+
+        WHAT THE COUNT READS, which is all a line built on it may say: the
+        union of the windows the frame times give the clique's requirements,
+        less the locked lessons that block every member (_cliques), each
+        class's lessons at most min(weekly, maximum) a day of its longest
+        length. Not the reservations, which _cliques does not subtract, nor
+        margins, rooms, teachers or any other rule: leaving them out lets
+        more through, so short here is short with them too.
+        """
+        held_back: list[UUID] = []
+        short_anyway: list[UUID] = []
+        for group, clique in self._cliques(request):
+            measure = clique.measure
+            capped = uncapped = 0
+            for free in clique.free_by_day.values():
+                holds = _holds(free, measure)
+                capped += min(holds, clique.day_cap) // measure * measure
+                uncapped += holds
+            if capped >= clique.demand:
+                continue
+            (held_back if uncapped >= clique.demand else short_anyway).append(group.id)
+        return held_back, short_anyway
 
     def _lunch_stage_solver(self, seconds: float) -> cp_model.CpSolver:
         """A solver for the stage whose search does not depend on the machine.
@@ -2478,7 +2582,6 @@ class SchedulerSolver:
         _, _, lunch_slots = self._lunch_window_slots(rules)
         headcounts = _lunch_headcounts(request.groups)
         seats = rules.dining_seats
-        max_per_day = rules.max_lessons_per_day_per_group
         slots_per_day = self._grid.slots_per_day
         hall_open = seats is not None and any(
             headcounts.get(group_id, 0) > 0 for group_id, _ in narrowings
@@ -2542,28 +2645,12 @@ class SchedulerSolver:
         for group, clique in self._cliques(request):
             window_texts[group.id] = clique.window_text
             measure = clique.measure
-            # THE CLASS SPACE, deliberately, though the clique is the pupils':
-            # this bound reads the school's daily maximum, which the model
-            # counts per class (7A's svenska is 7A's lesson there, whoever sits
-            # it). Every requirement of the clique is in exactly one class, so
-            # the sum over classes still bounds the clique's day.
-            by_member: dict[UUID, list[AnonymousRequirement]] = defaultdict(list)
-            for requirement in clique.requirements:
-                by_member[requirement.student_group_id].append(requirement)
-            # Each member places at most its weekly lessons, and at most the
-            # school's daily maximum, on one day — each no longer than its
-            # longest. A bound on the count, not a placement.
-            member_cap = 0
-            for member_requirements in by_member.values():
-                weekly = sum(r.lessons_per_week for r in member_requirements)
-                longest = max(
-                    self._grid.minutes_to_slots(r.minutes_per_lesson) for r in member_requirements
-                )
-                per_day = weekly if max_per_day is None else min(weekly, max_per_day)
-                member_cap += per_day * longest
+            # The day under the school's daily maximum, as _cliques bounds it;
+            # _cliques_short_at_the_maximum reads the same field.
+            day_cap = clique.day_cap
 
             def held(ranges: list[tuple[int, int]]) -> int:
-                return min(_holds(ranges, measure), member_cap) // measure
+                return min(_holds(ranges, measure), day_cap) // measure
 
             lessons = sentence("lessons", group.id)
             day_counts = []
@@ -2594,7 +2681,12 @@ class SchedulerSolver:
         )
 
     def _name_lunch_causes(
-        self, request: OptimizeScheduleRequest, stage: _LunchStage,
+        self,
+        request: OptimizeScheduleRequest,
+        stage: _LunchStage,
+        *,
+        held_back: list[UUID] | None = None,
+        short_anyway: list[UUID] | None = None,
     ) -> ConflictAnalysis | None:
         """Which sentences the refusal needs, by dropping the ones it does not.
 
@@ -2608,6 +2700,12 @@ class SchedulerSolver:
         the time left counts as "needed", the conservative reading.
 
         None when the refusal is not the lunch's: see the first question.
+
+        `held_back`: classes whose cliques the daily maximum holds back with no
+        meal at all (_cliques_short_at_the_maximum). Their line leads, and the
+        rest is named with their lessons sentences dropped; `short_anyway`,
+        the cliques short even without the maximum, are dropped whole beside
+        them, and no line says anything of them.
         """
         rules = request.rules
         seats = rules.dining_seats
@@ -2635,8 +2733,43 @@ class SchedulerSolver:
             if candidates and still_impossible(candidates):
                 relaxed.update(candidates)
 
+        # THE MAXIMUM FIRST, when it holds a clique back. The count proves
+        # that clique impossible on its own, so its line is a sufficient set
+        # by itself: whatever the solves below say, or fail to say in the
+        # time left, the refusal stands on it. Their lessons sentences go —
+        # the line already says what they would — and their meals stay, so a
+        # hall that cannot seat them still says so. A clique short even
+        # without the maximum is dropped whole: the line does not name it,
+        # and no line below may say anything of a class the count found
+        # impossible by its hours, which is not what the stage asked.
+        #
+        # The rest of the week is then solved again, as #204 does for the
+        # classes that eat on no day. Still impossible: its causes are named
+        # as ever and follow the line, true both. Possible, or undecided: the
+        # line alone.
+        maximum_line: ConflictDetail | None = None
+        if held_back:
+            maximum_line = ConflictDetail(
+                # "För många lektioner", as the model's own line files it.
+                category="REQUIREMENT_DEMAND",
+                code="GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT",
+                params={"maxPerDay": rules.max_lessons_per_day_per_group, "measured": 3},
+                resource_ids=held_back,
+            )
+            dropped = set(short_anyway or ())
+            relaxed.update(("lessons", group_id) for group_id in held_back)
+            relaxed.update(key for key in stage.literals if key[1] in dropped)
+            if still_impossible(set()) is not True:
+                return ConflictAnalysis(
+                    summary_code="CONFLICT_CORE_SUMMARY",
+                    summary_params={},
+                    conflicts=[maximum_line],
+                )
+
         # A CLASS THAT EATS ON NO DAY still has a "lessons" sentence. _cliques
-        # makes one for every class with lessons, and a reservation over the
+        # makes one for every class whose clique has lessons — its own, or a
+        # teaching group's that shares its pupils, so a class with no lessons
+        # of its own has one too — and a reservation over the
         # whole lunch window on every school day exempts the class from lunch
         # (_lunch_starts_blocked_by_constraints), so it has no start and no
         # "eats". Its sentence then reads no lunch start at all: it is the
@@ -2658,15 +2791,32 @@ class SchedulerSolver:
         # 0.03 s); at worst it runs out of time, a TIMEOUT where there was a
         # 500. Undecided in the time left, the same: sufficiency drops nothing
         # unproved, and what stays pinned would be named.
+        #
+        # That class's sentence is a count with no meal in it, which
+        # _cliques_short_at_the_maximum makes before the naming. Where the
+        # maximum holds it back it is named above and dropped; where it is
+        # short anyway and nothing is held back, the naming is main's, and
+        # this question leaves the week to the full model as it always has.
         eating = {group_id for (cause, group_id) in stage.literals if cause == "eats"}
         lunch_free = {
-            key for key in stage.literals if key[1] is not None and key[1] not in eating
+            key for key in stage.literals
+            if key[1] is not None and key[1] not in eating and key not in relaxed
         }
         if lunch_free:
-            if still_impossible(lunch_free) is not True:
+            needed = still_impossible(lunch_free)
+            if needed is not True and maximum_line is not None:
+                # Undecided, with the maximum's line standing on its own.
+                return ConflictAnalysis(
+                    summary_code="CONFLICT_CORE_SUMMARY",
+                    summary_params={},
+                    conflicts=[maximum_line],
+                )
+            if needed is not True:
                 logger.info(
-                    "lunch stage: the refusal rests on %d class(es) that eat on no day; "
+                    "lunch stage: %s %d class(es) that eat on no day; "
                     "the full model decides the week",
+                    "the refusal rests on" if needed is False
+                    else "out of time before deciding whether the refusal needs",
                     len(lunch_free),
                 )
                 return None
@@ -2796,6 +2946,9 @@ class SchedulerSolver:
         else:
             code = "LUNCH_NO_PLACEMENT_FOR_CLASSES"
             params = {"classes": len(named)}
+        if maximum_line is not None:
+            # The line the count proved leads; what the solves named follows.
+            details.insert(0, maximum_line)
         return ConflictAnalysis(
             summary_code=code, summary_params=params, conflicts=details,
         )
