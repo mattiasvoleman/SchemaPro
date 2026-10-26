@@ -10680,55 +10680,48 @@ def _two_school_days_settings() -> Settings:
     )
 
 
-def test_a_lunch_stage_refusal_with_no_lunch_in_it_is_left_to_the_full_model() -> None:
+def _the_maximum_lines(analysis: object) -> list[tuple[dict[str, object], list[str]]]:
+    """Each daily-maximum line of a refusal: its values and the classes it names."""
+    return [
+        (dict(d.params), [str(g) for g in d.resource_ids])
+        for d in analysis.conflicts  # type: ignore[attr-defined]
+        if d.code == "GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT"
+    ]
+
+
+def test_a_lunch_stage_refusal_with_no_lunch_in_it_names_the_maximum() -> None:
     """The production crash: the stage builds a lessons sentence for every
     class with lessons, a class that eats on no day has no "eats" beside it,
     the naming never reached it, and sorting the classes named by the classes
     that eat raised ValueError — solve() answered 500. Every lunch sentence
-    about this class would be false, so the stage gives no verdict, and the
-    full model refuses the week naming the daily maximum, which is what makes
-    it impossible."""
+    about this class would be false. Its count with no meal is short at the
+    maximum and holds it without, so the stage names the maximum, from that
+    count, and nothing else."""
     from app.schemas.schedule import OptimizeScheduleRequest
     from app.solver.scheduler_solver import SchedulerSolver
 
     solver = SchedulerSolver(_two_school_days_settings())
     payload = _a_class_that_eats_on_no_day()
     request = OptimizeScheduleRequest.model_validate(payload)
+    cls = payload["groups"][0]["id"]  # type: ignore[index]
     # Neither counting verdict sees it: the hours fit, the maximum is not theirs.
     assert solver._clique_hours_verdict(request) is None
     assert solver._lesson_gaps_verdict(request) is None
 
-    assert solver._lunch_stage_one(request) == (None, {})
+    verdict, hints = solver._lunch_stage_one(request)
 
-    response = solver.solve(request)
-
-    assert response.status == "INFEASIBLE"
-    assert response.conflicts is not None
-    assert not response.conflicts.summary_code.startswith("LUNCH_")
-    assert not [d.code for d in response.conflicts.conflicts if d.code.startswith("LUNCH_")]
-    cls = payload["groups"][0]["id"]  # type: ignore[index]
-    assert [
-        [str(g) for g in d.resource_ids]
-        for d in response.conflicts.conflicts
-        if d.code == "GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT"
-    ] == [[cls]]
+    assert hints == {}
+    assert verdict is not None
+    assert verdict.summary_code == "CONFLICT_CORE_SUMMARY"
+    assert _the_maximum_lines(verdict) == [({"maxPerDay": 2, "measured": 3}, [cls])]
+    assert len(verdict.conflicts) == 1
+    assert solver.solve(request).conflicts == verdict
 
 
-def test_a_class_that_eats_on_no_day_is_never_named_beside_a_lunch_refusal(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def _reproduction_b_beside_a_class_away_at_lunch() -> tuple[dict[str, object], str, str]:
     """Reproduction B — locks that pin one class's lunch — with a fifth class
     away over the lunch window every day and two lessons that fit anywhere.
-    Its lessons sentence is no cause, and on main the naming still crashed on
-    it: the lessons were needed for the whole school, the pruning walks only
-    the classes that eat, so the away class's sentence stayed pinned and was
-    named. Now it is dropped first, and the verdict is reproduction B's own:
-    three sentences about the pinned class, nothing about the away class."""
-    from app.schemas.schedule import OptimizeScheduleRequest
-    from app.solver.scheduler_solver import SchedulerSolver
-
-    monkeypatch.setattr(SchedulerSolver, "_clique_hours_verdict", lambda self, request: None)
-    solver = SchedulerSolver(_settings())
+    Returns the payload, the pinned class and the away class."""
     payload = _teaching_group_school(classes=4)
     payload["rules"] = {"lunchStartTime": "10:30:00", "lunchEndTime": "13:00:00", "lunchMinutes": 30}
     _pin_lunch_with_locked_lessons(payload)
@@ -10742,6 +10735,24 @@ def test_a_class_that_eats_on_no_day_is_never_named_beside_a_lunch_refusal(
         "studentGroupSize": 24, "minGradeLevel": 6, "maxGradeLevel": 6,
     })
     _away_at_lunch(payload, away, (1, 2, 3, 4, 5), "10:30:00", "13:00:00")
+    return payload, payload["groups"][0]["id"], away  # type: ignore[index]
+
+
+def test_a_class_that_eats_on_no_day_is_never_named_beside_a_lunch_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reproduction B beside a class away at lunch whose lessons fit. Its
+    lessons sentence is no cause, and on main the naming still crashed on it:
+    the lessons were needed for the whole school, the pruning walks only the
+    classes that eat, so the away class's sentence stayed pinned and was
+    named. Now it is dropped first, and the verdict is reproduction B's own:
+    three sentences about the pinned class, nothing about the away class."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    monkeypatch.setattr(SchedulerSolver, "_clique_hours_verdict", lambda self, request: None)
+    solver = SchedulerSolver(_settings())
+    payload, pinned, _ = _reproduction_b_beside_a_class_away_at_lunch()
     _the_full_model_is_never_built(monkeypatch)
 
     response = solver.solve(OptimizeScheduleRequest.model_validate(payload))
@@ -10749,7 +10760,6 @@ def test_a_class_that_eats_on_no_day_is_never_named_beside_a_lunch_refusal(
     assert response.status == "INFEASIBLE"
     assert response.conflicts is not None
     assert "for the 1 class named" in response.conflicts.summary
-    pinned = payload["groups"][0]["id"]  # type: ignore[index]
     assert [
         (d.category, [str(g) for g in d.resource_ids]) for d in response.conflicts.conflicts
     ] == [
@@ -10761,7 +10771,10 @@ def test_a_class_that_eats_on_no_day_is_not_dropped_unproved(monkeypatch: pytest
     """The first naming question runs out of time: whether the refusal needs
     the away class's lessons is undecided, so they cannot be dropped, and kept
     they would be named under a lunch sentence. The stage gives no verdict
-    and leaves the week to the full model."""
+    and leaves the week to the full model. Reproduction B's week, whose away
+    class fits its lessons: one the maximum holds back is named by the count
+    before the naming (_cliques_short_at_the_maximum), and its sentence is
+    dropped before this question is asked."""
     from app.schemas.schedule import OptimizeScheduleRequest
     from app.solver.scheduler_solver import SchedulerSolver
 
@@ -10775,11 +10788,302 @@ def test_a_class_that_eats_on_no_day_is_not_dropped_unproved(monkeypatch: pytest
         return cp_model.UNKNOWN
 
     monkeypatch.setattr(cp_model.CpSolver, "Solve", solve)
-    solver = SchedulerSolver(_two_school_days_settings())
-    request = OptimizeScheduleRequest.model_validate(_a_class_that_eats_on_no_day())
+    solver = SchedulerSolver(_settings())
+    payload, _, _ = _reproduction_b_beside_a_class_away_at_lunch()
+    request = OptimizeScheduleRequest.model_validate(payload)
+    assert solver._cliques_short_at_the_maximum(request) == ([], [])
 
     assert solver._lunch_stage_one(request) == (None, {})
     assert calls["n"] == 2
+
+
+def test_a_class_at_school_the_maximum_alone_holds_back_is_no_lunch_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The production crash's class at school and eating: no reservation, so
+    it takes a lunch both days. Seven lessons on two days at most two a day
+    are impossible with no lunch at all, and the stage named them "no
+    placement of the lunch breaks", advising a wider frame or lunch window.
+    The week is OPTIMAL as soon as the maximum goes. Now the stage's count
+    with no meal finds the class held back by the maximum, and the stage
+    names the maximum itself: decided before the full model is built."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_two_school_days_settings())
+    payload = _a_class_that_eats_on_no_day()
+    payload["constraints"] = []
+    request = OptimizeScheduleRequest.model_validate(payload)
+    cls = payload["groups"][0]["id"]  # type: ignore[index]
+    assert solver._clique_hours_verdict(request) is None
+    held_back, short_anyway = solver._cliques_short_at_the_maximum(request)
+    assert ([str(g) for g in held_back], short_anyway) == ([cls], [])
+    _the_full_model_is_never_built(monkeypatch)
+
+    response = solver.solve(request)
+
+    assert response.status == "INFEASIBLE"
+    assert response.conflicts is not None
+    assert response.conflicts.summary_code == "CONFLICT_CORE_SUMMARY"
+    assert not [d.code for d in response.conflicts.conflicts if d.code.startswith("LUNCH_")]
+    assert _the_maximum_lines(response.conflicts) == [({"maxPerDay": 2, "measured": 3}, [cls])]
+    assert "Counted without the maximum they fit" in response.conflicts.conflicts[0].message
+
+
+def test_a_class_that_eats_on_no_day_is_asked_about_before_the_hall(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The order of the naming's questions, from the review of #204:
+    reproduction G, which the hall decides, beside a class away at lunch every
+    day whose 36 lessons of 40 minutes five days at most seven a day cannot
+    hold. Asked after the hall, the away class's sentence would decide the
+    hall's answer — impossible without the seats too — and the summary would
+    drop the hall; the class is then the only thing left, and the stage gave
+    no verdict at all. Asked first, it goes, and the verdict is G's own.
+
+    Reached only with the count before the naming switched off: that count
+    finds the away class held back by the maximum, names it, and drops its
+    lessons before any question is asked (the mixed case of
+    test_the_maximum_is_named_from_one_lesson_too_many_and_not_at_an_exact_fit)."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    payload = _frames_that_pack_the_middle_years(_teaching_group_school(classes=20))
+    away = str(uuid4())
+    payload["groups"].append(  # type: ignore[union-attr]
+        {"id": away, "lunchHeadcount": 24, "minGradeLevel": 8, "maxGradeLevel": 8},
+    )
+    payload["requirements"].append({  # type: ignore[union-attr]
+        "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": away,
+        "teacherId": str(uuid4()), "lessonsPerWeek": 36, "minutesPerLesson": 40,
+        "studentGroupSize": 24, "minGradeLevel": 8, "maxGradeLevel": 8,
+    })
+    _away_at_lunch(payload, away, (1, 2, 3, 4, 5), "10:30:00", "13:00:00")
+    request = OptimizeScheduleRequest.model_validate(payload)
+    held_back, _ = solver._cliques_short_at_the_maximum(request)
+    assert [str(g) for g in held_back] == [away]
+    monkeypatch.setattr(
+        SchedulerSolver, "_cliques_short_at_the_maximum", lambda self, request: ([], []),
+    )
+    _the_full_model_is_never_built(monkeypatch)
+
+    response = solver.solve(request)
+
+    assert response.status == "INFEASIBLE"
+    assert response.conflicts is not None
+    assert "115 seats cannot seat the 11 classes named (264 students)" in response.conflicts.summary
+    assert not [d for d in response.conflicts.conflicts if away in map(str, d.resource_ids)]
+
+
+def _reproduction_b_beside_a_class_at_the_maximum(lessons: int) -> tuple[dict[str, object], str, str]:
+    """Reproduction B under a maximum of six a day, beside a class at school
+    with `lessons` lessons of fifteen minutes: thirty fill its five days at
+    six a day exactly. Returns the payload, B's pinned class and that class."""
+    payload = _teaching_group_school(classes=4)
+    payload["rules"] = {
+        "lunchStartTime": "10:30:00", "lunchEndTime": "13:00:00", "lunchMinutes": 30,
+        "maxLessonsPerDayPerGroup": 6,
+    }
+    _pin_lunch_with_locked_lessons(payload)
+    full = str(uuid4())
+    payload["groups"].append(  # type: ignore[union-attr]
+        {"id": full, "lunchHeadcount": 24, "minGradeLevel": 6, "maxGradeLevel": 6},
+    )
+    payload["requirements"].append({  # type: ignore[union-attr]
+        "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": full,
+        "teacherId": str(uuid4()), "lessonsPerWeek": lessons, "minutesPerLesson": 15,
+        "studentGroupSize": 24, "minGradeLevel": 6, "maxGradeLevel": 6,
+    })
+    return payload, payload["groups"][0]["id"], full  # type: ignore[index]
+
+
+def test_the_maximum_is_named_from_one_lesson_too_many_and_not_at_an_exact_fit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """THE BOUNDARY. Thirty lessons of fifteen minutes at most six a day fill
+    five days exactly, and the count must call that a fit: the week is then
+    reproduction B's, and the refusal is B's own three lines. Thirty-one do
+    not fit, and the maximum's line leads; B's lunch is still impossible once
+    that class's lessons are set aside, so its lines follow, true both."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    monkeypatch.setattr(SchedulerSolver, "_clique_hours_verdict", lambda self, request: None)
+    _the_full_model_is_never_built(monkeypatch)
+    solver = SchedulerSolver(_settings())
+    b_lines = [("LUNCH_WINDOW",), ("LUNCH_WINDOW",), ("GROUP_OVERLAP",)]
+
+    payload, pinned, full = _reproduction_b_beside_a_class_at_the_maximum(30)
+    request = OptimizeScheduleRequest.model_validate(payload)
+    assert solver._cliques_short_at_the_maximum(request) == ([], [])
+    response = solver.solve(request)
+    assert response.conflicts is not None
+    assert [(d.category,) for d in response.conflicts.conflicts] == b_lines
+    assert {str(g) for d in response.conflicts.conflicts for g in d.resource_ids} == {pinned}
+
+    payload, pinned, full = _reproduction_b_beside_a_class_at_the_maximum(31)
+    request = OptimizeScheduleRequest.model_validate(payload)
+    held_back, short_anyway = solver._cliques_short_at_the_maximum(request)
+    assert ([str(g) for g in held_back], short_anyway) == ([full], [])
+    response = solver.solve(request)
+    assert response.status == "INFEASIBLE"
+    assert response.conflicts is not None
+    assert "for the 1 class named" in response.conflicts.summary
+    first, *rest = response.conflicts.conflicts
+    assert first.code == "GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT"
+    assert (dict(first.params), [str(g) for g in first.resource_ids]) == (
+        {"maxPerDay": 6, "measured": 3}, [full],
+    )
+    assert [(d.category,) for d in rest] == b_lines
+    assert {str(g) for d in rest for g in d.resource_ids} == {pinned}
+
+
+def _one_class_framed_short_on_two_days() -> tuple[dict[str, object], str]:
+    """The review of #207's smallest week: one class of year 8, ten subjects of
+    three hour-long lessons, framed 08:00-12:30 on Monday and Tuesday and
+    08:00-17:30 the rest of the week, lunch 11:00-13:00, at most seven a day.
+    Thirty lessons, and 7 x 5 = 35 would hold them: no class has more lessons
+    than the maximum times its days. With no lunch the frames and the maximum
+    hold 4 + 4 + 7 + 7 + 7 = 29; without the maximum, 4 + 4 + 9 + 9 + 9."""
+    cls = str(uuid4())
+    years = {"minGradeLevel": 8, "maxGradeLevel": 8}
+    payload: dict[str, object] = {
+        "requestId": str(uuid4()), "academicYearId": str(uuid4()),
+        "requirements": [
+            {
+                "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": cls,
+                "teacherId": str(uuid4()), "lessonsPerWeek": 3, "minutesPerLesson": 60,
+                "studentGroupSize": 25, **years,
+            }
+            for _ in range(10)
+        ],
+        "groups": [{"id": cls, "lunchHeadcount": 25, **years}],
+        "rooms": [{"id": str(uuid4()), "capacity": 30} for _ in range(2)],
+        "constraints": [],
+        "rules": {
+            "lunchStartTime": "11:00:00", "lunchEndTime": "13:00:00", "lunchMinutes": 30,
+            "maxLessonsPerDayPerGroup": 7,
+        },
+        "frameTimes": [
+            {
+                **years, "dayOfWeek": day, "startTime": "08:00:00",
+                "endTime": "12:30:00" if day in (1, 2) else "17:30:00", "changeoverMinutes": 0,
+            }
+            for day in range(1, 6)
+        ],
+    }
+    return payload, cls
+
+
+def test_a_shortage_the_frames_and_the_maximum_make_together_is_named_by_the_stage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """NOT THE TRIVIAL SHORTAGE. The full model cannot assemble this pigeonhole
+    from its per-slot encoding: left to it, the week came back TIMEOUT at
+    80 s, and at 620 s on a ten-minute budget, with "nothing helped". The
+    stage's count proves it at once, and names the maximum from that count —
+    so the refusal is the stage's, which is checked by the full model never
+    being built rather than by a bound in seconds (reproduction G's reason)."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    payload, cls = _one_class_framed_short_on_two_days()
+    request = OptimizeScheduleRequest.model_validate(payload)
+    assert sum(r["lessonsPerWeek"] for r in payload["requirements"]) <= 7 * 5  # type: ignore[index]
+    held_back, short_anyway = solver._cliques_short_at_the_maximum(request)
+    assert ([str(g) for g in held_back], short_anyway) == ([cls], [])
+    _the_full_model_is_never_built(monkeypatch)
+
+    response = solver.solve(request)
+
+    assert response.status == "INFEASIBLE"
+    assert response.conflicts is not None
+    assert response.conflicts.summary_code == "CONFLICT_CORE_SUMMARY"
+    assert _the_maximum_lines(response.conflicts) == [({"maxPerDay": 7, "measured": 3}, [cls])]
+    assert len(response.conflicts.conflicts) == 1
+
+
+def _a_class_whose_frames_cannot_hold_its_lessons(payload: dict[str, object]) -> str:
+    """A second class on the two-day week, at school and eating, with ten
+    lessons of 80 minutes from two teachers: 800 against the 720 of its two
+    days, with or without the maximum, and no teacher's own hours short.
+    Returns its id."""
+    short = str(uuid4())
+    payload["groups"].append(  # type: ignore[union-attr]
+        {"id": short, "lunchHeadcount": 24, "minGradeLevel": 9, "maxGradeLevel": 9},
+    )
+    for _ in range(2):
+        payload["requirements"].append({  # type: ignore[union-attr]
+            "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": short,
+            "teacherId": str(uuid4()), "lessonsPerWeek": 5, "minutesPerLesson": 80,
+            "studentGroupSize": 24, "minGradeLevel": 9, "maxGradeLevel": 9,
+        })
+    return short
+
+
+def test_a_clique_short_without_the_maximum_too_leaves_the_naming_as_it_was(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Frames that cannot hold the lessons with or without the maximum: not
+    the maximum's to name. The hours verdict refuses such a week before the
+    stage, so it is switched off here to reach the stage at all. Nothing is
+    held back, and the stage names exactly what the naming names on its own."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    monkeypatch.setattr(SchedulerSolver, "_clique_hours_verdict", lambda self, request: None)
+    solver = SchedulerSolver(_two_school_days_settings())
+    payload = _a_class_that_eats_on_no_day()
+    payload["constraints"] = []
+    payload["groups"] = []
+    short = _a_class_whose_frames_cannot_hold_its_lessons(payload)
+    payload["requirements"] = [  # only the short class's lessons
+        r for r in payload["requirements"] if r["studentGroupId"] == short  # type: ignore[union-attr,index]
+    ]
+    request = OptimizeScheduleRequest.model_validate(payload)
+    held_back, short_anyway = solver._cliques_short_at_the_maximum(request)
+    assert (held_back, [str(g) for g in short_anyway]) == ([], [short])
+
+    verdict, hints = solver._lunch_stage_one(request)
+
+    from app.solver.scheduler_solver import _start_step
+    stage = solver._build_lunch_stage(
+        request, solver._lunch_start_narrowings(request, step=_start_step(request, solver._grid)),
+    )
+    assert verdict is not None
+    assert verdict == solver._name_lunch_causes(request, stage)
+    assert not _the_maximum_lines(verdict)
+
+
+def test_the_maximum_names_only_the_classes_it_holds_back() -> None:
+    """A class the maximum holds back beside one the frames cannot hold with
+    or without it. The line names the first and not the second, and the
+    second is in no line at all: its sentences go whole before the rest is
+    solved again, and with both set aside the lunches fit, so the line stands
+    alone. The stage is asked directly: the counting verdicts before it
+    refuse a week with a class like the second, as they should."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_two_school_days_settings())
+    payload = _a_class_that_eats_on_no_day()
+    payload["constraints"] = []
+    held = payload["groups"][0]["id"]  # type: ignore[index]
+    short = _a_class_whose_frames_cannot_hold_its_lessons(payload)
+    request = OptimizeScheduleRequest.model_validate(payload)
+    held_back, short_anyway = solver._cliques_short_at_the_maximum(request)
+    assert ([str(g) for g in held_back], [str(g) for g in short_anyway]) == ([held], [short])
+
+    verdict, hints = solver._lunch_stage_one(request)
+
+    assert hints == {}
+    assert verdict is not None
+    assert verdict.summary_code == "CONFLICT_CORE_SUMMARY"
+    assert _the_maximum_lines(verdict) == [({"maxPerDay": 2, "measured": 3}, [held])]
+    assert len(verdict.conflicts) == 1
+    assert short not in {str(g) for d in verdict.conflicts for g in d.resource_ids}
 
 
 def test_the_lunch_stage_asks_for_its_own_search_on_every_machine(

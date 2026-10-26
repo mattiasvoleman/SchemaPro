@@ -341,7 +341,11 @@ MESSAGES: dict[str, str] = {
     # 1, solving the week without the maximum found a timetable, and the groups
     # are the ones it gives more than the maximum on some day; 2, the week is
     # impossible without the maximum too, and the groups named fit their own
-    # days without the maximum and not with it; 0, nothing could be measured.
+    # days without the maximum and not with it; 3, the lunch stage's count
+    # (_cliques_short_at_the_maximum): with no meal at all, each class named and
+    # the groups that may never overlap with it fit the time the frames and the
+    # locks leave them without the maximum and not with it — a count, no week
+    # solved either way; 0, nothing could be measured.
     "GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT": (
         "The school rules allow at most {maxPerDay, plural, one {# lesson} other {# lessons}} a "
         "day for each class and teaching group. {measured, select, 1 {That maximum is what "
@@ -349,7 +353,12 @@ MESSAGES: dict[str, str] = {
         "and in it the groups named here have more lessons than that on some day.} 2 {That "
         "maximum makes the week impossible on its own: even with the other rules set aside, the "
         "groups named here cannot fit their lessons into the days open to them at that maximum. "
-        "The week has other causes too: it stays impossible without the maximum.} other {That "
+        "The week has other causes too: it stays impossible without the maximum.} 3 {That "
+        "maximum makes the week impossible on its own: at that maximum the lessons of each "
+        "class named here, together with those of groups that may never overlap with it, do "
+        "not fit into the time the frame times and the locked lessons leave them, even with "
+        "every other rule set aside. Counted without the maximum they fit; that is a count "
+        "and not a timetable.} other {That "
         "maximum is one of the rules that cannot all hold at once for the groups named here; "
         "whether it alone is the difference could not be measured.}} Raise Max lessons per day "
         "under School rules, or free more days for those groups' lessons."
