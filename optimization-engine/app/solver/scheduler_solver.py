@@ -809,6 +809,9 @@ class _LunchStage:
     headcounts: dict[UUID, int]
     #: Class -> the frame window its lessons share, for the sentence about them.
     window_texts: dict[UUID, str | None]
+    #: Class -> its clique's requirements. Two classes whose cliques hold the
+    #: same lessons are short of the same lessons, and a line names them once.
+    lessons: dict[UUID, frozenset[UUID]]
 
     def pinned(self, relaxed: set[tuple[str, UUID | None]]) -> cp_model.CpModel:
         clone = self.model.Clone()
@@ -1512,12 +1515,55 @@ class SchedulerSolver:
         it down to a multiple of 45 called it 90 and refused five such days
         for a class the model placed in under a second. The measure is still
         a bound the model cannot beat — every lesson is a whole number of it.
+
+        WHERE THE MEAL MAY SIT is the model's to say, not the free time's.
+        From bffd645a until the review of #207 the count put it only on the
+        window's starts that lie wholly inside the clique's free time, and
+        that is not where the model puts it. The free time is the frame of
+        the LESSONS' years; the meal sits where the GROUP's years let it
+        (_cliques says why the two are read apart), and a meal the school
+        placed by hand sits where it was placed, outside the window and the
+        frame too. A meal placed at 15:00, after a year-4 frame that closes
+        then, costs the lessons nothing, and the count took a lesson a day
+        for it: 31 lessons refused against 30, a week the model solves in a
+        tenth of a second. That one reaches the engine from the gateway as
+        it is. A class sent with no years whose lessons are year 8's, framed
+        to 12:00 inside an 11:00-13:00 window, eats at 12:00 and loses
+        nothing either: 16 refused against 15. Where no window start lay
+        inside the free time at all — that class's Friday framed to 10:30 —
+        the count gave up on the WHOLE WEEK, and another class, short by its
+        hours alone, reached the stage unnamed.
+
+        So the count reads exactly the starts the model's own variable may
+        take (_lunch_start_narrowings, composed: the window on the step,
+        narrowed by the stage's sitting or frame and by what the locks and
+        the reservations leave, or the start placed by hand), and the day
+        counts around whichever of them wastes least. Every timetable puts
+        the meal on one of them, so the count bounds the day; what the meal
+        keeps the lessons out of is unchanged. No start the model forbids is
+        read: one would let the count call a day larger than any timetable
+        makes it and drop a refusal that is true. A class whose meal has no
+        start at all on some day is refused by name before this runs
+        (_validate_request); handed one directly, the count skips that class
+        and counts the rest.
+
+        THE RAST VERDICT READS THE SAME VARIABLE, wider (_rast_meal_starts):
+        the hull it is made on, the window widened to hold a start placed by
+        hand (_lunch_start_bounds), without the sitting, the frame, the locks
+        or the reservations. Every start read here is in that hull, so the
+        two say the same thing from two sides: generous there, exact here.
+        This count cannot take the hull: two locks that pin the meal to 10:30
+        — the reproduction above — would let it sit on them, and the count
+        would lose its own refusal. Nor does it read rasts or the stretches
+        before them: a stretch the rast verdict closes, because no lesson can
+        answer it, is free time here, which only lets more through.
         """
         if not request.groups:
             return None
         classes = _derived_key_classes(request)
         rules = request.rules
         lunch_on = rules is not None and _lunch_window_is_set(rules)
+        narrowings: dict[tuple[UUID, int], _LunchStarts] = {}
         if lunch_on:
             window_start, window_end, lunch_slots = self._lunch_window_slots(rules)
             lunch_group_ids = _lunch_group_ids(
@@ -1527,9 +1573,13 @@ class SchedulerSolver:
                 request.constraints, set(lunch_group_ids),
                 window_start, window_end - lunch_slots, window_end, lunch_slots,
             )
+            narrowings = self._lunch_start_narrowings(
+                request, step=_start_step(request, self._grid),
+            ) or {}
         else:
             window_start = window_end = lunch_slots = 0
             exempt_days = set()
+        slots_per_day = self._grid.slots_per_day
 
         for group, clique in self._cliques(request):
             measure = clique.measure
@@ -1537,27 +1587,30 @@ class SchedulerSolver:
             # The same count with no meal to seat: when THAT would have held the
             # lessons, the lunch is the difference and is named as such.
             capacity_without_lunch = 0
+            counted = True
             for day_index, free in clique.free_by_day.items():
                 capacity_without_lunch += _holds(free, measure)
                 if lunch_on and (group.id, day_index) not in exempt_days:
-                    # The meal must sit inside the window AND inside free time;
+                    # The model's own starts, day-local as the free time is;
                     # the placement that wastes least is the one that counts.
-                    best = 0
-                    placed = False
-                    for start in range(window_start, window_end - lunch_slots + 1):
-                        if any(a <= start and start + lunch_slots <= b for a, b in free):
-                            placed = True
-                            best = max(
-                                best,
-                                _holds(_subtract_range(free, (start, start + lunch_slots)), measure),
-                            )
-                    if not placed:
-                        # No lunch fits this day at all — a refusal of its own,
-                        # made elsewhere by name. Not this verdict's to make.
-                        return None
-                    capacity += best
+                    parts = narrowings.get((group.id, day_index))
+                    offset = day_index * slots_per_day
+                    starts = [] if parts is None else [
+                        start - offset
+                        for low, high in _domain_intervals(parts.composed())
+                        for start in range(low, high + 1)
+                    ]
+                    if not starts:
+                        counted = False
+                        break
+                    capacity += max(
+                        _holds(_subtract_range(free, (start, start + lunch_slots)), measure)
+                        for start in starts
+                    )
                 else:
                     capacity += _holds(free, measure)
+            if not counted:
+                continue
 
             demand = clique.demand
             if demand > capacity:
@@ -2577,13 +2630,17 @@ class SchedulerSolver:
         lunch anywhere the cut goes, and the sentence holds exactly when the
         days' counts can sum to the clique's demand.
 
-        Returns (held back, short anyway), each a list of the cliques' classes.
-        HELD BACK: short with the cap and not without it — the maximum, and
-        nothing the count reads but the maximum, is the difference. SHORT
-        ANYWAY: short without the cap too, so the frames and the locks alone
-        cannot hold the lessons; the hours verdict refuses such a clique before
-        the stage runs, unless a day of it has no room for a lunch at all,
-        which it leaves to be refused by name elsewhere.
+        Returns (held back, short anyway), each a list of the cliques' classes,
+        all of them: a teaching group listed in `groups` beside its class has
+        a clique of the class's lessons, both sentences are short, and both
+        go (the line names those lessons once, _name_lunch_causes). HELD BACK:
+        short with the cap and not without it — the maximum, and nothing the
+        count reads but the maximum, is the difference. SHORT ANYWAY: short
+        without the cap too, so the frames and the locks alone cannot hold the
+        lessons. Through solve() there is none: the hours verdict counts the
+        same free time, less a meal, refuses such a clique before the stage
+        runs, and skips a clique only when its meal has no start at all, which
+        _validate_request refuses first. A direct caller can still reach one.
 
         WHAT THE COUNT READS, which is all a line built on it may say: the
         union of the windows the frame times give the clique's requirements,
@@ -2713,8 +2770,10 @@ class SchedulerSolver:
                 ).OnlyEnforceIf(hall)
 
         window_texts: dict[UUID, str | None] = {}
+        lessons_of: dict[UUID, frozenset[UUID]] = {}
         for group, clique in self._cliques(request):
             window_texts[group.id] = clique.window_text
+            lessons_of[group.id] = frozenset(r.id for r in clique.requirements)
             measure = clique.measure
             # The day under the school's daily maximum, as _cliques bounds it;
             # _cliques_short_at_the_maximum reads the same field.
@@ -2748,7 +2807,7 @@ class SchedulerSolver:
 
         return _LunchStage(
             model=model, starts=starts, literals=literals, headcounts=headcounts,
-            window_texts=window_texts,
+            window_texts=window_texts, lessons=lessons_of,
         )
 
     def _name_lunch_causes(
@@ -2773,10 +2832,11 @@ class SchedulerSolver:
         None when the refusal is not the lunch's: see the first question.
 
         `held_back`: classes whose cliques the daily maximum holds back with no
-        meal at all (_cliques_short_at_the_maximum). Their line leads, and the
-        rest is named with their lessons sentences dropped; `short_anyway`,
-        the cliques short even without the maximum, are dropped whole beside
-        them, and no line says anything of them.
+        meal at all (_cliques_short_at_the_maximum). Their line leads, naming
+        each clique once, and the rest is named with all their lessons
+        sentences dropped; `short_anyway`, the cliques short even without the
+        maximum, are dropped whole beside them, and no line says anything of
+        them.
         """
         rules = request.rules
         seats = rules.dining_seats
@@ -2818,14 +2878,30 @@ class SchedulerSolver:
         # classes that eat on no day. Still impossible: its causes are named
         # as ever and follow the line, true both. Possible, or undecided: the
         # line alone.
+        #
+        # ONE NAME PER SHORTAGE. A teaching group listed in `groups` beside
+        # its class has a clique of the class's lessons, and the line named
+        # both for one shortage: six groups for four in the review's week.
+        # So the classes whose cliques hold the same lessons are named once,
+        # by the one that brings pupils to lunch (a teaching group's eat with
+        # their class, and it is sent with none), else by the first. Each name
+        # is still a clique held back on its own count, so the line stays
+        # true. Every sentence still goes: the twin's is short of the same
+        # lessons, and left pinned it would keep the week impossible alone.
         maximum_line: ConflictDetail | None = None
         if held_back:
+            twins: dict[frozenset[UUID], list[UUID]] = {}
+            for group_id in held_back:
+                twins.setdefault(stage.lessons[group_id], []).append(group_id)
             maximum_line = ConflictDetail(
                 # "För många lektioner", as the model's own line files it.
                 category="REQUIREMENT_DEMAND",
                 code="GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT",
                 params={"maxPerDay": rules.max_lessons_per_day_per_group, "measured": 3},
-                resource_ids=held_back,
+                resource_ids=[
+                    next((g for g in alike if stage.headcounts.get(g, 0) > 0), alike[0])
+                    for alike in twins.values()
+                ],
             )
             dropped = set(short_anyway or ())
             relaxed.update(("lessons", group_id) for group_id in held_back)
@@ -3001,6 +3077,14 @@ class SchedulerSolver:
         # Three summaries rather than one with a substituted lead: a lead
         # built here would arrive at the translator as a finished English
         # sentence with a Swedish tail stapled to it.
+        #
+        # `classes` counts the classes the lunch causes name, and each
+        # sentence says so ("named in the lunch causes below"). Beside the
+        # maximum's line the refusal names more: in the review's week the
+        # line named a class no lunch cause is about, and "the 3 classes
+        # named" read as a count of all 4. Counted into the summary, that
+        # class would be one the hall cannot seat or the lunch cannot be
+        # placed for, which is the blame the maximum's line exists to lift.
         if seats_matter is None:
             code = "LUNCH_NO_PLACEMENT_SEATS_UNDECIDED"
             params: dict[str, str | int] = {"seats": seats, "classes": len(named)}
@@ -6117,6 +6201,9 @@ class SchedulerSolver:
         (_lunch_start_bounds). Sittings, frames, locks and the class's own
         reservations narrow it further in the model; reading the hull alone
         lets the meal sit where it wastes least, which is the generous side.
+        The hours verdict reads the same variable exactly, narrowings and all
+        (_clique_hours_verdict, _lunch_start_narrowings): every start it reads
+        is in this hull.
         """
         rules = request.rules
         if rules is None or not _lunch_window_is_set(rules) or group_id not in eaters:
