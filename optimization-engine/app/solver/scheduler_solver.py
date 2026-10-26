@@ -5802,13 +5802,6 @@ class SchedulerSolver:
                 reach[key] = self._reserved_ranges(request, requirement, day_index, teachers)
             return reach[key]
 
-        def fits_in(
-            requirement: AnonymousRequirement, day_index: int, room: int, first: int,
-        ) -> bool:
-            return self._room_in_stretch(
-                reserved(requirement, day_index), room, first,
-            ) >= self._grid.minutes_to_slots(requirement.shortest_lesson_minutes())
-
         # Who eats, and where a meal was put by hand: the lunch builder's own
         # readers, so the two can never disagree about whose day has a meal.
         eaters = set(_lunch_group_ids(
@@ -5855,6 +5848,34 @@ class SchedulerSolver:
             demand = sum(lengths)
             measure = math.gcd(*lengths)
 
+            # THE LESSONS ARE COUNTED AS THE MODEL ASKS ABOUT THEM: one unit
+            # per (requirement, length, teachers), with how many lessons it
+            # has, and each tried against a stretch with its own length and
+            # what reaches its own teachers — the very test the rule's builder
+            # skips a lesson's flag on. A requirement's 80-minute lesson that
+            # cannot fit is not counted because its 40-minute one can, and a
+            # split post's lesson whose lead is away is not counted because
+            # its other lead is free.
+            units: list[tuple[AnonymousRequirement, int, tuple[UUID, ...]]] = []
+            supply: list[int] = []
+            unit_of: dict[tuple[int, int, tuple[UUID, ...]], int] = {}
+            for requirement in asked:
+                for lesson_index, minutes in enumerate(requirement.lesson_minutes()):
+                    teachers = _teachers_at(requirement, lesson_index)
+                    duration = self._grid.minutes_to_slots(minutes)
+                    key = (id(requirement), duration, teachers)
+                    if key not in unit_of:
+                        unit_of[key] = len(units)
+                        units.append((requirement, duration, teachers))
+                        supply.append(0)
+                    supply[unit_of[key]] += 1
+
+            def room_for(unit: int, day_index: int, room: int, first: int) -> int:
+                requirement, _duration, teachers = units[unit]
+                return self._room_in_stretch(
+                    reserved(requirement, day_index, teachers), room, first,
+                )
+
             # Every stretch this class is asked to answer, day by day in the
             # order of the day: (first, last, room, meal, fits). A stretch a
             # lock already fills is not among them at all: a lesson the school
@@ -5865,16 +5886,19 @@ class SchedulerSolver:
             ):
                 if self._locks_in_stretch(request, members, day_index, room, first):
                     continue
-                # THE BEST-PLACED REQUIREMENT DECIDES, because the demand is for
-                # A lesson and not a particular one: one subject whose teacher
-                # is free and whose lessons are short enough answers it for the
+                # THE BEST-PLACED LESSON DECIDES, because the demand is for A
+                # lesson and not a particular one: one subject whose teacher is
+                # free and whose lessons are short enough answers it for the
                 # whole class. Measuring the shortest lesson alone would close a
                 # day whose maths teacher is away and whose music teacher is not.
-                # A split post's lead being away closes nothing here either: a
-                # reservation counts against a requirement only where it
-                # reaches every lesson of it (_reserved_ranges).
+                # Asked of each unit, the model's own question: a split post
+                # both of whose leads are away before the break answers it with
+                # nothing, and the day is closed — read off the row, with no
+                # lead on every lesson, it looked open, and the shortage came
+                # out as "only 0 lessons fit there".
                 fits = any(
-                    fits_in(requirement, day_index, room, first) for requirement in asked
+                    room_for(unit, day_index, room, first) >= units[unit][1]
+                    for unit in range(len(units))
                 )
                 stretches[day_index].append((first, last, room, meal, fits))
             # The days this class is shut out of the rest of, and the break that
@@ -5897,14 +5921,8 @@ class SchedulerSolver:
             # 11:10: the bare model UNKNOWN after sixty seconds, the whole
             # solve a TIMEOUT, and refused here by name in milliseconds.
             #
-            # THE LESSONS ARE COUNTED AS THE MODEL ASKS ABOUT THEM: one unit
-            # per (requirement, length, teachers), with how many lessons it
-            # has, and each tried against the stretch with its own length and
-            # what reaches its own teachers — the very test the rule's builder
-            # skips a lesson's flag on. A requirement's 80-minute lesson that
-            # cannot fit is not counted because its 40-minute one can, and a
-            # split post's lesson whose lead is away is not counted because
-            # its other lead is free.
+            # Each lesson is a unit counted as above, so a day is matched only
+            # to a lesson the model would let sit in its stretch.
             #
             # GENEROUS EVERYWHERE ELSE: only the FIRST asking break of a day
             # costs a lesson (later ones are taken as answered), and a day the
@@ -5912,26 +5930,10 @@ class SchedulerSolver:
             # close here. Each over-counts the week, the direction to be wrong in.
             gates = {day_index: day[0] for day_index, day in stretches.items()}
             openable = [day_index for day_index, gate in gates.items() if gate[4]]
-            units: list[tuple[AnonymousRequirement, int, tuple[UUID, ...]]] = []
-            supply: list[int] = []
-            unit_of: dict[tuple[int, int, tuple[UUID, ...]], int] = {}
-            for requirement in asked:
-                for lesson_index, minutes in enumerate(requirement.lesson_minutes()):
-                    teachers = _teachers_at(requirement, lesson_index)
-                    duration = self._grid.minutes_to_slots(minutes)
-                    key = (id(requirement), duration, teachers)
-                    if key not in unit_of:
-                        unit_of[key] = len(units)
-                        units.append((requirement, duration, teachers))
-                        supply.append(0)
-                    supply[unit_of[key]] += 1
 
             def answers(unit: int, day_index: int) -> bool:
-                requirement, duration, teachers = units[unit]
                 first, _last, room, _meal, _fits = gates[day_index]
-                return self._room_in_stretch(
-                    reserved(requirement, day_index, teachers), room, first,
-                ) >= duration
+                return room_for(unit, day_index, room, first) >= units[unit][1]
 
             # The quick answer first, and it is the common one: hand each day
             # the first lesson that is left and answers it. When every day gets
@@ -5998,8 +6000,7 @@ class SchedulerSolver:
             if closed and demand > capacity:
                 day_index, (first, _last, room, meal) = next(iter(closed.items()))
                 widest = max(
-                    self._room_in_stretch(reserved(requirement, day_index), room, first)
-                    for requirement in asked
+                    room_for(unit, day_index, room, first) for unit in range(len(units))
                 )
                 raise InvalidScheduleInputError.of("RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT", {
                     "day": self._grid.schedule_days[day_index],
@@ -6007,9 +6008,7 @@ class SchedulerSolver:
                     "rast": self._grid.format_hhmmss(first, 0)[0][:5],
                     "opens": self._grid.format_hhmmss(room, 0)[0][:5],
                     "remaining": widest * minutes,
-                    "minutes": min(
-                        self._grid.minutes_to_slots(r.shortest_lesson_minutes()) for r in asked
-                    ) * minutes,
+                    "minutes": min(duration for _r, duration, _t in units) * minutes,
                     # Which of the three took the minutes, so the school is sent to
                     # the screen that holds the lever.
                     "bound": (
