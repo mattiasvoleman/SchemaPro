@@ -417,22 +417,23 @@ MESSAGES: dict[str, str] = {
     # ---- The lunch stage: the refusal and the causes it needs -----------
     "LUNCH_HALL_CANNOT_SEAT_CLASSES": (
         "The dining hall's {seats} seats cannot seat the {classes, plural, one {# class} "
-        "other {# classes}} named ({students, plural, one {# student} other {# students}}) at the "
-        "lunch starts their days leave them, in {lunchMinutes}-minute sittings between "
-        "{windowStart} and {windowEnd}. Add seats, widen the lunch window or the sittings, or "
-        "free the starts a frame, a lock or a constraint takes away."
+        "other {# classes}} named in the lunch causes below ({students, plural, one {# student} "
+        "other {# students}}) at the lunch starts their days leave them, in "
+        "{lunchMinutes}-minute sittings between {windowStart} and {windowEnd}. Add seats, widen "
+        "the lunch window or the sittings, or free the starts a frame, a lock or a constraint "
+        "takes away."
     ),
     "LUNCH_NO_PLACEMENT_FOR_CLASSES": (
         "No placement of the lunch breaks works for the {classes, plural, one {# class} "
-        "other {# classes}} named: their lessons, sittings, frame times, locked lessons and "
-        "constraints leave no day that holds both the lessons and the break. Widen the frame or "
-        "the lunch window, or unlock a lesson in the middle of the day."
+        "other {# classes}} named in the lunch causes below: their lessons, sittings, frame "
+        "times, locked lessons and constraints leave no day that holds both the lessons and the "
+        "break. Widen the frame or the lunch window, or unlock a lesson in the middle of the day."
     ),
     "LUNCH_NO_PLACEMENT_SEATS_UNDECIDED": (
         "No placement of the lunch breaks satisfies the lunch window, the sittings, the frame "
         "times, the locked lessons and the dining hall's {seats} seats together for the "
-        "{classes, plural, one {# class} other {# classes}} named. The solver ran out of time "
-        "before it could say whether the seats are the difference."
+        "{classes, plural, one {# class} other {# classes}} named in the lunch causes below. The "
+        "solver ran out of time before it could say whether the seats are the difference."
     ),
     "LUNCH_SEATS_CAP": "The dining hall's {seats} seats are all it holds at one time.",
     "LUNCH_CLASSES_EAT_DAILY": (

@@ -191,6 +191,12 @@ class TestTheFuzzWeeks:
         The sitting narrows the meal bare, so its six rows are in the proof
         beside the lunch's NoOverlap. Without the sitting the meal goes to
         09:30 and every day takes two.
+
+        Since the review of #207 the class's hours count seats the meal where
+        the model does, at the sitting, and refuses the week first: 420
+        minutes in whole lessons against 490, the lunch the difference. It
+        put the meal at 09:30 before, where the sitting forbids it. The gaps
+        verdict is asked directly, and still says why in whole lessons.
         """
         group, teacher = str(uuid4()), str(uuid4())
         lessons = _requirement(group, teacher, [70] * 7)
@@ -202,7 +208,23 @@ class TestTheFuzzWeeks:
             lunchServings=[{**_YEAR_7, "startTime": "10:00:00", "endTime": "10:30:00"}],
         )
 
-        _, lines = _refusal(_post(settings, week))
+        body = _post(settings, week)
+        assert body["status"] == "INFEASIBLE", body
+        hours = body["conflicts"]
+        assert hours["summaryCode"] == "DEMAND_CLIQUE_HOURS_SHORT", hours  # type: ignore[index]
+        assert hours["summaryParams"] == {  # type: ignore[index]
+            "group": group, "sharingGroups": 0, "demandMinutes": 490, "capacityMinutes": 420,
+        }
+        assert [d["code"] for d in hours["conflicts"]] == [  # type: ignore[index]
+            "DEMAND_REQUIREMENTS_EXCEED_WEEK", "LUNCH_BREAK_IS_THE_DIFFERENCE",
+        ]
+
+        gaps = SchedulerSolver(_settings(**settings))._lesson_gaps_verdict(
+            OptimizeScheduleRequest.model_validate(week),
+        )
+        assert gaps is not None
+        assert gaps.summary_code == "DEMAND_LESSONS_EXCEED_GAPS"
+        lines = [d.model_dump(by_alias=True) for d in gaps.conflicts]
 
         line, lunch = lines
         assert line["params"] == {
