@@ -8973,8 +8973,7 @@ def test_one_lesson_that_answers_one_day_cannot_keep_five_open() -> None:
     refusal = _refusal(payload, SCHEDULE_DAYS="1,2,3,4,5")
 
     assert refusal.code == "RAST_DEMANDS_MORE_LESSONS_THAN_FIT_BEFORE_IT"
-    assert refusal.params["days"] == 1
-    assert refusal.params["askedDays"] == 5
+    assert refusal.params["witnessDays"] == 5
     assert refusal.params["lessons"] == 1
     assert refusal.params["rast"] == "11:10"
     assert refusal.params["demandMinutes"] > refusal.params["capacityMinutes"]
@@ -9010,15 +9009,184 @@ def test_a_day_takes_a_lesson_from_a_day_that_can_use_another() -> None:
     from app.solver.scheduler_solver import _days_distinct_lessons_answer
 
     maths, music = 0, 1
-    answered = _days_distinct_lessons_answer(
+    assignment = _days_distinct_lessons_answer(
         [1, 2], {1: [maths, music], 2: [maths]}, [1, 1],
     )
-    assert answered == {1, 2}
+    assert assignment == {1: music, 2: maths}
     # And a day nothing is left for stays out, without taking one from a day
     # that has no other.
     assert _days_distinct_lessons_answer(
         [1, 2, 3], {1: [maths], 2: [maths, music], 3: [music]}, [1, 1],
-    ) == {1, 2}
+    ) == {1: maths, 2: music}
+
+
+def test_the_meal_the_count_charges_is_the_one_the_lunch_builder_makes() -> None:
+    """No meal on a day the class is closed, the whole window otherwise, and a pin inside the hull.
+
+    The lunch builder gives a home class no meal on a day a reservation shuts
+    it over the whole window (its exempt day), and a meal the school placed by
+    hand sits where it was put, inside the window or not. The count charges
+    exactly those: a meal on an exempt day would take an hour from a day the
+    class's partners can still be taught on, and the class eats nothing there.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload = _rast_payload([_rast("09:40", "10:00", asks=True)])
+    group = payload["groups"][0]["id"]  # type: ignore[index]
+    payload["rules"] = {"lunchStartTime": "10:00:00", "lunchEndTime": "11:30:00", "lunchMinutes": 30}
+    payload["constraints"] = [{
+        "id": str(uuid4()), "resourceKind": "STUDENT_GROUP", "resourceId": group,
+        "kind": "UNAVAILABLE", "dayOfWeek": 2, "startTime": "08:00:00", "endTime": "12:00:00",
+    }]
+    payload["lunchPlacements"] = [
+        {"studentGroupId": group, "dayOfWeek": 3, "startTime": "12:30:00"},
+    ]
+    solver = SchedulerSolver(_settings(SCHEDULE_DAYS="1,2,3"))
+    request = OptimizeScheduleRequest.model_validate(payload)
+    grid = solver._grid
+    window = (grid.parse_hhmmss("10:00:00"), grid.parse_hhmmss("11:00:00"), grid.minutes_to_slots(30))
+    eaters = {UUID(group)}
+    pins = solver._lunch_pins(request.lunch_placements, eaters)
+
+    assert solver._rast_meal_starts(request, UUID(group), 0, eaters, pins) == window
+    assert solver._rast_meal_starts(request, UUID(group), 1, eaters, pins) is None, "exempt day"
+    assert solver._rast_meal_starts(request, UUID(group), 2, eaters, pins) == (
+        window[0], grid.parse_hhmmss("12:30:00"), window[2],
+    ), "the hull holds the pin"
+    assert solver._rast_meal_starts(request, UUID(group), 0, set(), pins) is None, "not fed"
+
+
+def _review_week(name: str) -> tuple[dict[str, object], dict[str, object]]:
+    """A week from the review of the rast verdict (tests/data/rast_verdict_*.json)."""
+    import json
+    from pathlib import Path
+
+    data = json.loads((Path(__file__).parent / "data" / f"rast_verdict_{name}.json").read_text())
+    return data["payload"], data["settings"]
+
+
+@pytest.mark.parametrize(("name", "why"), [
+    # THE MEAL MAY SIT WHERE THE COUNT DOES NOT LOOK. An 80-minute meal in an
+    # 08:40-12:00 window, a class that goes home at 10:20 on the days nothing
+    # answers its break: the model puts the meal after it has gone, for
+    # nothing. Counted only inside the minutes left, the day lost its meal's
+    # worth: 440 minutes against 480, and a week refused that solves at once.
+    ("lunch_n12", "the meal after the class has gone home"),
+    # The same, in main's closed-day count, over minutes a teacher is reserved.
+    ("fuzz_lunch_scarce_159", "the meal over minutes no lesson can use"),
+    # A REQUIREMENT WITH NO YEARS IS CUT BY NO RAST, so its lessons may start
+    # in the break and run past it: "gone" is no lesson starting after the
+    # break, not every lesson ended before it begins.
+    ("span_n36", "a requirement with no years runs past the break"),
+    ("fuzz_nospan_scarce_103", "the same, in main's closed-day count"),
+    # A WEEKDAY ROW FOR ANOTHER STAGE replaces the every-day break for a group
+    # whose years reach that stage: M2 (åk 7-8) has Friday's 10:00-10:10 for
+    # 8-9, not the 7-9 break to 10:40, and its lessons may start at 10:10.
+    ("shadow_friday_n1", "a Friday row of another stage shadows the break"),
+    # The best day gets the one lesson that answers a break, not the first.
+    ("order_n8", "the matching tries the day staying buys most on first"),
+    # A requirement with two lessons answers two days.
+    ("supply2_n20", "a requirement answers as many days as it has lessons"),
+])
+def test_a_week_the_model_solves_is_not_refused_by_the_rast_verdict(name: str, why: str) -> None:
+    """Every week here was refused by the rast verdict, by main or by the first fix, and solves.
+
+    Each is the review's repro, and the model without any verdict before it
+    finds its timetable in a fraction of a second.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload, settings = _review_week(name)
+    SchedulerSolver(_settings(**settings))._validate_request(
+        OptimizeScheduleRequest.model_validate(payload),
+    )
+    assert _bare_model_status(payload, **settings) == "OPTIMAL", why
+
+
+def test_a_break_the_shadowed_group_answers_nothing_for_is_still_refused() -> None:
+    """The control for the shadow: Friday's own row bars M2 too, and the week has no timetable.
+
+    The same Friday with more lessons than its morning and the minutes M2 may
+    run past the break can hold. The extension to where a lesson may end is
+    the shadowed group's, and only as far as its own longest lesson.
+    """
+    payload, settings = _review_week("shadow_friday_n3")
+
+    refusal = _refusal(payload, **settings)
+
+    assert refusal.code == "RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT"
+    assert _bare_model_status(payload, **settings) == "INFEASIBLE"
+
+
+def test_a_class_gone_at_one_break_is_gone_at_every_later_one() -> None:
+    """A lesson a later break keeps out cannot run past it, whichever break the class left at.
+
+    A Monday row for åk 7 shadows the first break for a 7-8 group, so its
+    lesson may run past that break's start; the later break covers it. The
+    class leaving at the first break leaves at the second too, and the
+    lesson, started before the second, ends before it. Counted from the
+    first break's own end-by alone, the day held more than it can, and this
+    week — the model finds no timetable at once — was let through.
+    """
+    payload, settings = _review_week("shadow_mixed_6127")
+
+    refusal = _refusal(payload, **settings)
+
+    assert refusal.code == "RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT"
+    assert _bare_model_status(payload, **settings) == "INFEASIBLE"
+
+
+def test_a_closed_break_after_an_open_one_still_closes_the_day() -> None:
+    """The first asking break can be answered; the second, at 12:00, cannot.
+
+    The day is closed at the second, and that is main's refusal by main's
+    name: it is found on whichever break of the day nothing can answer, not
+    only on the first.
+    """
+    payload, settings = _review_week("laterclosed_n20")
+
+    refusal = _refusal(payload, **settings)
+
+    assert refusal.code == "RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT"
+    assert refusal.params["rast"] == "12:00"
+
+
+@pytest.mark.parametrize(("name", "days", "lessons", "day", "rast"), [
+    # Six lessons fit before the break, five of them only on Monday: the
+    # shortage is Tuesday-Friday's, with one lesson between four days.
+    ("hall_n15", 4, 1, 2, "10:20"),
+    # M2a's lessons are 40 and 80 minutes and the stretch is 40: one fits.
+    ("lengths_n25", 5, 1, 1, "10:20"),
+    # The same week with M2a a split post of two 40-minute lessons, one lead
+    # away over the stretch: that lesson is not counted for the other's sake.
+    ("split_n25", 5, 1, 1, "10:20"),
+    # Two asking breaks a day, only the first scarce: the first is the one
+    # that costs a lesson, and the class leaves at its start.
+    ("twobreaks_n22", 5, 1, 1, "10:20"),
+])
+def test_a_shortage_of_lessons_names_the_days_it_is_on_and_the_lessons_that_fit(
+    name: str, days: int, lessons: int, day: int, rast: str,
+) -> None:
+    """The sentence says what is proved: on these days, only these lessons fit.
+
+    The days and lessons are the witness of the matching that fails — the
+    days the unanswered ones reach, and the only lessons that could answer
+    them — so "only N fit there" is true of the days it names. Lessons are
+    counted as the model asks about them: a length that does not fit is not
+    counted because another length of the same requirement does.
+    """
+    payload, settings = _review_week(name)
+
+    refusal = _refusal(payload, **settings)
+
+    assert refusal.code == "RAST_DEMANDS_MORE_LESSONS_THAN_FIT_BEFORE_IT"
+    assert refusal.params["witnessDays"] == days
+    assert refusal.params["lessons"] == lessons
+    assert refusal.params["day"] == day
+    assert refusal.params["rast"] == rast
+    assert refusal.params["demandMinutes"] > refusal.params["capacityMinutes"]
 
 
 # ---------------------------------------------------------------------------

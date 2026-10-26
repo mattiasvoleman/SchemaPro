@@ -1659,7 +1659,7 @@ describe('OptimizationProxyService', () => {
         ],
         [
           'RAST_DEMANDS_MORE_LESSONS_THAN_FIT_BEFORE_IT',
-          { day: 2, grades: '7–9', rast: '11:10', days: 1, askedDays: 5, lessons: 1, demandMinutes: 680, capacityMinutes: 640 },
+          { day: 2, grades: '7–9', rast: '11:10', witnessDays: 5, lessons: 1, demandMinutes: 680, capacityMinutes: 640 },
         ],
       ])('names %s’s class span back too, and nothing else of it', async (code, params) => {
         http.post.mockReturnValue(throwError(() => refusal(code, params)));
