@@ -9105,6 +9105,11 @@ SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id
 UPDATE "CoverSettings" SET "teacherSelfReport" = true WHERE "schoolId" = app.current_school_id();
 
 -- 28e: self-report, and what the guard lets a teacher do with it.
+--
+-- Whole days start at a school-local midnight, found as the product finds
+-- it: a date (app.school_today() plus whole days), then the school's zone.
+-- "+ interval 'n days'" on an instant counts 24-hour days in the session's
+-- UTC, and twice a year the school's day is 23 or 25 hours long.
 SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls28_t1_sub'))::text, true);
 DO $$
 DECLARE
@@ -9112,25 +9117,25 @@ DECLARE
   me uuid := app.current_user_id();
   started uuid := current_setting('app.test_rls28_absence')::uuid;
   tz text := (SELECT timezone FROM "Schools" WHERE id = app.current_school_id());
-  today timestamptz := (app.school_today()::timestamp AT TIME ZONE tz);
+  today date := app.school_today();
   own uuid; n bigint;
 BEGIN
   -- Not the person, not the creator, not yesterday.
   BEGIN
     INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "createdByUserId")
-    VALUES (school, current_setting('app.test_rls28_t2')::uuid, today + interval '10 days', today + interval '11 days', me);
+    VALUES (school, current_setting('app.test_rls28_t2')::uuid, (today + 10)::timestamp AT TIME ZONE tz, (today + 11)::timestamp AT TIME ZONE tz, me);
     RAISE EXCEPTION 'cover: a teacher registered a colleague''s absence';
   EXCEPTION WHEN insufficient_privilege THEN NULL;
   END;
   BEGIN
     INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "createdByUserId")
-    VALUES (school, me, today + interval '10 days', today + interval '11 days', current_setting('app.test_rls28_admin')::uuid);
+    VALUES (school, me, (today + 10)::timestamp AT TIME ZONE tz, (today + 11)::timestamp AT TIME ZONE tz, current_setting('app.test_rls28_admin')::uuid);
     RAISE EXCEPTION 'cover: a teacher spoofed the creator';
   EXCEPTION WHEN insufficient_privilege THEN NULL;
   END;
   BEGIN
     INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "createdByUserId")
-    VALUES (school, me, today - interval '1 day', today + interval '20 days', me);
+    VALUES (school, me, (today - 1)::timestamp AT TIME ZONE tz, (today + 20)::timestamp AT TIME ZONE tz, me);
     RAISE EXCEPTION 'cover: a teacher backdated an absence';
   EXCEPTION WHEN SQLSTATE 'TA403' THEN NULL;
   END;
@@ -9143,8 +9148,12 @@ BEGIN
     RAISE EXCEPTION 'cover: a teacher ended their absence early past a decision still ahead';
   EXCEPTION WHEN SQLSTATE 'TA403' THEN NULL;
   END;
+  -- A whole day of its own, four days ahead. The started one ends at 28b's
+  -- now() + 48 hours (one transaction, one now()), and the midnight three
+  -- days ahead can be only 47 hours after tonight's when the spring switch
+  -- falls between; four days ahead is at least 71.
   INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "createdByUserId", "reasonId")
-  VALUES (school, me, today + interval '3 days', today + interval '4 days', me, current_setting('app.test_rls28_sick')::uuid)
+  VALUES (school, me, (today + 4)::timestamp AT TIME ZONE tz, (today + 5)::timestamp AT TIME ZONE tz, me, current_setting('app.test_rls28_sick')::uuid)
   RETURNING id INTO own;
 
   -- The guard on the started one: no later end, no end before now, no new
@@ -9185,18 +9194,18 @@ BEGIN
   IF n <> 0 THEN RAISE EXCEPTION 'cover: a teacher deleted an absence'; END IF;
 END $$;
 
--- "Sjuk i dag": a whole day from today's school-local midnight, reported
--- now, is accepted; and the teacher who pressed the wrong day takes it back
--- within the hour, nothing having been decided on it.
+-- "Sjuk i dag": a whole day from today's school-local midnight to the next,
+-- reported now, is accepted; and the teacher who pressed the wrong day takes
+-- it back within the hour, nothing having been decided on it.
 SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls28_t2_sub'))::text, true);
 DO $$
 DECLARE
   tz text := (SELECT timezone FROM "Schools" WHERE id = app.current_school_id());
-  today timestamptz := (app.school_today()::timestamp AT TIME ZONE tz);
+  today date := app.school_today();
   own uuid; n bigint;
 BEGIN
   INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "createdByUserId")
-  VALUES (app.current_school_id(), app.current_user_id(), today, today + interval '1 day', app.current_user_id())
+  VALUES (app.current_school_id(), app.current_user_id(), today::timestamp AT TIME ZONE tz, (today + 1)::timestamp AT TIME ZONE tz, app.current_user_id())
   RETURNING id INTO own;
   UPDATE "TeacherAbsences" SET status = 'WITHDRAWN', "withdrawnAt" = now(), "withdrawnByUserId" = app.current_user_id() WHERE id = own;
   GET DIAGNOSTICS n = ROW_COUNT;
@@ -14252,9 +14261,11 @@ BEGIN
   IF school IS NULL THEN RAISE EXCEPTION 'job claims: the gallring fixture school is missing'; END IF;
   IF app.current_user_id() IS NOT NULL THEN RAISE EXCEPTION 'job claims: expected no principal'; END IF;
 
-  -- Before the hour: nothing.
-  SELECT count(*) INTO n FROM app.job_claim_nightly('rls80', 3, ARRAY[school], 5, (today + time '02:30') AT TIME ZONE 'Europe/Stockholm');
-  IF n <> 0 THEN RAISE EXCEPTION 'job claims: claimed at 02:30 for a 03:00 job'; END IF;
+  -- Before the hour: nothing. Half an hour before 03:00 as an instant: on
+  -- the spring switch's day there is no 02:30, and the zone reads it as
+  -- 03:30, past the hour.
+  SELECT count(*) INTO n FROM app.job_claim_nightly('rls80', 3, ARRAY[school], 5, ((today + time '03:00') AT TIME ZONE 'Europe/Stockholm') - interval '30 minutes');
+  IF n <> 0 THEN RAISE EXCEPTION 'job claims: claimed half an hour before a 03:00 job'; END IF;
 
   SELECT count(*), max(local_day) INTO n, d FROM app.job_claim_nightly('rls80', 3, ARRAY[school], 5, (today + time '12:00') AT TIME ZONE 'Europe/Stockholm');
   IF n <> 1 OR d <> today THEN RAISE EXCEPTION 'job claims: the first claim of the day gave % row(s) for %', n, d; END IF;
