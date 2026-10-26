@@ -8911,6 +8911,116 @@ def test_a_clique_lesson_the_classs_rule_never_reads_is_not_held_to_its_morning(
     assert response.status in {"OPTIMAL", "FEASIBLE"}
 
 
+def _one_opener_payload(m2b_lessons: int) -> dict[str, object]:
+    """The closed-stretch week, with M2b's lessons the only ones free before the break.
+
+    7A's sixteen lessons of 40 minutes are reserved away from 10:20-11:10, the
+    stretch before the 11:10 break that asks for a lesson, and so is M2a's
+    teacher; M2b's teacher is not. Mornings hold three lessons, a whole day
+    four, so the class needs at least two days on which it stays after the
+    break — and each of those days needs a lesson of M2b's in the stretch.
+    """
+    payload = _reserved_payload(lessons_per_week=16)
+    home_class = payload["groups"][0]["id"]  # type: ignore[index]
+    payload["frameTimes"][0]["endTime"] = "12:10:00"  # type: ignore[index]
+    m2a, m2b = str(uuid4()), str(uuid4())
+    m2a_teacher = str(uuid4())
+    template = payload["requirements"][0]  # type: ignore[index]
+    payload["requirements"] += [  # type: ignore[operator]
+        {**template, "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": m2a,
+         "teacherId": m2a_teacher, "lessonsPerWeek": 1},
+        {**template, "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": m2b,
+         "teacherId": str(uuid4()), "lessonsPerWeek": m2b_lessons},
+    ]
+    payload["constraints"].append({  # type: ignore[union-attr]
+        "id": str(uuid4()), "resourceKind": "TEACHER", "resourceId": m2a_teacher,
+        "kind": "UNAVAILABLE", "dayOfWeek": None, "startTime": "10:20:00", "endTime": "11:10:00",
+    })
+    payload["groupConflicts"] = [[home_class, m2a], [home_class, m2b]]
+    return payload
+
+
+def _bare_model_status(payload: dict[str, object], **settings: object) -> str:
+    """The model alone, no verdict before it and no assumption literal in it."""
+    from ortools.sat.python import cp_model
+
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver, _solve_guarded
+
+    solver = SchedulerSolver(_settings(**{**MONDAY, **settings}))
+    request = OptimizeScheduleRequest.model_validate(payload)
+    model, *_ = solver._build_model(request, use_assumptions=False, include_objective=False)
+    cp = cp_model.CpSolver()
+    cp.parameters.num_workers = 1
+    cp.parameters.max_time_in_seconds = 10.0
+    return cp.StatusName(_solve_guarded(cp, model, what="a test", request_id=request.request_id))
+
+
+def test_one_lesson_that_answers_one_day_cannot_keep_five_open() -> None:
+    """A lesson is taught on one day, so it opens one day and no more.
+
+    No day is closed outright: M2b's teacher is free before 11:10 every day,
+    and its lesson fits there. But M2b has one lesson, the class can stay
+    after the break on the day that lesson is taught and on no other, and four
+    mornings and one whole day hold sixteen lessons against the seventeen the
+    clique needs. The rule is the whole cause — without it the week solves at
+    once — and the bare model cannot prove it: UNKNOWN after sixty seconds,
+    the whole solve a TIMEOUT. Main refused this week by name, for a reason
+    that was not true (it never saw M2b); refused here for the one that is.
+    """
+    payload = _one_opener_payload(m2b_lessons=1)
+
+    refusal = _refusal(payload, SCHEDULE_DAYS="1,2,3,4,5")
+
+    assert refusal.code == "RAST_DEMANDS_MORE_LESSONS_THAN_FIT_BEFORE_IT"
+    assert refusal.params["days"] == 1
+    assert refusal.params["askedDays"] == 5
+    assert refusal.params["lessons"] == 1
+    assert refusal.params["rast"] == "11:10"
+    assert refusal.params["demandMinutes"] > refusal.params["capacityMinutes"]
+    payload["rasts"][1]["requiresLessonBefore"] = False  # type: ignore[index]
+    assert _bare_model_status(payload, SCHEDULE_DAYS="1,2,3,4,5") == "OPTIMAL"
+
+
+def test_a_lesson_for_every_day_keeps_every_day_open() -> None:
+    """The control: five lessons of M2b answer five days, and nothing is refused.
+
+    Every day can then keep the class after the break, the week holds twenty
+    lessons against seventeen, and the bare model finds the timetable in a
+    fraction of a second.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload = _one_opener_payload(m2b_lessons=5)
+    solver = SchedulerSolver(_settings(SCHEDULE_DAYS="1,2,3,4,5"))
+
+    solver._validate_request(OptimizeScheduleRequest.model_validate(payload))
+    assert _bare_model_status(payload, SCHEDULE_DAYS="1,2,3,4,5") == "OPTIMAL"
+
+
+def test_a_day_takes_a_lesson_from_a_day_that_can_use_another() -> None:
+    """The matching moves a day already answered when that frees the lesson a new day needs.
+
+    Monday can be answered by maths or music, Tuesday only by maths, and each
+    has one lesson. Monday, tried first, takes maths; Tuesday then finds maths
+    taken, moves Monday to music, and takes it. Two days, not one: a greedy
+    hand-out would have closed Tuesday and refused a week that has both.
+    """
+    from app.solver.scheduler_solver import _days_distinct_lessons_answer
+
+    maths, music = 0, 1
+    answered = _days_distinct_lessons_answer(
+        [1, 2], {1: [maths, music], 2: [maths]}, [1, 1],
+    )
+    assert answered == {1, 2}
+    # And a day nothing is left for stays out, without taking one from a day
+    # that has no other.
+    assert _days_distinct_lessons_answer(
+        [1, 2, 3], {1: [maths], 2: [maths, music], 3: [music]}, [1, 1],
+    ) == {1, 2}
+
+
 # ---------------------------------------------------------------------------
 # Kortegen: the margin a body needs between two lessons inside one block.
 # ---------------------------------------------------------------------------
