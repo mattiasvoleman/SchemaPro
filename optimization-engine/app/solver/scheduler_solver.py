@@ -386,16 +386,17 @@ def _days_distinct_lessons_answer(
     days: list[int],
     openers: dict[int, list[int]],
     supply: list[int],
-) -> set[int]:
+) -> dict[int, int]:
     """The days, tried in the order given, that each get a lesson of their own.
 
-    `openers[day]` names the requirements (by index) that can answer the day,
-    and `supply[i]` how many lessons requirement i has. A day joins when an
-    augmenting path finds it a lesson — moving days already holding one onto
-    another requirement where that frees a lesson — so no day once answered
-    is dropped. Which days can be answered together is a transversal matroid,
-    so trying them best first gives the best set there is, and every answer it
-    gives has the largest number of days any assignment reaches.
+    `openers[day]` names the lessons (by unit) that can answer the day, and
+    `supply[u]` how many lessons unit u has. A day joins when an augmenting
+    path finds it a lesson — moving days already holding one onto another
+    unit where that frees a lesson — so no day once answered is dropped.
+    Which days can be answered together is a transversal matroid, so trying
+    them best first gives the best set there is, and every answer it gives
+    has the largest number of days any assignment reaches. Returned as
+    day -> the unit answering it.
     """
     holding: dict[int, list[int]] = defaultdict(list)
 
@@ -413,7 +414,43 @@ def _days_distinct_lessons_answer(
                     return True
         return False
 
-    return {day for day in days if place(day, set())}
+    answered = [day for day in days if place(day, set())]
+    assignment = {day: key for key, held in holding.items() for day in held}
+    return {day: assignment[day] for day in answered}
+
+
+def _days_short_of_lessons(
+    unanswered: list[int],
+    openers: dict[int, list[int]],
+    assignment: dict[int, int],
+) -> tuple[set[int], set[int]]:
+    """The days no assignment answers all of, and the only lessons that could.
+
+    From every unanswered day, the lessons it could have had, the days those
+    lessons were given to, and theirs in turn: an alternating search over the
+    assignment _days_distinct_lessons_answer made. Every lesson it reaches is
+    taken (one left over would have been an augmenting path), so the lessons
+    reached are exactly as many as the answered days reached — fewer than the
+    days reached by the unanswered ones. Hall's condition failing, written
+    down: on these days only these lessons fit, and they are too few.
+    """
+    holders: dict[int, list[int]] = defaultdict(list)
+    for day, unit in assignment.items():
+        holders[unit].append(day)
+    days = set(unanswered)
+    units: set[int] = set()
+    queue = list(unanswered)
+    while queue:
+        day = queue.pop()
+        for unit in openers[day]:
+            if unit in units:
+                continue
+            units.add(unit)
+            for other in holders[unit]:
+                if other not in days:
+                    days.add(other)
+                    queue.append(other)
+    return days, units
 
 
 @dataclass(eq=False)
@@ -5748,15 +5785,21 @@ class SchedulerSolver:
         by_group: dict[UUID, list[AnonymousRequirement]] = defaultdict(list)
         for requirement in request.requirements:
             by_group[requirement.student_group_id].append(requirement)
-        # One read per (requirement, day) for the whole verdict: a requirement
-        # is asked about once per class whose space holds it, and a språkval
-        # group's is in every class it draws from.
-        reach: dict[tuple[int, int], list[tuple[int, int]]] = {}
+        # One read per (requirement, day, teachers) for the whole verdict: a
+        # requirement is asked about once per class whose space holds it, and
+        # a språkval group's is in every class it draws from. `teachers` is a
+        # lesson's own (_teachers_at) when the question is about one lesson,
+        # and None — the teachers on every lesson — when it is about the row.
+        reach: dict[tuple[int, int, tuple[UUID, ...] | None], list[tuple[int, int]]] = {}
 
-        def reserved(requirement: AnonymousRequirement, day_index: int) -> list[tuple[int, int]]:
-            key = (id(requirement), day_index)
+        def reserved(
+            requirement: AnonymousRequirement,
+            day_index: int,
+            teachers: tuple[UUID, ...] | None = None,
+        ) -> list[tuple[int, int]]:
+            key = (id(requirement), day_index, teachers)
             if key not in reach:
-                reach[key] = self._reserved_ranges(request, requirement, day_index)
+                reach[key] = self._reserved_ranges(request, requirement, day_index, teachers)
             return reach[key]
 
         def fits_in(
@@ -5765,6 +5808,14 @@ class SchedulerSolver:
             return self._room_in_stretch(
                 reserved(requirement, day_index), room, first,
             ) >= self._grid.minutes_to_slots(requirement.shortest_lesson_minutes())
+
+        # Who eats, and where a meal was put by hand: the lunch builder's own
+        # readers, so the two can never disagree about whose day has a meal.
+        eaters = set(_lunch_group_ids(
+            request.groups, {requirement.student_group_id for requirement in request.requirements},
+        ))
+        pins = self._lunch_pins(request.lunch_placements, eaters)
+        rast_blocks: dict[tuple[tuple[int, int] | None, int], list[tuple[int, int]]] = {}
 
         for group, clique in self._cliques(request):
             if group.min_grade_level is None or group.max_grade_level is None:
@@ -5846,44 +5897,99 @@ class SchedulerSolver:
             # 11:10: the bare model UNKNOWN after sixty seconds, the whole
             # solve a TIMEOUT, and refused here by name in milliseconds.
             #
-            # GENEROUS IN EVERY STEP: a requirement counts every lesson it has
-            # as able to answer every day it fits, only the FIRST asking break
-            # of a day costs a lesson (later ones are taken as answered), and
-            # a day the model forces open — a lock after the break — is still
-            # free to close here. Each of those over-counts the week, which is
-            # the direction to be wrong in.
+            # THE LESSONS ARE COUNTED AS THE MODEL ASKS ABOUT THEM: one unit
+            # per (requirement, length, teachers), with how many lessons it
+            # has, and each tried against the stretch with its own length and
+            # what reaches its own teachers — the very test the rule's builder
+            # skips a lesson's flag on. A requirement's 80-minute lesson that
+            # cannot fit is not counted because its 40-minute one can, and a
+            # split post's lesson whose lead is away is not counted because
+            # its other lead is free.
             #
-            # The quick answer first, and it is the common one: hand each day
-            # the first lesson that is left and fits. When every day gets one
-            # nothing is scarce, and the matching below is never built.
+            # GENEROUS EVERYWHERE ELSE: only the FIRST asking break of a day
+            # costs a lesson (later ones are taken as answered), and a day the
+            # model forces open — a lock after the break — is still free to
+            # close here. Each over-counts the week, the direction to be wrong in.
             gates = {day_index: day[0] for day_index, day in stretches.items()}
             openable = [day_index for day_index, gate in gates.items() if gate[4]]
-            left = [len(requirement.lesson_minutes()) for requirement in asked]
+            units: list[tuple[AnonymousRequirement, int, tuple[UUID, ...]]] = []
+            supply: list[int] = []
+            unit_of: dict[tuple[int, int, tuple[UUID, ...]], int] = {}
+            for requirement in asked:
+                for lesson_index, minutes in enumerate(requirement.lesson_minutes()):
+                    teachers = _teachers_at(requirement, lesson_index)
+                    duration = self._grid.minutes_to_slots(minutes)
+                    key = (id(requirement), duration, teachers)
+                    if key not in unit_of:
+                        unit_of[key] = len(units)
+                        units.append((requirement, duration, teachers))
+                        supply.append(0)
+                    supply[unit_of[key]] += 1
+
+            def answers(unit: int, day_index: int) -> bool:
+                requirement, duration, teachers = units[unit]
+                first, _last, room, _meal, _fits = gates[day_index]
+                return self._room_in_stretch(
+                    reserved(requirement, day_index, teachers), room, first,
+                ) >= duration
+
+            # The quick answer first, and it is the common one: hand each day
+            # the first lesson that is left and answers it. When every day gets
+            # one nothing is scarce, and the matching below is never built.
+            left = list(supply)
             scarce = False
             for day_index in openable:
-                gate = gates[day_index]
-                index = next(
-                    (
-                        i for i, requirement in enumerate(asked)
-                        if left[i] and fits_in(requirement, day_index, gate[2], gate[0])
-                    ),
+                unit = next(
+                    (u for u in range(len(units)) if left[u] and answers(u, day_index)),
                     None,
                 )
-                if index is None:
+                if unit is None:
                     scarce = True
                     break
-                left[index] -= 1
+                left[unit] -= 1
             if not closed and not scarce:
                 continue
 
+            # WHERE THE CLASS HAS GONE BY, on a day it leaves at a stretch:
+            # "gone" is the model's "no lesson starts after the break"
+            # (_add_rast_ordering_constraints' late), so a lesson may still
+            # start before the break ends. One whose own breaks keep it out of
+            # the stretch's break has ended when that break begins; one they do
+            # not — a requirement with no years, which no rast cuts, or one a
+            # weekday row of another stage shadows — may start in the break and
+            # run its whole length past it.
+            #
+            # AND GONE AT ONE BREAK IS GONE AT EVERY LATER ONE. A lesson that
+            # starts before an earlier break ends started before every later
+            # one too, so a later break that keeps it out holds it to that
+            # break's start, and one that does not lets it run no further than
+            # its own end-by allows. The day therefore ends at the earliest
+            # end-by from the break the class leaves at onwards: from the first
+            # break when it never stays, and from the first one nothing can
+            # answer when it stays as long as it may.
+            leaves: dict[int, tuple[int, int | None]] = {}
+            for day_index, day in stretches.items():
+                gone = [
+                    self._rast_gone_by(request, sent_home, day_index, first, last, rast_blocks)
+                    for first, last, _room, _meal, _fits in day
+                ]
+                closed_at = next((k for k, stretch in enumerate(day) if not stretch[4]), None)
+                leaves[day_index] = (
+                    min(gone), None if closed_at is None else min(gone[closed_at:]),
+                )
             reserved_for_all = {
                 day_index: self._reserved_for_all(request, sent_home, day_index)
                 for day_index in clique.free_by_day
             }
+            meals = {
+                day_index: self._rast_meal_starts(request, group.id, day_index, eaters, pins)
+                for day_index in clique.free_by_day
+            }
             stay = {
                 day_index: self._rast_day_holds(
-                    request, free, reserved_for_all[day_index],
-                    closed[day_index][0] if day_index in closed else None, measure,
+                    free, reserved_for_all[day_index],
+                    leaves[day_index][1] if day_index in leaves else None,
+                    measure, meals[day_index],
                 )
                 for day_index, free in clique.free_by_day.items()
             }
@@ -5920,8 +6026,8 @@ class SchedulerSolver:
 
             gain = {
                 day_index: stay[day_index] - self._rast_day_holds(
-                    request, clique.free_by_day[day_index], reserved_for_all[day_index],
-                    gates[day_index][0], measure,
+                    clique.free_by_day[day_index], reserved_for_all[day_index],
+                    leaves[day_index][0], measure, meals[day_index],
                 )
                 for day_index in openable
                 if day_index in stay
@@ -5929,75 +6035,155 @@ class SchedulerSolver:
             if demand <= capacity - sum(gain.values()):
                 continue
             openers = {
-                day_index: [
-                    i for i, requirement in enumerate(asked)
-                    if fits_in(requirement, day_index, gates[day_index][2], gates[day_index][0])
-                ]
+                day_index: [u for u in range(len(units)) if answers(u, day_index)]
                 for day_index in openable
             }
-            supply = [len(requirement.lesson_minutes()) for requirement in asked]
-            answered = _days_distinct_lessons_answer(
+            assignment = _days_distinct_lessons_answer(
                 sorted(openable, key=lambda day_index: (-gain.get(day_index, 0), day_index)),
                 openers,
                 supply,
             )
-            held = capacity - sum(g for day_index, g in gain.items() if day_index not in answered)
+            held = capacity - sum(g for day_index, g in gain.items() if day_index not in assignment)
             if demand <= held:
                 continue
-            day_index = min(d for d, g in gain.items() if g > 0 and d not in answered)
+            # WHAT THE SENTENCE SAYS IS THE WITNESS, not a tally: the days the
+            # unanswered ones reach through the lessons they could have had,
+            # and those lessons. Every one of them is taken, so they are fewer
+            # than the days — Hall's condition failing, on exactly the days
+            # it fails on — and "only so many fit there" is true of them.
+            short, wanted = _days_short_of_lessons(
+                [day_index for day_index in openable if day_index not in assignment],
+                openers,
+                assignment,
+            )
+            day_index = min(short)
             raise InvalidScheduleInputError.of("RAST_DEMANDS_MORE_LESSONS_THAN_FIT_BEFORE_IT", {
                 "day": self._grid.schedule_days[day_index],
                 "grades": _grade_span_text(group.min_grade_level, group.max_grade_level),
                 "rast": self._grid.format_hhmmss(gates[day_index][0], 0)[0][:5],
-                "days": len(answered),
-                "askedDays": len(gates),
-                "lessons": sum(
-                    supply[i] for i in {i for indices in openers.values() for i in indices}
-                ),
+                "witnessDays": len(short),
+                "lessons": sum(supply[unit] for unit in wanted),
                 "demandMinutes": demand * minutes,
                 "capacityMinutes": held * minutes,
             })
 
-    def _rast_day_holds(
+    def _rast_gone_by(
         self,
         request: OptimizeScheduleRequest,
+        lessons: list[AnonymousRequirement],
+        day_index: int,
+        first: int,
+        last: int,
+        blocks: dict[tuple[tuple[int, int] | None, int], list[tuple[int, int]]],
+    ) -> int:
+        """The slot every one of these lessons has ended by, on a day the class goes at this break.
+
+        The break is [first, last), the class's. A lesson the break keeps out —
+        its own requirement's rasts cover it (blocks_for, by the requirement's
+        own years and weekday, the same reading its start domain is cut by)
+        — has ended by `first`. Any other may start as late as the slot before
+        `last`, which is not yet "after the break", and run its whole length:
+        a requirement with no years matches no rast at all, and a weekday row
+        for another stage can replace the every-day one for a group whose years
+        reach that stage.
+        """
+        day_of_week = self._grid.schedule_days[day_index]
+        gone = first
+        for requirement in lessons:
+            span = span_of(requirement)
+            key = (span, day_of_week)
+            if key not in blocks:
+                blocks[key] = blocks_for(request.rasts, span, day_of_week, self._grid)
+            if any(start <= first and last <= end for start, end in blocks[key]):
+                continue
+            longest = max(self._grid.minutes_to_slots(m) for m in requirement.lesson_minutes())
+            gone = max(gone, last - 1 + longest)
+        return gone
+
+    def _rast_meal_starts(
+        self,
+        request: OptimizeScheduleRequest,
+        group_id: UUID,
+        day_index: int,
+        eaters: set[UUID],
+        pins: dict[tuple[UUID, int], int],
+    ) -> tuple[int, int, int] | None:
+        """Where this class's meal may start today, as (first, last, length), or None.
+
+        None for a class with no meal that day: no lunch window, a class the
+        lunch builder does not feed, or a day a reservation closes for it over
+        the whole window — the builder's exempt day, no lunch at all. Otherwise
+        every start the window allows, widened to hold a meal placed by hand,
+        exactly the hull the builder's variable is made on
+        (_lunch_start_bounds). Sittings, frames, locks and the class's own
+        reservations narrow it further in the model; reading the hull alone
+        lets the meal sit where it wastes least, which is the generous side.
+        """
+        rules = request.rules
+        if rules is None or not _lunch_window_is_set(rules) or group_id not in eaters:
+            return None
+        window_start, window_end, lunch_slots = self._lunch_window_slots(rules)
+        day_of_week = self._grid.schedule_days[day_index]
+        opens = self._grid.day_start_minutes + window_start * self._grid.slot_minutes
+        closes = self._grid.day_start_minutes + window_end * self._grid.slot_minutes
+        for constraint in request.constraints:
+            if (
+                constraint.kind != "UNAVAILABLE"
+                or constraint.date is not None
+                or constraint.resource_kind != "STUDENT_GROUP"
+                or constraint.resource_id != group_id
+                or constraint.day_of_week not in (None, day_of_week)
+            ):
+                continue
+            if _clock_minutes(constraint.start_time) <= opens and _clock_minutes(
+                constraint.end_time,
+            ) >= closes:
+                return None
+        low, high = self._lunch_start_bounds(
+            pins.get((group_id, day_index)), 0, window_start, window_end, lunch_slots,
+        )
+        return (low, high, lunch_slots) if low <= high else None
+
+    def _rast_day_holds(
+        self,
         free: list[tuple[int, int]],
         reserved: list[tuple[int, int]],
         shut: int | None,
         measure: int,
+        meal: tuple[int, int, int] | None,
     ) -> int:
-        """What one day holds of a clique's lessons when the class leaves at `shut`.
+        """What one day holds of a clique's lessons when the class has gone by `shut`.
 
         None is a class that may stay all day. The minutes reserved away from
         EVERY requirement counted are taken out — every one, not any: a row that
         stops the maths teacher leaves the hour open to music, and subtracting it
         would count a week as smaller than it is, which is the direction that
         refuses a timetable.
+
+        THE MEAL GOES WHERE IT TAKES LEAST, at any start it may take
+        (_rast_meal_starts), and that includes minutes this count does not
+        hold at all: after the class has gone home, or over an hour a teacher
+        is reserved away. The model lets it sit there for nothing, so a meal
+        held to the minutes counted here charged a day for a lunch it never
+        has to eat inside them. Measured on the review's week, a Monday-Friday
+        08:00-14:00 with an 80-minute meal in an 08:40-12:00 window: 440
+        minutes counted against 480-560 that hold, and a week refused that
+        solves at once.
         """
         if shut is not None:
             free = [(start, min(end, shut)) for start, end in free if start < shut]
         for start, end in reserved:
             free = _subtract_range(free, (start, end))
-        rules = request.rules
-        if rules is None or not _lunch_window_is_set(rules):
-            return _holds(free, measure)
-        # The meal placed where it wastes least, the same search the hours
-        # verdict makes: the class must eat, and counting a day as if it need
-        # not would over-count exactly the hour that decides these weeks.
-        # Best-case, so the count stays generous and a refusal stays one the
-        # model would have made.
-        window_start, window_end, lunch_slots = self._lunch_window_slots(rules)
+        whole = _holds(free, measure)
+        if meal is None:
+            return whole
+        low, high, length = meal
         best = 0
-        fits = False
-        for start in range(window_start, window_end - lunch_slots + 1):
-            if any(a <= start and start + lunch_slots <= b for a, b in free):
-                fits = True
-                best = max(best, _holds(
-                    _subtract_range(free, (start, start + lunch_slots)), measure,
-                ))
-        # No meal fits this day at all: a refusal of its own, made elsewhere by
-        # name, and not this one's to make.
-        return best if fits else _holds(free, measure)
+        for start in range(low, high + 1):
+            best = max(best, _holds(_subtract_range(free, (start, start + length)), measure))
+            if best == whole:
+                break
+        return best
 
     def _earliest_meal_end(
         self,
