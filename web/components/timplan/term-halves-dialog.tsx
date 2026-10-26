@@ -38,6 +38,16 @@
 // subject without one, so a chosen subject whose code is not the post's is
 // named before the split, with the way to Ämnen; the split itself goes on
 // (the gateway answers the same in codeWarnings).
+//
+// THE TEACHERS COME AS IN THE POST'S OWN DIALOG: the strongest behörighet in
+// the subject first, with the same badge beside each name (strongestFirst and
+// CandidateBadge, lib/staffing-candidates.ts). Per subject, not per half: a
+// subject's teacher has one half in the autumn and the other in the spring,
+// so its lärare and medlärare pickers list one order. The span is the
+// class's, which is its halves' (their pupils are the class's). The window is
+// the läsår and not the term, because the gateway judges each of the four
+// posts against the läsår (judgeRequirementWrite), and a subject's teacher
+// teaches in both terms anyway.
 
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -45,11 +55,20 @@ import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { ApiError, api } from "@/lib/api";
 import type { MessageLookup } from "@/lib/engine-message";
+import type { GradeSpan } from "@/lib/grade-span";
 import { lengthPartsOf } from "@/lib/lesson-lengths";
+import {
+  candidateQualification,
+  candidateRemaining,
+  strongestFirst,
+  type CandidateQualification,
+} from "@/lib/staffing-candidates";
 import { STAFFING_KEYS } from "@/lib/staffing-keys";
 import { refusalText, staffingRefusal, warningText } from "@/lib/staffing-warnings";
+import type { JudgedYear } from "@/lib/standard-week";
 import type { StaffingWarning, TeachingRequirement } from "@/lib/types";
 import { useLengthsInWords } from "@/components/timplan/use-lengths-in-words";
+import { CandidateBadge } from "@/components/staffing/candidate-badge";
 import { RefusalNotice } from "@/components/staffing/staffing-notices";
 import { Button } from "@/components/ui/button";
 import {
@@ -81,8 +100,18 @@ export interface TermHalvesDialogProps {
   groups: readonly { id: string; name: string; halfOfId?: string | null }[];
   subjects: readonly { id: string; name: string; nationalCode?: string | null }[];
   teachers: readonly { id: string; firstName: string; lastName: string }[];
-  /** The läsår's own days, YYYY-MM-DD. */
-  year: { startDate: string; endDate: string } | null;
+  /**
+   * The school's behörigheter, for the badge beside each teacher and the order
+   * they come in. Undefined while they load: the names come as the roster
+   * has them, as in the post's own dialog.
+   */
+  qualifications?: Parameters<typeof candidateQualification>[0];
+  /** The year's groups' årskurser (lib/grade-span.ts): the class's is the one judged. */
+  gradeSpans: ReadonlyMap<string, GradeSpan>;
+  /** The tjänstefördelning's report, for the minutes each teacher has left. */
+  loadReport?: Parameters<typeof candidateRemaining>[0];
+  /** The läsår's own days, YYYY-MM-DD, and its numbering when tioårig. */
+  year: JudgedYear | null;
   /** Cancel, and after the split too: the post the dialog was opened from is gone. */
   onClose: () => void;
 }
@@ -147,11 +176,15 @@ function TermHalvesForm({
   groups,
   subjects,
   teachers,
+  qualifications,
+  gradeSpans,
+  loadReport,
   year,
   onClose,
 }: Omit<TermHalvesDialogProps, "requirement"> & { requirement: TeachingRequirement }) {
   const t = useTranslations("requirements.termHalves");
   const tCommon = useTranslations("common");
+  const tStaffing = useTranslations("staffing");
   const tEngine = useTranslations("engineMessages") as unknown as MessageLookup;
   const locale = useLocale();
   const lengthsInWords = useLengthsInWords();
@@ -244,6 +277,29 @@ function TermHalvesForm({
 
   /** Half h reads pair[(h + term) % 2]: the spring is the autumn swapped. */
   const subjectAt = (half: number, term: number) => subjectName.get(pair[(half + term) % 2]!) ?? "–";
+
+  /**
+   * Each subject's teachers, strongest behörighet first, with the badge each
+   * carries for it. A subject not yet chosen has nothing to be behörig in:
+   * no badge word, and the roster's order.
+   */
+  const span = gradeSpans.get(requirement.studentGroupId) ?? null;
+  const candidates = useMemo(
+    () =>
+      pair.map((subjectId) =>
+        strongestFirst(
+          teachers.map((teacher) => ({
+            teacher,
+            qualification:
+              year && subjectId
+                ? candidateQualification(qualifications ?? [], teacher.id, subjectId, span, year)
+                : ({ recorded: false } satisfies CandidateQualification),
+          })),
+          (candidate) => candidate.qualification,
+        ),
+      ),
+    [pair, teachers, qualifications, span, year],
+  );
 
   const submit = async () => {
     if (!ready || busy) return;
@@ -392,14 +448,37 @@ function TermHalvesForm({
                       setPeople(index === 0 ? [id, people[1]] : [people[0], id]);
                     }}
                   >
-                    <SelectTrigger {...control}>
+                    {/*
+                      Half the post dialog's width, so the chosen line keeps
+                      to one row here: what wraps past it is cut whole — the
+                      minutes first, then the word — never half a badge
+                      spilling out of the box. The list shows the whole line,
+                      and a screen reader hears all of it in both.
+                    */}
+                    <SelectTrigger
+                      {...control}
+                      className="[&_[data-candidate-line]]:max-h-6 [&_[data-candidate-line]]:overflow-hidden"
+                    >
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value={NONE}>{tCommon("notAssigned")}</SelectItem>
-                      {teachers.map((teacher) => (
+                      {/* The post's own dialog's line (candidateLine): the name first, so typing it still finds it. */}
+                      {candidates[index]!.map(({ teacher, qualification }) => (
                         <SelectItem key={teacher.id} value={teacher.id}>
-                          {teacherName(teacher)}
+                          {year ? (
+                            <span data-candidate-line className="inline-flex flex-wrap items-center gap-2">
+                              <span>{teacherName(teacher)}</span>
+                              {/* contents: the word and the minutes wrap one by one (see the trigger). */}
+                              <CandidateBadge
+                                className="contents"
+                                qualification={qualification}
+                                remaining={candidateRemaining(loadReport, teacher.id)}
+                              />
+                            </span>
+                          ) : (
+                            teacherName(teacher)
+                          )}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -409,6 +488,7 @@ function TermHalvesForm({
             );
           }),
         )}
+        {year ? <p className="text-xs text-muted-foreground sm:col-span-2">{tStaffing("candidateHint")}</p> : null}
         {requirement.coTeacherId && coTeacherSettled ? (
           <p className="text-sm text-foreground sm:col-span-2">
             {carriedCoTeacher
