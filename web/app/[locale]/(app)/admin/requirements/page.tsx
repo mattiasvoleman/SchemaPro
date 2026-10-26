@@ -2211,6 +2211,9 @@ export default function RequirementsPage() {
           groups={yearGroups}
           subjects={subjects ?? []}
           teachers={teachers}
+          qualifications={qualifications}
+          gradeSpans={gradeSpanOf}
+          loadReport={loadReport}
           year={yearBounds}
           onClose={() => setTermHalves(null)}
         />

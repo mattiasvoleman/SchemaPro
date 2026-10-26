@@ -3,7 +3,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
-import type { TeachingRequirement } from "@/lib/types";
+import type { TeacherQualificationKind, TeachingRequirement } from "@/lib/types";
 import {
   TermHalvesDialog,
   guessTermSubjects,
@@ -77,6 +77,8 @@ const teachers = [
   { id: "t-cecilia", firstName: "Cecilia", lastName: "Ås" },
 ];
 const classOnly = [{ id: "g-7a", name: "7A", halfOfId: null }];
+/** 7A is åk 7: the span the behörighet is judged for. */
+const SPANS = new Map([["g-7a", { min: 7, max: 7 }]]);
 const withHalves = [
   ...classOnly,
   { id: "h-2", name: "7A:2", halfOfId: "g-7a" },
@@ -94,6 +96,7 @@ function renderDialog(props: Partial<TermHalvesDialogProps> = {}) {
         groups={classOnly}
         subjects={subjects}
         teachers={teachers}
+        gradeSpans={SPANS}
         year={YEAR}
         onClose={onClose}
         {...props}
@@ -175,7 +178,7 @@ describe("TermHalvesDialog", () => {
     const { user, onClose, invalidate } = renderDialog();
 
     await user.click(screen.getByRole("combobox", { name: /^teacherOf\(Textilslöjd\)/ }));
-    await user.click(screen.getByRole("option", { name: "Anna Ek" }));
+    await user.click(screen.getByRole("option", { name: /^Anna Ek/ }));
     await user.click(submit());
 
     expect(state.post).toHaveBeenCalledWith("/api/v1/teaching-requirements/r-sl/term-halves", {
@@ -251,6 +254,7 @@ describe("TermHalvesDialog", () => {
       requirement: post({ coTeacherId: "t-cecilia" }),
       groups: classOnly,
       subjects,
+      gradeSpans: SPANS,
       year: YEAR,
       onClose: vi.fn(),
     };
@@ -323,19 +327,19 @@ describe("TermHalvesDialog", () => {
     ["one co-teacher for both subjects", async (user: ReturnType<typeof userEvent.setup>) => {
       for (const subject of ["Textilslöjd", "Trä- och metallslöjd"]) {
         await user.click(screen.getByRole("combobox", { name: new RegExp(`^coTeacherOf\\(${subject}\\)`) }));
-        await user.click(screen.getByRole("option", { name: "Cecilia Ås" }));
+        await user.click(screen.getByRole("option", { name: /^Cecilia Ås/ }));
       }
     }, "teachersSame"],
     ["a teacher who is the subject's co-teacher too", async (user: ReturnType<typeof userEvent.setup>) => {
       await user.click(screen.getByRole("combobox", { name: /^teacherOf\(Textilslöjd\)/ }));
-      await user.click(screen.getByRole("option", { name: "Anna Ek" }));
+      await user.click(screen.getByRole("option", { name: /^Anna Ek/ }));
       await user.click(screen.getByRole("combobox", { name: /^coTeacherOf\(Textilslöjd\)/ }));
-      await user.click(screen.getByRole("option", { name: "Anna Ek" }));
+      await user.click(screen.getByRole("option", { name: /^Anna Ek/ }));
     }, "coTeacherSame"],
     ["one teacher for both subjects", async (user: ReturnType<typeof userEvent.setup>) => {
       for (const subject of ["Textilslöjd", "Trä- och metallslöjd"]) {
         await user.click(screen.getByRole("combobox", { name: new RegExp(`^teacherOf\\(${subject}\\)`) }));
-        await user.click(screen.getByRole("option", { name: "Anna Ek" }));
+        await user.click(screen.getByRole("option", { name: /^Anna Ek/ }));
       }
     }, "teachersSame"],
   ])("will not send %s, and says why", async (_, change, problem) => {
@@ -426,5 +430,138 @@ describe("TermHalvesDialog", () => {
       duration: 12_000,
     });
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+/*
+ * The teachers' order, as the post's own dialog has listed them since the
+ * admin asked for it there (requirements/page.test.tsx, "the order"): the
+ * strongest behörighet in the picker's own subject first, the badge beside
+ * each name, and the roster's order where nothing is known. The roster is
+ * Anna, Bo, Cecilia; each subject below turns it over its own way.
+ */
+describe("the teachers' order", () => {
+  const qualification = (
+    userId: string,
+    subjectId: string,
+    kind: TeacherQualificationKind,
+    extra: { minGradeLevel?: number; maxGradeLevel?: number; validTo?: string } = {},
+  ) => ({ userId, subjectId, kind, minGradeLevel: 7, maxGradeLevel: 9, validFrom: null, validTo: null, ...extra });
+  const QUALIFICATIONS = [
+    // Textilslöjd: Cecilia legitimerad, Bo tillåten, Anna nothing.
+    qualification("t-cecilia", "s-tx", "LEGITIMATION"),
+    qualification("t-bo", "s-tx", "TILLATEN"),
+    // Trä- och metallslöjd: Bo behörig. Anna's legitimation is for åk 1–6,
+    // not 7A's åk 7, and Cecilia's ended before the läsår began.
+    qualification("t-bo", "s-tm", "BEHORIG"),
+    qualification("t-anna", "s-tm", "LEGITIMATION", { minGradeLevel: 1, maxGradeLevel: 6 }),
+    qualification("t-cecilia", "s-tm", "LEGITIMATION", { validTo: "2026-06-30" }),
+    // Matematik: Bo.
+    qualification("t-bo", "s-ma", "LEGITIMATION"),
+  ];
+  const NAMES = ["Anna Ek", "Bo Al", "Cecilia Ås"];
+  /** The open list, each teacher's option by the name it starts with. */
+  const listed = () =>
+    screen
+      .getAllByRole("option")
+      .map((option) => NAMES.find((name) => option.textContent?.startsWith(name)) ?? option.textContent);
+  const optionText = (name: string) =>
+    screen.getAllByRole("option").find((option) => option.textContent?.startsWith(name))?.textContent;
+  /** One picker's list, read and closed again with Escape. */
+  const listOf = async (user: ReturnType<typeof userEvent.setup>, picker: RegExp) => {
+    await user.click(screen.getByRole("combobox", { name: picker }));
+    const order = listed();
+    await user.keyboard("{Escape}");
+    return order;
+  };
+
+  it("lists the strongest behörighet in each subject first, in its lärare's and its medlärare's picker alike", async () => {
+    const { user } = renderDialog({ qualifications: QUALIFICATIONS });
+
+    for (const picker of [/^teacherOf\(Textilslöjd\)/, /^coTeacherOf\(Textilslöjd\)/]) {
+      expect(await listOf(user, picker)).toEqual(["notAssigned", "Cecilia Ås", "Bo Al", "Anna Ek"]);
+    }
+    for (const picker of [/^teacherOf\(Trä- och metallslöjd\)/, /^coTeacherOf\(Trä- och metallslöjd\)/]) {
+      expect(await listOf(user, picker)).toEqual(["notAssigned", "Bo Al", "Anna Ek", "Cecilia Ås"]);
+    }
+  });
+
+  it("says beside each name what the post's own dialog says: the behörighet in the subject and the minutes left", async () => {
+    const { user } = renderDialog({
+      qualifications: QUALIFICATIONS,
+      loadReport: {
+        teachers: [
+          { userId: "t-cecilia", balanceMinutesPerWeek: 120 },
+          { userId: "t-bo", balanceMinutesPerWeek: -30 },
+        ],
+      },
+    });
+    // Once, under the four pickers, as the post's dialog says it under its own.
+    expect(screen.getAllByText("candidateHint")).toHaveLength(1);
+
+    await user.click(screen.getByRole("combobox", { name: /^teacherOf\(Textilslöjd\)/ }));
+    expect(optionText("Cecilia Ås")).toBe("Cecilia ÅskindLEGITIMATIONcandidateRemaining(120)");
+    expect(optionText("Bo Al")).toBe("Bo AlkindTILLATENcandidateOver(30)");
+    expect(optionText("Anna Ek")).toBe("Anna EkcandidateUnqualifiedcandidateNoTarget");
+    await user.keyboard("{Escape}");
+
+    // The same teacher, another subject: another word.
+    await user.click(screen.getByRole("combobox", { name: /^teacherOf\(Trä- och metallslöjd\)/ }));
+    expect(optionText("Cecilia Ås")).toBe("Cecilia ÅscandidateUnqualifiedcandidateRemaining(120)");
+    expect(optionText("Bo Al")).toBe("Bo AlkindBEHORIGcandidateOver(30)");
+  });
+
+  it("follows the subject when the admin chooses another one", async () => {
+    const { user } = renderDialog({ qualifications: QUALIFICATIONS });
+
+    await user.click(screen.getByRole("combobox", { name: "autumnSubject(7A:1)" }));
+    await user.click(screen.getByRole("option", { name: "Matematik" }));
+
+    expect(await listOf(user, /^teacherOf\(Matematik\)/)).toEqual(["notAssigned", "Bo Al", "Anna Ek", "Cecilia Ås"]);
+  });
+
+  it("keeps the roster's order, with no behörighet word, for a school that has recorded none", async () => {
+    const { user } = renderDialog({ qualifications: [] });
+
+    await user.click(screen.getByRole("combobox", { name: /^teacherOf\(Textilslöjd\)/ }));
+    expect(listed()).toEqual(["notAssigned", "Anna Ek", "Bo Al", "Cecilia Ås"]);
+    expect(optionText("Anna Ek")).toBe("Anna EkcandidateNoTarget");
+  });
+
+  it("keeps the roster's order, with no behörighet word, under a subject not chosen yet", async () => {
+    const { user } = renderDialog({ qualifications: QUALIFICATIONS, subjects: subjects.filter((s) => s.id === "s-ma") });
+
+    await user.click(screen.getByRole("combobox", { name: /^teacherOf\(subjectFallback\(1\)\)/ }));
+    expect(listed()).toEqual(["notAssigned", "Anna Ek", "Bo Al", "Cecilia Ås"]);
+    expect(optionText("Cecilia Ås")).toBe("Cecilia ÅscandidateNoTarget");
+  });
+
+  it("is still chosen from the keyboard: Enter, one arrow to the strongest, and a typed name wherever it stands", async () => {
+    const { user } = renderDialog({ qualifications: QUALIFICATIONS });
+    // Radix aria-hides the dialog while a list is open: take the trigger first.
+    const lead = screen.getByRole("combobox", { name: /^teacherOf\(Textilslöjd\)/ });
+
+    // Enter opens on Ej tilldelad; one arrow down is the strongest candidate.
+    lead.focus();
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+    // A screen reader hears the name first, the badge after it.
+    expect(screen.getByRole("option", { name: /^Cecilia Ås/ })).toHaveAccessibleName(/^Cecilia Ås.*kindLEGITIMATION/);
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    // The trigger repeats the chosen line, badge words and all.
+    expect(lead).toHaveTextContent("Cecilia Ås");
+    expect(lead).toHaveTextContent("kindLEGITIMATION");
+
+    // Typing a name finds it at the bottom of the list, where the order put it.
+    lead.focus();
+    await user.keyboard("{Enter}");
+    await user.keyboard("Anna");
+    await user.keyboard("{Enter}");
+    expect(lead).toHaveTextContent("Anna Ek");
+
+    // And the request names whom it chose.
+    await user.click(submit());
+    expect(state.post.mock.calls[0]![1].subjects[0]).toEqual({ subjectId: "s-tx", teacherId: "t-anna", coTeacherId: null });
   });
 });
