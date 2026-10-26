@@ -1657,6 +1657,10 @@ describe('OptimizationProxyService', () => {
           'RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT',
           { day: 1, grades: '7–9', rast: '09:40', opens: '08:00', remaining: 40, minutes: 60, bound: 'closed' },
         ],
+        [
+          'RAST_DEMANDS_MORE_LESSONS_THAN_FIT_BEFORE_IT',
+          { day: 2, grades: '7–9', rast: '11:10', days: 1, askedDays: 5, lessons: 1, demandMinutes: 680, capacityMinutes: 640 },
+        ],
       ])('names %s’s class span back too, and nothing else of it', async (code, params) => {
         http.post.mockReturnValue(throwError(() => refusal(code, params)));
 
@@ -7130,6 +7134,7 @@ describe('OptimizationProxyService', () => {
           'ROOM_NONE_ELIGIBLE_FOR_REQUIREMENT',
           'ROOM_LOCK_LEAVES_NO_ROOM',
           'RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT',
+          'RAST_DEMANDS_MORE_LESSONS_THAN_FIT_BEFORE_IT',
         ].flatMap((code): [GradeNumbering, [number, number], string, string][] => [
           ['TIOARIG', [10, 8], code, '8–10'],
           ['NIOARIG', [9, 7], code, '7–9'],

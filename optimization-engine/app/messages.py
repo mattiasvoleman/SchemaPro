@@ -1048,6 +1048,18 @@ MESSAGES: dict[str, str] = {
         "lessons need. Move the break, shorten the meal or widen its window, free the minutes "
         "a reservation holds, or turn the requirement off for that break."
     ),
+    "RAST_DEMANDS_MORE_LESSONS_THAN_FIT_BEFORE_IT": (
+        "The break at {rast} on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} "
+        "4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}} asks for a lesson "
+        "before it, and {grades, select, any {classes with unknown years} "
+        "other {years {grades}}} can be taught before their first such break on at most "
+        "{days, plural, one {# day} other {# days}} of the {askedDays} that ask for one: only "
+        "{lessons, plural, one {# lesson} other {# lessons}} a week fit there, and each is "
+        "taught on one day. On the other days they can never be at school after that break, and "
+        "the week then holds {capacityMinutes} minutes against the {demandMinutes} their lessons "
+        "need. Free a teacher or the minutes a reservation holds before the break, move the "
+        "break, or turn the requirement off for that break."
+    ),
     "RAST_NO_LESSON_FITS_BEFORE_IT": (
         "The classes named here require a lesson before a break, and their week leaves nowhere "
         "to put one: between the start of their day — or their previous break or lunch — and "
