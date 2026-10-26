@@ -99,9 +99,18 @@ describe('FamilyScheduleService', () => {
   });
 
   it('falls back to the school clock when the database names no day', async () => {
-    today = null;
-    const result = await run('2026-10-13');
-    expect(result.week.from).toBe('2026-10-12');
+    // The fallback reads the process clock, so the clock is pinned to the
+    // day the other cases name: on the real clock the week asked for drifts
+    // out of range a week after it was written.
+    jest.useFakeTimers({ now: new Date('2026-10-14T10:00:00.000Z') });
+    try {
+      today = null;
+      const result = await run('2026-10-13');
+      expect(result.week.from).toBe('2026-10-12');
+      expect(result.today).toBe('2026-10-14');
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('answers one identical 404 for any pupil the caller cannot see', async () => {
