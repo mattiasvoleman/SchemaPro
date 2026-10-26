@@ -8369,14 +8369,25 @@ async function pastRowChecks(owner: Client, api: PrismaService): Promise<void> {
             SELECT app.public_timetable(${tokenHashOf(link.token)}, ${null}::uuid, ${date}::date) AS "doc"`;
           return row?.doc ?? null;
         });
-      const day = (offset: number) => {
-        const at = new Date();
-        at.setUTCDate(at.getUTCDate() + offset);
-        return at.toISOString().slice(0, 10);
-      };
+      // Days back from the school's today, or from this week's Monday, as the
+      // viewer counts them: the school-local date, on the database's clock,
+      // in the statement that asks. For an hour or two after midnight the
+      // UTC date is a day behind it, and on a Monday that day is in the week
+      // before: seven days before Sunday is the week before last.
+      const { timezone } = (await owner.query<{ timezone: string }>(`SELECT timezone FROM "Schools" WHERE id = $1`, [school.schoolId])).rows[0]!;
+      const back = (days: number, from: 'today' | 'monday' = 'today') =>
+        api.withPublicViewer(async (tx) => {
+          const [row] = await tx.$queryRaw<{ doc: unknown }[]>`
+            SELECT app.public_timetable(${tokenHashOf(link.token)}, ${null}::uuid,
+                   CASE ${from}::text WHEN 'monday' THEN today - (extract(isodow FROM today)::int - 1) ELSE today END - ${days}::int) AS "doc"
+              FROM (SELECT (now() AT TIME ZONE ${timezone})::date AS today) AS here`;
+          return row?.doc ?? null;
+        });
       assert.ok(await view(null), 'today');
-      assert.ok(await view(day(-7)), 'last week');
-      assert.equal(await view(day(-15)), null);
+      assert.ok(await back(7), 'last week');
+      assert.ok(await back(7, 'monday'), 'last week\'s Monday');
+      assert.equal(await back(8, 'monday'), null, 'the Sunday before last week');
+      assert.equal(await back(15), null);
       assert.equal(await view(dates.start), null);
     });
   } finally {
