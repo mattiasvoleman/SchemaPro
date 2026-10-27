@@ -1043,7 +1043,7 @@ MESSAGES: dict[str, str] = {
         "other {years {grades}}} have {remaining, plural, one {# minute} other {# minutes}} "
         "between {opens} — {bound, select, lunch {the earliest their lunch can end} "
         "closed {what a reservation leaves of it} other {where the stretch opens}} — and that "
-        "break, and their shortest lesson is "
+        "break, and the lesson of theirs that comes closest to fitting is "
         "{minutes} minutes. They can therefore never be at school after that break, and the "
         "days that are left hold {capacityMinutes} minutes against the {demandMinutes} their "
         "lessons need. Move the break, shorten the meal or widen its window, free the minutes "

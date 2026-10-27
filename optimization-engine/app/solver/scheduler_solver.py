@@ -6083,20 +6083,39 @@ class SchedulerSolver:
             minutes = self._grid.slot_minutes
             if closed and demand > capacity:
                 day_index, (first, _last, room, meal) = next(iter(closed.items()))
-                widest = max(
-                    room_for(unit, day_index, room, first) for unit in range(len(units))
+                # ONE LESSON EXPLAINS IT, the one that misses by least. Every
+                # lesson misses the stretch, each by its own length against what
+                # its own teachers have left, and the sentence's room, length and
+                # bound are that one lesson's. Taken over all of them — the
+                # widest room from one, the shortest length from another — it
+                # could say "40 minutes, and their shortest lesson is 40": the
+                # review's split post, 80-minute lessons whose lead is free and
+                # 40-minute ones whose lead is reserved, in a 40-minute stretch,
+                # sent to "where the stretch opens" when the reservation was
+                # the lever. Its room is below its length because the day is
+                # closed, and the bound is what took its minutes. The sentence
+                # calls it the lesson that comes closest to fitting, because it
+                # need not be the shortest: a 60-minute lesson whose teacher is
+                # free misses a 50-minute stretch by less than a 40-minute one
+                # whose teacher is away over all of it. Ties go to the shorter
+                # lesson.
+                left = [room_for(unit, day_index, room, first) for unit in range(len(units))]
+                nearest = min(
+                    range(len(units)),
+                    key=lambda unit: (units[unit][1] - left[unit], units[unit][1]),
                 )
                 raise InvalidScheduleInputError.of("RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT", {
                     "day": self._grid.schedule_days[day_index],
                     "grades": _grade_span_text(group.min_grade_level, group.max_grade_level),
                     "rast": self._grid.format_hhmmss(first, 0)[0][:5],
                     "opens": self._grid.format_hhmmss(room, 0)[0][:5],
-                    "remaining": widest * minutes,
-                    "minutes": min(duration for _r, duration, _t in units) * minutes,
-                    # Which of the three took the minutes, so the school is sent to
-                    # the screen that holds the lever.
+                    "remaining": left[nearest] * minutes,
+                    "minutes": units[nearest][1] * minutes,
+                    # Which of the three took that lesson's minutes, so the
+                    # school is sent to the screen that holds the lever.
                     "bound": (
-                        "closed" if widest < first - room else "lunch" if meal else "day"
+                        "closed" if left[nearest] < first - room
+                        else "lunch" if meal else "day"
                     ),
                     "demandMinutes": demand * minutes,
                     "capacityMinutes": capacity * minutes,

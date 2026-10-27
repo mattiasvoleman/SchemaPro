@@ -9213,6 +9213,52 @@ def test_a_split_post_both_of_whose_leads_are_away_closes_the_day() -> None:
     assert refusal.params["bound"] == "closed"
 
 
+@pytest.mark.parametrize(("name", "remaining", "minutes", "bound", "said"), [
+    # 7A's 80-minute lessons have a free lead and its 40-minute ones a lead
+    # reserved over the whole 40-minute stretch: each misses by 40. Taken over
+    # all lessons, the room was the 80-minute lesson's and the length the
+    # 40-minute one's — "40 minutes, and their shortest lesson is 40", sent to
+    # where the stretch opens. The tie goes to the shorter lesson, and its
+    # lever is the reservation.
+    ("splitmix_8_8", 0, 40, "closed",
+     "have 0 minutes between 09:40 — what a reservation leaves of it — and that break, "
+     "and the lesson of theirs that comes closest to fitting is 40 minutes."),
+    # The same week as two ordinary posts, which main named the same way.
+    ("twoposts_8_8", 0, 40, "closed",
+     "have 0 minutes between 09:40 — what a reservation leaves of it — and that break, "
+     "and the lesson of theirs that comes closest to fitting is 40 minutes."),
+    # The 60-minute lessons' lead is free and the stretch is 50 minutes; the
+    # 40-minute lessons' lead is reserved over all of it. The 60-minute lesson
+    # misses by 10 and is named, though it is not the shortest — which is why
+    # the sentence does not call it that — and the lever is the stretch.
+    ("nearlong_8_8", 50, 60, "day",
+     "have 50 minutes between 09:40 — where the stretch opens — and that break, "
+     "and the lesson of theirs that comes closest to fitting is 60 minutes."),
+])
+def test_a_closed_day_is_explained_by_the_one_lesson_that_misses_by_least(
+    name: str, remaining: int, minutes: int, bound: str, said: str,
+) -> None:
+    """The minutes, the length and the bound are one lesson's, so the sentence never contradicts itself.
+
+    Every lesson misses the closed stretch, each by its own length against
+    what its own teachers have left. The one that misses by least is named:
+    what it has is less than its length, and the bound is what took its
+    minutes. The refusal is the model's — no timetable at all — and only its
+    explanation is the lesson's.
+    """
+    payload, settings = _review_week(name)
+
+    refusal = _refusal(payload, **settings)
+
+    assert refusal.code == "RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT"
+    assert (refusal.params["remaining"], refusal.params["minutes"], refusal.params["bound"]) == (
+        remaining, minutes, bound,
+    )
+    assert refusal.params["remaining"] < refusal.params["minutes"]
+    assert said in str(refusal)
+    assert _bare_model_status(payload, **settings) == "INFEASIBLE"
+
+
 def test_the_shortage_counts_lessons_not_kinds_of_lesson() -> None:
     """Two lessons of M2b answer two days, and the sentence says two.
 
