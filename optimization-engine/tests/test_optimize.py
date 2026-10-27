@@ -12945,21 +12945,13 @@ def test_the_class_count_reads_cliques_and_sets_of_classes_in_a_fixed_order(
     assert solver._class_hours_verdict(request) is None
 
 
-def test_the_class_count_reads_each_lock_once_however_many_the_school_keeps() -> None:
+def _hogstadium_and_a_locked_lower_school(lower_classes: int = 40) -> dict[str, object]:
     """A högstadium of three years of eight classes, three blocks of five
     teaching groups per year cut across every class, and a lower school of
-    forty classes whose whole week is locked: 1,000 locks. The gateway sends
-    every lesson it keeps as a lock, and the contract takes 5,000. The count
-    first asked every lock, in every count, whether it blocked every key,
-    with the partners looked up in lists: 3,429 counts of a week like this
-    took 34 s of CPU before any model, outside the solver's budget. Each
-    lock is now read once. A coarse bound in CPU time, which load does not
-    stretch: the count takes about a tenth of a second here."""
+    `lower_classes` classes whose whole week is locked: 25 locks each. The
+    gateway sends every lesson it keeps as a lock, and the contract takes
+    5,000."""
     import random
-    import time as clock
-
-    from app.schemas.schedule import OptimizeScheduleRequest
-    from app.solver.scheduler_solver import SchedulerSolver
 
     rng = random.Random(1)
 
@@ -12983,7 +12975,7 @@ def test_the_class_count_reads_each_lock_once_however_many_the_school_keeps() ->
         for i, block in enumerate(blocks):
             for other in blocks[i + 1:]:
                 pairs += [[a, b] for a in block for b in other]
-    for _ in range(40):
+    for _ in range(lower_classes):
         cls = uid()
         groups.append({"id": cls, "lunchHeadcount": 25, "minGradeLevel": 3, "maxGradeLevel": 3})
         fixed += [
@@ -12997,8 +12989,24 @@ def test_the_class_count_reads_each_lock_once_however_many_the_school_keeps() ->
         rules={"lunchStartTime": "11:00:00", "lunchEndTime": "13:00:00", "lunchMinutes": 30},
     )
     payload["rooms"] = [{"id": uid(), "capacity": 30} for _ in range(len(groups) * 2)]
+    return payload
+
+
+def test_the_class_count_reads_each_lock_once_however_many_the_school_keeps() -> None:
+    """The högstadium beside a lower school of forty classes whose whole week
+    is locked: 1,000 locks. The count first asked every lock, in every count,
+    whether it blocked every key, with the partners looked up in lists: 3,429
+    counts of a week like this took 34 s of CPU before any model, outside the
+    solver's budget. Each lock is now read once. A coarse bound in CPU time,
+    which load does not stretch: the count takes about a tenth of a second
+    here."""
+    import time as clock
+
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
     solver = SchedulerSolver(_settings())
-    request = OptimizeScheduleRequest.model_validate(payload)
+    request = OptimizeScheduleRequest.model_validate(_hogstadium_and_a_locked_lower_school())
     assert len(request.fixed_lessons) == 1000
 
     started = clock.process_time()
@@ -13007,6 +13015,187 @@ def test_the_class_count_reads_each_lock_once_however_many_the_school_keeps() ->
 
     assert verdict is None
     assert spent < 5.0, f"the class count took {spent:.1f} s of CPU for 1,000 locks"
+
+
+def test_the_hours_verdict_and_the_lunch_stage_read_each_lock_once_however_many_the_school_keeps() -> None:
+    """The same week, and the two checks every week meets before the model.
+    Both read each clique's free time from _cliques, which asked every lock,
+    for every group and every day, whether it blocked every member, with the
+    partners looked up in lists: 1.6-2.3 s each at 5,000 locks, and about
+    4,900 Python calls per lock on this week. Each lock is now read once
+    (_LockWalls): about 46 calls per lock.
+
+    A coarse bound, counted rather than timed: the calls each check makes
+    beyond what the same week without its locks costs, per lock. A profile
+    hook counts the same calls on a loaded host, under coverage and on a slow
+    runner, and a newer Python, which inlines comprehensions, counts fewer."""
+    import sys
+
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    def calls(check: object) -> int:
+        made = 0
+
+        def count(frame: object, event: str, arg: object) -> None:
+            nonlocal made
+            if event == "call":
+                made += 1
+
+        previous = sys.getprofile()
+        sys.setprofile(count)
+        try:
+            check()  # type: ignore[operator]
+        finally:
+            sys.setprofile(previous)
+        return made
+
+    payload = _hogstadium_and_a_locked_lower_school()
+    locked = OptimizeScheduleRequest.model_validate(payload)
+    bare = OptimizeScheduleRequest.model_validate({**payload, "fixedLessons": []})
+    locks = len(locked.fixed_lessons)
+    assert locks == 1000
+    checks = {
+        "the hours verdict": lambda solver, request: solver._clique_hours_verdict(request),
+        "the lunch stage": lambda solver, request: solver._lunch_stage_one(request)[0],
+    }
+    for name, check in checks.items():
+        assert check(SchedulerSolver(_settings()), locked) is None
+        assert check(SchedulerSolver(_settings()), bare) is None
+        with_locks, without = SchedulerSolver(_settings()), SchedulerSolver(_settings())
+        per_lock = (
+            calls(lambda: check(with_locks, locked)) - calls(lambda: check(without, bare))
+        ) / locks
+        assert per_lock < 200, f"{name} made {per_lock:.0f} Python calls per lock"
+
+
+def test_the_cliques_cut_out_exactly_the_locks_that_block_every_member() -> None:
+    """_LockWalls against the reading it replaced, on 300 seeded weeks full of
+    locks: classes, teaching groups and derived pupil keys paired at random;
+    locks with extra groups, with pupilGroupIds (derived keys among them, or
+    none at all), off the grid, over the day's edges and on a day the engine
+    does not teach, repeated and overlapping. Each clique's free time must be
+    the very ranges, in order, that cutting each lock which blocks every
+    member out of the merged windows leaves."""
+    import random
+
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.frames import day_windows, span_of
+    from app.solver.scheduler_solver import (
+        SchedulerSolver,
+        _fixed_lesson_window,
+        _groups_sharing_students,
+        _LockWalls,
+        _merge_ranges,
+        _subtract_range,
+        pupil_keys_of,
+    )
+
+    def clock(minutes: int) -> str:
+        return f"{minutes // 60:02d}:{minutes % 60:02d}:00"
+
+    walled = 0
+    for seed in range(300):
+        rng = random.Random(seed)
+
+        def uid() -> str:
+            return str(UUID(int=rng.getrandbits(128), version=4))  # noqa: B023
+
+        classes = [uid() for _ in range(rng.randint(1, 5))]
+        teaching = [uid() for _ in range(rng.randint(0, 5))]
+        derived = [uid() for _ in range(rng.randint(0, 2))]
+        keys = classes + teaching + derived
+        pairs = [[a, b] for i, a in enumerate(keys) for b in keys[i + 1:] if rng.random() < 0.45]
+        requirements = [
+            _lesson(
+                group, rng.randint(1, 3), minutes=rng.choice([30, 45, 60]),
+                years=rng.choice([None, 7, 8]),
+                pupils=rng.choice(derived) if derived and group in classes and rng.random() < 0.3 else None,
+            )
+            for group in classes + teaching
+            for _ in range(rng.randint(1, 3))
+        ]
+        groups = [
+            {"id": group, "lunchHeadcount": 20, **({"minGradeLevel": 7, "maxGradeLevel": 7} if rng.random() < 0.5 else {})}
+            for group in classes + [t for t in teaching if rng.random() < 0.3]
+        ]
+        fixed: list[dict[str, object]] = []
+        for _ in range(rng.randint(0, 40)):
+            lock: dict[str, object] = {
+                "id": uid(), "teacherId": uid(), "studentGroupId": rng.choice(classes + teaching),
+                "dayOfWeek": rng.choice([1, 2, 3, 4, 5, 5, 6]),
+            }
+            if rng.random() < 0.3:
+                lock["extraGroupIds"] = rng.sample(classes, rng.randint(1, len(classes)))
+            roll = rng.random()
+            if roll < 0.25:
+                lock["pupilGroupIds"] = rng.sample(keys, rng.randint(1, min(3, len(keys))))
+            elif roll < 0.3:
+                lock["pupilGroupIds"] = []
+            start = rng.randrange(7 * 60, 18 * 60, rng.choice([5, 7, 15]))
+            lock["startTime"] = clock(start)
+            lock["endTime"] = clock(min(start + rng.choice([5, 30, 45, 60, 90, 200]), 23 * 60 + 59))
+            fixed.append(lock)
+            if rng.random() < 0.1:
+                fixed.append({**lock, "id": uid()})
+        payload = _week(
+            requirements, groups, groupConflicts=pairs, fixedLessons=fixed,
+            frameTimes=[_year_frame(7, None, "08:00", "15:00"), _year_frame(8, rng.choice([None, 2]), "09:00", "13:30")],
+            rules={"lunchStartTime": "11:00:00", "lunchEndTime": "13:00:00", "lunchMinutes": 30},
+        )
+        solver = SchedulerSolver(_settings(SLOT_MINUTES=rng.choice([5, 15])))
+        request = OptimizeScheduleRequest.model_validate(payload)
+        grid = solver._grid
+        slots_per_day = grid.slots_per_day
+        sharing = _groups_sharing_students(request.group_conflicts)
+
+        for _, clique in solver._cliques(request):
+            # The reading before _LockWalls, line for line.
+            windows_of = [
+                day_windows(request.frame_times, span, grid)
+                for span in {span_of(r) for r in clique.requirements}
+            ]
+            expected: dict[int, list[tuple[int, int]]] = {}
+            for day_index in range(len(grid.schedule_days)):
+                base = day_index * slots_per_day
+                open_ranges = [w[day_index] for w in windows_of if day_index in w]
+                if not open_ranges:
+                    continue
+                free = _merge_ranges(open_ranges)
+                for lock_lesson in request.fixed_lessons:
+                    window = _fixed_lesson_window(lock_lesson, grid)
+                    if window is None:
+                        continue
+                    named = set(pupil_keys_of(lock_lesson))
+                    if not all(
+                        member in named or any(g in sharing.get(member, ()) for g in named)
+                        for member in clique.members
+                    ):
+                        continue
+                    lo, hi = window[0] - base, window[1] - base
+                    if hi <= 0 or lo >= slots_per_day:
+                        continue
+                    free = _subtract_range(free, (max(lo, 0), min(hi, slots_per_day)))
+                    walled += 1
+                expected[day_index] = free
+            assert clique.free_by_day == expected, f"seed {seed}, clique {clique.members}"
+
+        # No keys at all: every lock blocks all of them.
+        everything: dict[int, int] = {}
+        for lock_lesson in request.fixed_lessons:
+            window = _fixed_lesson_window(lock_lesson, grid)
+            if window is not None:
+                day_index, start = divmod(window[0], slots_per_day)
+                everything[day_index] = everything.get(day_index, 0) | (
+                    ((1 << (window[1] - window[0])) - 1) << start
+                )
+        walls = _LockWalls(
+            ((f, _fixed_lesson_window(f, grid)) for f in request.fixed_lessons),
+            sharing, slots_per_day, len(grid.schedule_days),
+        )
+        assert walls.walls([]) == everything, f"seed {seed}"
+    # The weeks exercise what they are for: locks that block whole cliques.
+    assert walled > 1000
 
 
 def test_a_reservation_the_grid_cannot_read_is_left_to_the_build() -> None:
