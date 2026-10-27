@@ -229,12 +229,20 @@ MESSAGES: dict[str, str] = {
     ),
 
     # ---- Hours against hours -------------------------------------------
+    # SchedulerSolver._class_hours_count, for both hours verdicts.
+    # `sharingGroups` counts the other groups in the count, classes and
+    # teaching groups alike, so the sentence calls them groups. `lunch` is
+    # "counted" when the count reads a meal and "none" when the frames and
+    # the locks are short alone; an older web build ignores it and says the
+    # lunch as it always did.
     "DEMAND_CLIQUE_HOURS_SHORT": (
         "Too many lessons for the hours: student group {group} and the {sharingGroups, plural, "
-        "one {# teaching group} other {# teaching groups}} sharing its pupils may never overlap, "
-        "and between them need {demandMinutes} minutes of lessons a week, but the frame times, "
-        "the locked lessons and the lunch leave at most {capacityMinutes}. Widen the frame, "
-        "unlock a lesson in the middle of the day, or move the lunch window."
+        "one {# other group} other {# other groups}} sharing its pupils may never overlap, "
+        "and between them need {demandMinutes} minutes of lessons a week, but the frame "
+        "times{lunch, select, none { and the locked lessons} other {, the locked lessons and "
+        "the lunch}} leave at most {capacityMinutes}. Widen the frame{lunch, select, none { or "
+        "unlock a lesson in the middle of the day} other {, unlock a lesson in the middle of "
+        "the day, or move the lunch window}}."
     ),
     "DEMAND_REQUIREMENTS_EXCEED_WEEK": (
         "Lessons of {requirements, plural, one {# requirement} other {# requirements}} need "
