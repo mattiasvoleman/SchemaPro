@@ -11711,7 +11711,8 @@ def test_a_week_that_fits_exactly_without_the_maximum_is_the_maximum_s(
     assert response.conflicts is not None
     assert response.conflicts.summary_code == "DEMAND_CLIQUE_HOURS_SHORT"
     assert _the_hours_line(response.conflicts) == (
-        {"group": cls, "sharingGroups": 0, "demandMinutes": 1260, "capacityMinutes": 1200},
+        {"group": cls, "sharingGroups": 0, "lunch": "none", "demandMinutes": 1260,
+         "capacityMinutes": 1200},
         ["DEMAND_REQUIREMENTS_EXCEED_WEEK"],
     )
 
@@ -11983,7 +11984,12 @@ def test_a_meal_placed_by_hand_where_it_wastes_most_is_counted_where_it_is() -> 
     and five after, six. The window's best start would leave seven, and a
     count that read it beside the pin let 31 through to a model that needs
     them all to fail. Read where the model has it, the meal makes 31 short by
-    counting, and the lunch is named as the difference; 30 fit."""
+    counting, and the lunch is named as the difference; 30 fit.
+
+    The lever is the meals placed by hand, not the window: each day's pin
+    is one of the rules the count needs (on the window any one day holds
+    seven, and 31 fit), so each is named, and the sentence still says the
+    lunch."""
     from app.schemas.schedule import OptimizeScheduleRequest
     from app.solver.scheduler_solver import SchedulerSolver
 
@@ -11997,13 +12003,228 @@ def test_a_meal_placed_by_hand_where_it_wastes_most_is_counted_where_it_is() -> 
     verdict = solver._clique_hours_verdict(OptimizeScheduleRequest.model_validate(payload))
     assert verdict is not None
     params, codes = _the_hours_line(verdict)
-    assert (params["demandMinutes"], params["capacityMinutes"]) == (1860, 1800)
-    assert codes == ["DEMAND_REQUIREMENTS_EXCEED_WEEK", "LUNCH_BREAK_IS_THE_DIFFERENCE"]
+    assert (params["demandMinutes"], params["capacityMinutes"], params["lunch"]) == (
+        1860, 1800, "counted",
+    )
+    assert codes == [
+        "DEMAND_REQUIREMENTS_EXCEED_WEEK", *["LUNCH_PLACED_BY_HAND"] * 5,
+        "LUNCH_BREAK_IS_THE_DIFFERENCE",
+    ]
+    assert [values for code, values, _ in _lines(verdict) if code == "LUNCH_PLACED_BY_HAND"] == [
+        {"group": cls, "day": day, "start": "09:30"} for day in range(1, 6)
+    ]
 
     payload["requirements"][0]["lessonsPerWeek"] = 30  # type: ignore[index]
     request = OptimizeScheduleRequest.model_validate(payload)
     assert solver._clique_hours_verdict(request) is None
     assert solver.solve(request).status in ("OPTIMAL", "FEASIBLE")
+
+
+def test_the_hours_verdict_names_the_meal_placed_by_hand_its_count_relies_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """THE LEVER THE SENTENCE NAMED WAS THE WINDOW. Year 4 framed 08:00-15:30,
+    hour-long lessons, the window 11:00-13:00. The meal is placed by hand at
+    09:30 on Monday, which leaves six lessons that day, and at 15:00 on
+    Tuesday, after the seventh, where it costs nothing; the other days eat in
+    the window and hold seven. Thirty-four in all, and the class needs 35.
+    The refusal named the count and the lunch, and its sentence said "move
+    the lunch window", which moves no meal placed by hand. It names Monday's
+    now, the one the count relies on: on the window Monday holds seven too,
+    and 35 fit. Tuesday's is not named."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=2.0))
+    payload = _one_class(group_span=(4, 4), requirement_spans=[(4, 4)], lessons_per_week=35,
+                         frame=(4, 4, "08:00", "15:30"))
+    cls = payload["groups"][0]["id"]  # type: ignore[index]
+    payload["lunchPlacements"] = [
+        {"studentGroupId": cls, "dayOfWeek": 1, "startTime": "09:30:00"},
+        {"studentGroupId": cls, "dayOfWeek": 2, "startTime": "15:00:00"},
+    ]
+    _the_full_model_is_never_built(monkeypatch)
+
+    response = solver.solve(OptimizeScheduleRequest.model_validate(payload))
+
+    assert response.status == "INFEASIBLE"
+    assert response.conflicts is not None
+    assert response.conflicts.summary_code == "DEMAND_CLIQUE_HOURS_SHORT"
+    assert response.conflicts.summary_params == {
+        "group": cls, "sharingGroups": 0, "lunch": "counted", "demandMinutes": 2100,
+        "capacityMinutes": 2040,
+    }
+    assert [(code, params) for code, params, _ in _lines(response.conflicts)] == [
+        ("DEMAND_REQUIREMENTS_EXCEED_WEEK",
+         {"requirements": 1, "demandMinutes": 2100, "capacityMinutes": 2040}),
+        ("LUNCH_PLACED_BY_HAND", {"group": cls, "day": 1, "start": "09:30"}),
+        ("LUNCH_BREAK_IS_THE_DIFFERENCE", {"lunchMinutes": 30, "freeMinutes": 2100}),
+    ]
+    assert "the locked lessons and the lunch leave at most 2040" in response.conflicts.summary
+    assert "on Monday at 09:30" in response.conflicts.conflicts[1].message
+
+    payload["requirements"][0]["lessonsPerWeek"] = 34  # type: ignore[index]
+    assert solver._clique_hours_verdict(OptimizeScheduleRequest.model_validate(payload)) is None
+
+    # THE NUMBER IS THE WEEK AS THE SCHOOL SET IT. Tuesday's meal at 09:30
+    # too: 33 lessons, two short. Without Monday's the count is still short
+    # (34), so deletion names only Tuesday's, which the count then needs; the
+    # number still reads both, as the sentence's "the lunch" does. Counted
+    # without Monday's it said 2040, a lesson more than the week holds.
+    payload["requirements"][0]["lessonsPerWeek"] = 35  # type: ignore[index]
+    payload["lunchPlacements"][1]["startTime"] = "09:30:00"  # type: ignore[index]
+    verdict = solver._clique_hours_verdict(OptimizeScheduleRequest.model_validate(payload))
+    assert verdict is not None
+    assert verdict.summary_params["capacityMinutes"] == 1980
+    assert [(code, params) for code, params, _ in _lines(verdict)] == [
+        ("DEMAND_REQUIREMENTS_EXCEED_WEEK",
+         {"requirements": 1, "demandMinutes": 2100, "capacityMinutes": 1980}),
+        ("LUNCH_PLACED_BY_HAND", {"group": cls, "day": 2, "start": "09:30"}),
+        ("LUNCH_BREAK_IS_THE_DIFFERENCE", {"lunchMinutes": 30, "freeMinutes": 2100}),
+    ]
+
+
+def test_the_hours_verdict_names_the_reservation_that_takes_its_meal_s_starts() -> None:
+    """The other narrowing the count reads: a day of year 7 framed 08:00-14:30
+    holds six hour-long lessons around a meal at 11:00. A reservation on the
+    class 11:00-12:30 leaves the meal only 12:30, and the day five. Moving the
+    window does not lift the reservation, so the refusal names it
+    (LUNCH_STARTS_TAKEN_BY_RESERVATION) beside the count and the lunch. The
+    hours count reads the reservation only where it takes the meal's starts,
+    so without it the six fit."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    cls = str(uuid4())
+    payload = _week(
+        [_lesson(cls, 6)],
+        [{"id": cls, "lunchHeadcount": 20, "minGradeLevel": 7, "maxGradeLevel": 7}],
+        constraints=[_reserved(cls, 1, "11:00", "12:30")],
+        frameTimes=[_year_frame(7, None, "08:00", "14:30")],
+        rules={"lunchStartTime": "11:00:00", "lunchEndTime": "13:00:00", "lunchMinutes": 30},
+    )
+    solver = SchedulerSolver(_settings(SCHEDULE_DAYS="1"))
+
+    verdict = solver._clique_hours_verdict(OptimizeScheduleRequest.model_validate(payload))
+
+    assert verdict is not None
+    assert verdict.summary_code == "DEMAND_CLIQUE_HOURS_SHORT"
+    assert verdict.summary_params == {
+        "group": cls, "sharingGroups": 0, "lunch": "counted", "demandMinutes": 360,
+        "capacityMinutes": 300,
+    }
+    assert _lines(verdict) == [
+        ("DEMAND_REQUIREMENTS_EXCEED_WEEK",
+         {"requirements": 1, "demandMinutes": 360, "capacityMinutes": 300}, [cls]),
+        ("LUNCH_STARTS_TAKEN_BY_RESERVATION", {}, [cls]),
+        ("LUNCH_BREAK_IS_THE_DIFFERENCE", {"lunchMinutes": 30, "freeMinutes": 360}, [cls]),
+    ]
+
+    payload["constraints"] = []
+    assert solver._clique_hours_verdict(OptimizeScheduleRequest.model_validate(payload)) is None
+
+
+def test_the_hours_sentence_says_no_lunch_where_its_count_reads_no_meal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """THE LUNCH ONLY WHERE A MEAL IS COUNTED. The sentence said "the frame
+    times, the locked lessons and the lunch leave" and "move the lunch
+    window" whatever the count read. Year 4 framed 08:00-15:00 holds seven
+    hour-long lessons a day, 35 a week, and the class has 36:
+    - with no lunch at all the count reads no meal, and the sentence says the
+      frames and the locks alone;
+    - with a 30-minute meal in 11:00-13:00 the day holds six beside it, 30,
+      and the frames alone are short too. The refusal said 1800 and the
+      lunch; it says the frames' 2100 and no lunch, as the count does without
+      the meal it does not need;
+    - the class count's own refusal says the same where it keeps no meal:
+      [class, second] needs five hours of a four-hour morning, with no lunch.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=2.0))
+    payload = _one_class(group_span=(4, 4), requirement_spans=[(4, 4)], lessons_per_week=36,
+                         frame=(4, 4, "08:00", "15:00"))
+    cls = payload["groups"][0]["id"]  # type: ignore[index]
+    with_lunch = payload["rules"]
+    for rules in (None, with_lunch):
+        payload["rules"] = rules
+        verdict = solver._clique_hours_verdict(OptimizeScheduleRequest.model_validate(payload))
+        assert verdict is not None
+        assert verdict.summary_params == {
+            "group": cls, "sharingGroups": 0, "lunch": "none", "demandMinutes": 2160,
+            "capacityMinutes": 2100,
+        }
+        assert [d.code for d in verdict.conflicts] == ["DEMAND_REQUIREMENTS_EXCEED_WEEK"]
+        assert verdict.summary.endswith(
+            "but the frame times and the locked lessons leave at most 2100. Widen the frame or "
+            "unlock a lesson in the middle of the day.",
+        )
+        assert "lunch" not in verdict.summary
+
+    # The class count, where the hours verdict's greedy clique fits.
+    cls, first, second = str(uuid4()), str(uuid4()), str(uuid4())
+    payload = _week(
+        [_lesson(cls, 2), _lesson(first, 1), _lesson(second, 3)],
+        [{"id": cls, "lunchHeadcount": 20, "minGradeLevel": 7, "maxGradeLevel": 7}],
+        groupConflicts=[[cls, first], [cls, second]],
+        frameTimes=[_year_frame(7, None, "08:00", "12:00")],
+    )
+    one_day = SchedulerSolver(_settings(SCHEDULE_DAYS="1", SOLVER_MAX_TIME_SECONDS=2.0))
+    request = OptimizeScheduleRequest.model_validate(payload)
+    assert one_day._clique_hours_verdict(request) is None
+    _the_full_model_is_never_built(monkeypatch)
+
+    response = one_day.solve(request)
+
+    assert response.status == "INFEASIBLE"
+    assert response.conflicts is not None
+    assert response.conflicts.summary_code == "DEMAND_CLIQUE_HOURS_SHORT"
+    assert response.conflicts.summary_params == {
+        "group": cls, "sharingGroups": 1, "lunch": "none", "demandMinutes": 300,
+        "capacityMinutes": 240,
+    }
+    assert "and the 1 other group sharing its pupils" in response.conflicts.summary
+    assert "lunch" not in response.conflicts.summary
+
+
+def test_the_hours_verdict_still_refuses_on_its_own_lines_should_the_counts_disagree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The hours verdict decides and the class count names; the two read the
+    same rules and come to the same number. Should they ever not, the week is
+    refused all the same, on the verdict's own count and lines, with the
+    lunch said where its count read a meal."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    monkeypatch.setattr(SchedulerSolver, "_class_hours_count", lambda self, *a, **k: None)
+    solver = SchedulerSolver(_settings())
+    payload = _one_class(group_span=(4, 4), requirement_spans=[(4, 4)], lessons_per_week=31,
+                         frame=(4, 4, "08:00", "15:30"))
+    cls = payload["groups"][0]["id"]  # type: ignore[index]
+    payload["lunchPlacements"] = [
+        {"studentGroupId": cls, "dayOfWeek": day, "startTime": "09:30:00"} for day in range(1, 6)
+    ]
+    verdict = solver._clique_hours_verdict(OptimizeScheduleRequest.model_validate(payload))
+    assert verdict is not None
+    assert _the_hours_line(verdict) == (
+        {"group": cls, "sharingGroups": 0, "lunch": "counted", "demandMinutes": 1860,
+         "capacityMinutes": 1800},
+        ["DEMAND_REQUIREMENTS_EXCEED_WEEK", "LUNCH_BREAK_IS_THE_DIFFERENCE"],
+    )
+
+    payload["rules"] = None
+    payload["lunchPlacements"] = []
+    payload["requirements"][0]["lessonsPerWeek"] = 36  # type: ignore[index]
+    verdict = solver._clique_hours_verdict(OptimizeScheduleRequest.model_validate(payload))
+    assert verdict is not None
+    assert _the_hours_line(verdict) == (
+        {"group": cls, "sharingGroups": 0, "lunch": "none", "demandMinutes": 2160,
+         "capacityMinutes": 2100},
+        ["DEMAND_REQUIREMENTS_EXCEED_WEEK"],
+    )
 
 
 def test_a_class_whose_meal_sits_after_its_friday_leaves_the_others_counted(
@@ -12078,7 +12299,10 @@ def test_a_class_whose_meal_sits_after_its_friday_leaves_the_others_counted(
     assert response.conflicts is not None
     assert response.conflicts.summary_code == "DEMAND_CLIQUE_HOURS_SHORT"
     params, codes = _the_hours_line(response.conflicts)
-    assert params == {"group": g2, "sharingGroups": 1, "demandMinutes": 1560, "capacityMinutes": 1500}
+    assert params == {
+        "group": g2, "sharingGroups": 1, "lunch": "none", "demandMinutes": 1560,
+        "capacityMinutes": 1500,
+    }
     assert codes == ["DEMAND_REQUIREMENTS_EXCEED_WEEK"]
 
     # G1 with years of its own: its frame closes Friday at 10:30 for the meal
@@ -12341,7 +12565,10 @@ def test_every_meal_that_keeps_clear_of_the_lessons_is_counted_with_them(
     assert response.conflicts is not None
     params, codes = _the_hours_line(response.conflicts)
     assert response.conflicts.summary_code == "DEMAND_CLIQUE_HOURS_SHORT"
-    assert params == {"group": cls, "sharingGroups": 1, "demandMinutes": 360, "capacityMinutes": 300}
+    assert params == {
+        "group": cls, "sharingGroups": 1, "lunch": "counted", "demandMinutes": 360,
+        "capacityMinutes": 300,
+    }
     # Both meals are needed, and the class's placed by hand at 08:45 too: in
     # the window it would sit beside the group's and cost one hour, not two.
     # "Move the lunch window" moves no meal placed by hand, so it is named.
@@ -12574,7 +12801,8 @@ def test_every_clique_through_the_class_is_counted_not_the_first_one_built() -> 
     assert response.conflicts is not None
     assert response.conflicts.summary_code == "DEMAND_CLIQUE_HOURS_SHORT"
     assert _the_hours_line(response.conflicts) == (
-        {"group": cls, "sharingGroups": 1, "demandMinutes": 300, "capacityMinutes": 240},
+        {"group": cls, "sharingGroups": 1, "lunch": "counted", "demandMinutes": 300,
+         "capacityMinutes": 240},
         ["DEMAND_REQUIREMENTS_EXCEED_WEEK", "LUNCH_BREAK_IS_THE_DIFFERENCE"],
     )
 
@@ -12629,7 +12857,8 @@ def test_a_meal_is_counted_only_against_the_lessons_the_model_keeps_it_clear_of(
     counted = two_days._class_hours_verdict(own)
     assert counted is not None
     assert _the_hours_line(counted)[0] == {
-        "group": x, "sharingGroups": 0, "demandMinutes": 540, "capacityMinutes": 480,
+        "group": x, "sharingGroups": 0, "lunch": "counted", "demandMinutes": 540,
+        "capacityMinutes": 480,
     }
     payload["requirements"][0]["lessonsPerWeek"] = 1  # type: ignore[index]
     payload["requirements"][1]["lessonsPerWeek"] = 4  # type: ignore[index]
@@ -12639,7 +12868,8 @@ def test_a_meal_is_counted_only_against_the_lessons_the_model_keeps_it_clear_of(
     refused = solver._clique_hours_verdict(request)
     assert refused is not None
     assert _the_hours_line(refused) == (
-        {"group": x, "sharingGroups": 1, "demandMinutes": 300, "capacityMinutes": 240},
+        {"group": x, "sharingGroups": 1, "lunch": "counted", "demandMinutes": 300,
+         "capacityMinutes": 240},
         ["DEMAND_REQUIREMENTS_EXCEED_WEEK", "LUNCH_BREAK_IS_THE_DIFFERENCE"],
     )
     # The stage, asked directly, refuses it too, and names the lessons.

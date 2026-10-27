@@ -213,7 +213,8 @@ class TestTheFuzzWeeks:
         hours = body["conflicts"]
         assert hours["summaryCode"] == "DEMAND_CLIQUE_HOURS_SHORT", hours  # type: ignore[index]
         assert hours["summaryParams"] == {  # type: ignore[index]
-            "group": group, "sharingGroups": 0, "demandMinutes": 490, "capacityMinutes": 420,
+            "group": group, "sharingGroups": 0, "lunch": "counted", "demandMinutes": 490,
+            "capacityMinutes": 420,
         }
         assert [d["code"] for d in hours["conflicts"]] == [  # type: ignore[index]
             "DEMAND_REQUIREMENTS_EXCEED_WEEK", "LUNCH_BREAK_IS_THE_DIFFERENCE",

@@ -1699,6 +1699,19 @@ class SchedulerSolver:
         model solves at once. Such a clique is counted with no meal here;
         _class_hours_verdict counts X's own lessons around it. The gateway
         always sends [X, Y], so every week it sends is counted as before.
+
+        A REFUSAL NAMES WHAT IT RELIES ON, as the class count's do: this count
+        decides, and _class_hours_count says it. Until then the refusal named
+        the count and, where the meal was the difference, the lunch, and its
+        sentence told the school to move the lunch window — also where the
+        count relied on a meal placed by hand, which outranks the window, or
+        on a reservation that took the meal's starts. A meal placed by hand
+        at 09:30 every day leaves six hour-long lessons in 08:00-15:30 where
+        the window's best start leaves seven: thirty fit and thirty-one do
+        not, and moving the window moves no pin. Each such pin and each such
+        narrowing the count needs is named now. A count that is short without
+        the meal says no lunch at all, and the number the frames and the locks
+        leave; it said the lunch's, smaller, and a lever that moves nothing.
         """
         if not request.groups:
             return None
@@ -1731,6 +1744,8 @@ class SchedulerSolver:
             # lessons, the lunch is the difference and is named as such.
             capacity_without_lunch = 0
             counted = True
+            # Whether any day's count took the meal out, for the sentence.
+            meal_read = False
             eats_here = lunch_on and all(
                 _meal_keeps_clear_of(group.id, r.student_group_id, sharing)
                 for r in clique.requirements
@@ -1738,6 +1753,7 @@ class SchedulerSolver:
             for day_index, free in clique.free_by_day.items():
                 capacity_without_lunch += _holds(free, measure)
                 if eats_here and (group.id, day_index) not in exempt_days:
+                    meal_read = True
                     # The model's own starts, day-local as the free time is;
                     # the placement that wastes least is the one that counts.
                     parts = narrowings.get((group.id, day_index))
@@ -1761,6 +1777,49 @@ class SchedulerSolver:
 
             demand = clique.demand
             if demand > capacity:
+                # The groups sharing the class's pupils, as the school names
+                # them: a derived key ("7A without SvA7") is its class, not a
+                # group of its own (_derived_key_classes, empty without
+                # pupilGroupId, when the count is the one it always was).
+                sharing_groups = (
+                    len({classes.get(member, member) for member in clique.members} - {group.id})
+                    if classes
+                    else len(clique.members) - 1
+                )
+                # NAMED AS THE CLASS COUNT NAMES ITS OWN. This count decides;
+                # the explanation is _class_hours_count's over the same
+                # lessons, free time and meal, which reads the same rules and
+                # comes to the same number: one meal, on the same starts, held
+                # around in whole measures (_held_around_meals is exact for
+                # one). It counts again without the meal, without each start
+                # placed by hand and without each reservation's narrowing, and
+                # names what the refusal needs: a meal placed by hand that the
+                # count relies on by its own line (LUNCH_PLACED_BY_HAND), and a
+                # reservation that takes the meal's starts by
+                # LUNCH_STARTS_TAKEN_BY_RESERVATION. "Move the lunch window"
+                # moves neither. The number stays this count's (whole_lunch):
+                # what the sentence says, the frames, the locks and the lunch
+                # as the school set it. A count that is short without the meal
+                # says no lunch at all, and the frames' and locks' own number.
+                explained = self._class_hours_count(
+                    request,
+                    group.id,
+                    [group.id],
+                    clique.requirements,
+                    clique.free_by_day,
+                    meals=[group.id] if eats_here else [],
+                    narrowings=narrowings,
+                    lunch_slots=lunch_slots,
+                    reservations=[],
+                    maximum=None,
+                    memo={},
+                    sharing_groups=sharing_groups,
+                    whole_lunch=True,
+                )
+                if explained is not None:
+                    return explained
+                # The two counts agree, so this is never reached; should they
+                # ever not, the week is still refused, on this count's lines.
                 minutes = self._grid.slot_minutes
                 details = []
                 if lunch_on and demand <= capacity_without_lunch:
@@ -1782,20 +1841,12 @@ class SchedulerSolver:
                             resource_ids=[group.id],
                         ),
                     )
-                # The groups sharing the class's pupils, as the school names
-                # them: a derived key ("7A without SvA7") is its class, not a
-                # group of its own (_derived_key_classes, empty without
-                # pupilGroupId, when the count is the one it always was).
-                sharing_groups = (
-                    len({classes.get(member, member) for member in clique.members} - {group.id})
-                    if classes
-                    else len(clique.members) - 1
-                )
                 return ConflictAnalysis(
                     summary_code="DEMAND_CLIQUE_HOURS_SHORT",
                     summary_params={
                         "group": str(group.id),
                         "sharingGroups": sharing_groups,
+                        "lunch": "counted" if meal_read else "none",
                         "demandMinutes": demand * minutes,
                         "capacityMinutes": capacity * minutes,
                     },
@@ -1894,7 +1945,8 @@ class SchedulerSolver:
         reservations' — and a rule goes when the count stays short without
         it. What is left is sufficient: the count proves it. When that is the
         frames, the locks and the lunch, the refusal is the hours verdict's,
-        DEMAND_CLIQUE_HOURS_SHORT, whose sentence says exactly those three.
+        DEMAND_CLIQUE_HOURS_SHORT, whose sentence says exactly those three,
+        and the lunch only where a meal is left (`lunch`: counted or none).
         Otherwise it is CONFLICT_CORE_SUMMARY over the model's own lines for
         what is left: AVAIL_CONSTRAINT_BLOCKS_LESSONS for a reservation,
         GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT (measured 0) for the maximum, and
@@ -2140,6 +2192,8 @@ class SchedulerSolver:
         reservations: list[tuple[AnonymousConstraint, list[tuple[int, int]]]],
         maximum: int | None,
         memo: dict[tuple, object],
+        sharing_groups: int | None = None,
+        whole_lunch: bool = False,
     ) -> ConflictAnalysis | None:
         """One count of _class_hours_verdict: these classes' lessons in one clique.
 
@@ -2148,6 +2202,23 @@ class SchedulerSolver:
         out every lesson counted. None when the lessons fit, or when some
         meal has no start at all on a day (_validate_request refuses that
         before any count runs, and a direct caller gets no verdict).
+
+        _clique_hours_verdict names its own refusals here too, with its
+        clique's lessons and free time, its leader's meal and no reservation
+        or maximum; `sharing_groups` is then its own count of the groups
+        beside the leader, which `chosen` (the leader alone) cannot give.
+
+        `whole_lunch` is that verdict's too: the count it reports reads the
+        WHOLE LUNCH of a meal it keeps, every start placed by hand and every
+        narrowing, as the sentence's "the lunch" does; deletion still decides
+        which of them have a line. Its refusal is always
+        DEMAND_CLIQUE_HOURS_SHORT, which names no narrowing by the locks
+        ("the locked lessons" says every lock), so those are not dropped at
+        all. Read by deletion alone, the report's two locks that pin the meal
+        to 10:30 — twenty lessons where twenty-four are needed — lost their
+        narrowing on three days of five and the count said twenty-three; a
+        meal placed by hand that costs a lesson the refusal does not need
+        left the count a lesson higher than the week the school set up.
         """
         grid = self._grid
         slots_per_day = grid.slots_per_day
@@ -2287,11 +2358,12 @@ class SchedulerSolver:
                     trials.append(lambda rules, eater=eater: replace(
                         rules, meals=rules.meals - {eater},
                     ))
-            for cause in ("pinned", "locked", "closed"):
+            for cause in ("pinned", "closed") if whole_lunch else ("pinned", "locked", "closed"):
                 for key in sorted(getattr(kept, cause), key=lambda k: (k[1], str(k[0]))):
                     trials.append(lambda rules, cause=cause, key=key: replace(
                         rules, **{cause: getattr(rules, cause) - {key}},
                     ))
+        read = kept
         for trial in trials:
             fewer = trial(kept)
             if fewer == kept:
@@ -2299,6 +2371,13 @@ class SchedulerSolver:
             fewer_count = capacity(fewer)
             if fewer_count is not None and fewer_count < demand:
                 kept, counted = fewer, fewer_count
+        if whole_lunch:
+            # The meals kept, each with every narrowing it was read with: the
+            # count with less only lets more through, so it is short too.
+            whole = capacity(replace(
+                kept, pinned=read.pinned, locked=read.locked, closed=read.closed,
+            ))
+            counted = counted if whole is None else whole
         if kept.maximum and not kept.reservations and not kept.meals:
             # THE MAXIMUM ALONE, beside the frames and the locks, is not this
             # count's to name. The model refutes the plain week of it at once
@@ -2375,7 +2454,17 @@ class SchedulerSolver:
                 summary_code="DEMAND_CLIQUE_HOURS_SHORT",
                 summary_params={
                     "group": str(named),
-                    "sharingGroups": len([c for c in chosen if c != named]),
+                    "sharingGroups": (
+                        len([c for c in chosen if c != named])
+                        if sharing_groups is None
+                        else sharing_groups
+                    ),
+                    # THE LUNCH IS IN THE SENTENCE ONLY WHEN THE COUNT READS A
+                    # MEAL. Without one, "the frame times, the locked lessons
+                    # and the lunch leave" said a lunch the count never took
+                    # out, and "move the lunch window" named a lever that
+                    # moves nothing: the frames and the locks are short alone.
+                    "lunch": "counted" if needed else "none",
                     "demandMinutes": demand * minutes,
                     "capacityMinutes": counted * minutes,
                 },
