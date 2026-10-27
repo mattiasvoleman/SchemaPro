@@ -8,7 +8,7 @@ import time
 from bisect import bisect_left, bisect_right
 from collections import Counter, defaultdict
 from collections.abc import Callable
-from collections.abc import Iterable, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date as date_type
 from uuid import UUID
@@ -383,8 +383,29 @@ def _holds(ranges: list[tuple[int, int]], measure: int) -> int:
     return sum(((end - start) // measure) * measure for start, end in ranges)
 
 
+def _slot_mask(ranges: Iterable[tuple[int, int]]) -> int:
+    """Half-open [a, b) slot ranges as the bits of one int."""
+    mask = 0
+    for start, end in ranges:
+        if end > start:
+            mask |= ((1 << (end - start)) - 1) << start
+    return mask
+
+
+def _slot_runs(mask: int) -> list[tuple[int, int]]:
+    """The maximal [a, b) runs of set bits, in order: _slot_mask turned back."""
+    runs: list[tuple[int, int]] = []
+    while mask:
+        start = (mask & -mask).bit_length() - 1
+        rest = mask >> start
+        length = (rest ^ (rest + 1)).bit_length() - 1
+        runs.append((start, start + length))
+        mask &= ~(((1 << length) - 1) << start)
+    return runs
+
+
 def _meal_keeps_clear_of(
-    eater: UUID, class_id: UUID, sharing: dict[UUID, list[UUID]],
+    eater: UUID, class_id: UUID, sharing: Mapping[UUID, Collection[UUID]],
 ) -> bool:
     """Whether the model keeps `eater`'s meal clear of the lessons filed under `class_id`.
 
@@ -404,14 +425,15 @@ def _meal_keeps_clear_of(
 class _CountedRules:
     """What one class count reads besides the frames and the locks, each part droppable.
 
-    `reservations` index the count's own list; `pinned`, `locked` and
-    `closed` are the (eater, day) meals whose start placed by hand, or whose
-    narrowing by the locks or the reservations, the count still reads.
+    `reservations` index the count's own list; `meals` are the eaters whose
+    meals it still reads; `pinned`, `locked` and `closed` are the (eater,
+    day) meals whose start placed by hand, or whose narrowing by the locks or
+    the reservations, it still reads.
     """
 
     maximum: bool
     reservations: tuple[int, ...]
-    meals: bool
+    meals: frozenset[UUID]
     pinned: frozenset[tuple[UUID, int]]
     locked: frozenset[tuple[UUID, int]]
     closed: frozenset[tuple[UUID, int]]
@@ -435,29 +457,44 @@ def _cliques_through(
         other for other in dict.fromkeys(sharing.get(group_id, ()))
         if other != group_id and other in requirements_of
     ]
-    neighbours = {
-        key: {other for other in candidates if other != key and other in sharing.get(key, ())}
-        for key in candidates
-    }
+    # Bitmasks over the candidates' places in that order: a set of partners is
+    # an int, and intersecting two is one AND, so a class with dozens of
+    # teaching groups is enumerated in microseconds. Every step takes the
+    # lowest place first, which keeps the payload's order.
+    place = {key: index for index, key in enumerate(candidates)}
+    neighbours: list[int] = []
+    for key in candidates:
+        mask = 0
+        for other in sharing.get(key, ()):
+            index = place.get(other)
+            if index is not None and other != key:
+                mask |= 1 << index
+        neighbours.append(mask)
     found: list[list[UUID]] = []
 
-    def expand(chosen: list[UUID], open_: list[UUID], closed: list[UUID]) -> None:
+    def expand(chosen: list[UUID], open_: int, closed: int) -> None:
         if len(found) >= limit:
             return
         if not open_ and not closed:
             found.append(chosen)
             return
-        pivot = max(open_ + closed, key=lambda key: len(neighbours[key].intersection(open_)))
-        for key in [k for k in open_ if k not in neighbours[pivot]]:
-            expand(
-                chosen + [key],
-                [k for k in open_ if k in neighbours[key]],
-                [k for k in closed if k in neighbours[key]],
-            )
-            open_ = [k for k in open_ if k != key]
-            closed = closed + [key]
+        either, pivot, most = open_ | closed, 0, -1
+        while either:
+            low = either & -either
+            either ^= low
+            reach = (neighbours[low.bit_length() - 1] & open_).bit_count()
+            if reach > most:
+                pivot, most = low.bit_length() - 1, reach
+        rest = open_ & ~neighbours[pivot]
+        while rest:
+            low = rest & -rest
+            rest ^= low
+            index = low.bit_length() - 1
+            expand(chosen + [candidates[index]], open_ & neighbours[index], closed & neighbours[index])
+            open_ &= ~low
+            closed |= low
 
-    expand([group_id], candidates, [])
+    expand([group_id], (1 << len(candidates)) - 1, 0)
     return found
 
 
@@ -1788,8 +1825,9 @@ class SchedulerSolver:
     #: each class alone and all of them together.
     CLASS_HOURS_SUBSET_CLASSES = 6
     #: Counts one request makes at most, in payload order. The högstadium week
-    #: (48 classes and teaching groups, 255 pairs) makes 543 in about 60 ms;
-    #: a count not made only lets a week through to the model.
+    #: (48 classes and teaching groups, 255 pairs) makes 543 in about 30 ms, a
+    #: school of 36 classes in four blocks and 465 locks 3,949 in 0.2 s; a
+    #: count not made only lets a week through to the model.
     CLASS_HOURS_COUNTS = 4096
 
     def _class_hours_verdict(self, request: OptimizeScheduleRequest) -> ConflictAnalysis | None:
@@ -1899,14 +1937,83 @@ class SchedulerSolver:
         maximum = rules.max_lessons_per_day_per_group if rules is not None else None
         eaters = list(dict.fromkeys(group_id for group_id, _ in narrowings))
         sharing = _groups_sharing_students(request.group_conflicts)
+        partners = {key: set(others) for key, others in sharing.items()}
         requirements_of: dict[UUID, list[AnonymousRequirement]] = defaultdict(list)
         for requirement in request.requirements:
             requirements_of[pupil_key_of(requirement)].append(requirement)
-        locks = [
-            (set(pupil_keys_of(fixed)), window)
-            for fixed in request.fixed_lessons
-            if (window := self._fixed_window(fixed)) is not None
+        days = len(grid.schedule_days)
+
+        # Pupil keys as small numbers, which hash in a fraction of a UUID's time.
+        numbers: dict[UUID, int] = {}
+
+        def key_number(key: UUID) -> int:
+            return numbers.setdefault(key, len(numbers))
+
+        # EVERY LOCK READ ONCE. A lock keeps out the lessons of the pupil keys
+        # it names and of every key sharing a pupil with one of them
+        # (_add_fixed_lesson_constraints; _cliques reads it the same way). The
+        # count first asked every lock, in every count, whether it blocked all
+        # the count's keys, with the partners looked up in lists: 95 % of the
+        # time on a högstadium week of 559 locks, 42-76 s before any model.
+        # So each lock's blocked set is worked out here, once, and locks with
+        # the same set are read as one, their windows merged day by day: a
+        # school's locks come in as many sets as it has locked groups, a few
+        # dozen however many hundred lessons it keeps. A count asks only which
+        # sets hold all its keys.
+        walls_by_blocked: dict[frozenset[int], dict[int, list[tuple[int, int]]]] = defaultdict(
+            lambda: defaultdict(list),
+        )
+        for fixed in request.fixed_lessons:
+            window = self._fixed_window(fixed)
+            if window is None:
+                continue
+            named_keys = set(pupil_keys_of(fixed))
+            blocked = set(named_keys)
+            for key in named_keys:
+                blocked |= partners.get(key, set())
+            by_day = walls_by_blocked[frozenset(key_number(key) for key in blocked)]
+            for day_index in range(days):
+                lo = window[0] - day_index * slots_per_day
+                hi = window[1] - day_index * slots_per_day
+                if hi > 0 and lo < slots_per_day:
+                    by_day[day_index].append((max(lo, 0), min(hi, slots_per_day)))
+        # Each day's slots as the bits of one int: a union of walls is an OR,
+        # and the free time what the open windows leave of it (_slot_runs).
+        lock_sets: list[tuple[frozenset[int], dict[int, int]]] = [
+            (
+                blocked,
+                {
+                    day_index: _slot_mask(_merge_ranges(ranges))
+                    for day_index, ranges in by_day.items()
+                },
+            )
+            for blocked, by_day in walls_by_blocked.items()
         ]
+        sets_blocking: dict[int, set[int]] = defaultdict(set)
+        for index, (blocked, _) in enumerate(lock_sets):
+            for key in blocked:
+                sets_blocking[key].add(index)
+        # Class -> the eaters whose meals the model keeps clear of its lessons
+        # (_meal_keeps_clear_of), in payload order; a set of classes takes the
+        # eaters common to all of them.
+        clear_of: dict[UUID, list[UUID]] = {}
+        meals_of: dict[frozenset[UUID], list[UUID]] = {}
+
+        def meals_for(chosen: list[UUID]) -> list[UUID]:
+            key = frozenset(chosen)
+            if key not in meals_of:
+                for class_id in chosen:
+                    if class_id not in clear_of:
+                        clear_of[class_id] = [
+                            e for e in eaters if _meal_keeps_clear_of(e, class_id, partners)
+                        ]
+                common = set(clear_of[chosen[0]]).intersection(*(clear_of[c] for c in chosen[1:]))
+                meals_of[key] = [e for e in clear_of[chosen[0]] if e in common]
+            return meals_of[key]
+
+        walls_of: dict[frozenset[int], dict[int, int]] = {}
+        Span = tuple[int | None, int | None]
+        free_of: dict[tuple[frozenset[int], frozenset[Span]], dict[int, list[tuple[int, int]]]] = {}
         windows_by_span: dict[tuple[int | None, int | None], dict[int, tuple[int, int]]] = {}
 
         def binds(constraint: AnonymousConstraint, requirement: AnonymousRequirement) -> bool:
@@ -1914,42 +2021,49 @@ class SchedulerSolver:
                 return constraint.resource_id == requirement.student_group_id
             return _grade_span_overlaps(constraint, requirement)
 
-        def free_time(lessons: list[AnonymousRequirement]) -> dict[int, list[tuple[int, int]]]:
-            keys = {pupil_key_of(r) for r in lessons}
-            spans = {span_of(r) for r in lessons}
+        def walls(keys: frozenset[int]) -> dict[int, int]:
+            """Day -> the slots the locks that block every key take, as bits."""
+            if keys not in walls_of:
+                common: set[int] | None = None
+                for key in keys:
+                    theirs = sets_blocking.get(key, set())
+                    common = set(theirs) if common is None else common & theirs
+                    if not common:
+                        break
+                by_day: dict[int, int] = defaultdict(int)
+                for index in common or ():
+                    for day_index, mask in lock_sets[index][1].items():
+                        by_day[day_index] |= mask
+                walls_of[keys] = by_day
+            return walls_of[keys]
+
+        def free_time(
+            keys: frozenset[int], spans: frozenset[Span],
+        ) -> dict[int, list[tuple[int, int]]]:
+            if (keys, spans) in free_of:
+                return free_of[(keys, spans)]
             for span in spans:
                 if span not in windows_by_span:
                     windows_by_span[span] = day_windows(request.frame_times, span, grid)
+            blocked_on = walls(keys)
             free_by_day: dict[int, list[tuple[int, int]]] = {}
-            for day_index in range(len(grid.schedule_days)):
-                opened = [
-                    windows_by_span[span][day_index]
-                    for span in spans
-                    if day_index in windows_by_span[span]
-                ]
-                if not opened:
-                    continue
-                free = _merge_ranges(opened)
-                base = day_index * slots_per_day
-                for lock_keys, (lock_start, lock_end) in locks:
-                    if not all(
-                        key in lock_keys or any(g in sharing.get(key, ()) for g in lock_keys)
-                        for key in keys
-                    ):
-                        continue
-                    lo, hi = lock_start - base, lock_end - base
-                    if hi <= 0 or lo >= slots_per_day:
-                        continue
-                    free = _subtract_range(free, (max(lo, 0), min(hi, slots_per_day)))
-                free_by_day[day_index] = free
+            for day_index in range(days):
+                opened = 0
+                for span in spans:
+                    window = windows_by_span[span].get(day_index)
+                    if window is not None:
+                        opened |= _slot_mask([window])
+                if opened:
+                    free_by_day[day_index] = _slot_runs(opened & ~blocked_on.get(day_index, 0))
+            free_of[(keys, spans)] = free_by_day
             return free_by_day
 
         seen: set[frozenset[UUID]] = set()
         # A class's lessons are the same in every clique through it, and so is
         # their count: each set of lessons is counted once.
-        counted: set[frozenset[UUID]] = set()
+        counted: set[frozenset[frozenset[int]]] = set()
         made = 0
-        memo: dict[tuple, int] = {}
+        memo: dict[tuple, object] = {}
         for group in request.groups:
             for members in _cliques_through(
                 group.id, requirements_of, sharing, self.CLASS_HOURS_CLIQUES,
@@ -1959,11 +2073,32 @@ class SchedulerSolver:
                 seen.add(frozenset(members))
                 requirements = [r for m in members for r in requirements_of.get(m, ())]
                 classes = list(dict.fromkeys(r.student_group_id for r in requirements))
+                # Each requirement once, as small numbers: its class's place in
+                # `classes`, its pupil key's number and its span. A count is
+                # then a filter over them, and hashes no UUID.
+                place = {class_id: index for index, class_id in enumerate(classes)}
+                rows = [
+                    (place[r.student_group_id], key_number(pupil_key_of(r)), span_of(r), r)
+                    for r in requirements
+                ]
+                rows_of: dict[int, list[int]] = defaultdict(list)
+                for index, row in enumerate(rows):
+                    rows_of[row[0]].append(index)
+                # Each class's lessons in this clique, by the requirement
+                # objects, which hash cheaply. A set of classes is then known
+                # by its classes' sets, before any of its lessons is gathered.
+                lessons_of_class = {
+                    class_place: frozenset(id(rows[index][3]) for index in indices)
+                    for class_place, indices in rows_of.items()
+                }
                 for chosen in _class_subsets(classes, self.CLASS_HOURS_SUBSET_CLASSES):
-                    lessons = [r for r in requirements if r.student_group_id in chosen]
-                    if frozenset(r.id for r in lessons) in counted:
+                    places = [place[class_id] for class_id in chosen]
+                    seen_lessons = frozenset(lessons_of_class[p] for p in places)
+                    if seen_lessons in counted:
                         continue
-                    counted.add(frozenset(r.id for r in lessons))
+                    counted.add(seen_lessons)
+                    taken = [rows[index] for index in sorted(i for p in places for i in rows_of[p])]
+                    lessons = [row[3] for row in taken]
                     made += 1
                     if made > self.CLASS_HOURS_COUNTS:
                         return None
@@ -1972,11 +2107,11 @@ class SchedulerSolver:
                         group.id if group.id in chosen else chosen[0],
                         chosen,
                         lessons,
-                        free_time(lessons),
-                        meals=[
-                            e for e in eaters
-                            if all(_meal_keeps_clear_of(e, c, sharing) for c in chosen)
-                        ],
+                        free_time(
+                            frozenset(row[1] for row in taken),
+                            frozenset(row[2] for row in taken),
+                        ),
+                        meals=meals_for(chosen),
                         narrowings=narrowings,
                         lunch_slots=lunch_slots,
                         reservations=[
@@ -2004,7 +2139,7 @@ class SchedulerSolver:
         lunch_slots: int,
         reservations: list[tuple[AnonymousConstraint, list[tuple[int, int]]]],
         maximum: int | None,
-        memo: dict[tuple, int],
+        memo: dict[tuple, object],
     ) -> ConflictAnalysis | None:
         """One count of _class_hours_verdict: these classes' lessons in one clique.
 
@@ -2035,6 +2170,25 @@ class SchedulerSolver:
                 per_day = sum(
                     sum(sorted(own, reverse=True)[:maximum]) for own in by_class.values()
                 )
+        # ROOM TO SPARE, settled before any meal is placed. A meal takes out of
+        # a day's whole measures at most its own length and a measure less a
+        # slot on either side of it, so the day holds at least that much less
+        # than it holds with no meal; where even that covers the demand, the
+        # exact count could only agree. Most counts of a school end here.
+        enough = 0
+        for day_index, free in free_by_day.items():
+            ranges = free
+            for _, windows in reservations:
+                for start, end in windows:
+                    lo = start - day_index * slots_per_day
+                    hi = end - day_index * slots_per_day
+                    if hi > 0 and lo < slots_per_day:
+                        ranges = _subtract_range(ranges, (max(lo, 0), min(hi, slots_per_day)))
+            meals_today = sum(1 for eater in meals if (eater, day_index) in narrowings)
+            least = max(0, _holds(ranges, measure) - meals_today * (lunch_slots + 2 * (measure - 1)))
+            enough += least if per_day is None else min(least, per_day)
+            if enough >= demand:
+                return None
         eating = [
             eater for eater in meals
             if any((eater, day_index) in narrowings for day_index in free_by_day)
@@ -2052,21 +2206,28 @@ class SchedulerSolver:
             parts = narrowings.get((eater, day_index))
             if parts is None:
                 return None
-            domain = parts.window
-            if parts.declared is not None:
-                domain = domain.intersection_with(parts.declared)
-            for cause, kept in (
-                ("locked", rules.locked), ("closed", rules.closed), ("pinned", rules.pinned),
-            ):
-                narrowing = getattr(parts, cause)
-                if narrowing is not None and (eater, day_index) in kept:
-                    domain = domain.intersection_with(narrowing)
-            offset = day_index * slots_per_day
-            return [
-                start - offset
-                for low, high in _domain_intervals(domain)
-                for start in range(low, high + 1)
-            ]
+            read = tuple(
+                getattr(parts, cause) is not None and (eater, day_index) in kept
+                for cause, kept in (
+                    ("locked", rules.locked), ("closed", rules.closed), ("pinned", rules.pinned),
+                )
+            )
+            # The same meal is read by many counts: its starts are worked out once.
+            key = ("starts", eater, day_index, read)
+            if key not in memo:
+                domain = parts.window
+                if parts.declared is not None:
+                    domain = domain.intersection_with(parts.declared)
+                for cause, narrows in zip(("locked", "closed", "pinned"), read):
+                    if narrows:
+                        domain = domain.intersection_with(getattr(parts, cause))
+                offset = day_index * slots_per_day
+                memo[key] = [  # type: ignore[assignment]
+                    start - offset
+                    for low, high in _domain_intervals(domain)
+                    for start in range(low, high + 1)
+                ]
+            return memo[key]  # type: ignore[return-value]
 
         def capacity(rules: _CountedRules) -> int | None:
             total = 0
@@ -2080,8 +2241,8 @@ class SchedulerSolver:
                             continue
                         ranges = _subtract_range(ranges, (max(lo, 0), min(hi, slots_per_day)))
                 day_meals: list[list[int]] = []
-                if rules.meals:
-                    for eater in eating:
+                for eater in eating:
+                    if eater in rules.meals:
                         starts = starts_of(eater, day_index, rules)
                         if starts is None:
                             continue
@@ -2097,7 +2258,7 @@ class SchedulerSolver:
         kept = _CountedRules(
             maximum=per_day is not None,
             reservations=tuple(range(len(reservations))),
-            meals=bool(eating),
+            meals=frozenset(eating),
             pinned=narrowed("pinned"),
             locked=narrowed("locked"),
             closed=narrowed("closed"),
@@ -2108,9 +2269,10 @@ class SchedulerSolver:
 
         # Every rule the count read, tried without, and dropped where the
         # count stays short: the maximum first, then each reservation, then
-        # the meals, and of the meals each start placed by hand and each
-        # narrowing by the locks or the reservations. A refusal left with the
-        # frames, the locks and the lunch is said as the hours verdict says it.
+        # the meals all together and each eater's alone, and of the meals left
+        # each start placed by hand and each narrowing by the locks or the
+        # reservations. A refusal left with the frames, the locks and the
+        # lunch is said as the hours verdict says it.
         trials: list[Callable[[_CountedRules], _CountedRules]] = []
         if kept.maximum:
             trials.append(lambda rules: replace(rules, maximum=False))
@@ -2119,7 +2281,12 @@ class SchedulerSolver:
                 rules, reservations=tuple(i for i in rules.reservations if i != index),
             ))
         if kept.meals:
-            trials.append(lambda rules: replace(rules, meals=False))
+            trials.append(lambda rules: replace(rules, meals=frozenset()))
+            if len(kept.meals) > 1:
+                for eater in eating:
+                    trials.append(lambda rules, eater=eater: replace(
+                        rules, meals=rules.meals - {eater},
+                    ))
             for cause in ("pinned", "locked", "closed"):
                 for key in sorted(getattr(kept, cause), key=lambda k: (k[1], str(k[0]))):
                     trials.append(lambda rules, cause=cause, key=key: replace(
@@ -2143,16 +2310,46 @@ class SchedulerSolver:
             return None
 
         minutes = grid.slot_minutes
+        # The eaters whose meals the refusal still reads, and of their meals
+        # the starts placed by hand and the reservations' narrowings it needs.
+        # Said beside the count whichever summary leads: "move the lunch
+        # window" moves no meal placed by hand, which outranks the window.
+        needed = [eater for eater in eating if eater in kept.meals]
+        meal_lines: list[ConflictDetail] = []
+        for eater, day_index in sorted(kept.pinned, key=lambda k: (k[1], str(k[0]))):
+            if eater not in kept.meals:
+                continue
+            start = narrowings[(eater, day_index)].pinned.min() - day_index * slots_per_day  # type: ignore[union-attr]
+            meal_lines.append(ConflictDetail(
+                category="LUNCH_WINDOW",
+                code="LUNCH_PLACED_BY_HAND",
+                params={
+                    "group": str(eater),
+                    "day": grid.schedule_days[day_index],
+                    "start": grid.format_hhmmss(start, 0)[0][:5],
+                },
+                resource_ids=[eater],
+            ))
+        narrowing_lines: dict[str, ConflictDetail] = {}
+        for cause, category, code in (
+            ("locked", "GROUP_OVERLAP", "LUNCH_STARTS_TAKEN_BY_LOCKED_LESSONS"),
+            ("closed", "AVAILABILITY", "LUNCH_STARTS_TAKEN_BY_RESERVATION"),
+        ):
+            groups = [e for e in needed if any(k[0] == e for k in getattr(kept, cause))]
+            if groups:
+                narrowing_lines[cause] = ConflictDetail(
+                    category=category, code=code, resource_ids=groups,
+                )
         lunch_line: list[ConflictDetail] = []
-        if kept.meals:
+        if needed:
             lunch_line.append(ConflictDetail(
                 category="LUNCH_WINDOW",
                 code="LUNCH_BREAK_IS_THE_DIFFERENCE",
                 params={
                     "lunchMinutes": request.rules.lunch_minutes,  # type: ignore[union-attr]
-                    "freeMinutes": (capacity(replace(kept, meals=False)) or 0) * minutes,
+                    "freeMinutes": (capacity(replace(kept, meals=frozenset())) or 0) * minutes,
                 },
-                resource_ids=eating,
+                resource_ids=needed,
             ))
         count_line = ConflictDetail(
             category="REQUIREMENT_DEMAND",
@@ -2167,7 +2364,13 @@ class SchedulerSolver:
         )
         if not kept.maximum and not kept.reservations:
             # The frames, the locks and the lunch: the hours verdict's own
-            # sentence says exactly those, and the refusal is said as it would.
+            # sentence says exactly those, and the refusal is said as it would,
+            # with the meals placed by hand and the reservations' narrowing of
+            # a meal beside it where the count needs them. The locks'
+            # narrowing is the sentence's "locked lessons".
+            short_lines = [count_line, *meal_lines]
+            if "closed" in narrowing_lines:
+                short_lines.append(narrowing_lines["closed"])
             return ConflictAnalysis(
                 summary_code="DEMAND_CLIQUE_HOURS_SHORT",
                 summary_params={
@@ -2176,7 +2379,7 @@ class SchedulerSolver:
                     "demandMinutes": demand * minutes,
                     "capacityMinutes": counted * minutes,
                 },
-                conflicts=[count_line, *lunch_line],
+                conflicts=[*short_lines, *lunch_line],
             )
         details = [count_line]
         for index in kept.reservations:
@@ -2196,28 +2399,9 @@ class SchedulerSolver:
                 params={"maxPerDay": maximum, "measured": 0},
                 resource_ids=held_back,
             ))
-        if kept.meals:
-            for eater, day_index in sorted(kept.pinned, key=lambda k: (k[1], str(k[0]))):
-                start = narrowings[(eater, day_index)].pinned.min() - day_index * slots_per_day  # type: ignore[union-attr]
-                details.append(ConflictDetail(
-                    category="LUNCH_WINDOW",
-                    code="LUNCH_PLACED_BY_HAND",
-                    params={
-                        "group": str(eater),
-                        "day": grid.schedule_days[day_index],
-                        "start": grid.format_hhmmss(start, 0)[0][:5],
-                    },
-                    resource_ids=[eater],
-                ))
-            for cause, category, code in (
-                ("locked", "GROUP_OVERLAP", "LUNCH_STARTS_TAKEN_BY_LOCKED_LESSONS"),
-                ("closed", "AVAILABILITY", "LUNCH_STARTS_TAKEN_BY_RESERVATION"),
-            ):
-                groups = [e for e in eating if any(k[0] == e for k in getattr(kept, cause))]
-                if groups:
-                    details.append(ConflictDetail(
-                        category=category, code=code, resource_ids=groups,
-                    ))
+        if needed:
+            details.extend(meal_lines)
+            details.extend(narrowing_lines.values())
             details.extend(lunch_line)
         return ConflictAnalysis(
             summary_code="CONFLICT_CORE_SUMMARY",
@@ -2231,7 +2415,7 @@ class SchedulerSolver:
         meals: list[list[int]],
         lunch_slots: int,
         measure: int,
-        memo: dict[tuple, int],
+        memo: dict[tuple, object],
     ) -> int:
         """The most whole measures `ranges` hold with every meal on one of its starts.
 

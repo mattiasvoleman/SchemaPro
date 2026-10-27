@@ -12342,10 +12342,16 @@ def test_every_meal_that_keeps_clear_of_the_lessons_is_counted_with_them(
     params, codes = _the_hours_line(response.conflicts)
     assert response.conflicts.summary_code == "DEMAND_CLIQUE_HOURS_SHORT"
     assert params == {"group": cls, "sharingGroups": 1, "demandMinutes": 360, "capacityMinutes": 300}
-    assert _lines(response.conflicts)[1] == (
-        "LUNCH_BREAK_IS_THE_DIFFERENCE", {"lunchMinutes": 40, "freeMinutes": 480}, [cls, group],
-    )
-    assert codes == ["DEMAND_REQUIREMENTS_EXCEED_WEEK", "LUNCH_BREAK_IS_THE_DIFFERENCE"]
+    # Both meals are needed, and the class's placed by hand at 08:45 too: in
+    # the window it would sit beside the group's and cost one hour, not two.
+    # "Move the lunch window" moves no meal placed by hand, so it is named.
+    assert _lines(response.conflicts)[1:] == [
+        ("LUNCH_PLACED_BY_HAND", {"group": cls, "day": 1, "start": "08:45"}, [cls]),
+        ("LUNCH_BREAK_IS_THE_DIFFERENCE", {"lunchMinutes": 40, "freeMinutes": 480}, [cls, group]),
+    ]
+    assert codes == [
+        "DEMAND_REQUIREMENTS_EXCEED_WEEK", "LUNCH_PLACED_BY_HAND", "LUNCH_BREAK_IS_THE_DIFFERENCE",
+    ]
 
     # The control: the teaching group off the group list eats with its class.
     payload["groups"] = payload["groups"][:1]  # type: ignore[index]
@@ -12407,6 +12413,139 @@ def test_the_maximum_is_counted_per_class_and_named_beside_the_meal(
         OptimizeScheduleRequest.model_validate(payload),
     )
     assert solved.status in ("OPTIMAL", "FEASIBLE")
+
+
+def test_the_maximum_binds_each_class_on_its_own_and_lets_the_others_fill_the_day() -> None:
+    """At most three lessons a day: class X has eight, its teaching group one.
+    Monday is framed to 11:00 with X's meal placed by hand at 09:00, two
+    lessons around it; Tuesday and Wednesday to 13:00, four around the meal.
+    X places two, three and three, and the group's lesson takes the fourth
+    place on Tuesday: a timetable. The maximum is X's alone. Counted over
+    both classes as one, at three a day, the days hold eight of nine and a
+    schedulable week is refused (the review's mutant m2, which refused 13
+    solvable weeks of its 851 and passed every other test)."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    cls, group = str(uuid4()), str(uuid4())
+    payload = _week(
+        [_lesson(cls, 8), _lesson(group, 1)],
+        [{"id": cls, "lunchHeadcount": 20}],
+        groupConflicts=[[cls, group]],
+        frameTimes=[_year_frame(7, 1, "08:00", "11:00"), _year_frame(7, 2, "08:00", "13:00"),
+                    _year_frame(7, 3, "08:00", "13:00")],
+        lunchPlacements=[{"studentGroupId": cls, "dayOfWeek": 1, "startTime": "09:00:00"}],
+        rules={"lunchStartTime": "10:00:00", "lunchEndTime": "12:00:00", "lunchMinutes": 30,
+               "maxLessonsPerDayPerGroup": 3},
+    )
+    solver = SchedulerSolver(_settings(SCHEDULE_DAYS="1,2,3", SOLVER_MAX_TIME_SECONDS=10))
+    request = OptimizeScheduleRequest.model_validate(payload)
+    _at_exact_fit(solver, request)
+
+    assert solver._class_hours_verdict(request) is None
+    assert solver.solve(request).status in ("OPTIMAL", "FEASIBLE")
+
+
+def test_the_maximum_takes_a_class_s_longest_lessons_not_its_longest_times_the_maximum() -> None:
+    """Two a day, and class X has one lesson of 90 minutes and five of 45:
+    a day takes at most 135 minutes of them, its longest two, and not 180,
+    two of its longest. Wednesday is reserved to 11:30 in a frame closing at
+    12:00, which holds no lesson, so Monday and Tuesday take 270 of 315 —
+    and the week is refused by the maximum and that reservation together.
+    Counted as the maximum times the longest lesson, 360 minutes, it passed
+    (the review's mutant m2b)."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    cls = str(uuid4())
+    wednesday = _reserved(cls, 3, "08:00", "11:30")
+    payload = _week(
+        [_lesson(cls, 1, minutes=90), _lesson(cls, 5, minutes=45)],
+        [{"id": cls, "lunchHeadcount": 20}],
+        constraints=[wednesday],
+        frameTimes=[_year_frame(7, None, "08:00", "12:00")],
+        rules={"maxLessonsPerDayPerGroup": 2},
+    )
+    solver = SchedulerSolver(_settings(SCHEDULE_DAYS="1,2,3"))
+    request = OptimizeScheduleRequest.model_validate(payload)
+    assert solver._clique_hours_verdict(request) is None
+    assert solver._lesson_gaps_verdict(request) is None
+
+    verdict = solver._class_hours_verdict(request)
+
+    assert verdict is not None
+    assert verdict.summary_code == "CONFLICT_CORE_SUMMARY"
+    assert [(code, params.get("capacityMinutes", params.get("measured", params.get("start"))), ids)
+            for code, params, ids in _lines(verdict)] == [
+        ("DEMAND_REQUIREMENTS_EXCEED_WEEK", 270, [cls]),
+        ("AVAIL_CONSTRAINT_BLOCKS_LESSONS", "08:00", [cls]),
+        ("GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT", 0, [cls]),
+    ]
+
+
+def test_only_the_meals_the_count_needs_are_named() -> None:
+    """Two eaters in one clique, both meals placed by hand at 08:45, one on
+    top of the other. Seven hour lessons in an eight-hour day: the meals
+    leave six. Either meal alone leaves six too, so the class's is dropped
+    and the teaching group's is the one named, with its start, and not both
+    eaters as the lunch line first named every meal the count read."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    cls, group = str(uuid4()), str(uuid4())
+    payload = _week(
+        [_lesson(cls, 6, years=None), _lesson(group, 1, years=None)],
+        [{"id": cls, "lunchHeadcount": 20}, {"id": group, "lunchHeadcount": 0}],
+        groupConflicts=[[cls, group]],
+        lunchPlacements=[{"studentGroupId": g, "dayOfWeek": 1, "startTime": "08:45:00"}
+                         for g in (cls, group)],
+        rules={"lunchStartTime": "10:30:00", "lunchEndTime": "13:00:00", "lunchMinutes": 40},
+    )
+    solver = SchedulerSolver(_settings(SCHEDULE_DAYS="1", SCHEDULE_DAY_END_MINUTES=960))
+    request = OptimizeScheduleRequest.model_validate(payload)
+    # Each clique's own count reads its leader's meal and is short too; asked
+    # directly, the class count names the one meal the refusal needs.
+    verdict = solver._class_hours_verdict(request)
+
+    assert verdict is not None
+    assert [(code, ids) for code, _, ids in _lines(verdict)][1:] == [
+        ("LUNCH_PLACED_BY_HAND", [group]),
+        ("LUNCH_BREAK_IS_THE_DIFFERENCE", [group]),
+    ]
+
+
+def test_a_reservation_that_narrows_the_meal_is_named_beside_the_short_count() -> None:
+    """The reservation on the class at 13:00-13:30 keeps no lesson out — the
+    frame closes at 13:00 — but keeps the meal off 13:00, after the frame,
+    where it cost nothing. Inside the frame it costs an hour, and the clique
+    of the class and its second teaching group, five lessons, is short. The
+    refusal is the hours count's, and names the reservation's narrowing of
+    the meal beside it, as the frames, the locks and the lunch do not say it."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    cls, first, second = str(uuid4()), str(uuid4()), str(uuid4())
+    payload = _week(
+        [_lesson(cls, 3), _lesson(first, 1), _lesson(second, 2)],
+        [{"id": cls, "lunchHeadcount": 20}],
+        groupConflicts=[[cls, first], [cls, second]],
+        constraints=[_reserved(cls, 1, "13:00", "13:30")],
+        frameTimes=[_year_frame(7, None, "08:00", "13:00")],
+        rules={"lunchStartTime": "11:00:00", "lunchEndTime": "13:30:00", "lunchMinutes": 30},
+    )
+    solver = SchedulerSolver(_settings(SCHEDULE_DAYS="1"))
+    request = OptimizeScheduleRequest.model_validate(payload)
+    _at_exact_fit(solver, request)
+
+    verdict = solver._class_hours_verdict(request)
+
+    assert verdict is not None
+    assert verdict.summary_code == "DEMAND_CLIQUE_HOURS_SHORT"
+    assert [(code, ids) for code, _, ids in _lines(verdict)] == [
+        ("DEMAND_REQUIREMENTS_EXCEED_WEEK", [cls]),
+        ("LUNCH_STARTS_TAKEN_BY_RESERVATION", [cls]),
+        ("LUNCH_BREAK_IS_THE_DIFFERENCE", [cls]),
+    ]
 
 
 def test_every_clique_through_the_class_is_counted_not_the_first_one_built() -> None:
@@ -12574,6 +12713,70 @@ def test_the_class_count_reads_cliques_and_sets_of_classes_in_a_fixed_order(
     # [class, group] and [class] are two counts; the second is the short one.
     monkeypatch.setattr(SchedulerSolver, "CLASS_HOURS_COUNTS", 1)
     assert solver._class_hours_verdict(request) is None
+
+
+def test_the_class_count_reads_each_lock_once_however_many_the_school_keeps() -> None:
+    """A högstadium of three years of eight classes, three blocks of five
+    teaching groups per year cut across every class, and a lower school of
+    forty classes whose whole week is locked: 1,000 locks. The gateway sends
+    every lesson it keeps as a lock, and the contract takes 5,000. The count
+    first asked every lock, in every count, whether it blocked every key,
+    with the partners looked up in lists: 3,429 counts of a week like this
+    took 34 s of CPU before any model, outside the solver's budget. Each
+    lock is now read once. A coarse bound in CPU time, which load does not
+    stretch: the count takes about a tenth of a second here."""
+    import random
+    import time as clock
+
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    rng = random.Random(1)
+
+    def uid() -> str:
+        return str(UUID(int=rng.getrandbits(128), version=4))
+
+    requirements: list[dict[str, object]] = []
+    groups: list[dict[str, object]] = []
+    pairs: list[list[str]] = []
+    fixed: list[dict[str, object]] = []
+    for year in (7, 8, 9):
+        classes = [uid() for _ in range(8)]
+        for cls in classes:
+            groups.append({"id": cls, "lunchHeadcount": 25, "minGradeLevel": year, "maxGradeLevel": year})
+            requirements += [_lesson(cls, lessons, years=year) for lessons in (3, 3, 2, 3, 3, 2, 1, 1, 1)]
+        blocks = [[uid() for _ in range(5)] for _ in range(3)]
+        for block in blocks:
+            for group in block:
+                requirements.append(_lesson(group, 2, years=year))
+                pairs += [[cls, group] for cls in classes]
+        for i, block in enumerate(blocks):
+            for other in blocks[i + 1:]:
+                pairs += [[a, b] for a in block for b in other]
+    for _ in range(40):
+        cls = uid()
+        groups.append({"id": cls, "lunchHeadcount": 25, "minGradeLevel": 3, "maxGradeLevel": 3})
+        fixed += [
+            {"id": uid(), "teacherId": uid(), "studentGroupId": cls, "dayOfWeek": day,
+             "startTime": f"{hour:02d}:00:00", "endTime": f"{hour + 1:02d}:00:00"}
+            for day in range(1, 6) for hour in (8, 9, 10, 13, 14)
+        ]
+    payload = _week(
+        requirements, groups, groupConflicts=pairs, fixedLessons=fixed,
+        frameTimes=[_year_frame(year, None, "08:00", "16:00") for year in (3, 7, 8, 9)],
+        rules={"lunchStartTime": "11:00:00", "lunchEndTime": "13:00:00", "lunchMinutes": 30},
+    )
+    payload["rooms"] = [{"id": uid(), "capacity": 30} for _ in range(len(groups) * 2)]
+    solver = SchedulerSolver(_settings())
+    request = OptimizeScheduleRequest.model_validate(payload)
+    assert len(request.fixed_lessons) == 1000
+
+    started = clock.process_time()
+    verdict = solver._class_hours_verdict(request)
+    spent = clock.process_time() - started
+
+    assert verdict is None
+    assert spent < 5.0, f"the class count took {spent:.1f} s of CPU for 1,000 locks"
 
 
 def test_a_reservation_the_grid_cannot_read_is_left_to_the_build() -> None:
