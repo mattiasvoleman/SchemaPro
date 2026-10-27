@@ -404,6 +404,96 @@ def _slot_runs(mask: int) -> list[tuple[int, int]]:
     return runs
 
 
+class _LockWalls:
+    """Every lock read once: the pupil keys it keeps out, and its slots day by day.
+
+    A lock keeps out the lessons of the pupil keys it names and of every key
+    sharing a pupil with one of them (_add_fixed_lesson_constraints). `sharing`
+    is _groups_sharing_students's, which holds each pair both ways and never a
+    key with itself, so "a member is named, or shares a pupil with one named"
+    is "the member is in the named keys and their partners". That set is
+    worked out here once per lock, and locks with the same set are one entry,
+    their slots ORed day by day: a school's locks come in as many sets as it
+    has locked groups, a few dozen however many hundred lessons it keeps.
+
+    `walls(keys)` is then the slots of every lock that blocks all of `keys`,
+    day -> the slots as the bits of one int: an intersection of a few small
+    sets and an OR per day. _cliques asked each lock, for each group and each
+    day, with the partners looked up in lists: 1.6-4.5 s a call at 5,000
+    locks, and every week reads _cliques twice before the model (the hours
+    verdict and the lunch stage), a week the stage refuses three times.
+    """
+
+    def __init__(
+        self,
+        fixed_windows: Iterable[tuple[FixedLesson, tuple[int, int] | None]],
+        sharing: Mapping[UUID, Collection[UUID]],
+        slots_per_day: int,
+        days: int,
+    ) -> None:
+        # Pupil keys as small numbers. A lock's UUIDs and a pair's are equal
+        # but not the same objects, and every set below would compare them
+        # in Python; numbers hash and compare in C.
+        numbers: dict[UUID, int] = {}
+        # A key with its partners, and a lock's named keys with theirs, each
+        # made once.
+        closure_of: dict[UUID, frozenset[int]] = {}
+        blocked_of: dict[tuple[UUID, ...], frozenset[int]] = {}
+        masks: dict[frozenset[int], dict[int, int]] = {}
+        for fixed, window in fixed_windows:
+            if window is None:
+                continue
+            named = tuple(pupil_keys_of(fixed))
+            blocked = blocked_of.get(named)
+            if blocked is None:
+                closures = []
+                for key in named:
+                    closure = closure_of.get(key)
+                    if closure is None:
+                        closure = closure_of[key] = frozenset(
+                            numbers.setdefault(other, len(numbers))
+                            for other in (key, *sharing.get(key, ()))
+                        )
+                    closures.append(closure)
+                blocked = blocked_of[named] = frozenset().union(*closures)
+            by_day = masks.setdefault(blocked, {})
+            # Each day the window reaches, clipped to it, as _cliques cut it.
+            first = max(window[0] // slots_per_day, 0)
+            last = min((window[1] - 1) // slots_per_day, days - 1)
+            for day_index in range(first, last + 1):
+                base = day_index * slots_per_day
+                lo = max(window[0] - base, 0)
+                hi = min(window[1] - base, slots_per_day)
+                if hi > lo:
+                    by_day[day_index] = by_day.get(day_index, 0) | (((1 << (hi - lo)) - 1) << lo)
+        self._numbers = numbers
+        self._by_day = list(masks.values())
+        self._sets_blocking: dict[int, set[int]] = defaultdict(set)
+        for index, blocked in enumerate(masks):
+            for number in blocked:
+                self._sets_blocking[number].add(index)
+
+    def walls(self, keys: Iterable[UUID]) -> dict[int, int]:
+        """Day -> the slots taken by the locks that block every one of `keys`, as bits."""
+        common: set[int] | None = None
+        for key in keys:
+            number = self._numbers.get(key)
+            theirs = None if number is None else self._sets_blocking.get(number)
+            if not theirs:
+                return {}
+            common = set(theirs) if common is None else common & theirs
+            if not common:
+                return {}
+        if common is None:
+            # No keys: every lock blocks all of them.
+            common = set(range(len(self._by_day)))
+        walls: dict[int, int] = {}
+        for index in common:
+            for day_index, mask in self._by_day[index].items():
+                walls[day_index] = walls.get(day_index, 0) | mask
+        return walls
+
+
 def _meal_keeps_clear_of(
     eater: UUID, class_id: UUID, sharing: Mapping[UUID, Collection[UUID]],
 ) -> bool:
@@ -1505,10 +1595,12 @@ class SchedulerSolver:
             requirements_of[pupil_key_of(requirement)].append(requirement)
         slots_per_day = self._grid.slots_per_day
         max_per_day = request.rules.max_lessons_per_day_per_group if request.rules else None
-        fixed_windows = [
-            (fixed, self._fixed_window(fixed))
-            for fixed in request.fixed_lessons
-        ]
+        locks = _LockWalls(
+            ((fixed, self._fixed_window(fixed)) for fixed in request.fixed_lessons),
+            sharing,
+            slots_per_day,
+            len(self._grid.schedule_days),
+        )
 
         cliques: list[tuple[AnonymousGroup, _Clique]] = []
         for group in request.groups:
@@ -1544,32 +1636,22 @@ class SchedulerSolver:
             # get to rely on that.
             spans = {span_of(requirement) for requirement in requirements}
             windows_of = [day_windows(request.frame_times, span, self._grid) for span in spans]
-            member_set = set(members)
+            # The slots of the locks that block every member (_LockWalls).
+            walls = locks.walls(set(members))
 
             free_by_day: dict[int, list[tuple[int, int]]] = {}
             open_by_day: dict[int, list[tuple[int, int]]] = {}
             for day_index in range(len(self._grid.schedule_days)):
-                base = day_index * slots_per_day
                 open_ranges = [windows[day_index] for windows in windows_of if day_index in windows]
                 if not open_ranges:
                     continue
                 free = _merge_ranges(open_ranges)
                 open_by_day[day_index] = free
-                for fixed, window in fixed_windows:
-                    if window is None:
-                        continue
-                    blocked_groups = set(pupil_keys_of(fixed))
-                    blocks_all = all(
-                        member in blocked_groups
-                        or any(g in sharing.get(member, ()) for g in blocked_groups)
-                        for member in member_set
-                    )
-                    if not blocks_all:
-                        continue
-                    lo, hi = window[0] - base, window[1] - base
-                    if hi <= 0 or lo >= slots_per_day:
-                        continue
-                    free = _subtract_range(free, (max(lo, 0), min(hi, slots_per_day)))
+                wall = walls.get(day_index)
+                if wall is not None:
+                    # What the locks leave: the same maximal runs, in order,
+                    # that cutting each lock out of the merged windows leaves.
+                    free = _slot_runs(_slot_mask(free) & ~wall)
                 free_by_day[day_index] = free
 
             # THE CLASS SPACE, deliberately, though the clique is the pupils':
