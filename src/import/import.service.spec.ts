@@ -2186,6 +2186,34 @@ describe('ImportService', () => {
         expect(tx.teachingRequirement.updateMany).not.toHaveBeenCalled();
       });
 
+      it("tells a row of the other half that changes only its weeks which row keeps it from being written", async () => {
+        // The autumn's lessons and the spring's weeks: the spring's row is
+        // right alone, and is refused only because the pair would differ.
+        const report = await run(
+          row({ groupName: '7A', lessonsPerWeek: 2, minutesPerLesson: 80 }),
+          row({ groupName: '7B', endDate: '2027-01-15' }),
+        );
+
+        expect(report.errors).toEqual([
+          {
+            row: 1,
+            message: expect.stringMatching(
+              /^Raden ligger i blocket "Matematik 7 HT", som läggs på samma tider som blocket "Matematik 7 VT", och /,
+            ),
+          },
+          {
+            row: 2,
+            message:
+              'Raden ligger i blocket "Matematik 7 VT" och ändrar inte dess lektioner, men skrivs inte: rad 1 ändrar ' +
+              'lektionerna i blocket "Matematik 7 HT", som läggs på samma tider, och båda blockens poster måste ha ' +
+              'samma antal lektioner och samma längder. Rätta den raden, eller ändra lektionerna med Ändra lektioner ' +
+              'under Block på Timplansposter, så skrivs också den här.',
+          },
+        ]);
+        expect(report.updated).toBe(0);
+        expect(tx.teachingRequirement.updateMany).not.toHaveBeenCalled();
+      });
+
       it("writes one half's lessons alone when they become the other half's", async () => {
         // A pair that drifted apart before 20261213090000, put back by the file.
         arrangeRows(tx.teachingRequirement.findMany, halves(lessons));
