@@ -124,6 +124,28 @@ describe("BlocksHost", () => {
     expect(await screen.findByText("warnTeacher(cellLabel(Franska|Fr7)|cellLabel(Tyska|Ty7))")).toBeInTheDocument();
   });
 
+  it("says nothing of one post in each of two linked blocks, and still of one post in a block alone (Dela i halvklass)", async () => {
+    // 7A's hemkunskap split in turn: 7A:1's in the first period's block,
+    // 7A:2's in the second's, which takes the first's times.
+    state.blocks = [
+      { id: "b-1", academicYearId: YEAR, name: "Hemkunskap 7A HT1", sameTimesAsBlockId: null },
+      { id: "b-2", academicYearId: YEAR, name: "Hemkunskap 7A HT2", sameTimesAsBlockId: "b-1" },
+      { id: "b-ensam", academicYearId: YEAR, name: "Ensam", sameTimesAsBlockId: null },
+    ];
+    show([
+      row("r-1", "g-ty", "s-ty", { blockId: "b-1" }),
+      row("r-2", "g-fr", "s-ty", { blockId: "b-2" }),
+      row("r-3", "g-sp", "s-sp", { blockId: "b-ensam" }),
+    ]);
+
+    for (const name of ["Hemkunskap 7A HT1", "Hemkunskap 7A HT2"]) {
+      const item = (await screen.findByRole("heading", { name })).closest("li")!;
+      expect(within(item).queryByText("warnOne")).not.toBeInTheDocument();
+    }
+    const alone = (await screen.findByRole("heading", { name: "Ensam" })).closest("li")!;
+    expect(within(alone).getByText("warnOne")).toBeInTheDocument();
+  });
+
   it("creates a block with the posts ticked, through the gateway", async () => {
     state.blocks = [];
     show([row("r-ty", "g-ty", "s-ty"), row("r-fr", "g-fr", "s-fr"), row("r-ma", "g-7a", "s-ma")]);
@@ -314,6 +336,11 @@ describe("blockWarnings", () => {
       ),
     ).toEqual(["warnTeacher(a|b)"]);
     expect(blockWarnings([row("a", "g-ty", "s-ty"), row("b", "g-fr", "s-fr")], label, t)).toEqual([]);
+  });
+
+  it("lets one post be a block on another block's times (Dela i halvklass, one subject), but not none", () => {
+    expect(blockWarnings([row("a", "g-ty", "s-ty")], label, t, true)).toEqual([]);
+    expect(blockWarnings([], label, t, true)).toEqual(["warnOne"]);
   });
 
   it("names two posts each split between teachers, which the generator refuses, and lets one through (delade lektioner)", () => {

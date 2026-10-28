@@ -224,7 +224,7 @@ function useBlockNames(academicYearId: string) {
     queryFn: async () => {
       const { data, error } = await createClient()
         .from("TeachingBlocks")
-        .select("id, academicYearId, name")
+        .select("id, academicYearId, name, sameTimesAsBlockId")
         .eq("academicYearId", academicYearId)
         .order("name");
       if (error) throw error;

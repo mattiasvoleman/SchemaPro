@@ -343,6 +343,12 @@ export interface TeachingBlock {
   id: string;
   academicYearId: string;
   name: string;
+  /**
+   * The block whose times this one takes (Dela i halvklass: the second
+   * period's on the first's), or null. Read by both readers of the key
+   * ["teachingBlocks", year], so whichever fills the cache has it.
+   */
+  sameTimesAsBlockId?: string | null;
 }
 
 export interface TeachingRequirement {
