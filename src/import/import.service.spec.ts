@@ -2039,7 +2039,7 @@ describe('ImportService', () => {
       beforeEach(() => {
         arrangeRows(tx.teachingRequirement.findMany, members());
         tx.teachingRequirement.updateMany.mockResolvedValue({ count: 2 });
-        tx.teachingBlock.findUnique.mockResolvedValue({ name: 'Språkval åk 7' });
+        tx.teachingBlock.findMany.mockResolvedValue([{ id: BLOCK, name: 'Språkval åk 7', sameTimesAsBlockId: null }]);
       });
 
       it('changes every member in one statement when the file changes them alike, then the rest row by row', async () => {
@@ -2122,6 +2122,93 @@ describe('ImportService', () => {
 
         expect(error).toBeInstanceOf(ConflictException);
         expect(((error as ConflictException).getResponse() as { code: string }).code).toBe('BLOCK_MEMBERS_DIFFER');
+      });
+    });
+
+    describe('a block on another block\'s times (Dela i halvklass, ett ämne)', () => {
+      // Matematik read in turn, say: 7A in the first period (block HT), 7B in
+      // the second (block VT, on HT's times), one post each.
+      const HT = 'b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2';
+      const VT = 'b3b3b3b3-b3b3-4b3b-8b3b-b3b3b3b3b3b3';
+      const halves = (vt: Record<string, unknown> = {}) => [
+        stored({ id: 'req-1', studentGroupId: GROUP_7A, blockId: HT }),
+        stored({ id: 'req-2', studentGroupId: GROUP_7B, blockId: VT, ...vt }),
+      ];
+      const lessons = { lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [] };
+      const shapeWith = (overrides: Record<string, unknown> = {}) => ({
+        ...lessons,
+        recurrence: 'ALL_WEEKS',
+        startDate: null,
+        endDate: null,
+        ...overrides,
+      });
+      const statements = () =>
+        tx.teachingRequirement.updateMany.mock.calls.map(([args]) => args as { where: unknown; data: unknown });
+
+      beforeEach(() => {
+        arrangeRows(tx.teachingRequirement.findMany, halves());
+        tx.teachingRequirement.updateMany.mockResolvedValue({ count: 1 });
+        tx.teachingBlock.findMany.mockResolvedValue([
+          { id: HT, name: 'Matematik 7 HT', sameTimesAsBlockId: null },
+          { id: VT, name: 'Matematik 7 VT', sameTimesAsBlockId: HT },
+        ]);
+      });
+
+      it("writes both halves' lessons in one statement first, then each block's shape", async () => {
+        const report = await run(
+          row({ groupName: '7A', lessonsPerWeek: 2, minutesPerLesson: 80 }),
+          row({ groupName: '7B', lessonsPerWeek: 2, minutesPerLesson: 80 }),
+        );
+
+        expect(report).toEqual({ created: 0, updated: 2, skipped: 0, errors: [], warnings: [] });
+        // The trigger compares a post whose lessons change with the other
+        // block's as its statement leaves them: one statement for the pair.
+        expect(statements()).toEqual([
+          { where: { id: { in: ['req-1', 'req-2'] } }, data: lessons },
+          { where: { id: { in: ['req-1'] } }, data: shapeWith() },
+          { where: { id: { in: ['req-2'] } }, data: shapeWith() },
+        ]);
+      });
+
+      it("refuses, on its row and naming both blocks, a file that changes one half's lessons alone", async () => {
+        const report = await run(row({ groupName: '7A', lessonsPerWeek: 2, minutesPerLesson: 80 }));
+
+        expect(report.errors).toEqual([
+          {
+            row: 1,
+            message:
+              'Raden ligger i blocket "Matematik 7 HT", som läggs på samma tider som blocket "Matematik 7 VT", och ' +
+              'båda blockens poster måste ha samma antal lektioner och samma längder. Ändra båda blockens rader ' +
+              'likadant i filen, eller ändra lektionerna med Ändra lektioner under Block på Timplansposter.',
+          },
+        ]);
+        expect(report.updated).toBe(0);
+        expect(tx.teachingRequirement.updateMany).not.toHaveBeenCalled();
+      });
+
+      it("writes one half's lessons alone when they become the other half's", async () => {
+        // A pair that drifted apart before 20261213090000, put back by the file.
+        arrangeRows(tx.teachingRequirement.findMany, halves(lessons));
+
+        const report = await run(row({ groupName: '7A', lessonsPerWeek: 2, minutesPerLesson: 80 }));
+
+        expect(report.errors).toEqual([]);
+        expect(statements()).toEqual([
+          { where: { id: { in: ['req-1'] } }, data: lessons },
+          { where: { id: { in: ['req-1'] } }, data: shapeWith() },
+        ]);
+      });
+
+      it("changes one half's weeks alone as a block on its own does: the periods differ by design", async () => {
+        const report = await run(row({ groupName: '7A', endDate: '2027-01-15' }));
+
+        expect(report.errors).toEqual([]);
+        expect(statements()).toEqual([
+          {
+            where: { id: { in: ['req-1'] } },
+            data: shapeWith({ lessonsPerWeek: 3, minutesPerLesson: 60, endDate: new Date('2027-01-15T00:00:00.000Z') }),
+          },
+        ]);
       });
     });
 

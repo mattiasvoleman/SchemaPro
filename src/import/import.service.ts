@@ -11,6 +11,7 @@ import { LOCAL_TIMPLAN_MAX_ENTRIES } from '../timplan/dto/local-timplan.dto';
 import {
   Prisma,
   type LessonRecurrence,
+  type PrismaClient,
   type TeacherContractKind,
 } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
@@ -126,14 +127,166 @@ const shapeAfter = (
   endDate: 'endDate' in values ? (values.endDate ?? null) : stored.endDate,
 });
 
-const sameBlockShape = (a: BlockShape, b: BlockShape): boolean =>
+/** The lessons of a shape: what a block on another's times shares with it (20261213090000). */
+const sameLessons = (a: BlockShape, b: BlockShape): boolean =>
   a.lessonsPerWeek === b.lessonsPerWeek &&
   a.minutesPerLesson === b.minutesPerLesson &&
   a.lessonLengths.length === b.lessonLengths.length &&
-  a.lessonLengths.every((minutes, i) => minutes === b.lessonLengths[i]) &&
+  a.lessonLengths.every((minutes, i) => minutes === b.lessonLengths[i]);
+
+const sameBlockShape = (a: BlockShape, b: BlockShape): boolean =>
+  sameLessons(a, b) &&
   a.recurrence === b.recurrence &&
   (a.startDate?.getTime() ?? null) === (b.startDate?.getTime() ?? null) &&
   (a.endDate?.getTime() ?? null) === (b.endDate?.getTime() ?? null);
+
+/** A stored post as the held rows are judged against it. */
+type StoredBlockRow = Pick<StoredRequirementValues, keyof BlockShape> & { id: string; blockId: string | null };
+
+/** A file row that changes a block member's lessons or weeks, held to the end. */
+interface HeldBlockRow {
+  rowNumber: number;
+  current: StoredBlockRow;
+  values: RequirementValues;
+}
+
+/**
+ * The held rows of the file's blocks, judged and written: the requirements
+ * import's last step (see importRequirements).
+ *
+ * Each block's members, as the file leaves them, have one shape, or every held
+ * row of the block is a row error naming it and nothing of it is written.
+ *
+ * A BLOCK ON ANOTHER'S TIMES AND THAT BLOCK ARE ONE UNIT (a term split's two
+ * periods, TeachingBlocks."sameTimesAsBlockId"). The trigger holds a post
+ * whose lessons change to the other block's posts as its statement leaves
+ * them (20261213090000), so a file changing both halves' hemkunskap, written a
+ * block at a time, would be refused at the first block — and the refusal is
+ * the whole file's 409, not a row's. So when a written row changes its
+ * lessons, every post of the unit must have them as the file leaves it, or
+ * every held row of the unit that would be written is a row error naming the
+ * blocks; and the unit's lessons are written in ONE statement, before each
+ * block's whole shape (its weeks among it) in one statement per block as
+ * before. A unit that changes only weeks writes as a block on its own always
+ * did: the weeks of the two periods differ by design.
+ */
+async function writeHeldBlocks(
+  tx: PrismaClient,
+  report: ImportReport & { updated: number },
+  existing: readonly StoredBlockRow[],
+  heldForBlock: ReadonlyMap<string, readonly HeldBlockRow[]>,
+  academicYearId: string,
+): Promise<void> {
+  const blocks = await tx.teachingBlock.findMany({
+    where: { academicYearId },
+    select: { id: true, name: true, sameTimesAsBlockId: true },
+  });
+  const nameOf = new Map(blocks.map((block) => [block.id, block.name]));
+  const linked = new Map<string, string[]>();
+  for (const block of blocks) {
+    const other = block.sameTimesAsBlockId;
+    if (other === null) continue;
+    linked.set(block.id, [...(linked.get(block.id) ?? []), other]);
+    linked.set(other, [...(linked.get(other) ?? []), block.id]);
+  }
+  // Each held block with every block linked to it, in file order.
+  const units: string[][] = [];
+  const placed = new Set<string>();
+  for (const blockId of heldForBlock.keys()) {
+    if (placed.has(blockId)) continue;
+    const unit = [blockId];
+    for (let i = 0; i < unit.length; i += 1) {
+      for (const next of linked.get(unit[i]!) ?? []) if (!unit.includes(next)) unit.push(next);
+    }
+    for (const id of unit) placed.add(id);
+    units.push(unit);
+  }
+
+  for (const unit of units) {
+    // Every post of the unit as the file leaves it; a block the file divides
+    // stays as it stands.
+    const after = new Map<string, BlockShape>();
+    const written: string[] = [];
+    for (const blockId of unit) {
+      const held = heldForBlock.get(blockId) ?? [];
+      const target = new Map(held.map((entry) => [entry.current.id, shapeAfter(entry.current, entry.values)]));
+      const rows = existing.filter((row) => row.blockId === blockId);
+      const shapes = rows.map((row) => target.get(row.id) ?? shapeAfter(row));
+      const whole = shapes.every((shape) => sameBlockShape(shape, shapes[0]!));
+      if (held.length > 0 && !whole) {
+        for (const entry of held) {
+          report.errors.push({
+            row: entry.rowNumber,
+            message:
+              `Raden ligger i blocket "${nameOf.get(blockId) ?? ''}", vars timplansposter läggs på samma tider och ` +
+              'måste ha samma antal lektioner, samma längder och samma veckor. Ändra alla blockets rader ' +
+              'likadant i filen, eller ändra hela blockets lektioner med Ändra lektioner under Block på Timplansposter.',
+          });
+        }
+      }
+      const writes = held.length > 0 && whole;
+      rows.forEach((row, index) => after.set(row.id, writes ? shapes[index]! : shapeAfter(row)));
+      if (writes) written.push(blockId);
+    }
+
+    const writtenRows = written.flatMap((blockId) => heldForBlock.get(blockId) ?? []);
+    const lessonsChange = writtenRows.some((entry) => !sameLessons(after.get(entry.current.id)!, shapeAfter(entry.current)));
+    if (unit.length > 1 && lessonsChange) {
+      const posts = existing.filter((row) => row.blockId !== null && unit.includes(row.blockId));
+      const lessons = after.get(writtenRows[0]!.current.id)!;
+      if (!posts.every((row) => sameLessons(after.get(row.id)!, lessons))) {
+        for (const entry of writtenRows) {
+          const own = entry.current.blockId!;
+          const others = unit
+            .filter((blockId) => blockId !== own)
+            .map((blockId) => `"${nameOf.get(blockId) ?? ''}"`)
+            .join(', ');
+          report.errors.push({
+            row: entry.rowNumber,
+            message:
+              `Raden ligger i blocket "${nameOf.get(own) ?? ''}", som läggs på samma tider som blocket ${others}, ` +
+              'och båda blockens poster måste ha samma antal lektioner och samma längder. Ändra båda blockens ' +
+              'rader likadant i filen, eller ändra lektionerna med Ändra lektioner under Block på Timplansposter.',
+          });
+        }
+        continue;
+      }
+      await tx.teachingRequirement.updateMany({
+        where: { id: { in: writtenRows.map((entry) => entry.current.id) } },
+        data: {
+          lessonsPerWeek: lessons.lessonsPerWeek,
+          minutesPerLesson: lessons.minutesPerLesson,
+          lessonLengths: lessons.lessonLengths,
+        },
+      });
+    }
+
+    // Each block's whole shape in one statement, which the block trigger
+    // judges at its end with every member changed; then the rest row by row.
+    for (const blockId of written) {
+      const held = heldForBlock.get(blockId)!;
+      await tx.teachingRequirement.updateMany({
+        where: { id: { in: held.map((entry) => entry.current.id) } },
+        data: after.get(held[0]!.current.id)!,
+      });
+      for (const { current, values } of held) {
+        const {
+          lessonsPerWeek: _lessons,
+          minutesPerLesson: _minutes,
+          lessonLengths: _lengths,
+          recurrence: _recurrence,
+          startDate: _start,
+          endDate: _end,
+          ...rest
+        } = values;
+        if (Object.keys(rest).length > 0) {
+          await tx.teachingRequirement.update({ where: { id: current.id }, data: rest });
+        }
+        report.updated += 1;
+      }
+    }
+  }
+}
 
 /**
  * CSV import: people, classes, teaching-group memberships and the timplan in
@@ -1093,6 +1246,10 @@ export class ImportService {
    * block's members, as the file leaves them, agree. When they do not, every
    * held row of that block is a row error naming the block and nothing of it
    * is written; the rest of the file proceeds, as for any other row error.
+   * A block on another's times and that block change their lessons together
+   * too (20261213090000): both halves' hemkunskap in one file is one
+   * statement of lessons, and a file that changes one half's alone is a row
+   * error naming both blocks (writeHeldBlocks).
    * The staffing judge has counted a held row in file order like any other,
    * so a refused block can only have made a later row's judgement stricter.
    */
@@ -1587,46 +1744,8 @@ export class ImportService {
         report.updated += 1;
       }
 
-      // Each block's held rows, judged against the block as the file leaves
-      // it and written in one statement, which the block trigger judges at its
-      // end with every one of them changed.
-      for (const [blockId, held] of heldForBlock) {
-        const target = new Map(held.map((entry) => [entry.current.id, shapeAfter(entry.current, entry.values)]));
-        const shapes = existing
-          .filter((row) => row.blockId === blockId)
-          .map((row) => target.get(row.id) ?? shapeAfter(row));
-        if (!shapes.every((shape) => sameBlockShape(shape, shapes[0]!))) {
-          const block = await tx.teachingBlock.findUnique({ where: { id: blockId }, select: { name: true } });
-          for (const entry of held) {
-            report.errors.push({
-              row: entry.rowNumber,
-              message:
-                `Raden ligger i blocket "${block?.name ?? ''}", vars timplansposter läggs på samma tider och ` +
-                'måste ha samma antal lektioner, samma längder och samma veckor. Ändra alla blockets rader ' +
-                'likadant i filen, eller ändra hela blockets lektioner med Ändra lektioner under Block på Timplansposter.',
-            });
-          }
-          continue;
-        }
-        await tx.teachingRequirement.updateMany({
-          where: { id: { in: held.map((entry) => entry.current.id) } },
-          data: shapes[0]!,
-        });
-        for (const { current, values } of held) {
-          const {
-            lessonsPerWeek: _lessons,
-            minutesPerLesson: _minutes,
-            lessonLengths: _lengths,
-            recurrence: _recurrence,
-            startDate: _start,
-            endDate: _end,
-            ...rest
-          } = values;
-          if (Object.keys(rest).length > 0) {
-            await tx.teachingRequirement.update({ where: { id: current.id }, data: rest });
-          }
-          report.updated += 1;
-        }
+      if (heldForBlock.size > 0) {
+        await writeHeldBlocks(tx, report, existing, heldForBlock, dto.academicYearId);
       }
 
       return report;
