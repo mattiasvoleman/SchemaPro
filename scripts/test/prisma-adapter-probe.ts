@@ -3232,6 +3232,189 @@ async function runChecks(
     }
   });
 
+  // ---- (u2h) the pair's two block rows are taken in id order (20261213090000)
+  //
+  // The two writers of a pair start from opposite ends of it: each locks its
+  // own block and the other. Were each to lock its own first, two PATCHes
+  // could each hold one row and wait for the other, and Postgres would abort
+  // one (40P01, a 409 WRITE_CONFLICT) where it should have been the pair's
+  // 409. (u2g) cannot tell the orders apart, since its holder has both rows
+  // before the rival starts. Here a third connection holds the HIGHER block's
+  // row first, so the writer from that end stops on it, and what it holds
+  // while it waits is the order: in id order it already has the lower row
+  // (its xmax), its own first and it has nothing. The writer from the lower
+  // end then queues on the lower row behind it. The block ids are chosen, so
+  // both ways round are run: the first period's block lower, and the
+  // second's.
+  await check('(u2h) two writers from either end of a pair take its block rows in id order, whichever period\'s block has the lower id: the second queues on the lower row behind the first and is the pair\'s 409, not a deadlock', async () => {
+    const subjects = new SubjectsService(api);
+    const years = new AcademicYearsService(api);
+    // A backend per writer, so each one's wait can be read by its pid.
+    const fromHigher = open(withConnectionLimit(appUrl, 1));
+    const fromLower = open(withConnectionLimit(appUrl, 1));
+    await fromHigher.onModuleInit();
+    await fromLower.onModuleInit();
+    const holder = new Client({ connectionString: ownerUrl });
+    await holder.connect();
+    const holderPid = (await holder.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+    const pending: Promise<unknown>[] = [];
+    const year = await years.create(
+      { name: `${MARKER} id-ordning`, startDate: '2090-08-21', endDate: '2091-06-14' } as never,
+      admin,
+    );
+    try {
+      const hemkunskap = await subjects.create({ name: `${MARKER} io-hemkunskap` } as never, admin);
+      /** A service whose transaction tells its backend's pid before the PATCH writes. */
+      const reporting = (prisma: PrismaService, pid: { resolve: (pid: number) => void }) =>
+        new TeachingRequirementsService({
+          withRls: <T>(user: AuthenticatedUser, fn: (tx: PrismaClient) => Promise<T>) =>
+            prisma.withRls(user, async (tx) => {
+              const [row] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+              pid.resolve(row!.pid);
+              return fn(tx);
+            }),
+        } as unknown as PrismaService);
+      /** Polls the database until `reached`, failing with `what` if the PATCH settles first. */
+      const waitUntil = async (what: string, settled: Promise<unknown>, reached: () => Promise<boolean>) => {
+        let done = false;
+        void settled.then(() => {
+          done = true;
+        });
+        for (let tries = 0; ; tries++) {
+          if (await reached()) return;
+          if (done || tries > 1000) throw new Error(what);
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      };
+      const waitsOn = async (pid: number, on: number) =>
+        (await owner.query<{ waits: boolean }>('SELECT $2::int = ANY(pg_blocking_pids($1::int)) AS waits', [pid, on])).rows[0]
+          .waits;
+
+      for (const firstLower of [true, false]) {
+        const label = firstLower ? 'HT lägst' : 'VT lägst';
+        // Two ids in Postgres's order: the first period's block takes the
+        // lower, or the second's does.
+        const [lower, higher] = (
+          await owner.query<{ id: string }>('SELECT id::text AS id FROM unnest($1::uuid[]) AS id ORDER BY id', [
+            [randomUUID(), randomUUID()],
+          ])
+        ).rows.map((row) => row.id);
+        const autumn = { id: firstLower ? lower! : higher!, name: `${MARKER} io-${label} HT` };
+        const spring = { id: firstLower ? higher! : lower!, name: `${MARKER} io-${label} VT` };
+        const groups = (
+          await owner.query<{ id: string }>(
+            `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt")
+             SELECT $1, $2, $3 || n, 'TEACHING_GROUP', now() FROM unnest(ARRAY[':1', ':2']) WITH ORDINALITY AS g(n, i)
+             ORDER BY i RETURNING id`,
+            [fixture.schoolId, year.id, `${MARKER} io-${label} 6A`],
+          )
+        ).rows.map((row) => row.id);
+        await owner.query(
+          `INSERT INTO "TeachingBlocks" (id, "schoolId", "academicYearId", name, "updatedAt") VALUES ($1, $2, $3, $4, now())`,
+          [autumn.id, fixture.schoolId, year.id, autumn.name],
+        );
+        await owner.query(
+          `INSERT INTO "TeachingBlocks" (id, "schoolId", "academicYearId", name, "sameTimesAsBlockId", "updatedAt")
+           VALUES ($1, $2, $3, $4, $5, now())`,
+          [spring.id, fixture.schoolId, year.id, spring.name, autumn.id],
+        );
+        // A pair that drifted apart, as one could before 20261213090000 (an
+        // INSERT is not held to the other block): the lower block's post at
+        // 3 × 40, the higher's at 2 × 60. Each writer below moves its post to
+        // the other's lessons, which is right alone and wrong together.
+        const post = async (block: { id: string }, group: string, lessons: number, minutes: number, dates: [string | null, string | null]) =>
+          (
+            await owner.query<{ id: string }>(
+              `INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId",
+                                                   "lessonsPerWeek", "minutesPerLesson", "startDate", "endDate", "blockId", "updatedAt")
+               VALUES ($1, $2, $3, $4, $5, $6, $7::date, $8::date, $9, now()) RETURNING id`,
+              [fixture.schoolId, year.id, hemkunskap.id, group, lessons, minutes, dates[0], dates[1], block.id],
+            )
+          ).rows[0].id;
+        const autumnPost = await post(autumn, groups[0]!, firstLower ? 3 : 2, firstLower ? 40 : 60, [null, '2090-10-31']);
+        const springPost = await post(spring, groups[1]!, firstLower ? 2 : 3, firstLower ? 60 : 40, ['2090-11-03', null]);
+        const [lowerPost, higherPost] = firstLower ? [autumnPost, springPost] : [springPost, autumnPost];
+        const shapes = async () =>
+          (
+            await owner.query<{ shape: string }>(
+              `SELECT "lessonsPerWeek" || ' × ' || "minutesPerLesson" AS shape FROM "TeachingRequirements"
+                WHERE id = ANY($1::uuid[]) ORDER BY "blockId"`,
+              [[lowerPost, higherPost]],
+            )
+          ).rows.map((row) => row.shape);
+        assert.deepEqual(await shapes(), ['3 × 40', '2 × 60'], label);
+
+        await holder.query('BEGIN');
+        await holder.query('SELECT 1 FROM "TeachingBlocks" WHERE id = $1 FOR UPDATE', [higher]);
+
+        // The higher block's post to 3 × 40: its trigger stops on the held row.
+        const higherPid = deferred<number>();
+        const higherSettled = reporting(fromHigher, higherPid)
+          .update(higherPost, { lessonsPerWeek: 3, minutesPerLesson: 40 } as never, admin)
+          .then(() => null, (error: unknown) => error);
+        pending.push(higherSettled);
+        const pidHigh = await higherPid.promise;
+        await waitUntil(`${label}: the writer from the higher block never waited on its row`, higherSettled, () =>
+          waitsOn(pidHigh, holderPid),
+        );
+        const held = (
+          await owner.query<{ xmax: string; xid: string | null }>(
+            `SELECT (SELECT xmax::text FROM "TeachingBlocks" WHERE id = $1) AS xmax,
+                    (SELECT backend_xid::text FROM pg_stat_activity WHERE pid = $2) AS xid`,
+            [lower, pidHigh],
+          )
+        ).rows[0];
+        assert.ok(held.xid !== null, `${label}: the writer from the higher block has written nothing`);
+        assert.equal(
+          held.xmax,
+          held.xid,
+          `${label}: the writer from the higher block waits on its own row without the lower one: the trigger did not take the pair's rows in id order`,
+        );
+
+        // The lower block's post to 2 × 60: it queues on the lower row, behind
+        // the writer that holds it.
+        const lowerPid = deferred<number>();
+        const lowerSettled = reporting(fromLower, lowerPid)
+          .update(lowerPost, { lessonsPerWeek: 2, minutesPerLesson: 60 } as never, admin)
+          .then(() => null, (error: unknown) => error);
+        pending.push(lowerSettled);
+        const pidLow = await lowerPid.promise;
+        await waitUntil(`${label}: the writer from the lower block never waited on the other writer`, lowerSettled, () =>
+          waitsOn(pidLow, pidHigh),
+        );
+        const queuedOn = (
+          await owner.query<{ rel: string; lowerRow: boolean }>(
+            `SELECT l.relation::regclass::text AS rel,
+                    format('(%s,%s)', l.page, l.tuple) = (SELECT ctid::text FROM "TeachingBlocks" WHERE id = $2) AS "lowerRow"
+               FROM pg_locks l
+              WHERE l.pid = $1 AND l.locktype = 'tuple'`,
+            [pidLow, lower],
+          )
+        ).rows;
+        assert.deepEqual(queuedOn, [{ rel: '"TeachingBlocks"', lowerRow: true }], `${label}: the writer from the lower block queued elsewhere`);
+
+        // The held row let go: the first writer reads the lower post's 3 × 40
+        // and is written; the second then reads that and is the pair's 409.
+        await holder.query('COMMIT');
+        assert.equal(await higherSettled, null, `${label}: the writer from the higher block was refused`);
+        const refused = await lowerSettled;
+        assert.ok(refused instanceof ConflictException, `${label}: ${summarise(refused)}`);
+        const body = refused.getResponse() as { code?: string; message?: string; sameTimesBlockId?: string };
+        assert.equal(body.code, BLOCK_MEMBERS_DIFFER, `${label}: ${body.message}`);
+        assert.equal(body.sameTimesBlockId, higher, label);
+        assert.deepEqual(await shapes(), ['3 × 40', '3 × 40'], label);
+      }
+    } finally {
+      await holder.query('ROLLBACK').catch(() => undefined);
+      await Promise.all(pending);
+      await holder.end();
+      await fromHigher.$disconnect();
+      await fromLower.$disconnect();
+      // The year takes its groups, posts and blocks with it.
+      await years.remove(year.id, admin);
+    }
+  });
+
   await check('(u3) a timplan credit round-trips under RLS, a CHECK or key reached past the DTO is a 400 naming the field, and a teacher reads but cannot write', async () => {
     const credits = new TimplanCreditsService(api);
     const subjects = new SubjectsService(api);
