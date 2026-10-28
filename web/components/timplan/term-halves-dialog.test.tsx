@@ -715,6 +715,8 @@ describe("hemkunskap swapped with slöjd", () => {
     ).toBeInTheDocument();
     const tick = screen.getByRole("checkbox", { name: "reductionApply(6A · Slöjd|lengthPart(2|25))" });
     expect(tick).not.toBeChecked();
+    // Mål and Täckning read 6A on its own posts until the pupils are in the halves.
+    expect(screen.getByText("reductionUnplaced(Slöjd|6A|50|80)")).toBeInTheDocument();
     await user.click(tick);
     expect(lines()).toEqual([
       ["Hemkunskap", "met(32|30)", "met(38|30)"],
@@ -784,6 +786,7 @@ describe("hemkunskap swapped with slöjd", () => {
 
     expect(await screen.findByText("reductionInBlock(6A · Slöjd)")).toBeInTheDocument();
     expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.queryByText(/^reductionUnplaced\(/)).toBeNull();
   });
 
   it("says slöjd's minutes count on its own code, and asks nothing of Ämnen", async () => {

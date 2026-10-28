@@ -208,21 +208,23 @@ describe("proposedLessons", () => {
     expect(proposedLessons(hemkunskap, halves, "inTurn", forty, [], null)).toEqual({ count: 4, minutes: 30 });
   });
 
-  it("asks more when the periods miss a week of the year, in the class's lessons made longer", () => {
+  it("asks a lesson more when the periods miss a week of the year: a week short is still short", () => {
     // Two subjects of the line over the terms with Christmas week in
     // neither: 19 + 23 of 43 weeks, 2 × 60 × 43 / 42 = 122,9 a week. The
-    // class's own week would leave each pupil 2 % under. 3 × 60 is 180; the
-    // class's two lessons at 65 are 130, the closer, and a swap takes it.
+    // class's own week would leave each pupil 2 % under; the proposal is
+    // 3 × 60, as #215 proposed it, and the dialog shows the hours beside it.
     const gap = [
       { startDate: "2026-08-17", endDate: "2026-12-27" },
       { startDate: "2027-01-04", endDate: "2027-06-11" },
     ] as const;
-    expect(proposedLessons(slojd, gap, "swapWithinLine", YEAR, [], null)).toEqual({ count: 2, minutes: 65 });
+    expect(proposedLessons(slojd, gap, "swapWithinLine", YEAR, [], null)).toEqual({ count: 3, minutes: 60 });
   });
 
-  it("asks over twice the pace for two subjects of the line swapped within the autumn: each pupil reads the line half the year", () => {
-    // 120 × 43 / 20 = 258 a week: 5 × 60 is 300, 2 × 130 is 260.
-    expect(proposedLessons(slojd, autumnHalves, "swapWithinLine", YEAR, [], null)).toEqual({ count: 2, minutes: 130 });
+  it("asks over twice the pace for two subjects of the line swapped within the autumn, in the class's lesson length", () => {
+    // 120 × 43 / 20 = 258 a week: 5 × 60, as #215 proposed it, and not the
+    // class's two lessons made longer (2 × 130), which only a swap with
+    // another line takes.
+    expect(proposedLessons(slojd, autumnHalves, "swapWithinLine", YEAR, [], null)).toEqual({ count: 5, minutes: 60 });
   });
 
   describe("hemkunskap swapped with slöjd over the terms, 17 and 20 of 37 teaching weeks", () => {

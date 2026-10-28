@@ -134,6 +134,8 @@ describe("hemkunskap swapped with slöjd over the terms", () => {
       to: { count: 2, minutes: 25 },
       target: 80,
       planned: [88, 82],
+      // 6A's own line until the pupils are in the halves: 2 × 25, under 80.
+      classPlanned: 50,
       inBlock: false,
     });
     // With it, no half is under in either line.
@@ -262,6 +264,39 @@ describe("what there is to judge", () => {
     expect(classPostReduction(sources(), swap(TERMS, ["hk", "sl"], "swapWithOther", [HEMKUNSKAP, MATEMATIK]), "sl")).toBeNull();
     const mixed = post("r-sl", "sl", 2, 50, { lessonLengths: [50, 30] });
     expect(classPostReduction(sources(), swap(TERMS, ["hk", "sl"], "swapWithOther", [HEMKUNSKAP, mixed]), "sl")).toBeNull();
+  });
+
+  it("stops at the target, not a minute under it: one 50 for a slöjd target of 78, since one 45 leaves 6A:2 at 77", () => {
+    // 6A's slöjd 1 × 80; the swap gives 37,8 and 32,2. 50 + 32,2 is 82 and
+    // 45 + 32,2 is 77,2, which the timplan reads as 77: under 78.
+    const one = post("r-sl", "sl", 1, 80);
+    const target78 = sources([
+      { subjectId: "hk", minutesPerWeek: 30 },
+      { subjectId: "sl", minutesPerWeek: 78 },
+    ]);
+    const split = swap(TERMS, ["hk", "sl"], "swapWithOther", [HEMKUNSKAP, one]);
+    expect(classPostReduction(target78, split, "sl")).toMatchObject({ to: { count: 1, minutes: 50 }, target: 78, planned: [88, 82] });
+    const below = halvesTimplan(target78, { ...split, adjusted: { requirementId: "r-sl", week: { count: 1, minutes: 45 } } }, "hk");
+    expect(linesOf(below).map((half) => half[1])).toEqual([
+      ["sl", 83, 78],
+      ["sl", 77, 78],
+    ]);
+  });
+
+  it("judges the class's post in its own weeks: odd weeks count half, so 4 × 40 comes down only to 4 × 25", () => {
+    // 4 × 40 odd weeks is 80 a standard week. 6A:2 needs 48 of it besides
+    // the swap's 32,2, so 96 a week on odd weeks: 4 × 25 is 100 (50 a
+    // standard week). Read as every week it would come down to 4 × 15 and
+    // leave 6A:2 at 30 + 32,2 = 62 of 80.
+    const odd = post("r-sl", "sl", 4, 40, { recurrence: "ODD_WEEKS" });
+    const split = swap(TERMS, ["hk", "sl"], "swapWithOther", [HEMKUNSKAP, odd]);
+    const reduction = classPostReduction(sources(), split, "sl");
+    expect(reduction).toMatchObject({ from: { count: 4, minutes: 40 }, to: { count: 4, minutes: 25 }, planned: [88, 82] });
+    const after = halvesTimplan(sources(), { ...split, adjusted: { requirementId: "r-sl", week: reduction!.to } }, "hk");
+    expect(linesOf(after).map((half) => half[1])).toEqual([
+      ["sl", 88, 80],
+      ["sl", 82, 80],
+    ]);
   });
 
   it("takes fewer lessons when that leaves fewer minutes: 4 × 25 comes down to 2 × 25, not 4 × 15", () => {

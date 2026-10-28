@@ -212,6 +212,12 @@ export interface PostReduction {
   /** The line's target, and what a pupil of each half gets on it with `to`. */
   target: number;
   planned: [number, number];
+  /**
+   * The class's own line with `to`, as Mål and Täckning judge the class
+   * until at least half its pupils are in the halves (the timplan's PUPILS
+   * rule): under the target, since the swap's minutes are the halves'.
+   */
+  classPlanned: number;
   /** The post is in a parallel block, whose posts change together (TB409). */
   inBlock: boolean;
 }
@@ -239,10 +245,12 @@ export function classPostReduction(
   );
   if (!post || isMixed(post) || split.theClass.gradeLevel === null) return null;
   const from = { count: lessonCountOf(post), minutes: longestLessonOf(post) };
-  const judged = (week: UniformLessons | null) => {
+  const coveragesOf = (week: UniformLessons | null) => {
     const asked = { ...split, adjusted: week ? { requirementId: post.id, week } : null };
-    return ([0, 1] as const).map((half) => linesOf(coverageOf(sources, asked, half), split.theClass.id, [otherSubjectId])[0]!);
+    return ([0, 1] as const).map((half) => coverageOf(sources, asked, half));
   };
+  const judged = (week: UniformLessons | null) =>
+    coveragesOf(week).map((coverage) => linesOf(coverage, split.theClass.id, [otherSubjectId])[0]!);
   const now = judged(null);
   const target = now[0]!.target;
   if (target === null || target <= 0) return null;
@@ -256,14 +264,19 @@ export function classPostReduction(
     (a, b) => a.count * a.minutes - b.count * b.minutes || Number(b.count === from.count) - Number(a.count === from.count),
   );
   for (const week of candidates) {
-    const lines = judged(week);
+    const coverages = coveragesOf(week);
+    const lines = coverages.map((coverage) => linesOf(coverage, split.theClass.id, [otherSubjectId])[0]!);
     if (lines.every((line) => line.planned !== null && line.planned >= target)) {
+      const classLine = coverages[0]!.groups
+        .find((group) => group.studentGroupId === split.theClass.id)
+        ?.lines.find((line) => line.subjectIds.includes(otherSubjectId));
       return {
         requirementId: post.id,
         from,
         to: week,
         target,
         planned: [lines[0]!.planned!, lines[1]!.planned!],
+        classPlanned: classLine?.plannedMinutesPerWeek ?? 0,
         inBlock: (post.blockId ?? null) !== null,
       };
     }
