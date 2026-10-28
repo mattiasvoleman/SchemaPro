@@ -21,6 +21,7 @@ import {
 
 const state = vi.hoisted(() => ({
   post: vi.fn(),
+  get: vi.fn(),
   success: vi.fn(),
   warning: vi.fn(),
   error: vi.fn(),
@@ -28,7 +29,7 @@ const state = vi.hoisted(() => ({
 
 vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
-  api: { post: state.post },
+  api: { post: state.post, get: state.get },
 }));
 vi.mock("@/i18n/navigation", () => ({
   Link: ({ href, children }: { href: string; children: React.ReactNode }) => <a href={href}>{children}</a>,
@@ -116,6 +117,8 @@ const plan = () =>
 
 beforeEach(() => {
   state.post.mockReset().mockResolvedValue({ halves: [{ id: "h-1", name: "7A:1" }, { id: "h-2", name: "7A:2" }], warnings: [] });
+  // The year attaches no plan unless a test says so.
+  state.get.mockReset().mockResolvedValue([]);
   state.success.mockReset();
   state.warning.mockReset();
   state.error.mockReset();
@@ -351,18 +354,37 @@ describe("TermHalvesDialog", () => {
     expect(submit().disabled).toBe(true);
   });
 
-  it("names a chosen subject without the post's national code before the split, with the way to Ämnen, and splits all the same", async () => {
+  it("names chosen subjects without the post's national code before the split, with the way to Ämnen, and splits all the same", async () => {
     const { user } = renderDialog({
-      subjects: subjects.map((subject) => (subject.id === "s-tm" ? { ...subject, nationalCode: null } : subject)),
+      subjects: subjects.map((subject) =>
+        subject.id === "s-tm" ? { ...subject, nationalCode: "TM" } : subject.id === "s-tx" ? { ...subject, nationalCode: "TX" } : subject,
+      ),
     });
 
+    // Neither has the line's code: they are read as the line's two parts,
+    // at the class's pace, and both are named.
     expect(screen.getByText("codeTitle")).toBeInTheDocument();
     expect(screen.getByText("codeDiffers(Trä- och metallslöjd|Slöjd|SL)")).toBeInTheDocument();
-    expect(screen.queryByText(/codeDiffers\(Textilslöjd/)).toBeNull();
+    expect(screen.getByText("codeDiffers(Textilslöjd|Slöjd|SL)")).toBeInTheDocument();
+    expect(screen.getByLabelText("lessonsCount")).toHaveValue(2);
+    expect(screen.getByLabelText("lessonsMinutes")).toHaveValue(60);
     expect(screen.getByRole("link", { name: "codeAction" })).toHaveAttribute("href", "/admin/subjects");
     expect(submit().disabled).toBe(false);
     await user.click(submit());
     expect(state.post).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads a subject without a code beside one of the line's as another line, keeps each pupil's hours, and sends it to Ämnen", () => {
+    renderDialog({
+      subjects: subjects.map((subject) => (subject.id === "s-tm" ? { ...subject, nationalCode: null } : subject)),
+    });
+
+    // A forgotten code or a subject of the school's own: the pace that keeps
+    // the line's hours either way. 2 × 60 × 43 / 20 = 258 a week, 2 × 130.
+    expect(screen.getByText("codeSwapMissing(Trä- och metallslöjd|Slöjd)")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "codeAction" })).toHaveAttribute("href", "/admin/subjects");
+    expect(screen.getByLabelText("lessonsCount")).toHaveValue(2);
+    expect(screen.getByLabelText("lessonsMinutes")).toHaveValue(130);
   });
 
   it("names every chosen subject when the post's own subject has no national code", () => {
@@ -594,10 +616,239 @@ describe("one subject read in turn", () => {
       ["7A:1", "Hemkunskap", "Textilslöjd"],
       ["7A:2", "Textilslöjd", "Hemkunskap"],
     ]);
-    // Each pupil reads the two in one half of the autumn each: 30 × 43 / 20
-    // is 64,5 a week, 2,15 lessons of 30, so three.
-    expect(screen.getByLabelText("lessonsCount")).toHaveValue(3);
+    // Each pupil reads hemkunskap in one half of the autumn, and textilslöjd
+    // (another code) in the other: 30 × 43 / 10 is 129 a week, 1 × 130
+    // rather than 5 × 30.
+    expect(screen.getByLabelText("lessonsCount")).toHaveValue(1);
+    expect(screen.getByLabelText("lessonsMinutes")).toHaveValue(130);
     expect(screen.getByText("replaces(7A · Hemkunskap)")).toBeInTheDocument();
+  });
+});
+
+/*
+ * Hemkunskap swapped with slöjd: 6A in åk 6, its hemkunskap 1 × 30 and its
+ * slöjd 2 × 40, the plan 30 and 80, and a läsår with höstlov, jullov,
+ * sportlov and påsklov: 17 teaching weeks in the autumn and 20 in the spring.
+ * The figures are lib/half-class-timplan.test.ts's.
+ */
+describe("hemkunskap swapped with slöjd", () => {
+  const LOV = [
+    { startDate: "2026-10-26", endDate: "2026-10-30" },
+    { startDate: "2026-12-21", endDate: "2027-01-08" },
+    { startDate: "2027-02-22", endDate: "2027-02-26" },
+    { startDate: "2027-03-29", endDate: "2027-04-02" },
+  ];
+  const withHemkunskap = [
+    ...subjects.filter((subject) => subject.id !== "s-sl"),
+    { id: "s-sl", name: "Slöjd", nationalCode: "SLJ" },
+    { id: "s-hk", name: "Hemkunskap", nationalCode: "HKK" },
+  ];
+  const hemkunskap = post({ id: "r-hk", subjectId: "s-hk", studentGroupId: "g-6a", lessonsPerWeek: 1, minutesPerLesson: 30 });
+  const slojd = post({ id: "r-sl", subjectId: "s-sl", studentGroupId: "g-6a", lessonsPerWeek: 2, minutesPerLesson: 40 });
+  const sixA = [{ id: "g-6a", name: "6A", halfOfId: null, gradeLevel: 6 }];
+  const givenPlan = () =>
+    state.get.mockImplementation(async (path: string) =>
+      path === "/api/v1/academic-years/y1/timplans"
+        ? [{ gradeLevel: 6, localTimplanId: "p-6", planName: "Lokal timplan", planStatus: "DECIDED" }]
+        : {
+            id: "p-6",
+            name: "Lokal timplan",
+            status: "DECIDED",
+            entries: [
+              { subjectId: "s-hk", gradeLevel: 6, minutesPerWeek: 30 },
+              { subjectId: "s-sl", gradeLevel: 6, minutesPerWeek: 80 },
+            ],
+          },
+    );
+  const renderSwap = async (props: Partial<TermHalvesDialogProps> = {}) => {
+    const rendered = renderDialog({
+      requirement: hemkunskap,
+      subjects: withHemkunskap,
+      groups: sixA,
+      gradeSpans: new Map([["g-6a", { min: 6, max: 6 }]]),
+      closures: LOV,
+      posts: [hemkunskap, slojd],
+      ...props,
+    });
+    const { user } = rendered;
+    await user.click(screen.getByRole("combobox", { name: "periodsLabel" }));
+    await user.click(screen.getByRole("option", { name: "preset.terms" }));
+    await user.click(screen.getByRole("combobox", { name: "autumnSubject(6A:2)" }));
+    await user.click(screen.getByRole("option", { name: "Slöjd" }));
+    return rendered;
+  };
+  /** The timplan's lines as the dialog draws them: subject, then each half. */
+  const lines = () =>
+    within(screen.getByTestId("term-halves-timplan"))
+      .getAllByRole("row")
+      .slice(1)
+      .map((row) => [...row.querySelectorAll("th, td")].map((cell) => cell.textContent));
+
+  it("proposes the pace that gives each half the class's hemkunskap over the shorter term, 1 × 70", async () => {
+    givenPlan();
+    await renderSwap();
+
+    expect(screen.getByLabelText("lessonsCount")).toHaveValue(1);
+    expect(screen.getByLabelText("lessonsMinutes")).toHaveValue(70);
+    // The hours of hemkunskap alone: 70 × 17 and 70 × 20 minutes.
+    expect(screen.getByText("hoursHalvesSubject(6A:1|19,8 h|Hemkunskap|6A:2|23,3 h|18,5 h)")).toBeInTheDocument();
+  });
+
+  it("draws what a pupil of each half gets of hemkunskap and slöjd against the plan, the class's slöjd included", async () => {
+    givenPlan();
+    await renderSwap();
+
+    expect(await screen.findByText("caption(6)")).toBeInTheDocument();
+    expect(lines()).toEqual([
+      ["Hemkunskap", "met(32|30)", "met(38|30)"],
+      ["Slöjd", "met(118|80)", "met(112|80)"],
+    ]);
+    expect(screen.getByText("double(Slöjd|6A)")).toBeInTheDocument();
+  });
+
+  it("proposes the class's slöjd at 2 × 25, and sends it in the same save when ticked", async () => {
+    givenPlan();
+    const { user } = await renderSwap();
+
+    expect(
+      await screen.findByText("reduction(Slöjd|80|6A · Slöjd|lengthPart(2|40)|lengthPart(2|25)|6A:1|88|6A:2|82)"),
+    ).toBeInTheDocument();
+    const tick = screen.getByRole("checkbox", { name: "reductionApply(6A · Slöjd|lengthPart(2|25))" });
+    expect(tick).not.toBeChecked();
+    await user.click(tick);
+    expect(lines()).toEqual([
+      ["Hemkunskap", "met(32|30)", "met(38|30)"],
+      ["Slöjd", "met(88|80)", "met(82|80)"],
+    ]);
+    await user.click(submit());
+
+    expect(state.post.mock.calls[0]![1]).toMatchObject({
+      subjects: [
+        { subjectId: "s-hk", teacherId: null, coTeacherId: null },
+        { subjectId: "s-sl", teacherId: null, coTeacherId: null },
+      ],
+      springStartDate: "2027-01-04",
+      lessons: [70],
+      adjustedPost: { requirementId: "r-sl", lessons: [25, 25] },
+    });
+  });
+
+  it("takes the class's slöjd when the first half reads slöjd first", async () => {
+    givenPlan();
+    const { user } = renderDialog({
+      requirement: hemkunskap,
+      subjects: withHemkunskap,
+      groups: sixA,
+      gradeSpans: new Map([["g-6a", { min: 6, max: 6 }]]),
+      closures: LOV,
+      posts: [hemkunskap, slojd],
+    });
+    await user.click(screen.getByRole("combobox", { name: "periodsLabel" }));
+    await user.click(screen.getByRole("option", { name: "preset.terms" }));
+    await user.click(screen.getByRole("combobox", { name: "autumnSubject(6A:1)" }));
+    await user.click(screen.getByRole("option", { name: "Slöjd" }));
+    await user.click(screen.getByRole("combobox", { name: "autumnSubject(6A:2)" }));
+    await user.click(screen.getByRole("option", { name: "Hemkunskap" }));
+
+    // 6A:1 reads hemkunskap in the spring now: 38 and 32, the slöjd the other way.
+    await user.click(await screen.findByRole("checkbox"));
+    expect(lines()).toEqual([
+      ["Hemkunskap", "met(38|30)", "met(32|30)"],
+      ["Slöjd", "met(82|80)", "met(88|80)"],
+    ]);
+    await user.click(submit());
+
+    expect(state.post.mock.calls[0]![1]).toMatchObject({
+      subjects: [
+        { subjectId: "s-sl", teacherId: null, coTeacherId: null },
+        { subjectId: "s-hk", teacherId: null, coTeacherId: null },
+      ],
+      lessons: [70],
+      adjustedPost: { requirementId: "r-sl", lessons: [25, 25] },
+    });
+  });
+
+  it("sends no change to the class's slöjd unless it is ticked", async () => {
+    givenPlan();
+    const { user } = await renderSwap();
+    await screen.findByText(/^reduction\(/);
+
+    await user.click(submit());
+
+    expect(state.post.mock.calls[0]![1]).not.toHaveProperty("adjustedPost");
+  });
+
+  it("says the class's slöjd in a block is changed under Block, and offers no tick", async () => {
+    givenPlan();
+    await renderSwap({ posts: [hemkunskap, { ...slojd, blockId: "b-1" }] });
+
+    expect(await screen.findByText("reductionInBlock(6A · Slöjd)")).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+  });
+
+  it("says slöjd's minutes count on its own code, and asks nothing of Ämnen", async () => {
+    givenPlan();
+    await renderSwap();
+
+    expect(screen.getByText("codeSwapOwn(Slöjd|Hemkunskap|SLJ)")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "codeAction" })).toBeNull();
+  });
+
+  it("sends a slöjd without a code to Ämnen, its minutes being skolans val", async () => {
+    givenPlan();
+    await renderSwap({
+      subjects: withHemkunskap.map((subject) => (subject.id === "s-sl" ? { ...subject, nationalCode: null } : subject)),
+    });
+
+    expect(screen.getByText("codeSwapMissing(Slöjd|Hemkunskap)")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "codeAction" })).toHaveAttribute("href", "/admin/subjects");
+  });
+
+  it("says the årskurs follows no plan, and proposes no change to the slöjd", async () => {
+    await renderSwap();
+
+    expect(await screen.findByText("noPlan(6)")).toBeInTheDocument();
+    expect(screen.queryByText(/^reduction\(/)).toBeNull();
+  });
+
+  it("splits the läsår in two halves of as many teaching weeks, with no spring start to ask", async () => {
+    givenPlan();
+    const { user } = await renderSwap();
+
+    await user.click(screen.getByRole("combobox", { name: "periodsLabel" }));
+    await user.click(screen.getByRole("option", { name: "preset.yearHalves" }));
+    expect(screen.queryByLabelText("springStart")).toBeNull();
+    // 18 and 19 of 37: 30 × 37 / 18 = 61,7 a week, 1 × 65.
+    expect(screen.getByLabelText("lessonsMinutes")).toHaveValue(65);
+    await user.click(submit());
+
+    expect(state.post.mock.calls[0]![1]).toMatchObject({
+      periods: [
+        { startDate: "2026-08-17", endDate: "2027-01-17" },
+        { startDate: "2027-01-18", endDate: "2027-06-11" },
+      ],
+      lessons: [65],
+      blockNames: ["blockName(Hemkunskap|6A|blockSuffix.period1)", "blockName(Hemkunskap|6A|blockSuffix.period2)"],
+    });
+  });
+
+  it("names the class's slöjd in a warning about it after the split", async () => {
+    givenPlan();
+    state.post.mockResolvedValue({
+      halves: [
+        { id: "h-1", name: "6A:1" },
+        { id: "h-2", name: "6A:2" },
+      ],
+      requirements: [],
+      adjustedRequirement: { id: "r-sl", studentGroupId: "g-6a", subjectId: "s-sl" },
+      warnings: [{ code: "STAFF_TEACHER_OVER_TARGET", params: {}, requirementId: "r-sl" }],
+    });
+    const { user } = await renderSwap();
+    await user.click(await screen.findByRole("checkbox"));
+
+    await user.click(submit());
+
+    expect(state.warning.mock.calls[0]![1].description).toMatch(/^6A · Slöjd: /);
   });
 });
 

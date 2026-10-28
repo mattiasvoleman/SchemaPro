@@ -35,9 +35,32 @@ import {
   type PlannedStatus,
 } from "@/lib/timplan-planned";
 import type { GradeNumbering } from "@/lib/grade-numbering";
+import type { LocalTimplanDetail } from "@/lib/timplan-queries";
+import type { YearTimplanRow } from "@/lib/year-timplan-queries";
 import type { ClosedRange, YearBounds } from "@/lib/teaching-hours";
 import { shapeFromDraft, type DraftPart } from "@/lib/lesson-lengths-text";
 import type { LessonRecurrence, StudentGroup, Subject, TeachingRequirement } from "@/lib/types";
+
+/**
+ * The plans a year attaches, as lib/timplan-planned.ts reads them: each with
+ * its entries, read in its lydelse's numbering (the year's rows say which —
+ * planTioarig). Mål mode and Dela i halvklass read the targets through this.
+ * Here and not in lib/year-timplan-queries.ts, which routes load whole.
+ */
+export function plannedPlansOf(rows: readonly YearTimplanRow[], details: readonly LocalTimplanDetail[]): PlannedPlan[] {
+  const tioarig = new Map(rows.map((row) => [row.localTimplanId, row.planTioarig]));
+  return details.map((plan) => ({
+    id: plan.id,
+    name: plan.name,
+    status: plan.status,
+    entries: plan.entries.map((entry) => ({
+      subjectId: entry.subjectId,
+      gradeLevel: entry.gradeLevel,
+      minutesPerWeek: entry.minutesPerWeek,
+    })),
+    ...(tioarig.get(plan.id) !== undefined ? { tioarig: tioarig.get(plan.id) } : {}),
+  }));
+}
 
 /** What the matrix needs to have loaded before Mål mode can say anything. */
 export interface TargetSources {
