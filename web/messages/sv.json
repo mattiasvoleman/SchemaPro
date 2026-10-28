@@ -1583,6 +1583,7 @@
       "split": "Delat",
       "apart": "{name} · delat",
       "cardBody": "{day} {start}–{end}. Blockets lektioner läggs på samma tider: flyttar du kortet i schemat följer alla med.",
+      "cardBodyLinked": "{day} {start}–{end}. Blocket ligger på samma tider som {other}: flyttar du kortet i schemat följer lektionerna i {other} på samma tid med, var och en i sina veckor, och Lås blocket låser båda blocken.",
       "editMember": "Ändra",
       "editMemberNamed": "Ändra {lesson}",
       "splitNote": "Blocket är delat: någon av dess lektioner står inte här. Flytta tillbaka den med blocket, eller lås alla blockets lektioner, innan du genererar igen.",

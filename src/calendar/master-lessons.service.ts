@@ -1018,6 +1018,13 @@ export class MasterLessonsService {
    * names what the move took (`follow`): a move that took nothing must not
    * take the other card back with it from where it landed beside it.
    *
+   * A POST ALONE IN ITS BLOCK ON ANOTHER'S TIMES IS A CARD OF ONE LESSON: a
+   * term split with one subject (hemkunskap, 6A:1 in the first period and 6A:2
+   * in the second) has a block per half with one post each, and each of the
+   * first half's lessons is a card that takes the second half's lesson at its
+   * day and clock along. One lesson of any other block is NOT_A_BLOCK_CARD: a
+   * block with other posts, or one on nobody's times, has no card of one.
+   *
    * The card's lessons are locked before they are read, and the other card's
    * once they are found, so two administrators dragging the autumn's card
    * and the spring's at the same moment lock them in opposite orders.
@@ -1139,6 +1146,10 @@ export class MasterLessonsService {
         select: { sameTimesAsBlockId: true, sameTimes: { select: { id: true } } },
       });
       const linkedId = linked?.sameTimesAsBlockId ?? linked?.sameTimes[0]?.id ?? null;
+      // A card of one lesson is a post alone in its block on another's times,
+      // or whose times another takes (see above); any other block's card has
+      // a lesson of each member standing there, and one lesson is not it.
+      if (lessons.length === 1 && ((block?.otherPosts ?? 0) > 0 || linkedId === null)) throw notACard();
       const linkedPosts = linkedId
         ? await tx.teachingRequirement.findMany({
             where: { blockId: linkedId },

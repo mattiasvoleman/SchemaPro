@@ -4715,6 +4715,70 @@ describe('MasterLessonsService', () => {
         expect(tx.scheduleChangeLog.create).not.toHaveBeenCalled();
       });
 
+      describe("a post alone in its block on another's times (Dela i halvklass, ett ämne)", () => {
+        // Tyska read in turn, say: Ty7 in the autumn (Språkval åk 7, one post),
+        // Fr7 in the spring (a block of one post on its times).
+        const SPRING_BLOCK = '1a1a1a1a-1a1a-4a1a-8a1a-1a1a1a1a1a1a';
+        const VT = '1b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b';
+        const autumn = { endDate: new Date('2027-01-10T00:00:00Z') };
+        const springWeeks = { startDate: new Date('2027-01-11T00:00:00Z') };
+        const spring = tyska({ id: VT, studentGroupId: FR_GROUP, studentGroup: { name: 'Fr7' }, ...springWeeks });
+        /** block-lessons.ts' read of a block with no other post, or one whose other post has no placed lesson. */
+        const noSiblings = (otherPostId: string | null) => [
+          franska({ otherPostId, id: null, studentGroupId: null, subjectId: null, dayOfWeek: null, startTime: null, endTime: null, recurrence: null, isGenerated: null, isLocked: null }),
+        ];
+        const arrangeHalves = (block: Row[], linked: Row | null) => {
+          arrangeCard([tyska(autumn), spring], [spring], [posts[0]!], block);
+          tx.teachingBlock.findUnique.mockResolvedValue(linked);
+          tx.teachingRequirement.findMany.mockImplementation((query: Query = {}) =>
+            Promise.resolve(
+              query.select && 'blockId' in query.select
+                ? [posts[0]]
+                : query.where?.blockId === SPRING_BLOCK
+                  ? [{ studentGroupId: FR_GROUP, subjectId: SUBJECT_ID }]
+                  : [],
+            ),
+          );
+          tx.masterLesson.updateMany.mockImplementation((query: Query) =>
+            Promise.resolve({ count: ((query.where?.id as Row | undefined)?.in as unknown[] | undefined)?.length ?? 0 }),
+          );
+        };
+        const moveOne = () =>
+          service.moveBlockCard(
+            { lessonIds: [LESSON_ID], dayOfWeek: 2, startTime: '09:00', endTime: '10:00' } as never,
+            testUser(),
+          );
+
+        it("moves a card of its one lesson with the other half's lesson at the same day and clock", async () => {
+          arrangeHalves(noSiblings(null), { sameTimesAsBlockId: null, sameTimes: [{ id: SPRING_BLOCK }] });
+
+          const result = await moveOne();
+
+          expect(result.lessons.map((lesson) => [lesson.id, lesson.dayOfWeek, lesson.startTime])).toEqual([
+            [LESSON_ID, 2, '09:00'],
+            [VT, 2, '09:00'],
+          ]);
+          expect(result.followed).toEqual([VT]);
+          expect(tx.masterLesson.updateMany).toHaveBeenCalledWith(
+            expect.objectContaining({ where: expect.objectContaining({ id: { in: [VT] }, startDate: springWeeks.startDate }) }),
+          );
+        });
+
+        it('refuses one lesson of a block that has another post, placed or not, as no card', async () => {
+          arrangeHalves(noSiblings(FR_LESSON), { sameTimesAsBlockId: null, sameTimes: [{ id: SPRING_BLOCK }] });
+
+          await expect(moveOne()).rejects.toMatchObject({ response: { code: 'NOT_A_BLOCK_CARD' } });
+          expect(tx.masterLesson.updateMany).not.toHaveBeenCalled();
+        });
+
+        it("refuses one lesson of a post alone in a block on nobody's times as no card", async () => {
+          arrangeHalves(noSiblings(null), { sameTimesAsBlockId: null, sameTimes: [] });
+
+          await expect(moveOne()).rejects.toMatchObject({ response: { code: 'NOT_A_BLOCK_CARD' } });
+          expect(tx.masterLesson.updateMany).not.toHaveBeenCalled();
+        });
+      });
+
       describe('a block on the same times (a term split: the spring on the autumn)', () => {
         const SPRING_BLOCK = '1d1d1d1d-1d1d-4d1d-8d1d-1d1d1d1d1d1d';
         const VT_A = '1e1e1e1e-1e1e-4e1e-8e1e-1e1e1e1e1e1e';

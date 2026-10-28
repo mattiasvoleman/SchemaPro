@@ -591,8 +591,8 @@ describe('Scheduling surface (e2e)', () => {
         expect(harness.tx['masterLesson']!['updateMany']).toHaveBeenCalledTimes(1);
       });
 
-      it('answers a card of one lesson, or of no lessons, with 400 before the service', async () => {
-        for (const lessonIds of [[LESSON_ID], ['not-a-uuid', LESSON_ID], [LESSON_ID, LESSON_ID]]) {
+      it('answers a card of no lessons, or of lessons not named once each, with 400 before the service', async () => {
+        for (const lessonIds of [[], ['not-a-uuid', LESSON_ID], [LESSON_ID, LESSON_ID]]) {
           await request(http())
             .patch('/api/v1/master-lessons/block-card')
             .set('x-test-user', admin())
@@ -607,6 +607,27 @@ describe('Scheduling surface (e2e)', () => {
             .send({ lessonIds: [LESSON_ID, FR_LESSON], dayOfWeek: 2, startTime: '09:00', endTime: '10:00', follow })
             .expect(400);
         }
+        expect(harness.tx['masterLesson']!['updateMany']).not.toHaveBeenCalled();
+      });
+
+      it('lets a card of one lesson through to the service, which holds it to a post alone in a block on another’s times', async () => {
+        // Dela i halvklass with one subject: each half's post alone in its block.
+        harness.tx['masterLesson']!['findMany']!
+          .mockResolvedValueOnce([member(LESSON_ID, GROUP_ID, 'Ty7')])
+          .mockResolvedValue([]);
+        harness.tx['teachingRequirement']!['findMany']!.mockResolvedValue([
+          { studentGroupId: GROUP_ID, subjectId: SUBJECT_ID, blockId: BLOCK },
+        ]);
+        // On nobody's times: one lesson is no card.
+        harness.tx['teachingBlock']!['findUnique']!.mockResolvedValue({ sameTimesAsBlockId: null, sameTimes: [] });
+
+        const response = await request(http())
+          .patch('/api/v1/master-lessons/block-card')
+          .set('x-test-user', admin())
+          .send({ lessonIds: [LESSON_ID], dayOfWeek: 2, startTime: '09:00', endTime: '10:00' })
+          .expect(400);
+
+        expect(response.body).toMatchObject({ code: 'NOT_A_BLOCK_CARD' });
         expect(harness.tx['masterLesson']!['updateMany']).not.toHaveBeenCalled();
       });
 

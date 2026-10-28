@@ -1583,6 +1583,7 @@
       "split": "Split",
       "apart": "{name} · split",
       "cardBody": "{day} {start}–{end}. The block's lessons are placed at the same times: move the card on the timetable and they all go with it.",
+      "cardBodyLinked": "{day} {start}–{end}. The block takes the same times as {other}: move the card on the timetable and the lessons of {other} at this time go with it, each in its own weeks, and Lock block locks both blocks.",
       "editMember": "Edit",
       "editMemberNamed": "Edit {lesson}",
       "splitNote": "The block is split: one of its lessons does not stand here. Move it back with the block, or lock all of the block's lessons, before you generate again.",
