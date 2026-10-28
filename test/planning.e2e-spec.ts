@@ -597,6 +597,58 @@ describe('Planning surface (e2e)', () => {
       ]);
     });
 
+    it('brings the class’s own post in the second subject down in the same save, and answers it', async () => {
+      // Hemkunskap swapped with slöjd: 7A's slöjd 2 × 40 given back as 2 × 25.
+      const CLASS_SLOJD = '77777777-7777-4777-8777-777777777771';
+      givenSplittable(
+        [
+          { id: SUBJECT_ID, name: 'Hemkunskap' },
+          { id: TRA, name: 'Slöjd' },
+        ],
+        ['Hemkunskap 7A HT', 'Hemkunskap 7A VT'],
+      );
+      harness.tx['teachingRequirement']!['findFirst']!.mockResolvedValueOnce({
+        id: CLASS_SLOJD,
+        teacherId: null,
+        coTeacherId: null,
+        lessonsPerWeek: 2,
+        minutesPerLesson: 40,
+        lessonLengths: [],
+        shares: [],
+      });
+      harness.tx['teachingRequirement']!['update']!.mockImplementationOnce(
+        async ({ data }: { data: Record<string, unknown> }) => ({
+          id: CLASS_SLOJD,
+          subjectId: TRA,
+          studentGroupId: GROUP_ID,
+          lessonLengths: [],
+          startDate: null,
+          endDate: null,
+          ...data,
+        }),
+      );
+
+      const response = await request(http())
+        .post(`/api/v1/teaching-requirements/${SPLIT_POST}/term-halves`)
+        .set('x-test-user', admin())
+        .send({
+          subjects: [{ subjectId: SUBJECT_ID }, { subjectId: TRA }],
+          springStartDate: '2027-01-11',
+          lessons: [70],
+          blockNames: ['Hemkunskap 7A HT', 'Hemkunskap 7A VT'],
+          adjustedPost: { requirementId: CLASS_SLOJD, lessons: [25, 25] },
+        })
+        .expect(201);
+
+      expect(harness.tx['teachingRequirement']!['update']).toHaveBeenCalledWith({
+        where: { id: CLASS_SLOJD },
+        data: { lessonsPerWeek: 2, minutesPerLesson: 25, lessonLengths: [] },
+      });
+      expect(response.body.adjustedRequirement).toEqual(
+        expect.objectContaining({ id: CLASS_SLOJD, lessonsPerWeek: 2, minutesPerLesson: 25, startDate: null }),
+      );
+    });
+
     // Each body breaks one rule and is otherwise valid, so each 400 is that
     // rule's and no other's: the pipe answers before the service reads.
     const TERM_SPLIT = { subjects: [{ subjectId: SUBJECT_ID }, { subjectId: GROUP_ID }], springStartDate: '2027-01-11' };
@@ -614,6 +666,8 @@ describe('Planning surface (e2e)', () => {
       ['a co-teacher that is no id', { ...TERM_SPLIT, subjects: [{ subjectId: SUBJECT_ID, coTeacherId: 'Cecilia' }, { subjectId: GROUP_ID }] }, 'subjects'],
       ['a spring start no calendar has', { ...TERM_SPLIT, springStartDate: '2027-02-30' }, 'springStartDate'],
       ['three half ids', { ...TERM_SPLIT, halfIds: [SUBJECT_ID, GROUP_ID, YEAR_ID] }, 'halfIds'],
+      ['an adjusted post that is no id', { ...TERM_SPLIT, adjustedPost: { requirementId: 'slöjd', lessons: [40] } }, 'adjustedPost'],
+      ['an adjusted post with a lesson of ten minutes', { ...TERM_SPLIT, adjustedPost: { requirementId: GROUP_ID, lessons: [10] } }, 'adjustedPost.lessons'],
     ])('refuses a term split with %s before the service runs', async (_, body, field) => {
       const response = await request(http())
         .post(`/api/v1/teaching-requirements/${SUBJECT_ID}/term-halves`)

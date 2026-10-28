@@ -45,6 +45,24 @@ export class TermPeriodDto {
 }
 
 /**
+ * The class's own post in the swap's other subject, with the week it gets in
+ * the same save: hemkunskap swapped with slöjd gives each pupil slöjd in the
+ * other period, which the class's slöjd post can give back.
+ */
+export class AdjustedPostDto {
+  @IsUUID('4', { message: 'adjustedPost: posten anges med sitt id.' })
+  requirementId!: string;
+
+  @IsArray({ message: 'adjustedPost.lessons: anges som en lista med en längd per lektion.' })
+  @ArrayMinSize(1, { message: 'adjustedPost.lessons: minst en lektion i veckan.' })
+  @ArrayMaxSize(40, { message: 'adjustedPost.lessons: högst 40 lektioner per vecka.' })
+  @IsInt({ each: true, message: 'adjustedPost.lessons: varje längd anges i hela minuter.' })
+  @Min(15, { each: true, message: 'adjustedPost.lessons: minst 15 minuter per lektion.' })
+  @Max(240, { each: true, message: 'adjustedPost.lessons: högst 240 minuter per lektion.' })
+  lessons!: number[];
+}
+
+/**
  * "Dela i halvklass" (term-halves.service.ts): a class's post replaced by
  * posts on the class's two halves, which take turns over two periods.
  *
@@ -67,6 +85,11 @@ export class TermPeriodDto {
  * omitted), `halfIds` orders the halves it has, and `blockNames` names the two
  * parallel blocks, the first period's first (named after the post if
  * omitted).
+ *
+ * `adjustedPost`, with two subjects only, is the class's own post in the
+ * swap's other subject (either of the two, but not the post being split)
+ * with its new week (`lessons` as above), written in the same transaction
+ * with the guards of the post's own dialog.
  */
 export class SplitByTermDto {
   @IsArray({ message: 'subjects: ett eller två ämnen, det första för den första halvan i den första perioden.' })
@@ -126,4 +149,9 @@ export class SplitByTermDto {
   @IsString({ each: true })
   @MaxLength(200, { each: true, message: 'blockNames: ett block har ett namn på högst 80 tecken.' })
   blockNames?: string[];
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AdjustedPostDto)
+  adjustedPost?: AdjustedPostDto;
 }

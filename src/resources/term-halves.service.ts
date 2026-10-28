@@ -12,6 +12,7 @@ import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError, writeConflict } from '../common/utils/prisma-errors';
 import { parseDateString } from '../common/utils/time';
 import { canonicalShape, lengthsProblem, type CanonicalShape } from '../common/lesson-lengths';
+import { sharesProblem } from '../common/lesson-shares';
 import { requirementName } from '../optimization/optimization-proxy.service';
 import { RequirementImportChecks, SAME_TEACHER_TWICE, sameTeacherTwice } from '../staffing/staffing-enforcement';
 import { staffingSentence } from '../staffing/staffing-checks';
@@ -30,8 +31,8 @@ import {
   type BlockStaffingWarning,
 } from './teaching-blocks.service';
 import { requirementResponse, type TeachingRequirementResponse } from './teaching-requirements.service';
-import { lockPostForShares } from './requirement-shares';
-import type { SplitByTermDto } from './dto/term-halves.dto';
+import { SHARE_SELECT, lockPostForShares, sharesRefusal } from './requirement-shares';
+import type { AdjustedPostDto, SplitByTermDto } from './dto/term-halves.dto';
 
 /** The problem codes "Dela terminsvis i halvklass" answers with besides the shared ones. */
 export const TERM_SUBJECTS_SAME = 'TERM_SUBJECTS_SAME';
@@ -45,6 +46,12 @@ export const TERM_PERIODS_MISSING = 'TERM_PERIODS_MISSING';
 export const TERM_PERIODS_INVALID = 'TERM_PERIODS_INVALID';
 /** The halves' `lessons` as no timplanspost can hold them. */
 export const TERM_LESSONS_INVALID = 'TERM_LESSONS_INVALID';
+/**
+ * `adjustedPost` that is not the class's own post in one of a swap's two
+ * subjects: one subject, another group's post, another subject's, the post
+ * being split, or none.
+ */
+export const TERM_ADJUSTED_POST_INVALID = 'TERM_ADJUSTED_POST_INVALID';
 export const CLASS_HAS_ONE_HALF = 'CLASS_HAS_ONE_HALF';
 export const HALF_HAS_SUBJECT = 'HALF_HAS_SUBJECT';
 /**
@@ -85,6 +92,8 @@ export interface TermHalvesResponse {
   requirements: TeachingRequirementResponse[];
   /** The class's post, which the new posts replace. */
   removedRequirementId: string;
+  /** The class's own post in the swap's other subject, as `adjustedPost` left it; null without one. */
+  adjustedRequirement: TeachingRequirementResponse | null;
   /** The staffing policy's WARNs, each with the new post it is about. */
   warnings: BlockStaffingWarning[];
   /**
@@ -97,8 +106,12 @@ export interface TermHalvesResponse {
   codeWarnings: { subjectId: string; subjectName: string; nationalCode: string | null; lineNationalCode: string | null }[];
 }
 
-/** A WARN about a post not written yet, by its place among the new ones. */
+/**
+ * A WARN about a post not written yet, by its place among the new ones; the
+ * adjusted post's (written by id) is ADJUSTED.
+ */
 type PlannedWarning = Omit<BlockStaffingWarning, 'requirementId'> & { index: number };
+const ADJUSTED = -1;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const asDay = (date: Date): string => date.toISOString().slice(0, 10);
@@ -163,6 +176,7 @@ export function periodsOf(
 export function halvesShape(
   lessons: readonly number[] | null | undefined,
   source: { lessonsPerWeek: number; minutesPerLesson: number; lessonLengths: number[] },
+  field = 'lessons',
 ): CanonicalShape {
   if (lessons == null) {
     return {
@@ -181,9 +195,82 @@ export function halvesShape(
       TOO_MANY_LESSONS: 'högst 40 lektioner per vecka.',
       TOO_MANY_KINDS: 'högst tre olika längder.',
     };
-    throw new BadRequestException({ message: `lessons: ${detail[problem]}`, code: TERM_LESSONS_INVALID });
+    throw new BadRequestException({ message: `${field}: ${detail[problem]}`, code: TERM_LESSONS_INVALID });
   }
   return canonicalShape(lessons);
+}
+
+/** The adjusted post as the split reads it: what its guards and its judge need. */
+interface AdjustedPost {
+  id: string;
+  teacherId: string | null;
+  coTeacherId: string | null;
+  shareTeacherIds: (string | null)[];
+  shape: CanonicalShape;
+}
+
+/**
+ * `adjustedPost`, read and held to the guards the post's own dialog holds a
+ * new week to (TeachingRequirementsService.update): the class's own post in
+ * one of the swap's two subjects — the one that is not the split post's,
+ * whichever half reads it first — the lengths a post can hold, and its shares
+ * fitting the new week (sharesProblem, said by its own code before the
+ * trigger, TS409, would say it). Read without a lock, as a PATCH reads the
+ * row; the UPDATE takes it, after the posts the split writes. A parallel
+ * block holding the post refuses a week its other posts do not have (TB409,
+ * the 409 BLOCK_MEMBERS_DIFFER), and nothing of the split is written then.
+ */
+async function readAdjustedPost(
+  tx: PrismaClient,
+  asked: AdjustedPostDto,
+  args: {
+    classId: string;
+    className: string;
+    academicYearId: string;
+    sourceId: string;
+    /** The swap's two subjects, by id and name; one subject is no swap. */
+    subjects: readonly { id: string; name: string }[];
+  },
+): Promise<AdjustedPost> {
+  const invalid = (detail: string) =>
+    new BadRequestException({ message: `adjustedPost: ${detail}`, code: TERM_ADJUSTED_POST_INVALID });
+  if (args.subjects.length < 2) {
+    throw invalid('klassens post i bytets andra ämne ändras bara vid ett byte mellan två ämnen.');
+  }
+  const post = await tx.teachingRequirement.findFirst({
+    where: {
+      id: asked.requirementId,
+      studentGroupId: args.classId,
+      academicYearId: args.academicYearId,
+      subjectId: { in: args.subjects.map((subject) => subject.id) },
+    },
+    select: {
+      id: true,
+      teacherId: true,
+      coTeacherId: true,
+      lessonsPerWeek: true,
+      minutesPerLesson: true,
+      lessonLengths: true,
+      shares: SHARE_SELECT,
+    },
+  });
+  if (!post || post.id === args.sourceId) {
+    throw invalid(
+      `posten är inte ${args.className}s egen post i ${args.subjects.map((subject) => subject.name).join(' eller ')}, ` +
+        'utöver den som delas.',
+    );
+  }
+  const shape = halvesShape(asked.lessons, post, 'adjustedPost.lessons');
+  const shares = post.shares ?? [];
+  const problem = sharesProblem({ teacherId: post.teacherId, coTeacherId: post.coTeacherId, ...shape }, shares);
+  if (problem !== null) throw sharesRefusal(problem);
+  return {
+    id: post.id,
+    teacherId: post.teacherId,
+    coTeacherId: post.coTeacherId,
+    shareTeacherIds: shares.map((share) => share.teacherId),
+    shape,
+  };
 }
 
 /**
@@ -245,6 +332,14 @@ export function halvesShape(
  * second half is free at those times too, and the second half's is written
  * there in its own weeks. A lock takes the two together, and so does a card
  * move where the blocks have cards (two subjects).
+ *
+ * THE SWAP'S OTHER LINE. Hemkunskap swapped with slöjd gives each pupil
+ * slöjd in the half's other period, on top of the class's own slöjd post.
+ * `adjustedPost` brings that post down in the same transaction — the dialog
+ * proposes how far, judged by the timplan (web/lib/half-class-timplan.ts) —
+ * with the guards a new week meets in the post's own dialog (readAdjustedPost)
+ * and the staffing policy's questions asked of it before the new posts', so
+ * its teacher's load is the lighter one when theirs are judged.
  *
  * THE NEW POSTS CARRY THE CLASS'S POST OVER: its lessons (count, lengths,
  * ombyte, its own distribution, its weeks) unless `lessons` names the
@@ -440,6 +535,15 @@ export class TermHalvesService {
         if (pair.some((subject) => !subjectName.has(subject.subjectId))) {
           throw new BadRequestException('subjects: ett av ämnena finns inte i skolan.');
         }
+        const adjusted = dto.adjustedPost
+          ? await readAdjustedPost(tx, dto.adjustedPost, {
+              classId: theClass.id,
+              className: theClass.name,
+              academicYearId: source.academicYearId,
+              sourceId: source.id,
+              subjects: pair.map((subject) => ({ id: subject.subjectId, name: subjectName.get(subject.subjectId) ?? '' })),
+            })
+          : null;
 
         // The class's halves, or two new ones. A class with one half left
         // (the other removed) cannot be split again until that one goes too.
@@ -525,7 +629,7 @@ export class TermHalvesService {
           }),
         );
 
-        const warnings = await this.judge(tx, user, source, shape, planned, subjectName);
+        const warnings = await this.judge(tx, user, source, shape, planned, subjectName, adjusted);
 
         // Delade lektioner: the post locked as a shares PATCH locks it
         // (lockPostForShares), where the DELETE below would take it anyway —
@@ -598,6 +702,18 @@ export class TermHalvesService {
         // In the planned order, by the (group, subject) the unique key makes one row.
         const byDemand = new Map(created.map((row) => [`${row.studentGroupId}:${row.subjectId}`, row]));
         const rows = planned.map((row) => byDemand.get(`${row.half.id}:${row.subjectId}`)!);
+        // The class's post in the second subject, last: its block's trigger
+        // (TB409) and its shares' (TS409) judge the week as the PATCH would.
+        const adjustedRow = adjusted
+          ? await tx.teachingRequirement.update({
+              where: { id: adjusted.id },
+              data: {
+                lessonsPerWeek: adjusted.shape.lessonsPerWeek,
+                minutesPerLesson: adjusted.shape.minutesPerLesson,
+                lessonLengths: adjusted.shape.lessonLengths,
+              },
+            })
+          : null;
 
         return {
           halves,
@@ -608,8 +724,12 @@ export class TermHalvesService {
           })),
           requirements: rows.map(requirementResponse),
           removedRequirementId: source.id,
+          adjustedRequirement: adjustedRow ? requirementResponse(adjustedRow) : null,
           codeWarnings,
-          warnings: warnings.map(({ index, ...warning }) => ({ ...warning, requirementId: rows[index]!.id })),
+          warnings: warnings.map(({ index, ...warning }) => ({
+            ...warning,
+            requirementId: index === ADJUSTED ? adjusted!.id : rows[index]!.id,
+          })),
         };
       });
     } catch (error) {
@@ -627,6 +747,12 @@ export class TermHalvesService {
    * subject in both halves is charged both periods. A REFUSE is a 409 naming
    * the post, and
    * nothing is written; a WARN keeps the index of the post it is about.
+   *
+   * The adjusted post (adjustedPost) is asked after the class's post is
+   * released and before the new posts, as a PATCH of its week would be asked:
+   * its teachers are locked with the rest (the import's order), and a teacher
+   * of the class's slöjd who also takes the halves' slöjd is judged on the
+   * lighter week.
    */
   private async judge(
     tx: PrismaClient,
@@ -649,9 +775,15 @@ export class TermHalvesService {
       endDate: Date | null;
     }[],
     subjectName: ReadonlyMap<string, string>,
+    adjusted: AdjustedPost | null,
   ): Promise<PlannedWarning[]> {
+    const adjustedTeachers = adjusted ? [adjusted.teacherId, adjusted.coTeacherId, ...adjusted.shareTeacherIds] : [];
     const teacherIds = [
-      ...new Set(planned.flatMap((row) => [row.teacherId, row.coTeacherId].filter((id): id is string => id !== null))),
+      ...new Set(
+        [...planned.flatMap((row) => [row.teacherId, row.coTeacherId]), ...adjustedTeachers].filter(
+          (id): id is string => id !== null,
+        ),
+      ),
     ];
     // No teacher on any post: nothing to ask, and releasing the class's
     // teachers changes no answer.
@@ -683,6 +815,32 @@ export class TermHalvesService {
     }
 
     const warnings: PlannedWarning[] = [];
+    const storedAdjusted = adjusted ? checks.stored(adjusted.id) : null;
+    if (adjusted && storedAdjusted) {
+      const { findings, after } = checks.judge({
+        requirementId: adjusted.id,
+        rowNumber: 0,
+        subjectId: storedAdjusted.subjectId,
+        subjectName: storedAdjusted.subjectName,
+        studentGroupId: storedAdjusted.studentGroupId,
+        groupName: storedAdjusted.groupName,
+        patch: {
+          lessonsPerWeek: adjusted.shape.lessonsPerWeek,
+          minutesPerLesson: adjusted.shape.minutesPerLesson,
+          lessonLengths: adjusted.shape.lessonLengths,
+        },
+      });
+      const refusal = findings.find((finding) => finding.mode === 'REFUSE');
+      if (refusal) {
+        throw new ConflictException({
+          message: `${requirementName(storedAdjusted.subjectName, storedAdjusted.groupName)}: ${staffingSentence(refusal)}`,
+          code: refusal.code,
+          params: { ...refusal.params, subjectId: storedAdjusted.subjectId, studentGroupId: storedAdjusted.studentGroupId },
+        });
+      }
+      warnings.push(...findings.map(({ code, params }) => ({ code, params, index: ADJUSTED })));
+      checks.apply(after);
+    }
     for (const [index, row] of planned.entries()) {
       if (row.teacherId === null && row.coTeacherId === null) continue;
       const name = subjectName.get(row.subjectId) ?? '';
