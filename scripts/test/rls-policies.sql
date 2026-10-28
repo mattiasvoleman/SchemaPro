@@ -18856,14 +18856,18 @@ BEGIN
     refused := 0;
     -- Each half alone, either way round: the spring's post is held to the
     -- autumn's, which its block names, and the autumn's to the spring's,
-    -- whose block names its own.
+    -- whose block names its own. The last change is the lengths alone: 2 × 60
+    -- read as 60 + 40 keeps both scalars, so only lessonLengths tells the
+    -- trigger the lessons changed, and only lessonLengths differs from the
+    -- other half's.
     FOR pair IN SELECT * FROM (VALUES (r2, vt, 'RLS104b VT', r1, ht, 'RLS104b HT'),
                                       (r1, ht, 'RLS104b HT', r2, vt, 'RLS104b VT'))
                          AS p(post, block, block_name, other_post, other_block, other_name) LOOP
       FOREACH change IN ARRAY ARRAY[
         '"lessonsPerWeek" = 3',
         '"minutesPerLesson" = 45',
-        '"minutesPerLesson" = 80, "lessonLengths" = ''{80,40}'''
+        '"minutesPerLesson" = 80, "lessonLengths" = ''{80,40}''',
+        '"lessonLengths" = ''{60,40}'''
       ] LOOP
         BEGIN
           EXECUTE format('UPDATE "TeachingRequirements" SET %s WHERE id = %L', change, pair.post);
@@ -18883,7 +18887,7 @@ BEGIN
         END;
       END LOOP;
     END LOOP;
-    IF refused <> 6 THEN RAISE EXCEPTION 'same times: % of 6 changes refused as %', refused, via; END IF;
+    IF refused <> 8 THEN RAISE EXCEPTION 'same times: % of 8 changes refused as %', refused, via; END IF;
 
     -- Its weeks are its own: the two blocks are two periods.
     UPDATE "TeachingRequirements" SET "endDate" = DATE '2027-01-15', "recurrence" = 'ODD_WEEKS' WHERE id = r2;
