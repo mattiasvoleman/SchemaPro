@@ -16,6 +16,15 @@
 // the save says so with "Flytta tillbaka med blocket" beside it. The gateway
 // decides what a split means (src/calendar/block-lessons.ts).
 //
+// A POST ALONE IN ITS BLOCK ON ANOTHER'S TIMES HAS CARDS OF ONE. Dela i
+// halvklass with one subject (hemkunskap: 6A:1 in the first period, 6A:2 in
+// the second) writes a block per half with one post each, the second on the
+// first's times. Each of their lessons is a card of its own, so its dialog
+// has Lås blocket, which locks both blocks, and a drag of it takes the other
+// half's lesson at its day and clock along, as a term split's two-post cards
+// do. A post alone in a block on nobody's times is no block to the generator
+// either, and its lessons stay lessons.
+//
 // LOADED ONLY WHEN THE YEAR HAS A BLOCK, as Mål mode and the requirements
 // page's block panel are: /admin/timetable sat at 188.3 KB of its 190 KB
 // budget. The page imports this file by hand once its timplan names a block,
@@ -161,7 +170,9 @@ const hhmm = (minutes: number): string =>
  * The year's cards, and the block of every lesson in one: from the posts'
  * blockId by (group, subject), over the placed lessons. A slot holding two or
  * more members is a card (a second lesson of one member there stands apart);
- * a lesson of a block alone in its slot stands apart from it.
+ * a lesson of a block alone in its slot stands apart from it. A block of one
+ * post on another's times, or whose times another takes, has a card of one
+ * in every slot.
  */
 export function cardsOf(
   lessons: readonly MasterLesson[],
@@ -169,6 +180,8 @@ export function cardsOf(
   names: ReadonlyMap<string, string>,
   /** A block whose name has not been read (yet). */
   unnamed = "",
+  /** Each block on another's times, or whose times another takes, to that block. */
+  linked: ReadonlyMap<string, string> = new Map(),
 ): {
   cards: Map<string, BlockCard>;
   cardOf: Map<string, BlockCard>;
@@ -179,6 +192,8 @@ export function cardsOf(
   const blockOfKey = new Map(
     requirements.flatMap((post) => (post.blockId ? [[keyOf(post), post.blockId] as const] : [])),
   );
+  const postsOf = new Map<string, number>();
+  for (const blockId of blockOfKey.values()) postsOf.set(blockId, (postsOf.get(blockId) ?? 0) + 1);
   const byBlock = new Map<string, MasterLesson[]>();
   for (const lesson of lessons) {
     const blockId = lesson.isParked ? undefined : blockOfKey.get(keyOf(lesson));
@@ -190,6 +205,9 @@ export function cardsOf(
   for (const [blockId, placed] of byBlock) {
     const name = names.get(blockId) ?? unnamed;
     const standing = new Set(placed.map(keyOf)).size;
+    // How many members a slot needs to be a card: one for a post alone in a
+    // block on another's times, whose card stands for the pair.
+    const least = postsOf.get(blockId) === 1 && linked.has(blockId) ? 1 : 2;
     const slots = new Map<string, MasterLesson[]>();
     for (const lesson of [...placed].sort((a, b) => a.id.localeCompare(b.id))) {
       slots.set(slotOf(lesson), [...(slots.get(slotOf(lesson)) ?? []), lesson]);
@@ -198,7 +216,7 @@ export function cardsOf(
       const members = new Map<string, MasterLesson>();
       for (const lesson of here) if (!members.has(keyOf(lesson))) members.set(keyOf(lesson), lesson);
       const inCard = [...members.values()];
-      if (inCard.length < 2) {
+      if (inCard.length < least) {
         if (standing > 1) for (const lesson of here) apart.set(lesson.id, name);
         continue;
       }
@@ -292,11 +310,22 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
   const follow = useRef<{ lessonId: string; until: number } | null>(null);
 
   const names = useMemo(() => new Map((blocks ?? []).map((block) => [block.id, block.name])), [blocks]);
+  // A term split's two periods, either way round: the block on the other's
+  // times, which a card move takes along and Lås blocket locks with it.
+  const linked = useMemo(() => {
+    const pairs = new Map<string, string>();
+    for (const block of blocks ?? []) {
+      if (!block.sameTimesAsBlockId) continue;
+      pairs.set(block.id, block.sameTimesAsBlockId);
+      pairs.set(block.sameTimesAsBlockId, block.id);
+    }
+    return pairs;
+  }, [blocks]);
   // A string, so the cards change with its text and not with the translator.
   const unnamed = t("unnamed");
   const { cards, cardOf, apart, byBlock } = useMemo(
-    () => cardsOf(lessons, requirements, names, unnamed),
-    [lessons, requirements, names, unnamed],
+    () => cardsOf(lessons, requirements, names, unnamed, linked),
+    [lessons, requirements, names, unnamed, linked],
   );
 
   // The writes the kit and the dialogs share. They read the page's actions
@@ -375,7 +404,9 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
         const out: TimetableLesson[] = [];
         for (const lesson of shown) {
           const card = cardOf.get(lesson.id);
-          if (card && card.lessons.filter((member) => visible.has(member.id)).length > 1) {
+          // A card shows while two of its lessons do, or its only one.
+          const showing = card ? card.lessons.filter((member) => visible.has(member.id)).length : 0;
+          if (card && showing >= Math.min(2, card.lessons.length)) {
             if (drawn.has(card.id)) continue;
             drawn.add(card.id);
             // Every member, not only those the filter shows: a drag of the
@@ -450,7 +481,13 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
       lessonIdsOf: (id, whole) => {
         const card = cards.get(id);
         if (!card) return undefined;
-        return (whole ? (byBlock.get(card.blockId) ?? card.lessons) : card.lessons).map((lesson) => lesson.id);
+        if (!whole) return card.lessons.map((lesson) => lesson.id);
+        // The whole block is locked with the block on its times, as Lås
+        // blocket locks them: the generation refuses the pair partly locked.
+        const other = linked.get(card.blockId);
+        return [...(byBlock.get(card.blockId) ?? card.lessons), ...(other ? (byBlock.get(other) ?? []) : [])].map(
+          (lesson) => lesson.id,
+        );
       },
       refuse: (id, tray) => {
         const card = cards.get(id);
@@ -460,7 +497,7 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
       },
       announce: writes.announce,
     }),
-    [cards, cardOf, apart, byBlock, writes],
+    [cards, cardOf, apart, byBlock, linked, writes],
   );
   // The block's placed lessons, which Lås blocket acts on: its label is theirs, not the card's.
   const blockLocked = opened ? (byBlock.get(opened.blockId) ?? opened.lessons).every((lesson) => lesson.isLocked) : false;
@@ -524,6 +561,7 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
     ? splitting.card.lessons.filter((member) => member.id !== splitting.lesson.id).map(actions.name)
     : [];
   const lead = opened?.lessons[0];
+  const pairedWith = opened ? linked.get(opened.blockId) : undefined;
 
   return (
     <>
@@ -535,10 +573,11 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
             <DialogTitle>{opened?.name ?? ""}</DialogTitle>
             <DialogDescription>
               {lead
-                ? t("cardBody", {
+                ? t(pairedWith ? "cardBodyLinked" : "cardBody", {
                     day: tDays(String(lead.dayOfWeek)),
                     start: clock(lead.startTime),
                     end: clock(lead.endTime),
+                    other: pairedWith ? (names.get(pairedWith) ?? unnamed) : "",
                   })
                 : ""}
             </DialogDescription>

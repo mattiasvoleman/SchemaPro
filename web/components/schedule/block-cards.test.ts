@@ -117,6 +117,70 @@ describe("cardsOf", () => {
   });
 });
 
+describe("cardsOf, a post alone in its block on another's times", () => {
+  // Dela i halvklass with hemkunskap: 6A:1 reads it in the first period
+  // (block HT), 6A:2 in the second (block VT, on HT's times), one post each.
+  const halves = [
+    { studentGroupId: "6a1", subjectId: "hkk", blockId: "ht" },
+    { studentGroupId: "6a2", subjectId: "hkk", blockId: "vt" },
+  ] as TeachingRequirement[];
+  const halfNames = new Map([
+    ["ht", "Hemkunskap 6A HT"],
+    ["vt", "Hemkunskap 6A VT"],
+  ]);
+  const pair = new Map([
+    ["ht", "vt"],
+    ["vt", "ht"],
+  ]);
+
+  it("makes each of its lessons a whole card of one", () => {
+    const { cards, cardOf, apart } = cardsOf(
+      [
+        lesson("a1", "6a1", "hkk"),
+        lesson("a2", "6a1", "hkk", { dayOfWeek: 3 }),
+        lesson("b1", "6a2", "hkk", { startDate: "2027-01-08" }),
+      ],
+      halves,
+      halfNames,
+      "",
+      pair,
+    );
+
+    expect(
+      [...cards.values()].map((card) => [card.id, card.name, card.lessons.map((row) => row.id), card.complete]).sort(),
+    ).toEqual([
+      ["block:a1", "Hemkunskap 6A HT", ["a1"], true],
+      ["block:a2", "Hemkunskap 6A HT", ["a2"], true],
+      ["block:b1", "Hemkunskap 6A VT", ["b1"], true],
+    ]);
+    expect(cardOf.get("b1")?.id).toBe("block:b1");
+    expect(apart.size).toBe(0);
+  });
+
+  it("leaves a lone post's lessons as lessons when its block is on nobody's times", () => {
+    const { cards, apart } = cardsOf([lesson("a1", "6a1", "hkk")], halves, halfNames);
+
+    expect(cards.size).toBe(0);
+    expect(apart.size).toBe(0);
+  });
+
+  it("still needs two members in a slot of a block of two posts on another's times", () => {
+    const { cards, apart } = cardsOf(
+      [lesson("a-ty", "ty7", "de"), lesson("b-fr", "fr7", "fr", { dayOfWeek: 3 })],
+      posts,
+      names,
+      "",
+      new Map([
+        ["b", "x"],
+        ["x", "b"],
+      ]),
+    );
+
+    expect(cards.size).toBe(0);
+    expect([...apart.keys()].sort()).toEqual(["a-ty", "b-fr"]);
+  });
+});
+
 describe("moveBackOf", () => {
   const from = { lessonIds: ["ty", "fr"], dayOfWeek: 1, startTime: "10:00", endTime: "11:00" };
 

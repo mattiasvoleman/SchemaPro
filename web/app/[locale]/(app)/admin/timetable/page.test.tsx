@@ -3289,6 +3289,106 @@ describe("a parallel block (Block i schemat)", () => {
   });
 });
 
+describe("a post alone in its block on another's times (Dela i halvklass, ett ämne)", () => {
+  // Slöjd read in turn, say: 4ma1 in the autumn (block HT), 4ma2 in the
+  // spring (block VT, on HT's times), one post each, Monday 13:00 in their
+  // own weeks.
+  const HALF_LESSONS = [
+    { ...lesson("l-ht", "s-sl", "g-ma1", "13:00"), endDate: "2026-12-20" },
+    { ...lesson("l-vt", "s-sl", "g-ma2", "13:00", { teacherId: "t-2" }), startDate: "2027-01-08" },
+  ];
+
+  beforeEach(() => {
+    state.lessons = [...LESSONS, ...HALF_LESSONS];
+    state.requirements = [
+      { id: "r-ht", studentGroupId: "g-ma1", subjectId: "s-sl", blockId: "b-ht" },
+      { id: "r-vt", studentGroupId: "g-ma2", subjectId: "s-sl", blockId: "b-vt" },
+    ];
+    blockNames.read.mockResolvedValue({
+      data: [
+        { id: "b-ht", academicYearId: "y-1", name: "Slöjd 4M HT", sameTimesAsBlockId: null },
+        { id: "b-vt", academicYearId: "y-1", name: "Slöjd 4M VT", sameTimesAsBlockId: "b-ht" },
+      ] as never,
+      error: null,
+    });
+    blockApi.patch.mockReset();
+    noMutation.mutateAsync.mockClear();
+    toasts.success.mockClear();
+  });
+  afterEach(() => {
+    blockNames.read.mockReset();
+    blockNames.read.mockResolvedValue({ data: [{ id: "b-sv", academicYearId: "y-1", name: "Språkval åk 4" }], error: null });
+  });
+
+  const showPage = () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={client}>
+        <TimetablePage />
+      </QueryClientProvider>,
+    );
+  };
+  const autumn = () => screen.findByRole("button", { name: /Slöjd 4M HT/ });
+
+  it("draws each half's lesson as a card of its own, named for its block", async () => {
+    showPage();
+
+    expect((await autumn()).textContent).toContain("4ma1");
+    expect((await screen.findByRole("button", { name: /Slöjd 4M VT/ })).textContent).toContain("4ma2");
+  });
+
+  it("opens the card's dialog, which names the other block and locks both from Lås blocket", async () => {
+    blockApi.patch.mockResolvedValue({ blockId: "b-ht", isLocked: true, lessonIds: ["l-ht", "l-vt"], parked: 0 });
+    const user = userEvent.setup();
+    showPage();
+
+    await user.click(await autumn());
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("timetable.blocks.cardBodyLinked(days.1|13:00|14:00|Slöjd 4M VT)");
+    await user.click(within(dialog).getByRole("button", { name: "timetable.blocks.lock" }));
+
+    await waitFor(() =>
+      expect(blockApi.patch).toHaveBeenCalledWith("/api/v1/master-lessons/block-lock", { blockId: "b-ht", isLocked: true }),
+    );
+    expect(toasts.success).toHaveBeenCalledWith("timetable.blocks.locked(Slöjd 4M HT|2)");
+  });
+
+  it("moves the card as a card of one lesson, which the gateway moves with the other half's", async () => {
+    blockApi.patch.mockResolvedValue({ lessons: [], propagatedLessons: 0, removedCalendarLessons: 0, warnings: [], followed: ["l-vt"] });
+    showPage();
+    await autumn();
+
+    dragToTuesday("Slöjd 4M HT");
+    // 4ma1 holds pupils of 4.1 and 4.2: asked first, as any card is.
+    await userEvent.setup().click(await screen.findByRole("button", { name: "timetable.sharedMoveConfirm" }));
+
+    await waitFor(() =>
+      expect(blockApi.patch).toHaveBeenCalledWith("/api/v1/master-lessons/block-card", {
+        lessonIds: ["l-ht"],
+        dayOfWeek: 2,
+        startTime: "13:00",
+        endTime: "14:00",
+      }),
+    );
+    expect(noMutation.mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("selected and locked from the bar, takes the other half's lessons with it", async () => {
+    const user = userEvent.setup();
+    showPage();
+
+    fireEvent.keyDown(await autumn(), { key: "Enter", shiftKey: true });
+    expect(await screen.findByText("timetable.bulkSelected(1)")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "timetable.bulkLock" }));
+
+    await waitFor(() =>
+      expect(
+        noMutation.mutateAsync.mock.calls.map(([body]) => (typeof body === "string" ? body : (body as { id: string }).id)).sort(),
+      ).toEqual(["l-ht", "l-vt"]),
+    );
+  });
+});
+
 describe("what a profile that does not write the grundschema is spared (Läsbehörighet)", () => {
   /*
    * The (app) layout's style rule hides a control marked data-writes and takes

@@ -57,11 +57,18 @@ export interface LessonBlock {
   name: string;
   /** Every placed (not parked) lesson of the block's OTHER members. */
   siblings: BlockSibling[];
+  /**
+   * How many other posts the block has, whether their lessons are placed or
+   * not: none is a post alone in its block, whose card is one lesson when the
+   * block is on another's times (moveBlockCard).
+   */
+  otherPosts: number;
 }
 
 interface SiblingRow {
   blockId: string;
   name: string;
+  otherPostId: string | null;
   id: string | null;
   studentGroupId: string | null;
   subjectId: string | null;
@@ -82,7 +89,8 @@ interface SiblingRow {
  * ONE STATEMENT, on a write path whose statements are counted
  * (projected-rosters.budget.spec.ts): the post by its key, its block, the
  * block's other posts and their lessons, joined. Zero rows is no block; a
- * block whose other members have no placed lesson is one row of nulls.
+ * block whose other members have no placed lesson is one row of nulls, the
+ * other post's id aside, and a post alone in its block one row of nulls.
  * Under the caller's RLS like every read of a hand edit. The clock and the
  * dates come back as text, compared as the card compares them.
  */
@@ -91,7 +99,7 @@ export async function readLessonBlock(
   lesson: { id: string; academicYearId: string; studentGroupId: string; subjectId: string },
 ): Promise<LessonBlock | null> {
   const rows = await tx.$queryRaw<SiblingRow[]>`
-    SELECT b."id" AS "blockId", b."name",
+    SELECT b."id" AS "blockId", b."name", other."id" AS "otherPostId",
            ml."id", ml."studentGroupId", ml."subjectId", ml."dayOfWeek",
            to_char(ml."startTime", 'HH24:MI') AS "startTime",
            to_char(ml."endTime", 'HH24:MI') AS "endTime",
@@ -132,6 +140,7 @@ export async function readLessonBlock(
         isGenerated: row.isGenerated === true,
         isLocked: row.isLocked === true,
       })),
+    otherPosts: new Set(rows.flatMap((row) => (row.otherPostId ? [row.otherPostId] : []))).size,
   };
 }
 

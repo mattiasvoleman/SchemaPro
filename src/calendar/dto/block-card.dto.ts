@@ -36,7 +36,9 @@ export class LeftLessonDto {
  */
 export class MoveBlockCardDto {
   @IsArray()
-  @ArrayMinSize(2, { message: 'lessonIds: ett block har minst två lektioner i varje tid.' })
+  // One for a post alone in its block on another's times (a term split with
+  // one subject); the service holds every other card to one per member.
+  @ArrayMinSize(1, { message: 'lessonIds: ett blockkort har minst en lektion.' })
   // A block is a school's språkval or elevens val: a handful of groups.
   @ArrayMaxSize(50)
   @ArrayUnique()
