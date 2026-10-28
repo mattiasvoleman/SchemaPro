@@ -460,18 +460,19 @@ describe('Planning surface (e2e)', () => {
         .expect(201);
     });
 
-    // Dela terminsvis i halvklass, round-tripped as the admin, so the handler
-    // and not only the guard is covered: 7A's slöjd replaced by four posts on
-    // two new halves, in one block per term.
-    it('splits a class’s post by term into its halves', async () => {
-      const POST = '17171717-1717-4717-8717-171717171717';
-      const TEXTIL = '18181818-1818-4818-8818-181818181818';
-      const TRA = '19191919-1919-4919-8919-191919191919';
+    // Dela i halvklass, round-tripped as the admin, so the handler and not
+    // only the guard is covered: 7A's slöjd replaced by four posts on two new
+    // halves, in one block per term, and 7A's hemkunskap by two, half a term
+    // each.
+    const SPLIT_POST = '17171717-1717-4717-8717-171717171717';
+    const TEXTIL = '18181818-1818-4818-8818-181818181818';
+    const TRA = '19191919-1919-4919-8919-191919191919';
+    const givenSplittable = (subjects: { id: string; name: string }[], blockNames: [string, string]) => {
       // Once each, so nothing here answers for a later test.
       harness.tx['teachingRequirement']!['findUnique']!
         .mockResolvedValueOnce({ studentGroupId: GROUP_ID, academicYearId: YEAR_ID })
         .mockResolvedValueOnce({
-          id: POST,
+          id: SPLIT_POST,
           academicYearId: YEAR_ID,
           subjectId: SUBJECT_ID,
           studentGroupId: GROUP_ID,
@@ -507,10 +508,7 @@ describe('Planning surface (e2e)', () => {
             : [],
         ),
       });
-      harness.tx['subject']!['findMany']!.mockResolvedValueOnce([
-        { id: TEXTIL, name: 'Textilslöjd' },
-        { id: TRA, name: 'Trä- och metallslöjd' },
-      ]);
+      harness.tx['subject']!['findMany']!.mockResolvedValueOnce(subjects);
       harness.tx['studentGroup']!['findUnique']!.mockResolvedValueOnce({
         name: '7A',
         kind: 'CLASS',
@@ -529,10 +527,21 @@ describe('Planning surface (e2e)', () => {
       ]);
       harness.tx['teachingRequirement']!['deleteMany']!.mockResolvedValueOnce({ count: 1 });
       harness.tx['teachingBlock']!['create']!
-        .mockResolvedValueOnce({ id: 'ht', name: 'Slöjd 7A HT' })
-        .mockResolvedValueOnce({ id: 'vt', name: 'Slöjd 7A VT' });
+        .mockResolvedValueOnce({ id: 'ht', name: blockNames[0] })
+        .mockResolvedValueOnce({ id: 'vt', name: blockNames[1] });
       harness.tx['teachingRequirement']!['createManyAndReturn']!.mockImplementationOnce(
         async ({ data }: { data: Record<string, unknown>[] }) => data.map((row, index) => ({ ...row, id: `r${index}` })),
+      );
+    };
+
+    it('splits a class’s post by term into its halves', async () => {
+      const POST = SPLIT_POST;
+      givenSplittable(
+        [
+          { id: TEXTIL, name: 'Textilslöjd' },
+          { id: TRA, name: 'Trä- och metallslöjd' },
+        ],
+        ['Slöjd 7A HT', 'Slöjd 7A VT'],
       );
 
       const response = await request(http())
@@ -557,11 +566,50 @@ describe('Planning surface (e2e)', () => {
       ]);
     });
 
+    it('splits a class’s post into its halves, one subject in turn over half a term each, at their own pace', async () => {
+      givenSplittable([{ id: SUBJECT_ID, name: 'Hemkunskap' }], ['Hemkunskap 7A HT1', 'Hemkunskap 7A HT2']);
+
+      const response = await request(http())
+        .post(`/api/v1/teaching-requirements/${SPLIT_POST}/term-halves`)
+        .set('x-test-user', admin())
+        .send({
+          subjects: [{ subjectId: SUBJECT_ID }],
+          periods: [
+            { startDate: '2026-08-17', endDate: '2026-10-30' },
+            { startDate: '2026-11-02', endDate: '2027-01-08' },
+          ],
+          lessons: [60, 60],
+          blockNames: ['Hemkunskap 7A HT1', 'Hemkunskap 7A HT2'],
+        })
+        .expect(201);
+
+      expect(response.body.blocks).toEqual([
+        { id: 'ht', name: 'Hemkunskap 7A HT1', requirementIds: ['r0'] },
+        { id: 'vt', name: 'Hemkunskap 7A HT2', requirementIds: ['r1'] },
+      ]);
+      expect(
+        response.body.requirements.map((row: Record<string, unknown>) => [
+          row.studentGroupId, row.lessonsPerWeek, row.minutesPerLesson, row.startDate, row.endDate,
+        ]),
+      ).toEqual([
+        ['h1', 2, 60, null, '2026-10-30'],
+        ['h2', 2, 60, '2026-11-02', '2027-01-08'],
+      ]);
+    });
+
     // Each body breaks one rule and is otherwise valid, so each 400 is that
     // rule's and no other's: the pipe answers before the service reads.
     const TERM_SPLIT = { subjects: [{ subjectId: SUBJECT_ID }, { subjectId: GROUP_ID }], springStartDate: '2027-01-11' };
+    const PERIOD = { startDate: '2026-08-17', endDate: '2026-10-30' };
     it.each([
-      ['one subject', { ...TERM_SPLIT, subjects: [{ subjectId: SUBJECT_ID }] }, 'subjects'],
+      ['no subject', { ...TERM_SPLIT, subjects: [] }, 'subjects'],
+      ['three subjects', { ...TERM_SPLIT, subjects: [{ subjectId: SUBJECT_ID }, { subjectId: GROUP_ID }, { subjectId: YEAR_ID }] }, 'subjects'],
+      ['one period', { subjects: TERM_SPLIT.subjects, periods: [PERIOD] }, 'periods'],
+      ['a period end no calendar has', { subjects: TERM_SPLIT.subjects, periods: [PERIOD, { startDate: '2027-02-01', endDate: '2027-02-30' }] }, 'endDate'],
+      ['a period without an end', { subjects: TERM_SPLIT.subjects, periods: [PERIOD, { startDate: '2027-02-01' }] }, 'endDate'],
+      ['no lessons', { ...TERM_SPLIT, lessons: [] }, 'lessons'],
+      ['a lesson of ten minutes', { ...TERM_SPLIT, lessons: [60, 10] }, 'lessons'],
+      ['a lesson in half minutes', { ...TERM_SPLIT, lessons: [30.5] }, 'lessons'],
       ['a subject that is no id', { ...TERM_SPLIT, subjects: [{ subjectId: 'textil' }, { subjectId: SUBJECT_ID }] }, 'subjects'],
       ['a co-teacher that is no id', { ...TERM_SPLIT, subjects: [{ subjectId: SUBJECT_ID, coTeacherId: 'Cecilia' }, { subjectId: GROUP_ID }] }, 'subjects'],
       ['a spring start no calendar has', { ...TERM_SPLIT, springStartDate: '2027-02-30' }, 'springStartDate'],

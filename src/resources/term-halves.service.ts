@@ -11,6 +11,7 @@ import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError, writeConflict } from '../common/utils/prisma-errors';
 import { parseDateString } from '../common/utils/time';
+import { canonicalShape, lengthsProblem, type CanonicalShape } from '../common/lesson-lengths';
 import { requirementName } from '../optimization/optimization-proxy.service';
 import { RequirementImportChecks, SAME_TEACHER_TWICE, sameTeacherTwice } from '../staffing/staffing-enforcement';
 import { staffingSentence } from '../staffing/staffing-checks';
@@ -38,6 +39,12 @@ export const TERM_TEACHER_TWICE = 'TERM_TEACHER_TWICE';
 export const REQUIREMENT_IN_A_BLOCK = 'REQUIREMENT_IN_A_BLOCK';
 export const REQUIREMENT_HAS_PERIOD = 'REQUIREMENT_HAS_PERIOD';
 export const SPRING_START_OUTSIDE_YEAR = 'SPRING_START_OUTSIDE_YEAR';
+/** Neither `springStartDate` nor `periods`, or both. */
+export const TERM_PERIODS_MISSING = 'TERM_PERIODS_MISSING';
+/** Two periods that are not two of the year's stretches, the first before the second. */
+export const TERM_PERIODS_INVALID = 'TERM_PERIODS_INVALID';
+/** The halves' `lessons` as no timplanspost can hold them. */
+export const TERM_LESSONS_INVALID = 'TERM_LESSONS_INVALID';
 export const CLASS_HAS_ONE_HALF = 'CLASS_HAS_ONE_HALF';
 export const HALF_HAS_SUBJECT = 'HALF_HAS_SUBJECT';
 /**
@@ -58,20 +65,25 @@ function splitHasShares(postName: string): ConflictException {
   });
 }
 
-/** What the split wrote: the halves, the two blocks and the four posts. */
+/** What the split wrote: the halves, the two blocks and the two or four posts. */
 export interface TermHalvesResponse {
   /** The class's two halves, the first half first. */
   halves: { id: string; name: string }[];
   /** Whether this request split the class (false: it had its halves). */
   createdHalves: boolean;
   /**
-   * The autumn's block first, each with its two posts; the spring's names
-   * the autumn's as the block whose times it takes.
+   * The first period's block first, each with its posts (two with two
+   * subjects, one with one); the second's names the first's as the block
+   * whose times it takes.
    */
   blocks: { id: string; name: string; sameTimesAsBlockId: string | null; requirementIds: string[] }[];
-  /** The four posts: the first half's autumn and spring, then the second's. */
+  /**
+   * The posts, the first half's first: with two subjects its first period's
+   * and its second's, then the second half's; with one subject the first
+   * half's (the first period) and the second half's (the second).
+   */
   requirements: TeachingRequirementResponse[];
-  /** The class's post, which the four replace. */
+  /** The class's post, which the new posts replace. */
   removedRequirementId: string;
   /** The staffing policy's WARNs, each with the new post it is about. */
   warnings: BlockStaffingWarning[];
@@ -85,62 +97,172 @@ export interface TermHalvesResponse {
   codeWarnings: { subjectId: string; subjectName: string; nationalCode: string | null; lineNationalCode: string | null }[];
 }
 
-/** A WARN about a post not written yet, by its place among the four. */
+/** A WARN about a post not written yet, by its place among the new ones. */
 type PlannedWarning = Omit<BlockStaffingWarning, 'requirementId'> & { index: number };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const asDay = (date: Date): string => date.toISOString().slice(0, 10);
 
+/** A period as the posts store it: an end that is the year's own is null. */
+interface StoredPeriod {
+  startDate: Date | null;
+  endDate: Date | null;
+}
+
 /**
- * "Dela terminsvis i halvklass": a class's post, slöjd for 7A, replaced by
- * four on the class's two halves, so that one half reads textilslöjd in the
- * autumn and trä- och metallslöjd in the spring and the other half the other
- * way round. Everything the school could already do by hand in eight steps on
- * two pages (Dela klassen, four posts with a period each, two blocks, the
- * class's post removed), done in one transaction from the post.
+ * The two periods the halves take turns over, as stored: an end that is the
+ * year's own is null, so a läsår whose dates move, or a rollover, keeps the
+ * period whole. From `springStartDate` the autumn and the spring, as before;
+ * from `periods` two of the year's stretches, the first ending before the
+ * second starts, so the halves never read in the same week. A 400 by code
+ * for anything else.
+ */
+export function periodsOf(
+  dto: Pick<SplitByTermDto, 'springStartDate' | 'periods'>,
+  year: { startDate: Date; endDate: Date },
+): [StoredPeriod, StoredPeriod] {
+  const stored = (start: Date, end: Date): StoredPeriod => ({
+    startDate: start.getTime() === year.startDate.getTime() ? null : start,
+    endDate: end.getTime() === year.endDate.getTime() ? null : end,
+  });
+  if (dto.springStartDate != null) {
+    const springStart = parseDateString(dto.springStartDate);
+    if (springStart <= year.startDate || springStart > year.endDate) {
+      throw new BadRequestException({
+        message:
+          `springStartDate: vårterminen börjar efter läsårets första dag och senast dess sista ` +
+          `(${asDay(year.startDate)} till ${asDay(year.endDate)}).`,
+        code: SPRING_START_OUTSIDE_YEAR,
+      });
+    }
+    return [stored(year.startDate, new Date(springStart.getTime() - DAY_MS)), stored(springStart, year.endDate)];
+  }
+  const [first, second] = (dto.periods ?? []).map((period) => ({
+    start: parseDateString(period.startDate),
+    end: parseDateString(period.endDate),
+  })) as [{ start: Date; end: Date }, { start: Date; end: Date }];
+  const invalid = (detail: string) =>
+    new BadRequestException({ message: `periods: ${detail}`, code: TERM_PERIODS_INVALID });
+  for (const period of [first, second]) {
+    if (period.end < period.start) throw invalid('en period slutar inte före den börjar.');
+    if (period.start < year.startDate || period.end > year.endDate) {
+      throw invalid(`båda perioderna ligger inom läsåret (${asDay(year.startDate)} till ${asDay(year.endDate)}).`);
+    }
+  }
+  if (second.start <= first.end) {
+    throw invalid('den andra perioden börjar efter att den första slutat, så att halvorna aldrig läser samma vecka.');
+  }
+  return [stored(first.start, first.end), stored(second.start, second.end)];
+}
+
+/**
+ * The halves' week: `lessons` as the timplanspost stores it, or the class's
+ * post's when the request names none. Refused by code where the post's own
+ * dialog would refuse the same lengths.
+ */
+export function halvesShape(
+  lessons: readonly number[] | null | undefined,
+  source: { lessonsPerWeek: number; minutesPerLesson: number; lessonLengths: number[] },
+): CanonicalShape {
+  if (lessons == null) {
+    return {
+      lessonsPerWeek: source.lessonsPerWeek,
+      minutesPerLesson: source.minutesPerLesson,
+      lessonLengths: source.lessonLengths,
+    };
+  }
+  const problem = lengthsProblem(lessons);
+  if (problem !== null) {
+    const detail: Record<typeof problem, string> = {
+      EMPTY: 'minst en lektion i veckan.',
+      NOT_INTEGER: 'varje längd anges i hela minuter.',
+      OUT_OF_RANGE: 'varje lektion är 15 till 240 minuter.',
+      OFF_GRID: 'varje längd är jämnt delbar med 5 minuter.',
+      TOO_MANY_LESSONS: 'högst 40 lektioner per vecka.',
+      TOO_MANY_KINDS: 'högst tre olika längder.',
+    };
+    throw new BadRequestException({ message: `lessons: ${detail[problem]}`, code: TERM_LESSONS_INVALID });
+  }
+  return canonicalShape(lessons);
+}
+
+/**
+ * "Dela i halvklass": a class's post, slöjd for 7A, replaced by four on the
+ * class's two halves, so that one half reads textilslöjd in the autumn and
+ * trä- och metallslöjd in the spring and the other half the other way round.
+ * Everything the school could already do by hand in eight steps on two pages
+ * (Dela klassen, four posts with a period each, two blocks, the class's post
+ * removed), done in one transaction from the post.
  *
- * TWO SUBJECTS, NOT ONE. A group has one post per subject in a year
+ * TWO PERIODS, NOT ONLY TWO TERMS. The halves take turns over two of the
+ * year's stretches: the autumn and the spring (`springStartDate`), or any two
+ * (`periods`) — the first and the second half of the autumn, or half the
+ * autumn and half the spring. A post's period is its own startDate and
+ * endDate, which every reader already reads (the lessons the generator
+ * writes, the coverage, the load report, the rollover's date shift), so a
+ * shorter period is the same split with other dates.
+ *
+ * ONE SUBJECT, OR TWO. Hemkunskap in halvklass is one subject: the first half
+ * reads it in the first period and the second half in the second, and
+ * neither reads it outside its own. That is two posts, one per half and
+ * period, in a block each. With two subjects the halves swap them as below.
+ *
+ * THE HALVES' OWN WEEK, WHEN ASKED. A half that reads its hemkunskap in half
+ * a term has a quarter of the year to read the class's hours in: the load
+ * report and the timplan weigh a dated post by its share of the year's
+ * teaching weeks (standardWeekWeight), so 1 × 30 over a quarter of the year
+ * is a quarter of the class's 1 × 30. `lessons` is the halves' week when it is
+ * not the class's (4 × 30, or 1 × 120); the dialog proposes the one that keeps
+ * each pupil's hours and shows the figures. Every new post has the same week,
+ * which a block holds (TB409) and the generator's same-times needs.
+ *
+ * A SWAP IS BETWEEN TWO SUBJECTS. A group has one post per subject in a year
  * (TeachingRequirements' unique key, which the generator, the coverage and
  * the hand-edit checks all read as "the demand of this group in this
  * subject"), so a half cannot hold slöjd in the autumn and slöjd again in the
  * spring. The swap is between two subjects, which is also what lets each
  * half's post ask for its own sal: textilsalen and trä- och metallsalen are
- * the subjects' room types.
+ * the subjects' room types. Hemkunskap is no swap: each half reads it once.
  *
- * ONE BLOCK PER TERM. A block's posts have the same lessons and weeks by
- * trigger (TB409), and the autumn's two posts have other weeks than the
- * spring's. So the autumn's block holds the first half's first subject and
- * the second half's second, and the spring's block the swap. Each block puts
- * its two halves at the same times, which is what keeps the class's week from
- * holding slöjd twice: two halves of one class never share a pupil, so the
- * block is always one the generator accepts.
+ * ONE BLOCK PER PERIOD. A block's posts have the same lessons and weeks by
+ * trigger (TB409), and the first period's posts have other weeks than the
+ * second's. So with two subjects the first period's block holds the first
+ * half's first subject and the second half's second, and the second period's
+ * block the swap. Each block puts its two halves at the same times, which is
+ * what keeps the class's week from holding slöjd twice: two halves of one
+ * class never share a pupil, so the block is always one the generator
+ * accepts. With one subject each block holds the one post of its period;
+ * the block is there for the link below.
  *
- * THE SPRING ON THE AUTUMN'S TIMES. The generator plans one week and has no
- * terms, so two blocks would each get their own times, both held all year,
- * and one of them empty each term. The spring's block names the autumn's
- * (TeachingBlocks."sameTimesAsBlockId"): the generator places the autumn's
- * block and writes each spring post at the times of the autumn post in its
- * subject, which is its room's subject and, the halves swapping, usually its
- * teacher's (same-times.ts). A lock or a card move takes the two together.
+ * THE SECOND PERIOD ON THE FIRST'S TIMES. The generator plans one week and
+ * has no terms, so two blocks would each get their own times, both held all
+ * year, and one of them empty each period. The second period's block names
+ * the first's (TeachingBlocks."sameTimesAsBlockId"): the generator places the
+ * first period's block and writes each post of the second at the times of
+ * the first period's post in its subject, which is its room's subject and,
+ * the halves swapping, usually its teacher's (same-times.ts). With one
+ * subject the first half's hemkunskap is placed for the whole class, so the
+ * second half is free at those times too, and the second half's is written
+ * there in its own weeks. A lock takes the two together, and so does a card
+ * move where the blocks have cards (two subjects).
  *
- * THE FOUR POSTS CARRY THE CLASS'S POST OVER: its lessons (count, lengths,
- * ombyte, its own distribution, its weeks) and how much of it counts for the
- * teacher and the co-teacher (teacherLoadPercent, coTeacherLoadPercent).
- * The teacher is each subject's own, named in the request. The co-teacher is
- * the class's post's unless the request names one per subject (null for
- * none); the class's post is removed, so its teachers' load is released
- * before the new posts are judged, and the new ones are charged at the
- * carried percentages. The periods are the year's own start to the day
- * before `springStartDate`, and `springStartDate` to the year's own end,
- * with the open ends stored as null so a läsår whose dates are moved, or a
- * rollover, keeps them whole.
+ * THE NEW POSTS CARRY THE CLASS'S POST OVER: its lessons (count, lengths,
+ * ombyte, its own distribution, its weeks) unless `lessons` names the
+ * halves' own, and how much of it counts for the teacher and the co-teacher
+ * (teacherLoadPercent, coTeacherLoadPercent). The teacher is each subject's
+ * own, named in the request. The co-teacher is the class's post's unless the
+ * request names one per subject (null for none); the class's post is
+ * removed, so its teachers' load is released before the new posts are
+ * judged, and the new ones are charged at the carried percentages, each over
+ * its own period (periodsOf).
  *
  * NOBODY ON BOTH SUBJECTS. Each block holds one post of each subject at the
  * same times, and the generator refuses a block whose posts share a teacher
  * or co-teacher. So a person, as teacher or co-teacher, on both subjects is
  * refused (TERM_TEACHER_TWICE) — which is also what a class's co-teacher,
  * carried to both subjects by default, comes to: the request has to say
- * which subject they follow, and nothing is dropped unseen.
+ * which subject they follow, and nothing is dropped unseen. One subject's
+ * teacher has the two halves one after the other, never at once.
  *
  * WHICH HALF IS THE FIRST. A class that has its halves is split in the order
  * the request names them (`halfIds`, the order the dialog drew), since the
@@ -153,7 +275,8 @@ const asDay = (date: Date): string => date.toISOString().slice(0, 10);
  * block (removing it would leave the block without it unseen), one with a
  * period of its own (it is already a part of the year), the same subject
  * twice, a person on both subjects, a teacher who is their own co-teacher, a
- * spring start that leaves either term empty, a half that already has a post
+ * spring start that leaves either term empty, periods that are not two of the
+ * year's in order, lessons no post can hold, a half that already has a post
  * in one of the subjects, a class with only one half left, halves that are
  * not the class's, and a block name the year has. Each by its own code,
  * before anything is written.
@@ -181,12 +304,17 @@ export class TermHalvesService {
   ): Promise<TermHalvesResponse> {
     const schoolId = requireSchoolId(user);
     const [first, second] = dto.subjects;
-    if (!first || !second || first.subjectId === second.subjectId) {
+    if (!first) throw new BadRequestException('subjects: ett eller två ämnen.');
+    if (second && first.subjectId === second.subjectId) {
       throw new BadRequestException({
-        message: 'subjects: halvorna byter mellan två olika ämnen, till exempel textilslöjd och trä- och metallslöjd.',
+        message:
+          'subjects: halvorna byter mellan två olika ämnen, till exempel textilslöjd och trä- och metallslöjd. ' +
+          'Läser halvorna samma ämne var sin period, ange det en gång.',
         code: TERM_SUBJECTS_SAME,
       });
     }
+    // The subjects in the order the halves take them: one, or the swap's two.
+    const pair = second ? [first, second] : [first];
     for (const subject of dto.subjects) {
       if (sameTeacherTwice(subject.teacherId, subject.coTeacherId)) {
         throw new BadRequestException(SAME_TEACHER_TWICE);
@@ -195,7 +323,13 @@ export class TermHalvesService {
     if (dto.halfIds && dto.halfNames) {
       throw new BadRequestException('halfIds och halfNames: klassen har halvor eller får nya, inte båda.');
     }
-    const springStart = parseDateString(dto.springStartDate);
+    // An explicit null is no value either (@IsOptional lets it through).
+    if ((dto.springStartDate == null) === (dto.periods == null)) {
+      throw new BadRequestException({
+        message: 'springStartDate eller periods: vårterminens första dag, eller två perioder, inte båda.',
+        code: TERM_PERIODS_MISSING,
+      });
+    }
     const askedBlockNames = dto.blockNames?.map(blockName);
     try {
       return await this.prisma.withRls(user, async (tx) => {
@@ -256,19 +390,12 @@ export class TermHalvesService {
         }
         if (source._count.shares > 0) throw splitHasShares(postName);
 
-        if (springStart <= year.startDate || springStart > year.endDate) {
-          throw new BadRequestException({
-            message:
-              `springStartDate: vårterminen börjar efter läsårets första dag och senast dess sista ` +
-              `(${asDay(year.startDate)} till ${asDay(year.endDate)}).`,
-            code: SPRING_START_OUTSIDE_YEAR,
-          });
-        }
-        const autumnEnd = new Date(springStart.getTime() - DAY_MS);
+        const periods = periodsOf(dto, year);
+        const shape = halvesShape(dto.lessons, source);
 
         // Who teaches each subject: its teacher, and its co-teacher — the
         // class's post's unless the request names one (null for none).
-        const staff = [first, second].map((subject) => ({
+        const staff = pair.map((subject) => ({
           teacherId: subject.teacherId ?? null,
           coTeacherId: subject.coTeacherId === undefined ? source.coTeacherId : subject.coTeacherId,
         }));
@@ -282,7 +409,7 @@ export class TermHalvesService {
           }
         }
         const onFirst = new Set([staff[0]!.teacherId, staff[0]!.coTeacherId].filter((id): id is string => id !== null));
-        if ([staff[1]!.teacherId, staff[1]!.coTeacherId].some((id) => id !== null && onFirst.has(id))) {
+        if (staff[1] && [staff[1].teacherId, staff[1].coTeacherId].some((id) => id !== null && onFirst.has(id))) {
           throw new BadRequestException({
             message:
               'subjects: halvorna har lektion samtidigt, så samma lärare eller medlärare kan inte finnas i båda ämnena.' +
@@ -294,7 +421,7 @@ export class TermHalvesService {
         }
 
         const subjects = await tx.subject.findMany({
-          where: { id: { in: [first.subjectId, second.subjectId] } },
+          where: { id: { in: pair.map((subject) => subject.subjectId) } },
           select: { id: true, name: true, nationalCode: true },
         });
         const subjectName = new Map(subjects.map((subject) => [subject.id, subject.name]));
@@ -310,7 +437,7 @@ export class TermHalvesService {
             nationalCode: subject.nationalCode ?? null,
             lineNationalCode: lineCode,
           }));
-        if (!subjectName.has(first.subjectId) || !subjectName.has(second.subjectId)) {
+        if (pair.some((subject) => !subjectName.has(subject.subjectId))) {
           throw new BadRequestException('subjects: ett av ämnena finns inte i skolan.');
         }
 
@@ -353,7 +480,7 @@ export class TermHalvesService {
         const taken = await tx.teachingRequirement.findMany({
           where: {
             studentGroupId: { in: halves.map((half) => half.id) },
-            subjectId: { in: [first.subjectId, second.subjectId] },
+            subjectId: { in: pair.map((subject) => subject.subjectId) },
           },
           select: { studentGroup: { select: { name: true } }, subject: { select: { name: true } } },
           orderBy: [{ studentGroup: { name: 'asc' } }, { subject: { name: 'asc' } }],
@@ -367,12 +494,13 @@ export class TermHalvesService {
           });
         }
 
-        const names = askedBlockNames ?? [
-          blockName(`${source.subject.name} ${theClass.name} HT`),
-          blockName(`${source.subject.name} ${theClass.name} VT`),
-        ];
+        const names =
+          askedBlockNames ??
+          (dto.springStartDate != null ? ['HT', 'VT'] : ['period 1', 'period 2']).map((suffix) =>
+            blockName(`${source.subject.name} ${theClass.name} ${suffix}`),
+          );
         if (names[0]!.toLowerCase() === names[1]!.toLowerCase()) {
-          throw new BadRequestException('blockNames: två olika namn, ett för hösten och ett för våren.');
+          throw new BadRequestException('blockNames: två olika namn, ett för varje period.');
         }
         const takenBlocks = await tx.teachingBlock.findMany({
           where: { academicYearId: source.academicYearId, name: { in: names } },
@@ -386,20 +514,18 @@ export class TermHalvesService {
           });
         }
 
-        // The four posts: half h reads subject (h + term) mod 2 in each term.
-        const terms = [
-          { startDate: null, endDate: autumnEnd },
-          { startDate: springStart, endDate: null },
-        ];
-        const pair = [first, second];
+        // The posts: half h reads subject (h + period) mod 2 in each period —
+        // with one subject, the first half in the first period and the second
+        // half in the second, and nobody in the other.
         const planned = halves.flatMap((half, h) =>
-          terms.map((term, t) => {
+          periods.flatMap((period, t) => {
             const index = (h + t) % 2;
-            return { half, term: t, ...term, subjectId: pair[index]!.subjectId, ...staff[index]! };
+            const subject = pair[index];
+            return subject ? [{ half, term: t, ...period, subjectId: subject.subjectId, ...staff[index]! }] : [];
           }),
         );
 
-        const warnings = await this.judge(tx, user, source, planned, subjectName);
+        const warnings = await this.judge(tx, user, source, shape, planned, subjectName);
 
         // Delade lektioner: the post locked as a shares PATCH locks it
         // (lockPostForShares), where the DELETE below would take it anyway —
@@ -434,7 +560,7 @@ export class TermHalvesService {
         });
         if (count !== 1) throw writeConflict();
 
-        // The autumn's first, so the spring's can name it.
+        // The first period's first, so the second's can name it.
         const blocks: { id: string; name: string; sameTimesAsBlockId: string | null }[] = [];
         for (const name of names) {
           blocks.push(
@@ -455,9 +581,9 @@ export class TermHalvesService {
             coTeacherId: row.coTeacherId,
             teacherLoadPercent: source.teacherLoadPercent,
             coTeacherLoadPercent: source.coTeacherLoadPercent,
-            lessonsPerWeek: source.lessonsPerWeek,
-            minutesPerLesson: source.minutesPerLesson,
-            lessonLengths: source.lessonLengths,
+            lessonsPerWeek: shape.lessonsPerWeek,
+            minutesPerLesson: shape.minutesPerLesson,
+            lessonLengths: shape.lessonLengths,
             minutesBefore: source.minutesBefore,
             minutesAfter: source.minutesAfter,
             ownDistribution: source.ownDistribution,
@@ -493,12 +619,13 @@ export class TermHalvesService {
   }
 
   /**
-   * The staffing policy's two questions over the four posts, as the import
+   * The staffing policy's two questions over the new posts, as the import
    * asks them of a file: the year read once, the class's post with its
    * teachers taken off first (it is about to go), and each post laid over the
    * year before the next is asked, with its teacher and co-teacher at the
-   * class's post's percentages, so a teacher with the subject in both halves
-   * is charged both terms. A REFUSE is a 409 naming the post, and
+   * class's post's percentages and the halves' week, so a teacher with the
+   * subject in both halves is charged both periods. A REFUSE is a 409 naming
+   * the post, and
    * nothing is written; a WARN keeps the index of the post it is about.
    */
   private async judge(
@@ -508,13 +635,11 @@ export class TermHalvesService {
       id: string;
       academicYearId: string;
       studentGroupId: string;
-      lessonsPerWeek: number;
-      minutesPerLesson: number;
-      lessonLengths: number[];
       recurrence: LessonRecurrence;
       teacherLoadPercent: number;
       coTeacherLoadPercent: number;
     },
+    shape: CanonicalShape,
     planned: readonly {
       half: { id: string; name: string };
       subjectId: string;
@@ -574,9 +699,9 @@ export class TermHalvesService {
           // As the class's post counted them: 120 % for the teacher stays 120 %.
           teacherLoadPercent: source.teacherLoadPercent,
           coTeacherLoadPercent: source.coTeacherLoadPercent,
-          lessonsPerWeek: source.lessonsPerWeek,
-          minutesPerLesson: source.minutesPerLesson,
-          lessonLengths: source.lessonLengths,
+          lessonsPerWeek: shape.lessonsPerWeek,
+          minutesPerLesson: shape.minutesPerLesson,
+          lessonLengths: shape.lessonLengths,
           recurrence: source.recurrence,
           startDate: row.startDate ? asDay(row.startDate) : null,
           endDate: row.endDate ? asDay(row.endDate) : null,

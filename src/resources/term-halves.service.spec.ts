@@ -19,6 +19,9 @@ import {
   REQUIREMENT_HAS_PERIOD,
   REQUIREMENT_IN_A_BLOCK,
   SPRING_START_OUTSIDE_YEAR,
+  TERM_LESSONS_INVALID,
+  TERM_PERIODS_INVALID,
+  TERM_PERIODS_MISSING,
   TERM_SPLIT_HAS_SHARES,
   TERM_SUBJECTS_SAME,
   TERM_TEACHER_TWICE,
@@ -46,6 +49,7 @@ const BO = '88888888-8888-4888-8888-888888888882';
 const CECILIA = '88888888-8888-4888-8888-888888888883';
 const AUTUMN = '99999999-9999-4999-8999-999999999991';
 const SPRING = '99999999-9999-4999-8999-999999999992';
+const HEMKUNSKAP = '55555555-5555-4555-8555-555555555556';
 
 const day = (value: string) => new Date(`${value}T00:00:00.000Z`);
 
@@ -134,7 +138,7 @@ describe('TermHalvesService', () => {
     tx.teachingRequirement.deleteMany.mockResolvedValue({ count: 1 });
     tx.teachingBlock.create.mockImplementation(
       async ({ data }: { data: { name: string; sameTimesAsBlockId: string | null } }) => ({
-        id: data.name.endsWith('HT') ? AUTUMN : SPRING,
+        id: data.name.endsWith('HT') || data.name.endsWith('period 1') ? AUTUMN : SPRING,
         name: data.name,
         sameTimesAsBlockId: data.sameTimesAsBlockId,
       }),
@@ -749,6 +753,189 @@ describe('TermHalvesService', () => {
       expect(result.warnings.map((warning) => [warning.code, warning.requirementId])).toEqual([
         ['STAFF_TEACHER_NOT_QUALIFIED', 'created-1'],
         ['STAFF_TEACHER_NOT_QUALIFIED', 'created-2'],
+      ]);
+    });
+  });
+
+  describe('halves that take turns over two periods', () => {
+    // 7A's hemkunskap, 1 × 30 the whole year: 7A:1 reads it the first half
+    // of the autumn and 7A:2 the second, at four times the pace.
+    const hemkunskap = (overrides: Record<string, unknown> = {}) =>
+      source({
+        subjectId: HEMKUNSKAP,
+        lessonsPerWeek: 1,
+        minutesPerLesson: 30,
+        lessonLengths: [],
+        ownDistribution: false,
+        maxLessonsPerDay: null,
+        subject: { name: 'Hemkunskap', nationalCode: 'HKK' },
+        ...overrides,
+      });
+    const HALF_AUTUMN = {
+      subjects: [{ subjectId: HEMKUNSKAP, teacherId: ANNA }],
+      periods: [
+        { startDate: '2026-08-17', endDate: '2026-10-30' },
+        { startDate: '2026-11-02', endDate: '2027-01-08' },
+      ],
+      lessons: [30, 30, 30, 30],
+    };
+    beforeEach(() => {
+      givenPost(hemkunskap());
+      tx.subject.findMany.mockResolvedValue([{ id: HEMKUNSKAP, name: 'Hemkunskap', nationalCode: 'HKK' }]);
+    });
+    const written = () =>
+      (tx.teachingRequirement.createManyAndReturn.mock.calls[0] as [{ data: Record<string, unknown>[] }])[0].data;
+
+    it('writes one post per half in its own period, one subject, in a block each, the second on the first’s times', async () => {
+      const result = await service.split(POST, HALF_AUTUMN, admin);
+
+      expect(written().map((row) => [row.studentGroupId, row.subjectId, row.teacherId, row.startDate, row.endDate, row.blockId])).toEqual([
+        // The year's own first day is stored as null: a moved läsår keeps it.
+        [HALF_1, HEMKUNSKAP, ANNA, null, day('2026-10-30'), AUTUMN],
+        [HALF_2, HEMKUNSKAP, ANNA, day('2026-11-02'), day('2027-01-08'), SPRING],
+      ]);
+      // The halves' own week, 4 × 30, stored as a uniform row.
+      for (const row of written()) {
+        expect(row).toEqual(expect.objectContaining({ lessonsPerWeek: 4, minutesPerLesson: 30, lessonLengths: [] }));
+      }
+      expect(tx.teachingBlock.create.mock.calls.map(([args]) => (args as { data: unknown }).data)).toEqual([
+        { schoolId: admin.schoolId, academicYearId: YEAR, name: 'Hemkunskap 7A period 1', sameTimesAsBlockId: null },
+        { schoolId: admin.schoolId, academicYearId: YEAR, name: 'Hemkunskap 7A period 2', sameTimesAsBlockId: AUTUMN },
+      ]);
+      expect(result.blocks.map((block) => block.requirementIds)).toEqual([['created-0'], ['created-1']]);
+      expect(result.requirements.map((row) => [row.studentGroupId, row.startDate, row.endDate])).toEqual([
+        [HALF_1, null, '2026-10-30'],
+        [HALF_2, '2026-11-02', '2027-01-08'],
+      ]);
+      // The post's own subject: nothing to say about the national code.
+      expect(result.codeWarnings).toEqual([]);
+      // Asked whether either half has hemkunskap already, and only that.
+      expect(tx.teachingRequirement.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { studentGroupId: { in: [HALF_1, HALF_2] }, subjectId: { in: [HEMKUNSKAP] } } }),
+      );
+    });
+
+    it('stores the year’s own last day as null, and half the autumn against half the spring as two dated periods', async () => {
+      await service.split(
+        POST,
+        {
+          ...HALF_AUTUMN,
+          periods: [
+            { startDate: '2026-11-02', endDate: '2027-01-08' },
+            { startDate: '2027-03-29', endDate: '2027-06-11' },
+          ],
+        },
+        admin,
+      );
+
+      expect(written().map((row) => [row.studentGroupId, row.startDate, row.endDate])).toEqual([
+        [HALF_1, day('2026-11-02'), day('2027-01-08')],
+        [HALF_2, day('2027-03-29'), null],
+      ]);
+    });
+
+    it('takes the class’s week when the request names none, and the swap still takes two subjects', async () => {
+      await service.split(POST, { ...HALF_AUTUMN, lessons: undefined }, admin);
+      expect(written().map((row) => [row.lessonsPerWeek, row.minutesPerLesson])).toEqual([
+        [1, 30],
+        [1, 30],
+      ]);
+
+      tx.teachingRequirement.createManyAndReturn.mockClear();
+      tx.subject.findMany.mockResolvedValue([
+        { id: TEXTIL, name: 'Textilslöjd' },
+        { id: TRA, name: 'Trä- och metallslöjd' },
+      ]);
+      await service.split(POST, { ...DTO, springStartDate: undefined, periods: HALF_AUTUMN.periods }, admin);
+      expect(written().map((row) => [row.studentGroupId, row.subjectId, row.startDate, row.endDate, row.blockId])).toEqual([
+        [HALF_1, TEXTIL, null, day('2026-10-30'), AUTUMN],
+        [HALF_1, TRA, day('2026-11-02'), day('2027-01-08'), SPRING],
+        [HALF_2, TRA, null, day('2026-10-30'), AUTUMN],
+        [HALF_2, TEXTIL, day('2026-11-02'), day('2027-01-08'), SPRING],
+      ]);
+    });
+
+    it('stores mixed lengths canonically, longest first', async () => {
+      await service.split(POST, { ...HALF_AUTUMN, lessons: [40, 80] }, admin);
+
+      expect(written()[0]).toEqual(expect.objectContaining({ lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] }));
+    });
+
+    it('judges each half’s post with its own period and the halves’ week', async () => {
+      const judge = jest.fn((args: { requirementId: string | null; studentGroupId: string; patch: unknown }) => ({
+        findings: [],
+        after: { id: args.requirementId ?? 'new' } as never,
+      }));
+      openChecks.mockResolvedValue({ judge, apply: jest.fn(), stored: jest.fn(() => null) } as unknown as RequirementImportChecks);
+
+      await service.split(POST, HALF_AUTUMN, admin);
+
+      expect(judge.mock.calls.map(([args]) => [args.studentGroupId, args.patch])).toEqual([
+        [HALF_1, expect.objectContaining({ teacherId: ANNA, lessonsPerWeek: 4, minutesPerLesson: 30, lessonLengths: [], startDate: null, endDate: '2026-10-30' })],
+        [HALF_2, expect.objectContaining({ teacherId: ANNA, lessonsPerWeek: 4, startDate: '2026-11-02', endDate: '2027-01-08' })],
+      ]);
+    });
+
+    it.each([
+      ['neither a spring start nor periods', { springStartDate: undefined, periods: undefined }, TERM_PERIODS_MISSING],
+      ['both a spring start and periods', { springStartDate: '2027-01-11' }, TERM_PERIODS_MISSING],
+      [
+        'a period that ends before it starts',
+        { periods: [{ startDate: '2026-10-30', endDate: '2026-10-01' }, HALF_AUTUMN.periods[1]] },
+        TERM_PERIODS_INVALID,
+      ],
+      [
+        'a period before the year',
+        { periods: [{ startDate: '2026-08-10', endDate: '2026-10-30' }, HALF_AUTUMN.periods[1]] },
+        TERM_PERIODS_INVALID,
+      ],
+      [
+        'a period after the year',
+        { periods: [HALF_AUTUMN.periods[0], { startDate: '2027-03-29', endDate: '2027-06-18' }] },
+        TERM_PERIODS_INVALID,
+      ],
+      [
+        'periods that meet, so a half would read in the other’s weeks',
+        { periods: [HALF_AUTUMN.periods[0], { startDate: '2026-10-30', endDate: '2027-01-08' }] },
+        TERM_PERIODS_INVALID,
+      ],
+      [
+        'the second period first',
+        { periods: [HALF_AUTUMN.periods[1], HALF_AUTUMN.periods[0]] },
+        TERM_PERIODS_INVALID,
+      ],
+      ['periods sent as null', { periods: null }, TERM_PERIODS_MISSING],
+      ['lengths off the five-minute grid', { lessons: [30, 32] }, TERM_LESSONS_INVALID],
+      ['four different lengths', { lessons: [30, 40, 50, 60] }, TERM_LESSONS_INVALID],
+    ])('refuses %s, and writes nothing', async (_, change, code) => {
+      const error = await service.split(POST, { ...HALF_AUTUMN, ...change } as never, admin).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect((error as BadRequestException).getResponse()).toMatchObject({ code });
+      expect(tx.studentGroup.createManyAndReturn).not.toHaveBeenCalled();
+      expect(tx.teachingRequirement.deleteMany).not.toHaveBeenCalled();
+      expect(tx.teachingRequirement.createManyAndReturn).not.toHaveBeenCalled();
+    });
+
+    it('reads periods and lessons sent as null as not sent: the spring start alone, and the class’s week', async () => {
+      await service.split(POST, { ...HALF_AUTUMN, springStartDate: '2027-01-11', periods: null, lessons: null } as never, admin);
+
+      expect(written().map((row) => [row.startDate, row.endDate, row.lessonsPerWeek])).toEqual([
+        [null, day('2027-01-10'), 1],
+        [day('2027-01-11'), null, 1],
+      ]);
+    });
+
+    it('accepts periods that touch the year’s own first and last day', async () => {
+      await service.split(
+        POST,
+        { ...HALF_AUTUMN, periods: [{ startDate: '2026-08-17', endDate: '2027-01-08' }, { startDate: '2027-01-11', endDate: '2027-06-11' }] },
+        admin,
+      );
+
+      expect(written().map((row) => [row.startDate, row.endDate])).toEqual([
+        [null, day('2027-01-08')],
+        [day('2027-01-11'), null],
       ]);
     });
   });

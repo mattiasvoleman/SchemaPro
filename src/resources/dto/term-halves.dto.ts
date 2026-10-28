@@ -3,16 +3,19 @@ import {
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
+  IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   MaxLength,
+  Min,
   ValidateNested,
 } from 'class-validator';
 import { IsCalendarDate } from './is-calendar-date';
 
-/** One of the two subjects a term split swaps, and who teaches it. */
+/** A subject the halves read in turn, and who teaches it. */
 export class TermSubjectDto {
   @IsUUID('4', { message: 'subjects: varje ämne anges med sitt id.' })
   subjectId!: string;
@@ -32,26 +35,69 @@ export class TermSubjectDto {
   coTeacherId?: string | null;
 }
 
+/** One of the two periods the halves take turns over, both days included. */
+export class TermPeriodDto {
+  @IsCalendarDate()
+  startDate!: string;
+
+  @IsCalendarDate()
+  endDate!: string;
+}
+
 /**
- * "Dela terminsvis i halvklass" (term-halves.service.ts): a class's post
- * replaced by four on the class's two halves. `subjects[0]` is the first
- * half's subject in the autumn and the second half's in the spring,
- * `subjects[1]` the other way round; the spring term starts on
- * `springStartDate`. `halfNames` names the halves when the class has none yet
- * ("7A:1", "7A:2" if omitted), `halfIds` orders the halves it has, and
- * `blockNames` names the two parallel blocks, the autumn's first (named after
- * the post if omitted).
+ * "Dela i halvklass" (term-halves.service.ts): a class's post replaced by
+ * posts on the class's two halves, which take turns over two periods.
+ *
+ * `subjects[0]` is the first half's subject in the first period and the
+ * second half's in the second. `subjects[1]`, when given, is the other way
+ * round: two subjects make four posts, the halves swapping (slöjd). One
+ * subject makes two, the halves reading it in turn and nothing of it outside
+ * their period (hemkunskap).
+ *
+ * The periods are the autumn and the spring split at `springStartDate`, or
+ * `periods`: two of the year's own stretches, the first before the second,
+ * half a term each or any other part of the year. Exactly one of the two.
+ *
+ * `lessons` is the halves' week, one length per lesson ([60, 60] is
+ * 2 × 60), when it is not the class's post's: a half that reads its
+ * hemkunskap in a quarter of the year reads it at four times the class's pace
+ * to get the class's hours.
+ *
+ * `halfNames` names the halves when the class has none yet ("7A:1", "7A:2" if
+ * omitted), `halfIds` orders the halves it has, and `blockNames` names the two
+ * parallel blocks, the first period's first (named after the post if
+ * omitted).
  */
 export class SplitByTermDto {
-  @IsArray({ message: 'subjects: två ämnen, ett för varje halva på hösten.' })
-  @ArrayMinSize(2, { message: 'subjects: två ämnen, ett för varje halva på hösten.' })
-  @ArrayMaxSize(2, { message: 'subjects: två ämnen, ett för varje halva på hösten.' })
+  @IsArray({ message: 'subjects: ett eller två ämnen, det första för den första halvan i den första perioden.' })
+  @ArrayMinSize(1, { message: 'subjects: ett eller två ämnen, det första för den första halvan i den första perioden.' })
+  @ArrayMaxSize(2, { message: 'subjects: ett eller två ämnen, det första för den första halvan i den första perioden.' })
   @ValidateNested({ each: true })
   @Type(() => TermSubjectDto)
   subjects!: TermSubjectDto[];
 
+  /** The autumn to the day before, the spring from it; or `periods` instead. */
+  @IsOptional()
   @IsCalendarDate()
-  springStartDate!: string;
+  springStartDate?: string;
+
+  @IsOptional()
+  @IsArray({ message: 'periods: två perioder, den första före den andra.' })
+  @ArrayMinSize(2, { message: 'periods: två perioder, den första före den andra.' })
+  @ArrayMaxSize(2, { message: 'periods: två perioder, den första före den andra.' })
+  @ValidateNested({ each: true })
+  @Type(() => TermPeriodDto)
+  periods?: TermPeriodDto[];
+
+  /** Mirrors the timplanspost's own bounds; the grid and the kinds are the service's. */
+  @IsOptional()
+  @IsArray({ message: 'lessons: anges som en lista med en längd per lektion.' })
+  @ArrayMinSize(1, { message: 'lessons: minst en lektion i veckan.' })
+  @ArrayMaxSize(40, { message: 'lessons: högst 40 lektioner per vecka.' })
+  @IsInt({ each: true, message: 'lessons: varje längd anges i hela minuter.' })
+  @Min(15, { each: true, message: 'lessons: minst 15 minuter per lektion.' })
+  @Max(240, { each: true, message: 'lessons: högst 240 minuter per lektion.' })
+  lessons?: number[];
 
   @IsOptional()
   @IsArray()
