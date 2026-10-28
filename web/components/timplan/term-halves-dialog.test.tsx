@@ -156,8 +156,8 @@ describe("TermHalvesDialog", () => {
     renderDialog();
 
     expect(screen.getByRole("dialog", { name: "title(7A · Slöjd)" })).toBeInTheDocument();
-    // What is carried over is said: the lessons and both percentages.
-    expect(screen.getByText("description(7A · Slöjd|lengthPart(2|60)|100|100)")).toBeInTheDocument();
+    // What is carried over is said: both percentages; the lessons below.
+    expect(screen.getByText("description(7A · Slöjd|100|100)")).toBeInTheDocument();
     expect(within(screen.getByRole("table")).getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual([
       "halfColumn",
       "autumnUntil(3 januari)",
@@ -188,7 +188,7 @@ describe("TermHalvesDialog", () => {
       ],
       springStartDate: "2027-01-04",
       halfNames: ["7A:1", "7A:2"],
-      blockNames: ["blockAutumn(Slöjd|7A)", "blockSpring(Slöjd|7A)"],
+      blockNames: ["blockName(Slöjd|7A|blockSuffix.autumn)", "blockName(Slöjd|7A|blockSuffix.spring)"],
     });
     expect(invalidate.mock.calls.map(([filters]) => filters?.queryKey)).toEqual(
       expect.arrayContaining([["requirements", "y1"], ["groups"], ["teachingBlocks", "y1"]]),
@@ -319,7 +319,7 @@ describe("TermHalvesDialog", () => {
     }, "springOutside"],
     ["one name for both blocks", async (user: ReturnType<typeof userEvent.setup>) => {
       await user.clear(screen.getByLabelText("blockSpringLabel"));
-      await user.type(screen.getByLabelText("blockSpringLabel"), "blockAutumn(Slöjd|7A)");
+      await user.type(screen.getByLabelText("blockSpringLabel"), "blockName(Slöjd|7A|blockSuffix.autumn)");
     }, "blockNamesInvalid"],
     ["an empty half name", async (user: ReturnType<typeof userEvent.setup>) => {
       await user.clear(screen.getByLabelText("halfName(2)"));
@@ -430,6 +430,172 @@ describe("TermHalvesDialog", () => {
       duration: 12_000,
     });
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+/*
+ * Hemkunskap in halvklass over half a term each: one subject, read by 7A:1
+ * the first half of the autumn and by 7A:2 the second, at the pace that keeps
+ * each pupil's hours. The autumn of YEAR is twenty teaching weeks with no lov
+ * given, so its halves are ten and ten (lib/half-class-periods.test.ts).
+ */
+describe("one subject read in turn", () => {
+  const withHemkunskap = [...subjects, { id: "s-hk", name: "Hemkunskap", nationalCode: "HKK" }];
+  const hemkunskap = post({ id: "r-hk", subjectId: "s-hk", lessonsPerWeek: 1, minutesPerLesson: 30 });
+  const renderHemkunskap = (props: Partial<TermHalvesDialogProps> = {}) =>
+    renderDialog({ requirement: hemkunskap, subjects: withHemkunskap, ...props });
+  const headers = () => within(screen.getByRole("table")).getAllByRole("columnheader").map((cell) => cell.textContent);
+
+  it("starts as the post's own subject over the two halves of the autumn, and draws a post per half in its period", () => {
+    renderHemkunskap();
+
+    expect(screen.getByRole("combobox", { name: "periodsLabel" })).toHaveTextContent("preset.autumnHalves");
+    expect(headers()).toEqual(["halfColumn", "periodSpan(1|17 augusti|25 oktober)", "periodSpan(2|26 oktober|3 januari)"]);
+    expect(plan()).toEqual([
+      ["7A:1", "Hemkunskap", "–"],
+      ["7A:2", "–", "Hemkunskap"],
+    ]);
+    // One subject: its teacher and its co-teacher, nothing for a second.
+    expect(screen.getAllByRole("combobox", { name: /^(teacherOf|coTeacherOf)\(/ })).toHaveLength(2);
+    expect(screen.getByText("replacesOne(7A · Hemkunskap)")).toBeInTheDocument();
+    expect(screen.getByText("generatorNoteOne(Hemkunskap)")).toBeInTheDocument();
+    expect(submit().disabled).toBe(false);
+  });
+
+  it("proposes the pace that keeps each pupil's hours, and says what the halves and the teacher get", () => {
+    renderHemkunskap();
+
+    // 1 × 30 over 43 weeks is 21,5 h; over ten weeks it takes 4 × 30.
+    expect(screen.getByLabelText("lessonsCount")).toHaveValue(4);
+    expect(screen.getByLabelText("lessonsMinutes")).toHaveValue(30);
+    const hours = within(screen.getByTestId("term-halves-hours"));
+    expect(hours.getByText("lessonsOwn(lengthPart(4|30)|lengthPart(1|30))")).toBeInTheDocument();
+    expect(hours.getByText("hoursHalves(7A:1|20 h|7A:2|20 h|21,5 h)")).toBeInTheDocument();
+    // The teacher has both halves: 120 a week over 20 of 43 weeks, 56 min a standard week.
+    expect(hours.getByText("chargedLine(Hemkunskap|56|30)")).toBeInTheDocument();
+  });
+
+  it("sends one subject, the two periods, the halves' week and the blocks named after the periods", async () => {
+    const { user } = renderHemkunskap();
+
+    await user.click(submit());
+
+    expect(state.post).toHaveBeenCalledWith("/api/v1/teaching-requirements/r-hk/term-halves", {
+      subjects: [{ subjectId: "s-hk", teacherId: null, coTeacherId: null }],
+      periods: [
+        { startDate: "2026-08-17", endDate: "2026-10-25" },
+        { startDate: "2026-10-26", endDate: "2027-01-03" },
+      ],
+      lessons: [30, 30, 30, 30],
+      halfNames: ["7A:1", "7A:2"],
+      blockNames: ["blockName(Hemkunskap|7A|blockSuffix.autumn1)", "blockName(Hemkunskap|7A|blockSuffix.autumn2)"],
+    });
+  });
+
+  it("keeps the class's pace when asked, and then sends no week of its own", async () => {
+    const { user } = renderHemkunskap();
+
+    await user.click(screen.getByRole("button", { name: "lessonsUseClass" }));
+    expect(screen.getByText("lessonsClass(lengthPart(1|30))")).toBeInTheDocument();
+    expect(screen.getByText("hoursHalves(7A:1|5 h|7A:2|5 h|21,5 h)")).toBeInTheDocument();
+    await user.click(submit());
+
+    expect(state.post.mock.calls[0]![1]).not.toHaveProperty("lessons");
+  });
+
+  it("sends a week the admin typed, and refuses one no post can hold", async () => {
+    const { user } = renderHemkunskap();
+
+    await user.clear(screen.getByLabelText("lessonsCount"));
+    await user.type(screen.getByLabelText("lessonsCount"), "2");
+    await user.clear(screen.getByLabelText("lessonsMinutes"));
+    await user.type(screen.getByLabelText("lessonsMinutes"), "62");
+    expect(screen.getByText("lessonsInvalid")).toBeInTheDocument();
+    expect(submit().disabled).toBe(true);
+
+    await user.clear(screen.getByLabelText("lessonsMinutes"));
+    await user.type(screen.getByLabelText("lessonsMinutes"), "60");
+    await user.click(submit());
+    expect(state.post.mock.calls[0]![1]).toMatchObject({ lessons: [60, 60] });
+  });
+
+  it("takes half the autumn against half the spring", async () => {
+    const { user } = renderHemkunskap();
+
+    await user.click(screen.getByRole("combobox", { name: "periodsLabel" }));
+    await user.click(screen.getByRole("option", { name: "preset.firstHalves" }));
+    await user.click(submit());
+
+    expect(state.post.mock.calls[0]![1]).toMatchObject({
+      periods: [
+        { startDate: "2026-08-17", endDate: "2026-10-25" },
+        { startDate: "2027-01-04", endDate: "2027-03-21" },
+      ],
+      blockNames: ["blockName(Hemkunskap|7A|blockSuffix.autumn1)", "blockName(Hemkunskap|7A|blockSuffix.spring1)"],
+    });
+  });
+
+  it("starts its own dates from the periods on screen, and will not send periods that meet", async () => {
+    const { user } = renderHemkunskap();
+
+    await user.click(screen.getByRole("combobox", { name: "periodsLabel" }));
+    await user.click(screen.getByRole("option", { name: "preset.custom" }));
+    expect(screen.getByLabelText("periodTo(1)")).toHaveValue("2026-10-25");
+    expect(screen.getByLabelText("periodFrom(2)")).toHaveValue("2026-10-26");
+
+    await user.clear(screen.getByLabelText("periodFrom(2)"));
+    await user.type(screen.getByLabelText("periodFrom(2)"), "2026-10-20");
+    expect(screen.getByText("periodsInvalid.OVERLAP")).toBeInTheDocument();
+    expect(submit().disabled).toBe(true);
+
+    await user.clear(screen.getByLabelText("periodFrom(2)"));
+    await user.type(screen.getByLabelText("periodFrom(2)"), "2026-11-02");
+    await user.click(submit());
+    expect(state.post.mock.calls[0]![1]).toMatchObject({
+      periods: [
+        { startDate: "2026-08-17", endDate: "2026-10-25" },
+        { startDate: "2026-11-02", endDate: "2027-01-03" },
+      ],
+      blockNames: ["blockName(Hemkunskap|7A|blockSuffix.period1)", "blockName(Hemkunskap|7A|blockSuffix.period2)"],
+    });
+  });
+
+  it("keeps a block name the admin wrote, and the other still follows the periods", async () => {
+    const { user } = renderHemkunskap();
+
+    await user.clear(screen.getByLabelText("blockPeriodLabel(1)"));
+    await user.type(screen.getByLabelText("blockPeriodLabel(1)"), "Hemkunskap 7A höst");
+    await user.click(screen.getByRole("combobox", { name: "periodsLabel" }));
+    await user.click(screen.getByRole("option", { name: "preset.springHalves" }));
+
+    expect(screen.getByLabelText("blockPeriodLabel(1)")).toHaveValue("Hemkunskap 7A höst");
+    expect(screen.getByLabelText("blockPeriodLabel(2)")).toHaveValue("blockName(Hemkunskap|7A|blockSuffix.spring2)");
+  });
+
+  it("cuts a long subject's name, never the period's, so the two blocks stay apart", () => {
+    const long = "H".repeat(90);
+    renderHemkunskap({ subjects: [...subjects, { id: "s-hk", name: long, nationalCode: "HKK" }] });
+
+    const names = [1, 2].map((n) => (screen.getByLabelText(`blockPeriodLabel(${n})`) as HTMLInputElement).value);
+    expect(names.map((name) => name.length)).toEqual([80, 80]);
+    expect(names[0]).toMatch(/\|7A\|blockSuffix\.autumn1\)$/);
+    expect(names[1]).toMatch(/\|7A\|blockSuffix\.autumn2\)$/);
+    expect(screen.queryByText("blockNamesInvalid")).toBeNull();
+  });
+
+  it("swaps two subjects over the periods when the second half reads one too", async () => {
+    const { user } = renderHemkunskap();
+
+    await user.click(screen.getByRole("combobox", { name: "firstPeriodSubject(7A:2)" }));
+    await user.click(screen.getByRole("option", { name: "Textilslöjd" }));
+
+    expect(plan()).toEqual([
+      ["7A:1", "Hemkunskap", "Textilslöjd"],
+      ["7A:2", "Textilslöjd", "Hemkunskap"],
+    ]);
+    // Each pupil reads hemkunskap in one half of the autumn: twice the pace.
+    expect(screen.getByLabelText("lessonsCount")).toHaveValue(2);
+    expect(screen.getByText("replaces(7A · Hemkunskap)")).toBeInTheDocument();
   });
 });
 

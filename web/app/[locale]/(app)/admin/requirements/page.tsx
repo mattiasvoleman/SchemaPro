@@ -294,7 +294,7 @@ const loadTargetModule = () => import("@/components/timplan/requirements-target"
 /** Parallella block, loaded on the first press of "Block" as Mål mode is. */
 type BlocksModule = typeof import("@/components/timplan/teaching-blocks");
 const loadBlocksModule = () => import("@/components/timplan/teaching-blocks");
-/** Dela terminsvis i halvklass, loaded on the first press in a class post's dialog. */
+/** Dela i halvklass, loaded on the first press in a class post's dialog. */
 type TermHalvesModule = typeof import("@/components/timplan/term-halves-dialog");
 
 /**
@@ -2005,7 +2005,7 @@ export default function RequirementsPage() {
                 onChange={(next) => setForm({ ...form, ...next })}
               />
             </Suspense>
-            {/* A class's post for the whole year, not shared between teachers, can become four on its halves, the subjects swapping at the spring term. */}
+            {/* A class's post for the whole year, not shared between teachers, can become posts on its halves, which take turns over two periods. */}
             {cell?.existing && !cell.existing.blockId && !cell.existing.startDate && !cell.existing.endDate &&
             !sharesOf.has(cell.existing.id) && groupOf(cell.groupId)?.kind === "CLASS" ? (
               <Button
@@ -2215,6 +2215,7 @@ export default function RequirementsPage() {
           gradeSpans={gradeSpanOf}
           loadReport={loadReport}
           year={yearBounds}
+          closures={breaks}
           onClose={() => setTermHalves(null)}
         />
       ) : null}

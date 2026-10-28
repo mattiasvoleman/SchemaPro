@@ -112,7 +112,7 @@ function useTeachingBlocks(academicYearId: string) {
     queryFn: async () => {
       const { data, error } = await createClient()
         .from("TeachingBlocks")
-        .select("id, academicYearId, name")
+        .select("id, academicYearId, name, sameTimesAsBlockId")
         .eq("academicYearId", academicYearId)
         .order("name");
       if (error) throw error;
@@ -127,6 +127,11 @@ function useTeachingBlocks(academicYearId: string) {
  * two posts on one group, and two posts whose lessons are each split between
  * teachers (delade lektioner, the gateway's BLOCK_MEMBERS_SPLIT). Each as a
  * sentence naming the posts.
+ *
+ * `linked`: the block is on another block's times, or another is on its.
+ * One post is then a block that has something to hold: Dela i halvklass
+ * with one subject makes a block per period with one half's post each, the
+ * second on the first's times (same-times.ts).
  */
 export type WarningText = (
   key: "warnOne" | "warnTeacher" | "warnGroup" | "warnSplit",
@@ -137,8 +142,9 @@ export function blockWarnings(
   members: readonly TeachingRequirement[],
   label: (requirement: TeachingRequirement) => string,
   t: WarningText,
+  linked = false,
 ): string[] {
-  if (members.length < 2) return [t("warnOne")];
+  if (members.length === 0 || (members.length < 2 && !linked)) return [t("warnOne")];
   const warnings: string[] = [];
   for (const [index, first] of members.entries()) {
     for (const second of members.slice(index + 1)) {
@@ -335,7 +341,10 @@ export function BlocksHost({ academicYearId, requirements, groups, subjects }: B
         <ul className="divide-y">
           {(blocks.data ?? []).map((block) => {
             const members = membersOf(block.id);
-            const warnings = blockWarnings(members, label, t as WarningText);
+            const linked =
+              (block.sameTimesAsBlockId ?? null) !== null ||
+              (blocks.data ?? []).some((other) => other.sameTimesAsBlockId === block.id);
+            const warnings = blockWarnings(members, label, t as WarningText, linked);
             return (
               <li key={block.id} className="space-y-2 py-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
