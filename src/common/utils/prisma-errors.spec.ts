@@ -23,6 +23,7 @@ import {
   rethrowPrismaError,
   rolloverLinkRefusal,
   teacherDutyBlockRefusal,
+  teachingBlockRefusal,
   timplanInUseConflict,
 } from './prisma-errors';
 
@@ -560,6 +561,90 @@ describe('rethrowPrismaError and a läsårsrullning link', () => {
     expect(answer(dutyRefusal('TD409'))).toBeInstanceOf(ConflictException);
     expect(((answer(dutyRefusal('TD409')) as ConflictException).getResponse() as { code: string }).code).toBe(
       'TEACHER_DUTY_BLOCK_MISMATCH',
+    );
+  });
+});
+
+describe('rethrowPrismaError and a parallel block (TB409)', () => {
+  const BLOCK = 'b1b1b1b1-b1b1-4b1b-8b1b-b1b1b1b1b1b1';
+  const OTHER_BLOCK = 'b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2';
+  const POST = 'c1c1c1c1-c1c1-4c1c-8c1c-c1c1c1c1c1c1';
+  const OTHER_POST = 'c2c2c2c2-c2c2-4c2c-8c2c-c2c2c2c2c2c2';
+  const refusal = (originalMessage: string, detail: string) =>
+    new Prisma.PrismaClientKnownRequestError(`Database error. Code: \`TB409\`. Message: \`${originalMessage}\``, {
+      code: 'P2039',
+      clientVersion: Prisma.prismaVersion.client,
+      meta: { driverAdapterError: { cause: { originalCode: 'TB409', originalMessage, detail, kind: 'postgres' } } },
+    });
+  const answer = (error: unknown) => {
+    try {
+      rethrowPrismaError(error);
+    } catch (thrown) {
+      return thrown as ConflictException;
+    }
+    throw new Error('not rethrown');
+  };
+  // 20261024090000's refusal, and 20261213090000's for a post whose new
+  // lessons leave the block on its times.
+  const members = refusal(
+    'BLOCK_MEMBERS_DIFFER: timplansposterna i blocket "Språkval åk 7" har inte samma lektioner och veckor',
+    `teachingBlockId=${BLOCK} requirementId=${POST} otherRequirementId=${OTHER_POST}`,
+  );
+  const sameTimes = refusal(
+    'BLOCK_MEMBERS_DIFFER: timplansposten i blocket "Hemkunskap 6A VT" har inte samma lektioner som posterna i blocket ' +
+      '"Hemkunskap 6A HT", som läggs på samma tider',
+    `teachingBlockId=${BLOCK} requirementId=${POST} otherRequirementId=${OTHER_POST} sameTimesBlockId=${OTHER_BLOCK}`,
+  );
+
+  it('reads a block of its own as it always did, with no block on its times', () => {
+    expect(teachingBlockRefusal(members)).toEqual({
+      blockName: 'Språkval åk 7',
+      teachingBlockId: BLOCK,
+      requirementId: POST,
+      otherRequirementId: OTHER_POST,
+      sameTimesBlockId: null,
+      sameTimesBlockName: null,
+    });
+    const conflict = answer(members);
+    expect(conflict).toBeInstanceOf(ConflictException);
+    expect(conflict.getResponse()).toEqual({
+      message: expect.stringMatching(/^Timplansposterna i blocket "Språkval åk 7" läggs på samma tider och måste ha samma antal lektioner, samma längder och samma veckor\./),
+      code: 'BLOCK_MEMBERS_DIFFER',
+      teachingBlockId: BLOCK,
+    });
+  });
+
+  it('names both blocks of a post held to the block on its times, and asks only for the lessons', () => {
+    // The post's own block first, as the reader before 20261213090000 reads it.
+    expect(teachingBlockRefusal(sameTimes)).toEqual({
+      blockName: 'Hemkunskap 6A VT',
+      teachingBlockId: BLOCK,
+      requirementId: POST,
+      otherRequirementId: OTHER_POST,
+      sameTimesBlockId: OTHER_BLOCK,
+      sameTimesBlockName: 'Hemkunskap 6A HT',
+    });
+    const conflict = answer(sameTimes);
+    expect(conflict).toBeInstanceOf(ConflictException);
+    expect(conflict.getResponse()).toEqual({
+      message:
+        'Timplansposten i blocket "Hemkunskap 6A VT" läggs på samma tider som blocket "Hemkunskap 6A HT" och måste ' +
+        'ha samma antal lektioner och samma längder som dess poster. Ändra lektionerna med Ändra lektioner under ' +
+        'Block på Timplansposter, som ändrar båda blocken.',
+      code: 'BLOCK_MEMBERS_DIFFER',
+      teachingBlockId: BLOCK,
+      sameTimesBlockId: OTHER_BLOCK,
+    });
+    expect((conflict.getResponse() as { message: string }).message).not.toContain('veckor');
+  });
+
+  it('still names the block on its times as another block when its name cannot be read', () => {
+    const unnamed = refusal(
+      'BLOCK_MEMBERS_DIFFER: något annat',
+      `teachingBlockId=${BLOCK} requirementId=${POST} otherRequirementId=${OTHER_POST} sameTimesBlockId=${OTHER_BLOCK}`,
+    );
+    expect((answer(unnamed).getResponse() as { message: string }).message).toMatch(
+      /^Timplansposten i ett block läggs på samma tider som ett annat block/,
     );
   });
 });

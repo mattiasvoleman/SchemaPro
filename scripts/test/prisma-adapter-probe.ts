@@ -2177,6 +2177,8 @@ async function runChecks(
           teachingBlockId: sprakval.id,
           requirementId: fr.id,
           otherRequirementId: ty.id,
+          sameTimesBlockId: null,
+          sameTimesBlockName: null,
         });
       }
       // Through the requirements service, the 409 naming the block; nothing written.
@@ -2996,6 +2998,235 @@ async function runChecks(
         ['ht-6A:2', '2092-11-03', '2093-01-05'],
       ]);
     } finally {
+      // The year takes its classes, halves, posts, blocks and lessons with it.
+      await years.remove(year.id, admin);
+    }
+  });
+
+  // ---- (u2g) a block of one post on another's times: its lessons are the pair's (20261213090000)
+  await check('(u2g) one half of a subject read in turn takes no lessons of its own: a TB409 naming both blocks, Ändra lektioner and the import change both, two writers of the pair wait for each other, and a card of one lesson moves and locks both halves', async () => {
+    const requirements = new TeachingRequirementsService(api);
+    const blocks = new TeachingBlocksService(api);
+    const subjects = new SubjectsService(api);
+    const years = new AcademicYearsService(api);
+    const termHalves = new TermHalvesService(api);
+    const imports = new ImportService(api, {} as UsersService);
+    const other = open(withConnectionLimit(appUrl, 1));
+    await other.onModuleInit();
+    const rivalRequirements = new TeachingRequirementsService(other);
+    const year = await years.create(
+      { name: `${MARKER} i tur`, startDate: '2090-08-21', endDate: '2091-06-14' } as never,
+      admin,
+    );
+    try {
+      const hemkunskap = await subjects.create({ name: `${MARKER} it-hemkunskap` } as never, admin);
+      const klass = (
+        await owner.query<{ id: string }>(
+          `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+           VALUES ($1, $2, $3 || ' it-6A', 'CLASS', 6, now()) RETURNING id`,
+          [fixture.schoolId, year.id, MARKER],
+        )
+      ).rows[0].id;
+      const post = await requirements.create(
+        { academicYearId: year.id, subjectId: hemkunskap.id, studentGroupId: klass, lessonsPerWeek: 1, minutesPerLesson: 60 } as never,
+        admin,
+      );
+      const split = await termHalves.split(
+        post.id,
+        {
+          subjects: [{ subjectId: hemkunskap.id }],
+          periods: [
+            { startDate: '2090-08-21', endDate: '2090-10-31' },
+            { startDate: '2090-11-03', endDate: '2091-01-08' },
+          ],
+          lessons: [60, 60],
+          blockNames: [`${MARKER} it-HT1`, `${MARKER} it-HT2`],
+        },
+        admin,
+      );
+      const [first, second] = split.requirements;
+      const [autumn, spring] = split.blocks;
+      assert.equal(spring!.sameTimesAsBlockId, autumn!.id);
+      const shapes = async () =>
+        (
+          await owner.query<{ lessons: number; minutes: number }>(
+            `SELECT "lessonsPerWeek" AS lessons, "minutesPerLesson" AS minutes FROM "TeachingRequirements"
+              WHERE id = ANY($1::uuid[]) ORDER BY "startDate" NULLS FIRST`,
+            [[first!.id, second!.id]],
+          )
+        ).rows.map((row) => `${row.lessons} × ${row.minutes}`);
+      const isPairRefusal = (error: unknown) => {
+        assert.ok(error instanceof ConflictException, summarise(error));
+        const body = error.getResponse() as { code?: string; message?: string; sameTimesBlockId?: string };
+        assert.equal(body.code, BLOCK_MEMBERS_DIFFER);
+        assert.ok(body.message?.includes(`blocket "${spring!.name}"`) && body.message.includes(`blocket "${autumn!.name}"`), body.message);
+        assert.equal(body.sameTimesBlockId, autumn!.id);
+        return true;
+      };
+
+      // Either half alone, past the services: the adapter's P2039 carries the
+      // driver's cause, which names both blocks and the four ids.
+      for (const [mine, theirs, own, held] of [
+        [first!, second!, autumn!, spring!],
+        [second!, first!, spring!, autumn!],
+      ] as const) {
+        try {
+          await api.withRls(admin, (tx) =>
+            tx.teachingRequirement.update({ where: { id: mine.id }, data: { lessonsPerWeek: 3 } }),
+          );
+          assert.fail('one half of the pair took other lessons alone');
+        } catch (error) {
+          assert.equal(sqlStateOf(error), 'TB409', summarise(error));
+          assert.deepEqual(teachingBlockRefusal(error), {
+            blockName: own.name,
+            teachingBlockId: own.id,
+            requirementId: mine.id,
+            otherRequirementId: theirs.id,
+            sameTimesBlockId: held.id,
+            sameTimesBlockName: held.name,
+          });
+        }
+      }
+      // Through the requirements service: the 409 naming both blocks, nothing written.
+      await assert.rejects(requirements.update(second!.id, { minutesPerLesson: 45 } as never, admin), isPairRefusal);
+      assert.deepEqual(await shapes(), ['2 × 60', '2 × 60']);
+      // Its weeks are its own.
+      await requirements.update(second!.id, { endDate: '2091-01-15' } as never, admin);
+
+      // Ändra lektioner on either block changes both, in one statement.
+      await blocks.update(spring!.id, { lessonsPerWeek: 3, minutesPerLesson: 40 } as never, admin);
+      assert.deepEqual(await shapes(), ['3 × 40', '3 × 40']);
+
+      // The import: both halves in one file are one statement of lessons;
+      // one half alone is that row's error, and the file's other rows stand.
+      const [half1, half2] = split.halves;
+      const fileRow = (groupName: string, lessonsPerWeek: number, minutesPerLesson: number) =>
+        ({ groupName, subject: hemkunskap.name, lessonsPerWeek, minutesPerLesson }) as never;
+      const both = await imports.importRequirements(
+        { academicYearId: year.id, columns: [], rows: [fileRow(half1!.name, 2, 60), fileRow(half2!.name, 2, 60)] } as never,
+        admin,
+      );
+      assert.deepEqual([both.updated, both.errors], [2, []]);
+      assert.deepEqual(await shapes(), ['2 × 60', '2 × 60']);
+      const alone = await imports.importRequirements(
+        { academicYearId: year.id, columns: [], rows: [fileRow(half1!.name, 1, 120)] } as never,
+        admin,
+      );
+      assert.equal(alone.updated, 0);
+      assert.equal(alone.errors.length, 1);
+      assert.match(alone.errors[0]!.message, /som läggs på samma tider som blocket/);
+      assert.deepEqual(await shapes(), ['2 × 60', '2 × 60']);
+
+      // Two writers of the pair, each right alone and wrong together. Planted
+      // past the trigger: a pair that drifted apart (3 × 40 and 2 × 60), as
+      // one could before 20261213090000. The holder puts the first half back
+      // to 2 × 60 and parks before COMMIT; the rival moves the second half to
+      // 3 × 40, the first's as committed, on its own connection. Only the
+      // trigger's lock on BOTH blocks makes it wait, and after the holder
+      // commits it reads 2 × 60 and is refused.
+      await owner.query('BEGIN');
+      await owner.query('SET LOCAL session_replication_role = replica');
+      await owner.query('UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 3, "minutesPerLesson" = 40 WHERE id = $1', [first!.id]);
+      await owner.query('COMMIT');
+      assert.deepEqual(await shapes(), ['3 × 40', '2 × 60']);
+      const touched = deferred<number>();
+      const release = deferred<void>();
+      const parked = {
+        withRls: <T>(user: AuthenticatedUser, fn: (tx: PrismaClient) => Promise<T>) =>
+          api.withRls(user, async (tx) => {
+            const result = await fn(tx);
+            const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+            touched.resolve(pid);
+            await release.promise;
+            return result;
+          }),
+      } as unknown as PrismaService;
+      const holderSettled = new TeachingRequirementsService(parked)
+        .update(first!.id, { lessonsPerWeek: 2, minutesPerLesson: 60 } as never, admin)
+        .then(() => null, (error: unknown) => error);
+      const pid = await Promise.race([
+        touched.promise,
+        holderSettled.then((error) => {
+          throw error ?? new Error('the holder committed before it parked');
+        }),
+      ]);
+      let rivalDone = false;
+      const rivalSettled = rivalRequirements
+        .update(second!.id, { lessonsPerWeek: 3, minutesPerLesson: 40 } as never, admin)
+        .then(() => null, (error: unknown) => error)
+        .finally(() => {
+          rivalDone = true;
+        });
+      let waitsOn: string[] = [];
+      for (let tries = 0; ; tries++) {
+        const { rows } = await owner.query<{ rel: string | null }>(
+          `SELECT l.relation::regclass::text AS rel FROM pg_locks l
+            WHERE l.locktype = 'tuple'
+              AND l.pid IN (SELECT a.pid FROM pg_stat_activity a WHERE $1::int = ANY(pg_blocking_pids(a.pid)))`,
+          [pid],
+        );
+        if (rows.length > 0) {
+          waitsOn = rows.map((row) => row.rel ?? '');
+          break;
+        }
+        if (rivalDone || tries > 500) {
+          release.resolve();
+          await holderSettled;
+          throw new Error('the second writer of the pair never waited on the first: the trigger takes no lock on the other block');
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.deepEqual(waitsOn, ['"TeachingBlocks"'], 'the rival waited on something other than a block row');
+      release.resolve();
+      assert.equal(await holderSettled, null);
+      isPairRefusal(await rivalSettled);
+      assert.deepEqual(await shapes(), ['2 × 60', '2 × 60']);
+
+      // In the grundschema each half's lesson is a card of one: Lås blocket
+      // from the autumn's side locks both halves, and the autumn's card
+      // dragged to Tuesday takes the spring's lesson along, in its own weeks.
+      const placedIds: string[] = [];
+      for (const row of [first!, second!]) {
+        const stored = (
+          await owner.query<{ startDate: string | null; endDate: string | null }>(
+            'SELECT "startDate"::text AS "startDate", "endDate"::text AS "endDate" FROM "TeachingRequirements" WHERE id = $1',
+            [row.id],
+          )
+        ).rows[0];
+        const placed = await owner.query<{ id: string }>(
+          `INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "dayOfWeek", "startTime", "endTime",
+                                        recurrence, "startDate", "endDate", "isGenerated", "updatedAt")
+           VALUES ($1, $2, $3, $4, 1, '08:00', '09:00', 'ALL_WEEKS', $5::date, $6::date, true, now()) RETURNING id`,
+          [fixture.schoolId, year.id, row.subjectId, row.studentGroupId, stored.startDate, stored.endDate],
+        );
+        placedIds.push(placed.rows[0].id);
+      }
+      const [autumnLesson, springLesson] = placedIds;
+      const grundschema = new MasterLessonsService(
+        api,
+        { notifyMasterTimetableChanged: () => undefined } as unknown as RealtimeService,
+        {} as NotificationsService,
+      );
+      const placedNow = async () =>
+        (
+          await owner.query<{ at: string; locked: boolean }>(
+            `SELECT "dayOfWeek" || ' ' || to_char("startTime", 'HH24:MI') AS at, "isLocked" AS locked
+               FROM "MasterLessons" WHERE id = ANY($1::uuid[]) ORDER BY id`,
+            [placedIds],
+          )
+        ).rows;
+      const locked = await grundschema.lockBlock({ blockId: autumn!.id, isLocked: true }, admin);
+      assert.deepEqual([...locked.lessonIds].sort(), [...placedIds].sort());
+      assert.ok((await placedNow()).every((row) => row.locked), 'Lås blocket on one half missed the other’s lesson');
+      await grundschema.lockBlock({ blockId: autumn!.id, isLocked: false }, admin);
+      const moved = await grundschema.moveBlockCard(
+        { lessonIds: [autumnLesson!], dayOfWeek: 2, startTime: '10:00', endTime: '11:00' } as never,
+        admin,
+      );
+      assert.deepEqual(moved.followed, [springLesson]);
+      assert.deepEqual(new Set((await placedNow()).map((row) => row.at)), new Set(['2 10:00']));
+    } finally {
+      await other.$disconnect();
       // The year takes its classes, halves, posts, blocks and lessons with it.
       await years.remove(year.id, admin);
     }

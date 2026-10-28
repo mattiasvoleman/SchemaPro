@@ -18782,6 +18782,176 @@ END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
+-- Section 104b: en post i ett block på ett annat blocks tider har dess
+-- lektioner (SQLSTATE TB409, 20261213090000).
+--
+-- Dela i halvklass with one subject writes a block per half with one post
+-- each, the second block on the first's times. A post alone in its block has
+-- no other member to be held to, so a change of its lessons is held to the
+-- posts of the block on the same times, either way round: refused with TB409,
+-- both blocks named in the message and the four ids in DETAIL. The weeks are
+-- not compared, since the two blocks are two periods. One statement over both
+-- halves is let in. Not judged at all: a post joining or leaving such a block,
+-- and an INSERT into one, which the generator judges, and a post alone in a
+-- block on nobody's times. A block of two posts on another's times is held to
+-- it too once its own posts agree. Through both API roles, because
+-- PostgREST's may write TeachingRequirements and meets no DTO.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  year uuid;
+  subject uuid;
+  g1 uuid; g2 uuid; g3 uuid; g4 uuid;
+  r1 uuid; r2 uuid; r4 uuid;
+  ht uuid; vt uuid; solo uuid;
+  via text;
+  msg text;
+  det text;
+  change text;
+  refused int;
+  pair record;
+BEGIN
+  SELECT id INTO year FROM "AcademicYears" WHERE "schoolId" = school ORDER BY "isActive" DESC, id LIMIT 1;
+  SELECT id INTO subject FROM "Subjects" WHERE "schoolId" = school ORDER BY id LIMIT 1;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt")
+  VALUES (school, year, 'RLS104b 6A:1', 'TEACHING_GROUP', now()) RETURNING id INTO g1;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt")
+  VALUES (school, year, 'RLS104b 6A:2', 'TEACHING_GROUP', now()) RETURNING id INTO g2;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt")
+  VALUES (school, year, 'RLS104b 6B:1', 'TEACHING_GROUP', now()) RETURNING id INTO g3;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt")
+  VALUES (school, year, 'RLS104b 6C', 'TEACHING_GROUP', now()) RETURNING id INTO g4;
+  INSERT INTO "TeachingBlocks" ("schoolId", "academicYearId", name, "updatedAt")
+  VALUES (school, year, 'RLS104b HT', now()) RETURNING id INTO ht;
+  INSERT INTO "TeachingBlocks" ("schoolId", "academicYearId", name, "sameTimesAsBlockId", "updatedAt")
+  VALUES (school, year, 'RLS104b VT', ht, now()) RETURNING id INTO vt;
+  INSERT INTO "TeachingBlocks" ("schoolId", "academicYearId", name, "updatedAt")
+  VALUES (school, year, 'RLS104b ensam', now()) RETURNING id INTO solo;
+  INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId",
+                                      "lessonsPerWeek", "minutesPerLesson", "endDate", "blockId", "updatedAt")
+  VALUES (school, year, subject, g1, 2, 60, DATE '2026-10-31', ht, now()) RETURNING id INTO r1;
+  INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId",
+                                      "lessonsPerWeek", "minutesPerLesson", "startDate", "blockId", "updatedAt")
+  VALUES (school, year, subject, g2, 2, 60, DATE '2026-11-02', vt, now()) RETURNING id INTO r2;
+  INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId",
+                                      "lessonsPerWeek", "minutesPerLesson", "blockId", "updatedAt")
+  VALUES (school, year, subject, g4, 2, 60, solo, now()) RETURNING id INTO r4;
+  PERFORM set_config('app.test_rls104b', json_build_object(
+    'school', school, 'year', year, 'subject', subject, 'g3', g3,
+    'r1', r1, 'r2', r2, 'r4', r4, 'ht', ht, 'vt', vt)::text, true);
+
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    IF current_user <> via THEN
+      RAISE EXCEPTION 'same times: running as %, not %', current_user, via;
+    END IF;
+    refused := 0;
+    -- Each half alone, either way round: the spring's post is held to the
+    -- autumn's, which its block names, and the autumn's to the spring's,
+    -- whose block names its own.
+    FOR pair IN SELECT * FROM (VALUES (r2, vt, 'RLS104b VT', r1, ht, 'RLS104b HT'),
+                                      (r1, ht, 'RLS104b HT', r2, vt, 'RLS104b VT'))
+                         AS p(post, block, block_name, other_post, other_block, other_name) LOOP
+      FOREACH change IN ARRAY ARRAY[
+        '"lessonsPerWeek" = 3',
+        '"minutesPerLesson" = 45',
+        '"minutesPerLesson" = 80, "lessonLengths" = ''{80,40}'''
+      ] LOOP
+        BEGIN
+          EXECUTE format('UPDATE "TeachingRequirements" SET %s WHERE id = %L', change, pair.post);
+          RAISE EXCEPTION 'same times: % on % alone was not refused as %', change, pair.block_name, via;
+        EXCEPTION
+          WHEN SQLSTATE 'TB409' THEN
+            GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT, det = PG_EXCEPTION_DETAIL;
+            IF msg <> format('BLOCK_MEMBERS_DIFFER: timplansposten i blocket "%s" har inte samma lektioner som posterna i blocket "%s", som läggs på samma tider',
+                             pair.block_name, pair.other_name) THEN
+              RAISE EXCEPTION 'same times: the refusal reads "%"', msg;
+            END IF;
+            IF det <> format('teachingBlockId=%s requirementId=%s otherRequirementId=%s sameTimesBlockId=%s',
+                             pair.block, pair.post, pair.other_post, pair.other_block) THEN
+              RAISE EXCEPTION 'same times: the refusal''s detail reads "%"', det;
+            END IF;
+            refused := refused + 1;
+        END;
+      END LOOP;
+    END LOOP;
+    IF refused <> 6 THEN RAISE EXCEPTION 'same times: % of 6 changes refused as %', refused, via; END IF;
+
+    -- Its weeks are its own: the two blocks are two periods.
+    UPDATE "TeachingRequirements" SET "endDate" = DATE '2027-01-15', "recurrence" = 'ODD_WEEKS' WHERE id = r2;
+    IF NOT FOUND THEN RAISE EXCEPTION 'same times: a half could not change its weeks as %', via; END IF;
+    -- A post alone in a block on nobody's times has its own lessons.
+    UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 3 WHERE id = r4;
+    UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 2 WHERE id = r4;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+END $$;
+
+-- What a pair may do: change both halves in one statement; take a post out
+-- and put one with other lessons in, which the generator judges; and a block
+-- of two posts on the pair's times is held to it once its own posts agree.
+DO $$
+DECLARE
+  t jsonb := current_setting('app.test_rls104b')::jsonb;
+  r3 uuid;
+  det text;
+BEGIN
+  UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 3, "minutesPerLesson" = 40
+   WHERE id IN ((t ->> 'r1')::uuid, (t ->> 'r2')::uuid);
+  IF (SELECT count(*) FROM "TeachingRequirements"
+       WHERE id IN ((t ->> 'r1')::uuid, (t ->> 'r2')::uuid) AND "lessonsPerWeek" = 3 AND "minutesPerLesson" = 40) <> 2 THEN
+    RAISE EXCEPTION 'same times: both halves could not change their lessons as one';
+  END IF;
+
+  UPDATE "TeachingRequirements" SET "blockId" = NULL WHERE id = (t ->> 'r2')::uuid;
+  UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 1, "minutesPerLesson" = 120 WHERE id = (t ->> 'r2')::uuid;
+  UPDATE "TeachingRequirements" SET "blockId" = (t ->> 'vt')::uuid WHERE id = (t ->> 'r2')::uuid;
+  IF (SELECT "blockId" FROM "TeachingRequirements" WHERE id = (t ->> 'r2')::uuid) IS DISTINCT FROM (t ->> 'vt')::uuid THEN
+    RAISE EXCEPTION 'same times: a post with other lessons could not join the block on the pair''s times';
+  END IF;
+  UPDATE "TeachingRequirements" SET "blockId" = NULL WHERE id = (t ->> 'r2')::uuid;
+  INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId",
+                                      "lessonsPerWeek", "minutesPerLesson", "blockId", "updatedAt")
+  VALUES ((t ->> 'school')::uuid, (t ->> 'year')::uuid, (t ->> 'subject')::uuid, (t ->> 'g3')::uuid,
+          1, 120, (t ->> 'vt')::uuid, now())
+  RETURNING id INTO r3;
+
+  -- VT now holds 6B:1 (1 × 120) alone, and HT 6A:1 (3 × 40). A second post
+  -- in HT with HT's lessons and weeks, then HT's two changed as one to
+  -- 2 × 60: its own posts agree, the block on its times does not.
+  UPDATE "TeachingRequirements" SET "blockId" = (t ->> 'ht')::uuid,
+         "lessonsPerWeek" = 3, "minutesPerLesson" = 40, "lessonLengths" = '{}',
+         "endDate" = DATE '2026-10-31', "startDate" = NULL, "recurrence" = 'ALL_WEEKS'
+   WHERE id = (t ->> 'r2')::uuid;
+  BEGIN
+    UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 2, "minutesPerLesson" = 60 WHERE "blockId" = (t ->> 'ht')::uuid;
+    RAISE EXCEPTION 'same times: a block of two posts changed its lessons away from the block on its times';
+  EXCEPTION
+    WHEN SQLSTATE 'TB409' THEN
+      GET STACKED DIAGNOSTICS det = PG_EXCEPTION_DETAIL;
+      IF det NOT LIKE '%sameTimesBlockId=' || (t ->> 'vt') THEN
+        RAISE EXCEPTION 'same times: the two-post block was refused for another reason: %', det;
+      END IF;
+  END;
+  -- With the block on its times changed in the same statement, let in.
+  UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 2, "minutesPerLesson" = 60
+   WHERE "blockId" IN ((t ->> 'ht')::uuid, (t ->> 'vt')::uuid);
+  IF (SELECT count(*) FROM "TeachingRequirements" WHERE "blockId" IN ((t ->> 'ht')::uuid, (t ->> 'vt')::uuid)
+       AND "lessonsPerWeek" = 2 AND "minutesPerLesson" = 60) <> 3 THEN
+    RAISE EXCEPTION 'same times: the pair could not change its three posts in one statement';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
 -- Section 130: skolenheterna nås bara genom API:t: skolans administratör
 -- skriver dem, tjänsten och synken läser dem (SchoolUnits, 20261031090000).
 --

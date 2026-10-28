@@ -136,6 +136,13 @@ export interface TeachingBlockRefusal {
   teachingBlockId: string | null;
   requirementId: string | null;
   otherRequirementId: string | null;
+  /**
+   * The block on the same times whose posts the post's new lessons left
+   * (20261213090000), and its name; null when the refusal is about the post's
+   * own block.
+   */
+  sameTimesBlockId: string | null;
+  sameTimesBlockName: string | null;
 }
 
 /**
@@ -146,7 +153,9 @@ export interface TeachingBlockRefusal {
  * meta.driverAdapterError.cause; the rendered message ("Code: `TB409`") is the
  * fallback, so an adapter release that stops carrying the cause degrades to a
  * 409 without the block's name rather than to a 500. The message names the
- * block in quotes, and DETAIL carries the three ids — never a person.
+ * block in quotes, and DETAIL carries the three ids — never a person. A post
+ * whose new lessons leave the block on the same times' (20261213090000) has
+ * that block named second in the message and a fourth id in DETAIL.
  */
 export function teachingBlockRefusal(error: unknown): TeachingBlockRefusal | null {
   if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return null;
@@ -163,6 +172,8 @@ export function teachingBlockRefusal(error: unknown): TeachingBlockRefusal | nul
     teachingBlockId: /teachingBlockId=([0-9a-f-]{36})/i.exec(detail)?.[1] ?? null,
     requirementId: /(?:^| )requirementId=([0-9a-f-]{36})/i.exec(detail)?.[1] ?? null,
     otherRequirementId: /otherRequirementId=([0-9a-f-]{36})/i.exec(detail)?.[1] ?? null,
+    sameTimesBlockId: /sameTimesBlockId=([0-9a-f-]{36})/i.exec(detail)?.[1] ?? null,
+    sameTimesBlockName: /som posterna i blocket "(.*)", som läggs på samma tider/.exec(text)?.[1] ?? null,
   };
 }
 
@@ -173,9 +184,26 @@ export function teachingBlockRefusal(error: unknown): TeachingBlockRefusal | nul
  * the two ways there are: the block's own lessons, changed for every member
  * at once (PATCH /teaching-blocks/:id, the Block panel's "Ändra lektioner"),
  * or the post taken out of the block first.
+ *
+ * A post held to the block on the same times (a term split's other period,
+ * 20261213090000) hears that block named: its lessons change with Ändra
+ * lektioner on either block, which writes both. Its weeks are its own, so the
+ * sentence asks only for the lessons.
  */
 export function blockMembersDifferConflict(refusal: TeachingBlockRefusal): ConflictException {
   const which = refusal.blockName === null ? 'ett block' : `blocket "${refusal.blockName}"`;
+  if (refusal.sameTimesBlockId !== null) {
+    const other = refusal.sameTimesBlockName === null ? 'ett annat block' : `blocket "${refusal.sameTimesBlockName}"`;
+    return new ConflictException({
+      message:
+        `Timplansposten i ${which} läggs på samma tider som ${other} och måste ha samma antal lektioner och ` +
+        'samma längder som dess poster. Ändra lektionerna med Ändra lektioner under Block på Timplansposter, ' +
+        'som ändrar båda blocken.',
+      code: BLOCK_MEMBERS_DIFFER,
+      ...(refusal.teachingBlockId !== null ? { teachingBlockId: refusal.teachingBlockId } : {}),
+      sameTimesBlockId: refusal.sameTimesBlockId,
+    });
+  }
   return new ConflictException({
     message:
       `Timplansposterna i ${which} läggs på samma tider och måste ha samma antal lektioner, ` +
