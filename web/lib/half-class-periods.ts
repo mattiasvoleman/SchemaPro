@@ -202,12 +202,14 @@ const MAX_MINUTES = 240;
  * Rounded UP: guaranteed time is a floor. A half over its target shows as
  * over in the timplan; one under it is a pupil short of the law's hours. The
  * epsilon keeps an exact need from a float's last bit rounding it up a whole
- * lesson. In turn the count is rounded in the class's lesson length (5 × 30
- * for a 1 × 30 read in half the autumn). A swap pays the surplus twice — the
- * line's and the other subject's, which the class's own post in it has to
- * give back — so it takes the closer of that and the class's lesson count
- * with a longer lesson, on the 5-minute grid: 1 × 30 read in 17 of 37 weeks
- * needs 65,3 a week, 1 × 70 rather than 3 × 30. A tie keeps the class's length.
+ * lesson. In turn and in a swap within the line the count is rounded in the
+ * class's lesson length (5 × 30 for a 1 × 30 read in half the autumn, 5 × 60
+ * for textilslöjd and trä- och metallslöjd swapped within it). A swap with
+ * another line pays the surplus twice — the line's and the other subject's,
+ * which the class's own post in it has to give back — so it takes the closer
+ * of that and the class's lesson count with a longer lesson, on the 5-minute
+ * grid: 1 × 30 read in 17 of 37 weeks needs 65,3 a week, 1 × 70 rather than
+ * 3 × 30. A tie keeps the class's length.
  */
 export function proposedLessons(
   post: LessonShape & TeachingPeriod,
@@ -233,7 +235,9 @@ export function proposedLessons(
   if (needed <= weekly + 1e-9) return null;
   const minutes = longestLessonOf(post);
   const inLength = { count: Math.min(MAX_LESSONS, Math.max(1, Math.ceil(needed / minutes - 1e-9))), minutes };
-  if (read === "inTurn") return inLength;
+  // Only a swap with another line pays the surplus twice; in turn and within
+  // the line the class's length stays, as #215 proposed it.
+  if (read !== "swapWithOther") return inLength;
   const count = Math.min(MAX_LESSONS, lessonCountOf(post));
   const longer = Math.ceil(needed / count / 5 - 1e-9) * 5;
   return longer <= MAX_MINUTES && count * longer < inLength.count * inLength.minutes

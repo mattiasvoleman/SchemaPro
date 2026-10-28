@@ -1152,6 +1152,17 @@ function TimplanLines({
               {tTimplan("reductionApply", { post: reducedPost, to: lengthsInWords([reduction.to]) })}
             </label>
           )}
+          {/* What Mål and Täckning say of the class's own line until the pupils are placed in the halves. */}
+          {!reduction.inBlock && reduction.classPlanned < reduction.target ? (
+            <p className="text-xs text-muted-foreground">
+              {tTimplan("reductionUnplaced", {
+                subject: otherSubject,
+                group: className,
+                planned: reduction.classPlanned,
+                target: reduction.target,
+              })}
+            </p>
+          ) : null}
         </>
       ) : null}
     </section>
