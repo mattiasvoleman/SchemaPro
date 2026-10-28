@@ -3878,6 +3878,43 @@ describe('OptimizationProxyService', () => {
         );
       });
 
+      it('sends the class as its pupils even when a replacing group takes hemkunskap from some of them', async () => {
+        // HK-ers replaces hemkunskap for pupil 1, who is in 7A:1: alone, 7A:1's
+        // hemkunskap would be sat by "7A:1 without HK-ers", a derived key that
+        // does not hold 7A:2. The class key wins, so 7A:2 is still held.
+        const HK_ERS = '7a000003-0000-4000-8000-000000000003';
+        const HK_ERS_POST = 'eeeeeeee-0008-4000-8000-000000000008';
+        arrangeTurns(
+          {
+            groups: [
+              { id: GROUP_ID, gradeLevel: 7, kind: 'CLASS', halfOfId: null, name: '7A', replacesSubjectId: null },
+              { id: H1, gradeLevel: 7, kind: 'TEACHING_GROUP', halfOfId: GROUP_ID, name: '7A:1', replacesSubjectId: null },
+              { id: H2, gradeLevel: 7, kind: 'TEACHING_GROUP', halfOfId: GROUP_ID, name: '7A:2', replacesSubjectId: null },
+              { id: HK_ERS, gradeLevel: null, kind: 'TEACHING_GROUP', halfOfId: null, name: 'HK-ers', replacesSubjectId: HK },
+            ],
+            teachingMembers: [
+              ...[1, 2].map((n) => ({ studentId: pupil(n), studentGroupId: H1 })),
+              ...[3, 4, 5].map((n) => ({ studentId: pupil(n), studentGroupId: H2 })),
+              { studentId: pupil(1), studentGroupId: HK_ERS },
+            ],
+          },
+          [
+            requirement({ id: H2_BILD, subjectId: BILD, studentGroupId: H2, teacherId: null, lessonsPerWeek: 1 }),
+            requirement({ id: HK_ERS_POST, subjectId: BILD, studentGroupId: HK_ERS, teacherId: null, lessonsPerWeek: 1 }),
+          ],
+        );
+
+        const prepared = await ready();
+
+        const real = new Map([...prepared.anonMaps.requirementAnonMap].map(([realId, anonId]) => [anonId, realId]));
+        const sent = prepared.payload.requirements.find((r) => real.get(r.id) === FIRST)!;
+        expect(sent.pupilGroupId).toBe(prepared.anonMaps.groupAnonMap.get(GROUP_ID));
+        // The replacing group is real and paired with the class, so it keeps
+        // off these times too: more held, never a pupil in two places.
+        const pairs = prepared.payload.groupConflicts.map((pair) => [...pair].sort().join(':'));
+        expect(pairs).toContain([prepared.anonMaps.groupAnonMap.get(GROUP_ID)!, prepared.anonMaps.groupAnonMap.get(HK_ERS)!].sort().join(':'));
+      });
+
       it('writes the second half’s hemkunskap at the first half’s times and room, in its own weeks only', async () => {
         arrangeTurns({ rooms: [hemkunskapssal] });
         http.post.mockImplementation((_url: string, payload: any) =>
