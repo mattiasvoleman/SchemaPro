@@ -788,10 +788,11 @@
   </p>
   <p>
     Ska halvorna byta ämne vid terminsskiftet, så att 7A:1 har textilslöjd på
-    hösten och trä- och metallslöjd på våren och 7A:2 tvärtom, gör
-    <span class="ui">Dela terminsvis i halvklass</span> på klassens post allt
-    på en gång: halvorna, de fyra posterna och ett block per termin (se
-    <em>Terminsvis halvklass</em> i 4.2).
+    hösten och trä- och metallslöjd på våren och 7A:2 tvärtom, eller läsa
+    hemkunskap var sin halva termin, gör
+    <span class="ui">Dela i halvklass</span> på klassens post allt på en gång:
+    halvorna, posterna och ett block per period (se
+    <em>Halvklass terminsvis eller på halva terminer</em> i 4.2).
   </p>
   <p>
     Klicka <span class="ui">Placera elever</span> på klassens rad eller på
@@ -1341,9 +1342,10 @@
     ämne, det med flest minuter i planen (vid lika svenska), och inget alls om
     den redan har något av dem. En klass vars halvor (3.4) redan har poster i
     ämnet, eller i ämnen med samma nationella kod, får ingen post i det. Efter
-    <span class="ui">Dela terminsvis i halvklass</span> (4.2) läser 7A:1 och
-    7A:2 textilslöjd och trä- och metallslöjd, och 7A får alltså ingen ny
-    slöjdpost. De överhoppade står i listan med skälet.
+    <span class="ui">Dela i halvklass</span> (4.2) läser 7A:1 och 7A:2
+    textilslöjd och trä- och metallslöjd, och 7A får alltså ingen ny
+    slöjdpost. Samma sak gäller hemkunskap som halvorna läser var sin period.
+    De överhoppade står i listan med skälet.
   </p>
 
   <h4>Täckning</h4>
@@ -1856,9 +1858,9 @@
       Blockets lektioner läggs ihop en och en, och två delade poster skulle
       binda en viss lärares lektion till en viss annans. Genereringen säger
       då vilka två poster det gäller. En post i ett block som ligger på ett
-      annat blocks tider (terminsvis halvklass, nedan) kan inte delas alls.
+      annat blocks tider (halvklass, nedan) kan inte delas alls.
       Genereringen säger även då vilken post det gäller.</li>
-    <li>En delad post kan inte delas terminsvis i halvklass (nedan), eftersom
+    <li>En delad post kan inte delas i halvklass (nedan), eftersom
       halvornas poster bemannas per ämne. Ta bort delningen först och välj
       sedan lärare för varje ämne i halvklassdialogen.</li>
     <li>Filen <em>timplansposter.csv</em> har ingen kolumn för delningen. En
@@ -1908,20 +1910,54 @@
       det går SvA-eleverna också på klassens svenska, och blocket vägras.
     </p>
   </div>
-  <h4 id="terminsvis-halvklass">Terminsvis halvklass</h4>
+  <h4 id="terminsvis-halvklass">Halvklass terminsvis eller på halva terminer</h4>
   <p>
     Slöjd läses ofta så att halva klassen har textilslöjd medan andra halvan
-    har trä- och metallslöjd, och halvorna byter vid terminsskiftet. Öppna
-    klassens post, till exempel <em>7A · Slöjd</em>, och tryck
-    <span class="ui">Dela terminsvis i halvklass</span> under
+    har trä- och metallslöjd, och halvorna byter vid terminsskiftet.
+    Hemkunskap läses ofta i halvklass under kortare perioder: 6A:1 läser in
+    sin hemkunskap under första halvan av hösten och 6A:2 under andra halvan,
+    eller under en halva av våren. Öppna klassens post, till exempel
+    <em>7A · Slöjd</em> eller <em>6A · Hemkunskap</em>, och tryck
+    <span class="ui">Dela i halvklass</span> under
     <span class="ui">Veckor</span>. Knappen finns på en klass post som gäller
     hela läsåret, inte ligger i ett block och inte delar sina lektioner mellan
     lärare.
   </p>
   <p>
-    Välj vilket ämne varje halva läser på hösten. På våren läser den det
-    ämne som den andra halvan läste på hösten. Halvorna byter alltså mellan
-    två ämnen, eftersom en grupp har en timplanspost per ämne. Har skolan
+    Välj först <span class="ui">Perioder</span>, de två perioder som halvorna
+    turas om under:
+  </p>
+  <ul>
+    <li><span class="ui">Hösten och våren</span>: från läsårets början till
+      och med dagen före vårterminen, och från vårterminens första dag till
+      läsårets slut. Rastra Schema föreslår första måndagen i januari som
+      vårterminens första dag.</li>
+    <li><span class="ui">Första och andra halvan av hösten</span>,
+      <span class="ui">Första och andra halvan av våren</span> och
+      <span class="ui">Första halvan av hösten och första halvan av
+      våren</span>: terminen delas på den måndag som ger halvorna lika många
+      undervisningsveckor, med lov och studiedagar under
+      <span class="path">Planering › Lov och studiedagar</span> borträknade.
+      Ett udda antal veckor ger den andra halvan en vecka mer.</li>
+    <li><span class="ui">Egna datum</span>: första och sista dagen för varje
+      period. Fälten fylls i med de perioder som stod i dialogen, så du kan
+      flytta en dag i taget. Den andra perioden måste börja efter att den
+      första slutat, så att halvorna aldrig läser samma vecka.</li>
+  </ul>
+  <p>
+    Välj sedan vilket ämne varje halva läser i den första perioden. Ska
+    halvorna läsa samma ämne var sin period, som hemkunskap, väljer du ämnet
+    för den första halvan och <span class="ui">Inget ämne</span> för den
+    andra. Den första halvan läser då ämnet i den första perioden och den
+    andra halvan i den andra. Utanför sin period läser halvan inte ämnet.
+    För en annan post än slöjd är det förvalt, med klassens eget ämne och
+    första och andra halvan av hösten.
+  </p>
+  <p>
+    Ska halvorna i stället byta mellan två ämnen, som i slöjd, väljer du ett
+    ämne för varje halva. I den andra perioden läser halvan det ämne som den
+    andra halvan läste i den första. Halvorna byter alltså mellan två ämnen,
+    eftersom en grupp har en timplanspost per ämne. Har skolan
     bara ämnet <em>Slöjd</em> lägger du först till exempelvis
     <em>Textilslöjd</em> och <em>Trä- och metallslöjd</em> under
     <span class="path">Grunddata › Ämnen</span> (3.2). Ge dem var sin salstyp,
@@ -1933,45 +1969,67 @@
     utan samma kod och har en länk till Ämnen, men delningen går att göra
     ändå. Täckningens <span class="ui">Planerat mot timplan</span> jämför
     ämne för ämne med den lokala timplanen, oavsett kod. Där räknas halvornas
-    två ämnen alltså inte mot en rad för Slöjd. Dialogen föreslår ämnen vars
-    namn säger textil eller trä och metall. Välj sedan
-    lärare och medlärare för varje ämne, om du vet vilka de är, och dagen då
-    vårterminen börjar. Rastra Schema föreslår första måndagen i januari.
-    Halvorna har lektion samtidigt, så samma person kan inte vara lärare
+    två ämnen alltså inte mot en rad för Slöjd. För en slöjdpost föreslår
+    dialogen ämnen vars namn säger textil eller trä och metall.
+  </p>
+  <p>
+    Välj lärare och medlärare för varje ämne, om du vet vilka de är. Med två
+    ämnen har halvorna lektion samtidigt, så samma person kan inte vara lärare
     eller medlärare i båda ämnena. Har klassens post en medlärare står hen
     förvald i det första ämnet; flytta hen till det andra eller ta bort hen
     om hen ska göra något annat. En medlärare som inte längre är aktiv följer
-    inte med, och dialogen säger det. Innan något sparas visar dialogen de
-    fyra posterna i en tabell.
+    inte med, och dialogen säger det. Med ett ämne har läraren den ena halvan
+    efter den andra.
   </p>
   <p>
-    <span class="ui">Dela terminsvis</span> gör allt i ett steg:
+    Under <span class="ui">Halvornas lektioner</span> anger du hur många
+    lektioner i veckan halvorna har under sin period, och hur långa de är.
+    En post som gäller en del av läsåret räknas i timplanen och
+    tjänstefördelningen efter sin andel av läsårets undervisningsveckor.
+    Läser en halva hemkunskap under en fjärdedel av läsåret i samma takt som
+    klassens post får varje elev alltså en fjärdedel av timmarna. Dialogen
+    föreslår därför den takt som ger varje elev klassens timmar: klassens
+    1 × 30 i veckan blir 4 × 30 under halva hösten. Under förslaget står hur
+    många timmar varje halva får och hur många klassens post ger, och hur
+    mycket tjänstefördelningen räknar för läraren mot klassens post. Läraren
+    undervisar båda halvorna och räknas alltså dubbelt så mycket som för
+    klassens post. Du kan skriva andra siffror, eller trycka
+    <span class="ui">Samma takt som klassens post</span>. Två ämnen över
+    hösten och våren behåller klassens lektioner, eftersom varje elev läser
+    ett av dem varje termin. Innan något sparas visar dialogen posterna i en
+    tabell, en kolumn per period.
+  </p>
+  <p>
+    <span class="ui">Dela i halvklass</span> gör allt i ett steg:
   </p>
   <ul>
     <li>Klassen delas i två halvor (3.4), om den inte redan är delad. Halvorna
       heter <em>7A:1</em> och <em>7A:2</em> om du inte ger dem andra namn.
       Har klassen redan två halvor används de.</li>
-    <li>Fyra poster skapas: 7A:1 läser det första ämnet på hösten och det
-      andra på våren, och 7A:2 läser tvärtom. Höstens poster gäller från
-      läsårets början till och med dagen före vårterminen. Vårens gäller från
-      den dagen till läsårets slut. Varje post får klassens lektioner,
-      längder, ombyte, egen fördelning och veckor (udda/jämna), och räknas
-      för lärare och medlärare med samma procent som klassens post
+    <li>Med två ämnen skapas fyra poster: 7A:1 läser det första ämnet i den
+      första perioden och det andra i den andra, och 7A:2 läser tvärtom. Med
+      ett ämne skapas två: den första halvans i den första perioden och den
+      andra halvans i den andra. Varje post gäller under sin period. Varje
+      post får halvornas lektioner och klassens ombyte, egen fördelning och
+      veckor (udda/jämna), och räknas för lärare och medlärare med samma
+      procent som klassens post
       (<span class="ui">Räknas för lärare (%)</span> och
       <span class="ui">Räknas för medlärare (%)</span>).</li>
-    <li>Höstens två poster läggs i ett parallellt block, till exempel
-      <em>Slöjd 7A HT</em>, och vårens poster i ett annat, till exempel
-      <em>Slöjd 7A VT</em>. Halvorna har då lektion samtidigt, och klassen
-      har aldrig slöjd två gånger. Vårens block läggs på höstens tider (se
-      nedan).</li>
+    <li>Den första periodens poster läggs i ett parallellt block, till
+      exempel <em>Slöjd 7A HT</em> eller <em>Hemkunskap 6A HT1</em>, och den
+      andra periodens i ett annat, till exempel <em>Slöjd 7A VT</em> eller
+      <em>Hemkunskap 6A HT2</em>. Med två ämnen har halvorna då lektion
+      samtidigt, och klassen har aldrig slöjd två gånger. Den andra periodens
+      block läggs på den första periodens tider (se nedan).</li>
     <li>Klassens post tas bort. Dess lärare och medlärare räknas inte längre.
       De nya posternas lärare och medlärare prövas mot tjänstefördelningens
       inställningar (4.3),
-      som när du sparar en post. Läraren i textilslöjd belastas för halva 1
-      på hösten och halva 2 på våren, alltså lika mycket som för en post
-      som gäller hela året. Lektioner som redan ligger i grundschemat för
-      klassens post ligger kvar tills du genererar igen. En låst lektion
-      ligger kvar tills du låser upp den eller tar bort den.</li>
+      som när du sparar en post, med halvornas lektioner och perioder.
+      Läraren i textilslöjd belastas för halva 1 på hösten och halva 2 på
+      våren, alltså lika mycket som för en post som gäller hela året.
+      Lektioner som redan ligger i grundschemat för klassens post ligger kvar
+      tills du genererar igen. En låst lektion ligger kvar tills du låser upp
+      den eller tar bort den.</li>
   </ul>
   <p>
     I vissa fall sparas ingenting:
@@ -1980,6 +2038,7 @@
     <li>klassens post delar sina lektioner mellan lärare;</li>
     <li>en halva har redan en post i något av ämnena;</li>
     <li>samma person är lärare eller medlärare i båda ämnena;</li>
+    <li>perioderna ligger utanför läsåret eller överlappar varandra;</li>
     <li>läsåret har redan ett block med något av namnen;</li>
     <li>tjänstefördelningen vägrar en av lärarna;</li>
     <li>klassen har bara en halva kvar;</li>
@@ -1991,9 +2050,11 @@
     tills efter genereringen.
   </p>
   <div class="note">
-    <span class="label">Samma tider båda terminerna</span>
+    <span class="label">Samma tider båda perioderna</span>
     <p>
-      Vårens block ligger på höstens tider. Genereringen lägger höstens block
+      Den andra periodens block ligger på den första periodens tider.
+      Nedan står hösten för den första perioden och våren för den andra.
+      Genereringen lägger höstens block
       och ger varje vårpost samma tider och sal som höstens post i samma ämne.
       Har 7A:1 textilslöjd i textilsalen på måndag kl. 9 på hösten, har 7A:2
       textilslöjd där på måndag kl. 9 på våren. Klassen har alltså slöjd på
@@ -2030,7 +2091,39 @@
     </ul>
     <p>
       Tar du bort det ena blocket får det andra egna tider igen. Vid
-      läsårsrullningen följer kopplingen med till nästa läsårs block.
+      läsårsrullningen följer kopplingen med till nästa läsårs block, och
+      periodernas datum flyttas med läsåret.
+    </p>
+    <p>
+      Med ett ämne lägger genereringen den första halvans post och håller
+      tiderna lediga för hela klassen, så att den andra halvan inte får något
+      annat där. Den andra halvans post skrivs sedan på samma tider och i
+      samma sal under sin period. Har 6A:1 hemkunskap på tisdag kl. 13 under
+      första halvan av hösten, har 6A:2 hemkunskap där på tisdag kl. 13 under
+      andra halvan. Genereringen planerar en vecka, så tiderna hålls lediga
+      för klassen hela läsåret, också när ingen av halvorna läser ämnet.
+      Halvan som inte läser ämnet har då en lucka på de tiderna, om du inte
+      lägger något i den för hand.
+    </p>
+    <p>
+      Ett block med en post har inget blockkort i grundschemat, och därför
+      ingen <span class="ui">Lås blocket</span>. Ska lektionerna stå kvar,
+      markerar du båda halvornas lektioner med skift-klick och låser dem på
+      en gång. Låser du bara den ena halvans vägrar nästa generering, med
+      blockens namn, tills båda är låsta eller båda olåsta. Drar du den ena
+      halvans lektion följer den andra halvans inte med. Dra båda, eller
+      generera igen.
+    </p>
+    <p>
+      Halvornas lektioner ändrar du med <span class="ui">Ändra lektioner</span>
+      på något av blocken under <span class="ui">Block</span>, som ändrar båda.
+      Ändrar du bara den ena halvans post i postens dialog vägrar
+      genereringen, med blockens namn, tills de har samma lektioner igen.
+      Den andra halvan läser sina lektioner på den första halvans tider. En
+      begränsning som bara gäller den andra halvan, till exempel en tid då
+      just den halvan är upptagen, och dess tak för lektioner per dag, ser
+      genereringen därför inte på de tiderna. Kontrollera dem efter
+      genereringen.
     </p>
     <p>
       Lägger genereringen ändå höstens och vårens block på var sin tid,
@@ -3266,8 +3359,8 @@
       eller lagts för hand medan resten ska läggas, vägras genereringen innan
       motorn startar, med blockets namn: lås upp blockets lektioner eller lås
       alla. Ett block där varje lektion är låst står kvar som du lagt det.
-      Vårens och höstens block efter en terminsvis delning bedöms tillsammans
-      (se <em>Terminsvis halvklass</em> i 4.2).
+      De två blocken efter en delning i halvklass bedöms tillsammans
+      (se <em>Halvklass terminsvis eller på halva terminer</em> i 4.2).
     </p>
     <p>
       Allt motorn säger står på svenska, med skolans egna namn: klassen, salen,
@@ -3497,8 +3590,10 @@
     låst. Flytta lektionen tillbaka med blocket och lås upp det som är låst,
     eller lås hela blocket. Drar du blockets kort flyttas alla dess lektioner
     i den tiden, och blocket är fortfarande genereringens. Efter en
-    terminsvis delning (4.2) gäller <span class="ui">Lås blocket</span> och
-    <span class="ui">Lås upp blocket</span> höstens och vårens block
+    delning i halvklass med två ämnen (4.2) gäller <span class="ui">Lås
+    blocket</span> och <span class="ui">Lås upp blocket</span> de två
+    periodernas block tillsammans. Med ett ämne har blocken bara en post var
+    och inget kort; markera då båda halvornas lektioner och lås dem
     tillsammans.
   </p>
 
