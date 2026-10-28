@@ -18,7 +18,8 @@
 // over the shorter of the two periods (each half reads it in one), with two
 // subjects over both (each half reads one in each, the class's line split
 // between them). The proposal keeps the class's lesson length and rounds the
-// count; the dialog shows the hours either way.
+// count UP, since guaranteed time is a floor; the dialog shows the hours
+// either way.
 
 import { teachingWeeks, type ClosedRange, type RequirementLoad, type TeachingPeriod, type YearBounds } from "@/lib/teaching-hours";
 import { longestLessonOf, weeklyMinutesOf, type LessonShape } from "@/lib/lesson-lengths";
@@ -122,9 +123,9 @@ export interface UniformLessons {
 }
 
 /**
- * The halves' week that keeps each pupil's minutes of the class's post, or
- * null when that is the class's own week (within 5 %: the terms with two
- * subjects, which split the line between the two). `subjects` is how many the
+ * The halves' week that gives each pupil at least the class's post's
+ * minutes, or null when the class's own week already does (the terms with
+ * two subjects, which split the line between the two). `subjects` is how many the
  * halves read: one in turn, or two swapped. Null too when a period has no
  * teaching week to read anything in.
  */
@@ -144,9 +145,16 @@ export function proposedLessons(
   const readWeeks = subjects === 1 ? Math.min(first, second) : first + second;
   if (weekly <= 0 || classWeeks <= 0 || readWeeks <= 0) return null;
   const needed = (weekly * classWeeks) / readWeeks;
-  if (Math.abs(needed - weekly) <= weekly * 0.05) return null;
+  // The class's own week already gives every pupil the class's minutes (two
+  // subjects over the terms read the line over the whole year).
+  if (needed <= weekly + 1e-9) return null;
   const minutes = longestLessonOf(post);
-  return { count: Math.min(40, Math.max(1, Math.round(needed / minutes))), minutes };
+  // Rounded UP: guaranteed time is a floor. A half over its target shows as
+  // over in the timplan; one under it is a pupil short of the law's hours.
+  // With equal periods the surplus is less than one weighted lesson, which
+  // the timplan reads as met. The epsilon keeps an exact need from a float's
+  // last bit rounding it up a whole lesson.
+  return { count: Math.min(40, Math.max(1, Math.ceil(needed / minutes - 1e-9))), minutes };
 }
 
 /** A uniform week as the timplanspost's lengths: 4 × 30 is [30, 30, 30, 30]. */

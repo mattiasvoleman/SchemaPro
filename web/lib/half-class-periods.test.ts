@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { annualMinutes } from "./teaching-hours";
 import {
   halvesRow,
   lengthsOf,
@@ -118,24 +119,84 @@ describe("proposedLessons", () => {
     expect(proposedLessons(slojd, terms, 2, YEAR, [], null)).toBeNull();
   });
 
-  it("doubles it for one subject over the terms, over the shorter one", () => {
-    // 2 × 60 over 43 weeks is 5 160 minutes; over the autumn's 20, 258 a week.
-    expect(proposedLessons(slojd, terms, 1, YEAR, [], null)).toEqual({ count: 4, minutes: 60 });
+  it("asks more than twice the pace for one subject over the terms, over the shorter one, rounded up", () => {
+    // 2 × 60 over 43 weeks is 5 160 minutes; over the autumn's 20, 258 a
+    // week: 4,3 lessons, so five. Four would leave each pupil 7 % short.
+    expect(proposedLessons(slojd, terms, 1, YEAR, [], null)).toEqual({ count: 5, minutes: 60 });
   });
 
-  it("asks four times the pace of hemkunskap read in half the autumn, in the class's lesson length", () => {
-    // 1 × 30 over 43 weeks is 1 290 minutes; over ten weeks, 129 a week.
-    expect(proposedLessons(hemkunskap, autumnHalves, 1, YEAR, [], null)).toEqual({ count: 4, minutes: 30 });
+  it("asks over four times the pace of hemkunskap read in half the autumn, in the class's lesson length", () => {
+    // 1 × 30 over 43 weeks is 1 290 minutes; over ten weeks, 129 a week:
+    // 4,3 lessons of 30, so five (150), never four (120, 27,9 a standard week).
+    expect(proposedLessons(hemkunskap, autumnHalves, 1, YEAR, [], null)).toEqual({ count: 5, minutes: 30 });
   });
 
-  it("doubles it for two subjects swapped within the autumn: each pupil reads the line half the year", () => {
-    expect(proposedLessons(slojd, autumnHalves, 2, YEAR, [], null)).toEqual({ count: 4, minutes: 60 });
+  it("rounds a need that is no whole number of lessons up: 2 × 45 over half the autumn is 8,6 lessons", () => {
+    const twoBy45 = { lessonsPerWeek: 2, minutesPerLesson: 45, lessonLengths: [], recurrence: "ALL_WEEKS" as const };
+    // 90 × 43 / 10 = 387 a week, 8,6 lessons of 45.
+    expect(proposedLessons(twoBy45, autumnHalves, 1, YEAR, [], null)).toEqual({ count: 9, minutes: 45 });
+  });
+
+  it("does not round up a need that is a whole number of lessons", () => {
+    // A läsår of 40 weeks, two terms of 20: half the autumn is ten weeks,
+    // and 1 × 30 over 40 weeks is exactly 4 × 30 over ten.
+    const forty = { startDate: "2026-08-17", endDate: "2027-05-21" };
+    const halves = presetPeriods("autumnHalves", SPRING, forty, [], null)!;
+    expect(proposedLessons(hemkunskap, halves, 1, forty, [], null)).toEqual({ count: 4, minutes: 30 });
+  });
+
+  it("asks a lesson more when the periods miss a week of the year: a week short is still short", () => {
+    // Two subjects over the terms with Christmas week in neither: 19 + 23 of
+    // 43 weeks, 2 × 60 × 43 / 42 = 122,9 a week. The class's own week would
+    // leave each pupil 2 % under; the proposal is 3 × 60, and the dialog
+    // shows the hours beside it.
+    const gap = [
+      { startDate: "2026-08-17", endDate: "2026-12-27" },
+      { startDate: "2027-01-04", endDate: "2027-06-11" },
+    ] as const;
+    expect(proposedLessons(slojd, gap, 2, YEAR, [], null)).toEqual({ count: 3, minutes: 60 });
+  });
+
+  it("asks over twice the pace for two subjects swapped within the autumn: each pupil reads the line half the year", () => {
+    expect(proposedLessons(slojd, autumnHalves, 2, YEAR, [], null)).toEqual({ count: 5, minutes: 60 });
+  });
+
+  it("never leaves a half under the class's minutes, whatever the preset, the lov or the week", () => {
+    const weeks = [
+      { lessonsPerWeek: 1, minutesPerLesson: 30, lessonLengths: [] },
+      { lessonsPerWeek: 2, minutesPerLesson: 45, lessonLengths: [] },
+      { lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] },
+      { lessonsPerWeek: 3, minutesPerLesson: 60, lessonLengths: [] },
+    ];
+    const presets = ["terms", "autumnHalves", "springHalves", "firstHalves"] as const;
+    for (const closures of [[], LOV]) {
+      for (const week of weeks) {
+        const post = { ...week, recurrence: "ALL_WEEKS" as const };
+        const classMinutes = annualMinutes(post, YEAR, closures, 7);
+        for (const preset of presets) {
+          const periods = presetPeriods(preset, SPRING, YEAR, closures, 7)!;
+          for (const subjects of [1, 2] as const) {
+            const row = halvesRow(post, proposedLessons(post, periods, subjects, YEAR, closures, 7));
+            const read = periods.map((period) =>
+              annualMinutes({ ...row, lessonLengths: row.lessonLengths ?? [], ...period }, YEAR, closures, 7),
+            );
+            // One subject: each half reads it in one period. Two: each reads
+            // the line over both.
+            const perPupil = subjects === 1 ? Math.min(...read) : read[0]! + read[1]!;
+            expect(perPupil, `${preset}, ${subjects} subject(s), ${week.lessonsPerWeek} lessons`).toBeGreaterThanOrEqual(
+              classMinutes - 1e-6,
+            );
+          }
+        }
+      }
+    }
   });
 
   it("counts odd weeks as the class's post does", () => {
     const odd = { ...hemkunskap, recurrence: "ODD_WEEKS" as const };
-    // Odd weeks over the year and over the period alike: the same four.
-    expect(proposedLessons(odd, autumnHalves, 1, YEAR, [], null)).toEqual({ count: 4, minutes: 30 });
+    // Odd weeks over the year (22) and over each half of the autumn (5) alike:
+    // 30 × 22 / 5 = 132 a week, 4,4 lessons, so five.
+    expect(proposedLessons(odd, autumnHalves, 1, YEAR, [], null)).toEqual({ count: 5, minutes: 30 });
   });
 
   it("proposes nothing for a period without a teaching week", () => {
