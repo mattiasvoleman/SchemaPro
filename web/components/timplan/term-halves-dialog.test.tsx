@@ -462,17 +462,18 @@ describe("one subject read in turn", () => {
     expect(submit().disabled).toBe(false);
   });
 
-  it("proposes the pace that keeps each pupil's hours, and says what the halves and the teacher get", () => {
+  it("proposes a pace that gives each pupil at least the class's hours, and says what the halves and the teacher get", () => {
     renderHemkunskap();
 
-    // 1 × 30 over 43 weeks is 21,5 h; over ten weeks it takes 4 × 30.
-    expect(screen.getByLabelText("lessonsCount")).toHaveValue(4);
+    // 1 × 30 over 43 weeks is 21,5 h; over ten weeks it takes 4,3 × 30, so
+    // 5 × 30: 25 h, never 4 × 30 and 20 h.
+    expect(screen.getByLabelText("lessonsCount")).toHaveValue(5);
     expect(screen.getByLabelText("lessonsMinutes")).toHaveValue(30);
     const hours = within(screen.getByTestId("term-halves-hours"));
-    expect(hours.getByText("lessonsOwn(lengthPart(4|30)|lengthPart(1|30))")).toBeInTheDocument();
-    expect(hours.getByText("hoursHalves(7A:1|20 h|7A:2|20 h|21,5 h)")).toBeInTheDocument();
-    // The teacher has both halves: 120 a week over 20 of 43 weeks, 56 min a standard week.
-    expect(hours.getByText("chargedLine(Hemkunskap|56|30)")).toBeInTheDocument();
+    expect(hours.getByText("lessonsOwn(lengthPart(5|30)|lengthPart(1|30))")).toBeInTheDocument();
+    expect(hours.getByText("hoursHalves(7A:1|25 h|7A:2|25 h|21,5 h)")).toBeInTheDocument();
+    // The teacher has both halves: 150 a week over 20 of 43 weeks, 70 min a standard week.
+    expect(hours.getByText("chargedLine(Hemkunskap|70|30)")).toBeInTheDocument();
   });
 
   it("sends one subject, the two periods, the halves' week and the blocks named after the periods", async () => {
@@ -486,7 +487,7 @@ describe("one subject read in turn", () => {
         { startDate: "2026-08-17", endDate: "2026-10-25" },
         { startDate: "2026-10-26", endDate: "2027-01-03" },
       ],
-      lessons: [30, 30, 30, 30],
+      lessons: [30, 30, 30, 30, 30],
       halfNames: ["7A:1", "7A:2"],
       blockNames: ["blockName(Hemkunskap|7A|blockSuffix.autumn1)", "blockName(Hemkunskap|7A|blockSuffix.autumn2)"],
     });
@@ -593,8 +594,9 @@ describe("one subject read in turn", () => {
       ["7A:1", "Hemkunskap", "Textilslöjd"],
       ["7A:2", "Textilslöjd", "Hemkunskap"],
     ]);
-    // Each pupil reads hemkunskap in one half of the autumn: twice the pace.
-    expect(screen.getByLabelText("lessonsCount")).toHaveValue(2);
+    // Each pupil reads the two in one half of the autumn each: 30 × 43 / 20
+    // is 64,5 a week, 2,15 lessons of 30, so three.
+    expect(screen.getByLabelText("lessonsCount")).toHaveValue(3);
     expect(screen.getByText("replaces(7A · Hemkunskap)")).toBeInTheDocument();
   });
 });
