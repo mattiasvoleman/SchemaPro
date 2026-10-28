@@ -140,6 +140,10 @@ const sameBlockShape = (a: BlockShape, b: BlockShape): boolean =>
   (a.startDate?.getTime() ?? null) === (b.startDate?.getTime() ?? null) &&
   (a.endDate?.getTime() ?? null) === (b.endDate?.getTime() ?? null);
 
+/** File rows as a message names them: "rad 3", "raderna 3 och 5", "raderna 2, 3 och 5". */
+const swedishRows = (rows: readonly number[]): string =>
+  rows.length === 1 ? `rad ${rows[0]}` : `raderna ${rows.slice(0, -1).join(', ')} och ${rows[rows.length - 1]}`;
+
 /** A stored post as the held rows are judged against it. */
 type StoredBlockRow = Pick<StoredRequirementValues, keyof BlockShape> & { id: string; blockId: string | null };
 
@@ -165,9 +169,10 @@ interface HeldBlockRow {
  * the whole file's 409, not a row's. So when a written row changes its
  * lessons, every post of the unit must have them as the file leaves it, or
  * every held row of the unit that would be written is a row error naming the
- * blocks; and the unit's lessons are written in ONE statement, before each
- * block's whole shape (its weeks among it) in one statement per block as
- * before. A unit that changes only weeks writes as a block on its own always
+ * blocks (a row leaving its own lessons as they are, its weeks changed, is
+ * told which rows change them); and the unit's lessons are written in ONE
+ * statement, before each block's whole shape (its weeks among it) in one
+ * statement per block as before. A unit that changes only weeks writes as a block on its own always
  * did: the weeks of the two periods differ by design.
  */
 async function writeHeldBlocks(
@@ -230,13 +235,33 @@ async function writeHeldBlocks(
     }
 
     const writtenRows = written.flatMap((blockId) => heldForBlock.get(blockId) ?? []);
-    const lessonsChange = writtenRows.some((entry) => !sameLessons(after.get(entry.current.id)!, shapeAfter(entry.current)));
-    if (unit.length > 1 && lessonsChange) {
+    const changesLessons = (entry: HeldBlockRow) => !sameLessons(after.get(entry.current.id)!, shapeAfter(entry.current));
+    if (unit.length > 1 && writtenRows.some(changesLessons)) {
       const posts = existing.filter((row) => row.blockId !== null && unit.includes(row.blockId));
       const lessons = after.get(writtenRows[0]!.current.id)!;
       if (!posts.every((row) => sameLessons(after.get(row.id)!, lessons))) {
+        // A row that leaves its lessons as they are (a period's weeks, say)
+        // is right on its own and is refused only with the unit; it is told
+        // which rows change the lessons, not that it must change its own.
+        const changers = writtenRows.filter(changesLessons);
+        const changerBlocks = [...new Set(changers.map((entry) => entry.current.blockId!))].map(
+          (blockId) => `"${nameOf.get(blockId) ?? ''}"`,
+        );
+        const changerRows = changers.map((entry) => entry.rowNumber);
         for (const entry of writtenRows) {
           const own = entry.current.blockId!;
+          if (!changesLessons(entry)) {
+            report.errors.push({
+              row: entry.rowNumber,
+              message:
+                `Raden ligger i blocket "${nameOf.get(own) ?? ''}" och ändrar inte dess lektioner, men skrivs inte: ` +
+                `${swedishRows(changerRows)} ändrar lektionerna i ${changerBlocks.length === 1 ? 'blocket' : 'blocken'} ` +
+                `${changerBlocks.join(', ')}, som läggs på samma tider, och båda blockens poster måste ha samma antal ` +
+                `lektioner och samma längder. Rätta ${changerRows.length === 1 ? 'den raden' : 'de raderna'}, eller ` +
+                'ändra lektionerna med Ändra lektioner under Block på Timplansposter, så skrivs också den här.',
+            });
+            continue;
+          }
           const others = unit
             .filter((blockId) => blockId !== own)
             .map((blockId) => `"${nameOf.get(blockId) ?? ''}"`)
