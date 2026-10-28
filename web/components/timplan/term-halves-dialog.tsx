@@ -35,8 +35,17 @@
 // weeks, so a half reading hemkunskap in a quarter of the year at the class's
 // pace would get a quarter of the class's hours, and the timplan would say
 // under mål. The dialog proposes the week that keeps each pupil's hours
-// (proposedLessons) and shows what the halves get and what the teacher is
-// charged; the admin can keep the class's pace instead, or type another.
+// (proposedLessons, by how the halves read the post's line: halvesRead) and
+// shows what the halves get and what the teacher is charged; the admin can
+// keep the class's pace instead, or type another.
+//
+// AGAINST THE TIMPLAN. Below the week, what a pupil of each half gets on each
+// line the split touches, against the plan's target — the timplan's own
+// figures (lib/half-class-timplan.ts), read under the keys Mål mode reads the
+// year's plans by. A swap of hemkunskap with slöjd gives each pupil slöjd in
+// the other period on top of the class's own slöjd post; the dialog proposes
+// how far that post can come down with no half under, and changes it in the
+// same save when the admin ticks it (the gateway's adjustedPost).
 //
 // A SWAP IS TWO SUBJECTS: a group has one post per subject, so a half cannot
 // read slöjd twice. The guesses below preselect a school's "Textilslöjd" /
@@ -49,7 +58,10 @@
 // national rows count a subject by its code. The Ämnen form leaves a new
 // subject without one, so a chosen subject whose code is not the post's is
 // named before the split, with the way to Ämnen; the split itself goes on
-// (the gateway answers the same in codeWarnings).
+// (the gateway answers the same in codeWarnings). In a swap with another
+// line (hemkunskap and slöjd) the other subject is meant to be another line:
+// the sentence says its minutes count on its own code, and only one without
+// a code is sent to Ämnen, its minutes being skolans val until it has one.
 //
 // THE TEACHERS COME AS IN THE POST'S OWN DIALOG: the strongest behörighet in
 // the subject first, with the same badge beside each name (strongestFirst and
@@ -69,17 +81,29 @@ import { ApiError, api } from "@/lib/api";
 import type { MessageLookup } from "@/lib/engine-message";
 import type { GradeSpan } from "@/lib/grade-span";
 import {
+  halvesRead,
   halvesRow,
   lengthsOf,
   periodsProblem,
   plannedRows,
   presetPeriods,
   proposedLessons,
+  readsPostLine,
   PERIOD_PRESETS,
   type HalfPeriod,
   type PeriodPreset,
   type UniformLessons,
 } from "@/lib/half-class-periods";
+import {
+  classPostReduction,
+  halvesTimplan,
+  type HalfLine,
+  type HalvesSplit,
+  type HalvesTimplanSources,
+  type StoredPost,
+} from "@/lib/half-class-timplan";
+import { plannedPlansOf } from "@/lib/requirements-target";
+import { useLocalTimplanDetails, useYearTimplans } from "@/lib/year-timplan-queries";
 import { lengthPartsOf, lengthsProblem, lessonCountOf, longestLessonOf, weeklyMinutesOf } from "@/lib/lesson-lengths";
 import {
   candidateQualification,
@@ -122,8 +146,14 @@ export interface TermHalvesDialogProps {
   /** The class's post to split; null: closed. */
   requirement: TeachingRequirement | null;
   /** The year's groups: the class and its halves are found among them. */
-  groups: readonly { id: string; name: string; halfOfId?: string | null }[];
-  subjects: readonly { id: string; name: string; nationalCode?: string | null }[];
+  groups: readonly { id: string; name: string; halfOfId?: string | null; gradeLevel?: number | null }[];
+  subjects: readonly { id: string; name: string; nationalCode?: string | null; countsTowardTimplan?: boolean }[];
+  /**
+   * The year's timplansposter, for what each half gets against the timplan:
+   * the class's other posts (its slöjd, when hemkunskap is swapped with
+   * slöjd) and the halves' own. Absent: the split's posts alone are judged.
+   */
+  posts?: readonly StoredPost[];
   teachers: readonly { id: string; firstName: string; lastName: string }[];
   /**
    * The school's behörigheter, for the badge beside each teacher and the order
@@ -152,7 +182,15 @@ interface SplitAnswer {
   halves: { id: string; name: string }[];
   warnings?: (StaffingWarning & { requirementId?: string })[];
   requirements?: { id: string; studentGroupId: string; subjectId: string }[];
+  /** The class's post the save changed too (adjustedPost), or null. */
+  adjustedRequirement?: { id: string; studentGroupId: string; subjectId: string } | null;
 }
+
+/** Stand-ins for the halves a split makes, so the timplan can be asked before they exist. */
+const NEW_HALVES = ["new-half-1", "new-half-2"] as const;
+/** No posts handed in: one list for every render, so the timplan's figures are not computed again. */
+const NO_POSTS: readonly StoredPost[] = [];
+const NO_CLOSURES: readonly ClosedRange[] = [];
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const dayOf = (value: string) => Date.parse(`${value}T00:00:00Z`);
@@ -200,6 +238,7 @@ export function isSlojd(name: string): boolean {
 /** The block names' last word for each period of a preset, by message key. */
 const BLOCK_SUFFIXES: Record<PeriodPreset, [string, string]> = {
   terms: ["autumn", "spring"],
+  yearHalves: ["period1", "period2"],
   autumnHalves: ["autumn1", "autumn2"],
   springHalves: ["spring1", "spring2"],
   firstHalves: ["autumn1", "spring1"],
@@ -225,7 +264,8 @@ function TermHalvesForm({
   gradeSpans,
   loadReport,
   year,
-  closures = [],
+  closures = NO_CLOSURES,
+  posts = NO_POSTS,
   onClose,
 }: Omit<TermHalvesDialogProps, "requirement"> & { requirement: TeachingRequirement }) {
   const t = useTranslations("requirements.termHalves");
@@ -290,6 +330,8 @@ function TermHalvesForm({
   const [halfNames, setHalfNames] = useState([`${className.slice(0, 58)}:1`, `${className.slice(0, 58)}:2`]);
   // Each named after its period until the admin names it.
   const [ownBlockNames, setOwnBlockNames] = useState<[string | null, string | null]>([null, null]);
+  // Whether the class's own post in the swap's other subject is brought down in the same save.
+  const [adjustChosen, setAdjustChosen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
@@ -321,11 +363,15 @@ function TermHalvesForm({
   const blockNames: [string, string] = [ownBlockNames[0] ?? blockNameFor(0), ownBlockNames[1] ?? blockNameFor(1)];
   const trimmedBlocks = blockNames.map((name) => name.trim());
   const subjectCount: 1 | 2 = pair[1] ? 2 : 1;
+  // How the halves read the post's line: in turn, or a swap within it or with another.
+  const read = halvesRead(pair, requirement.subjectId, subjects);
+  /** Whether the subject at `index` of the pair is the post's line (all are, but in a swap with another). */
+  const onLine = (index: number) => read !== "swapWithOther" || readsPostLine(pair[index]!, requirement.subjectId, subjects);
 
   // The halves' week, and what it gives each pupil and the teacher.
   const proposal =
     periods && periodsFault === null && year
-      ? proposedLessons(requirement, periods, subjectCount, year, closed, grade)
+      ? proposedLessons(requirement, periods, read, year, closed, grade)
       : null;
   const lessons: UniformLessons | null = ownLessons === "CLASS" ? null : (ownLessons ?? proposal);
   const shown: UniformLessons = lessons ?? { count: lessonCountOf(requirement), minutes: longestLessonOf(requirement) };
@@ -335,9 +381,13 @@ function TermHalvesForm({
   const week = halvesRow(requirement, lessons);
   const rows = periods && periodsFault === null ? plannedRows(week, requirement.recurrence, periods, subjectCount) : [];
   const yearDays = year ? { startDate: year.startDate, endDate: year.endDate } : null;
+  // On the post's line only: in a swap with another line the other subject's
+  // hours are the other line's (the timplan's lines below).
   const hoursOf = (half: 0 | 1) =>
     yearDays
-      ? rows.filter((row) => row.half === half).reduce((sum, row) => sum + annualMinutes(row, yearDays, closed, grade), 0)
+      ? rows
+          .filter((row) => row.half === half && onLine(row.subject))
+          .reduce((sum, row) => sum + annualMinutes(row, yearDays, closed, grade), 0)
       : 0;
   const classHours = yearDays ? annualMinutes(requirement, yearDays, closed, grade) : 0;
   /** A subject's standardvecka for its teacher, as the load report charges it (percent included). */
@@ -353,6 +403,57 @@ function TermHalvesForm({
     ? weeklyMinutesOf(requirement) * standardWeekWeight({ ...requirement, gradeSpan: span }, yearDays, closed) * percent
     : 0;
 
+  // Against the timplan: the year's plans as Mål mode reads them, the split
+  // laid over the year's posts, a pupil of each half.
+  const attachments = useYearTimplans(requirement.academicYearId);
+  const planIds = useMemo(
+    () => [...new Set((attachments.data ?? []).map((row) => row.localTimplanId))].sort(),
+    [attachments.data],
+  );
+  const plans = useLocalTimplanDetails(planIds, attachments.data !== undefined);
+  const timplanSources = useMemo<HalvesTimplanSources | null>(
+    () =>
+      year && attachments.data && plans.data
+        ? {
+            year,
+            closures: closed,
+            attachments: attachments.data,
+            plans: plannedPlansOf(attachments.data, plans.data),
+            subjects,
+          }
+        : null,
+    [year, closed, attachments.data, plans.data, subjects],
+  );
+  // The swap's subject that is not the post's line, whose class post can come down.
+  const otherSubjectId = read === "swapWithOther" ? (onLine(0) ? pair[1] : pair[0]) : null;
+  // The halves as the timplan is asked about them: the class's two, or stand-ins.
+  const splitHalves: HalvesSplit["halves"] | null =
+    splitting || halves.length === 2
+      ? [
+          { id: splitting ? NEW_HALVES[0] : halves[0]!.id, name: halfLabel(0) },
+          { id: splitting ? NEW_HALVES[1] : halves[1]!.id, name: halfLabel(1) },
+        ]
+      : null;
+  // Keyed on what the figures read, so a keystroke in a block name computes nothing again.
+  const splitKey = JSON.stringify([rows, pair, splitHalves]);
+  const { timplan, reduction } = useMemo(() => {
+    if (!timplanSources || rows.length === 0 || !theClass || !splitHalves) return { timplan: null, reduction: null };
+    const split: HalvesSplit = {
+      theClass: { id: theClass.id, name: theClass.name, gradeLevel: theClass.gradeLevel ?? null },
+      halves: splitHalves,
+      posts,
+      sourceId: requirement.id,
+      rows,
+      subjectIds: pair.slice(0, subjectCount),
+    };
+    const reduction = otherSubjectId ? classPostReduction(timplanSources, split, otherSubjectId) : null;
+    const adjusted = adjustChosen && reduction && !reduction.inBlock ? { requirementId: reduction.requirementId, week: reduction.to } : null;
+    return { timplan: halvesTimplan(timplanSources, { ...split, adjusted }, requirement.subjectId), reduction };
+    // splitKey stands for rows, pair and the halves, which are new arrays every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timplanSources, splitKey, posts, theClass, requirement.id, requirement.subjectId, otherSubjectId, subjectCount, adjustChosen]);
+  const adjusting = adjustChosen && reduction !== null && !reduction.inBlock ? reduction : null;
+
   const problems = {
     subjects: pair[0] === "" ? t("subjectsMissing") : pair[0] === pair[1] ? t("subjectsSame") : null,
     // The halves are at the same times, and the generator refuses a block
@@ -365,7 +466,15 @@ function TermHalvesForm({
     coTeachers: [0, 1].some((index) => index < subjectCount && coTeacherOf[index] !== "" && coTeacherOf[index] === teacherOf[index])
       ? t("coTeacherSame")
       : null,
-    spring: preset !== "custom" && !springFits ? t("springOutside") : preset !== "custom" && drawn === null ? t("periodsNotDrawn") : null,
+    // The läsår's halves read no spring start: only that they can be drawn.
+    spring:
+      preset === "custom"
+        ? null
+        : preset !== "yearHalves" && !springFits
+          ? t("springOutside")
+          : drawn === null
+            ? t("periodsNotDrawn")
+            : null,
     periods: preset === "custom" && periodsFault !== null ? t(`periodsInvalid.${periodsFault}`) : null,
     lessons: lessonsFault ? t("lessonsInvalid") : null,
     halves:
@@ -390,6 +499,20 @@ function TermHalvesForm({
     .map((id) => subjects.find((subject) => subject.id === id))
     .filter((subject): subject is (typeof subjects)[number] => subject !== undefined)
     .filter((subject) => postCode === null || (subject.nationalCode ?? null) !== postCode);
+  /** A sentence of the code notice, and whether it asks for Ämnen. */
+  const codeLine = (subject: (typeof subjects)[number]) => {
+    const code = subject.nationalCode ?? null;
+    // The swap's other line: its own code is what it should have.
+    if (subject.id === otherSubjectId) {
+      return code === null
+        ? { text: t("codeSwapMissing", { subject: subject.name, post: postSubject }), asks: true }
+        : { text: t("codeSwapOwn", { subject: subject.name, post: postSubject, code }), asks: false };
+    }
+    return postCode === null
+      ? { text: t("codeMissingOnPost", { subject: subject.name, post: postSubject }), asks: true }
+      : { text: t("codeDiffers", { subject: subject.name, post: postSubject, code: postCode }), asks: true };
+  };
+  const codeLines = uncoded.map((subject) => ({ id: subject.id, ...codeLine(subject) }));
 
   /** Half h reads pair[(h + period) % 2], nothing where that is the second and there is none. */
   const subjectAt = (half: number, period: number) => subjectName.get(pair[(half + period) % 2]!) ?? "–";
@@ -442,6 +565,7 @@ function TermHalvesForm({
         })),
         ...(terms ? { springStartDate: springStart } : { periods }),
         ...(lessons ? { lessons: lengthsOf(lessons) } : {}),
+        ...(adjusting ? { adjustedPost: { requirementId: adjusting.requirementId, lessons: lengthsOf(adjusting.to) } } : {}),
         ...(splitting ? { halfNames: halfLabels } : { halfIds: halves.map((half) => half.id) }),
         blockNames: trimmedBlocks,
       });
@@ -462,6 +586,8 @@ function TermHalvesForm({
       else {
         // Each sentence after the post it is about, as the block panel says them.
         const postOf = (id: string | undefined) => {
+          const adjusted = answer?.adjustedRequirement;
+          if (adjusted && adjusted.id === id) return `${className} · ${subjectName.get(adjusted.subjectId) ?? ""}: `;
           const row = answer?.requirements?.find((entry) => entry.id === id);
           const half = answer?.halves?.find((entry) => entry.id === row?.studentGroupId);
           return row && half ? `${subjectName.get(row.subjectId) ?? ""} · ${half.name}: ` : "";
@@ -525,7 +651,12 @@ function TermHalvesForm({
       ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
-        <FormField id="term-periods" label={t("periodsLabel")} className="sm:col-span-2">
+        <FormField
+          id="term-periods"
+          label={t("periodsLabel")}
+          className="sm:col-span-2"
+          error={preset === "yearHalves" ? problems.spring : null}
+        >
           {(control) => (
             <Select
               value={preset}
@@ -546,7 +677,7 @@ function TermHalvesForm({
             </Select>
           )}
         </FormField>
-        {preset === "custom" ? (
+        {preset === "yearHalves" ? null : preset === "custom" ? (
           ([0, 1] as const).flatMap((period) =>
             (["startDate", "endDate"] as const).map((field) => (
               <FormField
@@ -723,9 +854,10 @@ function TermHalvesForm({
           {rows.length > 0 && yearDays ? (
             <>
               <p>
-                {t("hoursHalves", {
+                {t(read === "swapWithOther" ? "hoursHalvesSubject" : "hoursHalves", {
                   first: halfLabel(0),
                   firstHours: formatHours(hoursOf(0)),
+                  ...(read === "swapWithOther" ? { subject: postSubject } : {}),
                   second: halfLabel(1),
                   secondHours: formatHours(hoursOf(1)),
                   classHours: formatHours(classHours),
@@ -756,6 +888,26 @@ function TermHalvesForm({
           </div>
         </div>
       </fieldset>
+
+      {rows.length > 0 && splitHalves ? (
+        <TimplanLines
+          state={
+            attachments.isError || plans.isError
+              ? { kind: "failed" }
+              : timplan === null
+                ? { kind: "loading" }
+                : timplan
+          }
+          halfLabel={halfLabel}
+          className={className}
+          subjectName={(id) => subjectName.get(id) ?? ""}
+          otherSubject={otherSubjectId ? (subjectName.get(otherSubjectId) ?? "") : ""}
+          reduction={reduction}
+          adjustChosen={adjustChosen}
+          onAdjust={setAdjustChosen}
+          lengthsInWords={lengthsInWords}
+        />
+      ) : null}
 
       {splitting ? (
         <fieldset className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
@@ -829,24 +981,22 @@ function TermHalvesForm({
         </table>
       </div>
 
-      {uncoded.length > 0 ? (
+      {codeLines.length > 0 ? (
         <Notice
-          tone="warning"
+          tone={codeLines.some((line) => line.asks) ? "warning" : "neutral"}
           role={null}
           title={t("codeTitle")}
           action={
-            <Button asChild variant="outline" size="sm">
-              <Link href="/admin/subjects">{t("codeAction")}</Link>
-            </Button>
+            codeLines.some((line) => line.asks) ? (
+              <Button asChild variant="outline" size="sm">
+                <Link href="/admin/subjects">{t("codeAction")}</Link>
+              </Button>
+            ) : undefined
           }
         >
           <ul className="space-y-1">
-            {uncoded.map((subject) => (
-              <li key={subject.id}>
-                {postCode === null
-                  ? t("codeMissingOnPost", { subject: subject.name, post: postSubject })
-                  : t("codeDiffers", { subject: subject.name, post: postSubject, code: postCode })}
-              </li>
+            {codeLines.map((line) => (
+              <li key={line.id}>{line.text}</li>
             ))}
           </ul>
         </Notice>
@@ -875,5 +1025,135 @@ function TermHalvesForm({
         </Button>
       </DialogFooter>
     </form>
+  );
+}
+
+/** What the timplan section draws: its lines, or why there are none yet. */
+type TimplanState = { kind: "loading" } | { kind: "failed" } | NonNullable<ReturnType<typeof halvesTimplan>>;
+
+/**
+ * What a pupil of each half gets on each line the split touches, against the
+ * plan's target, in the timplan's standardvecka minutes; then, in a swap with
+ * another line, how far the class's own post in it can come down, with the
+ * choice to change it in the same save.
+ */
+function TimplanLines({
+  state,
+  halfLabel,
+  className,
+  subjectName,
+  otherSubject,
+  reduction,
+  adjustChosen,
+  onAdjust,
+  lengthsInWords,
+}: {
+  state: TimplanState;
+  halfLabel: (half: number) => string;
+  className: string;
+  subjectName: (id: string) => string;
+  /** The swap's subject that is not the post's line; empty without one. */
+  otherSubject: string;
+  reduction: ReturnType<typeof classPostReduction>;
+  adjustChosen: boolean;
+  onAdjust: (chosen: boolean) => void;
+  lengthsInWords: ReturnType<typeof useLengthsInWords>;
+}) {
+  // Its own name: the key check (i18n/messages.test.ts) binds a name to one namespace per file.
+  const tTimplan = useTranslations("requirements.termHalves.timplan");
+  if (state.kind === "loading") {
+    return (
+      <p role="status" className="text-sm text-foreground">
+        {tTimplan("loading")}
+      </p>
+    );
+  }
+  if (state.kind === "failed") {
+    return (
+      <Notice tone="destructive" role={null}>
+        {tTimplan("failed")}
+      </Notice>
+    );
+  }
+  if (state.kind === "noGrade") return <p className="text-sm text-foreground">{tTimplan("noGrade", { group: className })}</p>;
+  if (state.kind === "noPlan") return <p className="text-sm text-foreground">{tTimplan("noPlan", { grade: state.gradeLevel })}</p>;
+  const nameOf = (line: HalfLine) => line.subjectIds.map(subjectName).join(" / ");
+  const cell = (line: HalfLine | undefined) =>
+    !line || line.target === null || line.planned === null
+      ? tTimplan("noTarget")
+      : line.planned < line.target
+        ? tTimplan("under", { planned: line.planned, target: line.target })
+        : tTimplan("met", { planned: line.planned, target: line.target });
+  const doubled = state.halves[0].filter(
+    (line, index) => line.doubleFrom.length > 0 || (state.halves[1][index]?.doubleFrom.length ?? 0) > 0,
+  );
+  const reducedPost = `${className} · ${otherSubject}`;
+  return (
+    <section className="grid gap-2 text-sm text-foreground" data-testid="term-halves-timplan">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <caption className="mb-1 text-left font-medium">{tTimplan("caption", { grade: state.gradeLevel })}</caption>
+          <thead>
+            <tr className="border-b text-left">
+              <th scope="col" className="py-1 pr-3 font-medium">
+                {tTimplan("lineColumn")}
+              </th>
+              <th scope="col" className="py-1 pr-3 font-medium">
+                {halfLabel(0)}
+              </th>
+              <th scope="col" className="py-1 font-medium">
+                {halfLabel(1)}
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {state.halves[0].map((line, index) => (
+              <tr key={line.key ?? line.subjectIds.join(",")} className="border-b last:border-0">
+                <th scope="row" className="py-1 pr-3 text-left font-normal">
+                  {nameOf(line)}
+                </th>
+                <td className="py-1 pr-3">{cell(line)}</td>
+                <td className="py-1">{cell(state.halves[1][index])}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-muted-foreground">{tTimplan("hint")}</p>
+      {doubled.map((line) => (
+        <p key={line.key ?? nameOf(line)}>{tTimplan("double", { subject: nameOf(line), group: className })}</p>
+      ))}
+      {reduction ? (
+        <>
+          <p>
+            {tTimplan("reduction", {
+              subject: otherSubject,
+              target: reduction.target,
+              post: reducedPost,
+              from: lengthsInWords([reduction.from]),
+              to: lengthsInWords([reduction.to]),
+              first: halfLabel(0),
+              firstPlanned: reduction.planned[0],
+              second: halfLabel(1),
+              secondPlanned: reduction.planned[1],
+            })}
+          </p>
+          {reduction.inBlock ? (
+            <p>{tTimplan("reductionInBlock", { post: reducedPost })}</p>
+          ) : (
+            // Top-aligned: the sentence wraps on a phone, and the box stays by its first line.
+            <label className="flex items-start gap-2 font-medium">
+              <input
+                type="checkbox"
+                className="mt-0.5 size-4 shrink-0 accent-primary"
+                checked={adjustChosen}
+                onChange={(event) => onAdjust(event.target.checked)}
+              />
+              {tTimplan("reductionApply", { post: reducedPost, to: lengthsInWords([reduction.to]) })}
+            </label>
+          )}
+        </>
+      ) : null}
+    </section>
   );
 }

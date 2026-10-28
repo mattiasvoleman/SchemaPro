@@ -2240,6 +2240,7 @@ export default function RequirementsPage() {
           loadReport={loadReport}
           year={yearBounds}
           closures={breaks}
+          posts={requirements}
           onClose={() => setTermHalves(null)}
         />
       ) : null}
