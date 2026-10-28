@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import {
   createPrismaMock,
   createTxMock,
@@ -7,7 +8,7 @@ import {
   type TxMock,
 } from '../../test/utils/prisma-mock';
 import type { PrismaService } from '../database/prisma.service';
-import { WRITE_CONFLICT } from '../common/utils/prisma-errors';
+import { BLOCK_MEMBERS_DIFFER, REQUIREMENT_SHARES_DO_NOT_FIT, WRITE_CONFLICT } from '../common/utils/prisma-errors';
 import { RequirementImportChecks } from '../staffing/staffing-enforcement';
 import type { StaffingFinding } from '../staffing/staffing-checks';
 import { SAME_TEACHER_TWICE } from '../staffing/staffing-enforcement';
@@ -19,6 +20,7 @@ import {
   REQUIREMENT_HAS_PERIOD,
   REQUIREMENT_IN_A_BLOCK,
   SPRING_START_OUTSIDE_YEAR,
+  TERM_ADJUSTED_POST_INVALID,
   TERM_LESSONS_INVALID,
   TERM_PERIODS_INVALID,
   TERM_PERIODS_MISSING,
@@ -50,6 +52,8 @@ const CECILIA = '88888888-8888-4888-8888-888888888883';
 const AUTUMN = '99999999-9999-4999-8999-999999999991';
 const SPRING = '99999999-9999-4999-8999-999999999992';
 const HEMKUNSKAP = '55555555-5555-4555-8555-555555555556';
+/** 6A's own slöjd, beside the hemkunskap post that is split. */
+const CLASS_SLOJD = '22222222-2222-4222-8222-222222222223';
 
 const day = (value: string) => new Date(`${value}T00:00:00.000Z`);
 
@@ -937,6 +941,236 @@ describe('TermHalvesService', () => {
         [null, day('2027-01-08')],
         [day('2027-01-11'), null],
       ]);
+    });
+  });
+  /*
+   * Hemkunskap swapped with slöjd: 6A's hemkunskap 1 × 30 split, the halves
+   * reading hemkunskap in one term and slöjd in the other, and 6A's own slöjd
+   * 2 × 40 brought down in the same save to give back what the swap adds.
+   */
+  describe('the swap’s other line: the class’s own post in the second subject (adjustedPost)', () => {
+    const SWAP = {
+      subjects: [
+        { subjectId: HEMKUNSKAP, teacherId: ANNA },
+        { subjectId: SLOJD, teacherId: BO },
+      ],
+      springStartDate: '2027-01-11',
+      lessons: [70],
+      adjustedPost: { requirementId: CLASS_SLOJD, lessons: [25, 25] },
+    };
+    const classSlojd = (overrides: Record<string, unknown> = {}) => ({
+      id: CLASS_SLOJD,
+      teacherId: CECILIA,
+      coTeacherId: null,
+      lessonsPerWeek: 2,
+      minutesPerLesson: 40,
+      lessonLengths: [],
+      shares: [],
+      ...overrides,
+    });
+
+    beforeEach(() => {
+      givenPost(
+        source({
+          subjectId: HEMKUNSKAP,
+          lessonsPerWeek: 1,
+          minutesPerLesson: 30,
+          lessonLengths: [],
+          subject: { name: 'Hemkunskap', nationalCode: 'HKK' },
+          studentGroup: { id: CLASS, name: '6A', kind: 'CLASS', halves: [] },
+        }),
+      );
+      tx.subject.findMany.mockResolvedValue([
+        { id: HEMKUNSKAP, name: 'Hemkunskap', nationalCode: 'HKK' },
+        { id: SLOJD, name: 'Slöjd', nationalCode: 'SLJ' },
+      ]);
+      tx.teachingRequirement.findFirst.mockResolvedValue(classSlojd());
+      tx.teachingRequirement.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+        ...source(),
+        id: CLASS_SLOJD,
+        subjectId: SLOJD,
+        teacherId: CECILIA,
+        ...data,
+      }));
+    });
+
+    it('reads the class’s own post in the second subject, and writes its new week after the posts, in the same transaction', async () => {
+      const result = await service.split(POST, SWAP, admin);
+
+      expect(tx.teachingRequirement.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: CLASS_SLOJD, studentGroupId: CLASS, academicYearId: YEAR, subjectId: { in: [HEMKUNSKAP, SLOJD] } },
+        }),
+      );
+      expect(tx.teachingRequirement.update).toHaveBeenCalledWith({
+        where: { id: CLASS_SLOJD },
+        data: { lessonsPerWeek: 2, minutesPerLesson: 25, lessonLengths: [] },
+      });
+      expect(tx.teachingRequirement.update.mock.invocationCallOrder[0]!).toBeGreaterThan(
+        tx.teachingRequirement.createManyAndReturn.mock.invocationCallOrder[0]!,
+      );
+      expect(prisma.withRls).toHaveBeenCalledTimes(1);
+      expect(result.adjustedRequirement).toEqual(
+        expect.objectContaining({ id: CLASS_SLOJD, lessonsPerWeek: 2, minutesPerLesson: 25 }),
+      );
+      // The halves' own week, as before.
+      const [{ data }] = tx.teachingRequirement.createManyAndReturn.mock.calls[0] as [{ data: Record<string, unknown>[] }];
+      expect(data.map((row) => [row.subjectId, row.lessonsPerWeek, row.minutesPerLesson])).toEqual([
+        [HEMKUNSKAP, 1, 70],
+        [SLOJD, 1, 70],
+        [SLOJD, 1, 70],
+        [HEMKUNSKAP, 1, 70],
+      ]);
+    });
+
+    it('takes the class’s slöjd when slöjd is the first subject, the first half reading it first', async () => {
+      const result = await service.split(
+        POST,
+        { ...SWAP, subjects: [{ subjectId: SLOJD, teacherId: BO }, { subjectId: HEMKUNSKAP, teacherId: ANNA }] },
+        admin,
+      );
+
+      expect(tx.teachingRequirement.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ subjectId: { in: [SLOJD, HEMKUNSKAP] } }) }),
+      );
+      expect(result.adjustedRequirement).toEqual(expect.objectContaining({ id: CLASS_SLOJD, minutesPerLesson: 25 }));
+    });
+
+    it('answers no adjusted post, and writes none, when the request names none', async () => {
+      const { adjustedPost: _, ...plain } = SWAP;
+
+      const result = await service.split(POST, plain, admin);
+
+      expect(result.adjustedRequirement).toBeNull();
+      expect(tx.teachingRequirement.findFirst).not.toHaveBeenCalled();
+      expect(tx.teachingRequirement.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses an adjusted post with one subject before it reads one', async () => {
+      const error = await service
+        .split(POST, { ...SWAP, subjects: [{ subjectId: HEMKUNSKAP }] } as never, admin)
+        .catch((e: unknown) => e);
+
+      expect((error as BadRequestException).getResponse()).toMatchObject({ code: TERM_ADJUSTED_POST_INVALID });
+      expect(tx.teachingRequirement.findFirst).not.toHaveBeenCalled();
+      expect(tx.teachingRequirement.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a post that is not the class’s own in either subject', {}, null],
+      ['the post being split', { subjects: [{ subjectId: SLOJD }, { subjectId: HEMKUNSKAP }] }, { id: POST }],
+    ] as const)('refuses an adjusted post %s, and writes nothing', async (_, change, found) => {
+      tx.teachingRequirement.findFirst.mockResolvedValue(found === null ? null : classSlojd(found));
+
+      const error = await service.split(POST, { ...SWAP, ...change } as never, admin).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect((error as BadRequestException).getResponse()).toMatchObject({ code: TERM_ADJUSTED_POST_INVALID });
+      expect(tx.teachingRequirement.deleteMany).not.toHaveBeenCalled();
+      expect(tx.teachingRequirement.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses a week no post can hold, by the field it is in', async () => {
+      const error = await service
+        .split(POST, { ...SWAP, adjustedPost: { requirementId: CLASS_SLOJD, lessons: [25, 27] } }, admin)
+        .catch((e: unknown) => e);
+
+      expect((error as BadRequestException).getResponse()).toMatchObject({
+        code: TERM_LESSONS_INVALID,
+        message: expect.stringMatching(/^adjustedPost\.lessons: /),
+      });
+      expect(tx.teachingRequirement.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('delade lektioner: refuses a week the post’s shares do not fit, as the post’s own dialog does', async () => {
+      // Bo teaches one of the two 40s; a week of 25s has no 40 for him.
+      tx.teachingRequirement.findFirst.mockResolvedValue(classSlojd({ shares: [{ teacherId: BO, lessons: 1, minutes: 40 }] }));
+
+      const error = await service.split(POST, SWAP, admin).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ConflictException);
+      expect((error as ConflictException).getResponse()).toMatchObject({ code: REQUIREMENT_SHARES_DO_NOT_FIT });
+      expect(tx.teachingRequirement.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('turns the block trigger’s TB409 on the post into the post dialog’s 409, and keeps nothing of the split', async () => {
+      const originalMessage = 'BLOCK_MEMBERS_DIFFER: timplansposterna i blocket "Slöjd åk 6" har inte samma lektioner och veckor';
+      tx.teachingRequirement.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError(`Database error. Code: \`TB409\`. Message: \`${originalMessage}\``, {
+          code: 'P2039',
+          clientVersion: Prisma.prismaVersion.client,
+          meta: { driverAdapterError: { cause: { originalCode: 'TB409', originalMessage, detail: '', kind: 'postgres' } } },
+        }),
+      );
+
+      const error = await service.split(POST, SWAP, admin).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ConflictException);
+      expect((error as ConflictException).getResponse()).toMatchObject({ code: BLOCK_MEMBERS_DIFFER });
+      // Thrown inside the one transaction: withRls rolls the split back with it.
+      expect(prisma.withRls).toHaveBeenCalledTimes(1);
+    });
+
+    describe('the staffing policy', () => {
+      const finding = (mode: 'WARN' | 'REFUSE'): StaffingFinding =>
+        ({ code: 'STAFF_TEACHER_OVER_TARGET', mode, params: { teacherName: 'Cecilia' } }) as unknown as StaffingFinding;
+      const givenChecks = (answer: (args: { requirementId: string | null }) => StaffingFinding[]) => {
+        const judge = jest.fn((args: { requirementId: string | null; patch: unknown }) => ({
+          findings: answer(args),
+          after: { id: args.requirementId ?? 'new' } as never,
+        }));
+        const stored = jest.fn((id: string) =>
+          id === POST
+            ? ({ id: POST, subjectId: HEMKUNSKAP, subjectName: 'Hemkunskap', studentGroupId: CLASS, groupName: '6A' } as never)
+            : id === CLASS_SLOJD
+              ? ({ id: CLASS_SLOJD, subjectId: SLOJD, subjectName: 'Slöjd', studentGroupId: CLASS, groupName: '6A' } as never)
+              : null,
+        );
+        openChecks.mockResolvedValue({ judge, apply: jest.fn(), stored } as unknown as RequirementImportChecks);
+        return judge;
+      };
+
+      it('locks its teacher with the rest, and asks about its week after the class’s post is released, before the new posts', async () => {
+        const judge = givenChecks(() => []);
+
+        await service.split(POST, SWAP, admin);
+
+        expect(openChecks).toHaveBeenCalledWith(tx, expect.objectContaining({ teacherIds: [ANNA, BO, CECILIA] }));
+        expect(judge.mock.calls.map(([args]) => [args.requirementId, args.patch])).toEqual([
+          [POST, { teacherId: null, coTeacherId: null }],
+          [CLASS_SLOJD, { lessonsPerWeek: 2, minutesPerLesson: 25, lessonLengths: [] }],
+          [null, expect.objectContaining({ teacherId: ANNA })],
+          [null, expect.objectContaining({ teacherId: BO })],
+          [null, expect.objectContaining({ teacherId: BO })],
+          [null, expect.objectContaining({ teacherId: ANNA })],
+        ]);
+      });
+
+      it('answers its WARN with its own id', async () => {
+        givenChecks(({ requirementId }) => (requirementId === CLASS_SLOJD ? [finding('WARN')] : []));
+
+        const result = await service.split(POST, SWAP, admin);
+
+        expect(result.warnings.map((warning) => [warning.code, warning.requirementId])).toEqual([
+          ['STAFF_TEACHER_OVER_TARGET', CLASS_SLOJD],
+        ]);
+      });
+
+      it('refuses with a 409 naming the class’s post, and writes nothing', async () => {
+        givenChecks(({ requirementId }) => (requirementId === CLASS_SLOJD ? [finding('REFUSE')] : []));
+
+        const error = await service.split(POST, SWAP, admin).catch((e: unknown) => e);
+
+        expect((error as ConflictException).getResponse()).toEqual(
+          expect.objectContaining({
+            message: expect.stringMatching(/^Slöjd för 6A: /),
+            code: 'STAFF_TEACHER_OVER_TARGET',
+            params: expect.objectContaining({ subjectId: SLOJD, studentGroupId: CLASS }),
+          }),
+        );
+        expect(tx.teachingRequirement.deleteMany).not.toHaveBeenCalled();
+        expect(tx.teachingRequirement.update).not.toHaveBeenCalled();
+      });
     });
   });
 });
