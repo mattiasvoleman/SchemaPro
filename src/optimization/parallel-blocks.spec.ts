@@ -160,7 +160,8 @@ describe('partlyLockedRefusal', () => {
     ]);
     expect(refusal.conflicts[0]!.message).toBe(
       'HT has 4 lessons locked or placed by hand, while VT, which takes the same times in other weeks, still has ' +
-        'all of its lessons to place. Lock the two blocks together, or unlock HT.',
+        'all of its lessons to place. Lock the two blocks together, or unlock HT. Blocks of one entry each have ' +
+        'no block card: select the lessons of both with shift-click and lock them together.',
     );
   });
 });

@@ -191,7 +191,8 @@ export function partlyLockedRefusal(
           params: { block, other, locked },
           message:
             `${block} has ${lessons(locked)} locked or placed by hand, while ${other}, which takes the same ` +
-            `times in other weeks, still has all of its lessons to place. Lock the two blocks together, or unlock ${block}.`,
+            `times in other weeks, still has all of its lessons to place. Lock the two blocks together, or unlock ${block}. ` +
+            'Blocks of one entry each have no block card: select the lessons of both with shift-click and lock them together.',
           requirementIds: members,
           roomIds: [],
           constraintIds: [],

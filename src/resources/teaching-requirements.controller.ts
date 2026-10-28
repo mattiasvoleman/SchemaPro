@@ -67,9 +67,11 @@ export class TeachingRequirementsController {
   }
 
   /**
-   * "Dela terminsvis i halvklass": the class's post replaced by four on its
-   * two halves, the two subjects swapping at the spring term, in one block
-   * per term (term-halves.service.ts).
+   * "Dela i halvklass": the class's post replaced by posts on its two
+   * halves, which take turns over two periods (the terms, half a term each,
+   * or the school's own dates): four when they swap two subjects, two when
+   * they read one in turn. One block per period, the second on the first's
+   * times (term-halves.service.ts).
    */
   @Post(':id/term-halves')
   splitByTerm(

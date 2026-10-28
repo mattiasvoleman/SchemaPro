@@ -762,14 +762,17 @@ MESSAGES: dict[str, str] = {
     "BLOCK_SAME_TIMES_PARTLY_LOCKED": (
         "{block} has {locked, plural, one {# lesson} other {# lessons}} locked or placed by hand, "
         "while {other}, which takes the same times in other weeks, still has all of its lessons "
-        "to place. Lock the two blocks together, or unlock {block}."
+        "to place. Lock the two blocks together, or unlock {block}. Blocks of one entry each have "
+        "no block card: select the lessons of both with shift-click and lock them together."
     ),
     # Refused by the gateway before this engine is called, as a 400 like the
     # block sentences above. `block` takes the times of `other`.
     "BLOCK_SAME_TIMES_DIFFER": (
         "{block} takes the times of {other}, and the two no longer fit together: they need the "
-        "same subjects for the same groups, with the same lessons, in weeks that never meet. Make "
-        "them match again, or delete {block} to place its lessons at times of their own."
+        "same subjects for the same groups (or, for a subject a class's halves take in turn, one entry "
+        "on each half), with the same lessons, in weeks that never meet. Make them match again, where "
+        "Change lessons on either block changes both, or delete {block} to place its lessons at times "
+        "of their own."
     ),
     "BLOCK_SAME_TIMES_TEACHERS": (
         "{block} takes the times of {other}, and has more teachers that {other} does not than the "

@@ -4264,8 +4264,9 @@ function sameTimesRefusalOf(
   const message =
     judgement.code === BLOCK_SAME_TIMES_DIFFER
       ? `${block} takes the times of ${other}, and the two no longer fit together: they need the same subjects ` +
-        'for the same groups, with the same lessons, in weeks that never meet. Make them match again, or delete ' +
-        `${block} to place its lessons at times of their own.`
+        "for the same groups (or, for a subject a class's halves take in turn, one entry on each half), with the " +
+        'same lessons, in weeks that never meet. Make them match again, where Change lessons on either block ' +
+        `changes both, or delete ${block} to place its lessons at times of their own.`
       : `${block} takes the times of ${other}, and has more teachers that ${other} does not than the entries of ` +
         `${other} have room for beside their own. Give the entries of ${block} the teachers of ${other}, or take a ` +
         `co-teacher off ${other}.`;
