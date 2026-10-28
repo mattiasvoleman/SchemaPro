@@ -2110,19 +2110,21 @@
       lägger något i den för hand.
     </p>
     <p>
-      Ett block med en post har inget blockkort i grundschemat, och därför
-      ingen <span class="ui">Lås blocket</span>. Ska lektionerna stå kvar,
-      markerar du båda halvornas lektioner med skift-klick och låser dem på
-      en gång. Låser du bara den ena halvans vägrar nästa generering, med
-      blockens namn, tills båda är låsta eller båda olåsta. Drar du den ena
-      halvans lektion följer den andra halvans inte med. Dra båda, eller
-      generera igen.
+      I grundschemat är varje halvas lektion ett eget blockkort med blockets
+      namn (5.3). <span class="ui">Lås blocket</span> på kortet låser båda
+      halvornas lektioner, och <span class="ui">Lås upp blocket</span> låser
+      upp båda. Drar du den ena halvans kort följer den andra halvans lektion
+      på samma tid med, i sina veckor. Flyttar du lektionen i dess egen dialog
+      följer den andra halvans inte med; dra kortet i stället.
     </p>
     <p>
       Halvornas lektioner ändrar du med <span class="ui">Ändra lektioner</span>
       på något av blocken under <span class="ui">Block</span>, som ändrar båda.
-      Ändrar du bara den ena halvans post i postens dialog vägrar
-      genereringen, med blockens namn, tills de har samma lektioner igen.
+      Ändrar du bara den ena halvans antal lektioner eller längder i postens
+      dialog säger sparningen att posten ligger på samma tider som det andra
+      blocket, och inget sparas. En importfil som ändrar bara den ena halvans
+      lektioner får ett fel på den raden; ändra båda halvornas rader likadant.
+      Veckorna är varje halvas egna och ändras i postens dialog.
       Den andra halvan läser sina lektioner på den första halvans tider. En
       begränsning som bara gäller den andra halvan, till exempel en tid då
       just den halvan är upptagen, och dess tak för lektioner per dag, ser
@@ -3495,6 +3497,8 @@
     redan står, följer den med kortet, och ett ångra lämnar den där den stod.
     Efter en terminsvis delning (4.2) står höstens och vårens kort på samma
     tid, och drar du det ena följer det andra med, var och ett i sina veckor.
+    Läser halvorna ett ämne i tur har varje block bara en post, och varje
+    lektion är då ett eget kort som tar den andra halvans lektion med sig.
     Kortet parkeras inte. Parkera en lektion i taget, från dess dialog.
   </p>
   <p>
@@ -3504,7 +3508,9 @@
     <span class="ui">Lås blocket</span> låser alla blockets lagda lektioner, i
     varje tid och inte bara den här, eftersom genereringen vägrar ett block som
     är delvis låst. Detsamma gäller när du markerar kortet och väljer
-    <span class="ui">Lås</span>. En parkerad lektion låses inte. Sidan säger
+    <span class="ui">Lås</span>. Ligger blocket på ett annat blocks tider
+    (4.2) låses det blockets lektioner också, på båda sätten.
+    En parkerad lektion låses inte. Sidan säger
     det, och nästa generering vägrar blocket tills lektionen är lagd. Knappen
     gäller hela blocket: den heter <span class="ui">Lås blocket</span> så länge
     någon av blockets lagda lektioner är olåst, och
@@ -3594,11 +3600,10 @@
     låst. Flytta lektionen tillbaka med blocket och lås upp det som är låst,
     eller lås hela blocket. Drar du blockets kort flyttas alla dess lektioner
     i den tiden, och blocket är fortfarande genereringens. Efter en
-    delning i halvklass med två ämnen (4.2) gäller <span class="ui">Lås
+    delning i halvklass (4.2) gäller <span class="ui">Lås
     blocket</span> och <span class="ui">Lås upp blocket</span> de två
-    periodernas block tillsammans. Med ett ämne har blocken bara en post var
-    och inget kort; markera då båda halvornas lektioner och lås dem
-    tillsammans.
+    periodernas block tillsammans, också med ett ämne i tur, där varje
+    halvas lektion är ett eget kort.
   </p>
 
   <h3 id="s54"><span class="num">5.4</span>Salsoptimering</h3>
