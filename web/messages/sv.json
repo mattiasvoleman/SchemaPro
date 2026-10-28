@@ -712,6 +712,7 @@
       "warnGroup": "{first} och {second} är samma grupp, och samma elever kan inte vara i båda samtidigt. Generatorn vägrar blocket.",
       "warnSplit": "{first} och {second} har båda sina lektioner delade mellan lärare, och ett blocks lektioner läggs ihop en och en. Generatorn vägrar blocket. Ge en av dem en lärare igen, eller ta den ur blocket.",
       "memberNotice": "Posten ligger i ett parallellt block, och dess lektioner och veckor är hela blockets. Ändra hela blockets lektioner med Ändra lektioner under Block, eller ta posten ur blocket för att ändra dem bara här.",
+      "memberNoticeLinked": "Posten ligger i blocket {block}, som läggs på samma tider som blocket {other}, och båda blockens poster har samma lektioner. Ändra dem med Ändra lektioner under Block, som ändrar båda blocken på en gång. Veckorna är varje blocks egna. Ta inte posten ur blocket för att ändra lektionerna bara här: då läggs den inte längre på samma tider som blocket {other}.",
       "lessons": "Ändra lektioner",
       "lessonsNamed": "Ändra lektionerna i blocket {name}",
       "lessonsTitle": "Lektioner i {name}",

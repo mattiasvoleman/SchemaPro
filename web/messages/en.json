@@ -712,6 +712,7 @@
       "warnGroup": "{first} and {second} are the same group, and the same pupils cannot be in both at once. The generator refuses the block.",
       "warnSplit": "{first} and {second} both have their lessons split between teachers, and the lessons of a block are placed together one by one. The generator refuses the block. Give one of them one teacher again, or take it out of the block.",
       "memberNotice": "The entry is in a parallel block, and its lessons and weeks are the whole block's. Change the whole block's lessons with Change lessons under Blocks, or take the entry out of the block to change them here alone.",
+      "memberNoticeLinked": "The entry is in the block {block}, which is placed at the same times as the block {other}, and the entries of both blocks have the same lessons. Change them with Change lessons under Blocks, which changes both blocks at once. Each block's weeks are its own. Do not take the entry out of the block to change its lessons here alone: it would then no longer be placed at the same times as the block {other}.",
       "lessons": "Change lessons",
       "lessonsNamed": "Change the lessons of the block {name}",
       "lessonsTitle": "Lessons in {name}",

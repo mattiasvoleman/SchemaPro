@@ -322,6 +322,9 @@ const freshState = () => ({
   masterLessons: loaded([] as Record<string, unknown>[]),
   /** Delade lektioner: the year's shares, from the gateway beside the rows. */
   shares: loaded([] as { requirementId: string; teacherId: string | null; lessons: number; minutes: number }[]),
+  /** The year's blocks, and the years the page asked for them (null: not asked). */
+  blocks: loaded([] as { id: string; academicYearId: string; name: string; sameTimesAsBlockId: string | null }[]),
+  blocksAskedFor: [] as (string | null)[],
 });
 
 interface YearTimplanFixture {
@@ -449,6 +452,16 @@ vi.mock("@/i18n/navigation", () => ({
   ),
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+
+// The year's blocks, read for the dialog of a post in one; blockPair is the
+// real one. Recorded, so a test can say when the page asked.
+vi.mock("@/lib/year-blocks", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/year-blocks")>()),
+  useYearBlocks: (yearId: string | null, enabled: boolean) => {
+    state.blocksAskedFor.push(enabled ? yearId : null);
+    return state.blocks;
+  },
+}));
 
 // Parallella block: the lazily loaded module, replaced by a stand-in that says
 // what the page handed it. Its own behaviour is teaching-blocks.test.tsx's.
@@ -2624,9 +2637,72 @@ describe("Parallella block on the timplan", () => {
 
     await user.click(screen.getByLabelText(/^cellLabel\w*\(7A\|Samhällsorientering\|/));
     expect(screen.getByRole("dialog")).toHaveTextContent("blocks.memberNotice");
+    expect(screen.getByRole("dialog")).not.toHaveTextContent("blocks.memberNoticeLinked");
     await user.keyboard("{Escape}");
     await user.click(screen.getByLabelText(/^cellLabel\w*\(7A\|Slöjd\|/));
     expect(screen.getByRole("dialog")).not.toHaveTextContent("blocks.memberNotice");
+  });
+
+  describe("a post in a block on another block's times (Dela i halvklass in turn)", () => {
+    // 7A's SO is the spring half's post, alone in its block, which takes the
+    // autumn block's times.
+    const pairBlocks = [
+      { id: "b-ht", academicYearId: "y1", name: "SO 7A HT", sameTimesAsBlockId: null },
+      { id: "b-vt", academicYearId: "y1", name: "SO 7A VT", sameTimesAsBlockId: "b-ht" },
+    ];
+    const inBlock = (blockId: string) =>
+      loaded(requirements.map((requirement) => (requirement.id === "r-so" ? { ...requirement, blockId } : requirement)));
+    const openSo = async () => {
+      render(<RequirementsPage />);
+      await userEvent.setup().click(screen.getByLabelText(/^cellLabel\w*\(7A\|Samhällsorientering\|/));
+      return screen.getByRole("dialog");
+    };
+    /** The ordinary block's notice, told apart from the pair's, whose key starts the same. */
+    const ORDINARY = /blocks\.memberNotice(?!Linked)/;
+
+    it("says the lessons are both blocks', changed with Ändra lektioner, and does not offer to take the post out", async () => {
+      state.requirements = inBlock("b-vt");
+      state.blocks = loaded(pairBlocks);
+
+      const dialog = await openSo();
+
+      expect(dialog).toHaveTextContent("blocks.memberNoticeLinked(SO 7A VT|SO 7A HT)");
+      expect(dialog).not.toHaveTextContent(ORDINARY);
+    });
+
+    it("says so either way round: the first period's post names the block on its times", async () => {
+      state.requirements = inBlock("b-ht");
+      state.blocks = loaded(pairBlocks);
+
+      expect(await openSo()).toHaveTextContent("blocks.memberNoticeLinked(SO 7A HT|SO 7A VT)");
+    });
+
+    it("asks for the year's blocks only once the year has a post in a block", () => {
+      render(<RequirementsPage />);
+      expect(state.blocksAskedFor.every((year) => year === null)).toBe(true);
+
+      state.blocksAskedFor = [];
+      state.requirements = inBlock("b-vt");
+      render(<RequirementsPage />);
+      expect(state.blocksAskedFor).toContain("y1");
+    });
+
+    it("says nothing while the blocks are read, rather than the advice that would part the pair", async () => {
+      state.requirements = inBlock("b-vt");
+      state.blocks = pending();
+
+      expect(await openSo()).not.toHaveTextContent("blocks.memberNotice");
+    });
+
+    it("says what it always said when the blocks cannot be read", async () => {
+      state.requirements = inBlock("b-vt");
+      state.blocks = failed();
+
+      const dialog = await openSo();
+
+      expect(dialog).toHaveTextContent(ORDINARY);
+      expect(dialog).not.toHaveTextContent("blocks.memberNoticeLinked");
+    });
   });
 });
 

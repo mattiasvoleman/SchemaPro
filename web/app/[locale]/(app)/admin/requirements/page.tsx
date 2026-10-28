@@ -176,6 +176,7 @@ import {
   peakLessonsPerWeekByKey,
 } from "@/lib/teaching-hours";
 import type { LessonRecurrence, StaffingWarning, TeachingRequirement } from "@/lib/types";
+import { blockPair, useYearBlocks } from "@/lib/year-blocks";
 import { isMixed, lengthPartsOf } from "@/lib/lesson-lengths";
 import {
   draftPartsOf,
@@ -443,6 +444,17 @@ export default function RequirementsPage() {
     isLoading: requirementsLoading,
     isError: requirementsFailed,
   } = useRequirements(activeYearId);
+  /*
+   * The year's blocks, for the dialog of a post in one: a block on another
+   * block's times (Dela i halvklass), or one whose times another takes, has
+   * its lessons with that block, and taking the post out of it would part it
+   * from the pair. Read once the year has a post in a block, so the dialog
+   * has them when it opens (lib/year-blocks.ts).
+   */
+  const yearBlocks = useYearBlocks(
+    activeYearId,
+    (requirements ?? []).some((row) => row.blockId),
+  );
   // Delade lektioner: each post's shares, from the gateway beside the rows.
   const {
     data: shareRows,
@@ -1803,8 +1815,20 @@ export default function RequirementsPage() {
             hidden (data-writes). An empty cell offers it nothing to open.
           */}
           <fieldset disabled={reader} className="min-w-0 space-y-4">
-            {cell?.existing?.blockId ? (
-              <Notice role={null}>{t("blocks.memberNotice")}</Notice>
+            {/*
+              A post in a block: its lessons are the block's. In a block on
+              another's times they are both blocks', and the advice to take
+              the post out would part it from the pair, so the notice waits
+              while the blocks are read; a list it cannot have (refused,
+              offline) says what it always said.
+            */}
+            {cell?.existing?.blockId && !yearBlocks.isLoading ? (
+              <Notice role={null}>
+                {(() => {
+                  const pair = blockPair(yearBlocks.data ?? [], cell.existing.blockId);
+                  return pair ? t("blocks.memberNoticeLinked", pair) : t("blocks.memberNotice");
+                })()}
+              </Notice>
             ) : null}
             {/* Three columns while extra lengths exist, so their rows line up under this pair. */}
             <div className={form.extraLengths.length > 0 ? EXTRA_ROW_GRID : "grid gap-4 sm:grid-cols-2 [&>*]:min-w-0"}>
