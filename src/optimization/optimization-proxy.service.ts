@@ -2513,12 +2513,16 @@ export class OptimizationProxyService {
     let sameTimesRefusal: HttpException | null = null;
     const followerIds = new Set(links.map((link) => link.followerBlockId));
     const rowById = new Map(rawRequirements.map((r) => [r.id, r]));
+    // Halvklasser: a half's class, so one subject read by the halves in turn
+    // can be held for the whole class (same-times.ts, holdsClass).
+    const halfOfById = new Map(allGroups.map((group) => [group.id, group.halfOfId ?? null]));
+    const sameTimesRow = (r: (typeof rawRequirements)[number]) => sameTimesRowOf(r, halfOfById);
     for (const link of blocks.mirrored.values()) {
       const membersOf = (blockId: string) => rawRequirements.filter((r) => r.blockId === blockId);
       const followers = membersOf(link.followerBlockId);
       const judgement = planMirror(
-        membersOf(link.leaderBlockId).map(sameTimesRowOf),
-        followers.map(sameTimesRowOf),
+        membersOf(link.leaderBlockId).map(sameTimesRow),
+        followers.map(sameTimesRow),
         followerIds.has(link.leaderBlockId),
       );
       if (!judgement.ok) {
@@ -2583,6 +2587,14 @@ export class OptimizationProxyService {
       const plan = leaderPlans.get(r.id);
       const bySubject = plan ? rowById.get(plan.sameSubject.get(r.id) ?? '') : undefined;
       const byGroup = plan ? rowById.get(plan.sameGroup.get(r.id) ?? '') : undefined;
+      // One subject read by the halves in turn: the first half's post is sat
+      // by the whole class as far as the engine knows, so the second half is
+      // free at its times for its own lessons there (same-times.ts). This
+      // overrides a replacing group's derived key: the class pairs with the
+      // replacing group too, so its lessons are kept off these times as
+      // well. That costs the week room, never puts a pupil in two places.
+      const heldClass = plan?.holdsClass.get(r.id);
+      const pupilKey = heldClass ?? pupilKeyByRequirement.get(r.id);
       const adults = plan?.adults.get(r.id) ?? { teacherId: r.teacherId, coTeacherId: r.coTeacherId };
       // Delade lektioner: each lesson left with its own teacher. Two or more
       // teachers send the list, and the scalar is its first; one sends that
@@ -2621,10 +2633,9 @@ export class OptimizationProxyService {
           id: anonId(requirementAnonMap, r.id),
           subjectId: anonId(subjectAnonMap, r.subjectId),
           studentGroupId: anonId(groupAnonMap, r.studentGroupId),
-          // Ersättande grupper: who sits it, when not all of the group (above).
-          ...(pupilKeyByRequirement.has(r.id)
-            ? { pupilGroupId: anonId(groupAnonMap, pupilKeyByRequirement.get(r.id)!) }
-            : {}),
+          // Ersättande grupper: who sits it, when not all of the group (above);
+          // the whole class, for a half's post that holds its sibling (above).
+          ...(pupilKey !== undefined ? { pupilGroupId: anonId(groupAnonMap, pupilKey) } : {}),
           teacherId: leadTeacher ? anonId(teacherAnonMap, leadTeacher) : null,
           lessonsPerWeek: remaining,
           // The longest REMAINING length: r.minutesPerLesson for a uniform
@@ -4170,21 +4181,25 @@ export class OptimizationProxyService {
   }
 }
 
-/** A timplanspost as same-times.ts plans it. */
-function sameTimesRowOf(row: {
-  id: string;
-  subjectId: string;
-  studentGroupId: string;
-  teacherId: string | null;
-  coTeacherId: string | null;
-  lessonsPerWeek: number;
-  minutesPerLesson: number;
-  lessonLengths: number[];
-  recurrence: LessonRecurrence;
-  startDate: Date | null;
-  endDate: Date | null;
-  shares?: readonly LessonShare[];
-}): SameTimesRow {
+/** A timplanspost as same-times.ts plans it, with its group's class when the group is a half. */
+function sameTimesRowOf(
+  row: {
+    id: string;
+    subjectId: string;
+    studentGroupId: string;
+    teacherId: string | null;
+    coTeacherId: string | null;
+    lessonsPerWeek: number;
+    minutesPerLesson: number;
+    lessonLengths: number[];
+    recurrence: LessonRecurrence;
+    startDate: Date | null;
+    endDate: Date | null;
+    shares?: readonly LessonShare[];
+  },
+  halfOfById: ReadonlyMap<string, string | null> = new Map(),
+): SameTimesRow {
+  const halfOfId = halfOfById.get(row.studentGroupId) ?? null;
   return {
     id: row.id,
     subjectId: row.subjectId,
@@ -4198,6 +4213,7 @@ function sameTimesRowOf(row: {
     startDate: row.startDate ?? null,
     endDate: row.endDate ?? null,
     ...((row.shares ?? []).length > 0 ? { shared: true } : {}),
+    ...(halfOfId !== null ? { halfOfId } : {}),
   };
 }
 

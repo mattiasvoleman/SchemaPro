@@ -2873,6 +2873,134 @@ async function runChecks(
     }
   });
 
+  await check('(u2f) hemkunskap split in halvklass over half a term each writes a post per half in a block each, sends the first as sat by the class, and the calendar holds each half in its own weeks only', async () => {
+    const requirements = new TeachingRequirementsService(api);
+    const subjects = new SubjectsService(api);
+    const years = new AcademicYearsService(api);
+    const termHalves = new TermHalvesService(api);
+    const year = await years.create(
+      { name: `${MARKER} halv termin`, startDate: '2092-08-18', endDate: '2093-06-12' } as never,
+      admin,
+    );
+    try {
+      const hemkunskap = await subjects.create({ name: `${MARKER} ht-hemkunskap` } as never, admin);
+      const klass = (
+        await owner.query<{ id: string }>(
+          `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+           VALUES ($1, $2, $3 || ' ht-6A', 'CLASS', 6, now()) RETURNING id`,
+          [fixture.schoolId, year.id, MARKER],
+        )
+      ).rows[0].id;
+      const post = await requirements.create(
+        { academicYearId: year.id, subjectId: hemkunskap.id, studentGroupId: klass, lessonsPerWeek: 1, minutesPerLesson: 60 } as never,
+        admin,
+      );
+
+      // The first half of the autumn and the second, 2 × 60 a week each.
+      const result = await termHalves.split(
+        post.id,
+        {
+          subjects: [{ subjectId: hemkunskap.id }],
+          periods: [
+            { startDate: '2092-08-18', endDate: '2092-10-31' },
+            { startDate: '2092-11-03', endDate: '2093-01-08' },
+          ],
+          lessons: [60, 60],
+          blockNames: [`${MARKER} ht-HT1`, `${MARKER} ht-HT2`],
+        },
+        admin,
+      );
+      assert.equal(result.createdHalves, true);
+      const posts = (
+        await owner.query<{ half: string; block: string; takes: string | null; lessons: number; minutes: number; startDate: string | null; endDate: string | null }>(
+          `SELECT g.name AS half, b.name AS block, a.name AS takes, r."lessonsPerWeek" AS lessons, r."minutesPerLesson" AS minutes,
+                  r."startDate"::text AS "startDate", r."endDate"::text AS "endDate"
+             FROM "TeachingRequirements" r
+             JOIN "StudentGroups" g ON g.id = r."studentGroupId"
+             JOIN "TeachingBlocks" b ON b.id = r."blockId"
+             LEFT JOIN "TeachingBlocks" a ON a.id = b."sameTimesAsBlockId"
+            WHERE r."academicYearId" = $1 ORDER BY g.name`,
+          [year.id],
+        )
+      ).rows.map((row) => [
+        row.half.replace(`${MARKER} `, ''), row.block.replace(`${MARKER} `, ''), row.takes?.replace(`${MARKER} `, '') ?? null,
+        row.lessons, row.minutes, row.startDate, row.endDate,
+      ]);
+      // The year's own first day is stored as null; the class's post is gone.
+      assert.deepEqual(posts, [
+        ['ht-6A:1', 'ht-HT1', null, 2, 60, null, '2092-10-31'],
+        ['ht-6A:2', 'ht-HT2', 'ht-HT1', 2, 60, '2092-11-03', '2093-01-08'],
+      ]);
+
+      // The generator's fetch sends 6A:1's post alone, sat by the whole
+      // class, and writes 6A:2's at its times.
+      const proxy = new OptimizationProxyService(
+        api,
+        { post: () => { throw new Error('the engine was called'); } } as never,
+        { getOrThrow: () => ({ baseUrl: 'http://engine.invalid', apiKey: 'k'.repeat(32), timeoutMs: 1 }) } as never,
+      );
+      const fetched = await api.withRls(admin, async (tx) =>
+        (
+          proxy as unknown as {
+            fetchAndAnonymize: (...args: unknown[]) => Promise<{
+              requirements: { id: string; blockId?: string; pupilGroupId?: string }[];
+              requirementAnonMap: Map<string, string>;
+              groupAnonMap: Map<string, string>;
+              mirrors: { leaderId: string; followerId: string }[];
+              sameTimesRefusal: unknown;
+            }>;
+          }
+        ).fetchAndAnonymize(tx, year.id, fixture.schoolId, await rostersOfYear(tx, admin, year.id)),
+      );
+      const [first, second] = result.requirements;
+      const realOf = new Map([...fetched.requirementAnonMap].map(([realId, anonId]) => [anonId, realId]));
+      assert.deepEqual(fetched.requirements.map((row) => realOf.get(row.id)), [first!.id]);
+      assert.equal(fetched.requirements[0]!.blockId, undefined, 'a block of one went to the engine as a block');
+      assert.equal(fetched.requirements[0]!.pupilGroupId, fetched.groupAnonMap.get(klass));
+      assert.deepEqual(fetched.mirrors, [{ leaderId: first!.id, followerId: second!.id }]);
+      assert.equal(fetched.sameTimesRefusal, null);
+
+      // As the generator writes them: both at Monday 08:00, each in its own
+      // weeks. Published over the year, the calendar has 6A:1 in a week of
+      // the first period, 6A:2 in a week of the second, and neither after.
+      for (const row of result.requirements) {
+        await owner.query(
+          `INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "dayOfWeek", "startTime", "endTime",
+                                        recurrence, "startDate", "endDate", "isGenerated", "updatedAt")
+           VALUES ($1, $2, $3, $4, 1, '08:00', '09:00', 'ALL_WEEKS', $5::date, $6::date, true, now())`,
+          [fixture.schoolId, year.id, row.subjectId, row.studentGroupId, row.startDate, row.endDate],
+        );
+      }
+      await new CalendarService(api).publish({ academicYearId: year.id, fromDate: '2092-08-18', toDate: '2093-06-12' }, admin);
+      const onMonday = async (date: string) =>
+        (
+          await owner.query<{ half: string }>(
+            `SELECT g.name AS half FROM "CalendarLessons" c JOIN "StudentGroups" g ON g.id = c."studentGroupId"
+              WHERE g."academicYearId" = $1 AND c.date = $2::date ORDER BY g.name`,
+            [year.id, date],
+          )
+        ).rows.map((row) => row.half.replace(`${MARKER} `, ''));
+      assert.deepEqual(await onMonday('2092-09-08'), ['ht-6A:1'], 'a Monday of the first period');
+      assert.deepEqual(await onMonday('2092-11-17'), ['ht-6A:2'], 'a Monday of the second period');
+      assert.deepEqual(await onMonday('2093-02-02'), [], 'a Monday after both periods');
+      const perHalf = (
+        await owner.query<{ half: string; first: string; last: string }>(
+          `SELECT g.name AS half, min(c.date)::text AS first, max(c.date)::text AS last
+             FROM "CalendarLessons" c JOIN "StudentGroups" g ON g.id = c."studentGroupId"
+            WHERE g."academicYearId" = $1 GROUP BY g.name ORDER BY g.name`,
+          [year.id],
+        )
+      ).rows.map((row) => [row.half.replace(`${MARKER} `, ''), row.first, row.last]);
+      assert.deepEqual(perHalf, [
+        ['ht-6A:1', '2092-08-18', '2092-10-27'],
+        ['ht-6A:2', '2092-11-03', '2093-01-05'],
+      ]);
+    } finally {
+      // The year takes its classes, halves, posts, blocks and lessons with it.
+      await years.remove(year.id, admin);
+    }
+  });
+
   await check('(u3) a timplan credit round-trips under RLS, a CHECK or key reached past the DTO is a 400 naming the field, and a teacher reads but cannot write', async () => {
     const credits = new TimplanCreditsService(api);
     const subjects = new SubjectsService(api);

@@ -181,3 +181,41 @@ def test_a_block_of_the_two_halves_holds_them_to_one_hour_and_is_not_refused() -
         assert error.code == "BLOCK_MEMBERS_SHARE_PUPILS"
     else:
         raise AssertionError("a block of paired halves was accepted")
+
+
+def test_a_half_sat_by_its_class_keeps_the_other_half_off_its_hours() -> None:
+    """One subject read by the halves in turn (Dela i halvklass, hemkunskap).
+
+    The gateway sends 7A:1's hemkunskap alone with its class as the pupils
+    who sit it (pupilGroupId), and writes 7A:2's at the same hours in its own
+    weeks. So 7A:2 must have nothing else there: the class pairs with both
+    halves, and a lesson sat by the class keeps off both. Here 7A:1's
+    two-hour lesson (SLOJD's place) is that hemkunskap and 7A:2's NO the
+    other half's own lesson, which without the key would share its hours.
+    """
+    payload = _payload(BEFORE_PLACEMENT, svenska=1)
+    for requirement in payload["requirements"]:  # type: ignore[union-attr]
+        if requirement["id"] == SLOJD:
+            requirement["pupilGroupId"] = CLASS_7A
+    status, lessons = _solve(payload)
+
+    assert status in {"OPTIMAL", "FEASIBLE"}
+    hemkunskap, no, svenska = _spans(lessons, SLOJD), _spans(lessons, NO), _spans(lessons, SVENSKA)
+    assert not _overlap(hemkunskap, no)
+    assert not _overlap(hemkunskap, svenska)
+    assert _validate(payload, lessons) == []
+
+
+def test_without_the_class_as_its_pupils_the_other_half_takes_the_hours_and_with_it_the_day_does_not_hold() -> None:
+    """Non-vacuity: two hours of svenska leave three, which only the rotation fits."""
+    rotating = _payload(BEFORE_PLACEMENT, svenska=2)
+    status, lessons = _solve(rotating)
+    assert status in {"OPTIMAL", "FEASIBLE"}
+    assert _spans(lessons, SLOJD) == _spans(lessons, NO)
+
+    held = _payload(BEFORE_PLACEMENT, svenska=2)
+    for requirement in held["requirements"]:  # type: ignore[union-attr]
+        if requirement["id"] == SLOJD:
+            requirement["pupilGroupId"] = CLASS_7A
+    status, _ = _solve(held)
+    assert status == "INFEASIBLE"

@@ -3777,6 +3777,158 @@ describe('OptimizationProxyService', () => {
       });
     });
 
+    describe('one subject read by the halves in turn: hemkunskap in halvklass, half a term each', () => {
+      // 7A's hemkunskap split by "Dela i halvklass" with one subject: 7A:1
+      // reads it the first half of the autumn and 7A:2 the second, 4 × 30
+      // with Hanna, each in a block of its own, the second on the first's times.
+      const H1 = '7a000001-0000-4000-8000-000000000001';
+      const H2 = '7a000002-0000-4000-8000-000000000002';
+      const HK = 'cccccccc-0003-4000-8000-000000000003';
+      const HANNA = 'dddddddd-0004-4000-8000-000000000004';
+      const P1 = 'bbbbbbbb-0003-4000-8000-000000000003';
+      const P2 = 'bbbbbbbb-0004-4000-8000-000000000004';
+      const FIRST = 'eeeeeeee-0005-4000-8000-000000000005';
+      const SECOND = 'eeeeeeee-0006-4000-8000-000000000006';
+      const firstEnd = new Date('2026-10-30T00:00:00.000Z');
+      const secondStart = new Date('2026-11-02T00:00:00.000Z');
+      const secondEnd = new Date('2027-01-10T00:00:00.000Z');
+      const pupil = (n: number) => `aaaaaaa${n}-0000-4000-8000-00000000000${n}`;
+      const hemkunskap = (id: string, studentGroupId: string, blockId: string, startDate: Date | null, endDate: Date | null) =>
+        requirement({
+          id,
+          subjectId: HK,
+          studentGroupId,
+          teacherId: HANNA,
+          lessonsPerWeek: 4,
+          minutesPerLesson: 30,
+          blockId,
+          startDate,
+          endDate,
+          subject: { requiredRoomTypeId: 'room-type-hk', name: 'Hemkunskap' },
+        });
+      const BILD = 'cccccccc-0004-4000-8000-000000000004';
+      const H2_BILD = 'eeeeeeee-0007-4000-8000-000000000007';
+      const arrangeTurns = (overrides: Arrangement = {}, extra: Row[] = []) => {
+        arrange({
+          requirements: [
+            hemkunskap(FIRST, H1, P1, null, firstEnd),
+            hemkunskap(SECOND, H2, P2, secondStart, secondEnd),
+            ...extra,
+          ],
+          groups: [
+            { id: GROUP_ID, gradeLevel: 7, kind: 'CLASS', halfOfId: null, name: '7A' },
+            { id: H1, gradeLevel: 7, kind: 'TEACHING_GROUP', halfOfId: GROUP_ID, name: '7A:1' },
+            { id: H2, gradeLevel: 7, kind: 'TEACHING_GROUP', halfOfId: GROUP_ID, name: '7A:2' },
+          ],
+          // Two pupils in 7A:1 and three in 7A:2.
+          homeMembers: [1, 2, 3, 4, 5].map((n) => ({ id: pupil(n), studentGroupId: GROUP_ID })),
+          teachingMembers: [
+            ...[1, 2].map((n) => ({ studentId: pupil(n), studentGroupId: H1 })),
+            ...[3, 4, 5].map((n) => ({ studentId: pupil(n), studentGroupId: H2 })),
+          ],
+          ...overrides,
+        });
+        tx.teachingBlock.findMany.mockResolvedValue([
+          { id: P1, name: 'Hemkunskap 7A period 1', sameTimesAsBlockId: null },
+          { id: P2, name: 'Hemkunskap 7A period 2', sameTimesAsBlockId: P1 },
+        ]);
+      };
+      const ready = async (): Promise<PreparedSchedule> => {
+        const result = await service.prepareSchedule(tx as unknown as PrismaClient, ACADEMIC_YEAR, testUser());
+        if (!result.ready) throw new Error(`refused: ${result.refusalCode}`);
+        return result;
+      };
+      const hemkunskapssal = { id: '55555555-0003-4000-8000-000000000003', capacity: 16, roomTypeId: 'room-type-hk' };
+
+      it('sends the first half’s post alone, as sat by the whole class, sized for the larger half', async () => {
+        // 7A:2 has a post of its own as well, a bild nobody else reads, so it
+        // is in the payload with lessons that could otherwise take those times.
+        arrangeTurns({}, [
+          requirement({ id: H2_BILD, subjectId: BILD, studentGroupId: H2, teacherId: null, lessonsPerWeek: 1 }),
+        ]);
+
+        const prepared = await ready();
+
+        const real = new Map([...prepared.anonMaps.requirementAnonMap].map(([realId, anonId]) => [anonId, realId]));
+        const [sent, ...rest] = prepared.payload.requirements;
+        expect([sent, ...rest].map((r) => real.get(r!.id))).toEqual([FIRST, H2_BILD]);
+        // A block of one is no block to the engine.
+        expect(sent!.blockId).toBeUndefined();
+        // Filed under 7A:1, sat by 7A, which pairs with both halves: 7A:2 has
+        // nothing else at the times its hemkunskap is written at.
+        const anonGroup = prepared.anonMaps.groupAnonMap;
+        expect(sent!.studentGroupId).toBe(anonGroup.get(H1));
+        expect(sent!.pupilGroupId).toBe(anonGroup.get(GROUP_ID));
+        const pairs = prepared.payload.groupConflicts.map((pair) => [...pair].sort().join(':'));
+        for (const half of [H1, H2]) {
+          expect(pairs).toContain([anonGroup.get(GROUP_ID)!, anonGroup.get(half)!].sort().join(':'));
+        }
+        // The halves themselves never pair: the rotation is theirs to share.
+        expect(pairs).not.toContain([anonGroup.get(H1)!, anonGroup.get(H2)!].sort().join(':'));
+        // 7A:1 has two pupils and 7A:2 three: the kitchen holds either half.
+        expect(sent!.studentGroupSize).toBe(3);
+        // Hanna has the two halves one after the other: nobody new to hold.
+        expect(sent!.coTeacherId ?? null).toBeNull();
+        expect(prepared.mirrors).toEqual([{ leaderId: FIRST, followerId: SECOND }]);
+        expect(prepared.demand).toEqual(
+          expect.arrayContaining([
+            { requirementId: FIRST, lessonsPerWeek: 4 },
+            { requirementId: SECOND, lessonsPerWeek: 4 },
+          ]),
+        );
+      });
+
+      it('writes the second half’s hemkunskap at the first half’s times and room, in its own weeks only', async () => {
+        arrangeTurns({ rooms: [hemkunskapssal] });
+        http.post.mockImplementation((_url: string, payload: any) =>
+          of({
+            data: {
+              requestId: payload.requestId,
+              status: 'OPTIMAL',
+              lessons: payload.requirements.flatMap((r: any) =>
+                Array.from({ length: r.lessonsPerWeek }, (_, n) => ({
+                  requirementId: r.id,
+                  roomId: payload.rooms[0]?.id ?? null,
+                  dayOfWeek: n + 1,
+                  startTime: '13:00:00',
+                  endTime: '13:30:00',
+                })),
+              ),
+              conflicts: null,
+            },
+          }),
+        );
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        const rows = written().map((row) => [
+          row.studentGroupId, row.teacherId, row.roomId, row.dayOfWeek,
+          (row.startTime as Date).toISOString().slice(11, 16), row.startDate, row.endDate,
+        ]);
+        expect(rows).toEqual([
+          ...[1, 2, 3, 4].map((day) => [H1, HANNA, hemkunskapssal.id, day, '13:00', null, firstEnd]),
+          ...[1, 2, 3, 4].map((day) => [H2, HANNA, hemkunskapssal.id, day, '13:00', secondStart, secondEnd]),
+        ]);
+      });
+
+      it('refuses the turn by the blocks’ names when the second half reads another week than the first', async () => {
+        arrangeTurns();
+        tx.teachingRequirement.findMany.mockResolvedValue([
+          hemkunskap(FIRST, H1, P1, null, firstEnd),
+          { ...hemkunskap(SECOND, H2, P2, secondStart, secondEnd), lessonsPerWeek: 2 },
+        ]);
+
+        const result = await service.prepareSchedule(tx as unknown as PrismaClient, ACADEMIC_YEAR, testUser());
+
+        expect(result.ready).toBe(false);
+        if (result.ready) return;
+        expect(result.refusalCode).toBe('BLOCK_SAME_TIMES_DIFFER');
+        expect(result.refusal.conflicts).toMatchObject({
+          summaryParams: { block: 'Hemkunskap 7A period 2', other: 'Hemkunskap 7A period 1' },
+        });
+      });
+    });
+
     describe('soft room wishes', () => {
       it('anonymises the subject, type and rooms a wish names', async () => {
         arrange({

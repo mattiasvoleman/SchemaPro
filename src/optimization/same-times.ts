@@ -22,7 +22,17 @@ import { weeksCanOverlap } from '../calendar/lesson-recurrence';
  *
  *  - The follower's GROUPS are the leader's (the halves), so a half is busy at
  *    those times in every week anyway, and nothing more is needed for them.
- *    A follower on other groups is refused (BLOCK_SAME_TIMES_DIFFER).
+ *    One exception: ONE SUBJECT READ BY THE HALVES IN TURN. "Dela i halvklass"
+ *    with hemkunskap makes a block of one post per period, 7A:1's in the
+ *    first and 7A:2's in the second, so the follower is the other half. The
+ *    leader post is then sent as sat by the whole class (its pupilGroupId is
+ *    the class, `holdsClass`): the class pairs with both halves, so neither
+ *    has anything else at those times, and 7A:2's hemkunskap is written there
+ *    in its own weeks. Its class-space rules (7A:1's daily maximum, its rasts,
+ *    a reservation on 7A:1) are still 7A:1's, as they are for every post of a
+ *    half; the same rules of 7A:2 do not see the mirrored lesson, which the
+ *    manual says (4.2). Any other follower on other groups is refused
+ *    (BLOCK_SAME_TIMES_DIFFER).
  *  - Its TEACHERS: one the leader block has is at those times already. One it
  *    has not — the spring's textilslöjd taught by somebody else — is sent as
  *    a teacher or co-teacher of a leader post with that place empty: every
@@ -69,6 +79,8 @@ export interface SameTimesRow {
   endDate: Date | null;
   /** Delade lektioner: whether some of its lessons are another teacher's. */
   shared?: boolean;
+  /** Halvklasser: the class whose half the group is, or null for a class or a teaching group. */
+  halfOfId?: string | null;
 }
 
 /** A block of the year with the block it takes the times of, or null. */
@@ -93,7 +105,10 @@ export interface Mirror {
 export interface MirrorPlan {
   /** Every follower post with its leader post in the same subject. */
   mirrors: Mirror[];
-  /** Leader post -> the follower post on the same group, whose buffers it keeps too. */
+  /**
+   * Leader post -> the follower post on the same group (or on the half the
+   * leader holds as its class), whose buffers it keeps too.
+   */
   sameGroup: Map<string, string>;
   /** Leader post -> the follower post in the same subject, whose rule it keeps too. */
   sameSubject: Map<string, string>;
@@ -102,6 +117,12 @@ export interface MirrorPlan {
    * a follower's teacher the leader block does not have.
    */
   adults: Map<string, { teacherId: string | null; coTeacherId: string | null }>;
+  /**
+   * Leader post -> the class it is sent as sat by (pupilGroupId), when its
+   * follower is the other half of that class (one subject read in turn; see
+   * the header). Empty for every other link.
+   */
+  holdsClass: Map<string, string>;
 }
 
 export type MirrorJudgement =
@@ -167,10 +188,22 @@ export function planMirror(
     pairs.push({ leader, follower });
   }
 
-  // The same groups, the halves swapped between the subjects or not.
+  // The same groups, the halves swapped between the subjects or not — or one
+  // post on each side, on the two halves of one class (see the header).
   const groups = (rows: readonly SameTimesRow[]) => rows.map((row) => row.studentGroupId).sort(byId).join(',');
-  if (groups(lead) !== groups(follow)) return differ;
+  const holdsClass = new Map<string, string>();
+  if (groups(lead) !== groups(follow)) {
+    const [leader] = lead;
+    const [follower] = follow;
+    const theClass = lead.length === 1 ? (leader!.halfOfId ?? null) : null;
+    if (theClass === null || (follower!.halfOfId ?? null) !== theClass) return differ;
+    holdsClass.set(leader!.id, theClass);
+  }
+  // The leader post a follower's group is held by: the one on its group, or
+  // the one sent as its class.
   const leaderByGroup = new Map(lead.map((row) => [row.studentGroupId, row]));
+  const holderOf = (follower: SameTimesRow) =>
+    leaderByGroup.get(follower.studentGroupId) ?? lead.find((leader) => holdsClass.has(leader.id))!;
 
   // The same lessons, and never a week in common.
   for (const { leader, follower } of pairs) {
@@ -215,9 +248,10 @@ export function planMirror(
     ok: true,
     plan: {
       mirrors: pairs.map(({ leader, follower }) => ({ leaderId: leader.id, followerId: follower.id })),
-      sameGroup: new Map(follow.map((follower) => [leaderByGroup.get(follower.studentGroupId)!.id, follower.id])),
+      sameGroup: new Map(follow.map((follower) => [holderOf(follower).id, follower.id])),
       sameSubject: new Map(pairs.map(({ leader, follower }) => [leader.id, follower.id])),
       adults,
+      holdsClass,
     },
   };
 }

@@ -138,6 +138,76 @@ describe('planMirror', () => {
   it('refuses a chain: the autumn block on a third block’s times', () => {
     expect(planMirror(autumn, spring, true)).toEqual({ ok: false, code: BLOCK_SAME_TIMES_DIFFER });
   });
+
+  it('holds no class for a swap: both halves are on the leader’s posts already', () => {
+    const judged = planMirror(
+      autumn.map((row) => ({ ...row, halfOfId: '7A' })),
+      spring.map((row) => ({ ...row, halfOfId: '7A' })),
+    );
+    expect(judged.ok && judged.plan.holdsClass).toEqual(new Map());
+  });
+});
+
+describe('planMirror, one subject read by the halves in turn', () => {
+  // Hemkunskap for 6.1: 6.1:1 reads it the first half of the autumn, 6.1:2
+  // the second, each in a block of its own, the second on the first's times.
+  const FIRST_END = new Date('2026-10-30T00:00:00Z');
+  const SECOND_START = new Date('2026-11-02T00:00:00Z');
+  const hk = (id: string, half: string, startDate: Date | null, endDate: Date | null, teacherId = 'hanna'): SameTimesRow => ({
+    ...post(id, 'hk', half, 'HT', teacherId),
+    lessonsPerWeek: 4,
+    minutesPerLesson: 30,
+    startDate,
+    endDate,
+    halfOfId: '6.1',
+  });
+  const first = hk('p1', '6.1:1', null, FIRST_END);
+  const second = hk('p2', '6.1:2', SECOND_START, AUTUMN_END);
+
+  it('writes the second half’s post at the first half’s times, the first sent as sat by the whole class', () => {
+    const judged = planMirror([first], [second]);
+    expect(judged.ok).toBe(true);
+    if (!judged.ok) return;
+    expect(judged.plan.mirrors).toEqual([{ leaderId: 'p1', followerId: 'p2' }]);
+    // The class pairs with both halves: 6.1:2 has nothing else at those times.
+    expect(judged.plan.holdsClass).toEqual(new Map([['p1', '6.1']]));
+    // Its buffers, its room (the larger half) and its rule ride on p1.
+    expect(judged.plan.sameGroup).toEqual(new Map([['p1', 'p2']]));
+    expect(judged.plan.sameSubject).toEqual(new Map([['p1', 'p2']]));
+    // One teacher, the two halves one after the other: nobody new to seat.
+    expect(judged.plan.adults).toEqual(new Map([['p1', { teacherId: 'hanna', coTeacherId: null }]]));
+  });
+
+  it('seats another teacher of the second half beside the first, held all year as any follower’s', () => {
+    const judged = planMirror([first], [{ ...second, teacherId: 'harald' }]);
+    expect(judged.ok && judged.plan.adults).toEqual(new Map([['p1', { teacherId: 'hanna', coTeacherId: 'harald' }]]));
+  });
+
+  it('accepts half the autumn against half the spring: the weeks never meet', () => {
+    const spring = hk('p2', '6.1:2', SPRING, new Date('2027-03-26T00:00:00Z'));
+    expect(planMirror([first], [spring]).ok).toBe(true);
+  });
+
+  it.each([
+    ['the halves of two classes', { ...second, halfOfId: '6.2', studentGroupId: '6.2:2' }],
+    ['a class that is no half', { ...second, halfOfId: null, studentGroupId: '6.2' }],
+    ['another subject', { ...second, subjectId: 'bild' }],
+    ['other lessons', { ...second, lessonsPerWeek: 2 }],
+    ['weeks that meet', { ...second, startDate: new Date('2026-10-26T00:00:00Z') }],
+  ])('refuses %s', (_, follower) => {
+    expect(planMirror([first], [follower as SameTimesRow])).toEqual({ ok: false, code: BLOCK_SAME_TIMES_DIFFER });
+  });
+
+  it('refuses a leader whose group is no half, though the follower is one', () => {
+    expect(planMirror([{ ...first, halfOfId: null }], [second])).toEqual({ ok: false, code: BLOCK_SAME_TIMES_DIFFER });
+  });
+
+  it('refuses two posts on a side: only one post per period is a turn, more is a swap and needs the same halves', () => {
+    const other = hk('p3', '6.1:2', null, FIRST_END);
+    const leaders = [first, { ...other, subjectId: 'bild' }];
+    const followers = [second, { ...second, id: 'p4', subjectId: 'bild', studentGroupId: '6.1:3' }];
+    expect(planMirror(leaders, followers)).toEqual({ ok: false, code: BLOCK_SAME_TIMES_DIFFER });
+  });
 });
 
 describe('mirrorLessons', () => {
