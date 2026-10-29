@@ -1084,9 +1084,6 @@ function TimplanLines({
       : line.planned < line.target
         ? tTimplan("under", { planned: line.planned, target: line.target })
         : tTimplan("met", { planned: line.planned, target: line.target });
-  const doubled = state.halves[0].filter(
-    (line, index) => line.doubleFrom.length > 0 || (state.halves[1][index]?.doubleFrom.length ?? 0) > 0,
-  );
   const reducedPost = `${className} · ${otherSubject}`;
   return (
     <section className="grid gap-2 text-sm text-foreground" data-testid="term-halves-timplan">
@@ -1120,9 +1117,6 @@ function TimplanLines({
         </table>
       </div>
       <p className="text-xs text-muted-foreground">{tTimplan("hint")}</p>
-      {doubled.map((line) => (
-        <p key={line.key ?? nameOf(line)}>{tTimplan("double", { subject: nameOf(line), group: className })}</p>
-      ))}
       {reduction ? (
         <>
           <p>

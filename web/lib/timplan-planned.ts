@@ -768,6 +768,25 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
   for (const classId of classes) {
     const group = groupsById.get(classId)!;
     const flagged = flaggedClassLines.get(classId)!;
+    // The class and one of its halves are one planning in a subject when
+    // every row the half has in it is dated: the half reads more of the
+    // class's subject for a period. Dela i halvklass with two subjects
+    // (term-halves.service.ts) replaces 6A's hemkunskap with the halves'
+    // and leaves 6A's slöjd post, so a pupil of 6A:1 reads slöjd from 6A all
+    // year and from 6A:1 in the spring — the line sums both against the
+    // target, as for any two rows. Not a half with an undated row (a whole
+    // year on top of the class's), not a teaching group (Ma-fördjupning on
+    // 7A's matematik), not another class's half, not two halves at once.
+    const classAndItsHalf = (groupIds: readonly string[], subjectId: string): boolean => {
+      if (groupIds.length !== 2 || !groupIds.includes(classId)) return false;
+      const half = groupIds.find((id) => id !== classId)!;
+      return (
+        groupsById.get(half)?.halfOfId === classId &&
+        (rowsByGroup.get(half) ?? []).every(
+          (row) => row.subjectId !== subjectId || row.startDate != null || row.endDate != null,
+        )
+      );
+    };
     for (const result of pupilResults.get(classId) ?? []) {
       let isBelow = false;
       const lines: PupilLine[] = [];
@@ -790,7 +809,7 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
               minutesPerWeek: Math.round(bySource.get(groupId)!),
             });
           }
-          if (groupIds.length > 1) {
+          if (groupIds.length > 1 && !classAndItsHalf(groupIds, subjectId)) {
             doubles.push(subjectId);
             verdicts.push({
               code: "TIMPLAN_PUPIL_DOUBLE_PLANNED",

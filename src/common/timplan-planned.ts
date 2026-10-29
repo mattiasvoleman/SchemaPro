@@ -109,10 +109,16 @@ import { keptByOf, leavesLesson, replacedSubjectOf, replacementsOf } from './rep
  * coverage. A school without a replacing group gets every figure it got
  * before. A pupil getting the SAME subject from two groups (7A
  * matematik and Ma-fördjupning) is TIMPLAN_PUPIL_DOUBLE_PLANNED rather than
- * silently summed into "on target" — and so, with the alternativeCode set, is
- * a pupil getting two DIFFERENT subjects of an alternative line from their
- * teaching groups (Spanska 8 and Tyska 8, a Svenska group and an SvA group):
- * the line is met on the sum, but the pupil reads one OR the other. The home
+ * silently summed into "on target" — unless the two are the home class and
+ * one of its halves (halfOfId) whose rows in the subject are all dated: that
+ * is the class's planning, more of it for a period (hemkunskap swapped with
+ * slöjd leaves 6A's slöjd, and each half reads slöjd in its other term), and
+ * the line's sum is the pupil's figure as for any two rows. With the
+ * alternativeCode set, a pupil getting two DIFFERENT subjects of an
+ * alternative line from their teaching groups (Spanska 8 and Tyska 8, a
+ * Svenska group and an SvA group) is double planned too, a half's dated row
+ * among them or not: the line is met on the sum, but the pupil reads one OR
+ * the other. The home
  * class's rows are not counted there — class Svenska with an SvA-grupp on top
  * that does not replace it is the support model, an SvA group that replaces
  * Svenska is read instead of the class's Svenska (whose rows then never reach
@@ -870,6 +876,25 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
   for (const classId of classes) {
     const group = groupsById.get(classId)!;
     const flagged = flaggedClassLines.get(classId)!;
+    // The class and one of its halves are one planning in a subject when
+    // every row the half has in it is dated: the half reads more of the
+    // class's subject for a period. Dela i halvklass with two subjects
+    // (term-halves.service.ts) replaces 6A's hemkunskap with the halves'
+    // and leaves 6A's slöjd post, so a pupil of 6A:1 reads slöjd from 6A all
+    // year and from 6A:1 in the spring — the line sums both against the
+    // target, as for any two rows. Not a half with an undated row (a whole
+    // year on top of the class's), not a teaching group (Ma-fördjupning on
+    // 7A's matematik), not another class's half, not two halves at once.
+    const classAndItsHalf = (groupIds: readonly string[], subjectId: string): boolean => {
+      if (groupIds.length !== 2 || !groupIds.includes(classId)) return false;
+      const half = groupIds.find((id) => id !== classId)!;
+      return (
+        groupsById.get(half)?.halfOfId === classId &&
+        (rowsByGroup.get(half) ?? []).every(
+          (row) => row.subjectId !== subjectId || row.startDate != null || row.endDate != null,
+        )
+      );
+    };
     for (const result of pupilResults.get(classId) ?? []) {
       let isBelow = false;
       const lines: PupilLine[] = [];
@@ -892,7 +917,7 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
               minutesPerWeek: Math.round(bySource.get(groupId)!),
             });
           }
-          if (groupIds.length > 1) {
+          if (groupIds.length > 1 && !classAndItsHalf(groupIds, subjectId)) {
             doubles.push(subjectId);
             verdicts.push({
               code: 'TIMPLAN_PUPIL_DOUBLE_PLANNED',
