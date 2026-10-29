@@ -715,9 +715,11 @@ describe("hemkunskap swapped with slöjd", () => {
     ).toBeInTheDocument();
     const tick = screen.getByRole("checkbox", { name: "reductionApply(6A · Slöjd|lengthPart(2|25))" });
     expect(tick).not.toBeChecked();
-    // Mål and Täckning read 6A on its own posts until the pupils are in the halves.
-    expect(screen.getByText("reductionUnplaced(Slöjd|6A|50|80)")).toBeInTheDocument();
+    // Unticked, 6A's slöjd keeps its 80: nothing to say of Mål and Täckning.
+    expect(screen.queryByText(/^reductionUnplaced\(/)).toBeNull();
     await user.click(tick);
+    // Ticked, Mål and Täckning read 6A on its own posts until the halves hold half its pupils.
+    expect(screen.getByText("reductionUnplaced(Slöjd|6A|50|80)")).toBeInTheDocument();
     expect(lines()).toEqual([
       ["Hemkunskap", "met(32|30)", "met(38|30)"],
       ["Slöjd", "met(88|80)", "met(82|80)"],
