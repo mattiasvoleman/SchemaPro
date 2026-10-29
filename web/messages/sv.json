@@ -788,7 +788,7 @@
         "double": "{subject} når varje elev både från {group} och från halvan. Täckningssidan säger därför att eleverna är dubbelplanerade i {subject}, också när minuterna stämmer.",
         "reduction": "Med bytet får varje elev mer {subject} än målet {target}. {post} kan gå från {from} till {to} i veckan utan att någon halva hamnar under målet: {first} får då {firstPlanned} och {second} {secondPlanned}.",
         "reductionApply": "Ändra {post} till {to} när klassen delas",
-        "reductionUnplaced": "Tills eleverna är placerade i halvorna visar Mål och Täckning {subject} för {group} som {planned} av {target}, under målet, eftersom klassen då bedöms på sina egna poster.",
+        "reductionUnplaced": "Tills halvorna har minst hälften av klassens elever visar Mål och Täckning {subject} för {group} som {planned} av {target}, under målet, eftersom klassen då bedöms på sina egna poster.",
         "reductionInBlock": "{post} ligger i ett parallellt block, så dess lektioner ändras med Ändra lektioner under Block."
       },
       "halvesLegend": "{group} delas i två halvor",

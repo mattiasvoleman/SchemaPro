@@ -1152,8 +1152,12 @@ function TimplanLines({
               {tTimplan("reductionApply", { post: reducedPost, to: lengthsInWords([reduction.to]) })}
             </label>
           )}
-          {/* What Mål and Täckning say of the class's own line until the pupils are placed in the halves. */}
-          {!reduction.inBlock && reduction.classPlanned < reduction.target ? (
+          {/*
+            Ticked only: what Mål and Täckning say of the class's own line
+            until the halves hold at least half its pupils (the timplan's
+            PUPILS rule). Unticked, the class's post keeps its minutes.
+          */}
+          {adjustChosen && !reduction.inBlock && reduction.classPlanned < reduction.target ? (
             <p className="text-xs text-muted-foreground">
               {tTimplan("reductionUnplaced", {
                 subject: otherSubject,

@@ -788,7 +788,7 @@
         "double": "{subject} reaches each pupil both from {group} and from the half. The coverage page therefore says the pupils are double planned in {subject}, even when the minutes are right.",
         "reduction": "With the swap each pupil gets more {subject} than the target of {target}. {post} can go from {from} to {to} a week with no half under the target: {first} then gets {firstPlanned} and {second} {secondPlanned}.",
         "reductionApply": "Change {post} to {to} when the class is split",
-        "reductionUnplaced": "Until the pupils are placed in the halves, Target mode and the coverage page show {subject} for {group} as {planned} of {target}, under the target, since the class is then judged on its own entries.",
+        "reductionUnplaced": "Until the halves hold at least half of the class's pupils, Target mode and the coverage page show {subject} for {group} as {planned} of {target}, under the target, since the class is then judged on its own entries.",
         "reductionInBlock": "{post} is in a parallel block, so its lessons are changed with Change lessons under Blocks."
       },
       "halvesLegend": "{group} is split into two halves",
