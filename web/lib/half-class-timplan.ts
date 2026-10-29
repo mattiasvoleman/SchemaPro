@@ -19,7 +19,9 @@
 // post. The timplan counts both — per pupil and per line, a line being the
 // school subject, or the alternative SV_SVA / M2 — so the dialog shows the
 // lines, and proposes how far the class's own post in the other subject can
-// come down with no half under its target (classPostReduction).
+// come down with no half under its target (classPostReduction). The class's
+// post and a half's dated one are one planning there, not two, so the swap
+// is never TIMPLAN_PUPIL_DOUBLE_PLANNED and the dialog has nothing to warn of.
 
 import {
   computePlannedCoverage,
@@ -71,11 +73,6 @@ export interface HalfLine {
   target: number | null;
   /** The pupil's standardvecka minutes on the line, whole, as the timplan rounds them; null without a target. */
   planned: number | null;
-  /**
-   * The groups the line reaches the pupil from when they are more than one:
-   * the timplan's TIMPLAN_PUPIL_DOUBLE_PLANNED, which the Täckning page lists.
-   */
-  doubleFrom: string[];
 }
 
 export type HalvesTimplan =
@@ -155,7 +152,6 @@ function coverageOf(sources: HalvesTimplanSources, split: HalvesSplit, half: 0 |
 /** The lines `subjectIds` are on, as one pupil reads them in a coverage of one pupil. */
 function linesOf(coverage: PlannedCoverage, classId: string, subjectIds: readonly string[]): HalfLine[] {
   const summary = coverage.groups.find((group) => group.studentGroupId === classId);
-  const doubles = coverage.verdicts.filter((verdict) => verdict.code === "TIMPLAN_PUPIL_DOUBLE_PLANNED");
   const lines: HalfLine[] = [];
   for (const subjectId of subjectIds) {
     const line = summary?.lines.find((candidate) => candidate.subjectIds.includes(subjectId));
@@ -163,22 +159,14 @@ function linesOf(coverage: PlannedCoverage, classId: string, subjectIds: readonl
     if (!line) {
       // No target and no class minutes on it (or a subject the timplan does
       // not count): the timplan has nothing to judge the line against.
-      lines.push({ key: null, subjectIds: [subjectId], target: null, planned: null, doubleFrom: [] });
+      lines.push({ key: null, subjectIds: [subjectId], target: null, planned: null });
       continue;
     }
-    const doubleFrom = [
-      ...new Set(
-        doubles
-          .filter((verdict) => verdict.subjectIds?.some((id) => line.subjectIds.includes(id)))
-          .flatMap((verdict) => verdict.studentGroupIds ?? []),
-      ),
-    ];
     lines.push({
       key: line.key,
       subjectIds: line.subjectIds,
       target: line.targetMinutesPerWeek,
       planned: line.targetMinutesPerWeek === null ? null : (line.pupils?.min ?? null),
-      doubleFrom,
     });
   }
   return lines;

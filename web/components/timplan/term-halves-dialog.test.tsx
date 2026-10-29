@@ -703,7 +703,6 @@ describe("hemkunskap swapped with slöjd", () => {
       ["Hemkunskap", "met(32|30)", "met(38|30)"],
       ["Slöjd", "met(118|80)", "met(112|80)"],
     ]);
-    expect(screen.getByText("double(Slöjd|6A)")).toBeInTheDocument();
   });
 
   it("proposes the class's slöjd at 2 × 25, and sends it in the same save when ticked", async () => {

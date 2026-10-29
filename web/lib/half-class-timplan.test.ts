@@ -116,15 +116,6 @@ describe("hemkunskap swapped with slöjd over the terms", () => {
     ]);
   });
 
-  it("says the slöjd reaches each pupil from the class and from the half, which the timplan calls double planned", () => {
-    const result = halvesTimplan(sources(), swap(TERMS), "hk");
-    if (result.kind !== "lines") throw new Error(result.kind);
-    expect(result.halves.map((lines) => lines.map((line) => line.doubleFrom))).toEqual([
-      [[], ["6A", "new-half-1"]],
-      [[], ["6A", "new-half-2"]],
-    ]);
-  });
-
   it("brings the class's slöjd down to 2 × 25, the least that keeps both halves at 80", () => {
     const split = swap(TERMS);
     const reduction = classPostReduction(sources(), split, "sl");
@@ -160,7 +151,7 @@ describe("hemkunskap swapped with slöjd over the terms", () => {
     }
   });
 
-  it("is the timplan's own answer: the class's line is read in its halves, and no pupil is under", () => {
+  it("is the timplan's own answer: the class's line is read in its halves, no pupil is under, and none is double planned", () => {
     // The whole year's coverage as the gateway computes it, with real pupils
     // in the two halves and the class's slöjd brought down.
     const split = swap(TERMS);
@@ -194,7 +185,9 @@ describe("hemkunskap swapped with slöjd over the terms", () => {
       includePupils: true,
     });
     expect(coverage.pupilsBelowTarget).toBe(0);
-    expect(coverage.verdicts.filter((verdict) => verdict.code === "TIMPLAN_PUPIL_UNDERPLANNED")).toEqual([]);
+    // Slöjd reaches each pupil from 6A and from their half's dated post: one
+    // planning, summed on the line, so nothing for Täckning to list.
+    expect(coverage.verdicts).toEqual([]);
     const lines = coverage.groups[0]!.lines.filter((line) => line.key !== "subject:ma");
     expect(lines.map((line) => [line.key, line.status, line.pupils])).toEqual([
       ["subject:hk", "PUPILS", { min: 32, median: 35, max: 38, below: 0 }],
@@ -350,11 +343,18 @@ describe("what there is to judge", () => {
       { id: "h1", name: "6A:1" },
       { id: "h2", name: "6A:2" },
     ] as const;
+    // The split's rows on the halves' ids and the pupil in them: a pupil
+    // missing their half's rows would read 0 hemkunskap and 80 slöjd.
     const result = halvesTimplan(sources(), { ...swap(TERMS), halves }, "hk");
-    if (result.kind !== "lines") throw new Error(result.kind);
-    expect(result.halves.map((lines) => [lines[0]!.planned, lines[1]!.doubleFrom])).toEqual([
-      [32, ["6A", "h1"]],
-      [38, ["6A", "h2"]],
+    expect(linesOf(result)).toEqual([
+      [
+        ["hk", 32, 30],
+        ["sl", 118, 80],
+      ],
+      [
+        ["hk", 38, 30],
+        ["sl", 112, 80],
+      ],
     ]);
   });
 });
