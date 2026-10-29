@@ -703,6 +703,17 @@ describe("hemkunskap swapped with slöjd", () => {
       ["Hemkunskap", "met(32|30)", "met(38|30)"],
       ["Slöjd", "met(118|80)", "met(112|80)"],
     ]);
+    // The class's slöjd and the half's are the swap's one planning.
+    expect(screen.queryByText(/^double\(/)).toBeNull();
+  });
+
+  it("says the pupils are double planned in both lines when 6A keeps a second hemkunskap post", async () => {
+    givenPlan();
+    const second = post({ id: "r-hk-2", subjectId: "s-hk", studentGroupId: "g-6a", lessonsPerWeek: 1, minutesPerLesson: 30 });
+    await renderSwap({ posts: [hemkunskap, second, slojd] });
+
+    expect(await screen.findByText("double(Hemkunskap|6A)")).toBeInTheDocument();
+    expect(screen.getByText("double(Slöjd|6A)")).toBeInTheDocument();
   });
 
   it("proposes the class's slöjd at 2 × 25, and sends it in the same save when ticked", async () => {
