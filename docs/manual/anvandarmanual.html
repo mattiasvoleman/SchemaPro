@@ -1379,10 +1379,11 @@
     och högsta minuter. Därunder listas de elever som avviker på egen hand —
     under mål där klassen inte är det, som får samma ämne från två grupper,
     eller som står i två alternativ samtidigt, till exempel både Spanska och
-    Tyska. Klassen och en av dess halvor räknas som en grupp när halvans
-    poster i ämnet har datum, som när halvorna byter hemkunskap mot slöjd
-    (4.2): minuterna läggs ihop. En elev som bara ligger under för att hela
-    klassen gör det räknas men listas inte; det syns redan på klassens rad. Svenska och
+    Tyska. Klassen och en av dess halvor är två grupper som alla andra, med
+    ett undantag: när halvorna byter hemkunskap mot slöjd (4.2) räknas
+    klassens slöjd och halvans slöjd som en planering, och minuterna läggs
+    ihop. En elev som bara ligger under för att hela klassen gör det räknas
+    men listas inte; det syns redan på klassens rad. Svenska och
     svenska som andraspråk räknas tillsammans, liksom språkvalets språk: målet
     är nått när elevens minuter i dem tillsammans räcker.
   </p>
@@ -2070,11 +2071,34 @@
     80, under målet, eftersom klassen bedöms på sina egna poster tills dess.
     Dialogen säger det när rutan är ikryssad. Ligger klassens slöjdpost i ett parallellt
     block ändrar du den med <span class="ui">Ändra lektioner</span> under
-    <span class="ui">Block</span> i stället. Slöjden når varje elev både från
-    klassens post och från halvans, och timplanen räknar dem som en
-    planering: minuterna läggs ihop och jämförs med målet, och Täckning säger
-    inte att eleverna är dubbelplanerade i slöjd. Följer årskursen ingen
+    <span class="ui">Block</span> i stället. Följer årskursen ingen
     timplan visar dialogen inga mål.
+  </p>
+  <p>
+    Slöjden når nu varje elev både från klassens post och från halvans.
+    Timplanen räknar dem ändå som en planering, eftersom de har bytets form:
+    halvans slöjd ligger i en annan period än halvans hemkunskap, och
+    klassen har ingen hemkunskapspost kvar. Minuterna läggs ihop och jämförs
+    med målet, och Täckning säger inte att eleverna är dubbelplanerade.
+    Undantaget gäller bara den formen. Allt annat varnas som förut, också när
+    halvans post har datum:
+  </p>
+  <ul>
+    <li>Klassens post tillbaka efter delningen. Mål visar klassens
+      hemkunskap som oplanerad tills halvorna har minst hälften av klassens
+      elever, men lägger du tillbaka posten får eleverna ämnet två gånger.
+      Efter ett byte blir eleverna då dubbelplanerade i både hemkunskap och
+      slöjd, och efter ett ämne i tur i det ämnet.</li>
+    <li>En post till i ämnet som delas. Har klassen två hemkunskapsposter
+      och du delar den ena, säger dialogen redan under halvornas lektioner
+      att eleverna blir dubbelplanerade.</li>
+    <li>En halvas post med datum utan något byte bredvid, till exempel
+      matematik på våren ovanpå klassens matematik, eller slöjd under nästan
+      hela läsåret.</li>
+  </ul>
+  <p>
+    Avvägningen är att just bytets form aldrig varnas, också när någon har
+    byggt den för hand. Minuterna mot målet syns ändå.
   </p>
   <p>
     <span class="ui">Dela i halvklass</span> gör allt i ett steg:

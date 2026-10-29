@@ -768,24 +768,33 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
   for (const classId of classes) {
     const group = groupsById.get(classId)!;
     const flagged = flaggedClassLines.get(classId)!;
-    // The class and one of its halves are one planning in a subject when
-    // every row the half has in it is dated: the half reads more of the
-    // class's subject for a period. Dela i halvklass with two subjects
-    // (term-halves.service.ts) replaces 6A's hemkunskap with the halves'
-    // and leaves 6A's slöjd post, so a pupil of 6A:1 reads slöjd from 6A all
-    // year and from 6A:1 in the spring — the line sums both against the
-    // target, as for any two rows. Not a half with an undated row (a whole
-    // year on top of the class's), not a teaching group (Ma-fördjupning on
-    // 7A's matematik), not another class's half, not two halves at once.
+    // The one shape in which a subject reaching a pupil from the home class
+    // and from one of its halves is a single planning: Dela i halvklass
+    // swapping two subjects (term-halves.service.ts). The split takes 6A's
+    // hemkunskap post off the class and leaves its slöjd, so 6A:1 reads
+    // hemkunskap in the autumn and slöjd in the spring on top of 6A's slöjd,
+    // and the line sums both against the target. Its signature, for the
+    // subject X: the half has a row in a subject the class has none of (the
+    // one swapped off the class) whose period meets none of the half's rows
+    // in X. Both rows are then dated, since a row without dates meets every
+    // period. Anything else stays double planned, whatever the sum: the
+    // class's post put back after a split, in turn or swapped (the class
+    // then has the other subject too); a half's dated post with no swap
+    // beside it, short or nearly the whole year (6A's matematik and 6A:1's
+    // in the spring); a teaching group of the same shape; another class's
+    // half; two halves at once. Periods are compared by their dates; odd and
+    // even weeks are not read.
+    const classSubjects = new Set((rowsByGroup.get(classId) ?? []).map((row) => row.subjectId));
+    const meets = (a: PlannedRequirement, b: PlannedRequirement): boolean =>
+      (a.startDate ?? "0000-01-01") <= (b.endDate ?? "9999-12-31") &&
+      (b.startDate ?? "0000-01-01") <= (a.endDate ?? "9999-12-31");
     const classAndItsHalf = (groupIds: readonly string[], subjectId: string): boolean => {
       if (groupIds.length !== 2 || !groupIds.includes(classId)) return false;
       const half = groupIds.find((id) => id !== classId)!;
-      return (
-        groupsById.get(half)?.halfOfId === classId &&
-        (rowsByGroup.get(half) ?? []).every(
-          (row) => row.subjectId !== subjectId || row.startDate != null || row.endDate != null,
-        )
-      );
+      if (groupsById.get(half)?.halfOfId !== classId) return false;
+      const rows = rowsByGroup.get(half) ?? [];
+      const own = rows.filter((row) => row.subjectId === subjectId);
+      return rows.some((other) => !classSubjects.has(other.subjectId) && own.every((row) => !meets(row, other)));
     };
     for (const result of pupilResults.get(classId) ?? []) {
       let isBelow = false;

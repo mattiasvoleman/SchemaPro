@@ -116,6 +116,33 @@ describe("hemkunskap swapped with slöjd over the terms", () => {
     ]);
   });
 
+  const doublesOf = (result: ReturnType<typeof halvesTimplan>) => {
+    if (result.kind !== "lines") throw new Error(result.kind);
+    return result.halves.map((lines) => lines.map((line) => line.doubleFrom));
+  };
+
+  it("says no double planning for the swap: the half's slöjd is in the term it reads no hemkunskap, which 6A has no post in", () => {
+    expect(doublesOf(halvesTimplan(sources(), swap(TERMS), "hk"))).toEqual([
+      [[], []],
+      [[], []],
+    ]);
+  });
+
+  it("says both lines are double planned when 6A keeps a second hemkunskap post, as the timplan will", () => {
+    const second = post("r-hk-2", "hk", 1, 30);
+    const split = swap(TERMS, ["hk", "sl"], "swapWithOther", [HEMKUNSKAP, second, SLOJD, MATEMATIK]);
+    expect(doublesOf(halvesTimplan(sources(), split, "hk"))).toEqual([
+      [
+        ["6A", "new-half-1"],
+        ["6A", "new-half-1"],
+      ],
+      [
+        ["6A", "new-half-2"],
+        ["6A", "new-half-2"],
+      ],
+    ]);
+  });
+
   it("brings the class's slöjd down to 2 × 25, the least that keeps both halves at 80", () => {
     const split = swap(TERMS);
     const reduction = classPostReduction(sources(), split, "sl");
