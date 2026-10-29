@@ -18,7 +18,7 @@
 // header and not repeated here. The body below is that file with the quotes this package's style
 // uses; keep it that way, so a diff of the two shows only the header.
 
-import { shortestLessonOf, weeklyMinutesOf } from "@/lib/lesson-lengths";
+import { lessonMinutesOf, shortestLessonOf, weeklyMinutesOf } from "@/lib/lesson-lengths";
 import { standardWeekWeight } from "@/lib/standard-week";
 import {
   teachingWeeks,
@@ -773,28 +773,50 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
     // swapping two subjects (term-halves.service.ts). The split takes 6A's
     // hemkunskap post off the class and leaves its slöjd, so 6A:1 reads
     // hemkunskap in the autumn and slöjd in the spring on top of 6A's slöjd,
-    // and the line sums both against the target. Its signature, for the
-    // subject X: the half has a row in a subject the class has none of (the
-    // one swapped off the class) whose period meets none of the half's rows
-    // in X. Both rows are then dated, since a row without dates meets every
-    // period. Anything else stays double planned, whatever the sum: the
-    // class's post put back after a split, in turn or swapped (the class
-    // then has the other subject too); a half's dated post with no swap
-    // beside it, short or nearly the whole year (6A's matematik and 6A:1's
-    // in the spring); a teaching group of the same shape; another class's
-    // half; two halves at once. Periods are compared by their dates; odd and
-    // even weeks are not read.
+    // 6A:2 the other way round, and the line sums both against the target.
+    // The swap's signature, for the half's one row x in the subject:
+    //   1. the half has a row y in a subject the class has none of (the one
+    //      the split took off the class) whose period does not meet x's —
+    //      both are then dated, since a row without dates meets every period;
+    //   2. another half of the class mirrors it: a row in x's subject whose
+    //      period meets y's, and one in y's subject whose period meets x's
+    //      (the half itself cannot, by 1);
+    //   3. x and y have the same lessons and weeks, as the swap's four posts
+    //      do (one week for the halves; TB409 within each period's block).
+    // Anything else stays double planned, whatever the sum: the class's post
+    // put back after a split, a half's dated post with no swap beside it, a
+    // second post of the half in the subject, a split in another subject
+    // (slöjd in turn) beside one in this subject, a teaching group of the
+    // same shape, another class's half, two halves at once. Periods are
+    // compared by their dates, a missing one the year's open end.
     const classSubjects = new Set((rowsByGroup.get(classId) ?? []).map((row) => row.subjectId));
+    const classHalves = input.groups.filter((candidate) => candidate.halfOfId === classId).map((half) => half.id);
+    const rowsIn = (groupId: string, subjectId: string): PlannedRequirement[] =>
+      (rowsByGroup.get(groupId) ?? []).filter((row) => row.subjectId === subjectId);
     const meets = (a: PlannedRequirement, b: PlannedRequirement): boolean =>
       (a.startDate ?? "0000-01-01") <= (b.endDate ?? "9999-12-31") &&
       (b.startDate ?? "0000-01-01") <= (a.endDate ?? "9999-12-31");
+    const sameWeek = (a: PlannedRequirement, b: PlannedRequirement): boolean =>
+      lessonMinutesOf(a).join() === lessonMinutesOf(b).join() &&
+      (a.recurrence ?? "ALL_WEEKS") === (b.recurrence ?? "ALL_WEEKS");
     const classAndItsHalf = (groupIds: readonly string[], subjectId: string): boolean => {
       if (groupIds.length !== 2 || !groupIds.includes(classId)) return false;
       const half = groupIds.find((id) => id !== classId)!;
       if (groupsById.get(half)?.halfOfId !== classId) return false;
-      const rows = rowsByGroup.get(half) ?? [];
-      const own = rows.filter((row) => row.subjectId === subjectId);
-      return rows.some((other) => !classSubjects.has(other.subjectId) && own.every((row) => !meets(row, other)));
+      const own = rowsIn(half, subjectId);
+      if (own.length !== 1) return false;
+      const x = own[0]!;
+      return (rowsByGroup.get(half) ?? []).some(
+        (y) =>
+          !classSubjects.has(y.subjectId) &&
+          !meets(x, y) &&
+          sameWeek(x, y) &&
+          classHalves.some(
+            (other) =>
+              rowsIn(other, subjectId).some((row) => meets(row, y)) &&
+              rowsIn(other, y.subjectId).some((row) => meets(row, x)),
+          ),
+      );
     };
     for (const result of pupilResults.get(classId) ?? []) {
       let isBelow = false;
