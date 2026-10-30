@@ -7,6 +7,8 @@ import {
 } from '../../test/utils/prisma-mock';
 import type { PrismaService } from '../database/prisma.service';
 import type { NotificationsService } from '../notifications/notifications.service';
+import { recordedReads } from '../../test/utils/recorded-reads';
+import { PUPIL_LIST, lessonNamed, pupilNamed, WITH_SVA, WITHOUT, type PupilListSchool } from '../../test/utils/pupil-list';
 import { Ss12000Service } from './ss12000.service';
 import { dutyStretchId } from './ss12000-v2/ids';
 
@@ -693,6 +695,105 @@ describe('Ss12000Service', () => {
         '2026-08-31',
       );
       expect(result.data[0]).toMatchObject({ cancelled: true, room: null });
+    });
+  });
+
+  describe('Elevlistan i uppföljningen: excludedStudentIds', () => {
+    // The shared school (src/common/__fixtures__/pupil-list-cases.json): Alva
+    // in SvA7, Bo in Stöd7, Cim in 7A only. v1 lists a group's home pupils
+    // and leaves the rest to the consumer, so an activity or event of a
+    // group says which of its pupils it does not hold.
+    type Where = Record<string, unknown> & { id?: { in: string[] }; studentGroupId?: { in: string[] }; studentId?: { in: string[] } };
+    const inList = (condition: { in: string[] } | undefined, value: string) => !condition || condition.in.includes(value);
+    const groupName = (school: PupilListSchool, id: string) => school.groups.find((group) => group.id === id)!.name;
+    const subject = (id: string) => PUPIL_LIST.subjects.find((row) => row.id === id)!;
+
+    const arrangeSchool = (school: PupilListSchool) => {
+      tx.studentGroup.findMany.mockImplementation(({ where }: { where: Where }) =>
+        Promise.resolve(
+          school.groups
+            .filter((group) => (where['replacesSubjectId'] ? group.replacesSubjectId !== null : inList(where.id, group.id)))
+            .map(({ id, kind, halfOfId, academicYearId, replacesSubjectId }) => ({ id, kind, halfOfId, academicYearId, replacesSubjectId })),
+        ),
+      );
+      const memberships = PUPIL_LIST.pupils.flatMap((pupil) => pupil.groupIds.map((studentGroupId) => ({ studentGroupId, studentId: pupil.id })));
+      tx.studentGroupMember.findMany.mockImplementation(({ where }: { where: Where }) =>
+        Promise.resolve(memberships.filter((row) => inList(where.studentGroupId, row.studentGroupId) && inList(where.studentId, row.studentId))),
+      );
+      tx.user.findMany.mockImplementation(({ where }: { where: Where }) =>
+        Promise.resolve(PUPIL_LIST.pupils.filter((pupil) => inList(where.id, pupil.id)).map((pupil) => ({ id: pupil.id, studentGroupId: pupil.homeGroupId }))),
+      );
+      const shape = (lesson: (typeof PUPIL_LIST.lessons)[number]) => ({
+        id: lesson.id,
+        subject: { id: lesson.subjectId, name: subject(lesson.subjectId).name },
+        studentGroup: { id: lesson.groupIds[0]!, name: groupName(school, lesson.groupIds[0]!) },
+        extraGroups: lesson.groupIds.slice(1).map((studentGroupId) => ({ studentGroupId })),
+        participants: lesson.named.map((studentId) => ({ studentId })),
+      });
+      arrangeList(
+        'calendarLesson',
+        PUPIL_LIST.lessons.length,
+        PUPIL_LIST.lessons.map((lesson, index) => ({
+          ...shape(lesson),
+          masterLessonId: null,
+          startsAt: new Date(`2026-10-19T${String(6 + index).padStart(2, '0')}:00:00.000Z`),
+          endsAt: new Date(`2026-10-19T${String(7 + index).padStart(2, '0')}:00:00.000Z`),
+          status: 'SCHEDULED',
+          room: null,
+          teachers: [],
+        })),
+      );
+      arrangeList(
+        'masterLesson',
+        PUPIL_LIST.lessons.length,
+        PUPIL_LIST.lessons.map((lesson) => ({
+          ...shape(lesson),
+          dayOfWeek: 1,
+          startTime: new Date('1970-01-01T08:00:00.000Z'),
+          endTime: new Date('1970-01-01T09:00:00.000Z'),
+          teacherId: null,
+          coTeacherId: null,
+          roomId: null,
+        })),
+      );
+    };
+
+    const excludedBy = (data: Array<{ id: string; excludedStudentIds?: string[] }>) =>
+      Object.fromEntries(PUPIL_LIST.lessons.map((lesson) => [lesson.name, data.find((row) => row.id === lesson.id)!.excludedStudentIds ?? null]));
+    const expectedBy = (school: PupilListSchool) =>
+      Object.fromEntries(PUPIL_LIST.lessons.map((lesson) => [lesson.name, school.expected[lesson.id]!.off.length > 0 ? school.expected[lesson.id]!.off : null]));
+
+    it.each([WITH_SVA, WITHOUT].map((school) => [school.name, school] as const))('%s: activities and events leave out exactly the pupils THE RULE takes off', async (_name, school) => {
+      arrangeSchool(school);
+      const events = await service.calendarEvents(SCHOOL_ID, '2026-10-19', '2026-10-19');
+      expect(excludedBy(events.data)).toEqual(expectedBy(school));
+      const activities = await service.activities(SCHOOL_ID);
+      expect(excludedBy(activities.data)).toEqual(expectedBy(school));
+    });
+
+    it('a school with no replacing group sends the very payload it sent before: no excludedStudentIds key, nothing more read', async () => {
+      arrangeSchool(WITHOUT);
+      const events = await service.calendarEvents(SCHOOL_ID, '2026-10-19', '2026-10-19');
+      expect(events.data.every((event) => !('excludedStudentIds' in event))).toBe(true);
+      const activities = await service.activities(SCHOOL_ID);
+      expect(activities.data.every((activity) => !('excludedStudentIds' in activity))).toBe(true);
+      // Only the list of replacing groups was asked: no membership, no pupil.
+      expect(tx.studentGroupMember.findMany).not.toHaveBeenCalled();
+      expect(tx.user.findMany).not.toHaveBeenCalled();
+    });
+
+    it('names a left-out pupil in the läslogg as ROSTER, as a named one is', async () => {
+      arrangeSchool(WITH_SVA);
+      await service.calendarEvents(SCHOOL_ID, '2026-10-19', '2026-10-19');
+      await service.activities(SCHOOL_ID);
+      const reads = recordedReads(tx).filter((read) => read.kind === 'ROSTER');
+      expect(reads).toHaveLength(2);
+      for (const read of reads) expect(read.ids).toContain(pupilNamed('Alva'));
+      // The event that names her keeps her in studentIds, and leaves nobody out.
+      const events = await service.calendarEvents(SCHOOL_ID, '2026-10-19', '2026-10-19');
+      const named = events.data.find((event) => event.id === lessonNamed('7A:s svenska, Alva namngiven').id)!;
+      expect(named).toMatchObject({ studentIds: [pupilNamed('Alva')] });
+      expect(named).not.toHaveProperty('excludedStudentIds');
     });
   });
 
