@@ -3279,8 +3279,8 @@
     <strong>Skolregler</strong> är hårda villkor. De <em>måste</em> uppfyllas.
     De anger garanterad lunchrast för varje klass — inom vilket tidsfönster och
     hur många minuter — antalet platser i matsalen, högsta antal lektioner
-    per dag och klass, och om generatorn ska hålla restiden mellan skolans
-    skolområden.
+    per dag och klass, om generatorn ska hålla restiden mellan skolans
+    skolområden och om den ska hålla nere elevernas håltimmar.
   </p>
   <p id="restid-i-generatorn">
     <strong>Restid i generatorn.</strong> Har skolan skolområden med restid
@@ -3380,6 +3380,59 @@
     bli mycket svår att lägga — då säger tidsgränsens diagnos vilken del av
     lunchen som inte får plats.
   </p>
+  <p id="elevernas-haltimmar">
+    <strong>Elevernas håltimmar i generatorn.</strong> Slå på
+    <span class="ui">Generatorn håller nere elevernas håltimmar</span> bland
+    skolreglerna och spara, så försöker genereringen lägga varje elevs dag
+    utan luckor mellan första och sista lektionen. Regeln är avstängd tills
+    skolan slår på den, och en skola som låter den vara får precis samma
+    schema som förut. Till skillnad från de andra skolreglerna är den ett
+    önskemål och inte ett villkor: den gör aldrig en vecka omöjlig, men den
+    väger mot allt annat som genereringen väger.
+  </p>
+  <p>
+    Generatorn räknar luckorna som sidan
+    <span class="path">Schemaläggning › Luckor och håltimmar</span> gör, per
+    elev och inte per klass. En elevs dag är lektionerna i klassen, i
+    undervisningsgrupperna, i den halva av klassen eleven är placerad i och i
+    de ersättande grupperna: en elev i SvA7 sitter inte på klassens svenska.
+    En elev som ännu inte placerats i någon halva räknas med båda halvorna,
+    eftersom eleven kan hamna i vilken som helst. Ombyte och dusch räknas som
+    upptagen tid, stängd tid (tillgänglighet för klassen, årskursregler och
+    ramtider) är ingen lucka, lunchen dras av en gång per dag och en lucka
+    under 15 minuter är en rast.
+  </p>
+  <p>
+    Sidan Luckor och håltimmar visar under Håltimmar <em>generatorns
+    siffra</em>: elevminuter i håltimmar en vanlig vecka, för hela skolan och
+    per elev. Det är summan av listan under den, med 15 minuter som minsta
+    lucka och varje lucka gånger de elever som sitter i den, och det är samma
+    siffra som genereringen räknar för sitt schema. Står minsta luckan i
+    listan på något annat än 15 minuter ändras listan men inte siffran.
+  </p>
+  <div class="note">
+    <span class="label">Hur mycket regeln väger</span>
+    <p>
+      En hel klass som väntar en minut väger dubbelt så mycket som en lärare
+      som väntar en minut, när Kompakta lärardagar står på sitt
+      standardvärde. En språkvalsgrupp på sex elever väger ungefär som en halv
+      lärare. En klass håltimme på 40 minuter väger mer än en lektion i fel
+      sal, men mindre än en lärares önskade lediga dag (4.4). Höjer du
+      Kompakta lärardagar i optimeringsprofilen väger lärarnas luckor tyngre
+      också mot elevernas.
+    </p>
+  </div>
+  <div class="note">
+    <span class="label">Där generatorn räknar grövre än sidan</span>
+    <p>
+      Generatorn styr mot alla luckor mellan första och sista lektionen, också
+      de under 15 minuter. Lunchen räknas av när klassens lunch ligger mitt på
+      dagen. En låst lektion varannan vecka räknas varje vecka, eftersom
+      generatorn inte har några veckor. Ombyte och dusch kring en låst lektion
+      räknas bara av sidan. Den siffra genereringen räknar för schemat, och
+      den sidan visar, följer sidans regler fullt ut.
+    </p>
+  </div>
   <p>
     <strong>Optimeringsprofilen</strong> är mjuka önskemål. De kan väga mot
     varandra: ju högre värde, desto viktigare. Motorn hittar den bästa
