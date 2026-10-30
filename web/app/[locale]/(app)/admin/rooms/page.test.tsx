@@ -38,6 +38,7 @@ vi.mock("./use-sites", () => ({
   useSites: () => ({ data: state.sites }),
 }));
 vi.mock("./sites-card", () => ({ SitesCard: () => null }));
+vi.mock("./sharing-card", () => ({ SharingCard: () => null }));
 
 // The CSV buttons bring the import machinery and its own queries; neither has
 // anything to do with where a room is.

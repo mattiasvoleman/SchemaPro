@@ -364,6 +364,55 @@ export const SITES = {
 };
 
 /**
+ * Huvudmannens andra skolor (GET /api/v1/sharing, /api/v1/room-loans,
+ * Delade lokaler och lärare, 20261217090000): the school's huvudman owns one
+ * more school, twelve minutes away, that Bo Ek works at too; it has asked
+ * for the school's first room on Tuesdays, and the school borrows that
+ * school's sports hall on Thursdays. Ids are KIND.misc 9851–9859.
+ */
+const NORRA = { id: uid(KIND.misc, 9851), name: "Norraskolan" };
+export const SHARING = {
+  schools: [{ ...NORRA, travelMinutes: 12, travelSetByUs: true }],
+  teachers: [{ teacherId: TEACHERS.bo.id, firstName: "Bo", lastName: "Ek", schools: [NORRA] }],
+};
+const loan = (n: number, patch: Record<string, unknown>) => ({
+  id: uid(KIND.misc, n),
+  dayOfWeek: 2,
+  startTime: "10:00",
+  endTime: "11:30",
+  startDate: YEAR.startDate,
+  endDate: YEAR.endDate,
+  note: null,
+  createdAt: ago(10, "09:00"),
+  decidedAt: null,
+  endedAt: null,
+  school: NORRA,
+  ownerRoomName: null,
+  ...patch,
+});
+export const ROOM_LOANS = {
+  lent: [loan(9852, { status: "PENDING", room: { id: ROOM_LIST[0]!.id, name: ROOM_LIST[0]!.name }, note: "Idrott åk 4" })],
+  borrowed: [
+    loan(9853, {
+      status: "APPROVED",
+      dayOfWeek: 4,
+      decidedAt: ago(9, "13:00"),
+      room: { id: uid(KIND.misc, 9854), name: "Idrottshallen (Norraskolan)" },
+      ownerRoomName: "Idrottshallen",
+    }),
+  ],
+};
+export const LENDABLE_ROOMS = [
+  {
+    ...NORRA,
+    rooms: [
+      { id: uid(KIND.misc, 9855), name: "Idrottshallen", capacity: 60, roomTypeName: "Idrottshall", localRoomId: uid(KIND.misc, 9854) },
+      { id: uid(KIND.misc, 9856), name: "Slöjdsal", capacity: 16, roomTypeName: "Slöjdsal", localRoomId: null },
+    ],
+  },
+];
+
+/**
  * The school's skolenheter (GET /api/v1/school-units, 20261031090000): one,
  * 7–9, as a högstadieskola is, so every class of the year is in it.
  */

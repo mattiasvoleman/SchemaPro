@@ -442,6 +442,116 @@
       "SITE_TRAVEL_STALE": "The travel times have changed since you opened the page. The new ones show now, with what you typed kept; save again."
     }
   },
+  "sharing": {
+    "title": "The huvudman's other schools",
+    "description": "The school's huvudman owns other schools. Here you set the travel time to them and see which teachers the school shares with them, and the schools borrow each other's rooms at fixed times. The other school sees only its own name, its rooms and the answers to loans: no pupils, timetables or people.",
+    "loadFailed": "The huvudman's other schools could not be loaded",
+    "loadFailedHint": "Nothing has changed. Reload the page to try again.",
+    "schoolsTitle": "Travel time and shared teachers",
+    "schoolsHint": "Minutes between the schools, the same both ways. Either school can change the figure. A school with several sites gives the longest time. An empty field means no travel time is set.",
+    "schoolsCaption": "The huvudman's other schools, the travel time there and the teachers who work at both schools",
+    "columns": {
+      "school": "School",
+      "travel": "Travel time, minutes",
+      "teachers": "Shared teachers",
+      "room": "Room",
+      "borrower": "Borrowed by",
+      "when": "Time",
+      "status": "Status",
+      "localRoom": "The school's room for the loan",
+      "owner": "Borrowed from"
+    },
+    "travelLabel": "Travel time to {school}, minutes",
+    "minutesPlaceholder": "Not set",
+    "minutesInvalid": "The travel time is whole minutes from 0 to 240.",
+    "setByThem": "Set by {school}.",
+    "noTeachers": "None",
+    "teachersHint": "A teacher is shared when the same login has an active row at both schools, that is, when the teacher is invited to both with the same email address. A teacher not invited at one of the schools is not shown here.",
+    "saveTravel": "Save travel times",
+    "travelSaved": "The travel times are saved",
+    "loansTitle": "Room loans",
+    "loansHint": "A loan is a fixed time each week between two dates. The school that owns the room approves each loan. An approved loan keeps the room for the other school at that time.",
+    "borrow": "Borrow a room",
+    "loansLoadFailed": "The loans could not be loaded",
+    "lentTitle": "The school's rooms other schools borrow",
+    "lentEmpty": "No other school has asked to borrow one of the school's rooms.",
+    "lentCaption": "Loans of the school's rooms to the huvudman's other schools",
+    "borrowedTitle": "Rooms the school borrows",
+    "borrowedEmpty": "The school borrows no room from another school.",
+    "borrowedCaption": "Loans of other schools' rooms to the school",
+    "ownerRoom": "{room}, {school}",
+    "window": "{day} {start}–{end}",
+    "period": "{from} – {to}",
+    "status": {
+      "PENDING": "Awaiting answer",
+      "APPROVED": "Approved",
+      "DECLINED": "Declined",
+      "WITHDRAWN": "Withdrawn",
+      "REVOKED": "Ended by the owner"
+    },
+    "actions": {
+      "approve": "Approve",
+      "decline": "Decline",
+      "revoke": "End the loan",
+      "withdraw": "Withdraw"
+    },
+    "done": {
+      "approve": "The loan of {room} to {school} is approved",
+      "decline": "The loan of {room} to {school} is declined",
+      "revoke": "The loan of {room} to {school} has ended",
+      "withdraw": "The loan of {room} is withdrawn"
+    },
+    "confirm": {
+      "revoke": {
+        "title": "End the loan of {room}?",
+        "body": "The room is the school's again from now on. {school} must move its lessons out of it, and its publishing warns about lessons left there."
+      },
+      "withdraw": {
+        "title": "Withdraw the loan of {room}?",
+        "body": "{school} gets the room back from now on. Lessons left in the room are warned about when publishing."
+      }
+    },
+    "borrowTitle": "Borrow a room from another school",
+    "borrowHint": "Choose a room, times and a period. Each time becomes a loan of its own that the other school's scheduler approves or declines.",
+    "roomsLoadFailed": "The rooms could not be loaded",
+    "noRooms": "The huvudman's other schools have no rooms to lend.",
+    "roomOption": "{name} ({type} {capacity})",
+    "fields": {
+      "room": "Room",
+      "roomPlaceholder": "Choose a room",
+      "windows": "Times each week",
+      "day": "Day",
+      "start": "From",
+      "end": "To",
+      "from": "First day",
+      "to": "Last day",
+      "localRoom": "Name of the school's room for the loan",
+      "localRoomHint": "The school's lessons in the borrowed room stand in a room of the school's own. Without a name it is named as suggested.",
+      "note": "Message to the other school"
+    },
+    "addWindow": "Add a time",
+    "removeWindow": "Remove time {n}",
+    "problems": {
+      "windowOrder": "Each time must end after it starts.",
+      "windowTwice": "The same time is listed twice.",
+      "datesOrder": "The last day comes before the first.",
+      "datesTooLong": "A loan lasts at most 400 days. Ask for the next school year separately."
+    },
+    "send": "Send request",
+    "requested": "The request for {room} is sent to {school}",
+    "requestFailed": "The request could not be sent",
+    "errors": {
+      "ROOM_LOAN_OVERLAP": "The room is already lent for part of that time. Decline the loan, or end the other loan first.",
+      "ROOM_LOAN_ALREADY_DECIDED": "The loan has already been answered. The list is updated.",
+      "ROOM_LOAN_ALREADY_ENDED": "The loan has already ended. The list is updated.",
+      "ROOM_LOAN_NOT_APPROVED": "Only an approved loan can be ended.",
+      "ROOM_LOAN_NOT_FOUND": "The loan no longer exists. The list is updated.",
+      "ROOM_LOAN_ROOM_NOT_FOUND": "The room can no longer be borrowed.",
+      "ROOM_LOAN_LOCAL_ROOM_NAME_TAKEN": "The school already has a room with that name. Choose another name for the borrowed room.",
+      "ROOM_LOAN_WINDOW_INVALID": "The times or dates do not fit together.",
+      "SCHOOL_NOT_SIBLING": "The school no longer belongs to the huvudman."
+    }
+  },
   "groups": {
     "title": "Classes",
     "subtitle": "Student groups that are scheduled together",
