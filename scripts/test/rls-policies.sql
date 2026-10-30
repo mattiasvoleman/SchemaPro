@@ -29515,6 +29515,161 @@ END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
+-- Section 283: brytaren för elevernas håltimmar är Skolreglernas och skrivs
+-- av den som planerar (LunchSettings."generatorKeepsPupilGapsDown",
+-- 20261216090000). Section 221's reading of the travel switch, line for line.
+--
+-- In the matrix school, whose Skolregler row the fixtures wrote as the owner
+-- without naming the column:
+--   * the column is boolean, NOT NULL, default false, with its comment, and
+--     the fixtures' row reads false: off for every school until it says so;
+--   * it has no privilege of its own: every role — the API's, PostgREST's
+--     two — has on the column exactly what it has on the row, so the row's
+--     arms are the whole of who reads and writes it;
+--   * the schemaläggare (PLANERING) turns it on and off again, by UPDATE and
+--     by the upsert the gateway writes; the full administrator and the rektor
+--     hold PLANERING and turn it too;
+--   * the expedition (PERSONAL, not PLANERING) and the läsare are refused by
+--     the arm's WITH CHECK (insufficient_privilege, as section 181's
+--     expedition is) and both still read it;
+--   * the teacher reads it, as staff read the row, and an UPDATE reaches no
+--     row of it;
+--   * a pupil and a guardian read no row at all.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+DO $$
+DECLARE
+  col record;
+  school uuid := app.current_school_id();
+BEGIN
+  IF (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-roller-school'
+     OR NOT app.current_user_may('PLANERING', true) THEN
+    RAISE EXCEPTION 'pupil-gap switch: expected the matrix school''s schemaläggare';
+  END IF;
+  SELECT a.attnotnull AS not_null, format_type(a.atttypid, a.atttypmod) AS type_name,
+         pg_get_expr(d.adbin, d.adrelid) AS default_value,
+         col_description(a.attrelid, a.attnum) AS comment
+    INTO col
+    FROM pg_attribute a
+    LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+   WHERE a.attrelid = '"LunchSettings"'::regclass AND a.attname = 'generatorKeepsPupilGapsDown'
+     AND NOT a.attisdropped;
+  IF col IS NULL OR NOT col.not_null OR col.type_name <> 'boolean' OR col.default_value <> 'false'
+     OR col.comment IS NULL OR col.comment NOT LIKE 'Elevernas håltimmar:%' THEN
+    RAISE EXCEPTION 'pupil-gap switch: the column is not boolean NOT NULL DEFAULT false with its comment: %', row_to_json(col);
+  END IF;
+  -- Row-level arms only: the column is the row's, for whoever the row is —
+  -- every role holds on it exactly what it holds on the row's other columns
+  -- (lunchMinutes stands for them), and the API's role all three it writes
+  -- with.
+  IF NOT has_column_privilege('app_authenticated', '"LunchSettings"', 'generatorKeepsPupilGapsDown', 'SELECT')
+     OR NOT has_column_privilege('app_authenticated', '"LunchSettings"', 'generatorKeepsPupilGapsDown', 'UPDATE')
+     OR NOT has_column_privilege('app_authenticated', '"LunchSettings"', 'generatorKeepsPupilGapsDown', 'INSERT') THEN
+    RAISE EXCEPTION 'pupil-gap switch: app_authenticated cannot read and write the column as it does the row';
+  END IF;
+  FOR col IN
+    SELECT r.rolname, p.privilege
+      FROM pg_roles r
+      CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE']) AS p(privilege)
+     WHERE r.rolname IN ('app_authenticated', 'authenticated', 'anon')
+  LOOP
+    IF has_column_privilege(col.rolname, '"LunchSettings"', 'generatorKeepsPupilGapsDown', col.privilege)
+       IS DISTINCT FROM has_column_privilege(col.rolname, '"LunchSettings"', 'lunchMinutes', col.privilege) THEN
+      RAISE EXCEPTION 'pupil-gap switch: % holds % on the column as it does not on the row''s other columns', col.rolname, col.privilege;
+    END IF;
+  END LOOP;
+
+  IF (SELECT "generatorKeepsPupilGapsDown" FROM "LunchSettings" WHERE "schoolId" = school) IS DISTINCT FROM false THEN
+    RAISE EXCEPTION 'pupil-gap switch: the row written before the column does not read off';
+  END IF;
+  UPDATE "LunchSettings" SET "generatorKeepsPupilGapsDown" = true WHERE "schoolId" = school;
+  IF NOT FOUND THEN RAISE EXCEPTION 'pupil-gap switch: the schemaläggare could not turn it on'; END IF;
+  -- The gateway's own write: INSERT … ON CONFLICT ("schoolId") DO UPDATE.
+  INSERT INTO "LunchSettings" ("schoolId", "lunchStartTime", "lunchEndTime", "lunchMinutes", "updatedAt", "generatorKeepsPupilGapsDown")
+  VALUES (school, '11:00', '13:00', 30, now(), false)
+  ON CONFLICT ("schoolId") DO UPDATE SET "generatorKeepsPupilGapsDown" = EXCLUDED."generatorKeepsPupilGapsDown";
+  IF (SELECT "generatorKeepsPupilGapsDown" FROM "LunchSettings" WHERE "schoolId" = school) THEN
+    RAISE EXCEPTION 'pupil-gap switch: the schemaläggare''s upsert did not turn it off';
+  END IF;
+  UPDATE "LunchSettings" SET "generatorKeepsPupilGapsDown" = true WHERE "schoolId" = school;
+END $$;
+SELECT set_config('app.test_rls283_school', app.current_school_id()::text, true);
+
+-- The full administrator and the rektor hold PLANERING: each turns it once.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+DO $$
+BEGIN
+  UPDATE "LunchSettings" SET "generatorKeepsPupilGapsDown" = false WHERE "schoolId" = app.current_school_id();
+  IF NOT FOUND THEN RAISE EXCEPTION 'pupil-gap switch: the full administrator could not turn it off'; END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000106')::text, true);
+DO $$
+BEGIN
+  UPDATE "LunchSettings" SET "generatorKeepsPupilGapsDown" = true WHERE "schoolId" = app.current_school_id();
+  IF NOT FOUND THEN RAISE EXCEPTION 'pupil-gap switch: the rektor could not turn it on'; END IF;
+END $$;
+
+-- The expedition and the läsare read it on and are refused a change by the
+-- arm's WITH CHECK; the teacher reads it on and an UPDATE reaches no row.
+DO $$
+DECLARE
+  who text;
+  n bigint;
+  msg text;
+  school uuid := current_setting('app.test_rls283_school')::uuid;
+BEGIN
+  FOREACH who IN ARRAY ARRAY[
+    '00000000-0000-4000-8000-000000000108',
+    '00000000-0000-4000-8000-000000000115',
+    '00000000-0000-4000-8000-000000000111'
+  ] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', who)::text, true);
+    IF (SELECT "generatorKeepsPupilGapsDown" FROM "LunchSettings" WHERE "schoolId" = school) IS DISTINCT FROM true THEN
+      RAISE EXCEPTION 'pupil-gap switch: % does not read the switch the rektor turned on', who;
+    END IF;
+    BEGIN
+      UPDATE "LunchSettings" SET "generatorKeepsPupilGapsDown" = false WHERE "schoolId" = school;
+      GET DIAGNOSTICS n = ROW_COUNT;
+      IF n <> 0 THEN RAISE EXCEPTION 'pupil-gap switch: % turned it off without PLANERING', who; END IF;
+      IF app.current_user_role() = 'SCHOOL_ADMIN' THEN
+        RAISE EXCEPTION 'pupil-gap switch: % (an administrator without PLANERING) was not refused', who;
+      END IF;
+    EXCEPTION WHEN insufficient_privilege THEN
+      GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT;
+      IF msg NOT LIKE '%row-level security%' THEN
+        RAISE EXCEPTION 'pupil-gap switch: % was refused by "%", not by row security', who, msg;
+      END IF;
+      IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+        RAISE EXCEPTION 'pupil-gap switch: % (%) was refused where no row is theirs', who, app.current_user_role();
+      END IF;
+    END;
+  END LOOP;
+END $$;
+
+-- A pupil and a guardian read no row of the Skolregler at all.
+DO $$
+DECLARE
+  who text;
+BEGIN
+  FOREACH who IN ARRAY ARRAY['00000000-0000-4000-8000-000000000112', '00000000-0000-4000-8000-000000000113'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', who)::text, true);
+    IF EXISTS (SELECT 1 FROM "LunchSettings") THEN
+      RAISE EXCEPTION 'pupil-gap switch: % reads the Skolregler', who;
+    END IF;
+  END LOOP;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+DO $$
+BEGIN
+  IF (SELECT "generatorKeepsPupilGapsDown" FROM "LunchSettings" WHERE "schoolId" = app.current_school_id()) IS DISTINCT FROM true THEN
+    RAISE EXCEPTION 'pupil-gap switch: a profile without PLANERING moved it after all';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
 -- Section 270: Ersättande grupper, katalogen (20261211090000). Kolumnen
 -- StudentGroups."replacesSubjectId", dess CHECK och sammansatta nyckel;
 -- elevens hjälpare SECURITY DEFINER, STABLE, med fäst search_path, körbar av
