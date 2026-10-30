@@ -22,6 +22,14 @@ from app.exceptions import (
     SolverBuildError,
 )
 from app.solver.frames import changeover_slots, day_windows, span_of
+from app.solver.pupil_gaps import (
+    PupilGapModel,
+    SlotGrid,
+    build_pupil_gap_objective,
+    estimate_variables as pupil_gap_variables,
+    pupil_gap_scale,
+    pupil_idle_minutes,
+)
 from app.solver.rasts import blocks_for, blocks_with_demand, forbidden_starts
 from app.solver.servings import allowed_starts
 from app.schemas.schedule import (
@@ -1518,7 +1526,18 @@ class SchedulerSolver:
                     model, decisions, wished_free, weights, teacher_days, day_literals,
                 ),
             ]
-            model.Minimize(sum(objective_terms) if objective_terms else 0)
+            # Elevernas håltimmar, last: it reads the one-hots the terms above
+            # built and adds its own after them. None at a school that has not
+            # turned it on, and then the objective is the line it always was.
+            pupil_terms = self._add_pupil_gap_objective(
+                model, request, decisions, day_vars, day_literals, lunch_starts,
+            )
+            if pupil_terms:
+                model.Minimize(
+                    pupil_gap_scale(request) * sum(objective_terms) + sum(pupil_terms),
+                )
+            else:
+                model.Minimize(sum(objective_terms) if objective_terms else 0)
         return model, registry, decisions, room_plan, lunch_starts
 
     def _dining_hall_verdict(self, request: OptimizeScheduleRequest) -> ConflictAnalysis | None:
@@ -4842,6 +4861,7 @@ class SchedulerSolver:
                 lessons=lessons,
                 lunches=self._lunches_of(winner_solver, winner_lunch, request.rules),
                 conflicts=None,
+                pupil_idle_minutes=pupil_idle_minutes(request, lessons),
             )
 
         remaining = _remaining()
@@ -4889,6 +4909,7 @@ class SchedulerSolver:
                 # lunch_full, not winner_lunch: phase 2 solved the full model.
                 lunches=self._lunches_of(phase2, lunch_full, request.rules),
                 conflicts=None,
+                pupil_idle_minutes=pupil_idle_minutes(request, lessons),
             )
 
         # Phase 2 came up empty: fall back to the phase-1 schedule rather than
@@ -5527,6 +5548,21 @@ class SchedulerSolver:
             + len(_blocks_of(request.requirements))
             + 2 * len(request.previous_lessons)
             + self._week_vars(request, lessons_by_teacher, lessons_by_group)
+            # Elevernas håltimmar: zero without pupilGaps (pupil_gaps.py).
+            + (
+                pupil_gap_variables(
+                    request,
+                    SlotGrid(
+                        slots_per_day=self._grid.slots_per_day,
+                        slot_minutes=self._grid.slot_minutes,
+                        day_start_minutes=self._grid.day_start_minutes,
+                        weekdays=self._grid.schedule_days,
+                    ),
+                    self._fixed_window,
+                )
+                if self._settings.weight_pupil_gap > 0
+                else 0
+            )
         )
 
     def _week_vars(
@@ -11023,6 +11059,104 @@ class SchedulerSolver:
                     ).OnlyEnforceIf(apart_literal)
                 for day_index in shut:
                     model.AddBoolAnd([used[day_index].Not()]).OnlyEnforceIf(apart_literal)
+
+    def _add_pupil_gap_objective(
+        self,
+        model: cp_model.CpModel,
+        request: OptimizeScheduleRequest,
+        decisions: list[LessonDecision],
+        day_vars: dict[str, cp_model.IntVar],
+        day_literals: _TeacherDayLiterals,
+        lunch_starts: dict[tuple[UUID, int], cp_model.IntVar],
+    ) -> list[cp_model.LinearExpr]:
+        """Elevernas håltimmar: the pupils' idle time, cohort by cohort. See pupil_gaps.py.
+
+        Nothing at a school that has not turned the rule on: no pupilGaps in the
+        payload, and not one variable. The day literals are each lesson's
+        one-hot in `day_literals` (_teacher_day_on's), built here where no
+        builder made one; nothing reads that cache after this term.
+        """
+        if request.pupil_gaps is None or self._settings.weight_pupil_gap <= 0:
+            return []
+        slots_per_day = self._grid.slots_per_day
+        reaches: dict[str, dict[int, list[tuple[int, int]]]] = {}
+
+        def reach(decision: LessonDecision) -> dict[int, list[tuple[int, int]]]:
+            """Day index -> one hull of the slots the lesson can occupy there.
+
+            _day_reach's days, with one [first start, last start + length)
+            per day rather than an interval per start: the term asks which
+            days a lesson can fall on and whether it can come near a window,
+            and on a stepped week every start is an interval of its own,
+            which made _day_reach most of the term's build at 2,000 pupils.
+            A hull is never narrower, so nothing the term needs is cut.
+            """
+            key = decision.lesson.key()
+            if key not in reaches:
+                if decision.starts is None:
+                    reaches[key] = {
+                        index: [(index * slots_per_day, (index + 1) * slots_per_day)]
+                        for index in range(len(self._grid.schedule_days))
+                    }
+                else:
+                    hulls: dict[int, list[int]] = {}
+                    for low, high in _domain_intervals(decision.starts):
+                        for day_index in range(low // slots_per_day, high // slots_per_day + 1):
+                            first = max(low, day_index * slots_per_day)
+                            last = min(high, (day_index + 1) * slots_per_day - 1)
+                            hull = hulls.get(day_index)
+                            if hull is None:
+                                hulls[day_index] = [first, last]
+                            else:
+                                hull[0] = min(hull[0], first)
+                                hull[1] = max(hull[1], last)
+                    reaches[key] = {
+                        day_index: [(first, last + decision.duration)]
+                        for day_index, (first, last) in hulls.items()
+                    }
+            return reaches[key]
+
+        def on(decision: LessonDecision, day_index: int) -> cp_model.IntVar | None:
+            days = reach(decision)
+            if day_index not in days:
+                return None
+            key = decision.lesson.key()
+            one_hot = day_literals.on_day.get(key)
+            if one_hot is None:
+                day = self._day_var(model, decision, day_vars)
+                one_hot = {
+                    index: model.NewBoolVar(f"ldon_{key}_{index}") for index in sorted(days)
+                }
+                model.AddExactlyOne(one_hot.values())
+                model.Add(day == sum(index * literal for index, literal in one_hot.items()))
+                day_literals.on_day[key] = one_hot
+            return one_hot.get(day_index)
+
+        rules = request.rules
+        lunch_slots = (
+            self._lunch_window_slots(rules)[2]
+            if rules is not None and _lunch_window_is_set(rules) and lunch_starts
+            else 0
+        )
+        return build_pupil_gap_objective(
+            PupilGapModel(
+                model=model,
+                slots_per_day=slots_per_day,
+                slot_minutes=self._grid.slot_minutes,
+                day_start_minutes=self._grid.day_start_minutes,
+                weekdays=self._grid.schedule_days,
+                on=on,
+                reach=reach,
+                fixed_window=lambda fixed: _fixed_lesson_window(fixed, self._grid),
+                lock_keys=pupil_keys_of,
+                pupil_key=pupil_key_of,
+                lunch_starts=lunch_starts,
+                lunch_slots=lunch_slots,
+                weight=self._settings.weight_pupil_gap,
+            ),
+            request,
+            decisions,
+        )
 
     def _add_idle_time_objective(
         self,

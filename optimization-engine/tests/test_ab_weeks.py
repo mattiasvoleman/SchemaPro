@@ -299,6 +299,40 @@ def test_special_rooms_an_ordinary_lesson_fits_are_still_shared_by_the_weeks() -
     assert _validate(payload, response.lessons, settings) == []
 
 
+def _allocator_alone(model, lessons, rooms):  # type: ignore[no-untyped-def]
+    """Room allocation alone, over lessons at fixed times.
+
+    `lessons` maps a name to (start, end, parity, room type); a lesson may
+    take a room of its type, and one without a type any room. Returns the
+    decisions by name and the RoomPlan.
+    """
+    from app.schemas.schedule import AnonymousRequirement
+    from app.solver.room_allocator import add_room_allocation
+    from app.solver.scheduler_solver import LessonDecision, LessonInstance
+
+    decisions = {}
+    for name, (start, end, parity, room_type) in lessons.items():
+        requirement = AnonymousRequirement.model_validate({
+            "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": str(uuid4()),
+            "lessonsPerWeek": 1, "minutesPerLesson": 15, "studentGroupSize": 10,
+            **({"recurrence": parity} if parity else {}),
+            **({"requiredRoomType": room_type} if room_type else {}),
+        })
+        begin = model.NewIntVar(start, start, f"s_{name}")
+        finish = model.NewIntVar(end, end, f"e_{name}")
+        decisions[name] = LessonDecision(
+            lesson=LessonInstance(requirement, 0), start=begin, duration=end - start,
+            end=finish, interval=model.NewIntervalVar(begin, end - start, finish, f"i_{name}"),
+            room_index=model.NewIntVar(0, len(rooms) - 1, f"r_{name}"),
+        )
+    plan = add_room_allocation(
+        model, list(decisions.values()), rooms, distinguished_room_ids=set(),
+        room_allowed=lambda room, requirement: requirement.required_room_type in (None, room.type),
+        profile_key=lambda requirement: (),
+    )
+    return decisions, plan
+
+
 def test_named_rooms_refuse_the_week_no_room_assignment_holds() -> None:
     """The module docstring's counter-example, at fixed times, on the allocator alone.
 
@@ -308,48 +342,106 @@ def test_named_rooms_refuse_the_week_no_room_assignment_holds() -> None:
     """
     from ortools.sat.python import cp_model
 
-    from app.schemas.schedule import AnonymousRequirement, AnonymousRoom
-    from app.solver.room_allocator import add_room_allocation
-    from app.solver.scheduler_solver import LessonDecision, LessonInstance
+    from app.schemas.schedule import AnonymousRoom
 
     rooms = [AnonymousRoom(id=uuid4(), capacity=30), AnonymousRoom(id=uuid4(), capacity=30)]
-    lessons = {  # name: (start, end, parity)
-        "a1": (0, 2, None), "o1": (0, 5, ODD_WEEKS), "e1": (1, 3, EVEN_WEEKS),
-        "e2": (2, 6, EVEN_WEEKS), "a2": (4, 6, None),
+    lessons = {  # name: (start, end, parity, room type)
+        "a1": (0, 2, None, None), "o1": (0, 5, ODD_WEEKS, None), "e1": (1, 3, EVEN_WEEKS, None),
+        "e2": (2, 6, EVEN_WEEKS, None), "a2": (4, 6, None, None),
     }
 
     def solve(names: list[str]) -> tuple[str, dict[str, int]]:
         model = cp_model.CpModel()
-        decisions = []
-        for name in names:
-            start, end, parity = lessons[name]
-            requirement = AnonymousRequirement.model_validate({
-                "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": str(uuid4()),
-                "lessonsPerWeek": 1, "minutesPerLesson": 15, "studentGroupSize": 10,
-                **({"recurrence": parity} if parity else {}),
-            })
-            begin = model.NewIntVar(start, start, f"s_{name}")
-            finish = model.NewIntVar(end, end, f"e_{name}")
-            decisions.append(LessonDecision(
-                lesson=LessonInstance(requirement, 0), start=begin, duration=end - start,
-                end=finish, interval=model.NewIntervalVar(begin, end - start, finish, f"i_{name}"),
-                room_index=model.NewIntVar(0, 1, f"r_{name}"),
-            ))
-        plan = add_room_allocation(
-            model, decisions, rooms, distinguished_room_ids=set(),
-            room_allowed=lambda room, requirement: True, profile_key=lambda requirement: (),
-        )
+        decisions, plan = _allocator_alone(model, {name: lessons[name] for name in names}, rooms)
         solver = cp_model.CpSolver()
         status = solver.StatusName(solver.Solve(model))
         if status not in SOLVED:
             return status, {}
         rooms_by_key = plan.assign_rooms(solver)
-        return status, {name: rooms_by_key[d.lesson.key()] for name, d in zip(names, decisions)}
+        return status, {name: rooms_by_key[d.lesson.key()] for name, d in decisions.items()}
 
     assert solve(list(lessons))[0] == "INFEASIBLE"
     status, room = solve(["a1", "o1", "e1", "e2"])
     assert status in SOLVED
     assert room["a1"] != room["o1"] and room["a1"] != room["e1"] and room["e1"] != room["e2"]
+
+
+def test_a_lesson_that_may_take_a_special_room_is_given_one_whenever_it_does() -> None:
+    """Review of #221, L6: every solution of a mixed class names a room for each of its lessons.
+
+    Two slöjdsalar and a classroom; slöjd every week, odd and even at 0-1,
+    and at 1-2 an even slöjd and a lesson without a room type, which may take
+    a slöjdsal or the classroom: an optional member of the slöjdsalar's mixed
+    class. Every solution the model admits is enumerated, and in each the
+    post-pass gives every lesson a room that holds it apart from the other
+    lessons of its weeks — none chooses the slöjdsalar and is left without one.
+    """
+    from ortools.sat.python import cp_model
+
+    from app.schemas.schedule import AnonymousRoom
+
+    rooms = [
+        AnonymousRoom(id=uuid4(), capacity=30, type="SL"),
+        AnonymousRoom(id=uuid4(), capacity=30, type="SL"),
+        AnonymousRoom(id=uuid4(), capacity=30),
+    ]
+    lessons = {  # name: (start, end, parity, room type)
+        "every": (0, 1, None, "SL"), "odd": (0, 1, ODD_WEEKS, "SL"),
+        "even": (0, 1, EVEN_WEEKS, "SL"), "late": (1, 2, EVEN_WEEKS, "SL"),
+        "untyped": (1, 2, None, None),
+    }
+    model = cp_model.CpModel()
+    decisions, plan = _allocator_alone(model, lessons, rooms)
+
+    class Every(cp_model.CpSolverSolutionCallback):
+        def __init__(self) -> None:
+            super().__init__()
+            self.rooms: list[dict[str, int]] = []
+
+        def on_solution_callback(self) -> None:
+            by_key = plan.assign_rooms(self)  # type: ignore[arg-type]
+            self.rooms.append({name: by_key[d.lesson.key()] for name, d in decisions.items()})
+
+    solver = cp_model.CpSolver()
+    solver.parameters.enumerate_all_solutions = True
+    every = Every()
+    assert solver.StatusName(solver.Solve(model, every)) == "OPTIMAL"
+    for room in every.rooms:
+        for week in (ODD_WEEKS, EVEN_WEEKS):
+            held = [
+                (room[name], start, end) for name, (start, end, parity, _) in lessons.items()
+                if parity in (None, week)
+            ]
+            assert not any(
+                a[0] == b[0] and a[1] < b[2] and b[1] < a[2]
+                for i, a in enumerate(held) for b in held[i + 1:]
+            ), (week, room)
+    # The untyped lesson takes a slöjdsal in some solutions and the classroom in others.
+    assert {room["untyped"] for room in every.rooms} == {0, 1, 2}
+
+
+def test_an_untyped_lesson_beside_the_tight_slojd_weeks_gets_a_room() -> None:
+    """Review of #221, L6: the reviewer's week through solve(), two hours.
+
+    Two slöjdsalar and a classroom; slöjd every week, odd and twice even, so
+    the even weeks fill the slöjdsalar with three lessons in two hours; and a
+    lesson without a room type, which may take the classroom or a slöjdsal.
+    A solvable week: the solver names the room of whichever it takes.
+    """
+    rooms = [
+        {"id": str(uuid4()), "capacity": 30, "type": "SL"},
+        {"id": str(uuid4()), "capacity": 30, "type": "SL"},
+        {"id": str(uuid4()), "capacity": 30},
+    ]
+    slojd = [
+        _requirement(str(uuid4()), 1, recurrence=parity, requiredRoomType="SL")
+        for parity in (None, ODD, EVEN, EVEN)
+    ]
+    payload = _payload([*slojd, _requirement(str(uuid4()), 1)], rooms=rooms)
+    settings = _settings(hours=2)
+    response = _solve(payload, settings)
+    assert response.status in SOLVED
+    assert _validate(payload, response.lessons, settings) == []
 
 
 def test_a_lock_of_the_odd_weeks_leaves_its_hour_to_the_even_ones() -> None:
@@ -548,6 +640,34 @@ def test_no_walk_between_two_lessons_that_never_meet() -> None:
     assert sorted(lesson.start_time for lesson in response.lessons) == ["08:00:00", "09:00:00"]
     assert _validate(payload, response.lessons, settings) == []
     assert _solve(_weekly(payload), settings).status == "INFEASIBLE"
+
+
+def test_a_teachers_lunch_keeps_clear_of_both_weeks_locks_and_is_refused_by_name() -> None:
+    """An odd-week lock 11-12 and an even-week lock 12-13 leave no hour between 11 and 13.
+
+    The teacher's break sits at one hour all year, so each week's locks are
+    in its way: refused before the model, by name, as a lock of every week
+    would be — though each week on its own leaves the hour.
+    """
+    teacher, group = str(uuid4()), str(uuid4())
+
+    def lock(start: str, end: str, parity: str) -> dict[str, object]:
+        return {"id": str(uuid4()), "teacherId": teacher, "studentGroupId": str(uuid4()),
+                "dayOfWeek": 1, "startTime": start, "endTime": end, "recurrence": parity}
+
+    payload = _payload(
+        [_requirement(group, 1, teacher=teacher)],
+        fixedLessons=[lock("11:00:00", "12:00:00", ODD), lock("12:00:00", "13:00:00", EVEN)],
+        teacherWorkRules=[{"id": str(uuid4()), "teacherId": teacher, "lunchMinutes": 60,
+                           "lunchStartTime": "11:00:00", "lunchEndTime": "13:00:00"}],
+    )
+    settings = _settings(hours=6)
+    with pytest.raises(InvalidScheduleInputError) as refused:
+        SchedulerSolver(settings)._validate_request(OptimizeScheduleRequest.model_validate(payload))
+    assert refused.value.code == "TEACHER_LUNCH_LEAVES_NO_START"
+    # One lock alone leaves the hour the other one takes.
+    one = {**payload, "fixedLessons": payload["fixedLessons"][:1]}  # type: ignore[index]
+    assert _solve(one, settings).status in SOLVED
 
 
 def test_a_rast_is_owed_in_the_week_whose_only_lesson_before_it_is_the_other_weeks() -> None:

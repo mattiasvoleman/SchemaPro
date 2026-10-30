@@ -574,6 +574,8 @@ export interface LunchSettingsInput {
   maxLessonsPerDayPerGroup: number | null;
   /** Left out to keep what is stored; an API from before the switch refuses it. */
   generatorKeepsTravelTime?: boolean;
+  /** The same for the pupils' håltimmar. */
+  generatorKeepsPupilGapsDown?: boolean;
 }
 
 export function useSaveLunchSettings() {

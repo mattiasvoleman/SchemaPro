@@ -105,6 +105,7 @@ describe('LunchSettingsService', () => {
     diningSeats: 180,
     maxLessonsPerDayPerGroup: null,
     generatorKeepsTravelTime: false,
+    generatorKeepsPupilGapsDown: false,
     createdAt: new Date('2026-08-01T00:00:00.000Z'),
     updatedAt: new Date('2026-08-01T00:00:00.000Z'),
     ...overrides,
@@ -167,6 +168,29 @@ describe('LunchSettingsService', () => {
       expect(call.update).not.toHaveProperty('generatorKeepsTravelTime');
       // A first row starts with the column's own default: off.
       expect(call.create).not.toHaveProperty('generatorKeepsTravelTime');
+    });
+
+    it('writes the pupil-gap switch when the form sends it, and leaves it alone when a tab from before it does not', async () => {
+      tx.lunchSetting.upsert.mockResolvedValue(storedRow({ generatorKeepsPupilGapsDown: true }));
+      await service.upsert(dto({ generatorKeepsPupilGapsDown: true }), testUser());
+      const sent = tx.lunchSetting.upsert.mock.calls[0]?.[0] as {
+        create: Record<string, unknown>;
+        update: Record<string, unknown>;
+      };
+      expect(sent.create['generatorKeepsPupilGapsDown']).toBe(true);
+      expect(sent.update['generatorKeepsPupilGapsDown']).toBe(true);
+
+      // A Skolregler tab from before the switch names it not, and changes it not:
+      // writing `false` would turn the rule off that a colleague turned on.
+      tx.lunchSetting.upsert.mockClear();
+      tx.lunchSetting.upsert.mockResolvedValue(storedRow());
+      await service.upsert(dto({ generatorKeepsTravelTime: true }), testUser());
+      const older = tx.lunchSetting.upsert.mock.calls[0]?.[0] as {
+        create: Record<string, unknown>;
+        update: Record<string, unknown>;
+      };
+      expect(older.update).not.toHaveProperty('generatorKeepsPupilGapsDown');
+      expect(older.create).not.toHaveProperty('generatorKeepsPupilGapsDown');
     });
 
     it('stores an absent seat count as null rather than dropping the field', async () => {

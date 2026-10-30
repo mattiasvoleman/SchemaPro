@@ -94,6 +94,7 @@ import {
   type IdleGap,
   type ScheduleData,
 } from "@/lib/gaps";
+import { IDLE_MINIMUM_MINUTES, pupilMinutesOf } from "@/lib/candidates/idle";
 import { usePlanningYear } from "@/lib/planning-year";
 import { isProjectable, withProjectedHomes } from "@/lib/projected-rosters";
 import type { LessonRecurrence } from "@/lib/types";
@@ -663,6 +664,34 @@ export default function GapsPage() {
     [scheduleData, classIds, teacherOptions, lunchSettings, gapMinimum, yearGroups],
   );
 
+  /*
+   * The generator's number: the pupils' håltimmar of the whole school at the
+   * generator's minimum, in idle pupil-minutes in the average week
+   * (lib/candidates/idle.ts pupilMinutesOf). The engine counts the timetable
+   * it lays to the same number (src/common/__fixtures__/pupil-gaps-cases.json),
+   * and keeps it down when the school's Skolregler say so. Read off the reports
+   * above when the reader has the minimum where the generator has it, and
+   * counted once more when they do not: the reader's choice of what to list
+   * must not move the number the generator is held to.
+   */
+  const generatorMinutes = useMemo(() => {
+    const reports =
+      Number(gapMinimum) === IDLE_MINIMUM_MINUTES
+        ? gapReports
+        : findIdleGaps({
+            ...scheduleData,
+            studentGroupIds: classIds,
+            lunch: lunchSettings ?? null,
+            minimumMinutes: IDLE_MINIMUM_MINUTES,
+            groups: yearGroups,
+          });
+    return Math.round(pupilMinutesOf(reports));
+  }, [gapMinimum, gapReports, scheduleData, classIds, lunchSettings, yearGroups]);
+  const classPupils = useMemo(() => {
+    const classes = new Set(classIds);
+    return students.filter((student) => student.studentGroupId && classes.has(student.studentGroupId)).length;
+  }, [students, classIds]);
+
   const visibleReports = useMemo(
     () =>
       gapScope === "ALL"
@@ -1082,6 +1111,14 @@ export default function GapsPage() {
           */}
           {pupilBuffers !== undefined && pupilBuffers.size > 0 && <p>{t("idlePupilTime")}</p>}
           <p>{t("lengthLegend")}</p>
+          {/* The generator's number, and whether Generera is held to it. */}
+          <p data-testid="generator-pupil-minutes">
+            {t("generatorFigure", {
+              minutes: generatorMinutes,
+              perPupil: classPupils > 0 ? Math.round((generatorMinutes / classPupils) * 10) / 10 : 0,
+            })}{" "}
+            {lunchSettings?.generatorKeepsPupilGapsDown ? t("generatorFigureOn") : t("generatorFigureOff")}
+          </p>
         </div>
 
         <FilterBar>

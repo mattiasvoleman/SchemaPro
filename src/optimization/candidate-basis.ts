@@ -69,6 +69,7 @@ export const BASIS_PAYLOAD_FIELDS = [
   'lunchPlacements',
   'lunchServings',
   'previousLessons',
+  'pupilGaps',
   'rasts',
   'requirements',
   'roomPreferences',
@@ -142,6 +143,7 @@ export type BasisPayload = Pick<
   | 'previousLessons'
   | 'groupConflicts'
   | 'siteTravelTimes'
+  | 'pupilGaps'
 >;
 
 /**
@@ -388,6 +390,9 @@ export function basisInputsOf(source: BasisSource): BasisInputs {
       // only the rooms (whose part carries the walks and the sites). Present
       // only when the walk was sent, as the rooms' keys are.
       ...(payload.siteTravelTimes !== undefined ? { keepsTravelTime: true } : {}),
+      // Elevernas håltimmar: the switch, as the walk's is, present only when
+      // the cohorts were sent. Their content is the rosters' part's.
+      ...(payload.pupilGaps !== undefined ? { keepsPupilGapsDown: true } : {}),
       storedRules: source.storedRules,
     },
     rosters: {
@@ -403,6 +408,25 @@ export function basisInputsOf(source: BasisSource): BasisInputs {
             lockedPupils: payload.fixedLessons
               .filter((lesson) => lesson.pupilGroupIds !== undefined)
               .map((lesson) => ({ ...fixedLessonContent(lesson, realOf), pupilGroupIds: lesson.pupilGroupIds!.map(realOf) })),
+          }
+        : {}),
+      // Elevernas håltimmar: the pupils' cohorts, in real ids (a lock by its
+      // own lesson id), as counts and keys. A pupil who changes språkval
+      // changes what the objective was, and a candidate solved before it is
+      // stale. Only when the cohorts were sent, so every other school's part
+      // hashes as before.
+      ...(payload.pupilGaps !== undefined
+        ? {
+            pupilCohorts: payload.pupilGaps.cohorts.map((cohort) => ({
+              ...cohort,
+              groupIds: cohort.groupIds.map(realOf),
+              fixedLessonIds: cohort.fixedLessonIds.map(realOf),
+              ...(cohort.homeGroupId !== undefined ? { homeGroupId: realOf(cohort.homeGroupId) } : {}),
+            })),
+            lockMargins: (payload.pupilGaps.fixedMargins ?? []).map((margin) => ({
+              ...margin,
+              fixedLessonId: realOf(margin.fixedLessonId),
+            })),
           }
         : {}),
     },

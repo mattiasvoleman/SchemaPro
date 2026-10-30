@@ -38,6 +38,14 @@ import type {
   LunchSettings,
 } from "@/lib/types";
 import { frameWindow, type FrameTime } from "@/lib/frame-times";
+import {
+  keptByOf,
+  leavesLesson,
+  replacedSubjectOf,
+  replacementsOf,
+  yearsOf,
+  type Replacement,
+} from "@/lib/replacing-groups";
 import { timeToMinutes } from "@/lib/utils";
 import type { GradeSpan } from "@/lib/grade-span";
 
@@ -174,6 +182,13 @@ interface KnownMemberships {
   groupConflicts?: GroupConflictMap;
   /** See ScheduleData.gradeSpanOf — year rules cannot reach a group without it. */
   gradeSpanOf?: Map<string, GradeSpan>;
+  /**
+   * Whether the pupil a probe stands for sits this lesson at all, beside what
+   * validatePlacement says of their groups: the replacing-group rule
+   * (lib/replacing-groups.ts), which a probe's groups cannot say — SvA7's
+   * pupil is in 7A and not in 7A's svenska. Absent for any other probe.
+   */
+  sits?: (placement: Placement) => boolean;
 }
 
 /**
@@ -378,6 +393,7 @@ function occupation(
     ) {
       continue;
     }
+    if (known.sits && !known.sits(placement)) continue;
     occupied = true;
     // The pupil reading is the widest one, so the first pupil probe that
     // matches settles the answer and the rest of the set is not asked. A mixed
@@ -771,7 +787,7 @@ export function findIdleGaps(
      * pupil placed in no half yet sits in both, as buildGroupConflictMap has
      * them — so the hour the halves rotate through is no håltimme.
      */
-    groups?: ReadonlyArray<{ id: string; halfOfId?: string | null }>;
+    groups?: ReadonlyArray<GapGroup>;
   },
 ): GapReport[] {
   const lunch = lunchWindowOf(options.lunch);
@@ -779,6 +795,7 @@ export function findIdleGaps(
   const days = options.days ?? daysWithLessons(options.placements);
   const groupsOfStudent = groupsByStudent(options, options.groups ?? []);
   const bookings = personalBookings(options.placements);
+  const replacing = replacingRuleOf(options.groups ?? []);
 
   const subjects: Array<{ id: string; kind: GapSubjectKind }> = [
     ...unique(options.studentGroupIds ?? []).map((id) => ({
@@ -792,7 +809,7 @@ export function findIdleGaps(
   for (const subject of subjects) {
     const cohorts =
       subject.kind === "STUDENT_GROUP"
-        ? cohortsOf(subject.id, options, groupsOfStudent, bookings)
+        ? cohortsOf(subject.id, options, groupsOfStudent, bookings, replacing)
         : [wholeBody({ teacherIds: [subject.id] }, options)];
 
     // One row per (hole, week, lunch credit) the day holds, however many
@@ -916,13 +933,16 @@ function wholeBody(bodies: Bodies, data: ScheduleData): Cohort {
  * The probe carries the pupil's own groups and gets no conflict maps, which is
  * the whole point: with the maps, a lesson for any group sharing a pupil with
  * 7A would busy every pupil of 7A, and the fourteen sitting idle while Ma71
- * runs would vanish again.
+ * runs would vanish again. It does get the groups' years (gradeSpanOf), which
+ * say when a year rule or a ramtid closes the pupil's time and nothing about
+ * who else is busy, and the replacing-group rule (replacingRuleOf).
  */
 function cohortsOf(
   groupId: string,
   data: ScheduleData,
   groupsOfStudent: Map<string, Set<string>>,
   bookings: Map<string, string[]>,
+  replacing: ReplacingRule | null = null,
 ): Cohort[] {
   // No roster at all: the best answer available is the old one, asked of the
   // group's name. Only the memberships say so — a caller who knows the home
@@ -956,8 +976,66 @@ function cohortsOf(
         studentIds: [cohort.studentId],
       },
     ],
-    known: {},
+    // The years of the groups, and nothing that widens who is in them: a
+    // year rule and a ramtid close a pupil's time as they close the class's.
+    // Without them the per-pupil reading skipped every GRADE_LEVEL row and
+    // every frame, and a stage's closed afternoon read as a håltimme.
+    known: {
+      gradeSpanOf: data.gradeSpanOf,
+      ...(replacing ? { sits: replacing.sits(cohort.studentId, cohort.groupIds) } : {}),
+    },
   }));
+}
+
+/** A group as the report reads it: its halves, and the subject it replaces. */
+export interface GapGroup {
+  id: string;
+  halfOfId?: string | null;
+  kind?: string | null;
+  replacesSubjectId?: string | null;
+  academicYearId?: string | null;
+}
+
+interface ReplacingRule {
+  /** Whether a pupil with these groups sits the lesson, by the rule alone. */
+  sits: (studentId: string, groupIds: readonly string[]) => (placement: Placement) => boolean;
+}
+
+/**
+ * Ersättande grupper, as the pupils' day reads them: a pupil of SvA7 is not in
+ * 7A's svenska (lib/replacing-groups.ts leavesLesson), named on it excepted.
+ * The generator's cohorts are cut by the same rule (src/optimization/
+ * pupil-cohorts.ts), so the hole a SvA pupil sits through while the rest of 7A
+ * has svenska is one both of them count. Null at a school with no replacing
+ * group, where every answer is the one this module gave before.
+ */
+function replacingRuleOf(groups: ReadonlyArray<GapGroup>): ReplacingRule | null {
+  const replaced = replacedSubjectOf(groups);
+  if (replaced.size === 0) return null;
+  const yearOf = yearsOf(groups);
+  const byId = new Map(groups.map((group) => [group.id, group]));
+  return {
+    sits: (studentId, groupIds) => {
+      const replacements: Replacement[] = replacementsOf(groupIds, replaced, yearOf);
+      if (replacements.length === 0) return () => true;
+      return (placement) => {
+        if (!placement.subjectId) return true;
+        const keptBy = keptByOf(byId.get(placement.studentGroupId));
+        const year = yearOf.get(placement.studentGroupId);
+        return !leavesLesson(
+          replacements,
+          {
+            subjectId: placement.subjectId,
+            groupIds: groupsOf(placement),
+            ...(keptBy === undefined ? {} : { keptBy }),
+            ...(year === undefined ? {} : { academicYearId: year }),
+          },
+          (placement.studentIds ?? []).includes(studentId),
+          groupIds,
+        );
+      };
+    },
+  };
 }
 
 /**
@@ -972,7 +1050,7 @@ function cohortsOf(
  */
 function groupsByStudent(
   data: ScheduleData,
-  groups: ReadonlyArray<{ id: string; halfOfId?: string | null }> = [],
+  groups: ReadonlyArray<GapGroup> = [],
 ): Map<string, Set<string>> {
   const byStudent = new Map<string, Set<string>>();
   const add = (studentId: string, groupId: string) => {

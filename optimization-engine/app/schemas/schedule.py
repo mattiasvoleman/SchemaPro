@@ -1014,6 +1014,66 @@ class SearchOptions(CamelModel):
         return self.probes is not False
 
 
+class PupilGapCohort(CamelModel):
+    """Elevernas håltimmar: pupils whose school day is one and the same day.
+
+    The pupils the gateway cannot tell apart: the same home class, the same
+    teaching groups and halves, the same replacing groups and the same locked
+    lessons. web/lib/gaps.ts asks the report of exactly these sets ("cohorts"),
+    and this is the same set sent anonymously, as a count and the keys its
+    pupils' lessons are filed under. No pupil id ever leaves the gateway.
+    """
+
+    #: Every key whose lessons these pupils sit, in the PUPIL space
+    #: (pupil_key_of): their groups, and a derived "7A without SvA7" key when
+    #: they sit 7A's svenska. Also every group they are in, for the rules
+    #: about a group — an UNAVAILABLE row on 7A closes 7A's pupils' time. A
+    #: pupil placed in no half of their class is sent with every half, as the
+    #: report reads them: they may end up in either.
+    group_ids: list[UUID4] = Field(alias="groupIds", min_length=1, max_length=200)
+    #: Every locked lesson these pupils sit, by the FixedLesson ids of this
+    #: same payload — named one by one, because a lock's keys hold everyone on
+    #: it and may hold more (a pupil named on a lock keeps their class's key
+    #: on it), and a pupil's day must hold exactly their own lessons.
+    fixed_lesson_ids: list[UUID4] = Field(
+        default_factory=list, alias="fixedLessonIds", max_length=500,
+    )
+    #: The class they eat with: its lunch is theirs (rules' lunch window).
+    home_group_id: UUID4 | None = Field(default=None, alias="homeGroupId")
+    #: How many pupils this is. Weighs the cohort's minutes in the objective
+    #: and in pupilIdleMinutes.
+    pupils: int = Field(ge=1, le=5000)
+
+
+class FixedLessonMargin(CamelModel):
+    """A locked lesson's minutes before and after it, for the pupils.
+
+    The ombyte and dusch the report counts as busy around a locked idrott, read
+    off the requirement of the lesson's class and subject the way
+    web/lib/conflicts.ts toPlacement reads it. Only the pupils' day reads it:
+    the lock blocks what it blocked before.
+    """
+
+    fixed_lesson_id: UUID4 = Field(alias="fixedLessonId")
+    minutes_before: int = Field(default=0, alias="minutesBefore", ge=0, le=60)
+    minutes_after: int = Field(default=0, alias="minutesAfter", ge=0, le=60)
+
+
+class PupilGaps(CamelModel):
+    """Elevernas håltimmar: sent only by a school whose Skolregler turn it on.
+
+    ABSENT IS EVERY OTHER SCHOOL, BYTE FOR BYTE. The gateway sends the key
+    only when the school has turned the rule on, so a payload without it
+    builds exactly the model it built before, and its response carries no
+    key it did not carry before. See app/solver/pupil_gaps.py.
+    """
+
+    cohorts: list[PupilGapCohort] = Field(min_length=1, max_length=5000)
+    fixed_margins: list[FixedLessonMargin] = Field(
+        default_factory=list, alias="fixedMargins", max_length=5000,
+    )
+
+
 class OptimizeScheduleRequest(CamelModel):
     request_id: UUID4 = Field(alias="requestId")
     academic_year_id: UUID4 = Field(alias="academicYearId")
@@ -1112,6 +1172,9 @@ class OptimizeScheduleRequest(CamelModel):
     )
     weights: ObjectiveWeights | None = None
     rules: ScheduleRules | None = None
+    #: Elevernas håltimmar, present only when the school turned it on. See
+    #: PupilGaps.
+    pupil_gaps: PupilGaps | None = Field(default=None, alias="pupilGaps")
     # Optional, and absent on every request but a schemaförslag candidate's;
     # absent is today's solve byte for byte. See SearchOptions.
     search: SearchOptions | None = None
@@ -1413,3 +1476,14 @@ class OptimizeScheduleResponse(CamelModel):
     #: failure path stays valid without naming the field.
     lunches: list[ScheduledLunch] = Field(default_factory=list)
     conflicts: ConflictAnalysis | None = None
+    #: Elevernas håltimmar in the timetable returned, locked lessons included:
+    #: idle pupil-minutes in an ordinary week, counted the way the
+    #: håltimmesrapport counts them (app/solver/pupil_gaps.py). A number, not
+    #: an integer: a hole on alternate weeks is half of one in an ordinary
+    #: week, as the report's weekShare has it. Only on a response to a request
+    #: that carried pupilGaps, and only with lessons; OMITTED otherwise, so
+    #: every other response is byte for byte what it was.
+    pupil_idle_minutes: float | None = Field(
+        default=None, alias="pupilIdleMinutes", ge=0,
+        exclude_if=lambda value: value is None,
+    )
