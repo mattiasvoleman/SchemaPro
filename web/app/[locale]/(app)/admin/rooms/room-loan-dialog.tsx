@@ -213,12 +213,13 @@ export function RoomLoanDialog({ open, onOpenChange, initial = null }: RoomLoanD
                     <FormField id={`room-loan-start-${index}`} label={t("fields.start")}>
                       <Input
                         type="time"
+                        step={300}
                         value={window.startTime}
                         onChange={(event) => setWindow(index, { startTime: event.target.value })}
                       />
                     </FormField>
                     <FormField id={`room-loan-end-${index}`} label={t("fields.end")}>
-                      <Input type="time" value={window.endTime} onChange={(event) => setWindow(index, { endTime: event.target.value })} />
+                      <Input type="time" step={300} value={window.endTime} onChange={(event) => setWindow(index, { endTime: event.target.value })} />
                     </FormField>
                     <Button
                       type="button"
