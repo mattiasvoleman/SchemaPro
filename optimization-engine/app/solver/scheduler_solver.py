@@ -10720,16 +10720,38 @@ class SchedulerSolver:
         reaches: dict[str, dict[int, list[tuple[int, int]]]] = {}
 
         def reach(decision: LessonDecision) -> dict[int, list[tuple[int, int]]]:
+            """Day index -> one hull of the slots the lesson can occupy there.
+
+            _day_reach's days, with one [first start, last start + length)
+            per day rather than an interval per start: the term asks which
+            days a lesson can fall on and whether it can come near a window,
+            and on a stepped week every start is an interval of its own,
+            which made _day_reach most of the term's build at 2,000 pupils.
+            A hull is never narrower, so nothing the term needs is cut.
+            """
             key = decision.lesson.key()
             if key not in reaches:
-                reaches[key] = (
-                    _day_reach(decision.starts, decision.duration, slots_per_day)
-                    if decision.starts is not None
-                    else {
+                if decision.starts is None:
+                    reaches[key] = {
                         index: [(index * slots_per_day, (index + 1) * slots_per_day)]
                         for index in range(len(self._grid.schedule_days))
                     }
-                )
+                else:
+                    hulls: dict[int, list[int]] = {}
+                    for low, high in _domain_intervals(decision.starts):
+                        for day_index in range(low // slots_per_day, high // slots_per_day + 1):
+                            first = max(low, day_index * slots_per_day)
+                            last = min(high, (day_index + 1) * slots_per_day - 1)
+                            hull = hulls.get(day_index)
+                            if hull is None:
+                                hulls[day_index] = [first, last]
+                            else:
+                                hull[0] = min(hull[0], first)
+                                hull[1] = max(hull[1], last)
+                    reaches[key] = {
+                        day_index: [(first, last + decision.duration)]
+                        for day_index, (first, last) in hulls.items()
+                    }
             return reaches[key]
 
         def on(decision: LessonDecision, day_index: int) -> cp_model.IntVar | None:

@@ -484,3 +484,86 @@ def test_the_size_estimate_bounds_what_the_term_builds(make) -> None:  # noqa: A
     assert len(built_on.Proto().variables) > len(built_off.Proto().variables)
     assert solver._estimate_model_size(on) >= len(built_on.Proto().variables)
     assert solver._estimate_model_size(on) > solver._estimate_model_size(off)
+
+
+def _pupil_objective(payload: dict[str, object], starts: list[int], lunch_at: int | None = None) -> float:
+    """The whole objective with every other weight at zero, lessons (and the meal) pinned.
+
+    What the term is worth inside the model it is built in: with the lunch
+    variable it reads, the day variables the rules made and the scale beside
+    it. In pupil-slots.
+    """
+    payload = {
+        **payload,
+        "weights": {
+            "preferredFree": 0, "preferredBusy": 0, "disruption": 0,
+            "spread": 0, "teacherGap": 0, "roomPreference": 0,
+        },
+    }
+    solver = _solver(WEIGHT_LUNCH_DRIFT=0, WEIGHT_FREE_DAY_WISH=0)
+    request = OptimizeScheduleRequest.model_validate(payload)
+    model, _, decisions, _, lunches = solver._build_model(request, use_assumptions=False)
+    grid = solver._grid
+    for decision, minutes in zip(decisions, starts):
+        model.Add(decision.start == (minutes - grid.day_start_minutes) // grid.slot_minutes)
+    if lunch_at is not None:
+        for variable in lunches.values():
+            model.Add(variable == (lunch_at - grid.day_start_minutes) // grid.slot_minutes)
+    cp = cp_model.CpSolver()
+    cp.parameters.max_time_in_seconds = 10.0
+    assert cp.Solve(model) == cp_model.OPTIMAL
+    return cp.ObjectiveValue() / solver._settings.weight_pupil_gap
+
+
+def test_the_lunch_in_the_day_is_credited_and_the_lunch_outside_it_is_not() -> None:
+    """7A at 08, 09, 12 and 13, Ty7 at 10, and 7A's lunch at 11:00 or at 14:00.
+
+    At 11:00 the meal is in the day of both cohorts: Ty7's ten wait 11:30-12:00
+    (6 slots), the fifteen 10:00-11:00 and 11:30-12:00 (18). At 14:00, after
+    the last lesson, it is in neither day, and both wait its half hour too.
+    """
+    payload = _week(pupil_gaps=True, lunch=True)
+    payload["rules"] = {"lunchStartTime": "11:00:00", "lunchEndTime": "14:30:00", "lunchMinutes": 30}
+    starts = [8 * 60, 9 * 60, 12 * 60, 13 * 60, 10 * 60]
+    assert _pupil_objective(payload, starts, lunch_at=11 * 60) == 10 * 6 + 15 * 18
+    assert _pupil_objective(payload, starts, lunch_at=14 * 60) == 10 * 12 + 15 * 24
+
+
+def test_the_pupils_margins_are_busy_time_in_the_term() -> None:
+    """Idrott with 15 minutes of dusch after it: the pupils are busy until a quarter past.
+
+    7A's first requirement is idrott (minutesAfter 15) at 08:00 and 12:00, its
+    second at 09:30 and 13:30, and Ty7 at 10:30. The fifteen outside Ty7 wait
+    09:15-09:30, 10:30-12:00 and 13:15-13:30 (3 + 18 + 3 slots); the ten in it
+    09:15-09:30, 11:30-12:00 and 13:15-13:30 (3 + 6 + 3). Without the dusch
+    as busy time each 15-minute wait would be half an hour.
+    """
+    payload = _week(pupil_gaps=True)
+    payload["requirements"][0]["minutesAfter"] = 15
+    starts = [8 * 60, 12 * 60, 9 * 60 + 30, 13 * 60 + 30, 10 * 60 + 30]
+    assert _pupil_term(payload, starts) == 15 * (3 + 18 + 3) + 10 * (3 + 6 + 3)
+
+
+def test_the_estimate_charges_the_closures_the_term_builds() -> None:
+    """The term's own closure variables, against what its estimate adds for them."""
+    open_week = _week(pupil_gaps=True)
+    closed_week = _closed_week()
+    solver = _solver()
+
+    def variables(payload: dict[str, object], on: bool) -> int:
+        request = OptimizeScheduleRequest.model_validate(payload)
+        if not on:
+            request = request.model_copy(update={"pupil_gaps": None})
+        model, *_ = solver._build_model(request, use_assumptions=False)
+        return len(model.Proto().variables)
+
+    from app.solver.pupil_gaps import estimate_variables
+
+    built = (variables(closed_week, True) - variables(open_week, True)) - (
+        variables(closed_week, False) - variables(open_week, False)
+    )
+    charged = estimate_variables(
+        OptimizeScheduleRequest.model_validate(closed_week), 1,
+    ) - estimate_variables(OptimizeScheduleRequest.model_validate(open_week), 1)
+    assert built > 0
+    assert charged >= built
