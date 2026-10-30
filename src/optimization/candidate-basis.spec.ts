@@ -463,6 +463,8 @@ describe('the candidate basis', () => {
     ['a block loses a member', (s) => void delete s.payload.requirements[1]!.blockId, ['requirements']],
     ['a locked lesson changes room', (s) => void (s.payload.fixedLessons[0]!.roomId = 'room-hall'), ['preserved']],
     ['a locked lesson loses its second class', (s) => void s.payload.fixedLessons[0]!.extraGroupIds!.pop(), ['preserved']],
+    ['a locked lesson moves to even weeks', (s) => void (s.payload.fixedLessons[0]!.recurrence = 'EVEN_WEEKS'), ['preserved']],
+    ['a post moves to odd weeks', (s) => void (s.payload.requirements[0]!.recurrence = 'ODD_WEEKS'), ['requirements']],
     ['a draft lesson is moved by hand', (s) => void (s.draftLessons[0]!.dayOfWeek = 5), ['draft']],
     ['a hint the engine is given moves', (s) => void (s.payload.previousLessons[0]!.startTime = '13:00:00'), ['draft']],
     ['a draft lesson gets a term', (s) => void (s.draftLessons[0]!.endDate = '2026-12-18'), ['draft']],
@@ -589,9 +591,16 @@ describe('the candidate basis', () => {
       startTime: new Date('1970-01-01T08:00:00.000Z'),
       endTime: new Date('1970-01-01T09:00:00.000Z'),
       extraGroups: [{ studentGroupId: 'grp-ma7' }, { studentGroupId: 'grp-7b' }],
+      recurrence: 'ALL_WEEKS' as const,
     };
     expect(preservedPartOf([row])).toBe(parts.preserved);
     expect(preservedPartOf([{ ...row, roomId: 'room-hall' }])).not.toBe(parts.preserved);
+    // A/B-veckor: a lock moved to odd weeks is not the lock the run planned
+    // around, and one sent with its parity digests the same from the row.
+    expect(preservedPartOf([{ ...row, recurrence: 'ODD_WEEKS' }])).not.toBe(parts.preserved);
+    const odd = school();
+    odd.payload.fixedLessons[0]!.recurrence = 'ODD_WEEKS';
+    expect(preservedPartOf([{ ...row, recurrence: 'ODD_WEEKS' }])).toBe(partsOf(odd).preserved);
   });
 
   it('refuses an anonymous id no map knows, rather than hashing a random one', () => {

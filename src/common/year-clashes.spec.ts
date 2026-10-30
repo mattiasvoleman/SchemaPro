@@ -92,3 +92,39 @@ describe('year clashes with replacing groups', () => {
     expect(groupClash(input, 'sv')).toBe(false);
   });
 });
+
+describe('year clashes in A/B-veckor', () => {
+  /*
+   * The generator now lays slöjd udda veckor and hemkunskap jämna veckor in
+   * one hour of one class, one teacher and one room. The publish check
+   * (PUB_CLASHES) reads them as the engine does: no week holds both, so they
+   * are no clash — and an every-week lesson in the same hour still is, in
+   * each week.
+   */
+  const shared = { teacherId: 't-1', roomId: 'r-1' };
+  const clashes = (input: YearClashInput, id: string) => (yearClashes(input).get(id) ?? []).map((hit) => hit.kind).sort();
+
+  it('lets an odd-week and an even-week lesson share a class, a teacher and a room', () => {
+    const input = base({
+      lessons: [
+        lesson('slojd', '7A', 'SL', { ...shared, recurrence: 'ODD_WEEKS' }),
+        lesson('hkk', '7A', 'HKK', { ...shared, recurrence: 'EVEN_WEEKS' }),
+      ],
+    });
+    expect(clashes(input, 'slojd')).toEqual([]);
+    expect(clashes(input, 'hkk')).toEqual([]);
+  });
+
+  it('still clashes an every-week lesson, or two of one parity, in the same hour', () => {
+    const input = base({
+      lessons: [
+        lesson('slojd', '7A', 'SL', { ...shared, recurrence: 'ODD_WEEKS' }),
+        lesson('bild', '7A', 'BL', { ...shared, recurrence: 'ODD_WEEKS' }),
+        lesson('hkk', '7A', 'HKK', { ...shared, recurrence: 'EVEN_WEEKS' }),
+        lesson('sv', '7A', 'SV', { ...shared }),
+      ],
+    });
+    expect(clashes(input, 'slojd')).toEqual(['GROUP', 'GROUP', 'ROOM', 'ROOM', 'TEACHER', 'TEACHER']);
+    expect(clashes(input, 'hkk')).toEqual(['GROUP', 'ROOM', 'TEACHER']);
+  });
+});

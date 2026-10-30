@@ -102,6 +102,7 @@ import type {
   AiEngineScheduleResponse,
   AnonymousConstraint,
   AiEngineLunch,
+  AlternatingWeeks,
   AnonymousFixedLesson,
   AnonymousFrameTime,
   AnonymousLunchPlacement,
@@ -1027,6 +1028,34 @@ export function groupConflictsRefusal(pairs: number): AiEngineConflictAnalysis {
   };
 }
 
+/**
+ * A/B-veckor: the parity a post's or a lock's times are held in, as the engine
+ * is told (AnonymousRequirement.recurrence, AnonymousFixedLesson.recurrence);
+ * undefined is every week, and the key is then left out.
+ *
+ * A LEADER POST CARRIES THE WHOLE LINK'S WEEKS (same-times.ts), `held` being
+ * every post of both blocks. They all sit at the block's times, each in its
+ * own weeks, and the engine holds a follower's pieces through DIFFERENT
+ * leader posts: its group through the post on that group (or the one sent as
+ * the class), its teacher through whichever post seats them, its room through
+ * the post in its subject. Swapped halves put 7A:1's spring trä, on even
+ * weeks, on the same group as its autumn textil, on odd weeks: told "odd
+ * weeks" for that post, the engine handed 7A:1's even weeks at those times to
+ * hemkunskap while the trä sat there (review of #221, H1), and a follower's
+ * teacher seated on an odd post was held in odd weeks while teaching every
+ * week. So the link keeps a parity only when every post of it has the same
+ * one; anything else is every week, which is what the engine held for every
+ * link before it knew weeks.
+ */
+export function alternatingWeeksOf(
+  row: { recurrence: LessonRecurrence },
+  held: readonly { recurrence: LessonRecurrence }[] = [],
+): AlternatingWeeks | undefined {
+  if (row.recurrence === 'ALL_WEEKS') return undefined;
+  if (held.some((other) => other.recurrence !== row.recurrence)) return undefined;
+  return row.recurrence;
+}
+
 @Injectable()
 export class OptimizationProxyService {
   private readonly logger = new Logger(OptimizationProxyService.name);
@@ -1597,6 +1626,8 @@ export class OptimizationProxyService {
               startTime: true,
               endTime: true,
               extraGroups: { select: { studentGroupId: true } },
+              // A/B-veckor: the parity the payload sent (fixedLessonContent).
+              recurrence: true,
             },
           });
           if (preservedPartOf(preserved) !== prepared.basisParts.preserved) {
@@ -2060,10 +2091,12 @@ export class OptimizationProxyService {
           select: { teacherId: true, lessons: true, minutes: true },
           orderBy: [{ minutes: 'desc' }, { teacherId: 'asc' }],
         },
-        // Never forwarded — the engine has no notion of weeks. Read here
-        // because the subtraction below compares a preserved lesson's weeks
-        // against these, and stamped on the lessons the run produces so a
-        // spring-only requirement yields spring-only lessons.
+        // The parity is forwarded (A/B-veckor, alternatingWeeksOf): the engine
+        // plans an odd and an even week. The dates are not — it plans the
+        // year — and both are read here because the subtraction below
+        // compares a preserved lesson's weeks against these, and both are
+        // stamped on the lessons the run produces, so a spring-only
+        // requirement yields spring-only lessons.
         recurrence: true,
         startDate: true,
         endDate: true,
@@ -2103,11 +2136,13 @@ export class OptimizationProxyService {
         dayOfWeek: true,
         startTime: true,
         endTime: true,
-        // Not forwarded as they are — the engine has no notion of weeks.
-        // Selected because the subtraction below has to know which weeks a
-        // preserved lesson is really there before it cancels any of a
-        // requirement's demand, and because a post's day limit is sent with
-        // the weekdays these lessons hold week by week (lockedWeekdays).
+        // The parity is forwarded (A/B-veckor): a lock of the odd weeks
+        // leaves its hour to the even ones. The dates are not — the engine
+        // plans the year. Both are read because the subtraction below has to
+        // know which weeks a preserved lesson is really there before it
+        // cancels any of a requirement's demand, and because a post's day
+        // limit is sent with the weekdays these lessons hold week by week
+        // (lockedWeekdays).
         recurrence: true,
         startDate: true,
         endDate: true,
@@ -2519,6 +2554,8 @@ export class OptimizationProxyService {
     const mirrors: Mirror[] = [];
     const mirroredIds = new Set<string>();
     const leaderPlans = new Map<string, MirrorPlan>();
+    // A/B-veckor: every post of a sent link, by leader post (alternatingWeeksOf).
+    const linkRowsOf = new Map<string, (typeof rawRequirements)[number][]>();
     let sameTimesRefusal: HttpException | null = null;
     const followerIds = new Set(links.map((link) => link.followerBlockId));
     const rowById = new Map(rawRequirements.map((r) => [r.id, r]));
@@ -2540,7 +2577,11 @@ export class OptimizationProxyService {
       }
       mirrors.push(...judgement.plan.mirrors);
       for (const follower of followers) mirroredIds.add(follower.id);
-      for (const leaderId of judgement.plan.adults.keys()) leaderPlans.set(leaderId, judgement.plan);
+      const linkRows = [...membersOf(link.leaderBlockId), ...followers];
+      for (const leaderId of judgement.plan.adults.keys()) {
+        leaderPlans.set(leaderId, judgement.plan);
+        linkRowsOf.set(leaderId, linkRows);
+      }
     }
 
     /*
@@ -2631,7 +2672,8 @@ export class OptimizationProxyService {
       // weekdays go with a rule and never without one, and they are EVERY
       // preserved lesson of the row, not only the ones that cancel demand
       // above: a lesson locked on odd weeks is still on Monday in the weeks it
-      // runs, and the engine, which has no weeks, has to count it there.
+      // runs, and the engine, which reads lockedDays with no weeks, counts it
+      // there in both — the stricter reading.
       const rule = stricterRule(
         effectiveDistribution(r, r.subject),
         bySubject ? effectiveDistribution(bySubject, bySubject.subject) : null,
@@ -2649,6 +2691,10 @@ export class OptimizationProxyService {
           // Ersättande grupper: who sits it, when not all of the group (above);
           // the whole class, for a half's post that holds its sibling (above).
           ...(pupilKey !== undefined ? { pupilGroupId: anonId(groupAnonMap, pupilKey) } : {}),
+          // A/B-veckor: the weeks the post's times are held in, for every
+          // post of its link too (alternatingWeeksOf). Sent only on an
+          // alternating post, so every other entry is what it was.
+          ...((weeks) => (weeks ? { recurrence: weeks } : {}))(alternatingWeeksOf(r, linkRowsOf.get(r.id))),
           teacherId: leadTeacher ? anonId(teacherAnonMap, leadTeacher) : null,
           lessonsPerWeek: remaining,
           // The longest REMAINING length: r.minutesPerLesson for a uniform
@@ -2737,6 +2783,9 @@ export class OptimizationProxyService {
       ...(pupilKeysByLesson.has(lesson.id)
         ? { pupilGroupIds: pupilKeysByLesson.get(lesson.id)!.map((key) => anonId(groupAnonMap, key)) }
         : {}),
+      // A/B-veckor: a lock of odd or even weeks only holds its window then.
+      // Sent only on such a lock; a dated lock of every week is every week.
+      ...((weeks) => (weeks ? { recurrence: weeks } : {}))(alternatingWeeksOf(lesson)),
     }));
 
     /*
@@ -3911,9 +3960,11 @@ export class OptimizationProxyService {
         dayOfWeek: lesson.dayOfWeek,
         startTime: this.parseTime(lesson.startTime),
         endTime: this.parseTime(lesson.endTime),
-        // The window comes from the requirement, never from the engine — the
-        // engine was never told about weeks and packs a spring-only course as
-        // if it ran all year. Stamping the period on afterwards over-provisions
+        // The window comes from the requirement, never from the engine. The
+        // engine is told the parity — an odd-week post's lessons may share
+        // their hour with an even one's, and so must come back as odd-week
+        // lessons — but not the dates, and packs a spring-only course as if
+        // it ran all year. Stamping the period on afterwards over-provisions
         // (two half-year subjects get separate slots where one would have
         // done) and that is the visible kind of wrong; a lesson that came back
         // as an ordinary weekly one would silently turn "kemi bara på

@@ -19,6 +19,7 @@ phases measure on.
     python benchmarks/hogstadium.py --teacher-day-rules --wish-disruption
     python benchmarks/hogstadium.py --travel 10 [--first-solution]
     python benchmarks/hogstadium.py --travel 10 --open-sites [--first-solution]
+    python benchmarks/hogstadium.py --ab-weeks [--first-solution]
 
 THE SHAPE. Three years (7–9) of six classes of 25 pupils. Per class and week,
 in lessons of 60 minutes unless named: matematik 3, svenska 3, engelska 2,
@@ -45,6 +46,15 @@ come back INFEASIBLE, quickly, and never TIMEOUT. --wish-disruption measures
 the free-day wish against last term's timetable: one solve without the wishes
 seeds previousLessons, then the week is solved with them, once with the
 disruption term standing back on the wished days and once without.
+
+A/B-VECKOR, opt in with --ab-weeks: slöjd and hemkunskap alternate. Classes
+A-C of each year have slöjd 2 × 90 in odd weeks and hemkunskap 2 × 60 in
+even ones, classes D-F the other way round, so every real week holds the
+loads the weekly week held — the slöjd teacher's 27 hours, the kitchen's 18 —
+and each class gets the year's minutes of both. The pair may share one hour of
+a class, and the slöjd teacher's two halves of the year one hour of theirs.
+Without the flag no requirement alternates, which is the week every earlier
+phase measured on.
 
 RESTID I GENERATORN, opt in with --travel MINUTES: the school stands on two
 skolområden, Norra and Södra, MINUTES apart, with its rooms split between them
@@ -253,6 +263,7 @@ def build_request(
     travel_minutes: int | None = None,
     open_sites: bool = False,
     pupil_gaps: bool = False,
+    ab_weeks: bool = False,
 ) -> OptimizeScheduleRequest:
     """The school's week; `blocks=False` sends the same rows with no blockId.
 
@@ -291,6 +302,13 @@ def build_request(
                 }
                 if room_type is not None:
                     row["requiredRoomType"] = room_type
+                if ab_weeks and code in ("SL", "HKK"):
+                    # Half the classes slöjd on odd weeks, the other half on
+                    # even ones, and hemkunskap the other week: twice the
+                    # lessons in half the weeks (the module docstring).
+                    first = (code == "SL") == (class_index < CLASSES_PER_YEAR // 2)
+                    row["lessonsPerWeek"] = 2 * lessons
+                    row["recurrence"] = "ODD_WEEKS" if first else "EVEN_WEEKS"
                 requirements.append(row)
 
         pupils = CLASSES_PER_YEAR * PUPILS_PER_CLASS
@@ -489,7 +507,7 @@ def _load() -> float:
 def run(
     *, blocks: bool, budget: float, teacher_day_rules: bool = False,
     infeasible_days: bool = False, travel_minutes: int | None = None,
-    open_sites: bool = False,
+    open_sites: bool = False, ab_weeks: bool = False,
 ) -> dict[str, object]:
     from validate_schedule import validate
 
@@ -497,7 +515,7 @@ def run(
     solver = SchedulerSolver(settings)
     request = build_request(
         blocks=blocks, teacher_day_rules=teacher_day_rules, infeasible_days=infeasible_days,
-        travel_minutes=travel_minutes, open_sites=open_sites,
+        travel_minutes=travel_minutes, open_sites=open_sites, ab_weeks=ab_weeks,
     )
     load_before = _load()
     started = time.perf_counter()
@@ -522,6 +540,7 @@ def run(
         "infeasibleDays": infeasible_days,
         "travelMinutes": travel_minutes,
         "openSites": open_sites,
+        "abWeeks": ab_weeks,
         **teacher_day_counts(request),
         "status": response.status,
         "conflictCodes": sorted({
@@ -546,7 +565,7 @@ def run(
 def first_solution(
     *, blocks: bool, budget: float, teacher_day_rules: bool = False,
     infeasible_days: bool = False, travel_minutes: int | None = None,
-    open_sites: bool = False,
+    open_sites: bool = False, ab_weeks: bool = False,
 ) -> dict[str, object]:
     """Seconds to a first timetable in the satisfaction model, as phase 1a builds it.
 
@@ -559,7 +578,7 @@ def first_solution(
     solver = SchedulerSolver(Settings(SOLVER_MAX_TIME_SECONDS=budget))  # type: ignore[call-arg]
     request = build_request(
         blocks=blocks, teacher_day_rules=teacher_day_rules, infeasible_days=infeasible_days,
-        travel_minutes=travel_minutes, open_sites=open_sites,
+        travel_minutes=travel_minutes, open_sites=open_sites, ab_weeks=ab_weeks,
     )
     solver._validate_request(request)
     full, *_ = solver._build_model(request, use_assumptions=False, include_objective=True)
@@ -577,6 +596,7 @@ def first_solution(
         "infeasibleDays": infeasible_days,
         "travelMinutes": travel_minutes,
         "openSites": open_sites,
+        "abWeeks": ab_weeks,
         **teacher_day_counts(request),
         "status": status,
         "buildSeconds": round(built, 2),
@@ -667,6 +687,8 @@ def main() -> int:
                         help="stand the school on two sites MINUTES apart (SITES)")
     parser.add_argument("--open-sites", action="store_true",
                         help="with --travel, open every classroom to every year")
+    parser.add_argument("--ab-weeks", action="store_true",
+                        help="slöjd and hemkunskap on alternate weeks (A/B-veckor)")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     blocks = not args.without_blocks
@@ -675,6 +697,7 @@ def main() -> int:
         "infeasible_days": args.infeasible_days,
         "travel_minutes": args.travel,
         "open_sites": args.open_sites,
+        "ab_weeks": args.ab_weeks,
     }
     if args.wish_disruption:
         print(json.dumps(wish_disruption(blocks=blocks, budget=args.budget), indent=2))
