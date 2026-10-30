@@ -94,6 +94,7 @@ import { recordRead, type AccessChannel } from '../access-log/access-log';
 import { WORK_DAYS_HIDDEN_MESSAGE, WorkDaysRefusal, isDaysBearing, withoutDays } from './work-days';
 import { unkeptFreeDayWishes, type FreeDayWish, type TeachersOnDay } from './free-day-wishes';
 import { TRAVEL_TEACHERS_CODE } from './stored-conflicts';
+import { pupilGapsOf } from './pupil-cohorts';
 import type {
   AiEngineConflictAnalysis,
   AiEngineLesson,
@@ -114,6 +115,7 @@ import type {
   AnonymousTeacherDayLimit,
   AnonymousSiteTravelTime,
   AnonymousTeacherWorkRule,
+  AnonymousPupilGaps,
   ConstraintKind,
   DayOfWeek,
   ObjectiveWeights,
@@ -1332,6 +1334,8 @@ export class OptimizationProxyService {
       // Restid i generatorn: only when the school turned the walk on and has a
       // figure, the rooms then carrying their sites. See AiEngineScheduleRequest.
       ...(data.siteTravelTimes.length > 0 ? { siteTravelTimes: data.siteTravelTimes } : {}),
+      // Elevernas håltimmar: only when the school turned it on and has pupils.
+      ...(data.pupilGaps ? { pupilGaps: data.pupilGaps } : {}),
     };
 
     // Over the payload turned back to real ids — the teacher's and the
@@ -1352,6 +1356,7 @@ export class OptimizationProxyService {
           data.blockAnonMap,
           data.dayLimitAnonMap,
           data.siteAnonMap,
+          data.fixedIdByLesson,
         ],
         storedRules: data.storedRules,
         draftLessons,
@@ -1913,6 +1918,10 @@ export class OptimizationProxyService {
     groupConflicts: [string, string][];
     /** Restid i generatorn: the walks, empty unless the school turned them on. */
     siteTravelTimes: AnonymousSiteTravelTime[];
+    /** Elevernas håltimmar: the pupils' cohorts, null unless the school turned it on. */
+    pupilGaps: AnonymousPupilGaps | null;
+    /** A lock's payload id by its own: the cohorts name locks by it. */
+    fixedIdByLesson: Map<string, string>;
     /** The sites the walks and the rooms name. Nothing in an answer names one. */
     siteAnonMap: Map<string, string>;
     roomAnonMap: Map<string, string>;
@@ -2570,6 +2579,9 @@ export class OptimizationProxyService {
       );
     }
 
+    // The pupil keys the requirements below are sent with, for the pupils'
+    // cohorts (pupilGapsOf): a derived key's pupils sit its lessons.
+    const sentPupilKeys = new Set<string>();
     const requirements: AnonymousRequirement[] = rawRequirements.flatMap((r) => {
       // A mirrored post is written at its leader post's times, never sent.
       if (mirroredIds.has(r.id)) return [];
@@ -2595,6 +2607,7 @@ export class OptimizationProxyService {
       // well. That costs the week room, never puts a pupil in two places.
       const heldClass = plan?.holdsClass.get(r.id);
       const pupilKey = heldClass ?? pupilKeyByRequirement.get(r.id);
+      if (pupilKey !== undefined) sentPupilKeys.add(pupilKey);
       const adults = plan?.adults.get(r.id) ?? { teacherId: r.teacherId, coTeacherId: r.coTeacherId };
       // Delade lektioner: each lesson left with its own teacher. Two or more
       // teachers send the list, and the scalar is its first; one sends that
@@ -2702,8 +2715,11 @@ export class OptimizationProxyService {
       },
     );
 
+    // The payload's id for each lock, by the lesson's own: the pupils' cohorts
+    // name the locks they sit by it (pupilGapsOf), and nothing else reads it.
+    const fixedIdByLesson = new Map<string, string>();
     const fixedLessons: AnonymousFixedLesson[] = preservedLessons.map((lesson) => ({
-      id: randomUUID(),
+      id: anonId(fixedIdByLesson, lesson.id),
       teacherId: lesson.teacherId ? anonId(teacherAnonMap, lesson.teacherId) : null,
       coTeacherId: lesson.coTeacherId
         ? anonId(teacherAnonMap, lesson.coTeacherId)
@@ -2840,6 +2856,7 @@ export class OptimizationProxyService {
         diningSeats: true,
         maxLessonsPerDayPerGroup: true,
         generatorKeepsTravelTime: true,
+        generatorKeepsPupilGapsDown: true,
       },
     });
     const storedRules: ScheduleRules | null = !lunchSettings
@@ -2904,6 +2921,7 @@ export class OptimizationProxyService {
       siteBId: anonId(siteAnonMap, row.siteBId),
       minutes: row.minutes,
     }));
+
 
     const rooms: AnonymousRoom[] = rawRooms.map((r) => ({
       id: anonId(roomAnonMap, r.id),
@@ -3312,6 +3330,33 @@ export class OptimizationProxyService {
     // log is of reads. No limit sent, nothing written.
     await recordRead(tx, 'EMPLOYMENT', dayLimitTeacherIds.values(), channel);
 
+    /*
+     * Elevernas håltimmar: the pupils, as the sets the håltimmesrapport counts
+     * a hole for (pupil-cohorts.ts), only when the school's Skolregler say
+     * so. Off, nothing is derived and the payload is the one it was. No pupil
+     * id is sent: a cohort is a count and the anonymous keys its pupils sit.
+     * After the rules and before the pairs, and minting nothing: a group no
+     * lesson, lock, meal or rule reached is nothing the engine can read, and
+     * an id minted for it here would add pairs below that keep nothing apart.
+     */
+    const pupilGaps: AnonymousPupilGaps | null = lunchSettings?.generatorKeepsPupilGapsDown
+      ? pupilGapsOf({
+          rosters,
+          homeClassIds,
+          groups: allGroups,
+          sentPupilKeys,
+          locks: preservedLessons.map((lesson) => ({
+            id: lesson.id,
+            groupIds: [lesson.studentGroupId, ...lesson.extraGroups.map((entry) => entry.studentGroupId)],
+            subjectId: lesson.subjectId,
+            pupilIds: (lesson.participants ?? []).map((entry) => entry.studentId),
+          })),
+          buffers: rawRequirements,
+          groupId: (realId) => groupAnonMap.get(realId),
+          fixedId: (lessonId) => fixedIdByLesson.get(lessonId),
+        })
+      : null;
+
     // Anonymize the conflict pairs with the same group map the requirements
     // used, so the engine sees a consistent id space. Pairs whose groups never
     // reached the payload (no requirement and no fixed lesson references them)
@@ -3362,6 +3407,8 @@ export class OptimizationProxyService {
       previousLessons,
       groupConflicts,
       siteTravelTimes,
+      pupilGaps,
+      fixedIdByLesson,
       siteAnonMap,
       roomAnonMap,
       requirementAnonMap,

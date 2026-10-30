@@ -583,11 +583,46 @@ export interface AiEngineScheduleRequest {
    * always built.
    */
   siteTravelTimes?: AnonymousSiteTravelTime[];
+  /**
+   * Elevernas håltimmar: the pupils, as the sets the håltimmesrapport counts
+   * a hole for (pupil-cohorts.ts). The KEY is sent only when the school's
+   * Skolregler turn the rule on and the week has pupils, so every other
+   * school sends the payload it always sent, and the engine builds the model
+   * it always built.
+   */
+  pupilGaps?: AnonymousPupilGaps;
   weights?: ObjectiveWeights | null;
   rules?: ScheduleRules | null;
   roomPreferences: AnonymousRoomPreference[];
   /** A schemaförslag's search settings; see SearchOptions. Never sent by Generera. */
   search?: SearchOptions;
+}
+
+/**
+ * Pupils booked alike: the same class, teaching groups, halves, replacing
+ * groups and locked lessons. A count and anonymous keys; never a pupil id.
+ */
+export interface AnonymousPupilGapCohort {
+  /** The anonymous groups they are in and derived keys ("7A without SvA7") they sit. */
+  groupIds: string[];
+  /** The payload ids of every locked lesson they sit. */
+  fixedLessonIds: string[];
+  /** The class they eat with; absent when the class reached nothing in the payload. */
+  homeGroupId?: string;
+  pupils: number;
+}
+
+/** A locked lesson's ombyte and dusch, for the pupils' day only. */
+export interface AnonymousFixedLessonMargin {
+  fixedLessonId: string;
+  minutesBefore: number;
+  minutesAfter: number;
+}
+
+export interface AnonymousPupilGaps {
+  cohorts: AnonymousPupilGapCohort[];
+  /** Sent only when a lock has a margin. */
+  fixedMargins?: AnonymousFixedLessonMargin[];
 }
 
 export type ConflictCategory =
@@ -687,6 +722,12 @@ export interface AiEngineScheduleResponse {
    */
   lunches?: AiEngineLunch[];
   conflicts?: AiEngineConflictAnalysis | null;
+  /**
+   * Elevernas håltimmar in the timetable returned, locked lessons included:
+   * idle pupil-minutes in an ordinary week, counted as the håltimmesrapport
+   * counts them. Only on an answer to a payload that carried pupilGaps.
+   */
+  pupilIdleMinutes?: number;
   /**
    * The soft wishes a finished run did not keep (free-day-wishes.ts), in a
    * conflict's shape, each with its teacher in `subjectIds`. Never sent by

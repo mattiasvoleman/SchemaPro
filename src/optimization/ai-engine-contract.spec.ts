@@ -100,8 +100,17 @@ const PAYLOAD_FIELDS_WITH_DAY_LIMITS = [...PAYLOAD_FIELDS, 'teacherDayLimits'].s
  */
 const SITE_TRAVEL_FIELDS = ['minutes', 'siteAId', 'siteBId'];
 const PAYLOAD_FIELDS_WITH_TRAVEL = [...PAYLOAD_FIELDS, 'siteTravelTimes'].sort();
+/**
+ * Elevernas håltimmar: the pupils' cohorts, sent only when the school's
+ * Skolregler turn the rule on and the week has pupils. The engine's
+ * `_field_names(PupilGaps)`, `(PupilGapCohort)` and `(FixedLessonMargin)`.
+ */
+const PUPIL_GAP_FIELDS = ['cohorts'];
+const COHORT_FIELDS = ['fixedLessonIds', 'groupIds', 'homeGroupId', 'pupils'];
+const MARGIN_FIELDS = ['fixedLessonId', 'minutesAfter', 'minutesBefore'];
+const PAYLOAD_FIELDS_WITH_PUPIL_GAPS = [...PAYLOAD_FIELDS, 'pupilGaps'].sort();
 /** Every key a payload can carry, the conditional ones included. */
-const PAYLOAD_FIELDS_ALL = [...PAYLOAD_FIELDS, 'teacherDayLimits', 'siteTravelTimes'].sort();
+const PAYLOAD_FIELDS_ALL = [...PAYLOAD_FIELDS, 'teacherDayLimits', 'siteTravelTimes', 'pupilGaps'].sort();
 /** The generator's room: the engine's `_field_names(AnonymousRoom)` with the walk on. */
 const ROOM_FIELDS = ['capacity', 'id', 'maxGradeLevel', 'minGradeLevel', 'type'];
 const ROOM_FIELDS_WITH_SITE = [...ROOM_FIELDS, 'siteId'].sort();
@@ -683,6 +692,97 @@ describe('AI engine wire contract', () => {
       // and neither is the school's own id.
       expect([walks[0]!['siteAId'], walks[0]!['siteBId']]).toEqual([sentRooms[0]!['siteId'], sentRooms[1]!['siteId']]);
       expect(JSON.stringify(payload)).not.toMatch(/site-n|site-s/);
+    });
+  });
+
+  describe('Elevernas håltimmar', () => {
+    const keeping = (keeps: boolean, pupils: Array<{ id: string; studentGroupId: string }>) =>
+      (tx: ReturnType<typeof createTxMock>) => {
+        tx['lunchSetting']!['findUnique']!.mockResolvedValue({
+          lunchEnabled: true,
+          lunchStartTime: new Date(0),
+          lunchEndTime: new Date(0),
+          lunchMinutes: 30,
+          diningSeats: 180,
+          maxLessonsPerDayPerGroup: 7,
+          generatorKeepsTravelTime: false,
+          generatorKeepsPupilGapsDown: keeps,
+        });
+        tx['user']!['findMany']!.mockResolvedValue(pupils);
+      };
+    const pupils = [
+      { id: 'pupil-1', studentGroupId: 'g1' },
+      { id: 'pupil-2', studentGroupId: 'g1' },
+    ];
+
+    it('sends a school that has not turned it on the payload it always sent', async () => {
+      const payload = await buildPayload({}, [], [], keeping(false, pupils));
+
+      expect(Object.keys(payload).sort()).toEqual(PAYLOAD_FIELDS);
+      expect(JSON.stringify(payload)).not.toMatch(/pupilGaps|cohorts/);
+    });
+
+    it('sends no key for a week without pupils, which the engine would refuse as an empty list', async () => {
+      const payload = await buildPayload({}, [], [], keeping(true, []));
+
+      expect(Object.keys(payload).sort()).toEqual(PAYLOAD_FIELDS);
+    });
+
+    it('sends the cohorts under the names the engine declares, as counts and anonymous groups', async () => {
+      const payload = await buildPayload({}, [], [], keeping(true, pupils));
+      const gaps = payload['pupilGaps'] as { cohorts: Array<Record<string, unknown>> };
+      const requirement = (payload['requirements'] as Array<Record<string, unknown>>)[0]!;
+
+      expect(Object.keys(payload).sort()).toEqual(PAYLOAD_FIELDS_WITH_PUPIL_GAPS);
+      expect(Object.keys(gaps).sort()).toEqual(PUPIL_GAP_FIELDS);
+      expect(gaps.cohorts).toHaveLength(1);
+      expect(Object.keys(gaps.cohorts[0]!).sort()).toEqual(COHORT_FIELDS);
+      // Both pupils of g1 are booked alike: one cohort of two, its class the
+      // requirement's own anonymous group, which is also where it eats.
+      expect(gaps.cohorts[0]).toEqual({
+        groupIds: [requirement['studentGroupId']],
+        fixedLessonIds: [],
+        homeGroupId: requirement['studentGroupId'],
+        pupils: 2,
+      });
+      // No pupil id and no real group id crosses.
+      expect(JSON.stringify(payload)).not.toMatch(/pupil-1|pupil-2|"g1"/);
+    });
+
+    it('names the locks the pupils sit by the payload’s own ids, and sends a locked idrott its dusch', async () => {
+      const lock = {
+        id: 'ml-idh',
+        subjectId: 's1',
+        studentGroupId: 'g1',
+        teacherId: null,
+        coTeacherId: null,
+        roomId: null,
+        dayOfWeek: 2,
+        startTime: new Date('1970-01-01T08:00:00.000Z'),
+        endTime: new Date('1970-01-01T09:00:00.000Z'),
+        recurrence: 'ALL_WEEKS',
+        startDate: null,
+        endDate: null,
+        extraGroups: [],
+        participants: [],
+      };
+      const payload = await buildPayload(
+        { minutesBefore: 5, minutesAfter: 20, lessonsPerWeek: 2 },
+        [lock],
+        [],
+        keeping(true, pupils),
+      );
+      const gaps = payload['pupilGaps'] as {
+        cohorts: Array<{ fixedLessonIds: string[] }>;
+        fixedMargins: Array<Record<string, unknown>>;
+      };
+      const fixedId = (payload['fixedLessons'] as Array<{ id: string }>)[0]!.id;
+
+      expect(Object.keys(gaps).sort()).toEqual([...PUPIL_GAP_FIELDS, 'fixedMargins'].sort());
+      expect(gaps.cohorts[0]!.fixedLessonIds).toEqual([fixedId]);
+      expect(gaps.fixedMargins).toEqual([{ fixedLessonId: fixedId, minutesBefore: 5, minutesAfter: 20 }]);
+      expect(Object.keys(gaps.fixedMargins[0]!).sort()).toEqual(MARGIN_FIELDS);
+      expect(JSON.stringify(payload)).not.toMatch(/ml-idh/);
     });
   });
 
