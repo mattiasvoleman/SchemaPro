@@ -782,7 +782,13 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
     //      period meets y's, and one in y's subject whose period meets x's
     //      (the half itself cannot, by 1);
     //   3. x and y have the same lessons and weeks, as the swap's four posts
-    //      do (one week for the halves; TB409 within each period's block).
+    //      do (one week for the halves; TB409 within each period's block);
+    //   4. y is x's partner alone: no other row of the half, in a subject the
+    //      class has, makes the same swap with it. Teknik split in turn in the
+    //      swap's very week beside the class's teknik put back would, and
+    //      then nothing tells which of the two the split swapped, so neither
+    //      is exempt. A row in a subject the class has none of (teknik in
+    //      turn, the class's teknik gone) hides nothing, and does not count.
     // Anything else stays double planned, whatever the sum: the class's post
     // put back after a split, a half's dated post with no swap beside it, a
     // second post of the half in the subject, a split in another subject
@@ -799,6 +805,16 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
     const sameWeek = (a: PlannedRequirement, b: PlannedRequirement): boolean =>
       lessonMinutesOf(a).join() === lessonMinutesOf(b).join() &&
       (a.recurrence ?? "ALL_WEEKS") === (b.recurrence ?? "ALL_WEEKS");
+    // Conditions 1 to 3: x and y as a swap's two posts on one half.
+    const swapped = (x: PlannedRequirement, y: PlannedRequirement): boolean =>
+      !classSubjects.has(y.subjectId) &&
+      !meets(x, y) &&
+      sameWeek(x, y) &&
+      classHalves.some(
+        (other) =>
+          rowsIn(other, x.subjectId).some((row) => meets(row, y)) &&
+          rowsIn(other, y.subjectId).some((row) => meets(row, x)),
+      );
     const classAndItsHalf = (groupIds: readonly string[], subjectId: string): boolean => {
       if (groupIds.length !== 2 || !groupIds.includes(classId)) return false;
       const half = groupIds.find((id) => id !== classId)!;
@@ -806,16 +822,11 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
       const own = rowsIn(half, subjectId);
       if (own.length !== 1) return false;
       const x = own[0]!;
-      return (rowsByGroup.get(half) ?? []).some(
+      const rows = rowsByGroup.get(half) ?? [];
+      return rows.some(
         (y) =>
-          !classSubjects.has(y.subjectId) &&
-          !meets(x, y) &&
-          sameWeek(x, y) &&
-          classHalves.some(
-            (other) =>
-              rowsIn(other, subjectId).some((row) => meets(row, y)) &&
-              rowsIn(other, y.subjectId).some((row) => meets(row, x)),
-          ),
+          swapped(x, y) &&
+          !rows.some((other) => other !== x && classSubjects.has(other.subjectId) && swapped(other, y)),
       );
     };
     for (const result of pupilResults.get(classId) ?? []) {
