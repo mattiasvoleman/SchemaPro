@@ -29,6 +29,8 @@ describe('roomLoanRefusal', () => {
     ['RL409', 'ROOM_LOAN_NOT_APPROVED', ConflictException, 'Bara ett godkänt lån kan avslutas av ägarskolan.'],
     ['RL409', 'ROOM_LOAN_LOCAL_ROOM_IS_LENT', ConflictException, 'Den salen lånar skolan ut, så den kan inte stå för en lånad sal.'],
     ['RL409', 'ROOM_LOAN_LOCAL_ROOM_IS_ANOTHER', ConflictException, expect.stringContaining('egen sal för den lånade salen')],
+    ['RL404', 'ROOM_LOAN_LOCAL_ROOM_TYPE_NOT_FOUND', NotFoundException, 'Salstypen finns inte bland skolans egna salstyper.'],
+    ['RL409', 'ROOM_LOAN_LOCAL_ROOM_NAME_TAKEN', ConflictException, expect.stringContaining('ett annat namn på sin sal')],
   ])('answers %s %s with its status, code and sentence', (state, code, type, message) => {
     const answer = roomLoanRefusal(refusal(state, code));
 

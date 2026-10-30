@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post, Put, UseGuards } from '@nestjs/common';
 import { Area } from '../auth/decorators/area.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -13,7 +13,10 @@ import { SharingService } from './sharing.service';
 /**
  * What a school shares with the other schools of its huvudman (Delade
  * lokaler och lärare): the minutes between them and the teachers they
- * share. Read by the school's administrators, written by planering.
+ * share. Read by the school's administrators, written by planering. A
+ * teacher is shared when both schools have marked their own row of the
+ * teacher (PUT .../teachers/:teacherId/schools/:schoolId) and one login
+ * holds both.
  */
 @Controller('api/v1/sharing')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -35,6 +38,26 @@ export class SharingController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.sharing.putTravel(schoolId, dto.minutes, user);
+  }
+
+  /** The school marks its own teacher as shared with another school of the huvudman. */
+  @Put('teachers/:teacherId/schools/:schoolId')
+  markTeacher(
+    @Param('teacherId', new ParseUUIDPipe()) teacherId: string,
+    @Param('schoolId', new ParseUUIDPipe()) schoolId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.sharing.markTeacher(teacherId, schoolId, true, user);
+  }
+
+  /** The school takes its mark back; the teacher is no longer shared with that school. */
+  @Delete('teachers/:teacherId/schools/:schoolId')
+  unmarkTeacher(
+    @Param('teacherId', new ParseUUIDPipe()) teacherId: string,
+    @Param('schoolId', new ParseUUIDPipe()) schoolId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.sharing.markTeacher(teacherId, schoolId, false, user);
   }
 }
 

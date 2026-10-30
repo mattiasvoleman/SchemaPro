@@ -112,12 +112,15 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *     travel times, which every member of staff reads directly, and nothing
  *     of a post or a pupil;
  *   - what a school shares with the other schools of its huvudman (Delade
- *     lokaler och lärare, 20261217090000): its shared teachers are its own
- *     staff, named in a planning view as on the travel line above; their
- *     lessons at the other school are that school's timetable layer, which
- *     every member of staff there reads, handed out by times and weeks
- *     alone (app.shared_teacher_busy: no subject, group, room or pupil);
- *     and a room loan names two schools and a room, never a person;
+ *     lokaler och lärare, 20261217090000): its marked teachers and the
+ *     teachers and administrators it may mark are its own staff, named in
+ *     a planning view as on the travel line above; whether the other
+ *     school has marked back is a yes or no; a shared teacher's lessons at
+ *     the other school are that school's timetable layer, which every
+ *     member of staff there reads, handed out by times and weeks alone
+ *     (app.shared_teacher_busy: no subject, group, room or pupil), and only
+ *     once both schools have marked the teacher; and a room loan names two
+ *     schools and a room, never a person;
  *   - the publication check's timplan coverage (preview and publish): it
  *     judges by both layers and hands out group lines and the verdicts'
  *     sentences, and a pupil verdict's sentence ("En elev i 7A ...") names

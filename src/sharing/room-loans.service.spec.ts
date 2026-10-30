@@ -1,22 +1,17 @@
-import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { createPrismaMock, createTxMock, testUser, type PrismaMock, type TxMock } from '../../test/utils/prisma-mock';
 import type { PrismaService } from '../database/prisma.service';
 import type { CreateRoomLoanDto } from './dto/sharing.dto';
-import {
-  MAX_LOAN_DAYS,
-  ROOM_LOAN_LOCAL_ROOM_NAME_TAKEN,
-  ROOM_LOAN_WINDOW_INVALID,
-  RoomLoansService,
-  windowProblem,
-} from './room-loans.service';
+import { MAX_LOAN_DAYS, ROOM_LOAN_WINDOW_INVALID, RoomLoansService, windowProblem } from './room-loans.service';
 
 /**
  * Salslån (Delade lokaler och lärare, 20261217090000). The database holds
  * the loan to its sides (four functions, RLS sections 278–279) and to its
  * checks; this is what the service adds: a window refused with a sentence
  * before the database is asked, the borrower's own room for the loan found
- * or made, one request per window, and the two lists the school reads.
+ * or named (a request makes none: the owner's approval does, by the name
+ * passed on), one request per window, and the two lists the school reads.
  */
 
 const SCHOOL_ID = '33333333-3333-4333-8333-333333333333';
@@ -48,6 +43,7 @@ const loanRow = (overrides: Record<string, unknown> = {}) => ({
   roomId: HALL,
   ownerSchoolId: ROLLER,
   borrowerSchoolId: SCHOOL_ID,
+  localRoomName: null,
   ...overrides,
 });
 
@@ -189,13 +185,41 @@ describe('RoomLoansService', () => {
       });
     });
 
-    it('leaves out a loan whose other school is no longer another school of the huvudman, and asks for no rooms with nothing borrowed', async () => {
+    it('keeps an approved loan of its room to a school that has left the huvudman, unnamed, so the owner can end it', async () => {
       tx.roomLoan.findMany
         .mockResolvedValueOnce([loanRow({ ownerSchoolId: SCHOOL_ID, borrowerSchoolId: NOT_SIBLING, room: { id: OWN_ROOM, name: 'Aulan' } })])
         .mockResolvedValueOnce([]);
 
-      await expect(service.list(testUser())).resolves.toEqual({ lent: [], borrowed: [] });
+      const view = await service.list(testUser());
+
+      expect(view.lent).toEqual([expect.objectContaining({ id: LOAN, status: 'APPROVED', school: { id: NOT_SIBLING, name: null } })]);
+      expect(view.borrowed).toEqual([]);
       expect(raw.mock.calls.some((call) => sqlText(call).includes('app.lendable_rooms()'))).toBe(false);
+    });
+
+    it('leaves out a borrowed room whose owner is no longer another school of the huvudman', async () => {
+      tx.roomLoan.findMany
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([loanRow({ ownerSchoolId: NOT_SIBLING, localRoom: { id: LOCAL_HALL, name: 'Roller hall (lånad)' } })]);
+
+      await expect(service.list(testUser())).resolves.toEqual({ lent: [], borrowed: [] });
+    });
+
+    it('names a request not yet approved by the room its approval makes, with no id', async () => {
+      tx.roomLoan.findMany
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          loanRow({ status: 'PENDING', decidedAt: null, localRoom: null, localRoomName: 'Roller hall (RLS Roller)' }),
+          loanRow({ id: 'declined', status: 'DECLINED', localRoom: null, localRoomName: null, roomId: SLOJD }),
+        ]);
+
+      const view = await service.list(testUser());
+
+      expect(view.borrowed.map((loan) => loan.room)).toEqual([
+        { id: null, name: 'Roller hall (RLS Roller)' },
+        // No name of its own: the owner's name for the room.
+        { id: null, name: 'Slöjd' },
+      ]);
     });
 
     it('says nothing of the owner\'s name for a room the owner no longer offers', async () => {
@@ -212,7 +236,11 @@ describe('RoomLoansService', () => {
 
   describe('rooms', () => {
     it('groups the rooms to ask for by school, with the school\'s own room for one it borrowed before', async () => {
-      tx.roomLoan.findMany.mockResolvedValue([{ roomId: HALL, localRoomId: LOCAL_HALL }]);
+      // The latest loan that has a room first: an older one's room is not the school's room for the hall now.
+      tx.roomLoan.findMany.mockResolvedValue([
+        { roomId: HALL, localRoomId: LOCAL_HALL },
+        { roomId: HALL, localRoomId: OWN_ROOM },
+      ]);
 
       await expect(service.rooms(testUser())).resolves.toEqual([
         {
@@ -225,8 +253,8 @@ describe('RoomLoansService', () => {
         },
       ]);
       expect(tx.roomLoan.findMany).toHaveBeenCalledWith({
-        where: { borrowerSchoolId: SCHOOL_ID },
-        distinct: ['roomId'],
+        where: { borrowerSchoolId: SCHOOL_ID, localRoomId: { not: null } },
+        orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
         select: { roomId: true, localRoomId: true },
       });
     });
@@ -260,71 +288,53 @@ describe('RoomLoansService', () => {
       expect(acts()).toHaveLength(0);
     });
 
-    it('holds the loan by the room the school already has for it', async () => {
-      tx.roomLoan.findFirst.mockResolvedValue({ localRoomId: LOCAL_HALL });
+    it('holds the loan by the room the school had for it, and makes none', async () => {
+      tx.roomLoan.findMany.mockResolvedValue([{ roomId: HALL, localRoomId: LOCAL_HALL }]);
 
-      await service.request(dto(), testUser());
+      await service.request(dto({ localRoomName: 'Ett namn', localRoomTypeId: TYPE }), testUser());
 
-      expect(tx.roomLoan.findFirst).toHaveBeenCalledWith({
-        where: { borrowerSchoolId: SCHOOL_ID, roomId: HALL },
-        select: { localRoomId: true },
-      });
       expect(tx.room.create).not.toHaveBeenCalled();
       expect(acts()).toHaveLength(1);
-      expect(sqlValues(acts()[0]!)).toEqual([HALL, LOCAL_HALL, 2, '10:00', '11:30', '2030-08-19', '2031-06-13', null]);
+      expect(sqlValues(acts()[0]!)).toEqual([HALL, LOCAL_HALL, null, null, 2, '10:00', '11:30', '2030-08-19', '2031-06-13', null]);
     });
 
     it('names the room the request gives, and passes it on for the database to judge', async () => {
-      tx.roomLoan.findFirst.mockResolvedValue({ localRoomId: LOCAL_HALL });
+      tx.roomLoan.findMany.mockResolvedValue([{ roomId: HALL, localRoomId: LOCAL_HALL }]);
 
       await service.request(dto({ localRoomId: OWN_ROOM }), testUser());
 
       expect(tx.room.create).not.toHaveBeenCalled();
-      expect(sqlValues(acts()[0]!)[1]).toBe(OWN_ROOM);
+      expect(sqlValues(acts()[0]!).slice(0, 4)).toEqual([HALL, OWN_ROOM, null, null]);
     });
 
-    it('makes a room of the school\'s own the first time, named after the room and its school, with its capacity', async () => {
-      tx.roomLoan.findFirst.mockResolvedValue(null);
-      tx.room.create.mockResolvedValue({ id: NEW_LOCAL });
-
+    it('makes no room the first time: the approval makes it, by the name and room type passed on', async () => {
       await service.request(dto({ localRoomTypeId: TYPE, note: '  Idrott åk 7  ' }), testUser());
 
-      expect(tx.room.create).toHaveBeenCalledWith({
-        data: { schoolId: SCHOOL_ID, name: 'Roller hall (RLS Roller)', capacity: 60, roomTypeId: TYPE },
-        select: { id: true },
-      });
-      expect(sqlValues(acts()[0]!)).toEqual([HALL, NEW_LOCAL, 2, '10:00', '11:30', '2030-08-19', '2031-06-13', 'Idrott åk 7']);
-    });
-
-    it('uses the name the request gives, trimmed, and no room type when none is named', async () => {
-      tx.roomLoan.findFirst.mockResolvedValue(null);
-      tx.room.create.mockResolvedValue({ id: NEW_LOCAL });
+      expect(tx.room.create).not.toHaveBeenCalled();
+      // No name: the database names it after the room and its school.
+      expect(sqlValues(acts()[0]!)).toEqual([HALL, null, null, TYPE, 2, '10:00', '11:30', '2030-08-19', '2031-06-13', 'Idrott åk 7']);
 
       await service.request(dto({ roomId: SLOJD, localRoomName: '  Slöjden hos Roller  ' }), testUser());
 
-      expect(tx.room.create).toHaveBeenCalledWith({
-        data: { schoolId: SCHOOL_ID, name: 'Slöjden hos Roller', capacity: null, roomTypeId: null },
-        select: { id: true },
-      });
+      expect(sqlValues(acts()[1]!).slice(0, 4)).toEqual([SLOJD, null, 'Slöjden hos Roller', null]);
     });
 
-    it('answers a name the school already has with a 409 that names it', async () => {
-      tx.roomLoan.findFirst.mockResolvedValue(null);
-      tx.room.create.mockRejectedValue(
-        new Prisma.PrismaClientKnownRequestError('Unique constraint failed', { code: 'P2002', clientVersion: 'test' }),
-      );
-
-      const call = service.request(dto(), testUser());
-
-      await expect(call).rejects.toBeInstanceOf(ConflictException);
-      await expect(service.request(dto(), testUser())).rejects.toMatchObject({
-        response: { code: ROOM_LOAN_LOCAL_ROOM_NAME_TAKEN, message: expect.stringContaining('Roller hall (RLS Roller)') },
+    it('answers a room type that is not the school\'s own with the database\'s 404', async () => {
+      raw.mockImplementation(async (sql: Prisma.Sql) => {
+        const text = sql.strings.join('?');
+        if (text.includes('app.sibling_schools()')) return [{ school_id: ROLLER, name: 'RLS Roller' }];
+        if (text.includes('app.lendable_rooms()')) return lendable;
+        throw refusal('RL404', 'ROOM_LOAN_LOCAL_ROOM_TYPE_NOT_FOUND');
       });
-      expect(acts()).toHaveLength(0);
+
+      await expect(service.request(dto({ localRoomTypeId: TYPE }), testUser())).rejects.toMatchObject({
+        status: 404,
+        response: { code: 'ROOM_LOAN_LOCAL_ROOM_TYPE_NOT_FOUND', message: expect.stringContaining('salstyper') },
+      });
     });
 
     it('asks once per window, with a blank note as none', async () => {
-      tx.roomLoan.findFirst.mockResolvedValue({ localRoomId: LOCAL_HALL });
+      tx.roomLoan.findMany.mockResolvedValue([{ roomId: HALL, localRoomId: LOCAL_HALL }]);
 
       await service.request(
         dto({
@@ -338,15 +348,15 @@ describe('RoomLoansService', () => {
       );
 
       expect(acts().map(sqlValues)).toEqual([
-        [HALL, LOCAL_HALL, 2, '10:00', '11:30', '2030-08-19', '2031-06-13', null],
-        [HALL, LOCAL_HALL, 4, '13:00:00', '14:00:00', '2030-08-19', '2031-06-13', null],
+        [HALL, LOCAL_HALL, null, null, 2, '10:00', '11:30', '2030-08-19', '2031-06-13', null],
+        [HALL, LOCAL_HALL, null, null, 4, '13:00:00', '14:00:00', '2030-08-19', '2031-06-13', null],
       ]);
       expect(sqlText(acts()[0]!)).toContain('app.room_loan_request(');
       expect(prisma.withRls).toHaveBeenCalledTimes(1);
     });
 
     it('answers a refusal of the database\'s by its code', async () => {
-      tx.roomLoan.findFirst.mockResolvedValue({ localRoomId: LOCAL_HALL });
+      tx.roomLoan.findMany.mockResolvedValue([{ roomId: HALL, localRoomId: LOCAL_HALL }]);
       raw.mockImplementation(async (sql: Prisma.Sql) => {
         const text = sql.strings.join('?');
         if (text.includes('app.sibling_schools()')) return [{ school_id: ROLLER, name: 'RLS Roller' }];

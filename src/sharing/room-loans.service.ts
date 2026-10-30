@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, type PrismaClient, type RoomLoanStatus } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
@@ -13,11 +13,16 @@ import { siblingSchools } from './sharing.service';
  * school of the huvudman, borrowed for weekly windows between two dates.
  *
  * The borrower holds the room by a room of its own (the loan's local room),
- * since its lessons need a room of their own school. The first request
- * makes it in the borrower's own transaction, under the borrower's own arms
- * on Rooms; every later request for the same room names it again. The loan
+ * since its lessons need a room of their own school. A request makes no
+ * room: it carries the name (and a room type of the borrower's own) the
+ * owner's approval makes the room by, when the borrower has none for it
+ * (app.room_loan_decide), so a declined or withdrawn request leaves nothing
+ * at the borrower. Every later request for the same room holds by that
+ * room, and one after an ended loan by the room the school had. The loan
  * itself is written only by the database's four functions, each for one
- * side, and both schools read the loans between them.
+ * side, and both schools read the loans between them; the owner reads and
+ * ends an approved loan of its room also after the borrower has left the
+ * huvudman.
  *
  * No person's name crosses: a loan says which school asked and which
  * answered. The rooms a school may ask for are another school's names,
@@ -42,11 +47,17 @@ export interface RoomLoanView {
   endedAt: string | null;
   /**
    * This school's room: the room lent out (a loan the school lends), or the
-   * school's own room for the room it borrows.
+   * school's own room for the room it borrows. A request not yet approved
+   * has no room: its id is null and its name the one the approval makes it
+   * by.
    */
-  room: { id: string; name: string };
-  /** The other school, while it has the same huvudman (the arms show nothing else). */
-  school: { id: string; name: string };
+  room: { id: string | null; name: string };
+  /**
+   * The other school. Its name is null for the borrower of an approved loan
+   * of the school's room that has left the huvudman: the owner still reads
+   * the loan and may end it.
+   */
+  school: { id: string; name: string | null };
   /** For a borrowed room: the owner's name for it, while the owner offers it. */
   ownerRoomName: string | null;
 }
@@ -73,7 +84,6 @@ export interface LendableSchoolView {
   rooms: LendableRoomView[];
 }
 
-export const ROOM_LOAN_LOCAL_ROOM_NAME_TAKEN = 'ROOM_LOAN_LOCAL_ROOM_NAME_TAKEN';
 export const ROOM_LOAN_WINDOW_INVALID = 'ROOM_LOAN_WINDOW_INVALID';
 
 /** At most 400 days between the first date and the last (RoomLoans_at_most_400_days). */
@@ -114,6 +124,7 @@ const LOAN_SELECT = {
   roomId: true,
   ownerSchoolId: true,
   borrowerSchoolId: true,
+  localRoomName: true,
 } as const;
 
 @Injectable()
@@ -131,12 +142,7 @@ export class RoomLoansService {
     return this.prisma.withRls(user, async (tx) => {
       const siblings = await siblingSchools(tx);
       const rooms = await lendableRooms(tx);
-      const locals = await tx.roomLoan.findMany({
-        where: { borrowerSchoolId: schoolId },
-        distinct: ['roomId'],
-        select: { roomId: true, localRoomId: true },
-      });
-      const localOf = new Map(locals.map((row) => [row.roomId, row.localRoomId]));
+      const localOf = await this.localRooms(tx, schoolId);
       return siblings
         .map((school) => ({
           id: school.id,
@@ -169,16 +175,17 @@ export class RoomLoansService {
             code: 'ROOM_LOAN_ROOM_NOT_FOUND',
           });
         }
-        const earlier = await tx.roomLoan.findFirst({
-          where: { borrowerSchoolId: schoolId, roomId: dto.roomId },
-          select: { localRoomId: true },
-        });
-        const localRoomId = dto.localRoomId ?? earlier?.localRoomId ?? (await this.makeLocalRoom(tx, schoolId, dto, room));
+        // The room the school had for it, when it has borrowed the room
+        // before; otherwise the approval makes one by the name given (or the
+        // room's and its school's, which the database writes).
+        const localRoomId = dto.localRoomId ?? (await this.localRooms(tx, schoolId)).get(room.id) ?? null;
+        const name = localRoomId ? null : dto.localRoomName?.trim() || null;
+        const type = localRoomId ? null : (dto.localRoomTypeId ?? null);
         const note = dto.note?.trim() ? dto.note.trim() : null;
         for (const window of dto.windows) {
           await tx.$queryRaw(
-            Prisma.sql`SELECT app.room_loan_request(${dto.roomId}::uuid, ${localRoomId}::uuid, ${window.dayOfWeek}::integer,
-                                                    ${window.startTime}::time, ${window.endTime}::time,
+            Prisma.sql`SELECT app.room_loan_request(${dto.roomId}::uuid, ${localRoomId}::uuid, ${name}::text, ${type}::uuid,
+                                                    ${window.dayOfWeek}::integer, ${window.startTime}::time, ${window.endTime}::time,
                                                     ${dto.startDate}::date, ${dto.endDate}::date, ${note}::text)::text AS id`,
           );
         }
@@ -218,29 +225,21 @@ export class RoomLoansService {
     }
   }
 
-  /** The school's own room for a room it borrows the first time: named after the room and its school. */
-  private async makeLocalRoom(
-    tx: PrismaClient,
-    schoolId: string,
-    dto: CreateRoomLoanDto,
-    room: { name: string; capacity: number | null; schoolName: string },
-  ): Promise<string> {
-    const name = dto.localRoomName?.trim() || `${room.name} (${room.schoolName})`;
-    try {
-      const created = await tx.room.create({
-        data: { schoolId, name, capacity: room.capacity, roomTypeId: dto.localRoomTypeId ?? null },
-        select: { id: true },
-      });
-      return created.id;
-    } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        throw new ConflictException({
-          message: `Skolan har redan en sal som heter ${name}. Välj ett annat namn för den lånade salen.`,
-          code: ROOM_LOAN_LOCAL_ROOM_NAME_TAKEN,
-        });
-      }
-      throw error;
+  /**
+   * The school's own room for each room it has borrowed, the latest loan's
+   * that has one: a request after an ended loan holds by the same room.
+   */
+  private async localRooms(tx: PrismaClient, schoolId: string): Promise<Map<string, string>> {
+    const rows = await tx.roomLoan.findMany({
+      where: { borrowerSchoolId: schoolId, localRoomId: { not: null } },
+      orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+      select: { roomId: true, localRoomId: true },
+    });
+    const localOf = new Map<string, string>();
+    for (const row of rows) {
+      if (row.localRoomId && !localOf.has(row.roomId)) localOf.set(row.roomId, row.localRoomId);
     }
+    return localOf;
   }
 
   private async read(tx: PrismaClient, schoolId: string): Promise<RoomLoansView> {
@@ -259,12 +258,13 @@ export class RoomLoansService {
     const ownerRooms = borrowed.length ? new Map((await lendableRooms(tx)).map((room) => [room.id, room.name])) : new Map<string, string>();
     const view = (
       loan: (typeof lent)[number] | (typeof borrowed)[number],
-      room: { id: string; name: string },
+      room: { id: string | null; name: string },
       otherSchoolId: string,
       ownerRoomName: string | null,
     ): RoomLoanView | null => {
-      const school = schoolOf.get(otherSchoolId);
-      // The arms show a loan only while both schools have the huvudman.
+      // The arms show a loan while both schools have the huvudman, and the
+      // owner an approved loan of its room after the borrower has left.
+      const school = schoolOf.get(otherSchoolId) ?? (loan.ownerSchoolId === schoolId ? { id: otherSchoolId, name: null } : null);
       if (!school) return null;
       return {
         id: loan.id,
@@ -288,7 +288,11 @@ export class RoomLoansService {
         .map((loan) => view(loan, loan.room, loan.borrowerSchoolId, null))
         .filter((loan): loan is RoomLoanView => loan !== null),
       borrowed: borrowed
-        .map((loan) => view(loan, loan.localRoom, loan.ownerSchoolId, ownerRooms.get(loan.roomId) ?? null))
+        .map((loan) => {
+          const ownerRoomName = ownerRooms.get(loan.roomId) ?? null;
+          const room = loan.localRoom ?? { id: null, name: loan.localRoomName ?? ownerRoomName ?? '' };
+          return view(loan, room, loan.ownerSchoolId, ownerRoomName);
+        })
         .filter((loan): loan is RoomLoanView => loan !== null),
     };
   }
