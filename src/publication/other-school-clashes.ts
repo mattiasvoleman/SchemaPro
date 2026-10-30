@@ -10,7 +10,11 @@
  *   LENT_ROOM      a lesson here in a room the school has lent, in an
  *                  approved window of the loan;
  *   BORROWED_ROOM  a lesson in the school's own room for a borrowed one, at
- *                  a time or on a date no approved loan covers.
+ *                  a time on a date it runs that the approved loans
+ *                  together do not cover (src/sharing/loan-coverage.ts,
+ *                  the rule the generator and the bookings read too: two
+ *                  loans side by side, or an autumn and a spring loan,
+ *                  cover a lesson together).
  *
  * Weeks count here as they do on the board (src/calendar/lesson-recurrence):
  * an odd-week lesson never meets an even-week one, nor a lesson whose dates
@@ -20,6 +24,7 @@
  * PURE.
  */
 import type { LessonRecurrence } from '@prisma/client';
+import { coveredEveryRun, minutesOfClock, type CoverLoan } from '../sharing/loan-coverage';
 
 export interface PublishedLesson {
   id: string;
@@ -95,12 +100,14 @@ export function shareADate(
   const from = a.startDate > b.startDate ? a.startDate : b.startDate;
   const to = a.endDate < b.endDate ? a.endDate : b.endDate;
   if (from > to) return false;
-  // The first date of the weekday in the common period, then week by week:
-  // two weeks settle the parity, so at most two dates are looked at.
+  // The first date of the weekday in the common period, then week by week.
+  // Three weeks settle the parity: ISO years of 53 weeks put two odd weeks
+  // in a row (week 53 and week 1, as 2026–2027 does), so two would miss
+  // every even week of a period that begins in week 53.
   const start = new Date(`${from}T00:00:00Z`);
   const weekday = start.getUTCDay() === 0 ? 7 : start.getUTCDay();
   let day = addDays(from, (dayOfWeek - weekday + 7) % 7);
-  for (let i = 0; i < 2 && day <= to; i++, day = addDays(day, 7)) {
+  for (let i = 0; i < 3 && day <= to; i++, day = addDays(day, 7)) {
     const odd = isoWeek(day) % 2 === 1;
     const runs = (r: LessonRecurrence) => r === 'ALL_WEEKS' || (r === 'ODD_WEEKS') === odd;
     if (runs(a.recurrence) && runs(b.recurrence)) return true;
@@ -139,16 +146,19 @@ export function otherSchoolClashes(input: {
     }
 
     if (input.localRoomIds.has(lesson.roomId)) {
-      const covered = input.borrowed.some(
-        (window) =>
-          window.roomId === lesson.roomId &&
-          window.dayOfWeek === lesson.dayOfWeek &&
-          minutesOf(window.startTime) <= start &&
-          end <= minutesOf(window.endTime) &&
-          window.startDate <= lesson.startDate &&
-          lesson.endDate <= window.endDate,
-      );
-      if (!covered) clashes.push({ kind: 'BORROWED_ROOM', lessonId: lesson.id, roomId: lesson.roomId });
+      const loans: CoverLoan[] = input.borrowed
+        .filter((window) => window.roomId === lesson.roomId)
+        .map((window) => ({
+          dayOfWeek: window.dayOfWeek,
+          start: minutesOfClock(window.startTime),
+          end: minutesOfClock(window.endTime),
+          startDate: window.startDate,
+          endDate: window.endDate,
+        }));
+      const runs = (date: string) => lesson.recurrence === 'ALL_WEEKS' || (lesson.recurrence === 'ODD_WEEKS') === (isoWeek(date) % 2 === 1);
+      if (!coveredEveryRun(loans, lesson.dayOfWeek, start, end, lesson.startDate, lesson.endDate, runs)) {
+        clashes.push({ kind: 'BORROWED_ROOM', lessonId: lesson.id, roomId: lesson.roomId });
+      }
     }
   }
   return clashes;

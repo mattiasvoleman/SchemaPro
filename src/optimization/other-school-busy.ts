@@ -51,6 +51,8 @@ export interface BusyBlock {
   end: number;
   /** The other schools whose lessons the block holds, in id order. */
   schoolIds: string[];
+  /** Whether a travel time between the schools widened it. */
+  walked: boolean;
 }
 
 const DAY_END = 24 * 60;
@@ -75,7 +77,10 @@ export function busyBlocks(
   from: string,
   to: string,
 ): BusyBlock[] {
-  const byKey = new Map<string, { teacherId: string; dayOfWeek: number; spans: { start: number; end: number; schoolId: string }[] }>();
+  const byKey = new Map<
+    string,
+    { teacherId: string; dayOfWeek: number; spans: { start: number; end: number; schoolId: string; walked: boolean }[] }
+  >();
   for (const lesson of lessons) {
     if (lesson.endDate < from || lesson.startDate > to) continue;
     // The engine plans Monday to Friday and refuses a reservation on any
@@ -87,7 +92,7 @@ export function busyBlocks(
     if (end <= start) continue;
     const key = `${lesson.teacherId}|${lesson.dayOfWeek}`;
     const entry = byKey.get(key) ?? { teacherId: lesson.teacherId, dayOfWeek: lesson.dayOfWeek, spans: [] };
-    entry.spans.push({ start, end, schoolId: lesson.schoolId });
+    entry.spans.push({ start, end, schoolId: lesson.schoolId, walked: travel > 0 });
     byKey.set(key, entry);
   }
   const blocks: BusyBlock[] = [];
@@ -97,10 +102,18 @@ export function busyBlocks(
     for (const span of spans) {
       if (current && span.start <= current.end) {
         current.end = Math.max(current.end, span.end);
+        current.walked = current.walked || span.walked;
         if (!current.schoolIds.includes(span.schoolId)) current.schoolIds.push(span.schoolId);
       } else {
         if (current) blocks.push(current);
-        current = { teacherId: entry.teacherId, dayOfWeek: entry.dayOfWeek, start: span.start, end: span.end, schoolIds: [span.schoolId] };
+        current = {
+          teacherId: entry.teacherId,
+          dayOfWeek: entry.dayOfWeek,
+          start: span.start,
+          end: span.end,
+          schoolIds: [span.schoolId],
+          walked: span.walked,
+        };
       }
     }
     if (current) blocks.push(current);

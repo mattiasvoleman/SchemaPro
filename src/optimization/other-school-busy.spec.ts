@@ -28,8 +28,21 @@ const lesson = (patch: Partial<LessonElsewhere>): LessonElsewhere => ({
 describe('busyBlocks', () => {
   it('widens a lesson by the walk on both sides', () => {
     expect(busyBlocks([lesson({})], 5, '2030-08-01', '2031-07-31')).toEqual([
-      { teacherId: ANNA, dayOfWeek: 2, start: minutesOf('09:45'), end: minutesOf('11:15'), schoolIds: [NORRA] },
+      { teacherId: ANNA, dayOfWeek: 2, start: minutesOf('09:45'), end: minutesOf('11:15'), schoolIds: [NORRA], walked: true },
     ]);
+  });
+
+  it('says whether a walk widened the block: none stated, or none at all, widens nothing', () => {
+    expect(busyBlocks([lesson({ travelMinutes: null })], 5, '2030-08-01', '2031-07-31')[0]?.walked).toBe(false);
+    expect(busyBlocks([lesson({ travelMinutes: 0 })], 5, '2030-08-01', '2031-07-31')[0]?.walked).toBe(false);
+    // Merged with a lesson that has one, the block was widened.
+    const merged = busyBlocks(
+      [lesson({ travelMinutes: null }), lesson({ startTime: '11:00', endTime: '12:00', travelMinutes: 15 })],
+      5,
+      '2030-08-01',
+      '2031-07-31',
+    );
+    expect(merged.map((block) => block.walked)).toEqual([true]);
   });
 
   it('rounds outward to the slot grid, so no lesson starts inside the walk', () => {

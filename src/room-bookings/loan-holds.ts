@@ -7,7 +7,11 @@
  *                                 approved window holds part of the booking;
  *   ROOM_BORROWED_OUTSIDE_LOAN    the room is the school's own for a
  *                                 borrowed one, and some part of the booking
- *                                 is outside every approved window.
+ *                                 is outside what the approved loans of
+ *                                 that date together cover
+ *                                 (src/sharing/loan-coverage.ts, the rule
+ *                                 the generator and the publish check read
+ *                                 too).
  *
  * The windows are the school's wall clock (TIME and DATE columns), the
  * booking two instants: the booking is read in the school's time zone, day
@@ -15,6 +19,8 @@
  *
  * PURE.
  */
+
+import { coverOn, coversSpan, minutesOfClock } from '../sharing/loan-coverage';
 
 export interface LoanRow {
   status: string;
@@ -109,9 +115,17 @@ export function loanBookingRefusal(
     }
   }
   if (loans.some((loan) => loan.localRoomId === roomId)) {
-    const held = approved.filter((loan) => loan.localRoomId === roomId);
+    const held = approved
+      .filter((loan) => loan.localRoomId === roomId)
+      .map((loan) => ({
+        dayOfWeek: loan.dayOfWeek,
+        start: minutesOfClock(loan.startTime),
+        end: minutesOfClock(loan.endTime),
+        startDate: loan.startDate,
+        endDate: loan.endDate,
+      }));
     for (const piece of pieces) {
-      if (!held.some((loan) => covers(loan, piece) && minutesOf(loan.startTime) <= piece.start && piece.end <= minutesOf(loan.endTime))) {
+      if (!coversSpan(coverOn(held, piece.date, piece.weekday), piece.start, piece.end)) {
         return 'ROOM_BORROWED_OUTSIDE_LOAN';
       }
     }

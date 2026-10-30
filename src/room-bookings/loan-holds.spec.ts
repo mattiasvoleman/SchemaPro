@@ -54,8 +54,25 @@ describe('loanBookingRefusal', () => {
     expect(loanBookingRefusal(loans, LOCAL, at('2030-09-03T10:00:00'), at('2030-09-03T11:30:00'), TZ)).toBeNull();
     expect(loanBookingRefusal(loans, LOCAL, at('2030-09-03T09:45:00'), at('2030-09-03T11:00:00'), TZ)).toBe('ROOM_BORROWED_OUTSIDE_LOAN');
     expect(loanBookingRefusal(loans, LOCAL, at('2030-09-04T10:00:00'), at('2030-09-04T11:00:00'), TZ)).toBe('ROOM_BORROWED_OUTSIDE_LOAN');
+    // A booking that starts in the window and ends after it.
+    expect(loanBookingRefusal(loans, LOCAL, at('2030-09-03T11:00:00'), at('2030-09-03T11:45:00'), TZ)).toBe('ROOM_BORROWED_OUTSIDE_LOAN');
     // Only a pending loan: the room holds nothing yet.
     expect(loanBookingRefusal([loan({ status: 'PENDING' })], LOCAL, at('2030-09-03T10:00:00'), at('2030-09-03T11:00:00'), TZ)).toBe(
+      'ROOM_BORROWED_OUTSIDE_LOAN',
+    );
+  });
+
+  it('lets the borrower book across two loans side by side, or a date an autumn or a spring loan covers', () => {
+    const sideBySide = [loan({ endTime: '11:00' }), loan({ startTime: '11:00', endTime: '12:00' })];
+    expect(loanBookingRefusal(sideBySide, LOCAL, at('2030-09-03T10:30:00'), at('2030-09-03T11:30:00'), TZ)).toBeNull();
+    expect(loanBookingRefusal(sideBySide, LOCAL, at('2030-09-03T10:30:00'), at('2030-09-03T12:15:00'), TZ)).toBe('ROOM_BORROWED_OUTSIDE_LOAN');
+    const terms = [loan({ endDate: '2030-12-20' }), loan({ startDate: '2031-01-07' })];
+    expect(loanBookingRefusal(terms, LOCAL, at('2030-09-03T10:00:00'), at('2030-09-03T11:00:00'), TZ)).toBeNull();
+    // Stockholm is UTC+1 in winter. A Tuesday of the spring loan is covered;
+    // 2030-12-31, between the terms, is not.
+    const winter = (local: string) => new Date(`${local}+01:00`);
+    expect(loanBookingRefusal(terms, LOCAL, winter('2031-01-14T10:00:00'), winter('2031-01-14T11:00:00'), TZ)).toBeNull();
+    expect(loanBookingRefusal(terms, LOCAL, winter('2030-12-31T10:00:00'), winter('2030-12-31T11:00:00'), TZ)).toBe(
       'ROOM_BORROWED_OUTSIDE_LOAN',
     );
   });

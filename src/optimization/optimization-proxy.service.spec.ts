@@ -2269,13 +2269,16 @@ describe('OptimizationProxyService', () => {
       const holds = (payload: AiEngineScheduleRequest) =>
         payload.constraints.filter((row) => row.kind === 'UNAVAILABLE');
 
-      it('sends exactly today’s payload, and reads no loan, for a school without another school of its huvudman', async () => {
+      it('sends exactly today’s payload, and reads no teacher’s times, for a school without another school of its huvudman', async () => {
         arrange();
         sharing({ siblings: [] });
         echoEngine();
         await service.triggerScheduling(ACADEMIC_YEAR, testUser());
         expect(postedPayload().constraints).toEqual([]);
-        expect(tx.roomLoan.findMany).not.toHaveBeenCalled();
+        // The loans are read (an owner keeps an approved loan of its room
+        // after the borrower has left); the other schools' times are not.
+        expect(tx.roomLoan.findMany).toHaveBeenCalledTimes(1);
+        expect(tx.$queryRaw.mock.calls.some((call) => String((call[0] as { sql?: string }).sql ?? '').includes('shared_teacher_busy'))).toBe(false);
       });
 
       it('holds a shared teacher at the other school, the walk counted, and nobody the payload does not carry', async () => {
@@ -2335,13 +2338,16 @@ describe('OptimizationProxyService', () => {
 
         expect(conflicts[0]).toMatchObject({
           code: 'OTHER_SCHOOL_TEACHER_BUSY',
-          params: { schools: 'Norraskolan', day: 2, start: '09:45', end: '11:15' },
+          // The 15 minutes between the schools widened the block: the line says so.
+          params: { schools: 'Norraskolan', day: 2, start: '09:45', end: '11:15', travel: 'yes' },
           constraintIds: [],
           resourceIds: [TEACHER_ID],
           resourceNames: [],
           subjectIds: [TEACHER_ID],
         });
-        expect(conflicts[0]!.message).toMatch(/^A teacher named here also teaches at Norraskolan: on Tuesdays 09:45-11:15/);
+        expect(conflicts[0]!.message).toMatch(
+          /^A teacher named here also teaches at Norraskolan: on Tuesdays 09:45-11:15 \(the travel between the schools included\) they are there, and that may be one of the reasons/,
+        );
         expect(conflicts[1]).toMatchObject({
           code: 'OTHER_SCHOOL_ROOM_LENT',
           params: { schools: 'Norraskolan', day: 4, start: '13:00', end: '14:30', room: 'Idrottshallen' },

@@ -1698,7 +1698,7 @@ export class OptimizationProxyService {
             day: hold.dayOfWeek,
             start: hold.startTime.slice(0, 5),
             end: hold.endTime.slice(0, 5),
-            ...(room !== null ? { room } : {}),
+            ...(room !== null ? { room } : { travel: hold.walked ? 'yes' : 'no' }),
           };
           const teachers = hold.resourceKind === 'TEACHER' ? [hold.resourceId] : [];
           return {

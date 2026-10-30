@@ -83,8 +83,10 @@ describe('the generator gateway’s sentences are the catalogue’s', () => {
     [1, 3, 5].map((day): [HoldKind, number] => [kind, day]),
   );
   it.each(holds)('says the %s line for weekday %i as the catalogue does', (kind, day) => {
-    const params = { schools: 'Norraskolan, Södra', day, start: '09:45', end: '11:15', room: 'Idrottshallen' };
-    expect(fixture[HOLD_CODES[kind]]).toBeDefined();
-    expect(holdMessage(kind, params)).toBe(render(fixture[HOLD_CODES[kind]]!, params));
+    for (const travel of ['yes', 'no']) {
+      const params = { schools: 'Norraskolan, Södra', day, start: '09:45', end: '11:15', room: 'Idrottshallen', travel };
+      expect(fixture[HOLD_CODES[kind]]).toBeDefined();
+      expect(holdMessage(kind, params)).toBe(render(fixture[HOLD_CODES[kind]]!, params));
+    }
   });
 });

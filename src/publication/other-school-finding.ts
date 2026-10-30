@@ -37,10 +37,12 @@ export async function otherSchoolFinding(
   const siblings = await tx.$queryRaw<Array<{ school_id: string; name: string }>>(
     Prisma.sql`SELECT school_id, name FROM app.sibling_schools()`,
   );
-  if (siblings.length === 0) return none;
+  // Without another school of the huvudman there is no shared teacher, but
+  // the loans are still read: the owner keeps an approved loan of its room
+  // after the borrower, or it, has left, until it ends it.
   const schoolName = new Map(siblings.map((row) => [row.school_id, row.name]));
 
-  const busy = await tx.$queryRaw<
+  const busy = siblings.length === 0 ? [] : await tx.$queryRaw<
     Array<{
       teacher_id: string;
       school_id: string;
@@ -162,7 +164,7 @@ export async function otherSchoolFinding(
     if (clash.kind === 'LENT_ROOM') {
       const lentAt = `${WEEKDAY[clash.window.dayOfWeek]} ${clash.window.startTime}–${clash.window.endTime}`;
       return {
-        label: `${base}: ${rooms.get(clash.window.roomId) ?? 'salen'} är utlånad till ${schoolName.get(clash.window.schoolId) ?? 'en annan skola'} ${lentAt}`,
+        label: `${base}: ${rooms.get(clash.window.roomId) ?? 'salen'} är utlånad till ${schoolName.get(clash.window.schoolId) ?? 'en skola som har lämnat huvudmannen'} ${lentAt}`,
         masterLessonId: lesson.id,
       };
     }

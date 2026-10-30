@@ -43,11 +43,23 @@ describe('readOtherSchoolHolds', () => {
     tx.academicYear.findUnique.mockResolvedValue({ startDate: date('2030-08-15'), endDate: date('2031-06-15') });
   });
 
-  it('reads nothing more for a school without another school of its huvudman', async () => {
+  it('reads no teacher’s times for a school without another school of its huvudman, and holds nothing with no loan', async () => {
     tx.$queryRaw.mockResolvedValueOnce([]);
     await expect(read()).resolves.toEqual({ holds: [] });
     expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
-    expect(tx.roomLoan.findMany).not.toHaveBeenCalled();
+    expect(tx.roomLoan.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps an approved loan of its room for an owner with no other school left, until it ends it', async () => {
+    // No sibling: the borrower has left the huvudman, and so may the owner
+    // have. The owner's arm still shows the approved loan.
+    tx.$queryRaw.mockResolvedValueOnce([]);
+    tx.roomLoan.findMany.mockResolvedValue([loan({ borrowerSchoolId: 'f0000000-0000-4000-8000-00000000000f' })]);
+    const { holds } = await read();
+    expect(holds.map((hold) => [hold.kind, hold.resourceId, hold.dayOfWeek, hold.startTime, hold.endTime, hold.schools])).toEqual([
+      ['ROOM_LENT', HALL, 2, '10:00:00', '11:30:00', ['en skola som har lämnat huvudmannen']],
+    ]);
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
   });
 
   it('holds a shared teacher at the other school’s lessons, the walk counted and on the grid', async () => {
@@ -77,6 +89,7 @@ describe('readOtherSchoolHolds', () => {
         startTime: '09:45:00',
         endTime: '11:15:00',
         schools: ['Norraskolan'],
+        walked: true,
       },
     ]);
     // The year's own dates bound the read.
@@ -89,7 +102,16 @@ describe('readOtherSchoolHolds', () => {
     tx.roomLoan.findMany.mockResolvedValue([
       loan({}),
       loan({ status: 'PENDING', dayOfWeek: 3 }),
-      loan({ ownerSchoolId: NORRA, borrowerSchoolId: SCHOOL, roomId: 'e0000000-0000-4000-8000-000000000005', localRoomId: LOCAL, dayOfWeek: 4 }),
+      // Every Thursday of the year, from 2030-08-15 (a Thursday) on.
+      loan({
+        ownerSchoolId: NORRA,
+        borrowerSchoolId: SCHOOL,
+        roomId: 'e0000000-0000-4000-8000-000000000005',
+        localRoomId: LOCAL,
+        dayOfWeek: 4,
+        startDate: date('2030-08-15'),
+        endDate: date('2031-06-15'),
+      }),
     ]);
     const { holds } = await read();
     const lent = holds.filter((hold) => hold.kind === 'ROOM_LENT');
@@ -131,6 +153,26 @@ describe('readOtherSchoolHolds', () => {
     expect(holds.map((hold) => [hold.kind, hold.resourceId, hold.schools])).toEqual([
       ['ROOM_LENT', HALL, ['en skola som har lämnat huvudmannen']],
     ]);
+  });
+
+  it('sends a teacher’s block that the walk carries past midnight as ending at 23:59', async () => {
+    tx.$queryRaw
+      .mockResolvedValueOnce([{ school_id: NORRA, name: 'Norraskolan' }])
+      .mockResolvedValueOnce([
+        {
+          teacher_id: ANNA,
+          school_id: NORRA,
+          day_of_week: 3,
+          start_time: time('23:00'),
+          end_time: time('23:50'),
+          recurrence: 'ALL_WEEKS',
+          start_date: date('2030-08-15'),
+          end_date: date('2031-06-15'),
+          travel_minutes: 15,
+        },
+      ]);
+    const { holds } = await read();
+    expect(holds.map((hold) => [hold.kind, hold.dayOfWeek, hold.startTime, hold.endTime])).toEqual([['TEACHER_BUSY', 3, '22:45:00', '23:59:00']]);
   });
 
   it('reads no teacher for the room optimisation', async () => {

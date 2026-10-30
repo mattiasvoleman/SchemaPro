@@ -63,6 +63,16 @@ describe('shareADate', () => {
     expect(shareADate(2, { ...all, endDate: '2030-12-20' }, { ...all, startDate: '2031-01-07' })).toBe(false);
     expect(shareADate(2, { ...all, startDate: '2030-09-04', endDate: '2030-09-09' }, all)).toBe(false);
   });
+
+  it('looks past ISO week 53, which is odd as week 1 after it is', () => {
+    // 2026-12-28 is the Monday of week 53, 2027-01-04 of week 1 and
+    // 2027-01-11 of week 2, the first even week of the spring.
+    const spring = { recurrence: 'ALL_WEEKS' as const, startDate: '2026-12-28', endDate: '2027-06-11' };
+    expect(shareADate(1, spring, { ...spring, recurrence: 'EVEN_WEEKS', startDate: '2026-08-17' })).toBe(true);
+    expect(shareADate(1, { ...spring, startDate: '2027-01-04' }, { ...spring, recurrence: 'EVEN_WEEKS' })).toBe(true);
+    // Weeks 53 and 1 alone hold no even week.
+    expect(shareADate(1, { ...spring, endDate: '2027-01-10' }, { ...spring, recurrence: 'EVEN_WEEKS' })).toBe(false);
+  });
 });
 
 describe('otherSchoolClashes', () => {
@@ -105,6 +115,32 @@ describe('otherSchoolClashes', () => {
     expect(run({ lessons: [lesson({ roomId: LOCAL, startTime: '10:00', endTime: '11:00' })], borrowed: [], localRoomIds: local })).toEqual(['BORROWED_ROOM']);
     // A room that is no local room is none of this.
     expect(run({ lessons: [lesson({ roomId: 'other', startTime: '10:00', endTime: '11:00' })], borrowed: [], localRoomIds: local })).toEqual([]);
+  });
+
+  it('reads a borrowed room’s loans together: side by side, autumn and spring, and only the weeks the lesson runs', () => {
+    const local = new Set([LOCAL]);
+    const tue = (patch: Partial<LoanWindow>) => window({ roomId: LOCAL, ...patch });
+    // 10–11 and 11–12 cover 10:30–11:30, which neither does alone.
+    expect(
+      run({ lessons: [lesson({ roomId: LOCAL, startTime: '10:30', endTime: '11:30' })], borrowed: [tue({ endTime: '11:00' }), tue({ startTime: '11:00', endTime: '12:00' })], localRoomIds: local }),
+    ).toEqual([]);
+    // An autumn loan and a spring loan cover a lesson that runs all year.
+    const terms = [tue({ endDate: '2030-12-20' }), tue({ startDate: '2030-12-21' })];
+    expect(run({ lessons: [lesson({ roomId: LOCAL, startTime: '10:00', endTime: '11:00' })], borrowed: terms, localRoomIds: local })).toEqual([]);
+    // A week between the terms with no loan: the lesson that week is outside.
+    const gap = [tue({ endDate: '2030-12-20' }), tue({ startDate: '2031-01-08' })];
+    expect(run({ lessons: [lesson({ roomId: LOCAL, startTime: '10:00', endTime: '11:00' })], borrowed: gap, localRoomIds: local })).toEqual([
+      'BORROWED_ROOM',
+    ]);
+    // An odd-week lesson needs only the odd weeks covered: the uncovered
+    // Tuesday 2030-12-24 is in week 52, even.
+    const oddGap = [tue({ endDate: '2030-12-20' }), tue({ startDate: '2030-12-25' })];
+    expect(
+      run({ lessons: [lesson({ roomId: LOCAL, startTime: '10:00', endTime: '11:00', recurrence: 'ODD_WEEKS' })], borrowed: oddGap, localRoomIds: local }),
+    ).toEqual([]);
+    expect(
+      run({ lessons: [lesson({ roomId: LOCAL, startTime: '10:00', endTime: '11:00', recurrence: 'EVEN_WEEKS' })], borrowed: oddGap, localRoomIds: local }),
+    ).toEqual(['BORROWED_ROOM']);
   });
 
   it('skips a lesson the publish does not materialise', () => {

@@ -4,21 +4,31 @@
  * already keeps (recurring UNAVAILABLE rows on a room).
  *
  *   lent      the owner's room is closed in each approved window that meets
- *             the year, so its own lessons stay out of the times another
- *             school holds it;
- *   borrowed  the borrower's own room for the borrowed one is closed outside
- *             the approved windows that meet the year, and every school day
- *             no window holds, so its lessons go only where the loan reaches.
- *             A room with no approved window is closed all week.
+ *             the year, the whole year, rounded out to the grid: the owner's
+ *             lessons stay out of every minute another school holds it;
+ *   borrowed  the borrower's own room for the borrowed one is open only
+ *             where the approved loans together cover every date of the
+ *             weekday in the year (src/sharing/loan-coverage.ts, the rule the
+ *             publish check and the bookings read too), rounded in to the
+ *             grid, and closed everywhere else; a loan for the spring alone
+ *             opens nothing, and a room with no approved loan is closed all
+ *             week.
+ *
+ * Both are the careful side: the engine has no weeks or dates, so a lesson
+ * it places runs all year, and nothing it places can meet a loan the publish
+ * check or a booking would refuse. The engine rounds a reservation's ends
+ * down to its grid (TimeGrid.clamp_to_grid), so the gateway rounds them
+ * itself, each the way that keeps the lessons out.
  *
  * Only the school week the engine plans (Monday to Friday): it refuses a
  * reservation on any other day as input, and a lesson there is no lesson it
- * places. The engine has no weeks: a window that holds the room from January
- * holds it for the whole year in the plan, conservatively, as a locked lesson
- * does; the publish check (PUB_OTHER_SCHOOL) reads the dates.
+ * places.
  *
  * PURE.
  */
+
+import { SLOT_MINUTES } from '../common/solver-grid';
+import { coveredOnEveryDate, minutesOfClock, type CoverLoan } from '../sharing/loan-coverage';
 
 export interface ApprovedWindow {
   /** The owner's room (lent) or the borrower's own room for it (borrowed). */
@@ -43,24 +53,41 @@ export interface RoomReservation {
 /** The days the engine plans (its SCHEDULE_DAYS default). */
 export const SCHOOL_WEEK = [1, 2, 3, 4, 5] as const;
 
-const DAY_START = '00:00:00';
 /** The engine reads 23:59 as the end of the day (TimeGrid.clamp_to_grid). */
-const DAY_END = '23:59:00';
-const clock = (time: string): string => (time.length === 5 ? `${time}:00` : time);
+const DAY_END = 24 * 60;
+const clockOf = (minutes: number): string =>
+  minutes >= DAY_END
+    ? '23:59:00'
+    : `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}:00`;
+const down = (minutes: number): number => Math.floor(minutes / SLOT_MINUTES) * SLOT_MINUTES;
+const up = (minutes: number): number => Math.ceil(minutes / SLOT_MINUTES) * SLOT_MINUTES;
 const meets = (window: ApprovedWindow, from: string, to: string): boolean => window.startDate <= to && window.endDate >= from;
+const coverLoan = (window: ApprovedWindow): CoverLoan => ({
+  dayOfWeek: window.dayOfWeek,
+  start: minutesOfClock(window.startTime),
+  end: minutesOfClock(window.endTime),
+  startDate: window.startDate,
+  endDate: window.endDate,
+});
 
-/** The owner's rooms, closed in the approved windows of the loans that meet [from, to]. */
+/** The owner's rooms, closed in the approved windows of the loans that meet [from, to], rounded out to the grid. */
 export function lentReservations(windows: readonly ApprovedWindow[], from: string, to: string): RoomReservation[] {
   return windows
     .filter((window) => meets(window, from, to) && (SCHOOL_WEEK as readonly number[]).includes(window.dayOfWeek))
-    .map((window) => ({ roomId: window.roomId, dayOfWeek: window.dayOfWeek, startTime: clock(window.startTime), endTime: clock(window.endTime) }))
+    .map((window) => ({
+      roomId: window.roomId,
+      dayOfWeek: window.dayOfWeek,
+      startTime: clockOf(down(minutesOfClock(window.startTime))),
+      endTime: clockOf(up(minutesOfClock(window.endTime))),
+    }))
     .sort(byRoomDayStart);
 }
 
 /**
- * The borrower's own rooms, closed outside the approved windows that meet
- * [from, to]: the gaps of each school day around the windows, merged where
- * they overlap, and the whole day where none is.
+ * The borrower's own rooms, closed outside what the approved loans together
+ * cover on every date of the weekday in [from, to] (the open time rounded in
+ * to the grid): the gaps of each school day around it, and the whole day
+ * where nothing is covered every week.
  */
 export function borrowedReservations(
   localRoomIds: readonly string[],
@@ -70,17 +97,17 @@ export function borrowedReservations(
 ): RoomReservation[] {
   const out: RoomReservation[] = [];
   for (const roomId of [...new Set(localRoomIds)].sort()) {
+    const loans = windows.filter((window) => window.roomId === roomId).map(coverLoan);
     for (const day of SCHOOL_WEEK) {
-      const open = windows
-        .filter((window) => window.roomId === roomId && window.dayOfWeek === day && meets(window, from, to))
-        .map((window) => [clock(window.startTime), clock(window.endTime)] as const)
-        .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
-      let cursor = DAY_START;
+      const open = coveredOnEveryDate(loans, day, from, to)
+        .map(([start, end]) => [up(start), down(end)] as const)
+        .filter(([start, end]) => end > start);
+      let cursor = 0;
       for (const [start, end] of open) {
-        if (start > cursor) out.push({ roomId, dayOfWeek: day, startTime: cursor, endTime: start });
+        if (start > cursor) out.push({ roomId, dayOfWeek: day, startTime: clockOf(cursor), endTime: clockOf(start) });
         if (end > cursor) cursor = end;
       }
-      if (cursor < DAY_END) out.push({ roomId, dayOfWeek: day, startTime: cursor, endTime: DAY_END });
+      if (cursor < DAY_END) out.push({ roomId, dayOfWeek: day, startTime: clockOf(cursor), endTime: clockOf(DAY_END) });
     }
   }
   return out;

@@ -60,9 +60,37 @@ describe('otherSchoolFinding', () => {
     ]);
   });
 
-  it('finds nothing, and reads no more, for a school without another school of its huvudman', async () => {
+  it('reads no teacher’s times for a school without another school of its huvudman, and finds nothing with no loan', async () => {
+    tx.$queryRaw.mockResolvedValue([]);
     await expect(find([lesson({})])).resolves.toEqual({ code: 'PUB_OTHER_SCHOOL', count: 0 });
-    expect(tx.roomLoan.findMany).not.toHaveBeenCalled();
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(tx.roomLoan.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('names a lesson in its room lent to a school that has left, for an owner with no other school left', async () => {
+    tx.$queryRaw.mockResolvedValue([]);
+    tx.roomLoan.findMany.mockResolvedValue([
+      {
+        id: 'lent',
+        status: 'APPROVED',
+        ownerSchoolId: SCHOOL,
+        borrowerSchoolId: 'f0000000-0000-4000-8000-00000000000f',
+        roomId: HALL,
+        localRoomId: 'x0000000-0000-4000-8000-000000000009',
+        dayOfWeek: 2,
+        startTime: time('09:30'),
+        endTime: time('11:00'),
+        startDate: date('2030-08-19'),
+        endDate: date('2031-06-13'),
+      },
+    ]);
+    const finding = await find([lesson({ id: 'in-lent', teacherId: null, roomId: HALL })]);
+    expect(finding.entries).toEqual([
+      {
+        label: 'Matematik · 7B, tis 09:00–10:00: Idrottshallen är utlånad till en skola som har lämnat huvudmannen tis 09:30–11:00',
+        masterLessonId: 'in-lent',
+      },
+    ]);
   });
 
   it('names a shared teacher’s lesson that meets the teacher’s lesson at the other school, the walk counted', async () => {
@@ -94,6 +122,25 @@ describe('otherSchoolFinding', () => {
     // The window bounds the other school's lessons it asks for.
     const asked = tx.$queryRaw.mock.calls.map((call) => call[0] as { sql: string; values: unknown[] }).find((q) => q.sql.includes('shared_teacher_busy'));
     expect(asked!.values).toEqual(['2030-08-19', '2031-06-13']);
+  });
+
+  it('names the shared teacher as a lesson’s co-teacher too', async () => {
+    sharing([
+      {
+        teacher_id: ANNA,
+        school_id: NORRA,
+        day_of_week: 2,
+        start_time: time('09:30'),
+        end_time: time('10:30'),
+        recurrence: 'ALL_WEEKS',
+        start_date: date('2030-08-15'),
+        end_date: date('2031-06-15'),
+        travel_minutes: null,
+      },
+    ]);
+    const finding = await find([lesson({ teacherId: 'b0000000-0000-4000-8000-00000000000b', coTeacherId: ANNA })]);
+    expect(finding.count).toBe(1);
+    expect(finding.entries?.[0]).toMatchObject({ masterLessonId: 'L1', teacherId: ANNA });
   });
 
   it('names a lesson in a lent room in the window and one in a borrowed room outside the loan', async () => {
