@@ -33139,3 +33139,66 @@ BEGIN
   END IF;
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 279c: publiceringens eget val för krockar med huvudmannens andra
+-- skolor (PublicationSettings."gateOtherSchool", 20261217090100), och det som
+-- generatorn och publiceringen läser genom de smala läsningarna.
+--
+--   a. the column is a PublishGateMode, NOT NULL, WARN by default, and every
+--      school's row reads WARN: no school is refused anything it published
+--      before;
+--   b. the scheduler (the roller school's schemaläggare, who generates and
+--      publishes) reads what other-school-holds.ts and other-school-finding.ts
+--      ask: the other schools, the shared teachers' lessons there in the
+--      year's dates, and the loans between the schools; and so does school
+--      A's administrator for the roller year. The expedition reads them too
+--      (every profile reads), and writes no loan.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_d_admin', :'admin_auth_id', true);
+DO $$
+DECLARE
+  ids jsonb := pg_temp.delade_ids();
+  col record;
+  wrong text[] := '{}';
+  n bigint;
+  sub text;
+BEGIN
+  SELECT a.atttypid::regtype::text AS type, a.attnotnull AS notnull, pg_get_expr(d.adbin, d.adrelid) AS def INTO col
+    FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+   WHERE a.attrelid = '"PublicationSettings"'::regclass AND a.attname = 'gateOtherSchool';
+  IF col IS NULL OR col.type <> '"PublishGateMode"' OR NOT col.notnull OR col.def NOT LIKE '''WARN''%' THEN
+    wrong := wrong || format('279c gateOtherSchool is %s', row_to_json(col));
+  END IF;
+
+  FOREACH sub IN ARRAY ARRAY['00000000-0000-4000-8000-000000000107', '00000000-0000-4000-8000-000000000108'] LOOP
+    PERFORM pg_temp.delade_as(sub, NULL);
+    IF (SELECT count(*) FROM app.sibling_schools()) <> 2
+       OR (SELECT count(*) FROM app.shared_teacher_busy('2026-08-01', '2027-07-31') WHERE teacher_id::text = ids ->> 't_m') <> 1
+       OR (SELECT count(*) FROM "RoomLoans") <> 2 THEN
+      wrong := wrong || format('279c %s does not read what the generator and the publish read', sub);
+    END IF;
+    SELECT count(*) INTO n FROM "PublicationSettings" WHERE "gateOtherSchool" <> 'WARN';
+    IF n <> 0 THEN
+      wrong := wrong || format('279c %s reads %s rows with gateOtherSchool set before any school chose', sub, n);
+    END IF;
+  END LOOP;
+  PERFORM pg_temp.delade_as('00000000-0000-4000-8000-000000000108', NULL);
+  IF pg_temp.delade_state(format('SELECT app.room_loan_decide(%L, true)', gen_random_uuid())) <> 'RL403' THEN
+    wrong := wrong || '279c the expedition decides a loan'::text;
+  END IF;
+
+  PERFORM pg_temp.delade_as(current_setting('app.test_d_admin'), NULL);
+  IF (SELECT count(*) FROM app.shared_teacher_busy('2030-08-15', '2031-06-15') WHERE teacher_id::text = ids ->> 't_a') <> 3
+     OR (SELECT count(*) FROM "RoomLoans" WHERE "borrowerSchoolId"::text = ids ->> 'a' AND status = 'APPROVED') <> 1 THEN
+    wrong := wrong || '279c school A''s administrator does not read the roller year''s holds'::text;
+  END IF;
+
+  PERFORM pg_temp.delade_as(NULL, NULL);
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION 'delade 279c: %', array_to_string(wrong, '; ');
+  END IF;
+END $$;
+ROLLBACK;
