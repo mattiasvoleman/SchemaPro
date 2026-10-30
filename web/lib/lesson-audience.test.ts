@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import pupilList from "../../src/common/__fixtures__/pupil-list-cases.json";
 import {
   audienceFor,
   buildRosterIndex,
@@ -101,10 +102,12 @@ describe("audienceFor", () => {
 
   it("never reports a named lesson as partial", () => {
     // `studentIds` ADDS individual participants, it never narrows a group —
-    // conflicts.ts treats a pupil as busy when their own class attends. So a
-    // lesson that names the class always holds all of it, and the fraction
-    // that follows is a property of this domain rather than of these numbers:
-    // every partial lesson is one reached through pupils.
+    // conflicts.ts treats a pupil as busy when their own class attends. So, in
+    // a school with no replacing group, a lesson that names the class holds
+    // all of it, and the fraction that follows is a property of this domain
+    // rather than of these numbers: every partial lesson is one reached
+    // through pupils. A replacing group is the one thing that takes a class's
+    // pupils off its own lesson (Elevlistan i uppföljningen, below).
     for (const l of [
       lesson("4.1"),
       lesson("4.1", ["4ma1"]),
@@ -239,5 +242,60 @@ describe("a class's halves (Halvklasser)", () => {
     );
 
     expect(audienceFor(lesson("4.1:1"), "4.1", placed)).toEqual({ attending: 2, cohortSize: 4, named: true });
+  });
+});
+
+describe("Elevlistan i uppföljningen: a replacing group takes its pupils out of the room", () => {
+  // The shared school (src/common/__fixtures__/pupil-list-cases.json): 7A of
+  // Alva (in SvA7 and the half 7A:1), Bo (in Stöd7 and the half) and Cim.
+  // With SvA7 replacing Svenska, Alva is not in the room for 7A's svenska or
+  // the half's; Bo, in a support group that replaces nothing, is.
+  interface Fixture {
+    pupils: { id: string; homeGroupId: string; groupIds: string[] }[];
+    lessons: { id: string; name: string; subjectId: string; groupIds: string[]; named: string[] }[];
+    schools: {
+      name: string;
+      groups: { id: string; name: string; kind: string; halfOfId: string | null; replacesSubjectId: string | null; academicYearId: string }[];
+      expected: Record<string, { on: string[]; off: string[] }>;
+    }[];
+  }
+  const f = pupilList as unknown as Fixture;
+  const home = new Map(f.pupils.map((pupil) => [pupil.id, pupil.homeGroupId] as [string, string | null]));
+  const members = f.pupils.flatMap((pupil) => pupil.groupIds.map((studentGroupId) => ({ studentId: pupil.id, studentGroupId })));
+  const asLesson = (l: Fixture["lessons"][number]) => ({
+    studentGroupId: l.groupIds[0]!,
+    extraGroupIds: l.groupIds.slice(1),
+    studentIds: l.named,
+    subjectId: l.subjectId,
+  });
+
+  it.each(f.schools.map((school) => [school.name, school] as const))("%s: each group's count is who of it lessonPupils puts on the lesson", (_name, school) => {
+    const roster = buildRosterIndex(home, members, school.groups);
+    for (const l of f.lessons) {
+      const on = new Set(school.expected[l.id]!.on);
+      for (const group of school.groups) {
+        const cohort = roster.membersOf.get(group.id) ?? new Set<string>();
+        const attending = [...cohort].filter((pupil) => on.has(pupil)).length;
+        const audience = audienceFor(asLesson(l), group.id, roster);
+        const named = l.groupIds.includes(group.id) || l.groupIds.some((id) => school.groups.find((g) => g.id === id)?.halfOfId === group.id);
+        expect([l.name, group.name, audience?.attending ?? null]).toEqual([l.name, group.name, attending === 0 && !named ? null : attending]);
+      }
+    }
+  });
+
+  it("7A's own svenska is partly 7A's, 2/3, and nothing of SvA7's; with no replacing group it is 7A's whole, as before", () => {
+    const [withSva, without] = f.schools;
+    const classSvenska = asLesson(f.lessons.find((l) => l.name === "7A:s svenska")!);
+    const c7a = withSva!.groups.find((g) => g.name === "7A")!.id;
+    const sva7 = withSva!.groups.find((g) => g.name === "SvA7")!.id;
+    const replaced = audienceFor(classSvenska, c7a, buildRosterIndex(home, members, withSva!.groups))!;
+    expect(replaced).toEqual({ attending: 2, cohortSize: 3, named: true });
+    expect(showsFraction(replaced)).toBe(true);
+    expect(audienceFor(classSvenska, sva7, buildRosterIndex(home, members, withSva!.groups))).toBeNull();
+    const plain = audienceFor(classSvenska, c7a, buildRosterIndex(home, members, without!.groups))!;
+    expect(plain).toEqual({ attending: 3, cohortSize: 3, named: true });
+    expect(showsFraction(plain)).toBe(false);
+    // Without a subject the lesson is counted as before: nothing to replace.
+    expect(audienceFor({ ...classSvenska, subjectId: undefined }, c7a, buildRosterIndex(home, members, withSva!.groups))!.attending).toBe(3);
   });
 });
