@@ -4777,6 +4777,9 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         LunchPlacement,
         LunchServing,
         OptimizeScheduleRequest,
+        PupilGapCohort,
+        PupilGaps,
+        FixedLessonMargin,
         Rast,
         ScheduledLesson,
         ScheduleRules,
@@ -4790,6 +4793,11 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "id", "capacity", "type", "minGradeLevel", "maxGradeLevel", "siteId",
     }
     assert _field_names(SiteTravelTime) == {"siteAId", "siteBId", "minutes"}
+    # Elevernas håltimmar: counts and anonymous keys, never a pupil. The
+    # gateway's PUPIL_GAP_FIELDS, COHORT_FIELDS and MARGIN_FIELDS.
+    assert _field_names(PupilGaps) == {"cohorts", "fixedMargins"}
+    assert _field_names(PupilGapCohort) == {"groupIds", "fixedLessonIds", "homeGroupId", "pupils"}
+    assert _field_names(FixedLessonMargin) == {"fixedLessonId", "minutesBefore", "minutesAfter"}
 
     assert _field_names(OptimizeScheduleRequest) == {
         "requestId",
@@ -4813,6 +4821,9 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "siteTravelTimes",
         "weights",
         "rules",
+        # Elevernas håltimmar: sent only when a school's Skolregler turn it on
+        # and the week has pupils; every other payload omits it.
+        "pupilGaps",
         # Optional, and sent only for a schemaförslag candidate: a Generera's
         # request has never carried it and still does not. An engine older
         # than this field answers it with a 422 whose one error is

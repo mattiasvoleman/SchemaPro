@@ -100,6 +100,24 @@ class Settings(BaseSettings):
         alias="WEIGHT_TEACHER_GAP",
         description="Penalty per idle slot between two same-day lessons of a teacher.",
     )
+    # Elevernas håltimmar, per PUPIL and five-minute slot, read only when the
+    # school has turned the rule on (pupilGaps in the payload). The rest of the
+    # objective is then scaled by pupil_gaps.PUPIL_GAP_SCALE (25), so a whole
+    # class of 25 pays 4 x 25 = 100 a slot against a teacher's 2 x 25 = 50:
+    # a class sitting idle weighs two teachers sitting idle, minute for minute,
+    # and a språkval group of six about half a teacher. Against the rest: a
+    # whole class's 40-minute håltimme (800) outweighs a teacher's free-day
+    # wish (40 x 25 = 1,000) only together with a little more, a room wish
+    # (125) six times over and a second lesson of a subject on one day (75)
+    # ten times over.
+    weight_pupil_gap: int = Field(
+        default=4,
+        alias="WEIGHT_PUPIL_GAP",
+        description=(
+            "Penalty per pupil per idle slot between a pupil's first and last "
+            "lesson of a day, when the school keeps pupils' håltimmar down."
+        ),
+    )
     weight_lunch_drift: int = Field(
         default=1,
         alias="WEIGHT_LUNCH_DRIFT",

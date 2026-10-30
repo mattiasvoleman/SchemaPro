@@ -1,0 +1,448 @@
+{
+  "note": "Elevernas håltimmar: one school per case, the timetable laid, and the number the håltimmesrapport and the generator must both give for it (idle pupil-minutes in an ordinary week, holes of 15 minutes or more). The school form is replayed by web/lib/gaps.contract.test.ts through findIdleGaps; the engine form by optimization-engine/tests/test_pupil_gaps.py through pupil_idle_minutes; src/optimization/pupil-cohorts.spec.ts checks that the gateway derives exactly the engine form's cohorts and keys from the school form. Every expected number is worked out by hand in the case's `why`. Edit the three readers with the cases, never one.",
+  "cases": [
+    {
+      "name": "a day without a hole",
+      "why": "Two lessons back to back: nothing between the first and the last.",
+      "groups": [{ "id": "7A", "kind": "CLASS", "halfOfId": null, "replacesSubjectId": null, "years": [7, 7] }],
+      "pupils": [
+        { "id": "p1", "home": "7A", "groups": [] },
+        { "id": "p2", "home": "7A", "groups": [] }
+      ],
+      "buffers": [],
+      "lessons": [
+        { "id": "L1", "groups": ["7A"], "subject": "ma", "day": 1, "start": "08:00", "end": "09:00", "pupils": [], "locked": false },
+        { "id": "L2", "groups": ["7A"], "subject": "sv", "day": 1, "start": "09:00", "end": "10:00", "pupils": [], "locked": false }
+      ],
+      "constraints": [],
+      "frames": [],
+      "lunch": null,
+      "engine": {
+        "requirements": [
+          { "id": "r-7A-ma", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0 },
+          { "id": "r-7A-sv", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0 }
+        ],
+        "lessons": [
+          { "requirement": "r-7A-ma", "day": 1, "start": "08:00", "end": "09:00" },
+          { "requirement": "r-7A-sv", "day": 1, "start": "09:00", "end": "10:00" }
+        ],
+        "fixedLessons": [],
+        "fixedMargins": [],
+        "cohorts": [{ "groupIds": ["7A"], "fixedLessonIds": [], "home": "7A", "pupils": 2 }]
+      },
+      "pupilIdleMinutes": 0
+    },
+    {
+      "name": "the språkval hour is a hole for the rest of the class",
+      "why": "Ty7 holds p1 and p2 at 09:00. p3 and p4 sit 7A's 08:00 and 10:00 with nothing between: 60 minutes each, 120.",
+      "groups": [
+        { "id": "7A", "kind": "CLASS", "halfOfId": null, "replacesSubjectId": null, "years": [7, 7] },
+        { "id": "Ty7", "kind": "TEACHING_GROUP", "halfOfId": null, "replacesSubjectId": null, "years": [7, 7] }
+      ],
+      "pupils": [
+        { "id": "p1", "home": "7A", "groups": ["Ty7"] },
+        { "id": "p2", "home": "7A", "groups": ["Ty7"] },
+        { "id": "p3", "home": "7A", "groups": [] },
+        { "id": "p4", "home": "7A", "groups": [] }
+      ],
+      "buffers": [],
+      "lessons": [
+        { "id": "L1", "groups": ["7A"], "subject": "ma", "day": 1, "start": "08:00", "end": "09:00", "pupils": [], "locked": false },
+        { "id": "L2", "groups": ["Ty7"], "subject": "ty", "day": 1, "start": "09:00", "end": "10:00", "pupils": [], "locked": false },
+        { "id": "L3", "groups": ["7A"], "subject": "sv", "day": 1, "start": "10:00", "end": "11:00", "pupils": [], "locked": false }
+      ],
+      "constraints": [],
+      "frames": [],
+      "lunch": null,
+      "engine": {
+        "requirements": [
+          { "id": "r-7A-ma", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0 },
+          { "id": "r-Ty7-ty", "group": "Ty7", "pupilKey": "Ty7", "minutesBefore": 0, "minutesAfter": 0 },
+          { "id": "r-7A-sv", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0 }
+        ],
+        "lessons": [
+          { "requirement": "r-7A-ma", "day": 1, "start": "08:00", "end": "09:00" },
+          { "requirement": "r-Ty7-ty", "day": 1, "start": "09:00", "end": "10:00" },
+          { "requirement": "r-7A-sv", "day": 1, "start": "10:00", "end": "11:00" }
+        ],
+        "fixedLessons": [],
+        "fixedMargins": [],
+        "cohorts": [
+          { "groupIds": ["7A", "Ty7"], "fixedLessonIds": [], "home": "7A", "pupils": 2 },
+          { "groupIds": ["7A"], "fixedLessonIds": [], "home": "7A", "pupils": 2 }
+        ]
+      },
+      "pupilIdleMinutes": 120
+    },
+    {
+      "name": "lunch is credited once a day, in clock order",
+      "why": "Lunch 11:00-13:00, 30 minutes. 11:00-11:20 takes 20 of it and leaves no idle minute; 12:00-12:40 takes the other 10 and leaves 30, which is a håltimme. 30 for each of three pupils: 90.",
+      "groups": [{ "id": "7A", "kind": "CLASS", "halfOfId": null, "replacesSubjectId": null, "years": [7, 7] }],
+      "pupils": [
+        { "id": "p1", "home": "7A", "groups": [] },
+        { "id": "p2", "home": "7A", "groups": [] },
+        { "id": "p3", "home": "7A", "groups": [] }
+      ],
+      "buffers": [],
+      "lessons": [
+        { "id": "L1", "groups": ["7A"], "subject": "ma", "day": 1, "start": "10:00", "end": "11:00", "pupils": [], "locked": false },
+        { "id": "L2", "groups": ["7A"], "subject": "sv", "day": 1, "start": "11:20", "end": "12:00", "pupils": [], "locked": false },
+        { "id": "L3", "groups": ["7A"], "subject": "en", "day": 1, "start": "12:40", "end": "13:40", "pupils": [], "locked": false }
+      ],
+      "constraints": [],
+      "frames": [],
+      "lunch": { "start": "11:00", "end": "13:00", "minutes": 30 },
+      "engine": {
+        "requirements": [
+          { "id": "r-7A-ma", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0 },
+          { "id": "r-7A-sv", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0 },
+          { "id": "r-7A-en", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0 }
+        ],
+        "lessons": [
+          { "requirement": "r-7A-ma", "day": 1, "start": "10:00", "end": "11:00" },
+          { "requirement": "r-7A-sv", "day": 1, "start": "11:20", "end": "12:00" },
+          { "requirement": "r-7A-en", "day": 1, "start": "12:40", "end": "13:40" }
+        ],
+        "fixedLessons": [],
+        "fixedMargins": [],
+        "cohorts": [{ "groupIds": ["7A"], "fixedLessonIds": [], "home": "7A", "pupils": 3 }]
+      },
+      "pupilIdleMinutes": 90
+    },
+    {
+      "name": "a hole under a quarter of an hour is a rast",
+      "why": "08:50-09:00 is ten minutes and not counted; 09:50-10:20 is thirty and is. One pupil: 30.",
+      "groups": [{ "id": "7A", "kind": "CLASS", "halfOfId": null, "replacesSubjectId": null, "years": [7, 7] }],
+      "pupils": [{ "id": "p1", "home": "7A", "groups": [] }],
+      "buffers": [],
+      "lessons": [
+        { "id": "L1", "groups": ["7A"], "subject": "ma", "day": 1, "start": "08:00", "end": "08:50", "pupils": [], "locked": false },
+        { "id": "L2", "groups": ["7A"], "subject": "sv", "day": 1, "start": "09:00", "end": "09:50", "pupils": [], "locked": false },
+        { "id": "L3", "groups": ["7A"], "subject": "en", "day": 1, "start": "10:20", "end": "11:00", "pupils": [], "locked": false }
+      ],
+      "constraints": [],
+      "frames": [],
+      "lunch": null,
+      "engine": {
+        "requirements": [
+          { "id": "r-7A-ma", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0 },
+          { "id": "r-7A-sv", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0 },
+          { "id": "r-7A-en", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0 }
+        ],
+        "lessons": [
+          { "requirement": "r-7A-ma", "day": 1, "start": "08:00", "end": "08:50" },
+          { "requirement": "r-7A-sv", "day": 1, "start": "09:00", "end": "09:50" },
+          { "requirement": "r-7A-en", "day": 1, "start": "10:20", "end": "11:00" }
+        ],
+        "fixedLessons": [],
+        "fixedMargins": [],
+        "cohorts": [{ "groupIds": ["7A"], "fixedLessonIds": [], "home": "7A", "pupils": 1 }]
+      },
+      "pupilIdleMinutes": 30
+    },
+    {
+      "name": "ombyte and dusch are busy time",
+      "why": "Idrott 09:30-10:30 keeps 7A from 09:20 to 10:45. The holes are 09:00-09:20 and 10:45-11:00: 20 and 15, both counted. 35 for each of two pupils: 70.",
+      "groups": [{ "id": "7A", "kind": "CLASS", "halfOfId": null, "replacesSubjectId": null, "years": [7, 7] }],
+      "pupils": [
+        { "id": "p1", "home": "7A", "groups": [] },
+        { "id": "p2", "home": "7A", "groups": [] }
+      ],
+      "buffers": [{ "group": "7A", "subject": "idh", "minutesBefore": 10, "minutesAfter": 15 }],
+      "lessons": [
+        { "id": "L1", "groups": ["7A"], "subject": "ma", "day": 1, "start": "08:00", "end": "09:00", "pupils": [], "locked": false },
+        { "id": "L2", "groups": ["7A"], "subject": "idh", "day": 1, "start": "09:30", "end": "10:30", "pupils": [], "locked": false },
+        { "id": "L3", "groups": ["7A"], "subject": "sv", "day": 1, "start": "11:00", "end": "12:00", "pupils": [], "locked": false }
+      ],
+      "constraints": [],
+      "frames": [],
+      "lunch": null,
+      "engine": {
+        "requirements": [
+          { "id": "r-7A-ma", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0 },
+          { "id": "r-7A-idh", "group": "7A", "pupilKey": "7A", "minutesBefore": 10, "minutesAfter": 15 },
+          { "id": "r-7A-sv", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0 }
+        ],
+        "lessons": [
+          { "requirement": "r-7A-ma", "day": 1, "start": "08:00", "end": "09:00" },
+          { "requirement": "r-7A-idh", "day": 1, "start": "09:30", "end": "10:30" },
+          { "requirement": "r-7A-sv", "day": 1, "start": "11:00", "end": "12:00" }
+        ],
+        "fixedLessons": [],
+        "fixedMargins": [],
+        "cohorts": [{ "groupIds": ["7A"], "fixedLessonIds": [], "home": "7A", "pupils": 2 }]
+      },
+      "pupilIdleMinutes": 70
+    },
+    {
+      "name": "a replacing group takes its pupils off the class's lesson",
+      "why": "SvA7 replaces svenska for p1. p1 is not in 7A's svenska at 09:00 and is in SvA7 at 10:00: a 60-minute hole at 09:00. p2 and p3 sit the svenska and nothing at 10:00: 60 each. 180. Before this phase the report kept p1 in the svenska as well and counted 120.",
+      "groups": [
+        { "id": "7A", "kind": "CLASS", "halfOfId": null, "replacesSubjectId": null, "years": [7, 7] },
+        { "id": "SvA7", "kind": "TEACHING_GROUP", "halfOfId": null, "replacesSubjectId": "sv", "years": [7, 7] }
+      ],
+      "pupils": [
+        { "id": "p1", "home": "7A", "groups": ["SvA7"] },
+        { "id": "p2", "home": "7A", "groups": [] },
+        { "id": "p3", "home": "7A", "groups": [] }
+      ],
+      "buffers": [],
+      "lessons": [
+        { "id": "L1", "groups": ["7A"], "subject": "ma", "day": 1, "start": "08:00", "end": "09:00", "pupils": [], "locked": false },
+        { "id": "L2", "groups": ["7A"], "subject": "sv", "day": 1, "start": "09:00", "end": "10:00", "pupils": [], "locked": false },
+        { "id": "L3", "groups": ["SvA7"], "subject": "sva", "day": 1, "start": "10:00", "end": "11:00", "pupils": [], "locked": false },
+        { "id": "L4", "groups": ["7A"], "subject": "en", "day": 1, "start": "11:00", "end": "12:00", "pupils": [], "locked": false }
+      ],
+      "constraints": [],
+      "frames": [],
+      "lunch": null,
+      "engine": {
+        "requirements": [
+          { "id": "r-7A-ma", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0 },
+          { "id": "r-7A-sv", "group": "7A", "pupilKey": "7A~SvA7", "minutesBefore": 0, "minutesAfter": 0 },
+          { "id": "r-SvA7-sva", "group": "SvA7", "pupilKey": "SvA7", "minutesBefore": 0, "minutesAfter": 0 },
+          { "id": "r-7A-en", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0 }
+        ],
+        "lessons": [
+          { "requirement": "r-7A-ma", "day": 1, "start": "08:00", "end": "09:00" },
+          { "requirement": "r-7A-sv", "day": 1, "start": "09:00", "end": "10:00" },
+          { "requirement": "r-SvA7-sva", "day": 1, "start": "10:00", "end": "11:00" },
+          { "requirement": "r-7A-en", "day": 1, "start": "11:00", "end": "12:00" }
+        ],
+        "fixedLessons": [],
+        "fixedMargins": [],
+        "cohorts": [
+          { "groupIds": ["7A", "SvA7"], "fixedLessonIds": [], "home": "7A", "pupils": 1 },
+          { "groupIds": ["7A", "7A~SvA7"], "fixedLessonIds": [], "home": "7A", "pupils": 2 }
+        ]
+      },
+      "pupilIdleMinutes": 180
+    },
+    {
+      "name": "a placed pupil sits one half, an unplaced pupil both",
+      "why": "7A:1 has slöjd at 09:00 and 7A:2 NO at 10:00. p1 (7A:1) waits through 10:00, p2 (7A:2) through 09:00: 60 each. p3 is in no half and may end up in either, so both hours are p3's: no hole. 120.",
+      "groups": [
+        { "id": "7A", "kind": "CLASS", "halfOfId": null, "replacesSubjectId": null, "years": [7, 7] },
+        { "id": "7A:1", "kind": "TEACHING_GROUP", "halfOfId": "7A", "replacesSubjectId": null, "years": [7, 7] },
+        { "id": "7A:2", "kind": "TEACHING_GROUP", "halfOfId": "7A", "replacesSubjectId": null, "years": [7, 7] }
+      ],
+      "pupils": [
+        { "id": "p1", "home": "7A", "groups": ["7A:1"] },
+        { "id": "p2", "home": "7A", "groups": ["7A:2"] },
+        { "id": "p3", "home": "7A", "groups": [] }
+      ],
+      "buffers": [],
+      "lessons": [
+        { "id": "L1", "groups": ["7A"], "subject": "ma", "day": 1, "start": "08:00", "end": "09:00", "pupils": [], "locked": false },
+        { "id": "L2", "groups": ["7A:1"], "subject": "sl", "day": 1, "start": "09:00", "end": "10:00", "pupils": [], "locked": false },
+        { "id": "L3", "groups": ["7A:2"], "subject": "no", "day": 1, "start": "10:00", "end": "11:00", "pupils": [], "locked": false },
+        { "id": "L4", "groups": ["7A"], "subject": "en", "day": 1, "start": "11:00", "end": "12:00", "pupils": [], "locked": false }
+      ],
+      "constraints": [],
+      "frames": [],
+      "lunch": null,
+      "engine": {
+        "requirements": [
+          { "id": "r-7A-ma", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0 },
+          { "id": "r-7A:1-sl", "group": "7A:1", "pupilKey": "7A:1", "minutesBefore": 0, "minutesAfter": 0 },
+          { "id": "r-7A:2-no", "group": "7A:2", "pupilKey": "7A:2", "minutesBefore": 0, "minutesAfter": 0 },
+          { "id": "r-7A-en", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0 }
+        ],
+        "lessons": [
+          { "requirement": "r-7A-ma", "day": 1, "start": "08:00", "end": "09:00" },
+          { "requirement": "r-7A:1-sl", "day": 1, "start": "09:00", "end": "10:00" },
+          { "requirement": "r-7A:2-no", "day": 1, "start": "10:00", "end": "11:00" },
+          { "requirement": "r-7A-en", "day": 1, "start": "11:00", "end": "12:00" }
+        ],
+        "fixedLessons": [],
+        "fixedMargins": [],
+        "cohorts": [
+          { "groupIds": ["7A", "7A:1"], "fixedLessonIds": [], "home": "7A", "pupils": 1 },
+          { "groupIds": ["7A", "7A:2"], "fixedLessonIds": [], "home": "7A", "pupils": 1 },
+          { "groupIds": ["7A", "7A:1", "7A:2"], "fixedLessonIds": [], "home": "7A", "pupils": 1 }
+        ]
+      },
+      "pupilIdleMinutes": 120
+    },
+    {
+      "name": "the halves' rotation leaves no hole",
+      "why": "Slöjd for 7A:1 and NO for 7A:2 in the same hour: every pupil, placed or not, is taught then. 0.",
+      "groups": [
+        { "id": "7A", "kind": "CLASS", "halfOfId": null, "replacesSubjectId": null, "years": [7, 7] },
+        { "id": "7A:1", "kind": "TEACHING_GROUP", "halfOfId": "7A", "replacesSubjectId": null, "years": [7, 7] },
+        { "id": "7A:2", "kind": "TEACHING_GROUP", "halfOfId": "7A", "replacesSubjectId": null, "years": [7, 7] }
+      ],
+      "pupils": [
+        { "id": "p1", "home": "7A", "groups": ["7A:1"] },
+        { "id": "p2", "home": "7A", "groups": ["7A:2"] },
+        { "id": "p3", "home": "7A", "groups": [] }
+      ],
+      "buffers": [],
+      "lessons": [
+        { "id": "L1", "groups": ["7A"], "subject": "ma", "day": 1, "start": "08:00", "end": "09:00", "pupils": [], "locked": false },
+        { "id": "L2", "groups": ["7A:1"], "subject": "sl", "day": 1, "start": "09:00", "end": "10:00", "pupils": [], "locked": false },
+        { "id": "L3", "groups": ["7A:2"], "subject": "no", "day": 1, "start": "09:00", "end": "10:00", "pupils": [], "locked": false },
+        { "id": "L4", "groups": ["7A"], "subject": "en", "day": 1, "start": "10:00", "end": "11:00", "pupils": [], "locked": false }
+      ],
+      "constraints": [],
+      "frames": [],
+      "lunch": null,
+      "engine": {
+        "requirements": [
+          { "id": "r-7A-ma", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0 },
+          { "id": "r-7A:1-sl", "group": "7A:1", "pupilKey": "7A:1", "minutesBefore": 0, "minutesAfter": 0 },
+          { "id": "r-7A:2-no", "group": "7A:2", "pupilKey": "7A:2", "minutesBefore": 0, "minutesAfter": 0 },
+          { "id": "r-7A-en", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0 }
+        ],
+        "lessons": [
+          { "requirement": "r-7A-ma", "day": 1, "start": "08:00", "end": "09:00" },
+          { "requirement": "r-7A:1-sl", "day": 1, "start": "09:00", "end": "10:00" },
+          { "requirement": "r-7A:2-no", "day": 1, "start": "09:00", "end": "10:00" },
+          { "requirement": "r-7A-en", "day": 1, "start": "10:00", "end": "11:00" }
+        ],
+        "fixedLessons": [],
+        "fixedMargins": [],
+        "cohorts": [
+          { "groupIds": ["7A", "7A:1"], "fixedLessonIds": [], "home": "7A", "pupils": 1 },
+          { "groupIds": ["7A", "7A:2"], "fixedLessonIds": [], "home": "7A", "pupils": 1 },
+          { "groupIds": ["7A", "7A:1", "7A:2"], "fixedLessonIds": [], "home": "7A", "pupils": 1 }
+        ]
+      },
+      "pupilIdleMinutes": 0
+    },
+    {
+      "name": "a locked lesson naming one pupil is that pupil's",
+      "why": "Mu7 has no members; the locked music at 09:00 names p1. p1 waits 10:00-11:00 (60), p2 09:00-11:00 (120). 180.",
+      "groups": [
+        { "id": "7A", "kind": "CLASS", "halfOfId": null, "replacesSubjectId": null, "years": [7, 7] },
+        { "id": "Mu7", "kind": "TEACHING_GROUP", "halfOfId": null, "replacesSubjectId": null, "years": [7, 7] }
+      ],
+      "pupils": [
+        { "id": "p1", "home": "7A", "groups": [] },
+        { "id": "p2", "home": "7A", "groups": [] }
+      ],
+      "buffers": [],
+      "lessons": [
+        { "id": "L1", "groups": ["7A"], "subject": "ma", "day": 1, "start": "08:00", "end": "09:00", "pupils": [], "locked": false },
+        { "id": "F1", "groups": ["Mu7"], "subject": "mu", "day": 1, "start": "09:00", "end": "10:00", "pupils": ["p1"], "locked": true },
+        { "id": "L2", "groups": ["7A"], "subject": "sv", "day": 1, "start": "11:00", "end": "12:00", "pupils": [], "locked": false }
+      ],
+      "constraints": [],
+      "frames": [],
+      "lunch": null,
+      "engine": {
+        "requirements": [
+          { "id": "r-7A-ma", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0 },
+          { "id": "r-7A-sv", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0 }
+        ],
+        "lessons": [
+          { "requirement": "r-7A-ma", "day": 1, "start": "08:00", "end": "09:00" },
+          { "requirement": "r-7A-sv", "day": 1, "start": "11:00", "end": "12:00" }
+        ],
+        "fixedLessons": [{ "id": "F1", "groups": ["Mu7"], "day": 1, "start": "09:00", "end": "10:00" }],
+        "fixedMargins": [],
+        "cohorts": [
+          { "groupIds": ["7A"], "fixedLessonIds": ["F1"], "home": "7A", "pupils": 1 },
+          { "groupIds": ["7A"], "fixedLessonIds": [], "home": "7A", "pupils": 1 }
+        ]
+      },
+      "pupilIdleMinutes": 180
+    },
+    {
+      "name": "closed time is not a hole",
+      "why": "7A is unavailable 10:00-11:00 and a rule for åk 7-9 closes 13:00-14:00. Of the gaps between 08:00 and 15:00 only 12:00-13:00 is idle: 60.",
+      "groups": [{ "id": "7A", "kind": "CLASS", "halfOfId": null, "replacesSubjectId": null, "years": [7, 7] }],
+      "pupils": [{ "id": "p1", "home": "7A", "groups": [] }],
+      "buffers": [],
+      "lessons": [
+        { "id": "L1", "groups": ["7A"], "subject": "ma", "day": 1, "start": "08:00", "end": "09:00", "pupils": [], "locked": false },
+        { "id": "L2", "groups": ["7A"], "subject": "sv", "day": 1, "start": "09:00", "end": "10:00", "pupils": [], "locked": false },
+        { "id": "L3", "groups": ["7A"], "subject": "en", "day": 1, "start": "11:00", "end": "12:00", "pupils": [], "locked": false },
+        { "id": "L4", "groups": ["7A"], "subject": "no", "day": 1, "start": "14:00", "end": "15:00", "pupils": [], "locked": false }
+      ],
+      "constraints": [
+        { "kind": "STUDENT_GROUP", "group": "7A", "min": null, "max": null, "day": 1, "start": "10:00", "end": "11:00" },
+        { "kind": "GRADE_LEVEL", "group": null, "min": 7, "max": 9, "day": 1, "start": "13:00", "end": "14:00" }
+      ],
+      "frames": [],
+      "lunch": null,
+      "engine": {
+        "requirements": [
+          { "id": "r-7A-ma", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0 },
+          { "id": "r-7A-sv", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0 },
+          { "id": "r-7A-en", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0 },
+          { "id": "r-7A-no", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0 }
+        ],
+        "lessons": [
+          { "requirement": "r-7A-ma", "day": 1, "start": "08:00", "end": "09:00" },
+          { "requirement": "r-7A-sv", "day": 1, "start": "09:00", "end": "10:00" },
+          { "requirement": "r-7A-en", "day": 1, "start": "11:00", "end": "12:00" },
+          { "requirement": "r-7A-no", "day": 1, "start": "14:00", "end": "15:00" }
+        ],
+        "fixedLessons": [],
+        "fixedMargins": [],
+        "cohorts": [{ "groupIds": ["7A"], "fixedLessonIds": [], "home": "7A", "pupils": 1 }]
+      },
+      "pupilIdleMinutes": 60
+    },
+    {
+      "name": "a ramtid closes the hours after the stage's day",
+      "why": "Åk 7-9 ends at 14:00, and a locked lesson sits at 14:30. 13:00-14:00 is idle (60); 14:00-14:30 is closed by the frame. 60.",
+      "groups": [{ "id": "7A", "kind": "CLASS", "halfOfId": null, "replacesSubjectId": null, "years": [7, 7] }],
+      "pupils": [{ "id": "p1", "home": "7A", "groups": [] }],
+      "buffers": [],
+      "lessons": [
+        { "id": "L1", "groups": ["7A"], "subject": "ma", "day": 1, "start": "12:00", "end": "13:00", "pupils": [], "locked": false },
+        { "id": "F1", "groups": ["7A"], "subject": "mu", "day": 1, "start": "14:30", "end": "15:30", "pupils": [], "locked": true }
+      ],
+      "constraints": [],
+      "frames": [{ "min": 7, "max": 9, "day": null, "start": "08:00", "end": "14:00" }],
+      "lunch": null,
+      "engine": {
+        "requirements": [
+          { "id": "r-7A-ma", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0 }
+        ],
+        "lessons": [{ "requirement": "r-7A-ma", "day": 1, "start": "12:00", "end": "13:00" }],
+        "fixedLessons": [{ "id": "F1", "groups": ["7A"], "day": 1, "start": "14:30", "end": "15:30" }],
+        "fixedMargins": [],
+        "cohorts": [{ "groupIds": ["7A"], "fixedLessonIds": ["F1"], "home": "7A", "pupils": 1 }]
+      },
+      "pupilIdleMinutes": 60
+    },
+    {
+      "name": "a locked idrott keeps its dusch",
+      "why": "The locked idrott 08:00-09:00 keeps 7A until 09:20 (dusch 20). The next lesson is at 10:00: a 40-minute hole, not 60. One pupil, two days of it: 80.",
+      "groups": [{ "id": "7A", "kind": "CLASS", "halfOfId": null, "replacesSubjectId": null, "years": [7, 7] }],
+      "pupils": [{ "id": "p1", "home": "7A", "groups": [] }],
+      "buffers": [{ "group": "7A", "subject": "idh", "minutesBefore": 0, "minutesAfter": 20 }],
+      "lessons": [
+        { "id": "F1", "groups": ["7A"], "subject": "idh", "day": 2, "start": "08:00", "end": "09:00", "pupils": [], "locked": true },
+        { "id": "L1", "groups": ["7A"], "subject": "ma", "day": 2, "start": "10:00", "end": "11:00", "pupils": [], "locked": false },
+        { "id": "F2", "groups": ["7A"], "subject": "idh", "day": 4, "start": "08:00", "end": "09:00", "pupils": [], "locked": true },
+        { "id": "L2", "groups": ["7A"], "subject": "ma", "day": 4, "start": "10:00", "end": "11:00", "pupils": [], "locked": false }
+      ],
+      "constraints": [],
+      "frames": [],
+      "lunch": null,
+      "engine": {
+        "requirements": [
+          { "id": "r-7A-ma", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0 }
+        ],
+        "lessons": [
+          { "requirement": "r-7A-ma", "day": 2, "start": "10:00", "end": "11:00" },
+          { "requirement": "r-7A-ma", "day": 4, "start": "10:00", "end": "11:00" }
+        ],
+        "fixedLessons": [
+          { "id": "F1", "groups": ["7A"], "day": 2, "start": "08:00", "end": "09:00" },
+          { "id": "F2", "groups": ["7A"], "day": 4, "start": "08:00", "end": "09:00" }
+        ],
+        "fixedMargins": [
+          { "fixedLesson": "F1", "minutesBefore": 0, "minutesAfter": 20 },
+          { "fixedLesson": "F2", "minutesBefore": 0, "minutesAfter": 20 }
+        ],
+        "cohorts": [{ "groupIds": ["7A"], "fixedLessonIds": ["F1", "F2"], "home": "7A", "pupils": 1 }]
+      },
+      "pupilIdleMinutes": 80
+    }
+  ]
+}
