@@ -483,8 +483,10 @@ export async function deladeChecks(owner: Client, api: PrismaService, check: Che
         [['ROOM_LENT', 2, '10:00:00', '11:30:00', aName]],
       );
 
+      // A group of A's own: the check reads the lov of a lesson's group in a borrowed room.
+      const groupA = (await one<{ id: string }>(`SELECT id FROM "StudentGroups" WHERE "schoolId" = $1 ORDER BY name, id LIMIT 1`, [a]))!.id;
       const lesson = (patch: Partial<GateLesson>): GateLesson => ({
-        id: 'probe', subjectId: 's', studentGroupId: 'g', teacherId: tA, coTeacherId: null, roomId: null,
+        id: 'probe', subjectId: 's', studentGroupId: groupA, teacherId: tA, coTeacherId: null, roomId: null,
         dayOfWeek: 2, startTime: '11:00', endTime: '12:00', recurrence: 'ALL_WEEKS', startDate: null, endDate: null,
         isParked: false, extraGroupIds: [], studentIds: [], subjectName: 'Probe', groupName: '7P', ...patch,
       });
