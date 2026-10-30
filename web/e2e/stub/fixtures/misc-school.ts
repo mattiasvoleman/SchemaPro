@@ -47,6 +47,9 @@ export const LUNCH_SETTINGS: LunchSettings = {
   // On, so the a11y sweep meets the Skolregler switch checked and the line
   // the generate page adds for it (Restid i generatorn).
   generatorKeepsTravelTime: true,
+  // On as well, so the sweep meets that switch checked, the generate page's
+  // line for it and the Håltimmar page saying Generera holds to its number.
+  generatorKeepsPupilGapsDown: true,
 };
 
 // --- Generation ----------------------------------------------------------------
