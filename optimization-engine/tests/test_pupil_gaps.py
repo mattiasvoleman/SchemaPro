@@ -580,6 +580,18 @@ def _estimate(solver: SchedulerSolver, payload: dict[str, object]) -> int:
     )
 
 
+def test_the_estimate_charges_nothing_without_pupil_gaps() -> None:
+    """Off is not a smaller term but none: the same estimate as a school that never heard of it."""
+    solver = _solver()
+    on = _closed_week()
+    off = {key: value for key, value in on.items() if key != "pupilGaps"}
+    assert _estimate(solver, off) == 0
+    assert _estimate(solver, on) > 0
+    assert _solver(WEIGHT_PUPIL_GAP=0)._estimate_model_size(
+        OptimizeScheduleRequest.model_validate(on),
+    ) == solver._estimate_model_size(OptimizeScheduleRequest.model_validate(off))
+
+
 # ---------------------------------------------------------------------------
 # The pupils' whole day: margins, derived keys and locks, term against count
 # ---------------------------------------------------------------------------
@@ -655,6 +667,46 @@ def _term_is_the_count(payload: dict[str, object], starts: list[int], slots: int
     """The term says `slots` pupil-slots for the week, and the count says the same in minutes."""
     assert _pupil_term(payload, starts) == slots
     assert _counted(payload, starts) == slots * 5
+
+
+def test_the_pupils_margins_bound_their_day() -> None:
+    """Ombyte before the first lesson and dusch after the last are the day's own ends.
+
+    Idrott (ten minutes before, fifteen after) at 08:30 and 13:30, 7A's other
+    lessons at 10:00 and 12:00, Ty7 at 11:00. The day is 08:20-14:45: the
+    fifteen wait 09:45-10:00, 11:00-12:00 and 13:00-13:20 (3 + 12 + 4 slots),
+    the ten in Ty7 the first and the last (3 + 4). Read off the lessons alone
+    the day would be 08:30-14:30, and 25 minutes of it busy would not be in it.
+    """
+    payload = _week(pupil_gaps=True)
+    payload["requirements"][0]["minutesBefore"] = 10
+    payload["requirements"][0]["minutesAfter"] = 15
+    starts = [8 * 60 + 30, 13 * 60 + 30, 10 * 60, 12 * 60, 11 * 60]
+    _term_is_the_count(payload, starts, 15 * (3 + 12 + 4) + 10 * (3 + 4))
+
+
+def test_a_derived_key_is_the_lesson_its_pupils_sit() -> None:
+    """7A's svenska is "7A without SvA7": the twenty in it are taught, the five in SvA7 are not.
+
+    Matte at 08:00 and 10:00, the class's svenska at 09:00, SvA7 at 11:00.
+    The twenty sit svenska and have no hole; the five sit SvA7 and wait the
+    svenska hour. Without the derived key the twenty would wait it as well.
+    """
+    derived, sva = str(uuid4()), str(uuid4())
+    payload = _school(
+        [
+            _requirement(CLASS, 0, lessons=2),
+            _requirement(CLASS, 1, pupilGroupId=derived),
+            _requirement(sva, 2),
+        ],
+        [
+            {"groupIds": [CLASS, derived], "pupils": 20, "homeGroupId": CLASS},
+            {"groupIds": [CLASS, sva], "pupils": 5, "homeGroupId": CLASS},
+        ],
+        conflicts=[[CLASS, derived], [CLASS, sva]],
+    )
+    _term_is_the_count(payload, [8 * 60, 10 * 60, 9 * 60, 11 * 60], 5 * 12)
+    _term_is_the_count(payload, [8 * 60, 10 * 60, 9 * 60, 9 * 60], 0)
 
 
 def test_both_halves_locked_at_once_are_one_hour_of_the_day() -> None:
