@@ -67,4 +67,14 @@ export class UpsertLunchSettingsDto {
   @ValidateIf((_, value) => value !== undefined)
   @IsBoolean()
   generatorKeepsTravelTime?: boolean;
+
+  /**
+   * Elevernas håltimmar: the generator keeps the pupils' idle time between
+   * their lessons down. Optional on exactly the travel switch's terms above:
+   * absent leaves the stored value as it is, null is refused with the 400
+   * that names the field.
+   */
+  @ValidateIf((_, value) => value !== undefined)
+  @IsBoolean()
+  generatorKeepsPupilGapsDown?: boolean;
 }

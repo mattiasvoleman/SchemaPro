@@ -1518,6 +1518,7 @@
     "rulesHint": "Reglerna gäller hela skolan och ställs in under Tillgänglighet.",
     "ruleMaxPerDay": "Max lektioner per dag och klass",
     "ruleTravel": "Generatorn håller restiden mellan skolområdena",
+    "rulePupilGaps": "Generatorn håller nere elevernas håltimmar",
     "rulesEdit": "Ändra",
     "noYearTitle": "{count, plural, one {En grupp} other {# grupper}} i timplansposterna saknar årskurs",
     "noYearBody": "Motorn läser ”ingen årskurs” som ”obegränsad”: ramtider och raster gäller inte för dessa gruppers lektioner, så de kan hamna rakt över en rast. Årskursen härleds ur medlemmarnas hemklasser, eller ur gruppens egen årskurs om den saknar medlemmar.",
@@ -2875,7 +2876,9 @@
     "saveFailed": "Skolreglerna sparades inte",
     "saveFailedHint": "De regler som gällde innan står kvar.",
     "travel": "Generatorn håller restiden mellan skolområdena",
-    "travelHint": "Lärare och elever med två lektioner samma dag på olika skolområden får restiden mellan dem, avrundad uppåt till hela startsteg i schemat. Restiderna anges under Salar, Skolområden."
+    "travelHint": "Lärare och elever med två lektioner samma dag på olika skolområden får restiden mellan dem, avrundad uppåt till hela startsteg i schemat. Restiderna anges under Salar, Skolområden.",
+    "pupilGaps": "Generatorn håller nere elevernas håltimmar",
+    "pupilGapsHint": "Luckorna mellan elevens första och sista lektion räknas per elev, med klassen, undervisningsgrupperna, halvorna och de ersättande grupperna, som på sidan Håltimmar. En hel klass som väntar väger dubbelt så mycket som en lärare som väntar. Det kan ta längre tid att få ett bra schema."
   },
   "conflictCategories": {
     "AVAILABILITY": "Tillgänglighet",
@@ -2938,6 +2941,9 @@
     "lengthMedium": "medellång",
     "lengthLong": "lång",
     "lengthLegend": "Luckorna märks efter väntetiden som blir kvar när lunchen är avdragen — samma tid som summorna räknas på: under 40 minuter är kort, 40–79 medellång, 80 minuter och mer lång. En lucka på 1 h 40 min med 30 min lunch räknas därför som 70 minuter: medellång.",
+    "generatorFigure": "Generatorns siffra: {minutes, number} elevminuter håltid på en vanlig vecka, {perPupil, number} minuter per elev. Den räknas som listan nedan, med 15 minuter som minsta lucka, och varje lucka gånger de elever som sitter i den.",
+    "generatorFigureOn": "Generera håller den nere när schemat läggs (Skolregler).",
+    "generatorFigureOff": "Generera tar inte hänsyn till den förrän skolan slår på det under Skolregler.",
     "whoTitle": "3. Vem är ledig då?",
     "whoHint": "Ange en dag och en tid — frågan man ställer när det behövs en vikarie på onsdag klockan tio. Varje klass, lärare och sal prövas var för sig.",
     "whoDay": "Dag",

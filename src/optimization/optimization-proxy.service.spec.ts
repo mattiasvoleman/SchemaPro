@@ -21,6 +21,7 @@ import type {
   DayOfWeek,
 } from './interfaces/ai-engine-payload.interface';
 import {
+  alternatingWeeksOf,
   calendarSweepWhere,
   coverageLessonsOf,
   engineMayStillBeSolving,
@@ -3659,11 +3660,14 @@ describe('OptimizationProxyService', () => {
             : { requiredRoomTypeId: 'room-type-tra', name: 'Trä- och metallslöjd' },
           ...overrides,
         });
-      const arrangeTerms = (spring: { s1?: Row; s2?: Row } = {}, overrides: Arrangement = {}) => {
+      const arrangeTerms = (
+        spring: { s1?: Row; s2?: Row; a1?: Row; a2?: Row } = {},
+        overrides: Arrangement = {},
+      ) => {
         arrange({
           requirements: [
-            slojd(A1, TX, H1, 'HT', TOVE),
-            slojd(A2, TR, H2, 'HT', TOR),
+            slojd(A1, TX, H1, 'HT', TOVE, spring.a1),
+            slojd(A2, TR, H2, 'HT', TOR, spring.a2),
             slojd(S1, TR, H1, 'VT', TOR, spring.s1),
             slojd(S2, TX, H2, 'VT', TOVE, spring.s2),
           ],
@@ -3738,6 +3742,50 @@ describe('OptimizationProxyService', () => {
           { requirementId: S1, lessonsPerWeek: 2 },
           { requirementId: S2, lessonsPerWeek: 2 },
         ]);
+      });
+
+      describe('A/B-veckor: a link keeps a parity only when every post of it has it', () => {
+        const odd = { recurrence: 'ODD_WEEKS' };
+        const even = { recurrence: 'EVEN_WEEKS' };
+        const sentWeeks = async () => {
+          const prepared = await ready();
+          const real = new Map([...prepared.anonMaps.requirementAnonMap].map(([realId, anonId]) => [anonId, realId]));
+          return new Map(prepared.payload.requirements.map((r) => [real.get(r.id), r.recurrence]));
+        };
+
+        it('sends the whole link with its parity when every post of both blocks has it', async () => {
+          arrangeTerms({ a1: odd, a2: odd, s1: odd, s2: odd });
+          expect(await sentWeeks()).toEqual(new Map([[A1, 'ODD_WEEKS'], [A2, 'ODD_WEEKS']]));
+        });
+
+        it('holds every week the times of swapped halves whose subjects alternate (review of #221, H1)', async () => {
+          // Textil odd and trä even, the halves swapped in the spring: 7A:1's
+          // spring trä (even) sits on the group the autumn textil (odd) holds.
+          // Sent "odd" for A1, 7A:1 would be free at the block's times in the
+          // even weeks its trä sits there.
+          arrangeTerms({ a1: odd, a2: even, s1: even, s2: odd });
+          expect(await sentWeeks()).toEqual(new Map([[A1, undefined], [A2, undefined]]));
+        });
+
+        it('holds every week a post that seats a follower teacher of other weeks', async () => {
+          // The autumn trä is full (Tor and a co-teacher) and runs every week,
+          // so Tea, who takes 7A:1's trä every week in the spring, sits on the
+          // autumn textil, odd weeks: held there odd weeks only, teaching
+          // every week.
+          arrangeTerms({
+            a1: odd,
+            a2: { coTeacherId: 'dddddddd-0009-4000-8000-000000000009' },
+            s1: { teacherId: TEA },
+            s2: odd,
+          });
+          const prepared = await ready();
+          const real = new Map([...prepared.anonMaps.requirementAnonMap].map(([realId, anonId]) => [anonId, realId]));
+          const textil = prepared.payload.requirements.find((r) => real.get(r.id) === A1)!;
+          // Tea is on the textil post (its empty co-teacher place) …
+          expect(textil.coTeacherId).toEqual(expect.any(String));
+          // … which is therefore held every week.
+          expect(textil.recurrence).toBeUndefined();
+        });
       });
 
       it('sends each autumn post with the longer buffers of its half and the stricter rule of its subject', async () => {
@@ -5415,8 +5463,14 @@ describe('OptimizationProxyService', () => {
           await service.triggerScheduling(ACADEMIC_YEAR, testUser());
 
           expect(limit()).toMatchObject({ maxTeachingDaysPerWeek: 2, lockedWeekdays: [[1, 2], [3, 4]] });
-          // The fixed placements themselves still carry no weeks.
-          expect(Object.keys(postedPayload().fixedLessons[0]!)).not.toContain('recurrence');
+          // A/B-veckor: and the fixed placements carry their own parity, so
+          // the engine holds each lock's window only in its weeks.
+          expect(postedPayload().fixedLessons.map((lesson) => [lesson.dayOfWeek, lesson.recurrence])).toEqual([
+            [4, 'EVEN_WEEKS'],
+            [1, 'ODD_WEEKS'],
+            [3, 'EVEN_WEEKS'],
+            [2, 'ODD_WEEKS'],
+          ]);
         });
 
         it('reads the weeks of the läsår only, its dates read when a post has a limit and not otherwise', async () => {
@@ -7746,5 +7800,24 @@ describe('OptimizationProxyService', () => {
         select: { unstaffedGeneration: true },
       });
     });
+  });
+});
+
+describe('alternatingWeeksOf (A/B-veckor)', () => {
+  it('tells the engine an alternating row’s parity and nothing for every week', () => {
+    expect(alternatingWeeksOf({ recurrence: 'ODD_WEEKS' })).toBe('ODD_WEEKS');
+    expect(alternatingWeeksOf({ recurrence: 'EVEN_WEEKS' })).toBe('EVEN_WEEKS');
+    expect(alternatingWeeksOf({ recurrence: 'ALL_WEEKS' })).toBeUndefined();
+  });
+
+  it('holds a leader post’s times every week when any post of its link runs in other weeks', () => {
+    // Every post of a link sits at the block's times (same-times.ts): odd
+    // beside even anywhere in it holds the hour in both.
+    const odd = { recurrence: 'ODD_WEEKS' as const };
+    expect(alternatingWeeksOf(odd, [odd, { recurrence: 'EVEN_WEEKS' }])).toBeUndefined();
+    // A post of every week in another period, the same.
+    expect(alternatingWeeksOf(odd, [odd, { recurrence: 'ALL_WEEKS' }])).toBeUndefined();
+    // Every post odd (two periods of odd weeks): the hour is the odd weeks'.
+    expect(alternatingWeeksOf(odd, [odd, odd, odd])).toBe('ODD_WEEKS');
   });
 });

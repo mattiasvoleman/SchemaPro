@@ -1,5 +1,6 @@
 import type { useTranslations } from "next-intl";
 import { toast } from "sonner";
+import { recurrenceBadge } from "@/components/schedule/recurrence-badge";
 import type { Audience } from "@/lib/lesson-audience";
 import type { AcademicYear, MasterLesson, Person, Room, Subject } from "@/lib/types";
 
@@ -131,6 +132,8 @@ export async function exportPdf(input: TimetableExportInput): Promise<void> {
           .filter(Boolean)
           .join(" + "),
         room: lesson.roomId ? (roomById.get(lesson.roomId)?.name ?? "") : "",
+        // A/B-veckor: "udda", "jämna", "period", as the grid's own card says.
+        weeks: recurrenceBadge(lesson, t) ?? undefined,
       };
     }),
   });

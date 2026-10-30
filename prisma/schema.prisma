@@ -3784,6 +3784,12 @@ model LunchSetting {
   /// rule either; it is in this row for the reason maxLessonsPerDayPerGroup
   /// is: it sits in the same form, Skolregler.
   generatorKeepsTravelTime Boolean  @default(false)
+  /// Elevernas håltimmar: whether the generator keeps the pupils' idle time
+  /// between their lessons down, counted per set of pupils booked alike as
+  /// the håltimmesrapport counts it. Off by default, and off sends the engine
+  /// no cohort, so the week is generated exactly as before. In this row for
+  /// the reason the travel switch is: it sits in the same form, Skolregler.
+  generatorKeepsPupilGapsDown Boolean @default(false)
   createdAt                DateTime @default(now()) @db.Timestamptz(6)
   updatedAt                DateTime @updatedAt @db.Timestamptz(6)
 

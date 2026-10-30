@@ -100,8 +100,17 @@ const PAYLOAD_FIELDS_WITH_DAY_LIMITS = [...PAYLOAD_FIELDS, 'teacherDayLimits'].s
  */
 const SITE_TRAVEL_FIELDS = ['minutes', 'siteAId', 'siteBId'];
 const PAYLOAD_FIELDS_WITH_TRAVEL = [...PAYLOAD_FIELDS, 'siteTravelTimes'].sort();
+/**
+ * Elevernas håltimmar: the pupils' cohorts, sent only when the school's
+ * Skolregler turn the rule on and the week has pupils. The engine's
+ * `_field_names(PupilGaps)`, `(PupilGapCohort)` and `(FixedLessonMargin)`.
+ */
+const PUPIL_GAP_FIELDS = ['cohorts'];
+const COHORT_FIELDS = ['fixedLessonIds', 'groupIds', 'homeGroupId', 'pupils'];
+const MARGIN_FIELDS = ['fixedLessonId', 'minutesAfter', 'minutesBefore'];
+const PAYLOAD_FIELDS_WITH_PUPIL_GAPS = [...PAYLOAD_FIELDS, 'pupilGaps'].sort();
 /** Every key a payload can carry, the conditional ones included. */
-const PAYLOAD_FIELDS_ALL = [...PAYLOAD_FIELDS, 'teacherDayLimits', 'siteTravelTimes'].sort();
+const PAYLOAD_FIELDS_ALL = [...PAYLOAD_FIELDS, 'teacherDayLimits', 'siteTravelTimes', 'pupilGaps'].sort();
 /** The generator's room: the engine's `_field_names(AnonymousRoom)` with the walk on. */
 const ROOM_FIELDS = ['capacity', 'id', 'maxGradeLevel', 'minGradeLevel', 'type'];
 const ROOM_FIELDS_WITH_SITE = [...ROOM_FIELDS, 'siteId'].sort();
@@ -178,9 +187,19 @@ const REQUIREMENT_FIELDS_SHARED = [...REQUIREMENT_FIELDS_BLOCKED, 'lessonTeacher
  */
 const REQUIREMENT_FIELDS_REPLACED = [...REQUIREMENT_FIELDS_SHARED, 'pupilGroupId'].sort();
 
+/**
+ * A/B-veckor: a post of odd or even weeks only carries its parity; one of
+ * every week never does. optimization-engine/tests/test_optimize.py's
+ * `_field_names(AnonymousRequirement)` must equal THIS set, and its
+ * `_field_names(FixedLesson)` FIXED_LESSON_FIELDS_ALTERNATING below.
+ */
+const REQUIREMENT_FIELDS_ALTERNATING = [...REQUIREMENT_FIELDS_REPLACED, 'recurrence'].sort();
+
 /** A locked lesson as the engine is told it; `pupilGroupIds` only beside a replacing group. */
 const FIXED_LESSON_FIELDS = ['coTeacherId', 'dayOfWeek', 'endTime', 'extraGroupIds', 'id', 'roomId', 'startTime', 'studentGroupId', 'teacherId'];
 const FIXED_LESSON_FIELDS_REPLACED = [...FIXED_LESSON_FIELDS, 'pupilGroupIds'].sort();
+/** A/B-veckor: `recurrence` only on a lock of odd or even weeks only. */
+const FIXED_LESSON_FIELDS_ALTERNATING = [...FIXED_LESSON_FIELDS_REPLACED, 'recurrence'].sort();
 
 /** No resourceId: a year range names no resource, and sending one is refused. */
 const GRADE_CONSTRAINT_FIELDS = [
@@ -686,6 +705,97 @@ describe('AI engine wire contract', () => {
     });
   });
 
+  describe('Elevernas håltimmar', () => {
+    const keeping = (keeps: boolean, pupils: Array<{ id: string; studentGroupId: string }>) =>
+      (tx: ReturnType<typeof createTxMock>) => {
+        tx['lunchSetting']!['findUnique']!.mockResolvedValue({
+          lunchEnabled: true,
+          lunchStartTime: new Date(0),
+          lunchEndTime: new Date(0),
+          lunchMinutes: 30,
+          diningSeats: 180,
+          maxLessonsPerDayPerGroup: 7,
+          generatorKeepsTravelTime: false,
+          generatorKeepsPupilGapsDown: keeps,
+        });
+        tx['user']!['findMany']!.mockResolvedValue(pupils);
+      };
+    const pupils = [
+      { id: 'pupil-1', studentGroupId: 'g1' },
+      { id: 'pupil-2', studentGroupId: 'g1' },
+    ];
+
+    it('sends a school that has not turned it on the payload it always sent', async () => {
+      const payload = await buildPayload({}, [], [], keeping(false, pupils));
+
+      expect(Object.keys(payload).sort()).toEqual(PAYLOAD_FIELDS);
+      expect(JSON.stringify(payload)).not.toMatch(/pupilGaps|cohorts/);
+    });
+
+    it('sends no key for a week without pupils, which the engine would refuse as an empty list', async () => {
+      const payload = await buildPayload({}, [], [], keeping(true, []));
+
+      expect(Object.keys(payload).sort()).toEqual(PAYLOAD_FIELDS);
+    });
+
+    it('sends the cohorts under the names the engine declares, as counts and anonymous groups', async () => {
+      const payload = await buildPayload({}, [], [], keeping(true, pupils));
+      const gaps = payload['pupilGaps'] as { cohorts: Array<Record<string, unknown>> };
+      const requirement = (payload['requirements'] as Array<Record<string, unknown>>)[0]!;
+
+      expect(Object.keys(payload).sort()).toEqual(PAYLOAD_FIELDS_WITH_PUPIL_GAPS);
+      expect(Object.keys(gaps).sort()).toEqual(PUPIL_GAP_FIELDS);
+      expect(gaps.cohorts).toHaveLength(1);
+      expect(Object.keys(gaps.cohorts[0]!).sort()).toEqual(COHORT_FIELDS);
+      // Both pupils of g1 are booked alike: one cohort of two, its class the
+      // requirement's own anonymous group, which is also where it eats.
+      expect(gaps.cohorts[0]).toEqual({
+        groupIds: [requirement['studentGroupId']],
+        fixedLessonIds: [],
+        homeGroupId: requirement['studentGroupId'],
+        pupils: 2,
+      });
+      // No pupil id and no real group id crosses.
+      expect(JSON.stringify(payload)).not.toMatch(/pupil-1|pupil-2|"g1"/);
+    });
+
+    it('names the locks the pupils sit by the payload’s own ids, and sends a locked idrott its dusch', async () => {
+      const lock = {
+        id: 'ml-idh',
+        subjectId: 's1',
+        studentGroupId: 'g1',
+        teacherId: null,
+        coTeacherId: null,
+        roomId: null,
+        dayOfWeek: 2,
+        startTime: new Date('1970-01-01T08:00:00.000Z'),
+        endTime: new Date('1970-01-01T09:00:00.000Z'),
+        recurrence: 'ALL_WEEKS',
+        startDate: null,
+        endDate: null,
+        extraGroups: [],
+        participants: [],
+      };
+      const payload = await buildPayload(
+        { minutesBefore: 5, minutesAfter: 20, lessonsPerWeek: 2 },
+        [lock],
+        [],
+        keeping(true, pupils),
+      );
+      const gaps = payload['pupilGaps'] as {
+        cohorts: Array<{ fixedLessonIds: string[] }>;
+        fixedMargins: Array<Record<string, unknown>>;
+      };
+      const fixedId = (payload['fixedLessons'] as Array<{ id: string }>)[0]!.id;
+
+      expect(Object.keys(gaps).sort()).toEqual([...PUPIL_GAP_FIELDS, 'fixedMargins'].sort());
+      expect(gaps.cohorts[0]!.fixedLessonIds).toEqual([fixedId]);
+      expect(gaps.fixedMargins).toEqual([{ fixedLessonId: fixedId, minutesBefore: 5, minutesAfter: 20 }]);
+      expect(Object.keys(gaps.fixedMargins[0]!).sort()).toEqual(MARGIN_FIELDS);
+      expect(JSON.stringify(payload)).not.toMatch(/ml-idh/);
+    });
+  });
+
   it('sends a rule’s cap and wish under the names the engine declares, and a rule holding only them', async () => {
     const payload = await buildPayload({}, [], [], (tx) => {
       tx['teacherWorkRule']!['findMany']!.mockResolvedValue([
@@ -772,22 +882,62 @@ describe('AI engine wire contract', () => {
     expect(Object.keys(requirements[0]!).sort()).toEqual(REQUIREMENT_FIELDS);
   });
 
-  it('names the engine’s whole requirement set, the shared post’s and the replaced lesson’s keys included', () => {
-    expect(REQUIREMENT_FIELDS_REPLACED).toEqual(
+  it('names the engine’s whole requirement set, the shared post’s, the replaced lesson’s and the parity’s keys included', () => {
+    expect(REQUIREMENT_FIELDS_ALTERNATING).toEqual(
       [
         'blockId', 'coTeacherId', 'id', 'lessonLengths', 'lessonTeacherIds', 'lessonsPerWeek', 'lockedDays',
         'maxGradeLevel', 'maxLessonsPerDay', 'minDaysBetween', 'minGradeLevel', 'minutesAfter', 'minutesBefore',
-        'minutesPerLesson', 'pupilGroupId', 'requiredRoomType', 'studentGroupId', 'studentGroupSize', 'subjectId',
-        'teacherId',
+        'minutesPerLesson', 'pupilGroupId', 'recurrence', 'requiredRoomType', 'studentGroupId', 'studentGroupSize',
+        'subjectId', 'teacherId',
       ],
     );
   });
 
-  it('names the engine’s whole locked-lesson set, the replaced lesson’s key included', () => {
-    expect(FIXED_LESSON_FIELDS_REPLACED).toEqual([
-      'coTeacherId', 'dayOfWeek', 'endTime', 'extraGroupIds', 'id', 'pupilGroupIds', 'roomId', 'startTime',
-      'studentGroupId', 'teacherId',
+  it('names the engine’s whole locked-lesson set, the replaced lesson’s and the parity’s keys included', () => {
+    expect(FIXED_LESSON_FIELDS_ALTERNATING).toEqual([
+      'coTeacherId', 'dayOfWeek', 'endTime', 'extraGroupIds', 'id', 'pupilGroupIds', 'recurrence', 'roomId',
+      'startTime', 'studentGroupId', 'teacherId',
     ]);
+  });
+
+  it('A/B-veckor: sends a post’s and a lock’s parity, and nothing for every week', async () => {
+    const lock = (id: string, recurrence: string) => ({
+      id,
+      subjectId: 's9',
+      studentGroupId: 'g1',
+      teacherId: 't1',
+      coTeacherId: null,
+      roomId: null,
+      dayOfWeek: 2,
+      startTime: new Date('1970-01-01T08:00:00.000Z'),
+      endTime: new Date('1970-01-01T09:00:00.000Z'),
+      recurrence,
+      startDate: null,
+      endDate: null,
+      extraGroups: [],
+      participants: [],
+    });
+    const alternating = await buildPayload(
+      { recurrence: 'ODD_WEEKS', startDate: null, endDate: null },
+      [lock('ml-odd', 'EVEN_WEEKS'), lock('ml-all', 'ALL_WEEKS')],
+    );
+    const requirements = alternating['requirements'] as Array<Record<string, unknown>>;
+    expect(Object.keys(requirements[0]!).sort()).toEqual([...REQUIREMENT_FIELDS, 'recurrence'].sort());
+    expect(requirements[0]!['recurrence']).toBe('ODD_WEEKS');
+    const fixed = alternating['fixedLessons'] as Array<Record<string, unknown>>;
+    expect(fixed.map((lesson) => lesson['recurrence'])).toEqual(['EVEN_WEEKS', undefined]);
+    expect(Object.keys(fixed[0]!).sort()).toEqual([...FIXED_LESSON_FIELDS, 'recurrence'].sort());
+    expect(Object.keys(fixed[1]!).sort()).toEqual(FIXED_LESSON_FIELDS);
+    // And the lessons the run writes are the post's weeks.
+    const written = (lastTx['masterLesson']!['createMany']!.mock.calls as [{ data: { recurrence: string }[] }][])
+      .flatMap(([call]) => call.data)
+      .map((lesson) => lesson.recurrence);
+    expect(written).toEqual(['ODD_WEEKS']);
+
+    const weekly = await buildPayload({ recurrence: 'ALL_WEEKS', startDate: null, endDate: null });
+    expect(Object.keys((weekly['requirements'] as Array<Record<string, unknown>>)[0]!).sort()).toEqual(
+      REQUIREMENT_FIELDS,
+    );
   });
 
   it('delade lektioner: sends each lesson of a shared post its own teacher, and writes each lesson with it', async () => {

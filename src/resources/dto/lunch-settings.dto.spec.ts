@@ -51,6 +51,17 @@ describe('UpsertLunchSettingsDto limits', () => {
     await expect(failing({ ...base, generatorKeepsTravelTime: false })).resolves.toEqual([]);
   });
 
+  it('takes the pupil-gap switch as true or false, and refuses null and a string', async () => {
+    await expect(failing({ ...base, generatorKeepsPupilGapsDown: true })).resolves.toEqual([]);
+    await expect(failing({ ...base, generatorKeepsPupilGapsDown: false })).resolves.toEqual([]);
+    await expect(failing({ ...base, generatorKeepsPupilGapsDown: null })).resolves.toEqual([
+      'generatorKeepsPupilGapsDown',
+    ]);
+    await expect(failing({ ...base, generatorKeepsPupilGapsDown: 'true' })).resolves.toEqual([
+      'generatorKeepsPupilGapsDown',
+    ]);
+  });
+
   it('refuses a null travel switch, which the NOT NULL column would answer with a 500', async () => {
     await expect(failing({ ...base, generatorKeepsTravelTime: null })).resolves.toEqual([
       'generatorKeepsTravelTime',

@@ -553,11 +553,17 @@ ON CONFLICT ("keyHash") DO NOTHING;
 -- A THIRD school for gallring (sections 80 to 89), planted once. Its own
 -- school, because a purge deletes rows and sections 83 and 84 must count
 -- exactly what goes; nothing of school A or B may move. Every date is
--- relative to today in Europe/Stockholm, so the cutoffs below hold whenever
--- the suite runs:
+-- relative to today in Europe/Stockholm and a month or more from its cutoff,
+-- so the cutoffs below hold whenever the suite runs, a midnight between these
+-- fixtures and the suite included. A row ON a cutoff has no such margin: the
+-- lesson on the attendance cutoff is planted by sections 83, 86 and 87 inside
+-- their own transactions, a year before their own school day. Planted here,
+-- a Stockholm midnight before the suite would leave it a day before the
+-- cutoff, and the night would take it.
 --
---   ATTENDANCE       12 months   lessons 13 months ago (go), on the cutoff day
---                                and 11 months ago (stay)
+--   ATTENDANCE       12 months   lessons 13 months ago (go) and 11 months ago
+--                                (stays); the sections add one on the
+--                                cutoff day (stays)
 --   ABSENCE_REPORTS   6 months   reports 7 months ago (go), 5 months ago (stay)
 --   LEAVE_REQUESTS   12 months   ended 13 months ago (goes); ended 11 months
 --                                ago, and one that began 14 months ago but
@@ -586,7 +592,7 @@ DECLARE
   grp uuid; sub uuid; reason uuid;
   admin uuid; teacher uuid; pupil uuid; guardian uuid;
   pupil_gone uuid; pupil_recent uuid; teacher_gone uuid; teacher_scb uuid;
-  l_old uuid; l_edge uuid; l_new uuid;
+  l_old uuid; l_new uuid;
   a_old uuid;
 BEGIN
   IF EXISTS (SELECT 1 FROM "Schools" WHERE slug = 'rls-gallring-school') THEN
@@ -666,14 +672,11 @@ BEGIN
   VALUES (g, sub, grp, today - interval '13 months', (today - interval '13 months')::date + time '06:10', (today - interval '13 months')::date + time '06:50', now())
   RETURNING id INTO l_old;
   INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
-  VALUES (g, sub, grp, today - interval '12 months', (today - interval '12 months')::date + time '06:10', (today - interval '12 months')::date + time '06:50', now())
-  RETURNING id INTO l_edge;
-  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
   VALUES (g, sub, grp, today - interval '11 months', (today - interval '11 months')::date + time '06:10', (today - interval '11 months')::date + time '06:50', now())
   RETURNING id INTO l_new;
   INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt") VALUES
     (g, l_old, pupil, 'PRESENT', now()), (g, l_old, pupil_gone, 'ABSENT', now()),
-    (g, l_edge, pupil, 'PRESENT', now()), (g, l_new, pupil, 'PRESENT', now());
+    (g, l_new, pupil, 'PRESENT', now());
 
   INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date) VALUES
     (g, pupil, guardian, today - interval '7 months'), (g, pupil, guardian, today - interval '5 months');

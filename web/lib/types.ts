@@ -571,6 +571,12 @@ export interface LunchSettings {
    * no such field, which reads as the rule it then is: off.
    */
   generatorKeepsTravelTime?: boolean;
+  /**
+   * Elevernas håltimmar: the generator keeps the pupils' idle time between
+   * their lessons down, counted as the Håltimmar page counts it. Off by
+   * default; optional for an API from before the switch, read as off.
+   */
+  generatorKeepsPupilGapsDown?: boolean;
 }
 
 export type LessonRecurrence = "ALL_WEEKS" | "ODD_WEEKS" | "EVEN_WEEKS";
