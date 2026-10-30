@@ -72,18 +72,22 @@ A/B-veckor: two weeks in one room
 ---------------------------------
 A lesson on odd weeks only and one on even weeks only may share a room at
 the same hour (app/solver/weeks.py). What each class's row holds then
-depends on its pool:
+depends on its pool — every lesson that may choose the class, which for a
+class of special rooms is its own subject's lessons AND every lesson without
+a room type that fits there:
 
 - **One room**: one NoOverlap per week (``week_parts``), exact — the room is
   the room, and the post-pass gives it to every lesson of the class.
 - **Several rooms, no every-week lesson in the pool**: one cumulative per
   week. Exact as well: the odd lessons never meet the even ones, so each week
   is a separate interval colouring with its own sweep (``RoomPlan.by_week``).
-- **Several rooms, every-week lessons beside alternating ones**: the one
-  cumulative it always was, the alternating lessons counted in both weeks.
-  Per-week cumulatives would be UNSOUND here — they can admit a timetable
-  with no room assignment at all, because an every-week lesson must keep one
-  room through both weeks::
+- **Several rooms, every-week lessons beside alternating ones** (MIXED): the
+  rooms are named. Each lesson of the pool takes one room of the class
+  (``RoomPlan.rooms_of``), and each room has one NoOverlap per week over the
+  lessons it holds; a cumulative per week beside them is implied and only
+  propagates. Per-week cumulatives ALONE would be unsound here — they can
+  admit a timetable with no room assignment at all, because an every-week
+  lesson must keep one room through both weeks::
 
       2 rooms;  a1 every week [0,2)   o1 odd [0,5)
                 e1 even [1,3)         e2 even [2,6)   a2 every week [4,6)
@@ -91,10 +95,13 @@ depends on its pool:
   Each week has at most two lessons at any instant, yet a1 takes one room,
   o1 the other; e1 must avoid a1 in the even week, so e1 shares o1's room;
   e2 must avoid e1, so e2 takes a1's; and a2 must avoid o1 (odd) and e2
-  (even), which is both rooms. The conservative count costs only the odd
-  and even lessons' sharing of rooms that hold every-week lessons too —
-  ordinary classrooms, where the room count rarely binds — and the class,
-  the teacher and a one-room class (the slöjdsal) still share.
+  (even), which is both rooms. Naming the rooms costs a literal per lesson
+  and room of a mixed class — only in a payload with alternating lessons,
+  and only in the classes that mix — and is exact. (The release before it
+  counted the alternating lessons of a mixed class in both weeks, which is
+  sound but refused real weeks: two slöjdsalar with odd and even slöjd, and
+  one ordinary lesson that fits a slöjdsal, made the slöjdsalar mixed —
+  review of #221, M1.)
 """
 
 from __future__ import annotations
@@ -158,6 +165,14 @@ class RoomPlan:
     #: Empty for a payload without alternating lessons.
     by_week: set[int] = field(default_factory=set)
     parity: dict[str, str] = field(default_factory=dict)
+    #: A/B-veckor: the mixed classes (the module docstring), and the literal
+    #: per lesson and room of one saying the lesson is in it, by lesson key —
+    #: every mixed class's rooms the lesson may take, since a lesson without a
+    #: room type is in the pool of every class it fits. The two builds of one
+    #: request make them in the same order, so solve() hints one from the other
+    #: as it does the class literals. Empty without a mixed class.
+    named: set[int] = field(default_factory=set)
+    rooms_of: dict[str, dict[int, cp_model.IntVar]] = field(default_factory=dict)
 
     def class_of(self, key: str, solver: cp_model.CpSolver) -> int:
         forced = self.forced_class.get(key)
@@ -180,6 +195,18 @@ class RoomPlan:
         assignment: dict[str, int] = {}
         for class_index, entries in by_class.items():
             room_indices = self.classes[class_index].room_indices
+            if class_index in self.named:
+                # A mixed class: the solver named each lesson's room.
+                for _start, _duration, key, _preferred in entries:
+                    chosen = [
+                        room for room in room_indices
+                        if solver.Value(self.rooms_of[key][room])
+                    ]
+                    if len(chosen) != 1:  # pragma: no cover - AddExactlyOne broke
+                        msg = f"lesson {key} named {len(chosen)} rooms of class {class_index}"
+                        raise RoomAllocationError(msg)
+                    assignment[key] = chosen[0]
+                continue
             if len(room_indices) == 1 and self.parity:
                 # One room is every lesson's room, whichever weeks they run:
                 # its NoOverlap per week is the whole proof, and two lessons
@@ -344,8 +371,11 @@ def add_room_allocation(
     )
     pools: dict[int, list[cp_model.IntervalVar]] = defaultdict(list)
     # The lesson behind each pool entry, by position: the week it runs in is
-    # what the class's row is cut by (module docstring, A/B-veckor).
+    # what the class's row is cut by, and a mixed class names its rooms for
+    # it — the decision and the literal choosing the class, None where the
+    # class is forced (module docstring, A/B-veckor).
     members: dict[int, list[str]] = defaultdict(list)
+    chosen_by: dict[int, list[tuple[object, cp_model.IntVar | None]]] = defaultdict(list)
 
     for decision in decisions:
         requirement = decision.lesson.requirement
@@ -374,6 +404,7 @@ def add_room_allocation(
             plan.forced_class[key] = only.index
             pools[only.index].append(decision.interval)
             members[only.index].append(key)
+            chosen_by[only.index].append((decision, None))
             if only.capacity == 1:
                 model.Add(decision.room_index == only.room_indices[0])
             continue
@@ -392,6 +423,7 @@ def add_room_allocation(
                 ),
             )
             members[room_class.index].append(key)
+            chosen_by[room_class.index].append((decision, literal))
             # A singleton class is a specific room, and other builders may reify
             # room_index against it. Keep the two views in agreement.
             if room_class.capacity == 1:
@@ -412,18 +444,65 @@ def add_room_allocation(
             # per week the pool's lessons run in, which is exact for one room.
             for _, part in parts:
                 model.AddNoOverlap([interval for interval, _ in part])
-        elif parts[0][0] is None or any(
-            entry[1] not in plan.parity for entry in entries
-        ):
-            # Every lesson every week, or every-week lessons beside
-            # alternating ones: one cumulative over all of them (the module
-            # docstring has why the second may not be cut).
+        elif parts[0][0] is None:
+            # Every lesson every week: the cumulative it always was.
             model.AddCumulative(pool, [1] * len(pool), room_class.capacity)
-        else:
+        elif all(entry[1] in plan.parity for entry in entries):
+            # Alternating lessons only: one colouring per week.
             plan.by_week.add(room_class.index)
+            for _, part in parts:
+                model.AddCumulative(
+                    [interval for interval, _ in part], [1] * len(part), room_class.capacity,
+                )
+        else:
+            _name_the_rooms(model, plan, room_class, chosen_by[room_class.index])
+            # Implied by the named rooms, and posted for what a cumulative
+            # propagates that k no-overlaps do not.
             for _, part in parts:
                 model.AddCumulative(
                     [interval for interval, _ in part], [1] * len(part), room_class.capacity,
                 )
 
     return plan
+
+
+def _name_the_rooms(
+    model: cp_model.CpModel,
+    plan: RoomPlan,
+    room_class: RoomClass,
+    chosen_by: list[tuple[object, cp_model.IntVar | None]],
+) -> None:
+    """A mixed class's rooms, named: each lesson in one of them, one no-overlap per room and week.
+
+    A lesson that may choose the class is in exactly one of its rooms when it
+    chooses it and in none otherwise; one forced into the class is in exactly
+    one. Each room then holds its lessons apart in each week they run in
+    (week_parts), so an every-week lesson keeps its room in both weeks and an
+    odd and an even lesson may share one. room_index follows the named room,
+    as a singleton class's does.
+    """
+    entries: dict[int, list[tuple[object, cp_model.IntervalVar]]] = defaultdict(list)
+    for decision, chooses in chosen_by:
+        key = decision.lesson.key()  # type: ignore[attr-defined]
+        named: dict[int, cp_model.IntVar] = {}
+        for room in room_class.room_indices:
+            literal = model.NewBoolVar(f"room_{room}_{key}")
+            named[room] = literal
+            model.Add(decision.room_index == room).OnlyEnforceIf(literal)  # type: ignore[attr-defined]
+            entries[room].append((
+                decision,
+                model.NewOptionalIntervalVar(
+                    decision.start, decision.duration, decision.end,  # type: ignore[attr-defined]
+                    literal, f"in_{room}_{key}",
+                ),
+            ))
+        if chooses is None:
+            model.AddExactlyOne(named.values())
+        else:
+            model.Add(sum(named.values()) == chooses)
+        plan.rooms_of.setdefault(key, {}).update(named)
+    plan.named.add(room_class.index)
+    for room, held in entries.items():
+        for _, part in week_parts(held, lambda entry: plan.parity.get(entry[0].lesson.key())):  # type: ignore[attr-defined]
+            if len(part) > 1:
+                model.AddNoOverlap([interval for _, interval in part])
