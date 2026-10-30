@@ -5900,7 +5900,7 @@ class SchedulerSolver:
         # solve() are: each check runs on each week's request (_week_requests)
         # — the request itself for a school without alternating lessons.
         for week in _week_requests(request):
-            self._verify_week(week)
+            self._verify_week(week, request)
 
         rules = request.rules
         if rules is None or not _lunch_window_is_set(rules):
@@ -5910,8 +5910,15 @@ class SchedulerSolver:
             return
         self._verify_lunch(request, rules)
 
-    def _verify_week(self, request: OptimizeScheduleRequest) -> None:
-        """_validate_request's counting refusals, on one week's request."""
+    def _verify_week(
+        self, request: OptimizeScheduleRequest, whole: OptimizeScheduleRequest,
+    ) -> None:
+        """_validate_request's counting refusals, on one week's request.
+
+        `whole` is the request the week came from, for the one thing here that
+        is every week's: the teachers' own lunch, which sits at one hour all
+        year and so keeps clear of a lock of either week.
+        """
         # THE BREAKS THAT ASK FOR A LESSON, before any of the counting below:
         # a demand no stretch can hold is a contradiction between two of the
         # school's own sentences, and every verdict that follows would be
@@ -5928,7 +5935,7 @@ class SchedulerSolver:
         # not set a lunch window. A teacher's own break has nothing to do with
         # the pupils' one, and behind that return a school with teacher rules and
         # no school-wide lunch would never have been told a thing.
-        self._verify_teacher_work_rules(request)
+        self._verify_teacher_work_rules(request, whole=whole)
 
         # LÄRARENS DAG, beside the work rules and for their reason: a cap no
         # day can hold, or days too few for the week, is arithmetic on
@@ -6481,7 +6488,12 @@ class SchedulerSolver:
             days.append(day_index)
         return days
 
-    def _verify_teacher_work_rules(self, request: OptimizeScheduleRequest) -> None:
+    def _verify_teacher_work_rules(
+        self,
+        request: OptimizeScheduleRequest,
+        *,
+        whole: OptimizeScheduleRequest | None = None,
+    ) -> None:
         """The three refusals a teacher's own lunch and rest can be arithmetic.
 
         THE ORDER IS THE ROW'S OWN. The lunch window's arithmetic first, because
@@ -6553,8 +6565,12 @@ class SchedulerSolver:
         # a second rounding rule here would eventually disagree with the model
         # about when a teacher may eat.
         if any(rule.has_lunch for rule in reaching):
-            locked_busy = self._teacher_busy_from_locks(request.fixed_lessons)
-            closed_busy = self._teacher_busy_from_constraints(request.constraints)
+            # A/B-veckor: the break is every week's, as the model's is
+            # (_add_teacher_lunch reads every lock): a lock of either week is
+            # in its way, so these are `whole`'s locks, whichever week's
+            # lessons put the teacher here.
+            locked_busy = self._teacher_busy_from_locks((whole or request).fixed_lessons)
+            closed_busy = self._teacher_busy_from_constraints((whole or request).constraints)
             for rule in reaching:
                 window = _teacher_lunch_slots(rule, self._grid)
                 if window is None:
