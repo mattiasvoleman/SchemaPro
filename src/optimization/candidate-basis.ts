@@ -99,6 +99,12 @@ export interface PreservedContent {
   /** HH:MM:SS, the clock the payload carries. */
   startTime: string;
   endTime: string;
+  /**
+   * A/B-veckor: the parity the engine was told the lock holds its window in.
+   * Only on an alternating lock, so a school without one hashes what it did,
+   * and a lock moved between odd and even weeks makes a run stale.
+   */
+  recurrence?: Exclude<LessonRecurrence, 'ALL_WEEKS'>;
 }
 
 /** One of the draft's own (non-preserved) lessons, by content. */
@@ -423,6 +429,7 @@ function fixedLessonContent(
     dayOfWeek: lesson.dayOfWeek,
     startTime: lesson.startTime,
     endTime: lesson.endTime,
+    ...(lesson.recurrence !== undefined ? { recurrence: lesson.recurrence } : {}),
   };
 }
 
@@ -436,6 +443,8 @@ export interface PreservedRow {
   startTime: Date;
   endTime: Date;
   extraGroups?: { studentGroupId: string }[];
+  /** A/B-veckor: read wherever this is compared with a payload's lock (fixedLessonContent). */
+  recurrence: LessonRecurrence;
 }
 
 /**
@@ -453,6 +462,7 @@ export function preservedContentOf(row: PreservedRow): PreservedContent {
     dayOfWeek: row.dayOfWeek,
     startTime: clockOf(row.startTime, true) ?? '',
     endTime: clockOf(row.endTime, true) ?? '',
+    ...(row.recurrence !== 'ALL_WEEKS' ? { recurrence: row.recurrence } : {}),
   };
 }
 

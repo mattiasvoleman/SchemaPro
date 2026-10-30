@@ -21,6 +21,7 @@ import type {
   DayOfWeek,
 } from './interfaces/ai-engine-payload.interface';
 import {
+  alternatingWeeksOf,
   calendarSweepWhere,
   coverageLessonsOf,
   engineMayStillBeSolving,
@@ -5225,8 +5226,14 @@ describe('OptimizationProxyService', () => {
           await service.triggerScheduling(ACADEMIC_YEAR, testUser());
 
           expect(limit()).toMatchObject({ maxTeachingDaysPerWeek: 2, lockedWeekdays: [[1, 2], [3, 4]] });
-          // The fixed placements themselves still carry no weeks.
-          expect(Object.keys(postedPayload().fixedLessons[0]!)).not.toContain('recurrence');
+          // A/B-veckor: and the fixed placements carry their own parity, so
+          // the engine holds each lock's window only in its weeks.
+          expect(postedPayload().fixedLessons.map((lesson) => [lesson.dayOfWeek, lesson.recurrence])).toEqual([
+            [4, 'EVEN_WEEKS'],
+            [1, 'ODD_WEEKS'],
+            [3, 'EVEN_WEEKS'],
+            [2, 'ODD_WEEKS'],
+          ]);
         });
 
         it('reads the weeks of the läsår only, its dates read when a post has a limit and not otherwise', async () => {
@@ -7556,5 +7563,23 @@ describe('OptimizationProxyService', () => {
         select: { unstaffedGeneration: true },
       });
     });
+  });
+});
+
+describe('alternatingWeeksOf (A/B-veckor)', () => {
+  it('tells the engine an alternating row’s parity and nothing for every week', () => {
+    expect(alternatingWeeksOf({ recurrence: 'ODD_WEEKS' })).toBe('ODD_WEEKS');
+    expect(alternatingWeeksOf({ recurrence: 'EVEN_WEEKS' })).toBe('EVEN_WEEKS');
+    expect(alternatingWeeksOf({ recurrence: 'ALL_WEEKS' })).toBeUndefined();
+  });
+
+  it('holds a leader post’s times every week when its follower runs in other weeks', () => {
+    // The follower is written at the leader's times in its own weeks
+    // (same-times.ts): odd beside even holds the hour in both.
+    expect(alternatingWeeksOf({ recurrence: 'ODD_WEEKS' }, { recurrence: 'EVEN_WEEKS' })).toBeUndefined();
+    // A follower of every week in another period, the same.
+    expect(alternatingWeeksOf({ recurrence: 'ODD_WEEKS' }, { recurrence: 'ALL_WEEKS' })).toBeUndefined();
+    // Both odd (two periods of odd weeks): the hour is the odd weeks'.
+    expect(alternatingWeeksOf({ recurrence: 'ODD_WEEKS' }, { recurrence: 'ODD_WEEKS' })).toBe('ODD_WEEKS');
   });
 });
