@@ -61,6 +61,7 @@ from app.solver.conflict_analyzer import (
 from app.solver.room_allocator import (
     RoomPlan,
     add_room_allocation,
+    build_room_classes,
     collect_distinguished_room_ids,
 )
 from app.solver.time_grid import TimeGrid
@@ -4740,6 +4741,8 @@ class SchedulerSolver:
             if (
                 len(decisions) != len(feas_decisions)
                 or set(room_plan.literals) != set(feas_plan.literals)
+                # A/B-veckor: a mixed room class's named rooms, by lesson.
+                or set(room_plan.rooms_of) != set(feas_plan.rooms_of)
                 # The lunch keys as well: the two builds must agree on which
                 # groups eat on which days, or the map read below belongs to a
                 # different school week than the one being returned.
@@ -4760,6 +4763,10 @@ class SchedulerSolver:
                 for (_, _, literal), (_, _, source) in zip(
                     room_plan.site_vars, feas_plan.site_vars,
                 )
+            ] + [
+                (literal, feas_plan.rooms_of[key][room])
+                for key, named in room_plan.rooms_of.items()
+                for room, literal in named.items()
             ]
         else:
             # ---- phase 1b: the cleared clone takes what is left -------------
@@ -4819,7 +4826,11 @@ class SchedulerSolver:
                 (literal, literal)
                 for literals in room_plan.literals.values()
                 for literal in literals.values()
-            ] + [(literal, literal) for _, _, literal in room_plan.site_vars]
+            ] + [(literal, literal) for _, _, literal in room_plan.site_vars] + [
+                (literal, literal)
+                for named in room_plan.rooms_of.values()
+                for literal in named.values()
+            ]
 
         def _phase1_response() -> OptimizeScheduleResponse:
             lessons = self._extract_lessons(
@@ -5576,7 +5587,54 @@ class SchedulerSolver:
         )
         asking_rasts = sum(1 for rast in request.rasts if rast.requires_lesson_before)
         extra += asking_rasts * day_count * len(request.groups)
-        return extra
+        return extra + self._named_room_vars(request)
+
+    def _named_room_vars(self, request: OptimizeScheduleRequest) -> int:
+        """A literal per lesson and room of every mixed room class (room_allocator).
+
+        The classes as _add_room_allocation makes them — the same predicate,
+        the same key, the same distinguished rooms and wishes — on one stand-in
+        per requirement, which is all the partition reads; then each class of
+        several rooms whose possible lessons alternate in part counts each of
+        those lessons once per room.
+        """
+        from types import SimpleNamespace
+
+        rooms = request.rooms
+        allowed, key = self._lock_aware(
+            resolve_room_locks(request.requirements, request.room_preferences or [], rooms),
+        )
+        travel = travel_map(
+            request, slot_minutes=self._grid.slot_minutes, step=_start_step(request, self._grid),
+        )
+        classes = build_room_classes(
+            [SimpleNamespace(lesson=SimpleNamespace(requirement=r)) for r in request.requirements],
+            rooms,
+            collect_distinguished_room_ids(request.constraints, request.fixed_lessons),
+            allowed,
+            key,
+            [
+                _preference_room_ids(preference, rooms)
+                for preference in (request.room_preferences or [])
+                if preference.kind == "WISH"
+            ],
+            travel.site_key if travel is not None else None,
+        )
+        pools: dict[int, list[AnonymousRequirement]] = defaultdict(list)
+        for requirement in request.requirements:
+            eligible = [
+                room_class for room_class in classes
+                if allowed(rooms[room_class.room_indices[0]], requirement)
+            ] or classes
+            for room_class in eligible:
+                pools[room_class.index].append(requirement)
+        named = 0
+        for room_class in classes:
+            pool = pools.get(room_class.index, [])
+            parities = {requirement.recurrence for requirement in pool}
+            if room_class.capacity > 1 and None in parities and len(parities) > 1:
+                named += room_class.capacity * sum(r.lessons_per_week for r in pool)
+        return named
 
     def _validate_request(self, request: OptimizeScheduleRequest) -> None:
         if not request.requirements:

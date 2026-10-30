@@ -245,30 +245,111 @@ def test_two_rooms_hold_two_odd_classes_and_two_even_ones() -> None:
     assert _solve(_weekly(payload), settings).status == "INFEASIBLE"
 
 
-def test_rooms_shared_with_every_week_lessons_count_an_alternating_lesson_in_both_weeks() -> None:
-    """The conservative reading (room_allocator's module docstring).
+def test_rooms_shared_with_every_week_lessons_are_named_and_shared_exactly() -> None:
+    """Two rooms, an every-week class and an odd and an even one: two lessons a real week.
 
-    Two rooms, an every-week class and an odd and an even one: each real week
-    has two lessons in two rooms, but per-week counts cannot promise one room
-    an every-week lesson keeps through both weeks, so a pool with every-week
-    lessons in it counts the alternating ones every week. The class and the
-    teacher still share; only these rooms do not.
+    A pool with every-week lessons beside alternating ones names its rooms
+    (room_allocator's module docstring): the every-week lesson keeps one room
+    in both weeks, and the odd and the even lesson share the other.
     """
     rooms = [
         {"id": str(uuid4()), "capacity": 30, "type": "slojd"},
         {"id": str(uuid4()), "capacity": 30, "type": "slojd"},
     ]
-    requirements = [
+    weekly, odd, even = (
         _requirement(str(uuid4()), 2, recurrence=parity, requiredRoomType="slojd")
         for parity in (None, ODD, EVEN)
-    ]
+    )
+    payload = _payload([weekly, odd, even], rooms=rooms)
     settings = _settings(hours=2)
-    assert _solve(_payload(requirements, rooms=rooms), settings).status == "INFEASIBLE"
-    rooms.append({"id": str(uuid4()), "capacity": 30, "type": "slojd"})
-    payload = _payload(requirements, rooms=rooms)
     response = _solve(payload, settings)
     assert response.status in SOLVED
     assert _validate(payload, response.lessons, settings) == []
+    room_of = {
+        (str(lesson.requirement_id), lesson.start_time): lesson.room_id for lesson in response.lessons
+    }
+    for start in ("08:00:00", "09:00:00"):
+        assert room_of[(str(odd["id"]), start)] == room_of[(str(even["id"]), start)]
+        assert room_of[(str(odd["id"]), start)] != room_of[(str(weekly["id"]), start)]
+    assert _solve(_weekly(payload), settings).status == "INFEASIBLE"
+
+
+def test_special_rooms_an_ordinary_lesson_fits_are_still_shared_by_the_weeks() -> None:
+    """Review of #221, M1: two slöjdsalar, odd and even slöjd, and one ordinary lesson.
+
+    7E's svenska has no room type and fits a slöjdsal, so the slöjdsalar's
+    pool holds an every-week lesson beside the alternating slöjd. Counting the
+    slöjd in both weeks refused the week with "no room of type slöjd"; named,
+    the slöjdsalar take 7A and 7B in odd weeks and 7C and 7D in even ones, and
+    the svenska the classroom.
+    """
+    rooms = [
+        {"id": str(uuid4()), "capacity": 30, "type": "SL"},
+        {"id": str(uuid4()), "capacity": 30, "type": "SL"},
+        {"id": str(uuid4()), "capacity": 30},
+    ]
+    slojd = [
+        _requirement(str(uuid4()), 1, recurrence=parity, requiredRoomType="SL")
+        for parity in (ODD, ODD, EVEN, EVEN)
+    ]
+    payload = _payload([*slojd, _requirement(str(uuid4()), 1)], rooms=rooms)
+    settings = _settings(hours=1)
+    response = _solve(payload, settings)
+    assert response.status in SOLVED
+    assert _validate(payload, response.lessons, settings) == []
+
+
+def test_named_rooms_refuse_the_week_no_room_assignment_holds() -> None:
+    """The module docstring's counter-example, at fixed times, on the allocator alone.
+
+    Every instant holds at most two lessons in each week, so per-week
+    cumulatives would accept it; no assignment of two rooms exists, and the
+    named rooms say so. Without a2 an assignment exists and the post-pass finds it.
+    """
+    from ortools.sat.python import cp_model
+
+    from app.schemas.schedule import AnonymousRequirement, AnonymousRoom
+    from app.solver.room_allocator import add_room_allocation
+    from app.solver.scheduler_solver import LessonDecision, LessonInstance
+
+    rooms = [AnonymousRoom(id=uuid4(), capacity=30), AnonymousRoom(id=uuid4(), capacity=30)]
+    lessons = {  # name: (start, end, parity)
+        "a1": (0, 2, None), "o1": (0, 5, ODD_WEEKS), "e1": (1, 3, EVEN_WEEKS),
+        "e2": (2, 6, EVEN_WEEKS), "a2": (4, 6, None),
+    }
+
+    def solve(names: list[str]) -> tuple[str, dict[str, int]]:
+        model = cp_model.CpModel()
+        decisions = []
+        for name in names:
+            start, end, parity = lessons[name]
+            requirement = AnonymousRequirement.model_validate({
+                "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": str(uuid4()),
+                "lessonsPerWeek": 1, "minutesPerLesson": 15, "studentGroupSize": 10,
+                **({"recurrence": parity} if parity else {}),
+            })
+            begin = model.NewIntVar(start, start, f"s_{name}")
+            finish = model.NewIntVar(end, end, f"e_{name}")
+            decisions.append(LessonDecision(
+                lesson=LessonInstance(requirement, 0), start=begin, duration=end - start,
+                end=finish, interval=model.NewIntervalVar(begin, end - start, finish, f"i_{name}"),
+                room_index=model.NewIntVar(0, 1, f"r_{name}"),
+            ))
+        plan = add_room_allocation(
+            model, decisions, rooms, distinguished_room_ids=set(),
+            room_allowed=lambda room, requirement: True, profile_key=lambda requirement: (),
+        )
+        solver = cp_model.CpSolver()
+        status = solver.StatusName(solver.Solve(model))
+        if status not in SOLVED:
+            return status, {}
+        rooms_by_key = plan.assign_rooms(solver)
+        return status, {name: rooms_by_key[d.lesson.key()] for name, d in zip(names, decisions)}
+
+    assert solve(list(lessons))[0] == "INFEASIBLE"
+    status, room = solve(["a1", "o1", "e1", "e2"])
+    assert status in SOLVED
+    assert room["a1"] != room["o1"] and room["a1"] != room["e1"] and room["e1"] != room["e2"]
 
 
 def test_a_lock_of_the_odd_weeks_leaves_its_hour_to_the_even_ones() -> None:
