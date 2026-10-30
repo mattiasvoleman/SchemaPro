@@ -1,5 +1,6 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { createPrismaMock, createTxMock, testUser, type TxMock } from '../../test/utils/prisma-mock';
+import { PUPIL_LIST, WITH_SVA, WITHOUT, type PupilListSchool } from '../../test/utils/pupil-list';
 import { recordedReads } from '../../test/utils/recorded-reads';
 import type { PrismaService } from '../database/prisma.service';
 import { CLASS_BOOK_GROUP_NOT_FOUND, CLASS_BOOK_RANGE, ClassBookService } from './class-book.service';
@@ -155,5 +156,90 @@ describe('ClassBookService', () => {
         response: { code: CLASS_BOOK_RANGE },
       });
     }
+  });
+
+  describe('Elevlistan i uppföljningen: the class\'s own lesson counts the pupils a replacing group leaves it', () => {
+    // The shared school (src/common/__fixtures__/pupil-list-cases.json): 7A of
+    // Alva (SvA7, the half), Bo (Stöd7, the half) and Cim. The service and the
+    // roster reader run whole; the router answers their reads from the school.
+    type Where = Record<string, any>;
+    const has = (condition: unknown, value: unknown) =>
+      condition === undefined ||
+      (condition !== null && typeof condition === 'object' && 'in' in (condition as Where) ? (condition as Where)['in'].includes(value) : condition === value);
+    const arrange = (school: PupilListSchool) => {
+      const c7a = school.groups.find((group) => group.name === '7A')!;
+      const memberships = PUPIL_LIST.pupils.flatMap((pupil) => pupil.groupIds.map((studentGroupId) => ({ studentId: pupil.id, studentGroupId })));
+      tx.studentGroup.findFirst.mockResolvedValue({ id: c7a.id, name: '7A', kind: 'CLASS', school: { name: 'Norra skolan' } });
+      tx.user.findMany.mockImplementation(({ where }: { where: Where }) =>
+        Promise.resolve(
+          PUPIL_LIST.pupils
+            .filter((pupil) => has(where['studentGroupId'], pupil.homeGroupId) && has(where['id'], pupil.id))
+            .map((pupil) => ({ id: pupil.id, studentGroupId: pupil.homeGroupId })),
+        ),
+      );
+      tx.studentGroupMember.findMany.mockImplementation(({ where, distinct }: { where: Where; distinct?: unknown }) => {
+        const rows = memberships.filter((row) => has(where['studentId'], row.studentId) && has(where['studentGroupId'], row.studentGroupId));
+        return Promise.resolve(distinct ? [...new Set(rows.map((row) => row.studentGroupId))].map((studentGroupId) => ({ studentGroupId })) : rows);
+      });
+      tx.studentGroup.findMany.mockImplementation(({ where }: { where: Where }) => {
+        const among: string[] | undefined = where['teachingMembers']?.some?.studentId?.in;
+        return Promise.resolve(
+          school.groups.filter((group) => {
+            if (among) return group.replacesSubjectId !== null && memberships.some((row) => row.studentGroupId === group.id && among.includes(row.studentId));
+            if (where['replacesSubjectId']) return group.replacesSubjectId !== null && has(where['replacesSubjectId'], group.replacesSubjectId);
+            return has(where['id'], group.id);
+          }),
+        );
+      });
+      tx.calendarLessonStudent.findMany.mockImplementation(({ where }: { where: Where }) =>
+        Promise.resolve(
+          PUPIL_LIST.lessons.flatMap((l) =>
+            l.named.filter((studentId) => has(where['calendarLessonId'], l.id) && has(where['studentId'], studentId)).map((studentId) => ({ calendarLessonId: l.id, studentId })),
+          ),
+        ),
+      );
+      const nameOf = (id: string) => school.groups.find((group) => group.id === id)!.name;
+      tx.calendarLesson.findMany.mockResolvedValue(
+        PUPIL_LIST.lessons.map((l) =>
+          lesson(l.id, l.groupIds[0]!, nameOf(l.groupIds[0]!), {
+            subjectId: l.subjectId,
+            extraGroups: l.groupIds.slice(1).map((studentGroupId) => ({ studentGroupId, studentGroup: { name: nameOf(studentGroupId) } })),
+          }),
+        ),
+      );
+      return c7a.id;
+    };
+    const counts = async (school: PupilListSchool) => {
+      const groupId = arrange(school);
+      const book = await service.classBook({ ...query, groupId }, testUser({ role: 'TEACHER' as never }));
+      return Object.fromEntries(book.lessons.map((l) => [PUPIL_LIST.lessons.find((x) => x.id === l.id)!.name, l.attending]));
+    };
+
+    it('with SvA7 replacing svenska: 7A\'s own svenska holds 2 of its 3; one naming Alva or carrying SvA7 holds all, and says nothing more', async () => {
+      expect(await counts(WITH_SVA)).toEqual({
+        '7A:s svenska': 2,
+        '7A:s svenska, Alva namngiven': null,
+        '7A:s svenska med SvA7 tillagd': null,
+        'halvans svenska': 1,
+        'SvA7:s svenska som andraspråk': 1,
+        'Stöd7:s svenska': 1,
+        '7A:s matematik': null,
+      });
+    });
+
+    it('with no replacing group: every own lesson holds the class, null, as before, and no own lesson is rostered', async () => {
+      expect(await counts(WITHOUT)).toEqual({
+        '7A:s svenska': null,
+        '7A:s svenska, Alva namngiven': null,
+        '7A:s svenska med SvA7 tillagd': null,
+        'halvans svenska': 2,
+        'SvA7:s svenska som andraspråk': 1,
+        'Stöd7:s svenska': 1,
+        '7A:s matematik': null,
+      });
+      const own = new Set(PUPIL_LIST.lessons.filter((l) => l.groupIds.includes(WITHOUT.groups.find((g) => g.name === '7A')!.id)).map((l) => l.id));
+      const asked = (tx.calendarLessonStudent.findMany.mock.calls as Array<[{ where: Where }]>).flatMap(([args]) => args.where['calendarLessonId']['in'] as string[]);
+      expect(asked.filter((id) => own.has(id))).toEqual([]);
+    });
   });
 });

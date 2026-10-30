@@ -57,7 +57,12 @@ export interface ClassBookLesson {
    * klassbok was read is a 409 and not removed unseen.
    */
   logUpdatedAt: string | null;
-  /** Another group's lesson: how many of this class's pupils are on it. Null for the group's own. */
+  /**
+   * Another group's lesson: how many of this class's pupils are on it. Null
+   * for the group's own, which holds the class — unless a replacing group
+   * takes some of it off (Elevlistan i uppföljningen: SvA7's pupils are not
+   * on 7A's svenska), and then the count of those it holds.
+   */
   attending: number | null;
 }
 
@@ -153,10 +158,29 @@ export class ClassBookService {
       const own = (lesson: (typeof candidates)[number]) =>
         lesson.studentGroupId === group.id || lesson.extraGroups.some((row) => row.studentGroupId === group.id);
       const others = candidates.filter((lesson) => !own(lesson));
+      // The class's own lessons in a subject that a group of its pupils
+      // replaces: the roster reader says how many of the class each holds.
+      // Asked only of those lessons, and only when such a group exists.
+      const replacedSubjects =
+        pupils.length === 0
+          ? new Set<string>()
+          : new Set(
+              ((await tx.studentGroup.findMany({
+                where: { replacesSubjectId: { not: null }, teachingMembers: { some: { studentId: { in: pupils } } } },
+                select: { replacesSubjectId: true },
+              })) ?? []).map((row) => row.replacesSubjectId),
+            );
+      const ownReplaced = candidates.filter((lesson) => own(lesson) && replacedSubjects.has(lesson.subjectId));
+      const rostered = [...others, ...ownReplaced];
       const rosters =
-        others.length > 0 && pupils.length > 0
-          ? await calendarLessonRosters(tx, others, { pupils: 'ACTIVE', among: pupils })
+        rostered.length > 0 && pupils.length > 0
+          ? await calendarLessonRosters(tx, rostered, { pupils: 'ACTIVE', among: pupils })
           : new Map<string, Set<string>>();
+      /** A lesson of the class's own: null while it holds the whole class, as before. */
+      const ownCount = (lessonId: string): number | null => {
+        const held = rosters.get(lessonId)?.size;
+        return held !== undefined && held < pupils.length ? held : null;
+      };
       const lessons = candidates.filter((lesson) => own(lesson) || (rosters.get(lesson.id)?.size ?? 0) > 0);
 
       const logs =
@@ -191,7 +215,7 @@ export class ClassBookService {
           topic: logOf.get(lesson.id)?.topic ?? null,
           homework: logOf.get(lesson.id)?.homework ?? null,
           logUpdatedAt: logOf.get(lesson.id)?.updatedAt.toISOString() ?? null,
-          attending: own(lesson) ? null : (rosters.get(lesson.id)?.size ?? 0),
+          attending: own(lesson) ? ownCount(lesson.id) : (rosters.get(lesson.id)?.size ?? 0),
         })),
       };
     });
