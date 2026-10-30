@@ -14372,7 +14372,7 @@
    }
   },
   {
-   "name": "halvklass: the other half does not read the two the other way round — 6N:2 reads no slöjd, 6P:2 no hemkunskap in 6P:1's slöjd spring, 6U:2 no slöjd in 6U:1's hemkunskap autumn: double planned",
+   "name": "halvklass: the other half does not read the two the other way round — 6N:2 reads no slöjd, 6P:2 no hemkunskap in 6P:1's slöjd spring, 6U:2 no slöjd in 6U:1's hemkunskap autumn, 6W's mirror split over two halves, 6X:2's slöjd in a third period: double planned",
    "input": {
     "year": {
      "startDate": "2026-08-17",
@@ -14478,6 +14478,53 @@
       "kind": "TEACHING_GROUP",
       "gradeLevel": 6,
       "halfOfId": "00000000-0000-4000-8000-000000002206"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002209",
+      "name": "6W",
+      "kind": "CLASS",
+      "gradeLevel": 6
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002210",
+      "name": "6W:1",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 6,
+      "halfOfId": "00000000-0000-4000-8000-000000002209"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002211",
+      "name": "6W:2",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 6,
+      "halfOfId": "00000000-0000-4000-8000-000000002209"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002212",
+      "name": "6W:3",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 6,
+      "halfOfId": "00000000-0000-4000-8000-000000002209"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002213",
+      "name": "6X",
+      "kind": "CLASS",
+      "gradeLevel": 6
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002214",
+      "name": "6X:1",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 6,
+      "halfOfId": "00000000-0000-4000-8000-000000002213"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002215",
+      "name": "6X:2",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 6,
+      "halfOfId": "00000000-0000-4000-8000-000000002213"
      }
     ],
     "requirements": [
@@ -14620,6 +14667,106 @@
       "recurrence": "ALL_WEEKS",
       "startDate": "2027-01-11",
       "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002414",
+      "studentGroupId": "00000000-0000-4000-8000-000000002209",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 2,
+      "minutesPerLesson": 25,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002415",
+      "studentGroupId": "00000000-0000-4000-8000-000000002210",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002416",
+      "studentGroupId": "00000000-0000-4000-8000-000000002210",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002417",
+      "studentGroupId": "00000000-0000-4000-8000-000000002211",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002418",
+      "studentGroupId": "00000000-0000-4000-8000-000000002212",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002419",
+      "studentGroupId": "00000000-0000-4000-8000-000000002213",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 2,
+      "minutesPerLesson": 25,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002420",
+      "studentGroupId": "00000000-0000-4000-8000-000000002214",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2026-10-25"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002421",
+      "studentGroupId": "00000000-0000-4000-8000-000000002214",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2026-10-26",
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002422",
+      "studentGroupId": "00000000-0000-4000-8000-000000002215",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002423",
+      "studentGroupId": "00000000-0000-4000-8000-000000002215",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2026-10-26",
+      "endDate": "2027-01-10"
      }
     ],
     "pupils": [
@@ -14656,6 +14803,20 @@
       "homeGroupId": "00000000-0000-4000-8000-000000002206",
       "groupIds": [
        "00000000-0000-4000-8000-000000002207"
+      ]
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002605",
+      "homeGroupId": "00000000-0000-4000-8000-000000002209",
+      "groupIds": [
+       "00000000-0000-4000-8000-000000002210"
+      ]
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002606",
+      "homeGroupId": "00000000-0000-4000-8000-000000002213",
+      "groupIds": [
+       "00000000-0000-4000-8000-000000002214"
       ]
      }
     ],
@@ -14849,6 +15010,128 @@
         }
        }
       ]
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002209",
+      "gradeLevel": 6,
+      "localTimplanId": "00000000-0000-4000-8000-000000002101",
+      "planStatus": "DECIDED",
+      "plannedMinutesPerWeek": 50,
+      "targetMinutesPerWeek": 110,
+      "plannedHours": 35.8,
+      "targetHours": 78.8,
+      "linesWithTarget": 2,
+      "linesCovered": 2,
+      "pupilCount": 1,
+      "lines": [
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002002",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002002"
+        ],
+        "targetMinutesPerWeek": 30,
+        "plannedMinutesPerWeek": 0,
+        "deltaMinutesPerWeek": -30,
+        "targetHours": 21.5,
+        "plannedHours": 0,
+        "status": "PUPILS",
+        "covered": true,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002210"
+        ],
+        "pupils": {
+         "min": 34,
+         "median": 34,
+         "max": 34,
+         "below": 0
+        }
+       },
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002001",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002001"
+        ],
+        "targetMinutesPerWeek": 80,
+        "plannedMinutesPerWeek": 50,
+        "deltaMinutesPerWeek": -30,
+        "targetHours": 57.3,
+        "plannedHours": 35.8,
+        "status": "PUPILS",
+        "covered": true,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002210"
+        ],
+        "pupils": {
+         "min": 86,
+         "median": 86,
+         "max": 86,
+         "below": 0
+        }
+       }
+      ]
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002213",
+      "gradeLevel": 6,
+      "localTimplanId": "00000000-0000-4000-8000-000000002101",
+      "planStatus": "DECIDED",
+      "plannedMinutesPerWeek": 50,
+      "targetMinutesPerWeek": 110,
+      "plannedHours": 35.8,
+      "targetHours": 78.8,
+      "linesWithTarget": 2,
+      "linesCovered": 0,
+      "pupilCount": 1,
+      "lines": [
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002002",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002002"
+        ],
+        "targetMinutesPerWeek": 30,
+        "plannedMinutesPerWeek": 0,
+        "deltaMinutesPerWeek": -30,
+        "targetHours": 21.5,
+        "plannedHours": 0,
+        "status": "PUPILS",
+        "covered": false,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002214"
+        ],
+        "pupils": {
+         "min": 16,
+         "median": 16,
+         "max": 16,
+         "below": 1
+        }
+       },
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002001",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002001"
+        ],
+        "targetMinutesPerWeek": 80,
+        "plannedMinutesPerWeek": 50,
+        "deltaMinutesPerWeek": -30,
+        "targetHours": 57.3,
+        "plannedHours": 35.8,
+        "status": "PUPILS",
+        "covered": false,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002214"
+        ],
+        "pupils": {
+         "min": 68,
+         "median": 68,
+         "max": 68,
+         "below": 1
+        }
+       }
+      ]
      }
     ],
     "cells": [
@@ -14921,6 +15204,54 @@
       "plannedHours": 35.8,
       "requirementIds": [
        "00000000-0000-4000-8000-000000002409"
+      ],
+      "status": "PUPILS"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002209",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 30,
+      "plannedMinutesPerWeek": 0,
+      "targetHours": 21.5,
+      "plannedHours": 0,
+      "requirementIds": [],
+      "status": "PUPILS"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002209",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 80,
+      "plannedMinutesPerWeek": 50,
+      "targetHours": 57.3,
+      "plannedHours": 35.8,
+      "requirementIds": [
+       "00000000-0000-4000-8000-000000002414"
+      ],
+      "status": "PUPILS"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002213",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 30,
+      "plannedMinutesPerWeek": 0,
+      "targetHours": 21.5,
+      "plannedHours": 0,
+      "requirementIds": [],
+      "status": "PUPILS"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002213",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 80,
+      "plannedMinutesPerWeek": 50,
+      "targetHours": 57.3,
+      "plannedHours": 35.8,
+      "requirementIds": [
+       "00000000-0000-4000-8000-000000002419"
       ],
       "status": "PUPILS"
      }
@@ -15076,10 +15407,95 @@
         "alternativeSubjectIds": []
        }
       ]
+     },
+     {
+      "pupilId": "00000000-0000-4000-8000-000000002605",
+      "homeGroupId": "00000000-0000-4000-8000-000000002209",
+      "gradeLevel": 6,
+      "lines": [
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002001",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002001"
+        ],
+        "targetMinutesPerWeek": 80,
+        "plannedMinutesPerWeek": 86,
+        "status": "MET",
+        "sources": [
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000002209",
+          "subjectId": "00000000-0000-4000-8000-000000002001",
+          "minutesPerWeek": 50
+         },
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000002210",
+          "subjectId": "00000000-0000-4000-8000-000000002001",
+          "minutesPerWeek": 36
+         }
+        ],
+        "doublePlannedSubjectIds": [
+         "00000000-0000-4000-8000-000000002001"
+        ],
+        "alternativeSubjectIds": []
+       }
+      ]
+     },
+     {
+      "pupilId": "00000000-0000-4000-8000-000000002606",
+      "homeGroupId": "00000000-0000-4000-8000-000000002213",
+      "gradeLevel": 6,
+      "lines": [
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002002",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002002"
+        ],
+        "targetMinutesPerWeek": 30,
+        "plannedMinutesPerWeek": 16,
+        "status": "UNDER",
+        "sources": [
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000002214",
+          "subjectId": "00000000-0000-4000-8000-000000002002",
+          "minutesPerWeek": 16
+         }
+        ],
+        "doublePlannedSubjectIds": [],
+        "alternativeSubjectIds": []
+       },
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002001",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002001"
+        ],
+        "targetMinutesPerWeek": 80,
+        "plannedMinutesPerWeek": 68,
+        "status": "UNDER",
+        "sources": [
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000002213",
+          "subjectId": "00000000-0000-4000-8000-000000002001",
+          "minutesPerWeek": 50
+         },
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000002214",
+          "subjectId": "00000000-0000-4000-8000-000000002001",
+          "minutesPerWeek": 18
+         }
+        ],
+        "doublePlannedSubjectIds": [
+         "00000000-0000-4000-8000-000000002001"
+        ],
+        "alternativeSubjectIds": []
+       }
+      ]
      }
     ],
-    "pupilCount": 5,
-    "pupilsBelowTarget": 1,
+    "pupilCount": 7,
+    "pupilsBelowTarget": 2,
     "pupilsOutsideClasses": 0,
     "verdicts": [
      {
@@ -15097,6 +15513,40 @@
        "targetMinutesPerWeek": 30,
        "plannedMinutesPerWeek": 15,
        "deficitMinutesPerWeek": 15
+      }
+     },
+     {
+      "code": "TIMPLAN_PUPIL_UNDERPLANNED",
+      "severity": "warning",
+      "pupilId": "00000000-0000-4000-8000-000000002606",
+      "studentGroupId": "00000000-0000-4000-8000-000000002213",
+      "subjectIds": [
+       "00000000-0000-4000-8000-000000002002"
+      ],
+      "params": {
+       "groupName": "6X",
+       "gradeLevel": 6,
+       "subjectName": "Hem- och konsumentkunskap",
+       "targetMinutesPerWeek": 30,
+       "plannedMinutesPerWeek": 16,
+       "deficitMinutesPerWeek": 14
+      }
+     },
+     {
+      "code": "TIMPLAN_PUPIL_UNDERPLANNED",
+      "severity": "warning",
+      "pupilId": "00000000-0000-4000-8000-000000002606",
+      "studentGroupId": "00000000-0000-4000-8000-000000002213",
+      "subjectIds": [
+       "00000000-0000-4000-8000-000000002001"
+      ],
+      "params": {
+       "groupName": "6X",
+       "gradeLevel": 6,
+       "subjectName": "Slöjd",
+       "targetMinutesPerWeek": 80,
+       "plannedMinutesPerWeek": 68,
+       "deficitMinutesPerWeek": 12
       }
      },
      {
@@ -15173,6 +15623,44 @@
        "subjectName": "Slöjd",
        "groupNames": "6U, 6U:1",
        "plannedMinutesPerWeek": 86
+      }
+     },
+     {
+      "code": "TIMPLAN_PUPIL_DOUBLE_PLANNED",
+      "severity": "warning",
+      "pupilId": "00000000-0000-4000-8000-000000002605",
+      "studentGroupId": "00000000-0000-4000-8000-000000002209",
+      "studentGroupIds": [
+       "00000000-0000-4000-8000-000000002209",
+       "00000000-0000-4000-8000-000000002210"
+      ],
+      "subjectIds": [
+       "00000000-0000-4000-8000-000000002001"
+      ],
+      "params": {
+       "groupName": "6W",
+       "subjectName": "Slöjd",
+       "groupNames": "6W, 6W:1",
+       "plannedMinutesPerWeek": 86
+      }
+     },
+     {
+      "code": "TIMPLAN_PUPIL_DOUBLE_PLANNED",
+      "severity": "warning",
+      "pupilId": "00000000-0000-4000-8000-000000002606",
+      "studentGroupId": "00000000-0000-4000-8000-000000002213",
+      "studentGroupIds": [
+       "00000000-0000-4000-8000-000000002213",
+       "00000000-0000-4000-8000-000000002214"
+      ],
+      "subjectIds": [
+       "00000000-0000-4000-8000-000000002001"
+      ],
+      "params": {
+       "groupName": "6X",
+       "subjectName": "Slöjd",
+       "groupNames": "6X, 6X:1",
+       "plannedMinutesPerWeek": 68
       }
      }
     ]
@@ -16004,7 +16492,3034 @@
    }
   },
   {
-   "name": "halvklass: the swap with the half's slöjd in another week than its hemkunskap — more lessons, shorter lessons, lessons of two lengths, odd weeks: double planned",
+   "name": "halvklass: two swaps on the same halves in one week — hemkunskap for slöjd and bild for teknik, either way round, a third for matematik, and one where the first partner that fits is the wrong one: each kept subject has a partner of its own, so none is double planned",
+   "input": {
+    "year": {
+     "startDate": "2026-08-17",
+     "endDate": "2027-06-11"
+    },
+    "closures": [],
+    "plans": [
+     {
+      "id": "00000000-0000-4000-8000-000000002101",
+      "name": "Grundskolan 2024",
+      "status": "DECIDED",
+      "entries": [
+       {
+        "subjectId": "00000000-0000-4000-8000-000000002001",
+        "gradeLevel": 6,
+        "minutesPerWeek": 80
+       },
+       {
+        "subjectId": "00000000-0000-4000-8000-000000002002",
+        "gradeLevel": 6,
+        "minutesPerWeek": 30
+       },
+       {
+        "subjectId": "00000000-0000-4000-8000-000000002003",
+        "gradeLevel": 6,
+        "minutesPerWeek": 60
+       },
+       {
+        "subjectId": "00000000-0000-4000-8000-000000002004",
+        "gradeLevel": 6,
+        "minutesPerWeek": 180
+       }
+      ]
+     }
+    ],
+    "attachments": [
+     {
+      "gradeLevel": 6,
+      "localTimplanId": "00000000-0000-4000-8000-000000002101"
+     }
+    ],
+    "subjects": [
+     {
+      "id": "00000000-0000-4000-8000-000000002001",
+      "name": "Slöjd",
+      "nationalCode": "SL",
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002002",
+      "name": "Hem- och konsumentkunskap",
+      "nationalCode": "HKK",
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002003",
+      "name": "Teknik",
+      "nationalCode": "TK",
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002004",
+      "name": "Matematik",
+      "nationalCode": "MA",
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002010",
+      "name": "Bild",
+      "nationalCode": "BL",
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002011",
+      "name": "Musik",
+      "nationalCode": "MU",
+      "countsTowardTimplan": true
+     }
+    ],
+    "groups": [
+     {
+      "id": "00000000-0000-4000-8000-000000002200",
+      "name": "6A",
+      "kind": "CLASS",
+      "gradeLevel": 6
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002201",
+      "name": "6A:1",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 6,
+      "halfOfId": "00000000-0000-4000-8000-000000002200"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002202",
+      "name": "6A:2",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 6,
+      "halfOfId": "00000000-0000-4000-8000-000000002200"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002203",
+      "name": "6B",
+      "kind": "CLASS",
+      "gradeLevel": 6
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002204",
+      "name": "6B:1",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 6,
+      "halfOfId": "00000000-0000-4000-8000-000000002203"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002205",
+      "name": "6B:2",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 6,
+      "halfOfId": "00000000-0000-4000-8000-000000002203"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002206",
+      "name": "6C",
+      "kind": "CLASS",
+      "gradeLevel": 6
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002207",
+      "name": "6C:1",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 6,
+      "halfOfId": "00000000-0000-4000-8000-000000002206"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002208",
+      "name": "6C:2",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 6,
+      "halfOfId": "00000000-0000-4000-8000-000000002206"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002209",
+      "name": "6D",
+      "kind": "CLASS",
+      "gradeLevel": 6
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002210",
+      "name": "6D:1",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 6,
+      "halfOfId": "00000000-0000-4000-8000-000000002209"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002211",
+      "name": "6D:2",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 6,
+      "halfOfId": "00000000-0000-4000-8000-000000002209"
+     }
+    ],
+    "requirements": [
+     {
+      "id": "00000000-0000-4000-8000-000000002400",
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 2,
+      "minutesPerLesson": 25,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002401",
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "subjectId": "00000000-0000-4000-8000-000000002003",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 30,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002402",
+      "studentGroupId": "00000000-0000-4000-8000-000000002201",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002403",
+      "studentGroupId": "00000000-0000-4000-8000-000000002201",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002404",
+      "studentGroupId": "00000000-0000-4000-8000-000000002202",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002405",
+      "studentGroupId": "00000000-0000-4000-8000-000000002202",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002406",
+      "studentGroupId": "00000000-0000-4000-8000-000000002201",
+      "subjectId": "00000000-0000-4000-8000-000000002010",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002407",
+      "studentGroupId": "00000000-0000-4000-8000-000000002201",
+      "subjectId": "00000000-0000-4000-8000-000000002003",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002408",
+      "studentGroupId": "00000000-0000-4000-8000-000000002202",
+      "subjectId": "00000000-0000-4000-8000-000000002003",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002409",
+      "studentGroupId": "00000000-0000-4000-8000-000000002202",
+      "subjectId": "00000000-0000-4000-8000-000000002010",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002410",
+      "studentGroupId": "00000000-0000-4000-8000-000000002203",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 2,
+      "minutesPerLesson": 25,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002411",
+      "studentGroupId": "00000000-0000-4000-8000-000000002203",
+      "subjectId": "00000000-0000-4000-8000-000000002003",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 30,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002412",
+      "studentGroupId": "00000000-0000-4000-8000-000000002204",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002413",
+      "studentGroupId": "00000000-0000-4000-8000-000000002204",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002414",
+      "studentGroupId": "00000000-0000-4000-8000-000000002205",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002415",
+      "studentGroupId": "00000000-0000-4000-8000-000000002205",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002416",
+      "studentGroupId": "00000000-0000-4000-8000-000000002204",
+      "subjectId": "00000000-0000-4000-8000-000000002010",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002417",
+      "studentGroupId": "00000000-0000-4000-8000-000000002204",
+      "subjectId": "00000000-0000-4000-8000-000000002003",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002418",
+      "studentGroupId": "00000000-0000-4000-8000-000000002205",
+      "subjectId": "00000000-0000-4000-8000-000000002003",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002419",
+      "studentGroupId": "00000000-0000-4000-8000-000000002205",
+      "subjectId": "00000000-0000-4000-8000-000000002010",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002420",
+      "studentGroupId": "00000000-0000-4000-8000-000000002206",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 2,
+      "minutesPerLesson": 25,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002421",
+      "studentGroupId": "00000000-0000-4000-8000-000000002206",
+      "subjectId": "00000000-0000-4000-8000-000000002003",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 30,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002422",
+      "studentGroupId": "00000000-0000-4000-8000-000000002206",
+      "subjectId": "00000000-0000-4000-8000-000000002004",
+      "lessonsPerWeek": 3,
+      "minutesPerLesson": 60,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002423",
+      "studentGroupId": "00000000-0000-4000-8000-000000002207",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002424",
+      "studentGroupId": "00000000-0000-4000-8000-000000002207",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002425",
+      "studentGroupId": "00000000-0000-4000-8000-000000002208",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002426",
+      "studentGroupId": "00000000-0000-4000-8000-000000002208",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002427",
+      "studentGroupId": "00000000-0000-4000-8000-000000002207",
+      "subjectId": "00000000-0000-4000-8000-000000002010",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002428",
+      "studentGroupId": "00000000-0000-4000-8000-000000002207",
+      "subjectId": "00000000-0000-4000-8000-000000002003",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002429",
+      "studentGroupId": "00000000-0000-4000-8000-000000002208",
+      "subjectId": "00000000-0000-4000-8000-000000002003",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002430",
+      "studentGroupId": "00000000-0000-4000-8000-000000002208",
+      "subjectId": "00000000-0000-4000-8000-000000002010",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002431",
+      "studentGroupId": "00000000-0000-4000-8000-000000002207",
+      "subjectId": "00000000-0000-4000-8000-000000002011",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002432",
+      "studentGroupId": "00000000-0000-4000-8000-000000002207",
+      "subjectId": "00000000-0000-4000-8000-000000002004",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002433",
+      "studentGroupId": "00000000-0000-4000-8000-000000002208",
+      "subjectId": "00000000-0000-4000-8000-000000002004",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002434",
+      "studentGroupId": "00000000-0000-4000-8000-000000002208",
+      "subjectId": "00000000-0000-4000-8000-000000002011",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002435",
+      "studentGroupId": "00000000-0000-4000-8000-000000002209",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 2,
+      "minutesPerLesson": 25,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002436",
+      "studentGroupId": "00000000-0000-4000-8000-000000002209",
+      "subjectId": "00000000-0000-4000-8000-000000002003",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 30,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002437",
+      "studentGroupId": "00000000-0000-4000-8000-000000002210",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002438",
+      "studentGroupId": "00000000-0000-4000-8000-000000002210",
+      "subjectId": "00000000-0000-4000-8000-000000002003",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002439",
+      "studentGroupId": "00000000-0000-4000-8000-000000002210",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2026-10-26",
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002440",
+      "studentGroupId": "00000000-0000-4000-8000-000000002210",
+      "subjectId": "00000000-0000-4000-8000-000000002010",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2026-10-25"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002441",
+      "studentGroupId": "00000000-0000-4000-8000-000000002211",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002442",
+      "studentGroupId": "00000000-0000-4000-8000-000000002211",
+      "subjectId": "00000000-0000-4000-8000-000000002003",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2026-10-26",
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002443",
+      "studentGroupId": "00000000-0000-4000-8000-000000002211",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002444",
+      "studentGroupId": "00000000-0000-4000-8000-000000002211",
+      "subjectId": "00000000-0000-4000-8000-000000002010",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     }
+    ],
+    "pupils": [
+     {
+      "id": "00000000-0000-4000-8000-000000002600",
+      "homeGroupId": "00000000-0000-4000-8000-000000002200",
+      "groupIds": [
+       "00000000-0000-4000-8000-000000002201"
+      ]
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002601",
+      "homeGroupId": "00000000-0000-4000-8000-000000002200",
+      "groupIds": [
+       "00000000-0000-4000-8000-000000002202"
+      ]
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002602",
+      "homeGroupId": "00000000-0000-4000-8000-000000002203",
+      "groupIds": [
+       "00000000-0000-4000-8000-000000002204"
+      ]
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002603",
+      "homeGroupId": "00000000-0000-4000-8000-000000002203",
+      "groupIds": [
+       "00000000-0000-4000-8000-000000002205"
+      ]
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002604",
+      "homeGroupId": "00000000-0000-4000-8000-000000002206",
+      "groupIds": [
+       "00000000-0000-4000-8000-000000002207"
+      ]
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002605",
+      "homeGroupId": "00000000-0000-4000-8000-000000002206",
+      "groupIds": [
+       "00000000-0000-4000-8000-000000002208"
+      ]
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002606",
+      "homeGroupId": "00000000-0000-4000-8000-000000002209",
+      "groupIds": [
+       "00000000-0000-4000-8000-000000002210"
+      ]
+     }
+    ],
+    "includePupils": true
+   },
+   "coverage": {
+    "pupilLevel": true,
+    "groups": [
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "gradeLevel": 6,
+      "localTimplanId": "00000000-0000-4000-8000-000000002101",
+      "planStatus": "DECIDED",
+      "plannedMinutesPerWeek": 80,
+      "targetMinutesPerWeek": 350,
+      "plannedHours": 57.3,
+      "targetHours": 250.8,
+      "linesWithTarget": 4,
+      "linesCovered": 3,
+      "pupilCount": 2,
+      "lines": [
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002002",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002002"
+        ],
+        "targetMinutesPerWeek": 30,
+        "plannedMinutesPerWeek": 0,
+        "deltaMinutesPerWeek": -30,
+        "targetHours": 21.5,
+        "plannedHours": 0,
+        "status": "PUPILS",
+        "covered": true,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002201",
+         "00000000-0000-4000-8000-000000002202"
+        ],
+        "pupils": {
+         "min": 34,
+         "median": 35,
+         "max": 36,
+         "below": 0
+        }
+       },
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002004",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002004"
+        ],
+        "targetMinutesPerWeek": 180,
+        "plannedMinutesPerWeek": 0,
+        "deltaMinutesPerWeek": -180,
+        "targetHours": 129,
+        "plannedHours": 0,
+        "status": "UNPLANNED",
+        "covered": false,
+        "teachingGroupIds": [],
+        "pupils": {
+         "min": 0,
+         "median": 0,
+         "max": 0,
+         "below": 2
+        }
+       },
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002001",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002001"
+        ],
+        "targetMinutesPerWeek": 80,
+        "plannedMinutesPerWeek": 50,
+        "deltaMinutesPerWeek": -30,
+        "targetHours": 57.3,
+        "plannedHours": 35.8,
+        "status": "PUPILS",
+        "covered": true,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002201",
+         "00000000-0000-4000-8000-000000002202"
+        ],
+        "pupils": {
+         "min": 84,
+         "median": 85,
+         "max": 86,
+         "below": 0
+        }
+       },
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002003",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002003"
+        ],
+        "targetMinutesPerWeek": 60,
+        "plannedMinutesPerWeek": 30,
+        "deltaMinutesPerWeek": -30,
+        "targetHours": 43,
+        "plannedHours": 21.5,
+        "status": "PUPILS",
+        "covered": true,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002201",
+         "00000000-0000-4000-8000-000000002202"
+        ],
+        "pupils": {
+         "min": 64,
+         "median": 65,
+         "max": 66,
+         "below": 0
+        }
+       }
+      ]
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002203",
+      "gradeLevel": 6,
+      "localTimplanId": "00000000-0000-4000-8000-000000002101",
+      "planStatus": "DECIDED",
+      "plannedMinutesPerWeek": 80,
+      "targetMinutesPerWeek": 350,
+      "plannedHours": 57.3,
+      "targetHours": 250.8,
+      "linesWithTarget": 4,
+      "linesCovered": 3,
+      "pupilCount": 2,
+      "lines": [
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002002",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002002"
+        ],
+        "targetMinutesPerWeek": 30,
+        "plannedMinutesPerWeek": 0,
+        "deltaMinutesPerWeek": -30,
+        "targetHours": 21.5,
+        "plannedHours": 0,
+        "status": "PUPILS",
+        "covered": true,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002204",
+         "00000000-0000-4000-8000-000000002205"
+        ],
+        "pupils": {
+         "min": 34,
+         "median": 35,
+         "max": 36,
+         "below": 0
+        }
+       },
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002004",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002004"
+        ],
+        "targetMinutesPerWeek": 180,
+        "plannedMinutesPerWeek": 0,
+        "deltaMinutesPerWeek": -180,
+        "targetHours": 129,
+        "plannedHours": 0,
+        "status": "UNPLANNED",
+        "covered": false,
+        "teachingGroupIds": [],
+        "pupils": {
+         "min": 0,
+         "median": 0,
+         "max": 0,
+         "below": 2
+        }
+       },
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002001",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002001"
+        ],
+        "targetMinutesPerWeek": 80,
+        "plannedMinutesPerWeek": 50,
+        "deltaMinutesPerWeek": -30,
+        "targetHours": 57.3,
+        "plannedHours": 35.8,
+        "status": "PUPILS",
+        "covered": true,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002204",
+         "00000000-0000-4000-8000-000000002205"
+        ],
+        "pupils": {
+         "min": 84,
+         "median": 85,
+         "max": 86,
+         "below": 0
+        }
+       },
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002003",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002003"
+        ],
+        "targetMinutesPerWeek": 60,
+        "plannedMinutesPerWeek": 30,
+        "deltaMinutesPerWeek": -30,
+        "targetHours": 43,
+        "plannedHours": 21.5,
+        "status": "PUPILS",
+        "covered": true,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002204",
+         "00000000-0000-4000-8000-000000002205"
+        ],
+        "pupils": {
+         "min": 64,
+         "median": 65,
+         "max": 66,
+         "below": 0
+        }
+       }
+      ]
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002206",
+      "gradeLevel": 6,
+      "localTimplanId": "00000000-0000-4000-8000-000000002101",
+      "planStatus": "DECIDED",
+      "plannedMinutesPerWeek": 260,
+      "targetMinutesPerWeek": 350,
+      "plannedHours": 186.3,
+      "targetHours": 250.8,
+      "linesWithTarget": 4,
+      "linesCovered": 4,
+      "pupilCount": 2,
+      "lines": [
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002002",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002002"
+        ],
+        "targetMinutesPerWeek": 30,
+        "plannedMinutesPerWeek": 0,
+        "deltaMinutesPerWeek": -30,
+        "targetHours": 21.5,
+        "plannedHours": 0,
+        "status": "PUPILS",
+        "covered": true,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002207",
+         "00000000-0000-4000-8000-000000002208"
+        ],
+        "pupils": {
+         "min": 34,
+         "median": 35,
+         "max": 36,
+         "below": 0
+        }
+       },
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002004",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002004"
+        ],
+        "targetMinutesPerWeek": 180,
+        "plannedMinutesPerWeek": 180,
+        "deltaMinutesPerWeek": 0,
+        "targetHours": 129,
+        "plannedHours": 129,
+        "status": "MET",
+        "covered": true,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002207",
+         "00000000-0000-4000-8000-000000002208"
+        ],
+        "pupils": {
+         "min": 214,
+         "median": 215,
+         "max": 216,
+         "below": 0
+        }
+       },
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002001",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002001"
+        ],
+        "targetMinutesPerWeek": 80,
+        "plannedMinutesPerWeek": 50,
+        "deltaMinutesPerWeek": -30,
+        "targetHours": 57.3,
+        "plannedHours": 35.8,
+        "status": "PUPILS",
+        "covered": true,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002207",
+         "00000000-0000-4000-8000-000000002208"
+        ],
+        "pupils": {
+         "min": 84,
+         "median": 85,
+         "max": 86,
+         "below": 0
+        }
+       },
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002003",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002003"
+        ],
+        "targetMinutesPerWeek": 60,
+        "plannedMinutesPerWeek": 30,
+        "deltaMinutesPerWeek": -30,
+        "targetHours": 43,
+        "plannedHours": 21.5,
+        "status": "PUPILS",
+        "covered": true,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002207",
+         "00000000-0000-4000-8000-000000002208"
+        ],
+        "pupils": {
+         "min": 64,
+         "median": 65,
+         "max": 66,
+         "below": 0
+        }
+       }
+      ]
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002209",
+      "gradeLevel": 6,
+      "localTimplanId": "00000000-0000-4000-8000-000000002101",
+      "planStatus": "DECIDED",
+      "plannedMinutesPerWeek": 80,
+      "targetMinutesPerWeek": 350,
+      "plannedHours": 57.3,
+      "targetHours": 250.8,
+      "linesWithTarget": 4,
+      "linesCovered": 2,
+      "pupilCount": 1,
+      "lines": [
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002002",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002002"
+        ],
+        "targetMinutesPerWeek": 30,
+        "plannedMinutesPerWeek": 0,
+        "deltaMinutesPerWeek": -30,
+        "targetHours": 21.5,
+        "plannedHours": 0,
+        "status": "PUPILS",
+        "covered": false,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002210"
+        ],
+        "pupils": {
+         "min": 18,
+         "median": 18,
+         "max": 18,
+         "below": 1
+        }
+       },
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002004",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002004"
+        ],
+        "targetMinutesPerWeek": 180,
+        "plannedMinutesPerWeek": 0,
+        "deltaMinutesPerWeek": -180,
+        "targetHours": 129,
+        "plannedHours": 0,
+        "status": "UNPLANNED",
+        "covered": false,
+        "teachingGroupIds": [],
+        "pupils": {
+         "min": 0,
+         "median": 0,
+         "max": 0,
+         "below": 1
+        }
+       },
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002001",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002001"
+        ],
+        "targetMinutesPerWeek": 80,
+        "plannedMinutesPerWeek": 50,
+        "deltaMinutesPerWeek": -30,
+        "targetHours": 57.3,
+        "plannedHours": 35.8,
+        "status": "PUPILS",
+        "covered": true,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002210"
+        ],
+        "pupils": {
+         "min": 86,
+         "median": 86,
+         "max": 86,
+         "below": 0
+        }
+       },
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002003",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002003"
+        ],
+        "targetMinutesPerWeek": 60,
+        "plannedMinutesPerWeek": 30,
+        "deltaMinutesPerWeek": -30,
+        "targetHours": 43,
+        "plannedHours": 21.5,
+        "status": "PUPILS",
+        "covered": true,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002210"
+        ],
+        "pupils": {
+         "min": 66,
+         "median": 66,
+         "max": 66,
+         "below": 0
+        }
+       }
+      ]
+     }
+    ],
+    "cells": [
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 30,
+      "plannedMinutesPerWeek": 0,
+      "targetHours": 21.5,
+      "plannedHours": 0,
+      "requirementIds": [],
+      "status": "PUPILS"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "subjectId": "00000000-0000-4000-8000-000000002004",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 180,
+      "plannedMinutesPerWeek": 0,
+      "targetHours": 129,
+      "plannedHours": 0,
+      "requirementIds": [],
+      "status": "UNPLANNED"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 80,
+      "plannedMinutesPerWeek": 50,
+      "targetHours": 57.3,
+      "plannedHours": 35.8,
+      "requirementIds": [
+       "00000000-0000-4000-8000-000000002400"
+      ],
+      "status": "PUPILS"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "subjectId": "00000000-0000-4000-8000-000000002003",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 60,
+      "plannedMinutesPerWeek": 30,
+      "targetHours": 43,
+      "plannedHours": 21.5,
+      "requirementIds": [
+       "00000000-0000-4000-8000-000000002401"
+      ],
+      "status": "PUPILS"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002203",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 30,
+      "plannedMinutesPerWeek": 0,
+      "targetHours": 21.5,
+      "plannedHours": 0,
+      "requirementIds": [],
+      "status": "PUPILS"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002203",
+      "subjectId": "00000000-0000-4000-8000-000000002004",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 180,
+      "plannedMinutesPerWeek": 0,
+      "targetHours": 129,
+      "plannedHours": 0,
+      "requirementIds": [],
+      "status": "UNPLANNED"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002203",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 80,
+      "plannedMinutesPerWeek": 50,
+      "targetHours": 57.3,
+      "plannedHours": 35.8,
+      "requirementIds": [
+       "00000000-0000-4000-8000-000000002410"
+      ],
+      "status": "PUPILS"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002203",
+      "subjectId": "00000000-0000-4000-8000-000000002003",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 60,
+      "plannedMinutesPerWeek": 30,
+      "targetHours": 43,
+      "plannedHours": 21.5,
+      "requirementIds": [
+       "00000000-0000-4000-8000-000000002411"
+      ],
+      "status": "PUPILS"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002206",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 30,
+      "plannedMinutesPerWeek": 0,
+      "targetHours": 21.5,
+      "plannedHours": 0,
+      "requirementIds": [],
+      "status": "PUPILS"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002206",
+      "subjectId": "00000000-0000-4000-8000-000000002004",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 180,
+      "plannedMinutesPerWeek": 180,
+      "targetHours": 129,
+      "plannedHours": 129,
+      "requirementIds": [
+       "00000000-0000-4000-8000-000000002422"
+      ],
+      "status": "MET"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002206",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 80,
+      "plannedMinutesPerWeek": 50,
+      "targetHours": 57.3,
+      "plannedHours": 35.8,
+      "requirementIds": [
+       "00000000-0000-4000-8000-000000002420"
+      ],
+      "status": "PUPILS"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002206",
+      "subjectId": "00000000-0000-4000-8000-000000002003",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 60,
+      "plannedMinutesPerWeek": 30,
+      "targetHours": 43,
+      "plannedHours": 21.5,
+      "requirementIds": [
+       "00000000-0000-4000-8000-000000002421"
+      ],
+      "status": "PUPILS"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002209",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 30,
+      "plannedMinutesPerWeek": 0,
+      "targetHours": 21.5,
+      "plannedHours": 0,
+      "requirementIds": [],
+      "status": "PUPILS"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002209",
+      "subjectId": "00000000-0000-4000-8000-000000002004",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 180,
+      "plannedMinutesPerWeek": 0,
+      "targetHours": 129,
+      "plannedHours": 0,
+      "requirementIds": [],
+      "status": "UNPLANNED"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002209",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 80,
+      "plannedMinutesPerWeek": 50,
+      "targetHours": 57.3,
+      "plannedHours": 35.8,
+      "requirementIds": [
+       "00000000-0000-4000-8000-000000002435"
+      ],
+      "status": "PUPILS"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002209",
+      "subjectId": "00000000-0000-4000-8000-000000002003",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 60,
+      "plannedMinutesPerWeek": 30,
+      "targetHours": 43,
+      "plannedHours": 21.5,
+      "requirementIds": [
+       "00000000-0000-4000-8000-000000002436"
+      ],
+      "status": "PUPILS"
+     }
+    ],
+    "pupils": [
+     {
+      "pupilId": "00000000-0000-4000-8000-000000002606",
+      "homeGroupId": "00000000-0000-4000-8000-000000002209",
+      "gradeLevel": 6,
+      "lines": [
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002002",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002002"
+        ],
+        "targetMinutesPerWeek": 30,
+        "plannedMinutesPerWeek": 18,
+        "status": "UNDER",
+        "sources": [
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000002210",
+          "subjectId": "00000000-0000-4000-8000-000000002002",
+          "minutesPerWeek": 18
+         }
+        ],
+        "doublePlannedSubjectIds": [],
+        "alternativeSubjectIds": []
+       }
+      ]
+     }
+    ],
+    "pupilCount": 7,
+    "pupilsBelowTarget": 5,
+    "pupilsOutsideClasses": 0,
+    "verdicts": [
+     {
+      "code": "TIMPLAN_GROUP_UNPLANNED",
+      "severity": "warning",
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "subjectIds": [
+       "00000000-0000-4000-8000-000000002004"
+      ],
+      "params": {
+       "groupName": "6A",
+       "gradeLevel": 6,
+       "subjectName": "Matematik",
+       "targetMinutesPerWeek": 180,
+       "plannedMinutesPerWeek": 0,
+       "deficitMinutesPerWeek": 180
+      }
+     },
+     {
+      "code": "TIMPLAN_GROUP_UNPLANNED",
+      "severity": "warning",
+      "studentGroupId": "00000000-0000-4000-8000-000000002203",
+      "subjectIds": [
+       "00000000-0000-4000-8000-000000002004"
+      ],
+      "params": {
+       "groupName": "6B",
+       "gradeLevel": 6,
+       "subjectName": "Matematik",
+       "targetMinutesPerWeek": 180,
+       "plannedMinutesPerWeek": 0,
+       "deficitMinutesPerWeek": 180
+      }
+     },
+     {
+      "code": "TIMPLAN_GROUP_UNPLANNED",
+      "severity": "warning",
+      "studentGroupId": "00000000-0000-4000-8000-000000002209",
+      "subjectIds": [
+       "00000000-0000-4000-8000-000000002004"
+      ],
+      "params": {
+       "groupName": "6D",
+       "gradeLevel": 6,
+       "subjectName": "Matematik",
+       "targetMinutesPerWeek": 180,
+       "plannedMinutesPerWeek": 0,
+       "deficitMinutesPerWeek": 180
+      }
+     },
+     {
+      "code": "TIMPLAN_PUPIL_UNDERPLANNED",
+      "severity": "warning",
+      "pupilId": "00000000-0000-4000-8000-000000002606",
+      "studentGroupId": "00000000-0000-4000-8000-000000002209",
+      "subjectIds": [
+       "00000000-0000-4000-8000-000000002002"
+      ],
+      "params": {
+       "groupName": "6D",
+       "gradeLevel": 6,
+       "subjectName": "Hem- och konsumentkunskap",
+       "targetMinutesPerWeek": 30,
+       "plannedMinutesPerWeek": 18,
+       "deficitMinutesPerWeek": 12
+      }
+     }
+    ]
+   }
+  },
+  {
+   "name": "halvklass: svenska in turn in the swap's week beside 6A's svenska — the pupil in SvA6 reads neither, so their slöjd keeps its partner; the other reads svenska twice: double planned in svenska and slöjd",
+   "input": {
+    "year": {
+     "startDate": "2026-08-17",
+     "endDate": "2027-06-11"
+    },
+    "closures": [],
+    "plans": [
+     {
+      "id": "00000000-0000-4000-8000-000000002101",
+      "name": "Grundskolan 2024",
+      "status": "DECIDED",
+      "entries": [
+       {
+        "subjectId": "00000000-0000-4000-8000-000000002001",
+        "gradeLevel": 6,
+        "minutesPerWeek": 80
+       },
+       {
+        "subjectId": "00000000-0000-4000-8000-000000002002",
+        "gradeLevel": 6,
+        "minutesPerWeek": 30
+       },
+       {
+        "subjectId": "00000000-0000-4000-8000-000000002005",
+        "gradeLevel": 6,
+        "minutesPerWeek": 180
+       },
+       {
+        "subjectId": "00000000-0000-4000-8000-000000002012",
+        "gradeLevel": 6,
+        "minutesPerWeek": 180
+       }
+      ]
+     }
+    ],
+    "attachments": [
+     {
+      "gradeLevel": 6,
+      "localTimplanId": "00000000-0000-4000-8000-000000002101"
+     }
+    ],
+    "subjects": [
+     {
+      "id": "00000000-0000-4000-8000-000000002001",
+      "name": "Slöjd",
+      "nationalCode": "SL",
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002002",
+      "name": "Hem- och konsumentkunskap",
+      "nationalCode": "HKK",
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002005",
+      "name": "Svenska",
+      "nationalCode": "SV_SVA",
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002012",
+      "name": "Svenska som andraspråk",
+      "nationalCode": "SV_SVA",
+      "countsTowardTimplan": true
+     }
+    ],
+    "groups": [
+     {
+      "id": "00000000-0000-4000-8000-000000002200",
+      "name": "6A",
+      "kind": "CLASS",
+      "gradeLevel": 6
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002201",
+      "name": "6A:1",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 6,
+      "halfOfId": "00000000-0000-4000-8000-000000002200"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002202",
+      "name": "6A:2",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 6,
+      "halfOfId": "00000000-0000-4000-8000-000000002200"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002203",
+      "name": "SvA6",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": null,
+      "replacesSubjectId": "00000000-0000-4000-8000-000000002005"
+     }
+    ],
+    "requirements": [
+     {
+      "id": "00000000-0000-4000-8000-000000002400",
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 2,
+      "minutesPerLesson": 25,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002401",
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "subjectId": "00000000-0000-4000-8000-000000002005",
+      "lessonsPerWeek": 3,
+      "minutesPerLesson": 60,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002402",
+      "studentGroupId": "00000000-0000-4000-8000-000000002201",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002403",
+      "studentGroupId": "00000000-0000-4000-8000-000000002201",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002404",
+      "studentGroupId": "00000000-0000-4000-8000-000000002202",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002405",
+      "studentGroupId": "00000000-0000-4000-8000-000000002202",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002406",
+      "studentGroupId": "00000000-0000-4000-8000-000000002201",
+      "subjectId": "00000000-0000-4000-8000-000000002005",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002407",
+      "studentGroupId": "00000000-0000-4000-8000-000000002202",
+      "subjectId": "00000000-0000-4000-8000-000000002005",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002408",
+      "studentGroupId": "00000000-0000-4000-8000-000000002203",
+      "subjectId": "00000000-0000-4000-8000-000000002012",
+      "lessonsPerWeek": 3,
+      "minutesPerLesson": 60,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     }
+    ],
+    "pupils": [
+     {
+      "id": "00000000-0000-4000-8000-000000002600",
+      "homeGroupId": "00000000-0000-4000-8000-000000002200",
+      "groupIds": [
+       "00000000-0000-4000-8000-000000002201",
+       "00000000-0000-4000-8000-000000002203"
+      ]
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002601",
+      "homeGroupId": "00000000-0000-4000-8000-000000002200",
+      "groupIds": [
+       "00000000-0000-4000-8000-000000002202"
+      ]
+     }
+    ],
+    "includePupils": true
+   },
+   "coverage": {
+    "pupilLevel": true,
+    "groups": [
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "gradeLevel": 6,
+      "localTimplanId": "00000000-0000-4000-8000-000000002101",
+      "planStatus": "DECIDED",
+      "plannedMinutesPerWeek": 230,
+      "targetMinutesPerWeek": 290,
+      "plannedHours": 164.8,
+      "targetHours": 207.8,
+      "linesWithTarget": 3,
+      "linesCovered": 3,
+      "pupilCount": 2,
+      "lines": [
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002002",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002002"
+        ],
+        "targetMinutesPerWeek": 30,
+        "plannedMinutesPerWeek": 0,
+        "deltaMinutesPerWeek": -30,
+        "targetHours": 21.5,
+        "plannedHours": 0,
+        "status": "PUPILS",
+        "covered": true,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002201",
+         "00000000-0000-4000-8000-000000002202"
+        ],
+        "pupils": {
+         "min": 34,
+         "median": 35,
+         "max": 36,
+         "below": 0
+        }
+       },
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002001",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002001"
+        ],
+        "targetMinutesPerWeek": 80,
+        "plannedMinutesPerWeek": 50,
+        "deltaMinutesPerWeek": -30,
+        "targetHours": 57.3,
+        "plannedHours": 35.8,
+        "status": "PUPILS",
+        "covered": true,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002201",
+         "00000000-0000-4000-8000-000000002202"
+        ],
+        "pupils": {
+         "min": 84,
+         "median": 85,
+         "max": 86,
+         "below": 0
+        }
+       },
+       {
+        "key": "alt:SV_SVA",
+        "alternativeCode": "SV_SVA",
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002005",
+         "00000000-0000-4000-8000-000000002012"
+        ],
+        "targetMinutesPerWeek": 180,
+        "plannedMinutesPerWeek": 180,
+        "deltaMinutesPerWeek": 0,
+        "targetHours": 129,
+        "plannedHours": 129,
+        "status": "MET",
+        "covered": true,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002201",
+         "00000000-0000-4000-8000-000000002202",
+         "00000000-0000-4000-8000-000000002203"
+        ],
+        "pupils": {
+         "min": 180,
+         "median": 197,
+         "max": 214,
+         "below": 0
+        }
+       }
+      ]
+     }
+    ],
+    "cells": [
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 30,
+      "plannedMinutesPerWeek": 0,
+      "targetHours": 21.5,
+      "plannedHours": 0,
+      "requirementIds": [],
+      "status": "PUPILS"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 80,
+      "plannedMinutesPerWeek": 50,
+      "targetHours": 57.3,
+      "plannedHours": 35.8,
+      "requirementIds": [
+       "00000000-0000-4000-8000-000000002400"
+      ],
+      "status": "PUPILS"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "subjectId": "00000000-0000-4000-8000-000000002005",
+      "alternativeCode": "SV_SVA",
+      "targetMinutesPerWeek": 180,
+      "plannedMinutesPerWeek": 180,
+      "targetHours": 129,
+      "plannedHours": 129,
+      "requirementIds": [
+       "00000000-0000-4000-8000-000000002401"
+      ],
+      "status": "MET"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "subjectId": "00000000-0000-4000-8000-000000002012",
+      "alternativeCode": "SV_SVA",
+      "targetMinutesPerWeek": 180,
+      "plannedMinutesPerWeek": 0,
+      "targetHours": 129,
+      "plannedHours": 0,
+      "requirementIds": [],
+      "status": "MET"
+     }
+    ],
+    "pupils": [
+     {
+      "pupilId": "00000000-0000-4000-8000-000000002601",
+      "homeGroupId": "00000000-0000-4000-8000-000000002200",
+      "gradeLevel": 6,
+      "lines": [
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002001",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002001"
+        ],
+        "targetMinutesPerWeek": 80,
+        "plannedMinutesPerWeek": 84,
+        "status": "MET",
+        "sources": [
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000002200",
+          "subjectId": "00000000-0000-4000-8000-000000002001",
+          "minutesPerWeek": 50
+         },
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000002202",
+          "subjectId": "00000000-0000-4000-8000-000000002001",
+          "minutesPerWeek": 34
+         }
+        ],
+        "doublePlannedSubjectIds": [
+         "00000000-0000-4000-8000-000000002001"
+        ],
+        "alternativeSubjectIds": []
+       },
+       {
+        "key": "alt:SV_SVA",
+        "alternativeCode": "SV_SVA",
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002005",
+         "00000000-0000-4000-8000-000000002012"
+        ],
+        "targetMinutesPerWeek": 180,
+        "plannedMinutesPerWeek": 214,
+        "status": "MET",
+        "sources": [
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000002200",
+          "subjectId": "00000000-0000-4000-8000-000000002005",
+          "minutesPerWeek": 180
+         },
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000002202",
+          "subjectId": "00000000-0000-4000-8000-000000002005",
+          "minutesPerWeek": 34
+         }
+        ],
+        "doublePlannedSubjectIds": [
+         "00000000-0000-4000-8000-000000002005"
+        ],
+        "alternativeSubjectIds": []
+       }
+      ]
+     }
+    ],
+    "pupilCount": 2,
+    "pupilsBelowTarget": 0,
+    "pupilsOutsideClasses": 0,
+    "verdicts": [
+     {
+      "code": "TIMPLAN_PUPIL_DOUBLE_PLANNED",
+      "severity": "warning",
+      "pupilId": "00000000-0000-4000-8000-000000002601",
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "studentGroupIds": [
+       "00000000-0000-4000-8000-000000002200",
+       "00000000-0000-4000-8000-000000002202"
+      ],
+      "subjectIds": [
+       "00000000-0000-4000-8000-000000002001"
+      ],
+      "params": {
+       "groupName": "6A",
+       "subjectName": "Slöjd",
+       "groupNames": "6A, 6A:2",
+       "plannedMinutesPerWeek": 84
+      }
+     },
+     {
+      "code": "TIMPLAN_PUPIL_DOUBLE_PLANNED",
+      "severity": "warning",
+      "pupilId": "00000000-0000-4000-8000-000000002601",
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "studentGroupIds": [
+       "00000000-0000-4000-8000-000000002200",
+       "00000000-0000-4000-8000-000000002202"
+      ],
+      "subjectIds": [
+       "00000000-0000-4000-8000-000000002005"
+      ],
+      "params": {
+       "groupName": "6A",
+       "subjectName": "Svenska",
+       "groupNames": "6A, 6A:2",
+       "plannedMinutesPerWeek": 214
+      }
+     }
+    ]
+   }
+  },
+  {
+   "name": "halvklass: a half's matematik in the swap's week with no mirror, or in the hemkunskap's term, is no partner's rival — the slöjd stays the swap, the matematik is double planned",
+   "input": {
+    "year": {
+     "startDate": "2026-08-17",
+     "endDate": "2027-06-11"
+    },
+    "closures": [],
+    "plans": [
+     {
+      "id": "00000000-0000-4000-8000-000000002101",
+      "name": "Grundskolan 2024",
+      "status": "DECIDED",
+      "entries": [
+       {
+        "subjectId": "00000000-0000-4000-8000-000000002001",
+        "gradeLevel": 6,
+        "minutesPerWeek": 80
+       },
+       {
+        "subjectId": "00000000-0000-4000-8000-000000002002",
+        "gradeLevel": 6,
+        "minutesPerWeek": 30
+       },
+       {
+        "subjectId": "00000000-0000-4000-8000-000000002004",
+        "gradeLevel": 6,
+        "minutesPerWeek": 180
+       }
+      ]
+     }
+    ],
+    "attachments": [
+     {
+      "gradeLevel": 6,
+      "localTimplanId": "00000000-0000-4000-8000-000000002101"
+     }
+    ],
+    "subjects": [
+     {
+      "id": "00000000-0000-4000-8000-000000002001",
+      "name": "Slöjd",
+      "nationalCode": "SL",
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002002",
+      "name": "Hem- och konsumentkunskap",
+      "nationalCode": "HKK",
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002004",
+      "name": "Matematik",
+      "nationalCode": "MA",
+      "countsTowardTimplan": true
+     }
+    ],
+    "groups": [
+     {
+      "id": "00000000-0000-4000-8000-000000002200",
+      "name": "6A",
+      "kind": "CLASS",
+      "gradeLevel": 6
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002201",
+      "name": "6A:1",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 6,
+      "halfOfId": "00000000-0000-4000-8000-000000002200"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002202",
+      "name": "6A:2",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 6,
+      "halfOfId": "00000000-0000-4000-8000-000000002200"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002203",
+      "name": "6B",
+      "kind": "CLASS",
+      "gradeLevel": 6
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002204",
+      "name": "6B:1",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 6,
+      "halfOfId": "00000000-0000-4000-8000-000000002203"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002205",
+      "name": "6B:2",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 6,
+      "halfOfId": "00000000-0000-4000-8000-000000002203"
+     }
+    ],
+    "requirements": [
+     {
+      "id": "00000000-0000-4000-8000-000000002400",
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 2,
+      "minutesPerLesson": 25,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002401",
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "subjectId": "00000000-0000-4000-8000-000000002004",
+      "lessonsPerWeek": 3,
+      "minutesPerLesson": 60,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002402",
+      "studentGroupId": "00000000-0000-4000-8000-000000002201",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002403",
+      "studentGroupId": "00000000-0000-4000-8000-000000002201",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002404",
+      "studentGroupId": "00000000-0000-4000-8000-000000002202",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002405",
+      "studentGroupId": "00000000-0000-4000-8000-000000002202",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002406",
+      "studentGroupId": "00000000-0000-4000-8000-000000002201",
+      "subjectId": "00000000-0000-4000-8000-000000002004",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002407",
+      "studentGroupId": "00000000-0000-4000-8000-000000002203",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 2,
+      "minutesPerLesson": 25,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002408",
+      "studentGroupId": "00000000-0000-4000-8000-000000002203",
+      "subjectId": "00000000-0000-4000-8000-000000002004",
+      "lessonsPerWeek": 3,
+      "minutesPerLesson": 60,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002409",
+      "studentGroupId": "00000000-0000-4000-8000-000000002204",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002410",
+      "studentGroupId": "00000000-0000-4000-8000-000000002204",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002411",
+      "studentGroupId": "00000000-0000-4000-8000-000000002205",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002412",
+      "studentGroupId": "00000000-0000-4000-8000-000000002205",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002413",
+      "studentGroupId": "00000000-0000-4000-8000-000000002204",
+      "subjectId": "00000000-0000-4000-8000-000000002004",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2027-01-10"
+     }
+    ],
+    "pupils": [
+     {
+      "id": "00000000-0000-4000-8000-000000002600",
+      "homeGroupId": "00000000-0000-4000-8000-000000002200",
+      "groupIds": [
+       "00000000-0000-4000-8000-000000002201"
+      ]
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002601",
+      "homeGroupId": "00000000-0000-4000-8000-000000002203",
+      "groupIds": [
+       "00000000-0000-4000-8000-000000002204"
+      ]
+     }
+    ],
+    "includePupils": true
+   },
+   "coverage": {
+    "pupilLevel": true,
+    "groups": [
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "gradeLevel": 6,
+      "localTimplanId": "00000000-0000-4000-8000-000000002101",
+      "planStatus": "DECIDED",
+      "plannedMinutesPerWeek": 230,
+      "targetMinutesPerWeek": 290,
+      "plannedHours": 164.8,
+      "targetHours": 207.8,
+      "linesWithTarget": 3,
+      "linesCovered": 3,
+      "pupilCount": 1,
+      "lines": [
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002002",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002002"
+        ],
+        "targetMinutesPerWeek": 30,
+        "plannedMinutesPerWeek": 0,
+        "deltaMinutesPerWeek": -30,
+        "targetHours": 21.5,
+        "plannedHours": 0,
+        "status": "PUPILS",
+        "covered": true,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002201"
+        ],
+        "pupils": {
+         "min": 34,
+         "median": 34,
+         "max": 34,
+         "below": 0
+        }
+       },
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002004",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002004"
+        ],
+        "targetMinutesPerWeek": 180,
+        "plannedMinutesPerWeek": 180,
+        "deltaMinutesPerWeek": 0,
+        "targetHours": 129,
+        "plannedHours": 129,
+        "status": "MET",
+        "covered": true,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002201"
+        ],
+        "pupils": {
+         "min": 216,
+         "median": 216,
+         "max": 216,
+         "below": 0
+        }
+       },
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002001",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002001"
+        ],
+        "targetMinutesPerWeek": 80,
+        "plannedMinutesPerWeek": 50,
+        "deltaMinutesPerWeek": -30,
+        "targetHours": 57.3,
+        "plannedHours": 35.8,
+        "status": "PUPILS",
+        "covered": true,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002201"
+        ],
+        "pupils": {
+         "min": 86,
+         "median": 86,
+         "max": 86,
+         "below": 0
+        }
+       }
+      ]
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002203",
+      "gradeLevel": 6,
+      "localTimplanId": "00000000-0000-4000-8000-000000002101",
+      "planStatus": "DECIDED",
+      "plannedMinutesPerWeek": 230,
+      "targetMinutesPerWeek": 290,
+      "plannedHours": 164.8,
+      "targetHours": 207.8,
+      "linesWithTarget": 3,
+      "linesCovered": 3,
+      "pupilCount": 1,
+      "lines": [
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002002",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002002"
+        ],
+        "targetMinutesPerWeek": 30,
+        "plannedMinutesPerWeek": 0,
+        "deltaMinutesPerWeek": -30,
+        "targetHours": 21.5,
+        "plannedHours": 0,
+        "status": "PUPILS",
+        "covered": true,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002204"
+        ],
+        "pupils": {
+         "min": 34,
+         "median": 34,
+         "max": 34,
+         "below": 0
+        }
+       },
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002004",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002004"
+        ],
+        "targetMinutesPerWeek": 180,
+        "plannedMinutesPerWeek": 180,
+        "deltaMinutesPerWeek": 0,
+        "targetHours": 129,
+        "plannedHours": 129,
+        "status": "MET",
+        "covered": true,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002204"
+        ],
+        "pupils": {
+         "min": 214,
+         "median": 214,
+         "max": 214,
+         "below": 0
+        }
+       },
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002001",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002001"
+        ],
+        "targetMinutesPerWeek": 80,
+        "plannedMinutesPerWeek": 50,
+        "deltaMinutesPerWeek": -30,
+        "targetHours": 57.3,
+        "plannedHours": 35.8,
+        "status": "PUPILS",
+        "covered": true,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002204"
+        ],
+        "pupils": {
+         "min": 86,
+         "median": 86,
+         "max": 86,
+         "below": 0
+        }
+       }
+      ]
+     }
+    ],
+    "cells": [
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 30,
+      "plannedMinutesPerWeek": 0,
+      "targetHours": 21.5,
+      "plannedHours": 0,
+      "requirementIds": [],
+      "status": "PUPILS"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "subjectId": "00000000-0000-4000-8000-000000002004",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 180,
+      "plannedMinutesPerWeek": 180,
+      "targetHours": 129,
+      "plannedHours": 129,
+      "requirementIds": [
+       "00000000-0000-4000-8000-000000002401"
+      ],
+      "status": "MET"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 80,
+      "plannedMinutesPerWeek": 50,
+      "targetHours": 57.3,
+      "plannedHours": 35.8,
+      "requirementIds": [
+       "00000000-0000-4000-8000-000000002400"
+      ],
+      "status": "PUPILS"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002203",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 30,
+      "plannedMinutesPerWeek": 0,
+      "targetHours": 21.5,
+      "plannedHours": 0,
+      "requirementIds": [],
+      "status": "PUPILS"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002203",
+      "subjectId": "00000000-0000-4000-8000-000000002004",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 180,
+      "plannedMinutesPerWeek": 180,
+      "targetHours": 129,
+      "plannedHours": 129,
+      "requirementIds": [
+       "00000000-0000-4000-8000-000000002408"
+      ],
+      "status": "MET"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002203",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 80,
+      "plannedMinutesPerWeek": 50,
+      "targetHours": 57.3,
+      "plannedHours": 35.8,
+      "requirementIds": [
+       "00000000-0000-4000-8000-000000002407"
+      ],
+      "status": "PUPILS"
+     }
+    ],
+    "pupils": [
+     {
+      "pupilId": "00000000-0000-4000-8000-000000002600",
+      "homeGroupId": "00000000-0000-4000-8000-000000002200",
+      "gradeLevel": 6,
+      "lines": [
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002004",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002004"
+        ],
+        "targetMinutesPerWeek": 180,
+        "plannedMinutesPerWeek": 216,
+        "status": "MET",
+        "sources": [
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000002200",
+          "subjectId": "00000000-0000-4000-8000-000000002004",
+          "minutesPerWeek": 180
+         },
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000002201",
+          "subjectId": "00000000-0000-4000-8000-000000002004",
+          "minutesPerWeek": 36
+         }
+        ],
+        "doublePlannedSubjectIds": [
+         "00000000-0000-4000-8000-000000002004"
+        ],
+        "alternativeSubjectIds": []
+       }
+      ]
+     },
+     {
+      "pupilId": "00000000-0000-4000-8000-000000002601",
+      "homeGroupId": "00000000-0000-4000-8000-000000002203",
+      "gradeLevel": 6,
+      "lines": [
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002004",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002004"
+        ],
+        "targetMinutesPerWeek": 180,
+        "plannedMinutesPerWeek": 214,
+        "status": "MET",
+        "sources": [
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000002203",
+          "subjectId": "00000000-0000-4000-8000-000000002004",
+          "minutesPerWeek": 180
+         },
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000002204",
+          "subjectId": "00000000-0000-4000-8000-000000002004",
+          "minutesPerWeek": 34
+         }
+        ],
+        "doublePlannedSubjectIds": [
+         "00000000-0000-4000-8000-000000002004"
+        ],
+        "alternativeSubjectIds": []
+       }
+      ]
+     }
+    ],
+    "pupilCount": 2,
+    "pupilsBelowTarget": 0,
+    "pupilsOutsideClasses": 0,
+    "verdicts": [
+     {
+      "code": "TIMPLAN_PUPIL_DOUBLE_PLANNED",
+      "severity": "warning",
+      "pupilId": "00000000-0000-4000-8000-000000002600",
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "studentGroupIds": [
+       "00000000-0000-4000-8000-000000002200",
+       "00000000-0000-4000-8000-000000002201"
+      ],
+      "subjectIds": [
+       "00000000-0000-4000-8000-000000002004"
+      ],
+      "params": {
+       "groupName": "6A",
+       "subjectName": "Matematik",
+       "groupNames": "6A, 6A:1",
+       "plannedMinutesPerWeek": 216
+      }
+     },
+     {
+      "code": "TIMPLAN_PUPIL_DOUBLE_PLANNED",
+      "severity": "warning",
+      "pupilId": "00000000-0000-4000-8000-000000002601",
+      "studentGroupId": "00000000-0000-4000-8000-000000002203",
+      "studentGroupIds": [
+       "00000000-0000-4000-8000-000000002203",
+       "00000000-0000-4000-8000-000000002204"
+      ],
+      "subjectIds": [
+       "00000000-0000-4000-8000-000000002004"
+      ],
+      "params": {
+       "groupName": "6B",
+       "subjectName": "Matematik",
+       "groupNames": "6B, 6B:1",
+       "plannedMinutesPerWeek": 214
+      }
+     }
+    ]
+   }
+  },
+  {
+   "name": "halvklass: the teknik in turn beside 6A's teknik back for the spring only — a class post in any period makes the subject the class's: double planned in slöjd and teknik",
+   "input": {
+    "year": {
+     "startDate": "2026-08-17",
+     "endDate": "2027-06-11"
+    },
+    "closures": [],
+    "plans": [
+     {
+      "id": "00000000-0000-4000-8000-000000002101",
+      "name": "Grundskolan 2024",
+      "status": "DECIDED",
+      "entries": [
+       {
+        "subjectId": "00000000-0000-4000-8000-000000002001",
+        "gradeLevel": 6,
+        "minutesPerWeek": 80
+       },
+       {
+        "subjectId": "00000000-0000-4000-8000-000000002002",
+        "gradeLevel": 6,
+        "minutesPerWeek": 30
+       },
+       {
+        "subjectId": "00000000-0000-4000-8000-000000002003",
+        "gradeLevel": 6,
+        "minutesPerWeek": 60
+       }
+      ]
+     }
+    ],
+    "attachments": [
+     {
+      "gradeLevel": 6,
+      "localTimplanId": "00000000-0000-4000-8000-000000002101"
+     }
+    ],
+    "subjects": [
+     {
+      "id": "00000000-0000-4000-8000-000000002001",
+      "name": "Slöjd",
+      "nationalCode": "SL",
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002002",
+      "name": "Hem- och konsumentkunskap",
+      "nationalCode": "HKK",
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002003",
+      "name": "Teknik",
+      "nationalCode": "TK",
+      "countsTowardTimplan": true
+     }
+    ],
+    "groups": [
+     {
+      "id": "00000000-0000-4000-8000-000000002200",
+      "name": "6A",
+      "kind": "CLASS",
+      "gradeLevel": 6
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002201",
+      "name": "6A:1",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 6,
+      "halfOfId": "00000000-0000-4000-8000-000000002200"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002202",
+      "name": "6A:2",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 6,
+      "halfOfId": "00000000-0000-4000-8000-000000002200"
+     }
+    ],
+    "requirements": [
+     {
+      "id": "00000000-0000-4000-8000-000000002400",
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 2,
+      "minutesPerLesson": 25,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002401",
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "subjectId": "00000000-0000-4000-8000-000000002003",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 30,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002402",
+      "studentGroupId": "00000000-0000-4000-8000-000000002201",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002403",
+      "studentGroupId": "00000000-0000-4000-8000-000000002201",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002404",
+      "studentGroupId": "00000000-0000-4000-8000-000000002202",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002405",
+      "studentGroupId": "00000000-0000-4000-8000-000000002202",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002406",
+      "studentGroupId": "00000000-0000-4000-8000-000000002201",
+      "subjectId": "00000000-0000-4000-8000-000000002003",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002407",
+      "studentGroupId": "00000000-0000-4000-8000-000000002202",
+      "subjectId": "00000000-0000-4000-8000-000000002003",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     }
+    ],
+    "pupils": [
+     {
+      "id": "00000000-0000-4000-8000-000000002600",
+      "homeGroupId": "00000000-0000-4000-8000-000000002200",
+      "groupIds": [
+       "00000000-0000-4000-8000-000000002201"
+      ]
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002601",
+      "homeGroupId": "00000000-0000-4000-8000-000000002200",
+      "groupIds": [
+       "00000000-0000-4000-8000-000000002202"
+      ]
+     }
+    ],
+    "includePupils": true
+   },
+   "coverage": {
+    "pupilLevel": true,
+    "groups": [
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "gradeLevel": 6,
+      "localTimplanId": "00000000-0000-4000-8000-000000002101",
+      "planStatus": "DECIDED",
+      "plannedMinutesPerWeek": 65,
+      "targetMinutesPerWeek": 170,
+      "plannedHours": 46.8,
+      "targetHours": 121.8,
+      "linesWithTarget": 3,
+      "linesCovered": 2,
+      "pupilCount": 2,
+      "lines": [
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002002",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002002"
+        ],
+        "targetMinutesPerWeek": 30,
+        "plannedMinutesPerWeek": 0,
+        "deltaMinutesPerWeek": -30,
+        "targetHours": 21.5,
+        "plannedHours": 0,
+        "status": "PUPILS",
+        "covered": true,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002201",
+         "00000000-0000-4000-8000-000000002202"
+        ],
+        "pupils": {
+         "min": 34,
+         "median": 35,
+         "max": 36,
+         "below": 0
+        }
+       },
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002001",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002001"
+        ],
+        "targetMinutesPerWeek": 80,
+        "plannedMinutesPerWeek": 50,
+        "deltaMinutesPerWeek": -30,
+        "targetHours": 57.3,
+        "plannedHours": 35.8,
+        "status": "PUPILS",
+        "covered": true,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002201",
+         "00000000-0000-4000-8000-000000002202"
+        ],
+        "pupils": {
+         "min": 84,
+         "median": 85,
+         "max": 86,
+         "below": 0
+        }
+       },
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002003",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002003"
+        ],
+        "targetMinutesPerWeek": 60,
+        "plannedMinutesPerWeek": 15,
+        "deltaMinutesPerWeek": -45,
+        "targetHours": 43,
+        "plannedHours": 11,
+        "status": "PUPILS",
+        "covered": false,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002201",
+         "00000000-0000-4000-8000-000000002202"
+        ],
+        "pupils": {
+         "min": 50,
+         "median": 51,
+         "max": 51,
+         "below": 2
+        }
+       }
+      ]
+     }
+    ],
+    "cells": [
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 30,
+      "plannedMinutesPerWeek": 0,
+      "targetHours": 21.5,
+      "plannedHours": 0,
+      "requirementIds": [],
+      "status": "PUPILS"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 80,
+      "plannedMinutesPerWeek": 50,
+      "targetHours": 57.3,
+      "plannedHours": 35.8,
+      "requirementIds": [
+       "00000000-0000-4000-8000-000000002400"
+      ],
+      "status": "PUPILS"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "subjectId": "00000000-0000-4000-8000-000000002003",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 60,
+      "plannedMinutesPerWeek": 15,
+      "targetHours": 43,
+      "plannedHours": 11,
+      "requirementIds": [
+       "00000000-0000-4000-8000-000000002401"
+      ],
+      "status": "PUPILS"
+     }
+    ],
+    "pupils": [
+     {
+      "pupilId": "00000000-0000-4000-8000-000000002600",
+      "homeGroupId": "00000000-0000-4000-8000-000000002200",
+      "gradeLevel": 6,
+      "lines": [
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002001",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002001"
+        ],
+        "targetMinutesPerWeek": 80,
+        "plannedMinutesPerWeek": 84,
+        "status": "MET",
+        "sources": [
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000002200",
+          "subjectId": "00000000-0000-4000-8000-000000002001",
+          "minutesPerWeek": 50
+         },
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000002201",
+          "subjectId": "00000000-0000-4000-8000-000000002001",
+          "minutesPerWeek": 34
+         }
+        ],
+        "doublePlannedSubjectIds": [
+         "00000000-0000-4000-8000-000000002001"
+        ],
+        "alternativeSubjectIds": []
+       },
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002003",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002003"
+        ],
+        "targetMinutesPerWeek": 60,
+        "plannedMinutesPerWeek": 50,
+        "status": "UNDER",
+        "sources": [
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000002200",
+          "subjectId": "00000000-0000-4000-8000-000000002003",
+          "minutesPerWeek": 15
+         },
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000002201",
+          "subjectId": "00000000-0000-4000-8000-000000002003",
+          "minutesPerWeek": 34
+         }
+        ],
+        "doublePlannedSubjectIds": [
+         "00000000-0000-4000-8000-000000002003"
+        ],
+        "alternativeSubjectIds": []
+       }
+      ]
+     },
+     {
+      "pupilId": "00000000-0000-4000-8000-000000002601",
+      "homeGroupId": "00000000-0000-4000-8000-000000002200",
+      "gradeLevel": 6,
+      "lines": [
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002001",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002001"
+        ],
+        "targetMinutesPerWeek": 80,
+        "plannedMinutesPerWeek": 86,
+        "status": "MET",
+        "sources": [
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000002200",
+          "subjectId": "00000000-0000-4000-8000-000000002001",
+          "minutesPerWeek": 50
+         },
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000002202",
+          "subjectId": "00000000-0000-4000-8000-000000002001",
+          "minutesPerWeek": 36
+         }
+        ],
+        "doublePlannedSubjectIds": [
+         "00000000-0000-4000-8000-000000002001"
+        ],
+        "alternativeSubjectIds": []
+       },
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002003",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002003"
+        ],
+        "targetMinutesPerWeek": 60,
+        "plannedMinutesPerWeek": 51,
+        "status": "UNDER",
+        "sources": [
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000002200",
+          "subjectId": "00000000-0000-4000-8000-000000002003",
+          "minutesPerWeek": 15
+         },
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000002202",
+          "subjectId": "00000000-0000-4000-8000-000000002003",
+          "minutesPerWeek": 36
+         }
+        ],
+        "doublePlannedSubjectIds": [
+         "00000000-0000-4000-8000-000000002003"
+        ],
+        "alternativeSubjectIds": []
+       }
+      ]
+     }
+    ],
+    "pupilCount": 2,
+    "pupilsBelowTarget": 2,
+    "pupilsOutsideClasses": 0,
+    "verdicts": [
+     {
+      "code": "TIMPLAN_PUPIL_UNDERPLANNED",
+      "severity": "warning",
+      "pupilId": "00000000-0000-4000-8000-000000002600",
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "subjectIds": [
+       "00000000-0000-4000-8000-000000002003"
+      ],
+      "params": {
+       "groupName": "6A",
+       "gradeLevel": 6,
+       "subjectName": "Teknik",
+       "targetMinutesPerWeek": 60,
+       "plannedMinutesPerWeek": 50,
+       "deficitMinutesPerWeek": 10
+      }
+     },
+     {
+      "code": "TIMPLAN_PUPIL_UNDERPLANNED",
+      "severity": "warning",
+      "pupilId": "00000000-0000-4000-8000-000000002601",
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "subjectIds": [
+       "00000000-0000-4000-8000-000000002003"
+      ],
+      "params": {
+       "groupName": "6A",
+       "gradeLevel": 6,
+       "subjectName": "Teknik",
+       "targetMinutesPerWeek": 60,
+       "plannedMinutesPerWeek": 51,
+       "deficitMinutesPerWeek": 9
+      }
+     },
+     {
+      "code": "TIMPLAN_PUPIL_DOUBLE_PLANNED",
+      "severity": "warning",
+      "pupilId": "00000000-0000-4000-8000-000000002600",
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "studentGroupIds": [
+       "00000000-0000-4000-8000-000000002200",
+       "00000000-0000-4000-8000-000000002201"
+      ],
+      "subjectIds": [
+       "00000000-0000-4000-8000-000000002001"
+      ],
+      "params": {
+       "groupName": "6A",
+       "subjectName": "Slöjd",
+       "groupNames": "6A, 6A:1",
+       "plannedMinutesPerWeek": 84
+      }
+     },
+     {
+      "code": "TIMPLAN_PUPIL_DOUBLE_PLANNED",
+      "severity": "warning",
+      "pupilId": "00000000-0000-4000-8000-000000002600",
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "studentGroupIds": [
+       "00000000-0000-4000-8000-000000002200",
+       "00000000-0000-4000-8000-000000002201"
+      ],
+      "subjectIds": [
+       "00000000-0000-4000-8000-000000002003"
+      ],
+      "params": {
+       "groupName": "6A",
+       "subjectName": "Teknik",
+       "groupNames": "6A, 6A:1",
+       "plannedMinutesPerWeek": 50
+      }
+     },
+     {
+      "code": "TIMPLAN_PUPIL_DOUBLE_PLANNED",
+      "severity": "warning",
+      "pupilId": "00000000-0000-4000-8000-000000002601",
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "studentGroupIds": [
+       "00000000-0000-4000-8000-000000002200",
+       "00000000-0000-4000-8000-000000002202"
+      ],
+      "subjectIds": [
+       "00000000-0000-4000-8000-000000002001"
+      ],
+      "params": {
+       "groupName": "6A",
+       "subjectName": "Slöjd",
+       "groupNames": "6A, 6A:2",
+       "plannedMinutesPerWeek": 86
+      }
+     },
+     {
+      "code": "TIMPLAN_PUPIL_DOUBLE_PLANNED",
+      "severity": "warning",
+      "pupilId": "00000000-0000-4000-8000-000000002601",
+      "studentGroupId": "00000000-0000-4000-8000-000000002200",
+      "studentGroupIds": [
+       "00000000-0000-4000-8000-000000002200",
+       "00000000-0000-4000-8000-000000002202"
+      ],
+      "subjectIds": [
+       "00000000-0000-4000-8000-000000002003"
+      ],
+      "params": {
+       "groupName": "6A",
+       "subjectName": "Teknik",
+       "groupNames": "6A, 6A:2",
+       "plannedMinutesPerWeek": 51
+      }
+     }
+    ]
+   }
+  },
+  {
+   "name": "halvklass: the swap with the half's slöjd in another week than its hemkunskap — more lessons, shorter lessons, lessons of two lengths, odd weeks, the same minutes in two lessons: double planned",
    "input": {
     "year": {
      "startDate": "2026-08-17",
@@ -16130,6 +19645,26 @@
       "kind": "TEACHING_GROUP",
       "gradeLevel": 6,
       "halfOfId": "00000000-0000-4000-8000-000000002209"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002212",
+      "name": "6V",
+      "kind": "CLASS",
+      "gradeLevel": 6
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002213",
+      "name": "6V:1",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 6,
+      "halfOfId": "00000000-0000-4000-8000-000000002212"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002214",
+      "name": "6V:2",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 6,
+      "halfOfId": "00000000-0000-4000-8000-000000002212"
      }
     ],
     "requirements": [
@@ -16340,6 +19875,56 @@
       "recurrence": "ALL_WEEKS",
       "startDate": "2027-01-11",
       "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002420",
+      "studentGroupId": "00000000-0000-4000-8000-000000002212",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 2,
+      "minutesPerLesson": 25,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002421",
+      "studentGroupId": "00000000-0000-4000-8000-000000002213",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002422",
+      "studentGroupId": "00000000-0000-4000-8000-000000002213",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 2,
+      "minutesPerLesson": 35,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002423",
+      "studentGroupId": "00000000-0000-4000-8000-000000002214",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "lessonsPerWeek": 2,
+      "minutesPerLesson": 35,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": "2027-01-10"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002424",
+      "studentGroupId": "00000000-0000-4000-8000-000000002214",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 70,
+      "recurrence": "ALL_WEEKS",
+      "startDate": "2027-01-11",
+      "endDate": null
      }
     ],
     "pupils": [
@@ -16397,6 +19982,20 @@
       "homeGroupId": "00000000-0000-4000-8000-000000002209",
       "groupIds": [
        "00000000-0000-4000-8000-000000002211"
+      ]
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002608",
+      "homeGroupId": "00000000-0000-4000-8000-000000002212",
+      "groupIds": [
+       "00000000-0000-4000-8000-000000002213"
+      ]
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000002609",
+      "homeGroupId": "00000000-0000-4000-8000-000000002212",
+      "groupIds": [
+       "00000000-0000-4000-8000-000000002214"
       ]
      }
     ],
@@ -16656,6 +20255,69 @@
         }
        }
       ]
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002212",
+      "gradeLevel": 6,
+      "localTimplanId": "00000000-0000-4000-8000-000000002101",
+      "planStatus": "DECIDED",
+      "plannedMinutesPerWeek": 50,
+      "targetMinutesPerWeek": 110,
+      "plannedHours": 35.8,
+      "targetHours": 78.8,
+      "linesWithTarget": 2,
+      "linesCovered": 2,
+      "pupilCount": 2,
+      "lines": [
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002002",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002002"
+        ],
+        "targetMinutesPerWeek": 30,
+        "plannedMinutesPerWeek": 0,
+        "deltaMinutesPerWeek": -30,
+        "targetHours": 21.5,
+        "plannedHours": 0,
+        "status": "PUPILS",
+        "covered": true,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002213",
+         "00000000-0000-4000-8000-000000002214"
+        ],
+        "pupils": {
+         "min": 34,
+         "median": 35,
+         "max": 36,
+         "below": 0
+        }
+       },
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002001",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002001"
+        ],
+        "targetMinutesPerWeek": 80,
+        "plannedMinutesPerWeek": 50,
+        "deltaMinutesPerWeek": -30,
+        "targetHours": 57.3,
+        "plannedHours": 35.8,
+        "status": "PUPILS",
+        "covered": true,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000002213",
+         "00000000-0000-4000-8000-000000002214"
+        ],
+        "pupils": {
+         "min": 84,
+         "median": 85,
+         "max": 86,
+         "below": 0
+        }
+       }
+      ]
      }
     ],
     "cells": [
@@ -16752,6 +20414,30 @@
       "plannedHours": 35.8,
       "requirementIds": [
        "00000000-0000-4000-8000-000000002415"
+      ],
+      "status": "PUPILS"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002212",
+      "subjectId": "00000000-0000-4000-8000-000000002002",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 30,
+      "plannedMinutesPerWeek": 0,
+      "targetHours": 21.5,
+      "plannedHours": 0,
+      "requirementIds": [],
+      "status": "PUPILS"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000002212",
+      "subjectId": "00000000-0000-4000-8000-000000002001",
+      "alternativeCode": null,
+      "targetMinutesPerWeek": 80,
+      "plannedMinutesPerWeek": 50,
+      "targetHours": 57.3,
+      "plannedHours": 35.8,
+      "requirementIds": [
+       "00000000-0000-4000-8000-000000002420"
       ],
       "status": "PUPILS"
      }
@@ -17020,9 +20706,75 @@
         "alternativeSubjectIds": []
        }
       ]
+     },
+     {
+      "pupilId": "00000000-0000-4000-8000-000000002608",
+      "homeGroupId": "00000000-0000-4000-8000-000000002212",
+      "gradeLevel": 6,
+      "lines": [
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002001",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002001"
+        ],
+        "targetMinutesPerWeek": 80,
+        "plannedMinutesPerWeek": 86,
+        "status": "MET",
+        "sources": [
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000002212",
+          "subjectId": "00000000-0000-4000-8000-000000002001",
+          "minutesPerWeek": 50
+         },
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000002213",
+          "subjectId": "00000000-0000-4000-8000-000000002001",
+          "minutesPerWeek": 36
+         }
+        ],
+        "doublePlannedSubjectIds": [
+         "00000000-0000-4000-8000-000000002001"
+        ],
+        "alternativeSubjectIds": []
+       }
+      ]
+     },
+     {
+      "pupilId": "00000000-0000-4000-8000-000000002609",
+      "homeGroupId": "00000000-0000-4000-8000-000000002212",
+      "gradeLevel": 6,
+      "lines": [
+       {
+        "key": "subject:00000000-0000-4000-8000-000000002001",
+        "alternativeCode": null,
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000002001"
+        ],
+        "targetMinutesPerWeek": 80,
+        "plannedMinutesPerWeek": 84,
+        "status": "MET",
+        "sources": [
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000002212",
+          "subjectId": "00000000-0000-4000-8000-000000002001",
+          "minutesPerWeek": 50
+         },
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000002214",
+          "subjectId": "00000000-0000-4000-8000-000000002001",
+          "minutesPerWeek": 34
+         }
+        ],
+        "doublePlannedSubjectIds": [
+         "00000000-0000-4000-8000-000000002001"
+        ],
+        "alternativeSubjectIds": []
+       }
+      ]
      }
     ],
-    "pupilCount": 8,
+    "pupilCount": 10,
     "pupilsBelowTarget": 3,
     "pupilsOutsideClasses": 0,
     "verdicts": [
@@ -17227,6 +20979,44 @@
        "subjectName": "Slöjd",
        "groupNames": "6T, 6T:2",
        "plannedMinutesPerWeek": 68
+      }
+     },
+     {
+      "code": "TIMPLAN_PUPIL_DOUBLE_PLANNED",
+      "severity": "warning",
+      "pupilId": "00000000-0000-4000-8000-000000002608",
+      "studentGroupId": "00000000-0000-4000-8000-000000002212",
+      "studentGroupIds": [
+       "00000000-0000-4000-8000-000000002212",
+       "00000000-0000-4000-8000-000000002213"
+      ],
+      "subjectIds": [
+       "00000000-0000-4000-8000-000000002001"
+      ],
+      "params": {
+       "groupName": "6V",
+       "subjectName": "Slöjd",
+       "groupNames": "6V, 6V:1",
+       "plannedMinutesPerWeek": 86
+      }
+     },
+     {
+      "code": "TIMPLAN_PUPIL_DOUBLE_PLANNED",
+      "severity": "warning",
+      "pupilId": "00000000-0000-4000-8000-000000002609",
+      "studentGroupId": "00000000-0000-4000-8000-000000002212",
+      "studentGroupIds": [
+       "00000000-0000-4000-8000-000000002212",
+       "00000000-0000-4000-8000-000000002214"
+      ],
+      "subjectIds": [
+       "00000000-0000-4000-8000-000000002001"
+      ],
+      "params": {
+       "groupName": "6V",
+       "subjectName": "Slöjd",
+       "groupNames": "6V, 6V:2",
+       "plannedMinutesPerWeek": 84
       }
      }
     ]
