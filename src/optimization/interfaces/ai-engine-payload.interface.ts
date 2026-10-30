@@ -33,6 +33,9 @@ export type ResourceKind = 'TEACHER' | 'ROOM' | 'STUDENT_GROUP' | 'GRADE_LEVEL';
  */
 export type RoomTypeKind = string;
 
+/** A/B-veckor: the parities the engine is told about; every week is the field left out. */
+export type AlternatingWeeks = 'ODD_WEEKS' | 'EVEN_WEEKS';
+
 export interface AnonymousRequirement {
   /** Opaque anonymous id for this requirement (NOT the real DB UUID). */
   id: string;
@@ -49,6 +52,17 @@ export interface AnonymousRequirement {
    * the engine (AnonymousRequirement.pupil_group_id), absent = studentGroupId.
    */
   pupilGroupId?: string;
+  /**
+   * A/B-veckor: the requirement runs only in odd ISO weeks or only in even
+   * ones, and its lessons hold their class, teachers and room in those weeks
+   * alone — slöjd udda veckor and hemkunskap jämna veckor may share one hour
+   * (weeksCanOverlap, calendar/lesson-recurrence.ts). lessonsPerWeek counts
+   * the weeks it runs. Sent only on an alternating requirement, so every
+   * other payload is what it always was; absent = every week on the engine
+   * (AnonymousRequirement.recurrence). A requirement's dates are not sent:
+   * the engine plans the year as one odd and one even week.
+   */
+  recurrence?: AlternatingWeeks;
   teacherId: string | null;
   lessonsPerWeek: number;
   minutesPerLesson: number;
@@ -378,9 +392,10 @@ export interface AnonymousTeacherDayLimit {
    * days literal — a placed lesson is a weekly lesson to it, and adds a day
    * to every week whose fixed lessons are not already on its weekday.
    *
-   * The fixed lessons carry no weeks of their own (AnonymousFixedLesson), and
-   * reading every weekday any of them holds as taught in every week — the
-   * union — was the lenient direction: a part-timer of two days on Monday
+   * The sets carry no parity, so a teacher whose two weeks differ holds each
+   * of them in both (the engine's stricter reading); reading every weekday
+   * any fixed lesson holds as taught in every week — the union — was the
+   * lenient direction: a part-timer of two days on Monday
    * and Tuesday in odd weeks and Wednesday and Thursday in even ones left
    * the engine no day to count, and a weekly Monday and Wednesday made every
    * week three. Only the sets no other implies are sent (see the helper).
@@ -465,6 +480,13 @@ export interface AnonymousFixedLesson {
    * question (FixedLesson.pupil_group_ids). Sent only then.
    */
   pupilGroupIds?: string[];
+  /**
+   * A/B-veckor: the lock holds its window only in odd ISO weeks or only in
+   * even ones, so a lesson of the other weeks may take its hour. Sent only on
+   * an alternating lock (FixedLesson.recurrence); a lock with dates and every
+   * week is still every week to the engine.
+   */
+  recurrence?: AlternatingWeeks;
   roomId: string | null;
   dayOfWeek: DayOfWeek;
   /** HH:MM:SS */
@@ -583,11 +605,46 @@ export interface AiEngineScheduleRequest {
    * always built.
    */
   siteTravelTimes?: AnonymousSiteTravelTime[];
+  /**
+   * Elevernas håltimmar: the pupils, as the sets the håltimmesrapport counts
+   * a hole for (pupil-cohorts.ts). The KEY is sent only when the school's
+   * Skolregler turn the rule on and the week has pupils, so every other
+   * school sends the payload it always sent, and the engine builds the model
+   * it always built.
+   */
+  pupilGaps?: AnonymousPupilGaps;
   weights?: ObjectiveWeights | null;
   rules?: ScheduleRules | null;
   roomPreferences: AnonymousRoomPreference[];
   /** A schemaförslag's search settings; see SearchOptions. Never sent by Generera. */
   search?: SearchOptions;
+}
+
+/**
+ * Pupils booked alike: the same class, teaching groups, halves, replacing
+ * groups and locked lessons. A count and anonymous keys; never a pupil id.
+ */
+export interface AnonymousPupilGapCohort {
+  /** The anonymous groups they are in and derived keys ("7A without SvA7") they sit. */
+  groupIds: string[];
+  /** The payload ids of every locked lesson they sit. */
+  fixedLessonIds: string[];
+  /** The class they eat with; absent when the class reached nothing in the payload. */
+  homeGroupId?: string;
+  pupils: number;
+}
+
+/** A locked lesson's ombyte and dusch, for the pupils' day only. */
+export interface AnonymousFixedLessonMargin {
+  fixedLessonId: string;
+  minutesBefore: number;
+  minutesAfter: number;
+}
+
+export interface AnonymousPupilGaps {
+  cohorts: AnonymousPupilGapCohort[];
+  /** Sent only when a lock has a margin. */
+  fixedMargins?: AnonymousFixedLessonMargin[];
 }
 
 export type ConflictCategory =
@@ -687,6 +744,13 @@ export interface AiEngineScheduleResponse {
    */
   lunches?: AiEngineLunch[];
   conflicts?: AiEngineConflictAnalysis | null;
+  /**
+   * Elevernas håltimmar in the timetable returned, locked lessons included:
+   * idle pupil-minutes in an ordinary week, counted as the håltimmesrapport
+   * counts them, so it can end in a half (a hole on alternate weeks is half
+   * of one). Only on an answer to a payload that carried pupilGaps.
+   */
+  pupilIdleMinutes?: number;
   /**
    * The soft wishes a finished run did not keep (free-day-wishes.ts), in a
    * conflict's shape, each with its teacher in `subjectIds`. Never sent by

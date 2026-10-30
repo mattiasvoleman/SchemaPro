@@ -1794,14 +1794,29 @@
     datum. I schemarutan står <em>udda</em>, <em>jämna</em> eller
     <em>period</em> så att du ser det direkt i rutnätet.
   </p>
-  <div class="warn">
-    <span class="label">Lås lektionen om du ställt in veckor</span>
+  <div class="note">
+    <span class="label">Genereringen planerar udda och jämna veckor var för sig</span>
     <p>
-      AI-motorn planerar veckoschemat och tar i dagsläget ingen hänsyn till
-      växlande veckor — den reserverar tiden varje vecka. En omgenerering
-      ersätter därför olåsta lektioner med nya som ligger varje vecka, och ditt
-      veckoval går förlorat. Slå på <span class="ui">Lås</span> på lektionen så
-      lämnas den orörd, och motorn planerar övrigt runt den.
+      En timplanspost som går udda eller jämna veckor får sina lektioner bara de
+      veckorna, och genereringen kan lägga en lektion udda veckor och en jämna
+      veckor på samma tid för samma klass, lärare eller sal. Du behöver alltså
+      inte låsa en lektion för att den ska behålla sina veckor. Det som gäller
+      en dag eller en vecka räknas för varje vecka för sig: högst antal
+      lektioner per dag, raster, restid, lärarens dag och vila, och
+      kontrollerna innan genereringen startar. Säger genereringen att något
+      inte går, gäller det en vecka där allt i meddelandet ligger. Lunchen,
+      klassens och lärarens, ligger däremot på samma tid varje vecka och hålls
+      därför fri från båda veckornas lektioner.
+    </p>
+    <p>
+      En lektion där du själv ändrat veckorna behålls vid omgenerering, som
+      andra lektioner du ändrat för hand. Genereringen räknar inte terminer:
+      en post med datum planeras som om den gick hela läsåret.
+    </p>
+    <p>
+      Salar delas på samma sätt: en udda- och en jämnlektion kan ha samma sal
+      på samma tid, och en lektion som går varje vecka behåller sin sal båda
+      veckorna.
     </p>
   </div>
   <p>
@@ -3364,8 +3379,8 @@
     <strong>Skolregler</strong> är hårda villkor. De <em>måste</em> uppfyllas.
     De anger garanterad lunchrast för varje klass — inom vilket tidsfönster och
     hur många minuter — antalet platser i matsalen, högsta antal lektioner
-    per dag och klass, och om generatorn ska hålla restiden mellan skolans
-    skolområden.
+    per dag och klass, om generatorn ska hålla restiden mellan skolans
+    skolområden och om den ska hålla nere elevernas håltimmar.
   </p>
   <p id="restid-i-generatorn">
     <strong>Restid i generatorn.</strong> Har skolan skolområden med restid
@@ -3465,6 +3480,70 @@
     bli mycket svår att lägga — då säger tidsgränsens diagnos vilken del av
     lunchen som inte får plats.
   </p>
+  <p id="elevernas-haltimmar">
+    <strong>Elevernas håltimmar i generatorn.</strong> Slå på
+    <span class="ui">Generatorn håller nere elevernas håltimmar</span> bland
+    skolreglerna och spara, så försöker genereringen lägga varje elevs dag
+    utan luckor mellan första och sista lektionen. Regeln är avstängd tills
+    skolan slår på den, och en skola som låter den vara får precis samma
+    schema som förut. Till skillnad från de andra skolreglerna är den ett
+    önskemål och inte ett villkor: den gör aldrig en vecka omöjlig, men den
+    väger mot allt annat som genereringen väger.
+  </p>
+  <p>
+    Generatorn räknar luckorna som sidan
+    <span class="path">Schemaläggning › Luckor och håltimmar</span> gör, per
+    elev och inte per klass. En elevs dag är lektionerna i klassen, i
+    undervisningsgrupperna, i den halva av klassen eleven är placerad i och i
+    de ersättande grupperna: en elev i SvA7 sitter inte på klassens svenska.
+    En elev som ännu inte placerats i någon halva räknas med båda halvorna,
+    eftersom eleven kan hamna i vilken som helst. Ombyte och dusch räknas som
+    upptagen tid, stängd tid (tillgänglighet för klassen, årskursregler och
+    ramtider) är ingen lucka, lunchen dras av en gång per dag och en lucka
+    under 15 minuter är en rast.
+  </p>
+  <p>
+    Sidan Luckor och håltimmar visar under Håltimmar <em>generatorns
+    siffra</em>: elevminuter i håltimmar en vanlig vecka, för hela skolan och
+    per elev. Det är summan av listan under den, med 15 minuter som minsta
+    lucka och varje lucka gånger de elever som sitter i den, och det är samma
+    siffra som genereringen räknar för sitt schema, utom i de fall rutan
+    nedan nämner. Står minsta luckan i
+    listan på något annat än 15 minuter ändras listan men inte siffran.
+  </p>
+  <div class="note">
+    <span class="label">Hur mycket regeln väger</span>
+    <p>
+      En hel klass som väntar en minut väger dubbelt så mycket som en lärare
+      som väntar en minut, när Kompakta lärardagar står på sitt
+      standardvärde. En språkvalsgrupp på sex elever väger ungefär som en halv
+      lärare. En klass håltimme på 40 minuter väger mer än en lektion i fel
+      sal, men mindre än en lärares önskade lediga dag (4.4). Höjer du
+      Kompakta lärardagar i optimeringsprofilen väger lärarnas luckor tyngre
+      också mot elevernas.
+    </p>
+  </div>
+  <div class="note">
+    <span class="label">Där generatorn räknar grövre än sidan</span>
+    <p>
+      Generatorn styr mot alla luckor mellan första och sista lektionen, också
+      de under 15 minuter. Lunchen räknas av hel när klassens lunch ligger
+      inom dagen, också om eleverna har dusch eller en lektion i en annan
+      grupp under en del av den. Ombyte och dusch kring en låst lektion räknas
+      bara av sidan.
+    </p>
+    <p>
+      Udda och jämna veckor räknar generatorn som sidan, var för sig, och en
+      vanlig vecka är hälften av varje. Datum har generatorn däremot inte. En
+      lektion som med <span class="ui">Från och med</span> och
+      <span class="ui">Till och med</span> bara går en del av läsåret räknas
+      därför varje vecka. En halvklass terminsvis eller på halva terminer
+      (4.2) räknas som en lektion för hela klassen hela läsåret, medan sidan
+      ser en lucka för den halva som inte läser ämnet i perioden. I de här
+      fallen skiljer sig också siffran som genereringen räknar för sitt schema
+      från sidans. Siffran på sidan räknas alltid efter sidans regler.
+    </p>
+  </div>
   <p>
     <strong>Optimeringsprofilen</strong> är mjuka önskemål. De kan väga mot
     varandra: ju högre värde, desto viktigare. Motorn hittar den bästa

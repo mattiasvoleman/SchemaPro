@@ -1517,6 +1517,7 @@
     "rulesHint": "The rules apply to the whole school and are set under Availability.",
     "ruleMaxPerDay": "Max lessons per day per class",
     "ruleTravel": "The generator keeps the travel time between sites",
+    "rulePupilGaps": "The generator keeps pupils' idle time down",
     "rulesEdit": "Change",
     "noYearTitle": "{count, plural, one {One group} other {# groups}} in the curriculum entries has no year",
     "noYearBody": "The solver reads “no year” as “unrestricted”: frame times and breaks do not apply to these groups’ lessons, so they can land straight across a break. The year is derived from the members’ home classes, or from the group’s own year when it has no members.",
@@ -2874,7 +2875,9 @@
     "saveFailed": "The school rules were not saved",
     "saveFailedHint": "The rules that applied before still stand.",
     "travel": "The generator keeps the travel time between sites",
-    "travelHint": "A teacher, or the pupils, with two lessons on one day at different sites get the travel time between them, rounded up to whole start steps of the timetable. The travel times are set under Rooms, Sites."
+    "travelHint": "A teacher, or the pupils, with two lessons on one day at different sites get the travel time between them, rounded up to whole start steps of the timetable. The travel times are set under Rooms, Sites.",
+    "pupilGaps": "The generator keeps pupils' idle time down",
+    "pupilGapsHint": "The gaps between a pupil's first and last lesson are counted per pupil, with the class, the teaching groups, the halves and the replacing groups, as on the Idle gaps page. A whole class waiting weighs twice what a teacher waiting does. A good timetable may take longer to find."
   },
   "conflictCategories": {
     "AVAILABILITY": "Availability",
@@ -2937,6 +2940,9 @@
     "lengthMedium": "medium",
     "lengthLong": "long",
     "lengthLegend": "Gaps are labelled by the waiting time left once lunch is subtracted — the same time the totals are counted in: under 40 minutes is short, 40–79 medium, 80 minutes and up long. A 1 h 40 min gap with 30 min of lunch therefore counts as 70 minutes: medium.",
+    "generatorFigure": "The generator's number: {minutes, number} pupil-minutes of idle time in an ordinary week, {perPupil, number} minutes per pupil. It is counted as the list below is, with 15 minutes as the shortest gap, and each gap times the pupils sitting in it.",
+    "generatorFigureOn": "Generate keeps it down when it lays a timetable (School rules).",
+    "generatorFigureOff": "Generate does not take it into account until the school turns it on under School rules.",
     "whoTitle": "3. Who is free then?",
     "whoHint": "Give a day and a time — the question you ask when you need a substitute on Wednesday at ten. Every class, teacher and room is tested on its own.",
     "whoDay": "Day",

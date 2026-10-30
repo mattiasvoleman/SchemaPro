@@ -41,6 +41,23 @@ export function standardWeekPupilMinutes(gaps: readonly IdleGap[]): number {
   return gaps.reduce((sum, gap) => sum + gap.idleMinutes * gap.idleStudents * weekShare(gap.weeks), 0);
 }
 
+/**
+ * The pupils' håltimmar of a whole school, in idle pupil-minutes in the
+ * average week: every class report's standardWeekPupilMinutes, added up.
+ *
+ * THE GENERATOR'S NUMBER, at IDLE_MINIMUM_MINUTES: what Generera keeps down
+ * when the school's Skolregler say so, and what the engine answers with for a
+ * timetable (pupilIdleMinutes). src/common/__fixtures__/pupil-gaps-cases.json
+ * holds the two to one count (lib/gaps.contract.test.ts here). Teachers'
+ * reports are left out: the number is the pupils'.
+ */
+export function pupilMinutesOf(reports: readonly GapReport[]): number {
+  return reports.reduce(
+    (sum, report) => (report.kind === "TEACHER" ? sum : sum + standardWeekPupilMinutes(report.gaps)),
+    0,
+  );
+}
+
 export interface IdleSummary {
   teachers: {
     /** Σ over teachers of their average-week idle minutes. */

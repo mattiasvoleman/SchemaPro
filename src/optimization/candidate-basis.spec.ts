@@ -213,6 +213,8 @@ const anonymised = (real: School, turn = 0): BasisSource => {
     block: new Map<string, string>(),
     dayLimit: new Map<string, string>(),
     site: new Map<string, string>(),
+    // A lock's own id, mapped only where the pupils' cohorts name it.
+    fixed: new Map<string, string>(),
   };
   const anon = (map: Map<string, string>, id: string): string => {
     const known = map.get(id);
@@ -317,7 +319,7 @@ const anonymised = (real: School, turn = 0): BasisSource => {
     fixedLessons: shuffled(
       p.fixedLessons.map((lesson) => ({
         ...lesson,
-        id: randomUUID(),
+        id: p.pupilGaps !== undefined ? anon(maps.fixed, lesson.id) : randomUUID(),
         teacherId: orNull(maps.teacher, lesson.teacherId),
         coTeacherId: orNull(maps.teacher, lesson.coTeacherId),
         studentGroupId: anon(maps.group, lesson.studentGroupId),
@@ -341,6 +343,30 @@ const anonymised = (real: School, turn = 0): BasisSource => {
       ),
       turn,
     ),
+    // Elevernas håltimmar: sent only when the school turned it on.
+    ...(p.pupilGaps !== undefined
+      ? {
+          pupilGaps: {
+            cohorts: shuffled(
+              p.pupilGaps.cohorts.map((cohort) => ({
+                ...cohort,
+                groupIds: shuffled(cohort.groupIds.map((id) => anon(maps.group, id)), turn),
+                fixedLessonIds: cohort.fixedLessonIds.map((id) => anon(maps.fixed, id)),
+                ...(cohort.homeGroupId !== undefined ? { homeGroupId: anon(maps.group, cohort.homeGroupId) } : {}),
+              })),
+              turn,
+            ),
+            ...(p.pupilGaps.fixedMargins !== undefined
+              ? {
+                  fixedMargins: p.pupilGaps.fixedMargins.map((margin) => ({
+                    ...margin,
+                    fixedLessonId: anon(maps.fixed, margin.fixedLessonId),
+                  })),
+                }
+              : {}),
+          },
+        }
+      : {}),
   };
   return {
     payload,
@@ -437,6 +463,8 @@ describe('the candidate basis', () => {
     ['a block loses a member', (s) => void delete s.payload.requirements[1]!.blockId, ['requirements']],
     ['a locked lesson changes room', (s) => void (s.payload.fixedLessons[0]!.roomId = 'room-hall'), ['preserved']],
     ['a locked lesson loses its second class', (s) => void s.payload.fixedLessons[0]!.extraGroupIds!.pop(), ['preserved']],
+    ['a locked lesson moves to even weeks', (s) => void (s.payload.fixedLessons[0]!.recurrence = 'EVEN_WEEKS'), ['preserved']],
+    ['a post moves to odd weeks', (s) => void (s.payload.requirements[0]!.recurrence = 'ODD_WEEKS'), ['requirements']],
     ['a draft lesson is moved by hand', (s) => void (s.draftLessons[0]!.dayOfWeek = 5), ['draft']],
     ['a hint the engine is given moves', (s) => void (s.payload.previousLessons[0]!.startTime = '13:00:00'), ['draft']],
     ['a draft lesson gets a term', (s) => void (s.draftLessons[0]!.endDate = '2026-12-18'), ['draft']],
@@ -523,6 +551,26 @@ describe('the candidate basis', () => {
     expect(changedParts(partsOf(walked(10)), partsOf(walked(15), 1))).toEqual(['rooms']);
   });
 
+  it('reads the pupils’ cohorts in real ids, as a change of rules and rosters, and a school without them as before', () => {
+    const counted = (pupils: number) => {
+      const real = school();
+      real.payload.pupilGaps = {
+        cohorts: [
+          { groupIds: ['grp-7a', 'grp-ma7'], fixedLessonIds: ['never-mapped'], homeGroupId: 'grp-7a', pupils },
+          { groupIds: ['grp-7a'], fixedLessonIds: [], homeGroupId: 'grp-7a', pupils: 10 },
+        ],
+        fixedMargins: [{ fixedLessonId: 'never-mapped', minutesBefore: 0, minutesAfter: 15 }],
+      };
+      return real;
+    };
+    // Whatever the anonymous ids and the order the cohorts come back in.
+    expect(partsOf(counted(12), 1)).toEqual(partsOf(counted(12)));
+    // Turned on: the rules say it is kept, and the rosters carry the cohorts.
+    expect(changedParts(partsOf(school()), partsOf(counted(12), 1))).toEqual(['rules', 'rosters']);
+    // A pupil who moves between cohorts is the rosters' part alone.
+    expect(changedParts(partsOf(counted(12)), partsOf(counted(11), 1))).toEqual(['rosters']);
+  });
+
   it('reads a conflict pair either way round as one pair', () => {
     const forward = school();
     const backward = school();
@@ -543,9 +591,16 @@ describe('the candidate basis', () => {
       startTime: new Date('1970-01-01T08:00:00.000Z'),
       endTime: new Date('1970-01-01T09:00:00.000Z'),
       extraGroups: [{ studentGroupId: 'grp-ma7' }, { studentGroupId: 'grp-7b' }],
+      recurrence: 'ALL_WEEKS' as const,
     };
     expect(preservedPartOf([row])).toBe(parts.preserved);
     expect(preservedPartOf([{ ...row, roomId: 'room-hall' }])).not.toBe(parts.preserved);
+    // A/B-veckor: a lock moved to odd weeks is not the lock the run planned
+    // around, and one sent with its parity digests the same from the row.
+    expect(preservedPartOf([{ ...row, recurrence: 'ODD_WEEKS' }])).not.toBe(parts.preserved);
+    const odd = school();
+    odd.payload.fixedLessons[0]!.recurrence = 'ODD_WEEKS';
+    expect(preservedPartOf([{ ...row, recurrence: 'ODD_WEEKS' }])).toBe(partsOf(odd).preserved);
   });
 
   it('refuses an anonymous id no map knows, rather than hashing a random one', () => {

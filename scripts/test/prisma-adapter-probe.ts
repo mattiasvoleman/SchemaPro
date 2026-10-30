@@ -5186,6 +5186,57 @@ async function runChecks(
     }
   });
 
+  // ---- (rh) Elevernas håltimmar: the Skolregler switch, and the cohorts the generator's fetch sends
+  await check('(rh) the pupils\' håltimmar switch round-trips the real adapter and a PUT without it keeps it; the generator\'s fetch sends no cohort while it is off, and then counts and anonymous groups, never a pupil', async () => {
+    const lunch = new LunchSettingsService(api);
+    const before = await owner.query('SELECT * FROM "LunchSettings" WHERE "schoolId" = $1', [fixture.schoolId]);
+    try {
+      const fetch = () =>
+        api.withRls(fixture.admin, async (tx) =>
+          (
+            new OptimizationProxyService(
+              api,
+              { post: () => { throw new Error('the engine was called'); } } as never,
+              { getOrThrow: () => ({ baseUrl: 'http://engine.invalid', apiKey: 'k'.repeat(32), timeoutMs: 1 }) } as never,
+            ) as unknown as {
+              fetchAndAnonymize: (...args: unknown[]) => Promise<{
+                pupilGaps: { cohorts: { groupIds: string[]; fixedLessonIds: string[]; homeGroupId?: string; pupils: number }[] } | null;
+                groupAnonMap: Map<string, string>;
+              }>;
+            }
+          ).fetchAndAnonymize(tx, fixture.activeYearId, fixture.schoolId, await rostersOfYear(tx, fixture.admin, fixture.activeYearId)),
+        );
+
+      const base = { lunchEnabled: false, lunchStartTime: '11:00', lunchEndTime: '13:00', lunchMinutes: 30 };
+      const off = await lunch.upsert({ ...base, generatorKeepsPupilGapsDown: false }, fixture.admin);
+      assert.equal(off.generatorKeepsPupilGapsDown, false);
+      assert.equal((await fetch()).pupilGaps, null, 'a cohort went out with the switch off');
+
+      const on = await lunch.upsert({ ...base, generatorKeepsPupilGapsDown: true }, fixture.admin);
+      assert.equal(on.generatorKeepsPupilGapsDown, true);
+      const kept = await lunch.upsert(base, fixture.admin);
+      assert.equal(kept.generatorKeepsPupilGapsDown, true, 'a PUT without the switch turned it off');
+
+      const sent = await fetch();
+      assert.ok(sent.pupilGaps && sent.pupilGaps.cohorts.length > 0, 'no cohort went out with the switch on');
+      const anonymous = new Set(sent.groupAnonMap.values());
+      for (const cohort of sent.pupilGaps!.cohorts) {
+        assert.ok(cohort.pupils > 0);
+        assert.ok(cohort.groupIds.length > 0 && cohort.groupIds.every((id) => anonymous.has(id)), 'a cohort named a group by a real id');
+      }
+      assert.ok(!JSON.stringify(sent.pupilGaps).includes(fixture.pupilId), 'a pupil id crossed');
+    } finally {
+      await owner.query('DELETE FROM "LunchSettings" WHERE "schoolId" = $1', [fixture.schoolId]);
+      for (const row of before.rows) {
+        const columns = Object.keys(row);
+        await owner.query(
+          `INSERT INTO "LunchSettings" (${columns.map((c) => `"${c}"`).join(', ')}) VALUES (${columns.map((_c, i) => `$${i + 1}`).join(', ')})`,
+          columns.map((c) => (row as Record<string, unknown>)[c]),
+        );
+      }
+    }
+  });
+
   await check('(z) the active year\'s hot paths send Postgres exactly f5ff8da\'s statements, the PATCH one fewer: the roster basis rides on reads they already make', async () => {
     // A school of its own, swept whole: an active year with 7A and 8A at the
     // same hour (no shared pupil or teacher), a published lesson, behörighet,

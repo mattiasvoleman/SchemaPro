@@ -26,6 +26,7 @@ interface LunchForm {
   diningSeats: string;
   maxLessonsPerDayPerGroup: string;
   generatorKeepsTravelTime: boolean;
+  generatorKeepsPupilGapsDown: boolean;
 }
 
 const EMPTY_FORM: LunchForm = {
@@ -37,6 +38,8 @@ const EMPTY_FORM: LunchForm = {
   maxLessonsPerDayPerGroup: "",
   // Off until the school turns it on: Restid i generatorn.
   generatorKeepsTravelTime: false,
+  // Off until the school turns it on: Elevernas håltimmar.
+  generatorKeepsPupilGapsDown: false,
 };
 
 /**
@@ -142,6 +145,9 @@ export function LunchSettingsCard() {
   // key out unless the API named it or the admin turned it on: a web that
   // reaches the browsers before the API does still saves the lunch.
   const [apiKnowsTravel, setApiKnowsTravel] = useState(false);
+  // The same for the pupils' håltimmar: an API that never named the switch
+  // refuses it, so it is sent only once the API has, or once it is turned on.
+  const [apiKnowsPupilGaps, setApiKnowsPupilGaps] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -163,10 +169,12 @@ export function LunchSettingsCard() {
         // `?? false`: an API from before the switch sends no such field, and
         // reads as the rule it is then — off.
         generatorKeepsTravelTime: settings.generatorKeepsTravelTime ?? false,
+        generatorKeepsPupilGapsDown: settings.generatorKeepsPupilGapsDown ?? false,
       };
       setForm(filled);
       setBaseline(filled);
       setApiKnowsTravel(settings.generatorKeepsTravelTime !== undefined);
+      setApiKnowsPupilGaps(settings.generatorKeepsPupilGapsDown !== undefined);
       return;
     }
     setForm({ ...EMPTY_FORM, ...legacyForm() });
@@ -198,6 +206,9 @@ export function LunchSettingsCard() {
         maxLessonsPerDayPerGroup: optionalNumber(sent.maxLessonsPerDayPerGroup),
         ...(apiKnowsTravel || sent.generatorKeepsTravelTime
           ? { generatorKeepsTravelTime: sent.generatorKeepsTravelTime }
+          : {}),
+        ...(apiKnowsPupilGaps || sent.generatorKeepsPupilGapsDown
+          ? { generatorKeepsPupilGapsDown: sent.generatorKeepsPupilGapsDown }
           : {}),
       });
       setBaseline(sent);
@@ -320,6 +331,23 @@ export function LunchSettingsCard() {
               aria-describedby="generator-keeps-travel-hint"
               checked={form.generatorKeepsTravelTime}
               onCheckedChange={(checked) => patch({ generatorKeepsTravelTime: checked })}
+            />
+          </div>
+
+          {/* Elevernas håltimmar: the generator keeps the pupils' idle time
+              down, counted as the Håltimmar page counts it. */}
+          <div className="flex items-start justify-between gap-4 rounded-md border p-3">
+            <div className="space-y-1">
+              <Label htmlFor="generator-keeps-pupil-gaps">{t("pupilGaps")}</Label>
+              <p id="generator-keeps-pupil-gaps-hint" className="text-sm text-muted-foreground">
+                {t("pupilGapsHint")}
+              </p>
+            </div>
+            <Switch
+              id="generator-keeps-pupil-gaps"
+              aria-describedby="generator-keeps-pupil-gaps-hint"
+              checked={form.generatorKeepsPupilGapsDown}
+              onCheckedChange={(checked) => patch({ generatorKeepsPupilGapsDown: checked })}
             />
           </div>
 

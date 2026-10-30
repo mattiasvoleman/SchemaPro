@@ -784,9 +784,10 @@ export class MasterLessonsService {
            * without saying so.
            *
            * Only a window flips ownership, not every edit, and the difference
-           * is what the engine can express. It has no notion of weeks at all,
-           * so a window is unreproducible and preserving it is the only way not
-           * to lose it. A moved time it can express perfectly well and simply
+           * is what the engine can express. It plans no dates, and odd or
+           * even weeks only as the requirement's own (A/B-veckor), so a window
+           * written on the lesson is unreproducible and preserving it is the
+           * only way not to lose it. A moved time it can express perfectly well and simply
            * decided otherwise about — pinning that is what the lock is for, and
            * the lock is visible on the lesson. Flipping here on every edit would
            * make each nudge a second, invisible lock and leave the padlock

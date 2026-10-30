@@ -58,6 +58,17 @@ const lesson = (overrides: Partial<PdfLesson> = {}): PdfLesson => ({
 const doc = () => state.instances[0]!;
 
 describe("exportTimetablePdf", () => {
+  it("says beside the time which weeks a lesson runs, and nothing for every week", async () => {
+    await exportTimetablePdf({
+      title: "T",
+      dayNames: DAY_NAMES,
+      columnLabels: COLUMN_LABELS,
+      lessons: [lesson({ weeks: "udda" }), lesson({ subject: "Home", weeks: "jämna" }), lesson({ startTime: "09:00", endTime: "10:00" })],
+    });
+    const body = (autoTableMock.mock.calls.at(-1)![1] as { body: string[][] }).body;
+    expect(body.map((row) => row[0])).toEqual(["08:15–09:00 (udda)", "08:15–09:00 (jämna)", "09:00–10:00"]);
+  });
+
   beforeEach(() => {
     state.instances.length = 0;
     state.tableHeight = 20;

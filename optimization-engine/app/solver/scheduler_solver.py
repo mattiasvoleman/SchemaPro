@@ -22,6 +22,14 @@ from app.exceptions import (
     SolverBuildError,
 )
 from app.solver.frames import changeover_slots, day_windows, span_of
+from app.solver.pupil_gaps import (
+    PupilGapModel,
+    SlotGrid,
+    build_pupil_gap_objective,
+    estimate_variables as pupil_gap_variables,
+    pupil_gap_scale,
+    pupil_idle_minutes,
+)
 from app.solver.rasts import blocks_for, blocks_with_demand, forbidden_starts
 from app.solver.servings import allowed_starts
 from app.schemas.schedule import (
@@ -47,6 +55,7 @@ from app.schemas.schedule import (
     ScheduleRules,
     SearchOptions,
     SolverStatus,
+    WeekParity,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,9 +69,11 @@ from app.solver.conflict_analyzer import (
 from app.solver.room_allocator import (
     RoomPlan,
     add_room_allocation,
+    build_room_classes,
     collect_distinguished_room_ids,
 )
 from app.solver.time_grid import TimeGrid
+from app.solver.weeks import WEEKS, alternates, meet, tag as week_tag, week_parts
 from app.solver.travel import (
     CATEGORIES as TRAVEL_CATEGORIES,
     CODES as TRAVEL_CODES,
@@ -285,6 +296,11 @@ def _by_pupils(decisions: list[LessonDecision]) -> list[list[LessonDecision]]:
     for decision in decisions:
         parts.setdefault(pupil_key_of(decision.lesson.requirement), []).append(decision)
     return list(parts.values())
+
+
+def _parity(decision: LessonDecision) -> WeekParity | None:
+    """A/B-veckor: the weeks a lesson runs in, None for every week (app/solver/weeks.py)."""
+    return decision.lesson.requirement.recurrence
 
 
 def _grade_span_text(low: int | None, high: int | None) -> str:
@@ -1105,6 +1121,48 @@ class _TeacherDayLiterals:
     works: dict[tuple[UUID, int], cp_model.IntVar] = field(default_factory=dict)
 
 
+class _TeacherWeekLocks:
+    """A/B-veckor: each week's locked lessons, as the teacher rules read them.
+
+    `alternate(teacher)` is whether a lock the teacher leads or co-teaches
+    runs on alternate weeks only — which makes the teacher's two weeks
+    differ with every generated lesson the same, so their rules are held per
+    week (weeks.week_parts' `alternating`). `busy(week)` and `minutes(week)`
+    are _teacher_busy_from_locks and _teacher_locks over the locks that run
+    in `week`, built on first use: a school without an alternating lock never
+    builds either.
+    """
+
+    def __init__(self, solver: SchedulerSolver, fixed_lessons: list[FixedLesson]) -> None:
+        self._solver = solver
+        self._fixed = fixed_lessons
+        self._alternating = {
+            teacher_id
+            for fixed in fixed_lessons
+            if fixed.recurrence is not None
+            for teacher_id in (fixed.teacher_id, fixed.co_teacher_id)
+            if teacher_id is not None
+        }
+        self._busy: dict[WeekParity, dict[tuple[UUID, int], list[tuple[int, int]]]] = {}
+        self._minutes: dict[WeekParity, dict[tuple[UUID, int], int]] = {}
+
+    def alternate(self, teacher_id: UUID) -> bool:
+        return teacher_id in self._alternating
+
+    def locks(self, week: WeekParity) -> list[FixedLesson]:
+        return [fixed for fixed in self._fixed if meet(fixed.recurrence, week)]
+
+    def busy(self, week: WeekParity) -> dict[tuple[UUID, int], list[tuple[int, int]]]:
+        if week not in self._busy:
+            self._busy[week] = self._solver._teacher_busy_from_locks(self.locks(week))
+        return self._busy[week]
+
+    def minutes(self, week: WeekParity) -> dict[tuple[UUID, int], int]:
+        if week not in self._minutes:
+            self._minutes[week] = _teacher_locks(self.locks(week))[0]
+        return self._minutes[week]
+
+
 def settings_for_search(settings: Settings, search: SearchOptions | None) -> Settings:
     """The Settings one request is solved under: the deployment's, with the
     request's own budget when it brought one.
@@ -1468,7 +1526,18 @@ class SchedulerSolver:
                     model, decisions, wished_free, weights, teacher_days, day_literals,
                 ),
             ]
-            model.Minimize(sum(objective_terms) if objective_terms else 0)
+            # Elevernas håltimmar, last: it reads the one-hots the terms above
+            # built and adds its own after them. None at a school that has not
+            # turned it on, and then the objective is the line it always was.
+            pupil_terms = self._add_pupil_gap_objective(
+                model, request, decisions, day_vars, day_literals, lunch_starts,
+            )
+            if pupil_terms:
+                model.Minimize(
+                    pupil_gap_scale(request) * sum(objective_terms) + sum(pupil_terms),
+                )
+            else:
+                model.Minimize(sum(objective_terms) if objective_terms else 0)
         return model, registry, decisions, room_plan, lunch_starts
 
     def _dining_hall_verdict(self, request: OptimizeScheduleRequest) -> ConflictAnalysis | None:
@@ -4519,35 +4588,54 @@ class SchedulerSolver:
             "start step: slot_minutes=%d step_slots=%d step_minutes=%d",
             self._grid.slot_minutes, step, step * self._grid.slot_minutes,
         )
-        # Arithmetic first, models second: a hall the school cannot fit in is
-        # decided here in microseconds and reported the way a solve would have.
-        verdict = (
-            self._dining_hall_verdict(request)
-            or self._clique_hours_verdict(request)
-            or self._teacher_hours_verdict(request)
-            or self._lesson_gaps_verdict(request)
-        )
-        if verdict is not None:
-            return OptimizeScheduleResponse(
-                request_id=request.request_id,
-                status="INFEASIBLE",
-                lessons=[],
-                conflicts=verdict,
+        # A/B-VECKOR: EVERY VERDICT BELOW COUNTS ONE REAL WEEK. A school with
+        # alternating lessons is judged on each week on its own
+        # (_week_requests): the odd week's lessons and locks, then the even
+        # week's, each a request with every lesson every week, so each
+        # verdict counts exactly what it always counted. A week's request is
+        # a relaxation of the model — the model holds every one of its rows
+        # in that week over at least these lessons — so a week a verdict
+        # refuses is a week the model refuses, and every row it names is a
+        # row of that week. A school without alternating lessons has one
+        # week, the request itself, and is judged exactly as before.
+        weeks = _week_requests(request)
+        lunch_hints: dict[tuple[UUID, int], int] = {}
+        for week in weeks:
+            # Arithmetic first, models second: a hall the school cannot fit in
+            # is decided here in microseconds and reported the way a solve
+            # would have.
+            verdict = (
+                self._dining_hall_verdict(week)
+                or self._clique_hours_verdict(week)
+                or self._teacher_hours_verdict(week)
+                or self._lesson_gaps_verdict(week)
             )
-        # Then the lunches alone: a small model that proves what the full one
-        # could not in a minute, or hands it a warm start. See _lunch_stage_one.
-        verdict, lunch_hints = self._lunch_stage_one(request)
-        # And the clique's hours once more, with every rule the model keeps
-        # its classes by: after every verdict above, so a week one of them
-        # decides keeps its answer. See _class_hours_verdict.
-        verdict = verdict or self._class_hours_verdict(request)
-        if verdict is not None:
-            return OptimizeScheduleResponse(
-                request_id=request.request_id,
-                status="INFEASIBLE",
-                lessons=[],
-                conflicts=verdict,
-            )
+            if verdict is not None:
+                return OptimizeScheduleResponse(
+                    request_id=request.request_id,
+                    status="INFEASIBLE",
+                    lessons=[],
+                    conflicts=verdict,
+                )
+        for week in weeks:
+            # Then the lunches alone: a small model that proves what the full
+            # one could not in a minute, or hands it a warm start. See
+            # _lunch_stage_one. Its starts are a warm start for the one week
+            # it was asked about, so a school of two weeks takes none.
+            verdict, week_hints = self._lunch_stage_one(week)
+            if week is request:
+                lunch_hints = week_hints
+            # And the clique's hours once more, with every rule the model keeps
+            # its classes by: after every verdict above, so a week one of them
+            # decides keeps its answer. See _class_hours_verdict.
+            verdict = verdict or self._class_hours_verdict(week)
+            if verdict is not None:
+                return OptimizeScheduleResponse(
+                    request_id=request.request_id,
+                    status="INFEASIBLE",
+                    lessons=[],
+                    conflicts=verdict,
+                )
 
         rooms = request.rooms
         model, _, decisions, room_plan, lunch_full = self._build_model(
@@ -4672,6 +4760,8 @@ class SchedulerSolver:
             if (
                 len(decisions) != len(feas_decisions)
                 or set(room_plan.literals) != set(feas_plan.literals)
+                # A/B-veckor: a mixed room class's named rooms, by lesson.
+                or set(room_plan.rooms_of) != set(feas_plan.rooms_of)
                 # The lunch keys as well: the two builds must agree on which
                 # groups eat on which days, or the map read below belongs to a
                 # different school week than the one being returned.
@@ -4692,6 +4782,10 @@ class SchedulerSolver:
                 for (_, _, literal), (_, _, source) in zip(
                     room_plan.site_vars, feas_plan.site_vars,
                 )
+            ] + [
+                (literal, feas_plan.rooms_of[key][room])
+                for key, named in room_plan.rooms_of.items()
+                for room, literal in named.items()
             ]
         else:
             # ---- phase 1b: the cleared clone takes what is left -------------
@@ -4751,7 +4845,11 @@ class SchedulerSolver:
                 (literal, literal)
                 for literals in room_plan.literals.values()
                 for literal in literals.values()
-            ] + [(literal, literal) for _, _, literal in room_plan.site_vars]
+            ] + [(literal, literal) for _, _, literal in room_plan.site_vars] + [
+                (literal, literal)
+                for named in room_plan.rooms_of.values()
+                for literal in named.values()
+            ]
 
         def _phase1_response() -> OptimizeScheduleResponse:
             lessons = self._extract_lessons(
@@ -4763,6 +4861,7 @@ class SchedulerSolver:
                 lessons=lessons,
                 lunches=self._lunches_of(winner_solver, winner_lunch, request.rules),
                 conflicts=None,
+                pupil_idle_minutes=pupil_idle_minutes(request, lessons),
             )
 
         remaining = _remaining()
@@ -4810,6 +4909,7 @@ class SchedulerSolver:
                 # lunch_full, not winner_lunch: phase 2 solved the full model.
                 lunches=self._lunches_of(phase2, lunch_full, request.rules),
                 conflicts=None,
+                pupil_idle_minutes=pupil_idle_minutes(request, lessons),
             )
 
         # Phase 2 came up empty: fall back to the phase-1 schedule rather than
@@ -5447,7 +5547,130 @@ class SchedulerSolver:
             # constraints on starts that exist already, and add no variable.
             + len(_blocks_of(request.requirements))
             + 2 * len(request.previous_lessons)
+            + self._week_vars(request, lessons_by_teacher, lessons_by_group)
+            # Elevernas håltimmar: zero without pupilGaps (pupil_gaps.py).
+            + (
+                pupil_gap_variables(
+                    request,
+                    SlotGrid(
+                        slots_per_day=self._grid.slots_per_day,
+                        slot_minutes=self._grid.slot_minutes,
+                        day_start_minutes=self._grid.day_start_minutes,
+                        weekdays=self._grid.schedule_days,
+                    ),
+                    self._fixed_window,
+                )
+                if self._settings.weight_pupil_gap > 0
+                else 0
+            )
         )
+
+    def _week_vars(
+        self,
+        request: OptimizeScheduleRequest,
+        lessons_by_teacher: dict[UUID, int],
+        lessons_by_group: dict[UUID, int],
+    ) -> int:
+        """A/B-veckor: what the second week adds to _estimate_model_size's count.
+
+        Zero for a request with nothing alternating, which is every request
+        that does not send the field. Otherwise the rows a teacher's or a
+        class's other week adds where it has one (weeks.py): a lesson's own
+        variables are never doubled, so this is a few variables per day — the
+        week's first, last, works and idle, a count per day, a rast's "still
+        here" — and never a term in the lessons.
+        """
+        requirements = request.requirements
+        if not alternates(r.recurrence for r in requirements) and not alternates(
+            f.recurrence for f in request.fixed_lessons
+        ):
+            return 0
+        day_count = len(self._grid.schedule_days)
+        teachers = {
+            teacher_id
+            for requirement in requirements
+            if requirement.recurrence is not None
+            for teacher_id in _teachers_of(requirement)
+        } | {
+            teacher_id
+            for fixed in request.fixed_lessons
+            if fixed.recurrence is not None
+            for teacher_id in (fixed.teacher_id, fixed.co_teacher_id)
+            if teacher_id is not None
+        }
+        groups = {r.student_group_id for r in requirements if r.recurrence is not None}
+        extra = 0
+        max_per_day = request.rules.max_lessons_per_day_per_group if request.rules else None
+        if max_per_day is not None:
+            extra += (day_count + 1) * sum(
+                1 for group_id in groups if lessons_by_group.get(group_id, 0) > max_per_day
+            )
+        if self._settings.weight_teacher_gap > 0:
+            extra += 5 * day_count * sum(
+                1 for teacher_id in teachers if lessons_by_teacher.get(teacher_id, 0) >= 2
+            )
+        for rule in request.teacher_work_rules:
+            if rule.teacher_id not in teachers or not lessons_by_teacher.get(rule.teacher_id):
+                continue
+            if rule.min_daily_rest_minutes is not None:
+                extra += 3 * day_count + (2 * day_count if request.fixed_lessons else 0)
+            if rule.max_teaching_minutes_per_day is not None:
+                extra += 2 * day_count + 1
+        extra += sum(
+            2 * day_count + 1
+            for limit in request.teacher_day_limits
+            if limit.teacher_id in teachers and lessons_by_teacher.get(limit.teacher_id)
+        )
+        asking_rasts = sum(1 for rast in request.rasts if rast.requires_lesson_before)
+        extra += asking_rasts * day_count * len(request.groups)
+        return extra + self._named_room_vars(request)
+
+    def _named_room_vars(self, request: OptimizeScheduleRequest) -> int:
+        """A literal per lesson and room of every mixed room class (room_allocator).
+
+        The classes as _add_room_allocation makes them — the same predicate,
+        the same key, the same distinguished rooms and wishes — on one stand-in
+        per requirement, which is all the partition reads; then each class of
+        several rooms whose possible lessons alternate in part counts each of
+        those lessons once per room.
+        """
+        from types import SimpleNamespace
+
+        rooms = request.rooms
+        allowed, key = self._lock_aware(
+            resolve_room_locks(request.requirements, request.room_preferences or [], rooms),
+        )
+        travel = travel_map(
+            request, slot_minutes=self._grid.slot_minutes, step=_start_step(request, self._grid),
+        )
+        classes = build_room_classes(
+            [SimpleNamespace(lesson=SimpleNamespace(requirement=r)) for r in request.requirements],
+            rooms,
+            collect_distinguished_room_ids(request.constraints, request.fixed_lessons),
+            allowed,
+            key,
+            [
+                _preference_room_ids(preference, rooms)
+                for preference in (request.room_preferences or [])
+                if preference.kind == "WISH"
+            ],
+            travel.site_key if travel is not None else None,
+        )
+        pools: dict[int, list[AnonymousRequirement]] = defaultdict(list)
+        for requirement in request.requirements:
+            eligible = [
+                room_class for room_class in classes
+                if allowed(rooms[room_class.room_indices[0]], requirement)
+            ] or classes
+            for room_class in eligible:
+                pools[room_class.index].append(requirement)
+        named = 0
+        for room_class in classes:
+            pool = pools.get(room_class.index, [])
+            parities = {requirement.recurrence for requirement in pool}
+            if room_class.capacity > 1 and None in parities and len(parities) > 1:
+                named += room_class.capacity * sum(r.lessons_per_week for r in pool)
+        return named
 
     def _validate_request(self, request: OptimizeScheduleRequest) -> None:
         if not request.requirements:
@@ -5767,6 +5990,29 @@ class SchedulerSolver:
         # per-requirement checks, which name a member's own problem first.
         self._validate_blocks(request)
 
+        # A/B-VECKOR: THE COUNTING BELOW IS A REAL WEEK'S, as the verdicts in
+        # solve() are: each check runs on each week's request (_week_requests)
+        # — the request itself for a school without alternating lessons.
+        for week in _week_requests(request):
+            self._verify_week(week, request)
+
+        rules = request.rules
+        if rules is None or not _lunch_window_is_set(rules):
+            # Nothing below exists without a lunch window. A school that has
+            # typed a seat count and not yet decided when lunch is has made no
+            # error and must not be told it has.
+            return
+        self._verify_lunch(request, rules)
+
+    def _verify_week(
+        self, request: OptimizeScheduleRequest, whole: OptimizeScheduleRequest,
+    ) -> None:
+        """_validate_request's counting refusals, on one week's request.
+
+        `whole` is the request the week came from, for the one thing here that
+        is every week's: the teachers' own lunch, which sits at one hour all
+        year and so keeps clear of a lock of either week.
+        """
         # THE BREAKS THAT ASK FOR A LESSON, before any of the counting below:
         # a demand no stretch can hold is a contradiction between two of the
         # school's own sentences, and every verdict that follows would be
@@ -5783,7 +6029,7 @@ class SchedulerSolver:
         # not set a lunch window. A teacher's own break has nothing to do with
         # the pupils' one, and behind that return a school with teacher rules and
         # no school-wide lunch would never have been told a thing.
-        self._verify_teacher_work_rules(request)
+        self._verify_teacher_work_rules(request, whole=whole)
 
         # LÄRARENS DAG, beside the work rules and for their reason: a cap no
         # day can hold, or days too few for the week, is arithmetic on
@@ -5803,6 +6049,9 @@ class SchedulerSolver:
         # refusing here can never refuse a week that would have worked. It
         # ignores frame times and availability, which only ever shrink the
         # supply — so it under-refuses and never over-refuses.
+        locked_by_requirement = resolve_room_locks(
+            request.requirements, request.room_preferences, request.rooms,
+        )
         by_locked_rooms: dict[frozenset[UUID], list[AnonymousRequirement]] = defaultdict(
             list,
         )
@@ -5845,13 +6094,12 @@ class SchedulerSolver:
                     "offeredMinutes": available * minutes,
                 })
 
-        rules = request.rules
-        if rules is None or not _lunch_window_is_set(rules):
-            # Nothing below exists without a lunch window. A school that has
-            # typed a seat count and not yet decided when lunch is has made no
-            # error and must not be told it has.
-            return
+    def _verify_lunch(self, request: OptimizeScheduleRequest, rules: ScheduleRules) -> None:
+        """_validate_request's lunch refusals, on the whole request.
 
+        The meal is every week's, so it keeps clear of a lock of either week,
+        and every check here reads the request as the model's lunch does.
+        """
         window_start, window_end, lunch_slots = self._lunch_window_slots(rules)
 
         if rules.dining_seats is not None and request.groups:
@@ -6164,6 +6412,10 @@ class SchedulerSolver:
                     })
             for index, first in enumerate(members):
                 for second in members[index + 1:]:
+                    # A/B-veckor: two members whose weeks never meet share no
+                    # hour, so they may share a teacher or pupils.
+                    if not meet(first.recurrence, second.recurrence):
+                        continue
                     if set(_teachers_of(first)) & set(_teachers_of(second)):
                         raise InvalidScheduleInputError.of("BLOCK_MEMBERS_SHARE_TEACHER", {
                             "block": str(block_id),
@@ -6330,7 +6582,12 @@ class SchedulerSolver:
             days.append(day_index)
         return days
 
-    def _verify_teacher_work_rules(self, request: OptimizeScheduleRequest) -> None:
+    def _verify_teacher_work_rules(
+        self,
+        request: OptimizeScheduleRequest,
+        *,
+        whole: OptimizeScheduleRequest | None = None,
+    ) -> None:
         """The three refusals a teacher's own lunch and rest can be arithmetic.
 
         THE ORDER IS THE ROW'S OWN. The lunch window's arithmetic first, because
@@ -6402,8 +6659,12 @@ class SchedulerSolver:
         # a second rounding rule here would eventually disagree with the model
         # about when a teacher may eat.
         if any(rule.has_lunch for rule in reaching):
-            locked_busy = self._teacher_busy_from_locks(request.fixed_lessons)
-            closed_busy = self._teacher_busy_from_constraints(request.constraints)
+            # A/B-veckor: the break is every week's, as the model's is
+            # (_add_teacher_lunch reads every lock): a lock of either week is
+            # in its way, so these are `whole`'s locks, whichever week's
+            # lessons put the teacher here.
+            locked_busy = self._teacher_busy_from_locks((whole or request).fixed_lessons)
+            closed_busy = self._teacher_busy_from_constraints((whole or request).constraints)
             for rule in reaching:
                 window = _teacher_lunch_slots(rule, self._grid)
                 if window is None:
@@ -6666,6 +6927,8 @@ class SchedulerSolver:
         day_index: int,
         opens: int,
         first: int,
+        *,
+        week: WeekParity | None = None,
     ) -> bool:
         """Has a hand-placed lesson already taught this class in this stretch?
 
@@ -6681,10 +6944,15 @@ class SchedulerSolver:
         The window is the one _fixed_window rounds OUTWARD, so a lock is only
         counted when it fits inside the stretch with the rounding against it —
         which is the safe direction for a test that excuses an obligation.
+
+        In `week` only (weeks.meet): a lock on the even weeks teaches nobody
+        before the break of an odd one. None is every lock, every week.
         """
         base = day_index * self._grid.slots_per_day
         for fixed in request.fixed_lessons:
             if not ({fixed.student_group_id, *fixed.extra_group_ids} & members):
+                continue
+            if not meet(fixed.recurrence, week):
                 continue
             window = self._fixed_window(fixed)
             if window is None:
@@ -6699,6 +6967,8 @@ class SchedulerSolver:
         members: set[UUID],
         day_index: int,
         last: int,
+        *,
+        week: WeekParity | None = None,
     ) -> bool:
         """Is the class hand-placed into a lesson AFTER the break?
 
@@ -6707,10 +6977,14 @@ class SchedulerSolver:
         class whose only afternoon is locked looked like a class that had gone
         home, and the break's demand was excused by a lesson the school had
         already written down. Here the demand is unconditional instead.
+
+        In `week` only, as _locks_in_stretch reads it.
         """
         base = day_index * self._grid.slots_per_day
         for fixed in request.fixed_lessons:
             if not ({fixed.student_group_id, *fixed.extra_group_ids} & members):
+                continue
+            if not meet(fixed.recurrence, week):
                 continue
             window = self._fixed_window(fixed)
             if window is not None and window[0] >= base + last:
@@ -7537,6 +7811,21 @@ class SchedulerSolver:
             if not lessons:
                 continue
             span = span_by_group.get(group.id)
+            # A/B-VECKOR: THE RULE IS ABOUT A REAL WEEK'S DAY, so a class with
+            # an alternating lesson or lock is held in each week on its own —
+            # the odd week's lessons before the odd week's break, and a lock
+            # of the even weeks excuses nothing in an odd one. Not implied
+            # (weeks.py): the other week's lesson is no lesson before this
+            # week's break. One week, None, for a class with neither, which is
+            # the rule as it always was.
+            locks_alternate = any(
+                fixed.recurrence is not None
+                and bool({fixed.student_group_id, *fixed.extra_group_ids} & members)
+                for fixed in request.fixed_lessons
+            )
+            weeks = week_parts(
+                lessons, _parity, implied=False, alternating=locks_alternate,
+            )
             # Built lazily: a class no asking rast reaches adds no literal, and
             # a payload where nobody asked adds none at all.
             asks: cp_model.IntVar | None = None
@@ -7546,115 +7835,143 @@ class SchedulerSolver:
                 base = day_index * slots_per_day
                 lunch_start = lunch_starts.get((group.id, day_index))
                 after_lunch = meal_bounds and lunch_start is not None
-                # A lesson the school placed by hand is a lesson: when one sits
-                # in the stretch the demand is already met, and the cheapest
-                # obligation is the one never written. `room` and not `opens`,
-                # so this reads the same stretch _verify_rast_demands does —
-                # see there for why the permissive end of the meal is the right
-                # one to measure from.
-                if self._locks_in_stretch(request, members, day_index, room, first):
-                    continue
-                inside = []
-                for decision in lessons:
-                    # A lesson too long for the stretch can never be in it,
-                    # and `room` is measured against the same boundary the
-                    # flag below is written against — the meal's earliest
-                    # end when the meal bounds the stretch. Skipping it here
-                    # is one boolean and two rows the model never sees; NOT
-                    # skipping it was the timeout, because a flag that can
-                    # never be true turns the clause into "go home".
-                    #
-                    # PER LESSON, not per stretch, because a reservation
-                    # reaches a teacher rather than a class: the maths teacher
-                    # being away leaves the stretch open to every other
-                    # subject, and a room measured across the class would close
-                    # it for all of them.
-                    if decision.duration > self._room_in_stretch(
-                        reserved(decision, day_index), room, first,
+                # A LESSON'S OWN LITERALS ARE THE LESSON'S, NOT A WEEK'S: "it
+                # sits in this stretch" and "it starts after the break" say
+                # the same of a lesson every week in both weeks, so each is
+                # built once per stretch and read by every week's clause.
+                flags: dict[str, cp_model.IntVar | None] = {}
+                lates: dict[str, cp_model.IntVar] = {}
+                holed: set[str] = set()
+                for week, week_lessons in weeks:
+                    # A lesson the school placed by hand is a lesson: when one
+                    # sits in the stretch the demand is already met, and the
+                    # cheapest obligation is the one never written. `room` and
+                    # not `opens`, so this reads the same stretch
+                    # _verify_rast_demands does — see there for why the
+                    # permissive end of the meal is the right one to measure
+                    # from.
+                    if self._locks_in_stretch(
+                        request, members, day_index, room, first, week=week,
                     ):
                         continue
-                    flag = model.NewBoolVar(
-                        f"before_{group.id}_{day_index}_{first}_{decision.lesson.key()}",
-                    )
-                    # The lunch's own start, not an intermediate variable
-                    # equal to its end: one linear row rather than two, and
-                    # presolve reads straight through to the meal.
-                    if after_lunch:
-                        model.Add(
-                            decision.start >= lunch_start + lunch_slots,
-                        ).OnlyEnforceIf(flag)
-                    else:
-                        model.Add(decision.start >= base + opens).OnlyEnforceIf(flag)
-                    model.Add(decision.end <= base + first).OnlyEnforceIf(flag)
-                    inside.append(flag)
-                if asks is None:
-                    asks = registry.register(
-                        model,
-                        name=f"rast_order_{group.id}",
-                        category="AVAILABILITY",
-                        code="RAST_NO_LESSON_FITS_BEFORE_IT",
-                        resource_ids=[group.id],
-                    )
-                if not inside:
-                    # NOTHING CAN EVER SIT IN THIS STRETCH, so the demand has
-                    # exactly one remaining way to be met: the class is gone by
-                    # then. Said outright, as a hole in every one of its
-                    # lessons' start domains, and NOT left to a clause over
-                    # flags that can never be true — that was the timeout, and
-                    # an empty BoolOr would be an unexplained INFEASIBLE
-                    # besides. A domain is also the cheapest thing this engine
-                    # has: no boolean, no row, and presolve reads it directly.
+                    inside = []
+                    for decision in week_lessons:
+                        key = decision.lesson.key()
+                        if key in flags:
+                            flag = flags[key]
+                            if flag is not None:
+                                inside.append(flag)
+                            continue
+                        # A lesson too long for the stretch can never be in
+                        # it, and `room` is measured against the same boundary
+                        # the flag below is written against — the meal's
+                        # earliest end when the meal bounds the stretch.
+                        # Skipping it here is one boolean and two rows the
+                        # model never sees; NOT skipping it was the timeout,
+                        # because a flag that can never be true turns the
+                        # clause into "go home".
+                        #
+                        # PER LESSON, not per stretch, because a reservation
+                        # reaches a teacher rather than a class: the maths
+                        # teacher being away leaves the stretch open to every
+                        # other subject, and a room measured across the class
+                        # would close it for all of them.
+                        if decision.duration > self._room_in_stretch(
+                            reserved(decision, day_index), room, first,
+                        ):
+                            flags[key] = None
+                            continue
+                        flag = model.NewBoolVar(
+                            f"before_{group.id}_{day_index}_{first}_{key}",
+                        )
+                        # The lunch's own start, not an intermediate variable
+                        # equal to its end: one linear row rather than two,
+                        # and presolve reads straight through to the meal.
+                        if after_lunch:
+                            model.Add(
+                                decision.start >= lunch_start + lunch_slots,
+                            ).OnlyEnforceIf(flag)
+                        else:
+                            model.Add(decision.start >= base + opens).OnlyEnforceIf(flag)
+                        model.Add(decision.end <= base + first).OnlyEnforceIf(flag)
+                        flags[key] = flag
+                        inside.append(flag)
+                    if asks is None:
+                        asks = registry.register(
+                            model,
+                            name=f"rast_order_{group.id}",
+                            category="AVAILABILITY",
+                            code="RAST_NO_LESSON_FITS_BEFORE_IT",
+                            resource_ids=[group.id],
+                        )
+                    if not inside:
+                        # NOTHING CAN EVER SIT IN THIS STRETCH, so the demand
+                        # has exactly one remaining way to be met: the class
+                        # is gone by then. Said outright, as a hole in every
+                        # one of its lessons' start domains, and NOT left to a
+                        # clause over flags that can never be true — that was
+                        # the timeout, and an empty BoolOr would be an
+                        # unexplained INFEASIBLE besides. A domain is also the
+                        # cheapest thing this engine has: no boolean, no row,
+                        # and presolve reads it directly.
+                        #
+                        # Whether the week then still holds the class's
+                        # lessons is _verify_rast_demands' question, asked
+                        # before the solve.
+                        for decision in week_lessons:
+                            if decision.lesson.key() in holed:
+                                continue
+                            holed.add(decision.lesson.key())
+                            model.AddLinearExpressionInDomain(
+                                decision.start,
+                                cp_model.Domain(
+                                    base + last, base + slots_per_day - 1,
+                                ).complement(),
+                            ).OnlyEnforceIf(asks)
+                        continue
+                    # WHO IS STILL AT SCHOOL AFTER THE RAST. Read without this
+                    # the rule demands a lesson in the stretch on every school
+                    # day, which is a different sentence: two asking rasts
+                    # would oblige every class to be taught ten times a week,
+                    # and a class with eight lessons is refused outright.
+                    # Measured on a five-day week with one class: 8 lessons
+                    # INFEASIBLE, 10 the first that solved.
                     #
-                    # Whether the week then still holds the class's lessons is
-                    # _verify_rast_demands' question, asked before the solve.
-                    for decision in lessons:
-                        model.AddLinearExpressionInDomain(
-                            decision.start,
-                            cp_model.Domain(
-                                base + last, base + slots_per_day - 1,
-                            ).complement(),
-                        ).OnlyEnforceIf(asks)
-                    continue
-                # WHO IS STILL AT SCHOOL AFTER THE RAST. Read without this
-                # the rule demands a lesson in the stretch on every school
-                # day, which is a different sentence: two asking rasts
-                # would oblige every class to be taught ten times a week,
-                # and a class with eight lessons is refused outright.
-                # Measured on a five-day week with one class: 8 lessons
-                # INFEASIBLE, 10 the first that solved.
-                #
-                # Fully reified, unlike the flags above, and that is the
-                # whole reason it costs a second boolean per lesson: the
-                # solver WANTS these false — false is what excuses it from
-                # the stretch — so only the reverse implication, "a lesson
-                # here means the class is still at school", makes them
-                # true. `inside` needs no such thing.
-                # A lock after the break has already answered the question the
-                # literals below exist to ask, and answered it yes. The demand
-                # is then unconditional, and costs one clause instead of a
-                # boolean and three rows per lesson.
-                if self._locked_after(request, members, day_index, last):
-                    model.AddBoolOr([*inside, asks.Not()])
-                    continue
-                still_here = model.NewBoolVar(
-                    f"after_{group.id}_{day_index}_{first}",
-                )
-                rest_of_day = cp_model.Domain(
-                    base + last, base + slots_per_day - 1,
-                )
-                for decision in lessons:
-                    late = model.NewBoolVar(
-                        f"late_{group.id}_{day_index}_{first}_"
-                        f"{decision.lesson.key()}",
+                    # Fully reified, unlike the flags above, and that is the
+                    # whole reason it costs a second boolean per lesson: the
+                    # solver WANTS these false — false is what excuses it from
+                    # the stretch — so only the reverse implication, "a lesson
+                    # here means the class is still at school", makes them
+                    # true. `inside` needs no such thing.
+                    # A lock after the break has already answered the question
+                    # the literals below exist to ask, and answered it yes.
+                    # The demand is then unconditional, and costs one clause
+                    # instead of a boolean and three rows per lesson.
+                    if self._locked_after(request, members, day_index, last, week=week):
+                        model.AddBoolOr([*inside, asks.Not()])
+                        continue
+                    still_here = model.NewBoolVar(
+                        week_tag(f"after_{group.id}_{day_index}_{first}", week),
                     )
-                    model.AddLinearExpressionInDomain(
-                        decision.start, rest_of_day,
-                    ).OnlyEnforceIf(late)
-                    model.AddLinearExpressionInDomain(
-                        decision.start, rest_of_day.complement(),
-                    ).OnlyEnforceIf(late.Not())
-                    model.AddImplication(late, still_here)
-                model.AddBoolOr([*inside, still_here.Not(), asks.Not()])
+                    rest_of_day = cp_model.Domain(
+                        base + last, base + slots_per_day - 1,
+                    )
+                    for decision in week_lessons:
+                        key = decision.lesson.key()
+                        late = lates.get(key)
+                        if late is None:
+                            late = model.NewBoolVar(
+                                f"late_{group.id}_{day_index}_{first}_{key}",
+                            )
+                            model.AddLinearExpressionInDomain(
+                                decision.start, rest_of_day,
+                            ).OnlyEnforceIf(late)
+                            model.AddLinearExpressionInDomain(
+                                decision.start, rest_of_day.complement(),
+                            ).OnlyEnforceIf(late.Not())
+                            lates[key] = late
+                        model.AddImplication(late, still_here)
+                    model.AddBoolOr([*inside, still_here.Not(), asks.Not()])
 
     def _rast_free_starts(
         self,
@@ -7803,14 +8120,22 @@ class SchedulerSolver:
             without, model, decisions, plan, budget, what="the daily maximum probe",
         )
         if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            # A/B-veckor: a day of a real week, as the model counts it — the
+            # odd week's lessons that day, then the even week's.
+            weeks = WEEKS if alternates(_parity(d) for d in decisions) else (None,)
             per_day = Counter(
                 (
                     decision.lesson.requirement.student_group_id,
                     probe.Value(decision.start) // self._grid.slots_per_day,
+                    week,
                 )
                 for decision in decisions
+                for week in weeks
+                if meet(_parity(decision), week)
             )
-            return said(1, [group_id for (group_id, _day), count in per_day.items() if count > cap])
+            return said(1, list(dict.fromkeys(
+                group_id for (group_id, _day, _week), count in per_day.items() if count > cap
+            )))
         if status != cp_model.INFEASIBLE:
             return conflicts
         held_back = self._held_back_by_the_maximum(
@@ -7870,40 +8195,58 @@ class SchedulerSolver:
             for day_index in range(len(self._grid.schedule_days))
         }
         held_back = []
-        for group_id, group in by_group.items():
-            if len(group) <= cap:
-                continue
-            fits_by_day: dict[int, int] = defaultdict(int)
-            for part in _by_pupils(group):
-                durations: dict[int, list[int]] = defaultdict(list)
-                spans: dict[int, list[tuple[int, int]]] = defaultdict(list)
-                for decision in part:
-                    reach = (
-                        _day_reach(decision.starts, decision.duration, slots_per_day)
-                        if decision.starts is not None
-                        else whole_day
-                    )
-                    for day_index, ranges in reach.items():
-                        durations[day_index].append(decision.duration)
-                        spans[day_index].extend(ranges)
-                for day_index, lengths in durations.items():
-                    time_there = _covered(spans[day_index])
-                    fits = 0
-                    for length in sorted(lengths):
-                        if time_there < length:
-                            break
-                        time_there -= length
-                        fits += 1
-                    fits_by_day[day_index] += fits
-            capped = uncapped = 0
-            for fits in fits_by_day.values():
-                capped += min(cap, fits)
-                uncapped += fits
-            if capped < len(group) <= uncapped and self._placeable_without_the_maximum(
-                request, group, deadline=deadline,
+        for group_id, everyone in by_group.items():
+            # A/B-veckor: the count is a real week's (week_parts, implied, as
+            # the model's maximum is): held back when some week's lessons fit
+            # without the maximum and not with it, and the whole class fits
+            # its weeks without it. One week, None, for a class that does not
+            # alternate.
+            if any(
+                self._held_back_in_week(group, cap, whole_day)
+                for _, group in week_parts(everyone, _parity)
+            ) and self._placeable_without_the_maximum(
+                request, everyone, deadline=deadline,
             ):
                 held_back.append(group_id)
         return held_back
+
+    def _held_back_in_week(
+        self,
+        group: list[LessonDecision],
+        cap: int,
+        whole_day: dict[int, list[tuple[int, int]]],
+    ) -> bool:
+        """_held_back_by_the_maximum's arithmetic on one week's lessons of a class."""
+        slots_per_day = self._grid.slots_per_day
+        if len(group) <= cap:
+            return False
+        fits_by_day: dict[int, int] = defaultdict(int)
+        for part in _by_pupils(group):
+            durations: dict[int, list[int]] = defaultdict(list)
+            spans: dict[int, list[tuple[int, int]]] = defaultdict(list)
+            for decision in part:
+                reach = (
+                    _day_reach(decision.starts, decision.duration, slots_per_day)
+                    if decision.starts is not None
+                    else whole_day
+                )
+                for day_index, ranges in reach.items():
+                    durations[day_index].append(decision.duration)
+                    spans[day_index].extend(ranges)
+            for day_index, lengths in durations.items():
+                time_there = _covered(spans[day_index])
+                fits = 0
+                for length in sorted(lengths):
+                    if time_there < length:
+                        break
+                    time_there -= length
+                    fits += 1
+                fits_by_day[day_index] += fits
+        capped = uncapped = 0
+        for fits in fits_by_day.values():
+            capped += min(cap, fits)
+            uncapped += fits
+        return capped < len(group) <= uncapped
 
     #: The most one group's placement without the maximum may take. It is a
     #: few dozen intervals; one that takes longer is not worth the refusal's
@@ -7969,46 +8312,61 @@ class SchedulerSolver:
                     start, decision.duration + decision.changeover, f"lesson_{k}",
                 ),
             ))
-        # One no-overlap per pupil key, each its lessons' pupils' intervals
-        # and then the locks that hold those pupils.
-        parts: dict[UUID, list[cp_model.IntervalVar]] = {key: [] for key in sharing_of}
-        for key, interval in zip(keys, pupils):
-            parts[key].append(interval)
-        for fixed in request.fixed_lessons:
-            window = self._fixed_window(fixed)
-            if window is None:
-                continue
-            blocked = model.NewFixedSizeIntervalVar(
-                window[0], window[1] - window[0], f"locked_{fixed.id}",
-            )
-            held = set(pupil_keys_of(fixed))
-            reached = {key for key, sharing in sharing_of.items() if held & sharing}
-            for key in parts:
-                if key in reached:
-                    parts[key].append(blocked)
-            if len(reached) == len(parts):
-                continue
-            teachers = {tid for tid in (fixed.teacher_id, fixed.co_teacher_id) if tid}
-            for key, (own, interval) in zip(keys, lessons):
-                if key not in reached and own & teachers:
-                    model.AddNoOverlap([interval, blocked])
-        for part in parts.values():
-            model.AddNoOverlap(part)
-        # And each pair of the class's keys the model holds apart.
-        joined: set[frozenset[UUID]] = set()
-        for first_id, second_id in request.group_conflicts or []:
-            pair = frozenset((first_id, second_id))
-            if (
-                first_id == second_id
-                or pair in joined
-                or not all(key in parts for key in pair)
-            ):
-                continue
-            joined.add(pair)
-            model.AddNoOverlap([
-                interval for key, interval in zip(keys, pupils)
-                if key in pair
-            ])
+        # A/B-veckor: the rows below once per real week, as the model posts
+        # them, for a class with an alternating lesson or a school with an
+        # alternating lock: that week's lessons, and the locks of that week.
+        # One week, None, the rows as they were, for every other.
+        weeks: tuple[WeekParity | None, ...] = (
+            WEEKS
+            if alternates(_parity(d) for d in group)
+            or alternates(f.recurrence for f in request.fixed_lessons)
+            else (None,)
+        )
+        for week in weeks:
+            here = [meet(_parity(decision), week) for decision in group]
+            # One no-overlap per pupil key, each its lessons' pupils' intervals
+            # and then the locks that hold those pupils.
+            parts: dict[UUID, list[cp_model.IntervalVar]] = {key: [] for key in sharing_of}
+            for key, interval, runs in zip(keys, pupils, here):
+                if runs:
+                    parts[key].append(interval)
+            for fixed in request.fixed_lessons:
+                if not meet(fixed.recurrence, week):
+                    continue
+                window = self._fixed_window(fixed)
+                if window is None:
+                    continue
+                blocked = model.NewFixedSizeIntervalVar(
+                    window[0], window[1] - window[0], f"locked_{fixed.id}",
+                )
+                held = set(pupil_keys_of(fixed))
+                reached = {key for key, sharing in sharing_of.items() if held & sharing}
+                for key in parts:
+                    if key in reached:
+                        parts[key].append(blocked)
+                if len(reached) == len(parts):
+                    continue
+                teachers = {tid for tid in (fixed.teacher_id, fixed.co_teacher_id) if tid}
+                for key, (own, interval), runs in zip(keys, lessons, here):
+                    if runs and key not in reached and own & teachers:
+                        model.AddNoOverlap([interval, blocked])
+            for part in parts.values():
+                model.AddNoOverlap(part)
+            # And each pair of the class's keys the model holds apart.
+            joined: set[frozenset[UUID]] = set()
+            for first_id, second_id in request.group_conflicts or []:
+                pair = frozenset((first_id, second_id))
+                if (
+                    first_id == second_id
+                    or pair in joined
+                    or not all(key in parts for key in pair)
+                ):
+                    continue
+                joined.add(pair)
+                model.AddNoOverlap([
+                    interval for key, interval, runs in zip(keys, pupils, here)
+                    if runs and key in pair
+                ])
         solver = cp_model.CpSolver()
         solver.parameters.num_workers = 1
         solver.parameters.max_time_in_seconds = left
@@ -8618,21 +8976,25 @@ class SchedulerSolver:
         # Never one across all of a hub's groups — two of its neighbours may
         # well run at once (a språkval's groups do), and holding them apart
         # would be a rule the week does not have.
+        # A/B-veckor: each once per week its lessons run in (week_parts), as
+        # the model's own no-overlaps.
         if party == "TEACHER":
-            model.AddNoOverlap([padded_of(model, lesson) for lesson in lessons])
+            for _, week in week_parts(lessons, _parity):
+                model.AddNoOverlap([padded_of(model, lesson) for lesson in week])
         else:
             # The PUPIL space, as _add_group_no_overlap and families_of key it.
             by_group: dict[UUID, list[LessonDecision]] = defaultdict(list)
             for lesson in lessons:
                 by_group[pupil_key_of(lesson.lesson.requirement)].append(lesson)
             for members_of_group in by_group.values():
-                model.AddNoOverlap([pupil_padded_of(model, lesson) for lesson in members_of_group])
+                for _, week in week_parts(members_of_group, _parity):
+                    model.AddNoOverlap([pupil_padded_of(model, lesson) for lesson in week])
             for first_id, second_id in request.group_conflicts or []:
                 if first_id != second_id and first_id in by_group and second_id in by_group:
-                    model.AddNoOverlap([
-                        pupil_padded_of(model, lesson)
-                        for lesson in (*by_group[first_id], *by_group[second_id])
-                    ])
+                    for _, week in week_parts(
+                        [*by_group[first_id], *by_group[second_id]], _parity,
+                    ):
+                        model.AddNoOverlap([pupil_padded_of(model, lesson) for lesson in week])
         pinned = model.NewBoolVar("walk")
         model.Add(pinned == 1)
         day_vars: dict[str, cp_model.IntVar] = {}
@@ -9629,6 +9991,11 @@ class SchedulerSolver:
         one lesson of Matematik för 7A may clash with nothing of Bertil's, and
         Anna's two are free to sit beside it. A post one person leads puts
         every lesson in the lead's family and the co-teacher's, as before.
+
+        ONE PER WEEK THE TEACHER HAS (week_parts): slöjd udda veckor and
+        hemkunskap jämna veckor are one teacher's lessons and never meet, so
+        they share an hour. A teacher with no alternating lesson keeps the one
+        no-overlap they always had.
         """
         grouped: dict[UUID, list[LessonDecision]] = {}
         for decision in decisions:
@@ -9636,10 +10003,11 @@ class SchedulerSolver:
                 grouped.setdefault(teacher_id, []).append(decision)
 
         for teacher_decisions in grouped.values():
-            if len(teacher_decisions) > 1:
-                model.AddNoOverlap(
-                    [padded_of(model, decision) for decision in teacher_decisions],
-                )
+            for _, part in week_parts(teacher_decisions, _parity):
+                if len(part) > 1:
+                    model.AddNoOverlap(
+                        [padded_of(model, decision) for decision in part],
+                    )
 
     def _add_group_no_overlap(
         self,
@@ -9679,6 +10047,10 @@ class SchedulerSolver:
         twice — the self-pair failure above. Nothing new hangs on a literal:
         a derived key only moves lessons between no-overlaps that were
         always posted bare.
+
+        BOTH LAYERS ONCE PER WEEK THE PUPILS HAVE (week_parts), as the
+        teacher's: 7A's slöjd udda veckor and hemkunskap jämna veckor share an
+        hour, and nothing of 7A's every week may sit beside either.
         """
         grouped: dict[UUID, list[LessonDecision]] = {}
         for decision in decisions:
@@ -9686,17 +10058,19 @@ class SchedulerSolver:
             grouped.setdefault(group_id, []).append(decision)
 
         for group_decisions in grouped.values():
-            if len(group_decisions) > 1:
-                model.AddNoOverlap(
-                    [pupil_padded_of(model, decision) for decision in group_decisions],
-                )
+            for _, part in week_parts(group_decisions, _parity):
+                if len(part) > 1:
+                    model.AddNoOverlap(
+                        [pupil_padded_of(model, decision) for decision in part],
+                    )
 
         for first_id, second_id in group_conflicts or []:
             if first_id == second_id:
                 continue
             combined = grouped.get(first_id, []) + grouped.get(second_id, [])
-            if len(combined) > 1:
-                model.AddNoOverlap([pupil_padded_of(model, decision) for decision in combined])
+            for _, part in week_parts(combined, _parity):
+                if len(part) > 1:
+                    model.AddNoOverlap([pupil_padded_of(model, decision) for decision in part])
 
     def _add_room_allocation(
         self,
@@ -9966,6 +10340,10 @@ class SchedulerSolver:
         (the pair (X, 7A)) and lets SvA7 in; a locked 7A matte keeps SvA7 out
         (the pair (7A, SvA7)). These disjunctions are posted bare as they
         always were; a derived key only changes which lessons meet which lock.
+
+        A LOCK HOLDS ITS WINDOW ONLY IN THE WEEKS IT RUNS: a lesson of the
+        other parity never meets it (weeks.meet) and is not held apart from it
+        at all — not by the teacher, the pupils, the room or the walk.
         """
         room_index_by_id = {room.id: idx for idx, room in enumerate(rooms)}
 
@@ -9999,6 +10377,8 @@ class SchedulerSolver:
 
             for decision in decisions:
                 requirement = decision.lesson.requirement
+                if not meet(fixed.recurrence, requirement.recurrence):
+                    continue
                 fixed_teachers = {
                     tid for tid in (fixed.teacher_id, fixed.co_teacher_id) if tid
                 }
@@ -10099,6 +10479,8 @@ class SchedulerSolver:
             return
         day_start, lock = outside
         for decision in decisions:
+            if not meet(fixed.recurrence, decision.lesson.requirement.recurrence):
+                continue
             relations = [
                 relation
                 for relation in _fixed_relations(decision.lesson, fixed, conflicts_with)
@@ -10678,6 +11060,104 @@ class SchedulerSolver:
                 for day_index in shut:
                     model.AddBoolAnd([used[day_index].Not()]).OnlyEnforceIf(apart_literal)
 
+    def _add_pupil_gap_objective(
+        self,
+        model: cp_model.CpModel,
+        request: OptimizeScheduleRequest,
+        decisions: list[LessonDecision],
+        day_vars: dict[str, cp_model.IntVar],
+        day_literals: _TeacherDayLiterals,
+        lunch_starts: dict[tuple[UUID, int], cp_model.IntVar],
+    ) -> list[cp_model.LinearExpr]:
+        """Elevernas håltimmar: the pupils' idle time, cohort by cohort. See pupil_gaps.py.
+
+        Nothing at a school that has not turned the rule on: no pupilGaps in the
+        payload, and not one variable. The day literals are each lesson's
+        one-hot in `day_literals` (_teacher_day_on's), built here where no
+        builder made one; nothing reads that cache after this term.
+        """
+        if request.pupil_gaps is None or self._settings.weight_pupil_gap <= 0:
+            return []
+        slots_per_day = self._grid.slots_per_day
+        reaches: dict[str, dict[int, list[tuple[int, int]]]] = {}
+
+        def reach(decision: LessonDecision) -> dict[int, list[tuple[int, int]]]:
+            """Day index -> one hull of the slots the lesson can occupy there.
+
+            _day_reach's days, with one [first start, last start + length)
+            per day rather than an interval per start: the term asks which
+            days a lesson can fall on and whether it can come near a window,
+            and on a stepped week every start is an interval of its own,
+            which made _day_reach most of the term's build at 2,000 pupils.
+            A hull is never narrower, so nothing the term needs is cut.
+            """
+            key = decision.lesson.key()
+            if key not in reaches:
+                if decision.starts is None:
+                    reaches[key] = {
+                        index: [(index * slots_per_day, (index + 1) * slots_per_day)]
+                        for index in range(len(self._grid.schedule_days))
+                    }
+                else:
+                    hulls: dict[int, list[int]] = {}
+                    for low, high in _domain_intervals(decision.starts):
+                        for day_index in range(low // slots_per_day, high // slots_per_day + 1):
+                            first = max(low, day_index * slots_per_day)
+                            last = min(high, (day_index + 1) * slots_per_day - 1)
+                            hull = hulls.get(day_index)
+                            if hull is None:
+                                hulls[day_index] = [first, last]
+                            else:
+                                hull[0] = min(hull[0], first)
+                                hull[1] = max(hull[1], last)
+                    reaches[key] = {
+                        day_index: [(first, last + decision.duration)]
+                        for day_index, (first, last) in hulls.items()
+                    }
+            return reaches[key]
+
+        def on(decision: LessonDecision, day_index: int) -> cp_model.IntVar | None:
+            days = reach(decision)
+            if day_index not in days:
+                return None
+            key = decision.lesson.key()
+            one_hot = day_literals.on_day.get(key)
+            if one_hot is None:
+                day = self._day_var(model, decision, day_vars)
+                one_hot = {
+                    index: model.NewBoolVar(f"ldon_{key}_{index}") for index in sorted(days)
+                }
+                model.AddExactlyOne(one_hot.values())
+                model.Add(day == sum(index * literal for index, literal in one_hot.items()))
+                day_literals.on_day[key] = one_hot
+            return one_hot.get(day_index)
+
+        rules = request.rules
+        lunch_slots = (
+            self._lunch_window_slots(rules)[2]
+            if rules is not None and _lunch_window_is_set(rules) and lunch_starts
+            else 0
+        )
+        return build_pupil_gap_objective(
+            PupilGapModel(
+                model=model,
+                slots_per_day=slots_per_day,
+                slot_minutes=self._grid.slot_minutes,
+                day_start_minutes=self._grid.day_start_minutes,
+                weekdays=self._grid.schedule_days,
+                on=on,
+                reach=reach,
+                fixed_window=lambda fixed: _fixed_lesson_window(fixed, self._grid),
+                lock_keys=pupil_keys_of,
+                pupil_key=pupil_key_of,
+                lunch_starts=lunch_starts,
+                lunch_slots=lunch_slots,
+                weight=self._settings.weight_pupil_gap,
+            ),
+            request,
+            decisions,
+        )
+
     def _add_idle_time_objective(
         self,
         model: cp_model.CpModel,
@@ -10764,6 +11244,21 @@ class SchedulerSolver:
                 # One lesson is a span equal to its own length: no idle time can
                 # exist, and the variables would be provably zero.
                 continue
+            # A/B-VECKOR: A HOLE IS A REAL WEEK'S. Slöjd udda veckor and
+            # hemkunskap jämna veckor in one hour are one hour taught in
+            # either week, and summed into one week they would be taught
+            # twice and buy back the teacher's real gap. A teacher with an
+            # alternating lesson is measured in each week on its own and pays
+            # for the two weeks' mean, rounded up — what the håltimmar page
+            # shows (a lesson every other week counts half). Not implied: the
+            # other week's lesson does not close this week's hole.
+            parts = week_parts(group, _parity, implied=False)
+            if parts[0][0] is not None:
+                penalties.extend(self._idle_by_week(
+                    model, teacher_id, group, parts, protected, weights, day_vars,
+                    teacher_days,
+                ))
+                continue
             days = [self._day_var(model, d, day_vars) for d in group]
 
             for day_index, day_of_week in enumerate(self._grid.schedule_days):
@@ -10808,6 +11303,76 @@ class SchedulerSolver:
                 model.Add(idle >= last - first - taught - credit)
                 penalties.append(idle * weights.teacher_gap)
 
+        return penalties
+
+    def _idle_by_week(
+        self,
+        model: cp_model.CpModel,
+        teacher_id: UUID,
+        group: list[LessonDecision],
+        parts: list[tuple[WeekParity | None, list[LessonDecision]]],
+        protected: dict[tuple[UUID, int], tuple[tuple[int, int], ...]],
+        weights: ResolvedWeights,
+        day_vars: dict[str, cp_model.IntVar],
+        teacher_days: dict[tuple[UUID, int], _TeacherDay] | None,
+    ) -> list[cp_model.LinearExpr]:
+        """_add_idle_time_objective's day, for a teacher whose two weeks differ.
+
+        Each week's day is measured as the plain one is — its span, less what
+        it teaches and what the teacher protected — on that week's lessons,
+        through the rest rule's two-sided pair for the week where one is built
+        (_teacher_day_bounds' `week`) and a one-sided pair of its own where
+        none is. A lesson's literal for the day is the lesson's in both
+        weeks. The day then pays for `idle` with `2·idle ≥ idle_odd +
+        idle_even`: the mean of the two weeks, rounded up, a week without the
+        teacher's lessons adding nothing to it.
+        """
+        slots_per_day = self._grid.slots_per_day
+        days = {decision.lesson.key(): self._day_var(model, decision, day_vars) for decision in group}
+        penalties: list[cp_model.LinearExpr] = []
+        for day_index, day_of_week in enumerate(self._grid.schedule_days):
+            base = day_index * slots_per_day
+            tag = f"idle_{teacher_id}_{day_index}"
+            on_of: dict[str, cp_model.IntVar] = {}
+            per_week: list[cp_model.IntVar] = []
+            for week, part in parts:
+                if len(part) < 2:
+                    continue
+                week_tagged = week_tag(tag, week)
+                built = (teacher_days or {}).get((teacher_id, day_index, week))  # type: ignore[call-overload]
+                if built is not None:
+                    first, last, taught = built.first, built.last, built.taught
+                else:
+                    on_day: list[cp_model.IntVar] = []
+                    for decision in part:
+                        key = decision.lesson.key()
+                        literal = on_of.get(key)
+                        if literal is None:
+                            literal = model.NewBoolVar(f"idle_on_{teacher_id}_{day_index}_{key}")
+                            model.Add(days[key] == day_index).OnlyEnforceIf(literal)
+                            model.Add(days[key] != day_index).OnlyEnforceIf(literal.Not())
+                            on_of[key] = literal
+                        on_day.append(literal)
+                    first = model.NewIntVar(base, base + slots_per_day, f"first_{week_tagged}")
+                    last = model.NewIntVar(base, base + slots_per_day, f"last_{week_tagged}")
+                    for literal, decision in zip(on_day, part):
+                        model.Add(first <= decision.start).OnlyEnforceIf(literal)
+                        model.Add(last >= decision.end).OnlyEnforceIf(literal)
+                    taught = sum(
+                        decision.duration * literal for literal, decision in zip(on_day, part)
+                    )
+                credit = self._protected_overlap(
+                    model, protected.get((teacher_id, day_of_week), ()), first, last,
+                    week_tagged,
+                )
+                idle_week = model.NewIntVar(0, slots_per_day, f"idle_{week_tagged}")
+                model.Add(idle_week >= last - first - taught - credit)
+                per_week.append(idle_week)
+            if not per_week:
+                continue
+            idle = model.NewIntVar(0, slots_per_day, f"idle_{tag}")
+            model.Add(2 * idle >= sum(per_week))
+            penalties.append(idle * weights.teacher_gap)
         return penalties
 
     def _protected_windows(
@@ -11238,7 +11803,13 @@ class SchedulerSolver:
         if max_per_day is not None:
             day_count = len(self._grid.schedule_days)
             for group_id, group in by_group.items():
-                if len(group) <= max_per_day:
+                # A/B-veckor: the maximum is per day of a REAL week, so it
+                # counts each week the class has on its own (week_parts) —
+                # slöjd udda veckor and hemkunskap jämna veckor in one hour
+                # are one lesson that day, in either week. A class with no
+                # alternating lesson has the one week it always had.
+                weeks = week_parts(group, _parity)
+                if all(len(part) <= max_per_day for _, part in weeks):
                     continue
                 # ONE LITERAL PER GROUP, the way distribution has one per
                 # requirement: the maximum binds each group on its own.
@@ -11265,7 +11836,7 @@ class SchedulerSolver:
                     resource_ids=[group_id],
                 )
                 days = [self._day_var(model, d, day_vars) for d in group]
-                on_days: dict[int, cp_model.LinearExpr] = {}
+                on_day_of: dict[int, list[cp_model.IntVar]] = {}
                 for day_index in range(day_count):
                     on_day: list[cp_model.IntVar] = []
                     for k, decision in enumerate(group):
@@ -11275,7 +11846,7 @@ class SchedulerSolver:
                         model.Add(days[k] == day_index).OnlyEnforceIf(b)
                         model.Add(days[k] != day_index).OnlyEnforceIf(b.Not())
                         on_day.append(b)
-                    on_days[day_index] = sum(on_day)
+                    on_day_of[day_index] = on_day
                 # A count per day under the maximum, and never `Σ on_day ≤
                 # max`: see _day_totals. The counts and their week are bare,
                 # as definitions are, so their domain is the group's lessons
@@ -11283,12 +11854,22 @@ class SchedulerSolver:
                 # literal. Phase 1 pins the literal true, so presolve still
                 # refutes on the week row the weeks it once threw on
                 # (test_solve_guard.py keeps them).
-                counts = _day_totals(
-                    model, f"ondaycount_{group_id}", on_days,
-                    dict.fromkeys(on_days, len(group)), len(group),
-                )
-                for count in counts.values():
-                    model.Add(count <= max_per_day).OnlyEnforceIf(daily_literal)
+                position = {decision.lesson.key(): k for k, decision in enumerate(group)}
+                for week, part in weeks:
+                    if len(part) <= max_per_day:
+                        continue
+                    on_days: dict[int, cp_model.LinearExpr] = {
+                        day_index: sum(
+                            on_day[position[decision.lesson.key()]] for decision in part
+                        )
+                        for day_index, on_day in on_day_of.items()
+                    }
+                    counts = _day_totals(
+                        model, week_tag(f"ondaycount_{group_id}", week), on_days,
+                        dict.fromkeys(on_days, len(part)), len(part),
+                    )
+                    for count in counts.values():
+                        model.Add(count <= max_per_day).OnlyEnforceIf(daily_literal)
 
         # --- Guaranteed lunch break per student group per day ---------------
         if _lunch_window_is_set(rules):
@@ -11645,11 +12226,17 @@ class SchedulerSolver:
                     # lessons, as before. Bare no-overlaps of the kind always
                     # posted here, so no literal is owed: a derived key only
                     # takes rows away from the one this was.
+                    #
+                    # AND ONE PER WEEK THE PUPILS HAVE (week_parts): the meal
+                    # is every week's, so it keeps clear of slöjd udda veckor
+                    # and of hemkunskap jämna veckor, which keep clear only of
+                    # each other's weeks.
                     for part in _by_pupils(lessons) or [lessons]:
-                        model.AddNoOverlap(
-                            [pupil_padded_of(model, decision) for decision in part]
-                            + lunch_intervals,
-                        )
+                        for _, week in week_parts(part, _parity):
+                            model.AddNoOverlap(
+                                [pupil_padded_of(model, decision) for decision in week]
+                                + lunch_intervals,
+                            )
                     # The break also has to be free of the lessons this group's
                     # own children sit in elsewhere. 7A cannot be eating while
                     # Ma71 is taught: those are the same thirty pupils, and the
@@ -11671,13 +12258,14 @@ class SchedulerSolver:
                     # by pupil key for the reason just above.
                     for other_id in sharing:
                         for part in _by_pupils(by_group[other_id]):
-                            model.AddNoOverlap(
-                                [
-                                    pupil_padded_of(model, decision)
-                                    for decision in part
-                                ]
-                                + lunch_intervals,
-                            )
+                            for _, week in week_parts(part, _parity):
+                                model.AddNoOverlap(
+                                    [
+                                        pupil_padded_of(model, decision)
+                                        for decision in week
+                                    ]
+                                    + lunch_intervals,
+                                )
 
             if sittings:
                 # One cumulative for the whole week, not one per day. Every
@@ -11699,6 +12287,8 @@ class SchedulerSolver:
         day_index: int,
         day_vars: dict[str, cp_model.IntVar],
         cache: dict[tuple[UUID, int], _TeacherDay],
+        *,
+        week: WeekParity | None = None,
     ) -> _TeacherDay:
         """The two ends of one teacher's day, built once and handed out.
 
@@ -11716,9 +12306,16 @@ class SchedulerSolver:
         and day, which is the price of a pair that means what its name says;
         the alternative, a literal per lesson saying "this one is the first",
         costs the same and propagates worse.
+
+        A/B-VECKOR: ONE DAY PER WEEK, `week` (weeks.py), for a teacher whose
+        two weeks differ — keyed (teacher, day, week), its ends the ends of
+        that week's lessons in `group`. A lesson's own three variables say
+        the same in both weeks, so they are built once per (teacher, day,
+        lesson) and kept under that key for the other week. None is the one
+        day a teacher with no alternating lesson has always had.
         """
-        key = (teacher_id, day_index)
-        existing = cache.get(key)
+        key = (teacher_id, day_index) if week is None else (teacher_id, day_index, week)
+        existing = cache.get(key)  # type: ignore[call-overload]
         if existing is not None:
             return existing
 
@@ -11729,6 +12326,14 @@ class SchedulerSolver:
         starts: list[cp_model.IntVar] = []
         ends: list[cp_model.IntVar] = []
         for decision in group:
+            own = (teacher_id, day_index, decision.lesson.key())
+            shared = cache.get(own) if week is not None else None  # type: ignore[call-overload]
+            if shared is not None:
+                literal, eff_start, eff_end = shared  # type: ignore[misc]
+                on_day.append(literal)
+                starts.append(eff_start)
+                ends.append(eff_end)
+                continue
             day_var = self._day_var(model, decision, day_vars)
             literal = model.NewBoolVar(f"tworks_{tag}_{decision.lesson.key()}")
             model.Add(day_var == day_index).OnlyEnforceIf(literal)
@@ -11748,7 +12353,10 @@ class SchedulerSolver:
             model.Add(eff_end == decision.end).OnlyEnforceIf(literal)
             model.Add(eff_end == base).OnlyEnforceIf(literal.Not())
             ends.append(eff_end)
+            if week is not None:
+                cache[own] = (literal, eff_start, eff_end)  # type: ignore[index,assignment]
 
+        tag = week_tag(tag, week)
         first = model.NewIntVar(base, base + slots_per_day, f"tfirst_{tag}")
         last = model.NewIntVar(base, base + slots_per_day, f"tlast_{tag}")
         model.AddMinEquality(first, starts)
@@ -11835,6 +12443,10 @@ class SchedulerSolver:
         locked_busy = self._teacher_busy_from_locks(fixed_lessons)
         closed_busy = self._teacher_busy_from_constraints(constraints)
         lattice = _start_lattice(step, self._grid.horizon)
+        # A/B-veckor: the locks of each week, for the rest rule's two weeks
+        # (_teacher_week_locks). The lunch keeps reading every lock: it is
+        # every week's break, and a lock of either week is in its way.
+        week_locks = _TeacherWeekLocks(self, fixed_lessons)
 
         for rule in work_rules:
             group = by_teacher.get(rule.teacher_id)
@@ -11861,6 +12473,7 @@ class SchedulerSolver:
                     locked_busy,
                     day_vars,
                     teacher_days,
+                    week_locks=week_locks,
                 )
 
     def _add_teacher_lunch(
@@ -12002,10 +12615,12 @@ class SchedulerSolver:
             # class: every break's start is confined to its own day and ends
             # inside the window, so two of them provably cannot overlap, and one
             # constraint per day would only cost five times as much to say the
-            # same thing about the same lessons.
-            model.AddNoOverlap(
-                [padded_of(model, decision) for decision in group] + breaks,
-            )
+            # same thing about the same lessons. One per week the teacher has
+            # (week_parts), as their own no-overlap: the break is every week's.
+            for _, week in week_parts(group, _parity):
+                model.AddNoOverlap(
+                    [padded_of(model, decision) for decision in week] + breaks,
+                )
 
     def _add_teacher_rest(
         self,
@@ -12016,6 +12631,8 @@ class SchedulerSolver:
         locked_busy: dict[tuple[UUID, int], list[tuple[int, int]]],
         day_vars: dict[str, cp_model.IntVar],
         teacher_days: dict[tuple[UUID, int], _TeacherDay],
+        *,
+        week_locks: _TeacherWeekLocks | None = None,
     ) -> None:
         """Hours between the end of one teaching day and the start of the next.
 
@@ -12059,12 +12676,27 @@ class SchedulerSolver:
         if len(self._grid.schedule_days) < 2:
             return
         rest_slots = -(-rule.min_daily_rest_minutes // self._grid.slot_minutes)
-        bounds = [
-            self._teacher_day_bounds(
-                model, rule.teacher_id, group, day_index, day_vars, teacher_days,
-            )
-            for day_index in range(len(self._grid.schedule_days))
-        ]
+        # A/B-VECKOR: THE NIGHT IS A REAL WEEK'S, so a teacher whose two weeks
+        # differ — an alternating lesson, or an alternating lock — rests
+        # between each week's own evening and morning (week_parts, implied: a
+        # lesson fewer is a shorter day). The literal per night is the rule's
+        # and is shared by both weeks. One week, the rule as it was, for a
+        # teacher with neither.
+        weeks = week_parts(
+            group,
+            _parity,
+            alternating=week_locks is not None and week_locks.alternate(rule.teacher_id),
+        )
+        bounds_of = {
+            week: [
+                self._teacher_day_bounds(
+                    model, rule.teacher_id, part, day_index, day_vars, teacher_days,
+                    week=week,
+                )
+                for day_index in range(len(self._grid.schedule_days))
+            ]
+            for week, part in weeks
+        }
         for day_index, day_of_week in enumerate(self._grid.schedule_days[:-1]):
             literal = registry.register(
                 model,
@@ -12079,24 +12711,30 @@ class SchedulerSolver:
                 # The rule and never the teacher — see the lunch literal above.
                 resource_ids=[rule.id],
             )
-            enforce = [literal]
-            ends = self._teacher_locked_edge(
-                model, rule.teacher_id, day_index, bounds[day_index], locked_busy,
-                latest=True,
-            )
-            if ends is None:
-                ends = bounds[day_index].last
-                enforce.append(bounds[day_index].works)
-            starts = self._teacher_locked_edge(
-                model, rule.teacher_id, day_index + 1, bounds[day_index + 1],
-                locked_busy, latest=False,
-            )
-            if starts is None:
-                starts = bounds[day_index + 1].first
-                enforce.append(bounds[day_index + 1].works)
-            model.Add(
-                ends + rest_slots <= starts + _night_pad_slots(self._grid, day_index),
-            ).OnlyEnforceIf(enforce)
+            for week, bounds in bounds_of.items():
+                busy = (
+                    locked_busy
+                    if week is None or week_locks is None
+                    else week_locks.busy(week)
+                )
+                enforce = [literal]
+                ends = self._teacher_locked_edge(
+                    model, rule.teacher_id, day_index, bounds[day_index], busy,
+                    latest=True,
+                )
+                if ends is None:
+                    ends = bounds[day_index].last
+                    enforce.append(bounds[day_index].works)
+                starts = self._teacher_locked_edge(
+                    model, rule.teacher_id, day_index + 1, bounds[day_index + 1],
+                    busy, latest=False,
+                )
+                if starts is None:
+                    starts = bounds[day_index + 1].first
+                    enforce.append(bounds[day_index + 1].works)
+                model.Add(
+                    ends + rest_slots <= starts + _night_pad_slots(self._grid, day_index),
+                ).OnlyEnforceIf(enforce)
 
     def _teacher_locked_edge(
         self,
@@ -12365,6 +13003,7 @@ class SchedulerSolver:
         weekdays = self._grid.schedule_days
         lock_minutes, _lock_days = _teacher_locks(fixed_lessons)
         locked_busy = self._teacher_busy_from_locks(fixed_lessons)
+        week_locks = _TeacherWeekLocks(self, fixed_lessons)
 
         reach_of: dict[str, dict[int, list[tuple[int, int]]]] = {}
 
@@ -12389,32 +13028,61 @@ class SchedulerSolver:
             on = self._teacher_day_on(
                 model, teacher_id, decisions, teacher_days, day_vars, literals, reach,
             )
-            reaching = {
-                day_index: [decision for decision in group if day_index in reach(decision)]
-                for day_index in range(len(weekdays))
-            }
-            room = self._teaching_room(
-                [reach(decision) for decision in group], locked_busy, teacher_id,
-            )
+            # A/B-VECKOR: THE CAP AND THE DAYS ARE A REAL WEEK'S. A teacher
+            # whose two weeks differ — an alternating lesson or lock — is held
+            # in each week on its own: that week's lessons, against what that
+            # week's locks leave (_TeacherWeekLocks). Implied (weeks.py): a
+            # lesson fewer is fewer minutes and no more days. Each lesson's
+            # own day literal (`on`) is the same in both weeks; `works` and
+            # the day's minutes are per week, and each rule keeps its one
+            # literal per day or per post. One week, the rows as they were,
+            # for a teacher with neither.
+            parts = week_parts(group, _parity, alternating=week_locks.alternate(teacher_id))
+            cap_literals: dict[tuple[UUID, int], cp_model.IntVar] = {}
 
-            def works(day_index: int) -> cp_model.IntVar:
+            class _Week:
+                """One week's view of the teacher: what reaches each day, and its room."""
+
+                def __init__(self, week: WeekParity | None, members: list[LessonDecision]) -> None:
+                    self.week = week
+                    self.members = members
+                    self.reaching = {
+                        day_index: [
+                            decision for decision in members if day_index in reach(decision)
+                        ]
+                        for day_index in range(len(weekdays))
+                    }
+                    self.locked = lock_minutes if week is None else week_locks.minutes(week)
+                    self.minutes: dict[int, cp_model.IntVar] = {}
+
+            views = [_Week(week, members) for week, members in parts]
+            rooms = {
+                view.week: self._teaching_room(
+                    [reach(decision) for decision in view.members],
+                    locked_busy if view.week is None else week_locks.busy(view.week),
+                    teacher_id,
+                )
+                for view in views
+            }
+
+            def works(view: _Week, day_index: int) -> cp_model.IntVar:
                 return self._teacher_day_works(
-                    model, teacher_id, day_index, reaching[day_index], on,
-                    teacher_days, literals,
+                    model, teacher_id, day_index, view.reaching[day_index], on,
+                    teacher_days, literals, week=view.week,
                 )
 
-            minutes: dict[int, cp_model.IntVar] = {}
-
-            def taught(day_index: int) -> cp_model.IntVar:
+            def taught(view: _Week, day_index: int) -> cp_model.IntVar:
                 # The day's minutes, one total per day the teacher's lessons
                 # reach and the week's minutes their sum (_day_totals), built
                 # with the first row that reads one: rows on these, and never
                 # on `Σ minutes·x`, are what presolve no longer throws on.
+                reaching = view.reaching
+                minutes = view.minutes
                 if not minutes:
                     days = [index for index in range(len(weekdays)) if reaching[index]]
                     minutes.update(_day_totals(
                         model,
-                        f"ldminutes_{teacher_id}",
+                        week_tag(f"ldminutes_{teacher_id}", view.week),
                         {
                             index: sum(
                                 decision.duration * slot_minutes * on(decision, index)
@@ -12427,7 +13095,7 @@ class SchedulerSolver:
                             * slot_minutes
                             for index in days
                         },
-                        sum(decision.duration for decision in group) * slot_minutes,
+                        sum(decision.duration for decision in view.members) * slot_minutes,
                     ))
                 return minutes[day_index]
 
@@ -12435,45 +13103,56 @@ class SchedulerSolver:
                 cap = rule.max_teaching_minutes_per_day
                 assert cap is not None
                 for day_index, weekday in enumerate(weekdays):
-                    lessons = reaching[day_index]
-                    if not lessons:
-                        continue
-                    residual = max(0, cap - lock_minutes.get((teacher_id, weekday), 0))
-                    bringable = sum(decision.duration for decision in lessons) * slot_minutes
-                    if residual >= min(bringable, room.get(day_index, 0) * slot_minutes):
-                        continue
-                    literal = registry.register(
-                        model,
-                        name=f"ldcap_{teacher_id}_{day_index}",
-                        category="TEACHER_OVERLAP",
-                        code="TEACHER_DAILY_CAP_CANNOT_BE_KEPT",
-                        params={"rule": str(rule.id), "minutes": cap, "day": weekday},
-                        # The rule and never the teacher — see the lunch's
-                        # literal in _add_teacher_lunch.
-                        resource_ids=[rule.id],
-                    )
-                    # On the day's minutes and times its `works`, a locked
-                    # day's too: one LP row sees the cap and the days limit
-                    # together, and presolve gets no sum against a number to
-                    # throw on — the docstring's two CP-SAT paragraphs.
-                    model.Add(
-                        taught(day_index) <= residual * works(day_index),
-                    ).OnlyEnforceIf(literal)
+                    for view in views:
+                        lessons = view.reaching[day_index]
+                        if not lessons:
+                            continue
+                        residual = max(0, cap - view.locked.get((teacher_id, weekday), 0))
+                        bringable = sum(decision.duration for decision in lessons) * slot_minutes
+                        room = rooms[view.week]
+                        if residual >= min(bringable, room.get(day_index, 0) * slot_minutes):
+                            continue
+                        literal = cap_literals.get((rule.id, day_index))
+                        if literal is None:
+                            literal = registry.register(
+                                model,
+                                name=f"ldcap_{teacher_id}_{day_index}",
+                                category="TEACHER_OVERLAP",
+                                code="TEACHER_DAILY_CAP_CANNOT_BE_KEPT",
+                                params={"rule": str(rule.id), "minutes": cap, "day": weekday},
+                                # The rule and never the teacher — see the
+                                # lunch's literal in _add_teacher_lunch.
+                                resource_ids=[rule.id],
+                            )
+                            cap_literals[(rule.id, day_index)] = literal
+                        # On the day's minutes and times its `works`, a locked
+                        # day's too: one LP row sees the cap and the days limit
+                        # together, and presolve gets no sum against a number
+                        # to throw on — the docstring's two CP-SAT paragraphs.
+                        model.Add(
+                            taught(view, day_index) <= residual * works(view, day_index),
+                        ).OnlyEnforceIf(literal)
 
             for limit in limits:
                 # One row per week the locks make: the days outside that
-                # week's locks, against what they leave of N.
-                weeks = []
-                for held in _week_sets(limit):
-                    allowed = max(0, limit.max_teaching_days_per_week - len(held))
-                    candidates = [
-                        day_index
-                        for day_index, weekday in enumerate(weekdays)
-                        if weekday not in held and reaching[day_index]
-                    ]
-                    if allowed < len(candidates):
-                        weeks.append((candidates, allowed))
-                if not weeks:
+                # week's locks, against what they leave of N. The sets are the
+                # gateway's real ISO weeks and carry no parity, so a teacher
+                # held in two weeks holds each set in both — the stricter
+                # reading, never a week over the post.
+                weeks_of_view = []
+                for view in views:
+                    weeks = []
+                    for held in _week_sets(limit):
+                        allowed = max(0, limit.max_teaching_days_per_week - len(held))
+                        candidates = [
+                            day_index
+                            for day_index, weekday in enumerate(weekdays)
+                            if weekday not in held and view.reaching[day_index]
+                        ]
+                        if allowed < len(candidates):
+                            weeks.append((candidates, allowed))
+                    weeks_of_view.append((view, weeks))
+                if not any(weeks for _, weeks in weeks_of_view):
                     continue
                 literal = registry.register(
                     model,
@@ -12485,25 +13164,29 @@ class SchedulerSolver:
                     # through its own map and masks the sentence on read.
                     resource_ids=[limit.id],
                 )
-                # A count of `works`, under the literal: no weighted row
-                # against a constant here either.
-                for candidates, allowed in weeks:
-                    model.Add(
-                        sum(works(day_index) for day_index in candidates) <= allowed,
-                    ).OnlyEnforceIf(literal)
-                # The linking rows, bare and implied — see the docstring — on
-                # every day, the locked ones included: they are what tells the
-                # LP that a locked day holds its room and no more. A row whose
-                # room holds every minute the day's lessons could bring says
-                # nothing the lessons' own implications on `works` do not,
-                # and is left out.
-                for day_index in range(len(weekdays)):
-                    lessons = reaching[day_index]
-                    capacity = room.get(day_index, 0) * slot_minutes
-                    bringable = sum(decision.duration for decision in lessons) * slot_minutes
-                    if not lessons or capacity >= bringable:
+                for view, weeks in weeks_of_view:
+                    if not weeks:
                         continue
-                    model.Add(taught(day_index) <= capacity * works(day_index))
+                    # A count of `works`, under the literal: no weighted row
+                    # against a constant here either.
+                    for candidates, allowed in weeks:
+                        model.Add(
+                            sum(works(view, day_index) for day_index in candidates) <= allowed,
+                        ).OnlyEnforceIf(literal)
+                    # The linking rows, bare and implied — see the docstring —
+                    # on every day, the locked ones included: they are what
+                    # tells the LP that a locked day holds its room and no
+                    # more. A row whose room holds every minute the day's
+                    # lessons could bring says nothing the lessons' own
+                    # implications on `works` do not, and is left out.
+                    room = rooms[view.week]
+                    for day_index in range(len(weekdays)):
+                        lessons = view.reaching[day_index]
+                        capacity = room.get(day_index, 0) * slot_minutes
+                        bringable = sum(decision.duration for decision in lessons) * slot_minutes
+                        if not lessons or capacity >= bringable:
+                            continue
+                        model.Add(taught(view, day_index) <= capacity * works(view, day_index))
 
     def _teacher_day_on(
         self,
@@ -12568,22 +13251,27 @@ class SchedulerSolver:
         on: Callable[[LessonDecision, int], cp_model.IntVar],
         teacher_days: dict[tuple[UUID, int], _TeacherDay],
         literals: _TeacherDayLiterals,
+        *,
+        week: WeekParity | None = None,
     ) -> cp_model.IntVar:
         """True exactly when the teacher teaches on the day: implied by every
         lesson there, and at most their sum. The rest rule's own where it built
         the day, which is the same fact by AddMaxEquality."""
-        built = teacher_days.get((teacher_id, day_index))
+        # A/B-veckor: a week's own day, keyed with its week, as
+        # _teacher_day_bounds keys the rest rule's — and never under the
+        # plain key, which the free-day wish reads as every week's.
+        key = (teacher_id, day_index) if week is None else (teacher_id, day_index, week)
+        built = teacher_days.get(key)  # type: ignore[call-overload]
         if built is not None:
             return built.works
-        key = (teacher_id, day_index)
-        works = literals.works.get(key)
+        works = literals.works.get(key)  # type: ignore[call-overload]
         if works is None:
             present = [on(decision, day_index) for decision in lessons]
-            works = model.NewBoolVar(f"ldworks_{teacher_id}_{day_index}")
+            works = model.NewBoolVar(week_tag(f"ldworks_{teacher_id}_{day_index}", week))
             for literal in present:
                 model.AddImplication(literal, works)
             model.Add(works <= sum(present))
-            literals.works[key] = works
+            literals.works[key] = works  # type: ignore[index]
         return works
 
     def _teaching_room(
@@ -13600,9 +14288,14 @@ def _fixed_relations(
     The pupils in the PUPIL space (pupil_key_of, pupil_keys_of), as that test
     and travel.families_of read them, so the key a lock's walk hangs on is a
     family the week has.
+
+    None at all for a lock the lesson never meets (weeks.meet): slöjd udda
+    veckor walks nowhere from a lesson locked on the even weeks.
     """
     requirement = lesson.requirement
     relations: list[tuple[Party, tuple[UUID, ...]]] = []
+    if not meet(fixed.recurrence, requirement.recurrence):
+        return relations
     fixed_teachers = {tid for tid in (fixed.teacher_id, fixed.co_teacher_id) if tid}
     for teacher_id in dict.fromkeys(_lesson_teachers(lesson)):
         if teacher_id in fixed_teachers:
@@ -13871,6 +14564,50 @@ def _common_domains(domains: list[dict[int, cp_model.Domain]]) -> dict[int, cp_m
         for duration, domain in common.items():
             common[duration] = domain.intersection_with(other[duration])
     return common
+
+
+def _week_requests(request: OptimizeScheduleRequest) -> list[OptimizeScheduleRequest]:
+    """A/B-veckor: the request as each real week has it, for what counts a week.
+
+    `[request]` itself when nothing alternates, so a school without
+    alternating lessons is counted exactly as before. Otherwise one request
+    per week (weeks.WEEKS): the requirements and the locks that run in it,
+    each made an every-week one — inside one week, every lesson of it runs —
+    and everything else as it was. A week with nothing left to place is left
+    out: what its locks alone break, the whole request's own checks refuse.
+
+    WHY A WEEK'S REQUEST MAY BE JUDGED FOR THE WHOLE. The model holds each of
+    its rows in each week over that week's lessons, and a row it does not cut
+    (a cap read in both weeks, an every-week meal) is no looser than the
+    week's own: so the model restricted to one week's lessons asks at least
+    what the week's request asks. A verdict that is sound on a request — it
+    refuses only a request whose model has no timetable — is then sound on
+    the whole when it refuses a week, and names only rows of that week.
+    """
+    requirements = request.requirements
+    fixed_lessons = request.fixed_lessons
+    if not alternates(r.recurrence for r in requirements) and not alternates(
+        f.recurrence for f in fixed_lessons
+    ):
+        return [request]
+    weeks: list[OptimizeScheduleRequest] = []
+    for week in WEEKS:
+        placed = [
+            requirement.model_copy(update={"recurrence": None})
+            for requirement in requirements
+            if meet(requirement.recurrence, week)
+        ]
+        if not placed:
+            continue
+        weeks.append(request.model_copy(update={
+            "requirements": placed,
+            "fixed_lessons": [
+                fixed.model_copy(update={"recurrence": None})
+                for fixed in fixed_lessons
+                if meet(fixed.recurrence, week)
+            ],
+        }))
+    return weeks
 
 
 def _without_blocks(request: OptimizeScheduleRequest) -> OptimizeScheduleRequest:

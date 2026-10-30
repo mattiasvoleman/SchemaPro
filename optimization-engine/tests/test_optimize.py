@@ -4777,6 +4777,9 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         LunchPlacement,
         LunchServing,
         OptimizeScheduleRequest,
+        PupilGapCohort,
+        PupilGaps,
+        FixedLessonMargin,
         Rast,
         ScheduledLesson,
         ScheduleRules,
@@ -4790,6 +4793,11 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "id", "capacity", "type", "minGradeLevel", "maxGradeLevel", "siteId",
     }
     assert _field_names(SiteTravelTime) == {"siteAId", "siteBId", "minutes"}
+    # Elevernas håltimmar: counts and anonymous keys, never a pupil. The
+    # gateway's PUPIL_GAP_FIELDS, COHORT_FIELDS and MARGIN_FIELDS.
+    assert _field_names(PupilGaps) == {"cohorts", "fixedMargins"}
+    assert _field_names(PupilGapCohort) == {"groupIds", "fixedLessonIds", "homeGroupId", "pupils"}
+    assert _field_names(FixedLessonMargin) == {"fixedLessonId", "minutesBefore", "minutesAfter"}
 
     assert _field_names(OptimizeScheduleRequest) == {
         "requestId",
@@ -4813,6 +4821,9 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "siteTravelTimes",
         "weights",
         "rules",
+        # Elevernas håltimmar: sent only when a school's Skolregler turn it on
+        # and the week has pupils; every other payload omits it.
+        "pupilGaps",
         # Optional, and sent only for a schemaförslag candidate: a Generera's
         # request has never carried it and still does not. An engine older
         # than this field answers it with a 422 whose one error is
@@ -4959,6 +4970,9 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "blockId",
         "lessonTeacherIds",
         "pupilGroupId",
+        # A/B-veckor: sent only on a requirement that runs odd or even weeks
+        # only, so every other payload is the bytes it was.
+        "recurrence",
     }
     # A locked lesson, which no half of the contract pinned until a field was
     # added to it. pupilGroupIds is sent only on a lock whose subject a
@@ -4976,6 +4990,8 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "startTime",
         "endTime",
         "pupilGroupIds",
+        # A/B-veckor: sent only on a lock of odd or even weeks only.
+        "recurrence",
     }
     # The response's one row. teacherId is a split post's lead of THIS lesson,
     # and omitted wherever it is None — on every lesson of every other post —

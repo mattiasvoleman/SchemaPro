@@ -860,6 +860,9 @@ export default function GeneratePage() {
               {lunchSettings?.generatorKeepsTravelTime ? (
                 <li className="text-muted-foreground">{t("ruleTravel")}</li>
               ) : null}
+              {lunchSettings?.generatorKeepsPupilGapsDown ? (
+                <li className="text-muted-foreground">{t("rulePupilGaps")}</li>
+              ) : null}
             </ul>
           )}
         </SectionCard>

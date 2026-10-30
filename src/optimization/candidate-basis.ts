@@ -69,6 +69,7 @@ export const BASIS_PAYLOAD_FIELDS = [
   'lunchPlacements',
   'lunchServings',
   'previousLessons',
+  'pupilGaps',
   'rasts',
   'requirements',
   'roomPreferences',
@@ -99,6 +100,12 @@ export interface PreservedContent {
   /** HH:MM:SS, the clock the payload carries. */
   startTime: string;
   endTime: string;
+  /**
+   * A/B-veckor: the parity the engine was told the lock holds its window in.
+   * Only on an alternating lock, so a school without one hashes what it did,
+   * and a lock moved between odd and even weeks makes a run stale.
+   */
+  recurrence?: Exclude<LessonRecurrence, 'ALL_WEEKS'>;
 }
 
 /** One of the draft's own (non-preserved) lessons, by content. */
@@ -136,6 +143,7 @@ export type BasisPayload = Pick<
   | 'previousLessons'
   | 'groupConflicts'
   | 'siteTravelTimes'
+  | 'pupilGaps'
 >;
 
 /**
@@ -382,6 +390,9 @@ export function basisInputsOf(source: BasisSource): BasisInputs {
       // only the rooms (whose part carries the walks and the sites). Present
       // only when the walk was sent, as the rooms' keys are.
       ...(payload.siteTravelTimes !== undefined ? { keepsTravelTime: true } : {}),
+      // Elevernas håltimmar: the switch, as the walk's is, present only when
+      // the cohorts were sent. Their content is the rosters' part's.
+      ...(payload.pupilGaps !== undefined ? { keepsPupilGapsDown: true } : {}),
       storedRules: source.storedRules,
     },
     rosters: {
@@ -397,6 +408,25 @@ export function basisInputsOf(source: BasisSource): BasisInputs {
             lockedPupils: payload.fixedLessons
               .filter((lesson) => lesson.pupilGroupIds !== undefined)
               .map((lesson) => ({ ...fixedLessonContent(lesson, realOf), pupilGroupIds: lesson.pupilGroupIds!.map(realOf) })),
+          }
+        : {}),
+      // Elevernas håltimmar: the pupils' cohorts, in real ids (a lock by its
+      // own lesson id), as counts and keys. A pupil who changes språkval
+      // changes what the objective was, and a candidate solved before it is
+      // stale. Only when the cohorts were sent, so every other school's part
+      // hashes as before.
+      ...(payload.pupilGaps !== undefined
+        ? {
+            pupilCohorts: payload.pupilGaps.cohorts.map((cohort) => ({
+              ...cohort,
+              groupIds: cohort.groupIds.map(realOf),
+              fixedLessonIds: cohort.fixedLessonIds.map(realOf),
+              ...(cohort.homeGroupId !== undefined ? { homeGroupId: realOf(cohort.homeGroupId) } : {}),
+            })),
+            lockMargins: (payload.pupilGaps.fixedMargins ?? []).map((margin) => ({
+              ...margin,
+              fixedLessonId: realOf(margin.fixedLessonId),
+            })),
           }
         : {}),
     },
@@ -423,6 +453,7 @@ function fixedLessonContent(
     dayOfWeek: lesson.dayOfWeek,
     startTime: lesson.startTime,
     endTime: lesson.endTime,
+    ...(lesson.recurrence !== undefined ? { recurrence: lesson.recurrence } : {}),
   };
 }
 
@@ -436,6 +467,8 @@ export interface PreservedRow {
   startTime: Date;
   endTime: Date;
   extraGroups?: { studentGroupId: string }[];
+  /** A/B-veckor: read wherever this is compared with a payload's lock (fixedLessonContent). */
+  recurrence: LessonRecurrence;
 }
 
 /**
@@ -453,6 +486,7 @@ export function preservedContentOf(row: PreservedRow): PreservedContent {
     dayOfWeek: row.dayOfWeek,
     startTime: clockOf(row.startTime, true) ?? '',
     endTime: clockOf(row.endTime, true) ?? '',
+    ...(row.recurrence !== 'ALL_WEEKS' ? { recurrence: row.recurrence } : {}),
   };
 }
 
