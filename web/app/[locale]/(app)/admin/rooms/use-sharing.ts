@@ -24,13 +24,26 @@ export interface SharedTeacher {
   teacherId: string;
   firstName: string;
   lastName: string;
-  schools: { id: string; name: string }[];
+  /**
+   * The other schools the school has marked the teacher as shared with;
+   * `shared` once that school has marked its row of the same login back.
+   */
+  schools: { id: string; name: string; shared: boolean }[];
+}
+
+export interface StaffMember {
+  id: string;
+  firstName: string;
+  lastName: string;
 }
 
 export interface Sharing {
   /** The other schools of the huvudman; empty for a school without one. */
   schools: SiblingSchool[];
+  /** The school's marked teachers. */
   teachers: SharedTeacher[];
+  /** The school's active teachers and administrators, to mark one. */
+  staff: StaffMember[];
 }
 
 export type RoomLoanStatus = "PENDING" | "APPROVED" | "DECLINED" | "WITHDRAWN" | "REVOKED";
@@ -49,10 +62,14 @@ export interface RoomLoan {
   createdAt: string;
   decidedAt: string | null;
   endedAt: string | null;
-  /** The school's own room: the one lent, or the school's room for the one borrowed. */
-  room: { id: string; name: string };
-  /** The other school. */
-  school: { id: string; name: string };
+  /**
+   * The school's own room: the one lent, or the school's room for the one
+   * borrowed. No id until the owner approves the first loan of the room,
+   * which makes it by this name.
+   */
+  room: { id: string | null; name: string };
+  /** The other school; no name once it has left the huvudman (an approved loan the owner may end). */
+  school: { id: string; name: string | null };
   /** For a borrowed room: the owner's name for it. */
   ownerRoomName: string | null;
 }
@@ -120,28 +137,43 @@ export function useSaveSchoolTravel() {
 
 export type RoomLoanAction = "approve" | "decline" | "withdraw" | "revoke";
 
-/** An answer to a loan, or its end. The loans are read again either way. */
+/** The school marks its own teacher as shared with another school, or takes the mark back. */
+export function useMarkTeacher() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ teacherId, schoolId, shared }: { teacherId: string; schoolId: string; shared: boolean }) => {
+      const path = `/api/v1/sharing/teachers/${teacherId}/schools/${schoolId}`;
+      return shared ? api.put<Sharing>(path) : api.delete<Sharing>(path);
+    },
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: SHARING_KEY }),
+  });
+}
+
+/**
+ * An answer to a loan, or its end. The loans are read again either way, and
+ * the rooms, since an approval makes the borrower's room for the loan.
+ */
 export function useRoomLoanAction() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ id, action }: { id: string; action: RoomLoanAction }) =>
       api.post<RoomLoans>(`/api/v1/room-loans/${id}/${action}`, {}),
-    onSettled: () => void queryClient.invalidateQueries({ queryKey: ROOM_LOANS_KEY }),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ROOM_LOANS_KEY });
+      void queryClient.invalidateQueries({ queryKey: ["rooms"] });
+    },
   });
 }
 
 /**
- * A request: one loan per window. The first request for a room makes the
- * school's own room for it, so the rooms are read again too.
+ * A request: one loan per window. It makes no room: the owner's approval
+ * makes the school's own room for it.
  */
 export function useRequestRoomLoan() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (body: RoomLoanRequest) => api.post<RoomLoans>("/api/v1/room-loans", body),
-    onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: ROOM_LOANS_KEY });
-      void queryClient.invalidateQueries({ queryKey: ["rooms"] });
-    },
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: ROOM_LOANS_KEY }),
   });
 }
 

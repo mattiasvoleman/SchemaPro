@@ -444,20 +444,21 @@
   },
   "sharing": {
     "title": "The huvudman's other schools",
-    "description": "The school's huvudman owns other schools. Here you set the travel time to them and see which teachers the school shares with them, and the schools borrow each other's rooms at fixed times. The other school sees only its own name, its rooms and the answers to loans: no pupils, timetables or people.",
+    "description": "The school's huvudman owns other schools. Here you set the travel time to them and the teachers the school shares with them, and the schools borrow each other's rooms at fixed times. The other school sees only its own name, its rooms, the answers to loans and whether it shares a teacher with the school: no pupils, timetables or people.",
     "loadFailed": "The huvudman's other schools could not be loaded",
     "loadFailedHint": "Nothing has changed. Reload the page to try again.",
-    "schoolsTitle": "Travel time and shared teachers",
+    "schoolsTitle": "Travel time",
     "schoolsHint": "Minutes between the schools, the same both ways. Either school can change the figure. A school with several sites gives the longest time. An empty field means no travel time is set.",
-    "schoolsCaption": "The huvudman's other schools, the travel time there and the teachers who work at both schools",
+    "schoolsCaption": "The huvudman's other schools and the travel time there",
     "columns": {
       "school": "School",
       "travel": "Travel time, minutes",
-      "teachers": "Shared teachers",
       "room": "Room",
       "borrower": "Borrowed by",
       "when": "Time",
       "status": "Status",
+      "teacher": "Teacher",
+      "sharedWith": "Shared with",
       "localRoom": "The school's room for the loan",
       "owner": "Borrowed from"
     },
@@ -465,12 +466,21 @@
     "minutesPlaceholder": "Not set",
     "minutesInvalid": "The travel time is whole minutes from 0 to 240.",
     "setByThem": "Set by {school}.",
-    "noTeachers": "None",
-    "teachersHint": "A teacher is shared when the same login has an active row at both schools, that is, when the teacher is invited to both with the same email address. A teacher not invited at one of the schools is not shown here.",
+    "teachersTitle": "Shared teachers",
+    "teachersCaption": "The school's teachers marked as shared with the huvudman's other schools",
+    "teachersEmpty": "The school has marked no teacher as shared.",
+    "teacherShared": "Shared",
+    "teacherWaiting": "Waiting for {school}",
+    "markTitle": "Mark a teacher as shared",
+    "markTeacher": "Mark as shared",
+    "unmarkTeacher": "Remove the mark of {name} for {school}",
+    "teacherMarked": "{name} is marked as shared with {school}",
+    "teacherUnmarked": "{name} is no longer shared with {school}",
+    "teachersHint": "A teacher who works at two schools of the huvudman is shared when both schools have marked the teacher here and the teacher has the same login at both. Only then do the schools see the teacher's lesson times at the other school, and only the times. Until the other school has marked the teacher, neither school sees anything of the other, not even that the teacher works there. If either school removes its mark, the sharing ends.",
     "saveTravel": "Save travel times",
     "travelSaved": "The travel times are saved",
     "loansTitle": "Room loans",
-    "loansHint": "A loan is a fixed time each week between two dates. The school that owns the room approves each loan. An approved loan keeps the room for the other school at that time.",
+    "loansHint": "A loan is a fixed time each week between two dates, and the school that owns the room approves each loan. When the first loan of a room is approved, your school gets a room of its own for it, where the school's lessons in the borrowed room stand. A declined or withdrawn loan leaves no room behind.",
     "borrow": "Borrow a room",
     "loansLoadFailed": "The loans could not be loaded",
     "lentTitle": "The school's rooms other schools borrow",
@@ -480,6 +490,8 @@
     "borrowedEmpty": "The school borrows no room from another school.",
     "borrowedCaption": "Loans of other schools' rooms to the school",
     "ownerRoom": "{room}, {school}",
+    "roomAtApproval": "{room} (made when the loan is approved)",
+    "leftSchool": "A school that has left the huvudman",
     "window": "{day} {start}–{end}",
     "period": "{from} – {to}",
     "status": {
@@ -504,11 +516,11 @@
     "confirm": {
       "revoke": {
         "title": "End the loan of {room}?",
-        "body": "The room is the school's again from now on. {school} must move its lessons out of it, and its publishing warns about lessons left there."
+        "body": "The loan ends from now on, and the room can be lent again at those times. {school} sees that the loan has ended."
       },
       "withdraw": {
         "title": "Withdraw the loan of {room}?",
-        "body": "{school} gets the room back from now on. Lessons left in the room are warned about when publishing."
+        "body": "The loan ends from now on, and {school} can lend the room again at those times. The school's own room for the borrowed room remains."
       }
     },
     "borrowTitle": "Borrow a room from another school",
@@ -526,8 +538,12 @@
       "from": "First day",
       "to": "Last day",
       "localRoom": "Name of the school's room for the loan",
-      "localRoomHint": "The school's lessons in the borrowed room stand in a room of the school's own. Without a name it is named as suggested.",
-      "note": "Message to the other school"
+      "localRoomHint": "The school's lessons in the borrowed room stand in a room of the school's own, made when the other school approves the loan. Without a name it is named as suggested.",
+      "note": "Message to the other school",
+      "teacher": "Teacher",
+      "teacherPlaceholder": "Choose a teacher",
+      "school": "School",
+      "schoolPlaceholder": "Choose a school"
     },
     "addWindow": "Add a time",
     "removeWindow": "Remove time {n}",
@@ -547,9 +563,11 @@
       "ROOM_LOAN_NOT_APPROVED": "Only an approved loan can be ended.",
       "ROOM_LOAN_NOT_FOUND": "The loan no longer exists. The list is updated.",
       "ROOM_LOAN_ROOM_NOT_FOUND": "The room can no longer be borrowed.",
-      "ROOM_LOAN_LOCAL_ROOM_NAME_TAKEN": "The school already has a room with that name. Choose another name for the borrowed room.",
+      "ROOM_LOAN_LOCAL_ROOM_NAME_TAKEN": "The other school already has rooms with that name. Ask it to request the loan with another name for its room.",
       "ROOM_LOAN_WINDOW_INVALID": "The times or dates do not fit together.",
-      "SCHOOL_NOT_SIBLING": "The school no longer belongs to the huvudman."
+      "SCHOOL_NOT_SIBLING": "The school no longer belongs to the huvudman.",
+      "SHARED_TEACHER_NOT_STAFF": "The teacher is no longer an active teacher or administrator at the school. The list is updated.",
+      "ROOM_LOAN_LOCAL_ROOM_TYPE_NOT_FOUND": "The room type is no longer one of the school's room types."
     }
   },
   "groups": {

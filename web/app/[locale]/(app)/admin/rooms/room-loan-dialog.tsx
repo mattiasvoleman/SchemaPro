@@ -5,10 +5,11 @@
  * huvudman for one of its rooms, at weekly times between two dates. Each time
  * becomes a loan of its own that the owner's planner approves or declines.
  *
- * The first request for a room makes the school's own room for it, named
- * after the room and its school unless the planner names it: the room the
- * school's lessons stand in, which the generator keeps to the approved times.
- * Fetched the first time it opens (sharing-card.tsx).
+ * A request makes nothing at the school: the owner's approval of the first
+ * loan of a room makes the school's own room for it, named after the room
+ * and its school unless the planner names it, the room the school's lessons
+ * in the borrowed room stand in. A later request of the room holds by that
+ * room. Fetched the first time it opens (sharing-card.tsx).
  */
 
 import { useMemo, useState, type FormEvent } from "react";
@@ -178,8 +179,9 @@ export function RoomLoanDialog({ open, onOpenChange }: RoomLoanDialogProps) {
               <legend className="text-sm font-medium">{t("fields.windows")}</legend>
               <ul className="space-y-2">
                 {windows.map((window, index) => (
-                  <li key={index} className="grid grid-cols-[1fr_6rem_6rem_auto] items-end gap-2">
-                    <FormField id={`room-loan-day-${index}`} label={t("fields.day")}>
+                  <li key={index} className="grid grid-cols-[1fr_1fr_auto] items-end gap-2 sm:grid-cols-[1fr_6rem_6rem_auto]">
+                    {/* On a phone the day has the row to itself, and the times and the button share the next. */}
+                    <FormField id={`room-loan-day-${index}`} label={t("fields.day")} className="col-span-3 sm:col-span-1">
                       <NativeSelect value={window.dayOfWeek} onChange={(event) => setWindow(index, { dayOfWeek: event.target.value })}>
                         {["1", "2", "3", "4", "5", "6", "7"].map((day) => (
                           <option key={day} value={day}>

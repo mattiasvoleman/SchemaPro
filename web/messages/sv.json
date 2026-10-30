@@ -444,20 +444,21 @@
   },
   "sharing": {
     "title": "Huvudmannens andra skolor",
-    "description": "Skolans huvudman äger fler skolor. Här anges restiden till dem och vilka lärare skolan delar med dem, och här lånar skolorna varandras salar på fasta tider. Den andra skolan ser bara sitt eget namn, sina salar och svaren på lånen: inga elever, scheman eller personer.",
+    "description": "Skolans huvudman äger fler skolor. Här anges restiden till dem och vilka lärare skolan delar med dem, och här lånar skolorna varandras salar på fasta tider. Den andra skolan ser bara sitt eget namn, sina salar, svaren på lånen och om den delar en lärare med skolan: inga elever, scheman eller personer.",
     "loadFailed": "Huvudmannens andra skolor kunde inte hämtas",
     "loadFailedHint": "Inget har ändrats. Ladda om sidan för att försöka igen.",
-    "schoolsTitle": "Restid och delade lärare",
+    "schoolsTitle": "Restid",
     "schoolsHint": "Minuter mellan skolorna, samma åt båda hållen. Båda skolorna kan ändra siffran. Har en skola flera skolområden anges den längsta tiden. Ett tomt fält betyder att restiden inte är angiven.",
-    "schoolsCaption": "Huvudmannens andra skolor, restiden dit och lärarna som arbetar på båda skolorna",
+    "schoolsCaption": "Huvudmannens andra skolor och restiden dit",
     "columns": {
       "school": "Skola",
       "travel": "Restid, minuter",
-      "teachers": "Delade lärare",
       "room": "Sal",
       "borrower": "Lånas av",
       "when": "Tid",
       "status": "Status",
+      "teacher": "Lärare",
+      "sharedWith": "Delas med",
       "localRoom": "Skolans sal för lånet",
       "owner": "Lånas från"
     },
@@ -465,12 +466,21 @@
     "minutesPlaceholder": "Ej angiven",
     "minutesInvalid": "Restiden är hela minuter från 0 till 240.",
     "setByThem": "Angiven av {school}.",
-    "noTeachers": "Inga",
-    "teachersHint": "En lärare delas när samma inloggning har en aktiv rad på båda skolorna, alltså när läraren är inbjuden med samma e-postadress till båda. En lärare som inte är inbjuden på den ena skolan syns inte här.",
+    "teachersTitle": "Delade lärare",
+    "teachersCaption": "Skolans lärare som är markerade som delade med huvudmannens andra skolor",
+    "teachersEmpty": "Skolan har inte markerat någon lärare som delad.",
+    "teacherShared": "Delad",
+    "teacherWaiting": "Väntar på {school}",
+    "markTitle": "Markera en lärare som delad",
+    "markTeacher": "Markera som delad",
+    "unmarkTeacher": "Ta bort markeringen av {name} för {school}",
+    "teacherMarked": "{name} är markerad som delad med {school}",
+    "teacherUnmarked": "{name} delas inte längre med {school}",
+    "teachersHint": "En lärare som arbetar på två skolor under huvudmannen delas när båda skolorna har markerat läraren här och läraren har samma inloggning på båda. Först då ser skolorna lärarens lektionstider på den andra skolan, och bara tiderna. Innan den andra skolan har markerat ser ingen av skolorna något av den andra, inte ens att läraren finns där. Tar någon av skolorna bort sin markering slutar delningen.",
     "saveTravel": "Spara restider",
     "travelSaved": "Restiderna är sparade",
     "loansTitle": "Lån av salar",
-    "loansHint": "Ett lån är en fast tid i veckan mellan två datum. Den skola som äger salen godkänner varje lån. Ett godkänt lån håller salen åt den andra skolan på den tiden.",
+    "loansHint": "Ett lån är en fast tid i veckan mellan två datum, och den skola som äger salen godkänner varje lån. När det första lånet av en sal godkänns får din skola en egen sal för den, där skolans lektioner i den lånade salen står. Ett avböjt eller tillbakadraget lån lämnar ingen sal efter sig.",
     "borrow": "Låna en sal",
     "loansLoadFailed": "Lånen kunde inte hämtas",
     "lentTitle": "Skolans salar som andra skolor lånar",
@@ -480,6 +490,8 @@
     "borrowedEmpty": "Skolan lånar ingen sal av en annan skola.",
     "borrowedCaption": "Lån av andra skolors salar till skolan",
     "ownerRoom": "{room}, {school}",
+    "roomAtApproval": "{room} (görs när lånet godkänns)",
+    "leftSchool": "En skola som har lämnat huvudmannen",
     "window": "{day} {start}–{end}",
     "period": "{from} – {to}",
     "status": {
@@ -504,11 +516,11 @@
     "confirm": {
       "revoke": {
         "title": "Avsluta lånet av {room}?",
-        "body": "Salen blir skolans igen från och med nu. {school} måste flytta sina lektioner därifrån, och deras publicering varnar för lektioner som står kvar."
+        "body": "Lånet avslutas från och med nu, och salen kan lånas ut igen på de tiderna. {school} ser att lånet är avslutat."
       },
       "withdraw": {
         "title": "Dra tillbaka lånet av {room}?",
-        "body": "{school} får salen tillbaka från och med nu. Lektioner som står kvar i salen varnas för vid publiceringen."
+        "body": "Lånet avslutas från och med nu, och {school} kan låna ut salen igen på de tiderna. Skolans egen sal för den lånade salen finns kvar."
       }
     },
     "borrowTitle": "Låna en sal av en annan skola",
@@ -526,8 +538,12 @@
       "from": "Första dag",
       "to": "Sista dag",
       "localRoom": "Namn på skolans sal för lånet",
-      "localRoomHint": "Skolans lektioner i den lånade salen står i en egen sal hos skolan. Utan namn heter den som förslaget.",
-      "note": "Meddelande till den andra skolan"
+      "localRoomHint": "Skolans lektioner i den lånade salen står i en egen sal hos skolan, som görs när den andra skolan godkänner lånet. Utan namn heter den som förslaget.",
+      "note": "Meddelande till den andra skolan",
+      "teacher": "Lärare",
+      "teacherPlaceholder": "Välj en lärare",
+      "school": "Skola",
+      "schoolPlaceholder": "Välj en skola"
     },
     "addWindow": "Lägg till en tid",
     "removeWindow": "Ta bort tid {n}",
@@ -547,9 +563,11 @@
       "ROOM_LOAN_NOT_APPROVED": "Bara ett godkänt lån kan avslutas.",
       "ROOM_LOAN_NOT_FOUND": "Lånet finns inte längre. Listan är uppdaterad.",
       "ROOM_LOAN_ROOM_NOT_FOUND": "Salen går inte längre att låna.",
-      "ROOM_LOAN_LOCAL_ROOM_NAME_TAKEN": "Skolan har redan en sal med det namnet. Välj ett annat namn för den lånade salen.",
+      "ROOM_LOAN_LOCAL_ROOM_NAME_TAKEN": "Den andra skolan har redan salar med det namnet. Be den begära lånet med ett annat namn på sin sal.",
       "ROOM_LOAN_WINDOW_INVALID": "Tiderna eller datumen går inte ihop.",
-      "SCHOOL_NOT_SIBLING": "Skolan hör inte längre till huvudmannen."
+      "SCHOOL_NOT_SIBLING": "Skolan hör inte längre till huvudmannen.",
+      "SHARED_TEACHER_NOT_STAFF": "Läraren är inte längre aktiv lärare eller administratör på skolan. Listan är uppdaterad.",
+      "ROOM_LOAN_LOCAL_ROOM_TYPE_NOT_FOUND": "Salstypen finns inte längre bland skolans salstyper."
     }
   },
   "groups": {
