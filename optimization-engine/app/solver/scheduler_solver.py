@@ -25,6 +25,7 @@ from app.solver.frames import changeover_slots, day_windows, span_of
 from app.solver.pupil_gaps import (
     PUPIL_GAP_SCALE,
     PupilGapModel,
+    SlotGrid,
     build_pupil_gap_objective,
     estimate_variables as pupil_gap_variables,
     pupil_idle_minutes,
@@ -5466,7 +5467,20 @@ class SchedulerSolver:
             + len(_blocks_of(request.requirements))
             + 2 * len(request.previous_lessons)
             # Elevernas håltimmar: zero without pupilGaps (pupil_gaps.py).
-            + (pupil_gap_variables(request, day_count) if self._settings.weight_pupil_gap > 0 else 0)
+            + (
+                pupil_gap_variables(
+                    request,
+                    SlotGrid(
+                        slots_per_day=self._grid.slots_per_day,
+                        slot_minutes=self._grid.slot_minutes,
+                        day_start_minutes=self._grid.day_start_minutes,
+                        weekdays=self._grid.schedule_days,
+                    ),
+                    self._fixed_window,
+                )
+                if self._settings.weight_pupil_gap > 0
+                else 0
+            )
         )
 
     def _validate_request(self, request: OptimizeScheduleRequest) -> None:
@@ -10786,6 +10800,7 @@ class SchedulerSolver:
                 on=on,
                 reach=reach,
                 fixed_window=lambda fixed: _fixed_lesson_window(fixed, self._grid),
+                lock_keys=pupil_keys_of,
                 pupil_key=pupil_key_of,
                 lunch_starts=lunch_starts,
                 lunch_slots=lunch_slots,

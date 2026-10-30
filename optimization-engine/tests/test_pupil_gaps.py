@@ -25,7 +25,9 @@ from app.schemas.schedule import OptimizeScheduleRequest, ScheduledLesson
 from app.solver.pupil_gaps import (
     MINIMUM_GAP_MINUTES,
     PUPIL_GAP_SCALE,
+    SlotGrid,
     day_idle_minutes,
+    estimate_variables,
     pupil_idle_minutes,
 )
 from app.solver.scheduler_solver import SchedulerSolver, _TeacherDayLiterals
@@ -467,7 +469,11 @@ def _closed_week() -> dict[str, object]:
     return payload
 
 
-@pytest.mark.parametrize("make", [_closed_week, _halves_payload], ids=["a closed hour", "sibling halves"])
+@pytest.mark.parametrize(
+    "make",
+    [_closed_week, _halves_payload, lambda: _locked_halves()],
+    ids=["a closed hour", "sibling halves", "locks, halves and closed time"],
+)
 def test_the_size_estimate_bounds_what_the_term_builds(make) -> None:  # noqa: ANN001
     """_estimate_model_size stays an upper bound with the rule on.
 
@@ -557,13 +563,237 @@ def test_the_estimate_charges_the_closures_the_term_builds() -> None:
         model, *_ = solver._build_model(request, use_assumptions=False)
         return len(model.Proto().variables)
 
-    from app.solver.pupil_gaps import estimate_variables
-
     built = (variables(closed_week, True) - variables(open_week, True)) - (
         variables(closed_week, False) - variables(open_week, False)
     )
-    charged = estimate_variables(
-        OptimizeScheduleRequest.model_validate(closed_week), 1,
-    ) - estimate_variables(OptimizeScheduleRequest.model_validate(open_week), 1)
+    charged = _estimate(solver, closed_week) - _estimate(solver, open_week)
     assert built > 0
     assert charged >= built
+
+
+def _estimate(solver: SchedulerSolver, payload: dict[str, object]) -> int:
+    grid = solver._grid
+    return estimate_variables(
+        OptimizeScheduleRequest.model_validate(payload),
+        SlotGrid(grid.slots_per_day, grid.slot_minutes, grid.day_start_minutes, grid.schedule_days),
+        solver._fixed_window,
+    )
+
+
+# ---------------------------------------------------------------------------
+# The pupils' whole day: margins, derived keys and locks, term against count
+# ---------------------------------------------------------------------------
+
+HALF_A = str(uuid4())
+HALF_B = str(uuid4())
+OTHER = str(uuid4())
+
+
+def _requirement(group: str, teacher: int, lessons: int = 1, **extra: object) -> dict[str, object]:
+    return {
+        "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": group,
+        "teacherId": TEACHERS[teacher], "lessonsPerWeek": lessons, "minutesPerLesson": 60,
+        "studentGroupSize": 10, "minGradeLevel": 7, "maxGradeLevel": 7, **extra,
+    }
+
+
+def _lock(group: str, start: str, end: str) -> dict[str, object]:
+    return {
+        "id": str(uuid4()), "studentGroupId": group, "dayOfWeek": 1,
+        "startTime": f"{start}:00", "endTime": f"{end}:00",
+    }
+
+
+def _school(
+    requirements: list[dict[str, object]],
+    cohorts: list[dict[str, object]],
+    *,
+    locks: list[dict[str, object]] = (),  # type: ignore[assignment]
+    closed: list[tuple[str, str, str]] = (),  # type: ignore[assignment]
+    conflicts: list[list[str]] | None = None,
+) -> dict[str, object]:
+    """7A and its halves, Monday 08:00-16:00: `closed` is (group, start, end) closed by a rule."""
+    return {
+        "requestId": str(uuid4()),
+        "academicYearId": str(uuid4()),
+        "requirements": requirements,
+        "groups": [{"id": CLASS, "lunchHeadcount": 25, "minGradeLevel": 7, "maxGradeLevel": 7}],
+        "rooms": [{"id": str(uuid4()), "capacity": 30}, {"id": str(uuid4()), "capacity": 30}],
+        "groupConflicts": conflicts if conflicts is not None else [[CLASS, HALF_A], [CLASS, HALF_B]],
+        "fixedLessons": list(locks),
+        "constraints": [
+            {
+                "id": str(uuid4()), "resourceKind": "STUDENT_GROUP", "resourceId": group,
+                "dayOfWeek": 1, "date": None, "kind": "UNAVAILABLE",
+                "startTime": f"{start}:00", "endTime": f"{end}:00",
+            }
+            for group, start, end in closed
+        ],
+        "pupilGaps": {"cohorts": cohorts},
+    }
+
+
+def _counted(payload: dict[str, object], starts: list[int]) -> int:
+    """The count for lessons at these minutes, each its requirement's length, in the decisions' order."""
+    request = OptimizeScheduleRequest.model_validate(payload)
+    placed = [
+        (requirement.id, requirement.minutes_per_lesson)
+        for requirement in request.requirements
+        for _ in range(requirement.lessons_per_week)
+    ]
+    clock = lambda minutes: f"{minutes // 60:02d}:{minutes % 60:02d}:00"  # noqa: E731
+    return pupil_idle_minutes(request, [
+        ScheduledLesson.model_validate({
+            "requirementId": owner, "dayOfWeek": 1,
+            "startTime": clock(minutes), "endTime": clock(minutes + length),
+        })
+        for (owner, length), minutes in zip(placed, starts)
+    ])
+
+
+def _term_is_the_count(payload: dict[str, object], starts: list[int], slots: int) -> None:
+    """The term says `slots` pupil-slots for the week, and the count says the same in minutes."""
+    assert _pupil_term(payload, starts) == slots
+    assert _counted(payload, starts) == slots * 5
+
+
+def test_both_halves_locked_at_once_are_one_hour_of_the_day() -> None:
+    """The halves' slöjd locked 11:00-12:00 for both: nine pupils in neither sit one hour.
+
+    7A at 08:00 and 09:00 leaves 10:00-11:00 empty before the rotation. Two
+    locks of an hour each in a four-hour day would read as a day without a
+    hole, and a generator could not tell it from 7A at 09:00 and 10:00.
+    """
+    locks = [_lock(HALF_A, "11:00", "12:00"), _lock(HALF_B, "11:00", "12:00")]
+    payload = _school(
+        [_requirement(CLASS, 0, lessons=2)],
+        [{
+            "groupIds": [CLASS, HALF_A, HALF_B], "pupils": 9, "homeGroupId": CLASS,
+            "fixedLessonIds": [lock["id"] for lock in locks],
+        }],
+        locks=locks,
+    )
+    _term_is_the_count(payload, [8 * 60, 9 * 60], 9 * 12)
+    _term_is_the_count(payload, [9 * 60, 10 * 60], 0)
+
+
+def test_a_lock_and_the_sibling_halfs_lesson_beside_it_are_one_hour() -> None:
+    """7A:1's slöjd locked 10:00-11:00, 7A:2's NO placed: four pupils in neither half.
+
+    7A at 08:00 and 13:00. NO beside the lock leaves 09:00-10:00 and
+    11:00-13:00 (36 slots); NO at 11:00 leaves 09:00-10:00 and 12:00-13:00
+    (24). Counted as two hours, the lock and the NO beside it would cost what
+    the NO after it does.
+    """
+    lock = _lock(HALF_A, "10:00", "11:00")
+    payload = _school(
+        [_requirement(CLASS, 0, lessons=2), _requirement(HALF_B, 1)],
+        [{
+            "groupIds": [CLASS, HALF_A, HALF_B], "pupils": 4, "homeGroupId": CLASS,
+            "fixedLessonIds": [lock["id"]],
+        }],
+        locks=[lock],
+    )
+    _term_is_the_count(payload, [8 * 60, 13 * 60, 10 * 60], 4 * 36)
+    _term_is_the_count(payload, [8 * 60, 13 * 60, 11 * 60], 4 * 24)
+
+
+def test_a_lock_in_closed_time_is_busy_once() -> None:
+    """7A is closed 10:00-11:00, and Ty7's språkval is locked in that hour.
+
+    7A at 08:00, 09:00, 11:00 and 14:00. The ten in Ty7 and the fifteen
+    outside it wait 12:00-14:00 alike: 24 slots each. Counted as the closure
+    and the lock both, the ten would wait only half of it.
+    """
+    lock = _lock(TY, "10:00", "11:00")
+    payload = _school(
+        [_requirement(CLASS, 0, lessons=2), _requirement(CLASS, 1, lessons=2)],
+        [
+            {
+                "groupIds": [CLASS, TY], "pupils": 10, "homeGroupId": CLASS,
+                "fixedLessonIds": [lock["id"]],
+            },
+            {"groupIds": [CLASS], "pupils": 15, "homeGroupId": CLASS},
+        ],
+        locks=[lock],
+        closed=[(CLASS, "10:00", "11:00")],
+        conflicts=[[CLASS, TY]],
+    )
+    _term_is_the_count(payload, [8 * 60, 9 * 60, 11 * 60, 14 * 60], 25 * 24)
+
+
+def test_both_halves_in_closed_time_are_busy_once() -> None:
+    """The halves both at 09:00, inside 09:00-09:40 a rule closes for the pupils' stödgrupp.
+
+    Three pupils in neither half, 7A at 08:00 and 10:00: a day without a hole.
+    The closure took 40 minutes off each half's hour; together they are one
+    hour, and the 40 minutes come back once, or the pupils would wait them.
+    """
+    payload = _school(
+        [_requirement(CLASS, 0, lessons=2), _requirement(HALF_A, 1), _requirement(HALF_B, 2)],
+        [{"groupIds": [CLASS, HALF_A, HALF_B, OTHER], "pupils": 3, "homeGroupId": CLASS}],
+        closed=[(OTHER, "09:00", "09:40")],
+    )
+    _term_is_the_count(payload, [8 * 60, 10 * 60, 9 * 60, 9 * 60], 0)
+    _term_is_the_count(payload, [8 * 60, 11 * 60, 9 * 60, 9 * 60], 3 * 12)
+
+
+def test_a_lock_naming_a_pupil_shares_the_hour_with_their_class() -> None:
+    """One pupil of 7A is named on a lock of another group, 09:00-10:00, and 7A has matte then.
+
+    7A at 08:00, 09:00 and 11:00: everyone waits 10:00-11:00, the named
+    pupil too. The lock holds 7A off nothing, so the class's hour may lie on
+    it, and the two are one hour of that pupil's day.
+    """
+    lock = _lock(OTHER, "09:00", "10:00")
+    payload = _school(
+        [_requirement(CLASS, 0, lessons=3)],
+        [
+            {
+                "groupIds": [CLASS], "pupils": 1, "homeGroupId": CLASS,
+                "fixedLessonIds": [lock["id"]],
+            },
+            {"groupIds": [CLASS], "pupils": 24, "homeGroupId": CLASS},
+        ],
+        locks=[lock],
+        conflicts=[],
+    )
+    _term_is_the_count(payload, [8 * 60, 9 * 60, 11 * 60], 25 * 12)
+
+
+def test_keys_nobody_paired_never_make_the_week_infeasible() -> None:
+    """Four keys of one cohort with no pair between them, all four lessons at 08:00.
+
+    Each pair's overlap is taken off once, so three keys over the same hours
+    take them off more than once and the right side outgrows a day. A
+    gateway sends at most two such keys; whatever comes, the term is a cost,
+    and this week — every hard rule kept — must stay a week.
+    """
+    groups = [str(uuid4()) for _ in range(4)]
+    payload = _school(
+        [
+            {**_requirement(group, 0), "teacherId": str(uuid4()), "minutesPerLesson": 240}
+            for group in groups
+        ],
+        [{"groupIds": groups, "pupils": 1, "homeGroupId": groups[0]}],
+        conflicts=[],
+    )
+    assert _pupil_term(payload, [8 * 60] * 4) >= 0
+
+
+def _locked_halves() -> dict[str, object]:
+    """A lock on one half, the other half's lesson, and closed time reaching them all."""
+    lock = _lock(HALF_A, "10:00", "11:00")
+    return _school(
+        [_requirement(CLASS, 0, lessons=2), _requirement(HALF_A, 1), _requirement(HALF_B, 2)],
+        [
+            {
+                "groupIds": [CLASS, HALF_A, HALF_B, OTHER], "pupils": 3, "homeGroupId": CLASS,
+                "fixedLessonIds": [lock["id"]],
+            },
+            {"groupIds": [CLASS, HALF_A], "pupils": 10, "homeGroupId": CLASS,
+             "fixedLessonIds": [lock["id"]]},
+        ],
+        locks=[lock],
+        closed=[(OTHER, "13:00", "13:40")],
+    )

@@ -29,15 +29,26 @@ tests/test_pupil_gaps.py through this function.
 THE OBJECTIVE (build_pupil_gap_objective) is what CP-SAT minimises when the
 school turns the rule on. Per cohort and day:
 
-    idle >= (last - first) - occupied - lunch - closed
+    idle >= (last - first) - busy - lunch
 
 with `first` and `last` the pupils' own day — every key of the cohort,
 which is the whole of "elevens faktiska dag": the home class, the teaching
 groups, the halves and the replacing groups, read in the pupil space exactly
-as the no-overlap rules read it (pupil_key_of). A class is never one body
-here: 7A's fourteen outside Ma71 and its sixteen inside it are two cohorts,
-each with its own day, which is why a span-minus-taught term per GROUP was
-refused for years (see _add_idle_time_objective) and this one is not.
+as the no-overlap rules read it (pupil_key_of) — and the locks they sit. A
+class is never one body here: 7A's fourteen outside Ma71 and its sixteen
+inside it are two cohorts, each with its own day, which is why a
+span-minus-taught term per GROUP was refused for years (see
+_add_idle_time_objective) and this one is not.
+
+`busy` is the union the count merges, each slot once, by inclusion and
+exclusion: the lessons, less the overlap of every two that may meet (sibling
+halves for a pupil in neither); then the windows that never move — the
+cohort's locks and its closed time, merged per day, so both halves' locked
+rotation is one hour and a lock in closed time is busy once — each where it
+lies inside the day, less the slots a lesson fills of it, plus those two
+siblings fill of it together. A lesson its key's lock holds off
+(_add_fixed_lesson_constraints) is never in that lock's window and pays
+nothing; every other one gets its overlap, exactly, from its own min and max.
 
 WHERE THE OBJECTIVE AND THE COUNT PART, said once and measured in the PR:
 
@@ -46,7 +57,10 @@ WHERE THE OBJECTIVE AND THE COUNT PART, said once and measured in the PR:
                               lesson after each one, and a successor per pair
                               of lessons is quadratic in every pupil's week
     lunch                     credited when the class's own placed lunch lies
-                              inside the day; the count credits the window
+                              inside the day, whole, even where the pupils are
+                              busy during some of it (a dusch, a lock of
+                              another of their groups); the count credits the
+                              window, and only what of it lies in a hole
     alternate weeks           the engine has no weeks: a locked odd-week
                               lesson is every week to both, and the report's
                               ordinary week halves it
@@ -54,7 +68,8 @@ WHERE THE OBJECTIVE AND THE COUNT PART, said once and measured in the PR:
                               keep a lock's ombyte either (FixedLessonMargin)
 
 Every term is a lower bound pushed up to the truth by the objective, never a
-rule: nothing here can make a week infeasible, and a school with the rule off
+rule: nothing here can make a week infeasible — each `idle` reaches as far as
+its right side can, whatever the payload — and a school with the rule off
 sends no pupilGaps and builds none of it.
 """
 
@@ -351,6 +366,16 @@ def pupil_idle_minutes(
 
 
 @dataclass(frozen=True)
+class SlotGrid:
+    """The grid in slots: what a closure or a lock needs to become one."""
+
+    slots_per_day: int
+    slot_minutes: int
+    day_start_minutes: int
+    weekdays: Sequence[int]
+
+
+@dataclass(frozen=True)
 class _KeyDay:
     """One pupil key's day: its one-sided ends and the slots its lessons fill."""
 
@@ -367,7 +392,8 @@ class PupilGapModel:
     `on(decision, day)` is the literal for "this lesson is on that day", None
     where its domain cannot reach the day; `reach(decision)` the absolute
     [a, b) slots it can occupy there, per day; `fixed_window(lock)` a lock's
-    rounded window; `pupil_key(requirement)` scheduler_solver.pupil_key_of.
+    rounded window; `lock_keys(lock)` scheduler_solver.pupil_keys_of, the keys
+    whose pupils sit it; `pupil_key(requirement)` scheduler_solver.pupil_key_of.
     """
 
     model: cp_model.CpModel
@@ -378,14 +404,21 @@ class PupilGapModel:
     on: Callable[[object, int], cp_model.IntVar | None]
     reach: Callable[[object], dict[int, list[tuple[int, int]]]]
     fixed_window: Callable[[FixedLesson], tuple[int, int] | None]
+    lock_keys: Callable[[FixedLesson], list[UUID]]
     pupil_key: Callable[[object], UUID]
     lunch_starts: dict[tuple[UUID, int], cp_model.IntVar]
     lunch_slots: int
     weight: int
     _key_days: dict[tuple[UUID, int], _KeyDay | None] = field(default_factory=dict)
-    _shared: dict[tuple[str, str], cp_model.IntVar] = field(default_factory=dict)
+    #: A pair of loose lessons: the later start, the earlier end, the overlap.
+    _shared: dict[
+        tuple[str, str], tuple[cp_model.IntVar, cp_model.IntVar, cp_model.IntVar]
+    ] = field(default_factory=dict)
     _overlaps: dict[tuple[str, str, int], cp_model.IntVar | None] = field(default_factory=dict)
-    _closure_overlaps: dict[tuple[str, int, int], cp_model.IntVar | None] = field(default_factory=dict)
+    _in_window: dict[tuple[str, int, int], cp_model.IntVar] = field(default_factory=dict)
+    _pairs_in_window: dict[tuple[str, str, int, int], cp_model.IntVar] = field(
+        default_factory=dict,
+    )
 
 
 def _lesson_span(decision: object) -> tuple[cp_model.LinearExpr, cp_model.LinearExpr]:
@@ -401,6 +434,32 @@ def _pupil_reach(built: PupilGapModel, decision: object, day: int) -> list[tuple
 
 def _meet(first: list[tuple[int, int]], second: list[tuple[int, int]]) -> bool:
     return any(a < d and c < b for a, b in first for c, d in second)
+
+
+def _cut(intervals: list[tuple[int, int]], cuts: Iterable[tuple[int, int]]) -> list[tuple[int, int]]:
+    """`intervals` less every one of `cuts`."""
+    out = list(intervals)
+    for low, high in cuts:
+        out = [
+            piece
+            for start, end in out
+            for piece in (
+                ((start, end),) if high <= start or low >= end
+                else ((start, low), (high, end))
+            )
+            if piece[0] < piece[1]
+        ]
+    return out
+
+
+def _common(first: list[tuple[int, int]], second: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Where two lists of intervals both lie."""
+    return [
+        (max(a, c), min(b, d))
+        for a, b in first
+        for c, d in second
+        if max(a, c) < min(b, d)
+    ]
 
 
 def _key_day(
@@ -455,8 +514,7 @@ def _overlap(
         built._overlaps[cache_key] = None
         return None
     model = built.model
-    shared = built._shared.get(pair)
-    if shared is None:
+    if pair not in built._shared:
         horizon = len(built.weekdays) * built.slots_per_day
         tag = f"pg_ov_{pair[0]}_{pair[1]}"
         (a_start, a_end), (b_start, b_end) = _lesson_span(a), _lesson_span(b)
@@ -466,11 +524,11 @@ def _overlap(
         model.AddMinEquality(high, [a_end, b_end])
         shared = model.NewIntVar(0, built.slots_per_day, tag)
         model.AddMaxEquality(shared, [high - low, 0])
-        built._shared[pair] = shared
+        built._shared[pair] = (low, high, shared)
     # The pair's overlap, charged to the day it happens on: zero on any other,
     # where the two cannot meet at all.
     today = model.NewIntVar(0, built.slots_per_day, f"pg_ov_{pair[0]}_{pair[1]}_{day}")
-    model.Add(today >= shared).OnlyEnforceIf(on_a)
+    model.Add(today >= built._shared[pair][2]).OnlyEnforceIf(on_a)
     built._overlaps[cache_key] = today
     return today
 
@@ -495,7 +553,7 @@ def _window_overlap(
 
 
 def _closure_slots(
-    built: PupilGapModel,
+    grid: SlotGrid | PupilGapModel,
     request: OptimizeScheduleRequest,
     cohort: PupilGapCohort,
     day: int,
@@ -503,19 +561,37 @@ def _closure_slots(
 ) -> list[tuple[int, int]]:
     """The cohort's closed time on a day, in absolute slots, merged and rounded inward.
 
-    Inward, because a closure is a CREDIT: rounding it outward would pay the
+    Inward, because closed time is no hole: rounding it outward would pay the
     pupils for minutes nobody closed.
     """
-    weekday = built.weekdays[day]
-    base = day * built.slots_per_day
+    weekday = grid.weekdays[day]
+    base = day * grid.slots_per_day
     out: list[tuple[int, int]] = []
     for start, end in _merged(closed_minutes(request, cohort.group_ids, weekday, spans)):
-        low = -(-(start - built.day_start_minutes) // built.slot_minutes)
-        high = (end - built.day_start_minutes) // built.slot_minutes
-        low, high = max(low, 0), min(high, built.slots_per_day)
+        low = -(-(start - grid.day_start_minutes) // grid.slot_minutes)
+        high = (end - grid.day_start_minutes) // grid.slot_minutes
+        low, high = max(low, 0), min(high, grid.slots_per_day)
         if high > low:
             out.append((base + low, base + high))
     return out
+
+
+def _held_off(
+    keys: Iterable[UUID], lock_keys: list[UUID], paired: set[frozenset[UUID]],
+) -> frozenset[UUID]:
+    """The cohort's keys a lock keeps out of its window.
+
+    _add_fixed_lesson_constraints's `shares_group`: a key the lock's pupils
+    sit, or one sharing pupils with them, is held off the window with the
+    pupils' margins on both sides, so none of its lessons is ever inside it.
+    Any other key's lesson may be: the sibling half's NO beside 7A:1's locked
+    slöjd, the class's matte under a lock that names one of its pupils.
+    """
+    return frozenset(
+        key
+        for key in keys
+        if key in lock_keys or any(frozenset((key, other)) in paired for other in lock_keys)
+    )
 
 
 def build_pupil_gap_objective(
@@ -534,7 +610,6 @@ def build_pupil_gap_objective(
         return []
     model = built.model
     spd = built.slots_per_day
-    horizon = len(built.weekdays) * spd
     by_key: dict[UUID, list[object]] = defaultdict(list)
     for decision in decisions:
         by_key[built.pupil_key(decision.lesson.requirement)].append(decision)  # type: ignore[attr-defined]
@@ -554,18 +629,21 @@ def build_pupil_gap_objective(
             for j in range(i + 1, len(keys))
             if frozenset((keys[i], keys[j])) not in paired
         ]
-        locks: dict[int, list[tuple[int, int]]] = defaultdict(list)
+        locks: dict[int, list[tuple[tuple[int, int], frozenset[UUID]]]] = defaultdict(list)
         for fixed_id in dict.fromkeys(cohort.fixed_lesson_ids):
             fixed = fixed_by_id.get(fixed_id)
             window = built.fixed_window(fixed) if fixed is not None else None
-            if window is not None:
-                locks[window[0] // spd].append(window)
+            if window is not None and fixed is not None:
+                locks[window[0] // spd].append(
+                    (window, _held_off(keys, built.lock_keys(fixed), paired)),
+                )
 
         for day in range(len(built.weekdays)):
             parts = [part for key in keys if (part := _key_day(built, by_key, key, day)) is not None]
             if not parts:
                 continue
-            if sum(part.count for part in parts) + len(locks.get(day, ())) < 2:
+            day_locks = locks.get(day, [])
+            if sum(part.count for part in parts) + len(day_locks) < 2:
                 # One lesson is a day equal to its own length.
                 continue
             base = day * spd
@@ -575,17 +653,22 @@ def build_pupil_gap_objective(
             for part in parts:
                 model.Add(first <= part.first)
                 model.Add(last >= part.last)
-            occupied: list[cp_model.LinearExpr] = [part.occupied for part in parts]
-            for start, end in locks.get(day, ()):
+            for (start, end), _ in day_locks:
                 model.Add(first <= start)
                 model.Add(last >= end)
-                occupied.append(end - start)
+            busy: list[cp_model.LinearExpr] = [part.occupied for part in parts]
+            met: list[tuple[object, object]] = []
             for key_a, key_b in loose:
                 for a in by_key[key_a]:
                     for b in by_key[key_b]:
                         shared = _overlap(built, a, b, day)
                         if shared is not None:
-                            occupied.append(-shared)
+                            busy.append(-shared)
+                            met.append((a, b))
+            busy.extend(_constant_busy(
+                built, request, cohort, day, spans, keys, by_key, day_locks, met,
+                (first, last), tag,
+            ))
 
             credit: list[cp_model.LinearExpr] = []
             lunch = (
@@ -599,79 +682,186 @@ def build_pupil_gap_objective(
                 model.Add(lunch + built.lunch_slots <= last).OnlyEnforceIf(inside)
                 credit.append(built.lunch_slots * inside)
 
-            closures = _closure_slots(built, request, cohort, day, spans)
-            if closures:
-                # Only a window the day can reach is credited: a frame's
-                # morning lies before every lesson the cohort can have, and
-                # three variables for an overlap that is always zero would be
-                # most of this term at a school with ramtider.
-                reach = [
-                    interval
-                    for key in keys
-                    for decision in by_key[key]
-                    for interval in _pupil_reach(built, decision, day)
-                ] + locks.get(day, [])
-                low = min(start for start, _ in reach)
-                high = max(end for _, end in reach)
-                for number, window in enumerate(closures):
-                    if window[1] <= low or window[0] >= high:
-                        continue
-                    credit.append(_window_overlap(
-                        model, window, first, last, horizon, spd, f"{tag}_cl{number}",
-                    ))
-                    for key in keys:
-                        for decision in by_key[key]:
-                            taken = _closure_overlap(built, decision, window, day)
-                            if taken is not None:
-                                credit.append(-taken)
-
-            idle = model.NewIntVar(0, spd, f"{tag}_idle")
-            model.Add(idle >= last - first - sum(occupied) - sum(credit))
+            # The day, and a day more for every pair's overlap: what the right
+            # side can reach whatever the payload, so the term is never a rule.
+            # Each overlap is exact for two keys at once, which is all a
+            # gateway sends; three keys no pair joins would take the same
+            # minutes off three times, and a tighter bound would turn that
+            # over-count into an INFEASIBLE week.
+            idle = model.NewIntVar(0, spd * (1 + len(met)), f"{tag}_idle")
+            model.Add(idle >= last - first - sum(busy) - sum(credit))
             terms.append(built.weight * cohort.pupils * idle)
     return terms
 
 
-def _closure_overlap(
-    built: PupilGapModel, decision: object, window: tuple[int, int], day: int,
+def _constant_busy(
+    built: PupilGapModel,
+    request: OptimizeScheduleRequest,
+    cohort: PupilGapCohort,
+    day: int,
+    spans: dict[UUID, tuple[int, int]],
+    keys: list[UUID],
+    by_key: dict[UUID, list[object]],
+    day_locks: list[tuple[tuple[int, int], frozenset[UUID]]],
+    met: list[tuple[object, object]],
+    ends: tuple[cp_model.IntVar, cp_model.IntVar],
+    tag: str,
+) -> list[cp_model.LinearExpr]:
+    """The cohort's locks and closed time on a day, as busy time counted once.
+
+    One union of windows that never move, so both halves' locked rotation at
+    10:00 is one hour of an unplaced pupil's day and not two, and a lock in
+    closed time is not busy twice. A window counts where it lies inside the
+    day: whole when locks alone make it, since every lock bounds the day,
+    else its overlap with [first, last]. Less what the cohort's lessons
+    already fill of it — a lesson the window's locks do not hold off may sit
+    there (_held_off) — and plus what two of them fill together, which the
+    pair's overlap took off once already: lessons ∪ windows, each slot once.
+    """
+    model = built.model
+    spd = built.slots_per_day
+    horizon = len(built.weekdays) * spd
+    locked = [window for window, _ in day_locks]
+    windows = _merged(locked + _closure_slots(built, request, cohort, day, spans))
+    if not windows:
+        return []
+    # Only a window the day can reach counts: a frame's morning lies before
+    # every lesson the cohort can have, and three variables for an overlap
+    # that is always zero would be most of this term at a school with
+    # ramtider. A lock is always within reach: it is in the day.
+    reach = [
+        interval
+        for key in keys
+        for decision in by_key[key]
+        for interval in _pupil_reach(built, decision, day)
+    ] + locked
+    low = min(start for start, _ in reach)
+    high = max(end for _, end in reach)
+    first, last = ends
+    out: list[cp_model.LinearExpr] = []
+    for number, window in enumerate(windows):
+        if window[1] <= low or window[0] >= high:
+            continue
+        if _cut([window], locked):
+            out.append(_window_overlap(
+                model, window, first, last, horizon, spd, f"{tag}_cw{number}",
+            ))
+        else:
+            out.append(window[1] - window[0])
+        open_to = {
+            key: _cut([window], [lock for lock, held in day_locks if key in held])
+            for key in keys
+        }
+        for key in keys:
+            if not open_to[key]:
+                continue
+            for decision in by_key[key]:
+                taken = _lesson_in_window(built, decision, window, open_to[key], day)
+                if taken is not None:
+                    out.append(-taken)
+        for a, b in met:
+            both = _common(
+                open_to[built.pupil_key(a.lesson.requirement)],  # type: ignore[attr-defined]
+                open_to[built.pupil_key(b.lesson.requirement)],  # type: ignore[attr-defined]
+            )
+            if both:
+                together = _pair_in_window(built, a, b, window, both, day)
+                if together is not None:
+                    out.append(together)
+    return out
+
+
+def _lesson_in_window(
+    built: PupilGapModel,
+    decision: object,
+    window: tuple[int, int],
+    open_part: list[tuple[int, int]],
+    day: int,
 ) -> cp_model.IntVar | None:
-    """Slots a lesson of the cohort spends inside a closed window, at least.
+    """Slots a lesson of the cohort spends inside a window, exactly.
 
     A rule on 7A closes 7A's hour and lets Ma71 meet in it; the pupils in both
-    are busy once, and the credit for the closure must not pay them for the
-    lesson's minutes too. Only a lesson whose domain reaches the window gets a
-    variable.
+    are busy once, and the window must not count the lesson's minutes too.
+    Only a lesson whose domain reaches the window's `open_part` — the window
+    less the locks holding the lesson off — gets a variable.
     """
-    if not _meet(_pupil_reach(built, decision, day), [window]):
+    if not _meet(_pupil_reach(built, decision, day), open_part):
         return None
     cache_key = (decision.lesson.key(), window[0], window[1])  # type: ignore[attr-defined]
-    if cache_key in built._closure_overlaps:
-        return built._closure_overlaps[cache_key]
+    if cache_key in built._in_window:
+        return built._in_window[cache_key]
     model = built.model
     horizon = len(built.weekdays) * built.slots_per_day
     start, end = _lesson_span(decision)
-    tag = f"pg_clov_{cache_key[0]}_{window[0]}"
+    tag = f"pg_in_{cache_key[0]}_{window[0]}_{window[1]}"
     low = model.NewIntVar(0, horizon, f"{tag}_lo")
     high = model.NewIntVar(0, horizon, f"{tag}_hi")
     model.AddMaxEquality(low, [start, window[0]])
     model.AddMinEquality(high, [end, window[1]])
     taken = model.NewIntVar(0, built.slots_per_day, tag)
     model.AddMaxEquality(taken, [high - low, 0])
-    built._closure_overlaps[cache_key] = taken
+    built._in_window[cache_key] = taken
     return taken
 
 
-def estimate_variables(request: OptimizeScheduleRequest, days: int) -> int:
+def _pair_in_window(
+    built: PupilGapModel,
+    first: object,
+    second: object,
+    window: tuple[int, int],
+    open_part: list[tuple[int, int]],
+    day: int,
+) -> cp_model.IntVar | None:
+    """Slots two loose lessons share inside a window, exactly.
+
+    Both halves' lessons at 10:00 inside a closure 10:00-10:40: the window
+    takes 40 off each, and they were one hour together, so 40 come back
+    once. Read off the pair's own later start and earlier end (_overlap).
+    """
+    if not (
+        _meet(_pupil_reach(built, first, day), open_part)
+        and _meet(_pupil_reach(built, second, day), open_part)
+    ):
+        return None
+    a, b = sorted(
+        (first, second), key=lambda decision: decision.lesson.key(),  # type: ignore[attr-defined]
+    )
+    pair = (a.lesson.key(), b.lesson.key())  # type: ignore[attr-defined]
+    cache_key = (*pair, window[0], window[1])
+    if cache_key in built._pairs_in_window:
+        return built._pairs_in_window[cache_key]
+    model = built.model
+    horizon = len(built.weekdays) * built.slots_per_day
+    later, earlier, _ = built._shared[pair]
+    tag = f"pg_pin_{pair[0]}_{pair[1]}_{window[0]}_{window[1]}"
+    low = model.NewIntVar(-horizon, 2 * horizon, f"{tag}_lo")
+    high = model.NewIntVar(-horizon, 2 * horizon, f"{tag}_hi")
+    model.AddMaxEquality(low, [later, window[0]])
+    model.AddMinEquality(high, [earlier, window[1]])
+    together = model.NewIntVar(0, built.slots_per_day, tag)
+    model.AddMaxEquality(together, [high - low, 0])
+    built._pairs_in_window[cache_key] = together
+    return together
+
+
+def estimate_variables(
+    request: OptimizeScheduleRequest,
+    grid: SlotGrid,
+    fixed_window: Callable[[FixedLesson], tuple[int, int] | None],
+) -> int:
     """An upper bound on what build_pupil_gap_objective adds, for _estimate_model_size.
 
     Per (key, day) two ends; per lesson and day one literal; per cohort and
     day its two ends, its idle and its lunch literal; per pair of loose keys'
-    lessons three and one a day. And the closures, charged here although the
-    teachers' are not (_estimate_model_size): a pupil's day can be closed by
-    every rule on any of their groups and every year rule, so a school with
-    ramtider pays for them on every cohort. Per cohort and day three for each
-    window that can close it, and per lesson three for each window and day of
-    the cohorts sitting it — counted at the windows its worst cohort has,
-    because the variable is the lesson's and made once.
+    lessons three and one a day. And the windows, charged here although the
+    teachers' closures are not (_estimate_model_size): a pupil's day can be
+    closed by every rule on any of their groups and every year rule, so a
+    school with ramtider pays for them on every cohort. They are the
+    builder's own — each cohort's locks and closed time, merged per day — so
+    three for every window closed time reaches (its overlap with the day),
+    three for every lesson and distinct window of a cohort sitting its key,
+    and three for every pair of loose lessons and window, as the builder
+    makes each of those once.
     """
     gaps = request.pupil_gaps
     if gaps is None:
@@ -682,44 +872,46 @@ def estimate_variables(request: OptimizeScheduleRequest, days: int) -> int:
             requirement.lessons_per_week
         )
     spans = group_spans(request)
-    weekly = [
-        rule for rule in request.constraints
-        if rule.kind == "UNAVAILABLE" and rule.date is None
-    ]
-    rules_on: dict[UUID, int] = defaultdict(int)
-    for rule in weekly:
-        if rule.resource_kind == "STUDENT_GROUP" and rule.resource_id is not None:
-            rules_on[rule.resource_id] += 1
-    year_rules = sum(1 for rule in weekly if rule.resource_kind == "GRADE_LEVEL")
-    framed = bool(request.frame_times)
-
     paired = {frozenset(pair) for pair in request.group_conflicts}
+    fixed_by_id = {fixed.id: fixed for fixed in request.fixed_lessons}
+    days = len(grid.weekdays)
+
     loose_pairs: set[frozenset[UUID]] = set()
-    windows_of_key: dict[UUID, int] = defaultdict(int)
-    cohort_windows = 0
+    key_windows: set[tuple[UUID, int, int]] = set()
+    pair_windows: set[tuple[frozenset[UUID], int, int]] = set()
+    closed_windows = 0
     for cohort in gaps.cohorts:
-        groups = list(dict.fromkeys(cohort.group_ids))
-        windows = (
-            sum(rules_on.get(group, 0) for group in groups)
-            + year_rules
-            + (2 * len({spans[group] for group in groups if group in spans}) if framed else 0)
-        )
-        cohort_windows += windows
-        keys = [key for key in groups if key in lessons_by_key]
-        for key in keys:
-            windows_of_key[key] = max(windows_of_key[key], windows)
-        for i in range(len(keys)):
-            for j in range(i + 1, len(keys)):
-                pair = frozenset((keys[i], keys[j]))
-                if pair not in paired:
-                    loose_pairs.add(pair)
+        keys = [key for key in dict.fromkeys(cohort.group_ids) if key in lessons_by_key]
+        pairs = [
+            pair
+            for i in range(len(keys))
+            for j in range(i + 1, len(keys))
+            if (pair := frozenset((keys[i], keys[j]))) not in paired
+        ]
+        loose_pairs.update(pairs)
+        locks: dict[int, list[tuple[int, int]]] = defaultdict(list)
+        for fixed_id in dict.fromkeys(cohort.fixed_lesson_ids):
+            fixed = fixed_by_id.get(fixed_id)
+            window = fixed_window(fixed) if fixed is not None else None
+            if window is not None:
+                locks[window[0] // grid.slots_per_day].append(window)
+        for day in range(days):
+            locked = locks.get(day, [])
+            for window in _merged(locked + _closure_slots(grid, request, cohort, day, spans)):
+                if _cut([window], locked):
+                    closed_windows += 1
+                key_windows.update((key, *window) for key in keys)
+                pair_windows.update((pair, *window) for pair in pairs)
+
+    def both(pair: frozenset[UUID]) -> int:
+        a, b = tuple(pair)
+        return lessons_by_key[a] * lessons_by_key[b]
+
     lessons = sum(lessons_by_key.values())
-    loose = sum(
-        lessons_by_key[a] * lessons_by_key[b] for a, b in (tuple(pair) for pair in loose_pairs)
-    )
-    closure_lessons = sum(lessons_by_key[key] * windows for key, windows in windows_of_key.items())
     return (
-        days * (2 * len(lessons_by_key) + lessons + 4 * len(gaps.cohorts) + 3 * cohort_windows)
-        + loose * (3 + days)
-        + 3 * days * closure_lessons
+        days * (2 * len(lessons_by_key) + lessons + 4 * len(gaps.cohorts))
+        + sum(both(pair) for pair in loose_pairs) * (3 + days)
+        + 3 * closed_windows
+        + 3 * sum(lessons_by_key[key] for key, _, _ in key_windows)
+        + 3 * sum(both(pair) for pair, _, _ in pair_windows)
     )
