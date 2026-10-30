@@ -99,7 +99,10 @@
 -- the patience (10 s) and then reaches for one a committing flush holds, as
 -- two such writers could on main; and a single transaction that both
 -- writes lessons and memberships, whose lesson bumps (immediate, as on
--- main) it holds while its flush waits.
+-- main) it holds while its flush waits. And where a statement failed on
+-- main, the COMMIT now does: past the patience under the transaction's own
+-- lock_timeout (55P03), and under REPEATABLE READ on an event moved since
+-- its snapshot (40001). The API runs READ COMMITTED.
 --
 -- app.ss12000_bump, every trigger's helper, now also upserts in entityId
 -- order, so two single statements moving overlapping entities lock them in
