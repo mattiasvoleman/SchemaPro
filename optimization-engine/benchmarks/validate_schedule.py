@@ -62,6 +62,13 @@ Checks, all derived from the request:
                       shares on one weekday, at least the school's minutes
                       for the pair of skolområden their rooms stand on — the
                       pupils' margins added — see _travel_problems
+    weeks             A/B-veckor: every check above is a check on a real
+                      week, so a request with a requirement or a lock on odd
+                      or even ISO weeks only is checked once per week — that
+                      week's lessons and locks, the every-week ones in both —
+                      and a problem says the week it was found in. Slöjd
+                      udda veckor and hemkunskap jämna veckor in one hour of
+                      one class, teacher or room are no clash. See _weeks
 
 Use as a library::
 
@@ -567,8 +574,61 @@ def _travel_problems(request, lessons) -> list[str]:
     return problems
 
 
+def _weeks(request):
+    """The request once per real week, or None when nothing alternates.
+
+    Read off the request here and not taken from the engine, which this file
+    shares no code with: a requirement or a lock with `recurrence` ODD_WEEKS
+    runs in the odd week, EVEN_WEEKS in the even one, and one without it in
+    both. Each week's request holds what runs in it, made every-week.
+    """
+    alternating = any(r.recurrence for r in request.requirements) or any(
+        fixed.recurrence for fixed in request.fixed_lessons
+    )
+    if not alternating:
+        return None
+    weeks = []
+    for week, label in (("ODD_WEEKS", "udda veckor"), ("EVEN_WEEKS", "jämna veckor")):
+        requirements = [
+            r.model_copy(update={"recurrence": None})
+            for r in request.requirements
+            if r.recurrence in (None, week)
+        ]
+        fixed_lessons = [
+            fixed.model_copy(update={"recurrence": None})
+            for fixed in request.fixed_lessons
+            if fixed.recurrence in (None, week)
+        ]
+        weeks.append((label, request.model_copy(update={
+            "requirements": requirements, "fixed_lessons": fixed_lessons,
+        })))
+    return weeks
+
+
 def validate(grid, request, lessons) -> list[str]:
     """Return a list of rule violations; empty means the timetable is valid."""
+    weeks = _weeks(request)
+    if weeks is None:
+        return _validate_week(grid, request, lessons)
+    problems: list[str] = []
+    seen: set[str] = set()
+    known = {r.id for r in request.requirements}
+    for lesson in lessons:
+        if lesson.requirement_id not in known:
+            problems.append(f"lesson names unknown requirement {lesson.requirement_id}")
+    for label, week in weeks:
+        ids = {r.id for r in week.requirements}
+        for problem in _validate_week(
+            grid, week, [lesson for lesson in lessons if lesson.requirement_id in ids],
+        ):
+            if problem not in seen:
+                seen.add(problem)
+                problems.append(f"{problem} ({label})")
+    return problems
+
+
+def _validate_week(grid, request, lessons) -> list[str]:
+    """validate() on one week: every lesson of `request` runs in it."""
     problems: list[str] = []
     spd = grid.slots_per_day
 
