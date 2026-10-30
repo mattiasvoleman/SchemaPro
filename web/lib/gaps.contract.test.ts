@@ -31,6 +31,8 @@ interface SchoolCase {
     end: string;
     pupils: string[];
     locked: boolean;
+    /** A/B-veckor: absent is every week. */
+    weeks?: "ODD_WEEKS" | "EVEN_WEEKS";
   }[];
   constraints: {
     kind: "STUDENT_GROUP" | "GRADE_LEVEL";
@@ -74,7 +76,7 @@ function countOf(school: SchoolCase): number {
       teacherId: null,
       roomId: null,
       studentIds: lesson.pupils,
-      recurrence: "ALL_WEEKS",
+      recurrence: lesson.weeks ?? "ALL_WEEKS",
       startDate: null,
       endDate: null,
     };

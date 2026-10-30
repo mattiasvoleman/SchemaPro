@@ -73,6 +73,8 @@ def _engine_payload(case: dict[str, object]) -> tuple[OptimizeScheduleRequest, l
         }
         if requirement["pupilKey"] != requirement["group"]:
             entry["pupilGroupId"] = ids[requirement["pupilKey"]]
+        if "recurrence" in requirement:
+            entry["recurrence"] = requirement["recurrence"]
         requirements.append(entry)
     constraints = [
         {
@@ -118,6 +120,7 @@ def _engine_payload(case: dict[str, object]) -> tuple[OptimizeScheduleRequest, l
                 "dayOfWeek": fixed["day"],
                 "startTime": f"{fixed['start']}:00",
                 "endTime": f"{fixed['end']}:00",
+                **({"recurrence": fixed["recurrence"]} if "recurrence" in fixed else {}),
             }
             for fixed in engine["fixedLessons"]
         ],
@@ -180,6 +183,10 @@ def test_the_fixture_reaches_every_rule_of_the_count() -> None:
     assert any(group["replacesSubjectId"] for case in CASES for group in case["groups"])
     assert any(group["halfOfId"] for case in CASES for group in case["groups"])
     assert any(lesson["pupils"] for case in CASES for lesson in case["lessons"])
+    # A/B-veckor: a lesson and a lock of one parity, and a week that ends in a half.
+    assert any("recurrence" in row for case in CASES for row in case["engine"]["requirements"])
+    assert any("recurrence" in row for case in CASES for row in case["engine"]["fixedLessons"])
+    assert any(case["pupilIdleMinutes"] % 1 for case in CASES)
 
 
 def test_no_pupil_gaps_no_count() -> None:
@@ -471,8 +478,8 @@ def _closed_week() -> dict[str, object]:
 
 @pytest.mark.parametrize(
     "make",
-    [_closed_week, _halves_payload, lambda: _locked_halves()],
-    ids=["a closed hour", "sibling halves", "locks, halves and closed time"],
+    [_closed_week, _halves_payload, lambda: _locked_halves(), lambda: _alternating_week()],
+    ids=["a closed hour", "sibling halves", "locks, halves and closed time", "odd and even weeks"],
 )
 def test_the_size_estimate_bounds_what_the_term_builds(make) -> None:  # noqa: ANN001
     """_estimate_model_size stays an upper bound with the rule on.
@@ -831,6 +838,165 @@ def test_keys_nobody_paired_never_make_the_week_infeasible() -> None:
         conflicts=[],
     )
     assert _pupil_term(payload, [8 * 60] * 4) >= 0
+
+
+# ---------------------------------------------------------------------------
+# A/B-veckor: an odd week and an even week, an ordinary week half of each
+# ---------------------------------------------------------------------------
+
+
+def _weeks_are_the_count(payload: dict[str, object], starts: list[int], ordinary: int) -> None:
+    """The term pays both weeks, `2 * ordinary` pupil-slots; the count says `ordinary` in minutes."""
+    assert _pupil_term(payload, starts) == 2 * ordinary
+    assert _counted(payload, starts) == ordinary * 5
+
+
+def test_odd_and_even_lessons_in_one_hour_are_that_hour_in_each_week() -> None:
+    """Slöjd on odd weeks and hemkunskap on even ones, both 09:00, matte at 08:00 and 11:00.
+
+    Each week is busy 08:00-10:00 and waits 10:00-11:00: 12 slots for each of
+    six pupils every week. Read as one week, the two lessons would fill the
+    hour twice and hide the hole.
+    """
+    payload = _school(
+        [
+            _requirement(CLASS, 0, lessons=2),
+            _requirement(CLASS, 1, recurrence="ODD_WEEKS"),
+            _requirement(CLASS, 2, recurrence="EVEN_WEEKS"),
+        ],
+        [{"groupIds": [CLASS], "pupils": 6, "homeGroupId": CLASS}],
+    )
+    _weeks_are_the_count(payload, [8 * 60, 11 * 60, 9 * 60, 9 * 60], 6 * 12)
+    _weeks_are_the_count(payload, [8 * 60, 10 * 60, 9 * 60, 9 * 60], 0)
+
+
+def test_a_lesson_on_odd_weeks_leaves_its_hour_on_even_ones() -> None:
+    """Matte at 08:00 and 10:00, slöjd at 09:00 on odd weeks: even weeks wait the hour.
+
+    Two pupils, 12 slots in one week of two: an ordinary week has 12.
+    """
+    payload = _school(
+        [_requirement(CLASS, 0, lessons=2), _requirement(CLASS, 1, recurrence="ODD_WEEKS")],
+        [{"groupIds": [CLASS], "pupils": 2, "homeGroupId": CLASS}],
+    )
+    _weeks_are_the_count(payload, [8 * 60, 10 * 60, 9 * 60], 12)
+    # Slöjd after the matte: neither week has a hole.
+    _weeks_are_the_count(payload, [8 * 60, 9 * 60, 10 * 60], 0)
+
+
+def test_a_lock_on_even_weeks_is_the_even_weeks_alone() -> None:
+    """Matte 08:00-10:00, music locked 13:00-14:00 on even weeks: three pupils.
+
+    Odd weeks end at 10:00; even weeks wait 10:00-13:00, 36 slots. An
+    ordinary week has 18 for each pupil.
+    """
+    lock = {**_lock(CLASS, "13:00", "14:00"), "recurrence": "EVEN_WEEKS"}
+    payload = _school(
+        [_requirement(CLASS, 0, lessons=2)],
+        [{
+            "groupIds": [CLASS], "pupils": 3, "homeGroupId": CLASS,
+            "fixedLessonIds": [lock["id"]],
+        }],
+        locks=[lock],
+    )
+    _weeks_are_the_count(payload, [8 * 60, 9 * 60], 3 * 18)
+
+
+def test_a_day_of_every_week_counts_twice_where_the_weeks_differ() -> None:
+    """7A's own day has no alternating lesson, the school's does (Ty7 on odd weeks).
+
+    7A's hole at 10:00 is in both weeks, so it pays both: twice the 12 slots
+    of an ordinary week for each of four pupils, and the count says the
+    ordinary week.
+    """
+    payload = _school(
+        [_requirement(CLASS, 0, lessons=3), _requirement(TY, 1, recurrence="ODD_WEEKS")],
+        [{"groupIds": [CLASS], "pupils": 4, "homeGroupId": CLASS}],
+        conflicts=[[CLASS, TY]],
+    )
+    _weeks_are_the_count(payload, [8 * 60, 9 * 60, 11 * 60, 13 * 60], 4 * 12)
+
+
+def test_the_generator_keeps_the_even_weeks_free_beside_an_odd_week_lock() -> None:
+    """A lock on odd weeks at 10:00 and three lessons to place, the rule on.
+
+    Around the lock (08:00, 09:00, 11:00) the odd weeks have no hole and the
+    even ones wait the lock's hour; after it (11:00-14:00) neither week waits.
+    A term that let the odd-week lock fill the even weeks' hour could not
+    tell the two apart; this one places the lessons where no week waits.
+    """
+    lock = {**_lock(CLASS, "10:00", "11:00"), "recurrence": "ODD_WEEKS"}
+    payload = _school(
+        [_requirement(CLASS, 0, lessons=3)],
+        [{
+            "groupIds": [CLASS], "pupils": 6, "homeGroupId": CLASS,
+            "fixedLessonIds": [lock["id"]],
+        }],
+        locks=[lock],
+        conflicts=[],
+    )
+    response = _solver().solve(OptimizeScheduleRequest.model_validate(payload))
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert response.pupil_idle_minutes == 0
+    assert all(lesson.start_time >= "11:00:00" for lesson in response.lessons)
+
+
+def test_the_rest_of_the_objective_is_scaled_for_both_weeks() -> None:
+    """A school with an alternating lesson: every other term twice PUPIL_GAP_SCALE, off as it was."""
+    payload = _week(pupil_gaps=True)
+    payload["requirements"][2]["recurrence"] = "ODD_WEEKS"
+    request = OptimizeScheduleRequest.model_validate(payload)
+    solver = _solver()
+    model, *_ = solver._build_model(request, use_assumptions=False)
+    off_model, *_ = solver._build_model(
+        request.model_copy(update={"pupil_gaps": None}), use_assumptions=False,
+    )
+    on_coeffs = dict(zip(model.Proto().objective.vars, model.Proto().objective.coeffs))
+    off_coeffs = dict(zip(off_model.Proto().objective.vars, off_model.Proto().objective.coeffs))
+    assert off_coeffs
+    for variable, coefficient in off_coeffs.items():
+        assert on_coeffs[variable] == 2 * PUPIL_GAP_SCALE * coefficient
+
+
+def test_the_estimate_charges_both_weeks_the_term_builds() -> None:
+    """The second week's variables, built against what the estimate adds for it."""
+    alternating = _alternating_week()
+    every_week = json.loads(json.dumps(alternating))
+    for row in [*every_week["requirements"], *every_week["fixedLessons"]]:
+        row.pop("recurrence", None)
+    solver = _solver()
+
+    def variables(payload: dict[str, object], on: bool) -> int:
+        request = OptimizeScheduleRequest.model_validate(payload)
+        if not on:
+            request = request.model_copy(update={"pupil_gaps": None})
+        model, *_ = solver._build_model(request, use_assumptions=False)
+        return len(model.Proto().variables)
+
+    built = (variables(alternating, True) - variables(every_week, True)) - (
+        variables(alternating, False) - variables(every_week, False)
+    )
+    charged = _estimate(solver, alternating) - _estimate(solver, every_week)
+    assert built > 0
+    assert charged >= built
+
+
+def _alternating_week() -> dict[str, object]:
+    """Halves, a lock on even weeks, a lesson on odd weeks and closed time: both weeks built."""
+    lock = {**_lock(HALF_A, "10:00", "11:00"), "recurrence": "EVEN_WEEKS"}
+    return _school(
+        [
+            _requirement(CLASS, 0, lessons=2),
+            _requirement(HALF_A, 1),
+            _requirement(HALF_B, 2, recurrence="ODD_WEEKS"),
+        ],
+        [{
+            "groupIds": [CLASS, HALF_A, HALF_B, OTHER], "pupils": 3, "homeGroupId": CLASS,
+            "fixedLessonIds": [lock["id"]],
+        }],
+        locks=[lock],
+        closed=[(OTHER, "13:00", "13:40")],
+    )
 
 
 def _locked_halves() -> dict[str, object]:

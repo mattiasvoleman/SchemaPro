@@ -21,13 +21,17 @@ it up (standardWeekPupilMinutes over the year's classes), line for line:
                 order: each hole takes as much of the window as it overlaps,
                 until the lunch's minutes are used up
     minimum     a hole whose minutes, less its lunch, are under 15 is a rast
+    weeks       a cohort with a lesson or a lock on alternate weeks has an odd
+                week and an even week, each of what runs in it; an ordinary
+                week is half of each (the report's weekShare), so the number
+                can end in a half
 
 Except where the report reads what the engine never sees, and the count then
-takes every week as it stands: a lock on alternate weeks, a lesson its dates
-keep to part of the läsår, and a halvklass terminsvis (the class holds the
-leader post, so its pupil key is the class's), which the report counts as a
-hole for the half not reading the subject in the period. The manual's box
-"Där generatorn räknar grövre än sidan" says the same.
+takes every week as it stands: a lesson its dates keep to part of the läsår,
+and a halvklass terminsvis (the class holds the leader post, so its pupil key
+is the class's), which the report counts as a hole for the half not reading
+the subject in the period. The manual's box "Där generatorn räknar grövre än
+sidan" says the same.
 
 src/common/__fixtures__/pupil-gaps-cases.json is the contract: the web replays
 it through findIdleGaps, the gateway through the cohorts it sends, and
@@ -57,6 +61,11 @@ siblings fill of it together. A lesson its key's lock holds off
 (_add_fixed_lesson_constraints) is never in that lock's window and pays
 nothing; every other one gets its overlap, exactly, from its own min and max.
 
+A cohort whose day has a lesson or a lock on alternate weeks gets that day
+once per week, each of what runs in it (app/solver/weeks.py): slöjd odd and
+hemkunskap even at one hour are the hour once in each week, never two hours
+in one. See build_pupil_gap_objective for how the two weeks are weighed.
+
 WHERE THE OBJECTIVE AND THE COUNT PART, said once and measured in the PR:
 
     a hole under 15 minutes   counted by the objective, never by the count.
@@ -68,9 +77,6 @@ WHERE THE OBJECTIVE AND THE COUNT PART, said once and measured in the PR:
                               busy during some of it (a dusch, a lock of
                               another of their groups); the count credits the
                               window, and only what of it lies in a hole
-    alternate weeks           the engine has no weeks: a locked odd-week
-                              lesson is every week to both, and the report's
-                              ordinary week halves it
     a locked lesson's margin  counted only by the count: the engine does not
                               keep a lock's ombyte either (FixedLessonMargin)
 
@@ -86,6 +92,9 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from app.solver.weeks import WEEKS, alternates, meet
+from app.solver.weeks import tag as week_tag
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
     from uuid import UUID
@@ -99,6 +108,7 @@ if TYPE_CHECKING:
         OptimizeScheduleRequest,
         PupilGapCohort,
         ScheduledLesson,
+        WeekParity,
     )
 
 #: A hole shorter than this is the changeover between two lessons, a rast and
@@ -293,10 +303,12 @@ class _Margins:
 
 @dataclass
 class CohortWeek:
-    """One cohort's lessons by weekday, in minutes, margins included."""
+    """One cohort's lessons by weekday, in minutes, margins included, each with its weeks."""
 
     cohort: PupilGapCohort
-    by_day: dict[int, list[tuple[int, int]]] = field(default_factory=lambda: defaultdict(list))
+    by_day: dict[int, list[tuple[int, int, WeekParity | None]]] = field(
+        default_factory=lambda: defaultdict(list),
+    )
 
 
 def cohort_weeks(
@@ -317,7 +329,7 @@ def cohort_weeks(
         for margin in gaps.fixed_margins
     }
     fixed_by_id = {fixed.id: fixed for fixed in request.fixed_lessons}
-    placed_by_key: dict[UUID, list[tuple[int, int, int]]] = defaultdict(list)
+    placed_by_key: dict[UUID, list[tuple[int, int, int, WeekParity | None]]] = defaultdict(list)
     for lesson in lessons:
         requirement = by_requirement.get(lesson.requirement_id)
         if requirement is None:
@@ -327,13 +339,14 @@ def cohort_weeks(
             lesson.day_of_week,
             _minutes(lesson.start_time) - requirement.minutes_before,
             _minutes(lesson.end_time) + requirement.minutes_after,
+            requirement.recurrence,
         ))
     weeks: list[CohortWeek] = []
     for cohort in gaps.cohorts:
         week = CohortWeek(cohort)
         for key in dict.fromkeys(cohort.group_ids):
-            for day, start, end in placed_by_key.get(key, ()):
-                week.by_day[day].append((start, end))
+            for day, start, end, runs in placed_by_key.get(key, ()):
+                week.by_day[day].append((start, end, runs))
         for fixed_id in dict.fromkeys(cohort.fixed_lesson_ids):
             fixed = fixed_by_id.get(fixed_id)
             if fixed is None:
@@ -342,6 +355,7 @@ def cohort_weeks(
             week.by_day[fixed.day_of_week].append((
                 _minutes(fixed.start_time) - margin.before,
                 _minutes(fixed.end_time) + margin.after,
+                fixed.recurrence,
             ))
         weeks.append(week)
     return weeks
@@ -349,22 +363,37 @@ def cohort_weeks(
 
 def pupil_idle_minutes(
     request: OptimizeScheduleRequest, lessons: Sequence[ScheduledLesson],
-) -> int | None:
+) -> float | None:
     """Idle pupil-minutes in an ordinary week: the håltimmesrapport's number.
 
-    None when the request carried no pupilGaps — the school has not turned
-    the rule on, and its response says nothing it did not say before.
+    A cohort with a lesson or a lock on alternate weeks has two weeks, each
+    counted with the lessons and locks that run in it (weeks.meet), and an
+    ordinary week is half of each — gaps.ts reports every hole once per
+    parity it exists in and candidates/idle.ts weekShare halves one that
+    exists in only one. So the number can end in a half; it is summed in
+    halves here and exact. None when the request carried no pupilGaps — the
+    school has not turned the rule on, and its response says nothing it did
+    not say before.
     """
     if request.pupil_gaps is None:
         return None
     spans = group_spans(request)
     lunch = lunch_window(request)
-    total = 0
+    halves = 0
     for week in cohort_weeks(request, lessons):
+        both = alternates(
+            parity for intervals in week.by_day.values() for _, _, parity in intervals
+        )
         for day, intervals in week.by_day.items():
             closures = closed_minutes(request, week.cohort.group_ids, day, spans)
-            total += week.cohort.pupils * day_idle_minutes(intervals, closures, lunch)
-    return total
+            for parity in WEEKS if both else (None,):
+                idle = day_idle_minutes(
+                    [(start, end) for start, end, runs in intervals if meet(runs, parity)],
+                    closures,
+                    lunch,
+                )
+                halves += week.cohort.pupils * idle * (1 if both else 2)
+    return halves / 2
 
 
 # ---------------------------------------------------------------------------
@@ -416,7 +445,7 @@ class PupilGapModel:
     lunch_starts: dict[tuple[UUID, int], cp_model.IntVar]
     lunch_slots: int
     weight: int
-    _key_days: dict[tuple[UUID, int], _KeyDay | None] = field(default_factory=dict)
+    _key_days: dict[tuple[object, ...], _KeyDay | None] = field(default_factory=dict)
     #: A pair of loose lessons: the later start, the earlier end, the overlap.
     _shared: dict[
         tuple[str, str], tuple[cp_model.IntVar, cp_model.IntVar, cp_model.IntVar]
@@ -469,25 +498,45 @@ def _common(first: list[tuple[int, int]], second: list[tuple[int, int]]) -> list
     ]
 
 
+def _runs(decision: object) -> WeekParity | None:
+    """A/B-veckor: the weeks a lesson runs in, None for every week (scheduler_solver._parity)."""
+    return decision.lesson.requirement.recurrence  # type: ignore[attr-defined]
+
+
 def _key_day(
-    built: PupilGapModel, by_key: dict[UUID, list[object]], key: UUID, day: int,
+    built: PupilGapModel,
+    by_key: dict[UUID, list[object]],
+    key: UUID,
+    day: int,
+    week: WeekParity | None = None,
 ) -> _KeyDay | None:
-    """A pupil key's day, built once and shared by every cohort sitting it."""
-    cache_key = (key, day)
+    """A pupil key's day in one week, built once and shared by every cohort sitting it.
+
+    A key none of whose lessons alternates has one day for both weeks, the
+    one it always had: same members, same names.
+    """
+    lessons_of_key = by_key.get(key, ())
+    if week is not None and not alternates(_runs(decision) for decision in lessons_of_key):
+        week = None
+    cache_key: tuple[object, ...] = (key, day) if week is None else (key, day, week)
     if cache_key in built._key_days:
         return built._key_days[cache_key]
     model = built.model
     base = day * built.slots_per_day
     lessons = [
         (decision, literal)
-        for decision in by_key.get(key, ())
-        if (literal := built.on(decision, day)) is not None
+        for decision in lessons_of_key
+        if meet(_runs(decision), week) and (literal := built.on(decision, day)) is not None
     ]
     if not lessons:
         built._key_days[cache_key] = None
         return None
-    first = model.NewIntVar(base, base + built.slots_per_day, f"pg_first_{key}_{day}")
-    last = model.NewIntVar(base, base + built.slots_per_day, f"pg_last_{key}_{day}")
+    first = model.NewIntVar(
+        base, base + built.slots_per_day, week_tag(f"pg_first_{key}_{day}", week),
+    )
+    last = model.NewIntVar(
+        base, base + built.slots_per_day, week_tag(f"pg_last_{key}_{day}", week),
+    )
     occupied: list[cp_model.LinearExpr] = []
     for decision, literal in lessons:
         start, end = _lesson_span(decision)
@@ -610,7 +659,17 @@ def build_pupil_gap_objective(
 
     See the module docstring for what is measured and where it parts from
     pupil_idle_minutes. Returns the terms; the caller scales the rest of the
-    objective by PUPIL_GAP_SCALE beside them.
+    objective by pupil_gap_scale(request) beside them.
+
+    A/B-VECKOR. A cohort with a lesson or a lock on alternate weeks has an
+    odd week and an even week, each built from what runs in it (weeks.meet),
+    as the count counts them: two lessons of one key at one hour, slöjd odd
+    and hemkunskap even, are that hour once in each week and never two hours
+    in one. Its terms are the two weeks' sum, and in such a school every
+    other cohort's day counts twice and the rest of the objective is scaled
+    twice as far (week_factor), so every term weighs an ordinary week — half
+    of each — in integers. A school without alternating lessons builds
+    exactly what it built before.
     """
     gaps = request.pupil_gaps
     if gaps is None or built.weight <= 0:
@@ -623,6 +682,7 @@ def build_pupil_gap_objective(
     paired = {frozenset(pair) for pair in request.group_conflicts}
     fixed_by_id = {fixed.id: fixed for fixed in request.fixed_lessons}
     spans = group_spans(request)
+    every_week = week_factor(request)
 
     terms: list[cp_model.LinearExpr] = []
     for index, cohort in enumerate(gaps.cohorts):
@@ -636,25 +696,43 @@ def build_pupil_gap_objective(
             for j in range(i + 1, len(keys))
             if frozenset((keys[i], keys[j])) not in paired
         ]
-        locks: dict[int, list[tuple[tuple[int, int], frozenset[UUID]]]] = defaultdict(list)
+        locks: dict[
+            int, list[tuple[tuple[int, int], frozenset[UUID], WeekParity | None]]
+        ] = defaultdict(list)
         for fixed_id in dict.fromkeys(cohort.fixed_lesson_ids):
             fixed = fixed_by_id.get(fixed_id)
             window = built.fixed_window(fixed) if fixed is not None else None
             if window is not None and fixed is not None:
                 locks[window[0] // spd].append(
-                    (window, _held_off(keys, built.lock_keys(fixed), paired)),
+                    (window, _held_off(keys, built.lock_keys(fixed), paired), fixed.recurrence),
                 )
+        weekly = alternates(
+            _runs(decision) for key in keys for decision in by_key[key]
+        ) or alternates(runs for rows in locks.values() for _, _, runs in rows)
 
-        for day in range(len(built.weekdays)):
-            parts = [part for key in keys if (part := _key_day(built, by_key, key, day)) is not None]
+        for day, week in (
+            (day, week)
+            for day in range(len(built.weekdays))
+            for week in (WEEKS if weekly else (None,))
+        ):
+            members = (
+                by_key if week is None
+                else {key: [d for d in by_key[key] if meet(_runs(d), week)] for key in keys}
+            )
+            parts = [
+                part for key in keys
+                if (part := _key_day(built, by_key, key, day, week)) is not None
+            ]
             if not parts:
                 continue
-            day_locks = locks.get(day, [])
+            day_locks = [
+                (window, held) for window, held, runs in locks.get(day, ()) if meet(runs, week)
+            ]
             if sum(part.count for part in parts) + len(day_locks) < 2:
                 # One lesson is a day equal to its own length.
                 continue
             base = day * spd
-            tag = f"pg_{index}_{day}"
+            tag = week_tag(f"pg_{index}_{day}", week)
             first = model.NewIntVar(base, base + spd, f"{tag}_first")
             last = model.NewIntVar(base, base + spd, f"{tag}_last")
             for part in parts:
@@ -666,14 +744,14 @@ def build_pupil_gap_objective(
             busy: list[cp_model.LinearExpr] = [part.occupied for part in parts]
             met: list[tuple[object, object]] = []
             for key_a, key_b in loose:
-                for a in by_key[key_a]:
-                    for b in by_key[key_b]:
+                for a in members[key_a]:
+                    for b in members[key_b]:
                         shared = _overlap(built, a, b, day)
                         if shared is not None:
                             busy.append(-shared)
                             met.append((a, b))
             busy.extend(_constant_busy(
-                built, request, cohort, day, spans, keys, by_key, day_locks, met,
+                built, request, cohort, day, spans, keys, members, day_locks, met,
                 (first, last), tag,
             ))
 
@@ -697,8 +775,27 @@ def build_pupil_gap_objective(
             # over-count into an INFEASIBLE week.
             idle = model.NewIntVar(0, spd * (1 + len(met)), f"{tag}_idle")
             model.Add(idle >= last - first - sum(busy) - sum(credit))
-            terms.append(built.weight * cohort.pupils * idle)
+            # One week of two is half an ordinary week; a day of every week,
+            # in a school whose weeks differ, is both.
+            weeks = every_week if week is None else 1
+            terms.append(built.weight * cohort.pupils * weeks * idle)
     return terms
+
+
+def week_factor(request: OptimizeScheduleRequest) -> int:
+    """Two in a school with a lesson or a lock on alternate weeks, one in any other.
+
+    The term counts such a school's alternating days once per week, so every
+    other part of the objective counts twice to weigh the same ordinary week.
+    """
+    return 2 if alternates(
+        requirement.recurrence for requirement in request.requirements
+    ) or alternates(fixed.recurrence for fixed in request.fixed_lessons) else 1
+
+
+def pupil_gap_scale(request: OptimizeScheduleRequest) -> int:
+    """What the rest of the objective is multiplied by beside the pupils' term."""
+    return PUPIL_GAP_SCALE * week_factor(request)
 
 
 def _constant_busy(
@@ -868,7 +965,8 @@ def estimate_variables(
     three for every window closed time reaches (its overlap with the day),
     three for every lesson and distinct window of a cohort sitting its key,
     and three for every pair of loose lessons and window, as the builder
-    makes each of those once.
+    makes each of those once. A school with alternating lessons has both
+    weeks: every key's and cohort's day twice, and each week's windows.
     """
     gaps = request.pupil_gaps
     if gaps is None:
@@ -882,6 +980,7 @@ def estimate_variables(
     paired = {frozenset(pair) for pair in request.group_conflicts}
     fixed_by_id = {fixed.id: fixed for fixed in request.fixed_lessons}
     days = len(grid.weekdays)
+    weeks = WEEKS if week_factor(request) == 2 else (None,)
 
     loose_pairs: set[frozenset[UUID]] = set()
     key_windows: set[tuple[UUID, int, int]] = set()
@@ -896,14 +995,14 @@ def estimate_variables(
             if (pair := frozenset((keys[i], keys[j]))) not in paired
         ]
         loose_pairs.update(pairs)
-        locks: dict[int, list[tuple[int, int]]] = defaultdict(list)
+        locks: dict[int, list[tuple[tuple[int, int], WeekParity | None]]] = defaultdict(list)
         for fixed_id in dict.fromkeys(cohort.fixed_lesson_ids):
             fixed = fixed_by_id.get(fixed_id)
             window = fixed_window(fixed) if fixed is not None else None
-            if window is not None:
-                locks[window[0] // grid.slots_per_day].append(window)
-        for day in range(days):
-            locked = locks.get(day, [])
+            if window is not None and fixed is not None:
+                locks[window[0] // grid.slots_per_day].append((window, fixed.recurrence))
+        for day, week in ((day, week) for day in range(days) for week in weeks):
+            locked = [window for window, runs in locks.get(day, ()) if meet(runs, week)]
             for window in _merged(locked + _closure_slots(grid, request, cohort, day, spans)):
                 if _cut([window], locked):
                     closed_windows += 1
@@ -916,7 +1015,7 @@ def estimate_variables(
 
     lessons = sum(lessons_by_key.values())
     return (
-        days * (2 * len(lessons_by_key) + lessons + 4 * len(gaps.cohorts))
+        days * (len(weeks) * (2 * len(lessons_by_key) + 4 * len(gaps.cohorts)) + lessons)
         + sum(both(pair) for pair in loose_pairs) * (3 + days)
         + 3 * closed_windows
         + 3 * sum(lessons_by_key[key] for key, _, _ in key_windows)

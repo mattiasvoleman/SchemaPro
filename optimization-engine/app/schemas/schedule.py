@@ -1478,10 +1478,12 @@ class OptimizeScheduleResponse(CamelModel):
     conflicts: ConflictAnalysis | None = None
     #: Elevernas håltimmar in the timetable returned, locked lessons included:
     #: idle pupil-minutes in an ordinary week, counted the way the
-    #: håltimmesrapport counts them (app/solver/pupil_gaps.py). Only on a
-    #: response to a request that carried pupilGaps, and only with lessons;
-    #: OMITTED otherwise, so every other response is byte for byte what it was.
-    pupil_idle_minutes: int | None = Field(
+    #: håltimmesrapport counts them (app/solver/pupil_gaps.py). A number, not
+    #: an integer: a hole on alternate weeks is half of one in an ordinary
+    #: week, as the report's weekShare has it. Only on a response to a request
+    #: that carried pupilGaps, and only with lessons; OMITTED otherwise, so
+    #: every other response is byte for byte what it was.
+    pupil_idle_minutes: float | None = Field(
         default=None, alias="pupilIdleMinutes", ge=0,
         exclude_if=lambda value: value is None,
     )

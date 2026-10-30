@@ -747,7 +747,8 @@ export interface AiEngineScheduleResponse {
   /**
    * Elevernas håltimmar in the timetable returned, locked lessons included:
    * idle pupil-minutes in an ordinary week, counted as the håltimmesrapport
-   * counts them. Only on an answer to a payload that carried pupilGaps.
+   * counts them, so it can end in a half (a hole on alternate weeks is half
+   * of one). Only on an answer to a payload that carried pupilGaps.
    */
   pupilIdleMinutes?: number;
   /**

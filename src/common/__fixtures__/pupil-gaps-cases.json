@@ -1,5 +1,5 @@
 {
-  "note": "Elevernas håltimmar: one school per case, the timetable laid, and the number the håltimmesrapport and the generator must both give for it (idle pupil-minutes in an ordinary week, holes of 15 minutes or more). The school form is replayed by web/lib/gaps.contract.test.ts through findIdleGaps; the engine form by optimization-engine/tests/test_pupil_gaps.py through pupil_idle_minutes; src/optimization/pupil-cohorts.spec.ts checks that the gateway derives exactly the engine form's cohorts and keys from the school form. Every expected number is worked out by hand in the case's `why`. Edit the three readers with the cases, never one.",
+  "note": "Elevernas håltimmar: one school per case, the timetable laid, and the number the håltimmesrapport and the generator must both give for it (idle pupil-minutes in an ordinary week, holes of 15 minutes or more; a lesson with `weeks` and a requirement or lock with `recurrence` runs only in odd or only in even ISO weeks, and an ordinary week is half of each). The school form is replayed by web/lib/gaps.contract.test.ts through findIdleGaps; the engine form by optimization-engine/tests/test_pupil_gaps.py through pupil_idle_minutes; src/optimization/pupil-cohorts.spec.ts checks that the gateway derives exactly the engine form's cohorts and keys from the school form. Every expected number is worked out by hand in the case's `why`. Edit the three readers with the cases, never one.",
   "cases": [
     {
       "name": "a day without a hole",
@@ -443,6 +443,106 @@
         "cohorts": [{ "groupIds": ["7A"], "fixedLessonIds": ["F1", "F2"], "home": "7A", "pupils": 1 }]
       },
       "pupilIdleMinutes": 80
+    },
+    {
+      "name": "a lesson on odd weeks leaves its hour empty on even ones",
+      "why": "Matte at 08:00 and 10:00 every week, slöjd 09:00-09:45 on odd weeks only. Odd weeks wait 09:45-10:00 (15 minutes, a håltimme), even weeks the whole hour (60). Each week is every other one, so an ordinary week has half of each: 7.5 + 30 = 37.5 for the one pupil.",
+      "groups": [{ "id": "7A", "kind": "CLASS", "halfOfId": null, "replacesSubjectId": null, "years": [7, 7] }],
+      "pupils": [{ "id": "p1", "home": "7A", "groups": [] }],
+      "buffers": [],
+      "lessons": [
+        { "id": "L1", "groups": ["7A"], "subject": "ma", "day": 1, "start": "08:00", "end": "09:00", "pupils": [], "locked": false },
+        { "id": "L2", "groups": ["7A"], "subject": "sl", "day": 1, "start": "09:00", "end": "09:45", "pupils": [], "locked": false, "weeks": "ODD_WEEKS" },
+        { "id": "L3", "groups": ["7A"], "subject": "ma", "day": 1, "start": "10:00", "end": "11:00", "pupils": [], "locked": false }
+      ],
+      "constraints": [],
+      "frames": [],
+      "lunch": null,
+      "engine": {
+        "requirements": [
+          { "id": "r-7A-ma", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0 },
+          { "id": "r-7A-sl", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0, "recurrence": "ODD_WEEKS" }
+        ],
+        "lessons": [
+          { "requirement": "r-7A-ma", "day": 1, "start": "08:00", "end": "09:00" },
+          { "requirement": "r-7A-sl", "day": 1, "start": "09:00", "end": "09:45" },
+          { "requirement": "r-7A-ma", "day": 1, "start": "10:00", "end": "11:00" }
+        ],
+        "fixedLessons": [],
+        "fixedMargins": [],
+        "cohorts": [{ "groupIds": ["7A"], "fixedLessonIds": [], "home": "7A", "pupils": 1 }]
+      },
+      "pupilIdleMinutes": 37.5
+    },
+    {
+      "name": "slöjd on odd weeks and hemkunskap on even ones in one hour are that hour every week",
+      "why": "Matte at 08:00 and 11:00, slöjd 09:00-10:00 on odd weeks and hemkunskap 09:00-10:00 on even weeks. Both weeks are busy 08:00-10:00 and wait 10:00-11:00: the same hole every week, 60 minutes for each of two pupils, 120. Read as one week the two lessons would be two hours in one.",
+      "groups": [{ "id": "7A", "kind": "CLASS", "halfOfId": null, "replacesSubjectId": null, "years": [7, 7] }],
+      "pupils": [
+        { "id": "p1", "home": "7A", "groups": [] },
+        { "id": "p2", "home": "7A", "groups": [] }
+      ],
+      "buffers": [],
+      "lessons": [
+        { "id": "L1", "groups": ["7A"], "subject": "ma", "day": 2, "start": "08:00", "end": "09:00", "pupils": [], "locked": false },
+        { "id": "L2", "groups": ["7A"], "subject": "sl", "day": 2, "start": "09:00", "end": "10:00", "pupils": [], "locked": false, "weeks": "ODD_WEEKS" },
+        { "id": "L3", "groups": ["7A"], "subject": "hkk", "day": 2, "start": "09:00", "end": "10:00", "pupils": [], "locked": false, "weeks": "EVEN_WEEKS" },
+        { "id": "L4", "groups": ["7A"], "subject": "ma", "day": 2, "start": "11:00", "end": "12:00", "pupils": [], "locked": false }
+      ],
+      "constraints": [],
+      "frames": [],
+      "lunch": null,
+      "engine": {
+        "requirements": [
+          { "id": "r-7A-ma", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0 },
+          { "id": "r-7A-sl", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0, "recurrence": "ODD_WEEKS" },
+          { "id": "r-7A-hkk", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0, "recurrence": "EVEN_WEEKS" }
+        ],
+        "lessons": [
+          { "requirement": "r-7A-ma", "day": 2, "start": "08:00", "end": "09:00" },
+          { "requirement": "r-7A-sl", "day": 2, "start": "09:00", "end": "10:00" },
+          { "requirement": "r-7A-hkk", "day": 2, "start": "09:00", "end": "10:00" },
+          { "requirement": "r-7A-ma", "day": 2, "start": "11:00", "end": "12:00" }
+        ],
+        "fixedLessons": [],
+        "fixedMargins": [],
+        "cohorts": [{ "groupIds": ["7A"], "fixedLessonIds": [], "home": "7A", "pupils": 2 }]
+      },
+      "pupilIdleMinutes": 120
+    },
+    {
+      "name": "a lock on even weeks is a hole on even weeks only",
+      "why": "Matte 08:00-10:00 every week and music locked 13:00-14:00 on even weeks. Odd weeks end at 10:00 with no hole; even weeks wait 10:00-13:00 (180). An ordinary week has half of it, 90, for each of three pupils: 270.",
+      "groups": [{ "id": "7A", "kind": "CLASS", "halfOfId": null, "replacesSubjectId": null, "years": [7, 7] }],
+      "pupils": [
+        { "id": "p1", "home": "7A", "groups": [] },
+        { "id": "p2", "home": "7A", "groups": [] },
+        { "id": "p3", "home": "7A", "groups": [] }
+      ],
+      "buffers": [],
+      "lessons": [
+        { "id": "L1", "groups": ["7A"], "subject": "ma", "day": 3, "start": "08:00", "end": "09:00", "pupils": [], "locked": false },
+        { "id": "L2", "groups": ["7A"], "subject": "ma", "day": 3, "start": "09:00", "end": "10:00", "pupils": [], "locked": false },
+        { "id": "F1", "groups": ["7A"], "subject": "mu", "day": 3, "start": "13:00", "end": "14:00", "pupils": [], "locked": true, "weeks": "EVEN_WEEKS" }
+      ],
+      "constraints": [],
+      "frames": [],
+      "lunch": null,
+      "engine": {
+        "requirements": [
+          { "id": "r-7A-ma", "group": "7A", "pupilKey": "7A", "minutesBefore": 0, "minutesAfter": 0 }
+        ],
+        "lessons": [
+          { "requirement": "r-7A-ma", "day": 3, "start": "08:00", "end": "09:00" },
+          { "requirement": "r-7A-ma", "day": 3, "start": "09:00", "end": "10:00" }
+        ],
+        "fixedLessons": [
+          { "id": "F1", "groups": ["7A"], "day": 3, "start": "13:00", "end": "14:00", "recurrence": "EVEN_WEEKS" }
+        ],
+        "fixedMargins": [],
+        "cohorts": [{ "groupIds": ["7A"], "fixedLessonIds": ["F1"], "home": "7A", "pupils": 3 }]
+      },
+      "pupilIdleMinutes": 270
     }
   ]
 }

@@ -23,11 +23,11 @@ from app.exceptions import (
 )
 from app.solver.frames import changeover_slots, day_windows, span_of
 from app.solver.pupil_gaps import (
-    PUPIL_GAP_SCALE,
     PupilGapModel,
     SlotGrid,
     build_pupil_gap_objective,
     estimate_variables as pupil_gap_variables,
+    pupil_gap_scale,
     pupil_idle_minutes,
 )
 from app.solver.rasts import blocks_for, blocks_with_demand, forbidden_starts
@@ -1533,7 +1533,9 @@ class SchedulerSolver:
                 model, request, decisions, day_vars, day_literals, lunch_starts,
             )
             if pupil_terms:
-                model.Minimize(PUPIL_GAP_SCALE * sum(objective_terms) + sum(pupil_terms))
+                model.Minimize(
+                    pupil_gap_scale(request) * sum(objective_terms) + sum(pupil_terms),
+                )
             else:
                 model.Minimize(sum(objective_terms) if objective_terms else 0)
         return model, registry, decisions, room_plan, lunch_starts
