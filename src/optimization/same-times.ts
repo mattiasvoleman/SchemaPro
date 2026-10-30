@@ -22,6 +22,10 @@ import { weeksCanOverlap } from '../calendar/lesson-recurrence';
  *
  *  - The follower's GROUPS are the leader's (the halves), so a half is busy at
  *    those times in every week anyway, and nothing more is needed for them.
+ *    (A/B-veckor: "every week" because the leader posts are sent with a
+ *    parity only when every post of the link has the same one —
+ *    alternatingWeeksOf in the proxy. A half held by an odd post and sat by
+ *    an even follower would otherwise be free in the even weeks.)
  *    One exception: ONE SUBJECT READ BY THE HALVES IN TURN. "Dela i halvklass"
  *    with hemkunskap makes a block of one post per period, 7A:1's in the
  *    first and 7A:2's in the second, so the follower is the other half. The
