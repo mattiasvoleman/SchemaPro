@@ -20,7 +20,9 @@
 --
 -- A school that leaves its huvudman, or that the huvudman lets go, drops out
 -- of all of it at the next statement: its rows stay where they are, and no
--- arm or function reads them while the two schools have different huvudmän.
+-- arm or function reads them while the two schools have different huvudmän,
+-- but one: the owner of a room reads and ends an approved loan of it (see
+-- Salslån).
 --
 -- ## Restid mellan skolorna ("SchoolTravelTimes")
 --
