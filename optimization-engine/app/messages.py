@@ -1098,6 +1098,37 @@ MESSAGES: dict[str, str] = {
         "room, or narrow which years the lock applies to."
     ),
 
+    # ---- Delade lokaler och lärare: sent by the GATEWAY, not by this engine --
+    # The gateway sends another school's hold on a teacher or a room as the
+    # recurring UNAVAILABLE rows a school writes by hand (src/optimization/
+    # other-school-holds.ts), and reads the AVAIL_CONSTRAINT_BLOCKS_LESSONS
+    # line the engine writes about one of them back as one of these, so the
+    # school is told it is the other school and not a reservation of its own.
+    # `schools` is the other schools' names; `room` the school's own room,
+    # named by the gateway; the teacher is named when the line is read.
+    "OTHER_SCHOOL_TEACHER_BUSY": (
+        "A teacher named here also teaches at {schools}: "
+        "{day, select, 1 {on Mondays} 2 {on Tuesdays} 3 {on Wednesdays} 4 {on Thursdays} "
+        "5 {on Fridays} other {on day {day}}} {start}-{end}, the travel between the schools included, "
+        "they are there, and lessons that have to be placed here do not fit beside it. Ask {schools} "
+        "to move the lesson, change the travel time under Rooms, The huvudman's other schools, or give "
+        "the lessons here another teacher."
+    ),
+    "OTHER_SCHOOL_ROOM_LENT": (
+        "Room {room} is lent to {schools} "
+        "{day, select, 1 {on Mondays} 2 {on Tuesdays} 3 {on Wednesdays} 4 {on Thursdays} "
+        "5 {on Fridays} other {on day {day}}} {start}-{end}, and lessons that have to be placed here "
+        "need it then. End the loan under Rooms, The huvudman's other schools, or let the lessons use "
+        "another room."
+    ),
+    "OTHER_SCHOOL_ROOM_BORROWED": (
+        "Room {room} is borrowed from {schools} and holds lessons only in the loan's times; "
+        "{day, select, 1 {on Mondays} 2 {on Tuesdays} 3 {on Wednesdays} 4 {on Thursdays} "
+        "5 {on Fridays} other {on day {day}}} {start}-{end} is outside them, and lessons that have to "
+        "be placed need it then. Ask {schools} for more times under Rooms, The huvudman's other "
+        "schools, or let the lessons use another room."
+    ),
+
     # ---- Tjänstefördelning: sent by the GATEWAY, not by this engine ---------
     # The staffing policy's refusals and warnings (src/staffing/staffing-checks.ts
     # and the generate pre-flight in optimization-proxy.service.ts). They live
