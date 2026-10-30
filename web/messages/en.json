@@ -525,7 +525,7 @@
       }
     },
     "borrowTitle": "Borrow a room from another school",
-    "borrowHint": "Choose a room, times and a period. Each time becomes a loan of its own that the other school's scheduler approves or declines. The generator places lessons in the room only at times the loans cover every week of the school year, so let the loans run over all of the year's dates.",
+    "borrowHint": "Choose a room, times and a period. Each time becomes a loan of its own that the other school's scheduler approves or declines. The generator places lessons in the room only at times the loans cover every week of the school year, so let the loans run over all of the year's school days. Days of a lov no year group has school need no loan.",
     "roomsLoadFailed": "The rooms could not be loaded",
     "noRooms": "The huvudman's other schools have no rooms to lend.",
     "roomOption": "{name} ({type} {capacity})",

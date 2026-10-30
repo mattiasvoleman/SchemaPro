@@ -525,7 +525,7 @@
       }
     },
     "borrowTitle": "Låna en sal av en annan skola",
-    "borrowHint": "Välj sal, tider och period. Varje tid blir ett eget lån som den andra skolans schemaläggare godkänner eller avböjer. Genereringen lägger lektioner i salen bara på tider som lånen täcker varje vecka under läsåret, så låt lånen gälla läsårets alla datum.",
+    "borrowHint": "Välj sal, tider och period. Varje tid blir ett eget lån som den andra skolans schemaläggare godkänner eller avböjer. Genereringen lägger lektioner i salen bara på tider som lånen täcker varje vecka under läsåret, så låt lånen gälla läsårets alla skoldagar. Lovdagar då ingen årskurs har skola behöver inget lån.",
     "roomsLoadFailed": "Salarna kunde inte hämtas",
     "noRooms": "Huvudmannens andra skolor har inga salar att låna ut.",
     "roomOption": "{name} ({type} {capacity})",
