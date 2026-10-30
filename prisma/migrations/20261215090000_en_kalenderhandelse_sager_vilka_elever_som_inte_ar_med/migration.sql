@@ -54,7 +54,7 @@
 --
 -- One new helper, app.ss12000_bump_replaced, SECURITY DEFINER with a locked
 -- search_path like every bump helper, and executable by no API role
--- (SS12000_PROVIDER_HELPERS_REACH below; RLS suite sections 282–283). The
+-- (SS12000_PROVIDER_HELPERS_REACH below; RLS suite sections 285–286). The
 -- three trigger functions are replaced in place: CREATE OR REPLACE keeps
 -- their triggers and their (revoked) privileges and takes no lock on any
 -- table, so no NOWAIT loop is needed. Each body is the one it replaces with
