@@ -427,8 +427,8 @@
     <span class="ui">Huvudmannens andra skolor</span> under
     <span class="path">Salar</span>. Kortet syns bara på en skola vars
     huvudman äger en annan skola. Den andra skolan ser bara sitt eget namn,
-    sina salars namn och svaren på lånen. Den ser inga elever, inga scheman och
-    ingen av skolans personer.
+    sina salars namn, svaren på lånen och om den delar en lärare med din
+    skola. Den ser inga elever, inga scheman och ingen av skolans personer.
   </p>
   <p>
     <strong>Restid mellan skolorna.</strong> För varje annan skola anger du
@@ -439,37 +439,53 @@
     angiven.
   </p>
   <p>
-    <strong>Delade lärare.</strong> En lärare är delad när samma inloggning
-    har en aktiv roll som lärare eller administratör på båda skolorna. Det
-    gäller alltså en lärare som båda skolorna har bjudit in med samma
-    e-postadress (3.5). Kortet visar skolans delade lärare vid varje skola.
-    Varje skola ser bara sin egen roll för läraren och den andra skolans namn.
-    En lärare som bara den ena skolan har bjudit in är inte delad. Bjud in
-    läraren med samma adress på båda skolorna.
+    <strong>Delade lärare.</strong> En lärare som arbetar på två skolor under
+    huvudmannen delas först när båda skolorna har sagt det. Under
+    <span class="ui">Delade lärare</span> väljer du en av skolans lärare och
+    den andra skolan och väljer <span class="ui">Markera som delad</span>.
+    Den andra skolan gör samma sak med sin rad för läraren. Läraren måste
+    också ha samma inloggning på båda skolorna, alltså vara inbjuden med
+    samma e-postadress till båda (3.5), och vara aktiv lärare eller
+    administratör på båda.
+  </p>
+  <p>
+    Tills den andra skolan har markerat läraren står
+    <span class="ui">Väntar på</span> och skolans namn vid markeringen, och
+    ingen av skolorna ser något av den andra, inte ens om läraren finns där.
+    En felskriven e-postadress på den ena skolan ger därför ingen
+    information om någon på den andra. När båda har markerat står
+    <span class="ui">Delad</span>. Då ser skolorna lärarens lektionstider på
+    den andra skolan, för de lärare de själva planerar: veckodag, tid,
+    veckor och datum, aldrig ämne, grupp, sal eller elever. Tar någon av
+    skolorna bort sin markering slutar delningen direkt.
   </p>
   <p>
     <strong>Låna en sal.</strong> Med <span class="ui">Låna en sal</span>
     väljer du en sal på en annan skola, en eller flera tider i veckan och den
     första och sista dagen, högst 400 dagar. Varje tid blir ett eget lån.
     Ägarskolans schemaläggare godkänner eller avböjer det under
-    <span class="ui">Skolans salar som andra skolor lånar</span>. Ett
-    godkänt lån håller salen åt din skola på den tiden. Två godkända lån av
-    samma sal kan aldrig gälla samma tid. Ägarskolan kan avsluta ett godkänt
-    lån, och din skola kan dra tillbaka ett lån. Båda gäller från och med nu.
+    <span class="ui">Skolans salar som andra skolor lånar</span>. Två
+    godkända lån av samma sal kan aldrig gälla samma tid. Ägarskolan kan
+    avsluta ett godkänt lån, och din skola kan dra tillbaka ett lån. Båda
+    gäller från och med nu.
   </p>
   <p>
-    Första gången skolan lånar en sal får skolan en egen sal för lånet, till
-    exempel <em>Idrottshallen (Norraskolan)</em>. Den står i skolans
-    sallista, och det är i den salen skolans lektioner placeras. Du kan ge
-    den ett eget namn i dialogen. Ska restiden till den lånade salen räknas,
-    lägg till ett skolområde för den hos skolan och ange restiden dit (3.3).
+    När ägarskolan godkänner det första lånet av en sal får din skola en
+    egen sal för lånet, till exempel <em>Idrottshallen (Norraskolan)</em>.
+    Den står i skolans sallista, och det är i den salen skolans lektioner i
+    den lånade salen placeras. Tills dess står förfrågan med salens namn och
+    <em>görs när lånet godkänns</em>. En förfrågan som avböjs eller dras
+    tillbaka lämnar ingen sal efter sig. Du kan ge salen ett eget namn i
+    dialogen. Har skolan redan en sal med det namnet får den nya salen ett
+    nummer efter namnet. Ska restiden till den lånade salen räknas, lägg till
+    ett skolområde för den hos skolan och ange restiden dit (3.3).
   </p>
   <div class="note">
     <span class="label">Vem gör vad</span>
     <p>
       Den som skriver planering (rektor, en fullständig administratör eller en
-      schemaläggare) anger restiden, begär lån och svarar på dem. Alla
-      administratörer läser kortet. Ett lån godkänns alltid av ägarskolan,
+      schemaläggare) anger restiden, markerar delade lärare, begär lån och
+      svarar på dem. Alla administratörer läser kortet. Ett lån godkänns alltid av ägarskolan,
       också när salen inte är markerad som specialsal. Markeringen gäller
       skolans egna bokningar (6.8).
     </p>
@@ -480,8 +496,11 @@
       Lämnar en av skolorna huvudmannen, eller släpper huvudmannen den, slutar
       allt det här att gälla direkt. Lånen, restiden och de delade lärarna
       syns inte längre för någon av skolorna, och inga nya lån kan begäras.
-      Ingenting tas bort. Kommer skolorna åter under samma huvudman syns det
-      igen.
+      Ett undantag: ägarskolan ser fortfarande ett godkänt lån av sin egen
+      sal, med <em>En skola som har lämnat huvudmannen</em> som låntagare,
+      och kan avsluta det. Annars skulle lånet hålla salens tider åt en
+      skola som inte längre syns. Ingenting tas bort. Kommer skolorna åter
+      under samma huvudman syns det igen.
     </p>
   </div>
 </section>
