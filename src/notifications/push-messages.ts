@@ -25,6 +25,11 @@ import type { NotificationKind } from './notifications.service';
  *
  * Within one transaction a person gets one push per kind; with more than one
  * notice the body is the plural ("3 lektioner är inställda.").
+ *
+ * A push names no app either ("Öppna appen", never the product's name). The
+ * phone already shows the owning app's name and icon above it, and the
+ * gateway does not know which of the two apps holds a token: one Expo
+ * request carries a class's pupils and guardians alike.
  */
 
 export type PushLocale = 'sv' | 'en';

@@ -14,6 +14,7 @@ import { en } from '../../i18n/en';
 import { sv } from '../../i18n/sv';
 
 jest.mock('../api', () => ({ ...jest.requireActual('../api'), apiRequest: jest.fn() }));
+jest.mock('../../config/appIdentity', () => ({ currentApp: jest.fn(() => 'rastra') }));
 
 beforeEach(() => forgetLookups());
 
@@ -80,6 +81,12 @@ describe('schoolAccountsOffered', () => {
     process.env['EXPO_PUBLIC_SCHOOL_ACCOUNTS'] = 'on';
     expect(schoolAccountsOffered()).toBe(true);
   });
+
+  it('never offers it in the guardian app', () => {
+    process.env['EXPO_PUBLIC_SCHOOL_ACCOUNTS'] = 'on';
+    (jest.requireMock('../../config/appIdentity').currentApp as jest.Mock).mockReturnValueOnce('vardnadshavare');
+    expect(schoolAccountsOffered()).toBe(false);
+  });
 });
 
 describe('providerHints', () => {
@@ -121,12 +128,12 @@ describe('refusalFor', () => {
 
 describe('callbackParams', () => {
   it('reads the code, and an error from the query or the fragment', () => {
-    expect(callbackParams('schemapro://auth/callback?code=abc').get('code')).toBe('abc');
-    const refused = callbackParams('schemapro://auth/callback?error=access_denied&error_code=signup_disabled#error=x&error_description=Signups+not+allowed');
+    expect(callbackParams('rastra://auth/callback?code=abc').get('code')).toBe('abc');
+    const refused = callbackParams('rastra://auth/callback?error=access_denied&error_code=signup_disabled#error=x&error_description=Signups+not+allowed');
     expect(refused.get('error_code')).toBe('signup_disabled');
     expect(refused.get('error')).toBe('access_denied');
     expect(refused.get('error_description')).toBe('Signups not allowed');
-    expect(callbackParams('schemapro://auth/callback#error_code=user_banned').get('error_code')).toBe('user_banned');
-    expect(callbackParams('schemapro://auth/callback').get('code')).toBeNull();
+    expect(callbackParams('rastra://auth/callback#error_code=user_banned').get('error_code')).toBe('user_banned');
+    expect(callbackParams('rastra://auth/callback').get('code')).toBeNull();
   });
 });

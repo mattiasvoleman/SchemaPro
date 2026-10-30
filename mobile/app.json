@@ -1,52 +1,89 @@
 {
   "expo": {
-    "name": "SchemaPro",
-    "slug": "schemapro-teacher",
+    "name": "Rastra",
+    "slug": "rastra",
     "version": "1.0.0",
     "orientation": "portrait",
-    "scheme": "schemapro",
-    "userInterfaceStyle": "dark",
+    "scheme": "rastra",
+    "userInterfaceStyle": "automatic",
+    "icon": "./assets/images/icon.png",
+    "backgroundColor": "#0f0f1a",
+    "locales": {
+      "sv": "./locales/sv.json",
+      "en": "./locales/en.json"
+    },
     "plugins": [
       "expo-router",
       "expo-secure-store",
       [
         "expo-notifications",
         {
+          "icon": "./assets/images/notification-icon.png",
           "defaultChannel": "default",
           "color": "#6366f1"
         }
       ],
-      [
-        "expo-local-authentication",
-        {
-          "faceIDPermission": "SchemaPro uses Face ID to verify your identity before submitting or altering attendance records."
-        }
-      ],
+      "expo-local-authentication",
       [
         "expo-sqlite",
         {
           "enableFTS": true,
           "useSQLCipher": true
         }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 128,
+          "resizeMode": "contain",
+          "backgroundColor": "#f4f4f5",
+          "dark": {
+            "backgroundColor": "#0f0f1a"
+          }
+        }
+      ],
+      [
+        "./plugins/withNightWindowBackground",
+        {
+          "light": "#f4f4f5",
+          "dark": "#0f0f1a"
+        }
       ]
     ],
     "ios": {
-      "supportsTablet": false,
-      "bundleIdentifier": "com.schemapro.teacher",
+      "supportsTablet": true,
+      "bundleIdentifier": "se.rastra.app",
+      "icon": {
+        "light": "./assets/images/icon.png",
+        "dark": "./assets/images/icon-dark.png",
+        "tinted": "./assets/images/icon-tinted.png"
+      },
+      "config": {
+        "usesNonExemptEncryption": false
+      },
       "infoPlist": {
-        "NSLocalNetworkUsageDescription": "SchemaPro uses the local network to receive real-time schedule updates from the school server."
+        "CFBundleDevelopmentRegion": "sv",
+        "CFBundleLocalizations": [
+          "sv",
+          "en"
+        ],
+        "CFBundleAllowMixedLocalizations": true,
+        "NSFaceIDUsageDescription": "Rastra ber om Face ID innan närvaron skickas, så att den inte kan skickas från en olåst enhet som ligger framme. Appen får bara veta om det lyckades."
       }
     },
     "android": {
+      "package": "se.rastra.app",
       "adaptiveIcon": {
-        "backgroundColor": "#0f0f1a"
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "monochromeImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#5048e5"
       },
-      "package": "com.schemapro.teacher",
-      "permissions": [
-        "android.permission.USE_BIOMETRIC",
-        "android.permission.USE_FINGERPRINT",
-        "android.permission.ACCESS_NETWORK_STATE",
-        "android.permission.INTERNET"
+      "blockedPermissions": [
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "com.google.android.gms.permission.AD_ID"
       ]
     },
     "experiments": {

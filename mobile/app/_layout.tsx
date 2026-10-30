@@ -6,6 +6,8 @@ import { AuthProvider, useAuth } from '../src/context/AuthContext';
 import { LocaleProvider, useI18n } from '../src/context/LocaleContext';
 import { NetworkProvider } from '../src/context/NetworkContext';
 import { SyncProvider } from '../src/context/SyncContext';
+import { AppThemeProvider, useAppTheme } from '../src/theme/ThemeContext';
+import { homeOf } from '../src/services/auth/appGate';
 import {
   ensureAndroidChannel,
   forgetTap,
@@ -24,12 +26,6 @@ Notifications.setNotificationHandler({
   }),
 });
 
-function notificationsRoute(role: string | null): '/(guardian)/notifications' | '/(student)/notifications' | '/(app)/notifications' {
-  if (role === 'GUARDIAN') return '/(guardian)/notifications';
-  if (role === 'STUDENT') return '/(student)/notifications';
-  return '/(app)/notifications';
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // AuthGate — redirects unauthenticated users to login and vice-versa.
 // Must be rendered inside <AuthProvider> so it can read auth state.
@@ -44,25 +40,14 @@ function AuthGate(): React.JSX.Element {
     if (isLoading) return;
 
     const inAuthGroup = segments[0] === '(auth)';
-    const homeGroup =
-      authState.role === 'GUARDIAN'
-        ? '(guardian)'
-        : authState.role === 'STUDENT'
-          ? '(student)'
-          : '(app)';
-    const homeRoute =
-      authState.role === 'GUARDIAN'
-        ? '/(guardian)/children'
-        : authState.role === 'STUDENT'
-          ? '/(student)/schedule'
-          : '/(app)/schedule';
+    const { group: homeGroup, home: homeRoute } = homeOf(authState.role);
 
     if (!authState.isAuthenticated && !inAuthGroup) {
       router.replace('/(auth)/login');
     } else if (authState.isAuthenticated && (inAuthGroup || segments[0] !== homeGroup)) {
       router.replace(homeRoute);
     }
-  }, [authState.isAuthenticated, isLoading, segments, router]);
+  }, [authState.isAuthenticated, authState.role, isLoading, segments, router]);
 
   return <Slot />;
 }
@@ -98,7 +83,7 @@ function PushBridge(): null {
 
   useEffect(() => {
     if (!userId) return;
-    const open = (): void => router.push(notificationsRoute(role));
+    const open = (): void => router.push(homeOf(role).notifications);
     const subscription = Notifications.addNotificationResponseReceivedListener(() => {
       forgetTap();
       open();
@@ -120,18 +105,25 @@ function PushBridge(): null {
 //                    └─ PushBridge + AuthGate  (need auth state)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** The status bar's glyphs in the appearance's contrast: dark on light, light on dark. */
+function ThemedStatusBar(): React.JSX.Element {
+  return <StatusBar style={useAppTheme().statusBar} />;
+}
+
 export default function RootLayout(): React.JSX.Element {
   return (
-    <LocaleProvider>
-      <NetworkProvider>
-        <AuthProvider>
-          <SyncProvider>
-            <StatusBar style="light" />
-            <PushBridge />
-            <AuthGate />
-          </SyncProvider>
-        </AuthProvider>
-      </NetworkProvider>
-    </LocaleProvider>
+    <AppThemeProvider>
+      <LocaleProvider>
+        <NetworkProvider>
+          <AuthProvider>
+            <SyncProvider>
+              <ThemedStatusBar />
+              <PushBridge />
+              <AuthGate />
+            </SyncProvider>
+          </AuthProvider>
+        </NetworkProvider>
+      </LocaleProvider>
+    </AppThemeProvider>
   );
 }

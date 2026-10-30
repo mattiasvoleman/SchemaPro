@@ -14,6 +14,9 @@ import type { AttendanceStatus, CalendarLesson, PendingAttendanceRecord, Student
 // foreign keys are enforced at the connection level.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// The product's name before it was renamed Rastra. It names the file the
+// attendance queue lives in: renamed in a later build of the same app, the
+// queue a teacher had not yet sent would be left behind in the old file.
 const DB_NAME = 'schemapro.db';
 const DB_KEY_ID = 'sp_sqlcipher_key';
 const DB_KEY_STORE_OPTIONS: SecureStore.SecureStoreOptions = {

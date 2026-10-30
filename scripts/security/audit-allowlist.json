@@ -26,20 +26,6 @@
   ],
   "mobile": [
     {
-      "id": "GHSA-vfj7-8cjw-p6xm",
-      "package": "braces",
-      "reason": "No patched release exists: the advisory marks <=3.0.3 vulnerable and 3.0.3 is the newest version published (checked 2026-10-06). braces is reached only through expo and metro (the bundler) via micromatch, where it expands this repository's own glob patterns at build and test time; no request-supplied pattern ever reaches it, so the stack-exhaustion DoS has no exposed surface here. Remove this entry as soon as braces ships a fix.",
-      "addedAt": "2026-10-06",
-      "expires": "2026-11-20"
-    },
-    {
-      "id": "GHSA-hp3w-g68c-fv3c",
-      "package": "sprintf-js",
-      "reason": "No patched release exists: <=1.1.3 is marked vulnerable and 1.1.3 is the newest version (checked 2026-10-06). sprintf-js is reached only through the expo/metro toolchain and formats those tools' own diagnostic strings; nothing user-supplied is formatted through it. Remove when upstream ships a fix.",
-      "addedAt": "2026-10-06",
-      "expires": "2026-11-20"
-    },
-    {
       "id": "GHSA-86w9-cpqp-85rv",
       "package": "node-forge",
       "reason": "No patched release exists: <=1.4.0 is marked vulnerable and 1.4.0 is the newest version (checked 2026-10-06); npm's only suggestion is a major expo upgrade. node-forge is pulled in by expo's development tooling (the dev server and CLI), not imported by the application bundle; the affected RSA PKCS#1 v1.5 verification is never performed on anything the app receives. Re-check the chain with `npm ls node-forge --package-lock-only` before renewing; remove when upstream ships a fix.",
@@ -47,23 +33,9 @@
       "expires": "2026-11-20"
     },
     {
-      "id": "GHSA-w3rx-r6r6-pgpr",
-      "package": "image-size",
-      "reason": "A patched release exists only as a new major: the advisory marks <=2.0.2 vulnerable and the fix is 2.0.3+, while metro (the React Native bundler) declares image-size ^1.x and reads its v1 API, so the fix cannot be forced in without breaking the bundle (checked 2026-10-06). image-size only ever parses this repository's own committed image assets at build time — attacker-supplied files never reach it. Remove this entry when metro moves to image-size 2.",
-      "addedAt": "2026-08-09",
-      "expires": "2026-11-09"
-    },
-    {
-      "id": "GHSA-5p2g-fcmc-qvqq",
-      "package": "image-size",
-      "reason": "Same situation and same surface as GHSA-w3rx-r6r6-pgpr (JXL/HEIF parsers): fixed only in image-size 2.0.3+, outside metro's ^1.x range. Remove when metro moves to image-size 2.",
-      "addedAt": "2026-08-09",
-      "expires": "2026-11-09"
-    },
-    {
       "id": "GHSA-mrhx-c7xc-m3w5",
       "package": "zod",
-      "reason": "No patched release in the range that can be installed: zod is fixed only in 4.6.6, a new major, and the one package that pulls zod in, @expo/cli (Expo's development and build CLI), declares zod ^3.25.76 in every release up to the newest, 58.1.14 (checked 2026-10-23). The SDK 57 CLI on claude/appbygget does the same. No app code imports zod and the app bundle does not contain it; the CLI validates the developer's own config and command-line input on the developer's machine or in EAS Build, so an attacker-sized collection never reaches it. Remove when @expo/cli moves to zod 4.6.6+; re-check with `npm view @expo/cli@latest dependencies.zod`.",
+      "reason": "No patched release in the range that can be installed: zod is fixed only in 4.6.6, a new major, and the one package that pulls zod in, @expo/cli (Expo's development and build CLI), declares zod ^3.25.76 in every release up to the newest, 58.1.17 (checked 2026-10-31). The SDK 57 CLI that mobile/ installs (@expo/cli 57.0.32) does the same. No app code imports zod and the app bundle does not contain it; the CLI validates the developer's own config and command-line input on the developer's machine or in EAS Build, so an attacker-sized collection never reaches it. Remove when @expo/cli moves to zod 4.6.6+; re-check with `npm view @expo/cli@latest dependencies.zod`.",
       "addedAt": "2026-10-23",
       "expires": "2026-11-20"
     }

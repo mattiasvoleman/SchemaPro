@@ -22,7 +22,7 @@ could be evaluated at all.
 | Gate | Status |
 | :--- | :--- |
 | API dependency audit | ✓ pass (0/0/0) |
-| Mobile dependency audit | ✓ pass (2 unfixable image-size advisories allowlisted, lease expires 2026-11-09) |
+| Mobile dependency audit | ✓ pass (2 advisories with no patched release allowlisted: node-forge, zod; leases expire 2026-11-20; braces and sprintf-js are no longer reported and image-size left with Expo SDK 57, measured 2026-10-31) |
 | WCAG 2.1 AA (axe-core) | ✓ pass (10/10, one real defect fixed) |
 | Visual regression | ✓ pass (16/16 on linux-x64 baselines) |
 | API coverage | ✗ 95.09% vs 95% (ratcheted at 95; remainder is module wiring) |
