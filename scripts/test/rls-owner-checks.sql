@@ -135,8 +135,9 @@ ROLLBACK;
 -- The functions refuse a second local room, a local room for two rooms and
 -- an approval over an approved loan before the constraints have to; here
 -- the owner writes past them, as two requests racing would, and each is
--- refused by its constraint (23P01). Then the roller school leaves H: its
--- loans and the travel to school A stay, unread (section 279a).
+-- refused by its constraint (23P01); an ended loan binds no local room,
+-- and an approved loan has its room (23514). Then the roller school leaves
+-- H: its loans and the travel to school A stay, unread (section 279a).
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -186,6 +187,26 @@ BEGIN
             loan."endTime", loan."endTime" + interval '1 hour', loan."startDate", loan."endDate", 'APPROVED', now());
   EXCEPTION WHEN exclusion_violation THEN
     wrong := wrong || 'an approved loan right after another is refused'::text;
+  END;
+
+  -- An ended loan binds no local room: a withdrawn loan of the room by
+  -- another local room is taken.
+  BEGIN
+    INSERT INTO "RoomLoans" ("ownerSchoolId", "roomId", "borrowerSchoolId", "localRoomId", "dayOfWeek", "startTime", "endTime",
+                             "startDate", "endDate", status, "endedAt")
+    VALUES (loan."ownerSchoolId", loan."roomId", loan."borrowerSchoolId", other_local, 5, '08:00', '09:00',
+            loan."startDate", loan."endDate", 'WITHDRAWN', now());
+  EXCEPTION WHEN exclusion_violation THEN
+    wrong := wrong || 'an ended loan binds its local room'::text;
+  END;
+  -- An approved loan has its room.
+  BEGIN
+    INSERT INTO "RoomLoans" ("ownerSchoolId", "roomId", "borrowerSchoolId", "localRoomName", "dayOfWeek", "startTime", "endTime",
+                             "startDate", "endDate", status, "decidedAt")
+    VALUES (loan."ownerSchoolId", other_room, loan."borrowerSchoolId", 'Delade 278i namn', 5, '08:00', '09:00',
+            loan."startDate", loan."endDate", 'APPROVED', now());
+    wrong := wrong || 'an approved loan without its room'::text;
+  EXCEPTION WHEN check_violation THEN NULL;
   END;
 
   -- The roller school leaves its huvudman; nothing of the sharing goes.
