@@ -388,6 +388,7 @@ const loan = (n: number, patch: Record<string, unknown>) => ({
   endedAt: null,
   school: NORRA,
   ownerRoomName: null,
+  ownerRoomId: null,
   ...patch,
 });
 export const ROOM_LOANS = {
@@ -399,6 +400,7 @@ export const ROOM_LOANS = {
       decidedAt: ago(9, "13:00"),
       room: { id: uid(KIND.misc, 9854), name: "Idrottshallen (Norraskolan)" },
       ownerRoomName: "Idrottshallen",
+      ownerRoomId: uid(KIND.misc, 9855),
     }),
   ],
 };

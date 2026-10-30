@@ -15,6 +15,7 @@ export type GateSeverity = "INFO" | "WARN" | "REFUSE";
 export const GATE_CODES = [
   "PUB_CALENDAR_REFUSED",
   "PUB_CLASHES",
+  "PUB_OTHER_SCHOOL",
   "PUB_PARKED",
   "PUB_UNPLACED",
   "PUB_UNSTAFFED",
@@ -51,6 +52,7 @@ export const GATE_POLICY_KEYS = [
   "gateGap",
   "gateDayOpsLost",
   "gateEmptyHalf",
+  "gateOtherSchool",
 ] as const;
 export type GatePolicyKey = (typeof GATE_POLICY_KEYS)[number];
 export type GatePolicy = Record<GatePolicyKey, GateMode>;
@@ -72,6 +74,7 @@ export const GATE_OF_POLICY: Record<GatePolicyKey, GateCode> = {
   gateGap: "PUB_RANGE_GAP",
   gateDayOpsLost: "PUB_DAY_OPS_LOST",
   gateEmptyHalf: "PUB_EMPTY_HALF",
+  gateOtherSchool: "PUB_OTHER_SCHOOL",
 };
 
 export type TeacherDisplay = "NONE" | "SIGNATURE" | "NAME";

@@ -66,6 +66,7 @@ export function SharingCard() {
   const [asking, setAsking] = useState(false);
   const [askedOnce, setAskedOnce] = useState(false);
   const [confirming, setConfirming] = useState<{ loan: RoomLoan; action: RoomLoanAction } | null>(null);
+  const [renewing, setRenewing] = useState<{ roomId: string; windows: { dayOfWeek: number; startTime: string; endTime: string }[] } | null>(null);
 
   // The saved figures fill the fields; one the admin has typed in keeps it.
   useEffect(() => {
@@ -129,6 +130,26 @@ export function SharingCard() {
     (sharing.data?.teachers ?? [])
       .filter((teacher) => teacher.schools.some((school) => school.id === schoolId))
       .map((teacher) => `${teacher.firstName} ${teacher.lastName}`);
+
+  // Begär igen: the room and every time the school borrows it by, the next
+  // läsår's dates for the planner to choose. Loans are not rolled over.
+  const askAgain = (loan: RoomLoan) => {
+    const same = (loans.data?.borrowed ?? []).filter(
+      (other) => other.ownerRoomId === loan.ownerRoomId && (other.status === "APPROVED" || other.id === loan.id),
+    );
+    const seen = new Set<string>();
+    const windows = same
+      .map((other) => ({ dayOfWeek: other.dayOfWeek, startTime: other.startTime, endTime: other.endTime }))
+      .filter((window) => {
+        const key = `${window.dayOfWeek} ${window.startTime} ${window.endTime}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    setRenewing({ roomId: loan.ownerRoomId!, windows });
+    setAskedOnce(true);
+    setAsking(true);
+  };
 
   const when = (loan: RoomLoan) =>
     t("window", { day: tDays(String(loan.dayOfWeek)), start: loan.startTime, end: loan.endTime });
@@ -205,6 +226,7 @@ export function SharingCard() {
               variant="outline"
               size="sm"
               onClick={() => {
+                setRenewing(null);
                 setAskedOnce(true);
                 setAsking(true);
               }}
@@ -303,13 +325,18 @@ export function SharingCard() {
                       <Badge variant={STATUS_VARIANT[loan.status]}>{t(`status.${loan.status}`)}</Badge>
                     </TableCell>
                     <TableCell className="text-right">
-                      {loan.status === "PENDING" || loan.status === "APPROVED" ? (
-                        <div data-writes="PLANERING" className="flex justify-end">
+                      <div data-writes="PLANERING" className="flex justify-end gap-2">
+                        {loan.status === "PENDING" || loan.status === "APPROVED" ? (
                           <Button type="button" size="sm" variant="outline" onClick={() => setConfirming({ loan, action: "withdraw" })}>
                             {t("actions.withdraw")}
                           </Button>
-                        </div>
-                      ) : null}
+                        ) : null}
+                        {loan.status !== "PENDING" && loan.ownerRoomId ? (
+                          <Button type="button" size="sm" variant="ghost" onClick={() => askAgain(loan)}>
+                            {t("actions.renew")}
+                          </Button>
+                        ) : null}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -321,7 +348,7 @@ export function SharingCard() {
 
       {askedOnce ? (
         <Suspense fallback={null}>
-          <RoomLoanDialog open={asking} onOpenChange={setAsking} />
+          <RoomLoanDialog open={asking} onOpenChange={setAsking} initial={renewing} />
         </Suspense>
       ) : null}
 
