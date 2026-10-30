@@ -3407,7 +3407,8 @@
     siffra</em>: elevminuter i håltimmar en vanlig vecka, för hela skolan och
     per elev. Det är summan av listan under den, med 15 minuter som minsta
     lucka och varje lucka gånger de elever som sitter i den, och det är samma
-    siffra som genereringen räknar för sitt schema. Står minsta luckan i
+    siffra som genereringen räknar för sitt schema, utom i de fall rutan
+    nedan nämner. Står minsta luckan i
     listan på något annat än 15 minuter ändras listan men inte siffran.
   </p>
   <div class="note">
@@ -3426,11 +3427,20 @@
     <span class="label">Där generatorn räknar grövre än sidan</span>
     <p>
       Generatorn styr mot alla luckor mellan första och sista lektionen, också
-      de under 15 minuter. Lunchen räknas av när klassens lunch ligger mitt på
-      dagen. En låst lektion varannan vecka räknas varje vecka, eftersom
-      generatorn inte har några veckor. Ombyte och dusch kring en låst lektion
-      räknas bara av sidan. Den siffra genereringen räknar för schemat, och
-      den sidan visar, följer sidans regler fullt ut.
+      de under 15 minuter. Lunchen räknas av hel när klassens lunch ligger
+      inom dagen, också om eleverna har dusch eller en lektion i en annan
+      grupp under en del av den. Ombyte och dusch kring en låst lektion räknas
+      bara av sidan.
+    </p>
+    <p>
+      Generatorn har inga veckor och inga datum. En låst lektion varannan
+      vecka, och en lektion som med <span class="ui">Från och med</span> och
+      <span class="ui">Till och med</span> bara går en del av läsåret, räknas
+      därför varje vecka. En halvklass terminsvis eller på halva terminer
+      (4.2) räknas som en lektion för hela klassen hela läsåret, medan sidan
+      ser en lucka för den halva som inte läser ämnet i perioden. I de här
+      fallen skiljer sig också siffran som genereringen räknar för sitt schema
+      från sidans. Siffran på sidan räknas alltid efter sidans regler.
     </p>
   </div>
   <p>

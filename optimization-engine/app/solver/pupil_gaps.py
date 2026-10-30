@@ -22,6 +22,13 @@ it up (standardWeekPupilMinutes over the year's classes), line for line:
                 until the lunch's minutes are used up
     minimum     a hole whose minutes, less its lunch, are under 15 is a rast
 
+Except where the report reads what the engine never sees, and the count then
+takes every week as it stands: a lock on alternate weeks, a lesson its dates
+keep to part of the läsår, and a halvklass terminsvis (the class holds the
+leader post, so its pupil key is the class's), which the report counts as a
+hole for the half not reading the subject in the period. The manual's box
+"Där generatorn räknar grövre än sidan" says the same.
+
 src/common/__fixtures__/pupil-gaps-cases.json is the contract: the web replays
 it through findIdleGaps, the gateway through the cohorts it sends, and
 tests/test_pupil_gaps.py through this function.

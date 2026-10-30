@@ -1226,6 +1226,30 @@ this load, never the search itself, whose model it does not touch. The
 in pairs: at a load where the högstadium's phase 1a took up to 64 s, a
 90-second pair there would have measured the machine.
 
+THE TERM AGAINST THE COUNT, on the review's two random corpora
+(`solve_loop.py`, 266 schools of one or two classes: halves with pupils
+placed and in neither, SvA and Fd, språkval across years, idrott with ombyte
+and dusch, locks and pupils named on them, closed time, ramtider and lunch;
+the second corpus adds locked half rotations, locks on two classes and a
+locked svenska beside SvA). Every school was solved with the rule off and on
+at 4 s, and every timetable pinned in the full model with the rule on: the
+term at that week against a count by the term's own rules (no minimum hole,
+the placed lunch, no margins on locks). On 0c35f998 the term added each
+lock's whole length whatever it overlapped, and differed in 7 of 298 and 81
+of 234 weeks, all but one under. At seed-5056, nine pupils in neither half
+with the halves' slöjd locked together, it saw no hole where there were 675
+pupil-minutes, and the rule on doubled the school's 335. With a cohort's
+locks and closed time merged into one union of windows per day, each slot
+once against the lessons beside it, the term is that count in all 532 weeks
+with the lunch left out of both. With the lunch it differs in 3 and 6 weeks,
+5–35 minutes under, each where the class's placed lunch overlaps a dusch or
+a lock of another of the pupils' groups: the term credits the lunch whole.
+Where both arms were OPTIMAL (137 and 91 schools) the rule on was worse than
+off in none, by the count or by the term's own rules, and the engine's count
+and the response's were the review's own per-pupil count on every timetable.
+The benchmark schools have no locks in a cohort and no closed time inside a
+day, and build the same 14,154 and 80,514 variables as before.
+
 A COMPLETE HINT FOR PHASE 2 was tried and is not in this change. Phase 2
 is hinted with phase 1's lessons and rooms only; the term's first and last
 per key, cohort and day are left to CP-SAT's completion, as every other
