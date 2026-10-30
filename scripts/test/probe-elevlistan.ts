@@ -4,7 +4,9 @@
  * which only two real connections show. In a school of its own (slug
  * <marker>-elevlistan), swept whole before and after: 7A with six pupils,
  * SvA7 replacing svenska, and four svenska lessons of 7A. Pupil P_n going into
- * SvA7 moves all four events, at the transaction's commit. Both writers are
+ * SvA7 moves all four events, at the transaction's commit. For el-e also last
+ * läsår, EnS7 replacing engelska with P5 in it, and an engelska lesson of a
+ * this-year group without pupils with 7A added. Both writers are
  * the API's role with the administrator as principal; the teacher's writer
  * edits a lesson, which moves its event at the statement, as on main.
  *
@@ -23,6 +25,10 @@
  *   el-d  the flush catches the lock timeout and nothing else: a REPEATABLE
  *         READ membership whose event the teacher moved after its snapshot
  *         fails its commit with 40001 at once, as its statement did on main;
+ *   el-e  a group without pupils (no enrollment holds it to its läsår) moved
+ *         from this läsår to last moves its lesson that 7A is added to, in
+ *         engelska, which only this läsår replaces (EnS7): P5 is on it again.
+ *         The old läsår is what finds it (review of #226, R2-L1);
  *
  * and after each, the pending table is empty.
  *
@@ -51,6 +57,9 @@ async function appClient(): Promise<{ client: Client; pid: number }> {
   const url = process.env['DATABASE_URL'];
   if (!url) throw new Error('DATABASE_URL is not set');
   const client = new Client({ connectionString: url.split('?')[0] });
+  // The cleanup terminates a backend left waiting; its client then reports
+  // the termination here instead of crashing the probe.
+  client.on('error', () => undefined);
   await client.connect();
   const { rows } = await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
   return { client, pid: rows[0]!.pid };
@@ -129,6 +138,16 @@ export async function elevlistanChecks(owner: Client, marker: string, check: Che
         ).id,
       );
     }
+    const lastYear = (
+      await one<{ id: string }>(
+        `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+         VALUES ($1, 'El i fjol', current_date - 400, current_date - 31, false, now()) RETURNING id`,
+        [s],
+      )
+    ).id;
+    const en = (
+      await one<{ id: string }>(`INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES ($1, 'El engelska', 'ELEN', now()) RETURNING id`, [s])
+    ).id;
     const lessons: string[] = [];
     for (let n = 0; n < 4; n++) {
       lessons.push(
@@ -143,6 +162,30 @@ export async function elevlistanChecks(owner: Client, marker: string, check: Che
       );
     }
     lessons.sort();
+    const ens = (
+      await one<{ id: string }>(
+        `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "replacesSubjectId", "updatedAt")
+         VALUES ($1, $2, 'El EnS7', 7, 'TEACHING_GROUP', $3, now()) RETURNING id`,
+        [s, year, en],
+      )
+    ).id;
+    await owner.query(`INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES ($1, $2, $3)`, [s, ens, pupils[5]]);
+    const empty = (
+      await one<{ id: string }>(
+        `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "updatedAt")
+         VALUES ($1, $2, 'El En7 utan elever', 7, 'TEACHING_GROUP', now()) RETURNING id`,
+        [s, year],
+      )
+    ).id;
+    const english = (
+      await one<{ id: string }>(
+        `INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+         VALUES ($1, $2, $3, current_date + 9, (current_date + 9) + time '10:00', (current_date + 9) + time '11:00', 'El-en', now())
+         RETURNING id`,
+        [s, en, empty],
+      )
+    ).id;
+    await owner.query(`INSERT INTO "CalendarLessonGroups" ("schoolId", "calendarLessonId", "studentGroupId") VALUES ($1, $2, $3)`, [s, english, k7a]);
     const first = lessons[0]!;
     const last = lessons[lessons.length - 1]!;
     // Each event has its version row (the inserts above moved them), so the
@@ -155,7 +198,10 @@ export async function elevlistanChecks(owner: Client, marker: string, check: Che
     const asAdmin = `SELECT set_config('request.jwt.claims', json_build_object('sub', $1::text)::text, true)`;
     const join = (client: Client, pupil: string) =>
       client.query(`INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES ($1, $2, $3)`, [s, sva, pupil]);
-    const edit = (client: Client, lesson: string, note: string) => client.query(`UPDATE "CalendarLessons" SET note = $2 WHERE id = $1`, [lesson, note]);
+    // A teacher's edit that moves the event at its statement, as on main: the
+    // lesson a minute later (the note alone moves nothing).
+    const edit = (client: Client, lesson: string) =>
+      client.query(`UPDATE "CalendarLessons" SET "startsAt" = "startsAt" + interval '1 minute', "endsAt" = "endsAt" + interval '1 minute' WHERE id = $1`, [lesson]);
     const xidOf = async (client: Client) => (await client.query<{ xid: string }>('SELECT pg_current_xact_id()::text AS xid')).rows[0]!.xid;
     const versionsOf = async () =>
       (
@@ -195,12 +241,12 @@ export async function elevlistanChecks(owner: Client, marker: string, check: Che
         await a.client.query('BEGIN');
         await a.client.query(asAdmin, [adminAuth]);
         await a.client.query(`SET LOCAL lock_timeout = '2s'`);
-        await edit(a.client, last, 'El-a last');
+        await edit(a.client, last);
         const committed = settle(b.client.query('COMMIT'));
         // Between attempts the flush sleeps, holding no version row.
         await until(b.pid, 'the membership’s flush backing off', (row) => inCommit(row) && row.event === 'PgSleep');
         const started = Date.now();
-        await edit(a.client, first, 'El-a first');
+        await edit(a.client, first);
         const took = Date.now() - started;
         assert.ok(took < 1000, `the teacher waited ${took} ms for the first event`);
         assert.equal(await within(committed, 0), 'pending', 'the membership committed while the teacher held its last event');
@@ -230,7 +276,8 @@ export async function elevlistanChecks(owner: Client, marker: string, check: Che
       try {
         await a.client.query('BEGIN');
         await a.client.query(asAdmin, [adminAuth]);
-        await edit(a.client, last, 'El-b last');
+        await a.client.query(`SET LOCAL lock_timeout = '2s'`);
+        await edit(a.client, last);
         await b.client.query('BEGIN');
         await b.client.query(asAdmin, [adminAuth]);
         await b.client.query(`SELECT set_config('app.ss12000_replaced_patience', '0', true)`);
@@ -261,9 +308,9 @@ export async function elevlistanChecks(owner: Client, marker: string, check: Che
         await a.client.query('BEGIN');
         await a.client.query(asAdmin, [adminAuth]);
         await a.client.query(`SET LOCAL lock_timeout = '2s'`);
-        await edit(a.client, last, 'El-c last');
+        await edit(a.client, last);
         await join(b.client, pupils[3]!);
-        await edit(a.client, first, 'El-c first');
+        await edit(a.client, first);
         await a.client.query('COMMIT');
         await b.client.query('COMMIT');
         assert.deepEqual(
@@ -292,7 +339,9 @@ export async function elevlistanChecks(owner: Client, marker: string, check: Che
         await join(b.client, pupils[4]!);
         await a.client.query('BEGIN');
         await a.client.query(asAdmin, [adminAuth]);
-        await edit(a.client, last, 'El-d last');
+        // The membership's statement holds no event: the teacher does not wait.
+        await a.client.query(`SET LOCAL lock_timeout = '2s'`);
+        await edit(a.client, last);
         await a.client.query('COMMIT');
         const outcome = await within(settle(b.client.query('COMMIT')), 5_000);
         if (outcome === 'pending') {
@@ -309,6 +358,27 @@ export async function elevlistanChecks(owner: Client, marker: string, check: Che
         await b.client.end().catch(() => undefined);
       }
       await pendingIsEmpty('el-d');
+    });
+
+    await check('el-e a group without pupils moved to last läsår moves its lesson in a subject only this läsår replaces', async () => {
+      const b = await appClient();
+      try {
+        await b.client.query('BEGIN');
+        await b.client.query(asAdmin, [adminAuth]);
+        const moved = await b.client.query(`UPDATE "StudentGroups" SET "academicYearId" = $2 WHERE id = $1`, [empty, lastYear]);
+        assert.equal(moved.rowCount, 1, 'the administrator could not move the group');
+        const bXid = await xidOf(b.client);
+        await b.client.query('COMMIT');
+        const { rows } = await owner.query<{ xid: string }>(
+          `SELECT xid::text AS xid FROM "Ss12000EntityVersions" WHERE resource = 'CalendarEvent' AND "entityId" = $1`,
+          [english],
+        );
+        assert.equal(rows[0]?.xid, bXid, 'the engelska lesson, where P5 is on again, did not move');
+      } finally {
+        await b.client.query('ROLLBACK').catch(() => undefined);
+        await b.client.end().catch(() => undefined);
+      }
+      await pendingIsEmpty('el-e');
     });
   } finally {
     await sweepElevlistanSchool(owner, marker);
