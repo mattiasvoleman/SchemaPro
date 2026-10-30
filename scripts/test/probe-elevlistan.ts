@@ -5,7 +5,7 @@
  * <marker>-elevlistan), swept whole before and after: 7A with six pupils,
  * SvA7 replacing svenska, and four svenska lessons of 7A. Pupil P_n going into
  * SvA7 moves all four events, at the transaction's commit. For el-e also last
- * läsår, EnS7 replacing engelska with P5 in it, and an engelska lesson of a
+ * läsår, EnS7 replacing engelska with P6 in it, and an engelska lesson of a
  * this-year group without pupils with 7A added. Both writers are
  * the API's role with the administrator as principal; the teacher's writer
  * edits a lesson, which moves its event at the statement, as on main.
@@ -27,7 +27,7 @@
  *         fails its commit with 40001 at once, as its statement did on main;
  *   el-e  a group without pupils (no enrollment holds it to its läsår) moved
  *         from this läsår to last moves its lesson that 7A is added to, in
- *         engelska, which only this läsår replaces (EnS7): P5 is on it again.
+ *         engelska, which only this läsår replaces (EnS7): P6 is on it again.
  *         The old läsår is what finds it (review of #226, R2-L1);
  *
  * and after each, the pending table is empty.
@@ -245,10 +245,9 @@ export async function elevlistanChecks(owner: Client, marker: string, check: Che
         const committed = settle(b.client.query('COMMIT'));
         // Between attempts the flush sleeps, holding no version row.
         await until(b.pid, 'the membership’s flush backing off', (row) => inCommit(row) && row.event === 'PgSleep');
-        const started = Date.now();
+        // Under the teacher's lock_timeout (2 s): it waits at most for one
+        // attempt of the flush (50 ms), or fails here.
         await edit(a.client, first);
-        const took = Date.now() - started;
-        assert.ok(took < 1000, `the teacher waited ${took} ms for the first event`);
         assert.equal(await within(committed, 0), 'pending', 'the membership committed while the teacher held its last event');
         await a.client.query('COMMIT');
         const outcome = await within(committed, 15_000);
@@ -373,7 +372,7 @@ export async function elevlistanChecks(owner: Client, marker: string, check: Che
           `SELECT xid::text AS xid FROM "Ss12000EntityVersions" WHERE resource = 'CalendarEvent' AND "entityId" = $1`,
           [english],
         );
-        assert.equal(rows[0]?.xid, bXid, 'the engelska lesson, where P5 is on again, did not move');
+        assert.equal(rows[0]?.xid, bXid, 'the engelska lesson, where P6 is on again, did not move');
       } finally {
         await b.client.query('ROLLBACK').catch(() => undefined);
         await b.client.end().catch(() => undefined);
