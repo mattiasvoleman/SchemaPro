@@ -398,20 +398,15 @@ def test_the_rest_of_the_objective_is_scaled_beside_it() -> None:
         assert on_coeffs[variable] == PUPIL_GAP_SCALE * coefficient
 
 
-def test_sibling_halves_meeting_is_one_hour() -> None:
-    """An unplaced pupil sits both halves: their rotation is one busy hour, not two.
-
-    Without the overlap the two hours would count as 24 slots taught inside a
-    12-slot span, and the day 08:00-11:00 with a hole at 09:00 would read as
-    none.
-    """
+def _halves_payload() -> dict[str, object]:
+    """7A, its two halves with one lesson each, and one pupil placed in neither."""
     half_a, half_b = str(uuid4()), str(uuid4())
     requirement = lambda group, teacher: {  # noqa: E731
         "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": group,
         "teacherId": teacher, "lessonsPerWeek": 1, "minutesPerLesson": 60,
         "studentGroupSize": 10, "minGradeLevel": 7, "maxGradeLevel": 7,
     }
-    payload = {
+    return {
         "requestId": str(uuid4()),
         "academicYearId": str(uuid4()),
         "requirements": [
@@ -427,6 +422,16 @@ def test_sibling_halves_meeting_is_one_hour() -> None:
             {"groupIds": [CLASS, half_a, half_b], "pupils": 1, "homeGroupId": CLASS},
         ]},
     }
+
+
+def test_sibling_halves_meeting_is_one_hour() -> None:
+    """An unplaced pupil sits both halves: their rotation is one busy hour, not two.
+
+    Without the overlap the two hours would count as 24 slots taught inside a
+    12-slot span, and the day 08:00-11:00 with a hole at 09:00 would read as
+    none.
+    """
+    payload = _halves_payload()
     # The halves rotate at 09:00, the class at 08:00 and 11:00: 10:00 is a hole.
     assert _pupil_term(payload, [8 * 60, 9 * 60, 9 * 60, 11 * 60]) == 12
     # Side by side at 09:00 and 10:00: no hole for the pupil who has both.
@@ -450,3 +455,32 @@ def test_closed_time_is_credited_once_however_many_are_in_it() -> None:
     assert _pupil_term(payload, [8 * 60, 9 * 60, 11 * 60, 14 * 60, 10 * 60]) == 15 * 24 + 10 * 24
     # And with nothing between: the closed hour is no hole for either.
     assert _pupil_term(payload, [8 * 60, 9 * 60, 11 * 60, 12 * 60, 10 * 60]) == 0
+
+
+def _closed_week() -> dict[str, object]:
+    payload = _week(pupil_gaps=True)
+    payload["constraints"] = [{
+        "id": str(uuid4()), "resourceKind": "STUDENT_GROUP", "resourceId": CLASS,
+        "dayOfWeek": 1, "date": None, "kind": "UNAVAILABLE",
+        "startTime": "10:00:00", "endTime": "11:00:00",
+    }]
+    return payload
+
+
+@pytest.mark.parametrize("make", [_closed_week, _halves_payload], ids=["a closed hour", "sibling halves"])
+def test_the_size_estimate_bounds_what_the_term_builds(make) -> None:  # noqa: ANN001
+    """_estimate_model_size stays an upper bound with the rule on.
+
+    A closed hour mid-day, and sibling halves, so the closure credits and the
+    halves' overlaps are made as well as the ends and the day literals.
+    """
+    on = OptimizeScheduleRequest.model_validate(make())
+    off = on.model_copy(update={"pupil_gaps": None})
+    solver = _solver()
+    built_on, *_ = solver._build_model(on, use_assumptions=False)
+    built_off, *_ = solver._build_model(off, use_assumptions=False)
+    # The whole model, which is what the estimate promises: the day variables
+    # the term reads are charged by the rules' own term, with or without it.
+    assert len(built_on.Proto().variables) > len(built_off.Proto().variables)
+    assert solver._estimate_model_size(on) >= len(built_on.Proto().variables)
+    assert solver._estimate_model_size(on) > solver._estimate_model_size(off)

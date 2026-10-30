@@ -665,8 +665,13 @@ def estimate_variables(request: OptimizeScheduleRequest, days: int) -> int:
 
     Per (key, day) two ends; per lesson and day one literal; per cohort and
     day its two ends, its idle and its lunch literal; per pair of loose keys'
-    lessons and day four. Closure credits are not charged, as the teachers'
-    are not (_estimate_model_size says why).
+    lessons three and one a day. And the closures, charged here although the
+    teachers' are not (_estimate_model_size): a pupil's day can be closed by
+    every rule on any of their groups and every year rule, so a school with
+    ramtider pays for them on every cohort. Per cohort and day three for each
+    window that can close it, and per lesson three for each window and day of
+    the cohorts sitting it — counted at the windows its worst cohort has,
+    because the variable is the lesson's and made once.
     """
     gaps = request.pupil_gaps
     if gaps is None:
@@ -676,10 +681,33 @@ def estimate_variables(request: OptimizeScheduleRequest, days: int) -> int:
         lessons_by_key[requirement.pupil_group_id or requirement.student_group_id] += (
             requirement.lessons_per_week
         )
+    spans = group_spans(request)
+    weekly = [
+        rule for rule in request.constraints
+        if rule.kind == "UNAVAILABLE" and rule.date is None
+    ]
+    rules_on: dict[UUID, int] = defaultdict(int)
+    for rule in weekly:
+        if rule.resource_kind == "STUDENT_GROUP" and rule.resource_id is not None:
+            rules_on[rule.resource_id] += 1
+    year_rules = sum(1 for rule in weekly if rule.resource_kind == "GRADE_LEVEL")
+    framed = bool(request.frame_times)
+
     paired = {frozenset(pair) for pair in request.group_conflicts}
     loose_pairs: set[frozenset[UUID]] = set()
+    windows_of_key: dict[UUID, int] = defaultdict(int)
+    cohort_windows = 0
     for cohort in gaps.cohorts:
-        keys = [key for key in dict.fromkeys(cohort.group_ids) if key in lessons_by_key]
+        groups = list(dict.fromkeys(cohort.group_ids))
+        windows = (
+            sum(rules_on.get(group, 0) for group in groups)
+            + year_rules
+            + (2 * len({spans[group] for group in groups if group in spans}) if framed else 0)
+        )
+        cohort_windows += windows
+        keys = [key for key in groups if key in lessons_by_key]
+        for key in keys:
+            windows_of_key[key] = max(windows_of_key[key], windows)
         for i in range(len(keys)):
             for j in range(i + 1, len(keys)):
                 pair = frozenset((keys[i], keys[j]))
@@ -689,4 +717,9 @@ def estimate_variables(request: OptimizeScheduleRequest, days: int) -> int:
     loose = sum(
         lessons_by_key[a] * lessons_by_key[b] for a, b in (tuple(pair) for pair in loose_pairs)
     )
-    return days * (2 * len(lessons_by_key) + lessons + 4 * len(gaps.cohorts) + 4 * loose)
+    closure_lessons = sum(lessons_by_key[key] * windows for key, windows in windows_of_key.items())
+    return (
+        days * (2 * len(lessons_by_key) + lessons + 4 * len(gaps.cohorts) + 3 * cohort_windows)
+        + loose * (3 + days)
+        + 3 * days * closure_lessons
+    )
