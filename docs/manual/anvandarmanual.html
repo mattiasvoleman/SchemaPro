@@ -1721,14 +1721,29 @@
     datum. I schemarutan står <em>udda</em>, <em>jämna</em> eller
     <em>period</em> så att du ser det direkt i rutnätet.
   </p>
-  <div class="warn">
-    <span class="label">Lås lektionen om du ställt in veckor</span>
+  <div class="note">
+    <span class="label">Genereringen planerar udda och jämna veckor var för sig</span>
     <p>
-      AI-motorn planerar veckoschemat och tar i dagsläget ingen hänsyn till
-      växlande veckor — den reserverar tiden varje vecka. En omgenerering
-      ersätter därför olåsta lektioner med nya som ligger varje vecka, och ditt
-      veckoval går förlorat. Slå på <span class="ui">Lås</span> på lektionen så
-      lämnas den orörd, och motorn planerar övrigt runt den.
+      En timplanspost som går udda eller jämna veckor får sina lektioner bara de
+      veckorna, och genereringen kan lägga en lektion udda veckor och en jämna
+      veckor på samma tid för samma klass, lärare eller sal. Du behöver alltså
+      inte låsa en lektion för att den ska behålla sina veckor. Det som gäller
+      en dag eller en vecka räknas för varje vecka för sig: högst antal
+      lektioner per dag, raster, restid, lärarens dag och vila, och
+      kontrollerna innan genereringen startar. Säger genereringen att något
+      inte går, gäller det en vecka där allt i meddelandet ligger. Lunchen,
+      klassens och lärarens, ligger däremot på samma tid varje vecka och hålls
+      därför fri från båda veckornas lektioner.
+    </p>
+    <p>
+      En lektion där du själv ändrat veckorna behålls vid omgenerering, som
+      andra lektioner du ändrat för hand. Genereringen räknar inte terminer:
+      en post med datum planeras som om den gick hela läsåret.
+    </p>
+    <p>
+      Salar delas på samma sätt: en udda- och en jämnlektion kan ha samma sal
+      på samma tid, och en lektion som går varje vecka behåller sin sal båda
+      veckorna.
     </p>
   </div>
   <p>

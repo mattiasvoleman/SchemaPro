@@ -4959,6 +4959,9 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "blockId",
         "lessonTeacherIds",
         "pupilGroupId",
+        # A/B-veckor: sent only on a requirement that runs odd or even weeks
+        # only, so every other payload is the bytes it was.
+        "recurrence",
     }
     # A locked lesson, which no half of the contract pinned until a field was
     # added to it. pupilGroupIds is sent only on a lock whose subject a
@@ -4976,6 +4979,8 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "startTime",
         "endTime",
         "pupilGroupIds",
+        # A/B-veckor: sent only on a lock of odd or even weeks only.
+        "recurrence",
     }
     # The response's one row. teacherId is a split post's lead of THIS lesson,
     # and omitted wherever it is None — on every lesson of every other post —

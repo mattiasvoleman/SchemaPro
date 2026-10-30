@@ -331,6 +331,12 @@ def families_of(
     without SvA7", who walk to 7A's matte and never to SvA7's lesson, which
     none of them sits. Keyed by the class, the pair (7A, SvA7) would hold
     the svenska a walk away from SvA beside it — a walk nobody takes.
+
+    A/B-VECKOR: EACH FAMILY ONCE PER WEEK ITS LESSONS DIFFER IN (_by_week). A
+    walk is between two lessons of one real week, so slöjd udda veckor and
+    hemkunskap jämna veckor never walk to each other; every pair of a week's
+    lessons is in that week's family, under the family's one literal. A family
+    with no alternating lesson is itself, as it was.
     """
     from app.solver.scheduler_solver import pupil_key_of
 
@@ -359,7 +365,7 @@ def families_of(
             for other in neighbours.get(group_id, []):
                 leaving.extend(by_group.get(other, []))
             families.append(Family("PUPILS", (group_id,), tuple(leaving), tuple(lessons)))
-        return families
+        return [part for family in families for part in _by_week(family)]
     for group_id, lessons in by_group.items():
         families.append(Family("PUPILS", (group_id,), tuple(lessons), tuple(lessons)))
     seen: set[frozenset[UUID]] = set()
@@ -374,7 +380,32 @@ def families_of(
         key = tuple(sorted((first_id, second_id), key=str))
         families.append(Family("PUPILS", key, tuple(first), tuple(second)))
         families.append(Family("PUPILS", key, tuple(second), tuple(first)))
-    return families
+    return [part for family in families for part in _by_week(family)]
+
+
+def _by_week(family: Family) -> list[Family]:
+    """The family once per week its lessons differ in (app/solver/weeks.py).
+
+    Implied, as every walk row is: a lesson fewer is a walk fewer, so a week
+    whose lessons all run in the other week as well says nothing that week's
+    rows do not. A part with nobody leaving or nobody arriving walks nowhere.
+    """
+    from app.solver.weeks import WEEKS, meet
+
+    parities = {
+        decision.lesson.requirement.recurrence
+        for decision in (*family.leaving, *family.arriving)
+    }
+    weeks = [week for week in WEEKS if week in parities]
+    if not weeks:
+        return [family]
+    parts = []
+    for week in weeks:
+        leaving = tuple(d for d in family.leaving if meet(d.lesson.requirement.recurrence, week))
+        arriving = tuple(d for d in family.arriving if meet(d.lesson.requirement.recurrence, week))
+        if leaving and arriving:
+            parts.append(Family(family.party, family.resource_ids, leaving, arriving))
+    return parts
 
 
 # ---------------------------------------------------------------------------
