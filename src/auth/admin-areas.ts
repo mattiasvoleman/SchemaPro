@@ -171,6 +171,11 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   // Skolområden och restid: the sites, and the minutes between them, as the rooms.
   SiteTravelTimes: only('PLANERING'),
   Sites: only('PLANERING'),
+  // Delade lokaler och lärare: the minutes to another school of the huvudman,
+  // as the sites'. A room loan is read by every administrator and written by
+  // none: app.room_loan_request/_decide/_withdraw/_revoke ask PLANERING.
+  SchoolTravelTimes: only('PLANERING'),
+  RoomLoans: readOnly,
   Schools: just('PLANERING', 'update'),
   StaffingPolicies: only('PLANERING'),
   StudentGroupMembers: only('PLANERING'),

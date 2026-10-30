@@ -2839,7 +2839,14 @@ BEGIN
        -- The school's list of its huvudman's readers: whether a member's
        -- login has a row of its own at the school (own_row), for the
        -- school's decider; it resolves no caller.
-       ('app', 'school_huvudman_readers')
+       ('app', 'school_huvudman_readers'),
+       -- Delade lokaler och lärare (20261217090000): a teacher is shared when
+       -- one login holds a staff row at two schools of one huvudman, so these
+       -- join the chosen school's rows to the other school's on "authId".
+       -- They resolve no caller: the chosen school is current_school_id()'s
+       -- (sections 276 and 279).
+       ('app', 'shared_teachers'),
+       ('app', 'shared_teacher_busy')
      );
   IF unexpected IS NOT NULL THEN
     RAISE EXCEPTION 'functions read "authId" without being named in section 10: % (resolve the caller through app.current_user_id())', unexpected;
@@ -20015,6 +20022,7 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('Rasts', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('RetentionDecisions', '{DECIDES}', '{}', '{}', '{}'),
   ('RoomBookings', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('RoomLoans', '{}', '{}', '{}', '{}'),
   ('RoomPreferenceRooms', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('RoomPreferences', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('RoomTypes', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
@@ -20025,6 +20033,7 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('ScheduleVersions', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{}'),
   ('SchoolBreaks', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('SchoolSignInMethods', '{INTEGRATIONER}', '{INTEGRATIONER}', '{INTEGRATIONER}', '{}'),
+  ('SchoolTravelTimes', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('SchoolUnits', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('Schools', '{}', '{PLANERING}', '{}', '{}'),
   ('SiteTravelTimes', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
@@ -20132,7 +20141,10 @@ BEGIN
     END IF;
 
     FOR g IN SELECT * FROM area_gates ORDER BY tbl LOOP
-      key_col := CASE g.tbl WHEN 'Schools' THEN 'id' ELSE 'schoolId' END;
+      -- The two tables of two schools (Delade lokaler och lärare): the row
+      -- the roller school signed, and the loan of its room.
+      key_col := CASE g.tbl WHEN 'Schools' THEN 'id' WHEN 'SchoolTravelTimes' THEN 'setBySchoolId'
+                            WHEN 'RoomLoans' THEN 'ownerSchoolId' ELSE 'schoolId' END;
       pick := format('(SELECT ctid FROM %I WHERE %I = %L%s LIMIT 1)', g.tbl, key_col, m,
                      CASE g.tbl WHEN 'Users' THEN ' AND role = ''STUDENT''' ELSE '' END);
       SELECT string_agg(quote_ident(a.attname), ', ' ORDER BY a.attnum) INTO ins_cols
@@ -32241,6 +32253,889 @@ BEGIN
   SELECT * INTO c FROM app.gallring_claim_person(run, current_setting('app.test_rls268i_pupil')::uuid);
   IF c.auth_id IS DISTINCT FROM '00000000-0000-4000-8000-000000000085' OR c.invited IS DISTINCT FROM false THEN
     RAISE EXCEPTION 'huvudman 268i: the departed pupil whose login a membership holds was claimed as % %', c.auth_id, c.invited;
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 275: restiden mellan skolorna och salslånen står i katalogen som
+-- migreringen säger (SchoolTravelTimes, RoomLoans, 20261217090000), och
+-- korsläsningarna är gatewayens funktioner och ingen annans.
+--
+-- Row security on both tables. SchoolTravelTimes has exactly the staff read
+-- and the planner's three writes, RoomLoans the staff read alone, every arm
+-- TO app_authenticated and keyed on the same huvudman for both schools of
+-- the row; the reads name administrators and teachers and no pupil or
+-- guardian; the travel's update asks PLANERING in WITH CHECK alone, and its
+-- insert and update sign the row with the chosen school. The API holds
+-- SELECT, INSERT, UPDATE and DELETE on the travel and SELECT alone on the
+-- loans; PostgREST's authenticated and anon hold nothing; service_role
+-- writes nothing; no API role holds MAINTAIN on 17. The checks, the three
+-- EXCLUDE constraints and the keys by what they say. The functions are
+-- SECURITY DEFINER with a fixed search_path, the reads STABLE and the acts
+-- VOLATILE; the API's role alone may call the nine it calls, nobody the
+-- three helpers.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  t text;
+  r text;
+  p text;
+  n bigint;
+  fn text;
+  pol record;
+  arm_names constant text[] := ARRAY['school_travel_times_staff_select', 'school_travel_times_admin_insert',
+                                     'school_travel_times_admin_update', 'school_travel_times_admin_delete',
+                                     'room_loans_staff_select'];
+  api_fns constant text[] := ARRAY[
+    'app.same_huvudman_school_ids()', 'app.sibling_schools()', 'app.shared_teachers()',
+    'app.shared_teacher_busy(date,date)', 'app.lendable_rooms()',
+    'app.room_loan_request(uuid,uuid,integer,time without time zone,time without time zone,date,date,text)',
+    'app.room_loan_decide(uuid,boolean)', 'app.room_loan_withdraw(uuid)', 'app.room_loan_revoke(uuid)'];
+  helper_fns constant text[] := ARRAY['app.room_loan_planner()', 'app.room_loan_lock(uuid)', 'app.room_loan_of(uuid,boolean)'];
+BEGIN
+  FOREACH t IN ARRAY ARRAY['SchoolTravelTimes', 'RoomLoans'] LOOP
+    IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = format('public.%I', t)::regclass) THEN
+      RAISE EXCEPTION 'delade 275: row security is off on %', t;
+    END IF;
+  END LOOP;
+
+  -- The arms: exactly the five, TO app_authenticated.
+  SELECT count(*) INTO n FROM pg_policies WHERE schemaname = 'public' AND tablename IN ('SchoolTravelTimes', 'RoomLoans');
+  IF n <> 5 OR (SELECT count(*) FROM pg_policies
+                 WHERE schemaname = 'public' AND tablename IN ('SchoolTravelTimes', 'RoomLoans')
+                   AND policyname = ANY (arm_names) AND roles = '{app_authenticated}'
+                   AND cmd = CASE WHEN policyname LIKE '%select' THEN 'SELECT' WHEN policyname LIKE '%insert' THEN 'INSERT'
+                                  WHEN policyname LIKE '%update' THEN 'UPDATE' ELSE 'DELETE' END) <> 5 THEN
+    RAISE EXCEPTION 'delade 275: the two tables have % arms, not the staff reads and the planner''s three writes TO app_authenticated', n;
+  END IF;
+  FOR pol IN SELECT * FROM pg_policies WHERE schemaname = 'public' AND tablename IN ('SchoolTravelTimes', 'RoomLoans') LOOP
+    -- Each expression keys both schools of the row on the huvudman.
+    FOREACH p IN ARRAY ARRAY[pol.qual, pol.with_check] LOOP
+      CONTINUE WHEN p IS NULL;
+      IF (length(p) - length(replace(p, 'same_huvudman_school_ids()', ''))) / length('same_huvudman_school_ids()') <> 2 THEN
+        RAISE EXCEPTION 'delade 275: %.% does not key both schools of the row on the huvudman: %', pol.tablename, pol.policyname, p;
+      END IF;
+      IF p !~ 'current_school_id\(\)' THEN
+        RAISE EXCEPTION 'delade 275: %.% does not ask the chosen school', pol.tablename, pol.policyname;
+      END IF;
+    END LOOP;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE tablename IN ('SchoolTravelTimes', 'RoomLoans') AND cmd = 'SELECT'
+              AND (qual NOT LIKE '%SCHOOL_ADMIN%' OR qual NOT LIKE '%TEACHER%' OR qual LIKE '%STUDENT%'
+                   OR qual LIKE '%GUARDIAN%' OR qual ~ 'current_user_may|current_user_decides')) THEN
+    RAISE EXCEPTION 'delade 275: a read is not the two schools'' administrators and teachers';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'SchoolTravelTimes' AND cmd <> 'SELECT'
+              AND (coalesce(with_check, qual) NOT LIKE '%current_user_may(''PLANERING''::"AdminArea", true)%'
+                   OR coalesce(with_check, qual) NOT LIKE '%SCHOOL_ADMIN%' OR coalesce(with_check, qual) LIKE '%TEACHER%')) THEN
+    RAISE EXCEPTION 'delade 275: a write on the travel is not the planner''s';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'SchoolTravelTimes' AND cmd = 'UPDATE' AND qual LIKE '%current_user_may%') THEN
+    RAISE EXCEPTION 'delade 275: the travel''s update asks the area in USING';
+  END IF;
+  IF (SELECT count(*) FROM pg_policies WHERE tablename = 'SchoolTravelTimes' AND cmd IN ('INSERT', 'UPDATE')
+       AND with_check LIKE '%"setBySchoolId" = ( SELECT app.current_school_id()%') <> 2 THEN
+    RAISE EXCEPTION 'delade 275: the travel''s insert and update do not sign the row with the chosen school';
+  END IF;
+
+  -- Grants.
+  FOREACH t IN ARRAY ARRAY['SchoolTravelTimes', 'RoomLoans'] LOOP
+    FOREACH r IN ARRAY ARRAY['authenticated', 'anon'] LOOP
+      CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+      FOREACH p IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+        IF has_table_privilege(r, format('public.%I', t), p) THEN RAISE EXCEPTION 'delade 275: % holds % on %', r, p, t; END IF;
+      END LOOP;
+    END LOOP;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+      FOREACH p IN ARRAY ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+        IF has_table_privilege('service_role', format('public.%I', t), p) THEN RAISE EXCEPTION 'delade 275: service_role holds % on %', p, t; END IF;
+      END LOOP;
+    END IF;
+    FOREACH p IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+      IF has_table_privilege('app_authenticated', format('public.%I', t), p)
+         IS DISTINCT FROM (p = 'SELECT' OR (t = 'SchoolTravelTimes' AND p IN ('INSERT', 'UPDATE', 'DELETE'))) THEN
+        RAISE EXCEPTION 'delade 275: the API''s % on % is %', p, t, has_table_privilege('app_authenticated', format('public.%I', t), p);
+      END IF;
+    END LOOP;
+    IF current_setting('server_version_num')::int >= 170000 THEN
+      FOREACH r IN ARRAY ARRAY['authenticated', 'app_authenticated', 'service_role', 'anon'] LOOP
+        CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+        IF has_table_privilege(r, format('public.%I', t), 'MAINTAIN') THEN RAISE EXCEPTION 'delade 275: % holds MAINTAIN on %', r, t; END IF;
+      END LOOP;
+    END IF;
+  END LOOP;
+
+  -- The checks, by what they say.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'SchoolTravelTimes_lower_id_first' AND contype = 'c'
+                   AND pg_get_constraintdef(oid) LIKE '%"schoolAId" < "schoolBId"%')
+     OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'SchoolTravelTimes_minutes_range' AND contype = 'c'
+                   AND pg_get_constraintdef(oid) LIKE '%minutes >= 0%' AND pg_get_constraintdef(oid) LIKE '%minutes <= 240%')
+     OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'SchoolTravelTimes_set_by_one_of_the_two' AND contype = 'c'
+                   AND pg_get_constraintdef(oid) LIKE '%("setBySchoolId" = "schoolAId") OR ("setBySchoolId" = "schoolBId")%') THEN
+    RAISE EXCEPTION 'delade 275: the travel''s pair order, minutes or signature check is missing';
+  END IF;
+  SELECT count(*) INTO n FROM pg_constraint WHERE conrelid = '"RoomLoans"'::regclass AND contype = 'c'
+     AND (conname, pg_get_constraintdef(oid) LIKE '%' || CASE conname
+            WHEN 'RoomLoans_between_two_schools' THEN '"ownerSchoolId" <> "borrowerSchoolId"'
+            WHEN 'RoomLoans_day_of_week_range' THEN '"dayOfWeek" <= 7'
+            WHEN 'RoomLoans_start_before_end' THEN '"startTime" < "endTime"'
+            WHEN 'RoomLoans_dates_in_order' THEN '"startDate" <= "endDate"'
+            WHEN 'RoomLoans_at_most_400_days' THEN '400'
+            WHEN 'RoomLoans_note_is_text' THEN 'btrim(note)'
+            WHEN 'RoomLoans_a_pending_loan_is_undecided' THEN '"decidedById" IS NULL'
+            WHEN 'RoomLoans_a_decided_loan_says_when' THEN '"decidedAt" IS NOT NULL'
+            WHEN 'RoomLoans_an_ended_loan_says_when' THEN '"endedAt" IS NOT NULL'
+          END || '%') IN (('RoomLoans_between_two_schools', true), ('RoomLoans_day_of_week_range', true),
+                          ('RoomLoans_start_before_end', true), ('RoomLoans_dates_in_order', true),
+                          ('RoomLoans_at_most_400_days', true), ('RoomLoans_note_is_text', true),
+                          ('RoomLoans_a_pending_loan_is_undecided', true), ('RoomLoans_a_decided_loan_says_when', true),
+                          ('RoomLoans_an_ended_loan_says_when', true));
+  IF n <> 9 THEN
+    RAISE EXCEPTION 'delade 275: % of the loans'' nine checks say what they should', n;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'RoomLoans_a_room_is_lent_once' AND contype = 'x'
+                   AND pg_get_constraintdef(oid) LIKE '%"roomId" WITH =%' AND pg_get_constraintdef(oid) LIKE '%"dayOfWeek" WITH =%'
+                   AND pg_get_constraintdef(oid) LIKE '%tsrange%WITH &&%' AND pg_get_constraintdef(oid) LIKE '%daterange("startDate", "endDate", ''[]''::text) WITH &&%'
+                   AND pg_get_constraintdef(oid) LIKE '%WHERE ((status = ''APPROVED''::"RoomLoanStatus"))%')
+     OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'RoomLoans_one_local_room_per_room' AND contype = 'x'
+                   AND pg_get_constraintdef(oid) LIKE '%"borrowerSchoolId" WITH =, "roomId" WITH =, "localRoomId" WITH <>%'
+                   AND pg_get_constraintdef(oid) NOT LIKE '%WHERE%')
+     OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'RoomLoans_a_local_room_stands_for_one_room' AND contype = 'x'
+                   AND pg_get_constraintdef(oid) LIKE '%"localRoomId" WITH =, "roomId" WITH <>%'
+                   AND pg_get_constraintdef(oid) NOT LIKE '%WHERE%') THEN
+    RAISE EXCEPTION 'delade 275: the three EXCLUDE constraints of the loans do not say what they should';
+  END IF;
+
+  -- The keys: the rooms by (room, school) ON DELETE CASCADE, the planners by
+  -- (person, school) ON DELETE SET NULL of that column alone.
+  SELECT count(*) INTO n FROM pg_constraint c
+   WHERE c.contype = 'f' AND c.conrelid = '"RoomLoans"'::regclass AND c.confupdtype = 'a'
+     AND ((c.confrelid = '"Rooms"'::regclass AND c.confdeltype = 'c'
+           AND (SELECT array_agg(a.attname::text ORDER BY k.ord) FROM unnest(c.conkey) WITH ORDINALITY k(attnum, ord)
+                  JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum)
+               IN (ARRAY['roomId', 'ownerSchoolId'], ARRAY['localRoomId', 'borrowerSchoolId']))
+       OR (c.confrelid = '"Users"'::regclass AND c.confdeltype = 'n'
+           AND ((SELECT array_agg(a.attname::text ORDER BY k.ord) FROM unnest(c.conkey) WITH ORDINALITY k(attnum, ord)
+                   JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum),
+                (SELECT array_agg(a.attname::text) FROM unnest(c.confdelsetcols) k(attnum)
+                   JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum))
+               IN ((ARRAY['requestedById', 'borrowerSchoolId'], ARRAY['requestedById']),
+                   (ARRAY['decidedById', 'ownerSchoolId'], ARRAY['decidedById']))));
+  IF n <> 4 THEN
+    RAISE EXCEPTION 'delade 275: the loans'' keys to Rooms and Users are not composite with the right school (% of 4)', n;
+  END IF;
+
+  -- The functions.
+  FOREACH fn IN ARRAY api_fns || helper_fns LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE oid = fn::regprocedure AND prosecdef
+                     AND proconfig = '{"search_path=public, pg_temp"}'
+                     AND provolatile = CASE WHEN fn ~ 'room_loan_(request|decide|withdraw|revoke|lock|of)' THEN 'v' ELSE 's' END) THEN
+      RAISE EXCEPTION 'delade 275: % is not SECURITY DEFINER with the fixed search_path and its volatility', fn;
+    END IF;
+    IF has_function_privilege('public', fn, 'EXECUTE') THEN
+      RAISE EXCEPTION 'delade 275: PUBLIC may call %', fn;
+    END IF;
+    FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'supabase_auth_admin', 'app_authenticated'] LOOP
+      CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+      IF has_function_privilege(r, fn, 'EXECUTE') IS DISTINCT FROM (r = 'app_authenticated' AND fn = ANY (api_fns)) THEN
+        RAISE EXCEPTION 'delade 275: % % call %', r, CASE WHEN has_function_privilege(r, fn, 'EXECUTE') THEN 'may' ELSE 'may not' END, fn;
+      END IF;
+    END LOOP;
+  END LOOP;
+  -- What the reads hand out, column by column.
+  IF pg_get_function_result('app.shared_teacher_busy(date,date)'::regprocedure)
+       <> 'TABLE(teacher_id uuid, school_id uuid, day_of_week integer, start_time time without time zone, end_time time without time zone, recurrence "LessonRecurrence", start_date date, end_date date, travel_minutes integer)'
+     OR pg_get_function_result('app.shared_teachers()'::regprocedure) <> 'TABLE(teacher_id uuid, school_id uuid, school_name text)'
+     OR pg_get_function_result('app.lendable_rooms()'::regprocedure)
+       <> 'TABLE(school_id uuid, room_id uuid, name text, capacity integer, room_type_name text)'
+     OR pg_get_function_result('app.sibling_schools()'::regprocedure) <> 'TABLE(school_id uuid, name text)' THEN
+    RAISE EXCEPTION 'delade 275: a read across schools hands out other columns than the sharing needs';
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 276: en delad lärare är samma inloggning med en aktiv personalrad på
+-- två skolor med samma huvudman, och skolan läser lärarens lektioner på den
+-- andra skolan, tider och veckor, bara för lärare den själv planerar
+-- (20261217090000).
+--
+-- The fixtures' logins …2750–…2754 (rls-fixtures.sql) at school A, the
+-- roller school (M), C (H's), and D (only asked for by H):
+--   a. A's administrator: T is shared with M and C, Y with M; U (D), V (a
+--      guardian at M) and W (deactivated at M) are not. Every row is one of
+--      A's own, every school another school of H, and no id of another
+--      school's person is handed out;
+--   b. A's administrator reads T's lessons at M in the roller year: Tue
+--      every week, Thu odd weeks with their dates, Fri as co-teacher, each
+--      with the 15 minutes between A and M, and not the parked one; nothing
+--      of Y, whom A plans nothing for; nothing out of the dates, for dates
+--      the wrong way round or for none;
+--   c. at M the same from the other side: T's lesson at A, Y not (A has no
+--      lesson of Y's);
+--   d. every profile reads (expedition and läsare too, as every area is
+--      read by all), and the huvudman's reader named at A reads what A's
+--      administrator reads; a teacher, a pupil, a guardian, no principal
+--      and D's administrator read nothing, and of those only the teachers
+--      read the other schools' names;
+--   e. a teacher's row of their own at A, shared or not, reads nothing.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.delade_as(sub text, school uuid) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM set_config('request.jwt.claims', CASE WHEN sub IS NULL THEN '' ELSE json_build_object('sub', sub)::text END, true);
+  PERFORM set_config('app.chosen_school_id', coalesce(school::text, ''), true);
+  PERFORM set_config('request.headers', '', true);
+END $$;
+
+CREATE FUNCTION pg_temp.delade_state(stmt text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  st text;
+BEGIN
+  EXECUTE stmt;
+  RETURN 'ok';
+EXCEPTION WHEN OTHERS THEN
+  GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE;
+  RETURN st;
+END $$;
+
+-- The same for a write: 'rows <n>' when it ran, the SQLSTATE when it did not.
+CREATE FUNCTION pg_temp.delade_rows(stmt text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  st text;
+  n bigint;
+BEGIN
+  EXECUTE stmt;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN 'rows ' || n;
+EXCEPTION WHEN OTHERS THEN
+  GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE;
+  RETURN st;
+END $$;
+
+-- The schools and the rows the sections ask about, read as each school's
+-- own administrator.
+CREATE FUNCTION pg_temp.delade_ids() RETURNS jsonb LANGUAGE plpgsql AS $$
+DECLARE
+  v jsonb := '{}';
+  a uuid;
+  m uuid;
+  c uuid;
+  d uuid;
+BEGIN
+  PERFORM pg_temp.delade_as(current_setting('app.test_d_admin'), NULL);
+  a := app.current_school_id();
+  SELECT school_id INTO m FROM app.sibling_schools() WHERE name = 'RLS Roller';
+  SELECT school_id INTO c FROM app.sibling_schools() WHERE name = 'RLS Huvudman C';
+  v := jsonb_build_object('a', a, 'm', m, 'c', c,
+    'a_student', (SELECT "authId" FROM "Users" WHERE "schoolId" = a AND role = 'STUDENT' AND "isActive" ORDER BY id LIMIT 1),
+    't_a', (SELECT id FROM "Users" WHERE "schoolId" = a AND "authId" = 'fe000000-0000-4000-8000-000000002750'),
+    'y_a', (SELECT id FROM "Users" WHERE "schoolId" = a AND "authId" = 'fe000000-0000-4000-8000-000000002754'),
+    'u_a', (SELECT id FROM "Users" WHERE "schoolId" = a AND "authId" = 'fe000000-0000-4000-8000-000000002751'),
+    'v_a', (SELECT id FROM "Users" WHERE "schoolId" = a AND "authId" = 'fe000000-0000-4000-8000-000000002752'),
+    'w_a', (SELECT id FROM "Users" WHERE "schoolId" = a AND "authId" = 'fe000000-0000-4000-8000-000000002753'),
+    'local_hall', (SELECT id FROM "Rooms" WHERE "schoolId" = a AND name = 'Roller hall (lånad)'));
+  PERFORM pg_temp.delade_as('00000000-0000-4000-8000-000000000105', NULL);
+  v := v || jsonb_build_object(
+    't_m', (SELECT id FROM "Users" WHERE "schoolId" = m AND "authId" = 'fe000000-0000-4000-8000-000000002750'),
+    'y_m', (SELECT id FROM "Users" WHERE "schoolId" = m AND "authId" = 'fe000000-0000-4000-8000-000000002754'),
+    'hall', (SELECT id FROM "Rooms" WHERE "schoolId" = m AND name = 'Roller hall'),
+    'roller1', (SELECT id FROM "Rooms" WHERE "schoolId" = m AND name = 'Roller 1'));
+  PERFORM pg_temp.delade_as('fe000000-0000-4000-8000-000000000266', NULL);
+  d := app.current_school_id();
+  v := v || jsonb_build_object('d', d);
+  PERFORM pg_temp.delade_as(NULL, NULL);
+  IF v ->> 'a' IS NULL OR v ->> 'm' IS NULL OR v ->> 'c' IS NULL OR v ->> 'd' IS NULL OR v ->> 't_a' IS NULL
+     OR v ->> 't_m' IS NULL OR v ->> 'y_a' IS NULL OR v ->> 'hall' IS NULL OR v ->> 'local_hall' IS NULL
+     OR v ->> 'a_student' IS NULL THEN
+    RAISE EXCEPTION 'delade: the fixtures are missing (%)', v;
+  END IF;
+  RETURN v;
+END $$;
+
+BEGIN;
+SELECT set_config('app.test_d_admin', :'admin_auth_id', true);
+DO $$
+DECLARE
+  ids jsonb := pg_temp.delade_ids();
+  a uuid := ids ->> 'a';
+  m uuid := ids ->> 'm';
+  c uuid := ids ->> 'c';
+  wrong text[] := '{}';
+  got text;
+  base text;
+  rec record;
+  sub text;
+BEGIN
+  -- a. Who is shared, at A.
+  PERFORM pg_temp.delade_as(current_setting('app.test_d_admin'), NULL);
+  SELECT string_agg(teacher_id || '@' || school_id, ',' ORDER BY teacher_id, school_id) INTO got
+    FROM app.shared_teachers() WHERE teacher_id::text IN (ids ->> 't_a', ids ->> 'y_a', ids ->> 'u_a', ids ->> 'v_a', ids ->> 'w_a');
+  IF got IS DISTINCT FROM (SELECT string_agg(x, ',' ORDER BY x) FROM unnest(ARRAY[
+        (ids ->> 't_a') || '@' || m, (ids ->> 't_a') || '@' || c, (ids ->> 'y_a') || '@' || m]) x) THEN
+    wrong := wrong || format('276a A''s shared teachers among T, U, V, W, Y are %s', got);
+  END IF;
+  IF EXISTS (SELECT 1 FROM app.shared_teachers() s
+              WHERE NOT EXISTS (SELECT 1 FROM "Users" u WHERE u.id = s.teacher_id AND u."schoolId" = a)
+                 OR s.school_id NOT IN (m, c)
+                 OR s.school_name IS DISTINCT FROM (CASE s.school_id WHEN m THEN 'RLS Roller' ELSE 'RLS Huvudman C' END)) THEN
+    wrong := wrong || '276a a shared teacher at A is not A''s own row, or names a school that is not H''s other school'::text;
+  END IF;
+  IF EXISTS (SELECT 1 FROM app.shared_teachers() s WHERE s.teacher_id::text IN (ids ->> 't_m', ids ->> 'y_m')) THEN
+    wrong := wrong || '276a A reads the roller school''s row of a shared teacher'::text;
+  END IF;
+
+  -- b. T's lessons at M, as A reads them.
+  SELECT string_agg(format('%s %s-%s %s %s..%s %s', day_of_week, start_time, end_time, recurrence, start_date, end_date, travel_minutes),
+                    '; ' ORDER BY day_of_week) INTO got
+    FROM app.shared_teacher_busy('2030-08-01', '2031-07-31') WHERE teacher_id::text = ids ->> 't_a' AND school_id = m;
+  base := '2 10:00:00-11:00:00 ALL_WEEKS 2030-08-15..2031-06-15 15; 4 13:00:00-14:00:00 ODD_WEEKS 2030-09-02..2030-12-20 15; '
+          '5 08:00:00-09:00:00 ALL_WEEKS 2030-08-15..2031-06-15 15';
+  IF got IS DISTINCT FROM base THEN
+    wrong := wrong || format('276b A reads T''s lessons at M as [%s]', got);
+  END IF;
+  -- Y has a lesson at M and A plans nothing for Y; U (at D, not H's), V (a
+  -- guardian row at M) and W (deactivated at M) each have a lesson at the
+  -- other school, and A plans each of them.
+  IF EXISTS (SELECT 1 FROM app.shared_teacher_busy('2030-08-01', '2031-07-31')
+              WHERE teacher_id::text IN (ids ->> 'y_a', ids ->> 'u_a', ids ->> 'v_a', ids ->> 'w_a')) THEN
+    wrong := wrong || format('276b A reads the lessons elsewhere of a teacher A plans nothing for, or of one who is not shared: %s',
+      (SELECT string_agg(teacher_id::text, ',') FROM app.shared_teacher_busy('2030-08-01', '2031-07-31')
+        WHERE teacher_id::text IN (ids ->> 'y_a', ids ->> 'u_a', ids ->> 'v_a', ids ->> 'w_a')));
+  END IF;
+  IF EXISTS (SELECT 1 FROM app.shared_teacher_busy('2030-08-01', '2031-07-31') WHERE school_id NOT IN (m, c)) THEN
+    wrong := wrong || '276b A reads lessons at a school that is not H''s other school'::text;
+  END IF;
+  -- Out of the dates: the Thursday ends before December's last week.
+  IF (SELECT count(*) FROM app.shared_teacher_busy('2030-12-21', '2031-01-06') WHERE teacher_id::text = ids ->> 't_a') <> 2
+     OR EXISTS (SELECT 1 FROM app.shared_teacher_busy('2029-01-01', '2029-12-31'))
+     OR EXISTS (SELECT 1 FROM app.shared_teacher_busy('2031-07-31', '2030-08-01'))
+     OR EXISTS (SELECT 1 FROM app.shared_teacher_busy(NULL, '2031-07-31'))
+     OR EXISTS (SELECT 1 FROM app.shared_teacher_busy('2030-08-01', NULL)) THEN
+    wrong := wrong || '276b the dates do not bound what A reads'::text;
+  END IF;
+
+  -- c. The other side: at M, T's lesson at A in A's year; Y has none at A.
+  PERFORM pg_temp.delade_as('00000000-0000-4000-8000-000000000105', NULL);
+  SELECT string_agg(format('%s %s %s-%s %s %s', s.school_id = a, b.day_of_week, b.start_time, b.end_time, b.recurrence, b.travel_minutes), '; ')
+    INTO got FROM app.shared_teacher_busy('2026-08-01', '2027-07-31') b JOIN app.shared_teachers() s USING (teacher_id, school_id)
+   WHERE b.teacher_id::text = ids ->> 't_m';
+  IF got IS DISTINCT FROM 't 1 08:00:00-09:00:00 ALL_WEEKS 15' THEN
+    wrong := wrong || format('276c M reads T''s lessons at A as [%s]', got);
+  END IF;
+  IF EXISTS (SELECT 1 FROM app.shared_teacher_busy('2000-01-01', '2100-01-01') WHERE teacher_id::text = ids ->> 'y_m')
+     OR NOT EXISTS (SELECT 1 FROM app.shared_teachers() WHERE teacher_id::text = ids ->> 'y_m' AND school_id = a) THEN
+    wrong := wrong || '276c at M, Y is not shared with A, or has lessons at A'::text;
+  END IF;
+
+  -- d. Every profile reads; the huvudman's reader named at A reads as A's
+  -- administrator; nobody else.
+  FOREACH sub IN ARRAY ARRAY['00000000-0000-4000-8000-000000000105', '00000000-0000-4000-8000-000000000107',
+                             '00000000-0000-4000-8000-000000000108', '00000000-0000-4000-8000-000000000115'] LOOP
+    PERFORM pg_temp.delade_as(sub, NULL);
+    IF (SELECT count(*) FROM app.shared_teacher_busy('2026-08-01', '2027-07-31') WHERE teacher_id::text = ids ->> 't_m') <> 1
+       OR (SELECT count(*) FROM app.shared_teachers() WHERE teacher_id::text = ids ->> 't_m') <> 2 THEN
+      wrong := wrong || format('276d the roller school''s %s does not read its shared teachers', sub);
+    END IF;
+  END LOOP;
+  PERFORM pg_temp.delade_as(current_setting('app.test_d_admin'), NULL);
+  SELECT md5(string_agg(x::text, '|' ORDER BY x::text)) INTO base FROM app.shared_teacher_busy('2026-01-01', '2032-01-01') x;
+  PERFORM pg_temp.delade_as('fe000000-0000-4000-8000-000000000260', a);
+  SELECT md5(string_agg(x::text, '|' ORDER BY x::text)) INTO got FROM app.shared_teacher_busy('2026-01-01', '2032-01-01') x;
+  IF got IS DISTINCT FROM base OR app.current_school_id() IS DISTINCT FROM a OR app.current_user_id() IS NOT NULL THEN
+    wrong := wrong || '276d the huvudman''s reader named at A does not read what A''s administrator reads'::text;
+  END IF;
+  FOR rec IN SELECT * FROM (VALUES
+      ('fe000000-0000-4000-8000-000000002750', NULL::uuid, 'T, a teacher at A'),
+      (ids ->> 'a_student', NULL, 'a pupil at A'),
+      ('00000000-0000-4000-8000-000000000004', NULL, 'a guardian at A'),
+      ('00000000-0000-4000-8000-000000000111', NULL, 'the roller school''s teacher'),
+      ('fe000000-0000-4000-8000-000000000266', NULL, 'D''s administrator'),
+      ('fe000000-0000-4000-8000-000000000260', NULL, 'the huvudman''s reader, naming no school'),
+      (NULL, NULL, 'no principal')) v(sub, school, who) LOOP
+    PERFORM pg_temp.delade_as(rec.sub, rec.school);
+    IF EXISTS (SELECT 1 FROM app.shared_teachers()) OR EXISTS (SELECT 1 FROM app.shared_teacher_busy('2000-01-01', '2100-01-01')) THEN
+      wrong := wrong || format('276d %s reads shared teachers', rec.who);
+    END IF;
+    -- The other schools' names are the staff's: a teacher reads them, a
+    -- pupil or a guardian does not.
+    IF EXISTS (SELECT 1 FROM app.sibling_schools()) IS DISTINCT FROM (rec.who LIKE '%teacher%') THEN
+      wrong := wrong || format('276d %s %s the other schools of the huvudman', rec.who,
+                               CASE WHEN rec.who LIKE '%teacher%' THEN 'does not read' ELSE 'reads' END);
+    END IF;
+  END LOOP;
+
+  PERFORM pg_temp.delade_as(NULL, NULL);
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION 'delade 276: %', array_to_string(wrong, '; ');
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 277: restiden mellan två skolor står en gång per par, båda
+-- skolornas personal läser den och båda skolornas planerare skriver den,
+-- signerad med sin skola, medan skolorna har samma huvudman (20261217090000).
+--
+--   a. A–M (15, set by M): A's and M's administrators and teachers read it;
+--      C's and D's administrators, A's pupil and guardian do not;
+--   b. A's planner changes the minutes, signing with A; the same change
+--      left signed by M is refused (WITH CHECK), as is one that signs with
+--      M; A adds A–C, and neither M–C signed by M nor A–D (D is not H's);
+--   c. M's schemaläggare writes, M's expedition and läsare and A's teacher
+--      are refused (an update by WITH CHECK, a delete finds no row), and
+--      the huvudman's reader at A writes nothing;
+--   d. the checks: the pair the wrong way round, 241 minutes, a signature
+--      of neither school;
+--   e. A's planner deletes A–M.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_d_admin', :'admin_auth_id', true);
+DO $$
+DECLARE
+  ids jsonb := pg_temp.delade_ids();
+  a uuid := ids ->> 'a';
+  m uuid := ids ->> 'm';
+  c uuid := ids ->> 'c';
+  d uuid := ids ->> 'd';
+  lo uuid := least(ids ->> 'a', ids ->> 'm');
+  hi uuid := greatest(ids ->> 'a', ids ->> 'm');
+  wrong text[] := '{}';
+  rec record;
+  st text;
+  n bigint;
+BEGIN
+  -- a. Who reads A–M.
+  FOR rec IN SELECT * FROM (VALUES
+      (current_setting('app.test_d_admin'), 1, 'A''s administrator'),
+      ('fe000000-0000-4000-8000-000000002750', 1, 'T, a teacher at A'),
+      ('00000000-0000-4000-8000-000000000105', 1, 'M''s full administrator'),
+      ('00000000-0000-4000-8000-000000000108', 1, 'M''s expedition'),
+      ('00000000-0000-4000-8000-000000000111', 1, 'M''s teacher'),
+      ('fe000000-0000-4000-8000-000000000269', 0, 'C''s administrator'),
+      ('fe000000-0000-4000-8000-000000000266', 0, 'D''s administrator'),
+      (ids ->> 'a_student', 0, 'a pupil at A'),
+      ('00000000-0000-4000-8000-000000000004', 0, 'a guardian at A'),
+      ('00000000-0000-4000-8000-000000000112', 0, 'M''s pupil'),
+      (NULL, 0, 'no principal')) v(sub, expected, who) LOOP
+    PERFORM pg_temp.delade_as(rec.sub, NULL);
+    SELECT count(*) INTO n FROM "SchoolTravelTimes";
+    IF n <> rec.expected THEN
+      wrong := wrong || format('277a %s reads %s travel rows, not %s', rec.who, n, rec.expected);
+    END IF;
+  END LOOP;
+
+  -- b. A's planner writes.
+  PERFORM pg_temp.delade_as(current_setting('app.test_d_admin'), NULL);
+  st := pg_temp.delade_state(format('UPDATE "SchoolTravelTimes" SET minutes = 20 WHERE "schoolAId" = %L', lo));
+  IF st <> '42501' THEN wrong := wrong || format('277b A changes the minutes left signed by M: %s', st); END IF;
+  st := pg_temp.delade_state(format('UPDATE "SchoolTravelTimes" SET minutes = 20, "setBySchoolId" = %L WHERE "schoolAId" = %L', m, lo));
+  IF st <> '42501' THEN wrong := wrong || format('277b A signs with M: %s', st); END IF;
+  UPDATE "SchoolTravelTimes" SET minutes = 20, "setBySchoolId" = a WHERE "schoolAId" = lo AND "schoolBId" = hi;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 OR (SELECT minutes FROM "SchoolTravelTimes" WHERE "schoolAId" = lo) <> 20 THEN
+    wrong := wrong || '277b A''s planner does not change A–M'::text;
+  END IF;
+  st := pg_temp.delade_state(format('INSERT INTO "SchoolTravelTimes" ("schoolAId", "schoolBId", minutes, "setBySchoolId") VALUES (%L, %L, 30, %L)',
+                               least(a, c), greatest(a, c), a));
+  IF st <> 'ok' THEN wrong := wrong || format('277b A adds A–C: %s', st); END IF;
+  st := pg_temp.delade_state(format('INSERT INTO "SchoolTravelTimes" ("schoolAId", "schoolBId", minutes, "setBySchoolId") VALUES (%L, %L, 30, %L)',
+                               least(m, c), greatest(m, c), m));
+  IF st <> '42501' THEN wrong := wrong || format('277b A adds M–C signed by M: %s', st); END IF;
+  st := pg_temp.delade_state(format('INSERT INTO "SchoolTravelTimes" ("schoolAId", "schoolBId", minutes, "setBySchoolId") VALUES (%L, %L, 30, %L)',
+                               least(a, d), greatest(a, d), a));
+  IF st <> '42501' THEN wrong := wrong || format('277b A adds A–D, D not H''s: %s', st); END IF;
+
+  -- c. Who else writes.
+  FOR rec IN SELECT * FROM (VALUES
+      ('00000000-0000-4000-8000-000000000107', NULL::uuid, true, 'M''s schemaläggare'),
+      ('00000000-0000-4000-8000-000000000108', NULL, false, 'M''s expedition'),
+      ('00000000-0000-4000-8000-000000000115', NULL, false, 'M''s läsare'),
+      ('00000000-0000-4000-8000-000000000111', NULL, false, 'M''s teacher'),
+      ('fe000000-0000-4000-8000-000000000260', a, false, 'the huvudman''s reader at A')) v(sub, school, writes, who) LOOP
+    PERFORM pg_temp.delade_as(rec.sub, rec.school);
+    -- A refused update: WITH CHECK's error for an administrator, no row for
+    -- a teacher, whom USING does not admit.
+    st := pg_temp.delade_rows(format('UPDATE "SchoolTravelTimes" SET minutes = 25, "setBySchoolId" = app.current_school_id() WHERE "schoolAId" = %L AND "schoolBId" = %L', lo, hi));
+    IF (rec.writes AND st <> 'rows 1') OR (NOT rec.writes AND st NOT IN ('42501', 'rows 0')) THEN
+      wrong := wrong || format('277c %s updates A–M: %s', rec.who, st);
+    END IF;
+    EXECUTE format('DELETE FROM "SchoolTravelTimes" WHERE "schoolAId" = %L AND "schoolBId" = %L AND NOT %L', lo, hi, rec.writes);
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN wrong := wrong || format('277c %s deletes A–M', rec.who); END IF;
+    IF NOT rec.writes THEN
+      st := pg_temp.delade_state(format('INSERT INTO "SchoolTravelTimes" ("schoolAId", "schoolBId", minutes, "setBySchoolId") VALUES (%L, %L, 5, %L)',
+                                   least(m, c), greatest(m, c), coalesce(app.current_school_id(), m)));
+      IF st <> '42501' THEN wrong := wrong || format('277c %s inserts M–C: %s', rec.who, st); END IF;
+    END IF;
+  END LOOP;
+
+  -- d. The checks, as A's planner.
+  PERFORM pg_temp.delade_as(current_setting('app.test_d_admin'), NULL);
+  st := pg_temp.delade_state(format('UPDATE "SchoolTravelTimes" SET minutes = 241, "setBySchoolId" = %L WHERE "schoolAId" = %L', a, lo));
+  IF st <> '23514' THEN wrong := wrong || format('277d 241 minutes: %s', st); END IF;
+  st := pg_temp.delade_state(format('INSERT INTO "SchoolTravelTimes" ("schoolAId", "schoolBId", minutes, "setBySchoolId") VALUES (%L, %L, 5, %L)',
+                               greatest(a, c), least(a, c), a));
+  IF st NOT IN ('23514', '23505') THEN wrong := wrong || format('277d the pair the wrong way round: %s', st); END IF;
+
+  -- e. A's planner deletes A–M.
+  DELETE FROM "SchoolTravelTimes" WHERE "schoolAId" = lo AND "schoolBId" = hi;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN wrong := wrong || '277e A''s planner does not delete A–M'::text; END IF;
+
+  PERFORM pg_temp.delade_as(NULL, NULL);
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION 'delade 277: %', array_to_string(wrong, '; ');
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 278: ett salslån är ett veckofönster som låntagarens planerare
+-- begär och ägarens planerare beslutar, båda skolorna läser lånen mellan
+-- sig, och ingen skriver tabellen utom funktionerna (20261217090000).
+--
+--   a. both loans (M's hall for A) are read by A's and M's administrators
+--      and teachers, by no one at C or D, by no pupil or guardian;
+--   b. the rooms A may ask for are M's two (and none of A's own); M may ask
+--      for A's rooms but not A's local room for M's hall; D's
+--      administrator and A's teacher are offered nothing;
+--   c. a request: A's planner asks for "Roller 1" with a room of its own
+--      as the local room, PENDING and asked by A's administrator; the
+--      hall again with another local room is RL409; a room of A's own, of
+--      D's, or a local room of another school's is RL404; a local room A
+--      lends out is RL409, and M's local room for A's room is not there to
+--      ask for (RL404); M's expedition and läsare, A's teacher and the
+--      huvudman's reader are RL403;
+--   d. the decision: M's expedition is RL403, A (the borrower) RL404; M's
+--      schemaläggare approves the pending Wednesday, decided by M's
+--      administrator; again RL409; a Tuesday 11:00–12:00 that meets the
+--      approved 10:00–11:30 is approved by nobody (23P01), 11:30–12:30 is;
+--   e. A withdraws the approved Tuesday (WITHDRAWN, ended), again RL409, and
+--      M may not withdraw (RL404); M revokes the Wednesday (REVOKED), a
+--      pending loan is not revoked (RL409), A may not revoke (RL404);
+--   f. the checks through the request: weekday 8, a start after the end,
+--      dates the wrong way round, 401 days, a note of 301 characters (a
+--      blank note is stored as none);
+--   g. the API writes no loan itself: INSERT, UPDATE and DELETE are denied;
+--   h. deleting A's local room deletes A's loans with it.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_d_admin', :'admin_auth_id', true);
+DO $$
+DECLARE
+  ids jsonb := pg_temp.delade_ids();
+  a uuid := ids ->> 'a';
+  m uuid := ids ->> 'm';
+  d uuid := ids ->> 'd';
+  hall uuid := ids ->> 'hall';
+  roller1 uuid := ids ->> 'roller1';
+  local_hall uuid := ids ->> 'local_hall';
+  a_admin_row uuid;
+  m_full_row uuid;
+  my_room uuid;
+  other_local uuid;
+  d_room uuid;
+  m_local uuid;
+  approved uuid;
+  pending uuid;
+  fresh uuid;
+  wrong text[] := '{}';
+  rec record;
+  st text;
+  n bigint;
+BEGIN
+  -- a. Who reads the two loans.
+  FOR rec IN SELECT * FROM (VALUES
+      (current_setting('app.test_d_admin'), 2, 'A''s administrator'),
+      ('fe000000-0000-4000-8000-000000002750', 2, 'T, a teacher at A'),
+      ('00000000-0000-4000-8000-000000000105', 2, 'M''s full administrator'),
+      ('00000000-0000-4000-8000-000000000115', 2, 'M''s läsare'),
+      ('00000000-0000-4000-8000-000000000111', 2, 'M''s teacher'),
+      ('fe000000-0000-4000-8000-000000000269', 0, 'C''s administrator'),
+      ('fe000000-0000-4000-8000-000000000266', 0, 'D''s administrator'),
+      (ids ->> 'a_student', 0, 'a pupil at A'),
+      ('00000000-0000-4000-8000-000000000004', 0, 'a guardian at A'),
+      ('00000000-0000-4000-8000-000000000113', 0, 'M''s guardian'),
+      (NULL, 0, 'no principal')) v(sub, expected, who) LOOP
+    PERFORM pg_temp.delade_as(rec.sub, NULL);
+    SELECT count(*) INTO n FROM "RoomLoans";
+    IF n <> rec.expected THEN
+      wrong := wrong || format('278a %s reads %s loans, not %s', rec.who, n, rec.expected);
+    END IF;
+  END LOOP;
+
+  -- b. What may be asked for.
+  PERFORM pg_temp.delade_as(current_setting('app.test_d_admin'), NULL);
+  a_admin_row := app.current_user_id();
+  IF (SELECT array_agg(room_id ORDER BY room_id) FROM app.lendable_rooms() WHERE school_id = m)
+       IS DISTINCT FROM (SELECT array_agg(x ORDER BY x) FROM unnest(ARRAY[hall, roller1]) x)
+     OR EXISTS (SELECT 1 FROM app.lendable_rooms() WHERE school_id = a) THEN
+    wrong := wrong || '278b A is not offered exactly M''s two rooms'::text;
+  END IF;
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (a, 'Delade A egen', now()) RETURNING id INTO my_room;
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (a, 'Delade A lånar Roller 1', now()) RETURNING id INTO other_local;
+  PERFORM pg_temp.delade_as('00000000-0000-4000-8000-000000000105', NULL);
+  m_full_row := app.current_user_id();
+  IF NOT EXISTS (SELECT 1 FROM app.lendable_rooms() WHERE room_id = my_room)
+     OR EXISTS (SELECT 1 FROM app.lendable_rooms() WHERE room_id = local_hall)
+     OR EXISTS (SELECT 1 FROM app.lendable_rooms() WHERE school_id = m) THEN
+    wrong := wrong || '278b M is offered A''s local room, its own rooms, or not A''s own'::text;
+  END IF;
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (m, 'Delade M lånar', now()) RETURNING id INTO m_local;
+  FOREACH st IN ARRAY ARRAY['fe000000-0000-4000-8000-000000000266', 'fe000000-0000-4000-8000-000000002750'] LOOP
+    PERFORM pg_temp.delade_as(st, NULL);
+    IF EXISTS (SELECT 1 FROM app.lendable_rooms()) THEN
+      wrong := wrong || format('278b %s is offered rooms to borrow', st);
+    END IF;
+  END LOOP;
+  PERFORM pg_temp.delade_as('fe000000-0000-4000-8000-000000000266', NULL);
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (d, 'Delade D sal', now()) RETURNING id INTO d_room;
+
+  -- c. Requests, as A's planner.
+  PERFORM pg_temp.delade_as(current_setting('app.test_d_admin'), NULL);
+  fresh := app.room_loan_request(roller1, other_local, 1, '08:00', '09:00', '2030-08-19', '2031-06-13', '  Slöjd  ');
+  IF NOT EXISTS (SELECT 1 FROM "RoomLoans" WHERE id = fresh AND status = 'PENDING' AND "requestedById" = a_admin_row
+                   AND "ownerSchoolId" = m AND "borrowerSchoolId" = a AND "localRoomId" = other_local AND note = 'Slöjd'
+                   AND "decidedAt" IS NULL AND "endedAt" IS NULL) THEN
+    wrong := wrong || '278c A''s request is not PENDING, asked by A''s administrator, with its local room and trimmed note'::text;
+  END IF;
+  FOR rec IN SELECT * FROM (VALUES
+      (format('SELECT app.room_loan_request(%L, %L, 4, ''08:00'', ''09:00'', ''2030-08-19'', ''2031-06-13'', NULL)', hall, other_local), 'RL409', 'the hall with another local room'),
+      (format('SELECT app.room_loan_request(%L, %L, 4, ''08:00'', ''09:00'', ''2030-08-19'', ''2031-06-13'', NULL)', roller1, local_hall), 'RL409', 'Roller 1 with the hall''s local room'),
+      (format('SELECT app.room_loan_request(%L, %L, 4, ''08:00'', ''09:00'', ''2030-08-19'', ''2031-06-13'', NULL)', my_room, other_local), 'RL404', 'a room of A''s own'),
+      (format('SELECT app.room_loan_request(%L, %L, 4, ''08:00'', ''09:00'', ''2030-08-19'', ''2031-06-13'', NULL)', d_room, my_room), 'RL404', 'D''s room'),
+      (format('SELECT app.room_loan_request(%L, %L, 4, ''08:00'', ''09:00'', ''2030-08-19'', ''2031-06-13'', NULL)', hall, m_local), 'RL404', 'a local room of M''s'),
+      (format('SELECT app.room_loan_request(%L, %L, 4, ''08:00'', ''09:00'', ''2030-08-19'', ''2031-06-13'', NULL)', gen_random_uuid(), my_room), 'RL404', 'no room')
+    ) v(stmt, expected, what) LOOP
+    st := pg_temp.delade_state(rec.stmt);
+    IF st IS DISTINCT FROM rec.expected THEN
+      wrong := wrong || format('278c A asks for %s: %s, not %s', rec.what, st, rec.expected);
+    END IF;
+  END LOOP;
+  st := pg_temp.delade_state(format('SELECT app.room_loan_request(%L, %L, 4, ''08:00'', ''09:00'', ''2030-08-19'', ''2031-06-13'', NULL)', hall, local_hall));
+  IF st <> 'ok' THEN wrong := wrong || format('278c A asks for the hall again with its local room: %s', st); END IF;
+  -- A local room A lends out: M asks for A's room, then A names it.
+  PERFORM pg_temp.delade_as('00000000-0000-4000-8000-000000000107', NULL);
+  st := pg_temp.delade_state(format('SELECT app.room_loan_request(%L, %L, 5, ''08:00'', ''09:00'', ''2030-08-19'', ''2031-06-13'', NULL)', my_room, m_local));
+  IF st <> 'ok' THEN wrong := wrong || format('278c M''s schemaläggare asks for A''s room: %s', st); END IF;
+  PERFORM pg_temp.delade_as(current_setting('app.test_d_admin'), NULL);
+  st := pg_temp.delade_state(format('SELECT app.room_loan_request(%L, %L, 4, ''12:00'', ''13:00'', ''2030-08-19'', ''2031-06-13'', NULL)', roller1, my_room));
+  IF st <> 'RL409' THEN wrong := wrong || format('278c A names a room it lends out as its local room: %s', st); END IF;
+  st := pg_temp.delade_state(format('SELECT app.room_loan_request(%L, %L, 4, ''12:00'', ''13:00'', ''2030-08-19'', ''2031-06-13'', NULL)', m_local, other_local));
+  IF st <> 'RL404' THEN wrong := wrong || format('278c A asks for M''s local room of A''s: %s', st); END IF;
+  FOR rec IN SELECT * FROM (VALUES
+      ('00000000-0000-4000-8000-000000000108', NULL::uuid, 'M''s expedition'),
+      ('00000000-0000-4000-8000-000000000115', NULL, 'M''s läsare'),
+      ('00000000-0000-4000-8000-000000000111', NULL, 'M''s teacher'),
+      ('fe000000-0000-4000-8000-000000000260', m, 'the huvudman''s reader at M')) v(sub, school, who) LOOP
+    PERFORM pg_temp.delade_as(rec.sub, rec.school);
+    st := pg_temp.delade_state(format('SELECT app.room_loan_request(%L, %L, 5, ''10:00'', ''11:00'', ''2030-08-19'', ''2031-06-13'', NULL)', my_room, m_local));
+    IF st <> 'RL403' THEN wrong := wrong || format('278c %s asks: %s', rec.who, st); END IF;
+  END LOOP;
+
+  -- d. Decisions.
+  SELECT id INTO approved FROM "RoomLoans" WHERE "roomId" = hall AND "dayOfWeek" = 2 AND status = 'APPROVED';
+  SELECT id INTO pending FROM "RoomLoans" WHERE "roomId" = hall AND "dayOfWeek" = 3 AND status = 'PENDING';
+  PERFORM pg_temp.delade_as('00000000-0000-4000-8000-000000000108', NULL);
+  st := pg_temp.delade_state(format('SELECT app.room_loan_decide(%L, true)', pending));
+  IF st <> 'RL403' THEN wrong := wrong || format('278d M''s expedition decides: %s', st); END IF;
+  PERFORM pg_temp.delade_as(current_setting('app.test_d_admin'), NULL);
+  st := pg_temp.delade_state(format('SELECT app.room_loan_decide(%L, true)', pending));
+  IF st <> 'RL404' THEN wrong := wrong || format('278d A decides its own request: %s', st); END IF;
+  PERFORM pg_temp.delade_as('00000000-0000-4000-8000-000000000107', NULL);
+  PERFORM app.room_loan_decide(pending, true);
+  IF NOT EXISTS (SELECT 1 FROM "RoomLoans" WHERE id = pending AND status = 'APPROVED' AND "decidedAt" IS NOT NULL
+                   AND "decidedById" = (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000107')) THEN
+    wrong := wrong || '278d M''s schemaläggare does not approve the Wednesday'::text;
+  END IF;
+  st := pg_temp.delade_state(format('SELECT app.room_loan_decide(%L, false)', pending));
+  IF st <> 'RL409' THEN wrong := wrong || format('278d deciding again: %s', st); END IF;
+  st := pg_temp.delade_state(format('SELECT app.room_loan_decide(%L, NULL)', fresh));
+  IF st <> 'RL400' THEN wrong := wrong || format('278d deciding nothing: %s', st); END IF;
+  PERFORM pg_temp.delade_as(current_setting('app.test_d_admin'), NULL);
+  fresh := app.room_loan_request(hall, local_hall, 2, '11:00', '12:00', '2031-01-01', '2031-01-31', NULL);
+  PERFORM pg_temp.delade_as('00000000-0000-4000-8000-000000000105', NULL);
+  st := pg_temp.delade_state(format('SELECT app.room_loan_decide(%L, true)', fresh));
+  IF st <> '23P01' THEN wrong := wrong || format('278d a Tuesday that meets the approved one is approved: %s', st); END IF;
+  PERFORM pg_temp.delade_as(current_setting('app.test_d_admin'), NULL);
+  fresh := app.room_loan_request(hall, local_hall, 2, '11:30', '12:30', '2030-08-19', '2031-06-13', NULL);
+  PERFORM pg_temp.delade_as('00000000-0000-4000-8000-000000000105', NULL);
+  st := pg_temp.delade_state(format('SELECT app.room_loan_decide(%L, true)', fresh));
+  IF st <> 'ok' THEN wrong := wrong || format('278d a Tuesday right after the approved one: %s', st); END IF;
+
+  -- e. Withdraw and revoke.
+  PERFORM pg_temp.delade_as('00000000-0000-4000-8000-000000000105', NULL);
+  st := pg_temp.delade_state(format('SELECT app.room_loan_withdraw(%L)', approved));
+  IF st <> 'RL404' THEN wrong := wrong || format('278e M withdraws A''s loan: %s', st); END IF;
+  PERFORM pg_temp.delade_as(current_setting('app.test_d_admin'), NULL);
+  st := pg_temp.delade_state(format('SELECT app.room_loan_revoke(%L)', pending));
+  IF st <> 'RL404' THEN wrong := wrong || format('278e A revokes M''s loan to it: %s', st); END IF;
+  PERFORM app.room_loan_withdraw(approved);
+  IF NOT EXISTS (SELECT 1 FROM "RoomLoans" WHERE id = approved AND status = 'WITHDRAWN' AND "endedAt" IS NOT NULL AND "decidedAt" IS NOT NULL) THEN
+    wrong := wrong || '278e the withdrawn loan is not WITHDRAWN with its end'::text;
+  END IF;
+  st := pg_temp.delade_state(format('SELECT app.room_loan_withdraw(%L)', approved));
+  IF st <> 'RL409' THEN wrong := wrong || format('278e withdrawing again: %s', st); END IF;
+  PERFORM pg_temp.delade_as('00000000-0000-4000-8000-000000000107', NULL);
+  PERFORM app.room_loan_revoke(pending);
+  IF NOT EXISTS (SELECT 1 FROM "RoomLoans" WHERE id = pending AND status = 'REVOKED' AND "endedAt" IS NOT NULL) THEN
+    wrong := wrong || '278e the revoked loan is not REVOKED with its end'::text;
+  END IF;
+  SELECT id INTO fresh FROM "RoomLoans" WHERE "roomId" = roller1 AND status = 'PENDING' LIMIT 1;
+  st := pg_temp.delade_state(format('SELECT app.room_loan_revoke(%L)', fresh));
+  IF st <> 'RL409' THEN wrong := wrong || format('278e revoking a pending loan: %s', st); END IF;
+
+  -- f. The checks, through the request.
+  PERFORM pg_temp.delade_as(current_setting('app.test_d_admin'), NULL);
+  FOR rec IN SELECT * FROM (VALUES
+      ('8, ''08:00'', ''09:00'', ''2030-08-19'', ''2031-06-13'', NULL', 'weekday 8'),
+      ('1, ''09:00'', ''08:00'', ''2030-08-19'', ''2031-06-13'', NULL', 'a start after the end'),
+      ('1, ''08:00'', ''08:00'', ''2030-08-19'', ''2031-06-13'', NULL', 'no time at all'),
+      ('1, ''08:00'', ''09:00'', ''2031-06-13'', ''2030-08-19'', NULL', 'dates the wrong way round'),
+      ('1, ''08:00'', ''09:00'', ''2030-08-19'', ''2031-09-24'', NULL', '401 days'),
+      (format('1, ''08:00'', ''09:00'', ''2030-08-19'', ''2031-06-13'', %L', repeat('x', 301)), 'a note of 301 characters')
+    ) v(args, what) LOOP
+    st := pg_temp.delade_state(format('SELECT app.room_loan_request(%L, %L, %s)', roller1, other_local, rec.args));
+    IF st <> '23514' THEN wrong := wrong || format('278f %s: %s', rec.what, st); END IF;
+  END LOOP;
+  fresh := app.room_loan_request(roller1, other_local, 1, '10:00', '11:00', '2030-08-19', '2031-09-23', '   ');
+  IF (SELECT note FROM "RoomLoans" WHERE id = fresh) IS NOT NULL THEN
+    wrong := wrong || '278f a blank note is stored'::text;
+  END IF;
+
+  -- g. The API writes no loan itself.
+  FOR rec IN SELECT * FROM (VALUES
+      (format('INSERT INTO "RoomLoans" ("ownerSchoolId", "roomId", "borrowerSchoolId", "localRoomId", "dayOfWeek", "startTime", "endTime", "startDate", "endDate") VALUES (%L, %L, %L, %L, 1, ''08:00'', ''09:00'', ''2030-08-19'', ''2031-06-13'')', m, roller1, a, other_local), 'INSERT'),
+      (format('UPDATE "RoomLoans" SET status = ''APPROVED'' WHERE id = %L', fresh), 'UPDATE'),
+      (format('DELETE FROM "RoomLoans" WHERE id = %L', fresh), 'DELETE')) v(stmt, what) LOOP
+    st := pg_temp.delade_state(rec.stmt);
+    IF st <> '42501' THEN wrong := wrong || format('278g the API''s own %s on RoomLoans: %s', rec.what, st); END IF;
+  END LOOP;
+
+  -- h. A's local room goes, and its loans with it.
+  DELETE FROM "Rooms" WHERE id = local_hall;
+  IF EXISTS (SELECT 1 FROM "RoomLoans" WHERE "localRoomId" = local_hall) THEN
+    wrong := wrong || '278h the loans of a deleted local room stay'::text;
+  END IF;
+
+  PERFORM pg_temp.delade_as(NULL, NULL);
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION 'delade 278: %', array_to_string(wrong, '; ');
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 279: en skola som lämnar huvudmannen faller ur allt vid nästa sats,
+-- och PostgREST:s roll når ingenting (20261217090000).
+--
+--   a. the roller school's rektor leaves H (app.school_leaves_huvudman):
+--      A's administrator no longer reads M among the other schools, nor T
+--      or Y as shared with M, nor T's lessons at M, nor the A–M travel, nor
+--      the loans of M's hall, nor M's rooms to ask for; asking for M's room
+--      is RL404, M's planner deciding A's pending loan is RL404, and
+--      neither planner writes the travel between them. Nothing is deleted:
+--      the owner's check 278i counts the rows after a departure;
+--   b. PostgREST's role (authenticated) may call none of the nine functions
+--      and read neither table, whoever it is and whichever school it names.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_d_admin', :'admin_auth_id', true);
+DO $$
+DECLARE
+  ids jsonb := pg_temp.delade_ids();
+  a uuid := ids ->> 'a';
+  m uuid := ids ->> 'm';
+  pending uuid;
+  wrong text[] := '{}';
+  st text;
+BEGIN
+  PERFORM pg_temp.delade_as('00000000-0000-4000-8000-000000000105', NULL);
+  SELECT id INTO pending FROM "RoomLoans" WHERE status = 'PENDING' LIMIT 1;
+  IF pending IS NULL THEN RAISE EXCEPTION 'delade 279: the pending loan is missing'; END IF;
+  PERFORM pg_temp.delade_as('00000000-0000-4000-8000-000000000106', NULL);
+  PERFORM app.school_leaves_huvudman();
+
+  PERFORM pg_temp.delade_as(current_setting('app.test_d_admin'), NULL);
+  IF EXISTS (SELECT 1 FROM app.sibling_schools() WHERE school_id = m) THEN wrong := wrong || '279a M is still a school of H''s'::text; END IF;
+  IF EXISTS (SELECT 1 FROM app.shared_teachers() WHERE school_id = m) THEN wrong := wrong || '279a a teacher is still shared with M'::text; END IF;
+  IF EXISTS (SELECT 1 FROM app.shared_teacher_busy('2000-01-01', '2100-01-01') WHERE school_id = m) THEN
+    wrong := wrong || '279a A reads lessons at M'::text;
+  END IF;
+  IF EXISTS (SELECT 1 FROM "SchoolTravelTimes") THEN wrong := wrong || '279a A reads the travel to M'::text; END IF;
+  IF EXISTS (SELECT 1 FROM "RoomLoans") THEN wrong := wrong || '279a A reads the loans of M''s hall'::text; END IF;
+  IF EXISTS (SELECT 1 FROM app.lendable_rooms() WHERE school_id = m) THEN wrong := wrong || '279a A is offered M''s rooms'::text; END IF;
+  st := pg_temp.delade_state(format('SELECT app.room_loan_request(%L, %L, 1, ''08:00'', ''09:00'', ''2030-08-19'', ''2031-06-13'', NULL)',
+                               ids ->> 'roller1', ids ->> 'local_hall'));
+  IF st <> 'RL404' THEN wrong := wrong || format('279a A asks for M''s room: %s', st); END IF;
+  PERFORM pg_temp.delade_as('00000000-0000-4000-8000-000000000105', NULL);
+  IF EXISTS (SELECT 1 FROM "RoomLoans") OR EXISTS (SELECT 1 FROM "SchoolTravelTimes") THEN
+    wrong := wrong || '279a M reads the loans or the travel after leaving'::text;
+  END IF;
+  st := pg_temp.delade_state(format('SELECT app.room_loan_decide(%L, true)', pending));
+  IF st <> 'RL404' THEN wrong := wrong || format('279a M decides A''s loan after leaving: %s', st); END IF;
+  -- Nor does either planner write the travel between them.
+  PERFORM pg_temp.delade_as(current_setting('app.test_d_admin'), NULL);
+  st := pg_temp.delade_rows(format('UPDATE "SchoolTravelTimes" SET minutes = 30, "setBySchoolId" = %L WHERE %L IN ("schoolAId", "schoolBId")', a, m));
+  IF st <> 'rows 0' THEN wrong := wrong || format('279a A changes the travel to M after M left: %s', st); END IF;
+  st := pg_temp.delade_rows(format('DELETE FROM "SchoolTravelTimes" WHERE %L IN ("schoolAId", "schoolBId")', m));
+  IF st <> 'rows 0' THEN wrong := wrong || format('279a A deletes the travel to M after M left: %s', st); END IF;
+  st := pg_temp.delade_rows(format('INSERT INTO "SchoolTravelTimes" ("schoolAId", "schoolBId", minutes, "setBySchoolId") VALUES (%L, %L, 5, %L) ON CONFLICT DO NOTHING',
+                                   least(a, m), greatest(a, m), a));
+  IF st <> '42501' THEN wrong := wrong || format('279a A adds a travel to M after M left: %s', st); END IF;
+
+  PERFORM pg_temp.delade_as(NULL, NULL);
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION 'delade 279a: %', array_to_string(wrong, '; ');
+  END IF;
+END $$;
+ROLLBACK;
+
+BEGIN;
+SELECT set_config('app.test_d_admin', :'admin_auth_id', true);
+DO $$
+BEGIN
+  PERFORM set_config('app.test_d_ids', pg_temp.delade_ids()::text, true);
+END $$;
+DO $$
+DECLARE
+  ids jsonb := current_setting('app.test_d_ids')::jsonb;
+  wrong text[] := '{}';
+  st text;
+  fn text;
+  rec record;
+BEGIN
+  SET LOCAL ROLE authenticated;
+  FOR rec IN SELECT * FROM (VALUES
+      (current_setting('app.test_d_admin'), ''),
+      ('00000000-0000-4000-8000-000000000105', json_build_object('x-school-id', ids ->> 'm')::text),
+      ('fe000000-0000-4000-8000-000000000260', json_build_object('x-school-id', ids ->> 'a')::text)) v(sub, headers) LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', rec.sub)::text, true);
+    PERFORM set_config('request.headers', rec.headers, true);
+    FOREACH fn IN ARRAY ARRAY[
+        'SELECT app.same_huvudman_school_ids()', 'SELECT * FROM app.sibling_schools()', 'SELECT * FROM app.shared_teachers()',
+        'SELECT * FROM app.shared_teacher_busy(''2000-01-01'', ''2100-01-01'')', 'SELECT * FROM app.lendable_rooms()',
+        format('SELECT app.room_loan_request(%L, %L, 1, ''08:00'', ''09:00'', ''2030-08-19'', ''2031-06-13'', NULL)', ids ->> 'roller1', ids ->> 'local_hall'),
+        format('SELECT app.room_loan_decide(%L, true)', gen_random_uuid()), format('SELECT app.room_loan_withdraw(%L)', gen_random_uuid()),
+        format('SELECT app.room_loan_revoke(%L)', gen_random_uuid()),
+        'SELECT * FROM "RoomLoans"', 'SELECT * FROM "SchoolTravelTimes"'] LOOP
+      st := pg_temp.delade_state(fn);
+      IF st <> '42501' THEN
+        wrong := wrong || format('%s as %s: %s', fn, rec.sub, st);
+      END IF;
+    END LOOP;
+  END LOOP;
+  IF current_user <> 'authenticated' THEN
+    RAISE EXCEPTION 'delade 279b: the block did not run as PostgREST''s role';
+  END IF;
+  SET LOCAL ROLE app_authenticated;
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION 'delade 279b: PostgREST''s role reaches the sharing: %', array_to_string(wrong, '; ');
   END IF;
 END $$;
 ROLLBACK;

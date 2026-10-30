@@ -2480,6 +2480,151 @@ BEGIN
   UPDATE "HuvudmanApiKeys" SET "revokedAt" = now() WHERE name = 'RLS H återkallad';
 END $$;
 
+-- Delade lokaler och lärare (20261217090000), sections 275–279. Huvudmannen
+-- H owns school A (the seed's), rls-roller-school (M) and rls-huvudman-c (C);
+-- B (rls-fixture-school) and rls-huvudman-d (D) have only H's question.
+-- Logins, each row joining the login as the gateway's invitation does:
+--
+--   …2750 T  a teacher at A (older), at M and at C: shared at all three. A
+--            plans T (a timplanspost) and has a lesson of T's, Mon
+--            08:00–09:00. M has four: Tue 10:00–11:00 every week, Thu
+--            13:00–14:00 odd weeks 2030-09-02..2030-12-20, a parked Wed
+--            09:00–10:00, and Fri 08:00–09:00 as co-teacher beside M's
+--            teacher (…0111).
+--   …2751 U  a teacher at A and at D (not H's): not shared.
+--   …2752 V  a teacher at A and a guardian at M: not shared.
+--   …2753 W  a teacher at A and a deactivated teacher at M: not shared.
+--            A plans U, V and W, and each has a lesson at the other school
+--            (V's planted on the guardian row, which no API writes), so that
+--            each rule alone keeps that lesson from A.
+--   …2754 Y  a teacher at A that A plans nothing for, and at M with a lesson
+--            Mon 09:00–10:00: shared, and none of M's times A's to read.
+--
+-- Restid A–M 15 minutes, set by M (so section 116's matrix has M's row).
+-- Salslån: M's room "Roller hall" for A, whose own room for it is "Roller
+-- hall (lånad)": APPROVED Tue 10:00–11:30 and PENDING Wed 13:00–14:00, both
+-- 2030-08-19..2031-06-13.
+DO $$
+DECLARE
+  a uuid := (SELECT id FROM "Schools" WHERE slug <> 'rls-fixture-school' ORDER BY "createdAt" LIMIT 1);
+  m uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-roller-school');
+  c uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-huvudman-c');
+  d uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-huvudman-d');
+  rec record;
+  row_id uuid;
+  a_year uuid;
+  a_subj uuid;
+  a_grp uuid;
+  m_year uuid;
+  m_subj uuid;
+  m_grp uuid;
+  m_teacher uuid;
+  hall uuid;
+  local_hall uuid;
+  m_admin uuid;
+  a_admin uuid;
+BEGIN
+  IF EXISTS (SELECT 1 FROM "Users" WHERE "authId" = 'fe000000-0000-4000-8000-000000002750') THEN
+    RETURN;
+  END IF;
+  IF a IS NULL OR m IS NULL OR c IS NULL OR d IS NULL
+     OR NOT EXISTS (SELECT 1 FROM "HuvudmanSchools" WHERE "schoolId" = m) THEN
+    RAISE EXCEPTION 'delade: the huvudman''s fixtures must exist first';
+  END IF;
+
+  FOR rec IN
+    SELECT * FROM (VALUES
+      ('fe000000-0000-4000-8000-000000002750'::uuid, a, 'TEACHER'::"UserRole", true,  timestamptz '2026-01-01', 'delade-t-a'),
+      ('fe000000-0000-4000-8000-000000002750'::uuid, m, 'TEACHER',             true,  timestamptz '2026-02-01', 'delade-t-m'),
+      ('fe000000-0000-4000-8000-000000002750'::uuid, c, 'TEACHER',             true,  timestamptz '2026-03-01', 'delade-t-c'),
+      ('fe000000-0000-4000-8000-000000002751'::uuid, a, 'TEACHER',             true,  timestamptz '2026-01-01', 'delade-u-a'),
+      ('fe000000-0000-4000-8000-000000002751'::uuid, d, 'TEACHER',             true,  timestamptz '2026-02-01', 'delade-u-d'),
+      ('fe000000-0000-4000-8000-000000002752'::uuid, a, 'TEACHER',             true,  timestamptz '2026-01-01', 'delade-v-a'),
+      ('fe000000-0000-4000-8000-000000002752'::uuid, m, 'GUARDIAN',            true,  timestamptz '2026-02-01', 'delade-v-m'),
+      ('fe000000-0000-4000-8000-000000002753'::uuid, a, 'TEACHER',             true,  timestamptz '2026-01-01', 'delade-w-a'),
+      ('fe000000-0000-4000-8000-000000002753'::uuid, m, 'TEACHER',             false, timestamptz '2026-02-01', 'delade-w-m'),
+      ('fe000000-0000-4000-8000-000000002754'::uuid, a, 'TEACHER',             true,  timestamptz '2026-01-01', 'delade-y-a'),
+      ('fe000000-0000-4000-8000-000000002754'::uuid, m, 'TEACHER',             true,  timestamptz '2026-02-01', 'delade-y-m')
+    ) v(auth_id, school, role, active, created, label)
+  LOOP
+    row_id := gen_random_uuid();
+    PERFORM set_config('app.login_join', row_id::text, true);
+    INSERT INTO "Users" (id, "schoolId", email, "firstName", "lastName", role, "authId",
+                         "isActive", "invitedAt", "createdAt", "updatedAt")
+    VALUES (row_id, rec.school, rec.label || '@example.invalid', 'Delade', rec.label, rec.role,
+            rec.auth_id, true, rec.created, rec.created, now());
+    IF NOT rec.active THEN
+      UPDATE "Users" SET "isActive" = false WHERE id = row_id;
+    END IF;
+  END LOOP;
+  PERFORM set_config('app.login_join', '', true);
+
+  SELECT id INTO a_year FROM "AcademicYears" WHERE "schoolId" = a ORDER BY "startDate" LIMIT 1;
+  -- A subject of its own, so that the post below is the only one of its kind.
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (a, 'Delade ämne', 'RLSD', now()) RETURNING id INTO a_subj;
+  SELECT id INTO a_grp FROM "StudentGroups" WHERE "schoolId" = a AND "academicYearId" = a_year ORDER BY name LIMIT 1;
+  SELECT id INTO m_year FROM "AcademicYears" WHERE "schoolId" = m AND name = 'Roller 2030/31';
+  SELECT id INTO m_subj FROM "Subjects" WHERE "schoolId" = m AND code = 'RLSR';
+  SELECT id INTO m_grp FROM "StudentGroups" WHERE "schoolId" = m AND name = 'Roller 7A';
+  SELECT id INTO m_teacher FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000111';
+  IF a_year IS NULL OR a_subj IS NULL OR a_grp IS NULL OR m_year IS NULL OR m_subj IS NULL OR m_grp IS NULL OR m_teacher IS NULL THEN
+    RAISE EXCEPTION 'delade: school A''s or the roller school''s year, subject, group or teacher is missing';
+  END IF;
+
+  -- A plans T: a timplanspost and a lesson.
+  INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "lessonsPerWeek", "updatedAt")
+  SELECT a, a_year, a_subj, a_grp, u.id, 1, now() FROM "Users" u WHERE u."authId" = 'fe000000-0000-4000-8000-000000002750' AND u."schoolId" = a;
+  INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+  SELECT a, a_year, a_subj, a_grp, u.id, 1, '08:00', '09:00', now() FROM "Users" u WHERE u."authId" = 'fe000000-0000-4000-8000-000000002750' AND u."schoolId" = a;
+
+  -- A plans U, V and W too.
+  INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+  SELECT a, a_year, a_subj, a_grp, u.id, v.dow, '14:00', '15:00', now()
+    FROM (VALUES ('fe000000-0000-4000-8000-000000002751'::uuid, 4), ('fe000000-0000-4000-8000-000000002752'::uuid, 3),
+                 ('fe000000-0000-4000-8000-000000002753'::uuid, 2)) v(auth_id, dow)
+    JOIN "Users" u ON u."authId" = v.auth_id AND u."schoolId" = a;
+
+  -- U's lesson at D, in a year of D's own.
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (d, 'Delade D 2030/31', '2030-08-15', '2031-06-15', true, now()) RETURNING id INTO row_id;
+  WITH s AS (INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (d, 'Delade D ämne', 'RLSDD', now()) RETURNING id),
+       g AS (INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+             VALUES (d, row_id, 'Delade D 7A', 7, now()) RETURNING id)
+  INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+  SELECT d, row_id, s.id, g.id, u.id, 2, '12:00', '13:00', now()
+    FROM s, g, "Users" u WHERE u."authId" = 'fe000000-0000-4000-8000-000000002751' AND u."schoolId" = d;
+
+  -- M's lessons of T, of Y, of W (deactivated) and on V's guardian row.
+  INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "coTeacherId",
+                               "dayOfWeek", "startTime", "endTime", recurrence, "startDate", "endDate", "isParked", "updatedAt")
+  SELECT m, m_year, m_subj, m_grp, CASE WHEN v.co THEN m_teacher ELSE u.id END, CASE WHEN v.co THEN u.id END,
+         v.dow, v.st, v.en, v.rec::"LessonRecurrence", v.sd, v.ed, v.parked, now()
+    FROM (VALUES
+      ('fe000000-0000-4000-8000-000000002750'::uuid, 2, time '10:00', time '11:00', 'ALL_WEEKS', NULL::date, NULL::date, false, false),
+      ('fe000000-0000-4000-8000-000000002750'::uuid, 4, time '13:00', time '14:00', 'ODD_WEEKS', date '2030-09-02', date '2030-12-20', false, false),
+      ('fe000000-0000-4000-8000-000000002750'::uuid, 3, time '09:00', time '10:00', 'ALL_WEEKS', NULL, NULL, true, false),
+      ('fe000000-0000-4000-8000-000000002750'::uuid, 5, time '08:00', time '09:00', 'ALL_WEEKS', NULL, NULL, false, true),
+      ('fe000000-0000-4000-8000-000000002754'::uuid, 1, time '09:00', time '10:00', 'ALL_WEEKS', NULL, NULL, false, false),
+      ('fe000000-0000-4000-8000-000000002753'::uuid, 1, time '11:00', time '12:00', 'ALL_WEEKS', NULL, NULL, false, false),
+      ('fe000000-0000-4000-8000-000000002752'::uuid, 1, time '13:00', time '14:00', 'ALL_WEEKS', NULL, NULL, false, false)
+    ) v(auth_id, dow, st, en, rec, sd, ed, parked, co)
+    JOIN "Users" u ON u."authId" = v.auth_id AND u."schoolId" = m;
+
+  -- Restid A–M, set by M.
+  INSERT INTO "SchoolTravelTimes" ("schoolAId", "schoolBId", minutes, "setBySchoolId")
+  VALUES (least(a, m), greatest(a, m), 15, m);
+
+  -- Salslån: M's hall for A.
+  SELECT id INTO m_admin FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000105';
+  SELECT id INTO a_admin FROM "Users" WHERE "schoolId" = a AND role = 'SCHOOL_ADMIN' AND "isActive" ORDER BY "createdAt", id LIMIT 1;
+  INSERT INTO "Rooms" ("schoolId", name, capacity, "updatedAt") VALUES (m, 'Roller hall', 60, now()) RETURNING id INTO hall;
+  INSERT INTO "Rooms" ("schoolId", name, capacity, "updatedAt") VALUES (a, 'Roller hall (lånad)', 60, now()) RETURNING id INTO local_hall;
+  INSERT INTO "RoomLoans" ("ownerSchoolId", "roomId", "borrowerSchoolId", "localRoomId", "dayOfWeek", "startTime", "endTime",
+                           "startDate", "endDate", status, note, "requestedById", "decidedById", "decidedAt")
+  VALUES (m, hall, a, local_hall, 2, '10:00', '11:30', '2030-08-19', '2031-06-13', 'APPROVED', 'Idrott åk 7', a_admin, m_admin, now()),
+         (m, hall, a, local_hall, 3, '13:00', '14:00', '2030-08-19', '2031-06-13', 'PENDING', NULL, a_admin, NULL, NULL);
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.

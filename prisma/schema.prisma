@@ -216,6 +216,13 @@ model School {
   schoolUnits             SchoolUnit[]
   sites                   Site[]
   siteTravelTimes         SiteTravelTime[]
+  /// Delade lokaler och lärare (20261217090000): the minutes to another
+  /// school of the huvudman, as either end of the pair.
+  travelTimesAsA          SchoolTravelTime[] @relation("SchoolTravelA")
+  travelTimesAsB          SchoolTravelTime[] @relation("SchoolTravelB")
+  /// Loans of this school's rooms, and of other schools' rooms to it.
+  roomLoansLent           RoomLoan[]         @relation("RoomLoanOwner")
+  roomLoansBorrowed       RoomLoan[]         @relation("RoomLoanBorrower")
   studentGroups           StudentGroup[]
   teachingRequirements    TeachingRequirement[]
   teachingRequirementShares TeachingRequirementShare[]
@@ -401,6 +408,9 @@ model User {
   notifications       Notification[]    @relation("NotificationRecipient")
   roomBookings        RoomBooking[]     @relation("RoomBookingBooker")
   decidedRoomBookings RoomBooking[]     @relation("RoomBookingDecider")
+  /// Salslån (20261217090000): loans this planner asked for, and decided.
+  requestedRoomLoans  RoomLoan[]        @relation("RoomLoanRequester")
+  decidedRoomLoans    RoomLoan[]        @relation("RoomLoanDecider")
   /// Membership of the substitute pool (20261012110000): at most one row, a
   /// list for the composite key's sake as workRules. readActiveStaffIds
   /// filters on it.
@@ -527,6 +537,10 @@ model Room {
   availabilityConstraints AvailabilityConstraint[]
   roomBookings            RoomBooking[]
   preferenceRooms         RoomPreferenceRoom[]
+  /// Salslån (20261217090000): this room lent to another school of the
+  /// huvudman, and the loans this room stands for at the borrower.
+  loansAsOwnerRoom        RoomLoan[]               @relation("RoomLoanRoom")
+  loansAsLocalRoom        RoomLoan[]               @relation("RoomLoanLocalRoom")
 
   @@unique([schoolId, name])
   /// The target a tenant-scoped composite foreign key needs; see User.
@@ -585,6 +599,92 @@ model SiteTravelTime {
   @@index([schoolId])
   @@index([siteBId, schoolId])
   @@map("SiteTravelTimes")
+}
+
+/// The minutes between two schools of one huvudman (Delade lokaler och
+/// lärare, 20261217090000): one figure per pair, the same both ways, stored
+/// once with the lower id first (CHECK "schoolAId" < "schoolBId"), 0..240.
+/// Either school's planner writes it, signed with its own school
+/// (setBySchoolId); both schools' staff read it, and neither while the two
+/// have different huvudmän. The pair is the schools, not their sites: a
+/// school with sites far apart states the longest walk.
+model SchoolTravelTime {
+  schoolAId     String   @db.Uuid
+  schoolBId     String   @db.Uuid
+  minutes       Int
+  /// The school whose planner wrote the figure last (CHECK: one of the two).
+  setBySchoolId String   @db.Uuid
+  createdAt     DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  schoolA School @relation("SchoolTravelA", fields: [schoolAId], references: [id], onDelete: Cascade)
+  schoolB School @relation("SchoolTravelB", fields: [schoolBId], references: [id], onDelete: Cascade)
+
+  @@id([schoolAId, schoolBId])
+  @@index([schoolBId])
+  @@map("SchoolTravelTimes")
+}
+
+enum RoomLoanStatus {
+  /// The borrower asked; the owner has not answered.
+  PENDING
+  /// The owner said yes: the room is the borrower's in the window.
+  APPROVED
+  /// The owner said no.
+  DECLINED
+  /// The borrower withdrew it, pending or approved.
+  WITHDRAWN
+  /// The owner ended an approved loan.
+  REVOKED
+}
+
+/// A loan of a room between two schools of one huvudman (Salslån, migration
+/// 20261217090000): one weekly window (dayOfWeek, startTime..endTime) between
+/// two dates at most 400 days apart. The borrower holds the room by a room of
+/// its own (localRoomId), since its lessons need a room of their own school;
+/// two EXCLUDE constraints keep one local room per room and one room per
+/// local room, and a third keeps two APPROVED loans of a room from sharing a
+/// minute on a date both run — none of which Prisma can state.
+///
+/// Written only by app.room_loan_request / _decide / _withdraw / _revoke,
+/// each for one side; both schools' staff read the loans between them.
+model RoomLoan {
+  id               String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ownerSchoolId    String         @db.Uuid
+  roomId           String         @db.Uuid
+  borrowerSchoolId String         @db.Uuid
+  localRoomId      String         @db.Uuid
+  // ISO weekday: 1 = Monday ... 7 = Sunday.
+  dayOfWeek        Int
+  startTime        DateTime       @db.Time(0)
+  endTime          DateTime       @db.Time(0)
+  startDate        DateTime       @db.Date
+  endDate          DateTime       @db.Date
+  status           RoomLoanStatus @default(PENDING)
+  /// The borrower's note to the owner: 1..300 characters, trimmed, or null.
+  note             String?
+  /// The borrower's planner who asked (ON DELETE SET NULL ("requestedById")).
+  requestedById    String?        @db.Uuid
+  /// The owner's planner who approved or declined (SET NULL ("decidedById")).
+  decidedById      String?        @db.Uuid
+  decidedAt        DateTime?      @db.Timestamptz(6)
+  /// When it was withdrawn or revoked.
+  endedAt          DateTime?      @db.Timestamptz(6)
+  createdAt        DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime       @default(now()) @updatedAt @db.Timestamptz(6)
+
+  ownerSchool    School @relation("RoomLoanOwner", fields: [ownerSchoolId], references: [id], onDelete: Cascade)
+  borrowerSchool School @relation("RoomLoanBorrower", fields: [borrowerSchoolId], references: [id], onDelete: Cascade)
+  room           Room   @relation("RoomLoanRoom", fields: [roomId, ownerSchoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  localRoom      Room   @relation("RoomLoanLocalRoom", fields: [localRoomId, borrowerSchoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  requestedBy    User?  @relation("RoomLoanRequester", fields: [requestedById, borrowerSchoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
+  decidedBy      User?  @relation("RoomLoanDecider", fields: [decidedById, ownerSchoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([ownerSchoolId, status])
+  @@index([borrowerSchoolId, status])
+  @@index([roomId])
+  @@index([localRoomId])
+  @@map("RoomLoans")
 }
 
 model Subject {
