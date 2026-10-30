@@ -53,9 +53,13 @@ SvA7's pupils of 7A there. The rule is the one every reader asks
 lesson, a pupil of a replacing group that is on the lesson, and a member of
 the lesson's own teaching group (not a half) stays. The field is absent when
 nobody is excluded, so a school with no replacing group gets the payload it
-always got. v1 lists a group's home-class members only (`groupType: Klass`),
-as it always has. A teaching group's members, SvA7's among them, are in
-v2.0's `/groups`.
+always got. Only active pupils are excluded, as only active members are
+listed. v1 has one read scope (`ss12000.v1`), and it reads `/groups` and
+its memberships as well, so every caller of v1's activities and events may
+read group membership, and every one gets `excludedStudentIds` (contrast
+v2.0's `groups.read` below). v1 lists a group's home-class members only
+(`groupType: Klass`), as it always has. A teaching group's members, SvA7's
+among them, are in v2.0's `/groups`.
 
 ### `/duties`: the one feed in the standard's own shape
 
@@ -305,11 +309,19 @@ huvudman's schools is two Persons, each with its school's id.
   memberships, a pupil's enrolments and responsibles) and an emitted id
   changing under the object. A CalendarEvent's `studentExceptions` moves too
   when a replacing group may change who of its groups does not participate
-  (migration `20261215090000`): a membership in or out, a replacement set,
-  moved or ended, a group's kind, a replacing group removed, a pupil's class
-  move or relinked id. A batch may move an event that did not change for any
-  pupil in it, but it never misses one that did. A phone number, an
-  invitation or a nedsättning moves nothing. An object unchanged since the migration is dated by its own
+  (migration `20261215090000`): a membership in or out; a replacement set,
+  moved or ended; a group's kind or läsår changed (a replacing group takes
+  pupils off lessons of its own läsår only); a replacing group removed; a
+  pupil's class move, relinked id, deactivation, reactivation or removal. A
+  removed pupil's memberships are gone before the version triggers run, so
+  every event of the home class in a subject some group of its läsår
+  replaces moves. A batch, or a removal, may move an event that did not
+  change for any pupil in it; none that did is missed. Because a
+  CalendarEvent's version is one row, a key without `groups.read` (which is
+  sent no `participates: false`, see below) also sees `meta.modified` move
+  when the list it is not sent changes: it learns that something about the
+  lesson's pupils changed, never who or what. A phone number, an invitation
+  or a nedsättning moves nothing. An object unchanged since the migration is dated by its own
   `updatedAt`.
 * **Request bodies.** A lookup's body is plain JSON of at most 1 MB, not
   compressed. A body sent with `Content-Encoding` (gzip, deflate, br) is
@@ -467,7 +479,11 @@ groups whom a replacing group takes off it is `{student, participates: false}`:
 SvA7 replaces Svenska, so each event of 7A's svenska lists 7A's SvA7 pupils as
 not participating (*Ersättande grupper*, by the rule in
 `src/common/replacing-groups.ts` `lessonPupils`). S1 has no exception on
-`Activity`, so the event is where this is said. The `student` filter stays
+`Activity`, so the event is where this is said. **`participates: false` is
+sent only to a key that also holds `groups.read`.** Who of 7A does not take
+7A's svenska is, in practice, who is in SvA7, a group membership; a key with
+`calendarEvents.read` alone is sent each event as it was before replacing
+groups existed (the `participates: true` entries are unchanged). The `student` filter stays
 S1's own ("group.groupMemberships.person.id eller
 studentExceptions.student.id"), and an SvA7 pupil's events therefore include
 7A's svenska, which says they do not participate. The same holds for the
