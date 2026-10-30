@@ -190,6 +190,11 @@ describe('pupilCohortsOf: the rules one at a time', () => {
       minutesBefore: 10,
       minutesAfter: 10,
     });
+    // The widest of each side, whichever group comes first.
+    expect(lockMarginOf(buffers, { groupIds: ['7B', '7A'], subjectId: 'idh' })).toEqual({
+      minutesBefore: 10,
+      minutesAfter: 10,
+    });
     expect(lockMarginOf(buffers, { groupIds: ['7C'], subjectId: 'idh' })).toBeNull();
     expect(lockMarginOf(buffers, { groupIds: ['7A'], subjectId: 'ma' })).toBeNull();
   });

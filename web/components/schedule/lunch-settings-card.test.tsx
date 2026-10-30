@@ -241,6 +241,16 @@ describe("LunchSettingsCard", () => {
     expect(save.mock.calls[1]?.[0]).toMatchObject({ generatorKeepsPupilGapsDown: false });
   });
 
+  it("reads the pupils' håltimmar switch on when the school turned it on", async () => {
+    saved({ generatorKeepsTravelTime: false, generatorKeepsPupilGapsDown: true });
+    render(<LunchSettingsCard />);
+
+    const gaps = await screen.findByRole("switch", { name: "pupilGaps" });
+    await waitFor(() => expect(gaps.getAttribute("aria-checked")).toBe("true"));
+    // Read, not changed: nothing to save.
+    expect((screen.getByRole("button", { name: "save" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("leaves the pupils' håltimmar switch out of a save to an API that predates it", async () => {
     saved({ generatorKeepsTravelTime: false });
     const user = userEvent.setup();

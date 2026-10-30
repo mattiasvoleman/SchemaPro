@@ -28,8 +28,19 @@ export interface IdleInputs {
   /** Every active pupil → their home class (the planned year's, for a year not yet activated). */
   studentGroupOf: ReadonlyMap<string, string | null>;
   memberships: readonly GroupMembership[];
-  /** The school's groups: years, kinds and the halves of a split class. */
-  groups: ReadonlyArray<{ id: string; academicYearId: string; kind: StudentGroupKind; gradeLevel: number | null; halfOfId?: string | null }>;
+  /**
+   * The school's groups: years, kinds, the halves of a split class and the
+   * subject a replacing group replaces — the pupil's day findIdleGaps counts
+   * reads all four, as /admin/gaps does.
+   */
+  groups: ReadonlyArray<{
+    id: string;
+    academicYearId: string;
+    kind: StudentGroupKind;
+    gradeLevel: number | null;
+    halfOfId?: string | null;
+    replacesSubjectId?: string | null;
+  }>;
   frameTimes: readonly FrameTime[];
   lunch: LunchSettings | null;
   academicYearId: string;

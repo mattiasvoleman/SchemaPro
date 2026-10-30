@@ -1522,6 +1522,21 @@ describe("the generator's number", () => {
     );
   });
 
+  it("keeps the generator's minimum when the list is asked for longer holes", async () => {
+    // The list at an hour: Nils's half-hour drops out of it, and not out of
+    // the number the generator is held to.
+    state.lessons = [...WEEK, lesson("l11", "g-8b", "t-ola", "r-a12", 3, "10:30", "11:00")];
+    const user = userEvent.setup();
+    render(<GapsPage />);
+
+    await user.click(screen.getByRole("combobox", { name: "gaps.idleMinimum" }));
+    await user.click(screen.getByRole("option", { name: "gaps.durationHoursOnly(1)" }));
+
+    expect(screen.getByTestId("generator-pupil-minutes").textContent).toBe(
+      "gaps.generatorFigure(390|130) gaps.generatorFigureOff",
+    );
+  });
+
   it("reads in Swedish as a sentence with its numbers", async () => {
     const { createTranslator } = await vi.importActual<typeof import("next-intl")>("next-intl");
     const sv = createTranslator({ locale: "sv", messages: svMessages, namespace: "gaps" });
