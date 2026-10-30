@@ -1031,19 +1031,26 @@ export function groupConflictsRefusal(pairs: number): AiEngineConflictAnalysis {
  * is told (AnonymousRequirement.recurrence, AnonymousFixedLesson.recurrence);
  * undefined is every week, and the key is then left out.
  *
- * A LEADER POST CARRIES ITS FOLLOWER'S WEEKS TOO (same-times.ts): the follower
- * in the same subject is written at the leader's times in its own weeks, so
- * the hour is held in both. The two never share a week, so a follower of the
- * other parity — or of every week, in another period — makes the leader's
- * hour every week's: told "odd weeks", the engine would hand the even weeks'
- * hour to another lesson of the halves while the follower sits in it.
+ * A LEADER POST CARRIES THE WHOLE LINK'S WEEKS (same-times.ts), `held` being
+ * every post of both blocks. They all sit at the block's times, each in its
+ * own weeks, and the engine holds a follower's pieces through DIFFERENT
+ * leader posts: its group through the post on that group (or the one sent as
+ * the class), its teacher through whichever post seats them, its room through
+ * the post in its subject. Swapped halves put 7A:1's spring trä, on even
+ * weeks, on the same group as its autumn textil, on odd weeks: told "odd
+ * weeks" for that post, the engine handed 7A:1's even weeks at those times to
+ * hemkunskap while the trä sat there (review of #221, H1), and a follower's
+ * teacher seated on an odd post was held in odd weeks while teaching every
+ * week. So the link keeps a parity only when every post of it has the same
+ * one; anything else is every week, which is what the engine held for every
+ * link before it knew weeks.
  */
 export function alternatingWeeksOf(
   row: { recurrence: LessonRecurrence },
-  mirrored?: { recurrence: LessonRecurrence },
+  held: readonly { recurrence: LessonRecurrence }[] = [],
 ): AlternatingWeeks | undefined {
   if (row.recurrence === 'ALL_WEEKS') return undefined;
-  if (mirrored && mirrored.recurrence !== row.recurrence) return undefined;
+  if (held.some((other) => other.recurrence !== row.recurrence)) return undefined;
   return row.recurrence;
 }
 
@@ -2538,6 +2545,8 @@ export class OptimizationProxyService {
     const mirrors: Mirror[] = [];
     const mirroredIds = new Set<string>();
     const leaderPlans = new Map<string, MirrorPlan>();
+    // A/B-veckor: every post of a sent link, by leader post (alternatingWeeksOf).
+    const linkRowsOf = new Map<string, (typeof rawRequirements)[number][]>();
     let sameTimesRefusal: HttpException | null = null;
     const followerIds = new Set(links.map((link) => link.followerBlockId));
     const rowById = new Map(rawRequirements.map((r) => [r.id, r]));
@@ -2559,7 +2568,11 @@ export class OptimizationProxyService {
       }
       mirrors.push(...judgement.plan.mirrors);
       for (const follower of followers) mirroredIds.add(follower.id);
-      for (const leaderId of judgement.plan.adults.keys()) leaderPlans.set(leaderId, judgement.plan);
+      const linkRows = [...membersOf(link.leaderBlockId), ...followers];
+      for (const leaderId of judgement.plan.adults.keys()) {
+        leaderPlans.set(leaderId, judgement.plan);
+        linkRowsOf.set(leaderId, linkRows);
+      }
     }
 
     /*
@@ -2665,10 +2678,10 @@ export class OptimizationProxyService {
           // Ersättande grupper: who sits it, when not all of the group (above);
           // the whole class, for a half's post that holds its sibling (above).
           ...(pupilKey !== undefined ? { pupilGroupId: anonId(groupAnonMap, pupilKey) } : {}),
-          // A/B-veckor: the weeks the post's times are held in, for the
-          // follower written at them too (alternatingWeeksOf). Sent only on an
+          // A/B-veckor: the weeks the post's times are held in, for every
+          // post of its link too (alternatingWeeksOf). Sent only on an
           // alternating post, so every other entry is what it was.
-          ...((weeks) => (weeks ? { recurrence: weeks } : {}))(alternatingWeeksOf(r, bySubject)),
+          ...((weeks) => (weeks ? { recurrence: weeks } : {}))(alternatingWeeksOf(r, linkRowsOf.get(r.id))),
           teacherId: leadTeacher ? anonId(teacherAnonMap, leadTeacher) : null,
           lessonsPerWeek: remaining,
           // The longest REMAINING length: r.minutesPerLesson for a uniform
