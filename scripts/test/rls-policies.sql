@@ -32428,6 +32428,21 @@ ROLLBACK;
 --   286h  en skola utan ersättande grupp (den primära): en elev som byter
 --         klass och går med i en undervisningsgrupp flyttar ingen händelse,
 --         som före migreringen.
+--   286i  EG SvA6 flyttas från i fjol till i år (granskningens H1): varje
+--         svensklektion vars undantag läsåret ändrar flyttas, i år och fjolårets
+--         EG-0; matematiken, engelskan, SvA och fördjupningen inte.
+--   286j  EG7B blir en undervisningsgrupp (kind): dess egna svensklektioner,
+--         där P3 nu behålls (keptBy), flyttas. P3 är 7B:s hemelev, så fallet
+--         kräver också att hemklassens elever räknas som gruppens.
+--   286k  EG EnS7 slutar ersätta engelska: engelskan (EG-10) flyttas, fast
+--         ingen annan grupp av P1 ersätter engelska (paret ges uttryckligen).
+--   286l  fjolårets EG SvA6 tas bort: fjolårets svenska (EG-0) flyttas,
+--         ingen av årets.
+--   286m  P1 avaktiveras: varje händelse som listade hen flyttas.
+--   286n  P6, som slutat, återaktiveras: 7A:s svenska som nu listar hen flyttas.
+--   286o  P3 tas bort (administratörens Ta bort): 7B:s svenska där P3 inte
+--         deltog flyttas, fast medlemskapen redan är borta när Users trigger
+--         körs; 7A:s egna lektioner inte.
 -- ---------------------------------------------------------------------------
 
 -- 286a
@@ -32688,6 +32703,219 @@ BEGIN
   END IF;
   IF NOT EXISTS (SELECT 1 FROM "Ss12000EntityVersions" WHERE resource = 'Group' AND xid = pg_current_xact_id()) THEN
     RAISE EXCEPTION 'elevlistan 286h: the writes moved no group either: nothing was written';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- 286i
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001500')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-ersattande-school' THEN
+    RAISE EXCEPTION 'elevlistan 286i: expected the replacing school''s administrator';
+  END IF;
+  PERFORM set_config('app.test_rls286_school', school::text, true);
+    UPDATE "StudentGroups" SET "academicYearId" = (SELECT "academicYearId" FROM "StudentGroups" WHERE "schoolId" = school AND name = 'EG7A')
+     WHERE "schoolId" = school AND name = 'EG SvA6';
+END $$;
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', current_setting('app.test_rls286_school'), true);
+DO $$
+DECLARE
+  moved text[] := ARRAY(
+    SELECT c.note FROM "Ss12000EntityVersions" v JOIN "CalendarLessons" c ON c.id = v."entityId"
+     WHERE v.resource = 'CalendarEvent' AND v.xid = pg_current_xact_id() ORDER BY 1);
+BEGIN
+  IF NOT moved @> ARRAY['EG-0', 'EG-1', 'EG-5', 'EG-6', 'EG-7', 'EG-12', 'EG-14', 'EG-15'] THEN
+    RAISE EXCEPTION 'elevlistan 286i: moved % but not every one of %', moved, ARRAY['EG-0', 'EG-1', 'EG-5', 'EG-6', 'EG-7', 'EG-12', 'EG-14', 'EG-15'];
+  END IF;
+  IF moved && ARRAY['EG-2', 'EG-3', 'EG-8', 'EG-9', 'EG-10', 'EG-13'] THEN
+    RAISE EXCEPTION 'elevlistan 286i: moved %, among them one of %', moved, ARRAY['EG-2', 'EG-3', 'EG-8', 'EG-9', 'EG-10', 'EG-13'];
+  END IF;
+END $$;
+ROLLBACK;
+
+-- 286j
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001500')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-ersattande-school' THEN
+    RAISE EXCEPTION 'elevlistan 286j: expected the replacing school''s administrator';
+  END IF;
+  PERFORM set_config('app.test_rls286_school', school::text, true);
+    UPDATE "StudentGroups" SET kind = 'TEACHING_GROUP' WHERE "schoolId" = school AND name = 'EG7B';
+END $$;
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', current_setting('app.test_rls286_school'), true);
+DO $$
+DECLARE
+  moved text[] := ARRAY(
+    SELECT c.note FROM "Ss12000EntityVersions" v JOIN "CalendarLessons" c ON c.id = v."entityId"
+     WHERE v.resource = 'CalendarEvent' AND v.xid = pg_current_xact_id() ORDER BY 1);
+BEGIN
+  IF NOT moved @> ARRAY['EG-6', 'EG-12', 'EG-15'] THEN
+    RAISE EXCEPTION 'elevlistan 286j: moved % but not every one of %', moved, ARRAY['EG-6', 'EG-12', 'EG-15'];
+  END IF;
+  IF moved && ARRAY['EG-1', 'EG-2', 'EG-3', 'EG-8', 'EG-9', 'EG-10', 'EG-13'] THEN
+    RAISE EXCEPTION 'elevlistan 286j: moved %, among them one of %', moved, ARRAY['EG-1', 'EG-2', 'EG-3', 'EG-8', 'EG-9', 'EG-10', 'EG-13'];
+  END IF;
+END $$;
+ROLLBACK;
+
+-- 286k
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001500')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-ersattande-school' THEN
+    RAISE EXCEPTION 'elevlistan 286k: expected the replacing school''s administrator';
+  END IF;
+  PERFORM set_config('app.test_rls286_school', school::text, true);
+    UPDATE "StudentGroups" SET "replacesSubjectId" = NULL WHERE "schoolId" = school AND name = 'EG EnS7';
+END $$;
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', current_setting('app.test_rls286_school'), true);
+DO $$
+DECLARE
+  moved text[] := ARRAY(
+    SELECT c.note FROM "Ss12000EntityVersions" v JOIN "CalendarLessons" c ON c.id = v."entityId"
+     WHERE v.resource = 'CalendarEvent' AND v.xid = pg_current_xact_id() ORDER BY 1);
+BEGIN
+  IF NOT moved @> ARRAY['EG-10'] THEN
+    RAISE EXCEPTION 'elevlistan 286k: moved % but not every one of %', moved, ARRAY['EG-10'];
+  END IF;
+  IF moved && ARRAY['EG-2', 'EG-3', 'EG-8', 'EG-9'] THEN
+    RAISE EXCEPTION 'elevlistan 286k: moved %, among them one of %', moved, ARRAY['EG-2', 'EG-3', 'EG-8', 'EG-9'];
+  END IF;
+END $$;
+ROLLBACK;
+
+-- 286l
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001500')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-ersattande-school' THEN
+    RAISE EXCEPTION 'elevlistan 286l: expected the replacing school''s administrator';
+  END IF;
+  PERFORM set_config('app.test_rls286_school', school::text, true);
+    DELETE FROM "StudentGroups" WHERE "schoolId" = school AND name = 'EG SvA6';
+END $$;
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', current_setting('app.test_rls286_school'), true);
+DO $$
+DECLARE
+  moved text[] := ARRAY(
+    SELECT c.note FROM "Ss12000EntityVersions" v JOIN "CalendarLessons" c ON c.id = v."entityId"
+     WHERE v.resource = 'CalendarEvent' AND v.xid = pg_current_xact_id() ORDER BY 1);
+BEGIN
+  IF NOT moved @> ARRAY['EG-0'] THEN
+    RAISE EXCEPTION 'elevlistan 286l: moved % but not every one of %', moved, ARRAY['EG-0'];
+  END IF;
+  IF moved && ARRAY['EG-1', 'EG-2', 'EG-3', 'EG-4', 'EG-5', 'EG-6', 'EG-7', 'EG-8', 'EG-9', 'EG-10', 'EG-11', 'EG-12', 'EG-13', 'EG-14'] THEN
+    RAISE EXCEPTION 'elevlistan 286l: moved %, among them one of %', moved, ARRAY['EG-1', 'EG-2', 'EG-3', 'EG-4', 'EG-5', 'EG-6', 'EG-7', 'EG-8', 'EG-9', 'EG-10', 'EG-11', 'EG-12', 'EG-13', 'EG-14'];
+  END IF;
+END $$;
+ROLLBACK;
+
+-- 286m
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001500')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-ersattande-school' THEN
+    RAISE EXCEPTION 'elevlistan 286m: expected the replacing school''s administrator';
+  END IF;
+  PERFORM set_config('app.test_rls286_school', school::text, true);
+    UPDATE "Users" SET "isActive" = false WHERE "authId" = '00000000-0000-4000-8000-000000001502';
+END $$;
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', current_setting('app.test_rls286_school'), true);
+DO $$
+DECLARE
+  moved text[] := ARRAY(
+    SELECT c.note FROM "Ss12000EntityVersions" v JOIN "CalendarLessons" c ON c.id = v."entityId"
+     WHERE v.resource = 'CalendarEvent' AND v.xid = pg_current_xact_id() ORDER BY 1);
+BEGIN
+  IF NOT moved @> ARRAY['EG-1', 'EG-6', 'EG-7', 'EG-10', 'EG-12', 'EG-14'] THEN
+    RAISE EXCEPTION 'elevlistan 286m: moved % but not every one of %', moved, ARRAY['EG-1', 'EG-6', 'EG-7', 'EG-10', 'EG-12', 'EG-14'];
+  END IF;
+  IF moved && ARRAY['EG-2', 'EG-3', 'EG-8', 'EG-9'] THEN
+    RAISE EXCEPTION 'elevlistan 286m: moved %, among them one of %', moved, ARRAY['EG-2', 'EG-3', 'EG-8', 'EG-9'];
+  END IF;
+END $$;
+ROLLBACK;
+
+-- 286n
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001500')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-ersattande-school' THEN
+    RAISE EXCEPTION 'elevlistan 286n: expected the replacing school''s administrator';
+  END IF;
+  PERFORM set_config('app.test_rls286_school', school::text, true);
+    UPDATE "Users" SET "isActive" = true WHERE "schoolId" = school AND email = 'eg-p6@example.invalid';
+    IF NOT FOUND THEN RAISE EXCEPTION 'elevlistan 286n: the fixtures have no P6'; END IF;
+END $$;
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', current_setting('app.test_rls286_school'), true);
+DO $$
+DECLARE
+  moved text[] := ARRAY(
+    SELECT c.note FROM "Ss12000EntityVersions" v JOIN "CalendarLessons" c ON c.id = v."entityId"
+     WHERE v.resource = 'CalendarEvent' AND v.xid = pg_current_xact_id() ORDER BY 1);
+BEGIN
+  IF NOT moved @> ARRAY['EG-1', 'EG-5', 'EG-6', 'EG-14'] THEN
+    RAISE EXCEPTION 'elevlistan 286n: moved % but not every one of %', moved, ARRAY['EG-1', 'EG-5', 'EG-6', 'EG-14'];
+  END IF;
+  IF moved && ARRAY['EG-2', 'EG-3', 'EG-7', 'EG-8', 'EG-9', 'EG-10', 'EG-12', 'EG-13'] THEN
+    RAISE EXCEPTION 'elevlistan 286n: moved %, among them one of %', moved, ARRAY['EG-2', 'EG-3', 'EG-7', 'EG-8', 'EG-9', 'EG-10', 'EG-12', 'EG-13'];
+  END IF;
+END $$;
+ROLLBACK;
+
+-- 286o
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001500')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-ersattande-school' THEN
+    RAISE EXCEPTION 'elevlistan 286o: expected the replacing school''s administrator';
+  END IF;
+  PERFORM set_config('app.test_rls286_school', school::text, true);
+    DELETE FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000001504';
+    IF NOT FOUND THEN RAISE EXCEPTION 'elevlistan 286o: P3 was not removed'; END IF;
+END $$;
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', current_setting('app.test_rls286_school'), true);
+DO $$
+DECLARE
+  moved text[] := ARRAY(
+    SELECT c.note FROM "Ss12000EntityVersions" v JOIN "CalendarLessons" c ON c.id = v."entityId"
+     WHERE v.resource = 'CalendarEvent' AND v.xid = pg_current_xact_id() ORDER BY 1);
+BEGIN
+  IF NOT moved @> ARRAY['EG-6', 'EG-12', 'EG-15'] THEN
+    RAISE EXCEPTION 'elevlistan 286o: moved % but not every one of %', moved, ARRAY['EG-6', 'EG-12', 'EG-15'];
+  END IF;
+  IF moved && ARRAY['EG-1', 'EG-2', 'EG-3', 'EG-5', 'EG-8', 'EG-9', 'EG-10', 'EG-13'] THEN
+    RAISE EXCEPTION 'elevlistan 286o: moved %, among them one of %', moved, ARRAY['EG-1', 'EG-2', 'EG-3', 'EG-5', 'EG-8', 'EG-9', 'EG-10', 'EG-13'];
   END IF;
 END $$;
 ROLLBACK;

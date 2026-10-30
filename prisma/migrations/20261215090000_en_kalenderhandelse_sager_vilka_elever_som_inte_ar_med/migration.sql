@@ -24,25 +24,38 @@
 --                         group, and, when the row's group itself replaces a
 --                         subject, every one of that subject that carries a
 --                         group of theirs (home class, teaching groups).
---   StudentGroups         replacesSubjectId set, moved or ended, or kind
+--   StudentGroups         replacesSubjectId set, moved or ended, kind
 --                         changed (which decides whether a teaching group's
---                         own lessons keep its members on, keptByOf): the
---                         same, for the group's members, over the old and
---                         the new subject. A replacing group removed: every
+--                         own lessons keep its members on, keptByOf), or
+--                         academicYearId changed (THE RULE compares a
+--                         replacing group's läsår with the lesson's, and the
+--                         group dialog can move a group between läsår): the
+--                         same, for the group's members (teaching and home),
+--                         over the old and the new (subject, läsår). A class
+--                         whose läsår changes is covered by the same loop: its
+--                         own lessons are then judged in its new läsår. A
+--                         replacing group removed: every
 --                         event of its subject in its läsår (its members
 --                         went first, by the cascade, so who it took off is
 --                         no longer known; a removal is rare).
 --   Users                 a class move (studentGroupId): the same, for the
 --                         class left and the class joined; a relinked
 --                         ss12000Id (A5.3, "everything that names the person
---                         moves"): every event that may name them as not
---                         participating, beside those naming them as
---                         participating.
+--                         moves"), a deactivation and a reactivation (the
+--                         gateway emits active pupils only, so the pupil
+--                         leaves or rejoins every exception): every event
+--                         that may name them as not participating.
 --
--- Deactivation is unchanged: a deactivated pupil leaves every exception, as
--- one named on a lesson always has, and the Person's tombstone says so
--- (20261014130000). CalendarLessons, CalendarLessonGroups and
--- CalendarLessonStudents already move their event on any change.
+--                         A pupil's row deleted (an administrator's
+--                         removal): its memberships go first, by the foreign
+--                         key's cascade, and their trigger moves the teaching
+--                         groups' events; which groups replaced what for the
+--                         pupil is then unknown, so every event of the home
+--                         class in a subject some group of its läsår
+--                         replaces moves.
+--
+-- CalendarLessons, CalendarLessonGroups and CalendarLessonStudents already
+-- move their event on any change.
 --
 -- A statement's pupils are read together (a membership import, an
 -- activation): over a batch an event may move that changed for none of
@@ -50,16 +63,41 @@
 -- school with no replacing group reads one empty list and moves nothing more
 -- than before.
 --
+-- ## Locks
+--
+-- A membership written in a school with replacing groups now moves up to
+-- every event of the subject in the läsår: a version row each, held to
+-- commit. Two things keep that from deadlocking with other writers of the
+-- same events (a teacher cancelling or covering lessons):
+--
+--   - app.ss12000_bump, every trigger's helper, now upserts in entityId
+--     order, so two single statements moving overlapping events always lock
+--     them in the same order. Same rows, same values; only the order is new.
+--   - app.ss12000_bump_replaced takes its rows ALL OR NONE: each attempt
+--     runs in a subtransaction under lock_timeout 50 ms, and a row held
+--     elsewhere rolls the attempt back, releasing every row it took, then
+--     waits (20 ms doubling to 500 ms) and tries again. It never waits while
+--     holding a version row another transaction needs next, which is what a
+--     teacher's transaction editing one lesson and then the rest needed to
+--     deadlock with it (review of #226, M1). After 10 s of contention it
+--     waits as every other writer does: a transaction that holds an event
+--     for longer than that and then reaches for another the membership
+--     write holds can still deadlock, as two such writers could on main.
+--
+-- What remains is waiting, not failing: a lesson write whose event a
+-- running SS12000 sync or membership write holds waits for that commit.
+--
 -- ## How
 --
 -- One new helper, app.ss12000_bump_replaced, SECURITY DEFINER with a locked
 -- search_path like every bump helper, and executable by no API role
 -- (SS12000_PROVIDER_HELPERS_REACH below; RLS suite sections 285–286). The
--- three trigger functions are replaced in place: CREATE OR REPLACE keeps
--- their triggers and their (revoked) privileges and takes no lock on any
--- table, so no NOWAIT loop is needed. Each body is the one it replaces with
--- the lines above added; the guard below stops the migration, changing
--- nothing, if any of the three is not the body 20261014130000/140000 wrote.
+-- three trigger functions and app.ss12000_bump are replaced in place: CREATE
+-- OR REPLACE keeps their triggers and their (revoked) privileges and takes
+-- no lock on any table, so no NOWAIT loop is needed. Each body is the one it
+-- replaces with the lines above added; the guard below stops the migration,
+-- changing nothing, if any of the four is not the body
+-- 20261014130000/140000 (and 20261104090000 for app.ss12000_bump) wrote.
 --
 -- No table, column, row, policy or grant on a table changes.
 
@@ -69,12 +107,43 @@ BEGIN
   SELECT string_agg(f.name, ', ' ORDER BY f.name) INTO bad
     FROM (VALUES ('ss12000_v_users', '76d25707cfb54ccb33826b7aa2532b14'),
                  ('ss12000_v_group_members', '29f18a20dcaf07e2322364b5134d0163'),
-                 ('ss12000_v_groups', 'b5e5bdcc3b014044e75125edf9dd9ea8')) AS f(name, md5)
+                 ('ss12000_v_groups', 'b5e5bdcc3b014044e75125edf9dd9ea8'),
+                 ('ss12000_bump', '0276bf99eaaf1e4ec8dc5b73208de49c')) AS f(name, md5)
    WHERE NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
                       WHERE ns.nspname = 'app' AND p.proname = f.name AND md5(p.prosrc) = f.md5);
   IF bad IS NOT NULL THEN
     RAISE EXCEPTION 'SS12000_REPLACED_TRIGGERS_MOVED: % is not the body this migration replaces; nothing is changed', bad;
   END IF;
+END
+$$;
+
+-- ---------------------------------------------------------------------------
+-- app.ss12000_bump: 20261104090000's body, upserting in entityId order.
+-- ---------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION app.ss12000_bump(p_school uuid, p_resource text, p_ids uuid[]) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+DECLARE
+  ids uuid[] := p_ids;
+BEGIN
+  IF p_school IS NULL OR p_ids IS NULL OR cardinality(p_ids) = 0
+     OR NOT EXISTS (SELECT 1 FROM "Schools" s WHERE s."id" = p_school) THEN
+    RETURN;
+  END IF;
+  IF p_resource = 'Duty' THEN
+    ids := ids || ARRAY(
+      SELECT i FROM "TeacherEmployments" e, unnest(app.ss12000_split_duty_ids(e."id")) i
+       WHERE e."id" = ANY (p_ids) AND e."schoolId" = p_school);
+  END IF;
+  -- In entityId order: two statements moving overlapping entities lock their
+  -- version rows in the same order (20261215090000).
+  INSERT INTO "Ss12000EntityVersions" AS v ("schoolId", "resource", "entityId", "createdAt", "modifiedAt", "xid")
+  SELECT p_school, p_resource, d.id, now(), now(), pg_current_xact_id()
+    FROM (SELECT DISTINCT x AS id FROM unnest(ids) x WHERE x IS NOT NULL) d
+   ORDER BY d.id
+  ON CONFLICT ("schoolId", "resource", "entityId") DO UPDATE
+     SET "modifiedAt" = EXCLUDED."modifiedAt", "xid" = EXCLUDED."xid"
+   WHERE v."xid" IS DISTINCT FROM EXCLUDED."xid";
 END
 $$;
 
@@ -103,6 +172,10 @@ DECLARE
   years uuid[];
   changed_subjects uuid[];
   changed_years uuid[];
+  lessons uuid[];
+  previous text;
+  pause numeric := 0.02;
+  waited numeric := 0;
 BEGIN
   IF p_school IS NULL THEN
     RETURN;
@@ -132,8 +205,8 @@ BEGIN
     SELECT x.s, x.y FROM unnest(coalesce(p_subjects, '{}'::uuid[]), coalesce(p_years, '{}'::uuid[])) AS x(s, y)
      WHERE x.s IS NOT NULL AND x.y IS NOT NULL
   ) pair;
-  PERFORM app.ss12000_bump_lessons(p_school, ARRAY(
-    SELECT c."id" FROM unnest(subjects, years) AS rp(s, y)
+  lessons := ARRAY(
+    SELECT DISTINCT c."id" FROM unnest(subjects, years) AS rp(s, y)
       JOIN "CalendarLessons" c ON c."schoolId" = p_school AND c."subjectId" = rp.s
       JOIN "StudentGroups" own ON own."id" = c."studentGroupId" AND own."academicYearId" = rp.y
      WHERE (c."studentGroupId" = ANY (theirs)
@@ -144,7 +217,30 @@ BEGIN
             OR EXISTS (SELECT 1 FROM "CalendarLessonGroups" cg
                         WHERE cg."calendarLessonId" = c."id" AND cg."studentGroupId" = ANY (p_groups))
             OR EXISTS (SELECT 1 FROM unnest(changed_subjects, changed_years) AS cp(s, y)
-                        WHERE cp.s = c."subjectId" AND cp.y = own."academicYearId"))));
+                        WHERE cp.s = c."subjectId" AND cp.y = own."academicYearId"))
+     ORDER BY 1);
+  IF cardinality(lessons) = 0 THEN
+    RETURN;
+  END IF;
+  -- All or none (see "Locks" above): an attempt that meets a version row
+  -- held elsewhere rolls back with its subtransaction, releasing every row it
+  -- took, and tries again; past 10 s of waiting, it waits as any writer does.
+  LOOP
+    BEGIN
+      previous := current_setting('lock_timeout');
+      PERFORM set_config('lock_timeout', '50ms', true);
+      PERFORM app.ss12000_bump_lessons(p_school, lessons);
+      PERFORM set_config('lock_timeout', previous, true);
+      RETURN;
+    EXCEPTION WHEN lock_not_available THEN
+      NULL;
+    END;
+    EXIT WHEN waited >= 10;
+    PERFORM pg_sleep(pause);
+    waited := waited + pause;
+    pause := least(pause * 2, 0.5);
+  END LOOP;
+  PERFORM app.ss12000_bump_lessons(p_school, lessons);
 END
 $$;
 
@@ -201,18 +297,21 @@ BEGIN
     LOOP
       PERFORM app.ss12000_bump_activities(r.s, r.ids, NULL, NULL, false);
     END LOOP;
-    -- Ersättande grupper: a replacement set, moved or ended, or a kind that
+    -- Ersättande grupper: a replacement set, moved or ended, a kind that
     -- decides whether a group's own lessons keep its members on (keptByOf),
-    -- changes which of its members' events list them as not participating.
+    -- or a läsår (THE RULE compares the replacing group's with the lesson's)
+    -- changes which of its members' events list them as not participating:
+    -- over the old (subject, läsår) and the new.
     FOR r IN
-      SELECT n."schoolId" s, n."id" g, n."academicYearId" y, o."replacesSubjectId" was, n."replacesSubjectId" now
+      SELECT n."schoolId" s, n."id" g, o."academicYearId" was_y, n."academicYearId" y,
+             o."replacesSubjectId" was, n."replacesSubjectId" now
         FROM n JOIN o ON o."id" = n."id"
-       WHERE (n."replacesSubjectId", n."kind") IS DISTINCT FROM (o."replacesSubjectId", o."kind")
+       WHERE (n."replacesSubjectId", n."kind", n."academicYearId") IS DISTINCT FROM (o."replacesSubjectId", o."kind", o."academicYearId")
     LOOP
       PERFORM app.ss12000_bump_replaced(r.s,
         ARRAY(SELECT m."studentId" FROM "StudentGroupMembers" m WHERE m."studentGroupId" = r.g
               UNION SELECT u."id" FROM "Users" u WHERE u."studentGroupId" = r.g),
-        ARRAY[r.g], ARRAY[r.was, r.now], ARRAY[r.y, r.y]);
+        ARRAY[r.g], ARRAY[r.was, r.now], ARRAY[r.was_y, r.y]);
     END LOOP;
     FOR r IN
       SELECT n."schoolId" s, array_agg(coalesce(o."ss12000Id", o."id")) old_ids, array_agg(coalesce(n."ss12000Id", n."id")) new_ids
@@ -251,7 +350,7 @@ $$;
 
 CREATE OR REPLACE FUNCTION app.ss12000_v_users() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
-DECLARE r record;
+DECLARE r record; subjects uuid[]; years uuid[];
 BEGIN
   IF TG_OP = 'INSERT' THEN
     FOR r IN SELECT n."schoolId" s, array_agg(n."id") ids FROM n WHERE n."isActive" GROUP BY 1 LOOP
@@ -341,9 +440,36 @@ BEGIN
     LOOP
       PERFORM app.ss12000_bump_replaced(r.s, r.ids, r.moved);
     END LOOP;
+    -- Deactivated or reactivated: the gateway emits active pupils only, so
+    -- the pupil leaves or rejoins every exception that names them.
+    FOR r IN
+      SELECT n."schoolId" s, array_agg(n."id") ids FROM n JOIN o ON o."id" = n."id"
+       WHERE o."isActive" IS DISTINCT FROM n."isActive"
+       GROUP BY 1
+    LOOP
+      PERFORM app.ss12000_bump_replaced(r.s, r.ids, NULL);
+    END LOOP;
   ELSE
     FOR r IN SELECT o."schoolId" s, array_agg(coalesce(o."ss12000Id", o."id")) ids FROM o WHERE o."isActive" GROUP BY 1 LOOP
       PERFORM app.ss12000_bury(r.s, 'Person', r.ids);
+    END LOOP;
+    -- A pupil's row deleted: the memberships went first (the cascade, whose
+    -- own trigger moved the teaching groups' events), so which groups replaced
+    -- what for the pupil is no longer known. Every event of the home class in
+    -- a subject that a group of the class's läsår replaces moves.
+    FOR r IN
+      SELECT o."schoolId" s, array_agg(DISTINCT o."studentGroupId") classes FROM o
+       WHERE o."isActive" AND o."studentGroupId" IS NOT NULL
+       GROUP BY 1
+    LOOP
+      SELECT array_agg(g."replacesSubjectId" ORDER BY g."id"), array_agg(g."academicYearId" ORDER BY g."id")
+        INTO subjects, years
+        FROM "StudentGroups" g
+       WHERE g."schoolId" = r.s AND g."replacesSubjectId" IS NOT NULL
+         AND g."academicYearId" IN (SELECT k."academicYearId" FROM "StudentGroups" k WHERE k."id" = ANY (r.classes));
+      IF subjects IS NOT NULL THEN
+        PERFORM app.ss12000_bump_replaced(r.s, NULL, r.classes, subjects, years);
+      END IF;
     END LOOP;
   END IF;
   RETURN NULL;
