@@ -1157,12 +1157,13 @@ export class Ss12000V2Service {
     const embedded = expand.has('activity') ? new Map((await this.activityObjects(model, new Set())).map((entry) => [entry.item.id, entry.item])) : null;
     // Ersättande grupper (Elevlistan i uppföljningen): the groups replacing a
     // subject, each in its own läsår. Empty in a school with none, which then
-    // sends exactly the exceptions it sent before. Only for a key that may
-    // read group memberships (groups.read): who of 7A does not take 7A's
-    // svenska is, in practice, who is in SvA7, which a key with
-    // calendarEvents.read alone may not learn. Without it the event is sent
-    // as it was before this phase.
-    const bySubject = model.can('groups.read') ? replacingBySubject(replacedSubjectOf(model.groups)) : new Map<string, string[]>();
+    // sends exactly the exceptions it sent before. Sent to every key that
+    // may read the event: S1's student filter, which calendarEvents.read
+    // alone may use, already answers which events a pupil's groups have
+    // (SvA7's included), so who of 7A leaves 7A's svenska tells such a key
+    // nothing it could not ask, and leaving it out would send it the wrong
+    // list (review of #226, R2-L3).
+    const bySubject = replacingBySubject(replacedSubjectOf(model.groups));
     const yearOf = yearsOf(model.groups);
     return lessons.map((lesson) => {
       const yearId = model.lessonYear(lesson)!;

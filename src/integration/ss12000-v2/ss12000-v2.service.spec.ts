@@ -720,17 +720,17 @@ describe('Elevlistan i uppföljningen: an event says who of its groups is not on
     expect(hers.map((event) => event.id)).toContain(lessonNamed('SvA7:s svenska som andraspråk').id);
   });
 
-  it('a key without groups.read gets the event as before: no participates false, since who leaves 7A\'s svenska is who is in SvA7 (review L5)', async () => {
+  it('a key with calendarEvents.read alone gets the same exceptions: the student filter it may use already tells which events a pupil\'s groups have (review R2-L3)', async () => {
     const { world, service } = setup();
     world.addPupilList(WITH_SVA);
-    const scopes = ALL_V2_SCOPES.filter((scope) => scope !== 'groups.read');
-    const events = (await service.listCalendarEvents(caller(scopes), DAY)).data;
-    const replaced = events.flatMap((event) => (exceptionsOf(event) ?? []).filter((entry) => !entry.participates));
-    expect(replaced).toEqual([]);
-    expect(events.find((event) => event.id === lessonNamed('7A:s svenska').id)).not.toHaveProperty('studentExceptions');
-    // With groups.read, the same event lists them.
-    const full = (await service.listCalendarEvents(caller(), DAY)).data.find((event) => event.id === lessonNamed('7A:s svenska').id);
-    expect(exceptionsOf(full)!.map((entry) => entry.participates)).toEqual([false, false]);
+    const bare = (await service.listCalendarEvents(caller(['calendarEvents.read']), DAY)).data;
+    const full = (await service.listCalendarEvents(caller(), DAY)).data;
+    const classSvenska = lessonNamed('7A:s svenska').id;
+    expect(exceptionsOf(bare.find((event) => event.id === classSvenska))).toEqual(exceptionsOf(full.find((event) => event.id === classSvenska)));
+    expect(exceptionsOf(bare.find((event) => event.id === classSvenska))!.map((entry) => entry.participates)).toEqual([false, false]);
+    // What that key could already ask: Alva's events hold SvA7's own lesson.
+    const hers = (await service.listCalendarEvents(caller(['calendarEvents.read']), { ...DAY, student: pupilNamed('Alva') })).data;
+    expect(hers.map((event) => event.id)).toContain(lessonNamed('SvA7:s svenska som andraspråk').id);
   });
 
   it('orders the exceptions by the student\'s id, participating or not (review L3)', async () => {
