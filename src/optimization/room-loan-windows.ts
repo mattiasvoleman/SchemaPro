@@ -7,12 +7,13 @@
  *             the year, the whole year, rounded out to the grid: the owner's
  *             lessons stay out of every minute another school holds it;
  *   borrowed  the borrower's own room for the borrowed one is open only
- *             where the approved loans together cover every date of the
- *             weekday in the year (src/sharing/loan-coverage.ts, the rule the
- *             publish check and the bookings read too), rounded in to the
- *             grid, and closed everywhere else; a loan for the spring alone
- *             opens nothing, and a room with no approved loan is closed all
- *             week.
+ *             where the approved loans together cover every school day of
+ *             the weekday in the year (src/sharing/loan-coverage.ts, the rule
+ *             the publish check and the bookings read too), rounded in to the
+ *             grid, and closed everywhere else. A day every årskurs is off
+ *             (the jullov between an autumn and a spring loan) holds no
+ *             lesson and needs no loan; a loan for the spring alone opens
+ *             nothing, and a room with no approved loan is closed all week.
  *
  * Both are the careful side: the engine has no weeks or dates, so a lesson
  * it places runs all year, and nothing it places can meet a loan the publish
@@ -85,21 +86,23 @@ export function lentReservations(windows: readonly ApprovedWindow[], from: strin
 
 /**
  * The borrower's own rooms, closed outside what the approved loans together
- * cover on every date of the weekday in [from, to] (the open time rounded in
- * to the grid): the gaps of each school day around it, and the whole day
- * where nothing is covered every week.
+ * cover on every date of the weekday in [from, to] but the off days (the
+ * open time rounded in to the grid): the gaps of each school day around it,
+ * and the whole day where nothing is covered every week.
  */
 export function borrowedReservations(
   localRoomIds: readonly string[],
   windows: readonly ApprovedWindow[],
   from: string,
   to: string,
+  /** The days no årskurs has school: they need no loan. */
+  offDays: ReadonlySet<string> = new Set(),
 ): RoomReservation[] {
   const out: RoomReservation[] = [];
   for (const roomId of [...new Set(localRoomIds)].sort()) {
     const loans = windows.filter((window) => window.roomId === roomId).map(coverLoan);
     for (const day of SCHOOL_WEEK) {
-      const open = coveredOnEveryDate(loans, day, from, to)
+      const open = coveredOnEveryDate(loans, day, from, to, (date) => !offDays.has(date))
         .map(([start, end]) => [up(start), down(end)] as const)
         .filter(([start, end]) => end > start);
       let cursor = 0;

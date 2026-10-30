@@ -13,8 +13,9 @@
  *                  a time on a date it runs that the approved loans
  *                  together do not cover (src/sharing/loan-coverage.ts,
  *                  the rule the generator and the bookings read too: two
- *                  loans side by side, or an autumn and a spring loan,
- *                  cover a lesson together).
+ *                  loans side by side cover a lesson together, and a lov
+ *                  of its group is no date it runs, so an autumn and a
+ *                  spring loan around the jullov do too).
  *
  * Weeks count here as they do on the board (src/calendar/lesson-recurrence):
  * an odd-week lesson never meets an even-week one, nor a lesson whose dates
@@ -39,6 +40,8 @@ export interface PublishedLesson {
   /** 'YYYY-MM-DD', inclusive, already within the publish window. */
   startDate: string;
   endDate: string;
+  /** The days a lov covers the lesson's group: the publish writes nothing then. */
+  offDays?: ReadonlySet<string>;
 }
 
 export interface BusyLesson {
@@ -155,7 +158,8 @@ export function otherSchoolClashes(input: {
           startDate: window.startDate,
           endDate: window.endDate,
         }));
-      const runs = (date: string) => lesson.recurrence === 'ALL_WEEKS' || (lesson.recurrence === 'ODD_WEEKS') === (isoWeek(date) % 2 === 1);
+      const runs = (date: string) =>
+        !lesson.offDays?.has(date) && (lesson.recurrence === 'ALL_WEEKS' || (lesson.recurrence === 'ODD_WEEKS') === (isoWeek(date) % 2 === 1));
       if (!coveredEveryRun(loans, lesson.dayOfWeek, start, end, lesson.startDate, lesson.endDate, runs)) {
         clashes.push({ kind: 'BORROWED_ROOM', lessonId: lesson.id, roomId: lesson.roomId });
       }

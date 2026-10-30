@@ -1,6 +1,6 @@
 import { createTxMock, type TxMock } from '../../test/utils/prisma-mock';
 import type { PrismaClient } from '@prisma/client';
-import { HOLD_CODES, holdId, readOtherSchoolHolds } from './other-school-holds';
+import { HOLD_CODES, holdId, noSchoolDays, readOtherSchoolHolds } from './other-school-holds';
 import { OTHER_SCHOOL_TEACHER_CODE } from './stored-conflicts';
 
 /**
@@ -173,6 +173,53 @@ describe('readOtherSchoolHolds', () => {
       ]);
     const { holds } = await read();
     expect(holds.map((hold) => [hold.kind, hold.dayOfWeek, hold.startTime, hold.endTime])).toEqual([['TEACHER_BUSY', 3, '22:45:00', '23:59:00']]);
+  });
+
+  it('opens a borrowed room an autumn and a spring loan cover around a jullov every årskurs has', async () => {
+    tx.$queryRaw.mockResolvedValueOnce([{ school_id: NORRA, name: 'Norraskolan' }]).mockResolvedValueOnce([]);
+    const borrowed = { ownerSchoolId: NORRA, borrowerSchoolId: SCHOOL, roomId: 'e0000000-0000-4000-8000-000000000005', localRoomId: LOCAL, dayOfWeek: 4 };
+    tx.roomLoan.findMany.mockResolvedValue([
+      loan({ ...borrowed, startDate: date('2030-08-15'), endDate: date('2030-12-20') }),
+      loan({ ...borrowed, startDate: date('2031-01-07'), endDate: date('2031-06-15') }),
+    ]);
+    tx.studentGroup.findMany.mockResolvedValue([{ gradeLevel: 7 }, { gradeLevel: 8 }]);
+    const thursday = async () =>
+      (await read()).holds.filter((hold) => hold.kind === 'ROOM_BORROWED' && hold.dayOfWeek === 4).map((hold) => `${hold.startTime}-${hold.endTime}`);
+    // No lov: the Thursdays between the terms need a loan, and the room is closed.
+    tx.schoolBreak.findMany.mockResolvedValue([]);
+    expect(await thursday()).toEqual(['00:00:00-23:59:00']);
+    tx.$queryRaw.mockResolvedValueOnce([{ school_id: NORRA, name: 'Norraskolan' }]).mockResolvedValueOnce([]);
+    // The jullov 2030-12-21–2031-01-06, the whole school: open in the window.
+    tx.schoolBreak.findMany.mockResolvedValue([
+      { startDate: date('2030-12-21'), endDate: date('2031-01-06'), minGradeLevel: null, maxGradeLevel: null },
+    ]);
+    expect(await thursday()).toEqual(['00:00:00-10:00:00', '11:30:00-23:59:00']);
+    expect(tx.schoolBreak.findMany).toHaveBeenLastCalledWith({
+      where: { academicYearId: YEAR },
+      select: { startDate: true, endDate: true, minGradeLevel: true, maxGradeLevel: true },
+    });
+  });
+
+  it('counts a day as without school only when every årskurs is off', () => {
+    const range = (from: string, to: string, min: number | null, max: number | null) => ({
+      startDate: date(from),
+      endDate: date(to),
+      minGradeLevel: min,
+      maxGradeLevel: max,
+    });
+    // A school-wide lov.
+    expect([...noSchoolDays([range('2030-10-28', '2030-10-29', null, null)], [7, 8], '2030-08-15', '2031-06-15')]).toEqual([
+      '2030-10-28',
+      '2030-10-29',
+    ]);
+    // Prao for åk 9 alone leaves the others in school.
+    expect(noSchoolDays([range('2030-10-28', '2030-10-28', 9, 9)], [7, 8, 9], '2030-08-15', '2031-06-15').size).toBe(0);
+    // Two lov that cover åk 7–8 and åk 9 the same day: everyone is off.
+    expect(
+      [...noSchoolDays([range('2030-10-28', '2030-10-28', 7, 8), range('2030-10-28', '2030-10-28', 9, 9)], [7, 8, 9], '2030-08-15', '2031-06-15')],
+    ).toEqual(['2030-10-28']);
+    // A teaching group without an årskurs is off only on a school-wide lov.
+    expect(noSchoolDays([range('2030-10-28', '2030-10-28', 7, 9)], [7, 8, 9, null], '2030-08-15', '2031-06-15').size).toBe(0);
   });
 
   it('reads no teacher for the room optimisation', async () => {

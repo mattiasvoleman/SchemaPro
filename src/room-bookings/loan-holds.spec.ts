@@ -75,6 +75,9 @@ describe('loanBookingRefusal', () => {
     expect(loanBookingRefusal(terms, LOCAL, winter('2030-12-31T10:00:00'), winter('2030-12-31T11:00:00'), TZ)).toBe(
       'ROOM_BORROWED_OUTSIDE_LOAN',
     );
+    // A booking is on its own date, lov or not: 2030-12-31 falls in the
+    // jullov, and the hall is still not lent then. Lessons need no loan on a
+    // lov because none are held; a booking is held, so it needs one.
   });
 
   it('refuses nothing in a room no loan names', () => {

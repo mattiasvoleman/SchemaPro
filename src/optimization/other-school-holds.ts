@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { Prisma, type LessonRecurrence, type PrismaClient } from '@prisma/client';
 import { SLOT_MINUTES } from '../common/solver-grid';
 import { busyBlocks, clockOf } from './other-school-busy';
+import { breakCoversGroup, breakDaysOf, type PublishBreak } from '../calendar/publish-days';
 import { borrowedReservations, lentReservations, type ApprovedWindow } from './room-loan-windows';
 
 /**
@@ -59,6 +60,28 @@ export interface OtherSchoolHolds {
 const EMPTY: OtherSchoolHolds = { holds: [] };
 /** The name a hold gives a borrower that has left the huvudman, which the school can no longer read. */
 const LEFT_HUVUDMAN = 'en skola som har lämnat huvudmannen';
+
+/**
+ * The days of [from, to] no årskurs of the year has school: a school-wide lov,
+ * or lov that together cover every group's årskurs (a group without one, a
+ * teaching group, only by a school-wide lov, as the publish reads them).
+ */
+export function noSchoolDays(
+  breaks: readonly PublishBreak[],
+  grades: readonly (number | null)[],
+  from: string,
+  to: string,
+): Set<string> {
+  const distinct = [...new Set(grades)];
+  const off = new Set<string>();
+  for (const [date, entries] of breakDaysOf(breaks, from, to)) {
+    const everyone =
+      entries.some((entry) => entry.minGradeLevel === null && entry.maxGradeLevel === null) ||
+      (distinct.length > 0 && distinct.every((grade) => entries.some((entry) => breakCoversGroup(entry, grade))));
+    if (everyone) off.add(date);
+  }
+  return off;
+}
 
 /** A stable id for a hold: the same hold on the same run is the same id. */
 export function holdId(schoolId: string, kind: HoldKind, resourceId: string, day: number, start: string, end: string): string {
@@ -199,11 +222,23 @@ export async function readOtherSchoolHolds(
     loan.borrowerSchoolId === schoolId && loan.localRoomId !== null ? [{ ...loan, localRoomId: loan.localRoomId }] : [],
   );
   const ownerOf = new Map(borrowedAll.map((loan) => [loan.localRoomId, loan.ownerSchoolId]));
+  // A day every årskurs is off holds no lesson in the plan, and needs no
+  // loan: an autumn and a spring loan around the jullov cover the year.
+  let offDays: ReadonlySet<string> = new Set();
+  if (borrowedAll.length > 0) {
+    const breaks = await tx.schoolBreak.findMany({
+      where: { academicYearId },
+      select: { startDate: true, endDate: true, minGradeLevel: true, maxGradeLevel: true },
+    });
+    const groups = await tx.studentGroup.findMany({ where: { academicYearId }, select: { gradeLevel: true } });
+    offDays = noSchoolDays(breaks, groups.map((group) => group.gradeLevel), from, to);
+  }
   for (const reservation of borrowedReservations(
     [...ownerOf.keys()],
     borrowedAll.filter((loan) => loan.status === 'APPROVED').map((loan) => window(loan, loan.localRoomId)),
     from,
     to,
+    offDays,
   )) {
     holds.push({
       holdId: holdId(schoolId, 'ROOM_BORROWED', reservation.roomId, reservation.dayOfWeek, reservation.startTime, reservation.endTime),

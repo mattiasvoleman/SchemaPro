@@ -132,6 +132,11 @@ describe('otherSchoolClashes', () => {
     expect(run({ lessons: [lesson({ roomId: LOCAL, startTime: '10:00', endTime: '11:00' })], borrowed: gap, localRoomIds: local })).toEqual([
       'BORROWED_ROOM',
     ]);
+    // Unless the group is on lov those Tuesdays: the publish writes nothing then.
+    const jul = new Set(['2030-12-24', '2030-12-31', '2031-01-07']);
+    expect(
+      run({ lessons: [lesson({ roomId: LOCAL, startTime: '10:00', endTime: '11:00', offDays: jul })], borrowed: gap, localRoomIds: local }),
+    ).toEqual([]);
     // An odd-week lesson needs only the odd weeks covered: the uncovered
     // Tuesday 2030-12-24 is in week 52, even.
     const oddGap = [tue({ endDate: '2030-12-20' }), tue({ startDate: '2030-12-25' })];

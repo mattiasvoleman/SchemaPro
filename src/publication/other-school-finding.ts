@@ -1,6 +1,7 @@
 import { Prisma, type LessonRecurrence, type PrismaClient } from '@prisma/client';
 import { lessonLabel, type GateLesson } from './publication-gates.reader';
 import type { GateEntry, GateFinding } from './publication-gates';
+import { breakCoversGroup, breakDaysOf } from '../calendar/publish-days';
 import { otherSchoolClashes, type BusyLesson, type LoanWindow } from './other-school-clashes';
 
 /**
@@ -112,6 +113,32 @@ export async function otherSchoolFinding(
   // year, clipped to the publish's window.
   const placed = lessons.filter((lesson) => !lesson.isParked);
   const byId = new Map(placed.map((lesson) => [lesson.id, lesson]));
+
+  // A lov of the lesson's group is no date it runs (the publish writes
+  // nothing then), so a borrowed room needs no loan on it: an autumn and a
+  // spring loan around the jullov cover the year. Read only when a lesson
+  // stands in a room the school borrows.
+  const offDaysOf = new Map<string, ReadonlySet<string>>();
+  const inLocal = placed.filter((lesson) => lesson.roomId !== null && localRoomIds.has(lesson.roomId));
+  if (inLocal.length > 0) {
+    const breakDays = breakDaysOf(
+      await tx.schoolBreak.findMany({
+        where: { startDate: { lte: new Date(`${window.to}T00:00:00.000Z`) }, endDate: { gte: new Date(`${window.from}T00:00:00.000Z`) } },
+        select: { startDate: true, endDate: true, minGradeLevel: true, maxGradeLevel: true },
+      }),
+      window.from,
+      window.to,
+    );
+    const groups = await tx.studentGroup.findMany({
+      where: { id: { in: [...new Set(inLocal.map((lesson) => lesson.studentGroupId))] } },
+      select: { id: true, gradeLevel: true },
+    });
+    for (const group of groups) {
+      const off = new Set<string>();
+      for (const [date, entries] of breakDays) if (entries.some((entry) => breakCoversGroup(entry, group.gradeLevel))) off.add(date);
+      offDaysOf.set(group.id, off);
+    }
+  }
   const clashes = otherSchoolClashes({
     lessons: placed.map((lesson) => {
       const from = lesson.startDate ?? window.yearStart;
@@ -126,6 +153,7 @@ export async function otherSchoolFinding(
         recurrence: lesson.recurrence,
         startDate: from > window.from ? from : window.from,
         endDate: to < window.to ? to : window.to,
+        offDays: offDaysOf.get(lesson.studentGroupId),
       };
     }),
     busy: busyLessons,

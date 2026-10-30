@@ -6,9 +6,13 @@
  *
  * A time on a date is covered when the union of the approved loans that run
  * on that date, on that weekday, holds it: two loans side by side (10–11 and
- * 11–12) cover 10:30–11:30 together, and an autumn loan and a spring loan of
- * the same window cover a lesson that runs all year. A weekly lesson is
- * covered when every date it runs is.
+ * 11–12) cover 10:30–11:30 together. A weekly lesson is covered when every
+ * date it runs is; a lov is no date it runs, so an autumn loan and a spring
+ * loan of the same window cover a lesson that runs all year, the jullov
+ * between them left out. The callers say which dates count: the generator
+ * leaves out the days every årskurs is off, the publish check the days the
+ * lesson's group is. A booking is no weekly lesson: it is on its own dates,
+ * lov or not, and each of them must be covered.
  *
  * Dates are the school's wall clock ('YYYY-MM-DD'), times minutes after
  * midnight, a span [start, end).
@@ -90,13 +94,19 @@ export function datesOf(weekday: number, from: string, to: string, runs: (date: 
 }
 
 /**
- * The time the loans cover on every date of the weekday in [from, to] (the
- * generator's plan holds a lesson every week of the year): the
- * intersection, over the dates, of each date's union. Nothing when no date
- * of the weekday falls in the period.
+ * The time the loans cover on every date of the weekday in [from, to] that
+ * `counts` keeps (the generator's plan holds a lesson every school week of
+ * the year): the intersection, over the dates, of each date's union.
+ * Nothing when no such date falls in the period.
  */
-export function coveredOnEveryDate(loans: readonly CoverLoan[], weekday: number, from: string, to: string): Span[] {
-  const dates = datesOf(weekday, from, to);
+export function coveredOnEveryDate(
+  loans: readonly CoverLoan[],
+  weekday: number,
+  from: string,
+  to: string,
+  counts: (date: string) => boolean = () => true,
+): Span[] {
+  const dates = datesOf(weekday, from, to, counts);
   if (dates.length === 0) return [];
   let open: Span[] = coverOn(loans, dates[0]!, weekday);
   for (const date of dates.slice(1)) {

@@ -101,9 +101,14 @@ describe('borrowedReservations', () => {
       window({ roomId: LOCAL, startDate: '2030-12-21' }),
     ];
     expect(tuesday(borrowedReservations([LOCAL], terms, FROM, TO))).toEqual(['00:00:00-10:00:00', '11:30:00-23:59:00']);
-    // A gap of a week between the terms closes it.
+    // A gap between the terms closes it, unless every årskurs is off then:
+    // the jullov needs no loan.
     const gap = [window({ roomId: LOCAL, endDate: '2030-12-20' }), window({ roomId: LOCAL, startDate: '2031-01-08' })];
     expect(tuesday(borrowedReservations([LOCAL], gap, FROM, TO))).toEqual(['00:00:00-23:59:00']);
+    const jul = new Set(['2030-12-24', '2030-12-31', '2031-01-07']);
+    expect(tuesday(borrowedReservations([LOCAL], gap, FROM, TO, jul))).toEqual(['00:00:00-10:00:00', '11:30:00-23:59:00']);
+    // A lov that leaves one Tuesday of the gap a school day does not.
+    expect(tuesday(borrowedReservations([LOCAL], gap, FROM, TO, new Set(['2030-12-24', '2030-12-31'])))).toEqual(['00:00:00-23:59:00']);
     // The autumn 10–11, the spring 10–12: 10–11 is covered every week.
     const narrower = [
       window({ roomId: LOCAL, endTime: '11:00', endDate: '2030-12-20' }),

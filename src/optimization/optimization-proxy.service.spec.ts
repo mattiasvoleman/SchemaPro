@@ -2315,6 +2315,36 @@ describe('OptimizationProxyService', () => {
         ]);
       });
 
+      it('says the travel only when one widened the teacher’s block', async () => {
+        arrange();
+        sharing({ siblings: [{ school_id: NORRA, name: 'Norraskolan' }], busy: [busy(TEACHER_ID, { travel_minutes: null })] });
+        answerWithConflicts((payload) => {
+          const [hold] = payload.constraints.filter((row: any) => row.kind === 'UNAVAILABLE');
+          return {
+            summary: 'blocked',
+            summaryCode: 'CONFLICT_CORE_SUMMARY',
+            summaryParams: {},
+            conflicts: [
+              {
+                category: 'AVAILABILITY',
+                code: 'AVAIL_CONSTRAINT_BLOCKS_LESSONS',
+                params: { constraint: hold.id, kind: hold.resourceKind, resource: hold.resourceId, grades: '', day: hold.dayOfWeek, date: '', start: hold.startTime.slice(0, 5), end: hold.endTime.slice(0, 5) },
+                message: 'blocked',
+                requirementIds: [payload.requirements[0].id],
+                roomIds: [],
+                constraintIds: [hold.id],
+                resourceIds: [hold.resourceId],
+              },
+            ],
+          };
+        });
+
+        const [line] = (await service.triggerScheduling(ACADEMIC_YEAR, testUser())).conflicts!.conflicts;
+
+        expect(line).toMatchObject({ code: 'OTHER_SCHOOL_TEACHER_BUSY', params: { start: '10:00', end: '11:00', travel: 'no' } });
+        expect(line!.message).toMatch(/^A teacher named here also teaches at Norraskolan: on Tuesdays 10:00-11:00 they are there, and/);
+      });
+
       it('reads a refusal about a hold as the other school’s: the teacher named when read, the room by name', async () => {
         arrange({ rooms: [{ id: ROOM_ID, name: 'Idrottshallen', capacity: 30, type: 'CLASSROOM' }] });
         sharing({ siblings: [{ school_id: NORRA, name: 'Norraskolan' }], busy: [busy(TEACHER_ID)] });

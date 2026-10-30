@@ -50,6 +50,11 @@ describe('loan coverage', () => {
     expect(
       coveredOnEveryDate([loan({ end: 660, endDate: '2030-12-20' }), loan({ end: 720, startDate: '2030-12-21' })], 2, '2030-08-19', '2031-06-13'),
     ).toEqual([[600, 660]]);
+    // A jullov between the terms is no date that counts: they cover the year.
+    const aroundJul = [loan({ endDate: '2030-12-20' }), loan({ startDate: '2031-01-08' })];
+    expect(coveredOnEveryDate(aroundJul, 2, '2030-08-19', '2031-06-13')).toEqual([]);
+    const jul = new Set(['2030-12-24', '2030-12-31', '2031-01-07']);
+    expect(coveredOnEveryDate(aroundJul, 2, '2030-08-19', '2031-06-13', (date) => !jul.has(date))).toEqual([[600, 690]]);
     // No date of the weekday in the period: nothing.
     expect(coveredOnEveryDate([loan({})], 2, '2030-09-04', '2030-09-09')).toEqual([]);
   });
