@@ -22,7 +22,7 @@ expo-env.d.ts
 *.ipa
 
 # Push and signing credentials. google-services.json reaches EAS Build as the
-# file variable GOOGLE_SERVICES_JSON (docs/DEPLOYMENT.md §12.3), never through
+# file variable GOOGLE_SERVICES_JSON (docs/DEPLOYMENT.md §15.3), never through
 # the repository: the repository is public. The rest are what `eas
 # credentials` and the stores hand out, and belong in the password manager.
 google-services.json

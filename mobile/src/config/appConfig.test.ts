@@ -284,7 +284,7 @@ describe('texts and assets iOS and Android show before the app runs', () => {
 
   it('is written the way EAS CLI writes it, so its rollback and `eas init` leave a clean diff', () => {
     // @expo/json-file: two spaces and a final newline. A hand-formatted array
-    // would be rewritten by any write the CLI makes or rolls back, and §12.5
+    // would be rewritten by any write the CLI makes or rolls back, and §15.5
     // tells the operator to treat any app.json change as suspect.
     expect(readFileSync(join(MOBILE, 'app.json'), 'utf8')).toBe(`${JSON.stringify(staticConfig, null, 2)}\n`);
   });

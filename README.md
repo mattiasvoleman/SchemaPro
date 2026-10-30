@@ -147,7 +147,7 @@ on EAS with `eas build --profile rastra-development` or
 `vardnadshavare-development` (the CLI is the npm package `eas-cli`). The
 lockfile is written by npm 11, which CI pins. Internal and store builds,
 credentials and push on a device: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
-§12.
+§15.
 
 ### Docker (Postgres + API + solver)
 

@@ -39,7 +39,7 @@ import type { ConfigContext, ExpoConfig } from 'expo/config';
  * `...config` does. eas-cli writes the whole evaluated extra, so app.json
  * also gains extra.app (Rastra's identity) and extra.router; both are
  * harmless, since this function writes extra.app again for every build, and
- * DEPLOYMENT.md §12.2 says to drop them before committing. Both apps are one
+ * DEPLOYMENT.md §15.2 says to drop them before committing. Both apps are one
  * EAS project, so the push registration of either reads the same id from
  * there.
  */

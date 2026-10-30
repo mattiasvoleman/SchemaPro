@@ -561,7 +561,7 @@ Honest limits, so you know when to get help:
   registered for your organisation (which takes weeks, so start early), an
   Expo account, and a new build for every change to the apps: unlike the web
   app, they do not update themselves when GitHub changes. See `DEPLOYMENT.md`
-  section 12.
+  section 15.
 - **Restoring from a backup.** Straightforward in the Supabase dashboard, but
   if you are doing it under pressure you want someone experienced beside you.
 - **Anything that goes wrong in a way this guide does not list.** The
