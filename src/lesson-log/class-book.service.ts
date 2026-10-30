@@ -160,13 +160,14 @@ export class ClassBookService {
       const others = candidates.filter((lesson) => !own(lesson));
       // The class's own lessons in a subject that a group of its pupils
       // replaces: the roster reader says how many of the class each holds.
-      // Asked only of those lessons, and only when such a group exists.
+      // Asked only of those lessons, and only when such a group is among the
+      // pupils' teaching groups read above.
       const replacedSubjects =
-        pupils.length === 0
+        groupIds.length <= 1
           ? new Set<string>()
           : new Set(
               ((await tx.studentGroup.findMany({
-                where: { replacesSubjectId: { not: null }, teachingMembers: { some: { studentId: { in: pupils } } } },
+                where: { id: { in: groupIds.slice(1) }, replacesSubjectId: { not: null } },
                 select: { replacesSubjectId: true },
               })) ?? []).map((row) => row.replacesSubjectId),
             );

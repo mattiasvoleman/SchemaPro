@@ -181,16 +181,16 @@ describe('ClassBookService', () => {
         const rows = memberships.filter((row) => has(where['studentId'], row.studentId) && has(where['studentGroupId'], row.studentGroupId));
         return Promise.resolve(distinct ? [...new Set(rows.map((row) => row.studentGroupId))].map((studentGroupId) => ({ studentGroupId })) : rows);
       });
-      tx.studentGroup.findMany.mockImplementation(({ where }: { where: Where }) => {
-        const among: string[] | undefined = where['teachingMembers']?.some?.studentId?.in;
-        return Promise.resolve(
+      tx.studentGroup.findMany.mockImplementation(({ where }: { where: Where }) =>
+        Promise.resolve(
           school.groups.filter((group) => {
-            if (among) return group.replacesSubjectId !== null && memberships.some((row) => row.studentGroupId === group.id && among.includes(row.studentId));
-            if (where['replacesSubjectId']) return group.replacesSubjectId !== null && has(where['replacesSubjectId'], group.replacesSubjectId);
+            const replaces = where['replacesSubjectId'];
+            if (replaces && 'not' in replaces && group.replacesSubjectId === null) return false;
+            if (replaces && 'in' in replaces && !replaces['in'].includes(group.replacesSubjectId)) return false;
             return has(where['id'], group.id);
           }),
-        );
-      });
+        ),
+      );
       tx.calendarLessonStudent.findMany.mockImplementation(({ where }: { where: Where }) =>
         Promise.resolve(
           PUPIL_LIST.lessons.flatMap((l) =>
