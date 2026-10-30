@@ -43,6 +43,7 @@ import { AccessLogModule } from './access-log/access-log.module';
 import { SchoolUnitsModule } from './school-units/school-units.module';
 import { HuvudmanModule } from './huvudman/huvudman.module';
 import { SitesModule } from './sites/sites.module';
+import { SharingModule } from './sharing/sharing.module';
 import { LessonLogModule } from './lesson-log/lesson-log.module';
 import { SupervisionModule } from './supervision/supervision.module';
 import { SignInModule } from './sign-in/sign-in.module';
@@ -142,6 +143,7 @@ import type { ThrottleConfig } from './config/configuration';
     SchoolUnitsModule,
     HuvudmanModule,
     SitesModule,
+    SharingModule,
     LessonLogModule,
     SupervisionModule,
     SignInModule,

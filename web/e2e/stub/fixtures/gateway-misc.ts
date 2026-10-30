@@ -36,6 +36,9 @@ import {
   roomProposal,
   yearRosters,
   SITES,
+  SHARING,
+  ROOM_LOANS,
+  LENDABLE_ROOMS,
 } from "./misc-school";
 import { byId, GROUPS, NEXT_YEAR, ROOM_TYPES, STUDENTS, YEAR } from "./world";
 import { addDays, THIS_MONDAY } from "./calendar";
@@ -69,6 +72,10 @@ export const miscRoutes: GatewayRoute[] = [
   route("GET", "/api/v1/school-units", () => SCHOOL_UNITS),
   // Salar's skolområden card and the room dialog's site.
   route("GET", "/api/v1/sites", () => SITES),
+  // Salar's card of the huvudman's other schools (Delade lokaler och lärare).
+  route("GET", "/api/v1/sharing", () => SHARING),
+  route("GET", "/api/v1/room-loans", () => ROOM_LOANS),
+  route("GET", "/api/v1/room-loans/rooms", () => LENDABLE_ROOMS),
   // A solve the timetable's Salar dialog asks for; it writes nothing.
   route("POST", "/api/v1/optimization/rooms/proposal", ({ body }) => {
     const { academicYearId } = body as { academicYearId: string };

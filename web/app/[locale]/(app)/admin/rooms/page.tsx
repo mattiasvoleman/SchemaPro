@@ -41,6 +41,7 @@ import {
 } from "@/components/ui/select";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { SitesCard } from "./sites-card";
+import { SharingCard } from "./sharing-card";
 import { SITES_KEY, useSites } from "./use-sites";
 import { STAFFING_KEYS } from "@/lib/staffing-keys";
 
@@ -372,6 +373,7 @@ export default function RoomsPage() {
       )}
 
       <SitesCard />
+      <SharingCard />
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>

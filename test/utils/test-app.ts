@@ -51,6 +51,7 @@ import { CoverModule } from '../../src/cover/cover.module';
 import { SignInModule } from '../../src/sign-in/sign-in.module';
 import { SchoolUnitsModule } from '../../src/school-units/school-units.module';
 import { SitesModule } from '../../src/sites/sites.module';
+import { SharingModule } from '../../src/sharing/sharing.module';
 import { LessonLogModule } from '../../src/lesson-log/lesson-log.module';
 import { SupervisionModule } from '../../src/supervision/supervision.module';
 import { GallringModule } from '../../src/gallring/gallring.module';
@@ -167,6 +168,7 @@ export const FEATURE_MODULES = [
   CoverModule,
   SchoolUnitsModule,
   SitesModule,
+  SharingModule,
   LessonLogModule,
   SupervisionModule,
   // Without JobsModule: GallringJob takes the runner as @Optional and

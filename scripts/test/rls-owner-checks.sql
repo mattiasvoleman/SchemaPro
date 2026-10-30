@@ -126,3 +126,98 @@ BEGIN
     policies, evaluated, cardinality(ks), admitted_full;
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 278i: salslånens tre EXCLUDE-villkor håller också mot en skrivare
+-- som inte går genom funktionerna, och en skola som lämnar huvudmannen tar
+-- inte bort något (20261217090000).
+--
+-- The functions refuse a second local room, a local room for two rooms and
+-- an approval over an approved loan before the constraints have to; here
+-- the owner writes past them, as two requests racing would, and each is
+-- refused by its constraint (23P01); an ended loan binds no local room,
+-- and an approved loan has its room (23514). Then the roller school leaves
+-- H: its loans and the travel to school A stay, unread (section 279a).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  loan "RoomLoans";
+  other_room uuid;
+  other_local uuid;
+  m uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-roller-school');
+  st text;
+  wrong text[] := '{}';
+BEGIN
+  SELECT * INTO loan FROM "RoomLoans" WHERE status = 'APPROVED' LIMIT 1;
+  IF loan.id IS NULL THEN
+    RAISE EXCEPTION 'delade 278i: the approved loan is missing; fixtures did not run';
+  END IF;
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (loan."ownerSchoolId", 'Delade 278i ägare', now()) RETURNING id INTO other_room;
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (loan."borrowerSchoolId", 'Delade 278i lokal', now()) RETURNING id INTO other_local;
+
+  -- The same room with another local room at the same borrower.
+  BEGIN
+    INSERT INTO "RoomLoans" ("ownerSchoolId", "roomId", "borrowerSchoolId", "localRoomId", "dayOfWeek", "startTime", "endTime", "startDate", "endDate")
+    VALUES (loan."ownerSchoolId", loan."roomId", loan."borrowerSchoolId", other_local, 5, '08:00', '09:00', loan."startDate", loan."endDate");
+    wrong := wrong || 'a second local room for one room'::text;
+  EXCEPTION WHEN exclusion_violation THEN NULL;
+  END;
+  -- The local room standing for another room too.
+  BEGIN
+    INSERT INTO "RoomLoans" ("ownerSchoolId", "roomId", "borrowerSchoolId", "localRoomId", "dayOfWeek", "startTime", "endTime", "startDate", "endDate")
+    VALUES (loan."ownerSchoolId", other_room, loan."borrowerSchoolId", loan."localRoomId", 5, '08:00', '09:00', loan."startDate", loan."endDate");
+    wrong := wrong || 'a local room for two rooms'::text;
+  EXCEPTION WHEN exclusion_violation THEN NULL;
+  END;
+  -- A second approved loan that meets the first, and one that does not.
+  BEGIN
+    INSERT INTO "RoomLoans" ("ownerSchoolId", "roomId", "borrowerSchoolId", "localRoomId", "dayOfWeek", "startTime", "endTime",
+                             "startDate", "endDate", status, "decidedAt")
+    VALUES (loan."ownerSchoolId", loan."roomId", loan."borrowerSchoolId", loan."localRoomId", loan."dayOfWeek",
+            loan."endTime" - interval '1 minute', loan."endTime" + interval '1 hour', loan."endDate", loan."endDate", 'APPROVED', now());
+    wrong := wrong || 'two approved loans of a room on one minute and one date'::text;
+  EXCEPTION WHEN exclusion_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "RoomLoans" ("ownerSchoolId", "roomId", "borrowerSchoolId", "localRoomId", "dayOfWeek", "startTime", "endTime",
+                             "startDate", "endDate", status, "decidedAt")
+    VALUES (loan."ownerSchoolId", loan."roomId", loan."borrowerSchoolId", loan."localRoomId", loan."dayOfWeek",
+            loan."endTime", loan."endTime" + interval '1 hour', loan."startDate", loan."endDate", 'APPROVED', now());
+  EXCEPTION WHEN exclusion_violation THEN
+    wrong := wrong || 'an approved loan right after another is refused'::text;
+  END;
+
+  -- An ended loan binds no local room: a withdrawn loan of the room by
+  -- another local room is taken.
+  BEGIN
+    INSERT INTO "RoomLoans" ("ownerSchoolId", "roomId", "borrowerSchoolId", "localRoomId", "dayOfWeek", "startTime", "endTime",
+                             "startDate", "endDate", status, "endedAt")
+    VALUES (loan."ownerSchoolId", loan."roomId", loan."borrowerSchoolId", other_local, 5, '08:00', '09:00',
+            loan."startDate", loan."endDate", 'WITHDRAWN', now());
+  EXCEPTION WHEN exclusion_violation THEN
+    wrong := wrong || 'an ended loan binds its local room'::text;
+  END;
+  -- An approved loan has its room.
+  BEGIN
+    INSERT INTO "RoomLoans" ("ownerSchoolId", "roomId", "borrowerSchoolId", "localRoomName", "dayOfWeek", "startTime", "endTime",
+                             "startDate", "endDate", status, "decidedAt")
+    VALUES (loan."ownerSchoolId", other_room, loan."borrowerSchoolId", 'Delade 278i namn', 5, '08:00', '09:00',
+            loan."startDate", loan."endDate", 'APPROVED', now());
+    wrong := wrong || 'an approved loan without its room'::text;
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+
+  -- The roller school leaves its huvudman; nothing of the sharing goes.
+  DELETE FROM "HuvudmanSchools" WHERE "schoolId" = m;
+  IF (SELECT count(*) FROM "RoomLoans" WHERE m IN ("ownerSchoolId", "borrowerSchoolId")) < 2
+     OR NOT EXISTS (SELECT 1 FROM "SchoolTravelTimes" WHERE m IN ("schoolAId", "schoolBId")) THEN
+    wrong := wrong || 'a departure deleted loans or travel'::text;
+  END IF;
+
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION 'delade 278i: %', array_to_string(wrong, '; ');
+  END IF;
+END $$;
+ROLLBACK;
