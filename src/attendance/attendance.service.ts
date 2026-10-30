@@ -394,8 +394,13 @@ export class AttendanceService {
    *
    * Narrower than what app.reported_absences answers. A TEACHER asks only for
    * a lesson they are assigned to, the same rule as recording it, and hears
-   * only of pupils on its roster. The teacher learns that a pupil in front of
-   * them is away, not who else in the school is, and never why.
+   * only of pupils on the list the register shows (ACTIVE, lessonRoster
+   * below). The teacher learns that a pupil in front of them is away, not who
+   * else in the school is, and never why: not a deactivated pupil's, and not
+   * a pupil a replacing group takes off the lesson (Elevlistan i
+   * uppföljningen: SvA7's pupils are not in front of 7A's svenska teacher,
+   * and their report is SvA7's teacher's to see). RECORDED, the superset the
+   * write check accepts, would name them, and the läslogg with them.
    */
   async reportedAbsences(
     calendarLessonId: string,
@@ -421,7 +426,8 @@ export class AttendanceService {
         ...coveredBy(await reportedAbsencesOn(tx, lesson.date), lesson),
       ];
       if (covered.length === 0) return { studentIds: [] };
-      const roster = await this.rosterAmong(tx, lesson, covered);
+      const rosters = await calendarLessonRosters(tx, [lesson], { pupils: 'ACTIVE', among: covered });
+      const roster = rosters.get(lesson.id) ?? new Set<string>();
       const studentIds = covered.filter((studentId) => roster.has(studentId)).sort();
       // That a pupil's absence was reported is the report's, even without
       // its note: in the läslogg as ABSENCE_REPORTS.
@@ -670,7 +676,7 @@ export class AttendanceService {
    * Which of `studentIds` are on the lesson's roster, by the sources above,
    * as the one roster reader answers it (calendar/lesson-roster.ts, which the
    * lesson notices ask too). Membership as recorded: see above. The roster
-   * check refuses the rest; reportedAbsences leaves them out.
+   * check refuses the rest.
    */
   private async rosterAmong(
     tx: Prisma.TransactionClient,

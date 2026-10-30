@@ -65,6 +65,13 @@ export interface GroupRow {
   kind: 'CLASS' | 'TEACHING_GROUP';
   gradeLevel: number | null;
   ss12000Id: string | null;
+  /** The class this group is a half of (Halvklasser): a half keeps nobody on a lesson by THE RULE. */
+  halfOfId: string | null;
+  /**
+   * Ersättande grupper: the subject whose other lessons this group's members
+   * leave. Never emitted on the Group; it decides an event's studentExceptions.
+   */
+  replacesSubjectId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -312,6 +319,8 @@ export class SchoolSlice {
         kind: true,
         gradeLevel: true,
         ss12000Id: true,
+        halfOfId: true,
+        replacesSubjectId: true,
         createdAt: true,
         updatedAt: true,
       },

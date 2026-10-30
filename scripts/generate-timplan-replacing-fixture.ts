@@ -14,12 +14,14 @@ import { computeScheduledCoverage, type ScheduledCoverageInput } from '../src/co
 const ROOT = path.join(__dirname, '..');
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const PREFIX = 'ersättande grupper:';
+/** Elevlistan i uppföljningen (omgång 7): the line statistics' "x av y". */
+const ELEVLISTAN = 'elevlistan:';
 
 function regenerate<I>(file: string, compute: (input: I) => unknown, added: { name: string; input: I }[]) {
   const path = `${ROOT}/src/common/__fixtures__/${file}`;
   const before = fs.readFileSync(path, 'utf8');
   const { cases } = JSON.parse(before) as { cases: { name: string; input: I; coverage: unknown }[] };
-  const kept = cases.filter((c) => !c.name.startsWith(PREFIX));
+  const kept = cases.filter((c) => !c.name.startsWith(PREFIX) && !c.name.startsWith(ELEVLISTAN));
   for (const c of kept) {
     const again = JSON.stringify(compute(c.input));
     if (again !== JSON.stringify(c.coverage)) throw new Error(`${file}: "${c.name}" moved`);
@@ -197,6 +199,40 @@ function majorityInput(): ScheduledCoverageInput {
   };
 }
 
+/**
+ * Elevlistan i uppföljningen: 7A of three — Alva in SvA7, Bo in Stöd7 (a
+ * support group in Svenska that replaces nothing), Cim in neither — plans 3 ×
+ * 60 Svenska and schedules two. With SvA7 replacing Svenska, 7A's Svenska line
+ * is over Bo and Cim, and says so (ofPupils 2, below 2 of 2); without, it is
+ * over the whole class and sends no ofPupils, as main does.
+ */
+function pupilListInput(replaces: boolean): ScheduledCoverageInput {
+  serial = 2000;
+  const sva7 = { ...SvA7, replacesSubjectId: replaces ? SV : null };
+  const stod7 = { id: id(2003), name: 'Stöd7', kind: 'TEACHING_GROUP' as const, gradeLevel: null };
+  return {
+    year: { startDate: '2026-08-17', endDate: '2027-06-11' },
+    subjects: SUBJECTS,
+    closures: [],
+    groups: [g7A, sva7, stod7],
+    requirements: [post(g7A.id, SV, 3, 60), post(sva7.id, SVA, 3, 60), post(stod7.id, SV, 1, 60)],
+    lessons: [
+      lesson(2101, g7A.id, SV, '08:00:00'),
+      lesson(2102, g7A.id, SV, '09:00:00'),
+      lesson(2103, sva7.id, SVA, '08:00:00'),
+      lesson(2104, sva7.id, SVA, '09:00:00'),
+      lesson(2105, sva7.id, SVA, '10:00:00'),
+      lesson(2106, stod7.id, SV, '13:00:00'),
+    ],
+    pupils: [
+      { id: id(2151), homeGroupId: g7A.id, groupIds: [sva7.id] },
+      { id: id(2152), homeGroupId: g7A.id, groupIds: [stod7.id] },
+      { id: id(2153), homeGroupId: g7A.id, groupIds: [] },
+    ],
+    includePupils: true,
+  };
+}
+
 regenerate('timplan-scheduled-cases.json', computeScheduledCoverage, [
   {
     name: `${PREFIX} SvA7 replaces Svenska — its pupils are planned and scheduled none of 7A's or 7B's Svenska, except a lesson naming one and 7B's lesson SvA7 attends as an extra group; group lines unchanged`,
@@ -209,5 +245,13 @@ regenerate('timplan-scheduled-cases.json', computeScheduledCoverage, [
   {
     name: `${PREFIX} most of 7A in SvA7 and 7A's Svenska a lesson short: the line's statistics are over the two pupils it reaches, not pulled to nothing by the three it does not`,
     input: majorityInput(),
+  },
+  {
+    name: `${ELEVLISTAN} Alva in SvA7, which replaces Svenska, and Bo in Stöd7, which does not — 7A's Svenska line is over Bo and Cim and says so, 2 below of 2, not of the class's 3`,
+    input: pupilListInput(true),
+  },
+  {
+    name: `${ELEVLISTAN} the same school with no replacing group — 7A's Svenska line is over the whole class and sends no ofPupils, as main does`,
+    input: pupilListInput(false),
   },
 ]);

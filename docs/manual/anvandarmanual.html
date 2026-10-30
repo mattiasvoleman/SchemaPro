@@ -949,6 +949,18 @@
     markering som låg i telefonens kö när gruppen märktes som ersättande.
   </p>
   <p>
+    Samma elevlista gäller överallt där en lektions elever räknas eller lämnas
+    ut. Schemats andelsmärke (5.3) visar till exempel <em>24/28</em> på
+    klassens svenska, och lektionen syns inte i SvA-gruppens vecka.
+    Klassboken (6.11) säger hur många av klassen som går på klassens svenska.
+    I Täckningens flikar för schemalagt och genomfört (4.1) står hur många
+    elever en rad räknas över, till exempel <em>2 av 24</em> i stället för
+    <em>2 av 28</em>. Registrets <span class="ui">Anmäld frånvaro</span> på
+    klassens svenska nämner inte en SvA-elev; det gör SvA-lektionens. SS12000
+    (7.3) lämnar ut klassens svenska med SvA-eleverna som elever som inte
+    deltar.
+  </p>
+  <p>
     Genereringen (5.2) får lägga SvA bredvid klassens svenska men aldrig
     bredvid klassens övriga lektioner. Det gäller också när du flyttar en
     lektion för hand på schemat och när publiceringen letar efter
@@ -5211,7 +5223,9 @@
     med <em>(vikarie)</em> efter namnet. Klassens egna lektioner är med, och
     också lektioner där någon av klassens elever deltar, till exempel ett
     språkval eller en nivågrupp. De visar hur många av klassens elever som
-    är där. Det är samma lista över vem som går på en lektion som närvaron och
+    är där. Klassens egna lektioner visar det bara när inte hela klassen går
+    där, till exempel klassens svenska när en SvA-grupp ersätter den (3.4).
+    Det är samma lista över vem som går på en lektion som närvaron och
     notiserna räknar med. Väljer du en undervisningsgrupp visas gruppens egna
     lektioner. <span class="ui">Skriv ut</span> skriver ut klassboken utan
     sidans knappar. Klassen och perioden står i adressen, så en utskriven
@@ -5681,6 +5695,22 @@
     Bara det <em>publicerade</em> schemat lämnas ut, aldrig ett utkast. Ingen
     frånvaroorsak, anteckning eller personnummer lämnas någonsin ut, och
     tjänstgöringsgrader bara när skolan har valt att dela dem (se ovan).
+  </p>
+  <p>
+    En lektion lämnas ut med sina grupper, och det anslutna systemet räknar
+    gruppernas elever som deltagare. De elever som en ersättande grupp tar
+    av lektionen (3.4) står därför med för sig, till exempel SvA-eleverna på
+    klassens svenska. I standardformatet står de som elever som inte deltar
+    på varje lektion (<code>studentExceptions</code> med
+    <code>participates: false</code>), och i Rastra Schemas eget format i
+    <code>excludedStudentIds</code>.
+  </p>
+  <p>
+    När en elev går med i eller lämnar en SvA-grupp, flyttar klass,
+    avaktiveras, aktiveras igen eller tas bort, markeras de berörda
+    lektionerna som ändrade. Det gäller också när gruppen börjar eller
+    slutar ersätta ett ämne eller flyttas till ett annat läsår. Ett system
+    som bara läser ändringar hämtar då lektionerna igen.
   </p>
   <h4>Närvaro och frånvaro till integrationer</h4>
   <p>

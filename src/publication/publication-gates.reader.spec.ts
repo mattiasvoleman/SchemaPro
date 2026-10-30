@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import { createTxMock, testUser, type TxMock } from '../../test/utils/prisma-mock';
+import { PUPIL_LIST, WITH_SVA, WITHOUT, type PupilListSchool } from '../../test/utils/pupil-list';
 import { clashFinding, type GateLesson } from './publication-gates.reader';
 
 /**
@@ -118,5 +119,68 @@ describe('PUB_CLASHES with replacing groups', () => {
       where: { academicYearId: YEAR, replacesSubjectId: { not: null } },
       select: { id: true, replacesSubjectId: true, academicYearId: true },
     });
+  });
+});
+
+describe('PUB_CLASHES, Elevlistan i uppföljningen: the shared school\'s three cases', () => {
+  // src/common/__fixtures__/pupil-list-cases.json: 7A of Alva (SvA7), Bo
+  // (Stöd7, a support group in svenska that replaces nothing) and Cim. 7A's
+  // svenska, SvA7's SvA and Stöd7's svenska all on Monday at ten.
+  let tx: TxMock;
+  const sv = PUPIL_LIST.subjects.find((subject) => subject.nationalCode === 'SV')!.id;
+  const sva = PUPIL_LIST.subjects.find((subject) => subject.nationalCode === 'SVA')!.id;
+  const year = PUPIL_LIST.academicYearId;
+
+  const arrange = (school: PupilListSchool) => {
+    const id = (name: string) => school.groups.find((group) => group.name === name)!.id;
+    const memberships = PUPIL_LIST.pupils.flatMap((pupil) => pupil.groupIds.map((studentGroupId) => ({ studentId: pupil.id, studentGroupId })));
+    tx.availabilityConstraint.findMany.mockResolvedValue([]);
+    tx.teachingRequirement.findMany.mockResolvedValue([]);
+    tx.academicYear.findUnique.mockResolvedValue({ isActive: true, predecessorId: null });
+    tx.studentGroup.findMany.mockImplementation((query: Query = {}) => {
+      const where = query.where ?? {};
+      if ('halfOfId' in where && where['halfOfId']?.not === null && !('kind' in where)) {
+        return Promise.resolve(school.groups.filter((group) => group.halfOfId !== null));
+      }
+      return Promise.resolve(
+        school.groups.filter(
+          (group) =>
+            (where['academicYearId'] === undefined || group.academicYearId === where['academicYearId']) &&
+            (where['replacesSubjectId']?.not !== null || group.replacesSubjectId !== null) &&
+            (where['id']?.in === undefined || where['id'].in.includes(group.id)) &&
+            (where['kind'] === undefined || group.kind === where['kind']) &&
+            (!('halfOfId' in where) || where['halfOfId'] !== null || group.halfOfId === null),
+        ),
+      );
+    });
+    tx.studentGroupMember.findMany.mockImplementation((query: Query = {}) =>
+      Promise.resolve(memberships.filter((row) => query.where?.['studentGroupId']?.in?.includes(row.studentGroupId) ?? true)),
+    );
+    tx.user.findMany.mockImplementation((query: Query = {}) => {
+      const homes = PUPIL_LIST.pupils.map((pupil) => ({ id: pupil.id, studentGroupId: pupil.homeGroupId }));
+      const where = query.where ?? {};
+      if (where['id']?.in) return Promise.resolve(homes.filter((row) => where['id'].in.includes(row.id)));
+      const classes = where['studentGroupId']?.in ?? [where['studentGroupId']];
+      return Promise.resolve(homes.filter((row) => classes.includes(row.studentGroupId)));
+    });
+    return [gateLesson('7A-sv', id('7A'), sv), gateLesson('SvA7-sva', id('SvA7'), sva), gateLesson('Stod7-sv', id('Stöd7'), sv)];
+  };
+
+  beforeEach(() => {
+    tx = createTxMock();
+  });
+
+  it('with SvA7 replacing svenska: SvA7 beside 7A\'s svenska is no clash, Stöd7 beside it is (Bo is in both)', async () => {
+    const lessons = arrange(WITH_SVA);
+    const with7A = await clashFinding(tx as unknown as PrismaClient, testUser(), year, [lessons[0]!, lessons[1]!]);
+    expect(with7A.count).toBe(0);
+    const withStod = await clashFinding(tx as unknown as PrismaClient, testUser(), year, [lessons[0]!, lessons[2]!]);
+    expect(withStod.count).toBe(1);
+  });
+
+  it('with no replacing group: both clash with 7A\'s svenska, as before', async () => {
+    const lessons = arrange(WITHOUT);
+    expect((await clashFinding(tx as unknown as PrismaClient, testUser(), year, [lessons[0]!, lessons[1]!])).count).toBe(1);
+    expect((await clashFinding(tx as unknown as PrismaClient, testUser(), year, [lessons[0]!, lessons[2]!])).count).toBe(1);
   });
 });

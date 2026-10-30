@@ -650,7 +650,7 @@ function DeliveredLineCard({
             median: hoursOf(line.pupils.projectedDelta.median),
             max: hoursOf(line.pupils.projectedDelta.max),
             below: line.pupils.belowPlanned,
-            pupils: pupilCount,
+            pupils: line.pupils.ofPupils ?? pupilCount,
           })}{" "}
           {t("delivered.statsDelivered", {
             min: hoursOf(line.pupils.delivered.min),

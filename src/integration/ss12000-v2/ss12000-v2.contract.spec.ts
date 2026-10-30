@@ -1,5 +1,6 @@
 import { createPrismaMock, createTxMock } from '../../../test/utils/prisma-mock';
 import { allKeys, checkSchema } from '../../../test/utils/s1-contract';
+import { lessonNamed, pupilNamed, WITH_SVA } from '../../../test/utils/pupil-list';
 import { ABSENCE_TEXT, ALL_V2_SCOPES, ProviderWorld, W } from '../../../test/utils/ss12000-provider-world';
 import type { PrismaService } from '../../database/prisma.service';
 import { DUTY_PROPERTIES } from '../ss12000-duties';
@@ -182,6 +183,30 @@ describe('what the objects say', () => {
     const l1 = await service.getCalendarEvent(caller(), W.l1, {});
     // P2 sits in 7A, the lesson's own group: no exception.
     expect(l1['studentExceptions']).toBeUndefined();
+  });
+
+  it('a pupil a replacing group takes off a lesson of its group is an S1 studentException that does not participate (Elevlistan i uppföljningen)', async () => {
+    const { service, world } = setup();
+    world.attendanceShared = true;
+    world.addPupilList(WITH_SVA);
+    const all = caller();
+    for (const [schema, pending] of [
+      ['CalendarEvents', service.listCalendarEvents(all, { ...WINDOW, expand: ['activity', 'attendance'], expandReferenceNames: 'true' })],
+      ['Activities', service.listActivities(all, { expand: ['groups', 'teachers', 'syllabus'], expandReferenceNames: 'true' })],
+      ['GroupsExpanded', service.listGroups(all, { expand: 'assignmentRoles', expandReferenceNames: 'true' })],
+    ] as const) {
+      expect({ schema, violations: checkSchema(await pending, schema) }).toEqual({ schema, violations: [] });
+    }
+    const event = await service.getCalendarEvent(all, lessonNamed('7A:s svenska').id, {});
+    expect(checkSchema(event, 'CalendarEvent')).toEqual([]);
+    expect(event['studentExceptions']).toEqual(
+      [pupilNamed('Alva'), pupilNamed('Eva')].sort().map((id) => ({ student: { id }, participates: false })),
+    );
+    // The replacement itself is never emitted: SvA7 is an Undervisning group with its members, nothing more.
+    const sva7 = WITH_SVA.groups.find((group) => group.name === 'SvA7')!;
+    const group = await service.getGroup(all, sva7.id, {});
+    expect(group['groupType']).toBe('Undervisning');
+    expect(JSON.stringify(group)).not.toContain(sva7.replacesSubjectId!);
   });
 });
 

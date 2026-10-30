@@ -156,6 +156,34 @@ export function replacedPupils(
   return out;
 }
 
+/** A lesson as lessonPupils reads it: replacedPupils' scope and the pupils named on it. */
+export interface LessonPupilsInput extends ReplacedScope {
+  named: readonly string[];
+}
+
+/** Who sits in a lesson (`on`) and whom THE RULE takes off it (`off`), each sorted. */
+export interface LessonPupils {
+  on: string[];
+  off: string[];
+}
+
+/**
+ * The pupil list of one lesson: every member of its groups and every pupil
+ * named on it, less the members THE RULE takes off. The gateway's copy says
+ * which readers ask it; both replay src/common/__fixtures__/pupil-list-cases.json.
+ */
+export function lessonPupils(
+  lesson: LessonPupilsInput,
+  membersOf: ReadonlyMap<string, ReadonlySet<string>>,
+  bySubject: ReadonlyMap<string, readonly string[]>,
+  yearOf?: ReadonlyMap<string, string>,
+): LessonPupils {
+  const roster = new Set<string>(lesson.named);
+  for (const groupId of lesson.groupIds) for (const pupil of membersOf.get(groupId) ?? []) roster.add(pupil);
+  const off = replacedPupils(roster, lesson, new Set(lesson.named), bySubject, membersOf, yearOf);
+  return { on: [...roster].filter((pupil) => !off.has(pupil)).sort(), off: [...off].sort() };
+}
+
 // ---------------------------------------------------------------------------
 // Per group: derived keys and the pairs they add.
 // ---------------------------------------------------------------------------
