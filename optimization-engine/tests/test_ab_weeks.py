@@ -515,52 +515,101 @@ def test_a_teacher_rests_between_each_weeks_own_evening_and_morning() -> None:
     assert _solve(_weekly(payload), settings).status == "INFEASIBLE"
 
 
+def _closed(kind: str, resource: str, day: int, start: str, end: str) -> dict[str, object]:
+    return {"id": str(uuid4()), "resourceKind": kind, "resourceId": resource, "dayOfWeek": day,
+            "startTime": start, "endTime": end, "kind": "UNAVAILABLE"}
+
+
 def test_no_walk_between_two_lessons_that_never_meet() -> None:
+    """Review of #221, T13: odd 08-09 on one site and even 09-10 on another, 30 minutes apart.
+
+    One teacher, back to back across two sites, but never in one week: no
+    walk is owed. One week holding both would owe thirty minutes it has not
+    got.
+    """
     teacher = str(uuid4())
     near, far = str(uuid4()), str(uuid4())
+    first, second = str(uuid4()), str(uuid4())
     rooms = [
         {"id": str(uuid4()), "capacity": 30, "type": "near", "siteId": near},
         {"id": str(uuid4()), "capacity": 30, "type": "far", "siteId": far},
     ]
     payload = _payload(
-        [_requirement(str(uuid4()), 1, teacher=teacher, recurrence=ODD, requiredRoomType="near"),
-         _requirement(str(uuid4()), 1, teacher=teacher, recurrence=EVEN, requiredRoomType="far")],
+        [_requirement(first, 1, teacher=teacher, recurrence=ODD, requiredRoomType="near"),
+         _requirement(second, 1, teacher=teacher, recurrence=EVEN, requiredRoomType="far")],
         rooms=rooms,
+        constraints=[_closed("STUDENT_GROUP", first, 1, "09:00:00", "23:59:00"),
+                     _closed("STUDENT_GROUP", second, 1, "00:00:00", "09:00:00")],
         siteTravelTimes=[{"siteAId": near, "siteBId": far, "minutes": 30}],
     )
-    settings = _settings(hours=1)
+    settings = _settings(hours=2)
     response = _solve(payload, settings)
     assert response.status in SOLVED
+    assert sorted(lesson.start_time for lesson in response.lessons) == ["08:00:00", "09:00:00"]
     assert _validate(payload, response.lessons, settings) == []
     assert _solve(_weekly(payload), settings).status == "INFEASIBLE"
 
 
-def test_a_teachers_lunch_keeps_clear_of_both_weeks_locks_and_is_refused_by_name() -> None:
-    """An odd-week lock 11-12 and an even-week lock 12-13 leave no hour between 11 and 13.
+def test_a_rast_is_owed_in_the_week_whose_only_lesson_before_it_is_the_other_weeks() -> None:
+    """Review of #221, T5: the rast is held in each week, the subset week too.
 
-    The teacher's break sits at one hour all year, so each week's locks are
-    in its way: refused before the model, by name, as a lock of every week
-    would be — though each week on its own leaves the hour.
+    7A's every-week lesson must come after the 09:00 break (its teacher has
+    7B's only lesson before it), and 7A's odd lesson can come before. In
+    even weeks 7A is at school after the break with nothing before it.
+    Holding the rast only in the odd week (as an implied row would) misses it.
     """
-    teacher, group = str(uuid4()), str(uuid4())
-
-    def lock(start: str, end: str, parity: str) -> dict[str, object]:
-        return {"id": str(uuid4()), "teacherId": teacher, "studentGroupId": str(uuid4()),
-                "dayOfWeek": 1, "startTime": start, "endTime": end, "recurrence": parity}
-
+    a, b, teacher = str(uuid4()), str(uuid4()), str(uuid4())
+    years = {"minGradeLevel": 7, "maxGradeLevel": 7}
     payload = _payload(
-        [_requirement(group, 1, teacher=teacher)],
-        fixedLessons=[lock("11:00:00", "12:00:00", ODD), lock("12:00:00", "13:00:00", EVEN)],
-        teacherWorkRules=[{"id": str(uuid4()), "teacherId": teacher, "lunchMinutes": 60,
-                           "lunchStartTime": "11:00:00", "lunchEndTime": "13:00:00"}],
+        [_requirement(a, 1, teacher=teacher, **years), _requirement(b, 1, teacher=teacher, **years),
+         _requirement(a, 1, recurrence=ODD, **years)],
+        constraints=[_closed("STUDENT_GROUP", b, 1, "09:00:00", "23:59:00")],
+        rasts=[{"minGradeLevel": 7, "maxGradeLevel": 7, "startTime": "09:00:00",
+                "endTime": "09:20:00", "requiresLessonBefore": True}],
     )
-    settings = _settings(hours=6)
-    with pytest.raises(InvalidScheduleInputError) as refused:
-        SchedulerSolver(settings)._validate_request(OptimizeScheduleRequest.model_validate(payload))
-    assert refused.value.code == "TEACHER_LUNCH_LEAVES_NO_START"
-    # One lock alone leaves the hour the other one takes.
-    one = {**payload, "fixedLessons": payload["fixedLessons"][:1]}  # type: ignore[index]
-    assert _solve(one, settings).status in SOLVED
+    settings = Settings(  # type: ignore[call-arg]
+        SOLVER_MAX_TIME_SECONDS=10.0, SCHEDULE_DAYS="1", SCHEDULE_DAY_END_MINUTES=680,
+    )
+    response = _solve(payload, settings)
+    assert response.status == "INFEASIBLE"
+    # Every week the odd lesson's: then both weeks have it before the break.
+    assert _solve(_weekly(payload), settings).status in SOLVED
+
+
+def test_a_cap_reads_only_the_locks_of_its_own_week() -> None:
+    """Review of #221, T9: a lock of the odd weeks fills a 60-minute cap on Monday."""
+    teacher = str(uuid4())
+    payload = _payload(
+        [_requirement(str(uuid4()), 1, teacher=teacher, recurrence=EVEN)],
+        teacherWorkRules=[{"id": str(uuid4()), "teacherId": teacher, "maxTeachingMinutesPerDay": 60}],
+        fixedLessons=[{"id": str(uuid4()), "teacherId": teacher, "studentGroupId": str(uuid4()),
+                       "dayOfWeek": 1, "startTime": "08:00:00", "endTime": "09:00:00",
+                       "recurrence": ODD}],
+    )
+    response = _solve(payload)
+    assert response.status in SOLVED
+    assert _validate(payload, response.lessons) == []
+    # The lock every week leaves the even lesson no minute of the cap.
+    with pytest.raises(InvalidScheduleInputError):
+        _solve(_weekly(payload))
+
+
+def test_a_rest_reads_only_the_locks_of_its_own_week() -> None:
+    """Review of #221, T10: an odd lock Monday 17-18 and an even lesson Tuesday 08-09, rest 15 h."""
+    teacher, locked, group = str(uuid4()), str(uuid4()), str(uuid4())
+    payload = _payload(
+        [_requirement(group, 1, teacher=teacher, recurrence=EVEN)],
+        constraints=[_closed("STUDENT_GROUP", group, 1, "00:00:00", "23:59:00"),
+                     _closed("STUDENT_GROUP", group, 2, "09:00:00", "23:59:00")],
+        teacherWorkRules=[{"id": str(uuid4()), "teacherId": teacher, "minDailyRestMinutes": 900}],
+        fixedLessons=[{"id": str(uuid4()), "teacherId": teacher, "studentGroupId": locked,
+                       "dayOfWeek": 1, "startTime": "17:00:00", "endTime": "18:00:00",
+                       "recurrence": ODD}],
+    )
+    settings = _settings(hours=10, days="1,2")
+    response = _solve(payload, settings)
+    assert response.status in SOLVED
+    assert _solve(_weekly(payload), settings).status == "INFEASIBLE"
 
 
 def test_a_block_may_hold_an_odd_and_an_even_member_of_one_teacher() -> None:
