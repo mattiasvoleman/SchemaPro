@@ -94,6 +94,7 @@ import { recordRead, type AccessChannel } from '../access-log/access-log';
 import { WORK_DAYS_HIDDEN_MESSAGE, WorkDaysRefusal, isDaysBearing, withoutDays } from './work-days';
 import { unkeptFreeDayWishes, type FreeDayWish, type TeachersOnDay } from './free-day-wishes';
 import { TRAVEL_TEACHERS_CODE } from './stored-conflicts';
+import { holdMessage, readOtherSchoolHolds, HOLD_CODES, type OtherSchoolHold } from './other-school-holds';
 import type {
   AiEngineConflictAnalysis,
   AiEngineLesson,
@@ -243,6 +244,14 @@ export interface AnonMaps {
    * (stored-conflicts.ts). Optional and empty unless the walk was sent.
    */
   travelTeacherIds?: Map<string, string>;
+  /**
+   * Delade lokaler och lärare: the other schools' holds sent as
+   * reservations, by the id the constraint map carries for each (holdId).
+   * A refusal that names one is read as the other school's (OTHER_SCHOOL_*),
+   * never as a reservation of the school's own. Absent or empty for a school
+   * without another school of its huvudman.
+   */
+  otherSchoolHolds?: Map<string, OtherSchoolHold>;
   /** Real group id -> the school's own name, the last step out of id space. */
   nameById: Map<string, string>;
   /**
@@ -1206,6 +1215,7 @@ export class OptimizationProxyService {
       // Only when the walk was sent: no other sentence names a teacher.
       travelTeacherIds:
         data.siteTravelTimes.length > 0 ? reversed(data.teacherAnonMap) : new Map<string, string>(),
+      otherSchoolHolds: data.otherSchoolHolds,
       nameById: data.nameById,
     };
 
@@ -1672,6 +1682,36 @@ export class OptimizationProxyService {
         // resourceIds, and the reader is told whose post it is only when they
         // read HR, whose walk it is when anyone reads it
         // (OptimizationJobsService).
+        // Delade lokaler och lärare: a reservation the gateway sent for
+        // another school's hold (other-school-holds.ts) is that school's, and
+        // its line says so. The hold's id is in no table, so it leaves as no
+        // constraint; a teacher is named when the line is read, as the walk's
+        // teachers are, and a room by the school's own name for it.
+        const hold =
+          detail.code === 'AVAIL_CONSTRAINT_BLOCKS_LESSONS'
+            ? detail.constraintIds.map((anonId) => maps.otherSchoolHolds?.get(realByAnon.get(anonId) ?? anonId)).find(Boolean)
+            : undefined;
+        if (hold) {
+          const room = hold.resourceKind === 'ROOM' ? (maps.nameById.get(hold.resourceId) ?? '') : null;
+          const params: Record<string, string | number> = {
+            schools: hold.schools.join(', '),
+            day: hold.dayOfWeek,
+            start: hold.startTime.slice(0, 5),
+            end: hold.endTime.slice(0, 5),
+            ...(room !== null ? { room } : {}),
+          };
+          const teachers = hold.resourceKind === 'TEACHER' ? [hold.resourceId] : [];
+          return {
+            ...detail,
+            code: HOLD_CODES[hold.kind],
+            message: holdMessage(hold.kind, params),
+            params,
+            constraintIds: [],
+            resourceIds: hold.resourceKind === 'ROOM' ? [hold.resourceId] : teachers,
+            resourceNames: room ? [room] : [],
+            subjectIds: teachers,
+          };
+        }
         const travelTeachers = maps.travelTeacherIds ?? new Map<string, string>();
         if (detail.code === TRAVEL_TEACHERS_CODE) {
           // The teachers who cannot make the walk, as Users ids kept beside
@@ -1929,6 +1969,8 @@ export class OptimizationProxyService {
     roomTypeAnonMap: Map<string, string>;
     /** And the reservation one names. */
     constraintAnonMap: Map<string, string>;
+    /** Delade lokaler och lärare: the other schools' holds sent as reservations, by hold id. */
+    otherSchoolHolds: Map<string, OtherSchoolHold>;
     /** And the arbetstid one names, which is the ONLY way back to that row. */
     workRuleAnonMap: Map<string, string>;
     /** And the post a days sentence names, back to the row. */
@@ -3040,6 +3082,29 @@ export class OptimizationProxyService {
       },
     );
 
+    // Delade lokaler och lärare: the other schools' hold on this school's
+    // teachers and rooms, as reservations beside the school's own
+    // (other-school-holds.ts). Only on a teacher or room this payload already
+    // carries: a hold on anybody else holds nothing the engine places. A
+    // school without another school of its huvudman adds none, and its
+    // payload is what it was.
+    const otherSchoolHolds = new Map<string, OtherSchoolHold>();
+    for (const hold of (await readOtherSchoolHolds(tx, academicYearId, schoolId)).holds) {
+      const resourceId = hold.resourceKind === 'TEACHER' ? teacherAnonMap.get(hold.resourceId) : roomAnonMap.get(hold.resourceId);
+      if (resourceId === undefined) continue;
+      otherSchoolHolds.set(hold.holdId, hold);
+      constraints.push({
+        id: anonId(constraintAnonMap, hold.holdId),
+        resourceKind: hold.resourceKind,
+        resourceId,
+        dayOfWeek: hold.dayOfWeek as DayOfWeek,
+        date: null,
+        startTime: hold.startTime,
+        endTime: hold.endTime,
+        kind: 'UNAVAILABLE',
+      });
+    }
+
     // Ramtider. School-scoped like the constraints above, and read through the
     // same year -> school hop rather than a schoolId the caller supplied, so a
     // request for another school's year cannot pull this school's rows.
@@ -3372,6 +3437,7 @@ export class OptimizationProxyService {
       workRuleAnonMap,
       dayLimitAnonMap,
       dayLimitTeacherIds,
+      otherSchoolHolds,
       nameById,
       blockAnonMap,
       blockRefusal,

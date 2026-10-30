@@ -46,6 +46,7 @@ import {
   unstaffedFinding,
   type GateLesson,
 } from './publication-gates.reader';
+import { otherSchoolFinding } from './other-school-finding';
 import {
   classifyOverlap,
   effectiveSegments,
@@ -812,6 +813,12 @@ export class PublicationsService {
   ): Promise<GateFinding[]> {
     const findings: GateFinding[] = [
       await clashFinding(tx, user, context.year.id, context.lessons),
+      await otherSchoolFinding(tx, context.schoolId, context.lessons, {
+        from: context.validFrom,
+        to: context.validTo,
+        yearStart: context.year.start,
+        yearEnd: context.year.end,
+      }),
       ...lessonFindings(context.lessons),
       await unstaffedFinding(tx, context.year.id),
       await lunchFinding(tx, context.schoolId),

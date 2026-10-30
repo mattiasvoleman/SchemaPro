@@ -33,7 +33,17 @@
  *          the HM ones through withHuvudmanKeyPrincipal) with the driver's
  *          code and message, each read by roomLoanRefusal; and
  *          app.shared_teacher_busy's time and date columns as Dates, which
- *          the generator and publish (second half) read.
+ *          the generator and publish (second half) read;
+ *   (dl-f) the second half, as the generator, the publish and a booking
+ *          read it: readOtherSchoolHolds at school A for a läsår of the
+ *          roller school's dates (planted by the owner) gives T's three
+ *          lessons there as blocks with the walk, and A's room for the hall
+ *          closed outside the approved Tuesday; at the roller school it gives
+ *          the hall closed in that window; otherSchoolFinding names a lesson
+ *          of T's that meets the Tuesday and one in A's room for the hall on
+ *          a Wednesday; a booking of the hall in the window is the 409
+ *          ROOM_LENT_TO_OTHER_SCHOOL, and A's booking of its room on the
+ *          Wednesday the 409 ROOM_BORROWED_OUTSIDE_LOAN.
  *
  * On the RLS fixtures (run-rls-tests.sh first). What it writes is the loans
  * of "Roller 1" and A's own room for it, which the owner deletes before and
@@ -47,6 +57,11 @@ import { Role } from '../../src/auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
 import type { PrismaService } from '../../src/database/prisma.service';
 import { RoomLoansService } from '../../src/sharing/room-loans.service';
+import { readOtherSchoolHolds } from '../../src/optimization/other-school-holds';
+import { otherSchoolFinding } from '../../src/publication/other-school-finding';
+import type { GateLesson } from '../../src/publication/publication-gates.reader';
+import { RoomBookingsService } from '../../src/room-bookings/room-bookings.service';
+import type { NotificationsService } from '../../src/notifications/notifications.service';
 import { roomLoanRefusal } from '../../src/sharing/sharing-errors';
 import { SharingService } from '../../src/sharing/sharing.service';
 
@@ -116,6 +131,8 @@ export async function deladeChecks(owner: Client, api: PrismaService, check: Che
 
   // What the probe writes, gone before it starts and after it ends.
   const sweep = async () => {
+    await owner.query(`DELETE FROM "RoomBookings" WHERE title = 'Delade probe'`);
+    await owner.query(`DELETE FROM "AcademicYears" WHERE "schoolId" = $1 AND name = 'Delade probe 2030/31'`, [a]);
     await owner.query(`DELETE FROM "RoomLoans" WHERE "roomId" = $1`, [roller1]);
     await owner.query(`DELETE FROM "Rooms" WHERE "schoolId" = $1 AND name = 'Roller 1 (RLS Roller)'`, [a]);
     await owner.query(
@@ -352,6 +369,75 @@ export async function deladeChecks(owner: Client, api: PrismaService, check: Che
           [m, 5, '1970-01-01T08:00:00.000Z', '09:00', 'ALL_WEEKS', '2030-08-15', '2031-06-15', 15],
         ],
       );
+    });
+
+    await check('(dl-f) the generator\'s holds, the publish check and a booking read the other school as the database lets them', async () => {
+      // A läsår of the roller school's dates at A, so that T's lessons there meet it.
+      const yearA = (
+        await owner.query<{ id: string }>(
+          `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+           VALUES ($1, 'Delade probe 2030/31', '2030-08-15', '2031-06-15', false, now()) RETURNING id`,
+          [a],
+        )
+      ).rows[0]!.id;
+      const yearM = (await one<{ id: string }>(`SELECT id FROM "AcademicYears" WHERE "schoolId" = $1 AND name = 'Roller 2030/31'`, [m]))!.id;
+
+      const atA = await api.withRls(aPlanner, (tx) => readOtherSchoolHolds(tx as never, yearA, a));
+      const teacher = atA.holds.filter((hold) => hold.kind === 'TEACHER_BUSY' && hold.resourceId === tA);
+      assert.deepEqual(
+        teacher.map((hold) => [hold.dayOfWeek, hold.startTime, hold.endTime, hold.schools.join()]),
+        [
+          [2, '09:45:00', '11:15:00', 'RLS Roller'],
+          [4, '12:45:00', '14:15:00', 'RLS Roller'],
+          [5, '07:45:00', '09:15:00', 'RLS Roller'],
+        ],
+      );
+      const borrowed = atA.holds.filter((hold) => hold.kind === 'ROOM_BORROWED' && hold.resourceId === localHall);
+      assert.deepEqual(
+        borrowed.filter((hold) => hold.dayOfWeek === 2).map((hold) => `${hold.startTime}-${hold.endTime}`),
+        ['00:00:00-10:00:00', '11:30:00-23:59:00'],
+      );
+      assert.equal(borrowed.filter((hold) => hold.dayOfWeek !== 2).length, 4);
+
+      const atM = await api.withRls(mPlanner, (tx) => readOtherSchoolHolds(tx as never, yearM, m, { teachers: false }));
+      assert.deepEqual(
+        atM.holds.filter((hold) => hold.resourceId === hall).map((hold) => [hold.kind, hold.dayOfWeek, hold.startTime, hold.endTime, hold.schools.join()]),
+        [['ROOM_LENT', 2, '10:00:00', '11:30:00', aName]],
+      );
+
+      const lesson = (patch: Partial<GateLesson>): GateLesson => ({
+        id: 'probe', subjectId: 's', studentGroupId: 'g', teacherId: tA, coTeacherId: null, roomId: null,
+        dayOfWeek: 2, startTime: '11:00', endTime: '12:00', recurrence: 'ALL_WEEKS', startDate: null, endDate: null,
+        isParked: false, extraGroupIds: [], studentIds: [], subjectName: 'Probe', groupName: '7P', ...patch,
+      });
+      const finding = await api.withRls(aPlanner, (tx) =>
+        otherSchoolFinding(tx as never, a, [lesson({ id: 'teacher' }), lesson({ id: 'room', teacherId: null, roomId: localHall, dayOfWeek: 3 })], {
+          from: '2030-08-19', to: '2031-06-13', yearStart: '2030-08-15', yearEnd: '2031-06-15',
+        }),
+      );
+      assert.deepEqual(finding.entries?.map((entry) => entry.masterLessonId), ['teacher', 'room']);
+      assert.match(finding.entries![0]!.label, /har en lektion på RLS Roller tis 10:00–11:00, restid 15 min$/);
+      assert.match(finding.entries![1]!.label, /^Probe · 7P, ons 11:00–12:00: Roller hall \(lånad\) är lånad av RLS Roller/);
+
+      const bookings = new RoomBookingsService(api, {} as NotificationsService);
+      // 2030-09-03 is a Tuesday, 2030-09-04 a Wednesday; Stockholm is UTC+2.
+      const lent = await failure(() =>
+        bookings.create({ roomId: hall, title: 'Delade probe', startsAt: '2030-09-03T08:30:00.000Z', endsAt: '2030-09-03T09:00:00.000Z' } as never, mFull),
+      );
+      assert.ok(lent instanceof ConflictException, `a booking in the lent window came back as ${String(lent)}`);
+      assert.equal(codeOf(lent), 'ROOM_LENT_TO_OTHER_SCHOOL');
+      const outside = await failure(() =>
+        bookings.create({ roomId: localHall, title: 'Delade probe', startsAt: '2030-09-04T08:00:00.000Z', endsAt: '2030-09-04T09:00:00.000Z' } as never, aPlanner),
+      );
+      assert.ok(outside instanceof ConflictException, `a booking outside the loan came back as ${String(outside)}`);
+      assert.equal(codeOf(outside), 'ROOM_BORROWED_OUTSIDE_LOAN');
+      const inside = await bookings.create(
+        { roomId: localHall, title: 'Delade probe', startsAt: '2030-09-03T08:00:00.000Z', endsAt: '2030-09-03T09:00:00.000Z' } as never,
+        aPlanner,
+      );
+      assert.equal(inside.status, 'APPROVED');
+      // Neither refused booking left a row.
+      assert.equal(Number((await one<{ n: string }>(`SELECT count(*) AS n FROM "RoomBookings" WHERE title = 'Delade probe'`))!.n), 1);
     });
   } finally {
     await sweep();

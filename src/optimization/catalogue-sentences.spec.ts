@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { freeDayWishMessage, TEACHER_FREE_DAY_WISH_NOT_KEPT } from './free-day-wishes';
 import { DAYS_BEARING_CODES, TEACHER_WORK_DAYS_HIDDEN, WORK_DAYS_HIDDEN_MESSAGE } from './work-days';
+import { HOLD_CODES, holdMessage, type HoldKind } from './other-school-holds';
 
 /**
  * The sentences the generator's gateway writes itself, held to the one
@@ -74,5 +75,16 @@ describe('the generator gateway’s sentences are the catalogue’s', () => {
     expect(fixture[TEACHER_FREE_DAY_WISH_NOT_KEPT]).toBeDefined();
     // The day is all the sentence takes: whose wish it is stands beside it.
     expect(freeDayWishMessage(day)).toBe(render(fixture[TEACHER_FREE_DAY_WISH_NOT_KEPT]!, { day }));
+  });
+
+  // Delade lokaler och lärare: the gateway reads a refusal about another
+  // school's hold as that school's, in the catalogue's words.
+  const holds: Array<[HoldKind, number]> = (['TEACHER_BUSY', 'ROOM_LENT', 'ROOM_BORROWED'] as const).flatMap((kind) =>
+    [1, 3, 5].map((day): [HoldKind, number] => [kind, day]),
+  );
+  it.each(holds)('says the %s line for weekday %i as the catalogue does', (kind, day) => {
+    const params = { schools: 'Norraskolan, Södra', day, start: '09:45', end: '11:15', room: 'Idrottshallen' };
+    expect(fixture[HOLD_CODES[kind]]).toBeDefined();
+    expect(holdMessage(kind, params)).toBe(render(fixture[HOLD_CODES[kind]]!, params));
   });
 });

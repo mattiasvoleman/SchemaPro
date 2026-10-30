@@ -166,6 +166,7 @@ describe('RoomLoansService', () => {
             room: { id: OWN_ROOM, name: 'Aulan' },
             school: { id: ROLLER, name: 'RLS Roller' },
             ownerRoomName: null,
+            ownerRoomId: null,
           },
         ],
         borrowed: [
@@ -184,6 +185,7 @@ describe('RoomLoansService', () => {
             room: { id: LOCAL_HALL, name: 'Roller hall (lånad)' },
             school: { id: ROLLER, name: 'RLS Roller' },
             ownerRoomName: 'Roller hall',
+            ownerRoomId: expect.any(String),
           },
         ],
       });

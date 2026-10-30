@@ -40,6 +40,7 @@ import type {
 import { OptimizationProxyService, type AnonMaps } from './optimization-proxy.service';
 import { lockApplyYearKey } from './regeneration-lock';
 import { loadRosters, roomNeedsOf, type RoomNeeds } from './room-eligibility';
+import { readOtherSchoolHolds } from './other-school-holds';
 import { rostersOfYear, type RosterViewer } from '../year-rollover/projected-rosters';
 
 /** The code a stale apply answers with, so the page recomputes rather than guesses. */
@@ -456,6 +457,23 @@ export class RoomOptimizationService {
           select: { siteAId: true, siteBId: true },
         })
       : [];
+    // Delade lokaler och lärare: a room lent to another school is closed in
+    // the loan's windows, and the school's own room for a borrowed one
+    // outside them, as the generator reads them (other-school-holds.ts). As
+    // rows of the school's own: the proposal sends them and the basis covers
+    // them, so a loan approved or ended since a proposal makes it stale. A
+    // lesson may always stay where it is; none is moved into a closed room.
+    const holds = await readOtherSchoolHolds(tx, academicYearId, year.schoolId, { teachers: false });
+    for (const hold of holds.holds) {
+      if (hold.resourceKind !== 'ROOM') continue;
+      constraints.push({
+        id: hold.holdId,
+        roomId: hold.resourceId,
+        dayOfWeek: hold.dayOfWeek,
+        startTime: new Date(`1970-01-01T${hold.startTime}Z`),
+        endTime: new Date(`1970-01-01T${hold.endTime}Z`),
+      });
+    }
     const sitesWithRooms = new Set(rooms.flatMap((room) => (room.siteId ? [room.siteId] : [])));
 
     // What each lesson asks of a room, derived HERE so that propose and apply

@@ -49,6 +49,11 @@ export interface RoomLoanView {
   school: { id: string; name: string };
   /** For a borrowed room: the owner's name for it, while the owner offers it. */
   ownerRoomName: string | null;
+  /**
+   * For a borrowed room: the owner's room, for asking again (the next
+   * läsår's loan). Null for a room the school lends.
+   */
+  ownerRoomId: string | null;
 }
 
 export interface RoomLoansView {
@@ -262,6 +267,7 @@ export class RoomLoansService {
       room: { id: string; name: string },
       otherSchoolId: string,
       ownerRoomName: string | null,
+      ownerRoomId: string | null,
     ): RoomLoanView | null => {
       const school = schoolOf.get(otherSchoolId);
       // The arms show a loan only while both schools have the huvudman.
@@ -281,14 +287,15 @@ export class RoomLoansService {
         room,
         school: { id: school.id, name: school.name },
         ownerRoomName,
+        ownerRoomId,
       };
     };
     return {
       lent: lent
-        .map((loan) => view(loan, loan.room, loan.borrowerSchoolId, null))
+        .map((loan) => view(loan, loan.room, loan.borrowerSchoolId, null, null))
         .filter((loan): loan is RoomLoanView => loan !== null),
       borrowed: borrowed
-        .map((loan) => view(loan, loan.localRoom, loan.ownerSchoolId, ownerRooms.get(loan.roomId) ?? null))
+        .map((loan) => view(loan, loan.localRoom, loan.ownerSchoolId, ownerRooms.get(loan.roomId) ?? null, loan.roomId))
         .filter((loan): loan is RoomLoanView => loan !== null),
     };
   }
