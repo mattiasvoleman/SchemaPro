@@ -490,11 +490,12 @@
     <li>en sal som skolan lånar ut får inga egna lektioner i lånets godkända
       tider;</li>
     <li>skolans egen sal för en lånad sal får lektioner bara på de tider som
-      de godkända lånen tillsammans täcker varje vecka under läsåret. Två lån
-      som ligger kant i kant räknas som ett, och ett höstlån och ett vårlån
-      av samma tid täcker hela året. Ett lån som bara gäller våren öppnar
-      ingenting, eftersom genereringen lägger lektioner för hela läsåret. Låt
-      därför lånen gälla läsårets alla datum. Salen finns först när ett lån
+      de godkända lånen tillsammans täcker varje skolvecka under läsåret. Två
+      lån som ligger kant i kant räknas som ett. Lovdagar då ingen årskurs
+      har skola behöver inget lån, så ett höstlån och ett vårlån av samma tid
+      på var sin sida om jullovet täcker hela året. Ett lån som bara gäller
+      våren öppnar ingenting, eftersom genereringen lägger lektioner för hela
+      läsåret. Låt därför lånen gälla läsårets alla skoldagar. Salen finns först när ett lån
       har godkänts, och när skolans lån av salen har avslutats får den inga
       lektioner alls.</li>
   </ul>
@@ -515,7 +516,9 @@
     skolan. Det gäller en delad lärares lektion där, med restiden, en egen
     lektion i en utlånad sal under lånets tider och en lektion i en lånad sal
     på en tid eller ett datum som de godkända lånen tillsammans inte täcker.
-    Bokningar av salen prövas på samma sätt. Kontrollen läser veckor och datum, så en lektion
+    Lektionsgruppens lovdagar räknas inte, eftersom publiceringen inte lägger
+    några lektioner då. En bokning av salen prövas på sitt eget datum, också
+    under ett lov: då behöver salen vara utlånad till skolan just den dagen. Kontrollen läser veckor och datum, så en lektion
     udda veckor krockar inte med en lektion jämna veckor. Båda skolorna gör
     samma kontroll när de publicerar. Den skola som publicerar sist ser därför
     krocken, vem som än orsakade den. Kontrollen varnar tills skolan väljer att
