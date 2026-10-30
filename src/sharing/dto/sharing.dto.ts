@@ -17,7 +17,8 @@ import {
   ValidateNested,
 } from 'class-validator';
 
-const CLOCK = /^\d{2}:\d{2}(:\d{2})?$/;
+/** A clock time of the day, 'HH:MM' or 'HH:MM:SS' (00:00–23:59:59). */
+const CLOCK = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
 
 /**
  * The minutes to another school of the huvudman, 0..240 as the table holds
@@ -51,8 +52,9 @@ export class RoomLoanWindowDto {
  * A request to borrow a room of another school of the huvudman: one or more
  * weekly windows between two dates, each its own loan the owner answers.
  * The room the school holds it by is its own: the one it already has for
- * the room, the room named, or a new room the gateway makes (named after
- * the room and its school unless the request names it).
+ * the room, the room named, or a room the owner's approval makes (named
+ * after the room and its school unless the request names it, with the room
+ * type named if it is one of the school's own). A request makes no room.
  */
 export class CreateRoomLoanDto {
   @IsUUID()
@@ -81,14 +83,14 @@ export class CreateRoomLoanDto {
   @IsUUID()
   localRoomId?: string;
 
-  /** The name of the room the gateway makes, when the school has none for it. */
+  /** The name of the room the approval makes, when the school has none for it. */
   @IsOptional()
   @IsString()
   @MinLength(1)
   @MaxLength(100)
   localRoomName?: string;
 
-  /** The school's own room type for the room it makes. */
+  /** A room type of the school's own for the room the approval makes. */
   @IsOptional()
   @IsUUID()
   localRoomTypeId?: string;

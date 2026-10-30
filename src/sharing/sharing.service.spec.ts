@@ -2,15 +2,17 @@ import { NotFoundException } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { createPrismaMock, createTxMock, testUser, type PrismaMock, type TxMock } from '../../test/utils/prisma-mock';
 import type { PrismaService } from '../database/prisma.service';
-import { SCHOOL_NOT_SIBLING, SharingService, schoolPair } from './sharing.service';
+import { SCHOOL_NOT_SIBLING, SHARED_TEACHER_NOT_STAFF, SharingService, schoolPair } from './sharing.service';
 
 /**
  * What a school shares with the other schools of its huvudman (Delade
  * lokaler och lärare, 20261217090000). Who reads which rows is the
  * database's (RLS sections 275–279); this is what the service adds: the
- * other schools with the minutes to each and who wrote them, the shared
- * teachers by their own row's name, and a figure written signed with the
- * school, the pair lower id first.
+ * other schools with the minutes to each and who wrote them, the school's
+ * marked teachers by their own row's name and whether the other school has
+ * marked back, a mark made or taken back for the school's own active staff
+ * towards another school of the huvudman, and a figure written signed with
+ * the school, the pair lower id first.
  */
 
 const SCHOOL_ID = '33333333-3333-4333-8333-333333333333';
@@ -18,6 +20,7 @@ const LOWER = '10000000-0000-4000-8000-000000000001';
 const HIGHER = '90000000-0000-4000-8000-000000000009';
 const ANNA = 'a0000000-0000-4000-8000-00000000000a';
 const BERTIL = 'b0000000-0000-4000-8000-00000000000b';
+const LEFT = '70000000-0000-4000-8000-000000000007';
 
 /** The SQL text of a raw call: the template's parts, joined. */
 const sqlOf = (call: unknown[]): string => ((call[0] as Prisma.Sql).strings ?? []).join('?');
@@ -93,46 +96,127 @@ describe('SharingService', () => {
       expect(view.schools.every((school) => school.travelMinutes === null)).toBe(true);
     });
 
-    it('names the shared teachers by the school\'s own rows, their schools grouped and by name, the teachers by last name', async () => {
-      shared = [
-        { teacher_id: ANNA, school_id: HIGHER, school_name: 'Östra skolan' },
-        { teacher_id: ANNA, school_id: LOWER, school_name: 'Björkskolan' },
-        { teacher_id: BERTIL, school_id: LOWER, school_name: 'Björkskolan' },
-      ];
-      tx.user.findMany.mockResolvedValue([
-        { id: ANNA, firstName: 'Anna', lastName: 'Öberg' },
-        { id: BERTIL, firstName: 'Bertil', lastName: 'Andersson' },
+    it('names the marked teachers by the school\'s own rows, each school marked back as shared, the teachers by last name', async () => {
+      tx.sharedTeacherMark.findMany.mockResolvedValue([
+        { teacherId: ANNA, withSchoolId: HIGHER },
+        { teacherId: ANNA, withSchoolId: LOWER },
+        { teacherId: BERTIL, withSchoolId: LOWER },
+        // Towards a school that has left the huvudman: shares nothing, not shown.
+        { teacherId: BERTIL, withSchoolId: LEFT },
       ]);
+      // Östra skolan has marked its row of Anna back; Björkskolan neither.
+      shared = [{ teacher_id: ANNA, school_id: HIGHER, school_name: 'Östra skolan' }];
+      tx.user.findMany
+        .mockResolvedValueOnce([
+          { id: ANNA, firstName: 'Anna', lastName: 'Öberg' },
+          { id: BERTIL, firstName: 'Bertil', lastName: 'Andersson' },
+        ])
+        .mockResolvedValueOnce([
+          { id: ANNA, firstName: 'Anna', lastName: 'Öberg' },
+          { id: BERTIL, firstName: 'Bertil', lastName: 'Andersson' },
+        ]);
 
       const view = await service.view(testUser());
 
-      expect(tx.user.findMany).toHaveBeenCalledWith({
+      expect(tx.sharedTeacherMark.findMany).toHaveBeenCalledWith({
+        where: { schoolId: SCHOOL_ID },
+        select: { teacherId: true, withSchoolId: true },
+      });
+      expect(tx.user.findMany).toHaveBeenNthCalledWith(1, {
         where: { id: { in: [ANNA, BERTIL] }, schoolId: SCHOOL_ID },
         select: { id: true, firstName: true, lastName: true },
       });
+      expect(tx.user.findMany).toHaveBeenNthCalledWith(2, {
+        where: { schoolId: SCHOOL_ID, isActive: true, role: { in: ['TEACHER', 'SCHOOL_ADMIN'] } },
+        select: { id: true, firstName: true, lastName: true },
+      });
       expect(view.teachers).toEqual([
-        { teacherId: BERTIL, firstName: 'Bertil', lastName: 'Andersson', schools: [{ id: LOWER, name: 'Björkskolan' }] },
+        {
+          teacherId: BERTIL,
+          firstName: 'Bertil',
+          lastName: 'Andersson',
+          schools: [{ id: LOWER, name: 'Björkskolan', shared: false }],
+        },
         {
           teacherId: ANNA,
           firstName: 'Anna',
           lastName: 'Öberg',
           schools: [
-            { id: LOWER, name: 'Björkskolan' },
-            { id: HIGHER, name: 'Östra skolan' },
+            { id: LOWER, name: 'Björkskolan', shared: false },
+            { id: HIGHER, name: 'Östra skolan', shared: true },
           ],
         },
       ]);
+      expect(view.staff.map((person) => person.lastName)).toEqual(['Andersson', 'Öberg']);
     });
 
-    it('reads no person when nobody is shared, and a school without a huvudman has no other schools', async () => {
+    it('leaves out a teacher marked only towards a school that has left the huvudman', async () => {
+      tx.sharedTeacherMark.findMany.mockResolvedValue([{ teacherId: BERTIL, withSchoolId: LEFT }]);
+      tx.user.findMany.mockResolvedValue([{ id: BERTIL, firstName: 'Bertil', lastName: 'Andersson' }]);
+
+      const view = await service.view(testUser());
+
+      expect(view.teachers).toEqual([]);
+    });
+
+    it('reads no mark and no person for a school without a huvudman, which has no other schools', async () => {
       siblings = [];
 
-      await expect(service.view(testUser())).resolves.toEqual({ schools: [], teachers: [] });
+      await expect(service.view(testUser())).resolves.toEqual({ schools: [], teachers: [], staff: [] });
       expect(tx.user.findMany).not.toHaveBeenCalled();
+      expect(tx.sharedTeacherMark.findMany).not.toHaveBeenCalled();
       expect(tx.$queryRaw.mock.calls.map(sqlOf)).toEqual([
         expect.stringContaining('app.sibling_schools()'),
         expect.stringContaining('app.shared_teachers()'),
       ]);
+    });
+  });
+
+  describe('markTeacher', () => {
+    it('marks the school\'s own active teacher towards another school of the huvudman, once', async () => {
+      tx.user.findFirst.mockResolvedValue({ id: ANNA });
+
+      await service.markTeacher(ANNA, HIGHER, true, testUser());
+
+      expect(tx.user.findFirst).toHaveBeenCalledWith({
+        where: { id: ANNA, schoolId: SCHOOL_ID, isActive: true, role: { in: ['TEACHER', 'SCHOOL_ADMIN'] } },
+        select: { id: true },
+      });
+      expect(tx.sharedTeacherMark.createMany).toHaveBeenCalledWith({
+        data: [{ schoolId: SCHOOL_ID, teacherId: ANNA, withSchoolId: HIGHER }],
+        skipDuplicates: true,
+      });
+      expect(prisma.withRls).toHaveBeenCalledTimes(1);
+    });
+
+    it('refuses a row that is not one of the school\'s active teachers or administrators with a 404', async () => {
+      tx.user.findFirst.mockResolvedValue(null);
+
+      await expect(service.markTeacher(ANNA, HIGHER, true, testUser())).rejects.toMatchObject({
+        status: 404,
+        response: { code: SHARED_TEACHER_NOT_STAFF },
+      });
+      expect(tx.sharedTeacherMark.createMany).not.toHaveBeenCalled();
+    });
+
+    it('refuses a school that is not another school of the huvudman with a 404, either way', async () => {
+      for (const shared of [true, false]) {
+        await expect(service.markTeacher(ANNA, LEFT, shared, testUser())).rejects.toMatchObject({
+          status: 404,
+          response: { code: SCHOOL_NOT_SIBLING },
+        });
+      }
+      expect(tx.sharedTeacherMark.createMany).not.toHaveBeenCalled();
+      expect(tx.sharedTeacherMark.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('takes the school\'s own mark back, whatever the row has become', async () => {
+      await service.markTeacher(ANNA, LOWER, false, testUser());
+
+      expect(tx.user.findFirst).not.toHaveBeenCalled();
+      expect(tx.sharedTeacherMark.deleteMany).toHaveBeenCalledWith({
+        where: { schoolId: SCHOOL_ID, teacherId: ANNA, withSchoolId: LOWER },
+      });
     });
   });
 

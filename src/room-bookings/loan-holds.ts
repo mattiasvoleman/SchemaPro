@@ -19,7 +19,8 @@
 export interface LoanRow {
   status: string;
   roomId: string;
-  localRoomId: string;
+  /** The borrower's room for the loan; none until the owner approves it. */
+  localRoomId: string | null;
   dayOfWeek: number;
   /** 'HH:MM'. */
   startTime: string;

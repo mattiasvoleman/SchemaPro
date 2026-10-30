@@ -105,13 +105,32 @@ describe('readOtherSchoolHolds', () => {
     expect(borrowed.filter((hold) => hold.dayOfWeek !== 4)).toHaveLength(4);
   });
 
-  it('closes a borrowed room whose loans are all pending all week', async () => {
+  it('closes a borrowed room whose loans are all pending or ended all week', async () => {
     tx.$queryRaw.mockResolvedValueOnce([{ school_id: NORRA, name: 'Norraskolan' }]).mockResolvedValueOnce([]);
-    tx.roomLoan.findMany.mockResolvedValue([loan({ status: 'PENDING', ownerSchoolId: NORRA, borrowerSchoolId: SCHOOL, localRoomId: LOCAL })]);
+    tx.roomLoan.findMany.mockResolvedValue([
+      // Waiting beside an approval that gave it the room, and one withdrawn since.
+      loan({ status: 'PENDING', ownerSchoolId: NORRA, borrowerSchoolId: SCHOOL, localRoomId: LOCAL }),
+      loan({ status: 'WITHDRAWN', ownerSchoolId: NORRA, borrowerSchoolId: SCHOOL, localRoomId: LOCAL, dayOfWeek: 3 }),
+    ]);
     const { holds } = await read();
     expect(holds.map((hold) => [hold.kind, hold.dayOfWeek, hold.startTime, hold.endTime])).toEqual(
       [1, 2, 3, 4, 5].map((day) => ['ROOM_BORROWED', day, '00:00:00', '23:59:00']),
     );
+  });
+
+  it('holds nothing for a request not yet approved: the approval makes the school\'s room', async () => {
+    tx.$queryRaw.mockResolvedValueOnce([{ school_id: NORRA, name: 'Norraskolan' }]).mockResolvedValueOnce([]);
+    tx.roomLoan.findMany.mockResolvedValue([loan({ status: 'PENDING', ownerSchoolId: NORRA, borrowerSchoolId: SCHOOL, localRoomId: null })]);
+    await expect(read()).resolves.toEqual({ holds: [] });
+  });
+
+  it('holds a room lent to a school that has left the huvudman until the owner ends the loan, naming it so', async () => {
+    tx.$queryRaw.mockResolvedValueOnce([{ school_id: NORRA, name: 'Norraskolan' }]).mockResolvedValueOnce([]);
+    tx.roomLoan.findMany.mockResolvedValue([loan({ borrowerSchoolId: 'f0000000-0000-4000-8000-00000000000f' })]);
+    const { holds } = await read();
+    expect(holds.map((hold) => [hold.kind, hold.resourceId, hold.schools])).toEqual([
+      ['ROOM_LENT', HALL, ['en skola som har lämnat huvudmannen']],
+    ]);
   });
 
   it('reads no teacher for the room optimisation', async () => {

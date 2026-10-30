@@ -176,6 +176,9 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   // none: app.room_loan_request/_decide/_withdraw/_revoke ask PLANERING.
   SchoolTravelTimes: only('PLANERING'),
   RoomLoans: readOnly,
+  // A school's word that its own teacher is shared with another school of
+  // the huvudman: a mark is made or removed, never changed.
+  SharedTeacherMarks: just('PLANERING', 'insert', 'delete'),
   Schools: just('PLANERING', 'update'),
   StaffingPolicies: only('PLANERING'),
   StudentGroupMembers: only('PLANERING'),

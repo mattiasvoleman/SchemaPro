@@ -139,4 +139,25 @@ describe('otherSchoolFinding', () => {
       },
     ]);
   });
+
+  it('reads a request not yet approved as no room of the school\'s: it holds nothing, and names no lesson', async () => {
+    sharing([]);
+    tx.roomLoan.findMany.mockResolvedValue([
+      {
+        id: 'waiting',
+        status: 'PENDING',
+        ownerSchoolId: NORRA,
+        borrowerSchoolId: SCHOOL,
+        roomId: 'y0000000-0000-4000-8000-000000000008',
+        localRoomId: null,
+        dayOfWeek: 3,
+        startTime: time('08:00'),
+        endTime: time('09:00'),
+        startDate: date('2030-08-19'),
+        endDate: date('2031-06-13'),
+      },
+    ]);
+    const finding = await find([lesson({ id: 'anywhere', teacherId: null, roomId: LOCAL, dayOfWeek: 3, startTime: '10:00', endTime: '11:00' })]);
+    expect(finding).toEqual({ code: 'PUB_OTHER_SCHOOL', count: 0 });
+  });
 });

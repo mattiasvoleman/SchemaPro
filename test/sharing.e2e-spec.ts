@@ -5,8 +5,8 @@ import { asUser, createTestApp, type TestHarness } from './utils/test-app';
 /**
  * Delade lokaler och lärare (20261217090000) through the real routing table,
  * validation, RolesGuard and handlers: every administrator reads what the
- * school shares, planering writes the travel and the loans, and the
- * huvudman's reader writes nothing. The database's own rules (who sees which
+ * school shares, planering writes the travel, the marks of shared teachers
+ * and the loans, and the huvudman's reader writes nothing. The database's own rules (who sees which
  * row, which side may act on a loan) are RLS sections 275–279 and the probe
  * (scripts/test/probe-delade.ts); here each request reaches its handler, or
  * is refused just before it.
@@ -19,6 +19,7 @@ const LOAN = '77777777-7777-4777-8777-777777777777';
 const LOCAL_HALL = '88888888-8888-4888-8888-888888888888';
 const HUVUDMAN_ID = '99999999-9999-4999-8999-999999999999';
 const MEMBER_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const ANNA = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 
 const PROFILES = ['FULL', 'REKTOR', 'SCHEMALAGGARE', 'EXPEDITION', 'LASARE'] as const;
 const as = (adminProfile: string) => asUser({ adminProfile } as never);
@@ -85,8 +86,19 @@ describe('Delade lokaler och lärare (e2e)', () => {
     harness.tx['schoolTravelTime']!['update']!.mockResolvedValue({});
     harness.tx['schoolTravelTime']!['deleteMany']!.mockResolvedValue({ count: 1 });
     harness.tx['roomLoan']!['findMany']!.mockResolvedValue([]);
-    harness.tx['roomLoan']!['findFirst']!.mockResolvedValue({ localRoomId: LOCAL_HALL });
+    harness.tx['sharedTeacherMark']!['findMany']!.mockResolvedValue([]);
+    harness.tx['sharedTeacherMark']!['createMany']!.mockResolvedValue({ count: 1 });
+    harness.tx['sharedTeacherMark']!['deleteMany']!.mockResolvedValue({ count: 1 });
+    harness.tx['user']!['findMany']!.mockResolvedValue([]);
+    harness.tx['user']!['findFirst']!.mockResolvedValue({ id: ANNA });
   });
+
+  /** The school had LOCAL_HALL for the hall: the request names it. */
+  const hadLocalHall = () => {
+    harness.tx['roomLoan']!['findMany']!.mockImplementation(async (args: { where?: { localRoomId?: unknown } }) =>
+      args?.where?.localRoomId ? [{ roomId: HALL, localRoomId: LOCAL_HALL }] : [],
+    );
+  };
 
   describe('every administrator reads what the school shares', () => {
     it.each(PROFILES)('%s reads the sharing, the loans and the rooms to ask for', async (profile) => {
@@ -94,6 +106,7 @@ describe('Delade lokaler och lärare (e2e)', () => {
       expect(sharing.body).toEqual({
         schools: [{ id: ROLLER, name: 'RLS Roller', travelMinutes: null, travelSetByUs: null }],
         teachers: [],
+        staff: [],
       });
       const loans = await request(http()).get('/api/v1/room-loans').set('x-test-user', as(profile)).expect(200);
       expect(loans.body).toEqual({ lent: [], borrowed: [] });
@@ -198,8 +211,62 @@ describe('Delade lokaler och lärare (e2e)', () => {
     });
   });
 
+  describe('a shared teacher', () => {
+    it('is marked by planering, the school\'s own row towards another school of the huvudman', async () => {
+      const response = await request(http())
+        .put(`/api/v1/sharing/teachers/${ANNA}/schools/${ROLLER}`)
+        .set('x-test-user', as('SCHEMALAGGARE'))
+        .expect(200);
+
+      expect(harness.tx['sharedTeacherMark']!['createMany']).toHaveBeenCalledWith({
+        data: [{ schoolId: SCHOOL_ID, teacherId: ANNA, withSchoolId: ROLLER }],
+        skipDuplicates: true,
+      });
+      expect(response.body).toMatchObject({ teachers: [], staff: [] });
+    });
+
+    it('is unmarked by planering', async () => {
+      await request(http()).delete(`/api/v1/sharing/teachers/${ANNA}/schools/${ROLLER}`).set('x-test-user', as('REKTOR')).expect(200);
+
+      expect(harness.tx['sharedTeacherMark']!['deleteMany']).toHaveBeenCalledWith({
+        where: { schoolId: SCHOOL_ID, teacherId: ANNA, withSchoolId: ROLLER },
+      });
+    });
+
+    it('answers a row that is not the school\'s active staff, and a school that is not the huvudman\'s, with a 404', async () => {
+      harness.tx['user']!['findFirst']!.mockResolvedValue(null);
+      const notStaff = await request(http()).put(`/api/v1/sharing/teachers/${ANNA}/schools/${ROLLER}`).set('x-test-user', as('FULL')).expect(404);
+      expect(notStaff.body).toMatchObject({ code: 'SHARED_TEACHER_NOT_STAFF' });
+      const notSibling = await request(http()).put(`/api/v1/sharing/teachers/${ANNA}/schools/${LOAN}`).set('x-test-user', as('FULL')).expect(404);
+      expect(notSibling.body).toMatchObject({ code: 'SCHOOL_NOT_SIBLING' });
+      expect(harness.tx['sharedTeacherMark']!['createMany']).not.toHaveBeenCalled();
+    });
+
+    it.each(['EXPEDITION', 'LASARE'])('refuses %s by the area, either way', async (profile) => {
+      for (const method of ['put', 'delete'] as const) {
+        const response = await request(http())[method](`/api/v1/sharing/teachers/${ANNA}/schools/${ROLLER}`).set('x-test-user', as(profile)).expect(403);
+        expect(response.body).toMatchObject({ code: 'AREA_NOT_YOURS' });
+      }
+      expect(raw).not.toHaveBeenCalled();
+    });
+
+    it('refuses a teacher and the huvudman\'s reader', async () => {
+      await request(http()).put(`/api/v1/sharing/teachers/${ANNA}/schools/${ROLLER}`).set('x-test-user', teacher()).expect(403);
+      const response = await request(http()).delete(`/api/v1/sharing/teachers/${ANNA}/schools/${ROLLER}`).set('x-test-user', reader()).expect(403);
+      expect(response.body.code).toBe('HUVUDMAN_READS_ONLY');
+      expect(raw).not.toHaveBeenCalled();
+    });
+
+    it('refuses ids that are no uuids with a 400', async () => {
+      await request(http()).put(`/api/v1/sharing/teachers/anna/schools/${ROLLER}`).set('x-test-user', as('FULL')).expect(400);
+      await request(http()).put(`/api/v1/sharing/teachers/${ANNA}/schools/roller`).set('x-test-user', as('FULL')).expect(400);
+      expect(raw).not.toHaveBeenCalled();
+    });
+  });
+
   describe('a loan of another school\'s room', () => {
     it('is asked for by planering, one request per window, through the database\'s function', async () => {
+      hadLocalHall();
       await request(http())
         .post('/api/v1/room-loans')
         .set('x-test-user', as('SCHEMALAGGARE'))
@@ -208,25 +275,30 @@ describe('Delade lokaler och lärare (e2e)', () => {
 
       expect(acts()).toHaveLength(2);
       expect(acts().every((call) => sqlText(call).includes('app.room_loan_request('))).toBe(true);
-      expect((acts()[0]![0] as Prisma.Sql).values).toEqual([HALL, LOCAL_HALL, 2, '10:00', '11:30', '2030-08-19', '2031-06-13', 'Idrott åk 7']);
+      expect((acts()[0]![0] as Prisma.Sql).values).toEqual([
+        HALL, LOCAL_HALL, null, null, 2, '10:00', '11:30', '2030-08-19', '2031-06-13', 'Idrott åk 7',
+      ]);
     });
 
-    it('makes the school\'s own room for the room the first time it is asked for', async () => {
-      harness.tx['roomLoan']!['findFirst']!.mockResolvedValue(null);
-      harness.tx['room']!['create']!.mockResolvedValue({ id: LOCAL_HALL });
+    it('makes no room of the school\'s own the first time: it passes the name on for the approval', async () => {
+      await request(http())
+        .post('/api/v1/room-loans')
+        .set('x-test-user', as('FULL'))
+        .send({ ...validLoan(), localRoomName: 'Hallen hos Roller' })
+        .expect(201);
 
-      await request(http()).post('/api/v1/room-loans').set('x-test-user', as('FULL')).send(validLoan()).expect(201);
-
-      expect(harness.tx['room']!['create']).toHaveBeenCalledWith({
-        data: { schoolId: SCHOOL_ID, name: 'Roller hall (RLS Roller)', capacity: 60, roomTypeId: null },
-        select: { id: true },
-      });
+      expect(harness.tx['room']!['create']).not.toHaveBeenCalled();
+      expect((acts()[0]![0] as Prisma.Sql).values.slice(0, 4)).toEqual([HALL, null, 'Hallen hos Roller', null]);
     });
 
     it.each([
       ['no windows', { ...validLoan(), windows: [] }],
       ['eleven windows', { ...validLoan(), windows: Array.from({ length: 11 }, (_, i) => ({ dayOfWeek: 1, startTime: `0${i % 10}:00`, endTime: '23:00' })) }],
       ['a clock that is no clock', { ...validLoan(), windows: [{ dayOfWeek: 2, startTime: '10.00', endTime: '11:30' }] }],
+      ['hour 25', { ...validLoan(), windows: [{ dayOfWeek: 2, startTime: '25:00', endTime: '26:00' }] }],
+      ['minute 99', { ...validLoan(), windows: [{ dayOfWeek: 2, startTime: '10:99', endTime: '11:30' }] }],
+      ['second 60', { ...validLoan(), windows: [{ dayOfWeek: 2, startTime: '10:00:60', endTime: '11:30' }] }],
+      ['a room type id that is no uuid', { ...validLoan(), localRoomTypeId: 'idrott' }],
       ['weekday 8', { ...validLoan(), windows: [{ dayOfWeek: 8, startTime: '10:00', endTime: '11:30' }] }],
       ['a room id that is no uuid', { ...validLoan(), roomId: 'hallen' }],
       ['a date that is no date', { ...validLoan(), startDate: '19 augusti' }],

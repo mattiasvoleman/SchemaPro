@@ -95,10 +95,14 @@ export async function otherSchoolFinding(
   });
   const approved = loans.filter((loan) => loan.status === 'APPROVED');
   const lent = approved.filter((loan) => loan.ownerSchoolId === schoolId).map((loan) => windowOf(loan, loan.roomId, loan.borrowerSchoolId));
-  const borrowed = approved
-    .filter((loan) => loan.borrowerSchoolId === schoolId)
+  // A request not yet approved has no room of the school's (the approval
+  // makes it): it holds nothing, and no lesson stands in it.
+  const borrowedAll = loans.flatMap((loan) =>
+    loan.borrowerSchoolId === schoolId && loan.localRoomId !== null ? [{ ...loan, localRoomId: loan.localRoomId }] : [],
+  );
+  const borrowed = borrowedAll
+    .filter((loan) => loan.status === 'APPROVED')
     .map((loan) => windowOf(loan, loan.localRoomId, loan.ownerSchoolId));
-  const borrowedAll = loans.filter((loan) => loan.borrowerSchoolId === schoolId);
   const localRoomIds = new Set(borrowedAll.map((loan) => loan.localRoomId));
   const ownerOfLocal = new Map(borrowedAll.map((loan) => [loan.localRoomId, loan.ownerSchoolId]));
 

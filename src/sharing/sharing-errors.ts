@@ -4,10 +4,10 @@ import { Prisma } from '@prisma/client';
 /**
  * The refusals of the room-loan functions (Delade lokaler och lärare,
  * 20261217090000), SQLSTATE class RL, which PostgreSQL does not define:
- * @prisma/adapter-pg hands them over as P2039 with the driver's fields under
- * meta.driverAdapterError.cause (as the HM refusals, huvudman-errors.ts),
- * the rendered message the fallback. The message's first word is the code
- * the API answers with.
+ * @prisma/adapter-pg hands them over with the driver's fields under
+ * meta.driverAdapterError.cause (P2010 for the raw calls these are, as the
+ * probe shows; P2039 through the model API, whose rendered message is the
+ * fallback). The message's first word is the code the API answers with.
  *
  * And the refusals of the loans' EXCLUDE constraints (23P01), which the
  * driver's message names: an approval over another approved loan of the
@@ -18,6 +18,8 @@ const SENTENCES: Record<string, string> = {
   ROOM_LOAN_NOT_YOURS: 'Lån av salar mellan skolor begärs och beslutas av den som skriver planering.',
   ROOM_LOAN_ROOM_NOT_FOUND: 'Salen finns inte bland huvudmannens andra skolors salar.',
   ROOM_LOAN_LOCAL_ROOM_NOT_FOUND: 'Skolans egen sal för lånet finns inte.',
+  ROOM_LOAN_LOCAL_ROOM_TYPE_NOT_FOUND: 'Salstypen finns inte bland skolans egna salstyper.',
+  ROOM_LOAN_LOCAL_ROOM_NAME_TAKEN: 'Låntagarskolan har redan salar med det namnet. Be den begära lånet med ett annat namn på sin sal.',
   ROOM_LOAN_LOCAL_ROOM_IS_LENT: 'Den salen lånar skolan ut, så den kan inte stå för en lånad sal.',
   ROOM_LOAN_LOCAL_ROOM_IS_ANOTHER: 'Skolan har redan en egen sal för den lånade salen, eller salen står för en annan lånad sal.',
   ROOM_LOAN_NOT_FOUND: 'Lånet finns inte.',

@@ -3,22 +3,24 @@
 /*
  * Delade lokaler och lärare (migration 20261217090000): what the school
  * shares with the other schools of its huvudman. The minutes between the
- * schools, the teachers who work at both, and the rooms one school lends
- * another for weekly times.
+ * schools, the teachers both schools have marked as shared, and the rooms
+ * one school lends another for weekly times.
  *
  * Shown only to a school whose huvudman owns another school: every other
  * school reads one empty answer and sees nothing here. On Salar beside the
  * sites, because a loan is a room and the travel is the sites' across
  * schools; the dialog that asks for a room is fetched when it opens.
  *
- * What the other school hands out is its name, its rooms' names and the
- * answer to a loan: never a person of its own.
+ * What the other school hands out is its name, its rooms' names, the
+ * answer to a loan, and whether it has marked a teacher back: never a
+ * person of its own. A school's mark is its own word about its own row; a
+ * teacher is shared only once both schools have marked theirs.
  */
 
 import { Suspense, lazy, useEffect, useState, type FormEvent } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { Plus } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import { useReadOnly } from "@/components/profile-context";
 import { ApiError } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
@@ -26,12 +28,15 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { LoadError } from "@/components/ui/load-error";
+import { FormField } from "@/components/ui/form-field";
+import { NativeSelect } from "@/components/ui/native-select";
 import { SectionCard } from "@/components/ui/section-card";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TableCard } from "@/components/ui/table-card";
 import { minutesFromField } from "./sites-card";
 import {
   byStatus,
+  useMarkTeacher,
   useRoomLoanAction,
   useRoomLoans,
   useSaveSchoolTravel,
@@ -62,7 +67,10 @@ export function SharingCard() {
   const loans = useRoomLoans(schools.length > 0);
   const saveTravel = useSaveSchoolTravel();
   const loanAction = useRoomLoanAction();
+  const markTeacher = useMarkTeacher();
   const [typed, setTyped] = useState<Record<string, string>>({});
+  const [markWho, setMarkWho] = useState("");
+  const [markWhere, setMarkWhere] = useState("");
   const [asking, setAsking] = useState(false);
   const [askedOnce, setAskedOnce] = useState(false);
   const [confirming, setConfirming] = useState<{ loan: RoomLoan; action: RoomLoanAction } | null>(null);
@@ -116,20 +124,46 @@ export function SharingCard() {
     }
   };
 
+  // A school that has left the huvudman has no name the school may read.
+  const schoolName = (loan: RoomLoan) => loan.school.name ?? t("leftSchool");
+
   const act = async (loan: RoomLoan, action: RoomLoanAction) => {
     try {
       await loanAction.mutateAsync({ id: loan.id, action });
-      toast.success(t(`done.${action}`, { room: loan.room.name, school: loan.school.name }));
+      toast.success(t(`done.${action}`, { room: loan.room.name, school: schoolName(loan) }));
       setConfirming(null);
     } catch (error) {
       toast.error(errorText(error));
     }
   };
 
-  const teachersAt = (schoolId: string) =>
-    (sharing.data?.teachers ?? [])
-      .filter((teacher) => teacher.schools.some((school) => school.id === schoolId))
-      .map((teacher) => `${teacher.firstName} ${teacher.lastName}`);
+  const teachers = sharing.data.teachers;
+  const staff = sharing.data.staff;
+  const marked = new Set(teachers.flatMap((teacher) => teacher.schools.map((school) => `${teacher.teacherId} ${school.id}`)));
+  const canMark = markWho !== "" && markWhere !== "" && !marked.has(`${markWho} ${markWhere}`);
+
+  const mark = async (teacherId: string, schoolId: string, shared: boolean) => {
+    const person = [...teachers, ...staff.map((member) => ({ ...member, teacherId: member.id }))].find(
+      (candidate) => candidate.teacherId === teacherId,
+    );
+    const values = {
+      name: person ? `${person.firstName} ${person.lastName}` : "",
+      school: schools.find((school) => school.id === schoolId)?.name ?? "",
+    };
+    try {
+      await markTeacher.mutateAsync({ teacherId, schoolId, shared });
+      toast.success(t(shared ? "teacherMarked" : "teacherUnmarked", values));
+      if (shared) setMarkWho("");
+    } catch (error) {
+      toast.error(errorText(error));
+    }
+  };
+
+  const submitMark = (event: FormEvent) => {
+    event.preventDefault();
+    if (readOnly || !canMark) return;
+    void mark(markWho, markWhere, true);
+  };
 
   // Begär igen: the room and every time the school borrows it by, the next
   // läsår's dates for the planner to choose. Loans are not rolled over.
@@ -170,14 +204,12 @@ export function SharingCard() {
               <TableRow>
                 <TableHead>{t("columns.school")}</TableHead>
                 <TableHead className="w-40">{t("columns.travel")}</TableHead>
-                <TableHead>{t("columns.teachers")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {schools.map((school) => {
                 const value = typed[school.id] ?? "";
                 const wrong = minutesFromField(value) === undefined;
-                const teachers = teachersAt(school.id);
                 return (
                   <TableRow key={school.id}>
                     <TableCell className="font-medium">{school.name}</TableCell>
@@ -198,21 +230,102 @@ export function SharingCard() {
                         <p className="mt-1 text-xs text-muted-foreground">{t("setByThem", { school: school.name })}</p>
                       ) : null}
                     </TableCell>
-                    <TableCell className="text-sm">
-                      {teachers.length > 0 ? teachers.join(", ") : <span className="text-muted-foreground">{t("noTeachers")}</span>}
-                    </TableCell>
                   </TableRow>
                 );
               })}
             </TableBody>
           </TableCard>
-          <p className="text-xs text-muted-foreground">{t("teachersHint")}</p>
           <div className="flex justify-end">
             <Button data-writes="PLANERING" type="submit" disabled={invalid || changed.length === 0 || saveTravel.isPending}>
               {t("saveTravel")}
             </Button>
           </div>
         </form>
+
+        <section aria-labelledby="sharing-teachers-title" className="space-y-3">
+          <h3 id="sharing-teachers-title" className="text-sm font-semibold">
+            {t("teachersTitle")}
+          </h3>
+          <p className="text-sm text-muted-foreground">{t("teachersHint")}</p>
+          {teachers.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{t("teachersEmpty")}</p>
+          ) : (
+            <TableCard caption={t("teachersCaption")}>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>{t("columns.teacher")}</TableHead>
+                  <TableHead>{t("columns.sharedWith")}</TableHead>
+                  <TableHead>{t("columns.status")}</TableHead>
+                  <TableHead className="text-right">{tCommon("actions")}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {teachers.flatMap((teacher) =>
+                  teacher.schools.map((school) => {
+                    const name = `${teacher.firstName} ${teacher.lastName}`;
+                    return (
+                      <TableRow key={`${teacher.teacherId} ${school.id}`}>
+                        <TableCell className="font-medium">{name}</TableCell>
+                        <TableCell>{school.name}</TableCell>
+                        <TableCell>
+                          {school.shared ? (
+                            <Badge variant="success">{t("teacherShared")}</Badge>
+                          ) : (
+                            <Badge variant="warning">{t("teacherWaiting", { school: school.name })}</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div data-writes="PLANERING" className="flex justify-end">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              aria-label={t("unmarkTeacher", { name, school: school.name })}
+                              disabled={markTeacher.isPending}
+                              onClick={() => void mark(teacher.teacherId, school.id, false)}
+                            >
+                              <X aria-hidden="true" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  }),
+                )}
+              </TableBody>
+            </TableCard>
+          )}
+          <form
+            aria-label={t("markTitle")}
+            className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end"
+            onSubmit={submitMark}
+            noValidate
+          >
+            <FormField id="sharing-mark-teacher" label={t("fields.teacher")}>
+              <NativeSelect value={markWho} onChange={(event) => setMarkWho(event.target.value)}>
+                <option value="">{t("fields.teacherPlaceholder")}</option>
+                {staff.map((member) => (
+                  <option key={member.id} value={member.id}>
+                    {member.firstName} {member.lastName}
+                  </option>
+                ))}
+              </NativeSelect>
+            </FormField>
+            <FormField id="sharing-mark-school" label={t("fields.school")}>
+              <NativeSelect value={markWhere} onChange={(event) => setMarkWhere(event.target.value)}>
+                <option value="">{t("fields.schoolPlaceholder")}</option>
+                {schools.map((school) => (
+                  <option key={school.id} value={school.id}>
+                    {school.name}
+                  </option>
+                ))}
+              </NativeSelect>
+            </FormField>
+            <Button data-writes="PLANERING" type="submit" variant="outline" disabled={!canMark || markTeacher.isPending}>
+              {t("markTeacher")}
+            </Button>
+          </form>
+        </section>
 
         <div className="space-y-3">
           <div className="flex flex-wrap items-start justify-between gap-2">
@@ -256,7 +369,7 @@ export function SharingCard() {
                   <TableRow key={loan.id}>
                     <TableCell className="font-medium">{loan.room.name}</TableCell>
                     <TableCell>
-                      {loan.school.name}
+                      {schoolName(loan)}
                       {loan.note ? <p className="text-xs text-muted-foreground">{loan.note}</p> : null}
                     </TableCell>
                     <TableCell className="text-sm">
@@ -313,9 +426,11 @@ export function SharingCard() {
               <TableBody>
                 {borrowed.map((loan) => (
                   <TableRow key={loan.id}>
-                    <TableCell className="font-medium">{loan.room.name}</TableCell>
+                    <TableCell className="font-medium">
+                      {loan.room.id ? loan.room.name : t("roomAtApproval", { room: loan.room.name })}
+                    </TableCell>
                     <TableCell>
-                      {loan.ownerRoomName ? t("ownerRoom", { room: loan.ownerRoomName, school: loan.school.name }) : loan.school.name}
+                      {loan.ownerRoomName ? t("ownerRoom", { room: loan.ownerRoomName, school: schoolName(loan) }) : schoolName(loan)}
                     </TableCell>
                     <TableCell className="text-sm">
                       {when(loan)}
@@ -356,7 +471,7 @@ export function SharingCard() {
         open={confirming !== null}
         onOpenChange={(next) => !next && setConfirming(null)}
         title={confirming ? t(`confirm.${confirming.action}.title`, { room: confirming.loan.room.name }) : ""}
-        description={confirming ? t(`confirm.${confirming.action}.body`, { school: confirming.loan.school.name }) : ""}
+        description={confirming ? t(`confirm.${confirming.action}.body`, { school: schoolName(confirming.loan) }) : ""}
         confirmLabel={confirming ? t(`actions.${confirming.action}`) : ""}
         loading={loanAction.isPending}
         onConfirm={() => (confirming ? act(confirming.loan, confirming.action) : undefined)}

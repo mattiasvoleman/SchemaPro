@@ -64,4 +64,10 @@ describe('loanBookingRefusal', () => {
     expect(loanBookingRefusal([loan({})], 'c0000000-0000-4000-8000-000000000003', at('2030-09-03T10:00:00'), at('2030-09-03T11:00:00'), TZ)).toBeNull();
     expect(loanBookingRefusal([], HALL, at('2030-09-03T10:00:00'), at('2030-09-03T11:00:00'), TZ)).toBeNull();
   });
+
+  it('reads a request not yet approved, which has no room of the borrower\'s, as holding nothing', () => {
+    const waiting = [loan({ status: 'PENDING', localRoomId: null })];
+    expect(loanBookingRefusal(waiting, LOCAL, at('2030-09-04T10:00:00'), at('2030-09-04T11:00:00'), TZ)).toBeNull();
+    expect(loanBookingRefusal(waiting, HALL, at('2030-09-03T10:00:00'), at('2030-09-03T11:00:00'), TZ)).toBeNull();
+  });
 });

@@ -3,16 +3,25 @@
  * (prisma-adapter-probe.ts calls this). The RLS suite proves the arms and the
  * functions in psql (sections 275–279), and the e2e suite mocks
  * PrismaService; what neither shows is the gateway's half against the
- * database: the services' reads through the functions, the borrower's own
- * room made in its own transaction, and what @prisma/adapter-pg hands back
- * for an RL refusal and for the EXCLUDE that keeps two approved loans of a
- * room apart.
+ * database: the services' reads through the functions, the marks of a
+ * shared teacher written through the arms, the borrower's own room made by
+ * the owner's approval and not before, and what @prisma/adapter-pg hands
+ * back for an RL refusal and for the EXCLUDE that keeps two approved loans
+ * of a room apart.
  *
  *   (dl-a) SharingService.view at school A and at the roller school: the
  *          other schools of the huvudman by name with the minutes between
  *          them (15, written by the roller school) and none to C; the
- *          shared teachers by the school's own rows, T with both schools,
- *          and none of U, V or W;
+ *          teachers A has marked by A's own rows, T shared with both
+ *          schools and Y and P with the roller school, the others A marked
+ *          (V, W, Z, Q, K, N) not shared, and U (marked towards D) not
+ *          listed; A's staff to mark, without the guardian Z or the
+ *          deactivated Q;
+ *   (dl-a2) markTeacher: A marks L, whom the roller school marked, and L is
+ *          shared; A takes it back and L is gone; a guardian's row is the
+ *          404 SHARED_TEACHER_NOT_STAFF, a school not H's the 404
+ *          SCHOOL_NOT_SIBLING, and the roller school's expedition is refused
+ *          by the arm (403 AREA_NOT_YOURS);
  *   (dl-b) putTravel: A's planner writes the figure signed with A, and the
  *          roller school's planner puts it back; a school that is not H's is
  *          the 404 SCHOOL_NOT_SIBLING; the roller school's expedition is
@@ -21,13 +30,15 @@
  *   (dl-c) RoomLoansService.rooms and .list from both sides: the hall's two
  *          loans as A borrows them (its own room "Roller hall (lånad)", the
  *          owner's name) and as the roller school lends them;
- *   (dl-d) a request as A's planner makes A's own room for "Roller 1" and a
- *          PENDING loan, and a second one names that room again; the roller
- *          school's schemaläggare approves; an approval that meets the
- *          approved one is the 409 ROOM_LOAN_OVERLAP; A deciding is the 404
- *          ROOM_LOAN_NOT_FOUND, the expedition asking the 403
- *          ROOM_LOAN_NOT_YOURS; withdraw, revoke, and a revoke of what is not
- *          approved the 409 ROOM_LOAN_NOT_APPROVED;
+ *   (dl-d) two requests as A's planner for "Roller 1" make no room at A, two
+ *          PENDING loans carrying the name "Roller 1 (RLS Roller)"; the
+ *          roller school's schemaläggare approves one, which makes A's room
+ *          by that name with Roller 1's capacity and gives it to the other;
+ *          an approval that meets the approved one is the 409
+ *          ROOM_LOAN_OVERLAP; A deciding is the 404 ROOM_LOAN_NOT_FOUND, the
+ *          expedition asking the 403 ROOM_LOAN_NOT_YOURS; withdraw, revoke,
+ *          and a revoke of what is not approved the 409
+ *          ROOM_LOAN_NOT_APPROVED; a declined request makes no room;
  *   (dl-e) the raw forms the adapter gives: 23P01 with the constraint's name
  *          in the driver's message, an RL refusal as P2010 (not P2039, as
  *          the HM ones through withHuvudmanKeyPrincipal) with the driver's
@@ -47,7 +58,8 @@
  *
  * On the RLS fixtures (run-rls-tests.sh first). What it writes is the loans
  * of "Roller 1" and A's own room for it, which the owner deletes before and
- * after, and the A–roller figure, which it puts back.
+ * after, the A–roller figure, which it puts back, and A's mark of L, which
+ * it takes back.
  */
 import { strict as assert } from 'node:assert';
 import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
@@ -68,6 +80,8 @@ import { SharingService } from '../../src/sharing/sharing.service';
 type Check = (label: string, body: () => Promise<void>) => Promise<void>;
 
 const T = 'fe000000-0000-4000-8000-000000002750';
+const L = 'fe000000-0000-4000-8000-000000002758';
+const Z = 'fe000000-0000-4000-8000-000000002755';
 const DATES = { startDate: '2030-08-19', endDate: '2031-06-13' } as const;
 
 /** The error a call throws, or null. */
@@ -119,11 +133,13 @@ export async function deladeChecks(owner: Client, api: PrismaService, check: Che
 
   const ids = async () => ({
     tA: (await one<{ id: string }>(`SELECT id FROM "Users" WHERE "authId" = $1 AND "schoolId" = $2`, [T, a]))!.id,
+    lA: (await one<{ id: string }>(`SELECT id FROM "Users" WHERE "authId" = $1 AND "schoolId" = $2`, [L, a]))!.id,
+    zA: (await one<{ id: string }>(`SELECT id FROM "Users" WHERE "authId" = $1 AND "schoolId" = $2`, [Z, a]))!.id,
     hall: (await one<{ id: string }>(`SELECT id FROM "Rooms" WHERE "schoolId" = $1 AND name = 'Roller hall'`, [m]))!.id,
     roller1: (await one<{ id: string }>(`SELECT id FROM "Rooms" WHERE "schoolId" = $1 AND name = 'Roller 1'`, [m]))!.id,
     localHall: (await one<{ id: string }>(`SELECT id FROM "Rooms" WHERE "schoolId" = $1 AND name = 'Roller hall (lånad)'`, [a]))!.id,
   });
-  const { tA, hall, roller1, localHall } = await ids();
+  const { tA, lA, zA, hall, roller1, localHall } = await ids();
   const pair = a < m ? [a, m] : [m, a];
 
   const sharing = new SharingService(api);
@@ -134,7 +150,8 @@ export async function deladeChecks(owner: Client, api: PrismaService, check: Che
     await owner.query(`DELETE FROM "RoomBookings" WHERE title = 'Delade probe'`);
     await owner.query(`DELETE FROM "AcademicYears" WHERE "schoolId" = $1 AND name = 'Delade probe 2030/31'`, [a]);
     await owner.query(`DELETE FROM "RoomLoans" WHERE "roomId" = $1`, [roller1]);
-    await owner.query(`DELETE FROM "Rooms" WHERE "schoolId" = $1 AND name = 'Roller 1 (RLS Roller)'`, [a]);
+    await owner.query(`DELETE FROM "Rooms" WHERE "schoolId" = $1 AND name LIKE 'Roller 1 (RLS Roller)%'`, [a]);
+    await owner.query(`DELETE FROM "SharedTeacherMarks" WHERE "teacherId" = $1`, [lA]);
     await owner.query(
       `UPDATE "SchoolTravelTimes" SET minutes = 15, "setBySchoolId" = $3 WHERE "schoolAId" = $1 AND "schoolBId" = $2`,
       [pair[0], pair[1], m],
@@ -155,15 +172,32 @@ export async function deladeChecks(owner: Client, api: PrismaService, check: Che
         firstName: 'Delade',
         lastName: 'delade-t-a',
         schools: [
-          { id: c, name: 'RLS Huvudman C' },
-          { id: m, name: 'RLS Roller' },
+          { id: c, name: 'RLS Huvudman C', shared: true },
+          { id: m, name: 'RLS Roller', shared: true },
         ],
       });
-      const names = atA.teachers.map((teacher) => teacher.lastName);
-      for (const notShared of ['delade-u-a', 'delade-v-a', 'delade-w-a']) {
-        assert.ok(!names.includes(notShared), `${notShared} is listed as shared`);
-      }
-      assert.ok(names.includes('delade-y-a'), 'Y, shared with the roller school, is not listed');
+      const marked = Object.fromEntries(
+        atA.teachers
+          .filter((teacher) => teacher.lastName.startsWith('delade-'))
+          .map((teacher) => [teacher.lastName, teacher.schools.map((school) => `${school.name}:${school.shared}`).join(',')]),
+      );
+      assert.deepEqual(marked, {
+        'delade-t-a': 'RLS Huvudman C:true,RLS Roller:true',
+        'delade-y-a': 'RLS Roller:true',
+        'delade-p-a': 'RLS Roller:true',
+        // Marked by A, and each kept apart by one rule: a guardian at the
+        // roller school, deactivated there, a guardian or deactivated at A,
+        // no mark of the roller school's, its mark towards C.
+        'delade-v-a': 'RLS Roller:false',
+        'delade-w-a': 'RLS Roller:false',
+        'delade-z-a': 'RLS Roller:false',
+        'delade-q-a': 'RLS Roller:false',
+        'delade-k-a': 'RLS Roller:false',
+        'delade-n-a': 'RLS Roller:false',
+      });
+      const staff = atA.staff.map((person) => person.lastName);
+      assert.ok(staff.includes('delade-l-a') && staff.includes('delade-k-a'), 'A\'s teachers are not offered to mark');
+      assert.ok(!staff.includes('delade-z-a') && !staff.includes('delade-q-a'), 'a guardian or a deactivated row is offered to mark');
       // Every teacher listed is a row of A's own.
       const own = await owner.query<{ id: string }>(`SELECT id FROM "Users" WHERE "schoolId" = $1 AND id = ANY ($2::uuid[])`, [
         a,
@@ -175,6 +209,36 @@ export async function deladeChecks(owner: Client, api: PrismaService, check: Che
       assert.equal(atM.schools.length, 2);
       assert.deepEqual(atM.schools.find((school) => school.id === a), { id: a, name: aName, travelMinutes: 15, travelSetByUs: true });
       assert.deepEqual(atM.schools.find((school) => school.id === c), { id: c, name: 'RLS Huvudman C', travelMinutes: null, travelSetByUs: null });
+    });
+
+    await check('(dl-a2) a mark of A\'s shares L with the roller school, and its withdrawal ends it; a guardian, a school not H\'s and the expedition are refused', async () => {
+      const marked = await sharing.markTeacher(lA, m, true, aPlanner);
+      assert.deepEqual(marked.teachers.find((teacher) => teacher.teacherId === lA)?.schools, [{ id: m, name: 'RLS Roller', shared: true }]);
+      // Again: one mark.
+      await sharing.markTeacher(lA, m, true, aPlanner);
+      assert.equal((await one<{ n: string }>(`SELECT count(*)::text AS n FROM "SharedTeacherMarks" WHERE "teacherId" = $1`, [lA]))!.n, '1');
+      const busy = await api.withRls(aPlanner, (tx) =>
+        tx.$queryRaw<Array<{ day_of_week: number }>>`SELECT day_of_week FROM app.shared_teacher_busy('2030-08-01'::date, '2031-07-31'::date) WHERE teacher_id = ${lA}::uuid`,
+      );
+      assert.deepEqual(busy.map((row) => row.day_of_week), [4]);
+
+      const unmarked = await sharing.markTeacher(lA, m, false, aPlanner);
+      assert.equal(unmarked.teachers.find((teacher) => teacher.teacherId === lA), undefined);
+
+      const guardian = await failure(() => sharing.markTeacher(zA, m, true, aPlanner));
+      assert.ok(guardian instanceof NotFoundException, `a guardian's row: ${String(guardian)}`);
+      assert.equal(codeOf(guardian), 'SHARED_TEACHER_NOT_STAFF');
+      const notOurs = await failure(() => sharing.markTeacher(lA, b, true, aPlanner));
+      assert.equal(codeOf(notOurs), 'SCHOOL_NOT_SIBLING');
+      const lM = (await one<{ id: string }>(`SELECT id FROM "Users" WHERE "authId" = $1 AND "schoolId" = $2`, [L, m]))!.id;
+      const expedition = await failure(() => sharing.markTeacher(lM, a, false, mExpedition));
+      // Row security's USING finds no row for the expedition: nothing is
+      // removed, and the roller school's mark stays.
+      assert.equal(expedition, null);
+      assert.equal((await one<{ n: string }>(`SELECT count(*)::text AS n FROM "SharedTeacherMarks" WHERE "teacherId" = $1`, [lM]))!.n, '1');
+      const expeditionMarks = await failure(() => sharing.markTeacher(lM, c, true, mExpedition));
+      assert.ok(expeditionMarks instanceof ForbiddenException, `the expedition's mark: ${String(expeditionMarks)}`);
+      assert.equal(codeOf(expeditionMarks), 'AREA_NOT_YOURS');
     });
 
     await check('(dl-b) the travel is written signed with the school, a school not H\'s is a 404, and the expedition is refused by the arm', async () => {
@@ -243,32 +307,31 @@ export async function deladeChecks(owner: Client, api: PrismaService, check: Che
       ]);
     });
 
-    await check('(dl-d) A asks for a room of its own making, the roller school decides, and each refusal is the one it names', async () => {
+    await check('(dl-d) A asks for Roller 1 and nothing is made until the roller school approves, and each refusal is the one it names', async () => {
       const window = (dayOfWeek: number, startTime: string, endTime: string) => ({ dayOfWeek, startTime, endTime });
+      const localRooms = async () =>
+        (await owner.query<{ id: string; capacity: number | null; name: string }>(
+          `SELECT id, capacity, name FROM "Rooms" WHERE "schoolId" = $1 AND name LIKE 'Roller 1 (%' ORDER BY name`,
+          [a],
+        )).rows;
       await loans.request({ roomId: roller1, windows: [window(1, '08:00', '09:00')], ...DATES, note: ' Probe ' }, aPlanner);
-      const local = await one<{ id: string; capacity: number | null }>(
-        `SELECT id, capacity FROM "Rooms" WHERE "schoolId" = $1 AND name = 'Roller 1 (RLS Roller)'`,
-        [a],
-      );
-      assert.ok(local, 'A\'s own room for Roller 1 was not made');
       await loans.request({ roomId: roller1, windows: [window(5, '08:00', '09:00')], ...DATES }, aPlanner);
-      const made = await owner.query<{ id: string; dayOfWeek: number; status: string; localRoomId: string; note: string | null; requestedById: string }>(
-        `SELECT id, "dayOfWeek", status::text AS status, "localRoomId", note, "requestedById" FROM "RoomLoans" WHERE "roomId" = $1 ORDER BY "dayOfWeek"`,
+      assert.deepEqual(await localRooms(), [], 'a request made a room at A');
+      const made = await owner.query<{ id: string; dayOfWeek: number; status: string; localRoomId: string | null; localRoomName: string | null; note: string | null; requestedById: string }>(
+        `SELECT id, "dayOfWeek", status::text AS status, "localRoomId", "localRoomName", note, "requestedById" FROM "RoomLoans" WHERE "roomId" = $1 ORDER BY "dayOfWeek"`,
         [roller1],
       );
       assert.deepEqual(
-        made.rows.map((row) => [row.dayOfWeek, row.status, row.localRoomId, row.note, row.requestedById]),
+        made.rows.map((row) => [row.dayOfWeek, row.status, row.localRoomId, row.localRoomName, row.note, row.requestedById]),
         [
-          [1, 'PENDING', local.id, 'Probe', aPlanner.userId],
-          [5, 'PENDING', local.id, null, aPlanner.userId],
+          [1, 'PENDING', null, 'Roller 1 (RLS Roller)', 'Probe', aPlanner.userId],
+          [5, 'PENDING', null, 'Roller 1 (RLS Roller)', null, aPlanner.userId],
         ],
-      );
-      assert.equal(
-        (await one<{ n: string }>(`SELECT count(*)::text AS n FROM "Rooms" WHERE "schoolId" = $1 AND name LIKE 'Roller 1 (%'`, [a]))!.n,
-        '1',
       );
       const monday = made.rows[0]!.id;
       const friday = made.rows[1]!.id;
+      const waiting = (await loans.list(aPlanner)).borrowed.find((loan) => loan.id === monday);
+      assert.deepEqual(waiting?.room, { id: null, name: 'Roller 1 (RLS Roller)' });
 
       // A decides nothing of the roller school's; the expedition asks nothing.
       const byA = await failure(() => loans.decide(monday, true, aPlanner));
@@ -279,21 +342,35 @@ export async function deladeChecks(owner: Client, api: PrismaService, check: Che
         [a],
       ))!.id;
       const byExpedition = await failure(() =>
-        loans.request({ roomId: aRoom, windows: [window(2, '08:00', '09:00')], ...DATES, localRoomId: roller1 }, mExpedition),
+        loans.request({ roomId: aRoom, windows: [window(2, '08:00', '09:00')], ...DATES }, mExpedition),
       );
       assert.ok(byExpedition instanceof ForbiddenException, `the expedition asks: ${String(byExpedition)}`);
       assert.equal(codeOf(byExpedition), 'ROOM_LOAN_NOT_YOURS');
 
+      // The approval makes A's room, with Roller 1's capacity, and gives it to Friday's request.
       const approved = await loans.decide(monday, true, mPlanner);
       assert.equal(approved.lent.find((loan) => loan.id === monday)?.status, 'APPROVED');
+      const rooms = await localRooms();
+      const capacity = (await one<{ capacity: number | null }>(`SELECT capacity FROM "Rooms" WHERE id = $1`, [roller1]))!.capacity;
+      assert.deepEqual(rooms.map((room) => [room.name, room.capacity]), [['Roller 1 (RLS Roller)', capacity]]);
+      const local = rooms[0]!;
+      assert.deepEqual(
+        (await owner.query<{ localRoomId: string }>(`SELECT "localRoomId" FROM "RoomLoans" WHERE id = ANY ($1::uuid[]) ORDER BY "dayOfWeek"`, [[monday, friday]])).rows.map((row) => row.localRoomId),
+        [local.id, local.id],
+      );
+      assert.deepEqual((await loans.list(aPlanner)).borrowed.find((loan) => loan.id === monday)?.room, { id: local.id, name: 'Roller 1 (RLS Roller)' });
 
       await loans.request({ roomId: roller1, windows: [window(1, '08:30', '09:30')], ...DATES }, aPlanner);
-      const meets = (await one<{ id: string }>(`SELECT id FROM "RoomLoans" WHERE "roomId" = $1 AND status = 'PENDING' AND "dayOfWeek" = 1`, [roller1]))!.id;
-      const overlap = await failure(() => loans.decide(meets, true, mPlanner));
+      const meets = (await one<{ id: string; localRoomId: string }>(
+        `SELECT id, "localRoomId" FROM "RoomLoans" WHERE "roomId" = $1 AND status = 'PENDING' AND "dayOfWeek" = 1`,
+        [roller1],
+      ))!;
+      assert.equal(meets.localRoomId, local.id, 'a request beside an approved loan does not hold by its room');
+      const overlap = await failure(() => loans.decide(meets.id, true, mPlanner));
       assert.ok(overlap instanceof ConflictException, `an approval that meets the approved one: ${String(overlap)}`);
       assert.equal(codeOf(overlap), 'ROOM_LOAN_OVERLAP');
-      const declined = await loans.decide(meets, false, mPlanner);
-      assert.equal(declined.lent.find((loan) => loan.id === meets)?.status, 'DECLINED');
+      const declined = await loans.decide(meets.id, false, mPlanner);
+      assert.equal(declined.lent.find((loan) => loan.id === meets.id)?.status, 'DECLINED');
 
       const withdrawn = await loans.withdraw(monday, aPlanner);
       assert.equal(withdrawn.borrowed.find((loan) => loan.id === monday)?.status, 'WITHDRAWN');
@@ -301,6 +378,7 @@ export async function deladeChecks(owner: Client, api: PrismaService, check: Che
       assert.ok(pendingRevoke instanceof ConflictException, `revoking a pending loan: ${String(pendingRevoke)}`);
       assert.equal(codeOf(pendingRevoke), 'ROOM_LOAN_NOT_APPROVED');
       await loans.decide(friday, true, mFull);
+      assert.deepEqual((await localRooms()).map((room) => room.id), [local.id], 'the second approval made a second room');
       const revoked = await loans.revoke(friday, mFull);
       assert.equal(revoked.lent.find((loan) => loan.id === friday)?.status, 'REVOKED');
       const again = await failure(() => loans.withdraw(friday, aPlanner));

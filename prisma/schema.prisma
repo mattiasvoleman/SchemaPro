@@ -223,6 +223,10 @@ model School {
   /// Loans of this school's rooms, and of other schools' rooms to it.
   roomLoansLent           RoomLoan[]         @relation("RoomLoanOwner")
   roomLoansBorrowed       RoomLoan[]         @relation("RoomLoanBorrower")
+  /// This school's marks of its own staff as shared, and the other schools'
+  /// marks towards it (each school reads only its own).
+  sharedTeacherMarks      SharedTeacherMark[] @relation("SharedTeacherMarkSchool")
+  teacherMarksTowards     SharedTeacherMark[] @relation("SharedTeacherMarkWithSchool")
   studentGroups           StudentGroup[]
   teachingRequirements    TeachingRequirement[]
   teachingRequirementShares TeachingRequirementShare[]
@@ -411,6 +415,8 @@ model User {
   /// Salslån (20261217090000): loans this planner asked for, and decided.
   requestedRoomLoans  RoomLoan[]        @relation("RoomLoanRequester")
   decidedRoomLoans    RoomLoan[]        @relation("RoomLoanDecider")
+  /// Delade lärare: the school's marks of this row as shared.
+  sharedTeacherMarks  SharedTeacherMark[] @relation("SharedTeacherMarkTeacher")
   /// Membership of the substitute pool (20261012110000): at most one row, a
   /// list for the composite key's sake as workRules. readActiveStaffIds
   /// filters on it.
@@ -625,6 +631,30 @@ model SchoolTravelTime {
   @@map("SchoolTravelTimes")
 }
 
+/// A school's word that its own row of a teacher is shared with another
+/// school of the huvudman (Delade lärare, 20261217090000). A teacher is shared
+/// only when both schools have marked their own rows towards each other, one
+/// login holds both rows, both are active staff and the schools have the same
+/// huvudman (app.shared_teachers). The school's administrators read its own
+/// marks and its planner writes them; no school reads another's.
+model SharedTeacherMark {
+  schoolId     String   @db.Uuid
+  /// The school's own row (the composite key holds it to the school).
+  teacherId    String   @db.Uuid
+  /// The other school (CHECK: not the school itself).
+  withSchoolId String   @db.Uuid
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+
+  school     School @relation("SharedTeacherMarkSchool", fields: [schoolId], references: [id], onDelete: Cascade)
+  withSchool School @relation("SharedTeacherMarkWithSchool", fields: [withSchoolId], references: [id], onDelete: Cascade)
+  teacher    User   @relation("SharedTeacherMarkTeacher", fields: [teacherId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([teacherId, withSchoolId])
+  @@index([schoolId])
+  @@index([withSchoolId])
+  @@map("SharedTeacherMarks")
+}
+
 enum RoomLoanStatus {
   /// The borrower asked; the owner has not answered.
   PENDING
@@ -641,10 +671,11 @@ enum RoomLoanStatus {
 /// A loan of a room between two schools of one huvudman (Salslån, migration
 /// 20261217090000): one weekly window (dayOfWeek, startTime..endTime) between
 /// two dates at most 400 days apart. The borrower holds the room by a room of
-/// its own (localRoomId), since its lessons need a room of their own school;
-/// two EXCLUDE constraints keep one local room per room and one room per
-/// local room, and a third keeps two APPROVED loans of a room from sharing a
-/// minute on a date both run — none of which Prisma can state.
+/// its own (localRoomId), since its lessons need a room of their own school,
+/// made when the owner approves; two EXCLUDE constraints keep one local room
+/// per room and one room per local room among the live loans, and a third
+/// keeps two APPROVED loans of a room from sharing a minute on a date both
+/// run — none of which Prisma can state.
 ///
 /// Written only by app.room_loan_request / _decide / _withdraw / _revoke,
 /// each for one side; both schools' staff read the loans between them.
@@ -653,7 +684,14 @@ model RoomLoan {
   ownerSchoolId    String         @db.Uuid
   roomId           String         @db.Uuid
   borrowerSchoolId String         @db.Uuid
-  localRoomId      String         @db.Uuid
+  /// The borrower's room for the loan: made when the owner approves the first
+  /// loan of the room, or named by the request; null until then.
+  localRoomId      String?        @db.Uuid
+  /// The name the approval makes the borrower's room by (1..100, trimmed).
+  localRoomName    String?
+  /// A room type of the borrower's own for that room, read again at the
+  /// approval (no foreign key: a type deleted since is none).
+  localRoomTypeId  String?        @db.Uuid
   // ISO weekday: 1 = Monday ... 7 = Sunday.
   dayOfWeek        Int
   startTime        DateTime       @db.Time(0)
@@ -676,7 +714,7 @@ model RoomLoan {
   ownerSchool    School @relation("RoomLoanOwner", fields: [ownerSchoolId], references: [id], onDelete: Cascade)
   borrowerSchool School @relation("RoomLoanBorrower", fields: [borrowerSchoolId], references: [id], onDelete: Cascade)
   room           Room   @relation("RoomLoanRoom", fields: [roomId, ownerSchoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
-  localRoom      Room   @relation("RoomLoanLocalRoom", fields: [localRoomId, borrowerSchoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  localRoom      Room?  @relation("RoomLoanLocalRoom", fields: [localRoomId, borrowerSchoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
   requestedBy    User?  @relation("RoomLoanRequester", fields: [requestedById, borrowerSchoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
   decidedBy      User?  @relation("RoomLoanDecider", fields: [decidedById, ownerSchoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
 

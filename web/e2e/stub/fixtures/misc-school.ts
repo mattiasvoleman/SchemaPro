@@ -366,14 +366,16 @@ export const SITES = {
 /**
  * Huvudmannens andra skolor (GET /api/v1/sharing, /api/v1/room-loans,
  * Delade lokaler och lärare, 20261217090000): the school's huvudman owns one
- * more school, twelve minutes away, that Bo Ek works at too; it has asked
- * for the school's first room on Tuesdays, and the school borrows that
- * school's sports hall on Thursdays. Ids are KIND.misc 9851–9859.
+ * more school, twelve minutes away, that Bo Ek works at too (both schools
+ * have marked him, so he is shared); it has asked for the school's first
+ * room on Tuesdays, and the school borrows that school's sports hall on
+ * Thursdays. Ids are KIND.misc 9851–9859.
  */
 const NORRA = { id: uid(KIND.misc, 9851), name: "Norraskolan" };
 export const SHARING = {
   schools: [{ ...NORRA, travelMinutes: 12, travelSetByUs: true }],
-  teachers: [{ teacherId: TEACHERS.bo.id, firstName: "Bo", lastName: "Ek", schools: [NORRA] }],
+  teachers: [{ teacherId: TEACHERS.bo.id, firstName: "Bo", lastName: "Ek", schools: [{ ...NORRA, shared: true }] }],
+  staff: [{ id: TEACHERS.bo.id, firstName: "Bo", lastName: "Ek" }],
 };
 const loan = (n: number, patch: Record<string, unknown>) => ({
   id: uid(KIND.misc, n),

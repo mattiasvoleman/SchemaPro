@@ -55,6 +55,8 @@ export interface OtherSchoolHolds {
 }
 
 const EMPTY: OtherSchoolHolds = { holds: [] };
+/** The name a hold gives a borrower that has left the huvudman, which the school can no longer read. */
+const LEFT_HUVUDMAN = 'en skola som har lämnat huvudmannen';
 
 /** A stable id for a hold: the same hold on the same run is the same id. */
 export function holdId(schoolId: string, kind: HoldKind, resourceId: string, day: number, start: string, end: string): string {
@@ -120,7 +122,10 @@ export async function readOtherSchoolHolds(
   });
 
   const holds: OtherSchoolHold[] = [];
-  const named = (ids: readonly string[]) => [...new Set(ids.map((id) => nameOf.get(id) ?? ''))].filter(Boolean).sort((a, b) => a.localeCompare(b, 'sv'));
+  // A borrower that has left the huvudman has no name to read: the owner
+  // still holds the room for an approved loan until it ends the loan.
+  const named = (ids: readonly string[]) =>
+    [...new Set(ids.map((id) => nameOf.get(id) ?? LEFT_HUVUDMAN))].sort((a, b) => a.localeCompare(b, 'sv'));
 
   for (const block of busyBlocks(
     busy.map((row) => ({
@@ -180,12 +185,15 @@ export async function readOtherSchoolHolds(
   }
 
   // Every room the school holds a borrowed one by, whatever its loans' state:
-  // a room whose loans are all pending or ended takes no lesson at all.
-  const borrowedAll = loans.filter((loan) => loan.borrowerSchoolId === schoolId);
+  // a room whose loans are all ended takes no lesson at all. A request not
+  // yet approved has no room (the approval makes it), so it holds nothing.
+  const borrowedAll = loans.flatMap((loan) =>
+    loan.borrowerSchoolId === schoolId && loan.localRoomId !== null ? [{ ...loan, localRoomId: loan.localRoomId }] : [],
+  );
   const ownerOf = new Map(borrowedAll.map((loan) => [loan.localRoomId, loan.ownerSchoolId]));
   for (const reservation of borrowedReservations(
     [...ownerOf.keys()],
-    approved.filter((loan) => loan.borrowerSchoolId === schoolId).map((loan) => window(loan, loan.localRoomId)),
+    borrowedAll.filter((loan) => loan.status === 'APPROVED').map((loan) => window(loan, loan.localRoomId)),
     from,
     to,
   )) {
