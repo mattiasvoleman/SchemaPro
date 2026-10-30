@@ -1006,6 +1006,86 @@ describe("findIdleGaps", () => {
     expect(findIdleGaps({ ...query, memberships: placed, groups })).toEqual([]);
   });
 
+  it("takes a replacing group's pupil off the class's lesson in the subject, unless named on it or kept by its group", () => {
+    // Ersättande grupper: SvA7 replaces svenska for s1. 7A's svenska at 09:00
+    // is the rest of the class's; s1 is in SvA7 at 10:00. The generator counts
+    // the pupils' day by the same rule (src/optimization/pupil-cohorts.ts).
+    const roster = new Map([
+      ["s1", "7A"],
+      ["s2", "7A"],
+    ]);
+    const groups = [
+      { id: "7A", kind: "CLASS", academicYearId: "y" },
+      { id: "SvA7", kind: "TEACHING_GROUP", replacesSubjectId: "sv", academicYearId: "y" },
+      { id: "Fd7", kind: "TEACHING_GROUP", academicYearId: "y" },
+    ];
+    const memberships = [{ studentId: "s1", studentGroupId: "SvA7" }];
+    const day = (svenska: Partial<Placement> = {}) => [
+      classLesson("7A", hm(8), hm(9), { subjectId: "ma" }),
+      classLesson("7A", hm(9), hm(10), { subjectId: "sv", ...svenska }),
+      classLesson("SvA7", hm(10), hm(11), { subjectId: "sva" }),
+      classLesson("7A", hm(11), hm(12), { subjectId: "en" }),
+    ];
+    const query = { studentGroupIds: ["7A"], constraints: [], days: [1], studentGroupOf: roster, groups };
+
+    // s1 waits through the svenska, s2 through SvA7's hour: one each.
+    const [report] = findIdleGaps({ ...query, placements: day(), memberships });
+    expect(report!.gaps.map((gap) => [gap.startMinutes, gap.idleStudents])).toEqual([
+      [hm(9), 1],
+      [hm(10), 1],
+    ]);
+    // Named on the svenska, s1 sits it after all: no hole at 09:00.
+    const [named] = findIdleGaps({ ...query, placements: day({ studentIds: ["s1"] }), memberships });
+    expect(named!.gaps.map((gap) => gap.startMinutes)).toEqual([hm(10)]);
+    // A teaching group keeps its own members: Svenska fördjupning (Fd7) has
+    // s1 in it, so its svenska is s1's, SvA7 or not.
+    const kept = findIdleGaps({
+      ...query,
+      placements: day({ studentGroupId: "Fd7" }),
+      memberships: [...memberships, { studentId: "s1", studentGroupId: "Fd7" }],
+    });
+    // s1 sits Fd7's svenska and SvA7's hour: no hole. s2 is in neither: 9-11.
+    expect(kept[0]!.gaps.map((gap) => [gap.startMinutes, gap.endMinutes, gap.idleStudents])).toEqual([
+      [hm(9), hm(11), 1],
+    ]);
+    // A school with no replacing group answers as before: s1 is in the svenska.
+    const plain = findIdleGaps({ ...query, groups: groups.slice(0, 1), placements: day(), memberships });
+    expect(plain[0]!.gaps.map((gap) => [gap.startMinutes, gap.idleStudents])).toEqual([[hm(10), 1]]);
+  });
+
+  it("closes a pupil's time by a year rule and a ramtid, as it closes the class's", () => {
+    // 7A's pupils: lessons 12-13 and 15-16, a rule for åk 7-9 closing 13-14
+    // and a frame for åk 7 ending at 14:30. Between the two lessons only
+    // 14:00-14:30 is closed by neither: the frame closes 14:30 onwards, the
+    // time before the 15:00 lesson, which sits outside it.
+    const roster = new Map([["s1", "7A"]]);
+    const placements = [classLesson("7A", hm(12), hm(13)), classLesson("7A", hm(15), hm(16))];
+    const report = findIdleGaps({
+      studentGroupIds: ["7A"],
+      placements,
+      constraints: [
+        constraint({
+          resourceType: "GRADE_LEVEL",
+          userId: null,
+          minGradeLevel: 7,
+          maxGradeLevel: 9,
+          dayOfWeek: 1,
+          startTime: "13:00",
+          endTime: "14:00",
+        }),
+      ],
+      frameTimes: [
+        { id: "f", minGradeLevel: 7, maxGradeLevel: 7, dayOfWeek: null, startTime: "08:00", endTime: "14:30", changeoverMinutes: 0 },
+      ],
+      gradeSpanOf: new Map([["7A", { min: 7, max: 7 }]]),
+      days: [1],
+      studentGroupOf: roster,
+      memberships: [],
+    });
+    // 14:00-14:30 is the one idle stretch, half an hour.
+    expect(report[0]!.gaps.map((gap) => [gap.startMinutes, gap.endMinutes])).toEqual([[hm(14), hm(14, 30)]]);
+  });
+
   it("finds the hole the half of a class outside the teaching group sits in", () => {
     // Four pupils of 7A, split between two maths groups. Nothing here is a
     // clash — the class is never double-booked — and yet every pupil has three

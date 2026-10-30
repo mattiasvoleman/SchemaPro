@@ -91,6 +91,9 @@ export class LunchSettingsService {
       ...(dto.generatorKeepsTravelTime !== undefined
         ? { generatorKeepsTravelTime: dto.generatorKeepsTravelTime }
         : {}),
+      ...(dto.generatorKeepsPupilGapsDown !== undefined
+        ? { generatorKeepsPupilGapsDown: dto.generatorKeepsPupilGapsDown }
+        : {}),
     };
 
     try {

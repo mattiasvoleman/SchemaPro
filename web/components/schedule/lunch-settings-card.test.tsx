@@ -219,6 +219,52 @@ describe("LunchSettingsCard", () => {
     expect(save.mock.calls[0]?.[0]).toMatchObject({ generatorKeepsTravelTime: false });
   });
 
+  it("fills the pupils' håltimmar switch from the school's rules, and sends both ways it is turned", async () => {
+    // Elevernas håltimmar: off until the school turns it on, beside the walk
+    // and on the same terms, and its own key on the save.
+    saved({ generatorKeepsTravelTime: false, generatorKeepsPupilGapsDown: false });
+    const user = userEvent.setup();
+    render(<LunchSettingsCard />);
+
+    const gaps = await screen.findByRole("switch", { name: "pupilGaps" });
+    expect(gaps.getAttribute("aria-checked")).toBe("false");
+    expect(gaps.getAttribute("aria-describedby")).toBe("generator-keeps-pupil-gaps-hint");
+    await user.click(gaps);
+    await user.click(screen.getByRole("button", { name: "save" }));
+    expect(save.mock.calls[0]?.[0]).toMatchObject({
+      generatorKeepsPupilGapsDown: true,
+      generatorKeepsTravelTime: false,
+    });
+
+    await user.click(gaps);
+    await user.click(screen.getByRole("button", { name: "save" }));
+    expect(save.mock.calls[1]?.[0]).toMatchObject({ generatorKeepsPupilGapsDown: false });
+  });
+
+  it("reads the pupils' håltimmar switch on when the school turned it on", async () => {
+    saved({ generatorKeepsTravelTime: false, generatorKeepsPupilGapsDown: true });
+    render(<LunchSettingsCard />);
+
+    const gaps = await screen.findByRole("switch", { name: "pupilGaps" });
+    await waitFor(() => expect(gaps.getAttribute("aria-checked")).toBe("true"));
+    // Read, not changed: nothing to save.
+    expect((screen.getByRole("button", { name: "save" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("leaves the pupils' håltimmar switch out of a save to an API that predates it", async () => {
+    saved({ generatorKeepsTravelTime: false });
+    const user = userEvent.setup();
+    render(<LunchSettingsCard />);
+
+    expect((await screen.findByRole("switch", { name: "pupilGaps" })).getAttribute("aria-checked")).toBe("false");
+    await waitFor(() => expect(field("seats").value).toBe("180"));
+    fireEvent.change(field("seats"), { target: { value: "200" } });
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    expect(save.mock.calls[0]?.[0]).not.toHaveProperty("generatorKeepsPupilGapsDown");
+    expect(save.mock.calls[0]?.[0]).toMatchObject({ generatorKeepsTravelTime: false });
+  });
+
   it("sends the seat count as a number once one is typed", async () => {
     const user = userEvent.setup();
     render(<LunchSettingsCard />);
@@ -400,6 +446,7 @@ describe("LunchSettingsCard under Läsbehörighet", () => {
       field("seats"),
       screen.getByRole("switch", { name: "enabled" }),
       screen.getByRole("switch", { name: "travel" }),
+      screen.getByRole("switch", { name: "pupilGaps" }),
     ]) {
       expect(control.closest("[data-writes-inert]")).toHaveAttribute("data-writes-inert", "PLANERING");
       expect(control.closest("[data-writes]")).toBeNull();

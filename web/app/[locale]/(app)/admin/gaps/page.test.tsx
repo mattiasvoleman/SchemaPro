@@ -1485,3 +1485,64 @@ describe("Gaps page — structure and operation", () => {
     });
   });
 });
+
+/*
+ * Elevernas håltimmar: the number the generator is held to, under the list.
+ *
+ * The week above with its lunch (11:00–12:30, 30 minutes): Sara and Elin of 7A
+ * wait 80 minutes on Wednesday morning and 70 after lunch, 300 between them;
+ * Sara, in Ma71, waits 60 more on Thursday once lunch is taken off. Nils has
+ * no hole and 9C no roster. 360 pupil-minutes over three pupils: 120 each.
+ */
+describe("the generator's number", () => {
+  it("states the pupils' håltimmar the generator counts, and that Generera does not hold to them yet", () => {
+    render(<GapsPage />);
+
+    expect(screen.getByTestId("generator-pupil-minutes").textContent).toBe(
+      "gaps.generatorFigure(360|120) gaps.generatorFigureOff",
+    );
+  });
+
+  it("says Generera holds to them once the school's Skolregler turn it on", () => {
+    state.lunch = { ...LUNCH, generatorKeepsPupilGapsDown: true };
+    render(<GapsPage />);
+
+    expect(screen.getByTestId("generator-pupil-minutes").textContent).toBe(
+      "gaps.generatorFigure(360|120) gaps.generatorFigureOn",
+    );
+  });
+
+  it("counts a hole under the list's minimum but over the generator's", () => {
+    // Nils's 8B gets 10:30–11:00 on Wednesday: a 30-minute hole at 10:00.
+    state.lessons = [...WEEK, lesson("l11", "g-8b", "t-ola", "r-a12", 3, "10:30", "11:00")];
+    render(<GapsPage />);
+
+    expect(screen.getByTestId("generator-pupil-minutes").textContent).toBe(
+      "gaps.generatorFigure(390|130) gaps.generatorFigureOff",
+    );
+  });
+
+  it("keeps the generator's minimum when the list is asked for longer holes", async () => {
+    // The list at an hour: Nils's half-hour drops out of it, and not out of
+    // the number the generator is held to.
+    state.lessons = [...WEEK, lesson("l11", "g-8b", "t-ola", "r-a12", 3, "10:30", "11:00")];
+    const user = userEvent.setup();
+    render(<GapsPage />);
+
+    await user.click(screen.getByRole("combobox", { name: "gaps.idleMinimum" }));
+    await user.click(screen.getByRole("option", { name: "gaps.durationHoursOnly(1)" }));
+
+    expect(screen.getByTestId("generator-pupil-minutes").textContent).toBe(
+      "gaps.generatorFigure(390|130) gaps.generatorFigureOff",
+    );
+  });
+
+  it("reads in Swedish as a sentence with its numbers", async () => {
+    const { createTranslator } = await vi.importActual<typeof import("next-intl")>("next-intl");
+    const sv = createTranslator({ locale: "sv", messages: svMessages, namespace: "gaps" });
+
+    expect(sv("generatorFigure", { minutes: 12400, perPupil: 41.3 })).toMatch(
+      /^Generatorns siffra: 12\s400 elevminuter håltid på en vanlig vecka, 41,3 minuter per elev\./,
+    );
+  });
+});

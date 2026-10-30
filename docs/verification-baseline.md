@@ -1170,6 +1170,114 @@ wall-clock rounds were at load 14–54 rather than idle, and that is what the
 then load was 150–240, and its candidates got 93–144 CPU-seconds, hardly more
 than the thirty-second rounds' 77.
 
+### Elevernas håltimmar: what the rule costs and buys
+
+Measured on 2026-10-30 on branch claude/elevernas-haltimmar (main 228f956d
+below it) with `benchmarks/pupil_gaps.py`: the högstadium week
+(`benchmarks/hogstadium.py`, 450 pupils in 90 cohorts, 423 lessons, språkval
+and elevens val) solved with the rule off and on at the same moment, in two
+processes, on the shared 8-core Mac at load 58–107. Every number is per run;
+the pupils' and the teachers' minutes are counted the same way for both arms
+(`pupil_idle_minutes` on the cohorts, and the same day rule for each teacher).
+
+THE MODEL. The rule adds 4,395 variables to the full model (9,759 → 14,154)
+and 9,126 constraints (26,470 → 35,596), and its build goes from 0.14–0.26 s
+to 0.26–0.50 s. The satisfaction model phase 1a solves is the SAME model
+either way, sha256 of its proto equal with and without `pupilGaps`, with and
+without blocks: so the rule moves the time to a first timetable by the
+full model's extra build only (it is made before phase 1 starts), a quarter of
+a second here. Phase 1a's first-solution times on the same model varied 8–64 s
+between runs at this load, which is the machine and not the rule. Phase 1b,
+the cleared clone, carries the extra variables free; it runs only when 1a
+finds nothing, which these weeks never needed.
+
+THE SOLVE, 90 s, idle pupil-minutes in an ordinary week (teachers' minutes):
+
+| Week | Rule off | Rule on | Pupils | Teachers |
+|---|---|---|---|---|
+| with blocks, run 1 | 110,250 (3,300) | 107,250 (3,450) | −2.7 % | +4.5 % |
+| with blocks, run 2 | 138,750 (3,150) | 117,750 (3,510) | −15.1 % | +11.4 % |
+| without blocks, run 1 | 182,550 (6,390) | 120,900 (6,360) | −33.8 % | −0.5 % |
+| without blocks, run 2 | 181,050 (6,150) | 149,700 (7,440) | −17.3 % | +21.0 % |
+
+With blocks the språkval and elevens val already take one slot of every
+class's week each, so the cohorts' days are their classes' and the rule has
+little left to close; without them the generator chooses where every
+språkval and elevens val hour goes, and the rule is what keeps them at the
+edge of the pupils' day. The teachers pay for it in some runs and not in
+others: a class's whole håltimme weighs two teachers' (WEIGHT_PUPIL_GAP 4
+against a teacher's 2, the rest scaled by 25), and phase 2 trades them
+inside its 80 seconds. Both arms were FEASIBLE with 423 of 423 lessons in
+every run; the numbers move a lot between runs at this load, so the
+direction is the finding and not the percentage.
+
+AT 2,000 PUPILS (`solve_2000_students.py`, home classes only, one cohort
+per class: 80): the full model goes from 63,714 to 80,514 variables (+26 %)
+and 171,823 to 208,383 constraints, and the satisfaction model is again the
+same proto with and without the rule. The term's own build was 2.6 s of a
+9.4 s full build at load 114 (the full build without it 7.5 s at load 140), of
+which `_day_reach` was most: on a stepped week every start is an interval of
+its own. The term now reads one hull per day instead, the same days and never
+narrower, and builds the same 80,514 variables in 2.2 s at load 99. So the
+rule adds about a third to the full model's build, which is made before phase 1
+starts: on the way to a first timetable at 2,000 pupils that is seconds under
+this load, never the search itself, whose model it does not touch. The
+2,000-pupil week was measured for its model and its build only, not solved
+in pairs: at a load where the högstadium's phase 1a took up to 64 s, a
+90-second pair there would have measured the machine.
+
+THE TERM AGAINST THE COUNT, on the review's two random corpora
+(`solve_loop.py`, 266 schools of one or two classes: halves with pupils
+placed and in neither, SvA and Fd, språkval across years, idrott with ombyte
+and dusch, locks and pupils named on them, closed time, ramtider and lunch;
+the second corpus adds locked half rotations, locks on two classes and a
+locked svenska beside SvA). Every school was solved with the rule off and on
+at 4 s, and every timetable pinned in the full model with the rule on: the
+term at that week against a count by the term's own rules (no minimum hole,
+the placed lunch, no margins on locks). On 0c35f998 the term added each
+lock's whole length whatever it overlapped, and differed in 7 of 298 and 81
+of 234 weeks, all but one under. At seed-5056, nine pupils in neither half
+with the halves' slöjd locked together, it saw no hole where there were 675
+pupil-minutes, and the rule on doubled the school's 335. With a cohort's
+locks and closed time merged into one union of windows per day, each slot
+once against the lessons beside it, the term is that count in all 532 weeks
+with the lunch left out of both. With the lunch it differs in 3 and 6 weeks,
+5–35 minutes under, each where the class's placed lunch overlaps a dusch or
+a lock of another of the pupils' groups: the term credits the lunch whole.
+Where both arms were OPTIMAL (137 and 91 schools) the rule on was worse than
+off in none, by the count or by the term's own rules, and the engine's count
+and the response's were the review's own per-pupil count on every timetable.
+The benchmark schools have no locks in a cohort and no closed time inside a
+day, and build the same 14,154 and 80,514 variables as before.
+
+ODD AND EVEN WEEKS, since main's A/B-veckor (#221) gave the engine both. A
+cohort whose day has a lesson or a lock on alternate weeks gets that day once
+per week, of what runs in it, so slöjd odd and hemkunskap even at one hour are
+the hour once in each week and never two hours in one. Its terms are the two
+weeks' sum; in such a school every other cohort's day counts twice and the
+rest of the objective is multiplied by 50 rather than 25, so every term weighs
+the ordinary week the report counts, half of each. A school without
+alternating lessons builds exactly the model it built before. The count does
+the same in halves, so `pupilIdleMinutes` is a number and can end in .5: an
+odd-week hole of 15 minutes is 7.5 minutes of an ordinary week, as the
+report's weekShare has it. The fixture's three alternating cases are
+replayed by the report, the gateway and the engine.
+
+A COMPLETE HINT FOR PHASE 2 was tried and is not in this change. Phase 2
+is hinted with phase 1's lessons and rooms only; the term's first and last
+per key, cohort and day are left to CP-SAT's completion, as every other
+objective variable of a Generera is (`_complete_the_hint` runs for a
+schemaförslag alone). Solved deterministically (one worker, seed 0, 40
+deterministic seconds a solve, `model_identity.py`'s patch), the same week
+with the rule on ended phase 2 at an objective of 333,150 with blocks and
+345,045 without on the partial hint, and at 221,250 and 225,795 on a complete
+one, with the SAME lessons in all four: the partial hint's budget went on
+repairing the term's variables. Whether that buys pupils' minutes needs a
+multi-worker measurement, and the wall-clock pair tried here timed out on
+both arms at load 99–107 (phase 1a, the same model on both). Until then a
+Generera solves exactly as the table above measured it.
+
+
 ### Corrections to earlier entries in this document
 
 - An earlier revision said the complexity guard was "pessimistic … not the

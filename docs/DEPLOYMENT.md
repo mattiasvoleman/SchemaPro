@@ -551,6 +551,43 @@ Walk the full product loop once, in order:
   the owner), and tell the schools it was. The column itself can stay through
   a rollback: nothing before the release reads it, and the migration is not
   undone.
+- **Elevernas håltimmar**: 20261216090000 adds one column,
+  `LunchSettings."generatorKeepsPupilGapsDown"` (boolean, NOT NULL, default
+  false): the Skolregler switch that has the generator keep the pupils' idle
+  time down, counted per set of pupils booked alike as the håltimmesrapport
+  counts it. It changes no row and takes its one lock (ACCESS EXCLUSIVE on
+  `LunchSettings`) NOWAIT in a loop, as the travel switch's did: if the table
+  is not free once in 30 s it stops with nothing changed — `prisma migrate
+  resolve --rolled-back
+  20261216090000_generatorn_haller_nere_elevernas_haltimmar`, then deploy
+  again. Before: `SELECT count(*) FROM "LunchSettings"` and the column absent
+  from `information_schema.columns`. After: the column present, boolean, NOT
+  NULL, default false, and `SELECT count(*) FROM "LunchSettings" WHERE
+  "generatorKeepsPupilGapsDown"` is 0. The API before the release names only
+  the old columns, so it keeps working between the migration and the deploy;
+  the new API reads the column, so the migration goes in first, then the
+  merge. The engine and the API deploy from the same merge, and the new
+  optional request field (`pupilGaps`) reaches the engine only once a school
+  has turned the switch on, which nobody can do before the new web is out.
+  The response's `pupilIdleMinutes` is sent only to such a request, and the
+  API reads it nowhere yet. A PUT of the Skolregler that leaves the switch
+  out keeps it, and the new web leaves the key out unless the API it read
+  named it or the admin turned it on, so the web and the API may go out in
+  either order. After the deploy the engine's `/openapi.json` names
+  `PupilGaps`, `PupilGapCohort` and `FixedLessonMargin`, and
+  `OptimizeScheduleResponse` gains `pupilIdleMinutes`; nothing else in it
+  moves. The weight is `WEIGHT_PUPIL_GAP` (default 4 per pupil and
+  five-minute slot, with the rest of the objective scaled by 25 when the rule
+  is on); it needs no setting.
+  **Rolling it back:** the engine before this release refuses `pupilGaps`
+  (`extra="forbid"`: 422), so once a school has turned the switch on, an
+  engine rolled back alone fails that school's Generera and schemaförslag.
+  Roll the API back first, or with the engine: the API before the release
+  never sends it. If the API must stay, turn the switch off for every school
+  before the engine goes back (`UPDATE "LunchSettings" SET
+  "generatorKeepsPupilGapsDown" = false WHERE "generatorKeepsPupilGapsDown";`,
+  as the owner), and tell the schools it was. The column can stay through a
+  rollback: nothing before the release reads it.
 - **Rastvakt i vardagen**: 20261210090000 adds `SupervisionCovers` (the
   vikarietavla's decision on an absent rastvakt's pass on one date: a
   vikarie, or none), the enum `SupervisionCoverDecision`, an `(id,
