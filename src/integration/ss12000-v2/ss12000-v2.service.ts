@@ -33,6 +33,7 @@ import {
   type AttendanceQuery,
 } from './attendance';
 import { EMAIL_TYPE, groupsOfPerson, metaOf, Model, type Meta, type Reach, type Ref, type Relation } from './model';
+import { keptByOf, lessonPupils, replacedSubjectOf, replacingBySubject, yearsOf } from '../../common/replacing-groups';
 
 /**
  * The SS12000 2.1-shaped provider (/ss12000/v2.0): S1's resources for what
@@ -1154,6 +1155,11 @@ export class Ss12000V2Service {
       for (const groupId of groupsOfPerson(user, teaching)) groupMembers.set(groupId, (groupMembers.get(groupId) ?? new Set()).add(user.id));
     }
     const embedded = expand.has('activity') ? new Map((await this.activityObjects(model, new Set())).map((entry) => [entry.item.id, entry.item])) : null;
+    // Ersättande grupper (Elevlistan i uppföljningen): the groups replacing a
+    // subject, each in its own läsår. Empty in a school with none, which then
+    // sends exactly the exceptions it sent before.
+    const bySubject = replacingBySubject(replacedSubjectOf(model.groups));
+    const yearOf = yearsOf(model.groups);
     return lessons.map((lesson) => {
       const yearId = model.lessonYear(lesson)!;
       const activityId = lesson.masterLessonId ?? parts.pendingKey.get(lesson.id) ?? adhocActivityId(lesson.id);
@@ -1174,12 +1180,29 @@ export class Ss12000V2Service {
         .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
         .sort((a, b) => (a.duty.id < b.duty.id ? -1 : 1));
       const groups = [lesson.studentGroupId, ...(parts.extraGroups.get(lesson.id) ?? []).map((row) => row.studentGroupId)];
-      const studentExceptions = (parts.students.get(lesson.id) ?? [])
-        .filter((row) => !groups.some((groupId) => groupMembers.get(groupId)?.has(row.studentId)))
-        .map((row) => model.personRef(row.studentId))
-        .filter((ref): ref is Ref => ref !== null)
-        .sort((a, b) => (a.id < b.id ? -1 : 1))
-        .map((student) => ({ student, participates: true }));
+      const named = (parts.students.get(lesson.id) ?? []).map((row) => row.studentId);
+      // A pupil named outside the activity's groups participates; a member of
+      // them whom THE RULE takes off (common/replacing-groups.ts: SvA7's
+      // pupils on 7A's svenska) does not. S1's own way to say that a member
+      // of the activity's group is not on this event.
+      const off = bySubject.has(lesson.subjectId)
+        ? lessonPupils(
+            { subjectId: lesson.subjectId, groupIds: groups, keptBy: keptByOf(model.groupsById.get(lesson.studentGroupId)), academicYearId: yearId, named },
+            groupMembers,
+            bySubject,
+            yearOf,
+          ).off
+        : [];
+      const studentExceptions = [
+        ...named.filter((studentId) => !groups.some((groupId) => groupMembers.get(groupId)?.has(studentId))).map((id) => ({ id, participates: true })),
+        ...off.map((id) => ({ id, participates: false })),
+      ]
+        .map(({ id, participates }) => {
+          const student = model.personRef(id);
+          return student ? { student, participates } : null;
+        })
+        .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+        .sort((a, b) => (a.student.id < b.student.id ? -1 : 1));
       const room = lesson.roomId ? roomById.get(lesson.roomId) : undefined;
       const item: Obj = {
         id: lesson.id,
@@ -1204,7 +1227,7 @@ export class Ss12000V2Service {
         item,
         lesson,
         groups,
-        named: (parts.students.get(lesson.id) ?? []).map((row) => row.studentId),
+        named,
         activityDuties: activityRow ? model.activityTeachers(activityRow).map((ref) => ref.id) : [],
       };
     });

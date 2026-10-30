@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { createPrismaMock, createTxMock } from '../../../test/utils/prisma-mock';
 import { recordedReads } from '../../../test/utils/recorded-reads';
+import { lessonNamed, PUPIL_LIST, pupilNamed, WITH_SVA, WITHOUT } from '../../../test/utils/pupil-list';
 import { ALL_V2_SCOPES, ProviderWorld, W } from '../../../test/utils/ss12000-provider-world';
 import type { PrismaService } from '../../database/prisma.service';
 import { adhocActivityId, dutyStretchId } from './ids';
@@ -660,5 +661,62 @@ describe('rooms, syllabuses and deletions', () => {
     const later = await service.deletedEntities(caller(), { after: '2026-10-02T12:00:00Z' });
     expect(later.data.rooms).toEqual(['50000000-0000-4000-8000-0000000000ff']);
     expect(later.data.persons).toEqual([]);
+  });
+});
+
+describe('Elevlistan i uppföljningen: an event says who of its groups is not on it', () => {
+  // The shared school (src/common/__fixtures__/pupil-list-cases.json): Alva in
+  // SvA7, Bo in Stöd7, Cim in 7A only. S1 has no exception on Activity; the
+  // event's studentExceptions with participates false is its own way to say
+  // that a member of the activity's group is not on this event.
+  type Obj = Record<string, unknown>;
+  type Ref = { id: string; displayName?: string };
+  const DAY = { 'startTime.onOrAfter': '2026-10-19T00:00:00Z', 'startTime.onOrBefore': '2026-10-19T23:59:59Z' };
+  const exceptionsOf = (event: Obj | undefined) => (event?.['studentExceptions'] as Array<{ student: Ref; participates: boolean }> | undefined) ?? null;
+
+  it.each([WITH_SVA, WITHOUT].map((school) => [school.name, school] as const))('%s: participates false exactly for the pupils THE RULE takes off', async (_name, school) => {
+    const { world, service } = setup();
+    world.addPupilList(school);
+    const events = new Map((await service.listCalendarEvents(caller(), DAY)).data.map((event) => [event.id, event]));
+    for (const lesson of PUPIL_LIST.lessons) {
+      const exceptions = exceptionsOf(events.get(lesson.id));
+      const off = (exceptions ?? []).filter((entry) => !entry.participates).map((entry) => entry.student.id);
+      expect([lesson.name, off]).toEqual([lesson.name, school.expected[lesson.id]!.off]);
+      // Every pupil named on a fixture lesson sits in one of its groups: no participates true.
+      expect((exceptions ?? []).filter((entry) => entry.participates)).toEqual([]);
+      // Without a pupil off, no studentExceptions at all, as main sends it.
+      if (school.expected[lesson.id]!.off.length === 0) expect([lesson.name, exceptions]).toEqual([lesson.name, null]);
+    }
+  });
+
+  it('the school without a replacing group answers every event as before, and the world\'s own events are untouched by either', async () => {
+    const plain = setup();
+    const before = await plain.service.listCalendarEvents(caller(), WINDOW);
+    for (const school of [WITH_SVA, WITHOUT]) {
+      const { world, service } = setup();
+      world.addPupilList(school);
+      const after = await service.listCalendarEvents(caller(), WINDOW);
+      const fixtureIds = new Set(PUPIL_LIST.lessons.map((lesson) => lesson.id));
+      expect(after.data.filter((event) => !fixtureIds.has(event.id))).toEqual(before.data);
+    }
+  });
+
+  it('a replaced pupil is read as ROSTER in the läslogg, as a named one is', async () => {
+    const world = new ProviderWorld();
+    const tx = createTxMock();
+    world.install(tx);
+    world.addPupilList(WITH_SVA);
+    await new Ss12000V2Service(createPrismaMock(tx) as unknown as PrismaService).listCalendarEvents(caller(), DAY);
+    expect(recordedReads(tx).filter((read) => read.kind === 'ROSTER').flatMap((read) => read.ids)).toContain(pupilNamed('Alva'));
+  });
+
+  it("S1's student filter is group membership or an exception: Alva's events still hold 7A's svenska, which says she does not participate", async () => {
+    const { world, service } = setup();
+    world.addPupilList(WITH_SVA);
+    const alva = pupilNamed('Alva');
+    const hers = (await service.listCalendarEvents(caller(), { ...DAY, student: alva })).data;
+    const classSvenska = hers.find((event) => event.id === lessonNamed('7A:s svenska').id);
+    expect(exceptionsOf(classSvenska)).toEqual([{ student: { id: alva }, participates: false }]);
+    expect(hers.map((event) => event.id)).toContain(lessonNamed('SvA7:s svenska som andraspråk').id);
   });
 });

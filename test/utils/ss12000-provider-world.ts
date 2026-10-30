@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { ATTENDANCE_ARGUMENTS } from '../../src/integration/ss12000-v2/attendance';
 import { serviceKeyOf, type TxMock } from './prisma-mock';
+import { PUPIL_LIST, type PupilListSchool } from './pupil-list';
 
 /**
  * An in-memory school behind the Prisma mock, for the SS12000 v2.0
@@ -329,7 +330,37 @@ export class ProviderWorld {
   }
 
   private group(id: string, year: string, name: string, kind: string, gradeLevel: number | null, ss12000Id: string | null = null): Row {
-    return { id, schoolId: W.school, academicYearId: year, name, kind, gradeLevel, ss12000Id, createdAt: t('2026-05-01T08:00:00Z'), updatedAt: t('2026-05-02T08:00:00Z') };
+    return {
+      id, schoolId: W.school, academicYearId: year, name, kind, gradeLevel, ss12000Id, halfOfId: null, replacesSubjectId: null,
+      createdAt: t('2026-05-01T08:00:00Z'), updatedAt: t('2026-05-02T08:00:00Z'),
+    };
+  }
+
+  /**
+   * Elevlistan i uppföljningen: the shared school of pupil-list-cases.json
+   * (test/utils/pupil-list.ts) beside the world's own, in the active läsår.
+   * Its lessons are ad-hoc lessons on Monday 2026-10-19, an hour apart, each
+   * with its extra groups and named pupils, so every event and the ad-hoc
+   * activity it makes come from the fixture alone.
+   */
+  addPupilList(school: PupilListSchool): void {
+    for (const subject of PUPIL_LIST.subjects) {
+      this.subjects.push({ ...subject, schoolId: W.school, countsTowardTimplan: true, createdAt: t('2026-01-10T08:00:00Z'), updatedAt: t('2026-01-10T08:00:00Z') });
+    }
+    for (const group of school.groups) {
+      this.groups.push({ ...this.group(group.id, W.year, group.name, group.kind, group.gradeLevel), halfOfId: group.halfOfId, replacesSubjectId: group.replacesSubjectId });
+    }
+    for (const pupil of PUPIL_LIST.pupils) {
+      this.users.push({ ...this.person(pupil.id, 'STUDENT', pupil.name, 'Elevlista', `${pupil.name.toLowerCase()}@elev.ekskolan.se`), studentGroupId: pupil.homeGroupId });
+      this.enrollments.push({ schoolId: W.school, studentId: pupil.id, academicYearId: W.year, studentGroupId: pupil.homeGroupId, gradeLevel: 7, validFrom: d('2026-08-17'), validTo: null });
+      for (const groupId of pupil.groupIds) this.teachingMembers.push({ schoolId: W.school, studentGroupId: groupId, studentId: pupil.id });
+    }
+    PUPIL_LIST.lessons.forEach((lesson, index) => {
+      const start = `2026-10-19T${String(6 + index).padStart(2, '0')}:00:00Z`;
+      this.lessons.push(this.lesson(lesson.id, null, lesson.subjectId, lesson.groupIds[0]!, null, start, 'SCHEDULED'));
+      for (const groupId of lesson.groupIds.slice(1)) this.lessonGroups.push({ schoolId: W.school, calendarLessonId: lesson.id, studentGroupId: groupId });
+      for (const studentId of lesson.named) this.lessonStudents.push({ schoolId: W.school, calendarLessonId: lesson.id, studentId });
+    });
   }
 
   private master(id: string, subjectId: string, groupId: string, teacherId: string | null, coTeacherId: string | null, roomId: string | null): Row {
