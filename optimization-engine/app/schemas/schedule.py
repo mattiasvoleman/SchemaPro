@@ -28,6 +28,11 @@ RoomTypeKind = str
 # be conflated: only INFEASIBLE justifies telling a school its requirements
 # are impossible, and only INFEASIBLE carries a conflict analysis.
 SolverStatus = Literal["OPTIMAL", "FEASIBLE", "INFEASIBLE", "TIMEOUT"]
+# A/B-veckor: the ISO weeks a lesson runs when it does not run every week —
+# "slöjd udda veckor", "hemkunskap jämna veckor". The values are the gateway's
+# own LessonRecurrence names, and ALL_WEEKS is deliberately not one of them:
+# every week is the field left out, one way of saying it (app/solver/weeks.py).
+WeekParity = Literal["ODD_WEEKS", "EVEN_WEEKS"]
 ConflictCategory = Literal[
     "REQUIREMENT_DEMAND",
     "TEACHER_OVERLAP",
@@ -275,6 +280,23 @@ class AnonymousRequirement(CamelModel):
     #: through 7A and through the derived id — an interval asked not to
     #: overlap itself, and an INFEASIBLE for every school with SvA.
     pupil_group_id: UUID4 | None = Field(default=None, alias="pupilGroupId")
+    #: A/B-veckor: the requirement runs only in odd ISO weeks or only in even
+    #: ones, and its lessons hold their class, teachers and room in those
+    #: weeks and no others. Slöjd udda veckor and hemkunskap jämna veckor may
+    #: then share one hour of 7A's, one teacher's or one room's, because no
+    #: week holds both — the gateway's own reading (weeksCanOverlap in
+    #: src/calendar/lesson-recurrence.ts), which the timetable has always
+    #: used for a lesson placed by hand. lessonsPerWeek counts the weeks the
+    #: requirement runs: two a week, odd weeks, is two lessons in every odd
+    #: week.
+    #:
+    #: OPTIONAL AND ADDITIVE. Absent is every week, which is every requirement
+    #: of every school until one writes an alternating one; the gateway sends
+    #: the key only on an alternating requirement, so a payload without one is
+    #: byte for byte what it was, builds the model it built, and is answered
+    #: with the bytes it was answered with. app/solver/weeks.py says how the
+    #: model holds each rule in the two weeks.
+    recurrence: WeekParity | None = Field(default=None)
 
     @model_validator(mode="after")
     def validate_lesson_lengths(self) -> AnonymousRequirement:
@@ -883,6 +905,14 @@ class FixedLesson(CamelModel):
     pupil_group_ids: list[UUID4] | None = Field(
         default=None, alias="pupilGroupIds", max_length=21,
     )
+    #: A/B-veckor, for a lesson the school locked: it holds its window only
+    #: in odd ISO weeks or only in even ones, so a generated lesson of the
+    #: other weeks may take the same hour of the same class, teacher or room.
+    #: Absent is every week, today's reading exactly; the gateway sends the
+    #: key only on a lock that alternates. A lock with dates and no parity is
+    #: still every week here — the engine plans one year-long week of each
+    #: parity and no terms (AnonymousRequirement.recurrence).
+    recurrence: WeekParity | None = Field(default=None)
 
 
 class PreviousLesson(CamelModel):
