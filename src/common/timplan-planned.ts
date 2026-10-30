@@ -587,6 +587,8 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
      * SV_SVA line): the class's shortfall there is not theirs.
      */
     classTakenOff: Set<string>;
+    /** The rows that reach the pupil: their groups', less those THE RULE takes them off. */
+    rows: PlannedRequirement[];
   }
   const teachingGroupsOf = (pupil: PlannedPupilInput): string[] =>
     [...new Set(pupil.groupIds)].filter((id) => groupsById.get(id)?.kind === 'TEACHING_GROUP');
@@ -634,7 +636,7 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
               .filter((row) => row.studentGroupId === classId && !rows.includes(row))
               .map((row) => lineKeyOf(row.subjectId).key),
       );
-      results.push({ pupil, grade, teachingGroupIds: own, lines: buildLines(targets, rows, grade), perSource, classTakenOff });
+      results.push({ pupil, grade, teachingGroupIds: own, lines: buildLines(targets, rows, grade), perSource, classTakenOff, rows });
     }
     pupilResults.set(classId, results);
     carriersByClass.set(classId, carriers);
@@ -886,15 +888,27 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
     // hemkunskap post off the class and leaves its slöjd, so 6A:1 reads
     // hemkunskap in the autumn and slöjd in the spring on top of 6A's slöjd,
     // 6A:2 the other way round, and the line sums both against the target.
-    // The swap's signature, for the half's one row x in the subject:
-    //   1. the half has a row y in a subject the class has none of (the one
-    //      the split took off the class) whose period does not meet x's —
-    //      both are then dated, since a row without dates meets every period;
-    //   2. another half of the class mirrors it: a row in x's subject whose
+    // A kept row x (the half's one row in a subject the class has) and a
+    // partner y (its row in a subject the class has none of: the one the
+    // split took off the class) make the swap when
+    //   1. y's period does not meet x's — both are then dated, since a row
+    //      without dates meets every period;
+    //   2. another half of the class mirrors them: a row in x's subject whose
     //      period meets y's, and one in y's subject whose period meets x's
     //      (the half itself cannot, by 1);
     //   3. x and y have the same lessons and weeks, as the swap's four posts
     //      do (one week for the halves; TB409 within each period's block).
+    // And 4, x is exempt only when every way of giving the half's kept rows
+    // partners of their own gives x one: x is in every maximum matching of
+    // kept rows to partners, so its rivals (the half's other kept rows) match
+    // fewer without it than with it. Two swaps on
+    // the same halves in one week (hemkunskap for slöjd, bild for teknik, the
+    // dialog's proposal for both) give each kept subject a partner: both are
+    // exempt. Teknik split in turn in the swap's very week beside the class's
+    // teknik put back gives two kept subjects one partner, and nothing tells
+    // which the split swapped: neither is. The kept rows are the pupil's own
+    // (an SvA pupil's svenska, which SvA6 replaces, is not one of theirs); the
+    // partners and the mirror are the halves' rows as planned.
     // Anything else stays double planned, whatever the sum: the class's post
     // put back after a split, a half's dated post with no swap beside it, a
     // second post of the half in the subject, a split in another subject
@@ -911,24 +925,49 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
     const sameWeek = (a: PlannedRequirement, b: PlannedRequirement): boolean =>
       lessonMinutesOf(a).join() === lessonMinutesOf(b).join() &&
       (a.recurrence ?? 'ALL_WEEKS') === (b.recurrence ?? 'ALL_WEEKS');
-    const classAndItsHalf = (groupIds: readonly string[], subjectId: string): boolean => {
+    // Conditions 1 to 3: a kept row and a partner as a swap's two posts.
+    const swapped = (x: PlannedRequirement, y: PlannedRequirement): boolean =>
+      !meets(x, y) &&
+      sameWeek(x, y) &&
+      classHalves.some(
+        (other) =>
+          rowsIn(other, x.subjectId).some((row) => meets(row, y)) &&
+          rowsIn(other, y.subjectId).some((row) => meets(row, x)),
+      );
+    // How many of `kept` can each have a partner of their own (augmenting
+    // paths; a half has a handful of rows).
+    const matched = (kept: readonly PlannedRequirement[], partners: readonly PlannedRequirement[]): number => {
+      const holderOf = new Map<PlannedRequirement, PlannedRequirement>();
+      const place = (row: PlannedRequirement, tried: Set<PlannedRequirement>): boolean => {
+        for (const partner of partners) {
+          if (tried.has(partner) || !swapped(row, partner)) continue;
+          tried.add(partner);
+          const holder = holderOf.get(partner);
+          if (holder === undefined || place(holder, tried)) {
+            holderOf.set(partner, row);
+            return true;
+          }
+        }
+        return false;
+      };
+      let count = 0;
+      for (const row of kept) if (place(row, new Set())) count += 1;
+      return count;
+    };
+    const classAndItsHalf = (
+      groupIds: readonly string[],
+      subjectId: string,
+      pupilRows: readonly PlannedRequirement[],
+    ): boolean => {
       if (groupIds.length !== 2 || !groupIds.includes(classId)) return false;
       const half = groupIds.find((id) => id !== classId)!;
       if (groupsById.get(half)?.halfOfId !== classId) return false;
       const own = rowsIn(half, subjectId);
       if (own.length !== 1) return false;
       const x = own[0]!;
-      return (rowsByGroup.get(half) ?? []).some(
-        (y) =>
-          !classSubjects.has(y.subjectId) &&
-          !meets(x, y) &&
-          sameWeek(x, y) &&
-          classHalves.some(
-            (other) =>
-              rowsIn(other, subjectId).some((row) => meets(row, y)) &&
-              rowsIn(other, y.subjectId).some((row) => meets(row, x)),
-          ),
-      );
+      const rivals = pupilRows.filter((row) => row !== x && row.studentGroupId === half && classSubjects.has(row.subjectId));
+      const partners = (rowsByGroup.get(half) ?? []).filter((row) => !classSubjects.has(row.subjectId));
+      return matched([x, ...rivals], partners) > matched(rivals, partners);
     };
     for (const result of pupilResults.get(classId) ?? []) {
       let isBelow = false;
@@ -952,7 +991,7 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
               minutesPerWeek: Math.round(bySource.get(groupId)!),
             });
           }
-          if (groupIds.length > 1 && !classAndItsHalf(groupIds, subjectId)) {
+          if (groupIds.length > 1 && !classAndItsHalf(groupIds, subjectId, result.rows)) {
             doubles.push(subjectId);
             verdicts.push({
               code: 'TIMPLAN_PUPIL_DOUBLE_PLANNED',
