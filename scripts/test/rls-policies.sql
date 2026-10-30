@@ -9255,6 +9255,83 @@ BEGIN
   IF n <> 1 THEN RAISE EXCEPTION 'cover: a teacher could not take back today''s absence within the hour'; END IF;
 END $$;
 
+-- The withdrawal window, from both sides of both edges. With nothing
+-- decided on it, a teacher withdraws their own absence while it has not
+-- begun (its start is after now) or within 60 minutes of registering it (at
+-- most 60 minutes since createdAt); after that they can only end it early
+-- (the API's ABSENCE_WITHDRAW_TOO_LATE). The guard and the API agree on both
+-- edges. The admin plants T2's rows, as T1's aged one above. T2 can hold
+-- them on any day: today's row is withdrawn just above, and the only other
+-- one is in 2090.
+--
+-- Let through: one begun an hour ago and registered exactly 60 minutes ago,
+-- and one registered a day ago that begins a microsecond from now. The
+-- first ends at now(), so the two never overlap while both are active.
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+WITH hour_ago AS (
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "createdByUserId", "createdAt", "updatedAt")
+  VALUES (app.current_school_id(), current_setting('app.test_rls28_t2')::uuid, now() - interval '1 hour', now(),
+          current_setting('app.test_rls28_t2')::uuid, now() - interval '60 minutes', now() - interval '60 minutes')
+  RETURNING id
+), ahead AS (
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "createdByUserId", "createdAt", "updatedAt")
+  VALUES (app.current_school_id(), current_setting('app.test_rls28_t2')::uuid, now() + interval '1 microsecond', now() + interval '1 day',
+          current_setting('app.test_rls28_t2')::uuid, now() - interval '1 day', now() - interval '1 day')
+  RETURNING id
+)
+SELECT set_config('app.test_rls28_hour_ago', hour_ago.id::text, true), set_config('app.test_rls28_ahead', ahead.id::text, true)
+  FROM hour_ago, ahead;
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls28_t2_sub'))::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  BEGIN
+    UPDATE "TeacherAbsences" SET status = 'WITHDRAWN', "withdrawnAt" = now(), "withdrawnByUserId" = app.current_user_id()
+     WHERE id = current_setting('app.test_rls28_hour_ago')::uuid;
+    GET DIAGNOSTICS n = ROW_COUNT;
+  EXCEPTION WHEN SQLSTATE 'TA403' THEN n := 0;
+  END;
+  IF n <> 1 THEN RAISE EXCEPTION 'cover: a teacher could not withdraw a begun absence registered exactly an hour ago'; END IF;
+  BEGIN
+    UPDATE "TeacherAbsences" SET status = 'WITHDRAWN', "withdrawnAt" = now(), "withdrawnByUserId" = app.current_user_id()
+     WHERE id = current_setting('app.test_rls28_ahead')::uuid;
+    GET DIAGNOSTICS n = ROW_COUNT;
+  EXCEPTION WHEN SQLSTATE 'TA403' THEN n := 0;
+  END;
+  IF n <> 1 THEN RAISE EXCEPTION 'cover: a teacher could not withdraw an absence registered a day ago that begins a microsecond from now'; END IF;
+END $$;
+
+-- Refused: one that starts at now() and was registered an hour and a
+-- microsecond ago, so a window wider on either side by any amount lets it
+-- through. Its updatedAt is now(), as after ending it early a moment ago:
+-- the hour is counted from when it was registered, not from its last change.
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+WITH late AS (
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "createdByUserId", "createdAt", "updatedAt")
+  VALUES (app.current_school_id(), current_setting('app.test_rls28_t2')::uuid, now(), now() + interval '1 day',
+          current_setting('app.test_rls28_t2')::uuid, now() - interval '1 hour 1 microsecond', now())
+  RETURNING id
+)
+SELECT set_config('app.test_rls28_late', late.id::text, true) FROM late;
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls28_t2_sub'))::text, true);
+DO $$
+DECLARE
+  late uuid := current_setting('app.test_rls28_late')::uuid;
+  n bigint;
+BEGIN
+  IF NOT coalesce((SELECT "startsAt" = now() AND now() - "createdAt" = interval '1 hour 1 microsecond'
+                     FROM "TeacherAbsences" WHERE id = late AND status = 'ACTIVE'), false) THEN
+    RAISE EXCEPTION 'cover: the absence planted to start now, registered an hour and a microsecond ago, reads as %',
+      (SELECT row("startsAt", "createdAt", status) FROM "TeacherAbsences" WHERE id = late);
+  END IF;
+  BEGIN
+    UPDATE "TeacherAbsences" SET status = 'WITHDRAWN', "withdrawnAt" = now(), "withdrawnByUserId" = app.current_user_id() WHERE id = late;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    RAISE EXCEPTION 'cover: a teacher withdrew an absence that has begun and was registered more than an hour ago (% row(s))', n;
+  EXCEPTION WHEN SQLSTATE 'TA403' THEN NULL;
+  END;
+END $$;
+
 -- 28h: what a teacher writes straight against the database never goes past
 -- the school's decisions, and the clock is the database's (20261012130000).
 -- T1 registers an absence in 2095 around the lessons 28b planted (l on 1
