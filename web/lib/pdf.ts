@@ -11,6 +11,13 @@ export interface PdfLesson {
   group: string;
   teacher: string;
   room: string;
+  /**
+   * The weeks a lesson runs when not every week ("udda", "jämna", "period" —
+   * components/schedule/recurrence-badge.ts), shown beside its time: slöjd on
+   * odd weeks and hemkunskap on even ones share an hour, and two rows at one
+   * time with nothing to tell them apart read as a clash.
+   */
+  weeks?: string;
 }
 
 export async function exportTimetablePdf(options: {
@@ -57,7 +64,7 @@ export async function exportTimetablePdf(options: {
       startY: cursorY + 2,
       head: [[time, subject, group, teacher, room]],
       body: dayLessons.map((lesson) => [
-        `${lesson.startTime}–${lesson.endTime}`,
+        `${lesson.startTime}–${lesson.endTime}${lesson.weeks ? ` (${lesson.weeks})` : ""}`,
         lesson.subject,
         lesson.group,
         lesson.teacher,
