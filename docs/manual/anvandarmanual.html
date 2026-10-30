@@ -489,9 +489,14 @@
       den andra skolan, med restiden mellan skolorna före och efter;</li>
     <li>en sal som skolan lånar ut får inga egna lektioner i lånets godkända
       tider;</li>
-    <li>skolans egen sal för en lånad sal får lektioner bara i lånets
-      godkända tider. Salen finns först när ett lån har godkänts, och när
-      skolans lån av salen har avslutats får den inga lektioner alls.</li>
+    <li>skolans egen sal för en lånad sal får lektioner bara på de tider som
+      de godkända lånen tillsammans täcker varje vecka under läsåret. Två lån
+      som ligger kant i kant räknas som ett, och ett höstlån och ett vårlån
+      av samma tid täcker hela året. Ett lån som bara gäller våren öppnar
+      ingenting, eftersom genereringen lägger lektioner för hela läsåret. Låt
+      därför lånen gälla läsårets alla datum. Salen finns först när ett lån
+      har godkänts, och när skolans lån av salen har avslutats får den inga
+      lektioner alls.</li>
   </ul>
   <p>
     Salsoptimeringen (5.4) flyttar inte heller någon lektion dit. Den andra
@@ -509,7 +514,8 @@
     som publiceringen skulle lägga i kalendern och som krockar med den andra
     skolan. Det gäller en delad lärares lektion där, med restiden, en egen
     lektion i en utlånad sal under lånets tider och en lektion i en lånad sal
-    utanför lånets tider. Kontrollen läser veckor och datum, så en lektion
+    på en tid eller ett datum som de godkända lånen tillsammans inte täcker.
+    Bokningar av salen prövas på samma sätt. Kontrollen läser veckor och datum, så en lektion
     udda veckor krockar inte med en lektion jämna veckor. Båda skolorna gör
     samma kontroll när de publicerar. Den skola som publicerar sist ser därför
     krocken, vem som än orsakade den. Kontrollen varnar tills skolan väljer att
@@ -528,6 +534,24 @@
     svarar ägarskolan på nytt. Delade lärare och restiden följer med av sig
     själva.
   </p>
+  <div class="note">
+    <span class="label">Gränser</span>
+    <ul>
+      <li>Kontrollen vid publiceringen jämför skolornas grundscheman, också
+        ändringar som inte är publicerade, men inte kalendrarna eller
+        dagsändringarna.</li>
+      <li>Den skola som publicerar sist ser krocken. Den som publicerade
+        först får inte veta att den andra skolan senare publicerade en krock
+        och gick vidare trots varningen.</li>
+      <li>När en skola tar bort sin markering av en lärare läser ingen av
+        skolorna lärarens tider längre. Tider som redan står i en sparad
+        dom från en generering eller i ett schemaförslag finns kvar där.</li>
+      <li>Nästa läsårs generering håller en delad lärare bara när den andra
+        skolan också har ett läsår för samma tid. Har den inte rullat
+        vidare än, håller genereringen inga tider för läraren, och
+        publiceringen fångar krockarna när båda skolornas scheman finns.</li>
+    </ul>
+  </div>
   <div class="note">
     <span class="label">Vem gör vad</span>
     <p>
