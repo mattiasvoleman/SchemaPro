@@ -60,6 +60,11 @@ export interface RoomLoanView {
   school: { id: string; name: string | null };
   /** For a borrowed room: the owner's name for it, while the owner offers it. */
   ownerRoomName: string | null;
+  /**
+   * For a borrowed room: the owner's room, for asking again (the next
+   * läsår's loan). Null for a room the school lends.
+   */
+  ownerRoomId: string | null;
 }
 
 export interface RoomLoansView {
@@ -261,6 +266,7 @@ export class RoomLoansService {
       room: { id: string | null; name: string },
       otherSchoolId: string,
       ownerRoomName: string | null,
+      ownerRoomId: string | null,
     ): RoomLoanView | null => {
       // The arms show a loan while both schools have the huvudman, and the
       // owner an approved loan of its room after the borrower has left.
@@ -281,17 +287,18 @@ export class RoomLoansService {
         room,
         school: { id: school.id, name: school.name },
         ownerRoomName,
+        ownerRoomId,
       };
     };
     return {
       lent: lent
-        .map((loan) => view(loan, loan.room, loan.borrowerSchoolId, null))
+        .map((loan) => view(loan, loan.room, loan.borrowerSchoolId, null, null))
         .filter((loan): loan is RoomLoanView => loan !== null),
       borrowed: borrowed
         .map((loan) => {
           const ownerRoomName = ownerRooms.get(loan.roomId) ?? null;
           const room = loan.localRoom ?? { id: null, name: loan.localRoomName ?? ownerRoomName ?? '' };
-          return view(loan, room, loan.ownerSchoolId, ownerRoomName);
+          return view(loan, room, loan.ownerSchoolId, ownerRoomName, loan.roomId);
         })
         .filter((loan): loan is RoomLoanView => loan !== null),
     };

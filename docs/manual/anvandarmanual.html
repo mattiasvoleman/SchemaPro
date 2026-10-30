@@ -480,14 +480,89 @@
     nummer efter namnet. Ska restiden till den lånade salen räknas, lägg till
     ett skolområde för den hos skolan och ange restiden dit (3.3).
   </p>
+  <p>
+    <strong>I genereringen.</strong> Genereringen (5.2) håller det som
+    delas, utan att den andra skolans schema lämnar något mer än tider:
+  </p>
+  <ul>
+    <li>en delad lärare får inga lektioner här när läraren har lektioner på
+      den andra skolan, med restiden mellan skolorna före och efter;</li>
+    <li>en sal som skolan lånar ut får inga egna lektioner i lånets godkända
+      tider;</li>
+    <li>skolans egen sal för en lånad sal får lektioner bara på de tider som
+      de godkända lånen tillsammans täcker varje skolvecka under läsåret. Två
+      lån som ligger kant i kant räknas som ett. Lovdagar då ingen årskurs
+      har skola behöver inget lån, så ett höstlån och ett vårlån av samma tid
+      på var sin sida om jullovet täcker hela året. Ett lån som bara gäller
+      våren öppnar ingenting, eftersom genereringen lägger lektioner för hela
+      läsåret. Låt därför lånen gälla läsårets alla skoldagar. Salen finns först när ett lån
+      har godkänts, och när skolans lån av salen har avslutats får den inga
+      lektioner alls.</li>
+  </ul>
+  <p>
+    Salsoptimeringen (5.4) flyttar inte heller någon lektion dit. Den andra
+    skolans lektioner läses ur dess grundschema. Det som den skolan
+    schemalägger först håller alltså den som genererar efter. Genereringen
+    räknar inte med veckor: en lektion på den andra skolan som bara går udda
+    veckor, eller bara en termin, håller läraren varje vecka. Lektioner på
+    lördagar och söndagar räknas inte, eftersom genereringen bara lägger
+    måndag till fredag. Går veckan inte att lägga för att den andra skolan
+    håller en lärare eller en sal, säger genereringen det med skolans namn.
+  </p>
+  <p>
+    <strong>Vid publiceringen.</strong> Kontrollen
+    <em>Krockar med huvudmannens andra skolor</em> (5.6) visar de lektioner
+    som publiceringen skulle lägga i kalendern och som krockar med den andra
+    skolan. Det gäller en delad lärares lektion där, med restiden, en egen
+    lektion i en utlånad sal under lånets tider och en lektion i en lånad sal
+    på en tid eller ett datum som de godkända lånen tillsammans inte täcker.
+    Lektionsgruppens lovdagar räknas inte, eftersom publiceringen inte lägger
+    några lektioner då. En bokning av salen prövas på sitt eget datum, också
+    under ett lov: då behöver salen vara utlånad till skolan just den dagen. Kontrollen läser veckor och datum, så en lektion
+    udda veckor krockar inte med en lektion jämna veckor. Båda skolorna gör
+    samma kontroll när de publicerar. Den skola som publicerar sist ser därför
+    krocken, vem som än orsakade den. Kontrollen varnar tills skolan väljer att
+    den ska stoppa.
+  </p>
+  <p>
+    <strong>Bokningar.</strong> En sal som skolan lånar ut kan inte bokas
+    under lånets tider (6.8). Skolans egen sal för en lånad sal kan bokas
+    bara under lånets tider.
+  </p>
+  <p>
+    <strong>Nästa läsår.</strong> Lånen har datum och slutar med sitt sista
+    datum. De följer inte med när skolan rullar vidare (8.1). Vid ett lån som
+    skolan haft står <span class="ui">Begär igen</span>. Den öppnar dialogen
+    med samma sal och samma tider, och du väljer nästa läsårs datum. Sedan
+    svarar ägarskolan på nytt. Delade lärare och restiden följer med av sig
+    själva.
+  </p>
+  <div class="note">
+    <span class="label">Gränser</span>
+    <ul>
+      <li>Kontrollen vid publiceringen jämför skolornas grundscheman, också
+        ändringar som inte är publicerade, men inte kalendrarna eller
+        dagsändringarna.</li>
+      <li>Den skola som publicerar sist ser krocken. Den som publicerade
+        först får inte veta att den andra skolan senare publicerade en krock
+        och gick vidare trots varningen.</li>
+      <li>När en skola tar bort sin markering av en lärare läser ingen av
+        skolorna lärarens tider längre. Tider som redan står i en sparad
+        dom från en generering eller i ett schemaförslag finns kvar där.</li>
+      <li>Nästa läsårs generering håller en delad lärare bara när den andra
+        skolan också har ett läsår för samma tid. Har den inte rullat
+        vidare än, håller genereringen inga tider för läraren, och
+        publiceringen fångar krockarna när båda skolornas scheman finns.</li>
+    </ul>
+  </div>
   <div class="note">
     <span class="label">Vem gör vad</span>
     <p>
       Den som skriver planering (rektor, en fullständig administratör eller en
       schemaläggare) anger restiden, markerar delade lärare, begär lån och
-      svarar på dem. Alla administratörer läser kortet. Ett lån godkänns alltid av ägarskolan,
-      också när salen inte är markerad som specialsal. Markeringen gäller
-      skolans egna bokningar (6.8).
+      svarar på dem. Alla administratörer läser kortet. Ett lån godkänns
+      alltid av ägarskolan, också när salen inte är markerad som specialsal.
+      Markeringen gäller skolans egna bokningar (6.8).
     </p>
   </div>
   <div class="note">
@@ -4036,8 +4111,10 @@
       minuter, tjänstefördelningens stoppregler, timplanen under nivån,
       giltighet som delar period med ett annat publicerat schema, skoldagar utan
       publicerat schema, en giltighet som börjar före i dag eller mitt i en
-      vecka, lunch som inte är inställd, dagsändringar som försvinner, och
-      halvklasser som har lektioner men inga placerade elever (3.4). Varje
+      vecka, lunch som inte är inställd, dagsändringar som försvinner,
+      halvklasser som har lektioner men inga placerade elever (3.4), och krockar
+      med huvudmannens andra skolor: delade lärare och lånade eller utlånade
+      salar (2.5). Varje
       kontroll visar upp till 20 av de lektioner eller dagar den gäller.
       Lektioner i ett parallellt block som inte står på samma tider som resten
       av blocket nämns också, efter blockets namn. Det är bara information: det
@@ -4886,7 +4963,9 @@
     Lärare bokar lokaler under <span class="path">Boka lokal</span>. Beroende på
     salens inställningar godkänns bokningen direkt eller hamnar för granskning
     under <span class="path">Drift › Lokalbokningar</span>. Bokningar tar hänsyn
-    till schemat, så en sal som redan har lektion går inte att boka.
+    till schemat, så en sal som redan har lektion går inte att boka. En sal
+    som skolan lånar ut till en annan skola går inte att boka under lånets
+    tider, och en lånad sal går bara att boka under dem (2.5).
   </p>
 
   <h3 id="s69"><span class="num">6.9</span>Rapporter</h3>
@@ -6142,6 +6221,11 @@
       <tr><td class="k">Granska</td><td>Allt som skapas och allt som lämnas kvar. Läs särskilt lärare som tas bort från en post (inaktiva, eller utan behörighet för nästa årskurs när behörighetskontrollen står på Vägra — in i ett tioårigt läsår prövas behörigheten i den numrering den är skriven i, så en lärare behörig i åk 7–9 är behörig för 10A, som är den gamla åk 9), poster vars period hamnar utanför det nya läsåret, och under <span class="ui">Tjänster och uppdrag</span> de lärare vars nedsättning eller eget riktmärke följer med.</td></tr>
     </tbody>
   </table>
+  <p>
+    Lån av salar mellan skolor (2.5) följer inte med: de har sina egna datum.
+    Begär nästa läsårs lån med <span class="ui">Begär igen</span> under
+    <span class="path">Salar</span>.
+  </p>
   <p>
     Timplansposterna följer <em>årskullen</em>: 7A:s poster blir 8A:s, med
     samma lärare och samma lektionslängder (1 × 80 + 1 × 40 förblir det), och

@@ -17,6 +17,7 @@
 export const GATE_CODES = [
   'PUB_CALENDAR_REFUSED',
   'PUB_CLASHES',
+  'PUB_OTHER_SCHOOL',
   'PUB_PARKED',
   'PUB_UNPLACED',
   'PUB_UNSTAFFED',
@@ -56,6 +57,7 @@ export interface GatePolicy {
   gateGap: GateMode;
   gateDayOpsLost: GateMode;
   gateEmptyHalf: GateMode;
+  gateOtherSchool: GateMode;
 }
 
 export const GATE_POLICY_KEYS = [
@@ -74,6 +76,7 @@ export const GATE_POLICY_KEYS = [
   'gateGap',
   'gateDayOpsLost',
   'gateEmptyHalf',
+  'gateOtherSchool',
 ] as const satisfies readonly (keyof GatePolicy)[];
 
 /** No row: every check WARNs. */
@@ -85,6 +88,10 @@ export const DEFAULT_GATE_POLICY: GatePolicy = Object.fromEntries(
 export const GATE_COLUMN: Record<GateCode, keyof GatePolicy | null> = {
   PUB_CALENDAR_REFUSED: null,
   PUB_CLASHES: 'gateClashes',
+  // Delade lokaler och lärare: a lesson that meets another school of the
+  // huvudman. A column of its own: the school may stop on its own clashes
+  // and only be warned about a timetable it cannot change itself.
+  PUB_OTHER_SCHOOL: 'gateOtherSchool',
   PUB_PARKED: 'gateParked',
   PUB_UNPLACED: 'gateUnplaced',
   PUB_UNSTAFFED: 'gateUnstaffed',

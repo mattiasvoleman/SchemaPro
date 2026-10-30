@@ -476,11 +476,11 @@
     "unmarkTeacher": "Remove the mark of {name} for {school}",
     "teacherMarked": "{name} is marked as shared with {school}",
     "teacherUnmarked": "{name} is no longer shared with {school}",
-    "teachersHint": "A teacher who works at two schools of the huvudman is shared when both schools have marked the teacher here and the teacher has the same login at both. Only then do the schools see the teacher's lesson times at the other school, and only the times. Until the other school has marked the teacher, neither school sees anything of the other, not even that the teacher works there. If either school removes its mark, the sharing ends.",
+    "teachersHint": "A teacher who works at two schools of the huvudman is shared when both schools have marked the teacher here and the teacher has the same login at both. Only then do the schools see the teacher's lesson times at the other school, and only the times. Until the other school has marked the teacher, neither school sees anything of the other, not even that the teacher works there. If either school removes its mark, the sharing ends. The generator places no lesson for a shared teacher while the teacher has lessons at the other school, with the travel time before and after.",
     "saveTravel": "Save travel times",
     "travelSaved": "The travel times are saved",
     "loansTitle": "Room loans",
-    "loansHint": "A loan is a fixed time each week between two dates, and the school that owns the room approves each loan. When the first loan of a room is approved, your school gets a room of its own for it, where the school's lessons in the borrowed room stand. A declined or withdrawn loan leaves no room behind.",
+    "loansHint": "A loan is a fixed time each week between two dates, and the school that owns the room approves each loan. When the first loan of a room is approved, your school gets a room of its own for it, where the school's lessons in the borrowed room stand. A declined or withdrawn loan leaves no room behind. An approved loan keeps the room for the other school at that time: the generator places none of this school's lessons there, and publishing warns about lessons left there. Loans keep their dates and do not move to the next school year. Ask again gives the same room and times, and you choose new dates.",
     "borrow": "Borrow a room",
     "loansLoadFailed": "The loans could not be loaded",
     "lentTitle": "The school's rooms other schools borrow",
@@ -505,7 +505,8 @@
       "approve": "Approve",
       "decline": "Decline",
       "revoke": "End the loan",
-      "withdraw": "Withdraw"
+      "withdraw": "Withdraw",
+      "renew": "Ask again"
     },
     "done": {
       "approve": "The loan of {room} to {school} is approved",
@@ -516,15 +517,15 @@
     "confirm": {
       "revoke": {
         "title": "End the loan of {room}?",
-        "body": "The loan ends from now on, and the room can be lent again at those times. {school} sees that the loan has ended."
+        "body": "The loan ends from now on, and the room can be lent again at those times. {school} must move its lessons out of it, and its publishing warns about lessons left there."
       },
       "withdraw": {
         "title": "Withdraw the loan of {room}?",
-        "body": "The loan ends from now on, and {school} can lend the room again at those times. The school's own room for the borrowed room remains."
+        "body": "The loan ends from now on, and {school} can lend the room again at those times. The school's own room for the borrowed room remains, and publishing warns about lessons left in it."
       }
     },
     "borrowTitle": "Borrow a room from another school",
-    "borrowHint": "Choose a room, times and a period. Each time becomes a loan of its own that the other school's scheduler approves or declines.",
+    "borrowHint": "Choose a room, times and a period. Each time becomes a loan of its own that the other school's scheduler approves or declines. The generator places lessons in the room only at times the loans cover every week of the school year, so let the loans run over all of the year's school days. Days of a lov no year group has school need no loan.",
     "roomsLoadFailed": "The rooms could not be loaded",
     "noRooms": "The huvudman's other schools have no rooms to lend.",
     "roomOption": "{name} ({type} {capacity})",
@@ -4295,7 +4296,10 @@
     "PROBE_TRAVEL_UNMEASURED": "The travel time between the school's sites is turned on. Searching without it for {seconds} s did not find a timetable either, so whether it is the difference was not measured. A run with it turned off under School rules shows that.",
     "TRAVEL_PROBE_SUMMARY": "No timetable satisfies every rule, and the solver could not name which of them collide. With the travel time between the school's sites dropped a timetable was found in {seconds} s, so it is the travel time below that makes the week impossible.",
     "PUPILS_TRAVEL_CANNOT_BE_KEPT": "The school rules ask the generator to keep the travel time between the school's sites for pupils with lessons on two sites on one day, after their time to change, rounded up to whole start steps of {stepMinutes} min. {measured, select, 1 {That travel time is what makes the week impossible: without it, a timetable exists that keeps every other rule, and in it the pupils of the groups named here have less time than the travel time between two lessons on different sites.} 2 {That travel time makes the week impossible on its own: even with the other rules set aside, the lessons of the groups named here cannot be placed so that it fits. The week has other causes too: it stays impossible without the travel time.} other {That travel time is one of the rules that cannot all hold at once for the groups named here; whether it alone is the difference could not be measured.}} Let these groups' lessons use rooms on one site, shorten the travel time under Rooms, Sites, or turn it off under School rules.",
-    "TEACHER_TRAVEL_CANNOT_BE_KEPT": "The school rules ask the generator to keep the travel time between the school's sites for every teacher with lessons on two sites on one day, rounded up to whole start steps of {stepMinutes} min. {measured, select, 1 {That travel time is what makes the week impossible: without it, a timetable exists that keeps every other rule, and in it the teachers named here have less time than the travel time between two lessons on different sites.} 2 {That travel time makes the week impossible on its own: even with the other rules set aside, the lessons of the teachers named here cannot be placed so that it fits. The week has other causes too: it stays impossible without the travel time.} other {That travel time is one of the rules that cannot all hold at once for the teachers named here; whether it alone is the difference could not be measured.}} Let these teachers' lessons use rooms on one site, shorten the travel time under Rooms, Sites, or turn it off under School rules."
+    "TEACHER_TRAVEL_CANNOT_BE_KEPT": "The school rules ask the generator to keep the travel time between the school's sites for every teacher with lessons on two sites on one day, rounded up to whole start steps of {stepMinutes} min. {measured, select, 1 {That travel time is what makes the week impossible: without it, a timetable exists that keeps every other rule, and in it the teachers named here have less time than the travel time between two lessons on different sites.} 2 {That travel time makes the week impossible on its own: even with the other rules set aside, the lessons of the teachers named here cannot be placed so that it fits. The week has other causes too: it stays impossible without the travel time.} other {That travel time is one of the rules that cannot all hold at once for the teachers named here; whether it alone is the difference could not be measured.}} Let these teachers' lessons use rooms on one site, shorten the travel time under Rooms, Sites, or turn it off under School rules.",
+    "OTHER_SCHOOL_TEACHER_BUSY": "A teacher named here also teaches at {schools}: {day, select, 1 {on Mondays} 2 {on Tuesdays} 3 {on Wednesdays} 4 {on Thursdays} 5 {on Fridays} other {on day {day}}} {start}-{end}{travel, select, yes { (the travel between the schools included)} other {}} they are there, and that may be one of the reasons the lessons that have to be placed here do not fit. Give the lessons here another teacher or other times, change the travel time under Rooms, The huvudman's other schools, or ask {schools} whether that lesson can move.",
+    "OTHER_SCHOOL_ROOM_LENT": "Room {room} is lent to {schools} {day, select, 1 {on Mondays} 2 {on Tuesdays} 3 {on Wednesdays} 4 {on Thursdays} 5 {on Fridays} other {on day {day}}} {start}-{end}, and that may be one of the reasons the lessons that have to be placed here do not fit. Let the lessons use another room, or end the loan under Rooms, The huvudman's other schools.",
+    "OTHER_SCHOOL_ROOM_BORROWED": "Room {room} is borrowed from {schools} and holds lessons only in the times the approved loans cover every week of the school year; {day, select, 1 {on Mondays} 2 {on Tuesdays} 3 {on Wednesdays} 4 {on Thursdays} 5 {on Fridays} other {on day {day}}} {start}-{end} is outside them, and that may be one of the reasons the lessons that have to be placed do not fit. Let the lessons use another room, or ask {schools} for more times under Rooms, The huvudman's other schools."
   },
   "timplanCoverage": {
     "title": "Coverage",
@@ -4771,7 +4775,8 @@
       "PUB_WEEK_SPLIT": "Validity starts or ends mid-week",
       "PUB_RANGE_GAP": "School days without a published timetable",
       "PUB_DAY_OPS_LOST": "Day changes that disappear",
-      "PUB_EMPTY_HALF": "Class halves without pupils"
+      "PUB_EMPTY_HALF": "Class halves without pupils",
+      "PUB_OTHER_SCHOOL": "Clashes with the huvudman's other schools (shared teachers, lent and borrowed rooms)"
     },
     "severity": {
       "REFUSE": "Stops",
@@ -4784,6 +4789,7 @@
     "gates": {
       "PUB_CALENDAR_REFUSED": "The calendar does not accept the publication: the database refused the dry run.",
       "PUB_CLASHES": "{count, plural, one {# clash} other {# clashes}} in the base timetable.",
+      "PUB_OTHER_SCHOOL": "{count, plural, one {# lesson clashes} other {# lessons clash}} with the huvudman's other schools: a shared teacher's lesson there, the travel included, or a room lent or borrowed.",
       "PUB_PARKED": "{count, plural, one {# parked lesson stays} other {# parked lessons stay}} in the calendar.",
       "PUB_UNPLACED": "{count, plural, one {# requirement has} other {# requirements have}} fewer lessons or minutes than planned.",
       "PUB_UNSTAFFED": "{count, plural, one {# requirement has} other {# requirements have}} no teacher.",

@@ -12,6 +12,7 @@ import { Role } from '../auth/enums/role.enum';
 import { PrismaService } from '../database/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { requireSchoolId, requireUserId } from '../common/utils/request-context';
+import { loanBookingRefusal } from './loan-holds';
 import type {
   CreateRoomBookingDto,
   DecideRoomBookingDto,
@@ -122,6 +123,7 @@ export class RoomBookingsService {
       // until we commit. Throwing takes the booking back out with the
       // transaction.
       await this.assertNoLessonUsesRoom(tx, dto.roomId, startsAt, endsAt);
+      await this.assertLoansAllow(tx, schoolId, dto.roomId, startsAt, endsAt);
 
       this.logger.log(`Room booked [booking=${booking.id}, status=${status}]`);
       return booking;
@@ -231,6 +233,57 @@ export class RoomBookingsService {
       this.logger.log(`Room booking decided [booking=${id}, status=${dto.status}]`);
       return updated;
     });
+  }
+
+  /**
+   * Salslån (Delade lokaler och lärare): a room lent to another school of the
+   * huvudman is that school's in the loan's approved windows, and the
+   * school's own room for a borrowed one is the school's only inside them
+   * (loan-holds.ts). Read under the booker's own arms, which show a teacher
+   * and an administrator the loans between their school and another; a
+   * school with no loan reads none and is refused nothing.
+   */
+  private async assertLoansAllow(
+    tx: PrismaClient,
+    schoolId: string,
+    roomId: string,
+    startsAt: Date,
+    endsAt: Date,
+  ): Promise<void> {
+    const loans = await tx.roomLoan.findMany({
+      where: { OR: [{ roomId }, { localRoomId: roomId }] },
+      select: { status: true, roomId: true, localRoomId: true, dayOfWeek: true, startTime: true, endTime: true, startDate: true, endDate: true },
+    });
+    if (loans.length === 0) return;
+    const school = await tx.school.findUnique({ where: { id: schoolId }, select: { timezone: true } });
+    const refusal = loanBookingRefusal(
+      loans.map((loan) => ({
+        status: loan.status,
+        roomId: loan.roomId,
+        localRoomId: loan.localRoomId,
+        dayOfWeek: loan.dayOfWeek,
+        startTime: loan.startTime.toISOString().slice(11, 16),
+        endTime: loan.endTime.toISOString().slice(11, 16),
+        startDate: loan.startDate.toISOString().slice(0, 10),
+        endDate: loan.endDate.toISOString().slice(0, 10),
+      })),
+      roomId,
+      startsAt,
+      endsAt,
+      school?.timezone ?? 'Europe/Stockholm',
+    );
+    if (refusal === 'ROOM_LENT') {
+      throw new ConflictException({
+        message: 'Salen är utlånad till en annan skola under en del av den tiden.',
+        code: 'ROOM_LENT_TO_OTHER_SCHOOL',
+      });
+    }
+    if (refusal === 'ROOM_BORROWED_OUTSIDE_LOAN') {
+      throw new ConflictException({
+        message: 'Salen är lånad av en annan skola, och lånet gäller inte hela den tiden.',
+        code: 'ROOM_BORROWED_OUTSIDE_LOAN',
+      });
+    }
   }
 
   /**
