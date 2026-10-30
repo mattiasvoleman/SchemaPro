@@ -9103,6 +9103,18 @@ END $$;
 -- The school allows self-report.
 SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
 UPDATE "CoverSettings" SET "teacherSelfReport" = true WHERE "schoolId" = app.current_school_id();
+-- T1's own report of a day six days ahead, registered yesterday. The admin
+-- plants it: a teacher's own insert takes the database's now() as createdAt
+-- (28h), and this is one transaction. 28e withdraws it.
+WITH aged AS (
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "createdByUserId", "createdAt", "updatedAt")
+  SELECT s.id, current_setting('app.test_rls28_t1')::uuid,
+         (app.school_today() + 6)::timestamp AT TIME ZONE s.timezone, (app.school_today() + 7)::timestamp AT TIME ZONE s.timezone,
+         current_setting('app.test_rls28_t1')::uuid, now() - interval '1 day', now() - interval '1 day'
+    FROM "Schools" s WHERE s.id = app.current_school_id()
+  RETURNING id
+)
+SELECT set_config('app.test_rls28_aged', aged.id::text, true) FROM aged;
 
 -- 28e: self-report, and what the guard lets a teacher do with it.
 --
@@ -9116,11 +9128,13 @@ DECLARE
   school uuid := app.current_school_id();
   me uuid := app.current_user_id();
   started uuid := current_setting('app.test_rls28_absence')::uuid;
+  aged uuid := current_setting('app.test_rls28_aged')::uuid;
   tz text := (SELECT timezone FROM "Schools" WHERE id = app.current_school_id());
   today date := app.school_today();
   own uuid; n bigint;
 BEGIN
-  -- Not the person, not the creator, not yesterday.
+  -- Not the person, not the creator. Not yesterday either: that is asked
+  -- as T2, below "Sjuk i dag".
   BEGIN
     INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "createdByUserId")
     VALUES (school, current_setting('app.test_rls28_t2')::uuid, (today + 10)::timestamp AT TIME ZONE tz, (today + 11)::timestamp AT TIME ZONE tz, me);
@@ -9132,12 +9146,6 @@ BEGIN
     VALUES (school, me, (today + 10)::timestamp AT TIME ZONE tz, (today + 11)::timestamp AT TIME ZONE tz, current_setting('app.test_rls28_admin')::uuid);
     RAISE EXCEPTION 'cover: a teacher spoofed the creator';
   EXCEPTION WHEN insufficient_privilege THEN NULL;
-  END;
-  BEGIN
-    INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "createdByUserId")
-    VALUES (school, me, (today - 1)::timestamp AT TIME ZONE tz, (today + 20)::timestamp AT TIME ZONE tz, me);
-    RAISE EXCEPTION 'cover: a teacher backdated an absence';
-  EXCEPTION WHEN SQLSTATE 'TA403' THEN NULL;
   END;
   -- Ending early past a decision: the decision sits on a lesson in 2095,
   -- ahead and outside the shortened period, which only the admin may undo
@@ -9188,6 +9196,18 @@ BEGIN
   UPDATE "TeacherAbsences" SET status = 'WITHDRAWN', "withdrawnAt" = now(), "withdrawnByUserId" = me, "updatedAt" = now() WHERE id = own;
   GET DIAGNOSTICS n = ROW_COUNT;
   IF n <> 1 THEN RAISE EXCEPTION 'cover: a teacher could not withdraw an absence that has not begun'; END IF;
+  -- That one was registered in this transaction, so the hour since lets it
+  -- through as well. One registered a day ago passes only because it has
+  -- not begun.
+  IF (SELECT now() - "createdAt" FROM "TeacherAbsences" WHERE id = aged) < interval '1 hour' THEN
+    RAISE EXCEPTION 'cover: the absence registered a day ago reads as registered at %', (SELECT "createdAt" FROM "TeacherAbsences" WHERE id = aged);
+  END IF;
+  BEGIN
+    UPDATE "TeacherAbsences" SET status = 'WITHDRAWN', "withdrawnAt" = now(), "withdrawnByUserId" = me WHERE id = aged;
+    GET DIAGNOSTICS n = ROW_COUNT;
+  EXCEPTION WHEN SQLSTATE 'TA403' THEN n := 0;
+  END;
+  IF n <> 1 THEN RAISE EXCEPTION 'cover: a teacher could not withdraw an absence registered a day ago that has not begun'; END IF;
   -- A teacher deletes nothing.
   DELETE FROM "TeacherAbsences" WHERE id = own;
   GET DIAGNOSTICS n = ROW_COUNT;
@@ -9196,7 +9216,13 @@ END $$;
 
 -- "Sjuk i dag": a whole day from today's school-local midnight to the next,
 -- reported now, is accepted; and the teacher who pressed the wrong day takes
--- it back within the hour, nothing having been decided on it.
+-- it back within the hour, nothing having been decided on it. A period from
+-- yesterday's midnight is refused. That is T2's to ask, not T1's: T1 is away
+-- from 28b's now() - 24 hours on, and a row of T1's that starts yesterday
+-- overlaps that unless it ends first. In the first hour after a 23-hour day
+-- now() - 24 hours lies before yesterday's midnight, and no such row exists:
+-- a guard that let yesterday through would be stopped by the exclusion
+-- instead of here. T2's only active absence is in 2090.
 SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls28_t2_sub'))::text, true);
 DO $$
 DECLARE
@@ -9204,9 +9230,19 @@ DECLARE
   today date := app.school_today();
   own uuid; n bigint;
 BEGIN
-  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "createdByUserId")
-  VALUES (app.current_school_id(), app.current_user_id(), today::timestamp AT TIME ZONE tz, (today + 1)::timestamp AT TIME ZONE tz, app.current_user_id())
-  RETURNING id INTO own;
+  BEGIN
+    INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "createdByUserId")
+    VALUES (app.current_school_id(), app.current_user_id(), (today - 1)::timestamp AT TIME ZONE tz, (today + 20)::timestamp AT TIME ZONE tz, app.current_user_id());
+    RAISE EXCEPTION 'cover: a teacher backdated an absence';
+  EXCEPTION WHEN SQLSTATE 'TA403' THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "createdByUserId")
+    VALUES (app.current_school_id(), app.current_user_id(), today::timestamp AT TIME ZONE tz, (today + 1)::timestamp AT TIME ZONE tz, app.current_user_id())
+    RETURNING id INTO own;
+  EXCEPTION WHEN SQLSTATE 'TA403' THEN
+    RAISE EXCEPTION 'cover: a teacher could not report today''s absence from its midnight';
+  END;
   UPDATE "TeacherAbsences" SET status = 'WITHDRAWN', "withdrawnAt" = now(), "withdrawnByUserId" = app.current_user_id() WHERE id = own;
   GET DIAGNOSTICS n = ROW_COUNT;
   IF n <> 1 THEN RAISE EXCEPTION 'cover: a teacher could not take back today''s absence within the hour'; END IF;
@@ -14197,11 +14233,12 @@ ROLLBACK;
 -- app_authenticated alone. 80b claims the gallring school's nightly job at
 -- fixed local times of today: once at noon, not again within two hours, again
 -- once a claim has gone two hours unfinished (its instance died), not at all
--- once finished, and never before the hour. Two instances asking at once are
--- the primary key's to settle, so one claim per (job, school, day) is the
--- property. 80c settles two ticks: runs, failures and counts sum, and a
--- count that is not a count, or an error that is not a class name, is
--- refused by the table, so no id, name or message can be written there.
+-- once finished; and at the hour itself but not a minute before it, today
+-- and tomorrow. Two instances asking at once are the primary key's to
+-- settle, so one claim per (job, school, day) is the property. 80c settles
+-- two ticks: runs, failures and counts sum, and a count that is not a count,
+-- or an error that is not a class name, is refused by the table, so no id,
+-- name or message can be written there.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -14257,15 +14294,24 @@ DECLARE
   at_local timestamp;
   n int;
   d date;
+  night date;
 BEGIN
   IF school IS NULL THEN RAISE EXCEPTION 'job claims: the gallring fixture school is missing'; END IF;
   IF app.current_user_id() IS NOT NULL THEN RAISE EXCEPTION 'job claims: expected no principal'; END IF;
 
-  -- Before the hour: nothing. Half an hour before 03:00 as an instant: on
-  -- the spring switch's day there is no 02:30, and the zone reads it as
-  -- 03:30, past the hour.
-  SELECT count(*) INTO n FROM app.job_claim_nightly('rls80', 3, ARRAY[school], 5, ((today + time '03:00') AT TIME ZONE 'Europe/Stockholm') - interval '30 minutes');
-  IF n <> 0 THEN RAISE EXCEPTION 'job claims: claimed half an hour before a 03:00 job'; END IF;
+  -- The hour itself: a 03:00 job is claimed at 03:00 and not a minute
+  -- before. Both are instants counted from 03:00 as the zone gives it: on
+  -- the spring switch's day the clock goes from 01:59 to 03:00, so a minute
+  -- before is 01:59, and a job claimed from 02:00 is told apart only on a
+  -- day that has a 02:59. Tomorrow too, then, since of two days in a row
+  -- one has. A job of its own, so the night the rest of 80b claims at noon
+  -- is still unclaimed.
+  FOREACH night IN ARRAY ARRAY[today, today + 1] LOOP
+    SELECT count(*) INTO n FROM app.job_claim_nightly('rls80-hour', 3, ARRAY[school], 5, ((night + time '03:00') AT TIME ZONE 'Europe/Stockholm') - interval '1 minute');
+    IF n <> 0 THEN RAISE EXCEPTION 'job claims: a 03:00 job was claimed a minute before 03:00 on %', night; END IF;
+    SELECT count(*), max(local_day) INTO n, d FROM app.job_claim_nightly('rls80-hour', 3, ARRAY[school], 5, (night + time '03:00') AT TIME ZONE 'Europe/Stockholm');
+    IF n <> 1 OR d IS DISTINCT FROM night THEN RAISE EXCEPTION 'job claims: a 03:00 job at 03:00 on % gave % claim(s) for %', night, n, d; END IF;
+  END LOOP;
 
   SELECT count(*), max(local_day) INTO n, d FROM app.job_claim_nightly('rls80', 3, ARRAY[school], 5, (today + time '12:00') AT TIME ZONE 'Europe/Stockholm');
   IF n <> 1 OR d <> today THEN RAISE EXCEPTION 'job claims: the first claim of the day gave % row(s) for %', n, d; END IF;
@@ -14694,6 +14740,11 @@ ROLLBACK;
 -- rows that went, and "gallrat före" answers the cutoffs. Run under an admin
 -- principal instead, the purge of the tjänst history is refused (TL403): the
 -- guards let a purge through only with no principal set.
+--
+-- The lesson ON the attendance cutoff is planted here, in this transaction,
+-- and the night runs at its now(): the counts, the lesson and the run's
+-- cutoffs are then of one school day, wherever a midnight falls. 86 and 87
+-- do the same.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -14732,7 +14783,17 @@ DO $$
 DECLARE
   school uuid := app.current_school_id();
   today date := (now() AT TIME ZONE 'Europe/Stockholm')::date;
+  edge uuid;
 BEGIN
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  SELECT school, (SELECT id FROM "Subjects" WHERE "schoolId" = school AND code = 'GAL'),
+         (SELECT id FROM "StudentGroups" WHERE "schoolId" = school AND name = 'G7A'),
+         c, c + time '06:10', c + time '06:50', now()
+    FROM (SELECT (today - interval '12 months')::date AS c) AS cutoff
+  RETURNING id INTO edge;
+  INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt")
+  SELECT school, edge, id, 'PRESENT', now() FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000083';
+
   PERFORM set_config('app.test_rls83_school', school::text, true);
   PERFORM set_config('app.test_rls83_before', jsonb_build_object(
     'att_old', (SELECT count(*) FROM "AttendanceRecords" a JOIN "CalendarLessons" l ON l.id = a."calendarLessonId" WHERE l.date < today - interval '12 months'),
@@ -14777,7 +14838,7 @@ DECLARE
   people uuid[];
 BEGIN
   IF app.current_user_id() IS NOT NULL THEN RAISE EXCEPTION 'gallring: expected no principal for the night'; END IF;
-  run := app.gallring_begin(school, clock_timestamp());
+  run := app.gallring_begin(school, now());
   PERFORM set_config('app.test_rls83_run', run::text, true);
   people := ARRAY(SELECT user_id FROM app.gallring_departed_due(run, 500));
   PERFORM set_config('app.test_rls83_people', array_to_string(people, ','), true);
@@ -15184,7 +15245,20 @@ DECLARE
   today date := (now() AT TIME ZONE 'Europe/Stockholm')::date;
   pv record;
   kinds jsonb := '{}';
+  edge uuid;
 BEGIN
+  -- The lesson on the attendance cutoff, as 83 plants it: due neither on
+  -- the page nor at night.
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  SELECT app.current_school_id(), (SELECT id FROM "Subjects" WHERE "schoolId" = app.current_school_id() AND code = 'GAL'),
+         (SELECT id FROM "StudentGroups" WHERE "schoolId" = app.current_school_id() AND name = 'G7A'),
+         c, c + time '06:10', c + time '06:50', now()
+    FROM (SELECT (today - interval '12 months')::date AS c) AS cutoff
+  RETURNING id INTO edge;
+  INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt")
+  SELECT app.current_school_id(), edge, id, 'PRESENT', now() FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000083';
+  IF NOT FOUND THEN RAISE EXCEPTION 'preview: the gallring school''s pupil is missing for the lesson on the cutoff'; END IF;
+
   PERFORM set_config('app.test_rls86_school', app.current_school_id()::text, true);
   FOR pv IN SELECT k.kind, k.months, p.* FROM (VALUES
       ('ATTENDANCE'::"RetentionDataType", 12), ('ABSENCE_REPORTS', 6), ('LEAVE_REQUESTS', 12),
@@ -15210,7 +15284,7 @@ END $$;
 SELECT set_config('request.jwt.claims', '', true);
 DO $$
 DECLARE
-  run uuid := app.gallring_begin(current_setting('app.test_rls86_school')::uuid, clock_timestamp());
+  run uuid := app.gallring_begin(current_setting('app.test_rls86_school')::uuid, now());
   kind "RetentionDataType";
   went jsonb := '{}';
 BEGIN
@@ -15245,10 +15319,25 @@ ROLLBACK;
 BEGIN;
 SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000081')::text, true);
 SELECT set_config('app.test_rls87_school', app.current_school_id()::text, true);
+-- The lesson on the attendance cutoff, as 83 plants it: neither run takes it.
+DO $$
+DECLARE
+  cutoff date := ((now() AT TIME ZONE 'Europe/Stockholm')::date - interval '12 months')::date;
+  edge uuid;
+BEGIN
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  VALUES (app.current_school_id(), (SELECT id FROM "Subjects" WHERE "schoolId" = app.current_school_id() AND code = 'GAL'),
+          (SELECT id FROM "StudentGroups" WHERE "schoolId" = app.current_school_id() AND name = 'G7A'),
+          cutoff, cutoff + time '06:10', cutoff + time '06:50', now())
+  RETURNING id INTO edge;
+  INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt")
+  SELECT app.current_school_id(), edge, id, 'PRESENT', now() FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000083';
+  IF NOT FOUND THEN RAISE EXCEPTION 'purged before: the gallring school''s pupil is missing for the lesson on the cutoff'; END IF;
+END $$;
 SELECT set_config('request.jwt.claims', '', true);
 DO $$
 DECLARE
-  run uuid := app.gallring_begin(current_setting('app.test_rls87_school')::uuid, clock_timestamp());
+  run uuid := app.gallring_begin(current_setting('app.test_rls87_school')::uuid, now());
 BEGIN
   IF app.gallring_purge(run, 'ATTENDANCE', 1) <> 1 THEN RAISE EXCEPTION 'purged before: the capped batch took no row'; END IF;
   PERFORM app.gallring_finish(run, '{}', clock_timestamp());
@@ -15266,7 +15355,7 @@ END $$;
 SELECT set_config('request.jwt.claims', '', true);
 DO $$
 DECLARE
-  run uuid := app.gallring_begin(current_setting('app.test_rls87_school')::uuid, clock_timestamp());
+  run uuid := app.gallring_begin(current_setting('app.test_rls87_school')::uuid, now());
 BEGIN
   IF app.gallring_purge(run, 'ATTENDANCE', 5000) <> 1 THEN RAISE EXCEPTION 'purged before: the second run did not take the row left'; END IF;
   PERFORM app.gallring_finish(run, '{}', clock_timestamp());
@@ -22564,6 +22653,12 @@ SELECT set_config('app.test_nv_narrow', (SELECT id FROM "IntegrationApiKeys" WHE
 SELECT set_config('app.test_nv_revoked', (SELECT id FROM "IntegrationApiKeys" WHERE name = 'NV återkallad')::text, true);
 SELECT set_config('app.test_nv_absences', (SELECT id FROM "IntegrationApiKeys" WHERE name = 'NV frånvaro')::text, true);
 SELECT set_config('app.test_nv_pupil', (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000153')::text, true);
+-- The day of the classmate's granted leave, as the fixtures stored it: they
+-- planted it five days after their own current_date, and a UTC midnight
+-- between them and this section would move ours.
+SELECT set_config('app.test_nv_granted_day', (
+  SELECT r.date::text FROM "AbsenceReports" r JOIN "Users" u ON u.id = r."studentId"
+   WHERE u."authId" = '00000000-0000-4000-8000-000000000154' AND r."grantedLeave"), true);
 SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000155')::text, true);
 SELECT set_config('app.test_nv_shares', app.current_school_id()::text, true);
 SELECT set_config('app.test_nv_shares_key', (SELECT id FROM "IntegrationApiKeys" WHERE name = 'ND hel')::text, true);
@@ -22659,9 +22754,13 @@ BEGIN
   IF n <> 0 THEN RAISE EXCEPTION 'attendance sharing: % rows were created a year ago', n; END IF;
   SELECT count(*) INTO n FROM app.ss12000_absences(NULL, ARRAY[pupil]);
   IF n <> 1 THEN RAISE EXCEPTION 'attendance sharing: the pupil''s absences are % rows', n; END IF;
-  -- The granted leave's day as the gateway reads it: the date and no times, as text.
+  -- The granted leave's day as the gateway reads it: the date and no times, as
+  -- text. The day is the one the fixtures stored, read back by the admin above.
+  IF coalesce(current_setting('app.test_nv_granted_day', true), '') = '' THEN
+    RAISE EXCEPTION 'attendance sharing: the fixtures'' granted leave is missing';
+  END IF;
   SELECT * INTO granted FROM app.ss12000_absences(NULL, NULL) a WHERE a."grantedLeave";
-  IF granted.date IS DISTINCT FROM to_char(current_date + 5, 'YYYY-MM-DD') OR granted."startTime" IS NOT NULL OR granted."endTime" IS NOT NULL THEN
+  IF granted.date IS DISTINCT FROM to_char(current_setting('app.test_nv_granted_day')::date, 'YYYY-MM-DD') OR granted."startTime" IS NOT NULL OR granted."endTime" IS NOT NULL THEN
     RAISE EXCEPTION 'attendance sharing: the granted leave reads as % % %', granted.date, granted."startTime", granted."endTime";
   END IF;
   -- Written before the school shared, so no version: each reads as modified
