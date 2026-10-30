@@ -1250,6 +1250,19 @@ and the response's were the review's own per-pupil count on every timetable.
 The benchmark schools have no locks in a cohort and no closed time inside a
 day, and build the same 14,154 and 80,514 variables as before.
 
+ODD AND EVEN WEEKS, since main's A/B-veckor (#221) gave the engine both. A
+cohort whose day has a lesson or a lock on alternate weeks gets that day once
+per week, of what runs in it, so slöjd odd and hemkunskap even at one hour are
+the hour once in each week and never two hours in one. Its terms are the two
+weeks' sum; in such a school every other cohort's day counts twice and the
+rest of the objective is multiplied by 50 rather than 25, so every term weighs
+the ordinary week the report counts, half of each. A school without
+alternating lessons builds exactly the model it built before. The count does
+the same in halves, so `pupilIdleMinutes` is a number and can end in .5: an
+odd-week hole of 15 minutes is 7.5 minutes of an ordinary week, as the
+report's weekShare has it. The fixture's three alternating cases are
+replayed by the report, the gateway and the engine.
+
 A COMPLETE HINT FOR PHASE 2 was tried and is not in this change. Phase 2
 is hinted with phase 1's lessons and rooms only; the term's first and last
 per key, cohort and day are left to CP-SAT's completion, as every other
