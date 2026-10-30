@@ -252,8 +252,13 @@ def build_request(
     infeasible_days: bool = False,
     travel_minutes: int | None = None,
     open_sites: bool = False,
+    pupil_gaps: bool = False,
 ) -> OptimizeScheduleRequest:
     """The school's week; `blocks=False` sends the same rows with no blockId.
+
+    `pupil_gaps` sends the pupils' cohorts (Elevernas håltimmar), as the
+    gateway does for a school that turns the rule on: the pupils booked alike,
+    their groups and their class. Without it the key is not sent.
 
     `teacher_day_rules` adds Lärarens dag's rows (TEACHER_DAY_RULES), and
     `infeasible_days` the post the week cannot hold; without them the keys are
@@ -416,6 +421,20 @@ def build_request(
             "siteBId": _uid("site-sodra"),
             "minutes": travel_minutes,
         }]
+    if pupil_gaps:
+        homes = {group["id"] for group in groups}
+        cohorts: dict[frozenset[str], int] = {}
+        for pupil_groups in memberships:
+            key = frozenset(pupil_groups)
+            cohorts[key] = cohorts.get(key, 0) + 1
+        payload["pupilGaps"] = {"cohorts": [
+            {
+                "groupIds": sorted(key),
+                "homeGroupId": next(group for group in sorted(key) if group in homes),
+                "pupils": count,
+            }
+            for key, count in sorted(cohorts.items(), key=lambda item: sorted(item[0]))
+        ]}
     if teacher_day_rules or infeasible_days:
         work_rules, day_limits, locked = _teacher_day_rows(infeasible_days=infeasible_days)
         payload["teacherWorkRules"] = work_rules
