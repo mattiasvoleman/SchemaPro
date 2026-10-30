@@ -900,6 +900,15 @@ describe('ersättande grupper (a replacing group)', () => {
     expect(coverage.groups.find((g) => g.studentGroupId === a.id)!.pupilCount).toBe(2);
   });
 
+  it('says what a line\'s belowPlanned is out of when the rule took some of the group off it, and only then (Elevlistan i uppföljningen)', () => {
+    // 7A's Svenska is over Bo alone: "1 av 1", not of 7A's two.
+    expect(lineOf(computeDeliveredCoverage(world()), a, sv).pupils).toMatchObject({ belowPlanned: 1, ofPupils: 1 });
+    // SvA7 an ordinary group: the line is over the class, and says nothing more, as before.
+    const plain = lineOf(computeDeliveredCoverage(ordinary()), a, sv).pupils!;
+    expect(plain).not.toHaveProperty('ofPupils');
+    expect(plain.belowPlanned).toBe(2);
+  });
+
   it('still names the pupil nothing was delivered to when most of 7A is in SvA7', () => {
     // 7A plans 3 × 60 Svenska, taught in Sv 7A-gruppen, which holds Bo and
     // Dag; Cim is in no Svenska group. Four of 7A's seven are in SvA7.

@@ -67,6 +67,8 @@ export interface DeliveredLineSummary {
     projectedDelta: DeltaStats;
     belowPlanned: number;
     nothingDelivered: number;
+    /** How many pupils the line is over, only when THE RULE took some of the group's off it; else the group's pupilCount. */
+    ofPupils?: number;
   };
 }
 

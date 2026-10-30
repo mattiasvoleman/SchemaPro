@@ -495,8 +495,9 @@ describe('ersättande grupper (a replacing group)', () => {
     // Bo is the one pupil below: Alva's SvA is whole, Dag's 7B Svenska is not his.
     expect(coverage.pupilsBelowPlanned).toBe(1);
     // 7A's Svenska statistics are over the home pupils its lessons reach:
-    // Bo alone, not Alva at a delta of nothing.
-    expect(lineOf(coverage, a, S.SV).pupils).toEqual({ min: -60, median: -60, max: -60, below: 1 });
+    // Bo alone, not Alva at a delta of nothing — and says so, "1 av 1", not of
+    // the class's two (Elevlistan i uppföljningen: ofPupils).
+    expect(lineOf(coverage, a, S.SV).pupils).toEqual({ min: -60, median: -60, max: -60, below: 1, ofPupils: 1 });
     // As an ordinary group, SvA7 left Alva 60 short in Svenska too.
     const both = compute({ ...ordinary, drillGroupId: a.id });
     expect(pupilLine(both, alva, S.SV)).toMatchObject({ plannedMinutesPerWeek: 180, scheduledMinutesPerWeek: 120 });
@@ -538,7 +539,8 @@ describe('ersättande grupper (a replacing group)', () => {
     });
     // Counted at nothing, the three SvA7 pupils made 7A's median 0 and hid a
     // line short for everybody it reaches.
-    expect(lineOf(coverage, a, S.SV).pupils).toEqual({ min: -120, median: -90, max: -60, below: 2 });
+    // "2 av 2": the line is over the two it reaches, not the class's five.
+    expect(lineOf(coverage, a, S.SV).pupils).toEqual({ min: -120, median: -90, max: -60, below: 2, ofPupils: 2 });
     // The nivågrupp's line is both its members: the SvA7 pupil placed in it
     // keeps its Svenska (a teaching group, not a half), short 60 of it; the
     // other, short 120 of 7A's and its together.
