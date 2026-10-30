@@ -16,7 +16,9 @@
  * split (in turn, swapped, or kept for the autumn), a half's dated post with
  * no swap beside it, a second post of the half in the subject, periods that
  * meet, another half that does not mirror the swap (another split beside it,
- * an extra post), a half whose two posts differ in their week, the shape
+ * an extra post, both subjects in one period), a third subject the class has
+ * that makes the same swap with the half's hemkunskap, a half whose two posts
+ * differ in their week, the shape
  * reached through both halves, another class's half, two halves without the
  * class or a teaching group, a teaching group on top of the class, and two
  * språkval through a half.
@@ -311,7 +313,8 @@ const swapAndExtraMatematik = (): PlannedCoverageInput => {
  * A half with the swap's own two posts whose other half does not read them
  * the other way round. 6N reads hemkunskap in turn, and 6N:1 has slöjd in the
  * spring too, which 6N:2 has none of. 6P:2 reads its hemkunskap inside the
- * autumn it reads slöjd in, so none of it in 6P:1's slöjd spring.
+ * autumn it reads slöjd in, so none of it in 6P:1's slöjd spring. 6U:2 reads
+ * both in the spring, so no slöjd in 6U:1's hemkunskap autumn.
  */
 const otherHalfDoesNotMirror = (): PlannedCoverageInput => {
   reset();
@@ -319,8 +322,10 @@ const otherHalfDoesNotMirror = (): PlannedCoverageInput => {
   const [n1, n2] = halvesOf(c6N);
   const c6P = theClass('6P');
   const [p1, p2] = halvesOf(c6P);
+  const c6U = theClass('6U');
+  const [u1, u2] = halvesOf(c6U);
   return yearOf(
-    [c6N, n1, n2, c6P, p1, p2],
+    [c6N, n1, n2, c6P, p1, p2, c6U, u1, u2],
     [
       post(c6N, S.SL, 2, 40),
       post(n1, S.HKK, 1, 70, AUTUMN),
@@ -331,8 +336,48 @@ const otherHalfDoesNotMirror = (): PlannedCoverageInput => {
       post(p1, S.SL, 1, 70, SPRING),
       post(p2, S.SL, 1, 70, AUTUMN),
       post(p2, S.HKK, 1, 70, period('2026-09-01', '2026-10-30')),
+      post(c6U, S.SL, 2, 25),
+      post(u1, S.HKK, 1, 70, AUTUMN),
+      post(u1, S.SL, 1, 70, SPRING),
+      post(u2, S.SL, 1, 70, SPRING),
+      post(u2, S.HKK, 1, 70, SPRING),
     ],
-    [pupil(c6N, [n1]), pupil(c6N, [n2]), pupil(c6P, [p1]), pupil(c6P, [p2])],
+    [pupil(c6N, [n1]), pupil(c6N, [n2]), pupil(c6P, [p1]), pupil(c6P, [p2]), pupil(c6U, [u1])],
+  );
+};
+
+/**
+ * The swap with slöjd as its first subject (6A:1 reads slöjd in the autumn
+ * and hemkunskap in the spring), and teknik split in turn over the terms in
+ * the swap's very week, 1 × 70: 6A:1 in the autumn, 6A:2 in the spring. Each
+ * half's hemkunskap then makes the same swap with its teknik as with its
+ * slöjd. 6A has its teknik post back, so one of the two is a pupil reading
+ * teknik twice, and nothing tells which: neither is exempt, double planned
+ * in slöjd and in teknik. 6B has no teknik post, so its teknik in turn is
+ * no second planning of anything: the swap stays the swap.
+ */
+const thirdSubjectInTheSwapsWeek = (): PlannedCoverageInput => {
+  reset();
+  const c6A = theClass('6A');
+  const a = halvesOf(c6A);
+  const c6B = theClass('6B');
+  const b = halvesOf(c6B);
+  const teknikInTurn = ([h1, h2]: readonly [PlannedGroup, PlannedGroup]) => [
+    post(h1, S.TK, 1, 70, AUTUMN),
+    post(h2, S.TK, 1, 70, SPRING),
+  ];
+  return yearOf(
+    [c6A, ...a, c6B, ...b],
+    [
+      post(c6A, S.SL, 2, 25),
+      post(c6A, S.TK, 1, 30),
+      ...swapPosts(a, { first: SPRING, second: AUTUMN }),
+      ...teknikInTurn(a),
+      post(c6B, S.SL, 2, 25),
+      ...swapPosts(b, { first: SPRING, second: AUTUMN }),
+      ...teknikInTurn(b),
+    ],
+    [pupil(c6A, [a[0]]), pupil(c6A, [a[1]]), pupil(c6B, [b[0]]), pupil(c6B, [b[1]])],
   );
 };
 
@@ -525,8 +570,12 @@ const added = [
     input: swapAndExtraMatematik(),
   },
   {
-    name: `${PREFIX} the other half does not read the two the other way round — 6N:2 reads no slöjd, 6P:2 no hemkunskap in 6P:1's slöjd spring: double planned`,
+    name: `${PREFIX} the other half does not read the two the other way round — 6N:2 reads no slöjd, 6P:2 no hemkunskap in 6P:1's slöjd spring, 6U:2 no slöjd in 6U:1's hemkunskap autumn: double planned`,
     input: otherHalfDoesNotMirror(),
+  },
+  {
+    name: `${PREFIX} teknik in turn in the swap's very week — with 6A's teknik back, the half's hemkunskap makes a swap with its teknik as with its slöjd, so neither is exempt; with 6B's teknik gone, the swap stays the swap`,
+    input: thirdSubjectInTheSwapsWeek(),
   },
   {
     name: `${PREFIX} the swap with the half's slöjd in another week than its hemkunskap — more lessons, shorter lessons, lessons of two lengths, odd weeks: double planned`,
