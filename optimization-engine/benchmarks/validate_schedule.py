@@ -123,7 +123,10 @@ def _lesson_slots(grid, requirement, lesson):
     """
     if requirement.lesson_lengths is None:
         return grid.minutes_to_slots(requirement.minutes_per_lesson)
-    return grid.parse_hhmmss(lesson.end_time) - grid.parse_hhmmss(lesson.start_time)
+    # The end by the clock and not by parse_hhmmss, which reads a START and
+    # refuses the day's own end: a lesson ending as the day does is a lesson
+    # of the day, and the within-day check below holds it there.
+    return grid.minutes_to_slots(_clock(lesson.end_time) - _clock(lesson.start_time))
 
 
 def _lesson_lead(requirement, lesson):
