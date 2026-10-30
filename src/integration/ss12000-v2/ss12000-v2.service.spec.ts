@@ -716,7 +716,34 @@ describe('Elevlistan i uppföljningen: an event says who of its groups is not on
     const alva = pupilNamed('Alva');
     const hers = (await service.listCalendarEvents(caller(), { ...DAY, student: alva })).data;
     const classSvenska = hers.find((event) => event.id === lessonNamed('7A:s svenska').id);
-    expect(exceptionsOf(classSvenska)).toEqual([{ student: { id: alva }, participates: false }]);
+    expect(exceptionsOf(classSvenska)).toEqual([alva, pupilNamed('Eva')].sort().map((id) => ({ student: { id }, participates: false })));
     expect(hers.map((event) => event.id)).toContain(lessonNamed('SvA7:s svenska som andraspråk').id);
+  });
+
+  it('a key without groups.read gets the event as before: no participates false, since who leaves 7A\'s svenska is who is in SvA7 (review L5)', async () => {
+    const { world, service } = setup();
+    world.addPupilList(WITH_SVA);
+    const scopes = ALL_V2_SCOPES.filter((scope) => scope !== 'groups.read');
+    const events = (await service.listCalendarEvents(caller(scopes), DAY)).data;
+    const replaced = events.flatMap((event) => (exceptionsOf(event) ?? []).filter((entry) => !entry.participates));
+    expect(replaced).toEqual([]);
+    expect(events.find((event) => event.id === lessonNamed('7A:s svenska').id)).not.toHaveProperty('studentExceptions');
+    // With groups.read, the same event lists them.
+    const full = (await service.listCalendarEvents(caller(), DAY)).data.find((event) => event.id === lessonNamed('7A:s svenska').id);
+    expect(exceptionsOf(full)!.map((entry) => entry.participates)).toEqual([false, false]);
+  });
+
+  it('orders the exceptions by the student\'s id, participating or not (review L3)', async () => {
+    const { world, service } = setup();
+    world.addPupilList(WITH_SVA);
+    // Fia of 8B, named on 7A's svenska: participates true, with an id after Alva's and Eva's.
+    const fia = 'e1e00000-0000-4000-8000-0000000000f6';
+    world.users.push({ ...world.users.find((user) => user['id'] === W.p4)!, id: fia, email: 'fia@elev.ekskolan.se', firstName: 'Fia', authId: null });
+    world.lessonStudents.push({ schoolId: W.school, calendarLessonId: lessonNamed('7A:s svenska').id, studentId: fia });
+    const event = (await service.listCalendarEvents(caller(), DAY)).data.find((item) => item.id === lessonNamed('7A:s svenska').id);
+    expect(exceptionsOf(event)).toEqual([
+      ...[pupilNamed('Alva'), pupilNamed('Eva')].sort().map((id) => ({ student: { id }, participates: false })),
+      { student: { id: fia }, participates: true },
+    ]);
   });
 });

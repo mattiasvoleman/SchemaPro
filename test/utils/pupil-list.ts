@@ -25,6 +25,8 @@ export interface PupilListSchool {
 
 export interface PupilListFixture {
   academicYearId: string;
+  /** Last läsår: SvA6's, which takes nobody off this year's lessons. */
+  pastAcademicYearId: string;
   subjects: { id: string; name: string; nationalCode: string }[];
   pupils: { id: string; name: string; homeGroupId: string; groupIds: string[] }[];
   lessons: { id: string; name: string; subjectId: string; groupIds: string[]; named: string[] }[];

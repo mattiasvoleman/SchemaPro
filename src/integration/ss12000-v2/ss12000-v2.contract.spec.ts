@@ -199,7 +199,9 @@ describe('what the objects say', () => {
     }
     const event = await service.getCalendarEvent(all, lessonNamed('7A:s svenska').id, {});
     expect(checkSchema(event, 'CalendarEvent')).toEqual([]);
-    expect(event['studentExceptions']).toEqual([{ student: { id: pupilNamed('Alva') }, participates: false }]);
+    expect(event['studentExceptions']).toEqual(
+      [pupilNamed('Alva'), pupilNamed('Eva')].sort().map((id) => ({ student: { id }, participates: false })),
+    );
     // The replacement itself is never emitted: SvA7 is an Undervisning group with its members, nothing more.
     const sva7 = WITH_SVA.groups.find((group) => group.name === 'SvA7')!;
     const group = await service.getGroup(all, sva7.id, {});

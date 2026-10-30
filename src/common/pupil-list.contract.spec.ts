@@ -16,8 +16,14 @@ describe("a lesson's pupils agree with the shared fixture", () => {
     expect(WITH_SVA.groups.some((group) => group.replacesSubjectId !== null)).toBe(true);
     expect(WITHOUT.groups.every((group) => group.replacesSubjectId === null)).toBe(true);
     const classSvenska = lessonNamed('7A:s svenska').id;
-    expect(WITH_SVA.expected[classSvenska]!.off).toEqual([pupilNamed('Alva')]);
+    expect(WITH_SVA.expected[classSvenska]!.off).toEqual([pupilNamed('Alva'), pupilNamed('Eva')].sort());
     expect(WITH_SVA.expected[classSvenska]!.on).toContain(pupilNamed('Bo'));
+  });
+
+  it('pins the läsår and keptBy: last year\'s SvA6 takes Dag off nothing this year, and Sv7f\'s own svenska keeps Eva of SvA7', () => {
+    expect(WITH_SVA.groups.find((group) => group.name === 'SvA6')).toMatchObject({ academicYearId: f.pastAcademicYearId });
+    expect(WITH_SVA.expected[lessonNamed('7A:s svenska').id]!.on).toContain(pupilNamed('Dag'));
+    expect(WITH_SVA.expected[lessonNamed('Sv7f:s svenska').id]).toEqual({ on: [pupilNamed('Eva')], off: [] });
   });
 
   it.each(f.schools.map((school) => [school.name, school] as const))('%s', (_name, school) => {

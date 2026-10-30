@@ -215,16 +215,21 @@ describe('ClassBookService', () => {
       return Object.fromEntries(book.lessons.map((l) => [PUPIL_LIST.lessons.find((x) => x.id === l.id)!.name, l.attending]));
     };
 
-    it('with SvA7 replacing svenska: 7A\'s own svenska holds 2 of its 3; one naming Alva or carrying SvA7 holds all, and says nothing more', async () => {
+    it('with SvA7 replacing svenska: 7A\'s own svenska holds 3 of its 5 (Dag\'s SvA6 is last year\'s); one naming Alva holds 4; one carrying SvA7 holds all, and says nothing more', async () => {
       expect(await counts(WITH_SVA)).toEqual({
-        '7A:s svenska': 2,
-        '7A:s svenska, Alva namngiven': null,
+        '7A:s svenska': 3,
+        '7A:s svenska, Alva namngiven': 4,
         '7A:s svenska med SvA7 tillagd': null,
         'halvans svenska': 1,
-        'SvA7:s svenska som andraspråk': 1,
+        'SvA7:s svenska som andraspråk': 2,
         'Stöd7:s svenska': 1,
         '7A:s matematik': null,
+        'Sv7f:s svenska': 1,
       });
+      // The replacing groups are asked among the pupils' teaching groups, all of them (review L3: slice(1)).
+      const asked = (tx.studentGroup.findMany.mock.calls as Array<[{ where: Where }]>).find(([args]) => args.where['replacesSubjectId'])![0].where;
+      const groupId = (name: string) => WITH_SVA.groups.find((group) => group.name === name)!.id;
+      expect([...asked['id'].in].sort()).toEqual(['7A:1', 'SvA7', 'Stöd7', 'SvA6', 'Sv7f'].map(groupId).sort());
     });
 
     it('with no replacing group: every own lesson holds the class, null, as before, and no own lesson is rostered', async () => {
@@ -233,9 +238,10 @@ describe('ClassBookService', () => {
         '7A:s svenska, Alva namngiven': null,
         '7A:s svenska med SvA7 tillagd': null,
         'halvans svenska': 2,
-        'SvA7:s svenska som andraspråk': 1,
+        'SvA7:s svenska som andraspråk': 2,
         'Stöd7:s svenska': 1,
         '7A:s matematik': null,
+        'Sv7f:s svenska': 1,
       });
       const own = new Set(PUPIL_LIST.lessons.filter((l) => l.groupIds.includes(WITHOUT.groups.find((g) => g.name === '7A')!.id)).map((l) => l.id));
       const asked = (tx.calendarLessonStudent.findMany.mock.calls as Array<[{ where: Where }]>).flatMap(([args]) => args.where['calendarLessonId']['in'] as string[]);

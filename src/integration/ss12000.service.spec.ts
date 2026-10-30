@@ -708,7 +708,7 @@ describe('Ss12000Service', () => {
     const groupName = (school: PupilListSchool, id: string) => school.groups.find((group) => group.id === id)!.name;
     const subject = (id: string) => PUPIL_LIST.subjects.find((row) => row.id === id)!;
 
-    const arrangeSchool = (school: PupilListSchool) => {
+    const arrangeSchool = (school: PupilListSchool, inactive: ReadonlySet<string> = new Set()) => {
       tx.studentGroup.findMany.mockImplementation(({ where }: { where: Where }) =>
         Promise.resolve(
           school.groups
@@ -721,7 +721,11 @@ describe('Ss12000Service', () => {
         Promise.resolve(memberships.filter((row) => inList(where.studentGroupId, row.studentGroupId) && inList(where.studentId, row.studentId))),
       );
       tx.user.findMany.mockImplementation(({ where }: { where: Where }) =>
-        Promise.resolve(PUPIL_LIST.pupils.filter((pupil) => inList(where.id, pupil.id)).map((pupil) => ({ id: pupil.id, studentGroupId: pupil.homeGroupId }))),
+        Promise.resolve(
+          PUPIL_LIST.pupils
+            .filter((pupil) => inList(where.id, pupil.id) && (where['isActive'] !== true || !inactive.has(pupil.id)))
+            .map((pupil) => ({ id: pupil.id, studentGroupId: pupil.homeGroupId })),
+        ),
       );
       const shape = (lesson: (typeof PUPIL_LIST.lessons)[number]) => ({
         id: lesson.id,
@@ -788,12 +792,60 @@ describe('Ss12000Service', () => {
       await service.activities(SCHOOL_ID);
       const reads = recordedReads(tx).filter((read) => read.kind === 'ROSTER');
       expect(reads).toHaveLength(2);
-      for (const read of reads) expect(read.ids).toContain(pupilNamed('Alva'));
-      // The event that names her keeps her in studentIds, and leaves nobody out.
+      // Eva is left out of 7A's svenska and named on no lesson: only the exclusion names her.
+      for (const read of reads) expect(read.ids).toContain(pupilNamed('Eva'));
+      // The event that names Alva keeps her in studentIds; Eva, named nowhere, is left out.
       const events = await service.calendarEvents(SCHOOL_ID, '2026-10-19', '2026-10-19');
       const named = events.data.find((event) => event.id === lessonNamed('7A:s svenska, Alva namngiven').id)!;
-      expect(named).toMatchObject({ studentIds: [pupilNamed('Alva')] });
-      expect(named).not.toHaveProperty('excludedStudentIds');
+      expect(named).toMatchObject({ studentIds: [pupilNamed('Alva')], excludedStudentIds: [pupilNamed('Eva')] });
+    });
+  });
+
+  describe('Elevlistan i uppföljningen: only active pupils are left out (review L3)', () => {
+    it('a deactivated pupil of SvA7 is in no excludedStudentIds, as v1 lists no inactive member either', async () => {
+      // Reuses the block above's arrangement through the describe's own tx.
+      const eva = pupilNamed('Eva');
+      const alva = pupilNamed('Alva');
+      tx.studentGroup.findMany.mockImplementation(({ where }: { where: Record<string, any> }) =>
+        Promise.resolve(
+          WITH_SVA.groups
+            .filter((group) => (where['replacesSubjectId'] ? group.replacesSubjectId !== null : !where['id'] || where['id'].in.includes(group.id)))
+            .map(({ id, kind, halfOfId, academicYearId, replacesSubjectId }) => ({ id, kind, halfOfId, academicYearId, replacesSubjectId })),
+        ),
+      );
+      const memberships = PUPIL_LIST.pupils.flatMap((pupil) => pupil.groupIds.map((studentGroupId) => ({ studentGroupId, studentId: pupil.id })));
+      tx.studentGroupMember.findMany.mockImplementation(({ where }: { where: Record<string, any> }) =>
+        Promise.resolve(
+          memberships.filter(
+            (row) => (!where['studentGroupId'] || where['studentGroupId'].in.includes(row.studentGroupId)) && (!where['studentId'] || where['studentId'].in.includes(row.studentId)),
+          ),
+        ),
+      );
+      tx.user.findMany.mockImplementation(({ where }: { where: Record<string, any> }) =>
+        Promise.resolve(
+          PUPIL_LIST.pupils
+            .filter((pupil) => (!where['id'] || where['id'].in.includes(pupil.id)) && (where['isActive'] !== true || pupil.id !== eva))
+            .map((pupil) => ({ id: pupil.id, studentGroupId: pupil.homeGroupId })),
+        ),
+      );
+      const classSvenska = lessonNamed('7A:s svenska');
+      arrangeList('calendarLesson', 1, [
+        {
+          id: classSvenska.id,
+          masterLessonId: null,
+          startsAt: new Date('2026-10-19T06:00:00.000Z'),
+          endsAt: new Date('2026-10-19T07:00:00.000Z'),
+          status: 'SCHEDULED',
+          subject: { id: classSvenska.subjectId, name: 'Svenska' },
+          studentGroup: { id: classSvenska.groupIds[0]!, name: '7A' },
+          room: null,
+          teachers: [],
+          extraGroups: [],
+          participants: [],
+        },
+      ]);
+      const events = await service.calendarEvents(SCHOOL_ID, '2026-10-19', '2026-10-19');
+      expect(events.data[0]).toMatchObject({ excludedStudentIds: [alva] });
     });
   });
 

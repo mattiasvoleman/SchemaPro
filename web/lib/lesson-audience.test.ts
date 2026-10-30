@@ -283,19 +283,19 @@ describe("Elevlistan i uppföljningen: a replacing group takes its pupils out of
     }
   });
 
-  it("7A's own svenska is partly 7A's, 2/3, and nothing of SvA7's; with no replacing group it is 7A's whole, as before", () => {
+  it("7A's own svenska is partly 7A's, 3/5, and nothing of SvA7's; with no replacing group it is 7A's whole, as before", () => {
     const [withSva, without] = f.schools;
     const classSvenska = asLesson(f.lessons.find((l) => l.name === "7A:s svenska")!);
     const c7a = withSva!.groups.find((g) => g.name === "7A")!.id;
     const sva7 = withSva!.groups.find((g) => g.name === "SvA7")!.id;
     const replaced = audienceFor(classSvenska, c7a, buildRosterIndex(home, members, withSva!.groups))!;
-    expect(replaced).toEqual({ attending: 2, cohortSize: 3, named: true });
+    expect(replaced).toEqual({ attending: 3, cohortSize: 5, named: true });
     expect(showsFraction(replaced)).toBe(true);
     expect(audienceFor(classSvenska, sva7, buildRosterIndex(home, members, withSva!.groups))).toBeNull();
     const plain = audienceFor(classSvenska, c7a, buildRosterIndex(home, members, without!.groups))!;
-    expect(plain).toEqual({ attending: 3, cohortSize: 3, named: true });
+    expect(plain).toEqual({ attending: 5, cohortSize: 5, named: true });
     expect(showsFraction(plain)).toBe(false);
     // Without a subject the lesson is counted as before: nothing to replace.
-    expect(audienceFor({ ...classSvenska, subjectId: undefined }, c7a, buildRosterIndex(home, members, withSva!.groups))!.attending).toBe(3);
+    expect(audienceFor({ ...classSvenska, subjectId: undefined }, c7a, buildRosterIndex(home, members, withSva!.groups))!.attending).toBe(5);
   });
 });

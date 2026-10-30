@@ -347,8 +347,14 @@ export class ProviderWorld {
     for (const subject of PUPIL_LIST.subjects) {
       this.subjects.push({ ...subject, schoolId: W.school, countsTowardTimplan: true, createdAt: t('2026-01-10T08:00:00Z'), updatedAt: t('2026-01-10T08:00:00Z') });
     }
+    // The fixture's läsår are the world's: this year's, and last year's (SvA6).
+    const yearOf = (id: string) => (id === PUPIL_LIST.pastAcademicYearId ? W.pastYear : W.year);
     for (const group of school.groups) {
-      this.groups.push({ ...this.group(group.id, W.year, group.name, group.kind, group.gradeLevel), halfOfId: group.halfOfId, replacesSubjectId: group.replacesSubjectId });
+      this.groups.push({
+        ...this.group(group.id, yearOf(group.academicYearId), group.name, group.kind, group.gradeLevel),
+        halfOfId: group.halfOfId,
+        replacesSubjectId: group.replacesSubjectId,
+      });
     }
     for (const pupil of PUPIL_LIST.pupils) {
       this.users.push({ ...this.person(pupil.id, 'STUDENT', pupil.name, 'Elevlista', `${pupil.name.toLowerCase()}@elev.ekskolan.se`), studentGroupId: pupil.homeGroupId });
