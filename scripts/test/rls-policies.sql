@@ -29524,7 +29524,7 @@ ROLLBACK;
 --   * the column is boolean, NOT NULL, default false, with its comment, and
 --     the fixtures' row reads false: off for every school until it says so;
 --   * it has no privilege of its own: every role — the API's, PostgREST's
---     two — has on the column exactly what it has on the row, so the row's
+--     three — has on the column exactly what it has on the row, so the row's
 --     arms are the whole of who reads and writes it;
 --   * the schemaläggare (PLANERING) turns it on and off again, by UPDATE and
 --     by the upsert the gateway writes; the full administrator and the rektor
@@ -29573,7 +29573,7 @@ BEGIN
     SELECT r.rolname, p.privilege
       FROM pg_roles r
       CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE']) AS p(privilege)
-     WHERE r.rolname IN ('app_authenticated', 'authenticated', 'anon')
+     WHERE r.rolname IN ('app_authenticated', 'authenticated', 'anon', 'service_role')
   LOOP
     IF has_column_privilege(col.rolname, '"LunchSettings"', 'generatorKeepsPupilGapsDown', col.privilege)
        IS DISTINCT FROM has_column_privilege(col.rolname, '"LunchSettings"', 'lunchMinutes', col.privilege) THEN
