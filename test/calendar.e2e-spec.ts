@@ -539,6 +539,11 @@ describe('Publish and regenerate (e2e)', () => {
  * post's, HR data: a schemaläggare without HR-läs is told the verdict with no
  * figure in the body at all, and the read of the post is in the läslogg
  * whichever wording went out.
+ *
+ * Sammanhängande undervisning is the same row's third column pair: a drag
+ * that leaves a stretch of the teacher's teaching longer than their limit
+ * warns TEACHER_CONSECUTIVE_TOO_LONG with its figures to every reader — the
+ * work rule is staff-read, so there is no hidden twin and no läslogg row.
  */
 describe('Lärarens dag on a hand edit (e2e)', () => {
   const LESSON_ID = '12121212-1212-4212-8212-121212121212';
@@ -639,6 +644,64 @@ describe('Lärarens dag on a hand edit (e2e)', () => {
       },
     ]);
     expect(harness.tx['masterLesson']!['update']).toHaveBeenCalledTimes(1);
+  });
+
+  describe('a stretch of teaching longer than the work rule’s limit', () => {
+    // At most two hours in a row, then half an hour free; Tuesday 08:00–09:30
+    // and the dragged lesson 09:45–11:15 are one stretch of 195 minutes.
+    const longStretch = () => {
+      arrange({ caps: 1, days: 0 }, 2, [
+        taught('16161616-1616-4616-8616-161616161616', 2, time(8), time(9, 30)),
+        taught(LESSON_ID, 2, time(9, 45), time(11, 15)),
+      ]);
+      harness.tx['teacherWorkRule']!['findMany']!.mockResolvedValue([
+        { userId: TEACHER_ID, maxConsecutiveTeachingMinutes: 120, consecutiveBreakMinutes: 30 },
+      ]);
+    };
+
+    it('a drag that joins two lessons into one is saved, and the 200 says so with the figures, to a schemaläggare without HR-läs too', async () => {
+      longStretch();
+
+      const response = await drag(2, asUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false })).expect(200);
+
+      expect(response.body.dayOfWeek).toBe(2);
+      expect(response.body.warnings).toEqual([
+        {
+          code: 'TEACHER_CONSECUTIVE_TOO_LONG',
+          params: { role: 'LEAD', requirement: 'Idrott för 7A', day: 2, minutes: 195, max: 120, breakMinutes: 30 },
+        },
+      ]);
+      expect(harness.tx['masterLesson']!['update']).toHaveBeenCalledTimes(1);
+      // A work rule everybody reads: nothing is recorded as a read of a post.
+      expect(recordedReads(harness.tx)).toEqual([]);
+    });
+
+    it('the same drag by a full administrator says the same', async () => {
+      longStretch();
+
+      const response = await drag(2, asUser({})).expect(200);
+
+      expect(response.body.warnings).toEqual([
+        {
+          code: 'TEACHER_CONSECUTIVE_TOO_LONG',
+          params: { role: 'LEAD', requirement: 'Idrott för 7A', day: 2, minutes: 195, max: 120, breakMinutes: 30 },
+        },
+      ]);
+    });
+
+    it('half an hour free between the two lessons is a break: nothing to say', async () => {
+      arrange({ caps: 1, days: 0 }, 2, [
+        taught('16161616-1616-4616-8616-161616161616', 2, time(8), time(9, 30)),
+        taught(LESSON_ID, 2, time(10), time(11, 30)),
+      ]);
+      harness.tx['teacherWorkRule']!['findMany']!.mockResolvedValue([
+        { userId: TEACHER_ID, maxConsecutiveTeachingMinutes: 120, consecutiveBreakMinutes: 30 },
+      ]);
+
+      const response = await drag(2, asUser({})).expect(200);
+
+      expect(response.body.warnings).toEqual([]);
+    });
   });
 
   describe('a week on more days than the post allows', () => {

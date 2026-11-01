@@ -359,6 +359,40 @@ describe('SupervisionCoverService', () => {
       ]);
     });
 
+    it('a pass is not teaching: a teacher whose stretch it would extend is still offered it, and a pick is told nothing', async () => {
+      // S teaches 08:00–10:00 and the pass starts at 10:00; on a lesson the
+      // same minutes would be 140 in a row, over her 60.
+      tx.calendarLessonTeacher.findMany.mockResolvedValue([
+        {
+          teacherId: S,
+          calendarLesson: {
+            id: 'l', date: new Date(`${DATE}T00:00:00Z`), startsAt: new Date('2026-10-14T06:00:00Z'), endsAt: PASS_START,
+            status: 'SCHEDULED', cancelCause: null, studentGroupId: 'g', subjectId: 's', roomId: null,
+          },
+        },
+      ]);
+      tx.teacherWorkRule.findMany.mockResolvedValue([
+        {
+          userId: S,
+          lunchMinutes: null,
+          lunchStartTime: null,
+          lunchEndTime: null,
+          minDailyRestMinutes: null,
+          maxTeachingMinutesPerDay: null,
+          maxConsecutiveTeachingMinutes: 60,
+          consecutiveBreakMinutes: 30,
+          preferredFreeDayOfWeek: null,
+        },
+      ]);
+      const answer = await service.candidates(SHIFT, DATE, admin);
+      expect(answer.candidates.map((c) => c.userId)).toContain(S);
+      expect(answer.excluded.find((entry) => entry.userId === S)).toBeUndefined();
+
+      const result = await service.decide(SHIFT, DATE, { absenceId: ABSENCE, kind: 'SUBSTITUTE', substituteId: S, expected: 'OPEN' }, admin);
+      expect(result.warnings).toEqual([]);
+      expect(tx.supervisionCover.create).toHaveBeenCalled();
+    });
+
     it('answers 404 for a pass that does not run that day, even with a decision standing on it', async () => {
       await expect(service.candidates(SHIFT, '2026-10-15', admin)).rejects.toMatchObject({
         response: { code: 'SUPERVISION_COVER_NOT_AFFECTED' },

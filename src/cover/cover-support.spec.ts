@@ -272,6 +272,45 @@ describe('cover support', () => {
         });
       });
 
+      it('reads the limit for teaching in a row with the cap, in the same statement, and leaves a teacher without one at null', async () => {
+        const tx = createTxMock();
+        tx.user.findMany.mockResolvedValue([
+          { id: 'a', role: 'TEACHER', isActive: true },
+          { id: 'b', role: 'TEACHER', isActive: true },
+        ]);
+        tx.teacherWorkRule.findMany.mockResolvedValue([
+          {
+            userId: 'a',
+            lunchMinutes: null,
+            lunchStartTime: null,
+            lunchEndTime: null,
+            minDailyRestMinutes: null,
+            maxTeachingMinutesPerDay: null,
+            maxConsecutiveTeachingMinutes: 120,
+            consecutiveBreakMinutes: 30,
+            preferredFreeDayOfWeek: null,
+          },
+          // A row from before the columns, as an older read would return it: no keys at all.
+          { userId: 'b', lunchMinutes: null, lunchStartTime: null, lunchEndTime: null, minDailyRestMinutes: null },
+        ]);
+
+        const read = await readPersonDays(tx as never, { date: '2026-10-14', timezone: 'Europe/Stockholm', academicYearId: 'y' });
+
+        const a = read.days.get('a')!;
+        expect([a.maxConsecutiveTeachingMinutes, a.consecutiveBreakMinutes]).toEqual([120, 30]);
+        const b = read.days.get('b')!;
+        expect([b.maxConsecutiveTeachingMinutes, b.consecutiveBreakMinutes]).toEqual([null, null]);
+        // The same one statement on the work rules, with the two columns more; no statement of its own.
+        expect(tx.teacherWorkRule.findMany).toHaveBeenCalledTimes(1);
+        expect(tx.teacherWorkRule.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            select: expect.objectContaining({ maxConsecutiveTeachingMinutes: true, consecutiveBreakMinutes: true }),
+          }),
+        );
+        // Not the school's switch for the generator: it is read nowhere in the cover.
+        expect(Object.keys(tx).filter((model) => /lunch/i.test(model))).toEqual([]);
+      });
+
       it('a school whose posts set no limit asks no week: the statements it sent before', async () => {
         const tx = createTxMock();
         tx.user.findMany.mockResolvedValue([{ id: 'b', role: 'TEACHER', isActive: true }, { id: 'c', role: 'TEACHER', isActive: true }]);

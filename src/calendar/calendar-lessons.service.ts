@@ -60,9 +60,10 @@ export interface CoverWarning {
  * A vikarie assigned, with what the staffing policy says about their behörighet
  * for this lesson (STAFF_TEACHER_NOT_QUALIFIED) — a warning even when the policy
  * says REFUSE; see assignSubstitute — and the cover rules the pick breaks
- * (lunch, daily rest, the daily cap, the post's deltid in days — without its
- * figure for a reader without HR-läs — a closure or a booking of theirs, a
- * pool member outside their declared hours), warnings too.
+ * (lunch, daily rest, the daily cap, the limit for teaching in a row, the
+ * post's deltid in days — without its figure for a reader without HR-läs — a
+ * closure or a booking of theirs, a pool member outside their declared
+ * hours), warnings too.
  */
 export interface SubstituteResult extends LessonActionResult {
   warnings: Array<StaffingWarning | CoverWarning>;

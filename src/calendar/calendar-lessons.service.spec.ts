@@ -1023,6 +1023,81 @@ describe('CalendarLessonsService', () => {
       });
     });
 
+    /*
+     * Sammanhängande undervisning, a limit of the same work rule: the stretch
+     * the cover lands in, against the substitute's lessons of the date. A
+     * warning with its figures to every reader — the work rule is staff-read —
+     * and nothing in the läslogg, and not one statement more.
+     */
+    describe('the limit for teaching in a row', () => {
+      /** The substitute's 08:00–10:00 (local) lesson, and a work rule of `max` minutes in a row with `pause` free. */
+      const arrangeStretch = (max: number, pause: number, until = '2026-08-10T08:00:00.000Z') => {
+        arrange([{ teacherId: TEACHER_ID, role: 'LEAD' }]);
+        tx.school.findUnique.mockResolvedValue({ timezone: 'Europe/Stockholm' });
+        tx.teacherWorkRule.findMany.mockImplementation(
+          answerRows([
+            {
+              userId: SUB_ID,
+              lunchMinutes: null,
+              lunchStartTime: null,
+              lunchEndTime: null,
+              minDailyRestMinutes: null,
+              maxTeachingMinutesPerDay: null,
+              maxConsecutiveTeachingMinutes: max,
+              consecutiveBreakMinutes: pause,
+              preferredFreeDayOfWeek: null,
+            },
+          ]),
+        );
+        tx.calendarLessonTeacher.findMany.mockImplementation((query: Query) =>
+          answerRows(
+            query.where?.teacherId
+              ? [
+                  {
+                    teacherId: SUB_ID,
+                    calendarLesson: {
+                      id: 'their-own',
+                      date: new Date('2026-08-10T00:00:00.000Z'),
+                      startsAt: new Date('2026-08-10T06:00:00.000Z'),
+                      endsAt: new Date(until),
+                      status: 'SCHEDULED',
+                      cancelCause: null,
+                      studentGroupId: 'other-group',
+                      subjectId: 'other-subject',
+                      roomId: null,
+                    },
+                  },
+                ]
+              : [],
+          )(query),
+        );
+      };
+
+      it('a pick that makes the stretch longer than the limit is a warning with its figures, and records nothing', async () => {
+        // 08:00–10:00 and the cover 10:00–11:00: 180 minutes in a row on 90.
+        arrangeStretch(90, 30);
+
+        const result = await service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID }, testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false, channel: 'WEB' }));
+
+        expect(result.warnings).toEqual([{ code: 'COVER_EXCEEDS_CONSECUTIVE_TEACHING', params: { minutes: 90, breakMinutes: 30 } }]);
+        expect(tx.calendarLessonTeacher.create).toHaveBeenCalledTimes(1);
+        expect(recordedReads(tx)).toEqual([]);
+        expect(tx.teacherWorkRule.findMany).toHaveBeenCalledTimes(1);
+        expect(tx.teacherEmployment.findMany).not.toHaveBeenCalled();
+      });
+
+      it('a gap of exactly the free time is a break, and the stretch exactly at the limit is fine', async () => {
+        // 08:00–09:30 and the cover at 10:00: half an hour free, then 60 minutes.
+        arrangeStretch(90, 30, '2026-08-10T07:30:00.000Z');
+        await expect(service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID }, testUser())).resolves.toMatchObject({ warnings: [] });
+
+        // Five minutes short of the break, they are one stretch of 180 minutes.
+        arrangeStretch(90, 30, '2026-08-10T07:35:00.000Z');
+        const result = await service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID }, testUser());
+        expect(result.warnings).toEqual([{ code: 'COVER_EXCEEDS_CONSECUTIVE_TEACHING', params: { minutes: 90, breakMinutes: 30 } }]);
+      });
+    });
+
     it('enters the publication lock first, then locks the lesson, then the substitute, before any check', async () => {
       arrange([{ teacherId: TEACHER_ID, role: 'LEAD' }]);
       const order: string[] = [];
@@ -1107,6 +1182,53 @@ describe('CalendarLessonsService', () => {
             : [],
         ),
       );
+
+      await expect(service.suggestSubstitutes(LESSON_ID, testUser())).resolves.toEqual([
+        { teacherId: FREE, isPrimary: true, qualificationKind: null },
+      ]);
+      expect(recordedReads(tx)).toEqual([]);
+    });
+
+    it('drops a teacher whose stretch of teaching the lesson would make too long, silently', async () => {
+      const FREE = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+      const TIRED = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+      storeLesson();
+      tx.teacherSubjectQualification.count.mockResolvedValue(0);
+      tx.teachingRequirement.findMany.mockResolvedValue([{ teacherId: FREE, coTeacherId: TIRED, studentGroupId: GROUP_ID }]);
+      tx.user.findMany.mockResolvedValue([{ id: FREE }, { id: TIRED }]);
+      tx.calendarLesson.findFirst.mockImplementation(answerFirst(null));
+      tx.school.findUnique.mockResolvedValue({ timezone: 'Europe/Stockholm' });
+      tx.studentGroup.findUnique.mockResolvedValue({ academicYearId: 'year-1' });
+      // Two hours in a row at most, and a lesson 08:00–10:00 right before the cover (10:00–11:00).
+      tx.teacherWorkRule.findMany.mockResolvedValue([
+        {
+          userId: TIRED,
+          lunchMinutes: null,
+          lunchStartTime: null,
+          lunchEndTime: null,
+          minDailyRestMinutes: null,
+          maxTeachingMinutesPerDay: null,
+          maxConsecutiveTeachingMinutes: 120,
+          consecutiveBreakMinutes: 30,
+          preferredFreeDayOfWeek: null,
+        },
+      ]);
+      tx.calendarLessonTeacher.findMany.mockResolvedValue([
+        {
+          teacherId: TIRED,
+          calendarLesson: {
+            id: 'their-own',
+            date: new Date('2026-08-10T00:00:00.000Z'),
+            startsAt: new Date('2026-08-10T06:00:00.000Z'),
+            endsAt: STARTS_AT,
+            status: 'SCHEDULED',
+            cancelCause: null,
+            studentGroupId: 'g',
+            subjectId: 's',
+            roomId: null,
+          },
+        },
+      ]);
 
       await expect(service.suggestSubstitutes(LESSON_ID, testUser())).resolves.toEqual([
         { teacherId: FREE, isPrimary: true, qualificationKind: null },

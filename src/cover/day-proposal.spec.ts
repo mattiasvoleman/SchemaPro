@@ -77,6 +77,17 @@ describe('Fördela dagen (greedy proposal)', () => {
     expect(assignment(proposal)).toEqual({ L1: 'A', L2: 'B' });
   });
 
+  it('re-checks the stretch of teaching against the evolving day: a second lesson in a row that A may not teach goes to B', () => {
+    const limited = person('A', { maxConsecutiveTeachingMinutes: 90, consecutiveBreakMinutes: 30 });
+    const scores = { L1: { A: 50, B: 10 }, L2: { A: 50, B: 10 } };
+    // 09:00–10:00 and 10:00–11:00 are two hours in a row, over the 90 minutes.
+    const back = [lesson('L1', 9, 10, ['A', 'B']), lesson('L2', 10, 11, ['A', 'B'])];
+    expect(assignment(proposeDay(back, deps([limited, person('B')], scores)))).toEqual({ L1: 'A', L2: 'B' });
+    // With half an hour free between them they are two stretches, and A takes both.
+    const apart = [lesson('L1', 9, 10, ['A', 'B']), lesson('L2', 10.5, 11.5, ['A', 'B'])];
+    expect(assignment(proposeDay(apart, deps([limited, person('B')], scores)))).toEqual({ L1: 'A', L2: 'A' });
+  });
+
   it('two lessons on a date a part-timer does not teach yet are one day: a post with room for it takes both', () => {
     const partTime = person('A', { maxTeachingDaysPerWeek: 2, weekTeachingDates: ['2026-10-12'] });
     const lessons = [lesson('L1', 9, 10, ['A', 'B']), lesson('L2', 11, 12, ['A', 'B'])];
@@ -229,6 +240,18 @@ describe('Fördela dagen (greedy proposal)', () => {
         if (rules() < 0.4) {
           p.maxTeachingDaysPerWeek = 1 + Math.floor(rules() * 4);
           p.weekTeachingDates = [...(rules() < 0.3 ? [D] : []), ...otherDates.filter(() => rules() < 0.5)];
+        }
+      }
+      // Sammanhängande undervisning, from a stream of its own as well: one to
+      // three hours in a row and a break of five to sixty minutes, so a stretch
+      // binds on the evolving day (the rule fires on the cover's own stretch,
+      // which every pick given earlier can lengthen or join, and which taking a
+      // pick away can only shorten).
+      const stretches = rng(seed + 30_003);
+      for (const p of people) {
+        if (stretches() < 0.4) {
+          p.maxConsecutiveTeachingMinutes = 60 + 30 * Math.floor(stretches() * 5);
+          p.consecutiveBreakMinutes = 5 * (1 + Math.floor(stretches() * 12));
         }
       }
       const lessons = Array.from({ length: 2 + Math.floor(random() * 9) }, (_, i) => {

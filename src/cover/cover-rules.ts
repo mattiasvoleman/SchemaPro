@@ -31,6 +31,12 @@
  *   DAILY_CAP          the work rule's cap on a day's teaching (Lärarens
  *                      dag): the minutes the person teaches on the date with
  *                      the cover, overlaps counted once, are more than it
+ *   CONSECUTIVE_TEACHING
+ *                      the work rule's limit for teaching in a row
+ *                      (Sammanhängande undervisning, common/stretch.ts): the
+ *                      stretch the cover lands in, as long as from its first
+ *                      lesson's start to its last lesson's end with no gap of
+ *                      the rule's free time inside, is longer than it
  *   WORK_DAYS          the post's deltid in days: the date is one of the ISO
  *                      week they teach nothing on yet, and the week would
  *                      then hold more teaching dates than the post allows
@@ -48,6 +54,29 @@
  * counts is src/common/teacher-day.ts's one definition: every lesson the
  * person holds a row on that date, whatever the role, that holds its time,
  * its own minutes start to end, two overlapping ones as their union.
+ *
+ * THE STRETCH FIRES ON THE COVER'S OWN STRETCH, not on the day's. The person's
+ * lessons of the date that hold their time, with the cover, are cut into
+ * stretches by common/stretch.ts's one definition (a lesson that starts less
+ * than the rule's free time after the stretch's latest end belongs to it), and
+ * the finding is about the stretch the cover is in: it fires when that one is
+ * longer than the limit. Unlike the cap, a stretch the cover does not touch
+ * that is already too long is no fault of the cover's — the cover makes no
+ * minute of it longer — so it is not asked about; the cover that joins two
+ * stretches into one over the limit, or lengthens one already over it, is
+ * what the rule stops. Exactly the limit is fine. A stretch only shrinks when
+ * a lesson is taken away (the stretches are the connected components of the
+ * lessons, each widened by the free time, and removing one only cuts a
+ * component), so the rule is monotone as it stands: a subset of a valid day
+ * proposal has a shorter stretch around each pick. A night ends a stretch:
+ * only the cover's own date is read. A rastvaktspass is not teaching, so a
+ * PASS target is never a finding, and a pass of the person's own is no part of
+ * a stretch either: the yard is work but not what the rule counts (an
+ * uppdrag, a rastvakt or the lunch between two lessons is time without
+ * teaching, as the generator reads it). Like the cap it is the work rule's
+ * and not HR data: the figures go to every reader, nothing is masked, and the
+ * school's switch for the generator (generatorKeepsConsecutiveTeaching) plays
+ * no part — the generator only tries it, the Vikarietavla keeps it.
  *
  * A NEW DAY IS JUDGED AGAINST THE STORED WEEK, not against the stored week
  * and the proposal's own picks. Two picks on one date the person does not
@@ -81,6 +110,7 @@
  * module has no timezone in it.
  */
 
+import { hasStretchRule, stretchesOf } from '../common/stretch';
 import { unionMinutes } from '../common/teacher-day';
 
 export type HardRuleCode =
@@ -95,6 +125,7 @@ export type HardRuleCode =
   | 'LUNCH'
   | 'DAILY_REST'
   | 'DAILY_CAP'
+  | 'CONSECUTIVE_TEACHING'
   | 'WORK_DAYS'
   /** Never from hardFindings: maskFindings' WORK_DAYS, without the figure. */
   | 'WORK_DAYS_HIDDEN'
@@ -170,6 +201,13 @@ export interface PersonDay {
   minDailyRestMinutes: number | null;
   /** The work rule's cap on a day's teaching, in minutes; null or absent = no cap. */
   dailyCapMinutes?: number | null;
+  /**
+   * The work rule's limit for teaching in a row, in minutes, and the free time
+   * that ends a stretch (Sammanhängande undervisning, common/stretch.ts): both
+   * or neither; null or absent = no limit.
+   */
+  maxConsecutiveTeachingMinutes?: number | null;
+  consecutiveBreakMinutes?: number | null;
   /** The post's deltid in days; null or absent = no limit. HR data (hr-visibility.ts). */
   maxTeachingDaysPerWeek?: number | null;
   /**
@@ -192,7 +230,7 @@ export interface CoverTarget {
   teacherIds: readonly string[];
   /** Where it is held; read by the ranking's walk between sites, never by a hard rule. */
   roomId?: string | null;
-  /** A rastvaktspass (20261210090000) rather than a lesson: the cap does not apply. Absent is a lesson. */
+  /** A rastvaktspass (20261210090000) rather than a lesson: the cap and the stretch do not apply. Absent is a lesson. */
   kind?: 'LESSON' | 'PASS';
 }
 
@@ -294,6 +332,26 @@ function capBroken(day: PersonDay, target: CoverTarget, lessons: readonly Person
   return cap !== null && teachingMinutesWith(target, lessons) > cap;
 }
 
+/**
+ * Whether the stretch of teaching the cover lands in is longer than the
+ * person's limit: their lessons of the cover's date that hold their time and
+ * the cover, cut into stretches by the rule's free time, and the one holding
+ * the cover measured from its first start to its last end. A row of theirs on
+ * the covered lesson itself is the cover's span again and is left out, so the
+ * cover is one span, found by identity. Spans are minutes since the epoch:
+ * the date is one, so a night is never inside a stretch.
+ */
+function stretchBroken(day: PersonDay, target: CoverTarget, lessons: readonly PersonLesson[]): boolean {
+  if (target.kind === 'PASS' || !hasStretchRule(day)) return false;
+  const span = (at: Span) => ({ startMinutes: at.start / MINUTE, endMinutes: at.end / MINUTE });
+  const cover = span(target);
+  const held = lessons.filter((lesson) => holdsTime(lesson) && lesson.date === target.date && lesson.id !== target.id);
+  const stretch = stretchesOf([...held.map(span), cover], day.consecutiveBreakMinutes).find((candidate) =>
+    candidate.spans.includes(cover),
+  );
+  return stretch !== undefined && stretch.minutes > day.maxConsecutiveTeachingMinutes;
+}
+
 function daysBroken(day: PersonDay, target: CoverTarget, added: readonly PersonLesson[]): boolean {
   const max = day.maxTeachingDaysPerWeek ?? null;
   if (max === null) return false;
@@ -334,6 +392,12 @@ export function hardFindings(
   const rest = restBroken(day, target, lessons);
   if (rest) findings.push({ code: 'DAILY_REST', params: { side: rest, minutes: day.minDailyRestMinutes! } });
   if (capBroken(day, target, lessons)) findings.push({ code: 'DAILY_CAP', params: { minutes: day.dailyCapMinutes! } });
+  if (stretchBroken(day, target, lessons)) {
+    findings.push({
+      code: 'CONSECUTIVE_TEACHING',
+      params: { minutes: day.maxConsecutiveTeachingMinutes!, breakMinutes: day.consecutiveBreakMinutes! },
+    });
+  }
   if (daysBroken(day, target, added)) findings.push({ code: 'WORK_DAYS', params: { days: day.maxTeachingDaysPerWeek! } });
   if (
     day.pool.member &&
@@ -368,6 +432,7 @@ export type CoverWarningCode =
   | 'COVER_BREAKS_LUNCH'
   | 'COVER_BREAKS_DAILY_REST'
   | 'COVER_EXCEEDS_DAILY_CAP'
+  | 'COVER_EXCEEDS_CONSECUTIVE_TEACHING'
   | 'COVER_BEYOND_WORK_DAYS'
   /** Never from softWarnings: maskWarnings' COVER_BEYOND_WORK_DAYS, without the figure. */
   | 'COVER_BEYOND_WORK_DAYS_HIDDEN'
@@ -378,14 +443,16 @@ export type CoverWarningCode =
   | 'COVER_TRAVEL_TIME_SHORT';
 
 /**
- * The cap and the days stay warnings too, as the lunch and the rest do: the
- * rektor at 07:45 with one free colleague may ask a part-timer in on their
- * day off, and the teacher may agree. Neither is in the web's REFUSED_PICK.
+ * The cap, the stretch and the days stay warnings too, as the lunch and the
+ * rest do: the rektor at 07:45 with one free colleague may ask a part-timer
+ * in on their day off, and the teacher may agree. None is in the web's
+ * REFUSED_PICK.
  */
 const WARNING_OF: Partial<Record<HardRuleCode, CoverWarningCode>> = {
   LUNCH: 'COVER_BREAKS_LUNCH',
   DAILY_REST: 'COVER_BREAKS_DAILY_REST',
   DAILY_CAP: 'COVER_EXCEEDS_DAILY_CAP',
+  CONSECUTIVE_TEACHING: 'COVER_EXCEEDS_CONSECUTIVE_TEACHING',
   WORK_DAYS: 'COVER_BEYOND_WORK_DAYS',
   BUSY_DUTY: 'COVER_TEACHER_UNAVAILABLE',
   // A pass, as an uppdrag's slot: a rektor may ask the rastvakt to swap.

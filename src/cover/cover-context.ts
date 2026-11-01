@@ -121,6 +121,8 @@ export async function readPersonDays(tx: PrismaClient, options: DayReadOptions):
       lunch: null,
       minDailyRestMinutes: null,
       dailyCapMinutes: null,
+      maxConsecutiveTeachingMinutes: null,
+      consecutiveBreakMinutes: null,
       maxTeachingDaysPerWeek: null,
       weekTeachingDates: [],
       preferredFreeDay: null,
@@ -304,9 +306,10 @@ export async function readPersonDays(tx: PrismaClient, options: DayReadOptions):
     }
   }
 
-  // The cap and the wish of Lärarens dag (20261123090000) are columns of the
-  // same row, read in the same statement: a school that sets neither asks
-  // nothing more than it did.
+  // The cap and the wish of Lärarens dag (20261123090000) and the limit for
+  // teaching in a row (Sammanhängande undervisning, 20261218090000) are
+  // columns of the same row, read in the same statement: a school that sets
+  // none of them asks nothing more than it did.
   const rules =
     (await tx.teacherWorkRule.findMany({
       where: { userId: people },
@@ -317,6 +320,8 @@ export async function readPersonDays(tx: PrismaClient, options: DayReadOptions):
         lunchEndTime: true,
         minDailyRestMinutes: true,
         maxTeachingMinutesPerDay: true,
+        maxConsecutiveTeachingMinutes: true,
+        consecutiveBreakMinutes: true,
         preferredFreeDayOfWeek: true,
       },
     })) ?? [];
@@ -328,6 +333,8 @@ export async function readPersonDays(tx: PrismaClient, options: DayReadOptions):
     }
     day.minDailyRestMinutes = rule.minDailyRestMinutes ?? null;
     day.dailyCapMinutes = rule.maxTeachingMinutesPerDay ?? null;
+    day.maxConsecutiveTeachingMinutes = rule.maxConsecutiveTeachingMinutes ?? null;
+    day.consecutiveBreakMinutes = rule.consecutiveBreakMinutes ?? null;
     day.preferredFreeDay = rule.preferredFreeDayOfWeek ?? null;
   }
 
