@@ -184,9 +184,14 @@ describe('teacherDayBreaches', () => {
     ...extra,
   });
 
-  it('a rule is a cap or a day limit; neither set is no rule', () => {
+  it('a rule is a cap, a day limit or a limit on teaching in a row; none set is no rule', () => {
     expect(hasTeacherDayRule(NO_TEACHER_DAY_RULE)).toBe(false);
-    expect(NO_TEACHER_DAY_RULE).toEqual({ maxTeachingMinutesPerDay: null, maxTeachingDaysPerWeek: null });
+    expect(NO_TEACHER_DAY_RULE).toEqual({
+      maxTeachingMinutesPerDay: null,
+      maxTeachingDaysPerWeek: null,
+      maxConsecutiveTeachingMinutes: null,
+      consecutiveBreakMinutes: null,
+    });
     expect(hasTeacherDayRule({ maxTeachingMinutesPerDay: 30, maxTeachingDaysPerWeek: null })).toBe(true);
     expect(hasTeacherDayRule({ maxTeachingMinutesPerDay: null, maxTeachingDaysPerWeek: 1 })).toBe(true);
   });

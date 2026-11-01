@@ -12,6 +12,12 @@
  * __fixtures__/teacher-day-cases.json for the same arithmetic without sharing
  * a line with it.
  *
+ * A THIRD LIMIT RIDES WITH THEM, Sammanhängande undervisning (stretch.ts,
+ * 20261218090000): at most X minutes of teaching in a row. It is the same
+ * work rule and the same weeks, so a hand edit asks the three together and
+ * gets one more kind of breach, CONSECUTIVE; the generator treats it as a
+ * wish and the Vikarietavla as a rule (src/cover/cover-rules.ts).
+ *
  * WHAT COUNTS AS TEACHING, ONE DEFINITION FOR ALL THREE. Every lesson the
  * teacher is on — as lead or as medlärare, since a co-taught lesson occupies
  * both adults for its whole length — counted in its own minutes, start to
@@ -53,6 +59,7 @@
  * midnight.
  */
 import { runsOn } from '../calendar/lesson-recurrence';
+import { hasStretchRule, overlongStretches, type StretchRule } from './stretch';
 
 /** Bounds shared by the DTOs, the CHECKs (20261123090000) and the engine. */
 export const MAX_TEACHING_MINUTES_PER_DAY_MIN = 30;
@@ -65,7 +72,7 @@ export const MAX_TEACHING_DAYS_PER_WEEK_MAX = 6;
 export const PREFERRED_FREE_DAY_MIN = 1;
 export const PREFERRED_FREE_DAY_MAX = 7;
 
-export interface TeacherDayRule {
+export interface TeacherDayRule extends StretchRule {
   /** Null: no cap. */
   maxTeachingMinutesPerDay: number | null;
   /** Null: no limit. HR data; see hr-visibility.ts. */
@@ -75,10 +82,12 @@ export interface TeacherDayRule {
 export const NO_TEACHER_DAY_RULE: TeacherDayRule = {
   maxTeachingMinutesPerDay: null,
   maxTeachingDaysPerWeek: null,
+  maxConsecutiveTeachingMinutes: null,
+  consecutiveBreakMinutes: null,
 };
 
 export function hasTeacherDayRule(rule: TeacherDayRule): boolean {
-  return rule.maxTeachingMinutesPerDay !== null || rule.maxTeachingDaysPerWeek !== null;
+  return rule.maxTeachingMinutesPerDay !== null || rule.maxTeachingDaysPerWeek !== null || hasStretchRule(rule);
 }
 
 export interface Span {
@@ -131,6 +140,17 @@ export type TeacherDayBreach =
       minutes: number;
       cap: number;
       /** The weekday's lessons that run in a week over the cap, sorted. */
+      lessonIds: string[];
+    }
+  | {
+      kind: 'CONSECUTIVE';
+      dayOfWeek: number;
+      /** The longest stretch the weekday holds in one week, over the limit. */
+      minutes: number;
+      max: number;
+      /** The free time that ends a stretch. */
+      breakMinutes: number;
+      /** The weekday's lessons in the stretches over the limit, in the weeks counted, sorted. */
       lessonIds: string[];
     }
   | {
@@ -305,6 +325,37 @@ export function teacherDayBreaches(
           dayOfWeek: day,
           minutes: most,
           cap,
+          lessonIds: [...over].sort(),
+        });
+      }
+    }
+  }
+
+  if (hasStretchRule(rule)) {
+    const limit = rule.maxConsecutiveTeachingMinutes;
+    const pause = rule.consecutiveBreakMinutes;
+    const days = [...new Set(taking.map((lesson) => lesson.dayOfWeek))].sort((a, b) => a - b);
+    for (const day of days) {
+      let most = 0;
+      const over = new Set<string>();
+      for (const week of weeks) {
+        const onDay = week.filter((lesson) => lesson.dayOfWeek === day);
+        // A stretch counts when the edit is part of it: one the school already
+        // had, in a week or a corner of the day the edit did not touch, is
+        // not this save's to repeat.
+        for (const stretch of overlongStretches(onDay, limit, pause)) {
+          if (!counted(stretch.spans)) continue;
+          most = Math.max(most, stretch.minutes);
+          for (const lesson of stretch.spans) over.add(lesson.id);
+        }
+      }
+      if (most > limit) {
+        breaches.push({
+          kind: 'CONSECUTIVE',
+          dayOfWeek: day,
+          minutes: most,
+          max: limit,
+          breakMinutes: pause,
           lessonIds: [...over].sort(),
         });
       }
