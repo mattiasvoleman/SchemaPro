@@ -48,6 +48,31 @@ describe("staffing warnings", () => {
     expect(said("TEACHER_DAY_TOO_LONG", { role: "LEAD", requirement: "Tyska för 7A", day: 2, minutes: 150, cap: 120 })).toBe(
       "Tyska för 7A: läraren undervisar nu 150 minuter på tisdagen, mer än de 120 minuter per dag som arbetstidsregeln tillåter.",
     );
+    // Sammanhängande undervisning: the same warning shape for the limit on
+    // teaching in a row, which the real ICU reads with the weekday and both
+    // figures of the limit.
+    expect(
+      said("TEACHER_CONSECUTIVE_TOO_LONG", {
+        role: "LEAD",
+        requirement: "Tyska för 7A",
+        day: 2,
+        minutes: 240,
+        max: 180,
+        breakMinutes: 20,
+      }),
+    ).toBe(
+      "Tyska för 7A: läraren undervisar nu 240 minuter i följd på tisdagen, mer än de 180 minuter i följd som arbetstidsregeln tillåter innan 20 minuter ledigt.",
+    );
+    expect(
+      said("TEACHER_CONSECUTIVE_TOO_LONG", {
+        role: "CO_TEACHER",
+        requirement: "Franska för 7B",
+        day: 5,
+        minutes: 150,
+        max: 120,
+        breakMinutes: 15,
+      }),
+    ).toMatch(/^Franska för 7B: medläraren undervisar nu 150 minuter i följd på fredagen/);
     expect(said("TEACHER_WEEK_TOO_MANY_DAYS", { role: "CO_TEACHER", requirement: "Franska för 7B", days: 4, max: 3 })).toBe(
       "Franska för 7B: medläraren undervisar nu 4 dagar i veckan, fler än de 3 som tjänsten tillåter.",
     );

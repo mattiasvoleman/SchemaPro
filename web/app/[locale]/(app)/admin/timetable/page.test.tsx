@@ -1158,6 +1158,28 @@ describe("a re-teachered lesson under the staffing policy", () => {
     );
   });
 
+  it("warns when a hand edit takes a teacher past the limit on teaching in a row, never refuses it", async () => {
+    // Sammanhängande undervisning: a warning of the same shape, whichever the
+    // school's switch says (the switch is the generator's alone). The page
+    // adds no code for it — savedToast renders any code in the catalogue.
+    const TOO_LONG_IN_A_ROW = {
+      code: "TEACHER_CONSECUTIVE_TOO_LONG",
+      params: { role: "LEAD", requirement: "Slöjd för 5.1", day: 1, minutes: 240, max: 180, breakMinutes: 20 },
+    };
+    noMutation.mutateAsync.mockResolvedValue({
+      id: "l-slojd",
+      propagatedLessons: 0,
+      warnings: [TOO_LONG_IN_A_ROW],
+    });
+
+    await saveSlojd();
+
+    await waitFor(() => expect(toasts.warning).toHaveBeenCalledTimes(1));
+    const [title, options] = toasts.warning.mock.calls[0]!;
+    expect(title).toBe("timetable.editSaved(0)");
+    expect(options.description).toBe("engineMessages.TEACHER_CONSECUTIVE_TOO_LONG(LEAD|Slöjd för 5.1|1|240|180|20)");
+  });
+
   it("warns about a lesson placed by hand as it is created, too", async () => {
     // Duplicated, so the new lesson's subject and class are filled in.
     const TOO_CLOSE = {

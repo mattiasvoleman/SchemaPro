@@ -53,6 +53,8 @@ const state = vi.hoisted(() => ({
   historyFor: [] as (string | null)[],
   /** GET candidates?academicYearId= as useScheduleCandidates answers; undefined = none read. */
   candidates: undefined as unknown,
+  /** GET /lunch-settings as useLunchSettings answers: Skolregler, null = none defined. */
+  lunch: null as unknown,
 }));
 
 const ACTIVE = {
@@ -112,7 +114,7 @@ vi.mock("@/lib/queries", () => ({
       ? { data: undefined, isLoading: false, isError: false, refetch: historyRefetch }
       : { data: state.history, isLoading: false, isError: state.historyFailed, refetch: historyRefetch };
   },
-  useLunchSettings: () => ({ data: null }),
+  useLunchSettings: () => ({ data: state.lunch }),
 }));
 
 vi.mock("@/lib/staffing-queries", () => ({
@@ -194,6 +196,7 @@ beforeEach(() => {
   state.dutiesFor = [];
   state.untranslated = [];
   state.candidates = undefined;
+  state.lunch = null;
   state.groups = [
     { id: "g-41", academicYearId: "y-1", name: "4.1", kind: "CLASS", gradeLevel: 4 },
     { id: "g-sl1", academicYearId: "y-1", name: "4sl1", kind: "TEACHING_GROUP", gradeLevel: null },
@@ -639,6 +642,42 @@ describe("a refusal the engine named", () => {
 });
 
 /*
+ * Skolregler, as the page says them before a run: the switches that make the
+ * generator try something the hard rules do not demand. A switch that is off
+ * is not a line — the list names what the generator WILL do.
+ */
+describe("the school's rules the generator keeps", () => {
+  const school = (extra: Record<string, unknown>) => ({
+    id: "ls-1",
+    lunchEnabled: false,
+    lunchStartTime: "11:00",
+    lunchEndTime: "13:00",
+    lunchMinutes: 30,
+    diningSeats: null,
+    maxLessonsPerDayPerGroup: null,
+    ...extra,
+  });
+
+  it("says the generator tries to keep teachers' teaching in a row where the school turned it on", () => {
+    state.lunch = school({ generatorKeepsConsecutiveTeaching: true });
+    render(<GeneratePage />);
+
+    expect(screen.getByText("generate.ruleConsecutive")).toBeInTheDocument();
+  });
+
+  it("says nothing of it while the switch is off, or for an API that predates it", () => {
+    state.lunch = school({ generatorKeepsConsecutiveTeaching: false });
+    const { unmount } = render(<GeneratePage />);
+    expect(screen.queryByText("generate.ruleConsecutive")).toBeNull();
+    unmount();
+
+    state.lunch = school({});
+    render(<GeneratePage />);
+    expect(screen.queryByText("generate.ruleConsecutive")).toBeNull();
+  });
+});
+
+/*
  * Lärarens dag: the wishes a laid week could not keep. The run succeeded, so
  * they are neither conflicts nor refusals — a heading of their own under the
  * result, the engine catalogue's sentence, and no category badge.
@@ -675,6 +714,50 @@ describe("wishes a finished run could not keep", () => {
     expect(screen.queryByText("conflictCategories.AVAILABILITY")).toBeNull();
     // Not a conflict: the conflicts' heading stays away from a run that has none.
     expect(screen.queryByText("generate.conflicts")).toBeNull();
+  });
+
+  /*
+   * Sammanhängande undervisning: a teacher whose longest stretch of the laid
+   * week is over their limit. The same plumbing as the free-day wish — the
+   * catalogue's sentence, the teacher under it, no badge — and the page has
+   * no code of its own for it: it is a note like the other.
+   */
+  it("lists a limit on teaching in a row that the week broke next to the free-day wishes, each with its teacher", () => {
+    const STRETCH = {
+      category: "AVAILABILITY",
+      code: "TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT",
+      params: { day: 2, minutes: 240, max: 180, breakMinutes: 20 },
+      message: "A teacher should teach at most 180 minutes in a row …",
+      resourceNames: ["Olle Ås"],
+    };
+    state.job = laid({ notes: [WISH, STRETCH] });
+    render(<GeneratePage />);
+
+    const section = screen.getByRole("region", { name: "generate.notesTitle" });
+    expect(within(section).getByText(SENTENCE).nextElementSibling).toHaveTextContent(/^Eva Ek$/);
+    // The catalogue stub echoes the code with the values in the order the
+    // gateway sent them: the weekday, the longest stretch, the limit, the break.
+    const stretch = within(section).getByText("engineMessages.TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT(2|240|180|20)");
+    expect(stretch.nextElementSibling).toHaveTextContent(/^Olle Ås$/);
+    expect(screen.queryByText("conflictCategories.AVAILABILITY")).toBeNull();
+  });
+
+  it("falls back to the gateway's English for a limit this build cannot translate", () => {
+    state.untranslated = ["TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT"];
+    state.job = laid({
+      notes: [
+        {
+          category: "AVAILABILITY",
+          code: "TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT",
+          params: { day: 2, minutes: 240, max: 180, breakMinutes: 20 },
+          message: "The limit could not be kept.",
+          resourceNames: [],
+        },
+      ],
+    });
+    render(<GeneratePage />);
+
+    expect(screen.getByText("The limit could not be kept.")).toBeInTheDocument();
   });
 
   it("names whose wish it was under the sentence, every name the gateway sent", () => {

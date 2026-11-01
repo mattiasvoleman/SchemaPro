@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import en from "@/messages/en.json";
 import sv from "@/messages/sv.json";
 import {
+  CONSECUTIVE_BREAK_MINUTES_MAX,
+  CONSECUTIVE_BREAK_MINUTES_MIN,
+  CONSECUTIVE_MAX_MINUTES_MAX,
+  CONSECUTIVE_MAX_MINUTES_MIN,
   DAY_CAP_MINUTES_MAX,
   DAY_CAP_MINUTES_MIN,
   EMPTY_DRAFT,
@@ -10,6 +14,7 @@ import {
   REST_MINUTES_MAX,
   REST_MINUTES_MIN,
   SUGGESTED_DRAFT,
+  consecutiveFigure,
   draftToBody,
   isEmptyDraft,
   ruleToDraft,
@@ -25,7 +30,7 @@ import {
  * Every other rule this app sends the solver is a closing — an hour a room or a
  * teacher cannot be used — and an absent row there means "no restriction". Here
  * an absent NUMBER means the same thing while a present 0 would be a promise the
- * solver has to keep and cannot, so each of the six fields has to survive the
+ * solver has to keep and cannot, so each of the eight fields has to survive the
  * round trip as null rather than as a number. A regression would not throw: the
  * form would look right, the save would succeed, and the school would find out
  * when a week it has always been able to generate came back refused.
@@ -56,6 +61,8 @@ const rule = (overrides: Partial<TeacherWorkRule> = {}): TeacherWorkRule => ({
   minDailyRestMinutes: 660,
   maxTeachingMinutesPerDay: null,
   preferredFreeDayOfWeek: null,
+  maxConsecutiveTeachingMinutes: null,
+  consecutiveBreakMinutes: null,
   ...overrides,
 });
 
@@ -71,7 +78,7 @@ describe("an empty row", () => {
     expect(isEmptyDraft(draft({ lunchMinutes: "  ", minDailyRestMinutes: " " }))).toBe(true);
   });
 
-  it("sends six nulls, never six zeroes", () => {
+  it("sends eight nulls, never eight zeroes", () => {
     expect(draftToBody(EMPTY_DRAFT)).toEqual({
       lunchMinutes: null,
       lunchStartTime: null,
@@ -79,6 +86,8 @@ describe("an empty row", () => {
       minDailyRestMinutes: null,
       maxTeachingMinutesPerDay: null,
       preferredFreeDayOfWeek: null,
+      maxConsecutiveTeachingMinutes: null,
+      consecutiveBreakMinutes: null,
     });
   });
 
@@ -99,15 +108,26 @@ describe("an empty row", () => {
     expect(isEmptyDraft(ruleToDraft(nulls))).toBe(true);
   });
 
-  it("is not empty while it holds only a cap, or only a wish", () => {
+  it("is not empty while it holds only a cap, only a wish, or either figure of the limit on teaching in a row", () => {
     /*
-     * The dialog DELETES the row when the draft is empty. A cap or a wish
-     * that did not count here would be deleted with the lunch somebody
+     * The dialog DELETES the row when the draft is empty. A cap, a wish or a
+     * limit that did not count here would be deleted with the lunch somebody
      * cleared beside it, and the generator would lose a rule nobody took away.
      */
     expect(isEmptyDraft(draft({ maxTeachingMinutesPerDay: "300" }))).toBe(false);
     expect(isEmptyDraft(draft({ preferredFreeDayOfWeek: "5" }))).toBe(false);
-    expect(isEmptyDraft(draft({ maxTeachingMinutesPerDay: " ", preferredFreeDayOfWeek: " " }))).toBe(true);
+    expect(isEmptyDraft(draft({ maxConsecutiveTeachingMinutes: "120" }))).toBe(false);
+    expect(isEmptyDraft(draft({ consecutiveBreakMinutes: "20" }))).toBe(false);
+    expect(
+      isEmptyDraft(
+        draft({
+          maxTeachingMinutesPerDay: " ",
+          preferredFreeDayOfWeek: " ",
+          maxConsecutiveTeachingMinutes: " ",
+          consecutiveBreakMinutes: " ",
+        }),
+      ),
+    ).toBe(true);
   });
 });
 
@@ -265,6 +285,8 @@ describe("the rest rule, which stands on its own", () => {
       minDailyRestMinutes: 660,
       maxTeachingMinutesPerDay: null,
       preferredFreeDayOfWeek: null,
+      maxConsecutiveTeachingMinutes: null,
+      consecutiveBreakMinutes: null,
     });
   });
 
@@ -320,6 +342,8 @@ describe("the round trip", () => {
       minDailyRestMinutes: "660",
       maxTeachingMinutesPerDay: "",
       preferredFreeDayOfWeek: "",
+      maxConsecutiveTeachingMinutes: "",
+      consecutiveBreakMinutes: "",
     });
   });
 
@@ -331,6 +355,8 @@ describe("the round trip", () => {
       minDailyRestMinutes: 660,
       maxTeachingMinutesPerDay: null,
       preferredFreeDayOfWeek: null,
+      maxConsecutiveTeachingMinutes: null,
+      consecutiveBreakMinutes: null,
     });
   });
 
@@ -347,6 +373,8 @@ describe("the round trip", () => {
       minDailyRestMinutes: 660,
       maxTeachingMinutesPerDay: null,
       preferredFreeDayOfWeek: null,
+      maxConsecutiveTeachingMinutes: null,
+      consecutiveBreakMinutes: null,
     });
   });
 
@@ -364,10 +392,21 @@ describe("the round trip", () => {
     });
   });
 
-  it("opens a row without the two newer keys as nothing said, not as the word undefined", () => {
-    const { maxTeachingMinutesPerDay: _cap, preferredFreeDayOfWeek: _day, ...older } = rule();
+  it("opens a row without the four newer keys as nothing said, not as the word undefined", () => {
+    const {
+      maxTeachingMinutesPerDay: _cap,
+      preferredFreeDayOfWeek: _day,
+      maxConsecutiveTeachingMinutes: _max,
+      consecutiveBreakMinutes: _break,
+      ...older
+    } = rule();
     const draftOf = ruleToDraft(older as TeacherWorkRule);
-    expect(draftOf).toMatchObject({ maxTeachingMinutesPerDay: "", preferredFreeDayOfWeek: "" });
+    expect(draftOf).toMatchObject({
+      maxTeachingMinutesPerDay: "",
+      preferredFreeDayOfWeek: "",
+      maxConsecutiveTeachingMinutes: "",
+      consecutiveBreakMinutes: "",
+    });
     // And the lunch on the same row stays savable.
     expect(validateDraft(draftOf)).toBeNull();
   });
@@ -380,9 +419,11 @@ describe("the round trip", () => {
      * rule is still there at the next generation run.
      */
     expect(Object.keys(draftToBody(EMPTY_DRAFT)).sort()).toEqual([
+      "consecutiveBreakMinutes",
       "lunchEndTime",
       "lunchMinutes",
       "lunchStartTime",
+      "maxConsecutiveTeachingMinutes",
       "maxTeachingMinutesPerDay",
       "minDailyRestMinutes",
       "preferredFreeDayOfWeek",
@@ -399,15 +440,20 @@ describe("the suggestion", () => {
       minDailyRestMinutes: "660",
       maxTeachingMinutesPerDay: "",
       preferredFreeDayOfWeek: "",
+      maxConsecutiveTeachingMinutes: "",
+      consecutiveBreakMinutes: "",
     });
   });
 
-  it("never carries a cap or a free day", () => {
+  it("never carries a cap, a free day or a limit on teaching in a row", () => {
     // A suggested cap would be a hard rule nobody chose: the next run of a
-    // school that only wanted the lunch would be refused over it.
+    // school that only wanted the lunch would be refused over it. A suggested
+    // limit would be a wish nobody made, in every teacher's weekly answer.
     expect(draftToBody(SUGGESTED_DRAFT)).toMatchObject({
       maxTeachingMinutesPerDay: null,
       preferredFreeDayOfWeek: null,
+      maxConsecutiveTeachingMinutes: null,
+      consecutiveBreakMinutes: null,
     });
   });
 
@@ -426,6 +472,8 @@ describe("the day's cap, which stands on its own", () => {
       minDailyRestMinutes: null,
       maxTeachingMinutesPerDay: 270,
       preferredFreeDayOfWeek: null,
+      maxConsecutiveTeachingMinutes: null,
+      consecutiveBreakMinutes: null,
     });
   });
 
@@ -491,6 +539,135 @@ describe("the free-day wish", () => {
   });
 });
 
+describe("the limit on teaching in a row, which is a pair", () => {
+  it("is allowed with nothing else on the row, and sent as two numbers", () => {
+    const both = draft({ maxConsecutiveTeachingMinutes: " 120 ", consecutiveBreakMinutes: "20" });
+    expect(validateDraft(both)).toBeNull();
+    expect(draftToBody(both)).toEqual({
+      lunchMinutes: null,
+      lunchStartTime: null,
+      lunchEndTime: null,
+      minDailyRestMinutes: null,
+      maxTeachingMinutesPerDay: null,
+      preferredFreeDayOfWeek: null,
+      maxConsecutiveTeachingMinutes: 120,
+      consecutiveBreakMinutes: 20,
+    });
+  });
+
+  it("refuses one half without the other, whichever it is", () => {
+    // The table's CHECK would say so in English prose; the form says it in
+    // Swedish and does not send.
+    expect(validateDraft(draft({ maxConsecutiveTeachingMinutes: "120" }))).toEqual({
+      reason: "consecutivePairIncomplete",
+    });
+    expect(validateDraft(draft({ consecutiveBreakMinutes: "20" }))).toEqual({
+      reason: "consecutivePairIncomplete",
+    });
+    expect(validateDraft(draft({ maxConsecutiveTeachingMinutes: "120", consecutiveBreakMinutes: "  " }))).toEqual({
+      reason: "consecutivePairIncomplete",
+    });
+  });
+
+  it("is taken away by emptying both: two nulls, which is how PUT clears a limit", () => {
+    const stored = rule({ maxConsecutiveTeachingMinutes: 120, consecutiveBreakMinutes: 20 });
+    expect(draftToBody(ruleToDraft(stored))).toMatchObject({
+      maxConsecutiveTeachingMinutes: 120,
+      consecutiveBreakMinutes: 20,
+    });
+    const emptied = draft({ ...ruleToDraft(stored), maxConsecutiveTeachingMinutes: "", consecutiveBreakMinutes: "" });
+    expect(validateDraft(emptied)).toBeNull();
+    expect(draftToBody(emptied)).toMatchObject({
+      lunchMinutes: 30,
+      maxConsecutiveTeachingMinutes: null,
+      consecutiveBreakMinutes: null,
+    });
+  });
+
+  it("accepts both ends of the gateway's ranges", () => {
+    expect([CONSECUTIVE_MAX_MINUTES_MIN, CONSECUTIVE_MAX_MINUTES_MAX]).toEqual([30, 480]);
+    expect([CONSECUTIVE_BREAK_MINUTES_MIN, CONSECUTIVE_BREAK_MINUTES_MAX]).toEqual([5, 120]);
+    expect(validateDraft(draft({ maxConsecutiveTeachingMinutes: "30", consecutiveBreakMinutes: "5" }))).toBeNull();
+    expect(validateDraft(draft({ maxConsecutiveTeachingMinutes: "480", consecutiveBreakMinutes: "120" }))).toBeNull();
+  });
+
+  it("refuses a maximum outside half an hour to eight hours, naming the range", () => {
+    for (const value of ["25", "485", "0", "-30", "120.5", "fem"]) {
+      expect(validateDraft(draft({ maxConsecutiveTeachingMinutes: value, consecutiveBreakMinutes: "20" }))).toEqual({
+        reason: "consecutiveMaxOutOfRange",
+        min: 30,
+        max: 480,
+      });
+    }
+  });
+
+  it("refuses a break outside five minutes to two hours, naming the range", () => {
+    for (const value of ["0", "2", "125", "20.5", "-5"]) {
+      expect(validateDraft(draft({ maxConsecutiveTeachingMinutes: "120", consecutiveBreakMinutes: value }))).toEqual({
+        reason: "consecutiveBreakOutOfRange",
+        min: 5,
+        max: 120,
+      });
+    }
+  });
+
+  it("refuses either figure off the engine's five-minute grid", () => {
+    expect(validateDraft(draft({ maxConsecutiveTeachingMinutes: "122", consecutiveBreakMinutes: "20" }))).toEqual({
+      reason: "consecutiveMaxOffGrid",
+      step: 5,
+    });
+    expect(validateDraft(draft({ maxConsecutiveTeachingMinutes: "120", consecutiveBreakMinutes: "22" }))).toEqual({
+      reason: "consecutiveBreakOffGrid",
+      step: 5,
+    });
+  });
+
+  it("says a number out of range is out of range, not off the grid", () => {
+    expect(validateDraft(draft({ maxConsecutiveTeachingMinutes: "4801", consecutiveBreakMinutes: "20" }))).toMatchObject({
+      reason: "consecutiveMaxOutOfRange",
+    });
+  });
+
+  it("is checked after the cap and before the wish, in the order the dialog draws them", () => {
+    expect(
+      validateDraft(
+        draft({
+          maxTeachingMinutesPerDay: "10",
+          maxConsecutiveTeachingMinutes: "5",
+          consecutiveBreakMinutes: "20",
+          preferredFreeDayOfWeek: "9",
+        }),
+      ),
+    ).toMatchObject({ reason: "dayCapOutOfRange" });
+    expect(
+      validateDraft(draft({ maxConsecutiveTeachingMinutes: "5", consecutiveBreakMinutes: "20", preferredFreeDayOfWeek: "9" })),
+    ).toMatchObject({ reason: "consecutiveMaxOutOfRange" });
+  });
+
+  it("carries a stored limit through the form and back as numbers", () => {
+    // Every key is named in the body, so a limit the form had not read would
+    // be sent as null by the next lunch somebody saved, and be gone.
+    const stored = rule({ maxConsecutiveTeachingMinutes: 150, consecutiveBreakMinutes: 15 });
+    expect(ruleToDraft(stored)).toMatchObject({ maxConsecutiveTeachingMinutes: "150", consecutiveBreakMinutes: "15" });
+    expect(draftToBody(ruleToDraft(stored))).toMatchObject({
+      maxConsecutiveTeachingMinutes: 150,
+      consecutiveBreakMinutes: 15,
+    });
+  });
+
+  it("is said back per figure as soon as that figure is one the form would accept", () => {
+    expect(consecutiveFigure("120", "max")).toBe(120);
+    expect(consecutiveFigure("20", "break")).toBe(20);
+    // Out of range, off the grid, fractional and empty are not sayable.
+    expect(consecutiveFigure("25", "max")).toBeNull();
+    expect(consecutiveFigure("122", "max")).toBeNull();
+    expect(consecutiveFigure("130", "break")).toBeNull();
+    expect(consecutiveFigure("2", "break")).toBeNull();
+    expect(consecutiveFigure("20.5", "break")).toBeNull();
+    expect(consecutiveFigure("", "max")).toBeNull();
+  });
+});
+
 /**
  * Every refusal has a sentence in both languages.
  *
@@ -514,6 +691,11 @@ describe("the refusals are translated", () => {
     dayCapOutOfRange: true,
     dayCapOffGrid: true,
     freeDayOutOfRange: true,
+    consecutivePairIncomplete: true,
+    consecutiveMaxOutOfRange: true,
+    consecutiveMaxOffGrid: true,
+    consecutiveBreakOutOfRange: true,
+    consecutiveBreakOffGrid: true,
   };
 
   it.each(Object.keys(REASONS))("%s reads in Swedish and in English", (reason) => {

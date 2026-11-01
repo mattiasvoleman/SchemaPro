@@ -27,6 +27,7 @@ interface LunchForm {
   maxLessonsPerDayPerGroup: string;
   generatorKeepsTravelTime: boolean;
   generatorKeepsPupilGapsDown: boolean;
+  generatorKeepsConsecutiveTeaching: boolean;
 }
 
 const EMPTY_FORM: LunchForm = {
@@ -40,6 +41,8 @@ const EMPTY_FORM: LunchForm = {
   generatorKeepsTravelTime: false,
   // Off until the school turns it on: Elevernas håltimmar.
   generatorKeepsPupilGapsDown: false,
+  // Off until the school turns it on: Sammanhängande undervisning.
+  generatorKeepsConsecutiveTeaching: false,
 };
 
 /**
@@ -148,6 +151,8 @@ export function LunchSettingsCard() {
   // The same for the pupils' håltimmar: an API that never named the switch
   // refuses it, so it is sent only once the API has, or once it is turned on.
   const [apiKnowsPupilGaps, setApiKnowsPupilGaps] = useState(false);
+  // And for the teachers' limit on teaching in a row, on the same terms.
+  const [apiKnowsConsecutive, setApiKnowsConsecutive] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -170,11 +175,13 @@ export function LunchSettingsCard() {
         // reads as the rule it is then — off.
         generatorKeepsTravelTime: settings.generatorKeepsTravelTime ?? false,
         generatorKeepsPupilGapsDown: settings.generatorKeepsPupilGapsDown ?? false,
+        generatorKeepsConsecutiveTeaching: settings.generatorKeepsConsecutiveTeaching ?? false,
       };
       setForm(filled);
       setBaseline(filled);
       setApiKnowsTravel(settings.generatorKeepsTravelTime !== undefined);
       setApiKnowsPupilGaps(settings.generatorKeepsPupilGapsDown !== undefined);
+      setApiKnowsConsecutive(settings.generatorKeepsConsecutiveTeaching !== undefined);
       return;
     }
     setForm({ ...EMPTY_FORM, ...legacyForm() });
@@ -209,6 +216,9 @@ export function LunchSettingsCard() {
           : {}),
         ...(apiKnowsPupilGaps || sent.generatorKeepsPupilGapsDown
           ? { generatorKeepsPupilGapsDown: sent.generatorKeepsPupilGapsDown }
+          : {}),
+        ...(apiKnowsConsecutive || sent.generatorKeepsConsecutiveTeaching
+          ? { generatorKeepsConsecutiveTeaching: sent.generatorKeepsConsecutiveTeaching }
           : {}),
       });
       setBaseline(sent);
@@ -348,6 +358,24 @@ export function LunchSettingsCard() {
               aria-describedby="generator-keeps-pupil-gaps-hint"
               checked={form.generatorKeepsPupilGapsDown}
               onCheckedChange={(checked) => patch({ generatorKeepsPupilGapsDown: checked })}
+            />
+          </div>
+
+          {/* Sammanhängande undervisning: whether the generator tries to keep
+              each teacher's limit on teaching in a row. The limits themselves
+              are set per teacher under Arbetstid; a wish, not a promise. */}
+          <div className="flex items-start justify-between gap-4 rounded-md border p-3">
+            <div className="space-y-1">
+              <Label htmlFor="generator-keeps-consecutive">{t("consecutive")}</Label>
+              <p id="generator-keeps-consecutive-hint" className="text-sm text-muted-foreground">
+                {t("consecutiveHint")}
+              </p>
+            </div>
+            <Switch
+              id="generator-keeps-consecutive"
+              aria-describedby="generator-keeps-consecutive-hint"
+              checked={form.generatorKeepsConsecutiveTeaching}
+              onCheckedChange={(checked) => patch({ generatorKeepsConsecutiveTeaching: checked })}
             />
           </div>
 

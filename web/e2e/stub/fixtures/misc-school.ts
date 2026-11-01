@@ -50,6 +50,10 @@ export const LUNCH_SETTINGS: LunchSettings = {
   // On as well, so the sweep meets that switch checked, the generate page's
   // line for it and the Håltimmar page saying Generera holds to its number.
   generatorKeepsPupilGapsDown: true,
+  // And the teachers' limit on teaching in a row (Sammanhängande
+  // undervisning), the same way: the switch checked and the generate page's
+  // line for it.
+  generatorKeepsConsecutiveTeaching: true,
 };
 
 // --- Generation ----------------------------------------------------------------
@@ -61,9 +65,13 @@ export const LUNCH_SETTINGS: LunchSettings = {
  * wish to have Wednesdays free (school-days.ts), which it says in its notes
  * (Lärarens dag, 20261123090100), naming Bo under the sentence as the gateway
  * does at read time for every reader — the sentence itself names only the
- * weekday. The refused runs never laid a week and say none, as the gateway
- * answers them. None is about a post's days, so none names a teacher
- * (conflictSummaryNames, errorNames).
+ * weekday — and the generator's try at Cecilia's limit on teaching in a row
+ * that did not succeed (Sammanhängande undervisning): her Thursday is one
+ * stretch of 135 minutes against a limit of 120, which it says with the
+ * weekday, the length and the limit, naming Cecilia the same way. The refused
+ * runs never laid a week and say none, as the gateway answers them. None is
+ * about a post's days, so none names a teacher (conflictSummaryNames,
+ * errorNames).
  */
 const YEAR_JOBS: OptimizationJob[] = [
   {
@@ -86,6 +94,14 @@ const YEAR_JOBS: OptimizationJob[] = [
         code: "TEACHER_FREE_DAY_WISH_NOT_KEPT",
         params: { day: 3 },
         resourceNames: [`${TEACHERS.bo.firstName} ${TEACHERS.bo.lastName}`],
+      },
+      {
+        category: "AVAILABILITY",
+        message:
+          "A teacher should teach at most 120 minutes in a row before 20 minutes free, and the new timetable gives them 135 minutes in a row on Thursdays. The generator tries to keep the limit but weighs it against the rest of the week, and gives way where keeping it would cost more.",
+        code: "TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT",
+        params: { day: 4, minutes: 135, max: 120, breakMinutes: 20 },
+        resourceNames: [`${TEACHERS.cecilia.firstName} ${TEACHERS.cecilia.lastName}`],
       },
     ],
     error: null,

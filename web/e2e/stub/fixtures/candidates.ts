@@ -158,16 +158,59 @@ function unplacedOf(week: ReadonlyArray<Pick<CandidateLesson, "studentGroupId" |
   return { lines, minutes };
 }
 
+/** Minutes since midnight of an "HH:MM" or "HH:MM:SS" clock. */
+const minutesAt = (time: string) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
+
 /**
- * The free-day wishes a week breaks (Lärarens dag), as the gateway stores
- * them when it stores the batch and names them when the page reads it: a
- * teacher whose wished weekday has a lesson of theirs, led or co-taught, by
- * weekday and then rule (unkeptFreeDayWishes). At Exempelskolan that is Bo,
- * who wishes Wednesdays free (school-days.ts).
+ * A teacher's longest stretch of teaching in a row in a week, as
+ * src/common/stretch.ts counts it: one day's lessons, led or co-taught, in
+ * start order; a lesson joins the stretch before it when it starts LESS than
+ * the break after the stretch's latest end; a stretch is as long as from its
+ * first start to its last end. The first of the longest wins a tie, Monday
+ * first. Null for a teacher with no lessons.
  */
-function notesOf(week: ReadonlyArray<Pick<CandidateLesson, "teacherId" | "coTeacherId" | "dayOfWeek">>): CandidateConflict[] {
+function longestStretch(
+  week: ReadonlyArray<Pick<CandidateLesson, "teacherId" | "coTeacherId" | "dayOfWeek" | "startTime" | "endTime">>,
+  userId: string,
+  breakMinutes: number,
+): { day: number; minutes: number } | null {
+  let longest: { day: number; minutes: number } | null = null;
+  for (let day = 1; day <= 7; day++) {
+    const spans = week
+      .filter((lesson) => lesson.dayOfWeek === day && (lesson.teacherId === userId || lesson.coTeacherId === userId))
+      .map((lesson) => ({ start: minutesAt(lesson.startTime), end: minutesAt(lesson.endTime) }))
+      .sort((a, b) => a.start - b.start || a.end - b.end);
+    let first = 0;
+    let last = 0;
+    spans.forEach((span, index) => {
+      if (index > 0 && span.start - last < breakMinutes) {
+        last = Math.max(last, span.end);
+      } else {
+        first = span.start;
+        last = span.end;
+      }
+      if (longest === null || last - first > longest.minutes) longest = { day, minutes: last - first };
+    });
+  }
+  return longest;
+}
+
+/**
+ * The wishes a week breaks, as the gateway stores them when it stores the
+ * batch and names them when the page reads it. First the free days (Lärarens
+ * dag): a teacher whose wished weekday has a lesson of theirs, led or
+ * co-taught, by weekday and then rule (unkeptFreeDayWishes). At Exempelskolan
+ * that is Bo, who wishes Wednesdays free (school-days.ts). Then the limits on
+ * teaching in a row (Sammanhängande undervisning): a teacher whose longest
+ * stretch is over their limit, with the weekday of the longest, its length and
+ * the limit — Cecilia's Thursday, in the draft and in two of the three
+ * candidates.
+ */
+function notesOf(
+  week: ReadonlyArray<Pick<CandidateLesson, "teacherId" | "coTeacherId" | "dayOfWeek" | "startTime" | "endTime">>,
+): CandidateConflict[] {
   const names = new Map(TEACHER_LIST.map((teacher) => [teacher.id, `${teacher.firstName} ${teacher.lastName}`]));
-  return TEACHER_WORK_RULES.flatMap((rule) => {
+  const freeDays = TEACHER_WORK_RULES.flatMap((rule) => {
     const day = rule.preferredFreeDayOfWeek;
     if (day === null) return [];
     const busy = week.some(
@@ -183,6 +226,24 @@ function notesOf(week: ReadonlyArray<Pick<CandidateLesson, "teacherId" | "coTeac
       message: "A teacher wishes this weekday free, and the new timetable gives them lessons that day.",
       resourceNames: name ? [name] : [],
     }));
+  const stretches = TEACHER_WORK_RULES.flatMap((rule) => {
+    const max = rule.maxConsecutiveTeachingMinutes;
+    const breakMinutes = rule.consecutiveBreakMinutes;
+    if (max === null || breakMinutes === null) return [];
+    const longest = longestStretch(week, rule.userId, breakMinutes);
+    return longest !== null && longest.minutes > max
+      ? [{ rule: rule.id, day: longest.day, minutes: longest.minutes, max, breakMinutes, name: names.get(rule.userId) }]
+      : [];
+  })
+    .sort((a, b) => a.day - b.day || a.rule.localeCompare(b.rule))
+    .map(({ day, minutes, max, breakMinutes, name }) => ({
+      category: "AVAILABILITY",
+      code: "TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT",
+      params: { day, minutes, max, breakMinutes },
+      message: "A teacher should teach at most so many minutes in a row, and the new timetable gives them more.",
+      resourceNames: name ? [name] : [],
+    }));
+  return [...freeDays, ...stretches];
 }
 
 /** What the draft breaks: the grundschema as it stands, a parked lesson occupying no day. */

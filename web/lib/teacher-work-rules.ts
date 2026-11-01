@@ -2,8 +2,10 @@ import { timeToMinutes } from "@/lib/utils";
 
 /**
  * A teacher's own working time: the lunch they are owed, the night between
- * two teaching days, how much they teach on one day at most, and the weekday
- * they would rather have free (Lärarens dag, migration 20261123090000).
+ * two teaching days, how much they teach on one day at most, the weekday
+ * they would rather have free (Lärarens dag, migration 20261123090000) and how
+ * long they teach in a row before a break (Sammanhängande undervisning,
+ * migration 20261218090000).
  *
  * Mirrors the row in TeacherWorkRules and the engine's
  * `AnonymousTeacherWorkRule`. Clock strings are HH:MM:SS as PostgREST returns
@@ -47,6 +49,22 @@ export interface TeacherWorkRule {
    * it against the rest of the week and never refuses one over it.
    */
   preferredFreeDayOfWeek: number | null;
+  /**
+   * Sammanhängande undervisning: the most minutes the teacher teaches in a
+   * row, or null for no limit. Set with `consecutiveBreakMinutes` — both or
+   * neither, as the table's CHECK has it. A stretch is teaching that the
+   * teacher's free time never interrupts: a lesson joins the one before it
+   * when it starts LESS than the break after it, and the stretch is as long
+   * as from its first start to its last end (src/common/stretch.ts).
+   *
+   * NOT HARD, and not hard in three different ways. The generator TRIES, and
+   * only where the school has switched it on in Skolregler; a hand edit of
+   * the grundschema is warned about; the Vikarietavlan never proposes a
+   * cover that would break it. Nothing refuses a week over it.
+   */
+  maxConsecutiveTeachingMinutes: number | null;
+  /** The free minutes that end a stretch: a gap of this many or more is a break. */
+  consecutiveBreakMinutes: number | null;
 }
 
 export const LUNCH_MINUTES_MIN = 5;
@@ -74,6 +92,20 @@ export const DAY_CAP_MINUTES_STEP = 5;
 /** ISO weekdays, Monday to Sunday: the column's CHECK, whichever days the school teaches. */
 export const FREE_DAY_MIN = 1;
 export const FREE_DAY_MAX = 7;
+/**
+ * The limit on teaching in a row: the gateway's bounds (src/common/stretch.ts)
+ * and the table's CHECKs. Half an hour at the bottom, because a limit under
+ * the shortest lesson a school runs is broken by every lesson the teacher
+ * has; eight hours at the top, because a longer one limits nothing. The break
+ * is five minutes to two hours: five is the engine's grid and the least that
+ * can end a stretch at all. Both on the five-minute grid, for the cap's
+ * reason: the engine counts in five-minute steps.
+ */
+export const CONSECUTIVE_MAX_MINUTES_MIN = 30;
+export const CONSECUTIVE_MAX_MINUTES_MAX = 480;
+export const CONSECUTIVE_BREAK_MINUTES_MIN = 5;
+export const CONSECUTIVE_BREAK_MINUTES_MAX = 120;
+export const CONSECUTIVE_STEP = 5;
 
 /**
  * What the form offers when somebody starts filling an EMPTY row.
@@ -96,10 +128,14 @@ export const SUGGESTED_DRAFT: WorkRuleDraft = {
    * teacher's arrangement with this school — and a suggested one would be a
    * hard rule nobody chose, refusing the next run of a school that only
    * wanted the lunch. The free day is the teacher's own, and a weekday
-   * offered by default would soon be everybody's.
+   * offered by default would soon be everybody's. The limit on teaching in a
+   * row is the same arrangement as the cap: no figure a school can accept
+   * without choosing it, and a pair that is half filled is refused.
    */
   maxTeachingMinutesPerDay: "",
   preferredFreeDayOfWeek: "",
+  maxConsecutiveTeachingMinutes: "",
+  consecutiveBreakMinutes: "",
 };
 
 /**
@@ -116,6 +152,9 @@ export interface WorkRuleDraft {
   maxTeachingMinutesPerDay: string;
   /** "" for no wish, else "1".."7": the weekday select's own value. */
   preferredFreeDayOfWeek: string;
+  /** The two figures of the limit on teaching in a row: both or neither. */
+  maxConsecutiveTeachingMinutes: string;
+  consecutiveBreakMinutes: string;
 }
 
 export const EMPTY_DRAFT: WorkRuleDraft = {
@@ -125,9 +164,11 @@ export const EMPTY_DRAFT: WorkRuleDraft = {
   minDailyRestMinutes: "",
   maxTeachingMinutesPerDay: "",
   preferredFreeDayOfWeek: "",
+  maxConsecutiveTeachingMinutes: "",
+  consecutiveBreakMinutes: "",
 };
 
-/** The six nullable fields as the gateway takes them. Times are HH:MM. */
+/** The eight nullable fields as the gateway takes them. Times are HH:MM. */
 export interface WorkRuleBody {
   lunchMinutes: number | null;
   lunchStartTime: string | null;
@@ -135,6 +176,8 @@ export interface WorkRuleBody {
   minDailyRestMinutes: number | null;
   maxTeachingMinutesPerDay: number | null;
   preferredFreeDayOfWeek: number | null;
+  maxConsecutiveTeachingMinutes: number | null;
+  consecutiveBreakMinutes: number | null;
 }
 
 /**
@@ -156,7 +199,12 @@ export type WorkRuleProblem =
   | { reason: "restOutOfRange"; min: number; max: number }
   | { reason: "dayCapOutOfRange"; min: number; max: number }
   | { reason: "dayCapOffGrid"; step: number }
-  | { reason: "freeDayOutOfRange" };
+  | { reason: "freeDayOutOfRange" }
+  | { reason: "consecutivePairIncomplete" }
+  | { reason: "consecutiveMaxOutOfRange"; min: number; max: number }
+  | { reason: "consecutiveMaxOffGrid"; step: number }
+  | { reason: "consecutiveBreakOutOfRange"; min: number; max: number }
+  | { reason: "consecutiveBreakOffGrid"; step: number };
 
 /** HH:MM, with optional seconds — what PostgREST sends and what the DTO takes. */
 const TIME = /^\d{2}:\d{2}(:\d{2})?$/;
@@ -185,12 +233,30 @@ function wholeMinutes(value: string): number | null {
 }
 
 /**
+ * A figure of the limit on teaching in a row that the form would accept on its
+ * own, or null. For the readout beside each field, which says "= 2 tim" as
+ * soon as ITS number is sayable rather than waiting for the other half of the
+ * pair: half a typed value is a wrong hour count on screen.
+ */
+export function consecutiveFigure(value: string, field: "max" | "break"): number | null {
+  const minutes = wholeMinutes(value);
+  if (minutes === null) return null;
+  const [min, max] =
+    field === "max"
+      ? [CONSECUTIVE_MAX_MINUTES_MIN, CONSECUTIVE_MAX_MINUTES_MAX]
+      : [CONSECUTIVE_BREAK_MINUTES_MIN, CONSECUTIVE_BREAK_MINUTES_MAX];
+  return minutes < min || minutes > max || minutes % CONSECUTIVE_STEP !== 0 ? null : minutes;
+}
+
+/**
  * Whether the draft says nothing at all — which is a legitimate answer, and the
  * one every teacher starts from.
  *
- * ALL SIX FIELDS. The dialog DELETES the row when this says yes, so a draft
- * holding only a cap or only a wish that read as empty would take a stored cap
- * away together with the lunch somebody cleared beside it.
+ * ALL EIGHT FIELDS. The dialog DELETES the row when this says yes, so a draft
+ * holding only a cap, a wish or a limit on teaching in a row that read as
+ * empty would take a stored one away together with the lunch somebody cleared
+ * beside it. The DELETE it then sends names `includeDay=true`, which takes the
+ * limit with the cap and the wish (work-rule-queries.ts).
  */
 export function isEmptyDraft(draft: WorkRuleDraft): boolean {
   return (
@@ -199,7 +265,9 @@ export function isEmptyDraft(draft: WorkRuleDraft): boolean {
     clock(draft.lunchEndTime) === "" &&
     draft.minDailyRestMinutes.trim() === "" &&
     draft.maxTeachingMinutesPerDay.trim() === "" &&
-    draft.preferredFreeDayOfWeek.trim() === ""
+    draft.preferredFreeDayOfWeek.trim() === "" &&
+    draft.maxConsecutiveTeachingMinutes.trim() === "" &&
+    draft.consecutiveBreakMinutes.trim() === ""
   );
 }
 
@@ -298,6 +366,44 @@ export function validateDraft(draft: WorkRuleDraft): WorkRuleProblem | null {
   }
 
   /*
+   * The limit on teaching in a row is a PAIR, like the lunch trio: a maximum
+   * without the break after it does not say when a stretch ends, and a break
+   * without a maximum limits nothing. The table's CHECK says so
+   * (consecutive_is_a_pair); this says it first, in Swedish, naming both
+   * fields. Each figure is then in range first and on the grid second, so a
+   * typo of 3000 is a number out of range, not one off the grid.
+   */
+  const consecutiveFilled = [
+    draft.maxConsecutiveTeachingMinutes.trim(),
+    draft.consecutiveBreakMinutes.trim(),
+  ].filter((value) => value !== "").length;
+  if (consecutiveFilled === 1) return { reason: "consecutivePairIncomplete" };
+  if (consecutiveFilled === 2) {
+    const max = wholeMinutes(draft.maxConsecutiveTeachingMinutes);
+    if (max === null || max < CONSECUTIVE_MAX_MINUTES_MIN || max > CONSECUTIVE_MAX_MINUTES_MAX) {
+      return {
+        reason: "consecutiveMaxOutOfRange",
+        min: CONSECUTIVE_MAX_MINUTES_MIN,
+        max: CONSECUTIVE_MAX_MINUTES_MAX,
+      };
+    }
+    if (max % CONSECUTIVE_STEP !== 0) {
+      return { reason: "consecutiveMaxOffGrid", step: CONSECUTIVE_STEP };
+    }
+    const pause = wholeMinutes(draft.consecutiveBreakMinutes);
+    if (pause === null || pause < CONSECUTIVE_BREAK_MINUTES_MIN || pause > CONSECUTIVE_BREAK_MINUTES_MAX) {
+      return {
+        reason: "consecutiveBreakOutOfRange",
+        min: CONSECUTIVE_BREAK_MINUTES_MIN,
+        max: CONSECUTIVE_BREAK_MINUTES_MAX,
+      };
+    }
+    if (pause % CONSECUTIVE_STEP !== 0) {
+      return { reason: "consecutiveBreakOffGrid", step: CONSECUTIVE_STEP };
+    }
+  }
+
+  /*
    * The select offers nothing else, so this is a value restored from a row
    * the form never wrote. Said rather than sent: draftToBody would turn it
    * into null, and the save would clear a wish nobody chose to clear.
@@ -315,7 +421,7 @@ export function validateDraft(draft: WorkRuleDraft): WorkRuleProblem | null {
 /**
  * The draft as the gateway takes it.
  *
- * All six keys are always present, including the null ones. A PATCH that
+ * All eight keys are always present, including the null ones. A PUT that
  * OMITS a field leaves the stored value alone, so a body built from only the
  * filled fields would make "clear the lunch rule" impossible: the reader would
  * empty the three boxes, press Spara, and find the old rule still there at the
@@ -341,6 +447,10 @@ export function draftToBody(draft: WorkRuleDraft): WorkRuleBody {
     // leaves out, so an omitted cap could never be taken away from here.
     maxTeachingMinutesPerDay: wholeMinutes(draft.maxTeachingMinutesPerDay),
     preferredFreeDayOfWeek: wholeMinutes(draft.preferredFreeDayOfWeek),
+    // The pair travels together: a validated draft holds both or neither, so
+    // the two nulls clear the limit and two numbers set it.
+    maxConsecutiveTeachingMinutes: wholeMinutes(draft.maxConsecutiveTeachingMinutes),
+    consecutiveBreakMinutes: wholeMinutes(draft.consecutiveBreakMinutes),
   };
 }
 
@@ -372,6 +482,12 @@ export function ruleToDraft(rule: TeacherWorkRule | undefined): WorkRuleDraft {
       rule.maxTeachingMinutesPerDay == null ? "" : String(rule.maxTeachingMinutesPerDay),
     preferredFreeDayOfWeek:
       rule.preferredFreeDayOfWeek == null ? "" : String(rule.preferredFreeDayOfWeek),
+    // The same tolerance for the pair: a select or a stub from before the
+    // columns has no key for them.
+    maxConsecutiveTeachingMinutes:
+      rule.maxConsecutiveTeachingMinutes == null ? "" : String(rule.maxConsecutiveTeachingMinutes),
+    consecutiveBreakMinutes:
+      rule.consecutiveBreakMinutes == null ? "" : String(rule.consecutiveBreakMinutes),
   };
 }
 

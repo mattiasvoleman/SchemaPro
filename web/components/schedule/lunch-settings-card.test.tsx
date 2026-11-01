@@ -265,6 +265,85 @@ describe("LunchSettingsCard", () => {
     expect(save.mock.calls[0]?.[0]).toMatchObject({ generatorKeepsTravelTime: false });
   });
 
+  it("fills the teaching-in-a-row switch from the school's rules, and sends both ways it is turned", async () => {
+    // Sammanhängande undervisning: off until the school turns it on, beside
+    // the others and on the same terms, and its own key on the save.
+    saved({
+      generatorKeepsTravelTime: false,
+      generatorKeepsPupilGapsDown: false,
+      generatorKeepsConsecutiveTeaching: false,
+    });
+    const user = userEvent.setup();
+    render(<LunchSettingsCard />);
+
+    const consecutive = await screen.findByRole("switch", { name: "consecutive" });
+    expect(consecutive.getAttribute("aria-checked")).toBe("false");
+    expect(consecutive.getAttribute("aria-describedby")).toBe("generator-keeps-consecutive-hint");
+    expect(screen.getByText("consecutiveHint")).toBeInTheDocument();
+    await user.click(consecutive);
+    await user.click(screen.getByRole("button", { name: "save" }));
+    expect(save.mock.calls[0]?.[0]).toMatchObject({
+      generatorKeepsConsecutiveTeaching: true,
+      generatorKeepsTravelTime: false,
+      generatorKeepsPupilGapsDown: false,
+    });
+
+    await user.click(consecutive);
+    await user.click(screen.getByRole("button", { name: "save" }));
+    expect(save.mock.calls[1]?.[0]).toMatchObject({ generatorKeepsConsecutiveTeaching: false });
+  });
+
+  it("reads the teaching-in-a-row switch on when the school turned it on", async () => {
+    saved({
+      generatorKeepsTravelTime: false,
+      generatorKeepsPupilGapsDown: false,
+      generatorKeepsConsecutiveTeaching: true,
+    });
+    render(<LunchSettingsCard />);
+
+    const consecutive = await screen.findByRole("switch", { name: "consecutive" });
+    await waitFor(() => expect(consecutive.getAttribute("aria-checked")).toBe("true"));
+    // Read, not changed: nothing to save.
+    expect((screen.getByRole("button", { name: "save" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("leaves the teaching-in-a-row switch out of a save to an API that predates it", async () => {
+    // That API refuses a key it does not know (forbidNonWhitelisted): a web
+    // out before it would otherwise refuse every lunch save with a 400.
+    saved({ generatorKeepsTravelTime: false, generatorKeepsPupilGapsDown: false });
+    const user = userEvent.setup();
+    render(<LunchSettingsCard />);
+
+    expect((await screen.findByRole("switch", { name: "consecutive" })).getAttribute("aria-checked")).toBe("false");
+    await waitFor(() => expect(field("seats").value).toBe("180"));
+    fireEvent.change(field("seats"), { target: { value: "200" } });
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    expect(save.mock.calls[0]?.[0]).not.toHaveProperty("generatorKeepsConsecutiveTeaching");
+    expect(save.mock.calls[0]?.[0]).toMatchObject({ generatorKeepsTravelTime: false, generatorKeepsPupilGapsDown: false });
+  });
+
+  it("keeps the other two switches in a save that changes only this one", async () => {
+    // Each switch is its own key on one PUT; turning one must not drop or
+    // flip the others the school already had on.
+    saved({
+      generatorKeepsTravelTime: true,
+      generatorKeepsPupilGapsDown: true,
+      generatorKeepsConsecutiveTeaching: false,
+    });
+    const user = userEvent.setup();
+    render(<LunchSettingsCard />);
+
+    await user.click(await screen.findByRole("switch", { name: "consecutive" }));
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    expect(save.mock.calls[0]?.[0]).toMatchObject({
+      generatorKeepsTravelTime: true,
+      generatorKeepsPupilGapsDown: true,
+      generatorKeepsConsecutiveTeaching: true,
+    });
+  });
+
   it("sends the seat count as a number once one is typed", async () => {
     const user = userEvent.setup();
     render(<LunchSettingsCard />);

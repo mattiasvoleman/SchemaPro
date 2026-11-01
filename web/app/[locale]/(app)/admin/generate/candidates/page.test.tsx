@@ -322,8 +322,42 @@ describe("the comparison table", () => {
       expect(wishesRow()).toEqual([
         // A teacher no longer in the school is "a teacher", not a blank.
         "scheduleCandidates.cell.wishes(2)scheduleCandidates.cell.wish(Anna Ek|1)scheduleCandidates.cell.wish(scheduleCandidates.cell.wishNobody|5)",
-        "scheduleCandidates.cell.wishes(1)scheduleCandidates.cell.delta(−scheduleCandidates.cell.teacherCount(1))scheduleCandidates.cell.wish(Anna Ek|1)",
-        "scheduleCandidates.cell.wishes(0)scheduleCandidates.cell.delta(−scheduleCandidates.cell.teacherCount(2))",
+        "scheduleCandidates.cell.wishes(1)scheduleCandidates.cell.delta(−scheduleCandidates.cell.wishCount(1))scheduleCandidates.cell.wish(Anna Ek|1)",
+        "scheduleCandidates.cell.wishes(0)scheduleCandidates.cell.delta(−scheduleCandidates.cell.wishCount(2))",
+        "scheduleCandidates.cell.notApplicable",
+      ]);
+    });
+
+    it("tells a limit on teaching in a row from a free-day wish, counts both as wishes, and names the teacher with the figures", () => {
+      // Sammanhängande undervisning: the same notes list, so the same row.
+      // One teacher can have both kinds, which is why the count is of wishes
+      // and not of teachers.
+      const stretch = (day: number, minutes: number, max: number, names: string[]) => ({
+        category: "AVAILABILITY",
+        code: "TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT",
+        params: { day, minutes, max, breakMinutes: 20 },
+        message: "A teacher should teach at most … in a row",
+        resourceNames: names,
+      });
+      state.overview = {
+        latest: BATCH,
+        batch: {
+          ...BATCH,
+          candidates: [
+            candidate(1, "KEEP", { notes: [wish(1, ["Anna Ek"]), stretch(2, 240, 180, ["Anna Ek"])] }),
+            candidate(2, "TEACHER_GAPS", { notes: [stretch(2, 240, 180, ["Anna Ek"])] }),
+            candidate(3, "SPREAD", { solverStatus: "TIMEOUT", metrics: null, notes: null }),
+          ],
+        },
+        unplaced: null,
+        draftNotes: [wish(1, ["Anna Ek"]), stretch(2, 240, 180, ["Anna Ek"]), stretch(4, 210, 180, [])],
+      };
+      render(<CandidatesPage />);
+
+      expect(wishesRow()).toEqual([
+        "scheduleCandidates.cell.wishes(3)scheduleCandidates.cell.wish(Anna Ek|1)scheduleCandidates.cell.stretch(Anna Ek|2|240|180)scheduleCandidates.cell.stretch(scheduleCandidates.cell.wishNobody|4|210|180)",
+        "scheduleCandidates.cell.wishes(2)scheduleCandidates.cell.delta(−scheduleCandidates.cell.wishCount(1))scheduleCandidates.cell.wish(Anna Ek|1)scheduleCandidates.cell.stretch(Anna Ek|2|240|180)",
+        "scheduleCandidates.cell.wishes(1)scheduleCandidates.cell.delta(−scheduleCandidates.cell.wishCount(2))scheduleCandidates.cell.stretch(Anna Ek|2|240|180)",
         "scheduleCandidates.cell.notApplicable",
       ]);
     });

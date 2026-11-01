@@ -577,6 +577,14 @@ export interface LunchSettings {
    * default; optional for an API from before the switch, read as off.
    */
   generatorKeepsPupilGapsDown?: boolean;
+  /**
+   * Sammanhängande undervisning: the generator TRIES to keep each teacher's
+   * limit on teaching in a row (set under Arbetstid), weighed against the rest
+   * of the week and never at the price of a refusal. Off by default; optional
+   * for an API from before the switch, read as off. A hand edit and the
+   * Vikarietavlan keep the limit whatever this says.
+   */
+  generatorKeepsConsecutiveTeaching?: boolean;
 }
 
 export type LessonRecurrence = "ALL_WEEKS" | "ODD_WEEKS" | "EVEN_WEEKS";

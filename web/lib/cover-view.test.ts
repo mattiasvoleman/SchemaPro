@@ -239,6 +239,14 @@ describe("reasons in plain Swedish", () => {
     expect(reasonText(t, { code: "WORK_DAYS_HIDDEN", params: {} })).not.toMatch(/\d/);
   });
 
+  it("says the limit on teaching in a row with its two figures (Sammanhängande undervisning)", () => {
+    // The hard finding carries the limit (`minutes`, like DAILY_CAP's cap) and
+    // the break that ends a stretch, so the sentence names both.
+    expect(reasonText(t, { code: "CONSECUTIVE_TEACHING", params: { minutes: 120, breakMinutes: 20 } })).toBe(
+      "Skulle undervisa mer än 120 min i följd innan 20 min ledigt",
+    );
+  });
+
   it("has a sentence, in both languages, for every code the gateway ranks or excludes by", () => {
     // src/cover/cover-rank.ts RankReasonCode and src/cover/cover-rules.ts HardRuleCode.
     const codes = [
@@ -251,6 +259,8 @@ describe("reasons in plain Swedish", () => {
       // Lärarens dag: the day's cap, the post's days, and the days masked for
       // a reader without HR-läs (src/cover/cover-rules.ts maskFindings).
       "DAILY_CAP", "WORK_DAYS", "WORK_DAYS_HIDDEN",
+      // Sammanhängande undervisning: the limit on teaching in a row.
+      "CONSECUTIVE_TEACHING",
     ];
     expect(codes.filter((code) => !(code in sv.coverReasons))).toEqual([]);
     expect(codes.filter((code) => !(code in en.coverReasons))).toEqual([]);
@@ -285,6 +295,8 @@ describe("cover refusals", () => {
       // Lärarens dag's warnings for a manual pick (WARNING_OF), the days one
       // masked for a reader without HR-läs.
       "COVER_EXCEEDS_DAILY_CAP", "COVER_BEYOND_WORK_DAYS", "COVER_BEYOND_WORK_DAYS_HIDDEN",
+      // Sammanhängande undervisning's, mapped from CONSECUTIVE_TEACHING the same way.
+      "COVER_EXCEEDS_CONSECUTIVE_TEACHING",
       // Rastvakt i vardagen: a pass's refusals, and a manual pick's warning
       // that the person has a pass of their own then.
       "COVER_TEACHER_ON_SUPERVISION", "SUPERVISION_COVER_NOT_AFFECTED", "SUPERVISION_COVER_HELD",
@@ -326,13 +338,14 @@ describe("the other-teacher pick", () => {
     expect(options.map((teacher) => teacher.id)).toEqual(["t-eva", "t-fia"]);
   });
 
-  it("keeps whoever only the day's cap or the days exclude: a manual pick of them is a warning, not a refusal", () => {
+  it("keeps whoever only the day's cap, the days or the limit on teaching in a row exclude: a manual pick of them is a warning, not a refusal", () => {
     const options = otherTeacherOptions(teachers, item({ teachers: [{ teacherId: "t-anna", role: "LEAD" }] }), {
       candidates: [],
       excluded: [
         { userId: "t-bo", codes: [{ code: "DAILY_CAP", params: { minutes: 300 } }] },
         { userId: "t-cia", codes: [{ code: "WORK_DAYS", params: { days: 4 } }] },
         { userId: "t-dan", codes: [{ code: "WORK_DAYS_HIDDEN", params: {} }] },
+        { userId: "t-eva", codes: [{ code: "CONSECUTIVE_TEACHING", params: { minutes: 120, breakMinutes: 20 } }] },
       ],
     });
     expect(options.map((teacher) => teacher.id)).toEqual(["t-bo", "t-cia", "t-dan", "t-eva", "t-fia"]);

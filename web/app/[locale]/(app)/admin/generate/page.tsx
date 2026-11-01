@@ -863,6 +863,9 @@ export default function GeneratePage() {
               {lunchSettings?.generatorKeepsPupilGapsDown ? (
                 <li className="text-muted-foreground">{t("rulePupilGaps")}</li>
               ) : null}
+              {lunchSettings?.generatorKeepsConsecutiveTeaching ? (
+                <li className="text-muted-foreground">{t("ruleConsecutive")}</li>
+              ) : null}
             </ul>
           )}
         </SectionCard>
