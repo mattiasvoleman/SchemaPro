@@ -1890,7 +1890,13 @@ describe('Planning surface (e2e)', () => {
         .expect(204);
 
       expect(harness.tx['teacherWorkRule']!['deleteMany']).toHaveBeenCalledWith({
-        where: { userId: TEACHER_ID, maxTeachingMinutesPerDay: null, preferredFreeDayOfWeek: null },
+        where: {
+          userId: TEACHER_ID,
+          maxTeachingMinutesPerDay: null,
+          preferredFreeDayOfWeek: null,
+          maxConsecutiveTeachingMinutes: null,
+          consecutiveBreakMinutes: null,
+        },
       });
       expect(harness.tx['teacherWorkRule']!['update']).not.toHaveBeenCalled();
     });
@@ -1950,7 +1956,7 @@ describe('Planning surface (e2e)', () => {
           .expect(403);
 
         expect(response.body.code).toBe('WORK_RULE_DAY_IS_PLANNED');
-        expect(response.body.detail).toBe('Dagstaket och den önskade lediga dagen sätts av en administratör som planerar.');
+        expect(response.body.detail).toBe('Dagstaket, den önskade lediga dagen och gränsen för sammanhängande undervisning sätts av en administratör som planerar.');
         expect(harness.tx['teacherWorkRule']!['upsert']).not.toHaveBeenCalled();
       });
 
@@ -2008,7 +2014,13 @@ describe('Planning surface (e2e)', () => {
           .expect(204);
 
         expect(harness.tx['teacherWorkRule']!['deleteMany']).toHaveBeenCalledWith({
-          where: { userId: COLLEAGUE_ID, maxTeachingMinutesPerDay: null, preferredFreeDayOfWeek: null },
+          where: {
+            userId: COLLEAGUE_ID,
+            maxTeachingMinutesPerDay: null,
+            preferredFreeDayOfWeek: null,
+            maxConsecutiveTeachingMinutes: null,
+            consecutiveBreakMinutes: null,
+          },
         });
         expect(harness.tx['teacherWorkRule']!['update']).toHaveBeenCalledWith({
           where: { userId: COLLEAGUE_ID },

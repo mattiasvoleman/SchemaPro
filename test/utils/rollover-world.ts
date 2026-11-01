@@ -181,7 +181,22 @@ export function defaultRolloverRows(): Record<string, Row[]> {
     subject: [subject(IDS.ma, 'Matematik'), subject(IDS.sv, 'Svenska'), subject(IDS.tk, 'Teknik')],
     staffingPolicy: [],
     teacherSubjectQualification: [],
-    masterLesson: [{ academicYearId: IDS.yearA, isLocked: true }, { academicYearId: IDS.yearA, isLocked: false }],
+    // Two lessons of nobody's, with an hour: a regeneration reads what it kept
+    // for the teacher, the weekday and the hour (the notes read the hour). No
+    // `isParked`: the fetch asks for unparked lessons and these are rows that
+    // only the rollover counts, so it passes them by.
+    masterLesson: [true, false].map((isLocked) => ({
+      academicYearId: IDS.yearA,
+      isLocked,
+      teacherId: null,
+      coTeacherId: null,
+      dayOfWeek: 1,
+      startTime: new Date('1970-01-01T08:00:00.000Z'),
+      endTime: new Date('1970-01-01T09:00:00.000Z'),
+      recurrence: 'ALL_WEEKS',
+      startDate: null,
+      endDate: null,
+    })),
     lunchSitting: [{ academicYearId: IDS.yearA, isGenerated: false }],
     // Anna's post and her rastvakt with its slot, as the services write them:
     // a rollover without carryStaffing only counts them (one duty, one slot,
