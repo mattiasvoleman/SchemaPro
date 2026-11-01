@@ -13,6 +13,27 @@
       "reason": "No patched release exists: <=1.1.3 is marked vulnerable and 1.1.3 is the newest version (checked 2026-10-06). sprintf-js is reached only through jest's reporters and formats those tools' own diagnostic strings; nothing user-supplied is formatted through it. Remove when upstream ships a fix.",
       "addedAt": "2026-10-06",
       "expires": "2026-11-20"
+    },
+    {
+      "id": "GHSA-mrwp-f3q8-3g9p",
+      "package": "follow-redirects",
+      "reason": "Patched in follow-redirects 1.16.2, published 2026-10-25T21:32Z; the seven-day rule admits it from 2026-11-01T21:32Z, so today the patch is only too young, not missing. The bump is a plain lockfile refresh (axios 1.20.0 declares ^1.16.0). Reachable at runtime: follow-redirects has one dependent, axios, which is a direct dependency and stays in the production image. The API's one axios call site, the proxy's POST to the solver at AI_ENGINE_URL (the solver service on Railway; http://solver:8000 under compose), goes through follow-redirects with the X-API-Key header and axios' default maxRedirects of 5. Nothing else reaches it: the SS12000 sync and webhook delivery use node:https and refuse redirects, and Resend and Expo push use fetch. The advisory needs a caller that hands follow-redirects a sensitiveHeaders array created in another JavaScript realm. This code never sets sensitiveHeaders and axios 1.20.0 builds its own array in the module's realm, and a leak would also need the solver, our own service, to answer with a redirect to another origin; no request-supplied input can start either, so a window of hours to a day is acceptable. Replace this entry with the bump on 2026-11-02 at the latest. Separate from this advisory and not fixed by it: follow-redirects does not treat X-API-Key as sensitive by default, so every version forwards it on a cross-origin redirect unless the engine call sets maxRedirects: 0 or sensitiveHeaders.",
+      "addedAt": "2026-11-01",
+      "expires": "2026-11-03"
+    },
+    {
+      "id": "GHSA-3g3m-2fjr-6pw4",
+      "package": "glob",
+      "reason": "Patched only in glob 14.0.2 (published 2026-10-27T22:07Z; the seven-day rule admits it from 2026-11-03T22:07Z), a new major for every consumer here. The advisory matches glob >=9.0.0 <=14.0.1, so only glob 13.0.6 (node_modules/glob) is affected; the glob 7.2.3 copies under jest are outside that range and are flagged only through their minimatch ^3 dependency (see GHSA-g3hv-75wg-m249). glob 13.0.6 is reached only through @nestjs/cli (a devDependency, pinned there exactly as glob 13.0.6), which runs `nest build`; `npm prune --omit=dev` leaves it out of the production image. The bypass keeps walking after an AbortSignal fires, and nothing here passes an AbortSignal or a request-supplied pattern to glob, so the surface is the build's own patterns on this repository's own files. The later bump has to settle whether glob 14.0.2 can be forced under @nestjs/cli with an override: the pin is exact, and @nestjs/cli 12.0.11 (npm's suggested fix) drops glob but needs TypeScript 6 and pins minimatch 10.2.6, which is still in range. Re-check with `npm view @nestjs/cli@latest dependencies`. Remove when glob 14.0.2 or newer is locked.",
+      "addedAt": "2026-11-01",
+      "expires": "2026-11-05"
+    },
+    {
+      "id": "GHSA-g3hv-75wg-m249",
+      "package": "minimatch",
+      "reason": "Patched only in minimatch 11.0.1 (published 2026-10-27T22:26Z; the seven-day rule admits it from 2026-11-03T22:26Z). The advisory marks every release below 11.0.1 vulnerable, so no release inside the ^3 or ^10 lines the consumers declare is patched. Two copies, both dev-only and absent from the production image: 10.2.5 (glob 13.0.6, ^10.2.2) and 3.1.5 (fork-ts-checker-webpack-plugin 9.1.0 under @nestjs/cli, test-exclude 6.0.0 under jest's coverage, and glob 7.2.3 under jest, all ^3). They match this repository's own glob patterns at build and test time; no request-supplied pattern reaches them, so the globparts amplification has no exposed surface. The later bump has to settle each copy on its own. 10.2.5 can take an override to 11.0.1 if it lands with glob 14.0.2 (which wants ^11.0.0). The 3.1.5 copies cannot take one as they stand: test-exclude 6 and fork-ts-checker-webpack-plugin 9 call the module itself as a function, and minimatch 11 only has named exports, so they pin an old major with no patched release in its line and stay flagged until jest and Nest move off them (test-exclude 8.0.0 still declares ^10.2.2). If they cannot move by the expiry, renew this entry with that reason rather than forcing the override. Re-check with `npm ls minimatch --package-lock-only`.",
+      "addedAt": "2026-11-01",
+      "expires": "2026-11-05"
     }
   ],
   "web": [
@@ -66,6 +87,76 @@
       "reason": "No patched release in the range that can be installed: zod is fixed only in 4.6.6, a new major, and the one package that pulls zod in, @expo/cli (Expo's development and build CLI), declares zod ^3.25.76 in every release up to the newest, 58.1.14 (checked 2026-10-23). The SDK 57 CLI on claude/appbygget does the same. No app code imports zod and the app bundle does not contain it; the CLI validates the developer's own config and command-line input on the developer's machine or in EAS Build, so an attacker-sized collection never reaches it. Remove when @expo/cli moves to zod 4.6.6+; re-check with `npm view @expo/cli@latest dependencies.zod`.",
       "addedAt": "2026-10-23",
       "expires": "2026-11-20"
+    },
+    {
+      "id": "GHSA-3g3m-2fjr-6pw4",
+      "package": "glob",
+      "reason": "Patched only in glob 14.0.2 (published 2026-10-27T22:07Z; the seven-day rule admits it from 2026-11-03T22:07Z), a new major for every consumer here. The advisory matches glob >=9.0.0 <=14.0.1, so only glob 13.0.6 (node_modules/glob) is affected; the glob 7.2.3 copies under jest are outside that range and are flagged only through their minimatch ^3 dependency (see GHSA-g3hv-75wg-m249). glob 13.0.6 is required as ^13.0.0 by @expo/cli, @expo/config, @expo/config-plugins, @expo/fingerprint and @expo/metro-config, expo's prebuild, fingerprint and bundling tooling. The lockfile marks it a runtime dependency only because expo is one; it runs on the developer's machine or in EAS Build over this repository's own files, no app code imports it and the app bundle does not contain it, and nothing gives its walk an AbortSignal over an attacker-chosen pattern. The later bump has to settle whether an override to glob 14.0.2 holds under all five @expo packages (@expo/cli 58.1.18, the newest release, still declares ^13.0.0), proven by `expo export` bundling. Re-check with `npm view @expo/cli@latest dependencies.glob`. Remove when glob 14.0.2 or newer is locked.",
+      "addedAt": "2026-11-01",
+      "expires": "2026-11-05"
+    },
+    {
+      "id": "GHSA-g3hv-75wg-m249",
+      "package": "minimatch",
+      "reason": "Patched only in minimatch 11.0.1 (published 2026-10-27T22:26Z; the seven-day rule admits it from 2026-11-03T22:26Z). The advisory marks every release below 11.0.1 vulnerable, so no release inside the ^3 or ^10 lines the consumers declare is patched. Two kinds of copy: 10.2.5 (glob 13.0.6 and @expo/fingerprint, both ^10.2.2; expo's tooling, not in the app bundle) and the 3.1.5 copies under jest (glob 7.2.3, test-exclude 6.0.0 via babel-plugin-istanbul; test time only). They match this repository's own glob patterns at build and test time; no request-supplied pattern reaches them, so the globparts amplification has no exposed surface. The later bump has to settle each kind on its own. 10.2.5 can take an override to 11.0.1 if it lands with glob 14.0.2. The 3.1.5 copies cannot take one as they stand: test-exclude 6 calls the module itself as a function and minimatch 11 only has named exports, so they pin an old major with no patched release in its line and stay flagged until jest moves off test-exclude 6; renew this entry with that reason rather than forcing the override. Re-check with `npm ls minimatch --package-lock-only` in mobile/.",
+      "addedAt": "2026-11-01",
+      "expires": "2026-11-05"
+    },
+    {
+      "id": "GHSA-7wch-p9px-956x",
+      "package": "node-forge",
+      "reason": "Patched in node-forge 1.4.1 (published 2026-10-27T04:44Z) and 1.4.2 (2026-10-27T14:09Z); the seven-day rule admits 1.4.2 from 2026-11-03T14:09Z, so today the patch is only too young. The bump is a plain lockfile refresh: both consumers declare a range that already takes it (@expo/cli ^1.3.3 and @expo/code-signing-certificates ^1.3.3), so no override is needed. node-forge is pulled in by expo's development tooling only, @expo/cli (the dev server and CLI) and the code-signing helper it uses, and is not imported by the application bundle. Checked in the published sources of @expo/cli 56.1.19 and @expo/code-signing-certificates 0.0.6: they call only forge.pki (certificate and key creation and parsing, such as certificateFromPem on the developer's own keychain certificate in `expo run:ios`), forge.md.sha256, forge.util and forge.random. The PEM decoder therefore only sees the developer's own certificates, on the developer's machine or in EAS Build; the ReDoS has no attacker-supplied input here. Delete this entry together with the other node-forge entries when the bump lands, including GHSA-86w9-cpqp-85rv, whose 'no patched release' reason no longer holds. Re-check with `npm ls node-forge --package-lock-only` in mobile/.",
+      "addedAt": "2026-11-01",
+      "expires": "2026-11-05"
+    },
+    {
+      "id": "GHSA-8hrf-8g6f-7xwp",
+      "package": "node-forge",
+      "reason": "Patched in node-forge 1.4.1 (published 2026-10-27T04:44Z) and 1.4.2 (2026-10-27T14:09Z); the seven-day rule admits 1.4.2 from 2026-11-03T14:09Z, so today the patch is only too young. Same chain and the same lockfile refresh as GHSA-7wch-p9px-956x. Surface: forge.tls record processing; expo's tooling does not use forge.tls. Remove with that entry.",
+      "addedAt": "2026-11-01",
+      "expires": "2026-11-05"
+    },
+    {
+      "id": "GHSA-hqq3-7jhf-c5jx",
+      "package": "node-forge",
+      "reason": "Patched in node-forge 1.4.1 (published 2026-10-27T04:44Z) and 1.4.2 (2026-10-27T14:09Z); the seven-day rule admits 1.4.2 from 2026-11-03T14:09Z, so today the patch is only too young. Same chain and the same lockfile refresh as GHSA-7wch-p9px-956x. Surface: forge.tls record processing; expo's tooling does not use forge.tls. Remove with that entry.",
+      "addedAt": "2026-11-01",
+      "expires": "2026-11-05"
+    },
+    {
+      "id": "GHSA-jc66-7q78-782g",
+      "package": "node-forge",
+      "reason": "Patched in node-forge 1.4.1 (published 2026-10-27T04:44Z) and 1.4.2 (2026-10-27T14:09Z); the seven-day rule admits 1.4.2 from 2026-11-03T14:09Z, so today the patch is only too young. Same chain and the same lockfile refresh as GHSA-7wch-p9px-956x. Surface: PKCS#12 parsing; expo's tooling does not use forge.pkcs12. Remove with that entry.",
+      "addedAt": "2026-11-01",
+      "expires": "2026-11-05"
+    },
+    {
+      "id": "GHSA-5x38-2vff-x55p",
+      "package": "node-forge",
+      "reason": "Patched in node-forge 1.4.1 (published 2026-10-27T04:44Z) and 1.4.2 (2026-10-27T14:09Z); the seven-day rule admits 1.4.2 from 2026-11-03T14:09Z, so today the patch is only too young. Same chain and the same lockfile refresh as GHSA-7wch-p9px-956x. Surface: forge.pki.verifyCertificateChain(); expo's tooling never verifies a chain with it. Remove with that entry.",
+      "addedAt": "2026-11-01",
+      "expires": "2026-11-05"
+    },
+    {
+      "id": "GHSA-5cwg-6vw7-rj6p",
+      "package": "node-forge",
+      "reason": "Patched in node-forge 1.4.1 (published 2026-10-27T04:44Z) and 1.4.2 (2026-10-27T14:09Z); the seven-day rule admits 1.4.2 from 2026-11-03T14:09Z, so today the patch is only too young. Same chain and the same lockfile refresh as GHSA-7wch-p9px-956x. Surface: AES-GCM with a caller-chosen tagLength; expo's tooling uses no forge cipher. Remove with that entry.",
+      "addedAt": "2026-11-01",
+      "expires": "2026-11-05"
+    },
+    {
+      "id": "GHSA-525v-9gp9-w22h",
+      "package": "node-forge",
+      "reason": "Patched in node-forge 1.4.1 (published 2026-10-27T04:44Z) and 1.4.2 (2026-10-27T14:09Z); the seven-day rule admits 1.4.2 from 2026-11-03T14:09Z, so today the patch is only too young. Same chain and the same lockfile refresh as GHSA-7wch-p9px-956x. Surface: the forge.tls client; expo's tooling does not open a TLS connection through forge. Remove with that entry.",
+      "addedAt": "2026-11-01",
+      "expires": "2026-11-05"
+    },
+    {
+      "id": "GHSA-6wvx-3r32-xmcg",
+      "package": "node-forge",
+      "reason": "Patched in node-forge 1.4.1 (published 2026-10-27T04:44Z) and 1.4.2 (2026-10-27T14:09Z); the seven-day rule admits 1.4.2 from 2026-11-03T14:09Z, so today the patch is only too young. Same chain and the same lockfile refresh as GHSA-7wch-p9px-956x. Surface: forge.http cookie handling; expo's tooling does not use forge.http. Remove with that entry.",
+      "addedAt": "2026-11-01",
+      "expires": "2026-11-05"
     }
   ]
 }
