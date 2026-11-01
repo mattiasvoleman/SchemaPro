@@ -50,7 +50,9 @@
  *         the teacher's last event holding the first, and the teacher
  *         reaches for the first) reaches a withRls caller as the adapter's
  *         error, which the API answers with its 409 WRITE_CONFLICT and the
- *         sync reads as 40P01 (R3-M2);
+ *         sync reads as 40P01 (R3-M2). The teacher here is the owner, with a
+ *         deadlock_timeout of 5 s, so the commit, which began waiting first,
+ *         is the victim every time (R5-L3);
  *   el-i  under a publication of every table's deletes a membership still
  *         commits: the pending table is unlogged and in no publication
  *         (R3-M3);
@@ -65,6 +67,10 @@
  *         master only the draft has does not (R4-L1);
  *   el-m  P2, named on T's matematik (a subject nothing replaces), relinked:
  *         that lesson moves at the commit (R4-L1);
+ *   el-n  a membership whose transaction is older than its patience when
+ *         it commits still backs off from the teacher's last event, holding
+ *         none: the patience runs from the flush, not from the transaction's
+ *         start (R5-L4, the reviewer's `aged`);
  *
  * and after each, the pending table is empty.
  *
@@ -96,8 +102,17 @@ export async function sweepElevlistanSchool(owner: Client, marker: string): Prom
 
 /** A connection as the API's role (DATABASE_URL), the way the RLS suite writes as it. */
 async function appClient(): Promise<{ client: Client; pid: number }> {
-  const url = process.env['DATABASE_URL'];
-  if (!url) throw new Error('DATABASE_URL is not set');
+  return connectAs('DATABASE_URL');
+}
+
+/** A connection as the owner (PROBE_OWNER_URL), for a setting only a superuser may change. */
+async function ownerClient(): Promise<{ client: Client; pid: number }> {
+  return connectAs('PROBE_OWNER_URL');
+}
+
+async function connectAs(env: 'DATABASE_URL' | 'PROBE_OWNER_URL'): Promise<{ client: Client; pid: number }> {
+  const url = process.env[env];
+  if (!url) throw new Error(`${env} is not set`);
   const client = new Client({ connectionString: url.split('?')[0] });
   // The cleanup terminates a backend left waiting; its client then reports
   // the termination here instead of crashing the probe.
@@ -567,12 +582,17 @@ export async function elevlistanChecks(owner: Client, api: PrismaService, marker
     });
 
     await check('el-h a deadlock at the commit reaches withRls as the adapter’s error: the API’s 409 WRITE_CONFLICT, and 40P01 to the sync', async () => {
-      const a = await appClient();
+      // The teacher is the owner here: only a superuser may set
+      // deadlock_timeout. With 5 s against the commit's 1 s, the commit,
+      // which began waiting first, always finds the deadlock first; under
+      // load the teacher's check could otherwise run first and make it the
+      // victim (review R5-L3). The edit runs the same triggers either way.
+      const a = await ownerClient();
       let pid = 0;
       try {
         await a.client.query('BEGIN');
-        await a.client.query(asAdmin, [adminAuth]);
-        await a.client.query(`SET LOCAL lock_timeout = '5s'`);
+        await a.client.query(`SET LOCAL deadlock_timeout = '5s'`);
+        await a.client.query(`SET LOCAL lock_timeout = '10s'`);
         await edit(a.client, last);
         const saved = api
           .withRls(admin, async (tx) => {
@@ -740,6 +760,54 @@ export async function elevlistanChecks(owner: Client, api: PrismaService, marker
         await b.client.end().catch(() => undefined);
       }
       await pendingIsEmpty('el-m');
+    });
+
+    await check('el-n a transaction older than its patience still backs off at its commit: the patience runs from the flush', async () => {
+      // P6 is out of SvA7 (el-h's failed commit left it so); made sure here.
+      await owner.query(`DELETE FROM "StudentGroupMembers" WHERE "studentGroupId" = $1 AND "studentId" = $2`, [sva, pupils[5]]);
+      const b = await appClient();
+      const a = await appClient();
+      try {
+        await b.client.query('BEGIN');
+        await b.client.query(asAdmin, [adminAuth]);
+        await b.client.query(`SELECT set_config('app.ss12000_replaced_patience', '1', true)`);
+        await join(b.client, pupils[5]!);
+        const bXid = await xidOf(b.client);
+        await a.client.query('BEGIN');
+        await a.client.query(asAdmin, [adminAuth]);
+        await a.client.query(`SET LOCAL lock_timeout = '2s'`);
+        await edit(a.client, last);
+        // The membership's transaction grows older than its patience ...
+        for (let tries = 0; ; tries++) {
+          const { old } = await one<{ old: boolean }>(
+            `SELECT clock_timestamp() - xact_start > interval '1.2 seconds' AS old FROM pg_stat_activity WHERE pid = $1`,
+            [b.pid],
+          );
+          if (old) break;
+          if (tries > 1000) throw new Error('the membership’s transaction never grew older than its patience');
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        // ... and its commit still backs off from the last event, holding
+        // none, so the teacher edits the first at once. A deadline counted
+        // from the transaction's start (now()) would be spent already: the
+        // flush would wait as a writer at once, holding the first three.
+        const committed = settle(b.client.query('COMMIT'));
+        await until(b.pid, 'the commit’s flush backing off', (row) => inCommit(row) && row.event === 'PgSleep');
+        await edit(a.client, first);
+        assert.equal(await within(committed, 0), 'pending', 'the commit went through while the teacher held its last event');
+        await a.client.query('COMMIT');
+        const outcome = await within(committed, 15_000);
+        assert.notEqual(outcome, 'pending', 'the commit never went through after the teacher’s');
+        assert.equal((outcome as Settled).error, null, `the commit failed: ${(outcome as Settled).error?.message}`);
+        assert.deepEqual(await xidsOf('CalendarEvent', lessons), lessons.map(() => bXid), 'not every event carries the membership’s transaction');
+      } finally {
+        await a.client.query('ROLLBACK').catch(() => undefined);
+        await b.client.query('ROLLBACK').catch(() => undefined);
+        await owner.query('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid = ANY ($1::int[])', [[a.pid, b.pid]]);
+        await a.client.end().catch(() => undefined);
+        await b.client.end().catch(() => undefined);
+      }
+      await pendingIsEmpty('el-n');
     });
   } finally {
     await sweepElevlistanSchool(owner, marker);
