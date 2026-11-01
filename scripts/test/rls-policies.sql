@@ -34040,6 +34040,15 @@ ROLLBACK;
 --   286t  EG7A byter namn: app.ss12000_bump_activities skjuter upp, så
 --         gruppens aktiviteter (EG-1, EG-6 med 7A) flyttas vid commit och
 --         inte vid satsen.
+--   286u  EG-läraren får en tjänstlänk (som synkens tillämpning skriver i
+--         medlemskapens transaktion, granskningens R4-L1): ingen händelse
+--         eller aktivitet har transaktionens xid före commit, och efter
+--         flushen har hens lektioner i år det, både händelserna och
+--         aktiviteterna.
+--   286v  EG7A får ett ss12000Id: gruppens aktiviteter (EG-1, EG-6) flyttas
+--         vid commit, som vid ett nytt namn (R4-L1).
+--   286w  skolan får en skolenhet: varje aktivitet i år flyttas vid commit
+--         och ingen vid satsen; fjolårets EG-0 är ingen aktivitet (R4-L1).
 -- ---------------------------------------------------------------------------
 
 -- 286a
@@ -34686,6 +34695,119 @@ BEGIN
   END IF;
   IF activities && ARRAY['EG-3', 'EG-4', 'EG-7', 'EG-11', 'EG-13'] THEN
     RAISE EXCEPTION 'elevlistan 286t: the commit moved the activities %, among them one of %', activities, ARRAY['EG-3', 'EG-4', 'EG-7', 'EG-11', 'EG-13'];
+  END IF;
+END $$;
+ROLLBACK;
+
+-- 286u: a teacher's duty link moves their events and activities at commit.
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001500')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+BEGIN
+  PERFORM set_config('app.test_rls286_school', school::text, true);
+  INSERT INTO "Ss12000DutyLinks" ("schoolId", "userId", "academicYearId", "ss12000DutyId", "dutyRole", "startDate", "updatedAt")
+  SELECT school, u.id, y.id, 'ffffffff-0000-4000-8000-000000000286', 'Lärare', y."startDate", now()
+    FROM "Users" u, "AcademicYears" y
+   WHERE u."authId" = '00000000-0000-4000-8000-000000001501' AND y."schoolId" = school AND y."isActive";
+  IF NOT FOUND THEN RAISE EXCEPTION 'elevlistan 286u: the duty link was not written'; END IF;
+END $$;
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', current_setting('app.test_rls286_school'), true);
+DO $$
+DECLARE
+  early text[] := ARRAY(SELECT resource FROM "Ss12000EntityVersions"
+                         WHERE resource IN ('CalendarEvent', 'Activity') AND xid = pg_current_xact_id() ORDER BY 1);
+BEGIN
+  IF cardinality(early) > 0 THEN
+    RAISE EXCEPTION 'elevlistan 286u: the duty link moved % at its statement', early;
+  END IF;
+END $$;
+SET CONSTRAINTS ALL IMMEDIATE;
+DO $$
+DECLARE
+  events text[] := ARRAY(
+    SELECT c.note FROM "Ss12000EntityVersions" v JOIN "CalendarLessons" c ON c.id = v."entityId"
+     WHERE v.resource = 'CalendarEvent' AND v.xid = pg_current_xact_id() ORDER BY 1);
+  activities text[] := ARRAY(
+    SELECT c.note FROM "Ss12000EntityVersions" v JOIN "CalendarLessons" c ON c.id = v."entityId"
+     WHERE v.resource = 'Activity' AND v.xid = pg_current_xact_id() ORDER BY 1);
+BEGIN
+  IF NOT events @> ARRAY['EG-1', 'EG-2', 'EG-8', 'EG-13', 'EG-15'] THEN
+    RAISE EXCEPTION 'elevlistan 286u: the commit moved the events % but not every one of %', events, ARRAY['EG-1', 'EG-2', 'EG-8', 'EG-13', 'EG-15'];
+  END IF;
+  IF NOT activities @> ARRAY['EG-1', 'EG-2', 'EG-8', 'EG-13', 'EG-15'] THEN
+    RAISE EXCEPTION 'elevlistan 286u: the commit moved the activities % but not every one of %', activities, ARRAY['EG-1', 'EG-2', 'EG-8', 'EG-13', 'EG-15'];
+  END IF;
+END $$;
+ROLLBACK;
+
+-- 286v: a group's new ss12000Id moves its activities at commit, as a new name does.
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001500')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+BEGIN
+  PERFORM set_config('app.test_rls286_school', school::text, true);
+  UPDATE "StudentGroups" SET "ss12000Id" = 'eeeeeeee-0000-4000-8000-000000000286' WHERE "schoolId" = school AND name = 'EG7A';
+  IF NOT FOUND THEN RAISE EXCEPTION 'elevlistan 286v: EG7A was not linked'; END IF;
+END $$;
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', current_setting('app.test_rls286_school'), true);
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM "Ss12000EntityVersions" WHERE resource = 'Activity' AND xid = pg_current_xact_id()) THEN
+    RAISE EXCEPTION 'elevlistan 286v: the new ss12000Id moved an activity at its statement';
+  END IF;
+END $$;
+SET CONSTRAINTS ALL IMMEDIATE;
+DO $$
+DECLARE
+  activities text[] := ARRAY(
+    SELECT c.note FROM "Ss12000EntityVersions" v JOIN "CalendarLessons" c ON c.id = v."entityId"
+     WHERE v.resource = 'Activity' AND v.xid = pg_current_xact_id() ORDER BY 1);
+BEGIN
+  IF NOT activities @> ARRAY['EG-1', 'EG-6'] THEN
+    RAISE EXCEPTION 'elevlistan 286v: the commit moved the activities % but not every one of %', activities, ARRAY['EG-1', 'EG-6'];
+  END IF;
+  IF activities && ARRAY['EG-3', 'EG-4', 'EG-7', 'EG-11', 'EG-13'] THEN
+    RAISE EXCEPTION 'elevlistan 286v: the commit moved the activities %, among them one of %', activities, ARRAY['EG-3', 'EG-4', 'EG-7', 'EG-11', 'EG-13'];
+  END IF;
+END $$;
+ROLLBACK;
+
+-- 286w: a school unit moves every activity of the active läsår at commit.
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001500')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+BEGIN
+  PERFORM set_config('app.test_rls286_school', school::text, true);
+  INSERT INTO "SchoolUnits" ("schoolId", name) VALUES (school, 'EG skolenhet');
+END $$;
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', current_setting('app.test_rls286_school'), true);
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM "Ss12000EntityVersions" WHERE resource = 'Activity' AND xid = pg_current_xact_id()) THEN
+    RAISE EXCEPTION 'elevlistan 286w: the school unit moved an activity at its statement';
+  END IF;
+END $$;
+SET CONSTRAINTS ALL IMMEDIATE;
+DO $$
+DECLARE
+  activities text[] := ARRAY(
+    SELECT c.note FROM "Ss12000EntityVersions" v JOIN "CalendarLessons" c ON c.id = v."entityId"
+     WHERE v.resource = 'Activity' AND v.xid = pg_current_xact_id() ORDER BY 1);
+BEGIN
+  IF NOT activities @> ARRAY['EG-1', 'EG-2', 'EG-3', 'EG-4', 'EG-5', 'EG-6', 'EG-7', 'EG-8', 'EG-10', 'EG-11', 'EG-12', 'EG-13', 'EG-14', 'EG-15'] THEN
+    RAISE EXCEPTION 'elevlistan 286w: the commit moved the activities % but not every one of %', activities, ARRAY['EG-1', 'EG-2', 'EG-3', 'EG-4', 'EG-5', 'EG-6', 'EG-7', 'EG-8', 'EG-10', 'EG-11', 'EG-12', 'EG-13', 'EG-14', 'EG-15'];
+  END IF;
+  IF activities && ARRAY['EG-0'] THEN
+    RAISE EXCEPTION 'elevlistan 286w: the commit moved last läsår''s EG-0 as an activity';
   END IF;
 END $$;
 ROLLBACK;

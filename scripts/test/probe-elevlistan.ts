@@ -8,7 +8,9 @@
  * läsår, EnS7 replacing engelska with P6 in it, and an engelska lesson of a
  * this-year group without pupils with 7A added. For el-g a teacher T and 7A's
  * matematik, which T teaches. For el-j last läsår's SvA6 replacing svenska,
- * with P7 in it, and a svenska lesson of last läsår with 7A added. Both
+ * with P7 in it, and a svenska lesson of last läsår with 7A added. El-l
+ * makes the school one that publishes drafts, with 8A and two of its
+ * matematik masters, one of them published. Both
  * writers are the API's role with the administrator as principal; the
  * teacher's writer edits a lesson, which moves its event at the statement,
  * as on main.
@@ -55,6 +57,14 @@
  *   el-j  P7, whose class 7A is added to last läsår's svenska and who is in
  *         last läsår's SvA6, removed: that lesson moves, though the class is
  *         this läsår's (R3-L4);
+ *   el-k  T, deactivated, reactivated: the matematik's event and activity
+ *         move at the commit, and so does the activity of a matematik master
+ *         T teaches (R4-L1);
+ *   el-l  in a school that publishes drafts, 8A renamed: the activity of its
+ *         published master moves (the snapshot is what is served), that of a
+ *         master only the draft has does not (R4-L1);
+ *   el-m  P2, named on T's matematik (a subject nothing replaces), relinked:
+ *         that lesson moves at the commit (R4-L1);
  *
  * and after each, the pending table is empty.
  *
@@ -637,6 +647,99 @@ export async function elevlistanChecks(owner: Client, api: PrismaService, marker
         await b.client.end().catch(() => undefined);
       }
       await pendingIsEmpty('el-j');
+    });
+
+    await check('el-k a teacher reactivated moves their events and activities at the commit', async () => {
+      // T as el-g's commit left it, deactivated, whatever el-g came to, and
+      // a master of 7A's matematik T teaches (the school publishes directly).
+      await owner.query(`UPDATE "Users" SET "isActive" = false WHERE id = $1 AND "isActive"`, [teacher]);
+      const taught = (
+        await one<{ id: string }>(
+          `INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+           VALUES ($1, $2, $3, $4, $5, 3, '13:00', '14:00', now()) RETURNING id`,
+          [s, year, ma, k7a, teacher],
+        )
+      ).id;
+      const b = await appClient();
+      try {
+        await b.client.query('BEGIN');
+        await b.client.query(asAdmin, [adminAuth]);
+        assert.equal((await b.client.query(`UPDATE "Users" SET "isActive" = true WHERE id = $1`, [teacher])).rowCount, 1, 'the administrator could not reactivate T');
+        const bXid = await xidOf(b.client);
+        await b.client.query('COMMIT');
+        assert.deepEqual(await xidsOf('CalendarEvent', [maths]), [bXid], 'T’s matematik event did not move');
+        assert.deepEqual(await xidsOf('Activity', [maths]), [bXid], 'T’s matematik activity did not move');
+        assert.deepEqual(await xidsOf('Activity', [taught]), [bXid], 'the activity of the master T teaches did not move');
+      } finally {
+        await b.client.query('ROLLBACK').catch(() => undefined);
+        await b.client.end().catch(() => undefined);
+      }
+      await pendingIsEmpty('el-k');
+    });
+
+    await check('el-l in a school that publishes drafts a group renamed moves its published activity, not one only the draft has', async () => {
+      const k8a = (
+        await one<{ id: string }>(
+          `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt") VALUES ($1, $2, 'El 8A', 8, now()) RETURNING id`,
+          [s, year],
+        )
+      ).id;
+      const master = async (day: number) =>
+        (
+          await one<{ id: string }>(
+            `INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+             VALUES ($1, $2, $3, $4, $5, '09:00', '10:00', now()) RETURNING id`,
+            [s, year, ma, k8a, day],
+          )
+        ).id;
+      const published = await master(1);
+      const draftOnly = await master(2);
+      await owner.query(`INSERT INTO "PublicationSettings" ("schoolId", "publishMode") VALUES ($1, 'DRAFT')`, [s]);
+      const publication = (
+        await one<{ id: string }>(
+          `INSERT INTO "TimetablePublications" ("schoolId", "academicYearId", kind, outcome, "publishMode", "validFrom", "validTo", "publishedByUserId")
+           VALUES ($1, $2, 'PUBLISH', 'PUBLISHED', 'DRAFT', current_date - 30, current_date + 300, $3) RETURNING id`,
+          [s, year, adminId],
+        )
+      ).id;
+      await owner.query(
+        `INSERT INTO "PublishedLessons" ("schoolId", "publicationId", "academicYearId", "masterLessonId", "subjectId", "studentGroupId",
+                                         "dayOfWeek", "startTime", "endTime", "isLocked", "isGenerated", "isParked", recurrence)
+         VALUES ($1, $2, $3, $4, $5, $6, 1, '09:00', '10:00', false, false, false, 'ALL_WEEKS')`,
+        [s, publication, year, published, ma, k8a],
+      );
+      const b = await appClient();
+      try {
+        await b.client.query('BEGIN');
+        await b.client.query(asAdmin, [adminAuth]);
+        assert.equal((await b.client.query(`UPDATE "StudentGroups" SET name = 'El 8A omdöpt' WHERE id = $1`, [k8a])).rowCount, 1, 'the administrator could not rename 8A');
+        const bXid = await xidOf(b.client);
+        await b.client.query('COMMIT');
+        assert.deepEqual(await xidsOf('Activity', [published]), [bXid], 'the published master’s activity did not move');
+        assert.equal((await xidsOf('Activity', [draftOnly])).includes(bXid), false, 'the activity of a master only the draft has moved');
+      } finally {
+        await b.client.query('ROLLBACK').catch(() => undefined);
+        await b.client.end().catch(() => undefined);
+      }
+      await pendingIsEmpty('el-l');
+    });
+
+    await check('el-m a pupil named on a lesson, relinked, moves that lesson at the commit', async () => {
+      // Matematik: no group replaces it, so only the naming moves it.
+      await owner.query(`INSERT INTO "CalendarLessonStudents" ("schoolId", "calendarLessonId", "studentId") VALUES ($1, $2, $3)`, [s, maths, pupils[1]]);
+      const b = await appClient();
+      try {
+        await b.client.query('BEGIN');
+        await b.client.query(asAdmin, [adminAuth]);
+        assert.equal((await b.client.query(`UPDATE "Users" SET "ss12000Id" = $2 WHERE id = $1`, [pupils[1], randomUUID()])).rowCount, 1, 'the administrator could not relink P2');
+        const bXid = await xidOf(b.client);
+        await b.client.query('COMMIT');
+        assert.deepEqual(await xidsOf('CalendarEvent', [maths]), [bXid], 'the matematik naming P2 did not move');
+      } finally {
+        await b.client.query('ROLLBACK').catch(() => undefined);
+        await b.client.end().catch(() => undefined);
+      }
+      await pendingIsEmpty('el-m');
     });
   } finally {
     await sweepElevlistanSchool(owner, marker);
