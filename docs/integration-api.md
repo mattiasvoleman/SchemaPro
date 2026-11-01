@@ -325,10 +325,14 @@ huvudman's schools is two Persons, each with its school's id.
   are taken all or none, backing off from a row another writer holds; past
   about 10 s the commit waits for it as any writer does. A membership write
   or a sync's apply therefore holds none of those events or activities
-  while it runs or commits, and a teacher's lesson edit does not wait for
-  it. A transaction that also moves events at its statements (a teacher's
-  own lesson write still does, as before, and so do a läsår's activation,
-  an employment and an administrator's removal of a pupil named on lessons)
+  while it runs or while its commit backs off, and a teacher's lesson edit
+  waits for it only while the commit takes them: about 0.1 s for a sync
+  chunk, 0.3 s for a whole school's activities. A transaction that
+  also moves events or activities at its statements (a teacher's own
+  lesson write still does, as before, and so do a läsår's activation, an
+  employment, a change of the organisations the source names, an
+  administrator's removal of a pupil named on lessons, and generating,
+  applying or publishing a schedule, which writes its lessons' activities)
   holds those while its commit backs off, up to about 10 s, and may then
   deadlock with a teacher's write. A commit can now fail where its
   statements did not: a deadlock answers the 409 `WRITE_CONFLICT` a
