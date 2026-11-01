@@ -5775,7 +5775,7 @@ async function runChecks(
   await tioarigChecks(owner, api, MARKER, check);
   await lessonLogChecks(owner, api, MARKER, check);
   await rastvaktChecks(owner, api, MARKER, check);
-  await elevlistanChecks(owner, MARKER, check);
+  await elevlistanChecks(owner, api, MARKER, check);
 }
 
 

@@ -2,13 +2,16 @@
  * The adapter probe's checks for Elevlistan i uppföljningen
  * (20261215090000): what the events a membership moves do to other writers,
  * which only two real connections show. In a school of its own (slug
- * <marker>-elevlistan), swept whole before and after: 7A with six pupils,
+ * <marker>-elevlistan), swept whole before and after: 7A with eight pupils,
  * SvA7 replacing svenska, and four svenska lessons of 7A. Pupil P_n going into
  * SvA7 moves all four events, at the transaction's commit. For el-e also last
  * läsår, EnS7 replacing engelska with P6 in it, and an engelska lesson of a
- * this-year group without pupils with 7A added. Both writers are
- * the API's role with the administrator as principal; the teacher's writer
- * edits a lesson, which moves its event at the statement, as on main.
+ * this-year group without pupils with 7A added. For el-g a teacher T and 7A's
+ * matematik, which T teaches. For el-j last läsår's SvA6 replacing svenska,
+ * with P7 in it, and a svenska lesson of last läsår with 7A added. Both
+ * writers are the API's role with the administrator as principal; the
+ * teacher's writer edits a lesson, which moves its event at the statement,
+ * as on main.
  *
  *   el-a  a membership committing while a teacher's transaction holds the
  *         last event (in entityId order) does not hold the first: the
@@ -24,11 +27,34 @@
  *         membership's commit then moves all four;
  *   el-d  the flush catches the lock timeout and nothing else: a REPEATABLE
  *         READ membership whose event the teacher moved after its snapshot
- *         fails its commit with 40001 at once, as its statement did on main;
+ *         fails its commit with 40001 at once (on main a membership took no
+ *         event, and this did not fail);
  *   el-e  a group without pupils (no enrollment holds it to its läsår) moved
  *         from this läsår to last moves its lesson that 7A is added to, in
  *         engelska, which only this läsår replaces (EnS7): P6 is on it again.
- *         The old läsår is what finds it (review of #226, R2-L1);
+ *         The old läsår is what finds it (review of #226, R2-L1). Moved back,
+ *         the new läsår finds it, and P6 is off it again (R3-L1);
+ *   el-f  an attempt of the flush gives up long before a deadlock check: a
+ *         teacher who holds the last event and, while an attempt waits on it
+ *         holding the first three, edits the first, gets it within 500 ms
+ *         (an attempt under a lock_timeout past deadlock_timeout brought
+ *         back round 1's deadlock, R3-L1);
+ *   el-g  a transaction like a sync's apply, which renames 7A, deactivates T
+ *         and writes a membership, holds none of their events or activities
+ *         before its commit: the teacher edits T's matematik and 7A's
+ *         svenska at once, and while the commit backs off from the last
+ *         event; then the commit moves all of them (R3-M1);
+ *   el-h  a deadlock at the commit (past a patience of 0, the flush waits on
+ *         the teacher's last event holding the first, and the teacher
+ *         reaches for the first) reaches a withRls caller as the adapter's
+ *         error, which the API answers with its 409 WRITE_CONFLICT and the
+ *         sync reads as 40P01 (R3-M2);
+ *   el-i  under a publication of every table's deletes a membership still
+ *         commits: the pending table is unlogged and in no publication
+ *         (R3-M3);
+ *   el-j  P7, whose class 7A is added to last läsår's svenska and who is in
+ *         last läsår's SvA6, removed: that lesson moves, though the class is
+ *         this läsår's (R3-L4);
  *
  * and after each, the pending table is empty.
  *
@@ -40,7 +66,13 @@
  */
 import { strict as assert } from 'node:assert';
 import { randomUUID } from 'node:crypto';
+import { ConflictException } from '@nestjs/common';
 import { Client } from 'pg';
+import { Role } from '../../src/auth/enums/role.enum';
+import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
+import { WRITE_CONFLICT, isWriteConflict, rethrowPrismaError } from '../../src/common/utils/prisma-errors';
+import type { PrismaService } from '../../src/database/prisma.service';
+import { sqlStateOf } from '../../src/integration/ss12000-sync/errors';
 
 type Check = (label: string, body: () => Promise<void>) => Promise<void>;
 
@@ -87,7 +119,7 @@ async function within<T>(promise: Promise<T>, ms: number): Promise<T | 'pending'
   }
 }
 
-export async function elevlistanChecks(owner: Client, marker: string, check: Check): Promise<void> {
+export async function elevlistanChecks(owner: Client, api: PrismaService, marker: string, check: Check): Promise<void> {
   await sweepElevlistanSchool(owner, marker);
   const one = async <T extends object>(sql: string, params: unknown[] = []): Promise<T> => (await owner.query<T>(sql, params)).rows[0]!;
   try {
@@ -121,13 +153,16 @@ export async function elevlistanChecks(owner: Client, marker: string, check: Che
       )
     ).id;
     const adminAuth = randomUUID();
-    await owner.query(
-      `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt")
-       VALUES ($1, $2, 'El', 'Admin', 'SCHOOL_ADMIN', 'FULL', $3, true, now())`,
-      [s, `${marker}-elevlistan-admin@example.invalid`, adminAuth],
-    );
+    const adminId = (
+      await one<{ id: string }>(
+        `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt")
+         VALUES ($1, $2, 'El', 'Admin', 'SCHOOL_ADMIN', 'FULL', $3, true, now()) RETURNING id`,
+        [s, `${marker}-elevlistan-admin@example.invalid`, adminAuth],
+      )
+    ).id;
+    const admin: AuthenticatedUser = { authId: adminAuth, userId: adminId, schoolId: s, role: Role.SCHOOL_ADMIN, adminProfile: 'FULL' };
     const pupils: string[] = [];
-    for (let n = 1; n <= 6; n++) {
+    for (let n = 1; n <= 8; n++) {
       pupils.push(
         (
           await one<{ id: string }>(
@@ -186,6 +221,54 @@ export async function elevlistanChecks(owner: Client, marker: string, check: Che
       )
     ).id;
     await owner.query(`INSERT INTO "CalendarLessonGroups" ("schoolId", "calendarLessonId", "studentGroupId") VALUES ($1, $2, $3)`, [s, english, k7a]);
+    // el-g: T teaches 7A's matematik, an ad hoc lesson of the active läsår
+    // (its activity is the lesson's own).
+    const teacher = (
+      await one<{ id: string }>(
+        `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+         VALUES ($1, $2, 'El', 'Lärare', 'TEACHER', $3, true, now()) RETURNING id`,
+        [s, `${marker}-elevlistan-t@example.invalid`, randomUUID()],
+      )
+    ).id;
+    const ma = (
+      await one<{ id: string }>(`INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES ($1, 'El matematik', 'ELMA', now()) RETURNING id`, [s])
+    ).id;
+    const maths = (
+      await one<{ id: string }>(
+        `INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+         VALUES ($1, $2, $3, current_date + 8, (current_date + 8) + time '13:00', (current_date + 8) + time '14:00', 'El-ma', now())
+         RETURNING id`,
+        [s, ma, k7a],
+      )
+    ).id;
+    await owner.query(`INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES ($1, $2, $3, 'LEAD')`, [s, maths, teacher]);
+    // el-j: last läsår's svenska of a group of its own with this läsår's 7A
+    // added, and last läsår's SvA6 with P7 (at home in 7A) in it, so P7 is
+    // off that lesson.
+    const sv6 = (
+      await one<{ id: string }>(
+        `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "updatedAt")
+         VALUES ($1, $2, 'El Sv6', 6, 'TEACHING_GROUP', now()) RETURNING id`,
+        [s, lastYear],
+      )
+    ).id;
+    const svenska6 = (
+      await one<{ id: string }>(
+        `INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+         VALUES ($1, $2, $3, current_date - 100, (current_date - 100) + time '08:00', (current_date - 100) + time '09:00', 'El-sv6', now())
+         RETURNING id`,
+        [s, sv, sv6],
+      )
+    ).id;
+    await owner.query(`INSERT INTO "CalendarLessonGroups" ("schoolId", "calendarLessonId", "studentGroupId") VALUES ($1, $2, $3)`, [s, svenska6, k7a]);
+    const sva6 = (
+      await one<{ id: string }>(
+        `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "replacesSubjectId", "updatedAt")
+         VALUES ($1, $2, 'El SvA6', 6, 'TEACHING_GROUP', $3, now()) RETURNING id`,
+        [s, lastYear, sv],
+      )
+    ).id;
+    await owner.query(`INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES ($1, $2, $3)`, [s, sva6, pupils[6]]);
     const first = lessons[0]!;
     const last = lessons[lessons.length - 1]!;
     // Each event has its version row (the inserts above moved them), so the
@@ -203,6 +286,14 @@ export async function elevlistanChecks(owner: Client, marker: string, check: Che
     const edit = (client: Client, lesson: string) =>
       client.query(`UPDATE "CalendarLessons" SET "startsAt" = "startsAt" + interval '1 minute', "endsAt" = "endsAt" + interval '1 minute' WHERE id = $1`, [lesson]);
     const xidOf = async (client: Client) => (await client.query<{ xid: string }>('SELECT pg_current_xact_id()::text AS xid')).rows[0]!.xid;
+    /** The xid each entity's version carries, by resource and id. */
+    const xidsOf = async (resource: string, ids: string[]) =>
+      (
+        await owner.query<{ xid: string }>(
+          `SELECT xid::text AS xid FROM "Ss12000EntityVersions" WHERE resource = $1 AND "entityId" = ANY ($2::uuid[]) ORDER BY "entityId"`,
+          [resource, ids],
+        )
+      ).rows.map((row) => row.xid);
     const versionsOf = async () =>
       (
         await owner.query<{ id: string; xid: string }>(
@@ -359,25 +450,193 @@ export async function elevlistanChecks(owner: Client, marker: string, check: Che
       await pendingIsEmpty('el-d');
     });
 
-    await check('el-e a group without pupils moved to last läsår moves its lesson in a subject only this läsår replaces', async () => {
+    await check('el-e a group without pupils moved to last läsår and back moves its lesson in a subject only this läsår replaces, both ways', async () => {
+      for (const [to, which] of [[lastYear, 'the old läsår'], [year, 'the new läsår']] as const) {
+        const b = await appClient();
+        try {
+          await b.client.query('BEGIN');
+          await b.client.query(asAdmin, [adminAuth]);
+          const moved = await b.client.query(`UPDATE "StudentGroups" SET "academicYearId" = $2 WHERE id = $1`, [empty, to]);
+          assert.equal(moved.rowCount, 1, 'the administrator could not move the group');
+          const bXid = await xidOf(b.client);
+          await b.client.query('COMMIT');
+          assert.deepEqual(await xidsOf('CalendarEvent', [english]), [bXid], `the engelska lesson did not move (${which} finds it)`);
+        } finally {
+          await b.client.query('ROLLBACK').catch(() => undefined);
+          await b.client.end().catch(() => undefined);
+        }
+      }
+      await pendingIsEmpty('el-e');
+    });
+
+    await check('el-f an attempt of the flush gives up long before a deadlock check: a teacher reaching for an event it holds waits at most that attempt', async () => {
+      const b = await appClient();
+      const a = await appClient();
+      try {
+        await a.client.query('BEGIN');
+        await a.client.query(asAdmin, [adminAuth]);
+        await edit(a.client, last);
+        await b.client.query('BEGIN');
+        await b.client.query(asAdmin, [adminAuth]);
+        // No fallback while the check runs: only attempts.
+        await b.client.query(`SELECT set_config('app.ss12000_replaced_patience', '60', true)`);
+        await join(b.client, pupils[1]!);
+        const bXid = await xidOf(b.client);
+        const committed = settle(b.client.query('COMMIT'));
+        // Mid-attempt: the first three events locked, waiting on the last.
+        await until(b.pid, 'an attempt of the flush waiting on the teacher', (row) => inCommit(row) && row.type === 'Lock');
+        // The attempt gives up after 50 ms and releases the first event; one
+        // that waited past deadlock_timeout (1 s) would deadlock with the
+        // teacher here, or keep the teacher past this lock_timeout.
+        await a.client.query(`SET LOCAL lock_timeout = '500ms'`);
+        await edit(a.client, first);
+        assert.equal(await within(committed, 0), 'pending', 'the membership committed while the teacher held its last event');
+        await a.client.query('COMMIT');
+        const outcome = await within(committed, 15_000);
+        assert.notEqual(outcome, 'pending', 'the membership never committed after the teacher did');
+        assert.equal((outcome as Settled).error, null, `the membership's commit failed: ${(outcome as Settled).error?.message}`);
+        assert.deepEqual(await xidsOf('CalendarEvent', lessons), lessons.map(() => bXid), 'not every event carries the membership’s transaction');
+      } finally {
+        await a.client.query('ROLLBACK').catch(() => undefined);
+        await b.client.query('ROLLBACK').catch(() => undefined);
+        await owner.query('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid = ANY ($1::int[])', [[a.pid, b.pid]]);
+        await a.client.end().catch(() => undefined);
+        await b.client.end().catch(() => undefined);
+      }
+      await pendingIsEmpty('el-f');
+    });
+
+    await check('el-g a sync-like transaction (a group renamed, a membership, a teacher deactivated) holds none of their events or activities before its commit', async () => {
+      const b = await appClient();
+      const a = await appClient();
+      try {
+        await b.client.query('BEGIN');
+        await b.client.query(asAdmin, [adminAuth]);
+        // As the sync's apply: its lock_timeout, its order (groups, ...,
+        // memberships, ..., deactivations).
+        await b.client.query(`SET LOCAL lock_timeout = '10s'`);
+        assert.equal((await b.client.query(`UPDATE "StudentGroups" SET name = 'El 7A omdöpt' WHERE id = $1`, [k7a])).rowCount, 1, 'the administrator could not rename 7A');
+        await join(b.client, pupils[4]!);
+        assert.equal((await b.client.query(`UPDATE "Users" SET "isActive" = false WHERE id = $1`, [teacher])).rowCount, 1, 'the administrator could not deactivate T');
+        const bXid = await xidOf(b.client);
+        // Before its commit it holds none of them: the teacher edits T's
+        // matematik (its event and activity the deactivation moves) and
+        // 7A's svenska (its activity the new name moves, its event the
+        // membership) without waiting.
+        await a.client.query('BEGIN');
+        await a.client.query(asAdmin, [adminAuth]);
+        await a.client.query(`SET LOCAL lock_timeout = '500ms'`);
+        await edit(a.client, maths);
+        await edit(a.client, first);
+        await a.client.query('ROLLBACK');
+        // At its commit: the teacher holds the last svenska event, the commit
+        // backs off, and the teacher edits the matematik at once.
+        await a.client.query('BEGIN');
+        await a.client.query(asAdmin, [adminAuth]);
+        await a.client.query(`SET LOCAL lock_timeout = '2s'`);
+        await edit(a.client, last);
+        const committed = settle(b.client.query('COMMIT'));
+        await until(b.pid, 'the commit’s flush backing off', (row) => inCommit(row) && row.event === 'PgSleep');
+        await edit(a.client, maths);
+        assert.equal(await within(committed, 0), 'pending', 'the commit went through while the teacher held its last event');
+        await a.client.query('COMMIT');
+        const outcome = await within(committed, 15_000);
+        assert.notEqual(outcome, 'pending', 'the commit never went through after the teacher’s');
+        assert.equal((outcome as Settled).error, null, `the commit failed: ${(outcome as Settled).error?.message}`);
+        const all = [...lessons, maths].sort();
+        assert.deepEqual(await xidsOf('CalendarEvent', all), all.map(() => bXid), 'not every event carries the transaction');
+        assert.deepEqual(await xidsOf('Activity', all), all.map(() => bXid), 'not every activity carries the transaction');
+      } finally {
+        await a.client.query('ROLLBACK').catch(() => undefined);
+        await b.client.query('ROLLBACK').catch(() => undefined);
+        await owner.query('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid = ANY ($1::int[])', [[a.pid, b.pid]]);
+        await a.client.end().catch(() => undefined);
+        await b.client.end().catch(() => undefined);
+      }
+      await pendingIsEmpty('el-g');
+    });
+
+    await check('el-h a deadlock at the commit reaches withRls as the adapter’s error: the API’s 409 WRITE_CONFLICT, and 40P01 to the sync', async () => {
+      const a = await appClient();
+      let pid = 0;
+      try {
+        await a.client.query('BEGIN');
+        await a.client.query(asAdmin, [adminAuth]);
+        await a.client.query(`SET LOCAL lock_timeout = '5s'`);
+        await edit(a.client, last);
+        const saved = api
+          .withRls(admin, async (tx) => {
+            pid = (await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`)[0]!.pid;
+            // Past a patience of 0 the flush waits as a writer at once.
+            await tx.$executeRaw`SELECT set_config('app.ss12000_replaced_patience', '0', true)`;
+            await tx.$executeRaw`INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (${s}::uuid, ${sva}::uuid, ${pupils[5]}::uuid)`;
+          })
+          .then(
+            () => null,
+            (error: unknown) => error,
+          );
+        for (let tries = 0; pid === 0; tries++) {
+          if (tries > 1000) throw new Error('the save never began');
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        // The commit holds the first three events and waits on the last ...
+        await until(pid, 'the commit waiting on the teacher', (row) => row.state === 'active' && row.type === 'Lock');
+        // ... and the teacher reaches for the first: a deadlock, which the
+        // commit, waiting longer, finds first.
+        await edit(a.client, first);
+        await a.client.query('COMMIT');
+        const error = await saved;
+        assert.ok(error, 'the save committed through a deadlock');
+        assert.equal(isWriteConflict(error), true, `not a write conflict: ${String((error as Error).message)}`);
+        assert.equal(sqlStateOf(error), '40P01');
+        assert.throws(
+          () => rethrowPrismaError(error),
+          (thrown: unknown) => thrown instanceof ConflictException && (thrown.getResponse() as { code?: string }).code === WRITE_CONFLICT,
+        );
+        assert.equal(await member(pupils[5]!), false, 'the failed commit kept the membership');
+      } finally {
+        await a.client.query('ROLLBACK').catch(() => undefined);
+        if (pid) await owner.query('SELECT pg_cancel_backend($1)', [pid]);
+        await owner.query('SELECT pg_terminate_backend($1)', [a.pid]);
+        await a.client.end().catch(() => undefined);
+      }
+      await pendingIsEmpty('el-h');
+    });
+
+    await check('el-i under a publication of every table’s deletes a membership still commits (the pending table is in none)', async () => {
+      const publication = `elevlistan_${randomUUID().replace(/-/g, '')}`;
+      await owner.query(`CREATE PUBLICATION ${publication} FOR ALL TABLES`);
       const b = await appClient();
       try {
         await b.client.query('BEGIN');
         await b.client.query(asAdmin, [adminAuth]);
-        const moved = await b.client.query(`UPDATE "StudentGroups" SET "academicYearId" = $2 WHERE id = $1`, [empty, lastYear]);
-        assert.equal(moved.rowCount, 1, 'the administrator could not move the group');
+        await join(b.client, pupils[7]!);
+        const bXid = await xidOf(b.client);
+        const outcome = await settle(b.client.query('COMMIT'));
+        assert.equal(outcome.error, null, `the commit failed: ${outcome.error?.message}`);
+        assert.deepEqual(await xidsOf('CalendarEvent', lessons), lessons.map(() => bXid), 'not every event carries the membership’s transaction');
+      } finally {
+        await b.client.query('ROLLBACK').catch(() => undefined);
+        await b.client.end().catch(() => undefined);
+        await owner.query(`DROP PUBLICATION IF EXISTS ${publication}`);
+      }
+      await pendingIsEmpty('el-i');
+    });
+
+    await check('el-j a pupil removed whose class is added to a lesson of last läsår, where a group of theirs replaces it, moves that lesson', async () => {
+      const b = await appClient();
+      try {
+        await b.client.query('BEGIN');
+        await b.client.query(asAdmin, [adminAuth]);
+        assert.equal((await b.client.query(`DELETE FROM "Users" WHERE id = $1`, [pupils[6]])).rowCount, 1, 'the administrator could not remove P7');
         const bXid = await xidOf(b.client);
         await b.client.query('COMMIT');
-        const { rows } = await owner.query<{ xid: string }>(
-          `SELECT xid::text AS xid FROM "Ss12000EntityVersions" WHERE resource = 'CalendarEvent' AND "entityId" = $1`,
-          [english],
-        );
-        assert.equal(rows[0]?.xid, bXid, 'the engelska lesson, where P6 is on again, did not move');
+        assert.deepEqual(await xidsOf('CalendarEvent', [svenska6]), [bXid], 'last läsår’s svenska, where P7 was off, did not move');
       } finally {
         await b.client.query('ROLLBACK').catch(() => undefined);
         await b.client.end().catch(() => undefined);
       }
-      await pendingIsEmpty('el-e');
+      await pendingIsEmpty('el-j');
     });
   } finally {
     await sweepElevlistanSchool(owner, marker);

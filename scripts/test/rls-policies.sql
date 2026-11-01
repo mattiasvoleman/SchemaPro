@@ -33865,6 +33865,10 @@ ROLLBACK;
 -- app.ss12000_bump_replaced är SECURITY DEFINER med fäst search_path och
 -- körbar av ingen API-roll; triggerfunktionerna på StudentGroupMembers,
 -- StudentGroups och Users frågar den, och deras triggrar är desamma.
+-- Händelserna och aktiviteterna flyttas vid commit: väntetabellen är
+-- unlogged (ingen publikation kan fälla flushen), och det som skjuter upp
+-- (app.ss12000_bump_activities, tjänstlänkarna, Users) flyttar inget vid
+-- satsen.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -33897,6 +33901,11 @@ BEGIN
   IF (SELECT relrowsecurity FROM pg_class WHERE oid = 'app."Ss12000ReplacedPending"'::regclass) IS DISTINCT FROM true THEN
     RAISE EXCEPTION 'elevlistan 285: app."Ss12000ReplacedPending" has row security off';
   END IF;
+  -- Unlogged: in no publication, so a publication of deletes for all tables
+  -- or for schema app cannot fail the flush's DELETE (review R3-M3).
+  IF (SELECT relpersistence FROM pg_class WHERE oid = 'app."Ss12000ReplacedPending"'::regclass) IS DISTINCT FROM 'u' THEN
+    RAISE EXCEPTION 'elevlistan 285: app."Ss12000ReplacedPending" is logged, and a publication of deletes would fail every flush';
+  END IF;
   FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated'] LOOP
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r)
        AND has_table_privilege(r, 'app."Ss12000ReplacedPending"', 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE') THEN
@@ -33908,7 +33917,8 @@ BEGIN
                     AND t.tgconstraint <> 0 AND t.tgdeferrable AND t.tginitdeferred AND p.proname = 'ss12000_flush_replaced') THEN
     RAISE EXCEPTION 'elevlistan 285: the flush is not a deferred constraint trigger on the table';
   END IF;
-  FOREACH r IN ARRAY ARRAY['app.ss12000_defer_lessons(uuid, uuid[])', 'app.ss12000_flush_replaced()'] LOOP
+  FOREACH r IN ARRAY ARRAY['app.ss12000_defer_lessons(uuid, uuid[])', 'app.ss12000_defer_activities(uuid, uuid[])',
+                           'app.ss12000_activity_ids(uuid, uuid[], uuid[], uuid[], boolean)', 'app.ss12000_flush_replaced()'] LOOP
     IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = r::regprocedure)
        OR (SELECT proconfig FROM pg_proc WHERE oid = r::regprocedure) IS DISTINCT FROM ARRAY['search_path=public, pg_temp']
        OR has_function_privilege('app_authenticated', r, 'EXECUTE') OR has_function_privilege('anon', r, 'EXECUTE') THEN
@@ -33917,15 +33927,34 @@ BEGIN
   END LOOP;
   -- What two connections would need to see (the adapter probe's el- checks
   -- do), pinned in the bodies too: the flush catches the lock timeout and
-  -- nothing else, locks in order before it writes, and waits as any writer
-  -- once its patience is spent; every bump upserts in entityId order; and the
-  -- statement records, never moves.
-  IF (SELECT prosrc FROM pg_proc WHERE oid = 'app.ss12000_flush_replaced()'::regprocedure) NOT LIKE '%EXCEPTION WHEN lock_not_available THEN%'
+  -- nothing else, and only within its patience; an attempt gives up after
+  -- 50 ms, long before a deadlock check (deadlock_timeout); it locks in
+  -- (resource, entityId) order before it writes; the patience is 10 s of
+  -- wall-clock time unless a test shortens it; and it moves, never records
+  -- again. Every bump upserts in entityId order, and the statement records,
+  -- never moves.
+  IF (SELECT prosrc FROM pg_proc WHERE oid = 'app.ss12000_flush_replaced()'::regprocedure) NOT LIKE '%EXCEPTION WHEN lock_not_available THEN%IF last_try THEN%RAISE;%'
      OR (SELECT prosrc FROM pg_proc WHERE oid = 'app.ss12000_flush_replaced()'::regprocedure) ILIKE '%WHEN OTHERS%'
-     OR (SELECT prosrc FROM pg_proc WHERE oid = 'app.ss12000_flush_replaced()'::regprocedure) NOT LIKE '%ORDER BY v."entityId"%FOR UPDATE;%'
-     OR (SELECT prosrc FROM pg_proc WHERE oid = 'app.ss12000_flush_replaced()'::regprocedure) NOT LIKE '%IF waited >= patience THEN%PERFORM app.ss12000_bump_lessons(r.s, r.ids);%' THEN
+     OR (SELECT prosrc FROM pg_proc WHERE oid = 'app.ss12000_flush_replaced()'::regprocedure) NOT LIKE '%IF NOT last_try THEN%PERFORM set_config(''lock_timeout'', ''50ms'', true);%'
+     OR (SELECT prosrc FROM pg_proc WHERE oid = 'app.ss12000_flush_replaced()'::regprocedure)
+          NOT LIKE '%(v."resource" = ''CalendarEvent'' AND v."entityId" = ANY (r.lessons))%(v."resource" = ''Activity'' AND v."entityId" = ANY (r.activities))%ORDER BY v."resource", v."entityId"%FOR UPDATE;%'
+     OR (SELECT prosrc FROM pg_proc WHERE oid = 'app.ss12000_flush_replaced()'::regprocedure) NOT LIKE '%current_setting(''app.ss12000_replaced_patience'', true), '''')::numeric, 10);%'
+     OR (SELECT prosrc FROM pg_proc WHERE oid = 'app.ss12000_flush_replaced()'::regprocedure) NOT LIKE '%deadline := clock_timestamp() + patience * interval ''1 second'';%last_try := clock_timestamp() >= deadline;%'
+     OR (SELECT prosrc FROM pg_proc WHERE oid = 'app.ss12000_flush_replaced()'::regprocedure) ~ '(ss12000_bump_activities|ss12000_defer_)' THEN
     RAISE EXCEPTION 'elevlistan 285: the flush''s body is not the all-or-none one';
   END IF;
+  -- What the sync's apply writes beside memberships moves its events and
+  -- activities at commit too (R3-M1): app.ss12000_bump_activities records
+  -- them, and so do the duty links and Users.
+  IF (SELECT prosrc FROM pg_proc WHERE oid = 'app.ss12000_bump_activities(uuid, uuid[], uuid[], uuid[], boolean)'::regprocedure)
+       NOT LIKE '%app.ss12000_defer_activities(p_school, app.ss12000_activity_ids(p_school, p_groups, p_subjects, p_teachers, p_all));%'
+     OR (SELECT prosrc FROM pg_proc WHERE oid = 'app.ss12000_bump_activities(uuid, uuid[], uuid[], uuid[], boolean)'::regprocedure) LIKE '%ss12000_bump(%' THEN
+    RAISE EXCEPTION 'elevlistan 285: app.ss12000_bump_activities moves activities at the statement';
+  END IF;
+  SELECT string_agg(p.proname, ', ' ORDER BY p.proname) INTO bad
+    FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace AND ns.nspname = 'app'
+   WHERE p.proname IN ('ss12000_duty_links_moved', 'ss12000_v_users') AND p.prosrc LIKE '%ss12000_bump_lessons(%';
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'elevlistan 285: % moves events at the statement', bad; END IF;
   IF (SELECT prosrc FROM pg_proc WHERE oid = 'app.ss12000_bump(uuid, text, uuid[])'::regprocedure) NOT LIKE '%ORDER BY d.id%' THEN
     RAISE EXCEPTION 'elevlistan 285: app.ss12000_bump does not upsert in entityId order';
   END IF;
@@ -34004,6 +34033,13 @@ ROLLBACK;
 --   286q  händelserna flyttas vid commit: efter en medlemsskrivning har ingen
 --         händelse transaktionens xid förrän den uppskjutna flushen körts.
 --   286r  flushen lämnar transaktionens lock_timeout som den var.
+--   286s  EG-läraren avaktiveras (som synkens tillämpning gör i medlemskapens
+--         transaktion, granskningens R3-M1): ingen händelse eller aktivitet
+--         har transaktionens xid före commit, och efter flushen har hens
+--         lektioner i år det, både händelserna och aktiviteterna.
+--   286t  EG7A byter namn: app.ss12000_bump_activities skjuter upp, så
+--         gruppens aktiviteter (EG-1, EG-6 med 7A) flyttas vid commit och
+--         inte vid satsen.
 -- ---------------------------------------------------------------------------
 
 -- 286a
@@ -34574,6 +34610,82 @@ BEGIN
   END IF;
   IF current_setting('lock_timeout') IS DISTINCT FROM '7s' THEN
     RAISE EXCEPTION 'elevlistan 286r: the flush left lock_timeout at %', current_setting('lock_timeout');
+  END IF;
+END $$;
+ROLLBACK;
+
+-- 286s: a teacher's deactivation moves their events and activities at commit.
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001500')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+BEGIN
+  PERFORM set_config('app.test_rls286_school', school::text, true);
+  UPDATE "Users" SET "isActive" = false WHERE "authId" = '00000000-0000-4000-8000-000000001501';
+  IF NOT FOUND THEN RAISE EXCEPTION 'elevlistan 286s: the teacher was not deactivated'; END IF;
+END $$;
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', current_setting('app.test_rls286_school'), true);
+DO $$
+DECLARE
+  early text[] := ARRAY(SELECT resource FROM "Ss12000EntityVersions"
+                         WHERE resource IN ('CalendarEvent', 'Activity') AND xid = pg_current_xact_id() ORDER BY 1);
+BEGIN
+  IF cardinality(early) > 0 THEN
+    RAISE EXCEPTION 'elevlistan 286s: the deactivation moved % at its statement', early;
+  END IF;
+END $$;
+SET CONSTRAINTS ALL IMMEDIATE;
+DO $$
+DECLARE
+  events text[] := ARRAY(
+    SELECT c.note FROM "Ss12000EntityVersions" v JOIN "CalendarLessons" c ON c.id = v."entityId"
+     WHERE v.resource = 'CalendarEvent' AND v.xid = pg_current_xact_id() ORDER BY 1);
+  activities text[] := ARRAY(
+    SELECT c.note FROM "Ss12000EntityVersions" v JOIN "CalendarLessons" c ON c.id = v."entityId"
+     WHERE v.resource = 'Activity' AND v.xid = pg_current_xact_id() ORDER BY 1);
+BEGIN
+  IF NOT events @> ARRAY['EG-1', 'EG-2', 'EG-8', 'EG-13', 'EG-15'] THEN
+    RAISE EXCEPTION 'elevlistan 286s: the commit moved the events % but not every one of %', events, ARRAY['EG-1', 'EG-2', 'EG-8', 'EG-13', 'EG-15'];
+  END IF;
+  IF NOT activities @> ARRAY['EG-1', 'EG-2', 'EG-8', 'EG-13', 'EG-15'] THEN
+    RAISE EXCEPTION 'elevlistan 286s: the commit moved the activities % but not every one of %', activities, ARRAY['EG-1', 'EG-2', 'EG-8', 'EG-13', 'EG-15'];
+  END IF;
+END $$;
+ROLLBACK;
+
+-- 286t: a group's new name moves its activities at commit.
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001500')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+BEGIN
+  PERFORM set_config('app.test_rls286_school', school::text, true);
+  UPDATE "StudentGroups" SET name = 'EG7A nytt namn' WHERE "schoolId" = school AND name = 'EG7A';
+  IF NOT FOUND THEN RAISE EXCEPTION 'elevlistan 286t: EG7A was not renamed'; END IF;
+END $$;
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', current_setting('app.test_rls286_school'), true);
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM "Ss12000EntityVersions" WHERE resource = 'Activity' AND xid = pg_current_xact_id()) THEN
+    RAISE EXCEPTION 'elevlistan 286t: the new name moved an activity at its statement';
+  END IF;
+END $$;
+SET CONSTRAINTS ALL IMMEDIATE;
+DO $$
+DECLARE
+  activities text[] := ARRAY(
+    SELECT c.note FROM "Ss12000EntityVersions" v JOIN "CalendarLessons" c ON c.id = v."entityId"
+     WHERE v.resource = 'Activity' AND v.xid = pg_current_xact_id() ORDER BY 1);
+BEGIN
+  IF NOT activities @> ARRAY['EG-1', 'EG-6'] THEN
+    RAISE EXCEPTION 'elevlistan 286t: the commit moved the activities % but not every one of %', activities, ARRAY['EG-1', 'EG-6'];
+  END IF;
+  IF activities && ARRAY['EG-3', 'EG-4', 'EG-7', 'EG-11', 'EG-13'] THEN
+    RAISE EXCEPTION 'elevlistan 286t: the commit moved the activities %, among them one of %', activities, ARRAY['EG-3', 'EG-4', 'EG-7', 'EG-11', 'EG-13'];
   END IF;
 END $$;
 ROLLBACK;

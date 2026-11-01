@@ -54,8 +54,9 @@
 --                         key's cascade, and their trigger moves the teaching
 --                         groups' events; which groups replaced what for the
 --                         pupil is then unknown, so every event of the home
---                         class in a subject some group of its läsår
---                         replaces moves.
+--                         class in a subject some group replaces in the
+--                         event's läsår moves, in any läsår: the class may
+--                         be added to a lesson of another (review R3-L4).
 --
 -- CalendarLessons, CalendarLessonGroups and CalendarLessonStudents already
 -- move their event on any change.
@@ -78,31 +79,76 @@
 --   - The statement triggers work out the events as before (the same reads,
 --     nothing locked) and record them in app."Ss12000ReplacedPending", one
 --     row per statement and school, tagged with the transaction.
+--   - So are the activities app.ss12000_bump_activities moves, and the
+--     events a person's deactivation, reactivation or relinked ss12000Id
+--     (app.ss12000_v_users) and a teacher's duty link
+--     (app.ss12000_duty_links_moved) move. app.ss12000_bump_activities is
+--     called for what surrounds a lesson (a group's name or link, a
+--     person's activation, a duty link, a school unit, a subject, a läsår,
+--     the publication mode), never by a lesson's own triggers, which move
+--     its activity themselves; it works the activities out at the statement,
+--     by app.ss12000_activity_ids (its query, unchanged). A sync's apply
+--     writes groups' names and links, school units, duty links and
+--     deactivations in the transaction of its memberships. Holding those
+--     events and activities from the statement while its commit waited
+--     blocked a teacher who wrote one of them for the whole wait, and then
+--     deadlocked (R3-M1).
 --   - A constraint trigger on that table, DEFERRABLE INITIALLY DEFERRED,
 --     runs app.ss12000_flush_replaced at COMMIT: it takes the transaction's
---     rows (deleting them), and moves the union of their events once.
+--     rows (deleting them), and moves the union of their events and
+--     activities once.
 --   - The flush takes the version rows ALL OR NONE: each attempt runs in a
---     subtransaction under lock_timeout 50 ms, locks the existing rows in
---     entityId order (SELECT … FOR UPDATE, which writes no row version) and
---     then upserts; a row held elsewhere rolls the attempt back, releasing
---     everything, and it waits (20 ms doubling to 500 ms) and tries again.
---     A failed attempt leaves no dead version rows behind (R2-L2).
---   - After 10 s of contention (app.ss12000_replaced_patience, seconds, may
---     shorten it for a test) it waits as every other writer does.
+--     subtransaction under lock_timeout 50 ms, well inside PostgreSQL's
+--     deadlock_timeout (1 s by default), so an attempt gives up before a
+--     deadlock check could pick a victim. It locks the existing rows in
+--     (resource, entityId) order (SELECT … FOR UPDATE, which writes no row
+--     version) and then upserts; a row held elsewhere rolls the attempt
+--     back, releasing everything, and it waits (20 ms doubling to 500 ms)
+--     and tries again. A failed attempt leaves no dead version rows behind
+--     (R2-L2).
+--   - Once 10 s have passed since the flush began
+--     (app.ss12000_replaced_patience, seconds of wall-clock time, may
+--     shorten it for a test; the last pause can carry it to 10.5 s) it takes
+--     them as every other writer does, under the transaction's own
+--     lock_timeout.
+--   - The table is UNLOGGED: it is empty between transactions, so a crash
+--     loses nothing, it writes no WAL, and no publication includes it. A
+--     logged table, which has no replica identity, would fail every flush's
+--     DELETE (55000) under a publication that publishes deletes for all
+--     tables or for schema app (R3-M3).
 --
--- At commit the transaction holds no event its own membership statements
--- moved, so a teacher's lesson write never waits on a membership or a sync
--- in progress; it can wait only for the few milliseconds between the
--- flush and the COMMIT. The committing membership writer waits for the
--- teacher instead, in the retry loop, holding nothing the teacher needs.
--- What can still deadlock: a transaction that holds an event for more than
--- the patience (10 s) and then reaches for one a committing flush holds, as
--- two such writers could on main; and a single transaction that both
--- writes lessons and memberships, whose lesson bumps (immediate, as on
--- main) it holds while its flush waits. And where a statement failed on
--- main, the COMMIT now does: past the patience under the transaction's own
--- lock_timeout (55P03), and under REPEATABLE READ on an event moved since
--- its snapshot (40001). The API runs READ COMMITTED.
+-- So a transaction whose statements wrote memberships, persons, groups,
+-- duty links or school units (a sync's apply) holds no event or activity
+-- those moved, at its statements or while its commit backs off: a teacher's
+-- lesson write never waits on it, but for the few milliseconds between the
+-- flush and the COMMIT. The committing writer waits for the teacher
+-- instead. It still holds its statements' other locks while it does (the
+-- memberships, a group's version row), so another administrator writing the
+-- same group waits for that commit too.
+--
+-- What can still happen, all of it new against main, where a membership
+-- write locked no event:
+--
+--   - A transaction that holds an event for longer than the patience, and
+--     then reaches for one that a flush past its patience holds, deadlocks
+--     with it (40P01), and one of the two fails.
+--   - A transaction that moves events at its statements for another reason
+--     holds them while its flush waits, as it held them to its commit on
+--     main; a teacher who then writes one of them waits for that commit, up
+--     to the patience, and may deadlock with it after. Lessons' own triggers
+--     (CalendarLessons, CalendarLessonGroups, CalendarLessonTeachers,
+--     CalendarLessonStudents), a läsår's activation, a teacher's employment
+--     and the school's own row still move events at the statement. An
+--     administrator's removal of a pupil named on lessons (the cascade
+--     through CalendarLessonStudents), or of a replacing group with lessons
+--     of its own, is such a transaction.
+--   - The COMMIT itself can fail: past the patience with 55P03 under the
+--     transaction's own lock_timeout (a sync's apply sets 10 s), with 40P01
+--     as above, and with 40001 under REPEATABLE READ on an event moved since
+--     its snapshot. The API runs READ COMMITTED. Prisma 7.10 reports a
+--     failed COMMIT as the adapter's DriverAdapterError, not as a known
+--     error, and the API reads its SQLSTATE there too (R3-M2): a deadlock is
+--     the 409 WRITE_CONFLICT a statement's is.
 --
 -- app.ss12000_bump, every trigger's helper, now also upserts in entityId
 -- order, so two single statements moving overlapping entities lock them in
@@ -110,19 +156,23 @@
 --
 -- ## How
 --
--- New: the helpers app.ss12000_bump_replaced, app.ss12000_defer_lessons and
--- app.ss12000_flush_replaced, SECURITY DEFINER with a locked search_path like
--- every bump helper and executable by no API role
+-- New: the helpers app.ss12000_bump_replaced, app.ss12000_activity_ids,
+-- app.ss12000_defer_lessons, app.ss12000_defer_activities and
+-- app.ss12000_flush_replaced, SECURITY DEFINER with a locked search_path
+-- like every bump helper and executable by no API role
 -- (SS12000_PROVIDER_HELPERS_REACH below; RLS suite sections 285–286); the
--- table app."Ss12000ReplacedPending", in schema app, row security on, no
--- policy and no grant to any API role, empty between transactions; and its
--- deferred constraint trigger. Creating them locks no existing table. The
--- three trigger functions and app.ss12000_bump are replaced in place: CREATE
--- OR REPLACE keeps their triggers and their (revoked) privileges and takes
--- no lock on any table, so no NOWAIT loop is needed. Each body is the one it
--- replaces with the lines above added; the guard below stops the migration,
--- changing nothing, if any of the four is not the body
--- 20261014130000/140000 (and 20261104090000 for app.ss12000_bump) wrote.
+-- table app."Ss12000ReplacedPending", in schema app, unlogged, row security
+-- on, no policy and no grant to any API role, empty between transactions;
+-- and its deferred constraint trigger. Creating them locks no existing
+-- table. The three trigger functions, app.ss12000_bump,
+-- app.ss12000_bump_activities and app.ss12000_duty_links_moved are replaced
+-- in place: CREATE OR REPLACE keeps their triggers and their (revoked)
+-- privileges and takes no lock on any table, so no NOWAIT loop is needed.
+-- Each body is the one it replaces with the lines above added
+-- (app.ss12000_bump_activities: its query moved to app.ss12000_activity_ids,
+-- unchanged); the guard below stops the migration, changing nothing, if any
+-- of the six is not the body 20261014130000/140000 (and 20261104090000 for
+-- app.ss12000_bump) wrote.
 --
 -- No existing table, column, row, policy or grant on a table changes.
 
@@ -133,7 +183,9 @@ BEGIN
     FROM (VALUES ('ss12000_v_users', '76d25707cfb54ccb33826b7aa2532b14'),
                  ('ss12000_v_group_members', '29f18a20dcaf07e2322364b5134d0163'),
                  ('ss12000_v_groups', 'b5e5bdcc3b014044e75125edf9dd9ea8'),
-                 ('ss12000_bump', '0276bf99eaaf1e4ec8dc5b73208de49c')) AS f(name, md5)
+                 ('ss12000_bump', '0276bf99eaaf1e4ec8dc5b73208de49c'),
+                 ('ss12000_bump_activities', '3589b9963ee273029e3e6ba9167cc552'),
+                 ('ss12000_duty_links_moved', '5f0a3041e999e95f25824540cd065449')) AS f(name, md5)
    WHERE NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
                       WHERE ns.nspname = 'app' AND p.proname = f.name AND md5(p.prosrc) = f.md5);
   IF bad IS NOT NULL THEN
@@ -173,13 +225,16 @@ END
 $$;
 
 -- ---------------------------------------------------------------------------
--- The events a transaction's membership statements moved, until its commit.
+-- The events (by their lessons) and the activities a transaction's
+-- statements moved, until its commit. Unlogged: empty between transactions,
+-- it needs no WAL, and no publication includes it (see "Locks").
 -- ---------------------------------------------------------------------------
 
-CREATE TABLE app."Ss12000ReplacedPending" (
+CREATE UNLOGGED TABLE app."Ss12000ReplacedPending" (
   "xid" xid8 NOT NULL DEFAULT pg_current_xact_id(),
   "schoolId" uuid NOT NULL,
-  "lessonIds" uuid[] NOT NULL
+  "lessonIds" uuid[] NOT NULL DEFAULT '{}',
+  "activityIds" uuid[] NOT NULL DEFAULT '{}'
 );
 ALTER TABLE app."Ss12000ReplacedPending" ENABLE ROW LEVEL SECURITY;
 
@@ -190,54 +245,122 @@ LANGUAGE sql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
   SELECT p_school, p_lessons WHERE p_school IS NOT NULL AND cardinality(p_lessons) > 0
 $$;
 
--- At commit: move the union of the transaction's recorded events, all or
--- none (see "Locks" above). Fired once per recorded row; the first firing
--- takes every row of the transaction, the rest find none.
+-- Record a statement's activities for the transaction's commit.
+CREATE FUNCTION app.ss12000_defer_activities(p_school uuid, p_activities uuid[]) RETURNS void
+LANGUAGE sql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+  INSERT INTO app."Ss12000ReplacedPending" ("schoolId", "activityIds")
+  SELECT p_school, p_activities WHERE p_school IS NOT NULL AND cardinality(p_activities) > 0
+$$;
+
+-- ---------------------------------------------------------------------------
+-- app.ss12000_bump_activities records its activities for the commit. Its
+-- callers change what surrounds a lesson (a group's name, a person's
+-- activation, a duty link, a school unit, a subject, a läsår); a lesson's own
+-- triggers move its activity themselves. app.ss12000_activity_ids is
+-- 20261014130000's query, unchanged, worked out at the statement as before.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION app.ss12000_activity_ids(p_school uuid, p_groups uuid[], p_subjects uuid[], p_teachers uuid[], p_all boolean)
+RETURNS uuid[]
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+DECLARE
+  yr uuid := app.ss12000_active_year(p_school);
+  direct boolean := app.school_publish_mode(p_school) = 'DIRECT';
+BEGIN
+  IF yr IS NULL THEN
+    RETURN '{}'::uuid[];
+  END IF;
+  RETURN ARRAY(
+    SELECT m."id" FROM "MasterLessons" m
+     WHERE direct AND m."schoolId" = p_school AND m."academicYearId" = yr AND NOT m."isParked"
+       AND (p_all
+            OR m."studentGroupId" = ANY (p_groups) OR m."subjectId" = ANY (p_subjects)
+            OR m."teacherId" = ANY (p_teachers) OR m."coTeacherId" = ANY (p_teachers)
+            OR EXISTS (SELECT 1 FROM "MasterLessonGroups" mg WHERE mg."masterLessonId" = m."id" AND mg."studentGroupId" = ANY (p_groups)))
+    UNION
+    SELECT p."masterLessonId" FROM "PublishedLessons" p
+     WHERE p."schoolId" = p_school AND p."academicYearId" = yr AND NOT p."isParked"
+       AND (p_all
+            OR p."studentGroupId" = ANY (p_groups) OR p."subjectId" = ANY (p_subjects)
+            OR p."teacherId" = ANY (p_teachers) OR p."coTeacherId" = ANY (p_teachers)
+            OR p."extraGroupIds" && p_groups)
+    UNION
+    SELECT c."id" FROM "CalendarLessons" c JOIN "StudentGroups" g ON g."id" = c."studentGroupId"
+     WHERE c."schoolId" = p_school AND g."academicYearId" = yr AND c."masterLessonId" IS NULL
+       AND (p_all OR c."studentGroupId" = ANY (p_groups) OR c."subjectId" = ANY (p_subjects)
+            OR EXISTS (SELECT 1 FROM "CalendarLessonTeachers" ct WHERE ct."calendarLessonId" = c."id" AND ct."teacherId" = ANY (p_teachers))
+            OR EXISTS (SELECT 1 FROM "CalendarLessonGroups" cg WHERE cg."calendarLessonId" = c."id" AND cg."studentGroupId" = ANY (p_groups))));
+END
+$$;
+
+CREATE OR REPLACE FUNCTION app.ss12000_bump_activities(p_school uuid, p_groups uuid[], p_subjects uuid[], p_teachers uuid[], p_all boolean)
+RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+BEGIN
+  -- Moved at commit (see "Locks" above).
+  PERFORM app.ss12000_defer_activities(p_school, app.ss12000_activity_ids(p_school, p_groups, p_subjects, p_teachers, p_all));
+END
+$$;
+
+-- At commit: move the union of the transaction's recorded events and
+-- activities, all or none (see "Locks" above). Fired once per recorded row;
+-- the first firing takes every row of the transaction, the rest find none.
 CREATE FUNCTION app.ss12000_flush_replaced() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 DECLARE
   r record;
   previous text;
   pause numeric;
-  waited numeric;
+  deadline timestamptz;
+  last_try boolean;
   done boolean;
   patience numeric := coalesce(nullif(current_setting('app.ss12000_replaced_patience', true), '')::numeric, 10);
 BEGIN
   FOR r IN
     WITH gone AS (
       DELETE FROM app."Ss12000ReplacedPending" p WHERE p."xid" = pg_current_xact_id()
-      RETURNING p."schoolId", p."lessonIds"
-    ), flat AS (
-      SELECT g."schoolId" s, x id FROM gone g, unnest(g."lessonIds") x
+      RETURNING p."schoolId", p."lessonIds", p."activityIds"
     )
-    SELECT f.s, array_agg(DISTINCT f.id ORDER BY f.id) ids FROM flat f GROUP BY f.s ORDER BY f.s
+    SELECT k.s,
+           ARRAY(SELECT DISTINCT x FROM gone g, unnest(g."lessonIds") x WHERE g."schoolId" = k.s ORDER BY 1) lessons,
+           ARRAY(SELECT DISTINCT x FROM gone g, unnest(g."activityIds") x WHERE g."schoolId" = k.s ORDER BY 1) activities
+      FROM (SELECT DISTINCT g."schoolId" s FROM gone g) k
+     ORDER BY 1
   LOOP
     pause := 0.02;
-    waited := 0;
+    deadline := clock_timestamp() + patience * interval '1 second';
     done := false;
     LOOP
+      last_try := clock_timestamp() >= deadline;
       BEGIN
         previous := current_setting('lock_timeout');
-        PERFORM set_config('lock_timeout', '50ms', true);
+        -- Within the patience an attempt gives up after 50 ms, long before
+        -- a deadlock check (deadlock_timeout); past it, the transaction's
+        -- own lock_timeout holds.
+        IF NOT last_try THEN
+          PERFORM set_config('lock_timeout', '50ms', true);
+        END IF;
         -- The existing rows first, in order: an attempt that fails here has
         -- written no row version.
         PERFORM 1 FROM "Ss12000EntityVersions" v
-         WHERE v."schoolId" = r.s AND v."resource" = 'CalendarEvent' AND v."entityId" = ANY (r.ids)
-         ORDER BY v."entityId"
+         WHERE v."schoolId" = r.s
+           AND ((v."resource" = 'CalendarEvent' AND v."entityId" = ANY (r.lessons))
+                OR (v."resource" = 'Activity' AND v."entityId" = ANY (r.activities)))
+         ORDER BY v."resource", v."entityId"
            FOR UPDATE;
-        PERFORM app.ss12000_bump_lessons(r.s, r.ids);
+        PERFORM app.ss12000_bump_lessons(r.s, r.lessons);
+        PERFORM app.ss12000_bump(r.s, 'Activity', r.activities);
         PERFORM set_config('lock_timeout', previous, true);
         done := true;
       EXCEPTION WHEN lock_not_available THEN
-        NULL;
+        -- Past the patience it was the transaction's own lock_timeout: the
+        -- commit fails with it.
+        IF last_try THEN
+          RAISE;
+        END IF;
       END;
       EXIT WHEN done;
-      IF waited >= patience THEN
-        PERFORM app.ss12000_bump_lessons(r.s, r.ids);
-        EXIT;
-      END IF;
       PERFORM pg_sleep(pause);
-      waited := waited + pause;
       pause := least(pause * 2, 0.5);
     END LOOP;
   END LOOP;
@@ -491,7 +614,9 @@ BEGIN
       PERFORM app.ss12000_bury(r.s, 'Duty', ARRAY(
         SELECT app.ss12000_duty_id(r.s, u, app.ss12000_active_year(r.s)) FROM unnest(r.ids) u));
       PERFORM app.ss12000_bump_activities(r.s, NULL, NULL, r.ids, false);
-      PERFORM app.ss12000_bump_lessons(r.s, ARRAY(
+      -- Moved at commit (see "Locks" above), as the activities are: a sync's
+      -- apply deactivates in the transaction of its memberships (R3-M1).
+      PERFORM app.ss12000_defer_lessons(r.s, ARRAY(
         SELECT ct."calendarLessonId" FROM "CalendarLessonTeachers" ct WHERE ct."teacherId" = ANY (r.ids)));
     END LOOP;
     -- Reactivated: it returns.
@@ -506,7 +631,9 @@ BEGIN
         SELECT e."id" FROM "TeacherEmployments" e
          WHERE e."schoolId" = r.s AND e."userId" = ANY (r.ids) AND e."academicYearId" = app.ss12000_active_year(r.s)));
       PERFORM app.ss12000_bump_activities(r.s, NULL, NULL, r.ids, false);
-      PERFORM app.ss12000_bump_lessons(r.s, ARRAY(
+      -- Moved at commit (see "Locks" above), as the activities are: a sync's
+      -- apply deactivates in the transaction of its memberships (R3-M1).
+      PERFORM app.ss12000_defer_lessons(r.s, ARRAY(
         SELECT ct."calendarLessonId" FROM "CalendarLessonTeachers" ct WHERE ct."teacherId" = ANY (r.ids)));
     END LOOP;
     -- The emitted id moved: everything that names the person moves (A5.3).
@@ -521,7 +648,8 @@ BEGIN
       PERFORM app.ss12000_bump(r.s, 'Person', ARRAY(
         SELECT gs."studentId" FROM "GuardianStudents" gs WHERE gs."guardianId" = ANY (r.ids)
         UNION SELECT gs."guardianId" FROM "GuardianStudents" gs WHERE gs."studentId" = ANY (r.ids)));
-      PERFORM app.ss12000_bump_lessons(r.s, ARRAY(
+      -- Moved at commit, as above.
+      PERFORM app.ss12000_defer_lessons(r.s, ARRAY(
         SELECT cs."calendarLessonId" FROM "CalendarLessonStudents" cs WHERE cs."studentId" = ANY (r.ids)));
       -- The events that name them as not participating (ersättande grupper).
       PERFORM app.ss12000_bump_replaced(r.s, r.ids, NULL);
@@ -556,7 +684,8 @@ BEGIN
     -- A pupil's row deleted: the memberships went first (the cascade, whose
     -- own trigger moved the teaching groups' events), so which groups replaced
     -- what for the pupil is no longer known. Every event of the home class in
-    -- a subject that a group of the class's läsår replaces moves.
+    -- a subject some group replaces in the event's läsår moves, in every
+    -- läsår: the class may be added to a lesson of another (R3-L4).
     FOR r IN
       SELECT o."schoolId" s, array_agg(DISTINCT o."studentGroupId") classes FROM o
        WHERE o."isActive" AND o."studentGroupId" IS NOT NULL
@@ -565,14 +694,39 @@ BEGIN
       SELECT array_agg(g."replacesSubjectId" ORDER BY g."id"), array_agg(g."academicYearId" ORDER BY g."id")
         INTO subjects, years
         FROM "StudentGroups" g
-       WHERE g."schoolId" = r.s AND g."replacesSubjectId" IS NOT NULL
-         AND g."academicYearId" IN (SELECT k."academicYearId" FROM "StudentGroups" k WHERE k."id" = ANY (r.classes));
+       WHERE g."schoolId" = r.s AND g."replacesSubjectId" IS NOT NULL;
       IF subjects IS NOT NULL THEN
         PERFORM app.ss12000_bump_replaced(r.s, NULL, r.classes, subjects, years);
       END IF;
     END LOOP;
   END IF;
   RETURN NULL;
+END
+$$;
+
+
+-- ---------------------------------------------------------------------------
+-- A teacher's duty links: 20261014130000's body, the teacher's events moved
+-- at commit.
+-- ---------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION app.ss12000_duty_links_moved(p_school uuid, p_user uuid, p_year uuid, p_duty_ids uuid[]) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+DECLARE current_id uuid := app.ss12000_duty_id(p_school, p_user, p_year);
+BEGIN
+  PERFORM app.ss12000_bump(p_school, 'Duty', ARRAY(
+    SELECT e."id" FROM "TeacherEmployments" e WHERE e."schoolId" = p_school AND e."userId" = p_user AND e."academicYearId" = p_year));
+  PERFORM app.ss12000_bury(p_school, 'Duty', ARRAY(
+    SELECT d FROM unnest(p_duty_ids || ARRAY(
+      SELECT e."id" FROM "TeacherEmployments" e WHERE e."schoolId" = p_school AND e."userId" = p_user AND e."academicYearId" = p_year)) d
+     WHERE d IS DISTINCT FROM current_id));
+  IF current_id IS NOT NULL THEN
+    PERFORM app.ss12000_unbury(p_school, 'Duty', ARRAY[current_id]);
+  END IF;
+  PERFORM app.ss12000_bump_activities(p_school, NULL, NULL, ARRAY[p_user], false);
+  -- Moved at commit (see "Locks" above), as the activities are: a sync's
+  -- apply writes duty links in the transaction of its memberships (R3-M1).
+  PERFORM app.ss12000_defer_lessons(p_school, ARRAY(SELECT ct."calendarLessonId" FROM "CalendarLessonTeachers" ct WHERE ct."teacherId" = p_user));
 END
 $$;
 
@@ -587,7 +741,9 @@ DECLARE r text; fn text;
 BEGIN
   FOREACH fn IN ARRAY ARRAY[
     'app.ss12000_bump_replaced(uuid, uuid[], uuid[], uuid[], uuid[])',
+    'app.ss12000_activity_ids(uuid, uuid[], uuid[], uuid[], boolean)',
     'app.ss12000_defer_lessons(uuid, uuid[])',
+    'app.ss12000_defer_activities(uuid, uuid[])',
     'app.ss12000_flush_replaced()'
   ] LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC', fn);
@@ -623,8 +779,8 @@ BEGIN
      AND (p.proname IN ('ss12000_year_is_emitted', 'ss12000_active_year', 'ss12000_duty_id',
                         'ss12000_bump', 'ss12000_bury', 'ss12000_unbury', 'ss12000_bump_groups',
                         'ss12000_bump_lessons', 'ss12000_bump_activities', 'ss12000_bump_school',
-                        'ss12000_duty_links_moved', 'ss12000_bump_replaced', 'ss12000_defer_lessons',
-                        'ss12000_flush_replaced')
+                        'ss12000_duty_links_moved', 'ss12000_bump_replaced', 'ss12000_activity_ids',
+                        'ss12000_defer_lessons', 'ss12000_defer_activities', 'ss12000_flush_replaced')
           OR p.proname LIKE 'ss12000\_v\_%')
      AND has_function_privilege(r.oid, p.oid, 'EXECUTE');
   IF bad IS NOT NULL THEN
