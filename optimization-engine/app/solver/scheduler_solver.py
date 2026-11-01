@@ -1531,7 +1531,7 @@ class SchedulerSolver:
                     model, decisions, wished_free, weights, teacher_days, day_literals,
                 ),
                 *self._add_stretch_objective(
-                    model, decisions, request, weights, day_vars,
+                    model, decisions, request, weights, day_vars, step,
                 ),
             ]
             # Elevernas håltimmar, last: it reads the one-hots the terms above
@@ -12802,6 +12802,7 @@ class SchedulerSolver:
         request: OptimizeScheduleRequest,
         weights: ResolvedWeights,
         day_vars: dict[str, cp_model.IntVar],
+        step: int,
     ) -> list[cp_model.LinearExpr]:
         """Sammanhängande undervisning as a wish: the objective terms, week by week.
 
@@ -12830,6 +12831,7 @@ class SchedulerSolver:
                 add_stretch_wish(
                     model,
                     grid=self._grid,
+                    step=step,
                     rule=rule,
                     weeks=[
                         (

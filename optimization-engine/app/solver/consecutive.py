@@ -66,9 +66,20 @@ is confined to [end, start + X] (when the lesson is "kept") and which is in a
 no-overlap with the teacher's lessons — the teacher's lunch in
 _add_teacher_lunch, in the same shape, for the same reason: "a free window of Y
 slots exists inside this window" is "a task of that length can be placed among
-these lessons", which is what the disjunctive propagator is for. The break's
-start is any slot, NOT only a lesson's start step: a lesson of 40 minutes on a
-30-minute grid ends between two steps, and the free time begins there.
+these lessons", which is what the disjunctive propagator is for. 
+
+WHERE A BREAK MAY BEGIN. In principle on any slot, and not only on a lesson's
+start step: a lesson of 40 minutes on a 30-minute grid ends between two steps,
+and the free time begins there. A break confined to the steps is a much
+smaller search (six values for X = 180 where thirty-seven are open), and it
+loses nothing when X and Y are whole steps and every edge of a locked stretch
+is on a step: a free window of Y that starts between two steps can slide
+forward to the next step, because the lesson after the gap starts on one and Y
+is a whole number of them, and it stays inside [end, start + X] because the
+upper bound is on a step too. When any of that fails (a break of 15 minutes on
+a 30-minute step, a lock from 08:20), the break is free on every slot, and
+the model is exact in all cases (test_consecutive.py tries every placement
+both ways).
 
 THE NIGHT IS A BREAK, AND IS PAID FOR WITH A SHIFTED CLOCK. A lesson that ends
 at five with X = 180 has the rest of the day, and the night, to rest in; but
@@ -177,6 +188,7 @@ def add_stretch_wish(
     model: cp_model.CpModel,
     *,
     grid: TimeGrid,
+    step: int = 1,
     rule: AnonymousTeacherWorkRule,
     weeks: list[StretchWeek],
     day_of: Callable[[LessonDecision], cp_model.IntVar],
@@ -194,6 +206,7 @@ def add_stretch_wish(
     slots_per_day = grid.slots_per_day
     if x_slots >= slots_per_day or weight <= 0:
         return []
+    on_step = step > 1 and x_slots % step == 0 and y_slots % step == 0
     days = len(grid.schedule_days)
     shifted_horizon = grid.horizon + days * y_slots
     terms: list[cp_model.LinearExpr] = []
@@ -206,6 +219,14 @@ def add_stretch_wish(
         chains = locked_stretches(merge_windows(raw_windows, slots_per_day), y_slots, slots_per_day)
         needs = [chain for chain in chains if chain[1] - chain[0] <= x_slots]
         closed = [chain for chain in chains if chain[1] - chain[0] > x_slots]
+        # Breaks go where lessons can START, the step, when that loses no break
+        # (see "WHERE A BREAK MAY BEGIN" above): X and Y are whole steps and
+        # no locked stretch has an edge between two steps.
+        lattice = (
+            cp_model.Domain.FromValues(list(range(0, shifted_horizon + 1, step)))
+            if on_step and all(low % step == 0 and high % step == 0 for low, high in chains)
+            else None
+        )
         tag = str(rule.teacher_id)
         if week is not None:
             tag += "_odd" if week == "ODD_WEEKS" else "_even"
@@ -234,7 +255,9 @@ def add_stretch_wish(
         # stretch ends by the break; when it is not, the lesson pays.
         for index, (decision, start) in enumerate(shifted):
             kept = model.NewBoolVar(f"stretchkept_{tag}_{index}")
-            brk = model.NewIntVar(0, shifted_horizon - y_slots, f"stretchb_{tag}_{index}")
+            brk = model.NewIntVarFromDomain(
+                _on(cp_model.Domain(0, shifted_horizon - y_slots), lattice), f"stretchb_{tag}_{index}",
+            )
             model.Add(brk >= start + decision.duration).OnlyEnforceIf(kept)
             model.Add(brk <= start + x_slots).OnlyEnforceIf(kept)
             interval = model.NewOptionalFixedSizeIntervalVar(
@@ -263,13 +286,21 @@ def add_stretch_wish(
         for index, (low, high) in enumerate(needs):
             offset = y_slots * (low // slots_per_day)
             kept = model.NewBoolVar(f"stretchlockedkept_{tag}_{index}")
-            brk = model.NewIntVar(high + offset, low + offset + x_slots, f"stretchc_{tag}_{index}")
+            brk = model.NewIntVarFromDomain(
+                _on(cp_model.Domain(high + offset, low + offset + x_slots), lattice),
+                f"stretchc_{tag}_{index}",
+            )
             interval = model.NewOptionalFixedSizeIntervalVar(
                 brk, y_slots, kept, f"stretchci_{tag}_{index}",
             )
             model.AddNoOverlap([*base, interval])
             terms.append(weight * (1 - kept))
     return terms
+
+
+def _on(domain: cp_model.Domain, lattice: cp_model.Domain | None) -> cp_model.Domain:
+    """The domain's values on the lattice; the domain itself without one."""
+    return domain if lattice is None else domain.intersection_with(lattice)
 
 
 def merge_windows(
