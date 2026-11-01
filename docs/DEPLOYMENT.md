@@ -588,6 +588,93 @@ Walk the full product loop once, in order:
   "generatorKeepsPupilGapsDown" = false WHERE "generatorKeepsPupilGapsDown";`,
   as the owner), and tell the schools it was. The column can stay through a
   rollback: nothing before the release reads it.
+- **Sammanhängande undervisning**: 20261218090000 adds two nullable columns to
+  `TeacherWorkRules` (`maxConsecutiveTeachingMinutes`, the most minutes of
+  teaching in a row, 30–480, and `consecutiveBreakMinutes`, the free time that
+  ends a stretch, 5–120; both multiples of five, set together or not at all,
+  each range and the pair with a CHECK of its own) and one to `LunchSettings`
+  (`generatorKeepsConsecutiveTeaching`, boolean, NOT NULL, default false): the
+  Skolregler switch that has the generator *try* to keep each teacher's
+  stretches within their limit. **It is off for every school until that school
+  turns it on**; the migration turns nothing on and changes no row, so every
+  work rule reads null and null and every Skolregler row reads off. The
+  limit is the generator's wish and not its promise (it pays for a lesson whose
+  stretch is not ended in time and refuses no week over it, and Generera names
+  the teachers it did not manage); a hand edit of the grundschema is warned
+  and the Vikarietavla never proposes a cover that would break it, and
+  neither of those two looks at the switch. The migration also replaces the
+  trigger function `app.teacher_work_rules_day_is_planned()` with
+  `CREATE OR REPLACE` (owner, SECURITY DEFINER, `search_path` and the REVOKEs
+  stay, the trigger itself is untouched), so that it keeps the two columns for
+  an administrator who writes planering the way it keeps the cap and the wish:
+  a teacher's own write that would set, change or clear them, or delete a row
+  holding them, is refused AR403 (a 403 from the API), and the teacher still
+  writes their own lunch and rest. Its sentence names all three fields now; the
+  API's copy is held equal to it by `teacher-work-rules.service.spec.ts`, and
+  RLS sections 160 and 288 assert it.
+  It takes ACCESS EXCLUSIVE on `TeacherWorkRules` and `LunchSettings`, NOWAIT
+  and together in a loop: the generator reads both at the start of every run,
+  the Skolregler card and the Arbetstid dialog on every load, and requests
+  take them in both orders, so a migration that waited for one while it held
+  the other could close a cycle. A refusal gives back whatever it got and
+  tries again 50 ms later, so it never waits while it holds a lock and no
+  request queues behind it; if the two are not free at once in 30 s it stops
+  with nothing changed — `prisma migrate resolve --rolled-back
+  20261218090000_en_larares_foljd_av_lektioner_har_en_grans_som_generatorn_forsoker_halla`,
+  then deploy again. Before: the three columns absent from
+  `information_schema.columns`. After: the three present, and `SELECT
+  count(*) FROM "TeacherWorkRules" WHERE "maxConsecutiveTeachingMinutes" IS NOT
+  NULL OR "consecutiveBreakMinutes" IS NOT NULL` and `SELECT count(*) FROM
+  "LunchSettings" WHERE "generatorKeepsConsecutiveTeaching"` both 0, and
+  `SELECT prosrc LIKE '%consecutiveBreakMinutes%' FROM pg_proc WHERE proname =
+  'teacher_work_rules_day_is_planned'` true.
+  The API before the release names only the old columns, so it keeps working
+  between the migration and the deploy: its PUT of a work rule updates the
+  columns it knows and leaves these (the trigger sees them unchanged and stays
+  quiet, so a teacher's save of their lunch is not refused), and its upsert of
+  the Skolregler does not name the switch, so a save leaves it as it was
+  (RLS section 289 runs those statements against a row that holds them). The
+  new API names the columns in every read of a work rule and of the Skolregler,
+  so the migration goes in first, then the merge. The engine and the API
+  deploy from the same merge, and the two new optional fields of a teacher in
+  the request (`maxConsecutiveTeachingMinutes`, `consecutiveBreakMinutes`)
+  reach the engine only for a school that has turned the switch on and a
+  teacher whose rule sets both, which nobody can do before the new web is out:
+  so the short window where the API is new and the engine old sends nothing the
+  old engine refuses. A PUT of a work rule that leaves the two fields out
+  keeps them, and a DELETE keeps them unless it says `?includeDay=true` (as for
+  the cap and the wish), so a web from before the release, open in a tab,
+  clears nothing. The other way round does not hold for the Arbetstid dialog:
+  the new web sends the two keys, which the API before the release refuses
+  (400, `forbidNonWhitelisted`), so the API goes out before, or with, the web.
+  The Skolregler card leaves the switch's key out unless the API it read named
+  it or the admin turned the switch on, so a lunch save never meets that 400.
+  After the deploy the engine's `/openapi.json` names the two fields on a
+  teacher; the weight is `WEIGHT_CONSECUTIVE_TEACHING` (default 40 per
+  lesson whose stretch is not ended in time, 0 or below switches it off) and
+  needs no setting.
+  **Rolling it back:** the engine before this release refuses the two fields
+  (its request models are `extra="forbid"`: 422), so once a school has turned
+  the switch on and a teacher has a limit, an engine rolled back alone fails
+  that school's Generera and schemaförslag. Roll the API back first, or with
+  the engine: the API before the release never sends them. If the API must
+  stay, turn the switch off for every school before the engine goes back
+  (`UPDATE "LunchSettings" SET "generatorKeepsConsecutiveTeaching" = false
+  WHERE "generatorKeepsConsecutiveTeaching";`, as the owner), and tell the
+  schools it was. The columns can stay through a rollback, and so can the
+  function: nothing before the release reads the columns, and the trigger keeps
+  them from a teacher whichever API writes. Two things an API from before the
+  release does with a row that holds a limit, which a rollback must not
+  forget: its bare DELETE of a work rule removes a row whose cap and wish are
+  empty without asking about the limit, so a teacher's "ingen arbetstidsregel"
+  on such a row is refused (403, from the trigger), and an administrator's
+  removes the row and the limit with it; and its PUT of a work rule, which
+  names neither field, leaves them. List the limits before rolling back
+  (`SELECT "userId", "maxConsecutiveTeachingMinutes",
+  "consecutiveBreakMinutes" FROM "TeacherWorkRules" WHERE
+  "maxConsecutiveTeachingMinutes" IS NOT NULL;`, as the owner) and tell the
+  schools that, until the release is back, an administrator who empties a
+  teacher's Arbetstid removes the limit with the row.
 - **Rastvakt i vardagen**: 20261210090000 adds `SupervisionCovers` (the
   vikarietavla's decision on an absent rastvakt's pass on one date: a
   vikarie, or none), the enum `SupervisionCoverDecision`, an `(id,
