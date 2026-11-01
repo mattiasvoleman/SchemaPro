@@ -156,6 +156,33 @@ describe('UpsertTeacherWorkRuleDto limits', () => {
     });
   });
 
+  describe('the limit on teaching in a row mirrors the table CHECKs and stretch.ts, bound for bound (20261218090000)', () => {
+    it('accepts the ends of both ranges, and null as no limit', async () => {
+      await expect(failing({ ...base, maxConsecutiveTeachingMinutes: 30, consecutiveBreakMinutes: 5 })).resolves.toEqual([]);
+      await expect(failing({ ...base, maxConsecutiveTeachingMinutes: 480, consecutiveBreakMinutes: 120 })).resolves.toEqual([]);
+      await expect(
+        failing({ ...base, maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null }),
+      ).resolves.toEqual([]);
+    });
+
+    it('refuses a limit under half an hour and one over eight hours, at the number next to each bound', async () => {
+      await expect(failing({ ...base, maxConsecutiveTeachingMinutes: 25 })).resolves.toEqual(['maxConsecutiveTeachingMinutes']);
+      await expect(failing({ ...base, maxConsecutiveTeachingMinutes: 485 })).resolves.toEqual(['maxConsecutiveTeachingMinutes']);
+    });
+
+    it('refuses a pause that is no pause and one that is a long recess, at the number next to each bound', async () => {
+      await expect(failing({ ...base, consecutiveBreakMinutes: 0 })).resolves.toEqual(['consecutiveBreakMinutes']);
+      await expect(failing({ ...base, consecutiveBreakMinutes: 125 })).resolves.toEqual(['consecutiveBreakMinutes']);
+    });
+
+    it('refuses either off the five-minute grid, and one that is not whole minutes', async () => {
+      await expect(failing({ ...base, maxConsecutiveTeachingMinutes: 182 })).resolves.toEqual(['maxConsecutiveTeachingMinutes']);
+      await expect(failing({ ...base, maxConsecutiveTeachingMinutes: '180' })).resolves.toEqual(['maxConsecutiveTeachingMinutes']);
+      await expect(failing({ ...base, consecutiveBreakMinutes: 17 })).resolves.toEqual(['consecutiveBreakMinutes']);
+      await expect(failing({ ...base, consecutiveBreakMinutes: 12.5 })).resolves.toEqual(['consecutiveBreakMinutes']);
+    });
+  });
+
   it('says why in Swedish, because an admin reads these in the form', async () => {
     const errors = await validate(
       plainToInstance(UpsertTeacherWorkRuleDto, { ...base, lunchMinutes: 7 }),

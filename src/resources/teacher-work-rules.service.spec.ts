@@ -63,6 +63,8 @@ describe('TeacherWorkRulesService', () => {
     minDailyRestMinutes: 660,
     maxTeachingMinutesPerDay: null,
     preferredFreeDayOfWeek: null,
+    maxConsecutiveTeachingMinutes: null,
+    consecutiveBreakMinutes: null,
     createdAt: new Date('2026-09-01T00:00:00.000Z'),
     updatedAt: new Date('2026-09-01T00:00:00.000Z'),
     ...overrides,
@@ -83,6 +85,8 @@ describe('TeacherWorkRulesService', () => {
           minDailyRestMinutes: 660,
           maxTeachingMinutesPerDay: null,
           preferredFreeDayOfWeek: null,
+          maxConsecutiveTeachingMinutes: null,
+          consecutiveBreakMinutes: null,
         },
       ]);
 
@@ -454,8 +458,16 @@ describe('TeacherWorkRulesService', () => {
         ['clearing the wish', { preferredFreeDayOfWeek: null }],
         ['restating the cap and moving the wish', { maxTeachingMinutesPerDay: 270, preferredFreeDayOfWeek: 1 }],
         ['moving the cap and restating the wish', { maxTeachingMinutesPerDay: 275, preferredFreeDayOfWeek: 5 }],
+        ['raising the limit on teaching in a row', { maxConsecutiveTeachingMinutes: 240, consecutiveBreakMinutes: 30 }],
+        ['shortening the pause that ends a stretch', { maxConsecutiveTeachingMinutes: 180, consecutiveBreakMinutes: 15 }],
+        ['clearing the limit on teaching in a row', { maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null }],
       ])('refuses a teacher %s on their own row, with the code the web reads, before the write', async (_label, body) => {
-        tx.teacherWorkRule.findUnique.mockResolvedValue({ maxTeachingMinutesPerDay: 270, preferredFreeDayOfWeek: 5 });
+        tx.teacherWorkRule.findUnique.mockResolvedValue({
+          maxTeachingMinutesPerDay: 270,
+          preferredFreeDayOfWeek: 5,
+          maxConsecutiveTeachingMinutes: 180,
+          consecutiveBreakMinutes: 30,
+        });
 
         const refusal = await service.upsert(ME, dto(body), teacher()).catch((error: unknown) => error);
 
@@ -466,7 +478,12 @@ describe('TeacherWorkRulesService', () => {
         });
         expect(tx.teacherWorkRule.findUnique).toHaveBeenCalledWith({
           where: { userId: ME },
-          select: { maxTeachingMinutesPerDay: true, preferredFreeDayOfWeek: true },
+          select: {
+            maxTeachingMinutesPerDay: true,
+            preferredFreeDayOfWeek: true,
+            maxConsecutiveTeachingMinutes: true,
+            consecutiveBreakMinutes: true,
+          },
         });
         expect(tx.teacherWorkRule.upsert).not.toHaveBeenCalled();
       });
@@ -500,6 +517,69 @@ describe('TeacherWorkRulesService', () => {
         }
       });
 
+      it('writes the limit on teaching in a row with its pause for an administrator who plans, and answers with both', async () => {
+        tx.teacherWorkRule.upsert.mockResolvedValue(
+          storedRow({ userId: COLLEAGUE, maxConsecutiveTeachingMinutes: 180, consecutiveBreakMinutes: 30 }),
+        );
+
+        const answer = await service.upsert(
+          COLLEAGUE,
+          dto({ maxConsecutiveTeachingMinutes: 180, consecutiveBreakMinutes: 30 }),
+          testUser({ adminProfile: 'SCHEMALAGGARE' }),
+        );
+
+        expect(call().update).toMatchObject({ maxConsecutiveTeachingMinutes: 180, consecutiveBreakMinutes: 30 });
+        expect(call().create).toMatchObject({ maxConsecutiveTeachingMinutes: 180, consecutiveBreakMinutes: 30 });
+        expect(answer).toMatchObject({ maxConsecutiveTeachingMinutes: 180, consecutiveBreakMinutes: 30 });
+      });
+
+      it('keeps the limit when a PUT from before it leaves both out, and clears both when both are null', async () => {
+        tx.teacherWorkRule.upsert.mockResolvedValue(storedRow({ userId: COLLEAGUE }));
+
+        await service.upsert(COLLEAGUE, dto(), testUser());
+        expect('maxConsecutiveTeachingMinutes' in call().update).toBe(false);
+        expect('consecutiveBreakMinutes' in call().update).toBe(false);
+
+        tx.teacherWorkRule.upsert.mockClear();
+        await service.upsert(
+          COLLEAGUE,
+          dto({ maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null }),
+          testUser(),
+        );
+        expect(call().update).toMatchObject({ maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null });
+      });
+
+      it.each([
+        ['the limit without the pause', { maxConsecutiveTeachingMinutes: 180 }],
+        ['the pause without the limit', { consecutiveBreakMinutes: 30 }],
+        ['a limit with a null pause', { maxConsecutiveTeachingMinutes: 180, consecutiveBreakMinutes: null }],
+        ['a null limit with a pause', { maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: 30 }],
+      ])('refuses %s as half a rule, before any statement', async (_label, body) => {
+        const refusal = await service.upsert(COLLEAGUE, dto(body), testUser()).catch((error: unknown) => error);
+
+        expect(refusal).toBeInstanceOf(BadRequestException);
+        expect(prisma.withRls).not.toHaveBeenCalled();
+      });
+
+      it('lets a teacher restate the limit as the row holds it, and leaves it out of the write', async () => {
+        tx.teacherWorkRule.findUnique.mockResolvedValue({
+          maxTeachingMinutesPerDay: null,
+          preferredFreeDayOfWeek: null,
+          maxConsecutiveTeachingMinutes: 180,
+          consecutiveBreakMinutes: 30,
+        });
+        tx.teacherWorkRule.upsert.mockResolvedValue(
+          storedRow({ maxConsecutiveTeachingMinutes: 180, consecutiveBreakMinutes: 30 }),
+        );
+
+        await service.upsert(ME, dto({ maxConsecutiveTeachingMinutes: 180, consecutiveBreakMinutes: 30 }), teacher());
+
+        for (const data of [call().create, call().update]) {
+          expect('maxConsecutiveTeachingMinutes' in data).toBe(false);
+          expect('consecutiveBreakMinutes' in data).toBe(false);
+        }
+      });
+
       it('asks the role before the profile: a teacher whose principal still names one is a teacher', async () => {
         tx.teacherWorkRule.findUnique.mockResolvedValue(null);
         await expect(
@@ -529,7 +609,7 @@ describe('TeacherWorkRulesService', () => {
         const migration = readFileSync(
           join(
             __dirname,
-            '../../prisma/migrations/20261123090000_en_larares_dag_har_ett_tak_dagar_och_en_onskad_ledig_dag/migration.sql',
+            '../../prisma/migrations/20261218090000_en_larares_foljd_av_lektioner_har_en_grans_som_generatorn_forsoker_halla/migration.sql',
           ),
           'utf8',
         );
@@ -578,7 +658,13 @@ describe('TeacherWorkRulesService', () => {
         await service.remove(COLLEAGUE, testUser());
 
         expect(tx.teacherWorkRule.deleteMany).toHaveBeenCalledWith({
-          where: { userId: COLLEAGUE, maxTeachingMinutesPerDay: null, preferredFreeDayOfWeek: null },
+          where: {
+            userId: COLLEAGUE,
+            maxTeachingMinutesPerDay: null,
+            preferredFreeDayOfWeek: null,
+            maxConsecutiveTeachingMinutes: null,
+            consecutiveBreakMinutes: null,
+          },
         });
         expect(tx.teacherWorkRule.update).not.toHaveBeenCalled();
         expect(tx.teacherWorkRule.delete).not.toHaveBeenCalled();
@@ -617,7 +703,13 @@ describe('TeacherWorkRulesService', () => {
         await service.remove(ME, teacher());
 
         expect(tx.teacherWorkRule.deleteMany).toHaveBeenCalledWith({
-          where: { userId: ME, maxTeachingMinutesPerDay: null, preferredFreeDayOfWeek: null },
+          where: {
+            userId: ME,
+            maxTeachingMinutesPerDay: null,
+            preferredFreeDayOfWeek: null,
+            maxConsecutiveTeachingMinutes: null,
+            consecutiveBreakMinutes: null,
+          },
         });
         expect(tx.teacherWorkRule.update).not.toHaveBeenCalled();
         expect(tx.teacherWorkRule.delete).not.toHaveBeenCalled();

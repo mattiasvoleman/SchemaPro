@@ -471,6 +471,12 @@ const NAMED_CHECKS: Record<string, string> = {
     'maxTeachingMinutesPerDay: dagstaket är 30 till 720 minuter, i femminuterssteg.',
   TeacherWorkRules_preferredFreeDayOfWeek_check:
     'preferredFreeDayOfWeek: den önskade lediga dagen är en veckodag, 1 (måndag) till 7 (söndag).',
+  TeacherWorkRules_maxConsecutiveTeachingMinutes_check:
+    'maxConsecutiveTeachingMinutes: gränsen för undervisning i följd är 30 till 480 minuter, i femminuterssteg.',
+  TeacherWorkRules_consecutiveBreakMinutes_check:
+    'consecutiveBreakMinutes: pausen som avslutar en följd är 5 till 120 minuter, i femminuterssteg.',
+  TeacherWorkRules_consecutive_is_a_pair_check:
+    'maxConsecutiveTeachingMinutes: gränsen för undervisning i följd och pausen anges tillsammans, eller ingen av dem.',
   TeacherDuties_label_is_sane: 'label: uppdraget behöver ett namn på högst 80 tecken.',
   TeacherDuties_minutesPerWeek_is_sane: 'minutesPerWeek: ett uppdrag är 1 till 2400 minuter per vecka.',
   TeacherDuties_note_is_sane: 'note: anteckningen kan vara högst 500 tecken.',

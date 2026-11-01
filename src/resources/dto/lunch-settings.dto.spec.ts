@@ -62,6 +62,17 @@ describe('UpsertLunchSettingsDto limits', () => {
     ]);
   });
 
+  it('takes the consecutive-teaching switch as true or false, and refuses null and a string', async () => {
+    await expect(failing({ ...base, generatorKeepsConsecutiveTeaching: true })).resolves.toEqual([]);
+    await expect(failing({ ...base, generatorKeepsConsecutiveTeaching: false })).resolves.toEqual([]);
+    await expect(failing({ ...base, generatorKeepsConsecutiveTeaching: null })).resolves.toEqual([
+      'generatorKeepsConsecutiveTeaching',
+    ]);
+    await expect(failing({ ...base, generatorKeepsConsecutiveTeaching: 'true' })).resolves.toEqual([
+      'generatorKeepsConsecutiveTeaching',
+    ]);
+  });
+
   it('refuses a null travel switch, which the NOT NULL column would answer with a 500', async () => {
     await expect(failing({ ...base, generatorKeepsTravelTime: null })).resolves.toEqual([
       'generatorKeepsTravelTime',

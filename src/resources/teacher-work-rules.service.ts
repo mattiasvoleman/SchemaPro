@@ -43,6 +43,13 @@ export interface TeacherWorkRuleResponse {
   maxTeachingMinutesPerDay: number | null;
   /** The ISO weekday the teacher would rather have free (soft), or null. */
   preferredFreeDayOfWeek: number | null;
+  /**
+   * Sammanhängande undervisning (20261218090000): the most minutes of
+   * teaching in a row, and the free time that ends a stretch; both null, or
+   * both set. Not HR, like the cap.
+   */
+  maxConsecutiveTeachingMinutes: number | null;
+  consecutiveBreakMinutes: number | null;
 }
 
 /**
@@ -58,10 +65,18 @@ export const WORK_RULE_DAY_IS_PLANNED = 'WORK_RULE_DAY_IS_PLANNED';
  * the two equal).
  */
 export const WORK_RULE_DAY_IS_PLANNED_MESSAGE =
-  'Dagstaket och den önskade lediga dagen sätts av en administratör som planerar.';
+  'Dagstaket, den önskade lediga dagen och gränsen för sammanhängande undervisning sätts av en administratör som planerar.';
 
-/** Lärarens dag on the row: the two columns only an administrator who plans writes. */
-const DAY_FIELDS = ['maxTeachingMinutesPerDay', 'preferredFreeDayOfWeek'] as const;
+/**
+ * Lärarens dag and Sammanhängande undervisning on the row: the columns only an
+ * administrator who plans writes.
+ */
+const DAY_FIELDS = [
+  'maxTeachingMinutesPerDay',
+  'preferredFreeDayOfWeek',
+  'maxConsecutiveTeachingMinutes',
+  'consecutiveBreakMinutes',
+] as const;
 
 /**
  * Lärarnas arbetstid: one row per teacher, upserted by the teacher named in the
@@ -144,6 +159,7 @@ export class TeacherWorkRulesService {
     this.assertMayWrite(userId, user);
     assertLunchIsWhole(dto);
     assertLunchFits(dto);
+    assertStretchIsWhole(dto);
 
     const plans = writesPlanning(user);
     const data = {
@@ -214,7 +230,13 @@ export class TeacherWorkRulesService {
           return;
         }
         const deleted = await tx.teacherWorkRule.deleteMany({
-          where: { userId, maxTeachingMinutesPerDay: null, preferredFreeDayOfWeek: null },
+          where: {
+            userId,
+            maxTeachingMinutesPerDay: null,
+            preferredFreeDayOfWeek: null,
+            maxConsecutiveTeachingMinutes: null,
+            consecutiveBreakMinutes: null,
+          },
         });
         if (deleted.count > 0) return;
         await tx.teacherWorkRule.update({
@@ -255,6 +277,8 @@ function toResponse(row: TeacherWorkRule): TeacherWorkRuleResponse {
     minDailyRestMinutes: row.minDailyRestMinutes,
     maxTeachingMinutesPerDay: row.maxTeachingMinutesPerDay,
     preferredFreeDayOfWeek: row.preferredFreeDayOfWeek,
+    maxConsecutiveTeachingMinutes: row.maxConsecutiveTeachingMinutes,
+    consecutiveBreakMinutes: row.consecutiveBreakMinutes,
   };
 }
 
@@ -291,7 +315,12 @@ async function assertDayIsKept(
   if (sent.length === 0) return;
   const stored = await tx.teacherWorkRule.findUnique({
     where: { userId },
-    select: { maxTeachingMinutesPerDay: true, preferredFreeDayOfWeek: true },
+    select: {
+      maxTeachingMinutesPerDay: true,
+      preferredFreeDayOfWeek: true,
+      maxConsecutiveTeachingMinutes: true,
+      consecutiveBreakMinutes: true,
+    },
   });
   if (sent.some((field) => dto[field] !== (stored?.[field] ?? null))) {
     throw new ForbiddenException({ message: WORK_RULE_DAY_IS_PLANNED_MESSAGE, code: WORK_RULE_DAY_IS_PLANNED });
@@ -313,6 +342,26 @@ function assertLunchIsWhole(dto: UpsertTeacherWorkRuleDto): void {
   if (present !== 0 && present !== 3) {
     throw new BadRequestException(
       'Ange lunchens längd och hela fönstret, eller inget av dem — en halv lunchregel går inte att tolka.',
+    );
+  }
+}
+
+/**
+ * The limit on teaching in a row and the pause that ends a stretch: both
+ * sent, or neither — and when sent, both set or both null.
+ *
+ * Checked on what the body SAYS and not on what the row holds, because absent
+ * keeps: a body naming one of the two, with the row holding the other, would
+ * otherwise write a half rule the table's pair CHECK then refuses as a bare
+ * 400 naming the constraint. The database refuses it too — this is the copy
+ * that can say which field is missing.
+ */
+function assertStretchIsWhole(dto: UpsertTeacherWorkRuleDto): void {
+  const { maxConsecutiveTeachingMinutes: limit, consecutiveBreakMinutes: pause } = dto;
+  if (limit === undefined && pause === undefined) return;
+  if (limit === undefined || pause === undefined || (limit === null) !== (pause === null)) {
+    throw new BadRequestException(
+      'Ange både gränsen för undervisning i följd och pausen som avslutar en följd, eller ingen av dem — en halv regel går inte att tolka.',
     );
   }
 }
