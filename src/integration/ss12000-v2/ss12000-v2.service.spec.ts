@@ -720,7 +720,7 @@ describe('Elevlistan i uppföljningen: an event says who of its groups is not on
     expect(hers.map((event) => event.id)).toContain(lessonNamed('SvA7:s svenska som andraspråk').id);
   });
 
-  it('a key with calendarEvents.read alone gets the same exceptions: the student filter it may use already tells which events a pupil\'s groups have (review R2-L3)', async () => {
+  it('a key with calendarEvents.read alone gets the same exceptions as one that reads groups (review R2-L3)', async () => {
     const { world, service } = setup();
     world.addPupilList(WITH_SVA);
     const bare = (await service.listCalendarEvents(caller(['calendarEvents.read']), DAY)).data;
@@ -728,7 +728,9 @@ describe('Elevlistan i uppföljningen: an event says who of its groups is not on
     const classSvenska = lessonNamed('7A:s svenska').id;
     expect(exceptionsOf(bare.find((event) => event.id === classSvenska))).toEqual(exceptionsOf(full.find((event) => event.id === classSvenska)));
     expect(exceptionsOf(bare.find((event) => event.id === classSvenska))!.map((entry) => entry.participates)).toEqual([false, false]);
-    // What that key could already ask: Alva's events hold SvA7's own lesson.
+    // What that key could already ask for a pupil whose id it knows: Alva's
+    // events hold SvA7's own lesson. The exceptions name her without that
+    // (R3-L3); the documentation says so.
     const hers = (await service.listCalendarEvents(caller(['calendarEvents.read']), { ...DAY, student: pupilNamed('Alva') })).data;
     expect(hers.map((event) => event.id)).toContain(lessonNamed('SvA7:s svenska som andraspråk').id);
   });

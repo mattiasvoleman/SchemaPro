@@ -313,15 +313,28 @@ huvudman's schools is two Persons, each with its school's id.
   pupils off lessons of its own läsår only); a replacing group removed; a
   pupil's class move, relinked id, deactivation, reactivation or removal. A
   removed pupil's memberships are gone before the version triggers run, so
-  every event of the home class in a subject some group of its läsår
-  replaces moves; a group moved to another läsår also moves its own
-  lessons and those it is added to in subjects replaced in either year. A
-  batch, or a removal, may move an event that did not change for any pupil
-  in it; none that did is missed. These events move when the writing
-  transaction COMMITS, not at its statement: the version rows are taken all
-  or none at commit, so a membership write or a sync's apply never holds an
-  event while a teacher edits one (a teacher's own lesson write moves its
-  event at the statement, as before). A phone number, an invitation or a
+  every event of the home class, in any läsår, in a subject some group
+  replaces in that event's läsår moves; a group moved to another läsår
+  also moves its own lessons and those it is added to in subjects replaced
+  in either year. A batch, or a removal, may move an event that did not
+  change for any pupil in it; none that did is missed. These events move
+  when the writing transaction COMMITS, not at its statement, and so do the
+  events and activities that a person's deactivation, reactivation or
+  relinked id, a teacher's duty link, and a change around a lesson (a
+  group's name, a school unit, a subject) move. At commit the version rows
+  are taken all or none, backing off from a row another writer holds; past
+  about 10 s the commit waits for it as any writer does. A membership write
+  or a sync's apply therefore holds none of those events or activities
+  while it runs or commits, and a teacher's lesson edit does not wait for
+  it. A transaction that also moves events at its statements (a teacher's
+  own lesson write still does, as before, and so do a läsår's activation,
+  an employment and an administrator's removal of a pupil named on lessons)
+  holds those while its commit backs off, up to about 10 s, and may then
+  deadlock with a teacher's write. A commit can now fail where its
+  statements did not: a deadlock answers the 409 `WRITE_CONFLICT` a
+  statement's does, and a sync's apply records it as
+  `SS12000_APPLY_40P01`, or answers `SS12000_BUSY` when its lock timeout
+  runs out. A phone number, an invitation or a
   nedsättning moves nothing. An object unchanged since the migration is dated by its own
   `updatedAt`.
 * **Request bodies.** A lookup's body is plain JSON of at most 1 MB, not
@@ -481,12 +494,15 @@ SvA7 replaces Svenska, so each event of 7A's svenska lists 7A's SvA7 pupils as
 not participating (*Ersättande grupper*, by the rule in
 `src/common/replacing-groups.ts` `lessonPupils`). S1 has no exception on
 `Activity`, so the event is where this is said. `participates: false` is
-sent to every key that may read the event. It tells a key with
-`calendarEvents.read` alone nothing new: S1's `student` filter, which that
-key may use, already answers which events a pupil's groups have, so
-`?student=<Alva>` lists SvA7's lessons, and which of the class's she leaves
-follows. Leaving the exceptions out would only send that key 7A's svenska
-as if Alva took it. The `student` filter stays
+sent to every key that may read the event. A key with `calendarEvents.read`
+alone thereby learns something it could not list before: the pseudonymous
+ids of the pupils a replacing group takes off a class's lessons, which with
+SvA is, in effect, who of the class reads Swedish as a second language.
+Before, such a key saw a pupil's id only on a lesson that names the pupil,
+or by asking for one it already knew (`?student=<Alva>` lists SvA7's lessons
+among hers). This is S1's own way of saying who does not take part, and it
+is sent to every key by choice: leaving it out for some keys would send them
+7A's svenska as if every pupil of 7A took it. The `student` filter stays
 S1's own ("group.groupMemberships.person.id eller
 studentExceptions.student.id"), and an SvA7 pupil's events therefore include
 7A's svenska, which says they do not participate. The same holds for the

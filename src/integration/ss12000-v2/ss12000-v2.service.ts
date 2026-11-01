@@ -1158,11 +1158,13 @@ export class Ss12000V2Service {
     // Ersättande grupper (Elevlistan i uppföljningen): the groups replacing a
     // subject, each in its own läsår. Empty in a school with none, which then
     // sends exactly the exceptions it sent before. Sent to every key that
-    // may read the event: S1's student filter, which calendarEvents.read
-    // alone may use, already answers which events a pupil's groups have
-    // (SvA7's included), so who of 7A leaves 7A's svenska tells such a key
-    // nothing it could not ask, and leaving it out would send it the wrong
-    // list (review of #226, R2-L3).
+    // may read the event (review of #226, R2-L3). A key with
+    // calendarEvents.read alone thereby learns the pseudonymous ids of the
+    // pupils a replacing group takes off a class's lessons, ids it could not
+    // list before (with SvA, who of the class reads Swedish as a second
+    // language); leaving them out would send it 7A's svenska as if every
+    // pupil of 7A took it. That is S1's way of saying who does not take part,
+    // chosen over a list that is wrong for some keys (R3-L3).
     const bySubject = replacingBySubject(replacedSubjectOf(model.groups));
     const yearOf = yearsOf(model.groups);
     return lessons.map((lesson) => {
