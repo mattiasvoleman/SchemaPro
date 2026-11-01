@@ -2212,6 +2212,7 @@ DECLARE
   rstod uuid;
   k6a uuid;
   p5 uuid;
+  p6 uuid;
   rfd uuid;
   t uuid;
   p1 uuid;
@@ -2330,6 +2331,12 @@ BEGIN
   VALUES (s1, 'eg-p5@example.invalid', 'EG', 'Elev hemma i en undervisningsgrupp', 'STUDENT', '00000000-0000-4000-8000-000000001510', true, rfd, now())
   RETURNING id INTO p5;
   INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (s1, r7, p5);
+  -- P6 has left the school: deactivated, at home in 7A and in SvA7.
+  -- Reactivated, P6 rejoins every exception of 7A's svenska (Elevlistan i
+  -- uppföljningen, RLS 286n).
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES (s1, 'eg-p6@example.invalid', 'EG', 'Elev inaktiv SvA', 'STUDENT', '00000000-0000-4000-8000-000000001511', false, k7a, now()) RETURNING id INTO p6;
+  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (s1, r7, p6);
   -- EG-0 is last year's class's svenska, with Sv6n added: P2 reaches it
   -- through Sv6n, and last year's SvA6 takes P2 off it (a teaching group
   -- added to a lesson keeps nobody on; only the lesson's own one does).

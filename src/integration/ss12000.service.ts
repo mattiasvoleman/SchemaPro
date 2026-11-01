@@ -4,6 +4,7 @@ import { recordRead } from '../access-log/access-log';
 import { PrismaService } from '../database/prisma.service';
 import { askNewMentors, leaveNoticeEntries, type LeaveNoticeRow } from '../family/leave-notices';
 import { NotificationsService } from '../notifications/notifications.service';
+import { keptByOf, lessonPupils, replacedSubjectOf, replacingBySubject, yearsOf } from '../common/replacing-groups';
 import { readGrundschema, type PublishedMaster } from '../publication/published-grundschema';
 import { dayOf } from '../staffing/duty-dates';
 import { dutyEmploymentSelect, dutySegments, toSs12000Duties, type DutyPeriod, type Ss12000Duty } from './ss12000-duties';
@@ -375,9 +376,11 @@ export class Ss12000Service {
       if (totalCount === 0) {
         const published = await this.publishedActivities(tx, schoolId);
         if (published !== null) {
-          const data = published.slice(skip, skip + take).map(toActivity);
-          // Pupils named on a lesson one by one: ROSTER in the läslogg.
-          await recordRead(tx, 'ROSTER', data.flatMap((activity) => activity.studentIds));
+          const rows = published.slice(skip, skip + take);
+          const excluded = await this.excludedOf(tx, schoolId, rows.map(lessonOfMaster));
+          const data = rows.map((row) => toActivity(row, excluded.get(row.id)));
+          // Pupils named on a lesson one by one, and those it leaves out: ROSTER in the läslogg.
+          await recordRead(tx, 'ROSTER', data.flatMap(namedIn));
           return {
             totalCount: published.length,
             limit: take,
@@ -386,8 +389,9 @@ export class Ss12000Service {
           };
         }
       }
-      const data = lessons.map(toActivity);
-      await recordRead(tx, 'ROSTER', data.flatMap((activity) => activity.studentIds));
+      const excluded = await this.excludedOf(tx, schoolId, lessons.map(lessonOfMaster));
+      const data = lessons.map((lesson) => toActivity(lesson, excluded.get(lesson.id)));
+      await recordRead(tx, 'ROSTER', data.flatMap(namedIn));
       return {
         totalCount,
         limit: take,
@@ -395,6 +399,62 @@ export class Ss12000Service {
         data,
       };
     });
+  }
+
+  /**
+   * Ersättande grupper (Elevlistan i uppföljningen): the active pupils of
+   * each lesson's groups that THE RULE takes off it (common/replacing-groups.ts
+   * lessonPupils: SvA7's pupils on 7A's svenska), by lesson id — what an
+   * activity and an event send as excludedStudentIds. Only pupils of a
+   * replacing group can be off, so only theirs are read; a school with no
+   * replacing group reads one empty list and sends what it always sent.
+   * Under the key's service principal, as every read here.
+   */
+  private async excludedOf(tx: PrismaClient, schoolId: string, lessons: ExcludedLesson[]): Promise<Map<string, string[]>> {
+    const out = new Map<string, string[]>();
+    const replacing = await tx.studentGroup.findMany({
+      where: { schoolId, replacesSubjectId: { not: null } },
+      select: { id: true, replacesSubjectId: true, academicYearId: true },
+    });
+    const bySubject = replacingBySubject(replacedSubjectOf(replacing));
+    const asked = lessons.filter((lesson) => bySubject.has(lesson.subjectId));
+    if (asked.length === 0) return out;
+    // The pupils who may be off: the replacing groups' active members, with
+    // every group they are in (home class and teaching groups).
+    const theirs = await tx.studentGroupMember.findMany({
+      where: { schoolId, studentGroupId: { in: replacing.map((group) => group.id) } },
+      select: { studentId: true },
+    });
+    const pupils = await tx.user.findMany({
+      where: { schoolId, id: { in: [...new Set(theirs.map((row) => row.studentId))] }, role: 'STUDENT', isActive: true },
+      select: { id: true, studentGroupId: true },
+    });
+    const memberships = await tx.studentGroupMember.findMany({
+      where: { schoolId, studentId: { in: pupils.map((pupil) => pupil.id) } },
+      select: { studentGroupId: true, studentId: true },
+    });
+    const membersOf = new Map<string, Set<string>>();
+    const add = (groupId: string, pupil: string) => membersOf.set(groupId, (membersOf.get(groupId) ?? new Set()).add(pupil));
+    for (const pupil of pupils) if (pupil.studentGroupId) add(pupil.studentGroupId, pupil.id);
+    for (const row of memberships) add(row.studentGroupId, row.studentId);
+    // Each lesson's own group: its läsår, and whether it keeps its members on (keptByOf).
+    const owners = await tx.studentGroup.findMany({
+      where: { schoolId, id: { in: [...new Set(asked.map((lesson) => lesson.groupIds[0]!))] } },
+      select: { id: true, kind: true, halfOfId: true, academicYearId: true },
+    });
+    const ownerOf = new Map(owners.map((group) => [group.id, group]));
+    const yearOf = yearsOf(replacing);
+    for (const lesson of asked) {
+      const owner = ownerOf.get(lesson.groupIds[0]!);
+      const { off } = lessonPupils(
+        { subjectId: lesson.subjectId, groupIds: lesson.groupIds, keptBy: keptByOf(owner), academicYearId: owner?.academicYearId, named: lesson.named },
+        membersOf,
+        bySubject,
+        yearOf,
+      );
+      if (off.length > 0) out.set(lesson.id, off);
+    }
+    return out;
   }
 
   /**
@@ -476,7 +536,20 @@ export class Ss12000Service {
               })
             ).map((row) => [row.calendarLessonId, row.masterLessonId]),
       );
-      await recordRead(tx, 'ROSTER', lessons.flatMap((lesson) => lesson.participants.map((entry) => entry.studentId)));
+      const excluded = await this.excludedOf(
+        tx,
+        schoolId,
+        lessons.map((lesson) => ({
+          id: lesson.id,
+          subjectId: lesson.subject.id,
+          groupIds: [lesson.studentGroup.id, ...lesson.extraGroups.map((entry) => entry.studentGroupId)],
+          named: lesson.participants.map((entry) => entry.studentId),
+        })),
+      );
+      await recordRead(tx, 'ROSTER', [
+        ...lessons.flatMap((lesson) => lesson.participants.map((entry) => entry.studentId)),
+        ...[...excluded.values()].flat(),
+      ]);
       return {
         totalCount,
         limit: take,
@@ -497,6 +570,7 @@ export class Ss12000Service {
             role: assignment.role,
           })),
           studentIds: lesson.participants.map((entry) => entry.studentId),
+          ...excludedField(excluded.get(lesson.id)),
           room: lesson.room
             ? { id: lesson.room.id, displayName: lesson.room.name }
             : null,
@@ -757,6 +831,43 @@ function toHHMMSS(time: Date): string {
 // Re-exported so the controller can type the system transaction if needed.
 export type SystemTx = PrismaClient;
 
+/** A lesson as excludedOf reads it: its subject, its groups (own first) and the pupils named on it. */
+interface ExcludedLesson {
+  id: string;
+  subjectId: string;
+  groupIds: string[];
+  named: string[];
+}
+
+/** A master lesson, live or published, as excludedOf reads it. */
+function lessonOfMaster(lesson: {
+  id: string;
+  subject: { id: string };
+  studentGroup: { id: string };
+  extraGroups: { studentGroupId: string }[];
+  participants: { studentId: string }[];
+}): ExcludedLesson {
+  return {
+    id: lesson.id,
+    subjectId: lesson.subject.id,
+    groupIds: [lesson.studentGroup.id, ...lesson.extraGroups.map((entry) => entry.studentGroupId)],
+    named: lesson.participants.map((entry) => entry.studentId),
+  };
+}
+
+/**
+ * excludedStudentIds, sent only when a pupil is off: a school with no
+ * replacing group sends every activity and event byte for byte as before.
+ */
+function excludedField(excluded: string[] | undefined): { excludedStudentIds?: string[] } {
+  return excluded && excluded.length > 0 ? { excludedStudentIds: excluded } : {};
+}
+
+/** The pupils an activity names: individually, and as left out. */
+function namedIn(activity: { studentIds: string[]; excludedStudentIds?: string[] }): string[] {
+  return [...activity.studentIds, ...(activity.excludedStudentIds ?? [])];
+}
+
 /** One master lesson — live, or a published snapshot's — as an SS12000 activity. */
 function toActivity(lesson: {
   id: string;
@@ -770,7 +881,7 @@ function toActivity(lesson: {
   studentGroup: { id: string; name: string };
   extraGroups: { studentGroupId: string }[];
   participants: { studentId: string }[];
-}) {
+}, excluded?: string[]) {
   return {
     id: lesson.id,
     displayName: `${lesson.subject.name} — ${lesson.studentGroup.name}`,
@@ -779,6 +890,7 @@ function toActivity(lesson: {
     groupIds: [lesson.studentGroup.id, ...lesson.extraGroups.map((entry) => entry.studentGroupId)],
     teacherIds: [lesson.teacherId, lesson.coTeacherId].filter(Boolean),
     studentIds: lesson.participants.map((entry) => entry.studentId),
+    ...excludedField(excluded),
     roomId: lesson.roomId,
     dayOfWeek: lesson.dayOfWeek,
     startTime: toHHMMSS(lesson.startTime),

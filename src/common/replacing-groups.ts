@@ -211,6 +211,41 @@ export function replacedPupils(
   return out;
 }
 
+/** A lesson as lessonPupils reads it: replacedPupils' scope and the pupils named on it. */
+export interface LessonPupilsInput extends ReplacedScope {
+  named: readonly string[];
+}
+
+/** Who sits in a lesson (`on`) and whom THE RULE takes off it (`off`), each sorted. */
+export interface LessonPupils {
+  on: string[];
+  off: string[];
+}
+
+/**
+ * The pupil list of one lesson, as every reader that lists or counts its
+ * pupils asks it (Elevlistan i uppföljningen): every member of its groups and
+ * every pupil named on it, less the members THE RULE takes off. `off` is what
+ * SS12000 sends as participates false and what a count leaves out; `on` is who
+ * is counted. `membersOf` holds each group's pupils, home classes and teaching
+ * groups alike; a group it does not hold has none. A pupil in neither list is
+ * not the lesson's at all.
+ *
+ * A school with no replacing group: `off` is empty, and `on` is the union the
+ * readers counted before.
+ */
+export function lessonPupils(
+  lesson: LessonPupilsInput,
+  membersOf: ReadonlyMap<string, ReadonlySet<string>>,
+  bySubject: ReadonlyMap<string, readonly string[]>,
+  yearOf?: ReadonlyMap<string, string>,
+): LessonPupils {
+  const roster = new Set<string>(lesson.named);
+  for (const groupId of lesson.groupIds) for (const pupil of membersOf.get(groupId) ?? []) roster.add(pupil);
+  const off = replacedPupils(roster, lesson, new Set(lesson.named), bySubject, membersOf, yearOf);
+  return { on: [...roster].filter((pupil) => !off.has(pupil)).sort(), off: [...off].sort() };
+}
+
 // ---------------------------------------------------------------------------
 // Per group: derived keys and the pairs they add.
 // ---------------------------------------------------------------------------

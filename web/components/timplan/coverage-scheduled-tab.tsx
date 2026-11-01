@@ -422,7 +422,7 @@ function ScheduledDrillDown({
                         line.pupils && line.pupils.below > 0 && "font-medium text-warning-foreground dark:text-warning",
                       )}
                     >
-                      {line.pupils ? t("below", { below: line.pupils.below, pupils: summary.pupilCount }) : "—"}
+                      {line.pupils ? t("below", { below: line.pupils.below, pupils: line.pupils.ofPupils ?? summary.pupilCount }) : "—"}
                     </td>
                   </>
                 ) : null}

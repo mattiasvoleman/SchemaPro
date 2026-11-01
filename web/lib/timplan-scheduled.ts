@@ -93,6 +93,8 @@ export interface DeltaStats {
   max: number;
   /** Pupils with a negative delta. */
   below: number;
+  /** The pupils the line is over, only when THE RULE took some of the group's off it (the gateway's copy says why). */
+  ofPupils?: number;
 }
 
 export interface ScheduledLine {
@@ -490,13 +492,14 @@ export function computeScheduledCoverage(input: ScheduledCoverageInput): Schedul
         masterLessonIds: [...draft.lessonIds, ...draft.parkedIds],
       };
       if (input.includePupils) {
+        const population = linePupils(draft.subjectId);
         const stats = statsOf(
-          linePupils(draft.subjectId).map((result) => {
+          population.map((result) => {
             const own = result.lines.get(draft.subjectId);
             return own ? Math.round(own.scheduled) - Math.round(own.planned) : 0;
           }),
         );
-        if (stats) line.pupils = stats;
+        if (stats) line.pupils = population.length < statPupils.length ? { ...stats, ofPupils: population.length } : stats;
       }
       lines.push(line);
 

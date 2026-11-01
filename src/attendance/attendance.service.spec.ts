@@ -1016,17 +1016,69 @@ describe('AttendanceService', () => {
       // but not in this lesson, was not answered and is not recorded.
       expect(recordedReads(tx)).toEqual([{ kind: 'ABSENCE_REPORTS', channel: null, ids: [STUDENT_A, STUDENT_B] }]);
       expectDayAskedOfTheFunction('2026-09-02');
+      // The register's own list (ACTIVE): active pupils only.
       expect(tx.user.findMany).toHaveBeenCalledWith({
         where: {
           studentGroupId: { in: [PRIMARY_GROUP] },
           id: { in: [STUDENT_B, STUDENT_A, STRANGER] },
+          role: 'STUDENT',
+          isActive: true,
         },
         select: { id: true, studentGroupId: true },
       });
     });
 
+    describe('Elevlistan i uppföljningen: the list the register shows, so not a pupil a replacing group takes off the lesson', () => {
+      // Student A is in SvA7, which replaces the lesson's subject; Student B
+      // is in Stöd7, a support group in it that replaces nothing; both are at
+      // home in the lesson's class and both reported away for the day.
+      const SVA7 = '11111111-1111-4111-8111-cccccccccccc';
+      const STOD7 = '11111111-1111-4111-8111-dddddddddddd';
+      const SVENSKA = '99999999-9999-4999-8999-999999999990';
+      const arrange = (replaces: string | null, lesson: { studentGroupId?: string; subjectId?: string } = {}) => {
+        storeLesson({ subjectId: SVENSKA, ...lesson });
+        arrangeUsers({ homeClass: [STUDENT_A, STUDENT_B] });
+        const groups = [
+          { id: SVA7, replacesSubjectId: replaces, academicYearId: 'y', kind: 'TEACHING_GROUP', halfOfId: null },
+          { id: STOD7, replacesSubjectId: null, academicYearId: 'y', kind: 'TEACHING_GROUP', halfOfId: null },
+          { id: PRIMARY_GROUP, replacesSubjectId: null, academicYearId: 'y', kind: 'CLASS', halfOfId: null },
+        ];
+        tx.studentGroup.findMany.mockImplementation((query: Query) =>
+          answerRows(query.where?.['replacesSubjectId'] ? groups.filter((group) => group.replacesSubjectId !== null) : groups)(query),
+        );
+        tx.studentGroupMember.findMany.mockImplementation(
+          answerRows([
+            { studentId: STUDENT_A, studentGroupId: SVA7 },
+            { studentId: STUDENT_B, studentGroupId: STOD7 },
+          ]),
+        );
+        tx.$queryRaw.mockResolvedValue([
+          { studentId: STUDENT_A, startTime: null, endTime: null },
+          { studentId: STUDENT_B, startTime: null, endTime: null },
+        ]);
+      };
+
+      it('class svenska: the pupil in SvA7 is not named, nor read in the läslogg; the pupil in the support group is', async () => {
+        arrange(SVENSKA);
+        await expect(service.reportedAbsences(LESSON_ID, teacher())).resolves.toEqual({ studentIds: [STUDENT_B] });
+        expect(recordedReads(tx)).toEqual([{ kind: 'ABSENCE_REPORTS', channel: null, ids: [STUDENT_B] }]);
+      });
+
+      it("SvA7's own lesson names its pupil", async () => {
+        arrange(SVENSKA, { studentGroupId: SVA7 });
+        await expect(service.reportedAbsences(LESSON_ID, teacher())).resolves.toEqual({ studentIds: [STUDENT_A] });
+      });
+
+      it('a school with no replacing group names both, as before', async () => {
+        arrange(null);
+        await expect(service.reportedAbsences(LESSON_ID, teacher())).resolves.toEqual({ studentIds: [STUDENT_A, STUDENT_B] });
+        expect(recordedReads(tx)).toEqual([{ kind: 'ABSENCE_REPORTS', channel: null, ids: [STUDENT_A, STUDENT_B] }]);
+      });
+    });
+
     it('finds a pupil through a teaching group or the participant list too', async () => {
-      arrangeUsers({ homeClass: [] });
+      // B is named on the lesson, and an active pupil (the register's list).
+      arrangeUsers({ homeClass: [], named: [{ id: STUDENT_B, firstName: 'Bo', lastName: 'Ek' }] });
       tx.studentGroupMember.findMany.mockResolvedValue([{ studentId: STUDENT_A, studentGroupId: PRIMARY_GROUP }]);
       tx.calendarLessonStudent.findMany.mockResolvedValue([{ studentId: STUDENT_B, calendarLessonId: LESSON_ID }]);
       tx.$queryRaw.mockResolvedValue([

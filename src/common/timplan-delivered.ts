@@ -280,6 +280,12 @@ export interface DeliveredLineSummary {
     projectedDelta: DeltaStats;
     belowPlanned: number;
     nothingDelivered: number;
+    /**
+     * Elevlistan i uppföljningen: how many pupils the line is over, sent only
+     * when THE RULE took some of the group's off the line — what belowPlanned
+     * is out of. Absent, it is the group's pupilCount.
+     */
+    ofPupils?: number;
   };
 }
 
@@ -1346,6 +1352,7 @@ export function computeDeliveredCoverage(
           projectedDelta: statsOf(deltas, deltas.filter((value) => value < 0).length),
           belowPlanned: population.filter((p) => pupilFigures.get(p.id)?.get(key)?.status === 'SHORT').length,
           nothingDelivered: 0,
+          ...(population.length < statPupils.length ? { ofPupils: population.length } : {}),
         };
       }
       if (drill === group.id) {

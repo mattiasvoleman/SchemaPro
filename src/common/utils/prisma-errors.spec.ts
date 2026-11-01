@@ -15,6 +15,7 @@ import {
   TIMPLAN_IS_DECIDED,
   WRITE_CONFLICT,
   areaRefusal,
+  driverAdapterCode,
   decidedTimplanConflict,
   decidedTimplanRefusal,
   enrolmentClassKeyRefusal,
@@ -26,6 +27,13 @@ import {
   teachingBlockRefusal,
   timplanInUseConflict,
 } from './prisma-errors';
+
+/** How Prisma 7.10 rejects a failed COMMIT: the adapter's error, the driver's fields under cause. */
+const commitError = (originalCode: string, kind: string): Error =>
+  Object.assign(new Error(kind), {
+    name: 'DriverAdapterError',
+    cause: { originalCode, originalMessage: 'deadlock detected', kind },
+  });
 
 const knownError = (code: string): Prisma.PrismaClientKnownRequestError =>
   new Prisma.PrismaClientKnownRequestError(`Simulated ${code}`, {
@@ -223,6 +231,23 @@ describe('rethrowPrismaError and a concurrent write', () => {
     for (const code of ['40P01', '40001']) {
       expect(answer(driverError(code, 'deadlock detected'))).toBeInstanceOf(ConflictException);
     }
+  });
+
+  it('answers a COMMIT the database aborted the same way, though Prisma rejects it with the adapter\'s own error', () => {
+    // Measured in the adapter probe (el-h, through withRls): a membership's
+    // events move at its COMMIT (20261215090000), and a deadlock there
+    // arrives as a DriverAdapterError with no code and no meta.
+    for (const code of ['40P01', '40001']) {
+      const thrown = answer(commitError(code, 'TransactionWriteConflict'));
+      expect(thrown).toBeInstanceOf(ConflictException);
+      expect((thrown as ConflictException).getResponse()).toMatchObject({ code: WRITE_CONFLICT });
+    }
+    // A lock timeout at the commit is no write conflict: it is rethrown as it came.
+    const timeout = commitError('55P03', 'postgres');
+    expect(answer(timeout)).toBe(timeout);
+    expect(driverAdapterCode(timeout)).toBe('55P03');
+    expect(driverAdapterCode(knownError('P2034'))).toBeUndefined();
+    expect(driverAdapterCode(new Error('DriverAdapterError'))).toBeUndefined();
   });
 });
 
