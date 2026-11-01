@@ -1,3 +1,5 @@
+import { driverAdapterCode } from '../../common/utils/prisma-errors';
+
 /**
  * A failure talking to the SS12000 source, as a code and nothing else.
  *
@@ -28,9 +30,14 @@ export function sourceErrorCode(error: unknown): string {
  * The SQLSTATE a database error carries through @prisma/adapter-pg (the
  * driver's cause, else the rendered message), as the adapter probe reads it.
  * SS403 / SS404 / SS409 are this module's guards and functions; 55P03 is a
- * lock_timeout; 23505 a unique violation.
+ * lock_timeout; 23505 a unique violation. A failed COMMIT arrives as the
+ * adapter's own DriverAdapterError (driverAdapterCode): the apply's
+ * memberships move their events at COMMIT, where its lock_timeout (55P03,
+ * SS12000_BUSY) or a deadlock (40P01) can end it.
  */
 export function sqlStateOf(error: unknown): string | undefined {
+  const atCommit = driverAdapterCode(error);
+  if (atCommit !== undefined) return atCommit;
   if (typeof error !== 'object' || error === null) return undefined;
   const meta = (error as { meta?: { driverAdapterError?: { cause?: { originalCode?: unknown } } } }).meta;
   const original = meta?.driverAdapterError?.cause?.originalCode;

@@ -14,4 +14,11 @@ describe('the module\'s errors', () => {
     expect(sqlStateOf(null)).toBeUndefined();
     expect(sqlStateOf('55P03')).toBeUndefined();
   });
+
+  it('reads it from a failed COMMIT too, which Prisma rejects with the adapter\'s own error', () => {
+    const atCommit = (originalCode: string) =>
+      Object.assign(new Error('TransactionWriteConflict'), { name: 'DriverAdapterError', cause: { originalCode, kind: 'TransactionWriteConflict' } });
+    expect(sqlStateOf(atCommit('40P01'))).toBe('40P01');
+    expect(sqlStateOf(atCommit('55P03'))).toBe('55P03');
+  });
 });
