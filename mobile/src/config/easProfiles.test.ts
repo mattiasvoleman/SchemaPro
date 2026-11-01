@@ -16,13 +16,23 @@ import eas from '../../eas.json';
  * profile names its app's ids itself; they must be the ones the build gets.
  */
 type Platform = 'ios' | 'android';
-type Section = { environment?: string; env?: Record<string, string> };
+type Section = {
+  environment?: string;
+  env?: Record<string, string>;
+  distribution?: string;
+  developmentClient?: boolean;
+  autoIncrement?: boolean;
+  buildType?: string;
+};
 type Profile = Section & { extends?: string; ios?: Section; android?: Section };
 
 const BUILD = eas.build as Record<string, Profile>;
 const SUBMIT = eas.submit as Record<
   string,
-  { ios?: { bundleIdentifier?: string; appName?: string }; android?: { applicationId?: string } }
+  {
+    ios?: { bundleIdentifier?: string; appName?: string };
+    android?: { applicationId?: string; track?: string; releaseStatus?: string };
+  }
 >;
 
 /** eas-json's merge (resolver.js): the update wins, env keys merge, and so do the platform sections. */
@@ -88,6 +98,44 @@ describe('eas.json build profiles', () => {
   );
 });
 
+/**
+ * What DEPLOYMENT.md §15.2 and §15.9 promise about how each variant is built
+ * and numbered. Nothing else reads these keys before a build is paid for, and
+ * a change to one is silent: a development profile without its client builds
+ * an app with nothing to load, a preview that is no APK cannot be sent to an
+ * Android phone by a link, and a build number nothing raises is refused by the
+ * store on the second upload.
+ */
+describe('eas.json build settings', () => {
+  const DEVELOPMENT = NAMES.filter((name) => name.endsWith('-development'));
+  const PREVIEW = NAMES.filter((name) => name.endsWith('-preview'));
+  const PRODUCTION = NAMES.filter((name) => name.endsWith('-production'));
+
+  it('keeps the build number at EAS, where preview and production raise it at every build', () => {
+    expect(eas.cli.appVersionSource).toBe('remote');
+    for (const name of PREVIEW.concat(PRODUCTION)) expect(chain(name).autoIncrement).toBe(true);
+    for (const name of DEVELOPMENT) expect(chain(name).autoIncrement).not.toBe(true);
+  });
+
+  it.each(DEVELOPMENT)('%s is a development client for internal distribution', (name) => {
+    expect(chain(name).developmentClient).toBe(true);
+    expect(chain(name).distribution).toBe('internal');
+  });
+
+  it.each(PREVIEW)('%s is internal distribution, an APK on Android and no development client', (name) => {
+    expect(chain(name).distribution).toBe('internal');
+    expect(resolved(name, 'android').buildType).toBe('apk');
+    expect(resolved(name, 'ios').buildType).toBeUndefined();
+    expect(chain(name).developmentClient).not.toBe(true);
+  });
+
+  it.each(PRODUCTION)('%s is a store build, not an APK and no development client', (name) => {
+    expect(chain(name).distribution).toBe('store');
+    expect(resolved(name, 'android').buildType).toBeUndefined();
+    expect(chain(name).developmentClient).not.toBe(true);
+  });
+});
+
 describe('eas.json submit profiles', () => {
   it('exist for each production build, named after it', () => {
     expect(Object.keys(SUBMIT).sort()).toEqual(NAMES.filter((name) => name.endsWith('-production')).sort());
@@ -100,5 +148,13 @@ describe('eas.json submit profiles', () => {
     expect(submit?.ios?.bundleIdentifier).toBe(ios.ios?.bundleIdentifier);
     expect(submit?.ios?.appName).toBe(ios.name);
     expect(submit?.android?.applicationId).toBe(android.android?.package);
+  });
+
+  // Play accepts nothing else while an app is a draft, and `eas submit` has
+  // no confirmation step: a production track or a completed release would
+  // publish the build to the store's public track at the first submit.
+  it.each(Object.keys(SUBMIT))('%s uploads to Play\'s internal track as a draft', (name) => {
+    expect(SUBMIT[name]?.android?.track).toBe('internal');
+    expect(SUBMIT[name]?.android?.releaseStatus).toBe('draft');
   });
 });
