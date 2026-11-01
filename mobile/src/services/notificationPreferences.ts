@@ -3,7 +3,7 @@ import type { MessageKey, Translate } from '../i18n';
 import type { NotificationType } from '../types';
 
 /**
- * What the signed-in person lets leave SchemaPro, per notice type: e-mail and
+ * What the signed-in person lets leave Rastra, per notice type: e-mail and
  * push together (NotificationOptOuts, 20261013100000). The inbox row is
  * written whatever is chosen. Own only — the gateway answers the caller's own
  * set by role — and a `required` type (the unreported absence for a guardian,

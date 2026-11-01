@@ -417,13 +417,35 @@ export const WRITE_CONFLICT = 'WRITE_CONFLICT';
  * P2034 — measured for a deadlock between a timplan save and a subject delete
  * in scripts/test/prisma-adapter-probe.ts. The SQLSTATE under a P2039 is the
  * fallback, for an adapter release that stops mapping them.
+ *
+ * A COMMIT that fails is the third shape: Prisma 7.10 rejects the
+ * interactive transaction with the adapter's own DriverAdapterError, no
+ * code and no meta, the driver's fields under `cause` (driverAdapterCode).
+ * A membership write's events move at its COMMIT (migration
+ * 20261215090000), so a deadlock can now happen there, and it is the same
+ * 409 (probe check el-h, through withRls).
  */
 export function isWriteConflict(error: unknown): boolean {
+  const atCommit = driverAdapterCode(error);
+  if (atCommit !== undefined) return atCommit === '40P01' || atCommit === '40001';
   if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
   if (error.code === 'P2034') return true;
   const cause = (error.meta as { driverAdapterError?: { cause?: DriverCause } } | undefined)
     ?.driverAdapterError?.cause;
   return cause?.originalCode === '40P01' || cause?.originalCode === '40001';
+}
+
+/**
+ * The SQLSTATE of the adapter's own error, which is how Prisma 7.10 reports
+ * a failed COMMIT: an Error named DriverAdapterError whose `cause` carries
+ * the driver's originalCode. Undefined for anything else, a Prisma error
+ * included (its SQLSTATE sits under meta.driverAdapterError instead).
+ */
+export function driverAdapterCode(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null) return undefined;
+  if ((error as { name?: unknown }).name !== 'DriverAdapterError') return undefined;
+  const original = (error as { cause?: { originalCode?: unknown } }).cause?.originalCode;
+  return typeof original === 'string' ? original : undefined;
 }
 
 /** The 409 for a write the database aborted because another one ran at once. */

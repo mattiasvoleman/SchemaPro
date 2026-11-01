@@ -1,0 +1,49 @@
+{
+  "cli": {
+    "version": ">= 24.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "rastra-development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "environment": "development",
+      "env": { "APP": "rastra", "APP_VARIANT": "development" }
+    },
+    "rastra-preview": {
+      "distribution": "internal",
+      "environment": "preview",
+      "env": { "APP": "rastra", "APP_VARIANT": "preview" },
+      "autoIncrement": true,
+      "android": { "buildType": "apk" }
+    },
+    "rastra-production": {
+      "distribution": "store",
+      "environment": "production",
+      "env": { "APP": "rastra", "APP_VARIANT": "production" },
+      "autoIncrement": true
+    },
+    "vardnadshavare-development": {
+      "extends": "rastra-development",
+      "env": { "APP": "vardnadshavare", "APP_VARIANT": "development" }
+    },
+    "vardnadshavare-preview": {
+      "extends": "rastra-preview",
+      "env": { "APP": "vardnadshavare", "APP_VARIANT": "preview" }
+    },
+    "vardnadshavare-production": {
+      "extends": "rastra-production",
+      "env": { "APP": "vardnadshavare", "APP_VARIANT": "production" }
+    }
+  },
+  "submit": {
+    "rastra-production": {
+      "ios": { "bundleIdentifier": "se.rastra.app", "appName": "Rastra", "language": "sv" },
+      "android": { "applicationId": "se.rastra.app", "track": "internal", "releaseStatus": "draft" }
+    },
+    "vardnadshavare-production": {
+      "ios": { "bundleIdentifier": "se.rastra.vardnadshavare", "appName": "Rastra vårdnadshavare", "language": "sv" },
+      "android": { "applicationId": "se.rastra.vardnadshavare", "track": "internal", "releaseStatus": "draft" }
+    }
+  }
+}

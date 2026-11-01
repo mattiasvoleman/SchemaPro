@@ -136,7 +136,7 @@ Out of scope are gymnasium (there is no Course entity), förskola, fritids and g
   - teacher daily caps;
   - A/B weeks. It reserves alternating lessons every week, and the manual tells schools to lock them.
 - The app is in Swedish and English only.
-- The mobile app has no admin. It is not distributed (no EAS project), and push has never reached a real device.
+- The mobile apps, Rastra for staff and pupils and Rastra vårdnadshavare for guardians, have no admin. They have not been distributed: the build profiles and the runbook exist (`mobile/eas.json`, `docs/DEPLOYMENT.md` §15), but there is no EAS project yet, no build of them has reached a tester, and push has never reached a real device.
 
 **Terms.** Keep the Swedish domain words in Swedish copy, without glossing:
 - **Timplan** is the school's lokal timplan in minutes per week per subject and årskurs, a huvudman decision.
@@ -164,7 +164,7 @@ English labels exist for all of them. A test enforces "Curriculum entries" as th
 
 ## Brand Commitments
 
-**Name.** The product is **Rastra** (decided 2026-10-17; formerly SchemaPro). The web app and every other application but the mobile apps (Schemavisaren, the guardian and pupil web, the admin) is **Rastra Schema** in Swedish, with the genitive *Rastra Schemas*, and **Rastra timetable** in English, the international name. The mobile apps are **Rastra** for staff and pupils and **Rastra vårdnadshavare** for guardians. The repository, packages, code identifiers, database, environment variables, API paths, storage keys and the hosting projects keep the old name, and so does everything a stored id or an integration derives from: the `X-SchemaPro-*` webhook headers, the ICS UIDs and the SS12000 id namespace. No logo, wordmark, favicon or app icon exists. The stock calendar icon on the web and the letters "SP" in the app are placeholders.
+**Name.** The product is **Rastra** (decided 2026-10-17; formerly SchemaPro). The web app and every other application but the mobile apps (Schemavisaren, the guardian and pupil web, the admin) is **Rastra Schema** in Swedish, with the genitive *Rastra Schemas*, and **Rastra timetable** in English, the international name. The mobile apps are **Rastra** for staff and pupils and **Rastra vårdnadshavare** for guardians. The repository, packages, code identifiers, database, environment variables, API paths, storage keys and the hosting projects keep the old name, and so does everything a stored id or an integration derives from: the `X-SchemaPro-*` webhook headers, the ICS UIDs and the SS12000 id namespace. No logo, wordmark or favicon exists. The apps' icon, their splash and the tile on their sign-in screen reuse the web's brand tile, lucide's stock CalendarRange glyph in white on #5048e5 (`mobile/scripts/render-brand-assets.mjs`). Like the stock calendar icon on the web they are drawn from, they are placeholders, not a designed mark.
 
 **Voice.** Swedish first, in the du-form: plain, declarative and procedural. The copy:
 - explains why a rule exists;

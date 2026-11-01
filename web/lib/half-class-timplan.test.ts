@@ -143,6 +143,38 @@ describe("hemkunskap swapped with slöjd over the terms", () => {
     ]);
   });
 
+  it("says nothing for a second swap on the same halves in the same week: bild for teknik beside hemkunskap for slöjd", () => {
+    // The first swap as saved on the halves, 6A's hemkunskap gone; then 6A's
+    // bild 1 × 30 swapped with teknik, which the dialog proposes at the same
+    // 1 × 70 over the same terms. Each kept subject has a partner of its own.
+    const halves = [
+      { id: "h1", name: "6A:1" },
+      { id: "h2", name: "6A:2" },
+    ] as const;
+    const first = swap(TERMS);
+    const saved = first.rows.map((row, index) =>
+      post(`saved-${index}`, first.subjectIds[row.subject]!, row.lessonsPerWeek, row.minutesPerLesson, {
+        studentGroupId: halves[row.half].id,
+        startDate: row.startDate ?? null,
+        endDate: row.endDate ?? null,
+      }),
+    );
+    const bild = post("r-bl", "bl", 1, 30);
+    const teknik = post("r-tk", "tk", 1, 30);
+    const second = { ...swap(TERMS, ["bl", "tk"], "swapWithOther", [SLOJD, MATEMATIK, bild, teknik, ...saved], bild), halves };
+    const plan = sources([
+      { subjectId: "hk", minutesPerWeek: 30 },
+      { subjectId: "sl", minutesPerWeek: 80 },
+      { subjectId: "tk", minutesPerWeek: 30 },
+    ]);
+    const withBoth = { ...plan, subjects: [...SUBJECTS, { id: "bl", name: "Bild", nationalCode: "BL" }, { id: "tk", name: "Teknik", nationalCode: "TK" }] };
+    expect(second.rows[0]!.minutesPerLesson).toBe(first.rows[0]!.minutesPerLesson);
+    expect(doublesOf(halvesTimplan(withBoth, second, "bl"))).toEqual([
+      [[], []],
+      [[], []],
+    ]);
+  });
+
   it("brings the class's slöjd down to 2 × 25, the least that keeps both halves at 80", () => {
     const split = swap(TERMS);
     const reduction = classPostReduction(sources(), split, "sl");

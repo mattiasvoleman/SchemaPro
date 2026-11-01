@@ -1063,8 +1063,8 @@ export default function TimetablePage() {
         remoteEditor: remoteEditors.get(lesson.id),
         // Only when the class is PARTLY here. "28/28" on every one of a class's
         // own lessons is noise on the common case, and a lesson that names the
-        // class always holds all of it — showsFraction is the same rule the
-        // library states as an invariant.
+        // class holds all of it but those a replacing group takes off (SvA7's
+        // on 7A's svenska, "24/28") — showsFraction is the library's rule.
         ...(audience && showsFraction(audience)
           ? {
               share: `${audience.attending}/${audience.cohortSize}`,

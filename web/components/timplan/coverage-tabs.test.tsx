@@ -161,6 +161,26 @@ describe("CoverageScheduledTab", () => {
     for (const table of tables) expect(table.closest(".overflow-auto, .overflow-x-auto")).toHaveClass("relative");
   });
 
+  it("says what a line's pupils below are out of: the pupils it reaches when a replacing group took some, else the group's (Elevlistan i uppföljningen)", async () => {
+    // 7A of three, Alva in SvA7: 7A's Svenska is over Bo and Cim, 2 of 2;
+    // the same school with no replacing group, 3 of 3, as before.
+    groupNames.set("00000000-0000-4000-8000-000000001101", "7A");
+    const user = userEvent.setup();
+    for (const [name, expected] of [
+      ["elevlistan: Alva in SvA7", "timplanCoverage.below(2|2)"],
+      ["elevlistan: the same school with no replacing group", "timplanCoverage.below(3|3)"],
+    ] as const) {
+      const { response, input } = scheduledCase(name);
+      state.scheduled[""] = response;
+      state.scheduled["00000000-0000-4000-8000-000000001101"] = response;
+      const { unmount } = render(<CoverageScheduledTab {...props(input.subjects.map(({ id, name: n }) => ({ id, name: n })))} />);
+      await user.click(screen.getByRole("button", { name: /^7A/ }));
+      const section = screen.getByRole("region", { name: "7A" });
+      expect(within(section).getByRole("row", { name: /^Svenska / })).toHaveTextContent(expected);
+      unmount();
+    }
+  });
+
   it("shows a teacher no pupil column and asks for no pupil drill-down", async () => {
     state.scheduled[""] = scheduledCase(TEACHER).response;
     const user = userEvent.setup();
@@ -363,6 +383,25 @@ describe("CoverageDeliveredTab", () => {
     } finally {
       delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
     }
+  });
+
+  it("says what a line's below plan is out of when a replacing group took some of the class off it (Elevlistan i uppföljningen)", async () => {
+    // As the gateway sends it when THE RULE took a pupil off 7A's Matematik:
+    // one pupil left on the line, and she is below plan.
+    const replaced = {
+      ...DELIVERED_DRILL_7A,
+      groups: DELIVERED_DRILL_7A.groups.map((group) => ({
+        ...group,
+        lines: group.lines.map((line) =>
+          line.key === `subject:${DELIVERED_IDS.ma}` && line.pupils ? { ...line, pupils: { ...line.pupils, belowPlanned: 1, ofPupils: 1 } } : line,
+        ),
+      })),
+    };
+    state.delivered[""] = DELIVERED_OVERVIEW;
+    state.delivered[DELIVERED_IDS.class7A] = replaced;
+    render(<CoverageDeliveredTab {...props(subjects, DELIVERED_IDS.class7A)} />);
+    const maths = within(screen.getByRole("region", { name: "7A" })).getByRole("article", { name: "Matematik" });
+    expect(maths).toHaveTextContent("timplanCoverage.delivered.statsDelta(−40,6 h|−4,2 h|−4,2 h|1|1)");
   });
 
   it("lists a pupil's own finding only under a group with a line in its subject, and only that line", async () => {

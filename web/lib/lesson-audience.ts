@@ -19,6 +19,15 @@
  * would contradict the pupil's own portal.
  */
 
+import {
+  keptByOf,
+  lessonPupils,
+  replacedSubjectOf,
+  replacingBySubject,
+  yearsOf,
+  type KeptByRow,
+} from "./replacing-groups";
+
 /**
  * A pupil roster, indexed the way both questions here need it.
  *
@@ -41,13 +50,27 @@ export interface RosterIndex {
    * free and refuse the drag into it for a lesson nobody can see.
    */
   halfOf?: Map<string, string>;
+  /**
+   * Ersättande grupper (Elevlistan i uppföljningen): the groups replacing a
+   * subject, every group's läsår and kind. A pupil in SvA7 is not in the room
+   * for 7A's svenska (lib/replacing-groups.ts lessonPupils), so 7A's svenska
+   * holds "24/28" of 7A and none of SvA7. Absent in a school with no
+   * replacing group, which counts as it always did.
+   */
+  replacing?: {
+    bySubject: Map<string, string[]>;
+    yearOf: Map<string, string>;
+    groups: Map<string, KeptByRow & { academicYearId?: string | null }>;
+  };
 }
 
-/** The three fields of a lesson that decide who is in the room. */
+/** The fields of a lesson that decide who is in the room. */
 export interface LessonAudienceInput {
   studentGroupId: string;
   extraGroupIds: string[];
   studentIds: string[];
+  /** Its subject: a group replacing it takes its members out of the room. Absent, nobody leaves. */
+  subjectId?: string;
 }
 
 export interface Audience {
@@ -74,12 +97,23 @@ export interface Audience {
 export function buildRosterIndex(
   studentGroupOf: Map<string, string | null> | undefined,
   memberships: Array<{ studentId: string; studentGroupId: string }> | undefined,
-  groups: ReadonlyArray<{ id: string; halfOfId?: string | null }> = [],
+  groups: ReadonlyArray<{
+    id: string;
+    halfOfId?: string | null;
+    kind?: string | null;
+    replacesSubjectId?: string | null;
+    academicYearId?: string | null;
+  }> = [],
 ): RosterIndex {
   const membersOf = new Map<string, Set<string>>();
   const halfOf = new Map(groups.flatMap((group) => (group.halfOfId ? [[group.id, group.halfOfId] as const] : [])));
+  const bySubject = replacingBySubject(replacedSubjectOf(groups));
+  const replacing =
+    bySubject.size === 0
+      ? undefined
+      : { bySubject, yearOf: yearsOf(groups), groups: new Map(groups.map((group) => [group.id, group])) };
   if (studentGroupOf === undefined || memberships === undefined) {
-    return { membersOf, halfOf };
+    return { membersOf, halfOf, ...(replacing ? { replacing } : {}) };
   }
 
   const add = (groupId: string, studentId: string) => {
@@ -96,7 +130,7 @@ export function buildRosterIndex(
   }
   for (const row of memberships) add(row.studentGroupId, row.studentId);
 
-  return { membersOf, halfOf };
+  return { membersOf, halfOf, ...(replacing ? { replacing } : {}) };
 }
 
 /** The groups a lesson names, and the classes of any halves among them. */
@@ -147,11 +181,32 @@ export function audienceFor(
  * The union is the whole point. Handling the groups separately double-counts a
  * pupil that two named groups both hold, which is exactly the shape a class
  * split into two named halves has.
+ *
+ * Less the pupils a replacing group takes off the lesson: the same union,
+ * asked of lessonPupils, which SS12000, the class book and the register ask
+ * too.
  */
 function attendeesOf(
   lesson: LessonAudienceInput,
   index: RosterIndex,
 ): Set<string> {
+  const replacing = index.replacing;
+  if (replacing && lesson.subjectId !== undefined && replacing.bySubject.has(lesson.subjectId)) {
+    const own = replacing.groups.get(lesson.studentGroupId);
+    const { on } = lessonPupils(
+      {
+        subjectId: lesson.subjectId,
+        groupIds: [lesson.studentGroupId, ...lesson.extraGroupIds],
+        keptBy: keptByOf(own),
+        ...(own?.academicYearId ? { academicYearId: own.academicYearId } : {}),
+        named: lesson.studentIds,
+      },
+      index.membersOf,
+      replacing.bySubject,
+      replacing.yearOf,
+    );
+    return new Set(on);
+  }
   const attendees = new Set<string>();
   for (const groupId of [lesson.studentGroupId, ...lesson.extraGroupIds]) {
     for (const studentId of index.membersOf.get(groupId) ?? []) {
@@ -203,7 +258,8 @@ export function homeClassesReached(
  * Only when the class is PARTLY there. A `28/28` on every one of a class's own
  * lessons is noise on the ninety-percent case, and a språkval that happens to
  * hold the whole class really is wholly booked — marking it partial would be a
- * second lie rather than a correction of the first.
+ * second lie rather than a correction of the first. A class's own svenska that
+ * SvA7 takes four of is partly there, "24/28", and says so.
  */
 export function showsFraction(audience: Audience): boolean {
   return audience.cohortSize > 0 && audience.attending < audience.cohortSize;
