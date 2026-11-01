@@ -3,17 +3,19 @@ import {
   ActivityIndicator,
   FlatList,
   RefreshControl,
-  StyleSheet,
   Text,
   TouchableOpacity,
   View,
-  SafeAreaView,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { TAB_SCREEN_EDGES } from '../tabScreenEdges';
+import { makeStyles, useAppTheme } from '../../theme/ThemeContext';
 import { fetchNotifications, markAllRead as markOwnRead } from '../../services/notifications';
 import { notificationText } from '../../services/notificationText';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/LocaleContext';
 import { formatDateTime } from '../../i18n/format';
+import { useColumnLayout } from '../../layout/responsive';
 import type { NotificationRow } from '../../types';
 
 /**
@@ -23,6 +25,8 @@ import type { NotificationRow } from '../../types';
  * types in the reader's language.
  */
 export function NotificationsScreen(): React.JSX.Element {
+  const { colors } = useAppTheme();
+  const styles = useStyles();
   const { t, locale } = useI18n();
   const { authState } = useAuth();
   const userId = authState.teacherId;
@@ -51,22 +55,23 @@ export function NotificationsScreen(): React.JSX.Element {
     await load().catch(() => undefined);
   }, [load, userId]);
 
+  const { gutter } = useColumnLayout();
   const unread = rows.filter((entry) => entry.readAt === null).length;
 
   if (isLoading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={TAB_SCREEN_EDGES}>
         <View style={styles.center}>
-          <ActivityIndicator size="large" color="#6366f1" />
+          <ActivityIndicator size="large" color={colors.primary} />
         </View>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <View>
+    <SafeAreaView style={styles.container} edges={TAB_SCREEN_EDGES}>
+      <View style={[styles.header, { paddingHorizontal: gutter }]}>
+        <View style={styles.headerText}>
           <Text style={styles.headerTitle}>{t('notifications.title')}</Text>
           {unread > 0 ? (
             <Text style={styles.headerSubtitle}>{t('notifications.unread', { count: unread })}</Text>
@@ -81,8 +86,9 @@ export function NotificationsScreen(): React.JSX.Element {
       <FlatList
         data={rows}
         keyExtractor={(item) => item.id}
+        contentContainerStyle={{ paddingHorizontal: gutter }}
         refreshControl={
-          <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor="#6366f1" />
+          <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} progressBackgroundColor={colors.surface} />
         }
         renderItem={({ item }) => (
           <View style={[styles.card, item.readAt === null && styles.cardUnread]}>
@@ -100,31 +106,31 @@ export function NotificationsScreen(): React.JSX.Element {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0f0f1a' },
+const useStyles = makeStyles((c) => ({
+  container: { flex: 1, backgroundColor: c.background },
   center: { padding: 32, alignItems: 'center' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
+    gap: 12,
     paddingTop: 16,
     paddingBottom: 8,
   },
-  headerTitle: { color: '#e2e8f0', fontSize: 22, fontWeight: '700' },
-  headerSubtitle: { color: '#94a3b8', fontSize: 13, marginTop: 2 },
-  markRead: { color: '#6366f1', fontWeight: '600' },
+  headerText: { flexShrink: 1 },
+  headerTitle: { color: c.text, fontSize: 22, fontWeight: '700' },
+  headerSubtitle: { color: c.textMuted, fontSize: 13, marginTop: 2 },
+  markRead: { color: c.primary, fontWeight: '600' },
   card: {
-    backgroundColor: '#1a1a2e',
-    borderColor: '#1e1e3a',
+    backgroundColor: c.surface,
+    borderColor: c.borderSubtle,
     borderWidth: 1,
     borderRadius: 14,
     padding: 14,
-    marginHorizontal: 16,
     marginBottom: 8,
   },
-  cardUnread: { borderColor: '#6366f1' },
-  cardText: { color: '#e2e8f0' },
-  cardMeta: { color: '#64748b', fontSize: 12, marginTop: 4 },
-  emptyTitle: { color: '#e2e8f0', fontSize: 16, fontWeight: '700' },
-});
+  cardUnread: { borderColor: c.primary },
+  cardText: { color: c.text },
+  cardMeta: { color: c.textMuted, fontSize: 12, marginTop: 4 },
+  emptyTitle: { color: c.text, fontSize: 16, fontWeight: '700' },
+}));

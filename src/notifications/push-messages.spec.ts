@@ -116,7 +116,45 @@ describe('push messages', () => {
     expect(pushText('LESSON_CANCELLED', META, 'sv', TZ, 3).body).toBe('3 lektioner är inställda.');
     expect(pushText('LESSON_SUBSTITUTE_COVER', META, 'en', TZ, 2).body).toBe('You have 2 new cover lessons.');
     expect(pushText('ABSENCE_UNREPORTED', META, 'sv', TZ, 2).body).toBe('2 oanmälda frånvaron 13 okt. Öppna appen för att se mer.');
+    expect(pushText('ABSENCE_UNREPORTED', META, 'en', TZ, 2).body).toBe('2 unreported absences 13 Oct. Open the app to see more.');
     expect(pushText('ABSENCE_UNREPORTED', {}, 'sv', TZ, 2).body).toBe('Oanmäld frånvaro. Öppna appen för att se mer.');
+    expect(pushText('ABSENCE_UNREPORTED', {}, 'en', TZ, 2).body).toBe('Unreported absence. Open the app to see more.');
+  });
+
+  // The phone shows the owning app's name and icon above every push, and the
+  // gateway does not know which of the two apps holds a token. A product name
+  // in a text would be wrong in one of them, and stale at the next rename.
+  it('names no product in any title or body, in either language', () => {
+    const contexts = [true, false].flatMap((approved) => [0, 1, 3].map((lessons) => ({ approved, lessons })));
+    const metas = [META, { ...META, status: 'REJECTED', lessonCount: 1 }, {}];
+    const named: string[] = [];
+    let seen = 0;
+    const look = (where: string, text: string) => {
+      seen += 1;
+      if (/SchemaPro|Rastra/i.test(text)) named.push(`${where}: ${text}`);
+    };
+    for (const locale of LOCALES) {
+      for (const kind of KINDS) {
+        const template = PUSH_TEMPLATES[locale][kind];
+        look(`${locale} ${kind} title`, template.title);
+        look(`${locale} ${kind} many`, template.many);
+        for (const context of contexts) {
+          for (const part of ['one', 'bare'] as const) {
+            const text = template[part];
+            const where = `${locale} ${kind} ${part} (approved=${context.approved}, lessons=${context.lessons})`;
+            look(where, typeof text === 'function' ? text(context) : text);
+          }
+        }
+        for (const [index, meta] of metas.entries()) {
+          for (const count of [1, 3]) {
+            const { title, body } = pushText(kind, meta, locale, TZ, count);
+            look(`${locale} ${kind} meta#${index} ×${count}`, `${title} ${body}`);
+          }
+        }
+      }
+    }
+    expect(named).toEqual([]);
+    expect(seen).toBe(LOCALES.length * KINDS.length * (2 + contexts.length * 2 + metas.length * 2));
   });
 
   it('falls back to a body without a time when the meta has none', () => {

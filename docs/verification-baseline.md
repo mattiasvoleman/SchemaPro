@@ -22,7 +22,7 @@ could be evaluated at all.
 | Gate | Status |
 | :--- | :--- |
 | API dependency audit | ✓ pass (0/0/0) |
-| Mobile dependency audit | ✓ pass (2 unfixable image-size advisories allowlisted, lease expires 2026-11-09) |
+| Mobile dependency audit | ✓ pass (12 advisories allowlisted: zod, with no patch in the range the Expo CLI declares, and 11 whose fix is a new major (glob, minimatch) or younger than the seven-day rule (nine node-forge, which a plain lockfile bump takes once 1.4.1 is admitted on 2026-11-03); leases expire 2026-11-05, zod's and GHSA-86w9-cpqp-85rv's 2026-11-20; braces and sprintf-js are no longer reported and image-size left with Expo SDK 57, measured 2026-11-01) |
 | WCAG 2.1 AA (axe-core) | ✓ pass (10/10, one real defect fixed) |
 | Visual regression | ✓ pass (16/16 on linux-x64 baselines) |
 | API coverage | ✗ 95.09% vs 95% (ratcheted at 95; remainder is module wiring) |
@@ -1299,7 +1299,7 @@ Generera solves exactly as the table above measured it.
 | :--- | :--- | :--- | :--- |
 | RLS / tenancy policies | no cross-tenant leak | **all assertions pass** | ✓ |
 | API dependency audit | 0 critical/high/moderate | **0 / 0 / 0** | ✓ |
-| Mobile dependency audit | 0 critical/high/moderate | **0 failing** (2 suppressed — no patched release exists; build-time-only surface; expiring allowlist) | ✓ |
+| Mobile dependency audit | 0 critical/high/moderate | **0 failing** (12 suppressed — zod has no patch in range, the rest are fixes that are a new major or younger than the seven-day rule; build-time-only surface; expiring allowlist; measured 2026-11-01) | ✓ |
 | Web dependency audit | 0 critical/high/moderate | **0 / 0 / 0** | ✓ |
 | Solver dependency audit (`pip-audit`) | 0 critical/high/moderate | not measured | — |
 | Semgrep SAST | 0 findings | not measured | — |
