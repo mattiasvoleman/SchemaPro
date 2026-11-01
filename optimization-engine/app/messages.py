@@ -623,6 +623,26 @@ MESSAGES: dict[str, str] = {
         "the new timetable gives them lessons that day. A wish is weighed against the rest of "
         "the week and gives way where keeping it would cost more."
     ),
+    # Sent by the GATEWAY after a run that worked: a teacher the generator did
+    # not manage to keep within their limit on teaching in a row (Sammanhängande
+    # undervisning, 20261218090000). A note beside a result and never a refusal
+    # of one: the generator pays for a lesson whose stretch is not ended in time
+    # and refuses no week over it, so this is the sentence that says "tries".
+    #
+    # `day` is the weekday of the longest stretch the new timetable gives the
+    # teacher, `minutes` its length, `max` the limit and `breakMinutes` the free
+    # time that ends a stretch. Whose limit it was is the teacher's name, which
+    # the gateway puts in the note's resourceNames when the run is read, as for
+    # the free-day wish. The limit is the work rule's, which every member of
+    # staff reads, so nothing here is masked.
+    "TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT": (
+        "A teacher should teach at most {max} minutes in a row before {breakMinutes} minutes "
+        "free, and the new timetable gives them {minutes} minutes in a row on "
+        "{day, select, 1 {Mondays} 2 {Tuesdays} 3 {Wednesdays} 4 {Thursdays} 5 {Fridays} "
+        "6 {Saturdays} 7 {Sundays} other {day {day}}}. The generator tries to keep the limit "
+        "but weighs it against the rest of the week, and gives way where keeping it would cost "
+        "more."
+    ),
     # Sent by the GATEWAY beside a hand edit of the grundschema that breaks the
     # cap or the days (master-lessons.service.ts): warnings, never refusals.
     # `role` is the edited lesson's lead or its co-teacher, never a name, and
@@ -634,6 +654,13 @@ MESSAGES: dict[str, str] = {
         "now teaches {minutes} minutes on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} "
         "4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}}, more than the "
         "{cap} minutes a day their working-time rule allows."
+    ),
+    "TEACHER_CONSECUTIVE_TOO_LONG": (
+        "{role, select, CO_TEACHER {The co-teacher} other {The teacher}} of {requirement} "
+        "now teaches {minutes} minutes in a row on {day, select, 1 {Monday} 2 {Tuesday} "
+        "3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}}, "
+        "more than the {max} minutes in a row their working-time rule allows before "
+        "{breakMinutes} minutes free."
     ),
     "TEACHER_WEEK_TOO_MANY_DAYS": (
         "{role, select, CO_TEACHER {The co-teacher} other {The teacher}} of {requirement} "

@@ -1,34 +1,36 @@
 #!/usr/bin/env python3
-"""Sammanhängande undervisning: what the rule costs, measured against main's model.
+"""Sammanhängande undervisning: what the wish costs, measured against main's model.
 
 Two arms are solved side by side in two processes started together, so the
 shared machine loads both alike (a paired A/B: one after the other on a loaded
 Mac measures the load, not the rule). The `off` arm is the school as it is and
-the others flag the busiest teachers with a rule:
+the others flag the busiest teachers with a limit on their teaching in a row:
 
-    A   at most 180 minutes in a row, then 30 free (the start step is unchanged)
-    B   at most 180 minutes in a row, then 15 free (the step goes from 30 to 15)
+    A   at most 180 minutes in a row, then 30 free
+    B   at most 180 minutes in a row, then 15 free
 
     python benchmarks/consecutive_teaching.py --mode first --arms off,A
     python benchmarks/consecutive_teaching.py --mode full --arms off,B --budget 90
     python benchmarks/consecutive_teaching.py --mode gate --arms off,A --budget 90
-    python benchmarks/consecutive_teaching.py --mode infeasible
 
 The schools: `hogstadium` (450 pupils, 26 teachers, 423 lessons) and `bench`
 (the nightly gate's 400 pupils, validate_schedule.py --students 400).
 
-THE RULE HAS TO BIND, or the pair measures nothing. Every arm counts the
-flagged teachers whose timetable has a stretch longer than the rule in a
+THE WISH HAS TO BIND, or the pair measures nothing. Every arm counts the
+flagged teachers whose timetable has a stretch longer than the limit in a
 timetable it makes (`breaching`): in the `off` arm that is how many teachers
-the rule has to move, and in an arm with the rule on it must be zero.
+the wish has to move, and in an arm with the wish on it should be few. It is a
+wish and not a rule (app/solver/consecutive.py), so the count is a result and
+never a failure; `validate` is still run on the full timetable and must be
+empty.
 
     first   the satisfaction model solved to its first timetable (stop after
-            first solution), as phase 1a does, and the full model built beside it
+            first solution), as phase 1a does, and the full model built beside
+            it. The satisfaction model is main's byte for byte, so the pair
+            says how much the host's noise is.
     full    solve() end to end on the budget, then validate_schedule.validate
     gate    the nightly gate: solve() on the bench school with a budget, then
             validate, as quality-gates.yml runs it
-    infeasible  a flagged teacher whose week the rule makes impossible; must
-            answer INFEASIBLE and name the rule, quickly
 """
 
 from __future__ import annotations
@@ -140,6 +142,23 @@ def breaching(
     return count
 
 
+def idle_minutes(spans: dict[tuple[str, int], list[tuple[int, int]]]) -> int:
+    """Every teacher's minutes between their first and last lesson of a day with no lesson in them.
+
+    What the wish costs the rest of the objective: a teacher kept from a
+    four-hour stretch waits somewhere else instead, and the objective already
+    prices that wait (weight_teacher_gap).
+    """
+    total = 0
+    for windows in spans.values():
+        latest = None
+        for start, end in sorted(windows):
+            if latest is not None and start > latest:
+                total += start - latest
+            latest = end if latest is None else max(latest, end)
+    return total
+
+
 def spans_of_solution(
     solver: SchedulerSolver, decisions, cp: cp_model.CpSolver,
 ) -> dict[tuple[str, int], list[tuple[int, int]]]:
@@ -233,7 +252,9 @@ def measure(args: tuple[str, str, str, float]) -> dict[str, object]:
             }),
         })
         if response.lessons:
-            result["breaching"] = breaching(base, spans_of_lessons(request, response.lessons), counted)
+            spans = spans_of_lessons(request, response.lessons)
+            result["breaching"] = breaching(base, spans, counted)
+            result["teacherIdleMinutes"] = idle_minutes(spans)
     result["load"].append(_load())  # type: ignore[union-attr]
     return result
 

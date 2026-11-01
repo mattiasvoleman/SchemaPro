@@ -167,6 +167,32 @@ class Settings(BaseSettings):
         alias="WEIGHT_FREE_DAY_WISH",
         description="Penalty per day a teacher teaches on their wished free weekday.",
     )
+    # Sammanhängande undervisning, paid PER GENERATED LESSON whose stretch is not
+    # ended by a break in time (consecutive.py). Per lesson and not per
+    # stretch because the cost of a long stretch is the lessons in it: a
+    # three-lesson run that is half an hour too long pays for the lessons that
+    # begin it, and a five-lesson one pays for more of them.
+    #
+    # FORTY, THE FREE-DAY WISH'S PRICE, because the two are the same kind of
+    # wish from the same dialog and a school that sets both should not find
+    # one outbidding the other by an accident of units. It buys a break in a
+    # long afternoon at the price of the teacher's own idle time (2 per
+    # five-minute slot, 24 an hour): a 40-point lesson is worth an hour and
+    # a half of the same teacher waiting, which is what a break costs. On the
+    # högstadium school with the eight busiest teachers limited to 180
+    # minutes then 30 free it leaves 0–1 of the eight over the limit where
+    # the same model with the wish off leaves 6–8, at 423 of 423 lessons and
+    # no loss of any other term worth naming (docs/verification-baseline.md).
+    #
+    # Zero or below switches the wish off entirely and builds nothing.
+    weight_consecutive_teaching: int = Field(
+        default=40,
+        alias="WEIGHT_CONSECUTIVE_TEACHING",
+        description=(
+            "Penalty per generated lesson of a flagged teacher whose stretch of "
+            "teaching is not ended by a break within the teacher's limit."
+        ),
+    )
 
     @computed_field  # type: ignore[prop-decorator]
     @property

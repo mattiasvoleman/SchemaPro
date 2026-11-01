@@ -679,12 +679,20 @@ class AnonymousTeacherWorkRule(CamelModel):
     #: nothing at all.
     preferred_free_day: DayOfWeek | None = Field(default=None, alias="preferredFreeDay")
     #: Sammanhängande undervisning: at most this many minutes of teaching in a
-    #: row, and then `consecutive_break_minutes` with no lesson at all. The two
-    #: come together or not at all (validate_stretch_pair), and are bounded and
-    #: stepped as the database bounds them (TeacherWorkRules_stretch_check):
-    #: half an hour is the least that is still a stretch of teaching, eight
-    #: hours the most a day can hold, and the multiple of five is this
-    #: engine's grid. See app/solver/consecutive.py for what a "stretch" is.
+    #: row, and then `consecutive_break_minutes` with no lesson at all. SOFT:
+    #: the full model's objective pays (weight_consecutive_teaching) for every
+    #: lesson of the teacher's whose stretch is not ended by a break in time,
+    #: and no week is ever refused over it, the way the wished free day is
+    #: treated. The satisfaction phase builds nothing for it. The gateway sends
+    #: the pair only where the school has turned the effort on
+    #: (LunchSettings.generatorKeepsConsecutiveTeaching) and the rule sets
+    #: both. They come together or not at all (validate_stretch_pair), and are
+    #: bounded and stepped as the database bounds them
+    #: (TeacherWorkRules_maxConsecutiveTeachingMinutes_check and its two
+    #: siblings): half an hour is the least that is still a stretch of
+    #: teaching, eight hours the most a day can hold, and the multiple of five
+    #: is this engine's grid. See app/solver/consecutive.py for what a
+    #: "stretch" is.
     max_consecutive_teaching_minutes: int | None = Field(
         default=None, alias="maxConsecutiveTeachingMinutes", ge=30, le=480, multiple_of=5,
     )
