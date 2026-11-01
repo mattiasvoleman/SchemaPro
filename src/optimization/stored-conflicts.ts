@@ -140,16 +140,29 @@ export function notedTeachersOf(stored: unknown): string[] {
  */
 export const TRAVEL_TEACHERS_CODE = 'TEACHER_TRAVEL_CANNOT_BE_KEPT';
 
-/** The teachers the travel sentences of a stored list of conflicts name. */
+/**
+ * Delade lokaler och lärare: the line about a shared teacher's lessons at
+ * another school of the huvudman (other-school-holds.ts). Named the walk's
+ * way, for the walk's reason: which teacher also teaches at another school
+ * is no HR fact, and the line keeps the school's own Users id only.
+ */
+export const OTHER_SCHOOL_TEACHER_CODE = 'OTHER_SCHOOL_TEACHER_BUSY';
+
+/** The sentences that name teachers when read, by the Users ids they keep. */
+export function namesTeachersWhenRead(code: string | null | undefined): boolean {
+  return code === TRAVEL_TEACHERS_CODE || code === OTHER_SCHOOL_TEACHER_CODE;
+}
+
+/** The teachers the travel sentences (and the other-school ones) of a stored list of conflicts name. */
 export function travelTeachersOf(stored: unknown): string[] {
   return entriesOf(stored)
-    .filter((entry) => entry.code === TRAVEL_TEACHERS_CODE)
+    .filter((entry) => namesTeachersWhenRead(entry.code))
     .flatMap(subjectsOf);
 }
 
-/** A travel sentence's teachers as their names now; nobody for any other sentence. */
+/** Such a sentence's teachers as their names now; nobody for any other sentence. */
 export function travelNamesOf(entry: Partial<StoredConflict>, names: ReadonlyMap<string, string>): string[] {
-  if (entry.code !== TRAVEL_TEACHERS_CODE) return [];
+  if (!namesTeachersWhenRead(entry.code)) return [];
   return subjectsOf(entry).flatMap((id) => names.get(id) ?? []);
 }
 
