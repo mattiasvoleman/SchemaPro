@@ -210,3 +210,35 @@ def test_every_placement_is_accepted_exactly_when_the_definition_allows_it(
     # The rule must be binding for the case to prove anything: some placement
     # the teacher's own no-overlap allows is refused.
     assert accepted < tried
+
+
+class TestTheContract:
+    def test_one_of_the_two_fields_without_the_other_is_refused(self) -> None:
+        for fields in (
+            {"maxConsecutiveTeachingMinutes": 180},
+            {"consecutiveBreakMinutes": 30},
+        ):
+            payload = _payload(limit=None, pause=None, lengths=[60])
+            payload["teacherWorkRules"][0].update(fields)  # type: ignore[index]
+            with pytest.raises(ValueError, match="together, or neither"):
+                OptimizeScheduleRequest.model_validate(payload)
+
+    def test_the_bounds_are_the_databases(self) -> None:
+        for limit, pause in ((25, 15), (485, 15), (180, 0), (180, 125), (182, 15), (180, 17)):
+            with pytest.raises(ValueError):  # noqa: PT011
+                OptimizeScheduleRequest.model_validate(
+                    _payload(limit=limit, pause=pause, lengths=[60]),
+                )
+
+    def test_a_teacher_with_nothing_to_place_builds_the_model_it_always_built(self) -> None:
+        # The rule names a teacher who teaches nothing in the week: the builder
+        # skips them, as the lunch and the rest do, and the proto is the one
+        # a week without the rule makes.
+        plain = _payload(limit=None, pause=None, lengths=[60, 60])
+        flagged = _payload(limit=120, pause=30, lengths=[60, 60])
+        flagged["teacherWorkRules"][0]["teacherId"] = str(uuid4())  # type: ignore[index]
+        plain["teacherWorkRules"] = []
+        _solver, _request, (without, *_rest) = _model(plain)
+        _solver, _request, (with_rule, *_rest) = _model(flagged)
+        assert len(without.Proto().variables) == len(with_rule.Proto().variables)
+        assert len(without.Proto().constraints) == len(with_rule.Proto().constraints)

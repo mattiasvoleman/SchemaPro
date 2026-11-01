@@ -58,8 +58,13 @@ from app.solver.scheduler_solver import SchedulerSolver, _lesson_teachers  # noq
 _NS = uuid.UUID("5c2d2f0a-3f6b-4d2e-8d6a-0a8c1b9d7e44")
 
 #: (max minutes in a row, minutes free)
-ARMS: dict[str, tuple[int, int] | None] = {"off": None, "A": (180, 30), "B": (180, 15)}
-FLAGGED = 8
+ARMS: dict[str, tuple[int, int] | None] = {
+    "off": None, "A": (180, 30), "B": (180, 15),
+    # Looser or tighter rules, for finding where the cost comes from.
+    "C": (240, 30), "D": (150, 30), "E": (420, 30),
+}
+#: How many of the busiest teachers carry the rule (FLAGGED=3 for three).
+FLAGGED = int(os.environ.get("FLAGGED", "8"))
 
 
 def _uid(label: str) -> str:

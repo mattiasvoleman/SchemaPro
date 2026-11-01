@@ -4864,6 +4864,10 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
     # optional and sent only when set — the gateway's WORK_RULE_FIELDS stay
     # what they were for a rule without them, so a school that has set neither
     # sends today's bytes.
+    #
+    # Sammanhängande undervisning adds the limit on a stretch of teaching and
+    # the break that ends it, a pair that comes together or not at all and is
+    # sent only for a teacher whose rule sets it.
     assert _field_names(AnonymousTeacherWorkRule) == {
         "id",
         "teacherId",
@@ -4873,6 +4877,8 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "minDailyRestMinutes",
         "maxTeachingMinutesPerDay",
         "preferredFreeDay",
+        "maxConsecutiveTeachingMinutes",
+        "consecutiveBreakMinutes",
     }
     # Deltid in days, apart from the work rule because it is HR: the id is the
     # POST's, which the gateway keeps its own map for (dayLimitAnonMap) and
