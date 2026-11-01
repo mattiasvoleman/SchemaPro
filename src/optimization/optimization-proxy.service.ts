@@ -92,7 +92,14 @@ import { enterGrundschemaWrite, isLockTimeout, type PublishMode } from '../publi
 import { STAFF_UNSTAFFED_REQUIREMENTS } from '../staffing/staffing-checks';
 import { recordRead, type AccessChannel } from '../access-log/access-log';
 import { WORK_DAYS_HIDDEN_MESSAGE, WorkDaysRefusal, isDaysBearing, withoutDays } from './work-days';
-import { unkeptFreeDayWishes, type FreeDayWish, type TeachersOnDay } from './free-day-wishes';
+import {
+  dateColumnDay,
+  timeColumnMinutes,
+  unkeptFreeDayWishes,
+  type FreeDayWish,
+  type TimedLesson,
+} from './free-day-wishes';
+import { unkeptConsecutiveWishes, type ConsecutiveWish } from './consecutive-wishes';
 import { TRAVEL_TEACHERS_CODE } from './stored-conflicts';
 import { holdMessage, readOtherSchoolHolds, HOLD_CODES, type OtherSchoolHold } from './other-school-holds';
 import { pupilGapsOf } from './pupil-cohorts';
@@ -488,12 +495,19 @@ export interface PreparedSchedule {
   /** Every free-day wish of the school's teachers, in real ids, for Generera's notes. Never sent. */
   freeDayWishes: FreeDayWish[];
   /**
-   * The preserved, non-parked masters as this fetch read them, by teacher and
-   * weekday: the half of a candidate's timetable every candidate keeps, which
-   * a schemaförslag reads the wishes against (timetableWith). Generera reads
-   * its own after its delete instead (RegenerationWritten).
+   * Every limit on teaching in a row the generator was asked to try to keep
+   * (the school has the switch on and the teacher's rule has both figures), in
+   * real ids, for Generera's notes. Empty when the switch is off. Never sent
+   * as such: the engine gets the figures on the anonymous work rules.
    */
-  keptTimetable: TeachersOnDay[];
+  consecutiveWishes: ConsecutiveWish[];
+  /**
+   * The preserved, non-parked masters as this fetch read them, by teacher,
+   * weekday and hour: the half of a candidate's timetable every candidate
+   * keeps, which a schemaförslag reads the wishes against (timetableWith).
+   * Generera reads its own after its delete instead (RegenerationWritten).
+   */
+  keptTimetable: TimedLesson[];
   /** groupId → children who eat AS this group, for the stored sittings. */
   headcountByGroup: Map<string, number>;
   /**
@@ -581,13 +595,14 @@ export interface RegenerationCounts {
 }
 
 /**
- * What a regeneration wrote, and the timetable it leaves by teacher and
- * weekday — the lessons it kept, as they stand after its delete, and the ones
- * it wrote — which Generera reads the free-day wishes against
- * (unkeptFreeDayWishes). Not logged: the counts are the REGENERATE entry.
+ * What a regeneration wrote, and the timetable it leaves by teacher, weekday
+ * and hour — the lessons it kept, as they stand after its delete, and the ones
+ * it wrote — which Generera reads the free-day wishes and the limits on
+ * teaching in a row against (unkeptFreeDayWishes, unkeptConsecutiveWishes).
+ * Not logged: the counts are the REGENERATE entry.
  */
 export interface RegenerationWritten extends RegenerationCounts {
-  timetable: TeachersOnDay[];
+  timetable: TimedLesson[];
 }
 
 export interface CandidateApplyResult extends RegenerationCounts {
@@ -1178,16 +1193,23 @@ export class OptimizationProxyService {
     // the school's own names. Everything the engine sees is anonymised, so a
     // caller handed the raw reply would get uuids that exist in no table.
     //
-    // And the free-day wishes the timetable just written does not keep, read
-    // off the timetable persist left: what it wrote and what it kept, as they
-    // stood when it wrote — see unkeptFreeDayWishes. None when nothing was
+    // And the free-day wishes and the limits on teaching in a row the
+    // timetable just written does not keep, read off the timetable persist
+    // left: what it wrote and what it kept, as they stood when it wrote — see
+    // unkeptFreeDayWishes and unkeptConsecutiveWishes. None when nothing was
     // written: a refused week keeps last week's timetable, and the wishes it
     // broke were said when it was made.
     return {
       ...response,
       lunches: realisedLunches ?? [],
       conflicts: this.realiseConflicts(response.conflicts, anonMaps),
-      notes: written === null ? [] : unkeptFreeDayWishes(prepared.freeDayWishes, written),
+      notes:
+        written === null
+          ? []
+          : [
+              ...unkeptFreeDayWishes(prepared.freeDayWishes, written),
+              ...unkeptConsecutiveWishes(prepared.consecutiveWishes, written),
+            ],
     };
   }
 
@@ -1414,11 +1436,20 @@ export class OptimizationProxyService {
       storedRules: data.storedRules,
       anonMaps,
       freeDayWishes: data.freeDayWishes,
-      keptTimetable: data.preservedRows.map((row) => ({
-        teacherId: row.teacherId,
-        coTeacherId: row.coTeacherId,
-        dayOfWeek: row.dayOfWeek,
-      })),
+      consecutiveWishes: data.consecutiveWishes,
+      keptTimetable: data.preservedRows.map(
+        (row): TimedLesson => ({
+          id: row.id,
+          teacherId: row.teacherId,
+          coTeacherId: row.coTeacherId,
+          dayOfWeek: row.dayOfWeek,
+          startMinutes: timeColumnMinutes(row.startTime),
+          endMinutes: timeColumnMinutes(row.endTime),
+          recurrence: row.recurrence,
+          startDate: dateColumnDay(row.startDate),
+          endDate: dateColumnDay(row.endDate),
+        }),
+      ),
       headcountByGroup: data.headcountByGroup,
       demand: demandOf(data.requirements, realRequirement, data.mirrors, splitLessons.realTeacher, data.requirementRows),
       mirrors: data.mirrors,
@@ -2032,6 +2063,8 @@ export class OptimizationProxyService {
     storedRules: ScheduleRules | null;
     /** Every free-day wish of the school's teachers, in real ids. Never sent. */
     freeDayWishes: FreeDayWish[];
+    /** Every limit on teaching in a row the generator was asked to try to keep, in real ids. Never sent as such. */
+    consecutiveWishes: ConsecutiveWish[];
     /**
      * The teacher's and the subject's maps, which nothing turns an engine
      * answer back through. Returned for the basis alone (prepareSchedule),
@@ -2948,6 +2981,7 @@ export class OptimizationProxyService {
         maxLessonsPerDayPerGroup: true,
         generatorKeepsTravelTime: true,
         generatorKeepsPupilGapsDown: true,
+        generatorKeepsConsecutiveTeaching: true,
       },
     });
     const storedRules: ScheduleRules | null = !lunchSettings
@@ -3310,11 +3344,40 @@ export class OptimizationProxyService {
         // plans (20261123090000). Numbers, like the rest above.
         maxTeachingMinutesPerDay: true,
         preferredFreeDayOfWeek: true,
+        // Sammanhängande undervisning: the limit and the pause that ends a
+        // stretch (20261218090000). Numbers again; sent only below.
+        maxConsecutiveTeachingMinutes: true,
+        consecutiveBreakMinutes: true,
       },
     });
 
+    /*
+     * Sammanhängande undervisning is the generator's effort, and the school's
+     * to turn on (LunchSettings.generatorKeepsConsecutiveTeaching, off by
+     * default): off, the engine is sent neither figure, and a work rule that
+     * exists only because of them is not sent at all — the payload, and with
+     * it the model, is the one a school without the rule gets. On, a limit
+     * rides on the rule it sits in, and the notes name the teachers it did not
+     * manage (consecutive-wishes.ts).
+     */
+    const keepsConsecutive = lunchSettings?.generatorKeepsConsecutiveTeaching === true;
+    const consecutiveOf = (rule: (typeof rawWorkRules)[number]) =>
+      keepsConsecutive && rule.maxConsecutiveTeachingMinutes !== null && rule.consecutiveBreakMinutes !== null
+        ? { max: rule.maxConsecutiveTeachingMinutes, pause: rule.consecutiveBreakMinutes }
+        : null;
+    const holdsOnlyAConsecutiveLimit = (rule: (typeof rawWorkRules)[number]) =>
+      rule.maxConsecutiveTeachingMinutes !== null &&
+      rule.lunchMinutes === null &&
+      rule.lunchStartTime === null &&
+      rule.lunchEndTime === null &&
+      rule.minDailyRestMinutes === null &&
+      rule.maxTeachingMinutesPerDay === null &&
+      rule.preferredFreeDayOfWeek === null;
+
     const teacherWorkRules: AnonymousTeacherWorkRule[] = rawWorkRules.flatMap(
       (rule): AnonymousTeacherWorkRule[] => {
+        const consecutive = consecutiveOf(rule);
+        if (consecutive === null && holdsOnlyAConsecutiveLimit(rule)) return [];
         const teacherId = teacherAnonMap.get(rule.userId);
         if (teacherId === undefined) {
           this.logger.warn(
@@ -3345,6 +3408,9 @@ export class OptimizationProxyService {
               : {}),
             ...(rule.preferredFreeDayOfWeek !== null
               ? { preferredFreeDay: rule.preferredFreeDayOfWeek as DayOfWeek }
+              : {}),
+            ...(consecutive !== null
+              ? { maxConsecutiveTeachingMinutes: consecutive.max, consecutiveBreakMinutes: consecutive.pause }
               : {}),
           },
         ];
@@ -3553,6 +3619,16 @@ export class OptimizationProxyService {
           ? []
           : [{ ruleId: rule.id, userId: rule.userId, day: rule.preferredFreeDayOfWeek }],
       ),
+      // The limits on teaching in a row the generator was asked to try to
+      // keep, in real ids, read against the finished timetable like the wishes
+      // above. Empty with the switch off: nothing was asked, so nothing is
+      // reported.
+      consecutiveWishes: rawWorkRules.flatMap((rule): ConsecutiveWish[] => {
+        const consecutive = consecutiveOf(rule);
+        return consecutive === null
+          ? []
+          : [{ ruleId: rule.id, userId: rule.userId, maxMinutes: consecutive.max, breakMinutes: consecutive.pause }];
+      }),
       gradeNumbering: numbering,
       numberingOnDay,
       // An empty object would send `rules: {}` and read as "rules were
@@ -3824,7 +3900,7 @@ export class OptimizationProxyService {
     draftIds: readonly string[],
     /** Delade lektioner: the posts sent with their lessons' teachers. */
     splitLessons: SplitLessons = NO_SPLIT,
-  ): Promise<TeachersOnDay[] | null> {
+  ): Promise<TimedLesson[] | null> {
     // First, before anything is read: the publication lock and the mode
     // (publish-mode.ts). In DRAFT the regenerated grundschema is a draft.
     // A principal with no tenant is refused below, before anything is
@@ -4112,7 +4188,18 @@ export class OptimizationProxyService {
      */
     const preserved = await tx.masterLesson.findMany({
       where: { academicYearId, ...preservedWhere },
-      select: { teacherId: true, coTeacherId: true, dayOfWeek: true, isParked: true },
+      select: {
+        id: true,
+        teacherId: true,
+        coTeacherId: true,
+        dayOfWeek: true,
+        isParked: true,
+        startTime: true,
+        endTime: true,
+        recurrence: true,
+        startDate: true,
+        endDate: true,
+      },
     });
     const lockedPreserved = preserved.length;
 
@@ -4163,11 +4250,22 @@ export class OptimizationProxyService {
     });
     return {
       ...counts,
-      timetable: [...preserved.filter((lesson) => !lesson.isParked), ...creates].map((lesson) => ({
-        teacherId: lesson.teacherId,
-        coTeacherId: lesson.coTeacherId,
-        dayOfWeek: lesson.dayOfWeek,
-      })),
+      timetable: [
+        ...preserved.filter((lesson) => !lesson.isParked),
+        ...creates.map((lesson, index) => ({ ...lesson, id: `written:${index}` })),
+      ].map(
+        (lesson): TimedLesson => ({
+          id: lesson.id,
+          teacherId: lesson.teacherId,
+          coTeacherId: lesson.coTeacherId,
+          dayOfWeek: lesson.dayOfWeek,
+          startMinutes: timeColumnMinutes(lesson.startTime),
+          endMinutes: timeColumnMinutes(lesson.endTime),
+          recurrence: lesson.recurrence,
+          startDate: dateColumnDay(lesson.startDate ?? null),
+          endDate: dateColumnDay(lesson.endDate ?? null),
+        }),
+      ),
     };
   }
 

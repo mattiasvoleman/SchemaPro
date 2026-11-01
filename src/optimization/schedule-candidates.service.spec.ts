@@ -129,6 +129,7 @@ describe('ScheduleCandidatesService', () => {
       },
       storedRules: null,
       freeDayWishes: [],
+      consecutiveWishes: [],
       keptTimetable: [],
       anonMaps: {
         requirementAnonMap: new Map([
@@ -653,7 +654,19 @@ describe('ScheduleCandidatesService', () => {
             freeDayWishes: wishes,
             // A locked lesson the other teacher co-teaches on their wished
             // Wednesday: every candidate keeps it, so every one breaks it.
-            keptTimetable: [{ teacherId: null, coTeacherId: OTHER_TEACHER, dayOfWeek: 3 }],
+            keptTimetable: [
+              {
+                id: 'kept-1',
+                teacherId: null,
+                coTeacherId: OTHER_TEACHER,
+                dayOfWeek: 3,
+                startMinutes: 480,
+                endMinutes: 540,
+                recurrence: 'ALL_WEEKS',
+                startDate: null,
+                endDate: null,
+              },
+            ],
           }),
         );
         proxy.solveCandidate

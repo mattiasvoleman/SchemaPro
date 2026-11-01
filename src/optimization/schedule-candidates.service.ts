@@ -22,7 +22,8 @@ import { RealtimeService } from '../realtime/realtime.service';
 import { rostersOfYear } from '../year-rollover/projected-rosters';
 import { changedParts, type BasisParts } from './candidate-basis';
 import { TEACHER_WORK_DAYS_HIDDEN, WORK_DAYS_HIDDEN_MESSAGE, isDaysBearing } from './work-days';
-import { timetableWith, unkeptFreeDayWishes } from './free-day-wishes';
+import { unkeptConsecutiveWishes } from './consecutive-wishes';
+import { clockMinutes, timetableWith, unkeptFreeDayWishes, type TimedLesson } from './free-day-wishes';
 import { candidateMetricsOf, lessonCountOf, metricsViewOf, runUnplacedOf, type CandidateMetrics, type CandidateMetricsView, type RunUnplaced } from './candidate-metrics';
 import {
   callTimeoutMs,
@@ -64,6 +65,7 @@ import {
   regenerationSweepDay,
   type CandidateLesson,
   type CandidateSolution,
+  type DraftLesson,
 } from './optimization-proxy.service';
 import {
   lockYearForCandidateApply,
@@ -318,6 +320,25 @@ const truncate = (text: string): string => (text.length > ERROR_MAX ? text.slice
 const codeOrNull = (code: unknown): string | null => (typeof code === 'string' && CODE_SHAPE.test(code) ? code : null);
 
 /** Scalars only, as the job row keeps its params (optimization-jobs.service.ts asParams). */
+/**
+ * A lesson of the draft as the notes read the timetable: its two adults, its
+ * weekday and its hour and weeks, as the draft states them (HH:MM, the post's
+ * own window). Parked lessons are left out by the caller.
+ */
+function timedDraftLesson(lesson: DraftLesson): TimedLesson {
+  return {
+    id: lesson.id,
+    teacherId: lesson.teacherId,
+    coTeacherId: lesson.coTeacherId,
+    dayOfWeek: lesson.dayOfWeek,
+    startMinutes: clockMinutes(lesson.startTime),
+    endMinutes: clockMinutes(lesson.endTime),
+    recurrence: lesson.recurrence ?? 'ALL_WEEKS',
+    startDate: lesson.startDate,
+    endDate: lesson.endDate,
+  };
+}
+
 function scalarParams(value: unknown): Record<string, string | number> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const params: Record<string, string | number> = {};
@@ -936,10 +957,14 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
       // The comparison's first column: the draft the run is solved from, its
       // kept lessons and its own, a parked lesson occupying no day — the
       // timetable Generera's notes would describe had it written this draft.
-      const draftNotes = unkeptFreeDayWishes(prepared.freeDayWishes, [
+      const draftTimetable: TimedLesson[] = [
         ...prepared.keptTimetable,
-        ...prepared.draftLessons.filter((lesson) => !lesson.isParked),
-      ]);
+        ...prepared.draftLessons.filter((lesson) => !lesson.isParked).map(timedDraftLesson),
+      ];
+      const draftNotes = [
+        ...unkeptFreeDayWishes(prepared.freeDayWishes, draftTimetable),
+        ...unkeptConsecutiveWishes(prepared.consecutiveWishes, draftTimetable),
+      ];
 
       const applicable: Array<{ ordinal: number; lessons: CandidateLesson[]; metrics: CandidateMetrics }> = [];
       for (const [index, candidate] of plan.candidates.entries()) {
@@ -981,12 +1006,16 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
             })
           : null;
         // What applying it would leave, read as Generera reads what it wrote.
-        const notes = APPLICABLE.has(status)
-          ? unkeptFreeDayWishes(
-              prepared.freeDayWishes,
-              timetableWith(prepared.keptTimetable, prepared.requirementRows, solution.lessons),
-            )
+        const left = APPLICABLE.has(status)
+          ? timetableWith(prepared.keptTimetable, prepared.requirementRows, solution.lessons)
           : null;
+        const notes =
+          left === null
+            ? null
+            : [
+                ...unkeptFreeDayWishes(prepared.freeDayWishes, left),
+                ...unkeptConsecutiveWishes(prepared.consecutiveWishes, left),
+              ];
         const firstFailed = index === 0 && (status === 'INFEASIBLE' || status === 'TIMEOUT');
         const outcome = await this.store(plan, user, candidate, solution, status, { metrics, notes }, firstFailed);
         if (outcome !== 'stored') return;

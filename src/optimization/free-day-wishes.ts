@@ -1,3 +1,4 @@
+import type { TeachingLesson } from '../common/teacher-day';
 import type { AiEngineConflictDetail } from './interfaces/ai-engine-payload.interface';
 
 /**
@@ -60,6 +61,40 @@ export interface TeachersOnDay {
 }
 
 /**
+ * A lesson of the finished timetable with its hour and weeks: what Sammanhängande
+ * undervisning reads (consecutive-wishes.ts) beside the two adults and the
+ * weekday the free-day wishes read. Every place that builds the timetable
+ * builds this, so a wish about the hour is never read off a row that has none.
+ */
+export interface TimedLesson extends TeachersOnDay {
+  /** The master lesson's id, or for a lesson not written yet a key of its own. */
+  id: string;
+  /** Minutes since midnight. */
+  startMinutes: number;
+  endMinutes: number;
+  recurrence: NonNullable<TeachingLesson['recurrence']>;
+  /** 'YYYY-MM-DD', or null for the open end. */
+  startDate: string | null;
+  endDate: string | null;
+}
+
+/** 'HH:MM' or 'HH:MM:SS' as minutes since midnight. */
+export function clockMinutes(value: string): number {
+  const [hours, minutes] = value.split(':');
+  return Number(hours) * 60 + Number(minutes);
+}
+
+/** The wall clock a @db.Time column holds (a Date anchored at 1970-01-01), as minutes since midnight. */
+export function timeColumnMinutes(value: Date): number {
+  return value.getUTCHours() * 60 + value.getUTCMinutes();
+}
+
+/** A @db.Date column as 'YYYY-MM-DD'. */
+export function dateColumnDay(value: Date | null): string | null {
+  return value ? value.toISOString().slice(0, 10) : null;
+}
+
+/**
  * The timetable a schemaförslag would leave, by teacher and weekday: the
  * lessons every candidate keeps (`kept`, the fetch's preserved, non-parked
  * lessons) and the candidate's own, each with its timplanspost's two adults —
@@ -69,23 +104,43 @@ export interface TeachersOnDay {
  * answer with one before it is stored.
  */
 export function timetableWith(
-  kept: readonly TeachersOnDay[],
-  rows: readonly { id: string; teacherId: string | null; coTeacherId: string | null }[],
+  kept: readonly TimedLesson[],
+  rows: readonly {
+    id: string;
+    teacherId: string | null;
+    coTeacherId: string | null;
+    /** The window the apply stamps on a lesson it writes: the post's, never the engine's. */
+    recurrence: TimedLesson['recurrence'];
+    startDate: Date | null;
+    endDate: Date | null;
+  }[],
   /** A lesson of a shared post carries its own teacher (delade lektioner), as the apply writes it. */
-  lessons: readonly { requirementId: string; dayOfWeek: number; teacherId?: string | null }[],
-): TeachersOnDay[] {
+  lessons: readonly {
+    requirementId: string;
+    dayOfWeek: number;
+    startTime: string;
+    endTime: string;
+    teacherId?: string | null;
+  }[],
+): TimedLesson[] {
   const byId = new Map(rows.map((row) => [row.id, row]));
   return [
     ...kept,
-    ...lessons.flatMap((lesson): TeachersOnDay[] => {
+    ...lessons.flatMap((lesson): TimedLesson[] => {
       const row = byId.get(lesson.requirementId);
       return row === undefined
         ? []
         : [
             {
+              id: `${lesson.requirementId}@${lesson.dayOfWeek}@${lesson.startTime}`,
               teacherId: lesson.teacherId !== undefined ? lesson.teacherId : row.teacherId,
               coTeacherId: row.coTeacherId,
               dayOfWeek: lesson.dayOfWeek,
+              startMinutes: clockMinutes(lesson.startTime),
+              endMinutes: clockMinutes(lesson.endTime),
+              recurrence: row.recurrence,
+              startDate: dateColumnDay(row.startDate),
+              endDate: dateColumnDay(row.endDate),
             },
           ];
     }),

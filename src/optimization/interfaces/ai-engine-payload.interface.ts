@@ -360,6 +360,19 @@ export interface AnonymousTeacherWorkRule {
    * only when set, for the reason the cap is.
    */
   preferredFreeDay?: DayOfWeek;
+  /**
+   * Sammanhängande undervisning: the most minutes this teacher teaches in a
+   * row, and the free time that ends a stretch (src/common/stretch.ts);
+   * 30..480 and 5..120 on the 5-minute grid. SOFT: the engine pays for a
+   * lesson whose stretch is not ended in time and never refuses a week over
+   * it, and the gateway names the teachers a finished run did not manage
+   * (consecutive-wishes.ts). Both or neither, and sent only where the school
+   * has turned the effort on (LunchSettings.generatorKeepsConsecutiveTeaching)
+   * and the rule sets them, for the reason the cap is: a key an older engine
+   * has not heard of is a 422.
+   */
+  maxConsecutiveTeachingMinutes?: number;
+  consecutiveBreakMinutes?: number;
 }
 
 /**

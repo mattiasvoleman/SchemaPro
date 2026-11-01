@@ -79,6 +79,12 @@ const WORK_RULE_FIELDS = [
  * declares every optional field either way.
  */
 const WORK_RULE_FIELDS_DAY = [...WORK_RULE_FIELDS, 'maxTeachingMinutesPerDay', 'preferredFreeDay'].sort();
+/** Sammanhängande undervisning: both keys, only where the school has turned the effort on and the rule sets them. */
+const WORK_RULE_FIELDS_STRETCH = [
+  ...WORK_RULE_FIELDS,
+  'maxConsecutiveTeachingMinutes',
+  'consecutiveBreakMinutes',
+].sort();
 
 /**
  * Deltid in days, its own list and its own id space (the post's, kept and
@@ -828,6 +834,72 @@ describe('AI engine wire contract', () => {
     expect(rules[0]).toMatchObject({ maxTeachingMinutesPerDay: 270, preferredFreeDay: 5 });
     expect(Object.keys(rules[1]!).sort()).toEqual([...WORK_RULE_FIELDS, 'maxTeachingMinutesPerDay'].sort());
     expect(rules[1]).toMatchObject({ lunchMinutes: null, minDailyRestMinutes: null, maxTeachingMinutesPerDay: 300 });
+  });
+
+  describe('Sammanhängande undervisning', () => {
+    const lunchRow = (keeps: boolean) => ({
+      lunchEnabled: true,
+      lunchStartTime: new Date(0),
+      lunchEndTime: new Date(0),
+      lunchMinutes: 30,
+      diningSeats: 180,
+      maxLessonsPerDayPerGroup: 7,
+      generatorKeepsTravelTime: false,
+      generatorKeepsPupilGapsDown: false,
+      generatorKeepsConsecutiveTeaching: keeps,
+    });
+    const ruleRow = (overrides: Record<string, unknown> = {}) => ({
+      id: 'wr-1',
+      userId: 't1',
+      lunchMinutes: null,
+      lunchStartTime: null,
+      lunchEndTime: null,
+      minDailyRestMinutes: null,
+      maxTeachingMinutesPerDay: null,
+      preferredFreeDayOfWeek: null,
+      maxConsecutiveTeachingMinutes: 180,
+      consecutiveBreakMinutes: 30,
+      ...overrides,
+    });
+    const arranged = (keeps: boolean, rules: Array<Record<string, unknown>>) => (tx: ReturnType<typeof createTxMock>) => {
+      tx['lunchSetting']!['findUnique']!.mockResolvedValue(lunchRow(keeps));
+      tx['teacherWorkRule']!['findMany']!.mockResolvedValue(rules);
+    };
+
+    it('sends a school that has not turned it on the payload it always sent: no key, and no rule that exists only for it', async () => {
+      const payload = await buildPayload({}, [], [], arranged(false, [ruleRow(), ruleRow({ id: 'wr-2', minDailyRestMinutes: 660 })]));
+      const rules = payload['teacherWorkRules'] as Array<Record<string, unknown>>;
+
+      // The rule holding only a limit is not sent; the one with a rest is, without the keys.
+      expect(rules).toHaveLength(1);
+      expect(Object.keys(rules[0]!).sort()).toEqual(WORK_RULE_FIELDS);
+      expect(JSON.stringify(payload)).not.toMatch(/Consecutive/);
+    });
+
+    it('sends the limit and the pause under the names the engine declares once the school has turned it on', async () => {
+      const payload = await buildPayload({}, [], [], arranged(true, [ruleRow()]));
+      const rules = payload['teacherWorkRules'] as Array<Record<string, unknown>>;
+
+      expect(rules).toHaveLength(1);
+      expect(Object.keys(rules[0]!).sort()).toEqual(WORK_RULE_FIELDS_STRETCH);
+      expect(rules[0]).toMatchObject({
+        lunchMinutes: null,
+        maxConsecutiveTeachingMinutes: 180,
+        consecutiveBreakMinutes: 30,
+      });
+    });
+
+    it('sends nothing for a rule that sets neither figure, whatever the switch says', async () => {
+      const payload = await buildPayload(
+        {},
+        [],
+        [],
+        arranged(true, [ruleRow({ maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null, minDailyRestMinutes: 660 })]),
+      );
+      const rules = payload['teacherWorkRules'] as Array<Record<string, unknown>>;
+
+      expect(Object.keys(rules[0]!).sort()).toEqual(WORK_RULE_FIELDS);
+    });
   });
 
   it('sends a post’s day limit exactly as the engine declares it, under the key it declares', async () => {
