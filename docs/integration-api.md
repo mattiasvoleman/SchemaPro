@@ -317,7 +317,13 @@ huvudman's schools is two Persons, each with its school's id.
   replaces in that event's läsår moves; a group moved to another läsår
   also moves its own lessons and those it is added to in subjects replaced
   in either year. A batch, or a removal, may move an event that did not
-  change for any pupil in it; none that did is missed. These events move
+  change for any pupil in it. The events are worked out at the write's
+  statements and moved at its COMMIT, so within one transaction none that
+  changed is missed, but a change another transaction commits in between
+  can be: the event of a lesson created meanwhile, or one that a class move
+  committed beside a membership changes (write skew), keeps the version it
+  had until it next changes.
+  These events move
   when the writing transaction COMMITS, not at its statement, and so do the
   events and activities that a person's deactivation, reactivation or
   relinked id, a teacher's duty link, and a change around a lesson (a
