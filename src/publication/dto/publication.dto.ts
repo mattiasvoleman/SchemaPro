@@ -87,6 +87,7 @@ export class UpsertPublicationSettingsDto {
   @IsOptional() @IsIn(GATE_MODES) gateGap?: 'WARN' | 'REFUSE';
   @IsOptional() @IsIn(GATE_MODES) gateDayOpsLost?: 'WARN' | 'REFUSE';
   @IsOptional() @IsIn(GATE_MODES) gateEmptyHalf?: 'WARN' | 'REFUSE';
+  @IsOptional() @IsIn(GATE_MODES) gateOtherSchool?: 'WARN' | 'REFUSE';
 
   // The public viewer (20261011120000). Off by default, every one.
   @IsOptional() @IsBoolean() publicViewerEnabled?: boolean;
@@ -137,6 +138,7 @@ const _everyGateHasAField: Record<(typeof GATE_POLICY_KEYS)[number], GateKeysOfD
   gateGap: 'gateGap',
   gateDayOpsLost: 'gateDayOpsLost',
   gateEmptyHalf: 'gateEmptyHalf',
+  gateOtherSchool: 'gateOtherSchool',
 };
 void _everyGateHasAField;
 

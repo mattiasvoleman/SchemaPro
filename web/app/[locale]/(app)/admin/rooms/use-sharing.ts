@@ -72,6 +72,8 @@ export interface RoomLoan {
   school: { id: string; name: string | null };
   /** For a borrowed room: the owner's name for it. */
   ownerRoomName: string | null;
+  /** For a borrowed room: the owner's room, to ask for it again. */
+  ownerRoomId: string | null;
 }
 
 export interface RoomLoans {

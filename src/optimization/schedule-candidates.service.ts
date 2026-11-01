@@ -49,7 +49,7 @@ import {
   notedTeachersOf,
   notesViewOf,
   storedOf,
-  TRAVEL_TEACHERS_CODE,
+  namesTeachersWhenRead,
   travelNamesOf,
   travelTeachersOf,
   type ConflictView,
@@ -460,7 +460,7 @@ export function storedConflictsOf(analysis: AiEngineConflictAnalysis | null): St
         resourceNames: conflict.resourceNames ?? [],
         // A travel sentence keeps its teachers server-side, named when read,
         // as a note does (stored-conflicts.ts).
-        ...(conflict.code === TRAVEL_TEACHERS_CODE && conflict.subjectIds && conflict.subjectIds.length > 0
+        ...(namesTeachersWhenRead(conflict.code) && conflict.subjectIds && conflict.subjectIds.length > 0
           ? { subjectIds: [...conflict.subjectIds] }
           : {}),
       },

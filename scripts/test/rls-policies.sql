@@ -9255,6 +9255,83 @@ BEGIN
   IF n <> 1 THEN RAISE EXCEPTION 'cover: a teacher could not take back today''s absence within the hour'; END IF;
 END $$;
 
+-- The withdrawal window, from both sides of both edges. With nothing
+-- decided on it, a teacher withdraws their own absence while it has not
+-- begun (its start is after now) or within 60 minutes of registering it (at
+-- most 60 minutes since createdAt); after that they can only end it early
+-- (the API's ABSENCE_WITHDRAW_TOO_LATE). The guard and the API agree on both
+-- edges. The admin plants T2's rows, as T1's aged one above. T2 can hold
+-- them on any day: today's row is withdrawn just above, and the only other
+-- one is in 2090.
+--
+-- Let through: one begun an hour ago and registered exactly 60 minutes ago,
+-- and one registered a day ago that begins a microsecond from now. The
+-- first ends at now(), so the two never overlap while both are active.
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+WITH hour_ago AS (
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "createdByUserId", "createdAt", "updatedAt")
+  VALUES (app.current_school_id(), current_setting('app.test_rls28_t2')::uuid, now() - interval '1 hour', now(),
+          current_setting('app.test_rls28_t2')::uuid, now() - interval '60 minutes', now() - interval '60 minutes')
+  RETURNING id
+), ahead AS (
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "createdByUserId", "createdAt", "updatedAt")
+  VALUES (app.current_school_id(), current_setting('app.test_rls28_t2')::uuid, now() + interval '1 microsecond', now() + interval '1 day',
+          current_setting('app.test_rls28_t2')::uuid, now() - interval '1 day', now() - interval '1 day')
+  RETURNING id
+)
+SELECT set_config('app.test_rls28_hour_ago', hour_ago.id::text, true), set_config('app.test_rls28_ahead', ahead.id::text, true)
+  FROM hour_ago, ahead;
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls28_t2_sub'))::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  BEGIN
+    UPDATE "TeacherAbsences" SET status = 'WITHDRAWN', "withdrawnAt" = now(), "withdrawnByUserId" = app.current_user_id()
+     WHERE id = current_setting('app.test_rls28_hour_ago')::uuid;
+    GET DIAGNOSTICS n = ROW_COUNT;
+  EXCEPTION WHEN SQLSTATE 'TA403' THEN n := 0;
+  END;
+  IF n <> 1 THEN RAISE EXCEPTION 'cover: a teacher could not withdraw a begun absence registered exactly an hour ago'; END IF;
+  BEGIN
+    UPDATE "TeacherAbsences" SET status = 'WITHDRAWN', "withdrawnAt" = now(), "withdrawnByUserId" = app.current_user_id()
+     WHERE id = current_setting('app.test_rls28_ahead')::uuid;
+    GET DIAGNOSTICS n = ROW_COUNT;
+  EXCEPTION WHEN SQLSTATE 'TA403' THEN n := 0;
+  END;
+  IF n <> 1 THEN RAISE EXCEPTION 'cover: a teacher could not withdraw an absence registered a day ago that begins a microsecond from now'; END IF;
+END $$;
+
+-- Refused: one that starts at now() and was registered an hour and a
+-- microsecond ago, so a window wider on either side by any amount lets it
+-- through. Its updatedAt is now(), as after ending it early a moment ago:
+-- the hour is counted from when it was registered, not from its last change.
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+WITH late AS (
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "createdByUserId", "createdAt", "updatedAt")
+  VALUES (app.current_school_id(), current_setting('app.test_rls28_t2')::uuid, now(), now() + interval '1 day',
+          current_setting('app.test_rls28_t2')::uuid, now() - interval '1 hour 1 microsecond', now())
+  RETURNING id
+)
+SELECT set_config('app.test_rls28_late', late.id::text, true) FROM late;
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls28_t2_sub'))::text, true);
+DO $$
+DECLARE
+  late uuid := current_setting('app.test_rls28_late')::uuid;
+  n bigint;
+BEGIN
+  IF NOT coalesce((SELECT "startsAt" = now() AND now() - "createdAt" = interval '1 hour 1 microsecond'
+                     FROM "TeacherAbsences" WHERE id = late AND status = 'ACTIVE'), false) THEN
+    RAISE EXCEPTION 'cover: the absence planted to start now, registered an hour and a microsecond ago, reads as %',
+      (SELECT row("startsAt", "createdAt", status) FROM "TeacherAbsences" WHERE id = late);
+  END IF;
+  BEGIN
+    UPDATE "TeacherAbsences" SET status = 'WITHDRAWN', "withdrawnAt" = now(), "withdrawnByUserId" = app.current_user_id() WHERE id = late;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    RAISE EXCEPTION 'cover: a teacher withdrew an absence that has begun and was registered more than an hour ago (% row(s))', n;
+  EXCEPTION WHEN SQLSTATE 'TA403' THEN NULL;
+  END;
+END $$;
+
 -- 28h: what a teacher writes straight against the database never goes past
 -- the school's decisions, and the clock is the database's (20261012130000).
 -- T1 registers an absence in 2095 around the lessons 28b planted (l on 1
@@ -32776,7 +32853,8 @@ END $$;
 --      person is handed out;
 --   b. A's administrator reads T's lessons at M in the roller year: Tue
 --      every week, Thu odd weeks with their dates, Fri as co-teacher, each
---      with the 15 minutes between A and M, and not the parked one; P's,
+--      with the 15 minutes between A and M, and not the parked one, and over
+--      every date nothing but its own teachers at another school; P's,
 --      whom A plans through a teacher's share alone; nothing of Y, whom A
 --      plans nothing for, nor of U, V, W, Z, Q, K, L or N, whom A plans;
 --      nothing out of the dates, for dates the wrong way round or for none;
@@ -32940,6 +33018,14 @@ BEGIN
   END IF;
   IF EXISTS (SELECT 1 FROM app.shared_teacher_busy('2030-08-01', '2031-07-31') WHERE school_id NOT IN (m, c)) THEN
     wrong := wrong || '276b A reads lessons at a school that is not H''s other school'::text;
+  END IF;
+  -- Over every date: each row is one of A's own teachers at another school.
+  -- M and C have marked T towards each other and towards A, so a function
+  -- that read every school's marks would hand A its own lesson of T under
+  -- the roller school's row.
+  IF EXISTS (SELECT 1 FROM app.shared_teacher_busy('2000-01-01', '2100-01-01') b
+              WHERE b.school_id = a OR NOT EXISTS (SELECT 1 FROM "Users" u WHERE u.id = b.teacher_id AND u."schoolId" = a)) THEN
+    wrong := wrong || '276b A reads a row that is not one of its own teachers at another school'::text;
   END IF;
   -- Out of the dates: the Thursday ends before December's last week.
   IF (SELECT count(*) FROM app.shared_teacher_busy('2030-12-21', '2031-01-06') WHERE teacher_id::text = ids ->> 't_a') <> 2
@@ -33318,7 +33404,10 @@ ROLLBACK;
 --      ended, A's room for it is offered to M, and M asks for it, and A
 --      asks for the hall by another room; a room once asked for and
 --      declined is A's room for a room it borrows;
---   i. deleting A's local room deletes A's loans with it.
+--   i. deleting A's local room deletes A's loans with it;
+--   j. a request takes the locks of the room asked for and of the room
+--      named, and a request waiting without a room is approved by the room
+--      another request of the same room named (20261217090100).
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -33681,6 +33770,68 @@ BEGIN
 END $$;
 ROLLBACK;
 
+-- 278j. A request takes the lock of the room it asks for and of the room
+-- it names, so a race over either queues (the transaction holds both after
+-- it). A request naming a room while another request of the same room waits
+-- without one: approving the waiting one holds by the named room, and makes
+-- no second room (20261217090100).
+BEGIN;
+SELECT set_config('app.test_d_admin', :'admin_auth_id', true);
+DO $$
+DECLARE
+  ids jsonb := pg_temp.delade_ids();
+  a uuid := ids ->> 'a';
+  m uuid := ids ->> 'm';
+  roller1 uuid := ids ->> 'roller1';
+  fresh_room uuid;
+  named uuid;
+  named2 uuid;
+  waiting uuid;
+  second uuid;
+  rooms_before bigint;
+  n bigint;
+  wrong text[] := '{}';
+  st text;
+BEGIN
+  PERFORM pg_temp.delade_as('00000000-0000-4000-8000-000000000105', NULL);
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (m, 'Delade M lås', now()) RETURNING id INTO fresh_room;
+  PERFORM pg_temp.delade_as(current_setting('app.test_d_admin'), NULL);
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (a, 'Delade A namngiven', now()) RETURNING id INTO named;
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (a, 'Delade A namngiven 2', now()) RETURNING id INTO named2;
+  IF EXISTS (SELECT 1 FROM pg_locks l WHERE l.locktype = 'advisory' AND l.pid = pg_backend_pid()) THEN
+    RAISE EXCEPTION 'delade 278j: the transaction holds an advisory lock before the request';
+  END IF;
+  -- The first request of the transaction, naming a room: both locks, whichever id is lower.
+  PERFORM app.room_loan_request(fresh_room, named, NULL, NULL, 1, '08:00', '09:00', '2030-08-19', '2031-06-13', NULL);
+  SELECT count(*) INTO n FROM pg_locks l
+   WHERE l.locktype = 'advisory' AND l.pid = pg_backend_pid() AND l.granted AND l.objsubid = 1
+     AND ((l.classid::bigint << 32) | l.objid::bigint) IN (hashtextextended('RoomLoans:' || named::text, 0),
+                                                             hashtextextended('RoomLoans:' || fresh_room::text, 0));
+  IF n <> 2 THEN wrong := wrong || format('278j a request naming its room holds %s of the two rooms'' locks', n); END IF;
+
+  -- A request without a room waits; another names one; the first's approval holds by it.
+  waiting := app.room_loan_request(roller1, NULL, NULL, NULL, 1, '08:00', '09:00', '2030-08-19', '2031-06-13', NULL);
+  second := app.room_loan_request(roller1, named2, NULL, NULL, 2, '08:00', '09:00', '2030-08-19', '2031-06-13', NULL);
+  IF NOT EXISTS (SELECT 1 FROM "RoomLoans" WHERE id = second AND "localRoomId" = named2)
+     OR NOT EXISTS (SELECT 1 FROM "RoomLoans" WHERE id = waiting AND "localRoomId" IS NULL) THEN
+    wrong := wrong || '278j the requests do not stand as asked'::text;
+  END IF;
+  SELECT count(*) INTO rooms_before FROM "Rooms" WHERE "schoolId" = a;
+  PERFORM pg_temp.delade_as('00000000-0000-4000-8000-000000000107', NULL);
+  st := pg_temp.delade_state(format('SELECT app.room_loan_decide(%L, true)', waiting));
+  PERFORM pg_temp.delade_as(current_setting('app.test_d_admin'), NULL);
+  IF st <> 'ok' OR NOT EXISTS (SELECT 1 FROM "RoomLoans" WHERE id = waiting AND status = 'APPROVED' AND "localRoomId" = named2)
+     OR (SELECT count(*) FROM "Rooms" WHERE "schoolId" = a) <> rooms_before THEN
+    wrong := wrong || format('278j approving the request waiting without a room (%s) does not hold by the named room, or makes another', st);
+  END IF;
+
+  PERFORM pg_temp.delade_as(NULL, NULL);
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION 'delade 278j: %', array_to_string(wrong, '; ');
+  END IF;
+END $$;
+ROLLBACK;
+
 -- ---------------------------------------------------------------------------
 -- Section 279: en skola som lämnar huvudmannen faller ur allt vid nästa sats,
 -- utom att ägaren läser och avslutar ett godkänt lån av sin egen sal, och
@@ -33853,6 +34004,69 @@ BEGIN
   SET LOCAL ROLE app_authenticated;
   IF cardinality(wrong) > 0 THEN
     RAISE EXCEPTION 'delade 279c: PostgREST''s role reaches the sharing: %', array_to_string(wrong, '; ');
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 279d: publiceringens eget val för krockar med huvudmannens andra
+-- skolor (PublicationSettings."gateOtherSchool", 20261217090100), och det som
+-- generatorn och publiceringen läser genom de smala läsningarna.
+--
+--   a. the column is a PublishGateMode, NOT NULL, WARN by default, and every
+--      school's row reads WARN: no school is refused anything it published
+--      before;
+--   b. the scheduler (the roller school's schemaläggare, who generates and
+--      publishes) reads what other-school-holds.ts and other-school-finding.ts
+--      ask: the other schools, the shared teachers' lessons there in the
+--      year's dates, and the loans between the schools; and so does school
+--      A's administrator for the roller year. The expedition reads them too
+--      (every profile reads), and writes no loan.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_d_admin', :'admin_auth_id', true);
+DO $$
+DECLARE
+  ids jsonb := pg_temp.delade_ids();
+  col record;
+  wrong text[] := '{}';
+  n bigint;
+  sub text;
+BEGIN
+  SELECT a.atttypid::regtype::text AS type, a.attnotnull AS notnull, pg_get_expr(d.adbin, d.adrelid) AS def INTO col
+    FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+   WHERE a.attrelid = '"PublicationSettings"'::regclass AND a.attname = 'gateOtherSchool';
+  IF col IS NULL OR col.type <> '"PublishGateMode"' OR NOT col.notnull OR col.def NOT LIKE '''WARN''%' THEN
+    wrong := wrong || format('279d gateOtherSchool is %s', row_to_json(col));
+  END IF;
+
+  FOREACH sub IN ARRAY ARRAY['00000000-0000-4000-8000-000000000107', '00000000-0000-4000-8000-000000000108'] LOOP
+    PERFORM pg_temp.delade_as(sub, NULL);
+    IF (SELECT count(*) FROM app.sibling_schools()) <> 2
+       OR (SELECT count(*) FROM app.shared_teacher_busy('2026-08-01', '2027-07-31') WHERE teacher_id::text = ids ->> 't_m') <> 1
+       OR (SELECT count(*) FROM "RoomLoans") <> 2 THEN
+      wrong := wrong || format('279d %s does not read what the generator and the publish read', sub);
+    END IF;
+    SELECT count(*) INTO n FROM "PublicationSettings" WHERE "gateOtherSchool" <> 'WARN';
+    IF n <> 0 THEN
+      wrong := wrong || format('279d %s reads %s rows with gateOtherSchool set before any school chose', sub, n);
+    END IF;
+  END LOOP;
+  PERFORM pg_temp.delade_as('00000000-0000-4000-8000-000000000108', NULL);
+  IF pg_temp.delade_state(format('SELECT app.room_loan_decide(%L, true)', gen_random_uuid())) <> 'RL403' THEN
+    wrong := wrong || '279d the expedition decides a loan'::text;
+  END IF;
+
+  PERFORM pg_temp.delade_as(current_setting('app.test_d_admin'), NULL);
+  IF (SELECT count(*) FROM app.shared_teacher_busy('2030-08-15', '2031-06-15') WHERE teacher_id::text = ids ->> 't_a') <> 3
+     OR (SELECT count(*) FROM "RoomLoans" WHERE "borrowerSchoolId"::text = ids ->> 'a' AND status = 'APPROVED') <> 1 THEN
+    wrong := wrong || '279d school A''s administrator does not read the roller year''s holds'::text;
+  END IF;
+
+  PERFORM pg_temp.delade_as(NULL, NULL);
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION 'delade 279d: %', array_to_string(wrong, '; ');
   END IF;
 END $$;
 ROLLBACK;

@@ -1279,6 +1279,8 @@ model PublicationSettings {
   gateDayOpsLost     PublishGateMode @default(WARN)
   /// A half of a class with lessons and no pupils (PUB_EMPTY_HALF, 20261113090000).
   gateEmptyHalf      PublishGateMode @default(WARN)
+  /// A lesson that meets another school of the huvudman (PUB_OTHER_SCHOOL, 20261217090100).
+  gateOtherSchool    PublishGateMode @default(WARN)
   /// The public viewer (20261011120000): everything off by default.
   publicViewerEnabled  Boolean        @default(false)
   publicGroups         Boolean        @default(false)

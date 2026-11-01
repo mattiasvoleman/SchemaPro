@@ -38,7 +38,8 @@ vi.mock("./use-sharing", async () => {
   };
 });
 vi.mock("./room-loan-dialog", () => ({
-  RoomLoanDialog: ({ open }: { open: boolean }) => (open ? <div role="dialog">loan dialog</div> : null),
+  RoomLoanDialog: ({ open, initial }: { open: boolean; initial?: unknown }) =>
+    open ? <div role="dialog">loan dialog {initial ? JSON.stringify(initial) : ""}</div> : null,
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const profile = vi.hoisted(() => ({ readOnly: false }));
@@ -70,6 +71,7 @@ const loan = (patch: Partial<RoomLoan>): RoomLoan => ({
   room: { id: "40000000-0000-4000-8000-000000000004", name: "Idrottshallen" },
   school: { id: ROLLER, name: "Rollerskolan" },
   ownerRoomName: null,
+  ownerRoomId: null,
   ...patch,
 });
 
@@ -225,6 +227,31 @@ describe("SharingCard", () => {
     const confirm = await screen.findByRole("dialog");
     await userEvent.click(within(confirm).getByRole("button", { name: "actions.withdraw" }));
     expect(loanAction).toHaveBeenCalledWith({ id: "b", action: "withdraw" });
+  });
+
+  it("asks again for a borrowed room with its times and no dates, the next läsår's loan being a new request", async () => {
+    withSchools();
+    state.loans = {
+      lent: [],
+      borrowed: [
+        loan({ id: "a", status: "APPROVED", ownerRoomId: "owner-hall", dayOfWeek: 2 }),
+        loan({ id: "b", status: "APPROVED", ownerRoomId: "owner-hall", dayOfWeek: 4, startTime: "13:00", endTime: "14:00" }),
+        loan({ id: "p", status: "PENDING", ownerRoomId: "owner-hall", dayOfWeek: 5 }),
+      ],
+    };
+    render(<SharingCard />);
+    // Not on a loan still waiting for its answer.
+    const again = screen.getAllByRole("button", { name: "actions.renew" });
+    expect(again).toHaveLength(2);
+    await userEvent.click(again[0]!);
+    const dialog = await screen.findByRole("dialog");
+    expect(JSON.parse(dialog.textContent!.replace("loan dialog ", ""))).toEqual({
+      roomId: "owner-hall",
+      windows: [
+        { dayOfWeek: 2, startTime: "10:00", endTime: "11:30" },
+        { dayOfWeek: 4, startTime: "13:00", endTime: "14:00" },
+      ],
+    });
   });
 
   it("names a request not yet approved by the room its approval makes, and a borrower that has left the huvudman as such", () => {
