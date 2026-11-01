@@ -58,6 +58,11 @@ Checks, all derived from the request:
                       post's limit in every week `lockedWeekdays` names; what
                       the school locked judged as the engine is held to it,
                       see _teacher_day_problems
+    stretches         Sammanhängande undervisning: per teacher and day, no
+                      stretch of lessons — each starting less than the work
+                      rule's break after the one before — longer than the
+                      rule's limit, unless it is made of the school's locked
+                      lessons alone; see _stretch_problems
     travel            Restid i generatorn: between two lessons one party
                       shares on one weekday, at least the school's minutes
                       for the pair of skolområden their rooms stand on — the
@@ -489,6 +494,76 @@ def _teacher_day_problems(request, lessons) -> list[str]:
     return problems
 
 
+def _stretch_problems(request, lessons) -> list[str]:
+    """Sammanhängande undervisning — at most X minutes of teaching in a row, then Y free.
+
+    THE GATEWAY'S DEFINITION, NOT THE ENGINE'S CODE (src/common/stretch.ts):
+    per teacher and weekday, every lesson the teacher is on — lead or
+    co-teacher, placed or locked — in clock minutes, sorted by start. A lesson
+    joins the stretch before it when it starts less than Y after that
+    stretch's latest end; a stretch is first start to last end, the short gaps
+    inside it counted, and it may not be longer than X.
+
+    WHAT THE SCHOOL LOCKED IS NOT JUDGED ON ITS OWN, as the cap's reading
+    above: a stretch of locked lessons alone, however long, was the school's
+    own doing and was warned beside the edit. A stretch with a lesson the
+    solver placed in it is held to X, and so is a placed lesson that joins a
+    locked stretch which was already too long, which is the point.
+    """
+    rules = {
+        rule.teacher_id: rule
+        for rule in request.teacher_work_rules
+        if rule.max_consecutive_teaching_minutes is not None
+    }
+    if not rules:
+        return []
+    req_by_id = {r.id: r for r in request.requirements}
+    days: dict = defaultdict(lambda: defaultdict(list))
+    for lesson in lessons:
+        requirement = req_by_id.get(lesson.requirement_id)
+        if requirement is None or lesson.requirement_id is None:
+            continue
+        span = (_clock(lesson.start_time), _clock(lesson.end_time), True)
+        for teacher in _lesson_teachers(requirement, lesson):
+            if teacher in rules:
+                days[teacher][lesson.day_of_week].append(span)
+    for fixed in request.fixed_lessons:
+        span = (_clock(fixed.start_time), _clock(fixed.end_time), False)
+        if span[1] <= span[0]:
+            continue
+        for teacher in {fixed.teacher_id, fixed.co_teacher_id} - {None}:
+            if teacher in rules:
+                days[teacher][fixed.day_of_week].append(span)
+
+    problems: list[str] = []
+    for teacher, rule in rules.items():
+        limit = rule.max_consecutive_teaching_minutes
+        pause = rule.consecutive_break_minutes
+        for weekday in sorted(days.get(teacher, {})):
+            stretch = None  # [first start, latest end, holds a placed lesson]
+            found = []
+            for start, end, placed in sorted(
+                days[teacher][weekday], key=lambda span: (span[0], span[1]),
+            ):
+                if stretch is not None and start - stretch[1] < pause:
+                    stretch[1] = max(stretch[1], end)
+                    stretch[2] = stretch[2] or placed
+                else:
+                    if stretch is not None:
+                        found.append(stretch)
+                    stretch = [start, end, placed]
+            if stretch is not None:
+                found.append(stretch)
+            for first, last, placed in found:
+                if placed and last - first > limit:
+                    problems.append(
+                        f"teacher work rule {rule.id}: {last - first} minutes of teaching "
+                        f"in a row on weekday {weekday} ({first // 60:02d}:{first % 60:02d}-"
+                        f"{last // 60:02d}:{last % 60:02d}), its rule allows {limit} "
+                        f"before a break of {pause}")
+    return problems
+
+
 def _travel_problems(request, lessons) -> list[str]:
     """Restid i generatorn: the walk between two skolområden, re-read from the request.
 
@@ -792,6 +867,7 @@ def _validate_week(grid, request, lessons) -> list[str]:
     problems.extend(_distribution_problems(request, placed_weekdays))
     problems.extend(_block_problems(request, lessons))
     problems.extend(_teacher_day_problems(request, lessons))
+    problems.extend(_stretch_problems(request, lessons))
     problems.extend(_travel_problems(request, lessons))
 
     rules = request.rules

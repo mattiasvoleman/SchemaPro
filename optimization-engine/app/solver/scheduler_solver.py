@@ -21,6 +21,7 @@ from app.exceptions import (
     OptimizationEngineError,
     SolverBuildError,
 )
+from app.solver.consecutive import add_stretch_rule, stretch_slots, teacher_windows
 from app.solver.frames import changeover_slots, day_windows, span_of
 from app.solver.pupil_gaps import (
     PupilGapModel,
@@ -1495,6 +1496,14 @@ class SchedulerSolver:
             day_vars,
             teacher_days,
             day_literals,
+        )
+        # Sammanhängande undervisning: a flagged teacher's stretch of lessons
+        # in a row, and the break that ends it (consecutive.py). On the day
+        # variables and the lessons alone, and writes nothing the rules around
+        # it read, so its place among them says nothing.
+        self._add_teacher_stretches(
+            model, registry, decisions, request.teacher_work_rules,
+            request.fixed_lessons, day_vars, step=step,
         )
         # Ämnesfördelning. On the day variables alone, so its place among the
         # rule builders says nothing; it reads `day_vars` as the spread
@@ -5503,6 +5512,17 @@ class SchedulerSolver:
             if lessons_by_teacher.get(limit.teacher_id, 0) > 0
         )
 
+        # _add_teacher_stretches (consecutive.py): a shifted start and a break
+        # per lesson of a flagged teacher, in each of the two weeks where the
+        # teacher has two, and a break per locked stretch (at most one per
+        # day), plus the one literal. The day variable is charged again
+        # though the spread usually built it, as above.
+        stretch_vars = sum(
+            1 + 7 * lessons_by_teacher[rule.teacher_id] + 2 * day_count
+            for rule in request.teacher_work_rules
+            if rule.has_stretch and lessons_by_teacher.get(rule.teacher_id, 0) > 0
+        )
+
         # The walk's own variables (travel.py), at their worst case: every
         # lesson a choice of every site and every row stretched over the
         # night, which the domains almost never ask for. "Every site" counts
@@ -5543,6 +5563,7 @@ class SchedulerSolver:
             + rast_order_vars
             + distribution_vars
             + teacher_day_vars
+            + stretch_vars
             # _add_block_constraints: one literal per block. Its equalities are
             # constraints on starts that exist already, and add no variable.
             + len(_blocks_of(request.requirements))
@@ -12774,6 +12795,57 @@ class SchedulerSolver:
             )
         return folded
 
+    def _add_teacher_stretches(
+        self,
+        model: cp_model.CpModel,
+        registry: AssumptionRegistry,
+        decisions: list[LessonDecision],
+        work_rules: list[AnonymousTeacherWorkRule],
+        fixed_lessons: list[FixedLesson],
+        day_vars: dict[str, cp_model.IntVar],
+        *,
+        step: int,
+    ) -> None:
+        """Sammanhängande undervisning: the rule's weeks, handed to consecutive.py.
+
+        A flagged teacher with nothing left to place is skipped, as the lunch
+        and the rest skip them; with no flagged teacher this returns before
+        reading anything and the model is the one every school had.
+        """
+        flagged = [rule for rule in work_rules if rule.has_stretch]
+        if not flagged:
+            return
+        by_teacher = _lessons_by_teacher(decisions)
+        locked_busy = self._teacher_busy_from_locks(fixed_lessons)
+        week_locks = _TeacherWeekLocks(self, fixed_lessons)
+        lattice = _start_lattice(step, self._grid.horizon)
+        for rule in flagged:
+            group = by_teacher.get(rule.teacher_id)
+            if not group:
+                continue
+            parts = week_parts(
+                group, _parity, alternating=week_locks.alternate(rule.teacher_id),
+            )
+            add_stretch_rule(
+                model,
+                registry,
+                grid=self._grid,
+                lattice=lattice,
+                rule=rule,
+                weeks=[
+                    (
+                        week,
+                        members,
+                        teacher_windows(
+                            locked_busy if week is None else week_locks.busy(week),
+                            rule.teacher_id,
+                        ),
+                    )
+                    for week, members in parts
+                ],
+                day_of=lambda decision: self._day_var(model, decision, day_vars),
+            )
+
     def _teacher_busy_from_locks(
         self, fixed_lessons: list[FixedLesson],
     ) -> dict[tuple[UUID, int], list[tuple[int, int]]]:
@@ -13899,6 +13971,12 @@ def _start_step(request: OptimizeScheduleRequest, grid: TimeGrid) -> int:
                 _night_pad_slots(grid, day_index)
                 for day_index in range(len(grid.schedule_days) - 1)
             )
+        if rule.has_stretch:
+            # Sammanhängande undervisning compares a break's start with a
+            # lesson's start plus X, and with the lesson before it plus its
+            # length, and the break is Y long: a step that divides neither
+            # would lose the week whose only break is a quarter of an hour.
+            values.extend(stretch_slots(rule, grid.slot_minutes))
     for frame in request.frame_times:
         for value in (frame.start_time, frame.end_time):
             values.extend((folded(value, upward=False), folded(value, upward=True)))
