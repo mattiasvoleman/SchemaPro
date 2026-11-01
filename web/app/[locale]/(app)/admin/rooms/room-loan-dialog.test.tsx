@@ -106,6 +106,22 @@ describe("RoomLoanDialog", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
+  it("starts from a loan asked for again: its room and times, and no dates", async () => {
+    render(
+      <RoomLoanDialog
+        open
+        onOpenChange={vi.fn()}
+        initial={{ roomId: SLOJD, windows: [{ dayOfWeek: 3, startTime: "08:00", endTime: "09:00" }] }}
+      />,
+    );
+    expect(screen.getByLabelText("fields.room")).toHaveValue(SLOJD);
+    expect(screen.getByLabelText("fields.day")).toHaveValue("3");
+    expect(screen.getByLabelText("fields.start")).toHaveValue("08:00");
+    expect(screen.getByLabelText("fields.end")).toHaveValue("09:00");
+    expect(screen.getByLabelText("fields.from")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "send" })).toBeDisabled();
+  });
+
   it("asks no name for a room the school already has a room of its own for", async () => {
     render(<RoomLoanDialog open onOpenChange={vi.fn()} />);
     await userEvent.selectOptions(screen.getByLabelText("fields.room"), SLOJD);

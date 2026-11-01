@@ -68,6 +68,7 @@ const SETTINGS: PublicationSettings = {
   gateGap: "WARN",
   gateDayOpsLost: "WARN",
   gateEmptyHalf: "WARN",
+  gateOtherSchool: "WARN",
   publicViewerEnabled: false,
   publicGroups: false,
   publicTeachers: false,

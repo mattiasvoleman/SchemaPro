@@ -886,6 +886,44 @@ describe('RoomOptimizationService', () => {
       ]);
     });
 
+    it('closes a room lent to another school of the huvudman in the loan’s window, as a row of its own (Delade lokaler och lärare)', async () => {
+      const at = (clock: string) => new Date(`1970-01-01T${clock}:00.000Z`);
+      const on = (day: string) => new Date(`${day}T00:00:00.000Z`);
+      tx.$queryRaw.mockImplementation(async (query: unknown) => {
+        const text = typeof query === 'object' && query !== null && 'sql' in query ? String((query as { sql: string }).sql) : '';
+        return text.includes('app.sibling_schools()') ? [{ school_id: 'c1000000-0000-4000-8000-000000000001', name: 'Norraskolan' }] : [];
+      });
+      // The holds read the year's dates; every other read of the year answers as before.
+      const year = tx.academicYear.findUnique.getMockImplementation();
+      tx.academicYear.findUnique.mockImplementation(async (query: { select?: Record<string, boolean> } = {}) =>
+        query.select && 'startDate' in query.select ? { startDate: on('2026-08-17'), endDate: on('2027-06-11') } : year?.(query),
+      );
+      const before = await basisNow();
+      tx.roomLoan.findMany.mockResolvedValue([
+        {
+          status: 'APPROVED',
+          ownerSchoolId: SCHOOL,
+          borrowerSchoolId: 'c1000000-0000-4000-8000-000000000001',
+          roomId: ROOM_10,
+          localRoomId: 'c1000000-0000-4000-8000-000000000002',
+          dayOfWeek: 2,
+          startTime: at('10:00'),
+          endTime: at('11:30'),
+          startDate: on('2026-08-17'),
+          endDate: on('2027-06-11'),
+        },
+      ]);
+      engine();
+
+      await propose();
+
+      expect(sent!.constraints).toEqual([
+        expect.objectContaining({ resourceKind: 'ROOM', resourceId: anonRoom(sent!, ROOM_10), dayOfWeek: 2, startTime: '10:00:00', endTime: '11:30:00', kind: 'UNAVAILABLE' }),
+      ]);
+      // A loan approved since a proposal makes it stale.
+      expect(await basisNow()).not.toBe(before);
+    });
+
     it('sends a room wish under the same subject and room tokens as the lessons', async () => {
       preferences = [wish('f2000000-0000-4000-8000-000000000001')];
       engine();
