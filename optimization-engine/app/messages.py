@@ -1098,6 +1098,40 @@ MESSAGES: dict[str, str] = {
         "room, or narrow which years the lock applies to."
     ),
 
+    # ---- Delade lokaler och lärare: sent by the GATEWAY, not by this engine --
+    # The gateway sends another school's hold on a teacher or a room as the
+    # recurring UNAVAILABLE rows a school writes by hand (src/optimization/
+    # other-school-holds.ts), and reads the AVAIL_CONSTRAINT_BLOCKS_LESSONS
+    # line the engine writes about one of them back as one of these, so the
+    # school is told it is the other school and not a reservation of its own.
+    # `schools` is the other schools' names; `room` the school's own room,
+    # named by the gateway; `travel` is yes when a travel time between the
+    # schools widened the teacher's block; the teacher is named when the line
+    # is read. Each says "may be one of the reasons": a core that is not
+    # minimal names rows that are no cause.
+    "OTHER_SCHOOL_TEACHER_BUSY": (
+        "A teacher named here also teaches at {schools}: {day, select, 1 {on Mondays} 2 {on Tuesdays} "
+        "3 {on Wednesdays} 4 {on Thursdays} 5 {on Fridays} other {on day {day}}} "
+        "{start}-{end}{travel, select, yes { (the travel between the schools included)} other {}} "
+        "they are there, and that may be one of the reasons the lessons that have to be placed here "
+        "do not fit. Give the lessons here another teacher or other times, change the travel time "
+        "under Rooms, The huvudman's other schools, or ask {schools} whether that lesson can move."
+    ),
+    "OTHER_SCHOOL_ROOM_LENT": (
+        "Room {room} is lent to {schools} {day, select, 1 {on Mondays} 2 {on Tuesdays} 3 {on "
+        "Wednesdays} 4 {on Thursdays} 5 {on Fridays} other {on day {day}}} {start}-{end}, and that "
+        "may be one of the reasons the lessons that have to be placed here do not fit. Let the "
+        "lessons use another room, or end the loan under Rooms, The huvudman's other schools."
+    ),
+    "OTHER_SCHOOL_ROOM_BORROWED": (
+        "Room {room} is borrowed from {schools} and holds lessons only in the times the approved "
+        "loans cover every week of the school year; {day, select, 1 {on Mondays} 2 {on Tuesdays} 3 "
+        "{on Wednesdays} 4 {on Thursdays} 5 {on Fridays} other {on day {day}}} {start}-{end} is "
+        "outside them, and that may be one of the reasons the lessons that have to be placed do not "
+        "fit. Let the lessons use another room, or ask {schools} for more times under Rooms, The "
+        "huvudman's other schools."
+    ),
+
     # ---- Tjänstefördelning: sent by the GATEWAY, not by this engine ---------
     # The staffing policy's refusals and warnings (src/staffing/staffing-checks.ts
     # and the generate pre-flight in optimization-proxy.service.ts). They live

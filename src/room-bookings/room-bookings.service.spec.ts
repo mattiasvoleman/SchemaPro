@@ -117,6 +117,53 @@ describe('RoomBookingsService', () => {
       ).resolves.toEqual({ id: BOOKING_ID, status: 'APPROVED' });
     });
 
+    describe('a room lent to or borrowed from another school of the huvudman (Salslån)', () => {
+      // 2026-08-05 is a Wednesday; 10:00–11:00Z is 12:00–13:00 in Stockholm.
+      const loan = (patch: Record<string, unknown>) => ({
+        status: 'APPROVED',
+        roomId: ROOM_ID,
+        localRoomId: 'c0000000-0000-4000-8000-000000000003',
+        dayOfWeek: 3,
+        startTime: new Date('1970-01-01T11:30:00.000Z'),
+        endTime: new Date('1970-01-01T13:00:00.000Z'),
+        startDate: new Date('2026-08-03T00:00:00.000Z'),
+        endDate: new Date('2027-06-11T00:00:00.000Z'),
+        ...patch,
+      });
+
+      beforeEach(() => {
+        arrangeFreeRoom();
+        tx.school.findUnique.mockResolvedValue({ timezone: 'Europe/Stockholm' });
+      });
+
+      it('refuses the owner a booking in an approved window of the loan, and takes the booking back', async () => {
+        tx.roomLoan.findMany.mockResolvedValue([loan({})]);
+        await expect(service.create(dto() as any, testUser({ role: Role.TEACHER }))).rejects.toMatchObject({
+          status: 409,
+          response: { code: 'ROOM_LENT_TO_OTHER_SCHOOL' },
+        });
+        expect(tx.roomLoan.findMany.mock.calls[0][0].where).toEqual({ OR: [{ roomId: ROOM_ID }, { localRoomId: ROOM_ID }] });
+      });
+
+      it('lets the owner book beside the window', async () => {
+        tx.roomLoan.findMany.mockResolvedValue([loan({ startTime: new Date('1970-01-01T13:00:00.000Z'), endTime: new Date('1970-01-01T14:00:00.000Z') })]);
+        await expect(service.create(dto() as any, testUser({ role: Role.TEACHER }))).resolves.toEqual({ id: BOOKING_ID, status: 'APPROVED' });
+      });
+
+      it('refuses the borrower a booking of its room outside every approved window', async () => {
+        tx.roomLoan.findMany.mockResolvedValue([loan({ roomId: 'd0000000-0000-4000-8000-000000000004', localRoomId: ROOM_ID, status: 'PENDING' })]);
+        await expect(service.create(dto() as any, testUser({ role: Role.TEACHER }))).rejects.toMatchObject({
+          status: 409,
+          response: { code: 'ROOM_BORROWED_OUTSIDE_LOAN' },
+        });
+      });
+
+      it('reads no time zone when no loan names the room', async () => {
+        await service.create(dto() as any, testUser({ role: Role.TEACHER }));
+        expect(tx.school.findUnique).not.toHaveBeenCalled();
+      });
+    });
+
     it('persists the tenant from the principal, never from the payload', async () => {
       arrangeFreeRoom();
       const user = testUser({ role: Role.TEACHER, schoolId: 'school-A' });

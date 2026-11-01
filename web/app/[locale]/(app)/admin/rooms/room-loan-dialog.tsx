@@ -12,7 +12,7 @@
  * room. Fetched the first time it opens (sharing-card.tsx).
  */
 
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Plus, Trash2 } from "lucide-react";
@@ -71,9 +71,15 @@ const emptyWindow = (): Window => ({ dayOfWeek: "1", startTime: "", endTime: "" 
 export interface RoomLoanDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * Begär igen: the room and times of a loan the school had, for the next
+   * läsår's request. The dates are left for the planner to choose: a loan is
+   * never rolled over by itself.
+   */
+  initial?: { roomId: string; windows: { dayOfWeek: number; startTime: string; endTime: string }[] } | null;
 }
 
-export function RoomLoanDialog({ open, onOpenChange }: RoomLoanDialogProps) {
+export function RoomLoanDialog({ open, onOpenChange, initial = null }: RoomLoanDialogProps) {
   const t = useTranslations("sharing");
   const tDays = useTranslations("days");
   const tCommon = useTranslations("common");
@@ -86,6 +92,20 @@ export function RoomLoanDialog({ open, onOpenChange }: RoomLoanDialogProps) {
   const [note, setNote] = useState("");
   const [localName, setLocalName] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+
+  // Each opening for a loan asked for again starts from that loan's room and times.
+  useEffect(() => {
+    if (!open || !initial) return;
+    setRoomId(initial.roomId);
+    setWindows(
+      initial.windows.length > 0
+        ? initial.windows.map((window) => ({ dayOfWeek: String(window.dayOfWeek), startTime: window.startTime, endTime: window.endTime }))
+        : [emptyWindow()],
+    );
+    setStartDate("");
+    setEndDate("");
+    setFormError(null);
+  }, [open, initial]);
 
   const chosen = useMemo(() => {
     for (const school of rooms.data ?? []) {
@@ -193,12 +213,13 @@ export function RoomLoanDialog({ open, onOpenChange }: RoomLoanDialogProps) {
                     <FormField id={`room-loan-start-${index}`} label={t("fields.start")}>
                       <Input
                         type="time"
+                        step={300}
                         value={window.startTime}
                         onChange={(event) => setWindow(index, { startTime: event.target.value })}
                       />
                     </FormField>
                     <FormField id={`room-loan-end-${index}`} label={t("fields.end")}>
-                      <Input type="time" value={window.endTime} onChange={(event) => setWindow(index, { endTime: event.target.value })} />
+                      <Input type="time" step={300} value={window.endTime} onChange={(event) => setWindow(index, { endTime: event.target.value })} />
                     </FormField>
                     <Button
                       type="button"

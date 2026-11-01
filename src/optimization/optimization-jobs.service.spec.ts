@@ -1474,6 +1474,27 @@ describe('OptimizationJobsService', () => {
         }
       });
 
+      it('names the shared teacher another school holds, as the walk’s teachers are (Delade lokaler och lärare)', () => {
+        const held = {
+          category: 'AVAILABILITY',
+          code: 'OTHER_SCHOOL_TEACHER_BUSY',
+          params: { schools: 'Norraskolan', day: 2, start: '09:45', end: '11:15' },
+          message: 'A teacher named here also teaches at Norraskolan …',
+          resourceNames: [],
+          subjectIds: [EVA],
+        };
+        const { view, revealed } = jobView(row({ conflicts: [held] }) as never, null, new Map([[EVA, 'Eva Ek']]));
+        expect(view.conflicts[0]).toEqual({
+          category: 'AVAILABILITY',
+          code: 'OTHER_SCHOOL_TEACHER_BUSY',
+          params: { schools: 'Norraskolan', day: 2, start: '09:45', end: '11:15' },
+          message: held.message,
+          resourceNames: ['Eva Ek'],
+        });
+        expect(revealed).toEqual([]);
+        expect(JSON.stringify(view)).not.toMatch(new RegExp(`${EVA}|subjectIds`));
+      });
+
       it('reads a notes column that is not a list as none', () => {
         expect(jobView(row({ notes: { unexpected: 'shape' } }) as never, null).view.notes).toEqual([]);
       });
