@@ -4,6 +4,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
+import { assertRoomTypeIsTheSchools } from './room-type-ref';
 import type {
   CreateRoomPreferenceDto,
   UpdateRoomPreferenceDto,
@@ -43,6 +44,7 @@ export class RoomPreferencesService {
 
     try {
       return await this.prisma.withRls(user, async (tx) => {
+        await assertRoomTypeIsTheSchools(tx, dto.roomTypeId, 'roomTypeId');
         await this.assertLockCanBeHonoured(
           tx,
           dto.kind ?? 'WISH',
@@ -125,6 +127,7 @@ export class RoomPreferencesService {
         if (!current) {
           throw new NotFoundException(`Room rule ${id} not found.`);
         }
+        await assertRoomTypeIsTheSchools(tx, dto.roomTypeId, 'roomTypeId');
 
         const minGradeLevel =
           dto.minGradeLevel !== undefined ? dto.minGradeLevel : current.minGradeLevel;

@@ -124,6 +124,7 @@ describe('RoomsService', () => {
 
     it('persists the chosen room type and approval requirement', async () => {
       tx.room.create.mockResolvedValue({ id: ROOM_ID });
+      tx.roomType.findFirst.mockResolvedValue({ id: ROOM_TYPE_ID });
 
       await service.create(
         dto({
@@ -145,6 +146,32 @@ describe('RoomsService', () => {
           }),
         }),
       );
+    });
+
+    it('refuses a room type that is not one of the school’s own, and writes no room', async () => {
+      // The single-column key accepts any school's type. Under RLS the lookup
+      // shows the school its own types only, so another school's reads as none.
+      tx.roomType.findFirst.mockResolvedValue(null);
+
+      const run = service.create(dto({ roomTypeId: ROOM_TYPE_ID }), testUser());
+
+      await expect(run).rejects.toThrow(BadRequestException);
+      await expect(run).rejects.toThrow('roomTypeId: rumstypen finns inte bland skolans rumstyper.');
+      expect(tx.roomType.findFirst).toHaveBeenCalledWith({
+        where: { id: ROOM_TYPE_ID },
+        select: { id: true },
+      });
+      expect(tx.room.create).not.toHaveBeenCalled();
+    });
+
+    it('asks nothing of the room types when the room names none', async () => {
+      tx.room.create.mockResolvedValue({ id: ROOM_ID });
+
+      await service.create(dto(), testUser());
+      await service.create(dto({ roomTypeId: null }), testUser());
+
+      expect(tx.roomType.findFirst).not.toHaveBeenCalled();
+      expect(tx.room.create).toHaveBeenCalledTimes(2);
     });
 
     it('rejects a principal with no school', async () => {
@@ -199,6 +226,7 @@ describe('RoomsService', () => {
       // The type is what a subject's required type is matched against. A PATCH
       // that drops it leaves kemi placed in a room that is no longer a lab.
       tx.room.update.mockResolvedValue({ id: ROOM_ID });
+      tx.roomType.findFirst.mockResolvedValue({ id: ROOM_TYPE_ID });
 
       await service.update(ROOM_ID, { roomTypeId: ROOM_TYPE_ID }, testUser());
 
@@ -206,6 +234,27 @@ describe('RoomsService', () => {
         where: { id: ROOM_ID },
         data: { roomTypeId: ROOM_TYPE_ID },
       });
+    });
+
+    it('refuses a PATCH naming a room type that is not one of the school’s own', async () => {
+      tx.roomType.findFirst.mockResolvedValue(null);
+
+      const run = service.update(ROOM_ID, { roomTypeId: ROOM_TYPE_ID }, testUser());
+
+      await expect(run).rejects.toThrow(BadRequestException);
+      await expect(run).rejects.toThrow('roomTypeId: rumstypen finns inte bland skolans rumstyper.');
+      expect(tx.room.update).not.toHaveBeenCalled();
+    });
+
+    it('clears the room type without asking the room types, and leaves it alone when absent', async () => {
+      tx.room.update.mockResolvedValue({ id: ROOM_ID });
+
+      await service.update(ROOM_ID, { roomTypeId: null }, testUser());
+      await service.update(ROOM_ID, { name: 'Fysiksal' }, testUser());
+
+      expect(tx.roomType.findFirst).not.toHaveBeenCalled();
+      expect(tx.room.update).toHaveBeenNthCalledWith(1, { where: { id: ROOM_ID }, data: { roomTypeId: null } });
+      expect(tx.room.update).toHaveBeenNthCalledWith(2, { where: { id: ROOM_ID }, data: { name: 'Fysiksal' } });
     });
 
     it('maps P2025 (unknown or cross-tenant id) to 404', async () => {

@@ -80,6 +80,7 @@ describe('SubjectsService', () => {
        * subject page to say why.
        */
       tx.subject.create.mockResolvedValue({ id: SUBJECT_ID });
+      tx.roomType.findFirst.mockResolvedValue({ id: ROOM_TYPE_ID });
 
       await service.create(
         {
@@ -105,6 +106,31 @@ describe('SubjectsService', () => {
           minDaysBetween: null,
         },
       });
+    });
+
+    it('refuses a required room type that is not one of the school’s own, and writes no subject', async () => {
+      // The single-column key accepts any school's type. Under RLS the lookup
+      // shows the school its own types only, so another school's reads as none.
+      tx.roomType.findFirst.mockResolvedValue(null);
+
+      const run = service.create({ name: 'Kemi', requiredRoomTypeId: ROOM_TYPE_ID }, testUser());
+
+      await expect(run).rejects.toThrow(BadRequestException);
+      await expect(run).rejects.toThrow('requiredRoomTypeId: rumstypen finns inte bland skolans rumstyper.');
+      expect(tx.roomType.findFirst).toHaveBeenCalledWith({
+        where: { id: ROOM_TYPE_ID },
+        select: { id: true },
+      });
+      expect(tx.subject.create).not.toHaveBeenCalled();
+    });
+
+    it('asks nothing of the room types for a subject that requires none', async () => {
+      tx.subject.create.mockResolvedValue({ id: SUBJECT_ID });
+
+      await service.create({ name: 'Matematik' }, testUser());
+      await service.create({ name: 'Matematik', requiredRoomTypeId: null }, testUser());
+
+      expect(tx.roomType.findFirst).not.toHaveBeenCalled();
     });
 
     it('writes the ämnesfördelning it is given', async () => {
@@ -246,8 +272,9 @@ describe('SubjectsService', () => {
       // Null is how the dialog clears a rule, and it must reach the column.
       ['maxLessonsPerDay as null', { maxLessonsPerDay: null }],
       ['minDaysBetween as null', { minDaysBetween: null }],
-    ])('a PATCH naming only %s writes it', async (_field, patch) => {
+    ])('a PATCH naming only %s writes it', async (field, patch) => {
       tx.subject.update.mockResolvedValue({ id: SUBJECT_ID });
+      tx.roomType.findFirst.mockResolvedValue({ id: ROOM_TYPE_ID });
 
       await service.update(SUBJECT_ID, patch, testUser());
 
@@ -256,6 +283,30 @@ describe('SubjectsService', () => {
         data: patch,
       });
       expect(tx.nationalSubject.findUnique).not.toHaveBeenCalled();
+      // The room types are asked about the one field that names one, and no other.
+      expect(tx.roomType.findFirst).toHaveBeenCalledTimes(field === 'requiredRoomTypeId' ? 1 : 0);
+    });
+
+    it('refuses a PATCH naming a required room type that is not one of the school’s own', async () => {
+      tx.roomType.findFirst.mockResolvedValue(null);
+
+      const run = service.update(SUBJECT_ID, { requiredRoomTypeId: ROOM_TYPE_ID }, testUser());
+
+      await expect(run).rejects.toThrow(BadRequestException);
+      await expect(run).rejects.toThrow('requiredRoomTypeId: rumstypen finns inte bland skolans rumstyper.');
+      expect(tx.subject.update).not.toHaveBeenCalled();
+    });
+
+    it('clears the required room type without asking the room types', async () => {
+      tx.subject.update.mockResolvedValue({ id: SUBJECT_ID });
+
+      await service.update(SUBJECT_ID, { requiredRoomTypeId: null }, testUser());
+
+      expect(tx.roomType.findFirst).not.toHaveBeenCalled();
+      expect(tx.subject.update).toHaveBeenCalledWith({
+        where: { id: SUBJECT_ID },
+        data: { requiredRoomTypeId: null },
+      });
     });
 
     it('a PATCH naming a national code looks it up and writes it', async () => {

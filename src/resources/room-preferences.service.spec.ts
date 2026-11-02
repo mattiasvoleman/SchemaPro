@@ -202,6 +202,8 @@ describe('RoomPreferencesService', () => {
     });
 
     it('stores a wish for a room type with no rooms attached', async () => {
+      tx.roomType.findFirst.mockResolvedValue({ id: TYPE_ID });
+
       await service.create(
         { subjectId: SUBJECT_ID, roomTypeId: TYPE_ID },
         testUser(),
@@ -212,6 +214,26 @@ describe('RoomPreferencesService', () => {
       };
       expect(data.roomTypeId).toBe(TYPE_ID);
       expect(data.rooms.create).toEqual([]);
+    });
+
+    it('refuses a rule for a room type that is not one of the school’s own, and stores none', async () => {
+      // The single-column key accepts any school's type, and a rule on it
+      // would be deleted with it, by the other school (ON DELETE CASCADE).
+      // Under RLS the lookup shows the school its own types only.
+      tx.roomType.findFirst.mockResolvedValue(null);
+
+      const run = service.create({ subjectId: SUBJECT_ID, roomTypeId: TYPE_ID }, testUser());
+
+      await expect(run).rejects.toThrow(BadRequestException);
+      await expect(run).rejects.toThrow('roomTypeId: rumstypen finns inte bland skolans rumstyper.');
+      expect(tx.roomType.findFirst).toHaveBeenCalledWith({ where: { id: TYPE_ID }, select: { id: true } });
+      expect(tx.roomPreference.create).not.toHaveBeenCalled();
+    });
+
+    it('asks nothing of the room types for a rule on rooms', async () => {
+      await service.create({ subjectId: SUBJECT_ID, roomIds: [ROOM_A] }, testUser());
+
+      expect(tx.roomType.findFirst).not.toHaveBeenCalled();
     });
 
     it('drops a room named twice rather than failing on the unique index', async () => {
@@ -287,6 +309,8 @@ describe('RoomPreferencesService', () => {
     });
 
     it('switching to a type clears the rooms it replaces', async () => {
+      tx.roomType.findFirst.mockResolvedValue({ id: TYPE_ID });
+
       await service.update(PREF_ID, { roomTypeId: TYPE_ID }, testUser());
 
       const { data } = tx.roomPreference.update.mock.calls[0][0] as {
@@ -294,6 +318,23 @@ describe('RoomPreferencesService', () => {
       };
       expect(data.roomTypeId).toBe(TYPE_ID);
       expect(data.rooms.create).toEqual([]);
+    });
+
+    it('refuses a PATCH switching to a room type that is not one of the school’s own', async () => {
+      tx.roomType.findFirst.mockResolvedValue(null);
+
+      const run = service.update(PREF_ID, { roomTypeId: TYPE_ID }, testUser());
+
+      await expect(run).rejects.toThrow(BadRequestException);
+      await expect(run).rejects.toThrow('roomTypeId: rumstypen finns inte bland skolans rumstyper.');
+      expect(tx.roomPreference.update).not.toHaveBeenCalled();
+    });
+
+    it('asks nothing of the room types for a PATCH that names rooms or only the weight', async () => {
+      await service.update(PREF_ID, { roomIds: [ROOM_B] }, testUser());
+      await service.update(PREF_ID, { weight: 500 }, testUser());
+
+      expect(tx.roomType.findFirst).not.toHaveBeenCalled();
     });
 
     it('still refuses both targets at once', async () => {
