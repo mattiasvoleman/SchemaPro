@@ -68,9 +68,17 @@ export interface LoanWindow {
   endDate: string;
 }
 
+/**
+ * One clash per lesson and teacher (TEACHER) or per lesson (LENT_ROOM), however
+ * many of the other schools' rows it meets: a teacher with an autumn and a
+ * spring row there, or a hall lent to one school in the autumn and to another
+ * in the spring, is one lesson to move. The rows it meets travel with it, in
+ * date order, so the finding names every school and time and not only the
+ * first.
+ */
 export type OtherSchoolClash =
-  | { kind: 'TEACHER'; lessonId: string; teacherId: string; busy: BusyLesson }
-  | { kind: 'LENT_ROOM'; lessonId: string; window: LoanWindow }
+  | { kind: 'TEACHER'; lessonId: string; teacherId: string; busies: readonly BusyLesson[] }
+  | { kind: 'LENT_ROOM'; lessonId: string; windows: readonly LoanWindow[] }
   | { kind: 'BORROWED_ROOM'; lessonId: string; roomId: string };
 
 const minutesOf = (time: string): number => Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
@@ -132,25 +140,39 @@ export function otherSchoolClashes(input: {
     const start = minutesOf(lesson.startTime);
     const end = minutesOf(lesson.endTime);
 
+    // The rows of each of the lesson's teachers that it meets, a teacher's
+    // first in the order the rows came in.
+    const busyOf = new Map<string, BusyLesson[]>();
     for (const busy of input.busy) {
       if (busy.dayOfWeek !== lesson.dayOfWeek || !lesson.teacherIds.includes(busy.teacherId)) continue;
       const walk = Math.max(0, busy.travelMinutes ?? 0);
       if (!(start < minutesOf(busy.endTime) + walk && minutesOf(busy.startTime) - walk < end)) continue;
       if (!shareADate(lesson.dayOfWeek, lesson, busy)) continue;
-      clashes.push({ kind: 'TEACHER', lessonId: lesson.id, teacherId: busy.teacherId, busy });
+      busyOf.set(busy.teacherId, [...(busyOf.get(busy.teacherId) ?? []), busy]);
+    }
+    for (const [teacherId, busies] of busyOf) {
+      clashes.push({
+        kind: 'TEACHER',
+        lessonId: lesson.id,
+        teacherId,
+        busies: [...busies].sort(
+          (a, b) => a.startDate.localeCompare(b.startDate) || a.schoolId.localeCompare(b.schoolId) || a.startTime.localeCompare(b.startTime),
+        ),
+      });
     }
 
     if (lesson.roomId === null) continue;
     // One clash per lesson, however many windows it meets: an autumn and a
     // spring loan of the same hall are two windows, and a lesson running all
-    // year is one lesson to move. The earliest names it, so the row does not
-    // depend on the order the loans were read in.
+    // year is one lesson to move. The windows come earliest first, then by the
+    // loan's id, so the row does not depend on the order the loans were read
+    // in; the finding names them all.
     const lentTo = input.lent
       .filter((window) => window.roomId === lesson.roomId && window.dayOfWeek === lesson.dayOfWeek)
       .filter((window) => start < minutesOf(window.endTime) && minutesOf(window.startTime) < end)
       .filter((window) => shareADate(lesson.dayOfWeek, lesson, { ...window, recurrence: 'ALL_WEEKS' }))
-      .sort((a, b) => a.startDate.localeCompare(b.startDate) || a.loanId.localeCompare(b.loanId))[0];
-    if (lentTo !== undefined) clashes.push({ kind: 'LENT_ROOM', lessonId: lesson.id, window: lentTo });
+      .sort((a, b) => a.startDate.localeCompare(b.startDate) || a.loanId.localeCompare(b.loanId));
+    if (lentTo.length > 0) clashes.push({ kind: 'LENT_ROOM', lessonId: lesson.id, windows: lentTo });
 
     if (input.localRoomIds.has(lesson.roomId)) {
       const loans: CoverLoan[] = input.borrowed

@@ -28,6 +28,18 @@ const WEEKDAY = ['', 'mån', 'tis', 'ons', 'tors', 'fre', 'lör', 'sön'];
 const day = (value: Date): string => value.toISOString().slice(0, 10);
 const clock = (value: Date): string => value.toISOString().slice(11, 16);
 
+/**
+ * What a label says of the rows one lesson meets: each text once, and dated
+ * only when the rows say different things, so that "Norraskolan tis 09:30–11:00
+ * and Sydskolan tis 09:00–09:45" tells which term is which. Rows that say the
+ * same (an autumn and a spring loan of the same hall to the same school) are
+ * one text and need no dates.
+ */
+function saidOf(rows: ReadonlyArray<{ text: string; startDate: string; endDate: string }>): string[] {
+  const dated = new Set(rows.map((row) => row.text)).size > 1;
+  return [...new Set(rows.map((row) => (dated ? `${row.text} (${row.startDate}–${row.endDate})` : row.text)))];
+}
+
 export async function otherSchoolFinding(
   tx: PrismaClient,
   schoolId: string,
@@ -171,7 +183,7 @@ export async function otherSchoolFinding(
 
   // The school's own names: its teachers and its rooms.
   const teacherIds = [...new Set(clashes.flatMap((clash) => (clash.kind === 'TEACHER' ? [clash.teacherId] : [])))];
-  const roomIds = [...new Set(clashes.flatMap((clash) => (clash.kind === 'TEACHER' ? [] : [clash.kind === 'LENT_ROOM' ? clash.window.roomId : clash.roomId])))];
+  const roomIds = [...new Set(clashes.flatMap((clash) => (clash.kind === 'TEACHER' ? [] : [clash.kind === 'LENT_ROOM' ? clash.windows[0].roomId : clash.roomId])))];
   const teachers = teacherIds.length
     ? new Map(
         (await tx.user.findMany({ where: { id: { in: teacherIds } }, select: { id: true, firstName: true, lastName: true } })).map(
@@ -187,18 +199,29 @@ export async function otherSchoolFinding(
     const lesson = byId.get(clash.lessonId)!;
     const base = lessonLabel(lesson);
     if (clash.kind === 'TEACHER') {
-      const busyAt = `${WEEKDAY[clash.busy.dayOfWeek]} ${clash.busy.startTime}–${clash.busy.endTime}`;
-      const walk = clash.busy.travelMinutes ? `, restid ${clash.busy.travelMinutes} min` : '';
+      const said = saidOf(
+        clash.busies.map((busy) => {
+          const busyAt = `${WEEKDAY[busy.dayOfWeek]} ${busy.startTime}–${busy.endTime}`;
+          const walk = busy.travelMinutes ? `, restid ${busy.travelMinutes} min` : '';
+          return { text: `${schoolName.get(busy.schoolId) ?? 'en annan skola'} ${busyAt}${walk}`, startDate: busy.startDate, endDate: busy.endDate };
+        }),
+      );
       return {
-        label: `${base}: ${teachers.get(clash.teacherId) ?? 'läraren'} har en lektion på ${schoolName.get(clash.busy.schoolId) ?? 'en annan skola'} ${busyAt}${walk}`,
+        label: `${base}: ${teachers.get(clash.teacherId) ?? 'läraren'} har en lektion på ${said.join(' och på ')}`,
         masterLessonId: lesson.id,
         teacherId: clash.teacherId,
       };
     }
     if (clash.kind === 'LENT_ROOM') {
-      const lentAt = `${WEEKDAY[clash.window.dayOfWeek]} ${clash.window.startTime}–${clash.window.endTime}`;
+      const said = saidOf(
+        clash.windows.map((lent) => ({
+          text: `${schoolName.get(lent.schoolId) ?? 'en skola som har lämnat huvudmannen'} ${WEEKDAY[lent.dayOfWeek]} ${lent.startTime}–${lent.endTime}`,
+          startDate: lent.startDate,
+          endDate: lent.endDate,
+        })),
+      );
       return {
-        label: `${base}: ${rooms.get(clash.window.roomId) ?? 'salen'} är utlånad till ${schoolName.get(clash.window.schoolId) ?? 'en skola som har lämnat huvudmannen'} ${lentAt}`,
+        label: `${base}: ${rooms.get(clash.windows[0].roomId) ?? 'salen'} är utlånad till ${said.join(' och ')}`,
         masterLessonId: lesson.id,
       };
     }

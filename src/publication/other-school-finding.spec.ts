@@ -11,6 +11,7 @@ import type { GateLesson } from './publication-gates.reader';
 
 const SCHOOL = '33333333-3333-4333-8333-333333333333';
 const NORRA = '44444444-4444-4444-8444-444444444444';
+const SYD = '55555555-5555-4555-8555-555555555555';
 const ANNA = 'a0000000-0000-4000-8000-000000000001';
 const HALL = 'b0000000-0000-4000-8000-000000000002';
 const LOCAL = 'c0000000-0000-4000-8000-000000000003';
@@ -44,10 +45,10 @@ const lesson = (patch: Partial<GateLesson>): GateLesson => ({
 describe('otherSchoolFinding', () => {
   let tx: TxMock;
   const find = (lessons: GateLesson[]) => otherSchoolFinding(tx as unknown as PrismaClient, SCHOOL, lessons, WINDOW);
-  const sharing = (busy: unknown[]) =>
+  const sharing = (busy: unknown[], siblings = [{ school_id: NORRA, name: 'Norraskolan' }]) =>
     tx.$queryRaw.mockImplementation(async (query: unknown) => {
       const text = typeof query === 'object' && query !== null && 'sql' in query ? String((query as { sql: string }).sql) : '';
-      if (text.includes('app.sibling_schools()')) return [{ school_id: NORRA, name: 'Norraskolan' }];
+      if (text.includes('app.sibling_schools()')) return siblings;
       if (text.includes('app.shared_teacher_busy(')) return busy;
       return [];
     });
@@ -251,6 +252,10 @@ describe('otherSchoolFinding', () => {
       ['åk 7–9', 7, 9],
       ['åk 8 alone', 8, 8],
       ['åk 1–12', 1, 12],
+      // A bound left open is no number for a group without an årskurs to be
+      // measured against, whichever one is read in its place.
+      ['åk 9 and below', null, 9],
+      ['åk 7 and above', 7, null],
     ])('is no lov of a teaching group, which has no årskurs: its lesson runs through a lov of %s', async (_name, min, max) => {
       // A group of åk 8 is off on those days: nothing is written, and the two
       // loans cover every day its lesson runs.
@@ -287,27 +292,99 @@ describe('otherSchoolFinding', () => {
     });
   });
 
-  it('names a lesson in a hall lent in an autumn and a spring window once, and counts it once', async () => {
-    sharing([]);
-    const lentTerm = (id: string, startDate: string, endDate: string) => ({
+  describe('a hall lent in an autumn and a spring window', () => {
+    // The ids run against the dates, so that what orders the windows is the date.
+    const lentTerm = (id: string, borrower: string, startDate: string, endDate: string, from = '09:30', to = '11:00') => ({
       id,
       status: 'APPROVED',
       ownerSchoolId: SCHOOL,
-      borrowerSchoolId: NORRA,
+      borrowerSchoolId: borrower,
       roomId: HALL,
       localRoomId: 'x0000000-0000-4000-8000-000000000009',
       dayOfWeek: 2,
-      startTime: time('09:30'),
-      endTime: time('11:00'),
+      startTime: time(from),
+      endTime: time(to),
       startDate: date(startDate),
       endDate: date(endDate),
     });
-    tx.roomLoan.findMany.mockResolvedValue([lentTerm('vt', '2031-01-08', '2031-06-13'), lentTerm('ht', '2030-08-19', '2030-12-20')]);
-    const finding = await find([lesson({ id: 'all-year', teacherId: null, roomId: HALL }), lesson({ id: 'spring', teacherId: null, roomId: HALL, startDate: '2031-01-08' })]);
-    expect(finding.count).toBe(2);
-    expect(finding.entries).toEqual([
-      { label: 'Matematik · 7B, tis 09:00–10:00: Idrottshallen är utlånad till Norraskolan tis 09:30–11:00', masterLessonId: 'all-year' },
-      { label: 'Matematik · 7B, tis 09:00–10:00: Idrottshallen är utlånad till Norraskolan tis 09:30–11:00', masterLessonId: 'spring' },
+    const inHall = [lesson({ id: 'all-year', teacherId: null, roomId: HALL }), lesson({ id: 'spring', teacherId: null, roomId: HALL, startDate: '2031-01-08' })];
+
+    it('is named once per lesson, and counted once', async () => {
+      sharing([]);
+      tx.roomLoan.findMany.mockResolvedValue([
+        lentTerm('a-spring', NORRA, '2031-01-08', '2031-06-13'),
+        lentTerm('b-autumn', NORRA, '2030-08-19', '2030-12-20'),
+      ]);
+      const finding = await find(inHall);
+      expect(finding.count).toBe(2);
+      expect(finding.entries).toEqual([
+        { label: 'Matematik · 7B, tis 09:00–10:00: Idrottshallen är utlånad till Norraskolan tis 09:30–11:00', masterLessonId: 'all-year' },
+        { label: 'Matematik · 7B, tis 09:00–10:00: Idrottshallen är utlånad till Norraskolan tis 09:30–11:00', masterLessonId: 'spring' },
+      ]);
+    });
+
+    it('names the school of every window, with the term of each, when the windows say different things', async () => {
+      sharing([], [
+        { school_id: NORRA, name: 'Norraskolan' },
+        { school_id: SYD, name: 'Sydskolan' },
+      ]);
+      tx.roomLoan.findMany.mockResolvedValue([
+        lentTerm('a-spring', SYD, '2031-01-08', '2031-06-13', '09:00', '09:45'),
+        lentTerm('b-autumn', NORRA, '2030-08-19', '2030-12-20'),
+      ]);
+      const finding = await find([inHall[0]]);
+      expect(finding.count).toBe(1);
+      expect(finding.entries).toEqual([
+        {
+          label:
+            'Matematik · 7B, tis 09:00–10:00: Idrottshallen är utlånad till ' +
+            'Norraskolan tis 09:30–11:00 (2030-08-19–2030-12-20) och Sydskolan tis 09:00–09:45 (2031-01-08–2031-06-13)',
+          masterLessonId: 'all-year',
+        },
+      ]);
+    });
+  });
+
+  it('names a teacher with an autumn and a spring row at the other school once, and counts it once', async () => {
+    const row = (start: string, end: string, school = NORRA, from = '10:10', to = '11:00') => ({
+      teacher_id: ANNA,
+      school_id: school,
+      day_of_week: 2,
+      start_time: time(from),
+      end_time: time(to),
+      recurrence: 'ALL_WEEKS',
+      start_date: date(start),
+      end_date: date(end),
+      travel_minutes: 15,
+    });
+    sharing([row('2031-01-08', '2031-06-15'), row('2030-08-15', '2030-12-20')]);
+    const same = await find([lesson({})]);
+    expect(same.count).toBe(1);
+    expect(same.entries).toEqual([
+      {
+        label: 'Matematik · 7B, tis 09:00–10:00: Anna Lind har en lektion på Norraskolan tis 10:10–11:00, restid 15 min',
+        masterLessonId: 'L1',
+        teacherId: ANNA,
+      },
+    ]);
+    // Rows that say different things are all said, and dated.
+    sharing(
+      [row('2031-01-08', '2031-06-15', SYD, '10:00', '11:00'), row('2030-08-15', '2030-12-20')],
+      [
+        { school_id: NORRA, name: 'Norraskolan' },
+        { school_id: SYD, name: 'Sydskolan' },
+      ],
+    );
+    const apart = await find([lesson({})]);
+    expect(apart.count).toBe(1);
+    expect(apart.entries).toEqual([
+      {
+        label:
+          'Matematik · 7B, tis 09:00–10:00: Anna Lind har en lektion på ' +
+          'Norraskolan tis 10:10–11:00, restid 15 min (2030-08-15–2030-12-20) och på Sydskolan tis 10:00–11:00, restid 15 min (2031-01-08–2031-06-15)',
+        masterLessonId: 'L1',
+        teacherId: ANNA,
+      },
     ]);
   });
 
