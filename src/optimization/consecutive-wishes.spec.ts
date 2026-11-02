@@ -118,18 +118,29 @@ describe('unkeptConsecutiveWishes', () => {
   });
 
   it('orders several notes by weekday, then by rule, so two reads of one run say it in one order', () => {
+    // Olle's rule sorts after Eva's, and his stretch is on the earlier day:
+    // the weekday decides, and the rule only breaks a tie.
     const notes = unkeptConsecutiveWishes(
+      [wish({ ruleId: RULE_OLLE, userId: OLLE }), wish()],
+      [
+        lesson('08:00', '12:00', { dayOfWeek: 3 }),
+        lesson('08:00', '12:00', { dayOfWeek: 1, teacherId: OLLE }),
+      ],
+    );
+    expect(notes.map((note) => [note.params!['day'], note.resourceIds[0]])).toEqual([
+      [1, RULE_OLLE],
+      [3, RULE_EVA],
+    ]);
+
+    // Two stretches on one day, the wishes given in the other order: by rule.
+    const tied = unkeptConsecutiveWishes(
       [wish({ ruleId: RULE_OLLE, userId: OLLE }), wish()],
       [
         lesson('08:00', '12:00', { dayOfWeek: 3, teacherId: OLLE }),
         lesson('08:00', '12:00', { dayOfWeek: 3 }),
-        lesson('13:00', '17:00', { dayOfWeek: 1 }),
       ],
     );
-    expect(notes.map((note) => [note.params!['day'], note.resourceIds[0]])).toEqual([
-      [1, RULE_EVA],
-      [3, RULE_OLLE],
-    ]);
+    expect(tied.map((note) => note.resourceIds[0])).toEqual([RULE_EVA, RULE_OLLE]);
   });
 
   it('says nothing for a teacher who teaches nothing, or for no wishes', () => {

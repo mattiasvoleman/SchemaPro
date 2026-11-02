@@ -161,6 +161,30 @@ describe('a hand edit asks the three limits together', () => {
     ]);
   });
 
+  it('names the longest stretch of the day, not the last one it reads', () => {
+    // 240 minutes in the morning, 200 in the afternoon, one weekday: the
+    // figure is the largest, wherever in the day or in whichever week it is.
+    const noCap: TeacherDayRule = { ...rule, maxTeachingMinutesPerDay: null };
+    expect(
+      teacherDayBreaches(noCap, [lesson('a', '08:00', '12:00'), lesson('b', '13:00', '16:20')]),
+    ).toMatchObject([{ kind: 'CONSECUTIVE', minutes: 240, lessonIds: ['a', 'b'] }]);
+
+    // The same two stretches in an odd and an even week, either way round, so
+    // that whichever week the reading takes last, the longest is named.
+    const inWeek = (id: string, start: string, end: string, recurrence: 'ODD_WEEKS' | 'EVEN_WEEKS'): TeachingLesson => ({
+      ...lesson(id, start, end),
+      recurrence,
+    });
+    for (const [odd, even] of [
+      [['08:00', '12:00'], ['08:00', '11:20']],
+      [['08:00', '11:20'], ['08:00', '12:00']],
+    ] as const) {
+      expect(
+        teacherDayBreaches(noCap, [inWeek('o', odd[0], odd[1], 'ODD_WEEKS'), inWeek('e', even[0], even[1], 'EVEN_WEEKS')]),
+      ).toMatchObject([{ kind: 'CONSECUTIVE', minutes: 240, lessonIds: ['e', 'o'] }]);
+    }
+  });
+
   it('says nothing for a teacher whose rule has only one of the two figures', () => {
     const half: TeacherDayRule = { ...rule, maxTeachingMinutesPerDay: null, consecutiveBreakMinutes: null };
     expect(teacherDayBreaches(half, [lesson('a', '08:00', '14:00')])).toEqual([]);

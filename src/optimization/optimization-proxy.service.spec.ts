@@ -5937,6 +5937,38 @@ describe('OptimizationProxyService', () => {
           expect(notes).toEqual([]);
         });
 
+        it.each([
+          ['lunchMinutes', 30],
+          ['lunchStartTime', eightAm],
+          ['lunchEndTime', nineAm],
+          ['minDailyRestMinutes', 660],
+          ['maxTeachingMinutesPerDay', 300],
+          ['preferredFreeDayOfWeek', 5],
+        ])(
+          'still sends a rule that holds the limit and %s, with the switch off, and leaves the limit out of it',
+          async (field, value) => {
+            // The row exists for more than the limit, so the school without
+            // the effort gets the rule it always got: dropping the row on
+            // the limit alone would silently drop this one with it.
+            arrange({ workRules: [limited({ [field]: value })], lunchSettings: school(false) });
+            echoEngine();
+
+            await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+            expect(postedPayload().teacherWorkRules).toHaveLength(1);
+            expect(JSON.stringify(postedPayload())).not.toMatch(/Consecutive/);
+          },
+        );
+
+        it('still sends a row that holds nothing at all, with the switch off, as it always did', async () => {
+          arrange({ workRules: [workRule()], lunchSettings: school(false) });
+          echoEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(postedPayload().teacherWorkRules).toHaveLength(1);
+        });
+
         it('keeps a limit no stretch of theirs is over', async () => {
           // The echo's 75 minutes is inside 90.
           arrange({ workRules: [limited({ maxConsecutiveTeachingMinutes: 90 })], lunchSettings: school(true) });
