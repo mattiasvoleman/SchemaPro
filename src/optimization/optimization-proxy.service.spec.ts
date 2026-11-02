@@ -1,7 +1,9 @@
 import { HttpException, Logger, ServiceUnavailableException } from '@nestjs/common';
-import type { HttpService } from '@nestjs/axios';
+import { HttpService } from '@nestjs/axios';
 import type { ConfigService } from '@nestjs/config';
 import { AxiosError } from 'axios';
+import { createServer, type Server } from 'http';
+import type { AddressInfo } from 'net';
 import { of, throwError, timer } from 'rxjs';
 import { mergeMap } from 'rxjs/operators';
 import { Prisma, type PrismaClient } from '@prisma/client';
@@ -60,6 +62,11 @@ const makeConfigService = () =>
       return { baseUrl: 'http://solver.test', apiKey: 'k'.repeat(32), timeoutMs: 50 };
     }),
   }) as unknown as ConfigService;
+
+/** A throwaway server on a free port of this machine's loopback. */
+const listening = (server: Server) =>
+  new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+const portOf = (server: Server) => (server.address() as AddressInfo).port;
 
 type Row = Record<string, unknown>;
 type Selection = Record<string, unknown> | undefined;
@@ -1420,6 +1427,48 @@ describe('OptimizationProxyService', () => {
       await expect(call()).rejects.toMatchObject({ status: 422 });
     });
 
+    it('does not send the service key on to the address a redirect names', async () => {
+      /*
+       * Over a real socket, with axios itself: the mocks above only see which
+       * options were passed, not what axios does with them. The engine here
+       * answers 302 to a second server, which records the key header of
+       * whatever reaches it.
+       */
+      const keysSeen: Array<string | string[] | undefined> = [];
+      const elsewhere = createServer((req, res) => {
+        keysSeen.push(req.headers['x-api-key']);
+        res.end('{}');
+      });
+      await listening(elsewhere);
+      const engine = createServer((_req, res) => {
+        res.writeHead(302, { Location: `http://127.0.0.1:${portOf(elsewhere)}/v1/schedule` });
+        res.end();
+      });
+      await listening(engine);
+
+      try {
+        const real = new OptimizationProxyService(
+          {} as unknown as PrismaService,
+          new HttpService(),
+          {
+            getOrThrow: () => ({
+              baseUrl: `http://127.0.0.1:${portOf(engine)}`,
+              apiKey: 'k'.repeat(32),
+              timeoutMs: 5_000,
+            }),
+          } as unknown as ConfigService,
+        );
+
+        await expect(real.callAiEngine('/v1/schedule', {}, maps())).rejects.toMatchObject({
+          status: 302,
+        });
+        expect(keysSeen).toEqual([]);
+      } finally {
+        engine.close();
+        elsewhere.close();
+      }
+    });
+
     it('answers 503 and not 502 when the engine never responded', async () => {
       /*
        * This used to assert 502, and 502 was the wrong answer.
@@ -1898,7 +1947,9 @@ describe('OptimizationProxyService', () => {
 
       await callWith({});
 
-      expect(Object.keys(http.post.mock.calls[0][2] as object)).toEqual(['headers']);
+      // Exactly these keys, so a `timeout` (even undefined) would show; the
+      // redirect option is the one every call carries.
+      expect(Object.keys(http.post.mock.calls[0][2] as object)).toEqual(['headers', 'maxRedirects']);
     });
 
     /** The engine's refusal of a field its models do not know. */
@@ -3225,6 +3276,45 @@ describe('OptimizationProxyService', () => {
           }),
         }),
       );
+    });
+
+    it('asks axios to follow no redirect, so the service key stays with the configured engine', async () => {
+      arrange();
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      // Axios follows a 3xx by default and sends the headers along, the key
+      // among them, to the address the redirect names.
+      expect(http.post).toHaveBeenCalledWith(
+        'http://solver.test/v1/schedule',
+        expect.anything(),
+        expect.objectContaining({ maxRedirects: 0 }),
+      );
+    });
+
+    it('takes a redirect from the engine for an answer with an error, and writes nothing', async () => {
+      arrange();
+      // What axios throws for a 3xx once it follows none: a response, not a
+      // missing one, so it is not "could not be reached".
+      const redirected = new AxiosError('Request failed with status code 302');
+      redirected.response = {
+        status: 302,
+        data: '',
+        headers: { location: 'http://elsewhere.test/v1/schedule' },
+      } as never;
+      http.post.mockReturnValue(throwError(() => redirected));
+
+      const run = service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      await expect(run).rejects.toThrow(HttpException);
+      await expect(run).rejects.toMatchObject({ status: 302 });
+      await expect(run).rejects.toThrow('The AI engine returned an error.');
+      await expect(run).rejects.not.toThrow('could not be reached');
+      // Asked once, at the configured address; the Location is never visited.
+      expect(http.post).toHaveBeenCalledTimes(1);
+      expect(tx.masterLesson.deleteMany).not.toHaveBeenCalled();
+      expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
     });
 
     it('translates the anonymous solution back to real ids before persisting', async () => {

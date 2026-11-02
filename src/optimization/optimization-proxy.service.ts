@@ -3789,6 +3789,13 @@ export class OptimizationProxyService {
               'X-API-Key': this.aiConfig.apiKey,
               'Content-Type': 'application/json',
             },
+            // The engine answers where it is configured and nowhere else. A 3xx
+            // is followed by default, with the headers, so the service key
+            // would leave for whatever address the redirect named. With none
+            // followed a 3xx is an answer axios rejects like any other
+            // non-2xx, and lands in the branch below that says the engine
+            // answered with an error.
+            maxRedirects: 0,
             ...(options.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
           })
           .pipe(
