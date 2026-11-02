@@ -9,6 +9,7 @@ import { otherSchoolClashes, shareADate, type BusyLesson, type LoanWindow, type 
 
 const ANNA = 'a0000000-0000-4000-8000-000000000001';
 const NORRA = 'b0000000-0000-4000-8000-000000000002';
+const SYD = 'e0000000-0000-4000-8000-000000000005';
 const HALL = 'c0000000-0000-4000-8000-000000000003';
 const LOCAL = 'd0000000-0000-4000-8000-000000000004';
 
@@ -104,19 +105,21 @@ describe('otherSchoolClashes', () => {
     expect(run({ lessons: [lesson({ roomId: HALL, startTime: '10:00', endTime: '11:00', startDate: '2031-06-14', endDate: '2031-06-20' })], lent: [window({})] })).toEqual([]);
   });
 
-  it('names a lesson once however many of the room’s windows it meets, by the earliest', () => {
+  it('names a lesson once however many of the room’s windows it meets, and carries them all, earliest first', () => {
     const inHall = lesson({ roomId: HALL, startTime: '11:00', endTime: '12:00' });
-    // An autumn and a spring loan of the same hall and time: two windows, one lesson.
-    const autumn = window({ loanId: 'ht', endDate: '2030-12-20' });
-    const spring = window({ loanId: 'vt', startDate: '2031-01-08' });
+    // An autumn and a spring loan of the same hall and time: two windows, one
+    // lesson. The ids run against the dates, so that what orders the windows
+    // is the date and not the id.
+    const autumn = window({ loanId: 'b-autumn', endDate: '2030-12-20' });
+    const spring = window({ loanId: 'a-spring', startDate: '2031-01-08' });
     for (const lent of [[autumn, spring], [spring, autumn]]) {
       const clashes = otherSchoolClashes({ lessons: [inHall], busy: [], lent, borrowed: [], localRoomIds: new Set() });
-      expect(clashes).toEqual([{ kind: 'LENT_ROOM', lessonId: 'L', window: autumn }]);
+      expect(clashes).toEqual([{ kind: 'LENT_ROOM', lessonId: 'L', windows: [autumn, spring] }]);
     }
-    // Two windows from the same day on: the loan id settles which names it.
+    // Two windows from the same day on: the loan id settles their order.
     const twin = [window({ loanId: 'b' }), window({ loanId: 'a' })];
     expect(otherSchoolClashes({ lessons: [inHall], busy: [], lent: twin, borrowed: [], localRoomIds: new Set() })).toEqual([
-      { kind: 'LENT_ROOM', lessonId: 'L', window: twin[1] },
+      { kind: 'LENT_ROOM', lessonId: 'L', windows: [twin[1], twin[0]] },
     ]);
     // One per lesson, not one for the room: a second lesson in it is its own.
     const two = otherSchoolClashes({
@@ -129,6 +132,56 @@ describe('otherSchoolClashes', () => {
     expect(two.map((clash) => [clash.kind, clash.lessonId])).toEqual([
       ['LENT_ROOM', 'L'],
       ['LENT_ROOM', 'M'],
+    ]);
+  });
+
+  it('carries the window of every school the lesson meets, so that none is left out of the finding', () => {
+    const inHall = lesson({ roomId: HALL, startTime: '11:00', endTime: '12:00' });
+    const autumn = window({ loanId: 'ht', schoolId: NORRA, endDate: '2030-12-20' });
+    // The spring's loan is another school's, at another time that still meets the lesson.
+    const spring = window({ loanId: 'vt', schoolId: SYD, startDate: '2031-01-08', startTime: '11:30', endTime: '12:30' });
+    expect(otherSchoolClashes({ lessons: [inHall], busy: [], lent: [spring, autumn], borrowed: [], localRoomIds: new Set() })).toEqual([
+      { kind: 'LENT_ROOM', lessonId: 'L', windows: [autumn, spring] },
+    ]);
+  });
+
+  it('names a lesson only for the windows of its own room', () => {
+    // A window of another room at the very time of the lesson is no clash of
+    // this lesson's, and does not join the windows of a room it is in.
+    const inHall = lesson({ roomId: HALL, startTime: '11:00', endTime: '12:00' });
+    const beside = window({ loanId: 'beside', roomId: LOCAL });
+    expect(run({ lessons: [inHall], lent: [beside] })).toEqual([]);
+    const own = window({ loanId: 'own' });
+    expect(otherSchoolClashes({ lessons: [inHall], busy: [], lent: [beside, own], borrowed: [], localRoomIds: new Set() })).toEqual([
+      { kind: 'LENT_ROOM', lessonId: 'L', windows: [own] },
+    ]);
+  });
+
+  it('names a lesson once per teacher however many of the other school’s rows the teacher has, and carries them all', () => {
+    // Two term rows of the same teacher at the same time, as the other school
+    // keeps a teacher's post by term: one lesson to move, not two.
+    const autumn = busy({ startDate: '2030-08-15', endDate: '2030-12-20' });
+    const spring = busy({ startDate: '2031-01-08', endDate: '2031-06-15' });
+    for (const rows of [[autumn, spring], [spring, autumn]]) {
+      expect(otherSchoolClashes({ lessons: [lesson({})], busy: rows, lent: [], borrowed: [], localRoomIds: new Set() })).toEqual([
+        { kind: 'TEACHER', lessonId: 'L', teacherId: ANNA, busies: [autumn, spring] },
+      ]);
+    }
+    // Rows at two schools: one lesson, both schools carried, in date order and
+    // then by school.
+    const south = busy({ schoolId: SYD, startDate: '2030-08-15', endDate: '2030-12-20' });
+    expect(otherSchoolClashes({ lessons: [lesson({})], busy: [spring, south, autumn], lent: [], borrowed: [], localRoomIds: new Set() })).toEqual([
+      { kind: 'TEACHER', lessonId: 'L', teacherId: ANNA, busies: [autumn, south, spring] },
+    ]);
+    // Each of a lesson's teachers is a clash of their own.
+    const other = busy({ teacherId: 'x' });
+    expect(
+      otherSchoolClashes({ lessons: [lesson({ teacherIds: ['x', ANNA] })], busy: [autumn, other], lent: [], borrowed: [], localRoomIds: new Set() }).map(
+        (clash) => [clash.kind, clash.kind === 'TEACHER' ? clash.teacherId : null],
+      ),
+    ).toEqual([
+      ['TEACHER', ANNA],
+      ['TEACHER', 'x'],
     ]);
   });
 
