@@ -7478,22 +7478,6 @@ async function teacherDayChecks(owner: Client, api: PrismaService): Promise<void
   };
   const bodyOf = (error: unknown) =>
     error instanceof HttpException ? (error.getResponse() as { message?: unknown; code?: unknown }) : { message: summarise(error) };
-  // The work rule's trigger refuses a write by the teacher whose row it is,
-  // when it would set, change or clear what an administrator who plans sets
-  // (app.teacher_work_rules_day_is_planned): AR403, which areaRefusal reads as
-  // AREA_NOT_YOURS with the trigger's own sentence and rethrowPrismaError
-  // answers 403. Since 20261218090000 the sentence names the limit on
-  // teaching in a row beside the cap and the wish (RLS sections 160 and 288).
-  const WORK_RULE_PLANNED_SENTENCE =
-    'dagstaket, den önskade lediga dagen och gränsen för sammanhängande undervisning sätts av en administratör som planerar';
-  const refusedByTrigger = async (who: AuthenticatedUser, write: (tx: PrismaClient) => Promise<unknown>) => {
-    const error = await refusalOf(api.withRls(who, write));
-    assert.equal(sqlStateOf(error), 'AR403', summarise(error));
-    assert.deepEqual(areaRefusal(error), { code: 'AREA_NOT_YOURS', message: WORK_RULE_PLANNED_SENTENCE });
-    const answered = await refusalOf(Promise.resolve().then(() => rethrowPrismaError(error)));
-    assert.ok(answered instanceof ForbiddenException, summarise(answered));
-    assert.equal(bodyOf(answered).code, 'AREA_NOT_YOURS');
-  };
   // Who an actor's EMPLOYMENT rows name, one sorted list per row: a row per
   // read that named somebody new to the actor that quarter-hour.
   const employmentReadBy = async (actor: AuthenticatedUser) =>
@@ -7555,7 +7539,18 @@ async function teacherDayChecks(owner: Client, api: PrismaService): Promise<void
       // Past the service, straight through the adapter: the trigger's AR403,
       // which areaRefusal reads as AREA_NOT_YOURS with the trigger's own
       // sentence, and rethrowPrismaError answers 403 — not row security's
-      // 42501, whose sentence is the generic one (refusedByTrigger, above).
+      // 42501, whose sentence is the generic one.
+      const refusedByTrigger = async (who: AuthenticatedUser, write: (tx: PrismaClient) => Promise<unknown>) => {
+        const error = await refusalOf(api.withRls(who, write));
+        assert.equal(sqlStateOf(error), 'AR403', summarise(error));
+        assert.deepEqual(areaRefusal(error), {
+          code: 'AREA_NOT_YOURS',
+          message: 'dagstaket och den önskade lediga dagen sätts av en administratör som planerar',
+        });
+        const answered = await refusalOf(Promise.resolve().then(() => rethrowPrismaError(error)));
+        assert.ok(answered instanceof ForbiddenException, summarise(answered));
+        assert.equal(bodyOf(answered).code, 'AREA_NOT_YOURS');
+      };
       await refusedByTrigger(own, (tx) => tx.teacherWorkRule.update({ where: { userId }, data: { maxTeachingMinutesPerDay: 90 } }));
       await refusedByTrigger(own, (tx) => tx.teacherWorkRule.update({ where: { userId }, data: { preferredFreeDayOfWeek: null } }));
       await refusedByTrigger(own, (tx) => tx.teacherWorkRule.delete({ where: { userId } }));
@@ -8034,46 +8029,48 @@ async function teacherDayChecks(owner: Client, api: PrismaService): Promise<void
       );
     });
 
-    await check('(ld-g) Sammanhängande undervisning on the work rule through the real adapter: a CHECK past the DTO is a 400 naming its field and the CHECK that fired — the limit’s, the break’s and the pair’s — and never a 500; the ends of both ranges are stored; a planner without HR-läs sets both, keeps them when a body leaves them out and clears them; and the teacher restates them but cannot set, change or clear them — 403 WORK_RULE_DAY_IS_PLANNED from the service, and past it the trigger’s AR403 with the three-field sentence, asked before the pair CHECK, on an update, Prisma’s own upsert, a delete and a fresh row — while a teacher’s or a planner’s bare DELETE keeps the row that holds them', async () => {
+    await check('(ld-g) Sammanhängande undervisning on the post, beside the days, through the real adapter: a CHECK past the DTO is a 400 naming its field and the CHECK that fired — the limit’s, the break’s and the pair’s — and never a 500; the ends of both ranges are stored; one who decides sets both, keeps them when a body leaves them out (absent keeps; Prisma’s own upsert of the API before, which names neither, is one statement and leaves them) and clears them; a planner writes no post and one without HR-läs reads it with the limit left out where one with HR-läs reads the figures; and the work rule holds no such column', async () => {
       const userId = school.free.id;
-      const own = school.teacher(school.free);
-      const stretchOf = async (teacher: string) =>
+      const post = school.posts.free;
+      const key = { schoolId_userId_academicYearId: { schoolId: school.schoolId, userId, academicYearId: school.yearId } };
+      const stateOf = async () =>
         (
           await owner.query(
-            `SELECT "maxConsecutiveTeachingMinutes" AS "limit", "consecutiveBreakMinutes" AS "break", "minDailyRestMinutes" AS rest,
-                    "maxTeachingMinutesPerDay" AS cap, "preferredFreeDayOfWeek" AS wish
-               FROM "TeacherWorkRules" WHERE "userId" = $1`,
-            [teacher],
+            `SELECT "maxConsecutiveTeachingMinutes" AS "limit", "consecutiveBreakMinutes" AS "break",
+                    "maxTeachingDaysPerWeek" AS days, "employmentPercent"::int AS percent
+               FROM "TeacherEmployments" WHERE id = $1`,
+            [post],
           )
         ).rows;
-      // (ld-a) leaves free without a row, and limited never had one; made so
-      // here all the same, since the first assertion below is that a refused
-      // write leaves none.
-      await owner.query(`DELETE FROM "TeacherWorkRules" WHERE "userId" = ANY($1::uuid[])`, [[userId, school.limited.id]]);
+      // (ld-e) cleared the days again; given back here, so that what follows is
+      // judged beside a figure of the days that the limit must leave alone.
+      await owner.query(`UPDATE "TeacherEmployments" SET "maxTeachingDaysPerWeek" = 3, "maxConsecutiveTeachingMinutes" = NULL, "consecutiveBreakMinutes" = NULL WHERE id = $1`, [post]);
+      assert.deepEqual(await stateOf(), [{ limit: null, break: null, days: 3, percent: 100 }]);
 
       // The CHECKs, reached with Prisma straight on the adapter (no service,
-      // no pipe), each by a planner's INSERT: the code is 23514, the
-      // CHECK that fired is the one named in the driver's message, and
-      // rethrowPrismaError answers a 400 with that CHECK's sentence — one for
-      // the limit, one for the break, one for the pair, never a 500.
+      // no pipe), each by one who decides: the code is 23514, the CHECK that
+      // fired is the one named in the driver's message, and rethrowPrismaError
+      // answers a 400 with that CHECK's sentence — one for the limit, one for
+      // the break, one for the pair, never a 500.
       const sentences = new Set<string>();
       for (const [limit, pause, constraint, field] of [
-        [25, 10, 'TeacherWorkRules_maxConsecutiveTeachingMinutes_check', 'maxConsecutiveTeachingMinutes'],
-        [485, 10, 'TeacherWorkRules_maxConsecutiveTeachingMinutes_check', 'maxConsecutiveTeachingMinutes'],
+        [25, 10, 'TeacherEmployments_maxConsecutiveTeachingMinutes_check', 'maxConsecutiveTeachingMinutes'],
+        [485, 10, 'TeacherEmployments_maxConsecutiveTeachingMinutes_check', 'maxConsecutiveTeachingMinutes'],
         // Inside the range, off the five-minute grid the engine plans on.
-        [302, 10, 'TeacherWorkRules_maxConsecutiveTeachingMinutes_check', 'maxConsecutiveTeachingMinutes'],
-        [60, 3, 'TeacherWorkRules_consecutiveBreakMinutes_check', 'consecutiveBreakMinutes'],
-        [60, 125, 'TeacherWorkRules_consecutiveBreakMinutes_check', 'consecutiveBreakMinutes'],
-        [60, 12, 'TeacherWorkRules_consecutiveBreakMinutes_check', 'consecutiveBreakMinutes'],
-        [60, 0, 'TeacherWorkRules_consecutiveBreakMinutes_check', 'consecutiveBreakMinutes'],
+        [302, 10, 'TeacherEmployments_maxConsecutiveTeachingMinutes_check', 'maxConsecutiveTeachingMinutes'],
+        [60, 3, 'TeacherEmployments_consecutiveBreakMinutes_check', 'consecutiveBreakMinutes'],
+        [60, 125, 'TeacherEmployments_consecutiveBreakMinutes_check', 'consecutiveBreakMinutes'],
+        [60, 12, 'TeacherEmployments_consecutiveBreakMinutes_check', 'consecutiveBreakMinutes'],
+        [60, 0, 'TeacherEmployments_consecutiveBreakMinutes_check', 'consecutiveBreakMinutes'],
         // One half without the other, from either side.
-        [60, null, 'TeacherWorkRules_consecutive_is_a_pair_check', 'maxConsecutiveTeachingMinutes'],
-        [null, 10, 'TeacherWorkRules_consecutive_is_a_pair_check', 'maxConsecutiveTeachingMinutes'],
+        [60, null, 'TeacherEmployments_consecutive_is_a_pair_check', 'maxConsecutiveTeachingMinutes'],
+        [null, 10, 'TeacherEmployments_consecutive_is_a_pair_check', 'maxConsecutiveTeachingMinutes'],
       ] as [number | null, number | null, string, string][]) {
         const error = await refusalOf(
-          api.withRls(school.planner, (tx) =>
-            tx.teacherWorkRule.create({
-              data: { schoolId: school.schoolId, userId, maxConsecutiveTeachingMinutes: limit, consecutiveBreakMinutes: pause },
+          api.withRls(school.admin, (tx) =>
+            tx.teacherEmployment.update({
+              where: { id: post },
+              data: { maxConsecutiveTeachingMinutes: limit, consecutiveBreakMinutes: pause },
             }),
           ),
         );
@@ -8087,25 +8084,23 @@ async function teacherDayChecks(owner: Client, api: PrismaService): Promise<void
         assert.equal(bodyOf(answered).message, sentence);
       }
       assert.equal(sentences.size, 3, `the limit, the break and the pair do not each have a sentence of their own: ${[...sentences].join(' | ')}`);
-      assert.deepEqual(await stretchOf(userId), [], 'a refused CHECK left a row behind');
+      assert.deepEqual(await stateOf(), [{ limit: null, break: null, days: 3, percent: 100 }], 'a refused CHECK moved the post');
 
-      // Both ends of both ranges are stored: the insert, then the update.
+      // Both ends of both ranges are stored, and cleared again.
       for (const [limit, pause] of [
         [30, 5],
         [480, 120],
         [30, 120],
         [480, 5],
       ] as const) {
-        await api.withRls(school.planner, (tx) =>
-          tx.teacherWorkRule.upsert({
-            where: { userId },
-            create: { schoolId: school.schoolId, userId, maxConsecutiveTeachingMinutes: limit, consecutiveBreakMinutes: pause },
-            update: { maxConsecutiveTeachingMinutes: limit, consecutiveBreakMinutes: pause },
-          }),
+        await api.withRls(school.admin, (tx) =>
+          tx.teacherEmployment.update({ where: { id: post }, data: { maxConsecutiveTeachingMinutes: limit, consecutiveBreakMinutes: pause } }),
         );
-        assert.deepEqual(await stretchOf(userId), [{ limit, break: pause, rest: null, cap: null, wish: null }]);
+        assert.deepEqual(await stateOf(), [{ limit, break: pause, days: 3, percent: 100 }]);
+        await api.withRls(school.admin, (tx) =>
+          tx.teacherEmployment.update({ where: { id: post }, data: { maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null } }),
+        );
       }
-      await owner.query(`DELETE FROM "TeacherWorkRules" WHERE "userId" = $1`, [userId]);
 
       // Through the service, which is called without the pipe: the range is the
       // table's, a 400 naming the field; a half rule never reaches the table.
@@ -8116,7 +8111,7 @@ async function teacherDayChecks(owner: Client, api: PrismaService): Promise<void
         [{ maxConsecutiveTeachingMinutes: 60, consecutiveBreakMinutes: 3 }, 'consecutiveBreakMinutes'],
         [{ maxConsecutiveTeachingMinutes: 60, consecutiveBreakMinutes: 125 }, 'consecutiveBreakMinutes'],
       ] as const) {
-        const error = await refusalOf(rules.upsert(userId, dto, school.planner));
+        const error = await refusalOf(posts.upsert(userId, school.yearId, { employmentPercent: 100, ...dto }, school.admin));
         assert.ok(error instanceof BadRequestException, `${JSON.stringify(dto)}: ${summarise(error)}`);
         assert.match(String(bodyOf(error).message), new RegExp(`^${field}: `));
       }
@@ -8125,85 +8120,75 @@ async function teacherDayChecks(owner: Client, api: PrismaService): Promise<void
         { consecutiveBreakMinutes: 10 },
         { maxConsecutiveTeachingMinutes: 60, consecutiveBreakMinutes: null },
       ]) {
-        const error = await refusalOf(rules.upsert(userId, dto, school.planner));
+        const error = await refusalOf(posts.upsert(userId, school.yearId, { employmentPercent: 100, ...dto }, school.admin));
         assert.ok(error instanceof BadRequestException, `${JSON.stringify(dto)}: ${summarise(error)}`);
       }
-      assert.deepEqual(await stretchOf(userId), [], 'a refused PUT left a row behind');
+      assert.deepEqual(await stateOf(), [{ limit: null, break: null, days: 3, percent: 100 }], 'a refused PUT moved the post');
 
-      // A planner without HR-läs sets both; a body that leaves them out keeps
-      // them; null and null clears them.
-      const set = await rules.upsert(userId, { minDailyRestMinutes: 660, maxConsecutiveTeachingMinutes: 150, consecutiveBreakMinutes: 15 }, school.planner);
-      assert.deepEqual([set.maxConsecutiveTeachingMinutes, set.consecutiveBreakMinutes, set.minDailyRestMinutes], [150, 15, 660]);
-      const kept = await rules.upsert(userId, { minDailyRestMinutes: 600 }, school.planner);
-      assert.deepEqual([kept.maxConsecutiveTeachingMinutes, kept.consecutiveBreakMinutes, kept.minDailyRestMinutes], [150, 15, 600]);
-      const cleared = await rules.upsert(userId, { maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null }, school.planner);
-      assert.deepEqual([cleared.maxConsecutiveTeachingMinutes, cleared.consecutiveBreakMinutes], [null, null]);
-      await rules.upsert(userId, { minDailyRestMinutes: 660, maxConsecutiveTeachingMinutes: 150, consecutiveBreakMinutes: 15 }, school.planner);
-      assert.deepEqual(await stretchOf(userId), [{ limit: 150, break: 15, rest: 660, cap: null, wish: null }]);
+      // One who decides sets both beside the days; a body that leaves them out
+      // keeps them (the days too); null and null clears them.
+      const set = await posts.upsert(userId, school.yearId, { employmentPercent: 100, maxConsecutiveTeachingMinutes: 150, consecutiveBreakMinutes: 15 }, school.admin);
+      assert.deepEqual([set.maxConsecutiveTeachingMinutes, set.consecutiveBreakMinutes, set.maxTeachingDaysPerWeek], [150, 15, 3]);
+      const kept = await posts.upsert(userId, school.yearId, { employmentPercent: 90 }, school.admin);
+      assert.deepEqual([kept.maxConsecutiveTeachingMinutes, kept.consecutiveBreakMinutes, kept.maxTeachingDaysPerWeek, kept.employmentPercent], [150, 15, 3, 90]);
+      assert.deepEqual(await stateOf(), [{ limit: 150, break: 15, days: 3, percent: 90 }]);
 
-      // The teacher's own save of their rest leaves both as they are, and a
-      // body restating them is no change; any other figure is a 403 from the
-      // service, and clearing them is one too.
-      const rested = await rules.upsert(userId, { minDailyRestMinutes: 700 }, own);
-      assert.deepEqual([rested.maxConsecutiveTeachingMinutes, rested.consecutiveBreakMinutes, rested.minDailyRestMinutes], [150, 15, 700]);
-      await rules.upsert(userId, { minDailyRestMinutes: 700, maxConsecutiveTeachingMinutes: 150, consecutiveBreakMinutes: 15 }, own);
-      for (const dto of [
-        { maxConsecutiveTeachingMinutes: 90, consecutiveBreakMinutes: 15 },
-        { maxConsecutiveTeachingMinutes: 150, consecutiveBreakMinutes: 20 },
-        { maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null },
-      ]) {
-        const error = await refusalOf(rules.upsert(userId, dto, own));
-        assert.ok(error instanceof ForbiddenException, `${JSON.stringify(dto)}: ${summarise(error)}`);
-        assert.equal(bodyOf(error).code, WORK_RULE_DAY_IS_PLANNED);
-      }
-
-      // Past the service, straight through the adapter. The row holds the
-      // stretch and neither the cap nor the wish, so a DELETE is refused for
-      // the stretch alone; one half cleared is the pair CHECK's as well, and
-      // the trigger answers first.
-      assert.deepEqual(await stretchOf(userId), [{ limit: 150, break: 15, rest: 700, cap: null, wish: null }]);
-      await refusedByTrigger(own, (tx) => tx.teacherWorkRule.update({ where: { userId }, data: { maxConsecutiveTeachingMinutes: 300 } }));
-      await refusedByTrigger(own, (tx) => tx.teacherWorkRule.update({ where: { userId }, data: { consecutiveBreakMinutes: 20 } }));
-      await refusedByTrigger(own, (tx) =>
-        tx.teacherWorkRule.update({ where: { userId }, data: { maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null } }),
+      // THE API BEFORE: its PUT is Prisma's upsert whose update names the
+      // columns it knows (employmentData on origin/main) and neither of the
+      // new two. One INSERT … ON CONFLICT DO UPDATE, which leaves a stored
+      // limit as it is; and a post it writes fresh would carry null and null.
+      const oldData = { employmentPercent: 80, reductionPercent: 0, contractKind: 'FERIE' as const, teachingTargetMinutesPerWeek: null, signature: null, note: null };
+      const sent = await statementsDuring(
+        () =>
+          api.withRls(school.admin, (tx) =>
+            tx.teacherEmployment.upsert({
+              where: key,
+              create: { schoolId: school.schoolId, userId, academicYearId: school.yearId, ...oldData },
+              update: oldData,
+            }),
+          ),
+        4000,
       );
-      await refusedByTrigger(own, (tx) => tx.teacherWorkRule.update({ where: { userId }, data: { maxConsecutiveTeachingMinutes: null } }));
-      await refusedByTrigger(own, (tx) => tx.teacherWorkRule.update({ where: { userId }, data: { consecutiveBreakMinutes: null } }));
-      await refusedByTrigger(own, (tx) => tx.teacherWorkRule.delete({ where: { userId } }));
-      // Prisma's upsert is judged as the update it becomes: restating passes,
-      // raising or moving is refused.
-      const upsertStretch = (limit: number, pause: number) => (tx: PrismaClient) =>
-        tx.teacherWorkRule.upsert({
-          where: { userId },
-          create: { schoolId: school.schoolId, userId, maxConsecutiveTeachingMinutes: limit, consecutiveBreakMinutes: pause },
-          update: { maxConsecutiveTeachingMinutes: limit, consecutiveBreakMinutes: pause },
-        });
-      const restated = await statementsDuring(() => api.withRls(own, upsertStretch(150, 15)), 2000);
-      assert.equal(
-        restated.filter((statement) => /^INSERT INTO "public"\."TeacherWorkRules" .* ON CONFLICT /.test(statement)).length,
-        1,
-        `Prisma's upsert is not the INSERT … ON CONFLICT the trigger's branch is for: ${JSON.stringify(restated)}`,
-      );
-      await refusedByTrigger(own, upsertStretch(300, 15));
-      await refusedByTrigger(own, upsertStretch(150, 20));
-      // A fresh row carrying both, by a teacher who has none, is the insert it is.
-      await refusedByTrigger(school.teacher(school.limited), (tx) =>
-        tx.teacherWorkRule.create({
-          data: { schoolId: school.schoolId, userId: school.limited.id, maxConsecutiveTeachingMinutes: 60, consecutiveBreakMinutes: 10 },
-        }),
-      );
-      assert.deepEqual(await stretchOf(school.limited.id), [], 'a refused INSERT left a row behind');
-      assert.deepEqual(await stretchOf(userId), [{ limit: 150, break: 15, rest: 700, cap: null, wish: null }], 'a refusal moved the row');
+      const upserts = sent.filter((statement) => /^INSERT INTO "public"\."TeacherEmployments" .* ON CONFLICT /.test(statement));
+      assert.equal(upserts.length, 1, `Prisma's upsert of a post is not one INSERT … ON CONFLICT: ${JSON.stringify(sent)}`);
+      const [naming] = upserts[0]!.split(' RETURNING ');
+      assert.ok(!/ConsecutiveTeachingMinutes|consecutiveBreakMinutes/.test(naming!), `the old API's upsert names the new columns: ${naming}`);
+      assert.deepEqual(await stateOf(), [{ limit: 150, break: 15, days: 3, percent: 80 }], "the old API's upsert moved the limit");
 
-      // A teacher's DELETE through the service clears their rest and keeps the
-      // row with its stretch, as it keeps a cap; so does a planner's bare one,
-      // the row going only with includeDay.
-      await rules.remove(userId, own);
-      assert.deepEqual(await stretchOf(userId), [{ limit: 150, break: 15, rest: null, cap: null, wish: null }]);
-      await rules.remove(userId, school.planner);
-      assert.deepEqual(await stretchOf(userId), [{ limit: 150, break: 15, rest: null, cap: null, wish: null }]);
-      await rules.remove(userId, school.planner, true);
-      assert.deepEqual(await stretchOf(userId), []);
+      // A planner (no HR-läs) writes no post: the arm's check, or no row. Their
+      // read of it leaves the limit out and says so; one with HR-läs reads it.
+      const { hidden, shown } = await school.readers('G');
+      const refused = await refusalOf(
+        api.withRls(hidden, (tx) => tx.teacherEmployment.update({ where: { id: post }, data: { maxConsecutiveTeachingMinutes: 300, consecutiveBreakMinutes: 20 } })),
+      );
+      assert.equal(sqlStateOf(refused), '42501', summarise(refused));
+      assert.deepEqual(await stateOf(), [{ limit: 150, break: 15, days: 3, percent: 80 }], 'a planner moved the limit');
+      const read = async (user: AuthenticatedUser) => (await posts.list(school.yearId, user)).find((row) => row.userId === userId)!;
+      const masked = await read(hidden);
+      assert.deepEqual(
+        [masked.maxConsecutiveTeachingMinutes, masked.consecutiveBreakMinutes, masked.maxTeachingDaysPerWeek, (masked as { hrHidden?: boolean }).hrHidden],
+        [null, null, null, true],
+      );
+      const unmasked = await read(shown);
+      assert.deepEqual([unmasked.maxConsecutiveTeachingMinutes, unmasked.consecutiveBreakMinutes, unmasked.maxTeachingDaysPerWeek], [150, 15, 3]);
+
+      // Cleared by one who decides, null and null; the days are the post's own.
+      const cleared = await posts.upsert(userId, school.yearId, { employmentPercent: 100, maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null }, school.admin);
+      assert.deepEqual([cleared.maxConsecutiveTeachingMinutes, cleared.consecutiveBreakMinutes, cleared.maxTeachingDaysPerWeek], [null, null, 3]);
+      assert.deepEqual(await stateOf(), [{ limit: null, break: null, days: 3, percent: 100 }]);
+
+      // And the work rule: nothing of this feature is there any more, so the
+      // teacher's own save of it needs no sentence for it.
+      assert.deepEqual(
+        (
+          await owner.query(
+            `SELECT column_name FROM information_schema.columns
+              WHERE table_name = 'TeacherWorkRules' AND column_name IN ('maxConsecutiveTeachingMinutes', 'consecutiveBreakMinutes')`,
+          )
+        ).rows,
+        [],
+      );
+      await owner.query(`UPDATE "TeacherEmployments" SET "maxTeachingDaysPerWeek" = NULL WHERE id = $1`, [post]);
     });
   } finally {
     await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-lararensdag'`, [MARKER]);

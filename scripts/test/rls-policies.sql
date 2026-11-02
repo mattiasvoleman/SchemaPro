@@ -23980,10 +23980,8 @@ ROLLBACK;
 
 BEGIN;
 SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
--- The sentence names the limit on teaching in a row as well since
--- 20261218090000, whose columns section 288 holds to the same trigger.
 SELECT set_config('app.test_rls160_planned',
-  'AR403|WORK_RULE_DAY_IS_PLANNED: dagstaket, den önskade lediga dagen och gränsen för sammanhängande undervisning sätts av en administratör som planerar|area=PLANERING|',
+  'AR403|WORK_RULE_DAY_IS_PLANNED: dagstaket och den önskade lediga dagen sätts av en administratör som planerar|area=PLANERING|',
   true);
 
 -- 'sqlstate|message|detail|constraint' of a statement's refusal, or 'none'.
@@ -35029,41 +35027,53 @@ END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
--- Section 287: en lärares gräns för undervisning i följd sitter på
--- arbetstidsraden, och skolans brytare för den på Skolreglerna
--- (20261218090000). The columns, their CHECKs and their defaults.
+-- Section 287: en lärares gräns för undervisning i följd sitter på tjänsten,
+-- och skolans brytare för den på Skolreglerna (20261218090000). The columns,
+-- their CHECKs and their defaults, and what the work rule no longer holds.
 --
 -- Sammanhängande undervisning: "at most X minutes of teaching in a row, then
--- Y minutes free", set per teacher. In the matrix school, whose one teacher
--- (111) has a work rule the fixtures wrote as the owner before the columns
--- existed, and whose Skolregler row they wrote without naming the switch:
+-- Y minutes free", set per teacher. It may be an arbetsanpassning, so it is
+-- HR data and sits on the POST beside deltid in days
+-- (TeacherEmployments."maxTeachingDaysPerWeek", section 161), where only
+-- those who decide write it and the post's arms keep PostgREST's role from
+-- every post but the teacher's own (section 288 holds who reads and writes
+-- it, role by role). In the matrix school, whose one teacher (111) has a post
+-- the fixtures wrote as the owner before the columns existed, and whose
+-- Skolregler row they wrote without naming the switch:
 --
 --   * "maxConsecutiveTeachingMinutes" and "consecutiveBreakMinutes" are
---     nullable integers with no default, and "generatorKeepsConsecutiveTeaching"
---     is boolean NOT NULL DEFAULT false, each with its comment, and each
---     role holds on a new column exactly what it holds on a column of the same
---     table that was there before: the rows' arms are the whole of who reads
---     and writes them, no GRANT moved;
+--     nullable integers with no default on TeacherEmployments, and
+--     "generatorKeepsConsecutiveTeaching" is boolean NOT NULL DEFAULT false on
+--     LunchSettings, each with its comment (the post's two say HR data), and
+--     each role holds on a new column exactly what it holds on a column of the
+--     same table that was there before: the rows' arms are the whole of who
+--     reads and writes them, no GRANT moved;
 --   * the row written before the columns reads null and null, and the Skolregler
 --     row reads false: off for every school until it says so;
---   * each column refuses a value outside its range by its own named CHECK
---     (prisma-errors.ts turns the name into a 400) and takes both ends of it:
---     the limit 30..480 and the break 5..120, both multiples of five, so a
---     figure inside the range and off the engine's grid is refused too;
+--   * each column refuses a value outside its range by its own named CHECK on
+--     the post (prisma-errors.ts turns the name into a 400) and takes both ends
+--     of it: the limit 30..480 and the break 5..120, both multiples of five, so
+--     a figure inside the range and off the engine's grid is refused too;
 --   * the pair: one set without the other is refused by the pair CHECK's name,
---     from either side, and both set or both null pass;
---   * the columns stand beside the cap and the wish, not on them: setting or
---     clearing the stretch moves neither, and clearing either of them moves
---     not the stretch;
---   * the schemaläggare (PLANERING) sets, changes and clears both by UPDATE
---     and by the upsert the gateway writes, on the teacher's row and on a row
---     of their own, and a row naming neither carries null and null;
+--     from either side, on an UPDATE and on an INSERT, and both set or both
+--     null pass;
+--   * the columns stand beside the days and the percentages, not on them:
+--     setting or clearing the stretch moves none of them, and clearing the
+--     days moves not the stretch;
+--   * the full administrator, who decides, sets, changes and clears both by
+--     UPDATE and by the upsert the gateway writes, on the teacher's post and on
+--     a post of their own; a post naming neither carries null and null, and a
+--     write that leaves the two columns out of its SET leaves them as they are;
+--   * THE WORK RULE HOLDS NEITHER: TeacherWorkRules has no such column and no
+--     such CHECK, and its trigger function is the one 20261123090000 made, with
+--     the cap's and the wish's sentence and no word of the stretch (section 160
+--     holds what it does);
 --   * the switch is NOT NULL and takes true and false, a fresh Skolregler row
 --     naming nothing reads false.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
-SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
 
 -- 'sqlstate|message|detail|constraint' of a statement's refusal, or 'none'.
 CREATE FUNCTION pg_temp.rls287_refusal(statement text) RETURNS text LANGUAGE plpgsql AS $$
@@ -35079,27 +35089,32 @@ END $$;
 DO $$
 DECLARE
   school uuid := app.current_school_id();
-  planner uuid := app.current_user_id();
+  decider uuid := app.current_user_id();
   teacher uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000111');
+  post uuid;
+  year uuid;
   col record;
   got text;
   what text;
   c record;
   r record;
   rule record;
+  fn record;
 BEGIN
-  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR NOT app.current_user_may('PLANERING', true)
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR NOT app.current_user_decides()
+     OR NOT app.current_user_may('PLANERING', true)
      OR (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-roller-school' THEN
-    RAISE EXCEPTION 'stretch columns: expected the matrix school''s schemaläggare, who writes PLANERING';
+    RAISE EXCEPTION 'stretch columns: expected the matrix school''s full administrator, who decides and writes PLANERING';
   END IF;
-  IF teacher IS NULL OR NOT EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = teacher) THEN
-    RAISE EXCEPTION 'stretch columns: the matrix school''s teacher or their work rule is missing; fixtures did not run';
+  SELECT id, "academicYearId" INTO post, year FROM "TeacherEmployments" WHERE "userId" = teacher;
+  IF teacher IS NULL OR post IS NULL THEN
+    RAISE EXCEPTION 'stretch columns: the matrix school''s teacher or their post is missing; fixtures did not run';
   END IF;
 
   -- The catalogue: type, nullability, default and comment of the three.
   FOR col IN SELECT * FROM (VALUES
-      ('TeacherWorkRules', 'maxConsecutiveTeachingMinutes', 'integer', false, NULL, 'Most minutes of teaching in a row%'),
-      ('TeacherWorkRules', 'consecutiveBreakMinutes', 'integer', false, NULL, 'The free time between two of the teacher%'),
+      ('TeacherEmployments', 'maxConsecutiveTeachingMinutes', 'integer', false, NULL, 'Most minutes of teaching in a row%HR data%'),
+      ('TeacherEmployments', 'consecutiveBreakMinutes', 'integer', false, NULL, 'The free time between two of the teacher%HR data%'),
       ('LunchSettings', 'generatorKeepsConsecutiveTeaching', 'boolean', true, 'false', 'Sammanhängande undervisning:%')
     ) AS t(tbl, name, type_name, not_null, default_value, comment_like)
   LOOP
@@ -35121,9 +35136,9 @@ BEGIN
   -- Row-level arms only: every role holds on a new column exactly what it holds
   -- on a column of the same table that was there before, the API's role all
   -- three it writes with, and anon and service_role what they hold on the row.
-  IF NOT has_column_privilege('app_authenticated', '"TeacherWorkRules"', 'maxConsecutiveTeachingMinutes', 'SELECT')
-     OR NOT has_column_privilege('app_authenticated', '"TeacherWorkRules"', 'maxConsecutiveTeachingMinutes', 'UPDATE')
-     OR NOT has_column_privilege('app_authenticated', '"TeacherWorkRules"', 'consecutiveBreakMinutes', 'INSERT')
+  IF NOT has_column_privilege('app_authenticated', '"TeacherEmployments"', 'maxConsecutiveTeachingMinutes', 'SELECT')
+     OR NOT has_column_privilege('app_authenticated', '"TeacherEmployments"', 'maxConsecutiveTeachingMinutes', 'UPDATE')
+     OR NOT has_column_privilege('app_authenticated', '"TeacherEmployments"', 'consecutiveBreakMinutes', 'INSERT')
      OR NOT has_column_privilege('app_authenticated', '"LunchSettings"', 'generatorKeepsConsecutiveTeaching', 'UPDATE') THEN
     RAISE EXCEPTION 'stretch columns: app_authenticated cannot read and write the columns as it does the rows';
   END IF;
@@ -35132,8 +35147,8 @@ BEGIN
       FROM pg_roles ro
       CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']) AS p(privilege)
       CROSS JOIN (VALUES
-        ('"TeacherWorkRules"', 'maxConsecutiveTeachingMinutes', 'maxTeachingMinutesPerDay'),
-        ('"TeacherWorkRules"', 'consecutiveBreakMinutes', 'lunchMinutes'),
+        ('"TeacherEmployments"', 'maxConsecutiveTeachingMinutes', 'maxTeachingDaysPerWeek'),
+        ('"TeacherEmployments"', 'consecutiveBreakMinutes', 'maxTeachingDaysPerWeek'),
         ('"LunchSettings"', 'generatorKeepsConsecutiveTeaching', 'lunchMinutes')
       ) AS k(tbl, new_col, old_col)
      WHERE ro.rolname IN ('app_authenticated', 'authenticated', 'anon', 'service_role')
@@ -35144,24 +35159,59 @@ BEGIN
     END IF;
   END LOOP;
 
-  -- The three CHECKs exist, are validated, and are on the work rule.
+  -- The three CHECKs exist, are validated, and are on the post.
   FOREACH what IN ARRAY ARRAY[
-    'TeacherWorkRules_maxConsecutiveTeachingMinutes_check',
-    'TeacherWorkRules_consecutiveBreakMinutes_check',
-    'TeacherWorkRules_consecutive_is_a_pair_check'
+    'TeacherEmployments_maxConsecutiveTeachingMinutes_check',
+    'TeacherEmployments_consecutiveBreakMinutes_check',
+    'TeacherEmployments_consecutive_is_a_pair_check'
   ] LOOP
     IF NOT EXISTS (SELECT 1 FROM pg_constraint
-                    WHERE conrelid = '"TeacherWorkRules"'::regclass AND conname = what AND contype = 'c' AND convalidated) THEN
+                    WHERE conrelid = '"TeacherEmployments"'::regclass AND conname = what AND contype = 'c' AND convalidated) THEN
       RAISE EXCEPTION 'stretch columns: the validated CHECK % is missing', what;
     END IF;
   END LOOP;
 
-  -- Written by the fixtures as the owner before the columns: null and null,
-  -- and the Skolregler row false. The cap and the wish are the owner's still.
-  SELECT * INTO rule FROM "TeacherWorkRules" WHERE "userId" = teacher;
+  -- THE WORK RULE HOLDS NEITHER. No column, no CHECK; and its trigger function
+  -- is 20261123090000's: the cap's and the wish's sentence, a comparison of the
+  -- two and not a word of the stretch, owned by the table's owner, SECURITY
+  -- DEFINER with its search_path pinned, executable by nobody but the owner,
+  -- and still fired by the trigger.
+  IF EXISTS (SELECT 1 FROM pg_attribute a
+              WHERE a.attrelid = '"TeacherWorkRules"'::regclass AND a.attnum > 0 AND NOT a.attisdropped
+                AND a.attname IN ('maxConsecutiveTeachingMinutes', 'consecutiveBreakMinutes')) THEN
+    RAISE EXCEPTION 'stretch columns: the work rule still holds a column of the stretch';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = '"TeacherWorkRules"'::regclass AND conname ILIKE '%consecutive%') THEN
+    RAISE EXCEPTION 'stretch columns: the work rule still holds a CHECK of the stretch';
+  END IF;
+  SELECT p.prosrc, p.prosecdef, p.proconfig, p.proacl, p.proowner, tbl.relowner
+    INTO fn
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'app'
+    CROSS JOIN pg_class tbl
+   WHERE p.proname = 'teacher_work_rules_day_is_planned' AND tbl.oid = '"TeacherWorkRules"'::regclass;
+  IF fn IS NULL
+     OR fn.prosrc ILIKE '%consecutive%' OR fn.prosrc ILIKE '%stretch%'
+     OR position('RAISE EXCEPTION ''WORK_RULE_DAY_IS_PLANNED: dagstaket och den önskade lediga dagen sätts av en administratör som planerar''' IN fn.prosrc) = 0
+     OR position('IF (cap_after IS DISTINCT FROM cap_before OR wish_after IS DISTINCT FROM wish_before)' IN fn.prosrc) = 0 THEN
+    RAISE EXCEPTION 'stretch columns: the work rule''s trigger function is not 20261123090000''s: %', fn.prosrc;
+  END IF;
+  IF NOT fn.prosecdef OR fn.proowner <> fn.relowner
+     OR NOT ('search_path=public, pg_temp' = ANY (coalesce(fn.proconfig, '{}')))
+     OR fn.proacl IS NULL OR EXISTS (SELECT 1 FROM aclexplode(fn.proacl) a WHERE a.grantee <> fn.proowner) THEN
+    RAISE EXCEPTION 'stretch columns: the work rule''s trigger function is not the owner''s SECURITY DEFINER, executable by the owner alone: %', row_to_json(fn);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger t
+                  WHERE t.tgrelid = '"TeacherWorkRules"'::regclass AND t.tgname = 'TeacherWorkRules_day_is_planned' AND t.tgenabled = 'O') THEN
+    RAISE EXCEPTION 'stretch columns: the work rule''s trigger is not enabled';
+  END IF;
+
+  -- Written by the fixtures as the owner before the columns: null and null on
+  -- the post, beside its percentages, and the Skolregler row false.
+  SELECT * INTO rule FROM "TeacherEmployments" WHERE id = post;
   IF rule."maxConsecutiveTeachingMinutes" IS NOT NULL OR rule."consecutiveBreakMinutes" IS NOT NULL
-     OR rule."maxTeachingMinutesPerDay" IS DISTINCT FROM 300 OR rule."preferredFreeDayOfWeek" IS DISTINCT FROM 5 THEN
-    RAISE EXCEPTION 'stretch columns: the row written before the columns does not read null and null beside the cap and the wish: %', row_to_json(rule);
+     OR rule."employmentPercent" IS DISTINCT FROM 80 OR rule."reductionPercent" IS DISTINCT FROM 10 THEN
+    RAISE EXCEPTION 'stretch columns: the post written before the columns does not read null and null beside its percentages: %', row_to_json(rule);
   END IF;
   IF (SELECT "generatorKeepsConsecutiveTeaching" FROM "LunchSettings" WHERE "schoolId" = school) IS DISTINCT FROM false THEN
     RAISE EXCEPTION 'stretch columns: the Skolregler row written before the switch does not read off';
@@ -35170,112 +35220,134 @@ BEGIN
   -- Each range's refusal, by the CHECK's own name: the half that is wrong
   -- beside a half that is right, so the pair CHECK has nothing to say.
   FOR c IN SELECT * FROM (VALUES
-      ('"maxConsecutiveTeachingMinutes" = 25, "consecutiveBreakMinutes" = 10', 'TeacherWorkRules_maxConsecutiveTeachingMinutes_check'),
-      ('"maxConsecutiveTeachingMinutes" = 485, "consecutiveBreakMinutes" = 10', 'TeacherWorkRules_maxConsecutiveTeachingMinutes_check'),
+      ('"maxConsecutiveTeachingMinutes" = 25, "consecutiveBreakMinutes" = 10', 'TeacherEmployments_maxConsecutiveTeachingMinutes_check'),
+      ('"maxConsecutiveTeachingMinutes" = 485, "consecutiveBreakMinutes" = 10', 'TeacherEmployments_maxConsecutiveTeachingMinutes_check'),
       -- Inside the range, off the five-minute grid the engine plans on.
-      ('"maxConsecutiveTeachingMinutes" = 302, "consecutiveBreakMinutes" = 10', 'TeacherWorkRules_maxConsecutiveTeachingMinutes_check'),
-      ('"maxConsecutiveTeachingMinutes" = 0, "consecutiveBreakMinutes" = 10', 'TeacherWorkRules_maxConsecutiveTeachingMinutes_check'),
-      ('"maxConsecutiveTeachingMinutes" = -60, "consecutiveBreakMinutes" = 10', 'TeacherWorkRules_maxConsecutiveTeachingMinutes_check'),
-      ('"maxConsecutiveTeachingMinutes" = 60, "consecutiveBreakMinutes" = 3', 'TeacherWorkRules_consecutiveBreakMinutes_check'),
-      ('"maxConsecutiveTeachingMinutes" = 60, "consecutiveBreakMinutes" = 125', 'TeacherWorkRules_consecutiveBreakMinutes_check'),
-      ('"maxConsecutiveTeachingMinutes" = 60, "consecutiveBreakMinutes" = 12', 'TeacherWorkRules_consecutiveBreakMinutes_check'),
-      ('"maxConsecutiveTeachingMinutes" = 60, "consecutiveBreakMinutes" = 0', 'TeacherWorkRules_consecutiveBreakMinutes_check'),
+      ('"maxConsecutiveTeachingMinutes" = 302, "consecutiveBreakMinutes" = 10', 'TeacherEmployments_maxConsecutiveTeachingMinutes_check'),
+      ('"maxConsecutiveTeachingMinutes" = 0, "consecutiveBreakMinutes" = 10', 'TeacherEmployments_maxConsecutiveTeachingMinutes_check'),
+      ('"maxConsecutiveTeachingMinutes" = -60, "consecutiveBreakMinutes" = 10', 'TeacherEmployments_maxConsecutiveTeachingMinutes_check'),
+      ('"maxConsecutiveTeachingMinutes" = 60, "consecutiveBreakMinutes" = 3', 'TeacherEmployments_consecutiveBreakMinutes_check'),
+      ('"maxConsecutiveTeachingMinutes" = 60, "consecutiveBreakMinutes" = 125', 'TeacherEmployments_consecutiveBreakMinutes_check'),
+      ('"maxConsecutiveTeachingMinutes" = 60, "consecutiveBreakMinutes" = 12', 'TeacherEmployments_consecutiveBreakMinutes_check'),
+      ('"maxConsecutiveTeachingMinutes" = 60, "consecutiveBreakMinutes" = 0', 'TeacherEmployments_consecutiveBreakMinutes_check'),
       -- One half without the other, from either side.
-      ('"maxConsecutiveTeachingMinutes" = 60', 'TeacherWorkRules_consecutive_is_a_pair_check'),
-      ('"consecutiveBreakMinutes" = 10', 'TeacherWorkRules_consecutive_is_a_pair_check')
+      ('"maxConsecutiveTeachingMinutes" = 60', 'TeacherEmployments_consecutive_is_a_pair_check'),
+      ('"consecutiveBreakMinutes" = 10', 'TeacherEmployments_consecutive_is_a_pair_check')
     ) AS t(assignment, constraint_name)
   LOOP
-    got := pg_temp.rls287_refusal(format('UPDATE "TeacherWorkRules" SET %s WHERE "userId" = %L', c.assignment, teacher));
+    got := pg_temp.rls287_refusal(format('UPDATE "TeacherEmployments" SET %s WHERE id = %L', c.assignment, post));
     IF split_part(got, '|', 1) <> '23514' OR split_part(got, '|', 4) IS DISTINCT FROM c.constraint_name THEN
       RAISE EXCEPTION 'stretch columns: % was answered "%", not by %', c.assignment, got, c.constraint_name;
     END IF;
   END LOOP;
-  -- A row that holds one half cannot be made to hold the other's absence.
-  UPDATE "TeacherWorkRules" SET "maxConsecutiveTeachingMinutes" = 60, "consecutiveBreakMinutes" = 10 WHERE "userId" = teacher;
+  -- A post that holds both cannot be made to hold one alone.
+  UPDATE "TeacherEmployments" SET "maxConsecutiveTeachingMinutes" = 60, "consecutiveBreakMinutes" = 10 WHERE id = post;
   FOREACH what IN ARRAY ARRAY['"maxConsecutiveTeachingMinutes" = NULL', '"consecutiveBreakMinutes" = NULL'] LOOP
-    got := pg_temp.rls287_refusal(format('UPDATE "TeacherWorkRules" SET %s WHERE "userId" = %L', what, teacher));
+    got := pg_temp.rls287_refusal(format('UPDATE "TeacherEmployments" SET %s WHERE id = %L', what, post));
     IF split_part(got, '|', 1) <> '23514'
-       OR split_part(got, '|', 4) IS DISTINCT FROM 'TeacherWorkRules_consecutive_is_a_pair_check' THEN
+       OR split_part(got, '|', 4) IS DISTINCT FROM 'TeacherEmployments_consecutive_is_a_pair_check' THEN
       RAISE EXCEPTION 'stretch columns: clearing one half was answered "%", not by the pair CHECK', got;
     END IF;
   END LOOP;
-  -- The same three refusals on an INSERT, here the schemaläggare's own row.
+  -- The same refusals on an INSERT, here the full administrator's own post.
   FOR c IN SELECT * FROM (VALUES
-      ('25, 10', 'TeacherWorkRules_maxConsecutiveTeachingMinutes_check'),
-      ('60, 125', 'TeacherWorkRules_consecutiveBreakMinutes_check'),
-      ('60, NULL', 'TeacherWorkRules_consecutive_is_a_pair_check'),
-      ('NULL, 10', 'TeacherWorkRules_consecutive_is_a_pair_check')
+      ('25, 10', 'TeacherEmployments_maxConsecutiveTeachingMinutes_check'),
+      ('60, 125', 'TeacherEmployments_consecutiveBreakMinutes_check'),
+      ('60, NULL', 'TeacherEmployments_consecutive_is_a_pair_check'),
+      ('NULL, 10', 'TeacherEmployments_consecutive_is_a_pair_check')
     ) AS t(figures, constraint_name)
   LOOP
     got := pg_temp.rls287_refusal(format(
-      'INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "maxConsecutiveTeachingMinutes", "consecutiveBreakMinutes", "updatedAt")
-       VALUES (%L, %L, %s, now())', school, planner, c.figures));
+      'INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "maxConsecutiveTeachingMinutes", "consecutiveBreakMinutes", "updatedAt")
+       VALUES (%L, %L, %L, 100, %s, now())', school, decider, year, c.figures));
     IF split_part(got, '|', 1) <> '23514' OR split_part(got, '|', 4) IS DISTINCT FROM c.constraint_name THEN
       RAISE EXCEPTION 'stretch columns: an INSERT of % was answered "%", not by %', c.figures, got, c.constraint_name;
     END IF;
   END LOOP;
-  IF EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = planner) THEN
-    RAISE EXCEPTION 'stretch columns: a refused INSERT left a row behind';
+  IF EXISTS (SELECT 1 FROM "TeacherEmployments" WHERE "userId" = decider) THEN
+    RAISE EXCEPTION 'stretch columns: a refused INSERT left a post behind';
   END IF;
 
   -- The ends and the middle go through, and are read back.
-  FOR c IN SELECT * FROM (VALUES (30, 5), (480, 120), (30, 120), (480, 5), (60, 10), (150, 15)) AS t(x, y) LOOP
-    UPDATE "TeacherWorkRules" SET "maxConsecutiveTeachingMinutes" = c.x, "consecutiveBreakMinutes" = c.y WHERE "userId" = teacher;
-    IF NOT EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = teacher
+  -- Odd multiples of five too (35, 475, 15), so a step of ten is not the step.
+  FOR c IN SELECT * FROM (VALUES (30, 5), (480, 120), (30, 120), (480, 5), (35, 10), (475, 115), (60, 10), (150, 15)) AS t(x, y) LOOP
+    UPDATE "TeacherEmployments" SET "maxConsecutiveTeachingMinutes" = c.x, "consecutiveBreakMinutes" = c.y WHERE id = post;
+    IF NOT EXISTS (SELECT 1 FROM "TeacherEmployments" WHERE id = post
                       AND "maxConsecutiveTeachingMinutes" = c.x AND "consecutiveBreakMinutes" = c.y) THEN
       RAISE EXCEPTION 'stretch columns: % and % were not stored', c.x, c.y;
     END IF;
   END LOOP;
 
-  -- Beside the cap and the wish, not on them.
-  UPDATE "TeacherWorkRules" SET "maxTeachingMinutesPerDay" = NULL, "preferredFreeDayOfWeek" = NULL WHERE "userId" = teacher;
-  IF NOT EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = teacher
+  -- Beside the days and the percentages, not on them.
+  UPDATE "TeacherEmployments" SET "maxTeachingDaysPerWeek" = 4 WHERE id = post;
+  IF NOT EXISTS (SELECT 1 FROM "TeacherEmployments" WHERE id = post
+                    AND "maxConsecutiveTeachingMinutes" = 150 AND "consecutiveBreakMinutes" = 15
+                    AND "maxTeachingDaysPerWeek" = 4 AND "employmentPercent" = 80 AND "reductionPercent" = 10) THEN
+    RAISE EXCEPTION 'stretch columns: writing the days moved the stretch or a percentage: %',
+      (SELECT row_to_json(e) FROM "TeacherEmployments" e WHERE id = post);
+  END IF;
+  UPDATE "TeacherEmployments" SET "maxTeachingDaysPerWeek" = NULL WHERE id = post;
+  IF NOT EXISTS (SELECT 1 FROM "TeacherEmployments" WHERE id = post
                     AND "maxConsecutiveTeachingMinutes" = 150 AND "consecutiveBreakMinutes" = 15) THEN
-    RAISE EXCEPTION 'stretch columns: clearing the cap and the wish moved the stretch';
+    RAISE EXCEPTION 'stretch columns: clearing the days moved the stretch';
   END IF;
-  UPDATE "TeacherWorkRules" SET "maxTeachingMinutesPerDay" = 300, "preferredFreeDayOfWeek" = 5 WHERE "userId" = teacher;
-  UPDATE "TeacherWorkRules" SET "maxConsecutiveTeachingMinutes" = NULL, "consecutiveBreakMinutes" = NULL WHERE "userId" = teacher;
-  IF NOT FOUND THEN RAISE EXCEPTION 'stretch columns: the schemaläggare could not clear both'; END IF;
-  IF NOT EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = teacher
+  UPDATE "TeacherEmployments" SET "maxTeachingDaysPerWeek" = 4 WHERE id = post;
+  UPDATE "TeacherEmployments" SET "maxConsecutiveTeachingMinutes" = NULL, "consecutiveBreakMinutes" = NULL WHERE id = post;
+  IF NOT FOUND THEN RAISE EXCEPTION 'stretch columns: the full administrator could not clear both'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM "TeacherEmployments" WHERE id = post
                     AND "maxConsecutiveTeachingMinutes" IS NULL AND "consecutiveBreakMinutes" IS NULL
-                    AND "maxTeachingMinutesPerDay" = 300 AND "preferredFreeDayOfWeek" = 5) THEN
-    RAISE EXCEPTION 'stretch columns: clearing the stretch moved the cap or the wish: %',
-      (SELECT row_to_json(w) FROM "TeacherWorkRules" w WHERE "userId" = teacher);
+                    AND "maxTeachingDaysPerWeek" = 4 AND "employmentPercent" = 80 AND "reductionPercent" = 10) THEN
+    RAISE EXCEPTION 'stretch columns: clearing the stretch moved the days or a percentage: %',
+      (SELECT row_to_json(e) FROM "TeacherEmployments" e WHERE id = post);
   END IF;
+  UPDATE "TeacherEmployments" SET "maxTeachingDaysPerWeek" = NULL WHERE id = post;
 
-  -- The gateway's own write: INSERT … ON CONFLICT ("userId") DO UPDATE, here
-  -- setting both on the teacher's row, moving them, and clearing both.
+  -- The gateway's own write: INSERT … ON CONFLICT (school, user, year) DO UPDATE,
+  -- here setting both on the teacher's post, moving them, leaving them out of
+  -- its SET (what a PUT that leaves them out does) and clearing both.
   FOR c IN SELECT * FROM (VALUES (240, 15), (90, 10)) AS t(x, y) LOOP
-    INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "maxConsecutiveTeachingMinutes", "consecutiveBreakMinutes", "updatedAt")
-    VALUES (school, teacher, c.x, c.y, now())
-    ON CONFLICT ("userId") DO UPDATE SET "maxConsecutiveTeachingMinutes" = EXCLUDED."maxConsecutiveTeachingMinutes",
+    INSERT INTO "TeacherEmployments"
+      ("schoolId", "userId", "academicYearId", "employmentPercent", "maxConsecutiveTeachingMinutes", "consecutiveBreakMinutes", "updatedAt")
+    VALUES (school, teacher, year, 80, c.x, c.y, now())
+    ON CONFLICT ("schoolId", "userId", "academicYearId") DO UPDATE SET
+      "maxConsecutiveTeachingMinutes" = EXCLUDED."maxConsecutiveTeachingMinutes",
       "consecutiveBreakMinutes" = EXCLUDED."consecutiveBreakMinutes", "updatedAt" = EXCLUDED."updatedAt";
-    IF NOT EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = teacher
-                      AND "maxConsecutiveTeachingMinutes" = c.x AND "consecutiveBreakMinutes" = c.y) THEN
+    IF NOT EXISTS (SELECT 1 FROM "TeacherEmployments" WHERE id = post
+                      AND "maxConsecutiveTeachingMinutes" = c.x AND "consecutiveBreakMinutes" = c.y AND "reductionPercent" = 10) THEN
       RAISE EXCEPTION 'stretch columns: the upsert did not leave a limit of % and a break of %', c.x, c.y;
     END IF;
   END LOOP;
-  INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "maxConsecutiveTeachingMinutes", "consecutiveBreakMinutes", "updatedAt")
-  VALUES (school, teacher, NULL, NULL, now())
-  ON CONFLICT ("userId") DO UPDATE SET "maxConsecutiveTeachingMinutes" = EXCLUDED."maxConsecutiveTeachingMinutes",
+  INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt")
+  VALUES (school, teacher, year, 70, now())
+  ON CONFLICT ("schoolId", "userId", "academicYearId") DO UPDATE SET
+    "employmentPercent" = EXCLUDED."employmentPercent", "updatedAt" = EXCLUDED."updatedAt";
+  IF NOT EXISTS (SELECT 1 FROM "TeacherEmployments" WHERE id = post AND "employmentPercent" = 70
+                    AND "maxConsecutiveTeachingMinutes" = 90 AND "consecutiveBreakMinutes" = 10) THEN
+    RAISE EXCEPTION 'stretch columns: an upsert that leaves the two out of its SET did not leave them as they were';
+  END IF;
+  INSERT INTO "TeacherEmployments"
+    ("schoolId", "userId", "academicYearId", "employmentPercent", "maxConsecutiveTeachingMinutes", "consecutiveBreakMinutes", "updatedAt")
+  VALUES (school, teacher, year, 80, NULL, NULL, now())
+  ON CONFLICT ("schoolId", "userId", "academicYearId") DO UPDATE SET
+    "maxConsecutiveTeachingMinutes" = EXCLUDED."maxConsecutiveTeachingMinutes",
     "consecutiveBreakMinutes" = EXCLUDED."consecutiveBreakMinutes", "updatedAt" = EXCLUDED."updatedAt";
-  IF NOT EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = teacher
+  IF NOT EXISTS (SELECT 1 FROM "TeacherEmployments" WHERE id = post
                     AND "maxConsecutiveTeachingMinutes" IS NULL AND "consecutiveBreakMinutes" IS NULL) THEN
     RAISE EXCEPTION 'stretch columns: the upsert did not clear both';
   END IF;
 
-  -- A schemaläggare who teaches: a row of their own naming neither carries
-  -- null and null, and one naming both carries them.
-  INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "lunchMinutes", "lunchStartTime", "lunchEndTime", "updatedAt")
-  VALUES (school, planner, 30, '10:30', '13:30', now());
-  IF NOT EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = planner
+  -- An administrator who also has a post: one naming neither carries null and
+  -- null, and one naming both carries them.
+  INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt")
+  VALUES (school, decider, year, 100, now());
+  IF NOT EXISTS (SELECT 1 FROM "TeacherEmployments" WHERE "userId" = decider
                     AND "maxConsecutiveTeachingMinutes" IS NULL AND "consecutiveBreakMinutes" IS NULL) THEN
-    RAISE EXCEPTION 'stretch columns: a row naming neither does not carry null and null';
+    RAISE EXCEPTION 'stretch columns: a post naming neither does not carry null and null';
   END IF;
-  UPDATE "TeacherWorkRules" SET "maxConsecutiveTeachingMinutes" = 120, "consecutiveBreakMinutes" = 20 WHERE "userId" = planner;
-  IF NOT FOUND THEN RAISE EXCEPTION 'stretch columns: the schemaläggare could not set their own limit'; END IF;
-  DELETE FROM "TeacherWorkRules" WHERE "userId" = planner;
-  IF NOT FOUND THEN RAISE EXCEPTION 'stretch columns: the schemaläggare could not remove their own row holding a limit'; END IF;
+  UPDATE "TeacherEmployments" SET "maxConsecutiveTeachingMinutes" = 120, "consecutiveBreakMinutes" = 20 WHERE "userId" = decider;
+  IF NOT FOUND THEN RAISE EXCEPTION 'stretch columns: the full administrator could not set their own limit'; END IF;
+  DELETE FROM "TeacherEmployments" WHERE "userId" = decider;
+  IF NOT FOUND THEN RAISE EXCEPTION 'stretch columns: the full administrator could not remove their own post holding a limit'; END IF;
 
   -- The switch: NOT NULL, takes both values, and a fresh Skolregler row that
   -- names nothing reads off.
@@ -35285,10 +35357,10 @@ BEGIN
   END IF;
   UPDATE "LunchSettings" SET "generatorKeepsConsecutiveTeaching" = true WHERE "schoolId" = school;
   IF NOT FOUND OR (SELECT "generatorKeepsConsecutiveTeaching" FROM "LunchSettings" WHERE "schoolId" = school) IS DISTINCT FROM true THEN
-    RAISE EXCEPTION 'stretch columns: the schemaläggare could not turn the switch on';
+    RAISE EXCEPTION 'stretch columns: the full administrator could not turn the switch on';
   END IF;
   DELETE FROM "LunchSettings" WHERE "schoolId" = school;
-  IF NOT FOUND THEN RAISE EXCEPTION 'stretch columns: the schemaläggare could not remove the Skolregler row'; END IF;
+  IF NOT FOUND THEN RAISE EXCEPTION 'stretch columns: the full administrator could not remove the Skolregler row'; END IF;
   INSERT INTO "LunchSettings" ("schoolId", "lunchStartTime", "lunchEndTime", "lunchMinutes", "updatedAt")
   VALUES (school, '11:00', '13:00', 30, now());
   IF (SELECT "generatorKeepsConsecutiveTeaching" FROM "LunchSettings" WHERE "schoolId" = school) IS DISTINCT FROM false THEN
@@ -35298,545 +35370,601 @@ END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
--- Section 288: en lärares gräns för undervisning i följd sätts av den som
--- planerar (TeacherWorkRules_day_is_planned, 20261218090000). Section 160's
--- reading of the cap and the wish, line for line, for the two columns the
--- trigger function keeps beside them since.
+-- Section 288: en lärares gräns för undervisning i följd är en HR-uppgift på
+-- tjänsten: den läses av läraren själv och av ingen annan direkt, den skrivs
+-- av den som beslutar och av ingen annan (20261218090000). Section 161's
+-- reading of deltid in days, for the two columns, and then every role.
 --
--- In the matrix school, whose one teacher (111) has a work rule. The limit
--- ("maxConsecutiveTeachingMinutes") and the break ("consecutiveBreakMinutes")
--- sit on the row the teacher writes through teacher_work_rules_teacher_own,
--- which is FOR ALL, so row security alone would let the teacher raise or
--- erase what the administrator set. The trigger refuses that with AR403, the
--- token and the sentence areaRefusal (prisma-errors.ts) hands the web as a
--- 403, and DETAIL area=PLANERING — in the sentence that now names all three
--- fields:
+-- The limit ("maxConsecutiveTeachingMinutes") and the break
+-- ("consecutiveBreakMinutes") may be an arbetsanpassning after sick leave, so
+-- they sit on the post (TeacherEmployments) and not on the work rule, whose
+-- rows every colleague reads. The post's arms are the whole of the protection
+-- (no trigger asks anything), and section 288 holds each of them, role by role,
+-- through the two roles a request can arrive as: app_authenticated, which is
+-- how the gateway reads and writes, and authenticated, which is how PostgREST
+-- would. In the matrix school, with a post for its teacher (111) holding 180
+-- minutes and a break of 30, one for a colleague teacher (planted by the
+-- expedition, who owns the roster) holding 240 and 15, and one for the full
+-- administrator, holding none:
 --
---   * the function is still what 20261123090000 made it: SECURITY DEFINER,
---     its search_path pinned, executable by no API role and not by PUBLIC;
---   * the teacher, as each API role, sets neither on a row that holds none
---     (UPDATE, the upsert), changes neither on a row that holds them (the
---     limit alone, the break alone, both), clears neither (both, and one half
---     alone, which the trigger refuses before the pair CHECK is asked), puts
---     neither on a fresh row (INSERT, the upsert), and deletes no row that
---     holds them — not even one holding nothing else, with the cap and the
---     wish cleared, which is what proves the stretch is asked on its own;
---   * what stays the teacher's: the lunch and the rest, by UPDATE with the
---     stretch restated unchanged and with it left out, by the upsert that
---     restates it and by the upsert that names neither, which keeps both; and
---     the row once it holds none of the four;
---   * THE UPSERT IS JUDGED AS THE UPDATE IT BECOMES, as section 160 shows for
---     the cap: restating passes, raising, moving or clearing is refused;
---   * the schemaläggare, the full administrator and the rektor (all PLANERING)
---     set, change and clear both by UPDATE and by the upsert, on the
---     teacher's row and on a row of their own, and delete a row holding them:
---     the trigger asks the area, not whose row it is;
---   * the expedition and the läsare, who do not write PLANERING, are refused
---     by the row's arm (42501, row-level security), never by the trigger:
---     the row is not theirs, so the trigger lets the write on to the arm;
---   * neither the service principal nor the sync has an arm on the table; with
---     the teacher's claims beside either setting the teacher's own arm admits
---     the row and the trigger lets the change through on the setting;
---   * AN ADMINISTRATOR WHO ONLY READS PLANERING AND ALSO TEACHES (the
---     expedition and the läsare, on a row of their own) sets neither the cap,
---     the wish, the limit nor the break: the trigger answers each UPDATE with
---     the planner's sentence, which is what proves it asked for the area's
---     WRITE (asked for its read, every administrator's, it lets the write on
---     to the area check and the answer is 42501), the upsert is refused by the
---     area check and the delete reaches no row. The cap and the wish are in it
---     because one function keeps all four columns.
+--   * THE ARMS, from the catalogue: the post and its history have exactly the
+--     arms they had. Every one an administrator's is TO app_authenticated
+--     alone, the teacher's own SELECT arm of each is the only arm anybody
+--     else's role can use, and the insert, update and delete arms ask
+--     app.current_user_decides() (the update's USING admits every
+--     administrator, because a row lock needs it, and its WITH CHECK is what
+--     refuses);
+--   * THE COLLEAGUE (another TEACHER), as each role: reads no row of
+--     another's post and no version of it, and writes none — an UPDATE
+--     reaches no row, an INSERT or an upsert is refused by row security, a
+--     DELETE reaches no row;
+--   * THE TEACHER THEMSELF, as each role: reads their own limit on the post
+--     and in its history, and writes nothing of it, the same four ways;
+--   * AN ADMINISTRATOR WITHOUT HR-LÄS (the schemaläggare, the expedition and
+--     the läsare) and ONE WITH IT (each of the three with HR-läs, the rektor
+--     and the full administrator): DIRECTLY, as authenticated, they read NO
+--     post and no version of any, whoever's, their own post included, because
+--     the arms that show them a row are TO app_authenticated alone; and no
+--     write of theirs, the deciders' included, changes anything. Through
+--     app_authenticated every one of them is shown the row: the SQL layer
+--     cannot hide a column, so the gateway is what leaves the HR columns out of
+--     its answer for a reader without HR-läs (hideHr, hr-visibility.ts) and
+--     the mask is the gateway's to keep, not this section's;
+--   * WHO WRITES, through app_authenticated: only those who decide. The rektor
+--     and the full administrator set, change and clear both by UPDATE and by
+--     the upsert, and delete a post that holds them; the schemaläggare, the
+--     expedition and the läsare, with or without HR-läs, are refused by the
+--     update's WITH CHECK, the insert's and the upsert's (42501, row-level
+--     security), and a DELETE reaches no row. HR-läs reads; it does not decide;
+--   * THE HISTORY: a write of the limit alone makes exactly one version,
+--     carrying it before (null) and after, as 161 holds for the days; the
+--     administrators' arm on the history shows the version through the API's
+--     role and none directly, the teacher's own arm shows them their own;
+--   * the pupil and the guardian read no post and no version, as each role;
+--   * the service principal's arm on the post is the API role's: it reads the
+--     school's posts through app_authenticated (a provider that names its
+--     columns) and none through authenticated, and writes none either way; the
+--     sync reads none;
+--   * nobody writes the history: a version inserted, rewritten or deleted is
+--     refused for every role, the deciders included, by the table's privilege
+--     (or, were a role given the privilege, by the trigger that keeps the
+--     history append-only); nobody but the owner truncates, references or
+--     maintains either table, and anon holds nothing on them.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
-SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
-SELECT set_config('app.test_rls288_planned',
-  'AR403|WORK_RULE_DAY_IS_PLANNED: dagstaket, den önskade lediga dagen och gränsen för sammanhängande undervisning sätts av en administratör som planerar|area=PLANERING|',
-  true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000108')::text, true);
 
--- 'sqlstate|message|detail|constraint' of a statement's refusal, or 'none'.
-CREATE FUNCTION pg_temp.rls288_refusal(statement text) RETURNS text LANGUAGE plpgsql AS $$
-DECLARE st text; msg text; det text; con text;
+-- 'rows=N' of a statement that ran, else 'sqlstate|message|constraint'.
+CREATE FUNCTION pg_temp.rls288_try(statement text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE n bigint; st text; msg text; con text;
 BEGIN
   EXECUTE statement;
-  RETURN 'none';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN 'rows=' || n;
 EXCEPTION WHEN OTHERS THEN
-  GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT, det = PG_EXCEPTION_DETAIL, con = CONSTRAINT_NAME;
-  RETURN st || '|' || msg || '|' || coalesce(det, '') || '|' || coalesce(con, '');
+  GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT, con = CONSTRAINT_NAME;
+  RETURN st || '|' || msg || '|' || coalesce(con, '');
 END $$;
 
--- The schemaläggare gives the teacher's row a stretch and nothing else of
--- the planner's: the cap and the wish cleared, so a delete or a restatement
--- below can only be judged on the stretch.
+-- Row security's refusal of a write: insufficient_privilege and its own words.
+CREATE FUNCTION pg_temp.rls288_is_rls(got text) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
+  SELECT split_part(got, '|', 1) = '42501' AND got LIKE '%row-level security%'
+$$;
+
+-- THE ARMS, from the catalogue. Exactly these policies, for exactly these
+-- roles and commands: an arm added, widened to authenticated or dropped fails
+-- here by name, before any role is asked.
+DO $$
+DECLARE
+  arm record;
+  expected text;
+  actual text;
+BEGIN
+  expected := $e$
+    TeacherEmployments|teacher_employments_admin_delete|DELETE|{app_authenticated}
+    TeacherEmployments|teacher_employments_admin_insert|INSERT|{app_authenticated}
+    TeacherEmployments|teacher_employments_admin_select|SELECT|{app_authenticated}
+    TeacherEmployments|teacher_employments_admin_update|UPDATE|{app_authenticated}
+    TeacherEmployments|teacher_employments_service_select|SELECT|{app_authenticated}
+    TeacherEmployments|teacher_employments_teacher_own_select|SELECT|{authenticated}
+    TeacherEmploymentLogs|teacher_employment_logs_admin_select|SELECT|{app_authenticated}
+    TeacherEmploymentLogs|teacher_employment_logs_teacher_own_select|SELECT|{authenticated}
+  $e$;
+  SELECT string_agg(l, E'\n' ORDER BY l COLLATE "C") INTO actual
+    FROM (SELECT format('%s|%s|%s|%s', tablename, policyname, cmd, roles) AS l
+            FROM pg_policies WHERE tablename IN ('TeacherEmployments', 'TeacherEmploymentLogs')) x;
+  SELECT string_agg(l, E'\n' ORDER BY l COLLATE "C") INTO expected
+    FROM (SELECT btrim(l) AS l FROM regexp_split_to_table(expected, E'\n') AS l WHERE btrim(l) <> '') x;
+  IF actual IS DISTINCT FROM expected THEN
+    RAISE EXCEPTION E'stretch post: the arms of the post and its history are not the ones this section holds:\n%', actual;
+  END IF;
+  -- Only the teacher's own SELECT arms are open to a role other than the API's.
+  FOR arm IN SELECT * FROM pg_policies WHERE tablename IN ('TeacherEmployments', 'TeacherEmploymentLogs') LOOP
+    IF arm.permissive <> 'PERMISSIVE' THEN
+      RAISE EXCEPTION 'stretch post: % is not permissive', arm.policyname;
+    END IF;
+    IF arm.roles::text[] && ARRAY['public', 'anon', 'authenticated'] AND NOT (arm.cmd = 'SELECT' AND arm.policyname LIKE '%teacher_own_select') THEN
+      RAISE EXCEPTION 'stretch post: % is open to a role other than the API''s', arm.policyname;
+    END IF;
+  END LOOP;
+  -- Who may write: the decisions, in the insert's check, the update's check and the delete's using.
+  IF (SELECT with_check FROM pg_policies WHERE policyname = 'teacher_employments_admin_insert') NOT LIKE '%current_user_decides%'
+     OR (SELECT with_check FROM pg_policies WHERE policyname = 'teacher_employments_admin_update') NOT LIKE '%current_user_decides%'
+     OR (SELECT qual FROM pg_policies WHERE policyname = 'teacher_employments_admin_delete') NOT LIKE '%current_user_decides%' THEN
+    RAISE EXCEPTION 'stretch post: a write arm of the post does not ask who decides';
+  END IF;
+  -- Nobody writes the history; only the owner truncates, references or triggers; anon holds nothing.
+  FOR arm IN
+    SELECT ro.rolname, t.tbl, p.privilege
+      FROM pg_roles ro
+      CROSS JOIN (VALUES ('public."TeacherEmployments"'), ('public."TeacherEmploymentLogs"')) AS t(tbl)
+      CROSS JOIN unnest(ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'SELECT']) AS p(privilege)
+     WHERE ro.rolname IN ('app_authenticated', 'authenticated', 'anon', 'service_role')
+  LOOP
+    IF has_table_privilege(arm.rolname, arm.tbl, arm.privilege) IS DISTINCT FROM (
+         CASE
+           WHEN arm.rolname = 'anon' THEN false
+           WHEN arm.privilege = 'SELECT' THEN true
+           WHEN arm.tbl = 'public."TeacherEmployments"' AND arm.privilege IN ('INSERT', 'UPDATE', 'DELETE')
+                AND arm.rolname IN ('app_authenticated', 'authenticated') THEN true
+           ELSE false
+         END) THEN
+      RAISE EXCEPTION 'stretch post: the table privilege % of % on % is not what the owner gave it', arm.privilege, arm.rolname, arm.tbl;
+    END IF;
+    IF arm.privilege <> 'SELECT' AND current_setting('server_version_num')::int >= 170000
+       AND has_table_privilege(arm.rolname, arm.tbl, 'MAINTAIN') THEN
+      RAISE EXCEPTION 'stretch post: % holds MAINTAIN on %', arm.rolname, arm.tbl;
+    END IF;
+  END LOOP;
+  IF has_any_column_privilege('anon', 'public."TeacherEmployments"', 'SELECT')
+     OR has_any_column_privilege('anon', 'public."TeacherEmploymentLogs"', 'SELECT') THEN
+    RAISE EXCEPTION 'stretch post: anon reads a column of the post or its history';
+  END IF;
+END $$;
+
+-- The expedition (PERSONAL) takes on a colleague, a teacher with no post yet.
 DO $$
 DECLARE
   school uuid := app.current_school_id();
-  teacher uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000111');
-  fn record;
 BEGIN
-  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR NOT app.current_user_may('PLANERING', true)
+  IF app.current_user_may('PLANERING', true) OR NOT app.current_user_may('PERSONAL', true)
      OR (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-roller-school' THEN
-    RAISE EXCEPTION 'stretch trigger: expected the matrix school''s schemaläggare, who writes PLANERING';
+    RAISE EXCEPTION 'stretch post: expected the matrix school''s expedition (PERSONAL, not PLANERING)';
   END IF;
-  IF teacher IS NULL OR NOT EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = teacher) THEN
-    RAISE EXCEPTION 'stretch trigger: the matrix school''s teacher or their work rule is missing; fixtures did not run';
-  END IF;
-
-  -- The function is the first migration's in what it protects: owned by the
-  -- table's owner, SECURITY DEFINER with a pinned search_path, and executable
-  -- by nobody who writes through the API.
-  SELECT p.prosecdef, p.proconfig, p.proacl, p.proowner, c.relowner
-    INTO fn
-    FROM pg_proc p
-    JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'app'
-    CROSS JOIN pg_class c
-   WHERE p.proname = 'teacher_work_rules_day_is_planned' AND c.oid = '"TeacherWorkRules"'::regclass;
-  IF fn IS NULL OR NOT fn.prosecdef OR fn.proowner <> fn.relowner
-     OR NOT ('search_path=public, pg_temp' = ANY (coalesce(fn.proconfig, '{}'))) THEN
-    RAISE EXCEPTION 'stretch trigger: the function is not the table owner''s SECURITY DEFINER with its search_path pinned: %', row_to_json(fn);
-  END IF;
-  IF fn.proacl IS NULL OR EXISTS (SELECT 1 FROM aclexplode(fn.proacl) a WHERE a.grantee <> fn.proowner) THEN
-    RAISE EXCEPTION 'stretch trigger: someone beside the owner may execute the function: %', fn.proacl;
-  END IF;
-
-  UPDATE "TeacherWorkRules"
-     SET "maxConsecutiveTeachingMinutes" = 240, "consecutiveBreakMinutes" = 15,
-         "maxTeachingMinutesPerDay" = NULL, "preferredFreeDayOfWeek" = NULL
-   WHERE "userId" = teacher;
-  IF NOT FOUND THEN RAISE EXCEPTION 'stretch trigger: the schemaläggare could not set the stretch'; END IF;
-  PERFORM set_config('app.test_rls288', json_build_object('school', school, 'teacher', teacher)::text, true);
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (school, 'rls288-kollega@example.invalid', 'RLS288', 'Kollega', 'TEACHER',
+          '00000000-0000-4000-8000-000000000288', true, now());
 END $$;
 
--- The teacher with a limit of 240 minutes and a break of 15, as each role.
-SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000111')::text, true);
+-- The full administrator, who decides, gives the teacher's post a limit of 180
+-- minutes and a break of 30, the colleague a post holding 240 and 15, and
+-- their own post holds none. The teacher's version carries the limit alone.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  admin uuid := app.current_user_id();
+  teacher uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000111');
+  colleague uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000288');
+  post111 uuid;
+  postc uuid;
+  posta uuid;
+  year uuid;
+  versions bigint;
+  logged record;
+BEGIN
+  IF NOT app.current_user_decides() OR app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN'
+     OR (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-roller-school' THEN
+    RAISE EXCEPTION 'stretch post: expected the matrix school''s full administrator, who decides';
+  END IF;
+  SELECT id, "academicYearId" INTO post111, year FROM "TeacherEmployments" WHERE "userId" = teacher;
+  IF post111 IS NULL OR colleague IS NULL THEN
+    RAISE EXCEPTION 'stretch post: the teacher''s post or the colleague is missing; fixtures did not run';
+  END IF;
+
+  SELECT count(*) INTO versions FROM "TeacherEmploymentLogs" WHERE "entityId" = post111;
+  UPDATE "TeacherEmployments" SET "maxConsecutiveTeachingMinutes" = 180, "consecutiveBreakMinutes" = 30 WHERE id = post111;
+  IF NOT FOUND THEN RAISE EXCEPTION 'stretch post: the full administrator could not set the teacher''s limit'; END IF;
+  IF (SELECT count(*) FROM "TeacherEmploymentLogs" WHERE "entityId" = post111) <> versions + 1 THEN
+    RAISE EXCEPTION 'stretch post: a write of the limit alone made % versions, not one',
+      (SELECT count(*) FROM "TeacherEmploymentLogs" WHERE "entityId" = post111) - versions;
+  END IF;
+  SELECT action, before, after INTO logged FROM "TeacherEmploymentLogs"
+   WHERE "entityId" = post111 ORDER BY version DESC LIMIT 1;
+  IF logged.action IS DISTINCT FROM 'UPDATE'
+     OR (logged.after ->> 'maxConsecutiveTeachingMinutes')::int IS DISTINCT FROM 180
+     OR (logged.after ->> 'consecutiveBreakMinutes')::int IS DISTINCT FROM 30
+     OR logged.before -> 'maxConsecutiveTeachingMinutes' IS DISTINCT FROM 'null'::jsonb
+     OR logged.before -> 'consecutiveBreakMinutes' IS DISTINCT FROM 'null'::jsonb THEN
+    RAISE EXCEPTION 'stretch post: the version holds % → %', logged.before, logged.after;
+  END IF;
+
+  INSERT INTO "TeacherEmployments"
+    ("schoolId", "userId", "academicYearId", "employmentPercent", "maxConsecutiveTeachingMinutes", "consecutiveBreakMinutes", "updatedAt")
+  VALUES (school, colleague, year, 100, 240, 15, now()) RETURNING id INTO postc;
+  INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt")
+  VALUES (school, admin, year, 100, now()) RETURNING id INTO posta;
+  IF (SELECT action FROM "TeacherEmploymentLogs" WHERE "entityId" = postc ORDER BY version DESC LIMIT 1) IS DISTINCT FROM 'CREATE'
+     OR ((SELECT after FROM "TeacherEmploymentLogs" WHERE "entityId" = postc ORDER BY version DESC LIMIT 1) ->> 'maxConsecutiveTeachingMinutes')::int
+        IS DISTINCT FROM 240 THEN
+    RAISE EXCEPTION 'stretch post: the colleague''s post was not logged holding its limit';
+  END IF;
+  PERFORM set_config('app.test_rls288', json_build_object(
+    'school', school, 'year', year, 'teacher', teacher, 'colleague', colleague, 'admin', admin,
+    'post111', post111, 'postc', postc, 'posta', posta,
+    'planner', (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000107'))::text, true);
+END $$;
+
+-- EVERY ROLE READS. The post and its history, as each role the request can
+-- arrive as. An administrator is shown the three posts through the API's role
+-- (the gateway masks what a reader without HR-läs is not to see) and, through
+-- PostgREST's role, none and no version; a teacher is shown their own post and
+-- its versions through both and nobody else's; a pupil and a guardian nothing.
+DO $$
+DECLARE
+  t jsonb := current_setting('app.test_rls288')::jsonb;
+  post111 uuid := (t ->> 'post111')::uuid;
+  postc uuid := (t ->> 'postc')::uuid;
+  posta uuid := (t ->> 'posta')::uuid;
+  actor record;
+  via text;
+  me uuid;
+  n bigint;
+  logs bigint;
+  own_limit text;
+  hr boolean;
+BEGIN
+  FOR actor IN SELECT * FROM (VALUES
+      ('00000000-0000-4000-8000-000000000105', 'the full administrator', 'ADMIN', true, true),
+      ('00000000-0000-4000-8000-000000000106', 'the rektor', 'ADMIN', true, true),
+      ('00000000-0000-4000-8000-000000000107', 'the schemaläggare', 'ADMIN', false, false),
+      ('00000000-0000-4000-8000-000000000109', 'the schemaläggare with HR-läs', 'ADMIN', false, true),
+      ('00000000-0000-4000-8000-000000000108', 'the expedition', 'ADMIN', false, false),
+      ('00000000-0000-4000-8000-000000000110', 'the expedition with HR-läs', 'ADMIN', false, true),
+      ('00000000-0000-4000-8000-000000000115', 'the läsare', 'ADMIN', false, false),
+      ('00000000-0000-4000-8000-000000000116', 'the läsare with HR-läs', 'ADMIN', false, true),
+      ('00000000-0000-4000-8000-000000000111', 'the teacher', 'TEACHER', false, false),
+      ('00000000-0000-4000-8000-000000000288', 'the colleague', 'TEACHER', false, false),
+      ('00000000-0000-4000-8000-000000000112', 'the pupil', 'NONE', false, false),
+      ('00000000-0000-4000-8000-000000000113', 'the guardian', 'NONE', false, false)
+    ) AS x(auth_id, label, kind, decides, reads_hr)
+  LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', actor.auth_id)::text, true);
+    me := app.current_user_id();
+    IF me IS NULL THEN RAISE EXCEPTION 'stretch post: % has no user in the matrix school', actor.label; END IF;
+    IF actor.kind = 'ADMIN' THEN
+      -- The fixtures' flags, as this section assumes them: who decides, and who
+      -- reads HR (the deciders, and any administrator flagged with HR-läs).
+      hr := app.current_user_decides() OR coalesce((SELECT "hrRead" FROM "Users" WHERE id = me), false);
+      IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR app.current_user_decides() IS DISTINCT FROM actor.decides
+         OR hr IS DISTINCT FROM actor.reads_hr THEN
+        RAISE EXCEPTION 'stretch post: % is not an administrator who decides = %, reads HR = % (%)',
+          actor.label, actor.decides, actor.reads_hr, hr;
+      END IF;
+    ELSIF actor.kind = 'TEACHER' AND app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN
+      RAISE EXCEPTION 'stretch post: % is not a teacher', actor.label;
+    END IF;
+
+    FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+      EXECUTE format('SET LOCAL ROLE %I', via);
+      IF current_user <> via THEN RAISE EXCEPTION 'stretch post: running as %, not %', current_user, via; END IF;
+      SELECT count(*) INTO n FROM "TeacherEmployments";
+      SELECT count(*) INTO logs FROM "TeacherEmploymentLogs";
+      IF actor.kind = 'NONE' OR (actor.kind = 'ADMIN' AND via = 'authenticated') THEN
+        -- PostgREST's role: no post and no version of anybody, an administrator's
+        -- own included, because the arms that show an administrator a row are TO
+        -- app_authenticated alone. A pupil and a guardian have no arm at all.
+        IF n <> 0 OR logs <> 0 THEN
+          RAISE EXCEPTION 'stretch post: as % % reads % posts and % versions', via, actor.label, n, logs;
+        END IF;
+      ELSIF actor.kind = 'ADMIN' THEN
+        -- The API's role: the three posts, each with its limit as the owner
+        -- left it. The SQL layer shows the row whole; hideHr is the gateway's.
+        IF (SELECT "maxConsecutiveTeachingMinutes" || '/' || "consecutiveBreakMinutes" FROM "TeacherEmployments" WHERE id = post111) IS DISTINCT FROM '180/30'
+           OR (SELECT "maxConsecutiveTeachingMinutes" || '/' || "consecutiveBreakMinutes" FROM "TeacherEmployments" WHERE id = postc) IS DISTINCT FROM '240/15'
+           OR (SELECT "maxConsecutiveTeachingMinutes" IS NULL AND "consecutiveBreakMinutes" IS NULL FROM "TeacherEmployments" WHERE id = posta) IS DISTINCT FROM true THEN
+          RAISE EXCEPTION 'stretch post: as % % does not read the three posts'' limits: %', via, actor.label,
+            (SELECT string_agg(coalesce("maxConsecutiveTeachingMinutes"::text, '-') || '/' || coalesce("consecutiveBreakMinutes"::text, '-'), ' ' ORDER BY id)
+               FROM "TeacherEmployments" WHERE id IN (post111, postc, posta));
+        END IF;
+        IF (SELECT count(*) FROM "TeacherEmploymentLogs"
+             WHERE "entityId" = post111 AND (after ->> 'maxConsecutiveTeachingMinutes')::int = 180 AND action = 'UPDATE') <> 1
+           OR (SELECT count(*) FROM "TeacherEmploymentLogs"
+                WHERE "entityId" = postc AND (after ->> 'maxConsecutiveTeachingMinutes')::int = 240 AND action = 'CREATE') <> 1 THEN
+          RAISE EXCEPTION 'stretch post: as % % does not read the versions that hold the limits', via, actor.label;
+        END IF;
+      ELSE
+        -- A teacher: their own post and its versions, through both roles, and
+        -- not one row or version of anybody else's.
+        own_limit := CASE WHEN me = (t ->> 'teacher')::uuid THEN '180/30' ELSE '240/15' END;
+        IF n <> 1 OR (SELECT "userId" FROM "TeacherEmployments") IS DISTINCT FROM me
+           OR (SELECT "maxConsecutiveTeachingMinutes" || '/' || "consecutiveBreakMinutes" FROM "TeacherEmployments") IS DISTINCT FROM own_limit THEN
+          RAISE EXCEPTION 'stretch post: as % % reads % posts, not their own with %', via, actor.label, n, own_limit;
+        END IF;
+        IF EXISTS (SELECT 1 FROM "TeacherEmploymentLogs" WHERE "userId" <> me) THEN
+          RAISE EXCEPTION 'stretch post: as % % reads a version of somebody else''s post', via, actor.label;
+        END IF;
+        -- ... among them the version that holds the limit.
+        IF (SELECT count(*) FROM "TeacherEmploymentLogs"
+             WHERE "userId" = me AND (after ->> 'maxConsecutiveTeachingMinutes')::int = split_part(own_limit, '/', 1)::int) <> 1 THEN
+          RAISE EXCEPTION 'stretch post: as % % does not read the one version of their own post that holds their limit', via, actor.label;
+        END IF;
+      END IF;
+    END LOOP;
+    SET LOCAL ROLE app_authenticated;
+  END LOOP;
+END $$;
+
+-- EVERY ROLE WRITES. Five statements at the teacher's post, each as every role
+-- through each of the two roles a request can arrive as:
+--   set both     UPDATE … SET limit, break
+--   clear both   UPDATE … SET NULL, NULL
+--   an upsert    INSERT … ON CONFLICT DO UPDATE, the statement the gateway writes
+--   a fresh post INSERT of a post for somebody who has none (the schemaläggare)
+--   delete       DELETE of the post
+-- Those who decide write through the API's role (the next block). Everyone else
+-- — every administrator through PostgREST's role, a deciding one included, and
+-- the administrators who do not decide through the API's, and every teacher,
+-- pupil and guardian through either — changes nothing. What they are answered
+-- depends on where the refusal sits:
+--   * no arm admits the row to a write (authenticated has no write arm at all,
+--     and a teacher is no administrator): an UPDATE or a DELETE reaches no row;
+--   * an INSERT is checked before it is looked at as an update, so a fresh post
+--     and an upsert are refused by row security (42501) in both roles;
+--   * an administrator who does not decide, through the API's role, reaches the
+--     row (the update arm's USING admits every administrator, which a row lock
+--     needs) and is refused by its WITH CHECK, which asks who decides (42501);
+--     their DELETE finds the delete arm's USING false and reaches no row.
 DO $$
 DECLARE
   t jsonb := current_setting('app.test_rls288')::jsonb;
   school uuid := (t ->> 'school')::uuid;
-  me uuid := app.current_user_id();
-  planned text := current_setting('app.test_rls288_planned');
+  year uuid := (t ->> 'year')::uuid;
+  post111 uuid := (t ->> 'post111')::uuid;
+  teacher uuid := (t ->> 'teacher')::uuid;
+  planner uuid := (t ->> 'planner')::uuid;
+  actor record;
   via text;
   got text;
   c record;
+  expect_rls boolean;
 BEGIN
-  IF me IS DISTINCT FROM (t ->> 'teacher')::uuid OR app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN
-    RAISE EXCEPTION 'stretch trigger: expected the matrix school''s teacher, am % (%)', app.current_user_role(), me;
-  END IF;
-  FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
-    EXECUTE format('SET LOCAL ROLE %I', via);
-    IF current_user <> via THEN RAISE EXCEPTION 'stretch trigger: running as %, not %', current_user, via; END IF;
-    FOR c IN SELECT * FROM (VALUES
-        ('raising the limit', 'UPDATE "TeacherWorkRules" SET "maxConsecutiveTeachingMinutes" = 300 WHERE "userId" = %1$L'),
-        ('lowering the limit', 'UPDATE "TeacherWorkRules" SET "maxConsecutiveTeachingMinutes" = 180 WHERE "userId" = %1$L'),
-        ('moving the break', 'UPDATE "TeacherWorkRules" SET "consecutiveBreakMinutes" = 20 WHERE "userId" = %1$L'),
-        ('moving both', 'UPDATE "TeacherWorkRules" SET "maxConsecutiveTeachingMinutes" = 180, "consecutiveBreakMinutes" = 10 WHERE "userId" = %1$L'),
-        ('clearing both', 'UPDATE "TeacherWorkRules" SET "maxConsecutiveTeachingMinutes" = NULL, "consecutiveBreakMinutes" = NULL WHERE "userId" = %1$L'),
-        -- One half alone breaks the pair CHECK too; the trigger is asked
-        -- first, so the answer is the planner's sentence and not a 400.
-        ('clearing the limit alone', 'UPDATE "TeacherWorkRules" SET "maxConsecutiveTeachingMinutes" = NULL WHERE "userId" = %1$L'),
-        ('clearing the break alone', 'UPDATE "TeacherWorkRules" SET "consecutiveBreakMinutes" = NULL WHERE "userId" = %1$L'),
-        -- The row holds the stretch and nothing else of the planner's.
-        ('deleting the row', 'DELETE FROM "TeacherWorkRules" WHERE "userId" = %1$L'),
-        ('an upsert raising the limit',
-         'INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "maxConsecutiveTeachingMinutes", "consecutiveBreakMinutes", "updatedAt") VALUES (%2$L, %1$L, 300, 15, now())
-          ON CONFLICT ("userId") DO UPDATE SET "maxConsecutiveTeachingMinutes" = EXCLUDED."maxConsecutiveTeachingMinutes",
-            "consecutiveBreakMinutes" = EXCLUDED."consecutiveBreakMinutes", "updatedAt" = EXCLUDED."updatedAt"'),
-        ('an upsert moving the break',
-         'INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "maxConsecutiveTeachingMinutes", "consecutiveBreakMinutes", "updatedAt") VALUES (%2$L, %1$L, 240, 20, now())
-          ON CONFLICT ("userId") DO UPDATE SET "maxConsecutiveTeachingMinutes" = EXCLUDED."maxConsecutiveTeachingMinutes",
-            "consecutiveBreakMinutes" = EXCLUDED."consecutiveBreakMinutes", "updatedAt" = EXCLUDED."updatedAt"'),
-        ('an upsert clearing both',
-         'INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "maxConsecutiveTeachingMinutes", "consecutiveBreakMinutes", "updatedAt") VALUES (%2$L, %1$L, NULL, NULL, now())
-          ON CONFLICT ("userId") DO UPDATE SET "maxConsecutiveTeachingMinutes" = EXCLUDED."maxConsecutiveTeachingMinutes",
-            "consecutiveBreakMinutes" = EXCLUDED."consecutiveBreakMinutes", "updatedAt" = EXCLUDED."updatedAt"')
-      ) AS x(what, statement)
-    LOOP
-      got := pg_temp.rls288_refusal(format(c.statement, me, school));
-      IF got IS DISTINCT FROM planned THEN
-        RAISE EXCEPTION 'stretch trigger: % as % was answered "%"', c.what, via, got;
-      END IF;
+  FOR actor IN SELECT * FROM (VALUES
+      ('00000000-0000-4000-8000-000000000105', 'the full administrator', 'ADMIN', true),
+      ('00000000-0000-4000-8000-000000000106', 'the rektor', 'ADMIN', true),
+      ('00000000-0000-4000-8000-000000000107', 'the schemaläggare', 'ADMIN', false),
+      ('00000000-0000-4000-8000-000000000109', 'the schemaläggare with HR-läs', 'ADMIN', false),
+      ('00000000-0000-4000-8000-000000000108', 'the expedition', 'ADMIN', false),
+      ('00000000-0000-4000-8000-000000000110', 'the expedition with HR-läs', 'ADMIN', false),
+      ('00000000-0000-4000-8000-000000000115', 'the läsare', 'ADMIN', false),
+      ('00000000-0000-4000-8000-000000000116', 'the läsare with HR-läs', 'ADMIN', false),
+      ('00000000-0000-4000-8000-000000000111', 'the teacher', 'TEACHER', false),
+      ('00000000-0000-4000-8000-000000000288', 'the colleague', 'TEACHER', false),
+      ('00000000-0000-4000-8000-000000000112', 'the pupil', 'NONE', false),
+      ('00000000-0000-4000-8000-000000000113', 'the guardian', 'NONE', false)
+    ) AS x(auth_id, label, kind, decides)
+  LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', actor.auth_id)::text, true);
+    FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+      -- The deciders write posts through the API's role: the next block. The
+      -- history is refused them as everybody, in this loop.
+      EXECUTE format('SET LOCAL ROLE %I', via);
+      IF current_user <> via THEN RAISE EXCEPTION 'stretch post: running as %, not %', current_user, via; END IF;
+      -- Row security's answer to the two UPDATEs and the DELETE.
+      expect_rls := via = 'app_authenticated' AND actor.kind = 'ADMIN';
+      FOR c IN SELECT * FROM (VALUES
+          ('setting both', true,
+           format('UPDATE "TeacherEmployments" SET "maxConsecutiveTeachingMinutes" = 300, "consecutiveBreakMinutes" = 20 WHERE id = %L', post111)),
+          ('clearing both', true,
+           format('UPDATE "TeacherEmployments" SET "maxConsecutiveTeachingMinutes" = NULL, "consecutiveBreakMinutes" = NULL WHERE id = %L', post111)),
+          ('an upsert setting both', false,
+           format('INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "maxConsecutiveTeachingMinutes", "consecutiveBreakMinutes", "updatedAt")
+                   VALUES (%L, %L, %L, 80, 300, 20, now())
+                   ON CONFLICT ("schoolId", "userId", "academicYearId") DO UPDATE SET
+                     "maxConsecutiveTeachingMinutes" = EXCLUDED."maxConsecutiveTeachingMinutes",
+                     "consecutiveBreakMinutes" = EXCLUDED."consecutiveBreakMinutes", "updatedAt" = EXCLUDED."updatedAt"', school, teacher, year)),
+          ('a fresh post carrying both', false,
+           format('INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "maxConsecutiveTeachingMinutes", "consecutiveBreakMinutes", "updatedAt")
+                   VALUES (%L, %L, %L, 100, 60, 10, now())', school, planner, year)),
+          ('deleting the post', false, format('DELETE FROM "TeacherEmployments" WHERE id = %L', post111)),
+          -- The history is nobody's to rewrite: no role holds a write privilege
+          -- on it, so the answer is the privilege's and not a row's.
+          ('forging a version', false,
+           format('INSERT INTO "TeacherEmploymentLogs" ("schoolId", "userId", "academicYearId", version, entity, "entityId", action, after)
+                   VALUES (%L, %L, %L, 99, ''EMPLOYMENT'', %L, ''UPDATE'', ''{"maxConsecutiveTeachingMinutes": 300}'')', school, teacher, year, post111)),
+          ('rewriting a version', false, 'UPDATE "TeacherEmploymentLogs" SET "after" = NULL'),
+          ('deleting a version', false, 'DELETE FROM "TeacherEmploymentLogs"')
+        ) AS s(what, updates, statement)
+      LOOP
+        CONTINUE WHEN actor.decides AND via = 'app_authenticated' AND c.what NOT IN ('forging a version', 'rewriting a version', 'deleting a version');
+        got := pg_temp.rls288_try(c.statement);
+        IF c.what IN ('forging a version', 'rewriting a version', 'deleting a version') THEN
+          IF split_part(got, '|', 1) <> '42501' OR got NOT LIKE '%permission denied for table TeacherEmploymentLogs%' THEN
+            RAISE EXCEPTION 'stretch post: % by % as % was answered "%", not by the table''s privilege', c.what, actor.label, via, got;
+          END IF;
+        ELSIF c.what IN ('an upsert setting both', 'a fresh post carrying both') THEN
+          IF NOT pg_temp.rls288_is_rls(got) THEN
+            RAISE EXCEPTION 'stretch post: % by % as % was answered "%", not by row security', c.what, actor.label, via, got;
+          END IF;
+        ELSIF c.updates AND expect_rls THEN
+          IF NOT pg_temp.rls288_is_rls(got) THEN
+            RAISE EXCEPTION 'stretch post: % by % as % was answered "%", not by the update arm''s check', c.what, actor.label, via, got;
+          END IF;
+        ELSIF got IS DISTINCT FROM 'rows=0' THEN
+          RAISE EXCEPTION 'stretch post: % by % as % was answered "%", not by reaching no row', c.what, actor.label, via, got;
+        END IF;
+      END LOOP;
     END LOOP;
-
-    -- A plain INSERT beside the stored row: the trigger leaves it to the
-    -- update it never becomes, and the unique key answers, never a write.
-    got := pg_temp.rls288_refusal(format(
-      'INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "maxConsecutiveTeachingMinutes", "consecutiveBreakMinutes", "updatedAt")
-       VALUES (%L, %L, 300, 15, now())', school, me));
-    IF split_part(got, '|', 1) <> '23505' THEN
-      RAISE EXCEPTION 'stretch trigger: an INSERT beside the stored row as % was answered "%", not by the unique key', via, got;
-    END IF;
-
-    -- What stays the teacher's: the lunch and the rest by UPDATE, with the
-    -- stretch restated unchanged.
-    UPDATE "TeacherWorkRules"
-       SET "lunchMinutes" = 30, "lunchStartTime" = '10:30', "lunchEndTime" = '13:30', "minDailyRestMinutes" = 660,
-           "maxConsecutiveTeachingMinutes" = 240, "consecutiveBreakMinutes" = 15, "updatedAt" = now()
-     WHERE "userId" = me;
-    IF NOT FOUND THEN RAISE EXCEPTION 'stretch trigger: the teacher could not write their own lunch and rest as %', via; END IF;
-    -- And with the stretch left out of the statement.
-    UPDATE "TeacherWorkRules" SET "lunchMinutes" = 35, "updatedAt" = now() WHERE "userId" = me;
-    IF NOT FOUND THEN RAISE EXCEPTION 'stretch trigger: the teacher could not write their own lunch alone as %', via; END IF;
-
-    -- The upsert restating both passes: its insert finds the stored row and
-    -- its update changes neither.
-    INSERT INTO "TeacherWorkRules"
-      ("schoolId", "userId", "maxConsecutiveTeachingMinutes", "consecutiveBreakMinutes", "lunchMinutes", "lunchStartTime", "lunchEndTime", "updatedAt")
-    VALUES (school, me, 240, 15, 45, '11:00', '13:00', now())
-    ON CONFLICT ("userId") DO UPDATE SET "maxConsecutiveTeachingMinutes" = EXCLUDED."maxConsecutiveTeachingMinutes",
-      "consecutiveBreakMinutes" = EXCLUDED."consecutiveBreakMinutes", "lunchMinutes" = EXCLUDED."lunchMinutes",
-      "lunchStartTime" = EXCLUDED."lunchStartTime", "lunchEndTime" = EXCLUDED."lunchEndTime", "updatedAt" = EXCLUDED."updatedAt";
-    IF NOT EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = me AND "lunchMinutes" = 45) THEN
-      RAISE EXCEPTION 'stretch trigger: the teacher''s upsert restating the stretch wrote no lunch as %', via;
-    END IF;
-
-    -- And the upsert naming neither keeps both: what the gateway sends for a
-    -- teacher, who has the day's fields removed from create and update alike.
-    INSERT INTO "TeacherWorkRules"
-      ("schoolId", "userId", "lunchMinutes", "lunchStartTime", "lunchEndTime", "minDailyRestMinutes", "updatedAt")
-    VALUES (school, me, 40, '11:00', '13:00', 600, now())
-    ON CONFLICT ("userId") DO UPDATE SET "lunchMinutes" = EXCLUDED."lunchMinutes", "lunchStartTime" = EXCLUDED."lunchStartTime",
-      "lunchEndTime" = EXCLUDED."lunchEndTime", "minDailyRestMinutes" = EXCLUDED."minDailyRestMinutes", "updatedAt" = EXCLUDED."updatedAt";
-    IF NOT EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = me AND "lunchMinutes" = 40 AND "minDailyRestMinutes" = 600
-                      AND "maxConsecutiveTeachingMinutes" = 240 AND "consecutiveBreakMinutes" = 15
-                      AND "maxTeachingMinutesPerDay" IS NULL AND "preferredFreeDayOfWeek" IS NULL) THEN
-      RAISE EXCEPTION 'stretch trigger: the teacher''s upsert naming neither left %, not the stretch kept, as %',
-        (SELECT row_to_json(w) FROM "TeacherWorkRules" w WHERE "userId" = me), via;
-    END IF;
-  END LOOP;
-  SET LOCAL ROLE app_authenticated;
-
-  -- The service principal and the sync. Alone, neither reads or writes a work
-  -- rule; beside the teacher's claims, the setting lets the stretch through.
-  FOREACH via IN ARRAY ARRAY['app.service_school_id', 'app.sync_school_id'] LOOP
-    PERFORM set_config(via, school::text, true);
-    UPDATE "TeacherWorkRules" SET "maxConsecutiveTeachingMinutes" = 300, "consecutiveBreakMinutes" = 20 WHERE "userId" = me;
-    IF NOT FOUND THEN RAISE EXCEPTION 'stretch trigger: with % beside the teacher, the stretch was refused', via; END IF;
-    UPDATE "TeacherWorkRules" SET "maxConsecutiveTeachingMinutes" = NULL, "consecutiveBreakMinutes" = NULL WHERE "userId" = me;
-    IF NOT FOUND THEN RAISE EXCEPTION 'stretch trigger: with % beside the teacher, clearing the stretch was refused', via; END IF;
-    UPDATE "TeacherWorkRules" SET "maxConsecutiveTeachingMinutes" = 240, "consecutiveBreakMinutes" = 15 WHERE "userId" = me;
-    PERFORM set_config(via, '', true);
-  END LOOP;
-  PERFORM set_config('request.jwt.claims', '', true);
-  FOREACH via IN ARRAY ARRAY['app.service_school_id', 'app.sync_school_id'] LOOP
-    PERFORM set_config(via, school::text, true);
-    IF EXISTS (SELECT 1 FROM "TeacherWorkRules") THEN RAISE EXCEPTION 'stretch trigger: % reads a work rule', via; END IF;
-    UPDATE "TeacherWorkRules" SET "maxConsecutiveTeachingMinutes" = 300, "consecutiveBreakMinutes" = 20;
-    IF FOUND THEN RAISE EXCEPTION 'stretch trigger: % wrote a work rule', via; END IF;
-    PERFORM set_config(via, '', true);
+    SET LOCAL ROLE app_authenticated;
   END LOOP;
 END $$;
 
--- The schemaläggare takes the stretch away, so the teacher below starts with a
--- row that holds none of the four.
-SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
-DO $$
-DECLARE
-  t jsonb := current_setting('app.test_rls288')::jsonb;
-BEGIN
-  UPDATE "TeacherWorkRules" SET "maxConsecutiveTeachingMinutes" = NULL, "consecutiveBreakMinutes" = NULL
-   WHERE "userId" = (t ->> 'teacher')::uuid;
-  IF NOT FOUND THEN RAISE EXCEPTION 'stretch trigger: the schemaläggare could not clear the stretch'; END IF;
-END $$;
-
--- The teacher with a row that holds none, as each role: neither is set on it,
--- not both and not one half alone; and the row, once it holds none, is theirs
--- to delete, after which no fresh row carries either.
-SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000111')::text, true);
+-- WHO WRITES: those who decide, as the API's role. The rektor and the full
+-- administrator set, change and clear both by UPDATE and by the upsert, each
+-- leaving the version the history shows, and put the post back as it was.
 DO $$
 DECLARE
   t jsonb := current_setting('app.test_rls288')::jsonb;
   school uuid := (t ->> 'school')::uuid;
-  me uuid := app.current_user_id();
-  planned text := current_setting('app.test_rls288_planned');
-  via text;
-  got text;
-  c record;
-BEGIN
-  FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
-    EXECUTE format('SET LOCAL ROLE %I', via);
-    IF current_user <> via THEN RAISE EXCEPTION 'stretch trigger: running as %, not %', current_user, via; END IF;
-    -- The previous round deleted the row: the teacher writes it back as the
-    -- gateway does, naming neither, and it holds none of the four.
-    INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "updatedAt") VALUES (school, me, now())
-    ON CONFLICT ("userId") DO UPDATE SET "updatedAt" = EXCLUDED."updatedAt";
-    IF NOT EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = me AND "maxTeachingMinutesPerDay" IS NULL
-                      AND "preferredFreeDayOfWeek" IS NULL AND "maxConsecutiveTeachingMinutes" IS NULL
-                      AND "consecutiveBreakMinutes" IS NULL) THEN
-      RAISE EXCEPTION 'stretch trigger: the teacher does not start this round with a row holding none as %', via;
-    END IF;
-    FOR c IN SELECT * FROM (VALUES
-        ('setting both', 'UPDATE "TeacherWorkRules" SET "maxConsecutiveTeachingMinutes" = 60, "consecutiveBreakMinutes" = 10 WHERE "userId" = %1$L'),
-        ('setting the limit alone', 'UPDATE "TeacherWorkRules" SET "maxConsecutiveTeachingMinutes" = 60 WHERE "userId" = %1$L'),
-        ('setting the break alone', 'UPDATE "TeacherWorkRules" SET "consecutiveBreakMinutes" = 10 WHERE "userId" = %1$L'),
-        ('an upsert setting both',
-         'INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "maxConsecutiveTeachingMinutes", "consecutiveBreakMinutes", "updatedAt") VALUES (%2$L, %1$L, 60, 10, now())
-          ON CONFLICT ("userId") DO UPDATE SET "maxConsecutiveTeachingMinutes" = EXCLUDED."maxConsecutiveTeachingMinutes",
-            "consecutiveBreakMinutes" = EXCLUDED."consecutiveBreakMinutes", "updatedAt" = EXCLUDED."updatedAt"')
-      ) AS x(what, statement)
-    LOOP
-      got := pg_temp.rls288_refusal(format(c.statement, me, school));
-      IF got IS DISTINCT FROM planned THEN
-        RAISE EXCEPTION 'stretch trigger: % on a row holding none as % was answered "%"', c.what, via, got;
-      END IF;
-    END LOOP;
-
-    -- Restating the absence passes, and the lunch is the teacher's.
-    UPDATE "TeacherWorkRules"
-       SET "lunchMinutes" = 30, "lunchStartTime" = '10:30', "lunchEndTime" = '13:30',
-           "maxConsecutiveTeachingMinutes" = NULL, "consecutiveBreakMinutes" = NULL, "updatedAt" = now()
-     WHERE "userId" = me;
-    IF NOT FOUND THEN RAISE EXCEPTION 'stretch trigger: the teacher could not restate the absence of a stretch as %', via; END IF;
-
-    -- The row holding none is theirs to delete; the next one starts them with none.
-    DELETE FROM "TeacherWorkRules" WHERE "userId" = me;
-    IF NOT FOUND THEN RAISE EXCEPTION 'stretch trigger: the teacher could not delete their own row holding none as %', via; END IF;
-    FOR c IN SELECT * FROM (VALUES
-        ('an INSERT carrying both',
-         'INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "maxConsecutiveTeachingMinutes", "consecutiveBreakMinutes", "updatedAt") VALUES (%2$L, %1$L, 60, 10, now())'),
-        -- One half alone on a fresh row: the trigger is asked before the CHECK.
-        ('an INSERT carrying the limit alone',
-         'INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "maxConsecutiveTeachingMinutes", "updatedAt") VALUES (%2$L, %1$L, 60, now())'),
-        ('an INSERT carrying the break alone',
-         'INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "consecutiveBreakMinutes", "updatedAt") VALUES (%2$L, %1$L, 10, now())'),
-        ('an upsert carrying both',
-         'INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "maxConsecutiveTeachingMinutes", "consecutiveBreakMinutes", "updatedAt") VALUES (%2$L, %1$L, 60, 10, now())
-          ON CONFLICT ("userId") DO UPDATE SET "maxConsecutiveTeachingMinutes" = EXCLUDED."maxConsecutiveTeachingMinutes",
-            "consecutiveBreakMinutes" = EXCLUDED."consecutiveBreakMinutes", "updatedAt" = EXCLUDED."updatedAt"')
-      ) AS x(what, statement)
-    LOOP
-      got := pg_temp.rls288_refusal(format(c.statement, me, school));
-      IF got IS DISTINCT FROM planned THEN
-        RAISE EXCEPTION 'stretch trigger: % on a fresh row as % was answered "%"', c.what, via, got;
-      END IF;
-    END LOOP;
-    IF EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = me) THEN
-      RAISE EXCEPTION 'stretch trigger: a refused write left the teacher a row as %', via;
-    END IF;
-
-    -- The lunch and the rest on a fresh row, as the gateway writes them, with
-    -- the stretch null and null.
-    INSERT INTO "TeacherWorkRules"
-      ("schoolId", "userId", "lunchMinutes", "lunchStartTime", "lunchEndTime", "minDailyRestMinutes", "updatedAt")
-    VALUES (school, me, 30, '10:30', '13:30', 660, now())
-    ON CONFLICT ("userId") DO UPDATE SET "lunchMinutes" = EXCLUDED."lunchMinutes", "lunchStartTime" = EXCLUDED."lunchStartTime",
-      "lunchEndTime" = EXCLUDED."lunchEndTime", "minDailyRestMinutes" = EXCLUDED."minDailyRestMinutes", "updatedAt" = EXCLUDED."updatedAt";
-    IF NOT EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = me AND "lunchMinutes" = 30 AND "minDailyRestMinutes" = 660
-                      AND "maxConsecutiveTeachingMinutes" IS NULL AND "consecutiveBreakMinutes" IS NULL) THEN
-      RAISE EXCEPTION 'stretch trigger: the teacher could not write their own lunch and rest on a fresh row as %', via;
-    END IF;
-    DELETE FROM "TeacherWorkRules" WHERE "userId" = me;
-    IF NOT FOUND THEN RAISE EXCEPTION 'stretch trigger: the teacher could not delete their own row holding none as %', via; END IF;
-  END LOOP;
-  SET LOCAL ROLE app_authenticated;
-END $$;
-
--- The administrators who write planering — the schemaläggare, the full
--- administrator and the rektor — set, change and clear the stretch on the
--- teacher's row by UPDATE and by the upsert, delete a row that holds it, and
--- do the same on a row of their own.
-DO $$
-DECLARE
-  who text;
-  t jsonb := current_setting('app.test_rls288')::jsonb;
-  school uuid := (t ->> 'school')::uuid;
+  year uuid := (t ->> 'year')::uuid;
+  post111 uuid := (t ->> 'post111')::uuid;
   teacher uuid := (t ->> 'teacher')::uuid;
-  me uuid;
-BEGIN
-  FOREACH who IN ARRAY ARRAY[
-    '00000000-0000-4000-8000-000000000107',
-    '00000000-0000-4000-8000-000000000105',
-    '00000000-0000-4000-8000-000000000106'
-  ] LOOP
-    PERFORM set_config('request.jwt.claims', json_build_object('sub', who)::text, true);
-    me := app.current_user_id();
-    IF NOT app.current_user_may('PLANERING', true) THEN
-      RAISE EXCEPTION 'stretch trigger: % does not write PLANERING', who;
-    END IF;
-    -- The teacher's row, which the teacher deleted above: planted fresh, by the planner.
-    INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "maxConsecutiveTeachingMinutes", "consecutiveBreakMinutes", "updatedAt")
-    VALUES (school, teacher, 240, 15, now())
-    ON CONFLICT ("userId") DO UPDATE SET "maxConsecutiveTeachingMinutes" = EXCLUDED."maxConsecutiveTeachingMinutes",
-      "consecutiveBreakMinutes" = EXCLUDED."consecutiveBreakMinutes", "updatedAt" = EXCLUDED."updatedAt";
-    UPDATE "TeacherWorkRules" SET "maxConsecutiveTeachingMinutes" = 300 WHERE "userId" = teacher;
-    IF NOT FOUND THEN RAISE EXCEPTION 'stretch trigger: % could not raise the limit', who; END IF;
-    UPDATE "TeacherWorkRules" SET "consecutiveBreakMinutes" = 25 WHERE "userId" = teacher;
-    IF NOT FOUND THEN RAISE EXCEPTION 'stretch trigger: % could not move the break', who; END IF;
-    INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "maxConsecutiveTeachingMinutes", "consecutiveBreakMinutes", "updatedAt")
-    VALUES (school, teacher, 120, 30, now())
-    ON CONFLICT ("userId") DO UPDATE SET "maxConsecutiveTeachingMinutes" = EXCLUDED."maxConsecutiveTeachingMinutes",
-      "consecutiveBreakMinutes" = EXCLUDED."consecutiveBreakMinutes", "updatedAt" = EXCLUDED."updatedAt";
-    IF NOT EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = teacher
-                      AND "maxConsecutiveTeachingMinutes" = 120 AND "consecutiveBreakMinutes" = 30) THEN
-      RAISE EXCEPTION 'stretch trigger: the upsert of % did not leave 120 and 30', who;
-    END IF;
-    UPDATE "TeacherWorkRules" SET "maxConsecutiveTeachingMinutes" = NULL, "consecutiveBreakMinutes" = NULL WHERE "userId" = teacher;
-    IF NOT FOUND THEN RAISE EXCEPTION 'stretch trigger: % could not clear the stretch', who; END IF;
-    UPDATE "TeacherWorkRules" SET "maxConsecutiveTeachingMinutes" = 240, "consecutiveBreakMinutes" = 15 WHERE "userId" = teacher;
-    DELETE FROM "TeacherWorkRules" WHERE "userId" = teacher;
-    IF NOT FOUND THEN RAISE EXCEPTION 'stretch trigger: % could not remove the teacher''s row holding the stretch', who; END IF;
-
-    -- A planner who teaches: their own row is theirs to plan.
-    INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "maxConsecutiveTeachingMinutes", "consecutiveBreakMinutes", "updatedAt")
-    VALUES (school, me, 240, 15, now());
-    UPDATE "TeacherWorkRules" SET "maxConsecutiveTeachingMinutes" = 180, "consecutiveBreakMinutes" = 10 WHERE "userId" = me;
-    IF NOT FOUND THEN RAISE EXCEPTION 'stretch trigger: % could not change their own stretch', who; END IF;
-    UPDATE "TeacherWorkRules" SET "maxConsecutiveTeachingMinutes" = NULL, "consecutiveBreakMinutes" = NULL WHERE "userId" = me;
-    IF NOT FOUND THEN RAISE EXCEPTION 'stretch trigger: % could not clear their own stretch', who; END IF;
-    UPDATE "TeacherWorkRules" SET "maxConsecutiveTeachingMinutes" = 90, "consecutiveBreakMinutes" = 5 WHERE "userId" = me;
-    DELETE FROM "TeacherWorkRules" WHERE "userId" = me;
-    IF NOT FOUND THEN RAISE EXCEPTION 'stretch trigger: % could not remove their own row holding a stretch', who; END IF;
-  END LOOP;
-END $$;
-
--- The expedition (PERSONAL, not PLANERING) and the läsare: refused by the
--- row's arm, never by the trigger, which finds the row none of theirs and
--- lets the write on. The row is the planner's, planted now.
-SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
-DO $$
-DECLARE
-  t jsonb := current_setting('app.test_rls288')::jsonb;
-BEGIN
-  INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "maxConsecutiveTeachingMinutes", "consecutiveBreakMinutes", "updatedAt")
-  VALUES ((t ->> 'school')::uuid, (t ->> 'teacher')::uuid, 240, 15, now());
-END $$;
-DO $$
-DECLARE
   who text;
-  t jsonb := current_setting('app.test_rls288')::jsonb;
-  school uuid := (t ->> 'school')::uuid;
-  teacher uuid := (t ->> 'teacher')::uuid;
+  versions bigint;
   got text;
-  c record;
 BEGIN
-  FOREACH who IN ARRAY ARRAY['00000000-0000-4000-8000-000000000108', '00000000-0000-4000-8000-000000000115'] LOOP
+  FOREACH who IN ARRAY ARRAY['00000000-0000-4000-8000-000000000105', '00000000-0000-4000-8000-000000000106'] LOOP
     PERFORM set_config('request.jwt.claims', json_build_object('sub', who)::text, true);
-    IF app.current_user_may('PLANERING', true) THEN
-      RAISE EXCEPTION 'stretch trigger: % writes PLANERING', who;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = teacher
-                      AND "maxConsecutiveTeachingMinutes" = 240 AND "consecutiveBreakMinutes" = 15) THEN
-      RAISE EXCEPTION 'stretch trigger: % does not read the stretch', who;
-    END IF;
-    FOR c IN SELECT * FROM (VALUES
-        ('raising the limit', 'UPDATE "TeacherWorkRules" SET "maxConsecutiveTeachingMinutes" = 300 WHERE "userId" = %1$L'),
-        ('clearing both', 'UPDATE "TeacherWorkRules" SET "maxConsecutiveTeachingMinutes" = NULL, "consecutiveBreakMinutes" = NULL WHERE "userId" = %1$L'),
-        ('an upsert moving the break',
-         'INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "maxConsecutiveTeachingMinutes", "consecutiveBreakMinutes", "updatedAt") VALUES (%2$L, %1$L, 240, 20, now())
-          ON CONFLICT ("userId") DO UPDATE SET "maxConsecutiveTeachingMinutes" = EXCLUDED."maxConsecutiveTeachingMinutes",
-            "consecutiveBreakMinutes" = EXCLUDED."consecutiveBreakMinutes", "updatedAt" = EXCLUDED."updatedAt"')
-      ) AS x(what, statement)
-    LOOP
-      got := pg_temp.rls288_refusal(format(c.statement, teacher, school));
-      IF split_part(got, '|', 1) <> '42501' OR got NOT LIKE '%row-level security%' THEN
-        RAISE EXCEPTION 'stretch trigger: % by % was answered "%", not by row security', c.what, who, got;
-      END IF;
-    END LOOP;
-    -- A delete reaches no row: the delete arm's USING asks PLANERING, so the
-    -- row is not one they can delete and the trigger is never fired.
-    DELETE FROM "TeacherWorkRules" WHERE "userId" = teacher;
-    IF FOUND THEN RAISE EXCEPTION 'stretch trigger: % deleted a row holding a stretch', who; END IF;
-  END LOOP;
-END $$;
-SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
-DO $$
-DECLARE
-  t jsonb := current_setting('app.test_rls288')::jsonb;
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = (t ->> 'teacher')::uuid
-                    AND "maxConsecutiveTeachingMinutes" = 240 AND "consecutiveBreakMinutes" = 15) THEN
-    RAISE EXCEPTION 'stretch trigger: a profile without PLANERING moved the stretch after all';
-  END IF;
-END $$;
+    SET LOCAL ROLE app_authenticated;
+    IF NOT app.current_user_decides() THEN RAISE EXCEPTION 'stretch post: % does not decide', who; END IF;
+    SELECT count(*) INTO versions FROM "TeacherEmploymentLogs" WHERE "entityId" = post111;
 
--- AN ADMINISTRATOR WHO READS PLANERING AND ALSO TEACHES. The expedition (108)
--- and the läsare (115) read every area (app.current_user_may asks the area's
--- WRITE only when told to), have a work rule of their own, and are
--- SCHOOL_ADMINs, so the row's arm admits them on their own row. What stops
--- them from setting the cap, the wish or the limit is the trigger's question
--- "may this person WRITE planering", which has to be asked as a write: asked as
--- a read it answers yes for both and the trigger lets everything through, to be
--- refused only afterwards by the area's write check on the new row (42501).
--- So the sentence the trigger raises (AR403) is what proves it was asked, and
--- it covers the cap and the wish as it covers the stretch, one function for all
--- four columns since 20261123090000.
-SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
-DO $$
-DECLARE
-  t jsonb := current_setting('app.test_rls288')::jsonb;
-  who text;
-BEGIN
-  FOREACH who IN ARRAY ARRAY['00000000-0000-4000-8000-000000000108', '00000000-0000-4000-8000-000000000115'] LOOP
-    INSERT INTO "TeacherWorkRules"
-      ("schoolId", "userId", "maxTeachingMinutesPerDay", "preferredFreeDayOfWeek",
-       "maxConsecutiveTeachingMinutes", "consecutiveBreakMinutes", "updatedAt")
-    VALUES ((t ->> 'school')::uuid,
-            (SELECT id FROM "Users" WHERE "authId" = who::uuid AND "schoolId" = (t ->> 'school')::uuid),
-            300, 5, 240, 15, now());
-  END LOOP;
-END $$;
-DO $$
-DECLARE
-  who text;
-  t jsonb := current_setting('app.test_rls288')::jsonb;
-  school uuid := (t ->> 'school')::uuid;
-  me uuid;
-  planned text := current_setting('app.test_rls288_planned');
-  got text;
-  c record;
-BEGIN
-  FOREACH who IN ARRAY ARRAY['00000000-0000-4000-8000-000000000108', '00000000-0000-4000-8000-000000000115'] LOOP
-    PERFORM set_config('request.jwt.claims', json_build_object('sub', who)::text, true);
-    me := app.current_user_id();
-    IF app.current_user_may('PLANERING', true) OR NOT app.current_user_may('PLANERING', false) THEN
-      RAISE EXCEPTION 'stretch trigger: % should read PLANERING and not write it', who;
+    got := pg_temp.rls288_try(format(
+      'UPDATE "TeacherEmployments" SET "maxConsecutiveTeachingMinutes" = 300, "consecutiveBreakMinutes" = 20 WHERE id = %L', post111));
+    IF got <> 'rows=1' OR NOT EXISTS (SELECT 1 FROM "TeacherEmployments" WHERE id = post111
+                                         AND "maxConsecutiveTeachingMinutes" = 300 AND "consecutiveBreakMinutes" = 20) THEN
+      RAISE EXCEPTION 'stretch post: % could not move the limit: %', who, got;
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = me
-                      AND "maxTeachingMinutesPerDay" = 300 AND "preferredFreeDayOfWeek" = 5
-                      AND "maxConsecutiveTeachingMinutes" = 240 AND "consecutiveBreakMinutes" = 15) THEN
-      RAISE EXCEPTION 'stretch trigger: % does not read the row planted for them', who;
+    got := pg_temp.rls288_try(format(
+      'UPDATE "TeacherEmployments" SET "maxConsecutiveTeachingMinutes" = NULL, "consecutiveBreakMinutes" = NULL WHERE id = %L', post111));
+    IF got <> 'rows=1' OR NOT EXISTS (SELECT 1 FROM "TeacherEmployments" WHERE id = post111
+                                         AND "maxConsecutiveTeachingMinutes" IS NULL AND "consecutiveBreakMinutes" IS NULL) THEN
+      RAISE EXCEPTION 'stretch post: % could not clear the limit: %', who, got;
     END IF;
-    FOR c IN SELECT * FROM (VALUES
-        ('raising the cap', 'UPDATE "TeacherWorkRules" SET "maxTeachingMinutesPerDay" = 400 WHERE "userId" = %1$L'),
-        ('moving the wish', 'UPDATE "TeacherWorkRules" SET "preferredFreeDayOfWeek" = 3 WHERE "userId" = %1$L'),
-        ('raising the limit', 'UPDATE "TeacherWorkRules" SET "maxConsecutiveTeachingMinutes" = 300 WHERE "userId" = %1$L'),
-        ('moving the break', 'UPDATE "TeacherWorkRules" SET "consecutiveBreakMinutes" = 20 WHERE "userId" = %1$L'),
-        ('clearing all four',
-         'UPDATE "TeacherWorkRules" SET "maxTeachingMinutesPerDay" = NULL, "preferredFreeDayOfWeek" = NULL,
-            "maxConsecutiveTeachingMinutes" = NULL, "consecutiveBreakMinutes" = NULL WHERE "userId" = %1$L')
-      ) AS x(what, statement)
-    LOOP
-      got := pg_temp.rls288_refusal(format(c.statement, me, school));
-      IF got IS DISTINCT FROM planned THEN
-        RAISE EXCEPTION 'stretch trigger: % by % on their own row was answered "%", not by the planner''s sentence', c.what, who, got;
-      END IF;
-    END LOOP;
-    -- The upsert's INSERT is checked against the area's write before the
-    -- conflict is looked at, so it never reaches the trigger as an update.
-    got := pg_temp.rls288_refusal(format(
-      'INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "maxTeachingMinutesPerDay", "maxConsecutiveTeachingMinutes", "consecutiveBreakMinutes", "updatedAt")
-       VALUES (%2$L, %1$L, 400, 300, 15, now())
-       ON CONFLICT ("userId") DO UPDATE SET "maxTeachingMinutesPerDay" = EXCLUDED."maxTeachingMinutesPerDay",
+    got := pg_temp.rls288_try(format(
+      'INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "maxConsecutiveTeachingMinutes", "consecutiveBreakMinutes", "updatedAt")
+       VALUES (%L, %L, %L, 80, 150, 10, now())
+       ON CONFLICT ("schoolId", "userId", "academicYearId") DO UPDATE SET
          "maxConsecutiveTeachingMinutes" = EXCLUDED."maxConsecutiveTeachingMinutes",
-         "consecutiveBreakMinutes" = EXCLUDED."consecutiveBreakMinutes", "updatedAt" = EXCLUDED."updatedAt"', me, school));
-    IF split_part(got, '|', 1) <> '42501' OR got NOT LIKE '%row-level security%' THEN
-      RAISE EXCEPTION 'stretch trigger: an upsert by % on their own row was answered "%", not by row security', who, got;
+         "consecutiveBreakMinutes" = EXCLUDED."consecutiveBreakMinutes", "updatedAt" = EXCLUDED."updatedAt"', school, teacher, year));
+    IF got <> 'rows=1' OR NOT EXISTS (SELECT 1 FROM "TeacherEmployments" WHERE id = post111
+                                         AND "maxConsecutiveTeachingMinutes" = 150 AND "consecutiveBreakMinutes" = 10) THEN
+      RAISE EXCEPTION 'stretch post: the upsert of % did not leave 150 and 10: %', who, got;
     END IF;
-    -- The row is reached by no delete: the delete arm asks PLANERING's write.
-    DELETE FROM "TeacherWorkRules" WHERE "userId" = me;
-    IF FOUND THEN RAISE EXCEPTION 'stretch trigger: % deleted their own row holding the cap, the wish and the stretch', who; END IF;
+    -- Three writes, three versions: each carries the limit as it stood.
+    IF (SELECT count(*) FROM "TeacherEmploymentLogs" WHERE "entityId" = post111) <> versions + 3
+       OR (SELECT (after ->> 'maxConsecutiveTeachingMinutes')::int FROM "TeacherEmploymentLogs"
+            WHERE "entityId" = post111 ORDER BY version DESC LIMIT 1) IS DISTINCT FROM 150
+       OR (SELECT after -> 'maxConsecutiveTeachingMinutes' FROM "TeacherEmploymentLogs"
+            WHERE "entityId" = post111 ORDER BY version DESC OFFSET 1 LIMIT 1) IS DISTINCT FROM 'null'::jsonb THEN
+      RAISE EXCEPTION 'stretch post: the three writes of % did not leave three versions carrying the limit as it stood', who;
+    END IF;
+    UPDATE "TeacherEmployments" SET "maxConsecutiveTeachingMinutes" = 180, "consecutiveBreakMinutes" = 30 WHERE id = post111;
   END LOOP;
 END $$;
-SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+
+-- Nothing the refused wrote is there: the three posts and the schemaläggare's
+-- missing one are as they were planted.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
 DO $$
 DECLARE
   t jsonb := current_setting('app.test_rls288')::jsonb;
 BEGIN
-  IF (SELECT count(*) FROM "TeacherWorkRules" r JOIN "Users" u ON u.id = r."userId"
-       WHERE u."authId" IN ('00000000-0000-4000-8000-000000000108', '00000000-0000-4000-8000-000000000115')
-         AND u."schoolId" = (t ->> 'school')::uuid
-         AND r."maxTeachingMinutesPerDay" = 300 AND r."preferredFreeDayOfWeek" = 5
-         AND r."maxConsecutiveTeachingMinutes" = 240 AND r."consecutiveBreakMinutes" = 15) <> 2 THEN
-    RAISE EXCEPTION 'stretch trigger: an administrator who only reads planering moved their own cap, wish or stretch after all';
+  IF (SELECT "maxConsecutiveTeachingMinutes" || '/' || "consecutiveBreakMinutes" FROM "TeacherEmployments" WHERE id = (t ->> 'post111')::uuid) IS DISTINCT FROM '180/30'
+     OR (SELECT "maxConsecutiveTeachingMinutes" || '/' || "consecutiveBreakMinutes" FROM "TeacherEmployments" WHERE id = (t ->> 'postc')::uuid) IS DISTINCT FROM '240/15'
+     OR (SELECT "maxConsecutiveTeachingMinutes" IS NOT NULL OR "consecutiveBreakMinutes" IS NOT NULL FROM "TeacherEmployments" WHERE id = (t ->> 'posta')::uuid) THEN
+    RAISE EXCEPTION 'stretch post: a write that was refused moved a limit after all';
   END IF;
+  IF EXISTS (SELECT 1 FROM "TeacherEmployments" WHERE "userId" = (t ->> 'planner')::uuid) THEN
+    RAISE EXCEPTION 'stretch post: a refused fresh post is there after all';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM "TeacherEmployments" WHERE id = (t ->> 'post111')::uuid) THEN
+    RAISE EXCEPTION 'stretch post: a refused DELETE took the teacher''s post';
+  END IF;
+END $$;
+
+-- The deciders delete a post that holds a limit, and the history keeps the
+-- version that says what it held, for the colleague's own arm to show them;
+-- what the deletion left is read by the colleague both ways and by no
+-- administrator directly. The rektor deletes the colleague's and the full
+-- administrator's own posts; PostgREST's role, as the rektor, deletes none.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000106')::text, true);
+DO $$
+DECLARE
+  t jsonb := current_setting('app.test_rls288')::jsonb;
+  got text;
+BEGIN
+  SET LOCAL ROLE authenticated;
+  got := pg_temp.rls288_try(format('DELETE FROM "TeacherEmployments" WHERE id = %L', t ->> 'postc'));
+  IF got <> 'rows=0' THEN RAISE EXCEPTION 'stretch post: the rektor deleted a post as authenticated: %', got; END IF;
+  SET LOCAL ROLE app_authenticated;
+  got := pg_temp.rls288_try(format('DELETE FROM "TeacherEmployments" WHERE id = %L', t ->> 'postc'));
+  IF got <> 'rows=1' THEN RAISE EXCEPTION 'stretch post: the rektor could not delete a post holding a limit: %', got; END IF;
+  got := pg_temp.rls288_try(format('DELETE FROM "TeacherEmployments" WHERE id = %L', t ->> 'posta'));
+  IF got <> 'rows=1' THEN RAISE EXCEPTION 'stretch post: the rektor could not delete a post holding none: %', got; END IF;
+  IF (SELECT (before ->> 'maxConsecutiveTeachingMinutes')::int FROM "TeacherEmploymentLogs"
+       WHERE "entityId" = (t ->> 'postc')::uuid AND action = 'DELETE') IS DISTINCT FROM 240 THEN
+    RAISE EXCEPTION 'stretch post: the deletion of a post holding a limit did not log the limit it held';
+  END IF;
+END $$;
+DO $$
+DECLARE
+  t jsonb := current_setting('app.test_rls288')::jsonb;
+  who text;
+  via text;
+BEGIN
+  -- The colleague, whose post is gone, reads their own versions through both
+  -- roles, the deletion among them; the teacher reads none of them.
+  FOREACH who IN ARRAY ARRAY['00000000-0000-4000-8000-000000000288', '00000000-0000-4000-8000-000000000111'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', who)::text, true);
+    FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+      EXECUTE format('SET LOCAL ROLE %I', via);
+      IF EXISTS (SELECT 1 FROM "TeacherEmployments" WHERE id = (t ->> 'postc')::uuid) THEN
+        RAISE EXCEPTION 'stretch post: as % somebody reads the colleague''s deleted post', via;
+      END IF;
+      IF (SELECT count(*) FROM "TeacherEmploymentLogs" WHERE "entityId" = (t ->> 'postc')::uuid AND action = 'DELETE')
+         IS DISTINCT FROM (CASE WHEN who LIKE '%288' THEN 1 ELSE 0 END) THEN
+        RAISE EXCEPTION 'stretch post: as % %''s read of the colleague''s deletion is wrong', via, who;
+      END IF;
+    END LOOP;
+    SET LOCAL ROLE app_authenticated;
+  END LOOP;
+END $$;
+
+-- The service principal and the sync. The service principal's arm on the post
+-- is the API role's, so it reads the school's posts through app_authenticated
+-- (the provider that uses it names the columns it needs) and none through
+-- authenticated; it reads no version of one, and writes nothing either way.
+-- The sync has no arm on the post: it reads none.
+DO $$
+DECLARE
+  t jsonb := current_setting('app.test_rls288')::jsonb;
+  school uuid := (t ->> 'school')::uuid;
+  via text;
+  setting text;
+  n bigint;
+  others bigint;
+  got text;
+BEGIN
+  PERFORM set_config('request.jwt.claims', '', true);
+  FOREACH setting IN ARRAY ARRAY['app.service_school_id', 'app.sync_school_id'] LOOP
+    PERFORM set_config(setting, school::text, true);
+    FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+      EXECUTE format('SET LOCAL ROLE %I', via);
+      SELECT count(*), count(*) FILTER (WHERE "schoolId" <> school) INTO n, others FROM "TeacherEmployments";
+      IF others <> 0 THEN RAISE EXCEPTION 'stretch post: % as % reads another school''s post', setting, via; END IF;
+      IF n > 0 AND NOT (setting = 'app.service_school_id' AND via = 'app_authenticated') THEN
+        RAISE EXCEPTION 'stretch post: % as % reads % posts', setting, via, n;
+      END IF;
+      IF n = 0 AND setting = 'app.service_school_id' AND via = 'app_authenticated' THEN
+        RAISE EXCEPTION 'stretch post: the service principal reads no post as app_authenticated';
+      END IF;
+      IF EXISTS (SELECT 1 FROM "TeacherEmploymentLogs") THEN
+        RAISE EXCEPTION 'stretch post: % as % reads a version of a post', setting, via;
+      END IF;
+      got := pg_temp.rls288_try('UPDATE "TeacherEmployments" SET "maxConsecutiveTeachingMinutes" = 300, "consecutiveBreakMinutes" = 20');
+      IF got <> 'rows=0' THEN RAISE EXCEPTION 'stretch post: % as % wrote a limit: %', setting, via, got; END IF;
+      got := pg_temp.rls288_try('DELETE FROM "TeacherEmployments"');
+      IF got <> 'rows=0' THEN RAISE EXCEPTION 'stretch post: % as % deleted a post: %', setting, via, got; END IF;
+      got := pg_temp.rls288_try(format(
+        'INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt") VALUES (%L, %L, %L, 100, now())',
+        school, t ->> 'planner', t ->> 'year'));
+      IF NOT pg_temp.rls288_is_rls(got) THEN RAISE EXCEPTION 'stretch post: % as % wrote a post: %', setting, via, got; END IF;
+    END LOOP;
+    SET LOCAL ROLE app_authenticated;
+    PERFORM set_config(setting, '', true);
+  END LOOP;
 END $$;
 ROLLBACK;
 
@@ -35858,22 +35986,32 @@ ROLLBACK;
 --     UPDATE reaches no row of it; each of these as the API's role and as
 --     PostgREST's;
 --   * a pupil and a guardian read no row at all, and anon holds no privilege
---     on the column, the row or the work rule's two new columns;
+--     on the column, the row or the post's two new columns;
 --   * no GRANT moved: the API's role holds SELECT, INSERT, UPDATE and DELETE
 --     on both tables as before, nobody holds TRUNCATE, REFERENCES or TRIGGER,
 --     and on Postgres 17 nobody holds MAINTAIN (20261016120000).
 --
 -- Beside the API that serves while the migration goes in (docs/DEPLOYMENT.md):
--- the statements it sends name only the columns it knew. Run here as the
--- migration's author's reading of them, each leaves the new columns as they
--- were, on a row that holds them and on a row written fresh:
---   * its PUT of a work rule — the upsert naming the cap, the wish, the lunch
---     and the rest, for a schemaläggare, and naming the lunch and the rest
---     alone, for the teacher — leaves a stretch the trigger would otherwise
---     have judged, and the teacher's is not refused;
+-- the statements it sends name only the columns it knew. They were read off
+-- origin/main when the migration was written (src/staffing/
+-- teacher-employments.service.ts employmentData, src/import/import.service.ts,
+-- src/year-rollover/rollover-apply.ts, src/resources/lunch-settings.service.ts) and are
+-- run here as the full administrator, who decides, against a post that holds a
+-- limit. Each leaves the new columns as they were, on a row that holds them and
+-- on a row written fresh:
+--   * its PUT of a post — the upsert naming the percentages, the contract, the
+--     target, the signature and the note, and the days when the body carries
+--     them — leaves the limit, and a post it writes fresh carries null and
+--     null, which the pair CHECK admits;
+--   * the import's UPDATE of a post names its own columns and leaves the limit;
+--   * its rollover, one createMany of the next year's posts without the two
+--     columns, writes null and null: the old API carries no limit into a new
+--     year, which is why nothing but the API after this ever sets one;
+--   * its DELETE of a post takes the row with the limit it held;
 --   * its upsert of the Skolregler, naming the old columns and not the switch,
 --     leaves the switch as it was, on or off, and a fresh row it writes reads
 --     off.
+-- The work rule is not one of them: nothing of this feature sits on it.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -35893,7 +36031,7 @@ BEGIN
   -- No GRANT moved. The API's role writes both tables as it did; nobody
   -- holds what no API role was given (section 36 holds the rest of the
   -- tables to the same); MAINTAIN is counted where the version has it.
-  FOREACH tbl IN ARRAY ARRAY['"TeacherWorkRules"', '"LunchSettings"'] LOOP
+  FOREACH tbl IN ARRAY ARRAY['"TeacherEmployments"', '"LunchSettings"'] LOOP
     FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE'] LOOP
       IF NOT has_table_privilege('app_authenticated', tbl, priv) THEN
         RAISE EXCEPTION 'stretch switch: app_authenticated lost % on %', priv, tbl;
@@ -35916,16 +36054,16 @@ BEGIN
   -- anon reads and writes neither table nor any of the three new columns.
   FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE'] LOOP
     IF has_column_privilege('anon', '"LunchSettings"', 'generatorKeepsConsecutiveTeaching', priv)
-       OR has_column_privilege('anon', '"TeacherWorkRules"', 'maxConsecutiveTeachingMinutes', priv)
-       OR has_column_privilege('anon', '"TeacherWorkRules"', 'consecutiveBreakMinutes', priv)
+       OR has_column_privilege('anon', '"TeacherEmployments"', 'maxConsecutiveTeachingMinutes', priv)
+       OR has_column_privilege('anon', '"TeacherEmployments"', 'consecutiveBreakMinutes', priv)
        OR has_table_privilege('anon', '"LunchSettings"', priv)
-       OR has_table_privilege('anon', '"TeacherWorkRules"', priv) THEN
-      RAISE EXCEPTION 'stretch switch: anon holds % on the Skolregler or the work rule', priv;
+       OR has_table_privilege('anon', '"TeacherEmployments"', priv) THEN
+      RAISE EXCEPTION 'stretch switch: anon holds % on the Skolregler or the post', priv;
     END IF;
   END LOOP;
   IF has_any_column_privilege('anon', '"LunchSettings"', 'SELECT')
-     OR has_any_column_privilege('anon', '"TeacherWorkRules"', 'SELECT') THEN
-    RAISE EXCEPTION 'stretch switch: anon reads a column of the Skolregler or the work rule';
+     OR has_any_column_privilege('anon', '"TeacherEmployments"', 'SELECT') THEN
+    RAISE EXCEPTION 'stretch switch: anon reads a column of the Skolregler or the post';
   END IF;
 
   IF (SELECT "generatorKeepsConsecutiveTeaching" FROM "LunchSettings" WHERE "schoolId" = school) IS DISTINCT FROM false THEN
@@ -36027,50 +36165,76 @@ BEGIN
 END $$;
 
 -- Beside the API from before: its statements name the old columns only. The
--- schemaläggare plans a teacher's stretch, and the Skolregler hold the
--- switch on, through the new column's own statements; then the old API's go.
+-- full administrator, who decides, gives the teacher's post a limit through
+-- the new columns' own statements and the Skolregler hold the switch on; then
+-- the old API's go.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
 DO $$
 DECLARE
   school uuid := current_setting('app.test_rls289_school')::uuid;
   teacher uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000111');
-  planner uuid := app.current_user_id();
+  decider uuid := app.current_user_id();
+  post uuid;
+  year uuid;
+  carried record;
 BEGIN
-  UPDATE "TeacherWorkRules"
-     SET "maxConsecutiveTeachingMinutes" = 240, "consecutiveBreakMinutes" = 15
-   WHERE "userId" = teacher;
-  IF NOT FOUND THEN RAISE EXCEPTION 'stretch switch: no work rule of the teacher to plan'; END IF;
+  SELECT id, "academicYearId" INTO post, year FROM "TeacherEmployments" WHERE "userId" = teacher;
+  IF post IS NULL THEN RAISE EXCEPTION 'stretch switch: no post of the teacher to plan'; END IF;
+  UPDATE "TeacherEmployments" SET "maxConsecutiveTeachingMinutes" = 240, "consecutiveBreakMinutes" = 15 WHERE id = post;
+  IF NOT FOUND THEN RAISE EXCEPTION 'stretch switch: the full administrator could not give the post a limit'; END IF;
 
-  -- Its PUT of a work rule for a schemaläggare: the upsert naming the cap,
-  -- the wish, the lunch and the rest — and not the stretch.
-  INSERT INTO "TeacherWorkRules"
-    ("schoolId", "userId", "lunchMinutes", "lunchStartTime", "lunchEndTime", "minDailyRestMinutes",
-     "maxTeachingMinutesPerDay", "preferredFreeDayOfWeek", "updatedAt")
-  VALUES (school, teacher, 30, '10:30', '13:30', 660, 360, 2, now())
-  ON CONFLICT ("userId") DO UPDATE SET "lunchMinutes" = EXCLUDED."lunchMinutes", "lunchStartTime" = EXCLUDED."lunchStartTime",
-    "lunchEndTime" = EXCLUDED."lunchEndTime", "minDailyRestMinutes" = EXCLUDED."minDailyRestMinutes",
-    "maxTeachingMinutesPerDay" = EXCLUDED."maxTeachingMinutesPerDay",
-    "preferredFreeDayOfWeek" = EXCLUDED."preferredFreeDayOfWeek", "updatedAt" = EXCLUDED."updatedAt";
-  IF NOT EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = teacher AND "maxTeachingMinutesPerDay" = 360
-                    AND "preferredFreeDayOfWeek" = 2 AND "minDailyRestMinutes" = 660
+  -- Its PUT of a post (employmentData): the upsert naming the percentages, the
+  -- contract, the target, the signature and the note — and not the limit.
+  INSERT INTO "TeacherEmployments"
+    ("schoolId", "userId", "academicYearId", "employmentPercent", "reductionPercent", "contractKind",
+     "teachingTargetMinutesPerWeek", "signature", "note", "updatedAt")
+  VALUES (school, teacher, year, 70, 0, 'FERIE', 900, 'RL', 'old api', now())
+  ON CONFLICT ("schoolId", "userId", "academicYearId") DO UPDATE SET
+    "employmentPercent" = EXCLUDED."employmentPercent", "reductionPercent" = EXCLUDED."reductionPercent",
+    "contractKind" = EXCLUDED."contractKind", "teachingTargetMinutesPerWeek" = EXCLUDED."teachingTargetMinutesPerWeek",
+    "signature" = EXCLUDED."signature", "note" = EXCLUDED."note", "updatedAt" = EXCLUDED."updatedAt";
+  IF NOT EXISTS (SELECT 1 FROM "TeacherEmployments" WHERE id = post AND "employmentPercent" = 70 AND "teachingTargetMinutesPerWeek" = 900
                     AND "maxConsecutiveTeachingMinutes" = 240 AND "consecutiveBreakMinutes" = 15) THEN
-    RAISE EXCEPTION 'stretch switch: the old API''s upsert for a schemaläggare did not leave the stretch as it was: %',
-      (SELECT row_to_json(w) FROM "TeacherWorkRules" w WHERE "userId" = teacher);
+    RAISE EXCEPTION 'stretch switch: the old API''s PUT of a post did not leave the limit as it was: %',
+      (SELECT row_to_json(e) FROM "TeacherEmployments" e WHERE id = post);
   END IF;
-  -- And its UPDATE of the same columns.
-  UPDATE "TeacherWorkRules" SET "maxTeachingMinutesPerDay" = NULL, "preferredFreeDayOfWeek" = NULL, "updatedAt" = now()
-   WHERE "userId" = teacher;
-  IF NOT EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = teacher
+  -- … and with the days, which a body of that API carries when the form sets them.
+  INSERT INTO "TeacherEmployments"
+    ("schoolId", "userId", "academicYearId", "employmentPercent", "reductionPercent", "contractKind",
+     "teachingTargetMinutesPerWeek", "signature", "note", "maxTeachingDaysPerWeek", "updatedAt")
+  VALUES (school, teacher, year, 80, 10, 'FERIE', NULL, 'RL', NULL, 4, now())
+  ON CONFLICT ("schoolId", "userId", "academicYearId") DO UPDATE SET
+    "employmentPercent" = EXCLUDED."employmentPercent", "reductionPercent" = EXCLUDED."reductionPercent",
+    "contractKind" = EXCLUDED."contractKind", "teachingTargetMinutesPerWeek" = EXCLUDED."teachingTargetMinutesPerWeek",
+    "signature" = EXCLUDED."signature", "note" = EXCLUDED."note",
+    "maxTeachingDaysPerWeek" = EXCLUDED."maxTeachingDaysPerWeek", "updatedAt" = EXCLUDED."updatedAt";
+  IF NOT EXISTS (SELECT 1 FROM "TeacherEmployments" WHERE id = post AND "maxTeachingDaysPerWeek" = 4
                     AND "maxConsecutiveTeachingMinutes" = 240 AND "consecutiveBreakMinutes" = 15) THEN
-    RAISE EXCEPTION 'stretch switch: the old API''s UPDATE of the cap and the wish moved the stretch';
+    RAISE EXCEPTION 'stretch switch: the old API''s PUT of a post with its days did not leave the limit as it was';
   END IF;
-  -- A fresh row it writes carries null and null.
-  INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "maxTeachingMinutesPerDay", "preferredFreeDayOfWeek", "updatedAt")
-  VALUES (school, planner, 300, 5, now());
-  IF NOT EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = planner
-                    AND "maxConsecutiveTeachingMinutes" IS NULL AND "consecutiveBreakMinutes" IS NULL) THEN
-    RAISE EXCEPTION 'stretch switch: a row the old API writes fresh does not carry null and null';
+  -- The import's UPDATE of a post.
+  UPDATE "TeacherEmployments" SET "employmentPercent" = 60, "reductionPercent" = 0, "signature" = 'RL', "updatedAt" = now()
+   WHERE "schoolId" = school AND "userId" = teacher AND "academicYearId" = year;
+  IF NOT EXISTS (SELECT 1 FROM "TeacherEmployments" WHERE id = post AND "employmentPercent" = 60
+                    AND "maxConsecutiveTeachingMinutes" = 240 AND "consecutiveBreakMinutes" = 15) THEN
+    RAISE EXCEPTION 'stretch switch: the old API''s import of a post moved the limit';
   END IF;
-  DELETE FROM "TeacherWorkRules" WHERE "userId" = planner;
+  -- A post it writes fresh, and the rollover's createMany, carry null and null.
+  INSERT INTO "TeacherEmployments"
+    ("schoolId", "userId", "academicYearId", "employmentPercent", "reductionPercent", "contractKind",
+     "teachingTargetMinutesPerWeek", "signature", "note", "updatedAt")
+  VALUES (school, decider, year, 100, 0, 'FERIE', NULL, NULL, NULL, now());
+  SELECT "maxConsecutiveTeachingMinutes" AS m, "consecutiveBreakMinutes" AS b INTO carried
+    FROM "TeacherEmployments" WHERE "userId" = decider AND "academicYearId" = year;
+  IF carried.m IS NOT NULL OR carried.b IS NOT NULL THEN
+    RAISE EXCEPTION 'stretch switch: a post the old API writes fresh does not carry null and null';
+  END IF;
+  -- Its DELETE takes the row with the limit it held; the history says so.
+  UPDATE "TeacherEmployments" SET "maxConsecutiveTeachingMinutes" = 120, "consecutiveBreakMinutes" = 10 WHERE "userId" = decider;
+  DELETE FROM "TeacherEmployments" WHERE "schoolId" = school AND "userId" = decider AND "academicYearId" = year;
+  IF NOT FOUND OR EXISTS (SELECT 1 FROM "TeacherEmployments" WHERE "userId" = decider) THEN
+    RAISE EXCEPTION 'stretch switch: the old API''s DELETE of a post holding a limit did not take it';
+  END IF;
 
   -- Its upsert of the Skolregler: the old columns, not the switch. On leaves on.
   INSERT INTO "LunchSettings"
@@ -36101,33 +36265,5 @@ BEGIN
   IF (SELECT "generatorKeepsConsecutiveTeaching" FROM "LunchSettings" WHERE "schoolId" = school) IS DISTINCT FROM false THEN
     RAISE EXCEPTION 'stretch switch: a Skolregler row the old API writes fresh does not read off';
   END IF;
-END $$;
-
--- The teacher, whose old API sends the lunch and the rest alone, as each role:
--- a stretch on the row is left as it is, and the save is not refused.
-SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000111')::text, true);
-DO $$
-DECLARE
-  school uuid := current_setting('app.test_rls289_school')::uuid;
-  me uuid := app.current_user_id();
-  via text;
-BEGIN
-  FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
-    EXECUTE format('SET LOCAL ROLE %I', via);
-    IF current_user <> via THEN RAISE EXCEPTION 'stretch switch: running as %, not %', current_user, via; END IF;
-    INSERT INTO "TeacherWorkRules"
-      ("schoolId", "userId", "lunchMinutes", "lunchStartTime", "lunchEndTime", "minDailyRestMinutes", "updatedAt")
-    VALUES (school, me, 45, '11:00', '13:00', 600, now())
-    ON CONFLICT ("userId") DO UPDATE SET "lunchMinutes" = EXCLUDED."lunchMinutes", "lunchStartTime" = EXCLUDED."lunchStartTime",
-      "lunchEndTime" = EXCLUDED."lunchEndTime", "minDailyRestMinutes" = EXCLUDED."minDailyRestMinutes", "updatedAt" = EXCLUDED."updatedAt";
-    IF NOT EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = me AND "lunchMinutes" = 45 AND "minDailyRestMinutes" = 600
-                      AND "maxConsecutiveTeachingMinutes" = 240 AND "consecutiveBreakMinutes" = 15) THEN
-      RAISE EXCEPTION 'stretch switch: the old API''s save of the teacher''s lunch and rest did not leave the stretch as it was, as %: %',
-        via, (SELECT row_to_json(w) FROM "TeacherWorkRules" w WHERE "userId" = me);
-    END IF;
-    UPDATE "TeacherWorkRules" SET "lunchMinutes" = 30, "updatedAt" = now() WHERE "userId" = me;
-    IF NOT FOUND THEN RAISE EXCEPTION 'stretch switch: the old API''s UPDATE of the lunch reached no row as %', via; END IF;
-  END LOOP;
-  SET LOCAL ROLE app_authenticated;
 END $$;
 ROLLBACK;
