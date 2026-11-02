@@ -104,8 +104,9 @@ describe("StaffingCarryDialog", () => {
       "Mentor 8A — Bo Alm",
     );
     expect(screen.getByText(/1 lärare har redan en tjänst i läsåret och hoppas över helt/)).toBeInTheDocument();
-    // An older gateway sends no withDayLimit: no heading over nobody.
+    // An older gateway sends no withDayLimit or withStretchLimit: no heading over nobody.
     expect(screen.queryByText(/Gränsen för undervisningsdagar per vecka/)).toBeNull();
+    expect(screen.queryByText(/Gränsen för undervisning i följd/)).toBeNull();
     // A zero side of a problem is not printed: no "0 uppdrag … hör till dem".
     expect(screen.queryByText(/0 uppdrag/)).toBeNull();
 
@@ -126,6 +127,29 @@ describe("StaffingCarryDialog", () => {
     expect(title.nextElementSibling).toHaveTextContent("Bo AlmGun Gone");
   });
 
+  it("names whose limit on teaching in a row is carried, and says it in the problem list too", async () => {
+    // Sammanhängande undervisning is set on the post and rolls with it (HR, in
+    // a preview deciders alone are shown): agreed like the days, often for one
+    // year, and tried by the generator, so carried silently it would misjudge
+    // next year's timetable for a reason nobody was shown.
+    post.mockResolvedValue(
+      preview({
+        employments: { ...preview().employments, withStretchLimit: ["t-bo", "t-gone"] },
+        problems: [
+          { code: "STAFFING_PER_YEAR_TERMS_CARRIED", blocking: false, params: { reductions: 0, overrides: 0, dayLimits: 0, stretchLimits: 2 } },
+        ],
+      }),
+    );
+    renderDialog();
+    const title = await screen.findByText("Gränsen för undervisning i följd följer med — gäller den även nästa läsår?");
+    expect(title).toHaveClass("text-warning-foreground");
+    expect(title.nextElementSibling).toHaveTextContent("Bo AlmGun Gone");
+    const problems = screen.getByRole("list", { name: "Att se över" });
+    expect(problems).toHaveTextContent("Gränsen för undervisning i följd följer med för 2 lärare.");
+    // A zero side is not printed.
+    expect(problems).not.toHaveTextContent(/Nedsättningen|undervisningsdagar|för 0 lärare/);
+  });
+
   it("names a person who only had uppdrag and is not carried, and prints no zero side of a problem", async () => {
     post.mockResolvedValue(
       preview({
@@ -138,7 +162,7 @@ describe("StaffingCarryDialog", () => {
         },
         problems: [
           { code: "STAFFING_TEACHERS_NOT_CARRIED", blocking: false, params: { teachers: 1 } },
-          { code: "STAFFING_PER_YEAR_TERMS_CARRIED", blocking: false, params: { reductions: 2, overrides: 0, dayLimits: 0 } },
+          { code: "STAFFING_PER_YEAR_TERMS_CARRIED", blocking: false, params: { reductions: 2, overrides: 0, dayLimits: 0, stretchLimits: 0 } },
           { code: "STAFFING_ALREADY_PRESENT", blocking: false, params: { teachers: 0, duties: 2 } },
         ],
       }),

@@ -304,8 +304,6 @@ describe("useTeacherWorkRules", () => {
       minDailyRestMinutes: 660,
       maxTeachingMinutesPerDay: 300,
       preferredFreeDayOfWeek: null,
-      maxConsecutiveTeachingMinutes: 150,
-      consecutiveBreakMinutes: 15,
     },
     {
       id: "w-2",
@@ -316,8 +314,6 @@ describe("useTeacherWorkRules", () => {
       minDailyRestMinutes: 540,
       maxTeachingMinutesPerDay: null,
       preferredFreeDayOfWeek: 5,
-      maxConsecutiveTeachingMinutes: null,
-      consecutiveBreakMinutes: null,
     },
   ];
 
@@ -330,12 +326,11 @@ describe("useTeacherWorkRules", () => {
     expect(result.current.data).toEqual(rows);
     expect(queryClient.getQueryData(["teacher-work-rules"])).toEqual(rows);
     expect(supabaseMocks.from).toHaveBeenCalledWith("TeacherWorkRules");
-    // The day's cap and the free-day wish too (Lärarens dag), and the limit on
-    // teaching in a row (Sammanhängande undervisning): the dialog sends every
-    // key, so one missing here would be cleared by the next lunch saved.
+    // The day's cap and the free-day wish too (Lärarens dag): the dialog sends
+    // every key, so one missing here would be cleared by the next lunch saved.
     expect(argsFor("TeacherWorkRules", "select")).toEqual([
       [
-        "id, userId, lunchMinutes, lunchStartTime, lunchEndTime, minDailyRestMinutes, maxTeachingMinutesPerDay, preferredFreeDayOfWeek, maxConsecutiveTeachingMinutes, consecutiveBreakMinutes",
+        "id, userId, lunchMinutes, lunchStartTime, lunchEndTime, minDailyRestMinutes, maxTeachingMinutesPerDay, preferredFreeDayOfWeek",
       ],
     ]);
     expect(argsFor("TeacherWorkRules", "order")).toEqual([["userId"], ["id"]]);
@@ -379,8 +374,6 @@ describe("useTeacherWorkRuleActions", () => {
         minDailyRestMinutes: 660,
         maxTeachingMinutesPerDay: 300,
         preferredFreeDayOfWeek: 5,
-        maxConsecutiveTeachingMinutes: 150,
-        consecutiveBreakMinutes: 15,
       });
     });
 
@@ -391,8 +384,6 @@ describe("useTeacherWorkRuleActions", () => {
       minDailyRestMinutes: 660,
       maxTeachingMinutesPerDay: 300,
       preferredFreeDayOfWeek: 5,
-      maxConsecutiveTeachingMinutes: 150,
-      consecutiveBreakMinutes: 15,
     });
     // Not ["people"]: a rule is not part of the person row, and invalidating the
     // register would refetch the school's longest list on every lunch saved.
@@ -414,8 +405,6 @@ describe("useTeacherWorkRuleActions", () => {
         minDailyRestMinutes: 660,
         maxTeachingMinutesPerDay: null,
         preferredFreeDayOfWeek: null,
-        maxConsecutiveTeachingMinutes: null,
-        consecutiveBreakMinutes: null,
       });
     });
 
@@ -426,20 +415,17 @@ describe("useTeacherWorkRuleActions", () => {
       minDailyRestMinutes: 660,
       maxTeachingMinutesPerDay: null,
       preferredFreeDayOfWeek: null,
-      // Named, null included: absent KEEPS a stored limit, null clears it.
-      maxConsecutiveTeachingMinutes: null,
-      consecutiveBreakMinutes: null,
     });
   });
 
   /*
    * `?includeDay=true` is load-bearing, not decoration: without it the
-   * gateway keeps the cap, the free-day wish and the limit on teaching in a
-   * row (a bare DELETE is what a web from before them sends, and must not
-   * take them away), so this dialog's "clear everything" would leave a cap
-   * the reader just emptied standing behind a summary that says no rule.
+   * gateway keeps the cap and the free-day wish (a bare DELETE is what a web
+   * from before Lärarens dag sends, and must not take them away), so this
+   * dialog's "clear everything" would leave a cap the reader just emptied
+   * standing behind a summary that says no rule.
    */
-  it("deletes by the teacher's id, and says it means the cap, the wish and the limit too", async () => {
+  it("deletes by the teacher's id, and says it means the cap and the wish too", async () => {
     const harness = createHarness();
     const { result } = renderHook(() => useTeacherWorkRuleActions(), {
       wrapper: harness.wrapper,
@@ -470,8 +456,6 @@ describe("useTeacherWorkRuleActions", () => {
           minDailyRestMinutes: null,
           maxTeachingMinutesPerDay: null,
           preferredFreeDayOfWeek: null,
-          maxConsecutiveTeachingMinutes: null,
-          consecutiveBreakMinutes: null,
         }),
       ).rejects.toThrow("HTTP 400");
     });

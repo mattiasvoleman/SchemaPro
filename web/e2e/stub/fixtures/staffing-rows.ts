@@ -68,6 +68,9 @@ const employment = (
   lecturerPercent: null,
   // Lärarens dag (20261123090000): no limit in days unless a post says one.
   maxTeachingDaysPerWeek: null,
+  // Sammanhängande undervisning (20261218090000): no limit unless a post says one.
+  maxConsecutiveTeachingMinutes: null,
+  consecutiveBreakMinutes: null,
   // The gateway lists every post with its periods (20261022120000).
   periods: [],
   ...extra,
@@ -103,9 +106,23 @@ export const EMPLOYMENTS: TeacherEmployment[] = [
     periods: [ANNA_SPRING],
     employmentForm: "TILLSVIDARE",
     firstTeacherPercent: 15,
+    // Room to spare (her longest Thursday stretch is far under it), so the
+    // card draws a post with days AND a limit and nothing breaks it.
+    maxConsecutiveTeachingMinutes: 240,
+    consecutiveBreakMinutes: 30,
   }),
   employment(2, TEACHERS.bo.id, 40, "FERIE", "BEK", { employmentForm: "VISSTID" }),
-  employment(3, TEACHERS.cecilia.id, 30, "SEMESTER", "CÅS", { employmentForm: "TILLSVIDARE" }),
+  // Sammanhängande undervisning (20261218090000): two hours' teaching in a row,
+  // then twenty minutes free. The grundschema gives Cecilia 09:25–10:25
+  // (co-teaching 9A's maths) and 10:40–11:40 (Språkval) on Thursdays, fifteen
+  // minutes apart, which is one stretch of 135 minutes: over her limit, so the
+  // draft, the run that laid it and two of the three schemaförslag break it, and
+  // the third (which moves 9A's Thursday maths to Monday) does not (candidates.ts).
+  employment(3, TEACHERS.cecilia.id, 30, "SEMESTER", "CÅS", {
+    employmentForm: "TILLSVIDARE",
+    maxConsecutiveTeachingMinutes: 120,
+    consecutiveBreakMinutes: 20,
+  }),
   // 80 %, as her Friday constraint in school-days.ts says, and four days a
   // week on the post itself (Lärarens dag): the deltid the constraint stood
   // in for.
@@ -262,6 +279,8 @@ export function historyOf(userId: string): HistoryEntry[] {
           ["lecturerPercent", post.lecturerPercent],
           ["teachingTargetMinutesPerWeek", post.teachingTargetMinutesPerWeek],
           ["maxTeachingDaysPerWeek", post.maxTeachingDaysPerWeek],
+          ["maxConsecutiveTeachingMinutes", post.maxConsecutiveTeachingMinutes],
+          ["consecutiveBreakMinutes", post.consecutiveBreakMinutes],
           ["signature", post.signature],
           ["noteChanged", post.note && post.reductionPercent === 0 ? true : null],
         ]),

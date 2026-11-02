@@ -158,6 +158,7 @@ describe("Dagsplanering", () => {
       ["COVER_BREAKS_DAILY_REST", { side: "BEFORE", minutes: 660 }],
       ["COVER_EXCEEDS_DAILY_CAP", { minutes: 300 }],
       ["COVER_EXCEEDS_CONSECUTIVE_TEACHING", { minutes: 120, breakMinutes: 20 }],
+      ["COVER_EXCEEDS_CONSECUTIVE_TEACHING_HIDDEN", {}],
       ["COVER_BEYOND_WORK_DAYS", { days: 3 }],
       ["COVER_BEYOND_WORK_DAYS_HIDDEN", {}],
       ["COVER_TEACHER_UNAVAILABLE", { label: "" }],
@@ -190,6 +191,10 @@ describe("Dagsplanering", () => {
     expect(description).toContain("Vikarien skulle undervisa mer än 120 min i följd innan 20 min ledigt.");
     expect(description).toContain("Vikarien får fler än 3 undervisningsdagar den veckan.");
     expect(description).toContain(sv.coverErrors.COVER_BEYOND_WORK_DAYS_HIDDEN);
+    // The limit on teaching in a row is set on the post: masked for a reader
+    // without HR-läs, in a sentence that carries no figure.
+    expect(description).toContain(sv.coverErrors.COVER_EXCEEDS_CONSECUTIVE_TEACHING_HIDDEN);
+    expect(sv.coverErrors.COVER_EXCEEDS_CONSECUTIVE_TEACHING_HIDDEN).not.toMatch(/\d/);
     expect(description).toContain(sv.coverErrors.COVER_POOL_NOT_DECLARED);
   });
 });

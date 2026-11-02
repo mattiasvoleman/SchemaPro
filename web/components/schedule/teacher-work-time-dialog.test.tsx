@@ -21,12 +21,10 @@ import { TeacherWorkTimeDialog } from "./teacher-work-time-dialog";
  *   to name every key or the old rule survives the clearing, and the school
  *   finds out at the next generation run.
  *
- *   A CAP, A WISH OR A LIMIT LOST to an edit of something else (Lärarens dag,
- *   Sammanhängande undervisning). They sit on the same row as the lunch, so a
- *   save that did not carry them, or a cleared lunch that read the row as
- *   empty and deleted it, would take them away without anybody choosing to.
- *   The limit is a PAIR (both or neither), and PUT keeps what a body leaves
- *   out, so both of its keys are named in every save, null included.
+ *   A CAP OR A WISH LOST to an edit of something else (Lärarens dag). They sit
+ *   on the same row as the lunch, so a save that did not carry them, or a
+ *   cleared lunch that read the row as empty and deleted it, would take them
+ *   away without anybody choosing to.
  *
  *   A REFUSAL the reader never sees. The gateway rejects a half-filled lunch
  *   trio in English prose written for a log; the form has to name the missing
@@ -63,8 +61,6 @@ const rule = (overrides: Partial<TeacherWorkRule> = {}): TeacherWorkRule => ({
   minDailyRestMinutes: 660,
   maxTeachingMinutesPerDay: null,
   preferredFreeDayOfWeek: null,
-  maxConsecutiveTeachingMinutes: null,
-  consecutiveBreakMinutes: null,
   ...overrides,
 });
 
@@ -335,8 +331,6 @@ describe("what a full row sends", () => {
       minDailyRestMinutes: 660,
       maxTeachingMinutesPerDay: null,
       preferredFreeDayOfWeek: null,
-      maxConsecutiveTeachingMinutes: null,
-      consecutiveBreakMinutes: null,
     });
   });
 
@@ -372,8 +366,6 @@ describe("what a full row sends", () => {
       minDailyRestMinutes: 660,
       maxTeachingMinutesPerDay: null,
       preferredFreeDayOfWeek: null,
-      maxConsecutiveTeachingMinutes: null,
-      consecutiveBreakMinutes: null,
     });
   });
 
@@ -392,8 +384,6 @@ describe("what a full row sends", () => {
       minDailyRestMinutes: 660,
       maxTeachingMinutesPerDay: null,
       preferredFreeDayOfWeek: null,
-      maxConsecutiveTeachingMinutes: null,
-      consecutiveBreakMinutes: null,
     });
   });
 
@@ -472,8 +462,6 @@ describe("clearing a rule", () => {
       minDailyRestMinutes: null,
       maxTeachingMinutesPerDay: 300,
       preferredFreeDayOfWeek: 3,
-      maxConsecutiveTeachingMinutes: null,
-      consecutiveBreakMinutes: null,
     });
   });
 
@@ -487,218 +475,6 @@ describe("clearing a rule", () => {
 
     expect(removeMock).toHaveBeenCalledWith("t-1");
     expect(saveMock).not.toHaveBeenCalled();
-  });
-
-  it("keeps the row, with its limit on teaching in a row, when only the lunch and the rest are cleared", async () => {
-    // A limit on the row makes it not empty: a DELETE here would take the
-    // limit away with a lunch somebody meant to remove.
-    const user = userEvent.setup();
-    open(rule({ maxConsecutiveTeachingMinutes: 150, consecutiveBreakMinutes: 15 }));
-
-    setNumber("lunchMinutes", "");
-    setTime("windowStart", "");
-    setTime("windowEnd", "");
-    setNumber("restMinutes", "");
-
-    expect(screen.queryByText("emptyMeansNoRule")).toBeNull();
-    await user.click(save());
-
-    expect(removeMock).not.toHaveBeenCalled();
-    expect(saveMock).toHaveBeenCalledWith({
-      userId: "t-1",
-      lunchMinutes: null,
-      lunchStartTime: null,
-      lunchEndTime: null,
-      minDailyRestMinutes: null,
-      maxTeachingMinutesPerDay: null,
-      preferredFreeDayOfWeek: null,
-      maxConsecutiveTeachingMinutes: 150,
-      consecutiveBreakMinutes: 15,
-    });
-  });
-
-  it("deletes the row once the limit on teaching in a row is cleared too, both halves", async () => {
-    // The DELETE is the one that names includeDay=true (work-rule-queries.ts):
-    // this draft holds the limit, so emptying it is the reader clearing it.
-    const user = userEvent.setup();
-    open(rule({ ...NO_LUNCH_OR_REST, maxConsecutiveTeachingMinutes: 150, consecutiveBreakMinutes: 15 }));
-
-    setNumber("consecutiveMax", "");
-    setNumber("consecutiveBreak", "");
-    expect(screen.getByText("emptyMeansNoRule")).toBeInTheDocument();
-    await user.click(save());
-
-    expect(removeMock).toHaveBeenCalledWith("t-1");
-    expect(saveMock).not.toHaveBeenCalled();
-  });
-});
-
-describe("the limit on teaching in a row", () => {
-  it("is offered empty, with no suggested number, as a group of its own", () => {
-    // A greyed number would read as a limit the school could just accept.
-    open(undefined);
-
-    expect(field("consecutiveMax").value).toBe("");
-    expect(field("consecutiveMax").placeholder).toBe("");
-    expect(field("consecutiveBreak").value).toBe("");
-    expect(field("consecutiveBreak").placeholder).toBe("");
-    const group = screen.getByRole("group", { name: "consecutiveTitle" });
-    expect(group).toContainElement(field("consecutiveMax"));
-    expect(group).toContainElement(field("consecutiveBreak"));
-  });
-
-  it("says where it is written that the generator tries and does not promise, and where the school's switch is", () => {
-    open(undefined);
-
-    const group = screen.getByRole("group", { name: "consecutiveTitle" });
-    expect(group).toHaveTextContent("consecutiveHint");
-    expect(group).toHaveTextContent("consecutiveCounts");
-    expect(group).toHaveTextContent("consecutiveSchoolSwitch");
-  });
-
-  it("is never part of the suggestion", async () => {
-    const user = userEvent.setup();
-    open(undefined);
-
-    await user.click(screen.getByRole("button", { name: "useSuggestion" }));
-
-    expect(field("consecutiveMax").value).toBe("");
-    expect(field("consecutiveBreak").value).toBe("");
-  });
-
-  it("sends the pair on its own, as two numbers, with everything else null", async () => {
-    const user = userEvent.setup();
-    open(undefined);
-
-    setNumber("consecutiveMax", "120");
-    setNumber("consecutiveBreak", "20");
-    await user.click(save());
-
-    expect(saveMock).toHaveBeenCalledWith({
-      userId: "t-1",
-      lunchMinutes: null,
-      lunchStartTime: null,
-      lunchEndTime: null,
-      minDailyRestMinutes: null,
-      maxTeachingMinutesPerDay: null,
-      preferredFreeDayOfWeek: null,
-      maxConsecutiveTeachingMinutes: 120,
-      consecutiveBreakMinutes: 20,
-    });
-  });
-
-  it("refuses one half without the other, in Swedish, and the save with it", () => {
-    open(undefined);
-
-    setNumber("consecutiveMax", "120");
-
-    expect(screen.getByRole("status")).toHaveTextContent("consecutivePairIncomplete");
-    expect(save()).toBeDisabled();
-
-    setNumber("consecutiveBreak", "20");
-
-    expect(screen.queryByRole("status")).toBeNull();
-    expect(save()).toBeEnabled();
-  });
-
-  it("refuses figures outside the ranges or off the five-minute grid", () => {
-    open(undefined);
-
-    setNumber("consecutiveMax", "25");
-    setNumber("consecutiveBreak", "20");
-    expect(screen.getByRole("status")).toHaveTextContent(/consecutiveMaxOutOfRange\(30\|480\)/);
-
-    setNumber("consecutiveMax", "122");
-    expect(screen.getByRole("status")).toHaveTextContent(/consecutiveMaxOffGrid\(5\)/);
-
-    setNumber("consecutiveMax", "120");
-    setNumber("consecutiveBreak", "125");
-    expect(screen.getByRole("status")).toHaveTextContent(/consecutiveBreakOutOfRange\(5\|120\)/);
-
-    setNumber("consecutiveBreak", "22");
-    expect(screen.getByRole("status")).toHaveTextContent(/consecutiveBreakOffGrid\(5\)/);
-    expect(save()).toBeDisabled();
-  });
-
-  it("reads each figure back as hours and minutes beside its field, as soon as that figure is sayable", () => {
-    open(undefined);
-
-    // The break is not typed yet; the maximum is already said.
-    setNumber("consecutiveMax", "150");
-    expect(screen.getByText("equalsHoursMinutes(2|30)")).toBeInTheDocument();
-
-    setNumber("consecutiveBreak", "20");
-    expect(screen.getByText("equalsMinutes(20)")).toBeInTheDocument();
-
-    setNumber("consecutiveMax", "180");
-    expect(screen.getByText("equalsHours(3)")).toBeInTheDocument();
-  });
-
-  it("says nothing beside a figure the form would refuse", () => {
-    open(undefined);
-
-    setNumber("consecutiveMax", "122");
-    setNumber("consecutiveBreak", "130");
-
-    expect(screen.queryByText(/equals/)).toBeNull();
-  });
-
-  it("round-trips a stored limit without changing it, and an edit of something else keeps it", async () => {
-    const user = userEvent.setup();
-    open(rule({ maxConsecutiveTeachingMinutes: 150, consecutiveBreakMinutes: 15 }));
-
-    expect(field("consecutiveMax").value).toBe("150");
-    expect(field("consecutiveBreak").value).toBe("15");
-
-    setNumber("restMinutes", "600");
-    await user.click(save());
-
-    expect(saveMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        minDailyRestMinutes: 600,
-        maxConsecutiveTeachingMinutes: 150,
-        consecutiveBreakMinutes: 15,
-      }),
-    );
-  });
-
-  it("is taken away by emptying both fields, while the rest of the row is kept", async () => {
-    // Two nulls: PUT keeps what a body leaves out, so only a named null clears.
-    const user = userEvent.setup();
-    open(rule({ maxConsecutiveTeachingMinutes: 150, consecutiveBreakMinutes: 15 }));
-
-    setNumber("consecutiveMax", "");
-    setNumber("consecutiveBreak", "");
-    await user.click(save());
-
-    expect(saveMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        lunchMinutes: 30,
-        maxConsecutiveTeachingMinutes: null,
-        consecutiveBreakMinutes: null,
-      }),
-    );
-  });
-
-  it("opens a row from before the columns as nothing said and still saves the lunch", async () => {
-    const user = userEvent.setup();
-    const { maxConsecutiveTeachingMinutes: _max, consecutiveBreakMinutes: _break, ...older } = rule();
-    open(older as TeacherWorkRule);
-
-    expect(field("consecutiveMax").value).toBe("");
-    expect(field("consecutiveBreak").value).toBe("");
-    await user.click(save());
-
-    expect(saveMock).toHaveBeenCalledWith(
-      expect.objectContaining({ lunchMinutes: 30, maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null }),
-    );
-  });
-
-  it("is written under the same planering gate as the rest of the dialog", () => {
-    // The fields live in the dialog Spara gates (data-writes on the button): a
-    // profile that does not write planering is not offered the dialog at all.
-    open(undefined);
-    expect(save()).toHaveAttribute("data-writes", "PLANERING");
   });
 });
 
@@ -731,8 +507,6 @@ describe("the day's cap", () => {
       minDailyRestMinutes: null,
       maxTeachingMinutesPerDay: 270,
       preferredFreeDayOfWeek: null,
-      maxConsecutiveTeachingMinutes: null,
-      consecutiveBreakMinutes: null,
     });
   });
 
@@ -766,20 +540,20 @@ describe("the day's cap", () => {
   it("reads 270 back as hours and minutes beside the field", () => {
     open(rule({ maxTeachingMinutesPerDay: 270 }));
 
-    expect(screen.getByText("equalsHoursMinutes(4|30)")).toBeInTheDocument();
+    expect(screen.getByText("dayCapEqualsHoursMinutes(4|30)")).toBeInTheDocument();
   });
 
   it("reads a whole number of hours as hours alone", () => {
     open(rule({ maxTeachingMinutesPerDay: 300 }));
 
-    expect(screen.getByText("equalsHours(5)")).toBeInTheDocument();
+    expect(screen.getByText("dayCapEqualsHours(5)")).toBeInTheDocument();
   });
 
   it("reads a cap under an hour as minutes alone, never as nought hours", () => {
     open(rule({ maxTeachingMinutesPerDay: 45 }));
 
-    expect(screen.getByText("equalsMinutes(45)")).toBeInTheDocument();
-    expect(screen.queryByText(/equalsHours/)).toBeNull();
+    expect(screen.getByText("dayCapEqualsMinutes(45)")).toBeInTheDocument();
+    expect(screen.queryByText(/dayCapEqualsHours/)).toBeNull();
   });
 
   it("says nothing beside the field while the number would be refused", () => {
@@ -787,7 +561,7 @@ describe("the day's cap", () => {
 
     setNumber("dayCapMinutes", "272");
 
-    expect(screen.queryByText(/equals/)).toBeNull();
+    expect(screen.queryByText(/dayCapEquals/)).toBeNull();
   });
 });
 
@@ -833,8 +607,6 @@ describe("the free-day wish", () => {
       minDailyRestMinutes: null,
       maxTeachingMinutesPerDay: null,
       preferredFreeDayOfWeek: 5,
-      maxConsecutiveTeachingMinutes: null,
-      consecutiveBreakMinutes: null,
     });
   });
 
@@ -878,3 +650,44 @@ describe("the rest field read back as hours", () => {
  * while this dialog is fetched only when opened: its tests are in
  * teacher-work-time-summary.test.tsx.
  */
+
+describe("no limit on teaching in a row (Sammanhängande undervisning)", () => {
+  /*
+   * The limit is HR, set on the teacher's POST beside the days (Anställning on
+   * the People page), because this dialog's row is read by every colleague.
+   * A field or a key for it here would show it to the wrong readers, or make
+   * the gateway answer 400 (PUT /teacher-work-rules takes no such key).
+   */
+  it("offers neither of its two fields, with or without a stored rule", () => {
+    const { unmount } = open(undefined);
+    expect(screen.queryByLabelText("consecutiveMax")).toBeNull();
+    expect(screen.queryByLabelText("consecutiveBreak")).toBeNull();
+    expect(screen.queryByText("consecutiveTitle")).toBeNull();
+    unmount();
+
+    open(rule());
+    expect(screen.queryByLabelText("consecutiveMax")).toBeNull();
+    expect(screen.queryByLabelText("consecutiveBreak")).toBeNull();
+  });
+
+  it("sends the six keys of the rule and no key for the limit", async () => {
+    const user = userEvent.setup();
+    open(rule());
+
+    setNumber("restMinutes", "600");
+    await user.click(save());
+
+    const body = saveMock.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(Object.keys(body).sort()).toEqual(
+      [
+        "lunchEndTime",
+        "lunchMinutes",
+        "lunchStartTime",
+        "maxTeachingMinutesPerDay",
+        "minDailyRestMinutes",
+        "preferredFreeDayOfWeek",
+        "userId",
+      ].sort(),
+    );
+  });
+});

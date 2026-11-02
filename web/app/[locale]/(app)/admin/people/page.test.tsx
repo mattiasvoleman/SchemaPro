@@ -528,8 +528,6 @@ describe("People page", () => {
         minDailyRestMinutes: 660,
         maxTeachingMinutesPerDay: null,
         preferredFreeDayOfWeek: null,
-        maxConsecutiveTeachingMinutes: null,
-        consecutiveBreakMinutes: null,
       };
 
       it("says plainly when a teacher has none — not four zeroes", async () => {
@@ -641,42 +639,6 @@ describe("People page", () => {
         expect(await screen.findByText("title(Karin Ek)")).toBeInTheDocument();
         expect(screen.getByLabelText("lunchMinutes")).toHaveValue(30);
         expect(screen.getByLabelText("windowStart")).toHaveValue("10:30");
-      });
-
-      it("reads a limit on teaching in a row back on the row, and a row that holds only it is still a rule", async () => {
-        // Sammanhängande undervisning: the summary is every administrator's,
-        // so "no rule" over a stored limit would tell the school its teacher
-        // has none.
-        state.workRules = [
-          {
-            ...workRule,
-            lunchMinutes: null,
-            lunchStartTime: null,
-            lunchEndTime: null,
-            minDailyRestMinutes: null,
-            maxConsecutiveTeachingMinutes: 150,
-            consecutiveBreakMinutes: 15,
-          },
-        ];
-        const user = userEvent.setup();
-        render(<PeoplePage />);
-
-        await user.click(nameButton("Karin Ek"));
-
-        expect(screen.getByText("summaryConsecutive(150|15)")).toBeInTheDocument();
-        expect(screen.queryByText("noRule")).toBeNull();
-        expect(screen.queryByLabelText("consecutiveMax")).toBeNull();
-      });
-
-      it("opens the form with the stored limit, so the next save keeps it", async () => {
-        state.workRules = [{ ...workRule, maxConsecutiveTeachingMinutes: 150, consecutiveBreakMinutes: 15 }];
-        const user = userEvent.setup();
-        render(<PeoplePage />);
-
-        await user.click(screen.getByRole("button", { name: "editFor(Karin Ek)" }));
-
-        expect(await screen.findByLabelText("consecutiveMax")).toHaveValue(150);
-        expect(screen.getByLabelText("consecutiveBreak")).toHaveValue(15);
       });
 
       it("opens the form with the stored cap and wish, so the next save keeps them", async () => {
@@ -807,6 +769,8 @@ describe("People page", () => {
           employmentForm: "VISSTID",
           firstTeacherPercent: 10,
           maxTeachingDaysPerWeek: 4,
+          maxConsecutiveTeachingMinutes: 150,
+          consecutiveBreakMinutes: 15,
         },
       ];
       const user = userEvent.setup();
@@ -819,8 +783,9 @@ describe("People page", () => {
       await user.type(percent, "100");
       await user.click(screen.getByRole("button", { name: "save" }));
 
-      // The nedsättning, the note, SCB's fields and the undervisningsdagar set on
-      // the card survive a change made here: PUT replaces the row whole.
+      // The nedsättning, the note, SCB's fields, the undervisningsdagar and the
+      // limit on teaching in a row (Sammanhängande undervisning) set on the card
+      // survive a change made here: PUT replaces the row whole.
       expect(saveEmployment).toHaveBeenCalledWith({
         userId: "t-1",
         academicYearId: "year-1",
@@ -834,6 +799,8 @@ describe("People page", () => {
         firstTeacherPercent: 10,
         lecturerPercent: null,
         maxTeachingDaysPerWeek: 4,
+        maxConsecutiveTeachingMinutes: 150,
+        consecutiveBreakMinutes: 15,
       });
     });
 
@@ -889,6 +856,8 @@ describe("People page", () => {
         firstTeacherPercent: null,
         lecturerPercent: null,
         maxTeachingDaysPerWeek: null,
+        maxConsecutiveTeachingMinutes: null,
+        consecutiveBreakMinutes: null,
       });
     });
   });

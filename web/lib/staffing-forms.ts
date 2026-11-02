@@ -45,6 +45,18 @@ export const NOTE_MAX = 500;
  */
 export const TEACHING_DAYS_MIN = 1;
 export const TEACHING_DAYS_MAX = 6;
+/**
+ * The limit on teaching in a row (Sammanhängande undervisning, migration
+ * 20261218090000): the gateway's bounds (src/common/stretch.ts) and the
+ * columns' CHECKs. Half an hour at the bottom, because a limit under the
+ * shortest lesson a school runs is broken by every lesson the teacher has;
+ * eight hours at the top, because a longer one limits nothing. The break is
+ * five minutes to two hours: five is the engine's grid and the least that can
+ * end a stretch at all. Both on the five-minute grid, for the engine counts
+ * in five-minute steps.
+ */
+export const CONSECUTIVE_BOUNDS = { max: { min: 30, max: 480 }, break: { min: 5, max: 120 } } as const;
+export const CONSECUTIVE_STEP = 5;
 
 export interface EmploymentDraft {
   employmentPercent: string;
@@ -61,6 +73,9 @@ export interface EmploymentDraft {
   lecturerPercent: string;
   /** "" = no limit; else the most weekdays with teaching the post allows. */
   maxTeachingDaysPerWeek: string;
+  /** The two figures of the limit on teaching in a row: both or neither. */
+  maxConsecutiveTeachingMinutes: string;
+  consecutiveBreakMinutes: string;
 }
 
 export const EMPTY_EMPLOYMENT_DRAFT: EmploymentDraft = {
@@ -74,6 +89,8 @@ export const EMPTY_EMPLOYMENT_DRAFT: EmploymentDraft = {
   firstTeacherPercent: "",
   lecturerPercent: "",
   maxTeachingDaysPerWeek: "",
+  maxConsecutiveTeachingMinutes: "",
+  consecutiveBreakMinutes: "",
 };
 
 /** The anställningsformer the form offers, in SCB's order (T, V). */
@@ -91,6 +108,8 @@ export interface EmploymentBody {
   firstTeacherPercent: number | null;
   lecturerPercent: number | null;
   maxTeachingDaysPerWeek: number | null;
+  maxConsecutiveTeachingMinutes: number | null;
+  consecutiveBreakMinutes: number | null;
 }
 
 export type EmploymentProblem =
@@ -104,7 +123,12 @@ export type EmploymentProblem =
   | { reason: "firstTeacherOutOfRange" }
   | { reason: "lecturerOutOfRange" }
   | { reason: "careerAbovePost"; first: number; lecturer: number }
-  | { reason: "teachingDaysOutOfRange"; min: number; max: number };
+  | { reason: "teachingDaysOutOfRange"; min: number; max: number }
+  | { reason: "consecutivePairIncomplete" }
+  | { reason: "consecutiveMaxOutOfRange"; min: number; max: number }
+  | { reason: "consecutiveMaxOffGrid"; step: number }
+  | { reason: "consecutiveBreakOutOfRange"; min: number; max: number }
+  | { reason: "consecutiveBreakOffGrid"; step: number };
 
 /**
  * A number with at most `decimals` decimals, or null for anything else.
@@ -182,7 +206,45 @@ export function validateEmploymentDraft(draft: EmploymentDraft): EmploymentProbl
   if (teachingDays(draft.maxTeachingDaysPerWeek) === undefined) {
     return { reason: "teachingDaysOutOfRange", min: TEACHING_DAYS_MIN, max: TEACHING_DAYS_MAX };
   }
+
+  /*
+   * The limit on teaching in a row is a PAIR: a maximum without the break after
+   * it does not say when a stretch ends, and a break without a maximum limits
+   * nothing. The gateway's DTO says so (both or neither); this says it first,
+   * naming both fields. Each figure is in range first and on the grid second,
+   * so a typo of 3000 is a number out of range, not one off the grid.
+   */
+  const limit = draft.maxConsecutiveTeachingMinutes.trim();
+  const pause = draft.consecutiveBreakMinutes.trim();
+  if ((limit === "") !== (pause === "")) return { reason: "consecutivePairIncomplete" };
+  if (limit !== "") {
+    const longest = wholeNumber(limit);
+    const { min, max } = CONSECUTIVE_BOUNDS.max;
+    if (longest === null || longest < min || longest > max) {
+      return { reason: "consecutiveMaxOutOfRange", min, max };
+    }
+    if (longest % CONSECUTIVE_STEP !== 0) return { reason: "consecutiveMaxOffGrid", step: CONSECUTIVE_STEP };
+    const free = wholeNumber(pause);
+    const bounds = CONSECUTIVE_BOUNDS.break;
+    if (free === null || free < bounds.min || free > bounds.max) {
+      return { reason: "consecutiveBreakOutOfRange", min: bounds.min, max: bounds.max };
+    }
+    if (free % CONSECUTIVE_STEP !== 0) return { reason: "consecutiveBreakOffGrid", step: CONSECUTIVE_STEP };
+  }
   return null;
+}
+
+/**
+ * A figure of the limit on teaching in a row that the form would accept on its
+ * own, or null. For the readout beside each field, which says "= 2 tim" as soon
+ * as ITS number is sayable rather than waiting for the other half of the pair:
+ * half a typed value is a wrong hour count on screen, and a wrong one is worse
+ * than none.
+ */
+export function consecutiveFigure(value: string, figure: "max" | "break"): number | null {
+  const minutes = wholeNumber(value);
+  const { min, max } = CONSECUTIVE_BOUNDS[figure];
+  return minutes === null || minutes < min || minutes > max || minutes % CONSECUTIVE_STEP !== 0 ? null : minutes;
 }
 
 /** Undervisningsdagar per vecka: null for an empty field, undefined when it is not 1–6 whole. */
@@ -226,6 +288,11 @@ export function employmentDraftToBody(draft: EmploymentDraft): EmploymentBody {
     // Always named: PUT replaces the row, so a body without the days would
     // take a deltid limit away every time somebody corrected a signature.
     maxTeachingDaysPerWeek: teachingDays(draft.maxTeachingDaysPerWeek) ?? null,
+    // The pair too, both keys always named: a key a body leaves out is kept,
+    // so only a named null takes a limit away. A validated draft holds both or
+    // neither, and the gateway refuses a half pair.
+    maxConsecutiveTeachingMinutes: wholeNumber(draft.maxConsecutiveTeachingMinutes),
+    consecutiveBreakMinutes: wholeNumber(draft.consecutiveBreakMinutes),
   };
 }
 
@@ -245,6 +312,10 @@ export function employmentToDraft(row: TeacherEmployment | null | undefined): Em
     lecturerPercent: row.lecturerPercent == null ? "" : String(row.lecturerPercent),
     // Absent from a gateway before 20261123090000, and null for no limit.
     maxTeachingDaysPerWeek: row.maxTeachingDaysPerWeek == null ? "" : String(row.maxTeachingDaysPerWeek),
+    // The same for the limit on teaching in a row (20261218090000).
+    maxConsecutiveTeachingMinutes:
+      row.maxConsecutiveTeachingMinutes == null ? "" : String(row.maxConsecutiveTeachingMinutes),
+    consecutiveBreakMinutes: row.consecutiveBreakMinutes == null ? "" : String(row.consecutiveBreakMinutes),
   };
 }
 

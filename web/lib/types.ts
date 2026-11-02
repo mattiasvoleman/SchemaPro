@@ -579,8 +579,8 @@ export interface LunchSettings {
   generatorKeepsPupilGapsDown?: boolean;
   /**
    * Sammanhängande undervisning: the generator TRIES to keep each teacher's
-   * limit on teaching in a row (set under Arbetstid), weighed against the rest
-   * of the week and never at the price of a refusal. Off by default; optional
+   * limit on teaching in a row (set on the teacher's post), weighed against the
+   * rest of the week and never at the price of a refusal. Off by default; optional
    * for an API from before the switch, read as off. A hand edit and the
    * Vikarietavlan keep the limit whatever this says.
    */
@@ -769,6 +769,18 @@ export interface TeacherEmployment {
    * hidden limit from none and shows neither. Absent from a gateway before it.
    */
   maxTeachingDaysPerWeek?: number | null;
+  /**
+   * Sammanhängande undervisning (migration 20261218090000): the most minutes
+   * of teaching in a row (30..480) and the free minutes that end a stretch
+   * (5..120), both or neither, on the five-minute grid. NOT HARD: the
+   * generator tries (where the school has switched it on), a hand edit is
+   * warned about and the Vikarietavlan never proposes a cover that would break
+   * it. HR data like the days: both null for a reader the gateway hides them
+   * from (hrHidden), so the web never tells a hidden limit from none and shows
+   * neither. Absent from a gateway before it.
+   */
+  maxConsecutiveTeachingMinutes?: number | null;
+  consecutiveBreakMinutes?: number | null;
   /**
    * The post from a date (migration 20261022120000), by Från. Absent from a
    * gateway before it; empty for a post that is the same all year, and for a
@@ -1099,6 +1111,12 @@ export interface StaffingCarryPreview {
      * only (absent from an older gateway).
      */
     withDayLimit?: string[];
+    /**
+     * The limit on teaching in a row (Sammanhängande undervisning) carried,
+     * likewise: it is set on the post and rolls with it. HR data, in a preview
+     * shown to deciders only (absent from an older gateway).
+     */
+    withStretchLimit?: string[];
     notCarried: { userId: string; reason: "INACTIVE" | "NOT_STAFF" | "ALREADY_PRESENT" }[];
     signaturesDropped: { userId: string; signature: string }[];
     /** A period with no Till ran to the year's end: its figures are the carried post (absent from an older gateway). */

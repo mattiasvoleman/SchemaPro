@@ -22,24 +22,20 @@ import { formatTime } from "@/lib/utils";
  * Whether a stored row says anything at all, as opposed to being six nulls.
  *
  * Every field counts, the soft wish included: the summary says "no
- * working-time rule" when this is false, and a row holding only a cap, only
- * a free-day wish or only a limit on teaching in a row is a rule the school
- * wrote.
+ * working-time rule" when this is false, and a row holding only a cap or only
+ * a free-day wish is a rule the school wrote.
  */
 export function hasAnyRule(rule: TeacherWorkRule | undefined): boolean {
   if (!rule) return false;
-  // `!= null`: a row read without the newer columns has no key for them, and
-  // an absent key says no more than a null. The limit is a pair, so one of its
-  // two figures says as much as both.
+  // `!= null`: a row read without the two newer columns has no key for them,
+  // and an absent key says no more than a null.
   return (
     rule.lunchMinutes !== null ||
     rule.lunchStartTime !== null ||
     rule.lunchEndTime !== null ||
     rule.minDailyRestMinutes !== null ||
     rule.maxTeachingMinutesPerDay != null ||
-    rule.preferredFreeDayOfWeek != null ||
-    rule.maxConsecutiveTeachingMinutes != null ||
-    rule.consecutiveBreakMinutes != null
+    rule.preferredFreeDayOfWeek != null
   );
 }
 
@@ -66,11 +62,10 @@ export function splitHours(minutes: number): { hours: number; minutes: number } 
  * zeroes. The difference is the whole design: zero minutes of lunch would be a
  * promise the solver keeps, and nothing said is a promise it never makes.
  *
- * The cap, the wish and the limit on teaching in a row are read back like the
- * rest, one line each, and the wish says it is a wish. Never the post's
- * undervisningsdagar: those are HR (src/staffing/hr-visibility.ts), this
- * summary is every administrator's, and the days are said on the Anställning
- * card to the readers who may see them.
+ * The cap and the wish are read back like the rest, one line each, and the
+ * wish says it is a wish. Never the post's undervisningsdagar: those are HR
+ * (src/staffing/hr-visibility.ts), this summary is every administrator's, and
+ * the days are said on the Anställning card to the readers who may see them.
  */
 export function TeacherWorkTimeSummary({ rule }: { rule: TeacherWorkRule | undefined }) {
   const t = useTranslations("teacherWorkTime");
@@ -110,16 +105,6 @@ export function TeacherWorkTimeSummary({ rule }: { rule: TeacherWorkRule | undef
       ? null
       : t("summaryDayCap", { minutes: rule.maxTeachingMinutesPerDay });
 
-  // Both figures or nothing: a half pair is a row the table refuses, and a
-  // line with one number in it would say a limit that does not exist.
-  const consecutive =
-    rule.maxConsecutiveTeachingMinutes == null || rule.consecutiveBreakMinutes == null
-      ? null
-      : t("summaryConsecutive", {
-          max: rule.maxConsecutiveTeachingMinutes,
-          breakMinutes: rule.consecutiveBreakMinutes,
-        });
-
   // The weekday by its number: the sentence's own select names it, so this
   // module needs no table of day names and the plural form is the translator's.
   const freeDay =
@@ -132,7 +117,6 @@ export function TeacherWorkTimeSummary({ rule }: { rule: TeacherWorkRule | undef
       {lunch === null ? null : <li>{lunch}</li>}
       {rest === null ? null : <li>{rest}</li>}
       {cap === null ? null : <li>{cap}</li>}
-      {consecutive === null ? null : <li>{consecutive}</li>}
       {freeDay === null ? null : <li>{freeDay}</li>}
     </ul>
   );

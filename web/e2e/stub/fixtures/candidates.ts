@@ -15,6 +15,7 @@ import { stockholmInstant, TODAY } from "./calendar";
 import { CALENDAR_LESSON_TEACHERS_WITH_COVER, CALENDAR_LESSONS_WITH_COVER } from "./cover-world";
 import { ago } from "./misc-school";
 import { ATTENDANCE_RECORDS, TEACHER_WORK_RULES } from "./school-days";
+import { EMPLOYMENTS } from "./staffing-rows";
 import { ADMIN, MASTER_LESSONS, REQUIREMENTS, ROOMS, TEACHER_LIST } from "./world";
 
 /**
@@ -204,7 +205,8 @@ function longestStretch(
  * teaching in a row (Sammanhängande undervisning): a teacher whose longest
  * stretch is over their limit, with the weekday of the longest, its length and
  * the limit — Cecilia's Thursday, in the draft and in two of the three
- * candidates.
+ * candidates. The limit is read off the teacher's POST (staffing-rows.ts), as
+ * the gateway reads it back for a reader with HR-läs; the stub's reader is one.
  */
 function notesOf(
   week: ReadonlyArray<Pick<CandidateLesson, "teacherId" | "coTeacherId" | "dayOfWeek" | "startTime" | "endTime">>,
@@ -226,16 +228,16 @@ function notesOf(
       message: "A teacher wishes this weekday free, and the new timetable gives them lessons that day.",
       resourceNames: name ? [name] : [],
     }));
-  const stretches = TEACHER_WORK_RULES.flatMap((rule) => {
-    const max = rule.maxConsecutiveTeachingMinutes;
-    const breakMinutes = rule.consecutiveBreakMinutes;
+  const stretches = EMPLOYMENTS.flatMap((post) => {
+    const max = post.maxConsecutiveTeachingMinutes ?? null;
+    const breakMinutes = post.consecutiveBreakMinutes ?? null;
     if (max === null || breakMinutes === null) return [];
-    const longest = longestStretch(week, rule.userId, breakMinutes);
+    const longest = longestStretch(week, post.userId, breakMinutes);
     return longest !== null && longest.minutes > max
-      ? [{ rule: rule.id, day: longest.day, minutes: longest.minutes, max, breakMinutes, name: names.get(rule.userId) }]
+      ? [{ post: post.id, day: longest.day, minutes: longest.minutes, max, breakMinutes, name: names.get(post.userId) }]
       : [];
   })
-    .sort((a, b) => a.day - b.day || a.rule.localeCompare(b.rule))
+    .sort((a, b) => a.day - b.day || a.post.localeCompare(b.post))
     .map(({ day, minutes, max, breakMinutes, name }) => ({
       category: "AVAILABILITY",
       code: "TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT",

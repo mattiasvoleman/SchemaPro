@@ -61,7 +61,7 @@ describe("staffing warnings", () => {
         breakMinutes: 20,
       }),
     ).toBe(
-      "Tyska för 7A: läraren undervisar nu 240 minuter i följd på tisdagen, mer än de 180 minuter i följd som arbetstidsregeln tillåter innan 20 minuter ledigt.",
+      "Tyska för 7A: läraren undervisar nu 240 minuter i följd på tisdagen, mer än de 180 minuter i följd som tjänsten tillåter innan 20 minuter ledigt.",
     );
     expect(
       said("TEACHER_CONSECUTIVE_TOO_LONG", {
@@ -73,6 +73,12 @@ describe("staffing warnings", () => {
         breakMinutes: 15,
       }),
     ).toMatch(/^Franska för 7B: medläraren undervisar nu 150 minuter i följd på fredagen/);
+    // The limit is set on the post, so a reader without HR-läs gets the verdict
+    // alone: the lesson and the role, and no weekday and no figure.
+    const hidden = said("TEACHER_CONSECUTIVE_TOO_LONG_HIDDEN", { role: "LEAD", requirement: "Tyska för 7A" });
+    expect(hidden).toMatch(/^Tyska för 7A: läraren undervisar nu längre i följd än tjänsten tillåter\. /);
+    expect(hidden).toMatch(/HR-läs/);
+    expect(hidden.replace("7A", "")).not.toMatch(/\d/);
     expect(said("TEACHER_WEEK_TOO_MANY_DAYS", { role: "CO_TEACHER", requirement: "Franska för 7B", days: 4, max: 3 })).toBe(
       "Franska för 7B: medläraren undervisar nu 4 dagar i veckan, fler än de 3 som tjänsten tillåter.",
     );

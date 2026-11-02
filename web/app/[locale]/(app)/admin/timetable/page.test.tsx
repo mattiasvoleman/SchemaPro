@@ -1180,6 +1180,23 @@ describe("a re-teachered lesson under the staffing policy", () => {
     expect(options.description).toBe("engineMessages.TEACHER_CONSECUTIVE_TOO_LONG(LEAD|Slöjd för 5.1|1|240|180|20)");
   });
 
+  it("warns a reader without HR-läs of the same breach with the lesson and nothing else", async () => {
+    // The limit is set on the teacher's post, so the gateway words the warning
+    // per reader as it does the days: no weekday, no figure in the params. The
+    // page adds no code for either — savedToast renders whatever it is sent.
+    const HIDDEN = {
+      code: "TEACHER_CONSECUTIVE_TOO_LONG_HIDDEN",
+      params: { role: "LEAD", requirement: "Slöjd för 5.1" },
+    };
+    noMutation.mutateAsync.mockResolvedValue({ id: "l-slojd", propagatedLessons: 0, warnings: [HIDDEN] });
+
+    await saveSlojd();
+
+    await waitFor(() => expect(toasts.warning).toHaveBeenCalledTimes(1));
+    const [, options] = toasts.warning.mock.calls[0]!;
+    expect(options.description).toBe("engineMessages.TEACHER_CONSECUTIVE_TOO_LONG_HIDDEN(LEAD|Slöjd för 5.1)");
+  });
+
   it("warns about a lesson placed by hand as it is created, too", async () => {
     // Duplicated, so the new lesson's subject and class are filled in.
     const TOO_CLOSE = {

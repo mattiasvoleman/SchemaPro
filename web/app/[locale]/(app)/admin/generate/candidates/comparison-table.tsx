@@ -124,6 +124,12 @@ export function ComparisonTable({
    * difference against the draft, and the names under it — the reason a
    * school would pick another candidate is who, not how many. The count is
    * of wishes, not of teachers: one teacher can have both kinds.
+   *
+   * A LIMIT ON TEACHING IN A ROW IS HR (it is set on the teacher's post): a
+   * reader without HR-läs is handed TEACHER_CONSECUTIVE_TEACHING_HIDDEN, one
+   * note for the whole category and with no teacher and no figure. It is
+   * drawn as that sentence and nothing is read off the note, so a name that
+   * slipped into it would still not be shown.
    */
   const unmeasured = <span className="text-muted-foreground">{t("cell.notMeasured")}</span>;
   const wishes = (notes: readonly CandidateConflict[], current: readonly CandidateConflict[] | null) => (
@@ -135,6 +141,13 @@ export function ComparisonTable({
         </Line>
       ) : null}
       {notes.map((note, index) => {
+        if (note.code === "TEACHER_CONSECUTIVE_TEACHING_HIDDEN") {
+          return (
+            <Line key={index} muted>
+              {t("cell.stretchHidden")}
+            </Line>
+          );
+        }
         const name = note.resourceNames && note.resourceNames.length > 0 ? note.resourceNames.join(", ") : t("cell.wishNobody");
         const day = Number(note.params?.["day"] ?? 0);
         return (

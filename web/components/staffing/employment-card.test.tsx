@@ -157,6 +157,8 @@ describe("EmploymentCard", () => {
       firstTeacherPercent: null,
       lecturerPercent: null,
       maxTeachingDaysPerWeek: null,
+      maxConsecutiveTeachingMinutes: null,
+      consecutiveBreakMinutes: null,
     });
   });
 
@@ -199,6 +201,126 @@ describe("EmploymentCard", () => {
     type("employmentPercent", "100");
     await user.click(screen.getByRole("button", { name: "save" }));
     expect(save.mock.calls[0]?.[0]).toMatchObject({ maxTeachingDaysPerWeek: 4 });
+  });
+
+  it("reads the limit on teaching in a row back, and says nothing for a post without one or with half of one", () => {
+    // Sammanhängande undervisning sits on the post beside the days (HR).
+    const { unmount } = renderCard({
+      employment: { ...employment, maxConsecutiveTeachingMinutes: 240, consecutiveBreakMinutes: 30 },
+    });
+    expect(screen.getByText("employmentSummaryConsecutive(240|30)")).toBeInTheDocument();
+    unmount();
+
+    const { unmount: unmountNone } = renderCard({
+      employment: { ...employment, maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null },
+    });
+    expect(screen.queryByText(/employmentSummaryConsecutive/)).not.toBeInTheDocument();
+    unmountNone();
+
+    // A half pair is a row the gateway refuses; a line with one number in it
+    // would say a limit that does not exist.
+    renderCard({ employment: { ...employment, maxConsecutiveTeachingMinutes: 240, consecutiveBreakMinutes: null } });
+    expect(screen.queryByText(/employmentSummaryConsecutive/)).not.toBeInTheDocument();
+  });
+
+  it("offers the pair empty, as no limit, beside the days, and with its hint tied to both fields", async () => {
+    const user = userEvent.setup();
+    renderCard();
+    await user.click(screen.getByRole("button", { name: "add" }));
+    for (const label of ["consecutiveMax", "consecutiveBreak"]) {
+      expect(field(label).value).toBe("");
+      expect(field(label).placeholder).toBe("teachingDaysNone");
+      expect(field(label).step).toBe("5");
+      expect(field(label).getAttribute("aria-describedby")).toBe("emp-stretch-hint-t-anna");
+    }
+    expect(field("consecutiveMax").min).toBe("30");
+    expect(field("consecutiveMax").max).toBe("480");
+    expect(field("consecutiveBreak").min).toBe("5");
+    expect(field("consecutiveBreak").max).toBe("120");
+    expect(document.getElementById("emp-stretch-hint-t-anna")).toHaveTextContent("consecutiveHint");
+    expect(document.getElementById("emp-stretch-hint-t-anna")).toHaveTextContent("consecutiveRule");
+  });
+
+  it("sends the pair typed, as two numbers", async () => {
+    const user = userEvent.setup();
+    renderCard();
+    await user.click(screen.getByRole("button", { name: "add" }));
+    type("employmentPercent", "80");
+    type("consecutiveMax", "180");
+    type("consecutiveBreak", "20");
+    await user.click(screen.getByRole("button", { name: "save" }));
+    expect(save.mock.calls[0]?.[0]).toMatchObject({
+      maxConsecutiveTeachingMinutes: 180,
+      consecutiveBreakMinutes: 20,
+    });
+  });
+
+  it("reads each figure back as hours and minutes beside its field, as soon as that figure is sayable", async () => {
+    const user = userEvent.setup();
+    renderCard();
+    await user.click(screen.getByRole("button", { name: "add" }));
+    type("employmentPercent", "80");
+    // The break is not typed yet; the maximum is already said.
+    type("consecutiveMax", "150");
+    expect(screen.getByText("consecutiveSaid(2|30)")).toBeInTheDocument();
+    type("consecutiveBreak", "20");
+    expect(screen.getByText("consecutiveSaid(0|20)")).toBeInTheDocument();
+    type("consecutiveMax", "180");
+    expect(screen.getByText("consecutiveSaid(3|0)")).toBeInTheDocument();
+    // Nothing for a figure the form would refuse: a wrong readout is worse than none.
+    type("consecutiveMax", "17");
+    expect(screen.queryByText(/consecutiveSaid\(0\|17\)/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/consecutiveSaid\(3/)).not.toBeInTheDocument();
+  });
+
+  it("refuses one half of the pair beside the fields, in the form's own sentence, and keeps the save disabled", async () => {
+    const user = userEvent.setup();
+    renderCard();
+    await user.click(screen.getByRole("button", { name: "add" }));
+    type("employmentPercent", "80");
+    type("consecutiveMax", "180");
+    expect(screen.getByRole("alert")).toHaveTextContent("problem_consecutivePairIncomplete");
+    expect(screen.getByRole("button", { name: "save" })).toBeDisabled();
+    type("consecutiveBreak", "20");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "save" })).toBeEnabled();
+  });
+
+  it("refuses figures outside the ranges or off the five-minute grid, naming them", async () => {
+    const user = userEvent.setup();
+    renderCard();
+    await user.click(screen.getByRole("button", { name: "add" }));
+    type("employmentPercent", "80");
+    type("consecutiveBreak", "20");
+    type("consecutiveMax", "3000");
+    expect(screen.getByRole("alert")).toHaveTextContent("problem_consecutiveMaxOutOfRange(30|480)");
+    type("consecutiveMax", "182");
+    expect(screen.getByRole("alert")).toHaveTextContent("problem_consecutiveMaxOffGrid(5)");
+    type("consecutiveMax", "180");
+    type("consecutiveBreak", "130");
+    expect(screen.getByRole("alert")).toHaveTextContent("problem_consecutiveBreakOutOfRange(5|120)");
+    type("consecutiveBreak", "17");
+    expect(screen.getByRole("alert")).toHaveTextContent("problem_consecutiveBreakOffGrid(5)");
+    expect(screen.getByRole("button", { name: "save" })).toBeDisabled();
+  });
+
+  it("keeps the stored pair when the admin edits only the percentage, and takes it away with two nulls", async () => {
+    // PUT keeps a key a body leaves out: the pair is named in every save.
+    const user = userEvent.setup();
+    renderCard({ employment: { ...employment, maxConsecutiveTeachingMinutes: 240, consecutiveBreakMinutes: 30 } });
+    await user.click(screen.getByRole("button", { name: "editEmployment" }));
+    expect(field("consecutiveMax").value).toBe("240");
+    expect(field("consecutiveBreak").value).toBe("30");
+    type("employmentPercent", "100");
+    await user.click(screen.getByRole("button", { name: "save" }));
+    expect(save.mock.calls[0]?.[0]).toMatchObject({ maxConsecutiveTeachingMinutes: 240, consecutiveBreakMinutes: 30 });
+
+    // The card closes on a save; the stored post is the prop, so Ändra opens it as it was.
+    await user.click(screen.getByRole("button", { name: "editEmployment" }));
+    type("consecutiveMax", "");
+    type("consecutiveBreak", "");
+    await user.click(screen.getByRole("button", { name: "save" }));
+    expect(save.mock.calls[1]?.[0]).toMatchObject({ maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null });
   });
 
   it("sends the karriärtjänst shares typed, and says a share above the post beside the fields", async () => {
@@ -296,6 +418,31 @@ describe("EmploymentCard, Roller i skolan", () => {
     expect(screen.getByText("hrHiddenNotice")).toBeInTheDocument();
     expect(screen.queryByText(/employmentSummaryTeachingDays/)).not.toBeInTheDocument();
     expect(screen.queryByText(/hrHidden$/)).not.toBeInTheDocument();
+  });
+
+  it("says nothing of the limit on teaching in a row to a reader the percentages are hidden from", () => {
+    // HR like the days: the gateway nulls both figures with the percentages
+    // and sets hrHidden. Even a row that carried them (it never should) draws
+    // nothing in the hidden branch — not a figure, not "dolt", and no field.
+    me.adminProfile = "SCHEMALAGGARE";
+    renderCard({
+      employment: {
+        ...employment,
+        employmentPercent: null,
+        reductionPercent: null,
+        note: null,
+        hrHidden: true,
+        maxConsecutiveTeachingMinutes: 240,
+        consecutiveBreakMinutes: 30,
+      },
+    });
+    expect(screen.getByText("hrHiddenNotice")).toBeInTheDocument();
+    expect(screen.queryByText(/employmentSummaryConsecutive/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/240|30\b/)).not.toBeInTheDocument();
+    // And no way into a form that has the fields: a planner decides nothing.
+    expect(screen.queryByRole("button", { name: "editEmployment" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("consecutiveMax")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("consecutiveBreak")).not.toBeInTheDocument();
   });
 
   it("offers no post to add to somebody who does not decide, and says who does", () => {

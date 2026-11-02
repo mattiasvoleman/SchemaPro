@@ -75,14 +75,6 @@ export const LUNCH_SERVINGS: LunchServing[] = [
  * Anna's lunch and rest, and Lärarens dag (20261123090000): a cap of five
  * hours' teaching a day on her row, and Bo's row holding nothing but a wish to
  * have Wednesdays free — the row a school writes when the wish is all it has.
- * Sammanhängande undervisning (20261218090000): Cecilia's row holds nothing
- * but a limit of two hours' teaching in a row, then twenty minutes free. The
- * grundschema gives her 09:25–10:25 (co-teaching 9A's maths) and 10:40–11:40
- * (Språkval) on Thursdays, fifteen minutes apart, which is one stretch of
- * 135 minutes — over her limit, so the draft, the run that laid it and two of
- * the three schemaförslag break it, and the third (which moves 9A's Thursday
- * maths to Monday) does not. Anna's own row carries the same kind of limit
- * with room to spare, so a row with a cap AND a limit is drawn.
  */
 export const TEACHER_WORK_RULES: TeacherWorkRule[] = [
   {
@@ -94,8 +86,6 @@ export const TEACHER_WORK_RULES: TeacherWorkRule[] = [
     minDailyRestMinutes: 660,
     maxTeachingMinutesPerDay: 300,
     preferredFreeDayOfWeek: null,
-    maxConsecutiveTeachingMinutes: 240,
-    consecutiveBreakMinutes: 30,
   },
   {
     id: uid(KIND.misc, 1032),
@@ -106,20 +96,6 @@ export const TEACHER_WORK_RULES: TeacherWorkRule[] = [
     minDailyRestMinutes: null,
     maxTeachingMinutesPerDay: null,
     preferredFreeDayOfWeek: 3,
-    maxConsecutiveTeachingMinutes: null,
-    consecutiveBreakMinutes: null,
-  },
-  {
-    id: uid(KIND.misc, 1033),
-    userId: TEACHERS.cecilia.id,
-    lunchMinutes: null,
-    lunchStartTime: null,
-    lunchEndTime: null,
-    minDailyRestMinutes: null,
-    maxTeachingMinutesPerDay: null,
-    preferredFreeDayOfWeek: null,
-    maxConsecutiveTeachingMinutes: 120,
-    consecutiveBreakMinutes: 20,
   },
 ];
 

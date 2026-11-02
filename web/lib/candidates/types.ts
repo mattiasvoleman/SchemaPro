@@ -94,7 +94,9 @@ export interface CandidateView {
    * TEACHER_FREE_DAY_WISH_NOT_KEPT with the weekday, one per teacher, and a
    * limit on teaching in a row (Sammanhängande undervisning) is
    * TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT with the weekday, the longest
-   * stretch and the limit, one per teacher too. Null when it was
+   * stretch and the limit, one per teacher too — or, for a reader without
+   * HR-läs (the limit is set on the post), the single note
+   * TEACHER_CONSECUTIVE_TEACHING_HIDDEN with no teacher and no figure. Null when it was
    * not measured (no timetable, or stored before the gateway measured it);
    * empty when every wish is kept. Absent from an older gateway.
    */

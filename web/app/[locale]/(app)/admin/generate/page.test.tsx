@@ -742,6 +742,27 @@ describe("wishes a finished run could not keep", () => {
     expect(screen.queryByText("conflictCategories.AVAILABILITY")).toBeNull();
   });
 
+  it("lists the limit as one sentence with no teacher and no figure for a reader without HR-läs", () => {
+    // The limit is set on the teacher's post (HR): everyone but a reader with
+    // HR-läs is handed TEACHER_CONSECUTIVE_TEACHING_HIDDEN, one note for the
+    // category, params {} and no resourceNames. The page draws it as it draws
+    // any note and has no name line to draw under it.
+    const HIDDEN = {
+      category: "AVAILABILITY",
+      code: "TEACHER_CONSECUTIVE_TEACHING_HIDDEN",
+      params: {},
+      message: "The new timetable does not keep a teacher's limit on teaching in a row.",
+      resourceNames: [],
+    };
+    state.job = laid({ notes: [WISH, HIDDEN] });
+    render(<GeneratePage />);
+
+    const section = screen.getByRole("region", { name: "generate.notesTitle" });
+    const hidden = within(section).getByText("engineMessages.TEACHER_CONSECUTIVE_TEACHING_HIDDEN()");
+    expect(hidden.nextElementSibling).toBeNull();
+    expect(within(section).queryByText(/TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT/)).toBeNull();
+  });
+
   it("falls back to the gateway's English for a limit this build cannot translate", () => {
     state.untranslated = ["TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT"];
     state.job = laid({

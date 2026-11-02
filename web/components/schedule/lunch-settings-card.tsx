@@ -363,7 +363,8 @@ export function LunchSettingsCard() {
 
           {/* Sammanhängande undervisning: whether the generator tries to keep
               each teacher's limit on teaching in a row. The limits themselves
-              are set per teacher under Arbetstid; a wish, not a promise. */}
+              are set per teacher on the teacher's post (an HR figure); a wish, not a
+              promise. */}
           <div className="flex items-start justify-between gap-4 rounded-md border p-3">
             <div className="space-y-1">
               <Label htmlFor="generator-keeps-consecutive">{t("consecutive")}</Label>

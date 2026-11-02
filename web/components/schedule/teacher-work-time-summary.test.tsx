@@ -9,8 +9,7 @@ import { TeacherWorkTimeSummary, hasAnyRule, splitHours } from "./teacher-work-t
  *
  * The summary is drawn on /admin/people for every member of staff, by every
  * administrator, so two mistakes would be seen by everybody: "no
- * working-time rule" over a row that holds a cap, a wish or a limit on
- * teaching in a row — the school would
+ * working-time rule" over a row that holds a cap or a wish — the school would
  * believe the generator free where it is not — and a line for a field that is
  * null, which would promise a teacher a rule nobody wrote.
  */
@@ -31,8 +30,6 @@ const rule = (overrides: Partial<TeacherWorkRule> = {}): TeacherWorkRule => ({
   minDailyRestMinutes: 660,
   maxTeachingMinutesPerDay: null,
   preferredFreeDayOfWeek: null,
-  maxConsecutiveTeachingMinutes: null,
-  consecutiveBreakMinutes: null,
   ...overrides,
 });
 
@@ -64,7 +61,6 @@ describe("the summary beside the form", () => {
     // Nothing said about a cap or a day the row does not hold.
     expect(screen.queryByText(/summaryDayCap/)).toBeNull();
     expect(screen.queryByText(/summaryFreeDay/)).toBeNull();
-    expect(screen.queryByText(/summaryConsecutive/)).toBeNull();
   });
 
   it("reads a rest with a remainder as hours and minutes", () => {
@@ -109,47 +105,6 @@ describe("the summary beside the form", () => {
   });
 });
 
-describe("the limit on teaching in a row, read back like the cap", () => {
-  it("reads both figures on one line, after the cap and before the wish", () => {
-    render(
-      <TeacherWorkTimeSummary
-        rule={rule({
-          maxTeachingMinutesPerDay: 270,
-          maxConsecutiveTeachingMinutes: 120,
-          consecutiveBreakMinutes: 20,
-          preferredFreeDayOfWeek: 5,
-        })}
-      />,
-    );
-
-    const lines = screen.getAllByRole("listitem").map((item) => item.textContent);
-    expect(lines).toEqual([
-      "summaryLunch(30|10:30|13:30)",
-      "summaryRestHours(11)",
-      "summaryDayCap(270)",
-      "summaryConsecutive(120|20)",
-      "summaryFreeDay(5)",
-    ]);
-  });
-
-  it("does not say 'no rule' over a row that holds only a limit", () => {
-    render(
-      <TeacherWorkTimeSummary
-        rule={rule({ ...NO_LUNCH_OR_REST, maxConsecutiveTeachingMinutes: 150, consecutiveBreakMinutes: 15 })}
-      />,
-    );
-
-    expect(screen.queryByText("noRule")).toBeNull();
-    expect(screen.getByText("summaryConsecutive(150|15)")).toBeInTheDocument();
-  });
-
-  it("says no line for half a pair: one number would state a limit that does not exist", () => {
-    render(<TeacherWorkTimeSummary rule={rule({ maxConsecutiveTeachingMinutes: 150 })} />);
-
-    expect(screen.queryByText(/summaryConsecutive/)).toBeNull();
-  });
-});
-
 describe("whether a stored row says anything", () => {
   it("is no for no row, and for a row of nulls", () => {
     expect(hasAnyRule(undefined)).toBe(false);
@@ -163,19 +118,10 @@ describe("whether a stored row says anything", () => {
     expect(hasAnyRule(rule({ ...NO_LUNCH_OR_REST, minDailyRestMinutes: 660 }))).toBe(true);
     expect(hasAnyRule(rule({ ...NO_LUNCH_OR_REST, maxTeachingMinutesPerDay: 300 }))).toBe(true);
     expect(hasAnyRule(rule({ ...NO_LUNCH_OR_REST, preferredFreeDayOfWeek: 5 }))).toBe(true);
-    // The limit is a pair, and either figure alone is a row somebody wrote.
-    expect(hasAnyRule(rule({ ...NO_LUNCH_OR_REST, maxConsecutiveTeachingMinutes: 150 }))).toBe(true);
-    expect(hasAnyRule(rule({ ...NO_LUNCH_OR_REST, consecutiveBreakMinutes: 15 }))).toBe(true);
   });
 
-  it("reads a row without the four newer keys by the four it has", () => {
-    const {
-      maxTeachingMinutesPerDay: _cap,
-      preferredFreeDayOfWeek: _day,
-      maxConsecutiveTeachingMinutes: _max,
-      consecutiveBreakMinutes: _break,
-      ...older
-    } = rule(NO_LUNCH_OR_REST);
+  it("reads a row without the two newer keys by the four it has", () => {
+    const { maxTeachingMinutesPerDay: _cap, preferredFreeDayOfWeek: _day, ...older } = rule(NO_LUNCH_OR_REST);
     expect(hasAnyRule(older as TeacherWorkRule)).toBe(false);
   });
 });

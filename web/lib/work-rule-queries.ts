@@ -17,15 +17,13 @@ import type { WorkRuleBody } from "@/lib/teacher-work-rules";
 // select by two columns, which took /admin/requirements to 189.98KB own JS,
 // 18 bytes under its 190KB budget; with the hooks here it measured 189.87KB
 // and /admin/timetable 189.65KB (2026-10-17). They are paid for by the page
-// and the dialog that use them. Sammanhängande undervisning (20261218090000)
-// lengthened the select by two columns more; the cost is the page's, which
-// reads the rules for its summary.
+// and the dialog that use them.
 // ---------------------------------------------------------------------------
 
 /**
  * What each teacher's own working time is — the lunch owed, the night
- * between two teaching days, the day's cap on teaching, the weekday they
- * would rather have free and how long they teach in a row.
+ * between two teaching days, the day's cap on teaching and the weekday they
+ * would rather have free.
  *
  * School-scoped like the raster, and for the same reason: an employment term
  * follows the person, not one läsår, and re-entering every teacher's lunch
@@ -45,10 +43,9 @@ export function useTeacherWorkRules() {
         // Every field the form writes. A column missing from this list is
         // invisible to the page — the form would draw it empty and the next
         // save would clear a rule the school set a term ago. The day's cap and
-        // the free-day wish (20261123090000) included, and the limit on
-        // teaching in a row (20261218090000): the dialog sends every key, so a
-        // cap or a limit left out here would be cleared by the next lunch saved.
-        "id, userId, lunchMinutes, lunchStartTime, lunchEndTime, minDailyRestMinutes, maxTeachingMinutesPerDay, preferredFreeDayOfWeek, maxConsecutiveTeachingMinutes, consecutiveBreakMinutes",
+        // the free-day wish (20261123090000) included: the dialog sends every
+        // key, so a cap left out here would be cleared by the next lunch saved.
+        "id, userId, lunchMinutes, lunchStartTime, lunchEndTime, minDailyRestMinutes, maxTeachingMinutesPerDay, preferredFreeDayOfWeek",
         "userId",
       ),
   });
@@ -91,18 +88,16 @@ export function useTeacherWorkRuleActions() {
 
   const remove = useMutation({
     mutationFn: (userId: string) =>
-      // `includeDay=true`: THIS DELETE MEANS THE CAP, THE WISH AND THE LIMIT
-      // ON TEACHING IN A ROW TOO. A bare DELETE from a planner keeps the
-      // day's two columns (20261123090000) and the limit's two
-      // (20261218090000) and clears only the lunch and the rest, because a
-      // web from before them, open in a tab over the release, reads a row
-      // holding only a cap, a wish or a limit as "no rule" and sends DELETE
-      // when its four-field draft is empty — which would take away a cap a
-      // colleague set an hour ago with nothing on screen to say so. This
-      // dialog's draft holds all eight fields (isEmptyDraft), so its empty
-      // draft is the reader clearing them as well, and it says so. A
-      // teacher's own DELETE ignores the flag: they never remove what an
-      // administrator set.
+      // `includeDay=true`: THIS DELETE MEANS THE CAP AND THE WISH TOO. A bare
+      // DELETE from a planner keeps the day's two columns (20261123090000) and
+      // clears only the lunch and the rest, because a web from before them,
+      // open in a tab over the release, reads a row holding only a cap or a
+      // wish as "no rule" and sends DELETE when its four-field draft is empty
+      // — which would take away a cap a colleague set an hour ago with nothing
+      // on screen to say so. This dialog's draft holds all six fields
+      // (isEmptyDraft), so its empty draft is the reader clearing the cap and
+      // the wish as well, and it says so. A teacher's own DELETE ignores the
+      // flag: they never remove what an administrator set.
       api.delete(`/api/v1/teacher-work-rules/${userId}?includeDay=true`),
     onSuccess: invalidate,
   });

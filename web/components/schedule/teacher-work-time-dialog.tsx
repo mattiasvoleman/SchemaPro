@@ -7,11 +7,6 @@ import { TriangleAlert } from "lucide-react";
 import { useTeacherWorkRuleActions } from "@/lib/work-rule-queries";
 import type { Person, TeacherWorkRule } from "@/lib/types";
 import {
-  CONSECUTIVE_BREAK_MINUTES_MAX,
-  CONSECUTIVE_BREAK_MINUTES_MIN,
-  CONSECUTIVE_MAX_MINUTES_MAX,
-  CONSECUTIVE_MAX_MINUTES_MIN,
-  CONSECUTIVE_STEP,
   DAY_CAP_MINUTES_MAX,
   DAY_CAP_MINUTES_MIN,
   DAY_CAP_MINUTES_STEP,
@@ -24,7 +19,6 @@ import {
   REST_MINUTES_MAX,
   REST_MINUTES_MIN,
   SUGGESTED_DRAFT,
-  consecutiveFigure,
   draftToBody,
   isEmptyDraft,
   ruleToDraft,
@@ -72,8 +66,7 @@ export interface TeacherWorkTimeDialogProps {
 
 /**
  * A teacher's own working time: the lunch they are owed, the night, how much
- * they teach on one day at most, the weekday they would rather have free and
- * how long they teach in a row before a break.
+ * they teach on one day at most, and the weekday they would rather have free.
  *
  * THE EMPTY FORM IS A REAL ANSWER, and it is the one nearly every row starts
  * from. Empty fields mean the solver promises this teacher nothing, which is
@@ -89,13 +82,11 @@ export interface TeacherWorkTimeDialogProps {
  * the rest only: see SUGGESTED_DRAFT for why it never carries a cap.
  *
  * ONE ROW, TWO KINDS OF FIELD. The lunch, the rest and the day's cap are hard
- * — the generator refuses a week that cannot keep them — and the free day and
- * the limit on teaching in a row are wishes it weighs and may give up. The
- * dialog says which is which where each is written, because a school that
- * read a wish as a rule would expect it to be kept, and one that read the cap
- * as a wish would be surprised by the refusal. THE LIMIT IS NOT A PROMISE
- * EVEN WHERE IT IS ON: the generator tries it only where the school has
- * switched it on in Skolregler, so the group says that, and where.
+ * — the generator refuses a week that cannot keep them — and the free day is
+ * a wish it weighs and may give up. The dialog says which is which where each
+ * is written, because a school that read the wish as a rule would expect the
+ * day to be kept, and one that read the cap as a wish would be surprised by
+ * the refusal.
  *
  * THE DRAFT IS INITIALISED ONCE, AT MOUNT. The page remounts this component
  * with a key built from the teacher and the row, which is what makes a
@@ -203,40 +194,22 @@ export function TeacherWorkTimeDialog({
    * 270 read back as "= 4 tim 30 min", beside the field.
    *
    * A cap is thought of in hours and lessons and typed in minutes, so the
-   * number is said back the way the school thinks of it. Three sentences,
+   * number is said back the way the school thinks of it. The same rule as the
+   * rest's readout: only for a value the form would save. Three sentences,
    * because a cap can be under an hour (30..55 minutes) as well as whole hours,
-   * and "0 tim 45 min" is not how anybody says three quarters of an hour. The
-   * limit on teaching in a row shares them.
-   */
-  const minutesSaid = (minutes: number): string => {
-    const split = splitHours(minutes);
-    if (split.hours === 0) return t("equalsMinutes", { minutes: split.minutes });
-    return split.minutes === 0
-      ? t("equalsHours", { hours: split.hours })
-      : t("equalsHoursMinutes", { hours: split.hours, minutes: split.minutes });
-  };
-
-  /**
-   * The same rule as the rest's readout: only for a value the form would
-   * save. The cap is judged by the whole form's rules; each figure of the
-   * limit on teaching in a row by its own (consecutiveFigure), so it is said
-   * as soon as it is sayable rather than when the pair is complete — half a
-   * typed value is a wrong hour count on screen, and a wrong one is worse than
-   * none.
+   * and "0 tim 45 min" is not how anybody says three quarters of an hour.
    */
   const capReadout = (): string | null => {
     const cap = draft.maxTeachingMinutesPerDay;
     if (cap.trim() === "") return null;
     if (validateDraft({ ...EMPTY_DRAFT, maxTeachingMinutesPerDay: cap })) return null;
-    return minutesSaid(Number(cap.trim()));
+    const split = splitHours(Number(cap.trim()));
+    if (split.hours === 0) return t("dayCapEqualsMinutes", { minutes: split.minutes });
+    return split.minutes === 0
+      ? t("dayCapEqualsHours", { hours: split.hours })
+      : t("dayCapEqualsHoursMinutes", { hours: split.hours, minutes: split.minutes });
   };
   const capSaid = capReadout();
-  const figureSaid = (value: string, field: "max" | "break"): string | null => {
-    const minutes = consecutiveFigure(value, field);
-    return minutes === null ? null : minutesSaid(minutes);
-  };
-  const consecutiveMaxSaid = figureSaid(draft.maxConsecutiveTeachingMinutes, "max");
-  const consecutiveBreakSaid = figureSaid(draft.consecutiveBreakMinutes, "break");
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -355,73 +328,6 @@ export function TeacherWorkTimeDialog({
               )}
             </div>
             <p className="text-xs text-muted-foreground">{t("dayCapHint")}</p>
-          </div>
-
-          {/*
-            Sammanhängande undervisning: at most X minutes in a row, then Y
-            free. Two fields that belong together (both or neither, said in
-            Swedish by validateDraft), and no placeholder, like the cap: a
-            greyed 120 reads as a limit the school could just accept. The
-            group says the two things a reader would otherwise assume the
-            wrong way — that it is tried and not promised, and that the
-            school's switch decides whether the generator tries at all.
-          */}
-          <div role="group" aria-labelledby="work-consecutive-title" className="space-y-2 border-t pt-4">
-            <h3 id="work-consecutive-title" className="text-sm font-semibold">
-              {t("consecutiveTitle")}
-            </h3>
-            {/* One under the other, each with its readout beside it like the
-                cap's: the two labels are long, and side by side they wrap to
-                different heights and leave the fields out of line. */}
-            <div className="space-y-2">
-              <Label htmlFor="work-consecutive-max">{t("consecutiveMax")}</Label>
-              <div className="flex items-center gap-3">
-                <Input
-                  id="work-consecutive-max"
-                  type="number"
-                  inputMode="numeric"
-                  min={CONSECUTIVE_MAX_MINUTES_MIN}
-                  max={CONSECUTIVE_MAX_MINUTES_MAX}
-                  step={CONSECUTIVE_STEP}
-                  value={draft.maxConsecutiveTeachingMinutes}
-                  onChange={(event) =>
-                    setDraft((previous) => ({
-                      ...previous,
-                      maxConsecutiveTeachingMinutes: event.target.value,
-                    }))
-                  }
-                />
-                {consecutiveMaxSaid === null ? null : (
-                  <span className="shrink-0 text-sm text-muted-foreground">{consecutiveMaxSaid}</span>
-                )}
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="work-consecutive-break">{t("consecutiveBreak")}</Label>
-              <div className="flex items-center gap-3">
-                <Input
-                  id="work-consecutive-break"
-                  type="number"
-                  inputMode="numeric"
-                  min={CONSECUTIVE_BREAK_MINUTES_MIN}
-                  max={CONSECUTIVE_BREAK_MINUTES_MAX}
-                  step={CONSECUTIVE_STEP}
-                  value={draft.consecutiveBreakMinutes}
-                  onChange={(event) =>
-                    setDraft((previous) => ({
-                      ...previous,
-                      consecutiveBreakMinutes: event.target.value,
-                    }))
-                  }
-                />
-                {consecutiveBreakSaid === null ? null : (
-                  <span className="shrink-0 text-sm text-muted-foreground">{consecutiveBreakSaid}</span>
-                )}
-              </div>
-            </div>
-            <p className="text-xs text-muted-foreground">{t("consecutiveHint")}</p>
-            <p className="text-xs text-muted-foreground">{t("consecutiveCounts")}</p>
-            <p className="text-xs text-muted-foreground">{t("consecutiveSchoolSwitch")}</p>
           </div>
 
           {/*

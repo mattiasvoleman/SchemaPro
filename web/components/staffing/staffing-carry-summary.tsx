@@ -107,6 +107,7 @@ export function StaffingCarrySummary({
       <Section title={t("withReduction")} items={names(employments.withReduction)} warn />
       <Section title={t("withTargetOverride")} items={names(employments.withTargetOverride)} warn />
       <Section title={t("withDayLimit")} items={names(employments.withDayLimit ?? [])} warn />
+      <Section title={t("withStretchLimit")} items={names(employments.withStretchLimit ?? [])} warn />
       <Section title={t("mentorskapLeft")} items={notCarried("GROUP_LEAVES").map(duty)} warn />
       <Section title={t("endedBeforeYear")} items={notCarried("ENDS_BEFORE_YEAR").map(duty)} />
       <Section

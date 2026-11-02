@@ -362,6 +362,41 @@ describe("the comparison table", () => {
       ]);
     });
 
+    it("draws the limit on teaching in a row as one sentence with no name and no figure for a reader without HR-läs", () => {
+      // The limit is HR (set on the post): the gateway sends
+      // TEACHER_CONSECUTIVE_TEACHING_HIDDEN, one note, params {}, no names. The
+      // row counts it as a wish and reads nothing else off it — even a name
+      // that slipped into resourceNames is not drawn.
+      const hidden = (names: string[] = []) => ({
+        category: "AVAILABILITY",
+        code: "TEACHER_CONSECUTIVE_TEACHING_HIDDEN",
+        params: {},
+        message: "The new timetable does not keep a teacher's limit on teaching in a row.",
+        resourceNames: names,
+      });
+      state.overview = {
+        latest: BATCH,
+        batch: {
+          ...BATCH,
+          candidates: [
+            candidate(1, "KEEP", { notes: [wish(1, ["Anna Ek"]), hidden()] }),
+            candidate(2, "TEACHER_GAPS", { notes: [hidden(["Anna Ek"])] }),
+            candidate(3, "SPREAD", { solverStatus: "TIMEOUT", metrics: null, notes: null }),
+          ],
+        },
+        unplaced: null,
+        draftNotes: [wish(1, ["Anna Ek"]), hidden()],
+      };
+      render(<CandidatesPage />);
+
+      expect(wishesRow()).toEqual([
+        "scheduleCandidates.cell.wishes(2)scheduleCandidates.cell.wish(Anna Ek|1)scheduleCandidates.cell.stretchHidden",
+        "scheduleCandidates.cell.wishes(2)scheduleCandidates.cell.delta(±scheduleCandidates.cell.wishCount(0))scheduleCandidates.cell.wish(Anna Ek|1)scheduleCandidates.cell.stretchHidden",
+        "scheduleCandidates.cell.wishes(1)scheduleCandidates.cell.delta(−scheduleCandidates.cell.wishCount(1))scheduleCandidates.cell.stretchHidden",
+        "scheduleCandidates.cell.notApplicable",
+      ]);
+    });
+
     it("says not measured for a batch stored before the gateway measured them, and no difference without the draft's", () => {
       state.overview = {
         latest: BATCH,

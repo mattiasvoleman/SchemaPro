@@ -247,6 +247,18 @@ describe("reasons in plain Swedish", () => {
     );
   });
 
+  it("says the limit on teaching in a row to a reader without HR-läs with no figure at all", () => {
+    // The limit is set on the post, so the Vikarietavlan masks the finding for
+    // a reader who may not read the post (src/cover/cover-rules.ts maskFindings).
+    // The sentence says whose figures are shown, and no digit is left in it.
+    for (const messages of [sv.coverReasons, en.coverReasons] as Record<string, string>[]) {
+      const said = reasonText(lookup(messages), { code: "CONSECUTIVE_TEACHING_HIDDEN", params: {} });
+      expect(said).not.toBe("CONSECUTIVE_TEACHING_HIDDEN");
+      expect(said).not.toMatch(/\d/);
+    }
+    expect(reasonText(t, { code: "CONSECUTIVE_TEACHING_HIDDEN", params: {} })).toMatch(/HR-läs/);
+  });
+
   it("has a sentence, in both languages, for every code the gateway ranks or excludes by", () => {
     // src/cover/cover-rank.ts RankReasonCode and src/cover/cover-rules.ts HardRuleCode.
     const codes = [
@@ -259,8 +271,9 @@ describe("reasons in plain Swedish", () => {
       // Lärarens dag: the day's cap, the post's days, and the days masked for
       // a reader without HR-läs (src/cover/cover-rules.ts maskFindings).
       "DAILY_CAP", "WORK_DAYS", "WORK_DAYS_HIDDEN",
-      // Sammanhängande undervisning: the limit on teaching in a row.
-      "CONSECUTIVE_TEACHING",
+      // Sammanhängande undervisning: the limit on teaching in a row, and the
+      // same masked for a reader without HR-läs.
+      "CONSECUTIVE_TEACHING", "CONSECUTIVE_TEACHING_HIDDEN",
     ];
     expect(codes.filter((code) => !(code in sv.coverReasons))).toEqual([]);
     expect(codes.filter((code) => !(code in en.coverReasons))).toEqual([]);
@@ -295,8 +308,9 @@ describe("cover refusals", () => {
       // Lärarens dag's warnings for a manual pick (WARNING_OF), the days one
       // masked for a reader without HR-läs.
       "COVER_EXCEEDS_DAILY_CAP", "COVER_BEYOND_WORK_DAYS", "COVER_BEYOND_WORK_DAYS_HIDDEN",
-      // Sammanhängande undervisning's, mapped from CONSECUTIVE_TEACHING the same way.
-      "COVER_EXCEEDS_CONSECUTIVE_TEACHING",
+      // Sammanhängande undervisning's, mapped from CONSECUTIVE_TEACHING the same
+      // way, the masked one with it.
+      "COVER_EXCEEDS_CONSECUTIVE_TEACHING", "COVER_EXCEEDS_CONSECUTIVE_TEACHING_HIDDEN",
       // Rastvakt i vardagen: a pass's refusals, and a manual pick's warning
       // that the person has a pass of their own then.
       "COVER_TEACHER_ON_SUPERVISION", "SUPERVISION_COVER_NOT_AFFECTED", "SUPERVISION_COVER_HELD",
@@ -346,6 +360,7 @@ describe("the other-teacher pick", () => {
         { userId: "t-cia", codes: [{ code: "WORK_DAYS", params: { days: 4 } }] },
         { userId: "t-dan", codes: [{ code: "WORK_DAYS_HIDDEN", params: {} }] },
         { userId: "t-eva", codes: [{ code: "CONSECUTIVE_TEACHING", params: { minutes: 120, breakMinutes: 20 } }] },
+        { userId: "t-fia", codes: [{ code: "CONSECUTIVE_TEACHING_HIDDEN", params: {} }] },
       ],
     });
     expect(options.map((teacher) => teacher.id)).toEqual(["t-bo", "t-cia", "t-dan", "t-eva", "t-fia"]);

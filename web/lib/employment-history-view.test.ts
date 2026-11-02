@@ -22,6 +22,8 @@ const labels: HistoryLabels = {
       firstTeacherPercent: "Förstelärare",
       lecturerPercent: "Lektor",
       maxTeachingDaysPerWeek: "Undervisningsdagar per vecka",
+      maxConsecutiveTeachingMinutes: "Högst undervisning i följd (min)",
+      consecutiveBreakMinutes: "Ledigt efter en följd (min)",
       label: "Benämning",
       minutesPerWeek: "Tid",
       countsAsTeaching: "Räknas",
@@ -145,6 +147,35 @@ describe("historyLines", () => {
     expect(
       historyLines(entry({ changes: [{ field: "maxTeachingDaysPerWeek", before: 4, after: null }] }), labels),
     ).toEqual(["Undervisningsdagar per vecka: 4 → —"]);
+  });
+
+  it("says the limit on teaching in a row as its two figures, and a cleared one as empty (Sammanhängande undervisning)", () => {
+    // HR like the days: a reader without HR-läs is never handed the change (the
+    // gateway leaves a version that changed nothing else out), so the web draws
+    // exactly the lines it is sent and invents none.
+    expect(
+      historyLines(
+        entry({
+          changes: [
+            { field: "maxConsecutiveTeachingMinutes", before: 180, after: 240 },
+            { field: "consecutiveBreakMinutes", before: 20, after: 30 },
+          ],
+        }),
+        labels,
+      ),
+    ).toEqual(["Högst undervisning i följd (min): 180 → 240", "Ledigt efter en följd (min): 20 → 30"]);
+    expect(
+      historyLines(
+        entry({
+          changes: [
+            { field: "maxConsecutiveTeachingMinutes", before: 240, after: null },
+            { field: "consecutiveBreakMinutes", before: 30, after: null },
+          ],
+        }),
+        labels,
+      ),
+    ).toEqual(["Högst undervisning i följd (min): 240 → —", "Ledigt efter en följd (min): 30 → —"]);
+    expect(historyLines(entry({ changes: [] }), labels)).toEqual([]);
   });
 
   it("states what an uppdrag was created with and what a deleted one had", () => {
