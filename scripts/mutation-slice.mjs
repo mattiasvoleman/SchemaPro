@@ -33,7 +33,8 @@
  * WHAT IT WRITES, under reports/mutation/slice-N/ — the number is in the path,
  * so ten nights can be laid side by side: stryker.conf.json (the config the run
  * used, `mutate` being the slice's files), slice.json (number, size, files),
- * index.html and mutation.json (Stryker's report), summary.md (score, and every
+ * index.html and mutation.json (Stryker's report), file-times.json (what each
+ * file cost, from mutation-timing-reporter.mjs), summary.md (score, and every
  * file's score, weakest first). The summary is also appended to the Actions
  * job summary. The exit code is Stryker's.
  */
@@ -240,6 +241,9 @@ async function main() {
         ...base,
         slice_comment: `Slice ${n} of ${of}, written by scripts/mutation-slice.mjs: \`mutate\` is this slice's files, the reports carry its number.`,
         mutate: chosen.files.map((f) => f.file),
+        // Beside Stryker's own: what each file cost, see mutation-timing-reporter.mjs.
+        plugins: [...(base.plugins ?? ['@stryker-mutator/*']), './scripts/mutation-timing-reporter.mjs'],
+        reporters: [...(base.reporters ?? []), 'timing'],
         htmlReporter: { fileName: join(dir, 'index.html') },
         jsonReporter: { fileName: join(dir, 'mutation.json') },
       },
@@ -250,7 +254,10 @@ async function main() {
   const slice = { slice: n, of, mutants: chosen.mutants, files: chosen.files, apiMutants: total, apiFiles: files.length };
   writeFileSync(join(dir, 'slice.json'), JSON.stringify({ ...slice, date: new Date().toISOString() }, null, 2) + '\n');
 
-  const stryker = spawnSync(join('node_modules', '.bin', 'stryker'), ['run', configPath], { stdio: 'inherit' });
+  const stryker = spawnSync(join('node_modules', '.bin', 'stryker'), ['run', configPath], {
+    stdio: 'inherit',
+    env: { ...process.env, MUTATION_TIMING_FILE: join(dir, 'file-times.json') },
+  });
 
   const reportPath = join(dir, 'mutation.json');
   const summary = existsSync(reportPath) ? summarise(JSON.parse(readFileSync(reportPath, 'utf8'))) : null;
