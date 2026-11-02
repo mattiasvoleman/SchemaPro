@@ -251,7 +251,12 @@ export async function readOtherSchoolHolds(
       schools: named([ownerOf.get(reservation.roomId)!]),
     });
   }
-  return { holds };
+  // One hold per id. An autumn and a spring loan of the same window are two
+  // reservations of one room, one weekday and one time, and the id is those
+  // four: the engine and the constraint map need no second row for it, and the
+  // borrowers it names were read across the loans already.
+  const ids = new Set<string>();
+  return { holds: holds.filter((hold) => !ids.has(hold.holdId) && ids.add(hold.holdId)) };
 }
 
 /** The OTHER_SCHOOL_* code a hold's refusal is read as. */

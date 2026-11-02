@@ -127,6 +127,32 @@ describe('readOtherSchoolHolds', () => {
     expect(borrowed.filter((hold) => hold.dayOfWeek !== 4)).toHaveLength(4);
   });
 
+  it('holds a room once for an autumn and a spring loan of the same window, naming both borrowers', async () => {
+    const SYD = '55555555-5555-4555-8555-555555555555';
+    tx.$queryRaw
+      .mockResolvedValueOnce([
+        { school_id: NORRA, name: 'Norraskolan' },
+        { school_id: SYD, name: 'Sydskolan' },
+      ])
+      .mockResolvedValueOnce([]);
+    tx.roomLoan.findMany.mockResolvedValue([
+      loan({ endDate: date('2030-12-20') }),
+      loan({ borrowerSchoolId: SYD, startDate: date('2031-01-08') }),
+    ]);
+    const { holds } = await read();
+    // Two reservations of one room, weekday and time are one hold, by its id.
+    expect(holds).toHaveLength(1);
+    expect(holds[0]).toMatchObject({
+      holdId: holdId(SCHOOL, 'ROOM_LENT', HALL, 2, '10:00:00', '11:30:00'),
+      kind: 'ROOM_LENT',
+      schools: ['Norraskolan', 'Sydskolan'],
+    });
+    // A window of its own is a hold of its own.
+    tx.roomLoan.findMany.mockResolvedValue([loan({ endDate: date('2030-12-20') }), loan({ startDate: date('2031-01-08'), startTime: time('13:00'), endTime: time('14:00') })]);
+    tx.$queryRaw.mockResolvedValueOnce([{ school_id: NORRA, name: 'Norraskolan' }]).mockResolvedValueOnce([]);
+    expect((await read()).holds.map((hold) => hold.startTime)).toEqual(['10:00:00', '13:00:00']);
+  });
+
   it('closes a borrowed room whose loans are all pending or ended all week', async () => {
     tx.$queryRaw.mockResolvedValueOnce([{ school_id: NORRA, name: 'Norraskolan' }]).mockResolvedValueOnce([]);
     tx.roomLoan.findMany.mockResolvedValue([
