@@ -175,6 +175,19 @@ describe('GuardianHomeScreen', () => {
       expect(reportAbsence).toHaveBeenCalledWith({ studentId: 'c2', date: '2099-02-03', type: 'SICK' });
     });
 
+    it('stays empty when the guardian empties it to write another day, and then reports nothing', async () => {
+      // An empty field is a typed day like any other. Filled again with the
+      // school's the moment it is emptied, it could never be cleared to be
+      // written over; and a submit would report the school's day behind the
+      // guardian's back.
+      tree = await render(GuardianHomeScreen);
+      await type(tree, DATE, '');
+      expect(valueOf(tree, DATE)).toBe('');
+      await press(tree, t('guardian.submit'));
+      expect(reportAbsence).not.toHaveBeenCalled();
+      expect(Alert.alert).toHaveBeenCalledWith(t('guardian.alertTitle'), t('guardian.pickChildAndDate'));
+    });
+
     it("is the phone's day only for a child whose gateway named no school day", async () => {
       // A gateway from before schoolToday: the field falls back to the phone's
       // calendar day, in the phone's zone. Only the clock is faked, so the
@@ -217,6 +230,21 @@ describe('GuardianHomeScreen', () => {
       expect(valueOf(tree, DATE)).toBe('2099-01-01');
       expect(withdrawableDates(tree)).toEqual(['2099-01-01', '2000-01-01', '2000-01-03']);
     });
+
+    it("follows the gateway's removable over the day when it has said one, whichever way it points", async () => {
+      // The rows above carry no removable, which is a gateway from before the
+      // field. A gateway that has it answers with the withdrawal's own rule, in
+      // the school's day, and the screen takes its word and not the phone's
+      // reckoning of the same rule.
+      jest.mocked(fetchAbsenceReports).mockResolvedValue([
+        // The guardian's own and still to come in Liam's school's day, but the gateway says no: not offered.
+        { ...report('r1', 'c2', '2000-01-03'), removable: false },
+        // Long past in Liam's school's day, but the gateway says yes: offered.
+        { ...report('r2', 'c2', '1999-12-31'), removable: true },
+      ]);
+      tree = await render(GuardianHomeScreen);
+      expect(withdrawableDates(tree)).toEqual(['1999-12-31']);
+    });
   });
 });
 
@@ -252,6 +280,15 @@ describe('LeaveRequestsScreen', () => {
     await type(tree, REASON, 'Resa');
     await press(tree, t('leave.submit'));
     expect(requestLeave).toHaveBeenLastCalledWith({ studentId: 'c2', startDate: '2000-02-01', endDate: '2000-02-09', reason: 'Resa' });
+  });
+
+  it('stays empty when the guardian empties a day to write another', async () => {
+    // As on the home screen: an empty field is a typed day, not a missing one.
+    tree = await render(LeaveRequestsScreen);
+    await type(tree, FROM, '');
+    expect([valueOf(tree, FROM), valueOf(tree, TO)]).toEqual(['', '2099-01-01']);
+    await type(tree, TO, '');
+    expect([valueOf(tree, FROM), valueOf(tree, TO)]).toEqual(['', '']);
   });
 
   it("starts at the phone's day only for a child whose gateway named no school day", async () => {
