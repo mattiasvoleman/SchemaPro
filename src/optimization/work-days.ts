@@ -1,7 +1,13 @@
 import { HttpException } from '@nestjs/common';
 
 /**
- * DELTID IN DAYS, AND WHO MAY READ A REFUSAL ABOUT IT.
+ * DELTID IN DAYS, AND THE LIMIT ON TEACHING IN A ROW: WHO MAY READ A SENTENCE
+ * ABOUT THEM.
+ *
+ * (The second half of this file is the limit on teaching in a row, which
+ * moved to the post in 20261218090000 and is read here exactly as the days
+ * are: see "THE LIMIT ON TEACHING IN A ROW" below. Everything said about the
+ * days holds for it, with a note instead of a refusal.)
  *
  * A post may say on how many days a week its teacher teaches
  * (TeacherEmployments.maxTeachingDaysPerWeek, 20261123090000), and the
@@ -61,6 +67,60 @@ export function isDaysBearing(code: string | null | undefined): boolean {
   return DAYS_BEARING.has(code);
 }
 
+/*
+ * THE LIMIT ON TEACHING IN A ROW (Sammanhängande undervisning,
+ * TeacherEmployments.maxConsecutiveTeachingMinutes and consecutiveBreakMinutes,
+ * 20261218090000) IS HR DATA, AND READ HERE AS THE DAYS ARE.
+ *
+ * A limit may be an arbetsanpassning after sick leave, so the user decided it
+ * is the post's and not the work rule's: no reader without HR-läs is shown the
+ * figures, or the teacher, or even that some teacher has one. The generator
+ * does not soft-refuse a week over it, so what a run says about it is a NOTE
+ * (the teacher whose longest stretch the finished timetable leaves over the
+ * limit, consecutive-wishes.ts) and not a conflict, but the note is stored and
+ * shown by the same rule as a days refusal:
+ *
+ *  - STORED WITHOUT THE LIMIT. The note keeps the weekday and the length of
+ *    the longest stretch (what the timetable itself shows), the teacher's
+ *    Users id server-side in `subjectIds`, and an English fallback with no
+ *    figure of the limit. The post is the one place the limit lives, so
+ *    gallring has no second copy in OptimizationJobs to miss.
+ *  - SHOWN PER READER. A reader without HR-läs gets TEACHER_CONSECUTIVE_
+ *    TEACHING_HIDDEN: no teacher, no limit, no weekday, its category kept, and
+ *    two of those say nothing the first did not, so they are one. A reader
+ *    with HR-läs gets the note with the limit and the pause read back from
+ *    the post as it stands and the teacher named, and the read is recorded
+ *    (EMPLOYMENT). A post that no longer has a limit, or is gone, has nothing
+ *    to read back, and its note stays hidden for that reader too.
+ *  - A SCHEMAFÖRSLAG STORES THE HIDDEN SENTENCE FOR EVERY READER (hideConsecutiveNotes),
+ *    as it does a days sentence: a candidate is read by a page that has no
+ *    read-back of the posts, so nothing HR is kept to be shown.
+ */
+
+/** The note about a limit the finished timetable does not keep. */
+export const TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT = 'TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT' as const;
+
+/** The masked note, for a reader without HR-läs. No params. */
+export const TEACHER_CONSECUTIVE_TEACHING_HIDDEN = 'TEACHER_CONSECUTIVE_TEACHING_HIDDEN' as const;
+
+/** Every sentence whose params are completed from a post's limit on teaching in a row. */
+export const STRETCH_BEARING_CODES: readonly string[] = [TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT];
+
+const STRETCH_BEARING = new Set<string | null | undefined>(STRETCH_BEARING_CODES);
+
+export function isStretchBearing(code: string | null | undefined): boolean {
+  return STRETCH_BEARING.has(code);
+}
+
+/**
+ * The catalogue's English for TEACHER_CONSECUTIVE_TEACHING_HIDDEN, rendered
+ * here because the engine never produces it: the English of the note with
+ * nothing in it that names a limit, a weekday or a teacher.
+ */
+export const CONSECUTIVE_TEACHING_HIDDEN_MESSAGE =
+  "A teacher's limit on teaching in a row was not kept in the timetable. " +
+  'The limit is shown to the principal, a full administrator and anyone with HR read access.';
+
 /**
  * The catalogue's English for TEACHER_WORK_DAYS_HIDDEN, rendered here because
  * the engine never produces it. Stored as the English of every days-bearing
@@ -107,7 +167,10 @@ export interface StoredSentence {
 
 /** One teacher's post as a reader with HR-läs is shown it. */
 export interface PostShown {
-  days: number;
+  /** The post's deltid in days; null when the post has none (a limit on teaching in a row alone). */
+  days: number | null;
+  /** The post's limit on teaching in a row; null when the post has none. */
+  stretch: { max: number; breakMinutes: number } | null;
   /** The teacher, as the school wrote them: first and last name. */
   name: string;
 }
@@ -145,17 +208,18 @@ export function forReader(
   sentence: StoredSentence,
   posts: ReadonlyMap<string, PostShown> | null,
 ): SentenceShown {
+  if (isStretchBearing(sentence.code)) return stretchForReader(sentence, posts);
   if (!isDaysBearing(sentence.code)) {
     return { code: sentence.code, params: sentence.params, message: sentence.message, names: [], revealed: [] };
   }
   const shown = posts === null ? [] : sentence.subjectIds.map((id) => posts.get(id));
-  if (shown.length === 0 || shown.some((post) => post === undefined)) {
+  if (shown.length === 0 || shown.some((post) => post === undefined || post.days === null)) {
     return { ...HIDDEN, revealed: [] };
   }
   // One limit per sentence and one post per limit, so one teacher: the first
   // is the figure — the post's, over any a hand-edited row might carry. Every
   // one of them is named and recorded all the same.
-  const posted = shown as PostShown[];
+  const posted = shown as Array<PostShown & { days: number }>;
   return {
     code: sentence.code,
     params: { ...sentence.params, days: posted[0]!.days },
@@ -164,3 +228,40 @@ export function forReader(
     revealed: [...sentence.subjectIds],
   };
 }
+
+const HIDDEN_STRETCH: Omit<SentenceShown, 'revealed'> = {
+  code: TEACHER_CONSECUTIVE_TEACHING_HIDDEN,
+  params: {},
+  message: CONSECUTIVE_TEACHING_HIDDEN_MESSAGE,
+  names: [],
+};
+
+/**
+ * What one note about a limit on teaching in a row says to its reader, by the
+ * rule `forReader` states for the days: the limit and the pause read back from
+ * the post, and the teacher named, only for a reader with HR-läs and only
+ * while every teacher it is about still has a limit; the hidden note
+ * otherwise.
+ */
+function stretchForReader(
+  sentence: StoredSentence,
+  posts: ReadonlyMap<string, PostShown> | null,
+): SentenceShown {
+  const shown = posts === null ? [] : sentence.subjectIds.map((id) => posts.get(id));
+  if (shown.length === 0 || shown.some((post) => post === undefined || post.stretch === null)) {
+    return { ...HIDDEN_STRETCH, revealed: [] };
+  }
+  const posted = shown as Array<PostShown & { stretch: { max: number; breakMinutes: number } }>;
+  return {
+    code: sentence.code,
+    params: {
+      ...sentence.params,
+      max: posted[0]!.stretch.max,
+      breakMinutes: posted[0]!.stretch.breakMinutes,
+    },
+    message: sentence.message,
+    names: posted.map((post) => post.name),
+    revealed: [...sentence.subjectIds],
+  };
+}
+

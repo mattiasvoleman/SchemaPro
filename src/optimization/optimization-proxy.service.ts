@@ -3344,40 +3344,11 @@ export class OptimizationProxyService {
         // plans (20261123090000). Numbers, like the rest above.
         maxTeachingMinutesPerDay: true,
         preferredFreeDayOfWeek: true,
-        // Sammanhängande undervisning: the limit and the pause that ends a
-        // stretch (20261218090000). Numbers again; sent only below.
-        maxConsecutiveTeachingMinutes: true,
-        consecutiveBreakMinutes: true,
       },
     });
 
-    /*
-     * Sammanhängande undervisning is the generator's effort, and the school's
-     * to turn on (LunchSettings.generatorKeepsConsecutiveTeaching, off by
-     * default): off, the engine is sent neither figure, and a work rule that
-     * exists only because of them is not sent at all — the payload, and with
-     * it the model, is the one a school without the rule gets. On, a limit
-     * rides on the rule it sits in, and the notes name the teachers it did not
-     * manage (consecutive-wishes.ts).
-     */
-    const keepsConsecutive = lunchSettings?.generatorKeepsConsecutiveTeaching === true;
-    const consecutiveOf = (rule: (typeof rawWorkRules)[number]) =>
-      keepsConsecutive && rule.maxConsecutiveTeachingMinutes !== null && rule.consecutiveBreakMinutes !== null
-        ? { max: rule.maxConsecutiveTeachingMinutes, pause: rule.consecutiveBreakMinutes }
-        : null;
-    const holdsOnlyAConsecutiveLimit = (rule: (typeof rawWorkRules)[number]) =>
-      rule.maxConsecutiveTeachingMinutes !== null &&
-      rule.lunchMinutes === null &&
-      rule.lunchStartTime === null &&
-      rule.lunchEndTime === null &&
-      rule.minDailyRestMinutes === null &&
-      rule.maxTeachingMinutesPerDay === null &&
-      rule.preferredFreeDayOfWeek === null;
-
-    const teacherWorkRules: AnonymousTeacherWorkRule[] = rawWorkRules.flatMap(
+    let teacherWorkRules: AnonymousTeacherWorkRule[] = rawWorkRules.flatMap(
       (rule): AnonymousTeacherWorkRule[] => {
-        const consecutive = consecutiveOf(rule);
-        if (consecutive === null && holdsOnlyAConsecutiveLimit(rule)) return [];
         const teacherId = teacherAnonMap.get(rule.userId);
         if (teacherId === undefined) {
           this.logger.warn(
@@ -3408,9 +3379,6 @@ export class OptimizationProxyService {
               : {}),
             ...(rule.preferredFreeDayOfWeek !== null
               ? { preferredFreeDay: rule.preferredFreeDayOfWeek as DayOfWeek }
-              : {}),
-            ...(consecutive !== null
-              ? { maxConsecutiveTeachingMinutes: consecutive.max, consecutiveBreakMinutes: consecutive.pause }
               : {}),
           },
         ];
@@ -3466,10 +3434,39 @@ export class OptimizationProxyService {
         maxDays,
         year,
       ) as DayOfWeek[][];
-    const rawDayLimits = await tx.teacherEmployment.findMany({
-      where: { academicYearId, maxTeachingDaysPerWeek: { not: null } },
-      select: { id: true, userId: true, maxTeachingDaysPerWeek: true },
+    /*
+     * SAMMANHÄNGANDE UNDERVISNING rides on the same read: the limit on
+     * teaching in a row is the post's too (20261218090000), HR data beside the
+     * days, so it is read here, in the same statement (an OR in the filter, no
+     * extra read), under the starter's own session and not filtered by whether
+     * the starter reads HR, for the reason the days are not: the week must not
+     * depend on who pressed the button. It is the generator's EFFORT and the
+     * school's to turn on (LunchSettings.generatorKeepsConsecutiveTeaching,
+     * off by default): off, the posts are asked only for their days, and the
+     * payload, the model and the Läslogg are the ones a school without the
+     * limit gets. On, a limit rides to the engine on the teacher's work-rule
+     * entry — the one they have, or one made for the purpose, since the
+     * limit sits on no work rule any more — and the notes name the teachers
+     * it did not manage (consecutive-wishes.ts), worded per reader
+     * (work-days.ts).
+     */
+    const keepsConsecutive = lunchSettings?.generatorKeepsConsecutiveTeaching === true;
+    const rawPosts = await tx.teacherEmployment.findMany({
+      where: keepsConsecutive
+        ? {
+            academicYearId,
+            OR: [{ maxTeachingDaysPerWeek: { not: null } }, { maxConsecutiveTeachingMinutes: { not: null } }],
+          }
+        : { academicYearId, maxTeachingDaysPerWeek: { not: null } },
+      select: {
+        id: true,
+        userId: true,
+        maxTeachingDaysPerWeek: true,
+        maxConsecutiveTeachingMinutes: true,
+        consecutiveBreakMinutes: true,
+      },
     });
+    const rawDayLimits = rawPosts.filter((post) => post.maxTeachingDaysPerWeek !== null);
     const yearRow =
       rawDayLimits.length > 0
         ? await tx.academicYear.findUnique({
@@ -3503,12 +3500,64 @@ export class OptimizationProxyService {
         ];
       },
     );
-    // A post's days are HR data, and this transaction read them for every
-    // teacher whose limit it sends: written to the Läslogg in the read's own
-    // transaction, as every read of a post is. Nobody shown them — the engine
-    // gets an anonymous number — but the starter's session read them, and the
-    // log is of reads. No limit sent, nothing written.
-    await recordRead(tx, 'EMPLOYMENT', dayLimitTeacherIds.values(), channel);
+    /*
+     * The limits on teaching in a row, for the teachers this year mentions
+     * (a limit whose teacher it never mentions is left out and said in the
+     * log, for the days' reason). Each is merged into that teacher's work-rule
+     * entry or, when they have none, becomes an entry of its own with the
+     * lunch and rest as nulls — the contract is the engine's, unchanged. Whose
+     * limit it is is kept in real ids for the notes (consecutiveWishes) and
+     * never sent.
+     */
+    const consecutiveWishes: ConsecutiveWish[] = [];
+    const consecutiveTeacherIds: string[] = [];
+    for (const post of keepsConsecutive ? rawPosts : []) {
+      if (post.maxConsecutiveTeachingMinutes === null || post.consecutiveBreakMinutes === null) continue;
+      const teacherId = teacherAnonMap.get(post.userId);
+      if (teacherId === undefined) {
+        this.logger.warn(
+          `Skipping the limit on teaching in a row on post ${post.id}: its teacher has no lesson, ` +
+            `reservation or requirement in this year, so there is nothing to hold it against.`,
+        );
+        continue;
+      }
+      const limit = {
+        maxConsecutiveTeachingMinutes: post.maxConsecutiveTeachingMinutes,
+        consecutiveBreakMinutes: post.consecutiveBreakMinutes,
+      };
+      const existing = teacherWorkRules.find((rule) => rule.teacherId === teacherId);
+      teacherWorkRules = existing
+        ? teacherWorkRules.map((rule) => (rule === existing ? { ...rule, ...limit } : rule))
+        : [
+            ...teacherWorkRules,
+            {
+              // The engine never refuses a week over the limit, so nothing is
+              // read back by this id; it is in the work-rule map all the same,
+              // because the candidate basis turns every id in the payload back
+              // into a real one (candidate-basis.ts) and the post is the row
+              // this entry stands for.
+              id: anonId(workRuleAnonMap, post.id),
+              teacherId,
+              lunchMinutes: null,
+              lunchStartTime: null,
+              lunchEndTime: null,
+              minDailyRestMinutes: null,
+              ...limit,
+            },
+          ];
+      consecutiveWishes.push({
+        userId: post.userId,
+        maxMinutes: post.maxConsecutiveTeachingMinutes,
+        breakMinutes: post.consecutiveBreakMinutes,
+      });
+      consecutiveTeacherIds.push(post.userId);
+    }
+    // A post's days and its limit on teaching in a row are HR data, and this
+    // transaction read them for every teacher whose limit it sends: written to
+    // the Läslogg in the read's own transaction, as every read of a post is.
+    // Nobody shown them — the engine gets anonymous numbers — but the starter's
+    // session read them, and the log is of reads. No limit sent, nothing written.
+    await recordRead(tx, 'EMPLOYMENT', [...dayLimitTeacherIds.values(), ...consecutiveTeacherIds], channel);
 
     /*
      * Elevernas håltimmar: the pupils, as the sets the håltimmesrapport counts
@@ -3622,13 +3671,9 @@ export class OptimizationProxyService {
       // The limits on teaching in a row the generator was asked to try to
       // keep, in real ids, read against the finished timetable like the wishes
       // above. Empty with the switch off: nothing was asked, so nothing is
-      // reported.
-      consecutiveWishes: rawWorkRules.flatMap((rule): ConsecutiveWish[] => {
-        const consecutive = consecutiveOf(rule);
-        return consecutive === null
-          ? []
-          : [{ ruleId: rule.id, userId: rule.userId, maxMinutes: consecutive.max, breakMinutes: consecutive.pause }];
-      }),
+      // reported. HR data: they leave this service only as a hidden note or
+      // as a note read back from the post for a reader with HR-läs.
+      consecutiveWishes,
       gradeNumbering: numbering,
       numberingOnDay,
       // An empty object would send `rules: {}` and read as "rules were

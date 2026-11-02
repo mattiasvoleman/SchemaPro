@@ -1,6 +1,6 @@
 """Sammanhängande undervisning: at most X minutes of teaching in a row, then Y free.
 
-A WISH, NOT A RULE. A teacher whose work rule sets `maxConsecutiveTeachingMinutes`
+A WISH, NOT A RULE. A teacher whose post sets `maxConsecutiveTeachingMinutes`
 (X) and `consecutiveBreakMinutes` (Y) is better off never teaching more than X
 minutes without a break of at least Y, and the full model's objective pays
 WEIGHT for every lesson of theirs whose stretch is not ended by such a break in

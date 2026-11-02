@@ -685,10 +685,12 @@ class AnonymousTeacherWorkRule(CamelModel):
     #: and no week is ever refused over it, the way the wished free day is
     #: treated. The satisfaction phase builds nothing for it. The gateway sends
     #: the pair only where the school has turned the effort on
-    #: (LunchSettings.generatorKeepsConsecutiveTeaching) and the rule sets
-    #: both. They come together or not at all (validate_stretch_pair), and are
-    #: bounded and stepped as the database bounds them
-    #: (TeacherWorkRules_maxConsecutiveTeachingMinutes_check and its two
+    #: (LunchSettings.generatorKeepsConsecutiveTeaching) and the teacher's
+    #: post sets both (HR data; the gateway carries them on this entry, or on
+    #: one made for the purpose, so the contract is unchanged). They come
+    #: together or not at all (validate_stretch_pair), and are bounded and
+    #: stepped as the database bounds them
+    #: (TeacherEmployments_maxConsecutiveTeachingMinutes_check and its two
     #: siblings): half an hour is the least that is still a stretch of
     #: teaching, eight hours the most a day can hold, and the multiple of five
     #: is this engine's grid. See app/solver/consecutive.py for what a

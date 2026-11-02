@@ -848,53 +848,81 @@ describe('AI engine wire contract', () => {
       generatorKeepsPupilGapsDown: false,
       generatorKeepsConsecutiveTeaching: keeps,
     });
+    // The limit is the post’s (HR data, 20261218090000), not the work rule’s.
+    const postRow = (overrides: Record<string, unknown> = {}) => ({
+      id: 'post-1',
+      userId: 't1',
+      maxTeachingDaysPerWeek: null,
+      maxConsecutiveTeachingMinutes: 180,
+      consecutiveBreakMinutes: 30,
+      ...overrides,
+    });
     const ruleRow = (overrides: Record<string, unknown> = {}) => ({
       id: 'wr-1',
       userId: 't1',
       lunchMinutes: null,
       lunchStartTime: null,
       lunchEndTime: null,
-      minDailyRestMinutes: null,
+      minDailyRestMinutes: 660,
       maxTeachingMinutesPerDay: null,
       preferredFreeDayOfWeek: null,
-      maxConsecutiveTeachingMinutes: 180,
-      consecutiveBreakMinutes: 30,
       ...overrides,
     });
-    const arranged = (keeps: boolean, rules: Array<Record<string, unknown>>) => (tx: ReturnType<typeof createTxMock>) => {
-      tx['lunchSetting']!['findUnique']!.mockResolvedValue(lunchRow(keeps));
-      tx['teacherWorkRule']!['findMany']!.mockResolvedValue(rules);
-    };
+    const arranged =
+      (keeps: boolean, posts: Array<Record<string, unknown>>, rules: Array<Record<string, unknown>> = []) =>
+      (tx: ReturnType<typeof createTxMock>) => {
+        tx['lunchSetting']!['findUnique']!.mockResolvedValue(lunchRow(keeps));
+        tx['teacherEmployment']!['findMany']!.mockResolvedValue(posts);
+        tx['teacherWorkRule']!['findMany']!.mockResolvedValue(rules);
+      };
 
-    it('sends a school that has not turned it on the payload it always sent: no key, and no rule that exists only for it', async () => {
-      const payload = await buildPayload({}, [], [], arranged(false, [ruleRow(), ruleRow({ id: 'wr-2', minDailyRestMinutes: 660 })]));
+    it('sends a school that has not turned it on the payload it always sent: no key, and no entry that exists only for it', async () => {
+      const payload = await buildPayload({}, [], [], arranged(false, [postRow()], [ruleRow()]));
       const rules = payload['teacherWorkRules'] as Array<Record<string, unknown>>;
 
-      // The rule holding only a limit is not sent; the one with a rest is, without the keys.
       expect(rules).toHaveLength(1);
       expect(Object.keys(rules[0]!).sort()).toEqual(WORK_RULE_FIELDS);
       expect(JSON.stringify(payload)).not.toMatch(/Consecutive/);
+      // A post with a limit alone is no day limit either.
+      expect(Object.keys(payload)).not.toContain('teacherDayLimits');
     });
 
-    it('sends the limit and the pause under the names the engine declares once the school has turned it on', async () => {
-      const payload = await buildPayload({}, [], [], arranged(true, [ruleRow()]));
+    it('sends the limit and the pause under the names the engine declares, on the work rule the teacher has', async () => {
+      const payload = await buildPayload({}, [], [], arranged(true, [postRow()], [ruleRow()]));
       const rules = payload['teacherWorkRules'] as Array<Record<string, unknown>>;
 
       expect(rules).toHaveLength(1);
       expect(Object.keys(rules[0]!).sort()).toEqual(WORK_RULE_FIELDS_STRETCH);
       expect(rules[0]).toMatchObject({
-        lunchMinutes: null,
+        minDailyRestMinutes: 660,
         maxConsecutiveTeachingMinutes: 180,
         consecutiveBreakMinutes: 30,
       });
     });
 
-    it('sends nothing for a rule that sets neither figure, whatever the switch says', async () => {
+    it('sends the limit of a teacher with no work rule as an entry of its own, the same declared fields', async () => {
+      const payload = await buildPayload({}, [], [], arranged(true, [postRow()]));
+      const rules = payload['teacherWorkRules'] as Array<Record<string, unknown>>;
+      const requirements = payload['requirements'] as Array<Record<string, unknown>>;
+
+      expect(rules).toHaveLength(1);
+      expect(Object.keys(rules[0]!).sort()).toEqual(WORK_RULE_FIELDS_STRETCH);
+      expect(rules[0]).toMatchObject({
+        teacherId: requirements[0]!['teacherId'],
+        lunchMinutes: null,
+        minDailyRestMinutes: null,
+        maxConsecutiveTeachingMinutes: 180,
+        consecutiveBreakMinutes: 30,
+      });
+      expect(JSON.stringify(payload)).not.toMatch(/post-1|"t1"/);
+    });
+
+    it('sends nothing for a post that sets neither figure, whatever the switch says', async () => {
       const payload = await buildPayload(
         {},
         [],
         [],
-        arranged(true, [ruleRow({ maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null, minDailyRestMinutes: 660 })]),
+        arranged(true, [postRow({ maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null })], [ruleRow()]),
       );
       const rules = payload['teacherWorkRules'] as Array<Record<string, unknown>>;
 

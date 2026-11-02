@@ -368,8 +368,11 @@ export interface AnonymousTeacherWorkRule {
    * it, and the gateway names the teachers a finished run did not manage
    * (consecutive-wishes.ts). Both or neither, and sent only where the school
    * has turned the effort on (LunchSettings.generatorKeepsConsecutiveTeaching)
-   * and the rule sets them, for the reason the cap is: a key an older engine
-   * has not heard of is a 422.
+   * and the teacher's POST sets them (TeacherEmployments, HR data beside the
+   * days — the gateway merges them onto the teacher's work-rule entry, or makes
+   * an entry of its own with the lunch and the rest as nulls, so the engine's
+   * contract is the one it always had), for the reason the cap is: a key an
+   * older engine has not heard of is a 422.
    */
   maxConsecutiveTeachingMinutes?: number;
   consecutiveBreakMinutes?: number;

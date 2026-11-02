@@ -19,7 +19,12 @@ import type {
 import { OptimizationJobsService, jobView } from './optimization-jobs.service';
 import type { OptimizationProxyService } from './optimization-proxy.service';
 import { recordedReads } from '../../test/utils/recorded-reads';
-import { TEACHER_WORK_DAYS_HIDDEN, WORK_DAYS_HIDDEN_MESSAGE, WorkDaysRefusal } from './work-days';
+import {
+  CONSECUTIVE_TEACHING_HIDDEN_MESSAGE,
+  TEACHER_WORK_DAYS_HIDDEN,
+  WORK_DAYS_HIDDEN_MESSAGE,
+  WorkDaysRefusal,
+} from './work-days';
 
 const JOB_ID = '66666666-6666-4666-8666-666666666666';
 const YEAR_ID = '44444444-4444-4444-8444-444444444444';
@@ -766,7 +771,19 @@ describe('OptimizationJobsService', () => {
       academicYearId: YEAR_ID,
       userId: EVA,
       maxTeachingDaysPerWeek: 3,
+      maxConsecutiveTeachingMinutes: null,
+      consecutiveBreakMinutes: null,
       user: { firstName: 'Eva', lastName: 'Ek' },
+      ...overrides,
+    });
+    /** A note about a limit on teaching in a row as run() stores it: the weekday and the length, Eva server-side, no figure of the limit. */
+    const stretchNote = (overrides: Record<string, unknown> = {}) => ({
+      category: 'AVAILABILITY',
+      code: 'TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT',
+      params: { day: 2, minutes: 250 },
+      message: 'A teacher with a limit on teaching in a row has 250 minutes in a row on Tuesdays …',
+      resourceNames: [],
+      subjectIds: [EVA],
       ...overrides,
     });
 
@@ -1042,6 +1059,109 @@ describe('OptimizationJobsService', () => {
       });
     });
 
+    /*
+     * THE LIMIT ON TEACHING IN A ROW IS A POST’S HR DATA (20261218090000), and a
+     * note about it is read by the rule of the days (work-days.ts): the limit,
+     * the pause and the teacher only for a reader with HR-läs, from the post as
+     * it stands; the hidden note for every other reader.
+     */
+    describe('a note about a limit on teaching in a row', () => {
+      const stretchRun = (overrides: Record<string, unknown> = {}) =>
+        row({ solverStatus: 'OPTIMAL', conflicts: [], notes: [stretchNote()], ...overrides });
+      const evasLimit = (overrides: Record<string, unknown> = {}) =>
+        evasPost({ maxTeachingDaysPerWeek: null, maxConsecutiveTeachingMinutes: 180, consecutiveBreakMinutes: 30, ...overrides });
+      beforeEach(() => tx.scheduleChangeLog.findMany.mockResolvedValue([]));
+
+      it('is the hidden note to a reader without HR-läs: no teacher, no weekday, no figure, no read of the post, no name read', async () => {
+        tx.optimizationJob.findUnique.mockResolvedValue(stretchRun());
+
+        const view = await service.get(JOB_ID, noHr());
+
+        expect(view.notes).toEqual([
+          {
+            category: 'AVAILABILITY',
+            code: 'TEACHER_CONSECUTIVE_TEACHING_HIDDEN',
+            params: {},
+            message: CONSECUTIVE_TEACHING_HIDDEN_MESSAGE,
+            resourceNames: [],
+          },
+        ]);
+        const shown = JSON.stringify(view);
+        expect(shown).not.toMatch(new RegExp(`${EVA}|Eva|250|Tuesdays|180`));
+        // Nothing of the post is read, nobody is named, nothing is recorded.
+        expect(tx.teacherEmployment.findMany).not.toHaveBeenCalled();
+        expect(tx.user.findMany).not.toHaveBeenCalled();
+        expect(recordedReads(tx)).toEqual([]);
+      });
+
+      it('is shown with the limit and the pause read back from the post and the teacher named to a reader with HR-läs, and the read is logged', async () => {
+        tx.optimizationJob.findUnique.mockResolvedValue(stretchRun());
+        tx.teacherEmployment.findMany.mockResolvedValue([evasLimit()]);
+
+        const view = await service.get(JOB_ID, hr());
+
+        expect(view.notes).toEqual([
+          {
+            category: 'AVAILABILITY',
+            code: 'TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT',
+            params: { day: 2, minutes: 250, max: 180, breakMinutes: 30 },
+            message: stretchNote().message,
+            resourceNames: ['Eva Ek'],
+          },
+        ]);
+        expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [EVA] }]);
+        // Never the Users id the row keeps; and no name was read for it, the
+        // post carried the name.
+        expect(JSON.stringify(view)).not.toContain(EVA);
+        expect(tx.user.findMany).not.toHaveBeenCalled();
+      });
+
+      it('stays hidden for a reader with HR-läs when the post no longer has a limit, or is gone', async () => {
+        for (const posts of [[evasPost({ maxTeachingDaysPerWeek: 3 })], []]) {
+          tx.optimizationJob.findUnique.mockResolvedValue(stretchRun());
+          tx.teacherEmployment.findMany.mockResolvedValue(posts);
+
+          const view = await service.get(JOB_ID, hr());
+
+          expect(view.notes.map((note) => note.code)).toEqual(['TEACHER_CONSECUTIVE_TEACHING_HIDDEN']);
+          expect(JSON.stringify(view)).not.toMatch(/Eva|180/);
+        }
+        expect(recordedReads(tx)).toEqual([]);
+      });
+
+      it('is one hidden note, not one per teacher, and shown beside a free-day note that still names its teacher', async () => {
+        const OLLE = '33333333-dddd-4ddd-8ddd-333333333333';
+        tx.optimizationJob.findUnique.mockResolvedValue(
+          stretchRun({ notes: [wishNote(), stretchNote(), stretchNote({ subjectIds: [OLLE] })] }),
+        );
+        tx.user.findMany.mockResolvedValue([evasName]);
+
+        const view = await service.get(JOB_ID, noHr());
+
+        expect(view.notes.map((note) => note.code)).toEqual([
+          'TEACHER_FREE_DAY_WISH_NOT_KEPT',
+          'TEACHER_CONSECUTIVE_TEACHING_HIDDEN',
+        ]);
+        expect(view.notes[0]!.resourceNames).toEqual(['Eva Ek']);
+        // The names read are the free-day note’s teacher, never the limit’s.
+        expect(tx.user.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: { in: [EVA] } } }));
+      });
+
+      it('names no teacher of a limit in the history either', async () => {
+        tx.scheduleChangeLog.findMany.mockResolvedValue([]);
+        tx.optimizationJob.findMany.mockResolvedValue([stretchRun(), stretchRun()]);
+
+        const views = await service.list(YEAR_ID, noHr());
+
+        expect(views.map((view) => view.notes.map((note) => note.code))).toEqual([
+          ['TEACHER_CONSECUTIVE_TEACHING_HIDDEN'],
+          ['TEACHER_CONSECUTIVE_TEACHING_HIDDEN'],
+        ]);
+        expect(tx.user.findMany).not.toHaveBeenCalled();
+        expect(JSON.stringify(views)).not.toMatch(/Eva|250/);
+      });
+    });
+
     describe('a reader with HR-läs', () => {
       it('is shown the days from the post as it stands and the teacher named, and the read is logged', async () => {
         tx.optimizationJob.findUnique.mockResolvedValue(row());
@@ -1064,11 +1184,17 @@ describe('OptimizationJobsService', () => {
         expect(prisma.queryWithRls).toHaveBeenCalledTimes(1);
         expect(prisma.withRls).toHaveBeenCalledTimes(1);
         expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith({
-          where: { academicYearId: { in: [YEAR_ID] }, userId: { in: [EVA] }, maxTeachingDaysPerWeek: { not: null } },
+          where: {
+            academicYearId: { in: [YEAR_ID] },
+            userId: { in: [EVA] },
+            OR: [{ maxTeachingDaysPerWeek: { not: null } }, { maxConsecutiveTeachingMinutes: { not: null } }],
+          },
           select: {
             academicYearId: true,
             userId: true,
             maxTeachingDaysPerWeek: true,
+            maxConsecutiveTeachingMinutes: true,
+            consecutiveBreakMinutes: true,
             user: { select: { firstName: true, lastName: true } },
           },
         });
@@ -1502,7 +1628,7 @@ describe('OptimizationJobsService', () => {
       it('reads only Users ids out of the teachers a params blob keeps', () => {
         // A hand-edited row with something else in the list must not reach
         // the posts' read or the Läslogg as a teacher.
-        const posts = new Map([[EVA, { days: 3, name: 'Eva Ek' }]]);
+        const posts = new Map([[EVA, { days: 3, stretch: null, name: 'Eva Ek' }]]);
         const run = { ...preflightRow(), errorParams: { limit: POST, subjectIds: [EVA, 42] } };
 
         expect(jobView(run as never, posts)).toMatchObject({
@@ -1512,7 +1638,7 @@ describe('OptimizationJobsService', () => {
       });
 
       it('says which teachers it showed the days of', () => {
-        const posts = new Map([[EVA, { days: 3, name: 'Eva Ek' }]]);
+        const posts = new Map([[EVA, { days: 3, stretch: null, name: 'Eva Ek' }]]);
 
         expect(jobView(row() as never, posts).revealed).toEqual([EVA]);
         expect(jobView(preflightRow() as never, posts).revealed).toEqual([EVA]);
@@ -1570,7 +1696,11 @@ describe('OptimizationJobsService', () => {
         expect(Object.keys(answer.getResponse() as object)).toEqual(['message', 'code', 'params']);
         expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith(
           expect.objectContaining({
-            where: { academicYearId: { in: [YEAR_ID] }, userId: { in: [EVA] }, maxTeachingDaysPerWeek: { not: null } },
+            where: {
+              academicYearId: { in: [YEAR_ID] },
+              userId: { in: [EVA] },
+              OR: [{ maxTeachingDaysPerWeek: { not: null } }, { maxConsecutiveTeachingMinutes: { not: null } }],
+            },
           }),
         );
         expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [EVA] }]);

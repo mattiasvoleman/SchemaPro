@@ -148,9 +148,10 @@ const matchesWhere = (row: Row, where: Row = {}): boolean =>
       case 'isGenerated':
       case 'kind':
         return row[key] === filter;
-      case 'maxTeachingDaysPerWeek': {
+      case 'maxTeachingDaysPerWeek':
+      case 'maxConsecutiveTeachingMinutes': {
         // `{ not: null }`, the one shape the posts are read by: a post that
-        // limits its days.
+        // limits its days, or its teaching in a row.
         if ((filter as { not?: unknown }).not !== null) throw new Error(`unexpected filter ${key}`);
         return row[key] !== null && row[key] !== undefined;
       }
@@ -5417,6 +5418,8 @@ describe('OptimizationProxyService', () => {
         id: POST_ID,
         userId: TEACHER_ID,
         maxTeachingDaysPerWeek: 4,
+        maxConsecutiveTeachingMinutes: null,
+        consecutiveBreakMinutes: null,
         ...overrides,
       });
 
@@ -5474,7 +5477,13 @@ describe('OptimizationProxyService', () => {
         // the year and asks only for posts that set a limit.
         expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith({
           where: { academicYearId: ACADEMIC_YEAR, maxTeachingDaysPerWeek: { not: null } },
-          select: { id: true, userId: true, maxTeachingDaysPerWeek: true },
+          select: {
+            id: true,
+            userId: true,
+            maxTeachingDaysPerWeek: true,
+            maxConsecutiveTeachingMinutes: true,
+            consecutiveBreakMinutes: true,
+          },
         });
         // A post's days are HR, and this transaction read them: the Läslogg
         // names the teacher, by their Users id.
@@ -5889,7 +5898,7 @@ describe('OptimizationProxyService', () => {
         });
       });
 
-      describe('the limits on teaching in a row (Sammanhängande undervisning)', () => {
+      describe('the limits on teaching in a row (Sammanhängande undervisning), a post’s HR data', () => {
         const school = (keeps: boolean) => ({
           lunchEnabled: false,
           lunchStartTime: eightAm,
@@ -5899,79 +5908,154 @@ describe('OptimizationProxyService', () => {
           maxLessonsPerDayPerGroup: null,
           generatorKeepsConsecutiveTeaching: keeps,
         });
-        /** 60 minutes in a row, then 15 free: the echo's 75-minute Monday lesson breaks it. */
+        /** 60 minutes in a row, then 15 free, on a post with no days: the echo's 75-minute Monday lesson breaks it. */
         const limited = (overrides: Record<string, unknown> = {}) =>
-          workRule({ maxConsecutiveTeachingMinutes: 60, consecutiveBreakMinutes: 15, ...overrides });
+          post({ maxTeachingDaysPerWeek: null, maxConsecutiveTeachingMinutes: 60, consecutiveBreakMinutes: 15, ...overrides });
 
-        it('sends the limit on the work rule and names the teacher the run left over it, with the figures and nobody named', async () => {
-          arrange({ workRules: [limited()], lunchSettings: school(true) });
+        it('sends the limit on the teacher’s own work-rule entry, and says nothing of it in the note but the weekday and the length', async () => {
+          arrange({
+            posts: [limited()],
+            workRules: [workRule({ minDailyRestMinutes: 660 })],
+            lunchSettings: school(true),
+          });
           echoEngine();
 
-          const { notes } = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+          const { notes } = await service.triggerScheduling(ACADEMIC_YEAR, testUser({ channel: 'WEB' }));
 
           expect(postedPayload().teacherWorkRules).toEqual([
-            expect.objectContaining({ maxConsecutiveTeachingMinutes: 60, consecutiveBreakMinutes: 15 }),
+            expect.objectContaining({
+              minDailyRestMinutes: 660,
+              maxConsecutiveTeachingMinutes: 60,
+              consecutiveBreakMinutes: 15,
+            }),
           ]);
+          // HR data: the note carries the weekday and the length of the longest
+          // stretch (the timetable shows both) and the teacher server-side. Not
+          // the limit, not the pause, not a post, not a name.
           expect(notes).toEqual([
             expect.objectContaining({
               category: 'AVAILABILITY',
               code: 'TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT',
-              params: { day: 1, minutes: 75, max: 60, breakMinutes: 15 },
-              resourceIds: [WORK_RULE_ID],
+              params: { day: 1, minutes: 75 },
+              resourceIds: [],
               resourceNames: [],
-              // Whose limit, for the job view to name when the run is read.
               subjectIds: [TEACHER_ID],
             }),
           ]);
+          const stored = JSON.stringify(notes);
+          expect(stored).not.toMatch(/"max"|breakMinutes|60 minutes|15 minutes/);
+          expect(stored).not.toContain(POST_ID);
+          // And the run's own read of the post is a read of HR data, recorded.
+          expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [TEACHER_ID] }]);
         });
 
-        it('sends the payload it always sent and says nothing while the school has not turned the effort on', async () => {
-          arrange({ workRules: [limited(), limited({ id: '77777777-bbbb-4bbb-8bbb-777777777778', minDailyRestMinutes: 660 })], lunchSettings: school(false) });
-          echoEngine();
-
-          const { notes } = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
-
-          // The rule that exists only for the limit is not sent at all.
-          expect(postedPayload().teacherWorkRules).toHaveLength(1);
-          expect(JSON.stringify(postedPayload())).not.toMatch(/Consecutive/);
-          expect(notes).toEqual([]);
-        });
-
-        it.each([
-          ['lunchMinutes', 30],
-          ['lunchStartTime', eightAm],
-          ['lunchEndTime', nineAm],
-          ['minDailyRestMinutes', 660],
-          ['maxTeachingMinutesPerDay', 300],
-          ['preferredFreeDayOfWeek', 5],
-        ])(
-          'still sends a rule that holds the limit and %s, with the switch off, and leaves the limit out of it',
-          async (field, value) => {
-            // The row exists for more than the limit, so the school without
-            // the effort gets the rule it always got: dropping the row on
-            // the limit alone would silently drop this one with it.
-            arrange({ workRules: [limited({ [field]: value })], lunchSettings: school(false) });
-            echoEngine();
-
-            await service.triggerScheduling(ACADEMIC_YEAR, testUser());
-
-            expect(postedPayload().teacherWorkRules).toHaveLength(1);
-            expect(JSON.stringify(postedPayload())).not.toMatch(/Consecutive/);
-          },
-        );
-
-        it('still sends a row that holds nothing at all, with the switch off, as it always did', async () => {
-          arrange({ workRules: [workRule()], lunchSettings: school(false) });
+        it('gives a teacher with no work rule an entry of their own, the lunch and the rest as nulls', async () => {
+          arrange({ posts: [limited()], lunchSettings: school(true) });
           echoEngine();
 
           await service.triggerScheduling(ACADEMIC_YEAR, testUser());
 
-          expect(postedPayload().teacherWorkRules).toHaveLength(1);
+          expect(postedPayload().teacherWorkRules).toEqual([
+            {
+              id: expect.any(String),
+              teacherId: postedPayload().requirements[0]!.teacherId,
+              lunchMinutes: null,
+              lunchStartTime: null,
+              lunchEndTime: null,
+              minDailyRestMinutes: null,
+              maxConsecutiveTeachingMinutes: 60,
+              consecutiveBreakMinutes: 15,
+            },
+          ]);
+          // The post, not a work rule, is the row it stands for.
+          expect(JSON.stringify(postedPayload())).not.toContain(POST_ID);
+        });
+
+        it('reads the limit in the same statement as the days, and asks for it only with the switch on', async () => {
+          arrange({ posts: [limited()], lunchSettings: school(true) });
+          echoEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(tx.teacherEmployment.findMany).toHaveBeenCalledTimes(1);
+          expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+              where: {
+                academicYearId: ACADEMIC_YEAR,
+                OR: [{ maxTeachingDaysPerWeek: { not: null } }, { maxConsecutiveTeachingMinutes: { not: null } }],
+              },
+            }),
+          );
+        });
+
+        it('sends the payload it always sent, reads nothing more and says nothing while the school has not turned the effort on', async () => {
+          // A post with days and a limit, and one with a limit alone.
+          arrange({
+            posts: [
+              limited({ maxTeachingDaysPerWeek: 4 }),
+              limited({ id: 'post-of-co', userId: CO_TEACHER }),
+            ],
+            lunchSettings: school(false),
+          });
+          echoEngine();
+
+          const { notes } = await service.triggerScheduling(ACADEMIC_YEAR, testUser({ channel: 'WEB' }));
+
+          expect(JSON.stringify(postedPayload())).not.toMatch(/Consecutive/);
+          // The days go as they always did; the limit does not.
+          expect(postedPayload().teacherDayLimits).toHaveLength(1);
+          expect(postedPayload().teacherWorkRules ?? []).toEqual([]);
+          expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith(
+            expect.objectContaining({ where: { academicYearId: ACADEMIC_YEAR, maxTeachingDaysPerWeek: { not: null } } }),
+          );
+          expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [TEACHER_ID] }]);
+          expect(notes).toEqual([]);
+        });
+
+        it('sends the same limits whoever starts the run, HR-läs or not, and records the read either way', async () => {
+          const asked = async (user: ReturnType<typeof testUser>) => {
+            http.post.mockClear();
+            arrange({ posts: [limited()], lunchSettings: school(true) });
+            echoEngine();
+            await service.triggerScheduling(ACADEMIC_YEAR, user);
+            return {
+              limits: postedPayload().teacherWorkRules.map(
+                ({ maxConsecutiveTeachingMinutes, consecutiveBreakMinutes }) => [
+                  maxConsecutiveTeachingMinutes,
+                  consecutiveBreakMinutes,
+                ],
+              ),
+              reads: recordedReads(tx),
+            };
+          };
+          const withHr = await asked(testUser({ adminProfile: 'REKTOR', channel: 'WEB' } as never));
+          const without = await asked(testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false, channel: 'WEB' } as never));
+          expect(without.limits).toEqual([[60, 15]]);
+          expect(withHr.limits).toEqual(without.limits);
+          // The run reads the post for whoever starts it, so the log says so
+          // for either: once for the first, and once more for the second (the
+          // mock's log runs on).
+          const read = { kind: 'EMPLOYMENT', channel: 'WEB', ids: [TEACHER_ID] };
+          expect(withHr.reads).toEqual([read]);
+          expect(without.reads).toEqual([read, read]);
+        });
+
+        it('leaves out a limit whose teacher this year never mentions, says so, and logs no read of it', async () => {
+          arrange({ posts: [limited({ userId: 'teacher-who-teaches-nothing' })], lunchSettings: school(true) });
+          echoEngine();
+          const warn = warnings();
+
+          const { notes } = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(postedPayload().teacherWorkRules ?? []).toEqual([]);
+          expect(warn).toHaveBeenCalledWith(expect.stringContaining(`teaching in a row on post ${POST_ID}`));
+          expect(recordedReads(tx)).toEqual([]);
+          expect(notes).toEqual([]);
         });
 
         it('keeps a limit no stretch of theirs is over', async () => {
           // The echo's 75 minutes is inside 90.
-          arrange({ workRules: [limited({ maxConsecutiveTeachingMinutes: 90 })], lunchSettings: school(true) });
+          arrange({ posts: [limited({ maxConsecutiveTeachingMinutes: 90 })], lunchSettings: school(true) });
           echoEngine();
 
           await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).resolves.toMatchObject({ notes: [] });
@@ -5981,7 +6065,7 @@ describe('OptimizationProxyService', () => {
           // lockedLesson() is the teacher's, on Tuesday, 08:00–09:00: 60 minutes against a limit of 30.
           arrange({
             lockedLessons: [lockedLesson()],
-            workRules: [limited({ maxConsecutiveTeachingMinutes: 30, consecutiveBreakMinutes: 5 })],
+            posts: [limited({ maxConsecutiveTeachingMinutes: 30, consecutiveBreakMinutes: 5 })],
             lunchSettings: school(true),
           });
           echoEngine();
@@ -5989,11 +6073,15 @@ describe('OptimizationProxyService', () => {
           const { notes } = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
 
           // The longest is the Monday echo's 75 minutes, which the note says; the Tuesday lock is in the same teacher's note.
-          expect(notes!.map((note) => note.params)).toEqual([{ day: 1, minutes: 75, max: 30, breakMinutes: 5 }]);
+          expect(notes!.map((note) => note.params)).toEqual([{ day: 1, minutes: 75 }]);
         });
 
         it('says both kinds of note, the wished free day first', async () => {
-          arrange({ workRules: [limited({ preferredFreeDayOfWeek: 1 })], lunchSettings: school(true) });
+          arrange({
+            posts: [limited()],
+            workRules: [workRule({ preferredFreeDayOfWeek: 1 })],
+            lunchSettings: school(true),
+          });
           echoEngine();
 
           const { notes } = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
@@ -6005,7 +6093,7 @@ describe('OptimizationProxyService', () => {
         });
 
         it('says nothing when the run wrote no timetable', async () => {
-          arrange({ workRules: [limited()], lockedLessons: [lockedLesson({ dayOfWeek: 1 })], lunchSettings: school(true) });
+          arrange({ posts: [limited()], lockedLessons: [lockedLesson({ dayOfWeek: 1 })], lunchSettings: school(true) });
           answerWithConflicts(() => ({ summary: 'no', summaryCode: 'CONFLICT_NO_CORE', summaryParams: {}, conflicts: [] }));
 
           await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).resolves.toMatchObject({ notes: [] });

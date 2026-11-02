@@ -41,7 +41,12 @@ import {
   yearHasActiveCandidateRun,
 } from './schedule-candidates.service';
 import { ENGINE_LACKS_CANDIDATES } from './optimization-proxy.service';
-import { TEACHER_WORK_DAYS_HIDDEN, WORK_DAYS_HIDDEN_MESSAGE, WorkDaysRefusal } from './work-days';
+import {
+  CONSECUTIVE_TEACHING_HIDDEN_MESSAGE,
+  TEACHER_WORK_DAYS_HIDDEN,
+  WORK_DAYS_HIDDEN_MESSAGE,
+  WorkDaysRefusal,
+} from './work-days';
 import { SCHEDULE_CANDIDATE_BUSY, SCHEDULE_CANDIDATE_STALE } from './regeneration-lock';
 
 /*
@@ -718,6 +723,71 @@ describe('ScheduleCandidatesService', () => {
         expect(run.errorCode).toBe(CANDIDATES_NONE_APPLICABLE);
         expect(run.draftNotes).toBeUndefined();
         expect(stored.map((row) => row['notes'])).toEqual([Prisma.DbNull, Prisma.DbNull]);
+      });
+    });
+
+    /*
+     * Sammanhängande undervisning (20261218090000): the limit is the post's, HR
+     * data, and a schemaförslag reads no post back, so it stores the HIDDEN
+     * note for every reader — one per timetable, no params, no teacher, no
+     * figure — beside the other notes (consecutive-wishes.ts hideConsecutiveNotes).
+     */
+    describe('the limits on teaching in a row', () => {
+      const limits = [
+        { userId: TEACHER, maxMinutes: 30, breakMinutes: 5 },
+        { userId: OTHER_TEACHER, maxMinutes: 30, breakMinutes: 5 },
+      ];
+      const hidden = {
+        category: 'AVAILABILITY',
+        code: 'TEACHER_CONSECUTIVE_TEACHING_HIDDEN',
+        params: {},
+        message: CONSECUTIVE_TEACHING_HIDDEN_MESSAGE,
+        resourceNames: [],
+      };
+
+      it('stores one hidden note per timetable, for the candidates and the draft, and nothing of the limit or the teacher', async () => {
+        proxy.prepareSchedule.mockResolvedValue(
+          prepared({
+            consecutiveWishes: limits,
+            keptTimetable: [
+              {
+                id: 'kept-1',
+                teacherId: null,
+                coTeacherId: OTHER_TEACHER,
+                dayOfWeek: 3,
+                startMinutes: 480,
+                endMinutes: 600,
+                recurrence: 'ALL_WEEKS',
+                startDate: null,
+                endDate: null,
+              },
+            ],
+          }),
+        );
+        // Ma is an hour on a Monday: over a limit of half an hour for her; the
+        // kept lesson is two hours for the other teacher in every candidate.
+        proxy.solveCandidate.mockResolvedValue(solved());
+        await startAndRun(dto({ count: 2 }));
+
+        expect(stored.map((row) => row['notes'])).toEqual([[hidden], [hidden]]);
+        expect(run.draftNotes).toEqual([hidden]);
+        const everything = JSON.stringify([stored.map((row) => row['notes']), run.draftNotes]);
+        expect(everything).not.toMatch(new RegExp(`${TEACHER}|${OTHER_TEACHER}|subjectIds|"max"|breakMinutes`));
+      });
+
+      it('stores none for a candidate that keeps every limit, and keeps the other notes in their place', async () => {
+        proxy.prepareSchedule.mockResolvedValue(
+          prepared({
+            consecutiveWishes: [{ userId: TEACHER, maxMinutes: 480, breakMinutes: 5 }],
+            freeDayWishes: [{ ruleId: 'rule-teacher', userId: TEACHER, day: 1 }],
+          }),
+        );
+        proxy.solveCandidate.mockResolvedValue(solved());
+        await startAndRun(dto({ count: 1 }));
+
+        expect((stored[0]!['notes'] as unknown[]).map((note) => (note as { code: string }).code)).toEqual([
+          TEACHER_FREE_DAY_WISH_NOT_KEPT,
+        ]);
       });
     });
 

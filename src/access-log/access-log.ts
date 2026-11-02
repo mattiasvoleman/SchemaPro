@@ -55,18 +55,24 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *     room's week by Schemavisaren's whitelist, with no pupil on it; a
  *     printed week of a pupil is the family's week, recorded when it was
  *     read. A hand edit's warning that a teacher now teaches more days than
- *     their post allows (Lärarens dag) is the post's and not this layer's,
- *     and is recorded (EMPLOYMENT) whenever it is given, worded or hidden;
+ *     their post allows (Lärarens dag), or longer in a row than the limit on
+ *     their post (Sammanhängande undervisning, 20261218090000: HR data like
+ *     the days), is the post's and not this layer's, and is recorded
+ *     (EMPLOYMENT) whenever it is given, worded or hidden;
  *   - substitute suggestions (GET /calendar-lessons/:id/substitute-
  *     suggestions) and the rollover preview's cleared teachers and
  *     qualification warnings: teachers with their behörighet, which staff
  *     read directly (TeacherSubjectQualifications), against the timetable.
  *     An absent teacher is left out, not named, and so is one whose post's
- *     deltid in days (Lärarens dag) the lesson would break: the list says
+ *     deltid in days (Lärarens dag) or limit on teaching in a row
+ *     (Sammanhängande undervisning) the lesson would break: the list says
  *     who may be asked, never why another may not. The cover candidates,
  *     which do name the absent and state load, are recorded, and so are the
- *     people their deltid leaves out there and a manual pick the days warn
- *     about (EMPLOYMENT);
+ *     people their deltid or their limit leaves out there, and a manual pick
+ *     the days or the limit warn about (EMPLOYMENT); to a reader without
+ *     HR-läs the board says CONSECUTIVE_TEACHING_HIDDEN and
+ *     COVER_EXCEEDS_CONSECUTIVE_TEACHING_HIDDEN, no figure, as it says
+ *     WORK_DAYS_HIDDEN for the days;
  *   - the cover day proposal's absences, which it gives only by id: who
  *     is away is the board's, which records it. The substitutes it would
  *     book come with their cover counter and their week against their
@@ -79,7 +85,16 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *     TEACHER_WORK_DAYS_HIDDEN, with no teacher, no post and no figure
  *     (src/optimization/work-days.ts). Read with HR-läs it names the teacher
  *     and the days, read back from the post, and is recorded (EMPLOYMENT), as
- *     the run's own read of the limits it sends the engine is;
+ *     the run's own read of the limits it sends the engine is. So is the
+ *     run's note about a teacher the generator left over their limit on
+ *     teaching in a row (Sammanhängande undervisning, HR data on the post):
+ *     stored with the weekday and the length of the longest stretch and the
+ *     teacher server-side, never the limit; TEACHER_CONSECUTIVE_TEACHING_
+ *     HIDDEN to a reader without HR-läs, and with HR-läs the note with the
+ *     limit and the pause read back from the post and the teacher named,
+ *     recorded (EMPLOYMENT). The run's own read of the limits it sends the
+ *     engine, the days' and the limit on teaching in a row alike, is
+ *     recorded (EMPLOYMENT) whoever started it;
  *   - schemaförslag (GET /optimization/candidates, its runs' check and a
  *     candidate's lessons, 20261125090000): a candidate is a grundschema
  *     nobody has applied yet, read only by the school's administrators,
@@ -91,13 +106,16 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *     no studentIds and no participants (schedule-candidates.service.spec.ts).
  *     Nor a post's days: a sentence about them is stored as the hidden one
  *     (TEACHER_WORK_DAYS_HIDDEN, no figure, no post, no teacher) for every
- *     reader, so nothing HR is shown. The names it gives are a teacher's
+ *     reader, so nothing HR is shown; nor a post's limit on teaching in a
+ *     row, whose notes a candidate stores as the one hidden note
+ *     (TEACHER_CONSECUTIVE_TEACHING_HIDDEN) for every reader. The names it gives are a teacher's
  *     beside a free-day wish a candidate or the draft breaks
  *     (20261127090000), read when the page is read, as a generator run's
  *     notes name them: the wish is on the work rule every member of staff
  *     reads (below), not on the post; and the travel line's teachers, the
  *     same way (below). What IS recorded is each rebuild of
- *     the fetch reading the posts' day limits it sends the engine — the
+ *     the fetch reading the posts' day limits and limits on teaching in a
+ *     row it sends the engine — the
  *     run, the check before an apply and the apply itself — by the
  *     fetch's own recordRead (EMPLOYMENT), as Generera's is. A row per poll
  *     of the page would record the timetable layer about the people who
@@ -147,9 +165,12 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *     the school's own list of whom it may call. The pool page names them
  *     through the register, which records its read (PEOPLE), and their
  *     availability is recorded (STAFF_ABSENCES);
- *   - the staff's work rules (GET /teacher-work-rules): lunch window and
- *     daily rest, which colleagues read on purpose to plan around each
- *     other, and which staff read directly through PostgREST as well;
+ *   - the staff's work rules (GET /teacher-work-rules): lunch window, daily
+ *     rest, the daily cap and the wished free day, which colleagues read on
+ *     purpose to plan around each other, and which staff read directly
+ *     through PostgREST as well. The limit on teaching in a row is NOT on
+ *     the work rule: it is the post's, HR data like the days, read through
+ *     GET /teacher-employments and recorded there;
  *   - who signed a decision (the leave delegation, retention, attendance
  *     sharing): rektor's or a full administrator's name on the school's own
  *     decision, which is the school's act and not data about the person;

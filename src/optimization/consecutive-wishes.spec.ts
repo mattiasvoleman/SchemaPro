@@ -1,15 +1,15 @@
 import {
   TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT,
-  consecutiveWishMessage,
+  consecutiveNoteMessage,
+  hideConsecutiveNotes,
   unkeptConsecutiveWishes,
   type ConsecutiveWish,
 } from './consecutive-wishes';
+import { TEACHER_CONSECUTIVE_TEACHING_HIDDEN } from './work-days';
 import { timetableWith, type TimedLesson } from './free-day-wishes';
 
 const EVA = '22222222-ffff-4fff-8fff-222222222222';
 const OLLE = '33333333-ffff-4fff-8fff-333333333333';
-const RULE_EVA = '77777777-ffff-4fff-8fff-777777777771';
-const RULE_OLLE = '77777777-ffff-4fff-8fff-777777777772';
 
 const clock = (value: string): number => {
   const [hours, minutes] = value.split(':').map(Number);
@@ -17,7 +17,6 @@ const clock = (value: string): number => {
 };
 
 const wish = (overrides: Partial<ConsecutiveWish> = {}): ConsecutiveWish => ({
-  ruleId: RULE_EVA,
   userId: EVA,
   maxMinutes: 180,
   breakMinutes: 30,
@@ -54,22 +53,26 @@ describe('unkeptConsecutiveWishes', () => {
     ).toEqual([]);
   });
 
-  it('names a limit a stretch breaks, in a conflict’s shape: the figures in the sentence, Eva beside it, nobody named', () => {
-    expect(unkeptConsecutiveWishes([wish()], [lesson('08:00', '10:00'), lesson('10:10', '12:10')])).toEqual([
+  it('names a limit a stretch breaks, in a conflict’s shape, with the weekday and the length and none of the limit: Eva only server-side', () => {
+    const notes = unkeptConsecutiveWishes([wish()], [lesson('08:00', '10:00'), lesson('10:10', '12:10')]);
+    expect(notes).toEqual([
       {
         category: 'AVAILABILITY',
         code: TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT,
-        params: { day: 1, minutes: 250, max: 180, breakMinutes: 30 },
-        message: consecutiveWishMessage({ day: 1, minutes: 250, max: 180, breakMinutes: 30 }),
+        params: { day: 1, minutes: 250 },
+        message: consecutiveNoteMessage({ day: 1, minutes: 250 }),
         requirementIds: [],
         roomIds: [],
         constraintIds: [],
-        resourceIds: [RULE_EVA],
+        resourceIds: [],
         resourceNames: [],
-        // Server-only: the job view names her from it when the run is read.
+        // Server-only: the job view reads the limit back from the post, and
+        // names her, for a reader with HR-läs (work-days.ts) and no other.
         subjectIds: [EVA],
       },
     ]);
+    // HR data: not the limit, not the pause, in no field of the note.
+    expect(JSON.stringify(notes)).not.toMatch(/180|"max"|breakMinutes|"30"/);
   });
 
   it('counts a lesson she co-teaches: it keeps her in the room as surely', () => {
@@ -92,12 +95,12 @@ describe('unkeptConsecutiveWishes', () => {
       ],
     );
     expect(notes).toHaveLength(1);
-    expect(notes[0]!.params).toEqual({ day: 5, minutes: 240, max: 180, breakMinutes: 30 });
+    expect(notes[0]!.params).toEqual({ day: 5, minutes: 240 });
     const tied = unkeptConsecutiveWishes(
       [wish()],
       [lesson('08:00', '11:30', { dayOfWeek: 4 }), lesson('08:00', '11:30', { dayOfWeek: 2 })],
     );
-    expect(tied[0]!.params).toMatchObject({ day: 2, minutes: 210 });
+    expect(tied[0]!.params).toEqual({ day: 2, minutes: 210 });
   });
 
   it('breaks a limit by hand-made or locked lessons alone: the note is the school’s to act on', () => {
@@ -117,30 +120,30 @@ describe('unkeptConsecutiveWishes', () => {
     ).toEqual([]);
   });
 
-  it('orders several notes by weekday, then by rule, so two reads of one run say it in one order', () => {
-    // Olle's rule sorts after Eva's, and his stretch is on the earlier day:
-    // the weekday decides, and the rule only breaks a tie.
+  it('orders several notes by weekday, then by teacher, so two reads of one run say it in one order', () => {
+    // Eva sorts before Olle, and Olle’s stretch is on the earlier day: the
+    // weekday decides, and the teacher only breaks a tie.
     const notes = unkeptConsecutiveWishes(
-      [wish({ ruleId: RULE_OLLE, userId: OLLE }), wish()],
+      [wish({ userId: OLLE }), wish()],
       [
         lesson('08:00', '12:00', { dayOfWeek: 3 }),
         lesson('08:00', '12:00', { dayOfWeek: 1, teacherId: OLLE }),
       ],
     );
-    expect(notes.map((note) => [note.params!['day'], note.resourceIds[0]])).toEqual([
-      [1, RULE_OLLE],
-      [3, RULE_EVA],
+    expect(notes.map((note) => [note.params!['day'], note.subjectIds![0]])).toEqual([
+      [1, OLLE],
+      [3, EVA],
     ]);
 
-    // Two stretches on one day, the wishes given in the other order: by rule.
+    // Two stretches on one day, the wishes given in the other order: by teacher.
     const tied = unkeptConsecutiveWishes(
-      [wish({ ruleId: RULE_OLLE, userId: OLLE }), wish()],
+      [wish({ userId: OLLE }), wish()],
       [
         lesson('08:00', '12:00', { dayOfWeek: 3, teacherId: OLLE }),
         lesson('08:00', '12:00', { dayOfWeek: 3 }),
       ],
     );
-    expect(tied.map((note) => note.resourceIds[0])).toEqual([RULE_EVA, RULE_OLLE]);
+    expect(tied.map((note) => note.subjectIds![0])).toEqual([EVA, OLLE]);
   });
 
   it('says nothing for a teacher who teaches nothing, or for no wishes', () => {
@@ -164,12 +167,49 @@ describe('timetableWith feeds it the post’s own window and the solved hour', (
   });
 });
 
-describe('consecutiveWishMessage', () => {
-  it('says the limit, the pause, the stretch and the weekday in the catalogue’s English', () => {
-    expect(consecutiveWishMessage({ day: 2, minutes: 240, max: 180, breakMinutes: 30 })).toBe(
-      'A teacher should teach at most 180 minutes in a row before 30 minutes free, and the new timetable ' +
-        'gives them 240 minutes in a row on Tuesdays. The generator tries to keep the limit but weighs it ' +
-        'against the rest of the week, and gives way where keeping it would cost more.',
+describe('consecutiveNoteMessage', () => {
+  it('says the stretch and the weekday in English, and nothing of the limit', () => {
+    const message = consecutiveNoteMessage({ day: 2, minutes: 240 });
+    expect(message).toBe(
+      'A teacher with a limit on teaching in a row has 240 minutes in a row on Tuesdays in the new timetable, ' +
+        'over the limit. The generator tries to keep the limit but weighs it against the rest of the week, and ' +
+        'gives way where keeping it would cost more.',
     );
+  });
+});
+
+describe('hideConsecutiveNotes: what a schemaförslag stores', () => {
+  const note = (code: string, overrides: Record<string, unknown> = {}) => ({
+    category: 'AVAILABILITY' as const,
+    code,
+    params: { day: 1, minutes: 250 },
+    message: 'English',
+    requirementIds: [],
+    roomIds: [],
+    constraintIds: [],
+    resourceIds: [],
+    resourceNames: [],
+    subjectIds: [EVA],
+    ...overrides,
+  });
+
+  it('replaces every note about a limit with one hidden note: no params, no teacher, no figure, in the first one’s place', () => {
+    const wishNote = note('TEACHER_FREE_DAY_WISH_NOT_KEPT', { subjectIds: [OLLE] });
+    const out = hideConsecutiveNotes([
+      wishNote,
+      note(TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT),
+      note(TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT, { subjectIds: [OLLE] }),
+    ]);
+    expect(out).toHaveLength(2);
+    expect(out[0]).toBe(wishNote);
+    expect(out[1]).toMatchObject({ category: 'AVAILABILITY', code: TEACHER_CONSECUTIVE_TEACHING_HIDDEN, params: {} });
+    expect(out[1]).not.toHaveProperty('subjectIds');
+    expect(JSON.stringify(out[1])).not.toMatch(new RegExp(`${EVA}|${OLLE}|250`));
+  });
+
+  it('changes nothing when no note is about a limit', () => {
+    const notes = [note('TEACHER_FREE_DAY_WISH_NOT_KEPT')];
+    expect(hideConsecutiveNotes(notes)).toEqual(notes);
+    expect(hideConsecutiveNotes([])).toEqual([]);
   });
 });

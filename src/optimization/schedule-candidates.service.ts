@@ -22,7 +22,7 @@ import { RealtimeService } from '../realtime/realtime.service';
 import { rostersOfYear } from '../year-rollover/projected-rosters';
 import { changedParts, type BasisParts } from './candidate-basis';
 import { TEACHER_WORK_DAYS_HIDDEN, WORK_DAYS_HIDDEN_MESSAGE, isDaysBearing } from './work-days';
-import { unkeptConsecutiveWishes } from './consecutive-wishes';
+import { hideConsecutiveNotes, unkeptConsecutiveWishes } from './consecutive-wishes';
 import { clockMinutes, timetableWith, unkeptFreeDayWishes, type TimedLesson } from './free-day-wishes';
 import { candidateMetricsOf, lessonCountOf, metricsViewOf, runUnplacedOf, type CandidateMetrics, type CandidateMetricsView, type RunUnplaced } from './candidate-metrics';
 import {
@@ -961,10 +961,13 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
         ...prepared.keptTimetable,
         ...prepared.draftLessons.filter((lesson) => !lesson.isParked).map(timedDraftLesson),
       ];
-      const draftNotes = [
+      // A limit on teaching in a row is HR data: a schemaförslag keeps the
+      // hidden note for every reader (consecutive-wishes.ts), as it keeps the
+      // hidden sentence for a post's days.
+      const draftNotes = hideConsecutiveNotes([
         ...unkeptFreeDayWishes(prepared.freeDayWishes, draftTimetable),
         ...unkeptConsecutiveWishes(prepared.consecutiveWishes, draftTimetable),
-      ];
+      ]);
 
       const applicable: Array<{ ordinal: number; lessons: CandidateLesson[]; metrics: CandidateMetrics }> = [];
       for (const [index, candidate] of plan.candidates.entries()) {
@@ -1012,10 +1015,10 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
         const notes =
           left === null
             ? null
-            : [
+            : hideConsecutiveNotes([
                 ...unkeptFreeDayWishes(prepared.freeDayWishes, left),
                 ...unkeptConsecutiveWishes(prepared.consecutiveWishes, left),
-              ];
+              ]);
         const firstFailed = index === 0 && (status === 'INFEASIBLE' || status === 'TIMEOUT');
         const outcome = await this.store(plan, user, candidate, solution, status, { metrics, notes }, firstFailed);
         if (outcome !== 'stored') return;
