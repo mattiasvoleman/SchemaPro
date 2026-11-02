@@ -62,8 +62,17 @@ export async function gallringChecks(owner: Client, api: PrismaService, marker: 
   await sweepGallringSchool(owner, marker);
   const one = async <T extends object>(sql: string, params: unknown[] = []): Promise<T> => (await owner.query<T>(sql, params)).rows[0]!;
   const count = async (sql: string, params: unknown[] = []): Promise<number> => Number((await one<{ n: string }>(sql, params)).n);
-  const today = (await one<{ d: string }>(`SELECT ((now() AT TIME ZONE 'Europe/Stockholm')::date)::text AS d`)).d;
+  // The school's date, read when the rows are planted. What the night does is
+  // judged against its own recorded day and cutoff, never against this: a
+  // midnight in Stockholm between planting and the night (or between two
+  // nights) moves the cutoff a day, and the lessons around it, planted on both
+  // sides, are what show that the cutoff is still exact.
+  const schoolDay = async (): Promise<string> =>
+    (await one<{ d: string }>(`SELECT ((now() AT TIME ZONE 'Europe/Stockholm')::date)::text AS d`)).d;
+  const today = await schoolDay();
   const ago = (months: number) => `('${today}'::date - interval '${months} months')::date`;
+  const monthsBefore = async (day: string, months: number): Promise<string> =>
+    (await one<{ d: string }>(`SELECT ('${day}'::date - interval '${months} months')::date::text AS d`)).d;
 
   const school = await one<{ id: string }>(
     `INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ($1, $2, 'Europe/Stockholm', now()) RETURNING id`,
@@ -109,17 +118,35 @@ export async function gallringChecks(owner: Client, api: PrismaService, marker: 
     `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "updatedAt") VALUES ($1, $2, 'P7', now()) RETURNING id`,
     [s, lessonsYear.id],
   );
-  for (const months of [13, 12, 11]) {
-    const lesson = await one<{ id: string }>(
+  // Attendance on lessons around the 12-month cutoff: 13 months back, the day
+  // before the cutoff, ON it, the day after, and 11 months back. Tonight's
+  // cutoff is today's or, past a midnight, the next day's, so one lesson is
+  // always on it and one the day before.
+  const planted: Array<{ id: string; date: string }> = [];
+  for (const [months, days] of [[13, 0], [12, -1], [12, 0], [12, 1], [11, 0]] as const) {
+    const day = `${ago(months)} + (${days})`;
+    const lesson = await one<{ id: string; date: string }>(
       `INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
-       VALUES ($1, $2, $3, ${ago(months)}, ${ago(months)} + time '06:10', ${ago(months)} + time '06:50', now()) RETURNING id`,
+       VALUES ($1, $2, $3, ${day}, (${day}) + time '06:10', (${day}) + time '06:50', now()) RETURNING id, date::text AS date`,
       [s, subject.id, group.id],
     );
+    planted.push(lesson);
     await owner.query(
       `INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt") VALUES ($1, $2, $3, 'PRESENT', now())`,
       [s, lesson.id, pupil.id],
     );
   }
+  // The attendance gallring took on the lessons before `cutoff`; the rest stays.
+  const goneBefore = (cutoff: string): number => planted.filter((lesson) => lesson.date < cutoff).length;
+  // The school's newest run, with the day and the attendance cutoff it recorded.
+  const latestRun = () =>
+    one<{ status: string; counts: Record<string, number>; complete: Record<string, boolean>; day: string; started: string; cutoff: string }>(
+      `SELECT status, counts, complete, "localDay"::text AS day, cutoffs ->> 'ATTENDANCE' AS cutoff,
+              (("startedAt" AT TIME ZONE 'Europe/Stockholm')::date)::text AS started
+         FROM "GallringRuns" WHERE "schoolId" = $1 ORDER BY "startedAt" DESC LIMIT 1`,
+      [s],
+    );
+  let firstCutoff = '';
   await owner.query(
     `INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date) VALUES ($1, $2, $3, ${ago(7)}), ($1, $2, $3, ${ago(5)})`,
     [s, pupil.id, guardian.id],
@@ -204,11 +231,20 @@ export async function gallringChecks(owner: Client, api: PrismaService, marker: 
     await check('(ga) the page: ej beslutat, a period that waits a day and previews, KEEP without months, the admin\'s alone', async () => {
       const before = await service.overview(asAdmin);
       assert.ok(before.kinds.every((kind) => kind.current === null && kind.preview === null), 'a kind was decided before anyone decided');
+      const dayBefore = await schoolDay();
       const after = await service.decide({ dataType: 'ATTENDANCE', decision: 'PURGE_AFTER', months: 12, reference: 'DHP probe' }, asAdmin);
+      const dayAfter = await schoolDay();
       const attendance = after.kinds.find((kind) => kind.dataType === 'ATTENDANCE')!;
       assert.equal(attendance.current?.decidedBy, 'admin Probe');
       assert.ok(attendance.waitsUntil && attendance.waitsUntil > today, `a new period applies at once (${attendance.waitsUntil})`);
-      assert.deepEqual(attendance.preview, { cutoff: (await one<{ d: string }>(`SELECT ${ago(12)}::text AS d`)).d, due: 1, held: 0 });
+      // The preview's cutoff is 12 months before the school's day, whichever
+      // side of a midnight the call fell on.
+      const previewCutoff = attendance.preview?.cutoff ?? '';
+      assert.ok(
+        [await monthsBefore(dayBefore, 12), await monthsBefore(dayAfter, 12)].includes(previewCutoff),
+        `the preview's cutoff ${previewCutoff} is not 12 months before ${dayBefore} or ${dayAfter}`,
+      );
+      assert.deepEqual(attendance.preview, { cutoff: previewCutoff, due: goneBefore(previewCutoff), held: 0 });
       const preview = await service.preview({ dataType: 'DEPARTED_PEOPLE', months: 12 }, asAdmin);
       assert.deepEqual([preview.due, preview.held], [2, 1], `departed preview ${JSON.stringify(preview)}`);
       await assert.rejects(service.decide({ dataType: 'NOTIFICATIONS', decision: 'KEEP', months: 3 }, asAdmin), /Bara en gallringsperiod/);
@@ -236,8 +272,23 @@ export async function gallringChecks(owner: Client, api: PrismaService, marker: 
       const othersBefore = await othersRows();
       const result = await job.runSchool(s);
       assert.deepEqual(await othersRows(), othersBefore, 'another school moved');
-      assert.equal(await count(`SELECT count(*) AS n FROM "AttendanceRecords" a JOIN "CalendarLessons" l ON l.id = a."calendarLessonId" WHERE a."schoolId" = $1 AND l.date < ${ago(12)}`, [s]), 0);
-      assert.equal(await count(`SELECT count(*) AS n FROM "AttendanceRecords" WHERE "schoolId" = $1`, [s]), 2, 'attendance on or after the cutoff went');
+      // The night's own day and cutoff, as it recorded them: the lessons were
+      // planted on `today`, and the night may belong to the next school day.
+      const night = await latestRun();
+      firstCutoff = night.cutoff;
+      assert.equal(night.day, night.started, 'the night\'s day is not the school\'s date when it began');
+      assert.equal(firstCutoff, await monthsBefore(night.day, 12), 'the night\'s cutoff is not 12 months before its day');
+      const dayBeforeCutoff = (await one<{ d: string }>(`SELECT ('${firstCutoff}'::date - 1)::text AS d`)).d;
+      assert.ok(
+        planted.some((lesson) => lesson.date === firstCutoff) && planted.some((lesson) => lesson.date === dayBeforeCutoff),
+        `no lesson on the cutoff ${firstCutoff} and the day before: the night's day has moved more than a day since they were planted`,
+      );
+      for (const lesson of planted) {
+        const left = await count(`SELECT count(*) AS n FROM "AttendanceRecords" WHERE "calendarLessonId" = $1`, [lesson.id]);
+        if (lesson.date < firstCutoff) assert.equal(left, 0, `attendance before the cutoff stayed (${lesson.date}, cutoff ${firstCutoff})`);
+        else assert.equal(left, 1, `attendance on or after the cutoff went (${lesson.date}, cutoff ${firstCutoff})`);
+      }
+      assert.equal(await count(`SELECT count(*) AS n FROM "AttendanceRecords" WHERE "schoolId" = $1`, [s]), planted.length - goneBefore(firstCutoff));
       assert.equal(await count(`SELECT count(*) AS n FROM "AbsenceReports" WHERE "schoolId" = $1`, [s]), 1);
       assert.equal(await count(`SELECT count(*) AS n FROM "LeaveRequests" WHERE "schoolId" = $1 AND "endDate" >= ${ago(12)}`, [s]), 1, 'the request that ended after the cutoff went');
       assert.equal(await count(`SELECT count(*) AS n FROM "LeaveRequests" WHERE "schoolId" = $1`, [s]), 1);
@@ -247,22 +298,20 @@ export async function gallringChecks(owner: Client, api: PrismaService, marker: 
       assert.ok((await count(`SELECT count(*) AS n FROM "TeacherEmploymentLogs" WHERE "academicYearId" = $1`, [current.id])) >= 2, 'this läsår\'s history went');
       assert.equal(await count(`SELECT count(*) AS n FROM "TeacherAbsences" WHERE "schoolId" = $1 AND "reasonId" IS NOT NULL`, [s]), 1);
       assert.equal(await count(`SELECT count(*) AS n FROM "TeacherAbsences" WHERE "schoolId" = $1`, [s]), 2, 'an absence went with its reason');
-      // Attendance, an absence report, a request, a schedule log and 2019/20's
-      // one version, an absence's reason.
-      assert.equal(result.rows, 1 + 1 + 1 + 2 + 1, `rows ${result.rows}`);
+      // Attendance (the lessons before the cutoff), an absence report, a
+      // request, a schedule log and 2019/20's one version, an absence's reason.
+      const attendanceGone = goneBefore(firstCutoff);
+      assert.equal(result.rows, attendanceGone + 1 + 1 + 2 + 1, `rows ${result.rows}`);
 
-      const run = await one<{ status: string; counts: Record<string, number>; complete: Record<string, boolean> }>(
-        `SELECT status, counts, complete FROM "GallringRuns" WHERE "schoolId" = $1 ORDER BY "startedAt" DESC LIMIT 1`,
-        [s],
-      );
+      const run = night;
       assert.equal(run.status, 'DONE');
-      assert.deepEqual(run.counts, { ATTENDANCE: 1, ABSENCE_REPORTS: 1, LEAVE_REQUESTS: 1, CHANGE_LOGS: 2, ABSENCE_REASONS: 1, DEPARTED_PEOPLE: 1 });
+      assert.deepEqual(run.counts, { ATTENDANCE: attendanceGone, ABSENCE_REPORTS: 1, LEAVE_REQUESTS: 1, CHANGE_LOGS: 2, ABSENCE_REASONS: 1, DEPARTED_PEOPLE: 1 });
       const purged = await service.purgedBefore(asTeacher);
       assert.deepEqual(
         purged.map((p) => p.dataType),
         ['ATTENDANCE', 'ABSENCE_REPORTS', 'LEAVE_REQUESTS', 'CHANGE_LOGS', 'ABSENCE_REASONS'],
       );
-      assert.equal(purged[0]!.purgedBefore, (await one<{ d: string }>(`SELECT ${ago(12)}::text AS d`)).d);
+      assert.equal(purged[0]!.purgedBefore, firstCutoff);
     });
 
     await check('(gc) the departed: login first, the stuck one waits and is counted, SCB holds the autumn teacher, the next night takes the rest', async () => {
@@ -287,7 +336,14 @@ export async function gallringChecks(owner: Client, api: PrismaService, marker: 
       deleted.push('retry');
       const next = await job.runSchool(s);
       assert.equal(next.people, 1);
-      assert.equal(next.rows, 0, 'the second night took rows the first had left');
+      // Its cutoff is the first night's or, if a school day went by between
+      // them, the next day's: it takes the lessons in between and nothing else.
+      const secondCutoff = (await latestRun()).cutoff;
+      assert.equal(
+        next.rows,
+        planted.filter((lesson) => lesson.date >= firstCutoff && lesson.date < secondCutoff).length,
+        'the second night took rows the first had left',
+      );
       assert.ok((await one<{ p: Date | null }>(`SELECT "pseudonymisedAt" AS p FROM "Users" WHERE id = $1`, [stuck.id])).p !== null);
       // The job logged ids and counts, and never a name or an e-mail.
       assert.ok(lines.some((line) => line.startsWith(`Gallring [school=${s}, `)), `no summary line in ${JSON.stringify(lines)}`);
