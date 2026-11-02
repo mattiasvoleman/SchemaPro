@@ -527,8 +527,8 @@ function unplacedViewOf(value: unknown): RunUnplaced | null {
 /**
  * How a failed engine call reads on the run. A call that ran out of time or
  * never reached the engine (the proxy's 503s) is CANDIDATE_ENGINE_TIMEOUT; an
- * engine that broke (another 5xx) CANDIDATE_ENGINE_FAILED; anything the engine
- * or the proxy NAMED keeps its name — ENGINE_LACKS_CANDIDATES, and the
+ * engine that broke (another 5xx, or an answer below 400) CANDIDATE_ENGINE_FAILED;
+ * anything the engine or the proxy NAMED keeps its name — ENGINE_LACKS_CANDIDATES, and the
  * engine's own 4xx refusals — with its values.
  */
 export function engineFailureOf(error: unknown): RunFailure {
@@ -536,7 +536,10 @@ export function engineFailureOf(error: unknown): RunFailure {
   if (failure.code !== null || !(error instanceof HttpException)) return failure;
   const status = error.getStatus();
   if (status === 503 || status === 504) return { ...failure, code: CANDIDATE_ENGINE_TIMEOUT };
-  if (status >= 500) return { ...failure, code: CANDIDATE_ENGINE_FAILED };
+  // Below 400 is not a refusal either: callAiEngine answers a redirect with a
+  // 502, so none arrives, but one that did would be an engine that broke and
+  // not a run without a name.
+  if (status >= 500 || status < 400) return { ...failure, code: CANDIDATE_ENGINE_FAILED };
   return failure;
 }
 

@@ -1459,8 +1459,10 @@ describe('OptimizationProxyService', () => {
           } as unknown as ConfigService,
         );
 
+        // The gateway's own answer is a 502: a 302 of the engine's is no
+        // redirect of the client's.
         await expect(real.callAiEngine('/v1/schedule', {}, maps())).rejects.toMatchObject({
-          status: 302,
+          status: 502,
         });
         expect(keysSeen).toEqual([]);
       } finally {
@@ -3293,28 +3295,58 @@ describe('OptimizationProxyService', () => {
       );
     });
 
-    it('takes a redirect from the engine for an answer with an error, and writes nothing', async () => {
+    it.each([301, 302, 303, 307, 308])(
+      'answers a %i from the engine with a 502 of the gateway\'s own, and writes nothing',
+      async (status) => {
+        arrange();
+        // What axios throws for a 3xx once it follows none: a response, not a
+        // missing one, so it is not "could not be reached".
+        const redirected = new AxiosError(`Request failed with status code ${status}`);
+        redirected.response = {
+          status,
+          data: '',
+          headers: { location: 'http://elsewhere.test/v1/schedule' },
+        } as never;
+        http.post.mockReturnValue(throwError(() => redirected));
+
+        const run = service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        await expect(run).rejects.toThrow(HttpException);
+        // Never the engine's 3xx to the client: "go elsewhere", with nowhere to go.
+        await expect(run).rejects.toMatchObject({ status: 502 });
+        await expect(run).rejects.toThrow('The AI engine returned an error.');
+        await expect(run).rejects.not.toThrow('could not be reached');
+        // Asked once, at the configured address; the Location is never visited.
+        expect(http.post).toHaveBeenCalledTimes(1);
+        expect(tx.masterLesson.deleteMany).not.toHaveBeenCalled();
+        expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
+      },
+    );
+
+    it('does not hand on the message a 3xx body carries, and logs the status but not the Location', async () => {
       arrange();
-      // What axios throws for a 3xx once it follows none: a response, not a
-      // missing one, so it is not "could not be reached".
       const redirected = new AxiosError('Request failed with status code 302');
       redirected.response = {
         status: 302,
-        data: '',
+        data: { message: 'Moved to http://elsewhere.test/v1/schedule' },
         headers: { location: 'http://elsewhere.test/v1/schedule' },
       } as never;
       http.post.mockReturnValue(throwError(() => redirected));
+      const error = jest
+        .spyOn((service as unknown as { logger: Logger }).logger, 'error')
+        .mockImplementation(() => undefined);
 
       const run = service.triggerScheduling(ACADEMIC_YEAR, testUser());
 
-      await expect(run).rejects.toThrow(HttpException);
-      await expect(run).rejects.toMatchObject({ status: 302 });
-      await expect(run).rejects.toThrow('The AI engine returned an error.');
-      await expect(run).rejects.not.toThrow('could not be reached');
-      // Asked once, at the configured address; the Location is never visited.
-      expect(http.post).toHaveBeenCalledTimes(1);
-      expect(tx.masterLesson.deleteMany).not.toHaveBeenCalled();
-      expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
+      // A 4xx's message is the engine's own sentence for a school to read; a
+      // 3xx has none to give.
+      await expect(run).rejects.toMatchObject({
+        status: 502,
+        response: { message: 'The AI engine returned an error.' },
+      });
+      await expect(run).rejects.not.toThrow('elsewhere');
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('answered 302'));
+      expect(error).not.toHaveBeenCalledWith(expect.stringContaining('elsewhere'));
     });
 
     it('translates the anonymous solution back to real ids before persisting', async () => {
