@@ -13,7 +13,8 @@
  * round, all four posts in one week — and the line's sum is judged against
  * the target as always. Neither are two or three swaps on the same halves in
  * one week, each kept subject with a partner of its own (nor a pupil whose
- * replacing group takes a rival away). Every neighbouring shape still is,
+ * replacing group takes a rival away, nor a kept subject with a swap of its
+ * own beside two that share one, which are). Every neighbouring shape still is,
  * each case failing
  * one part of the signature where it can: the class's post put back after a
  * split (in turn, swapped, or kept for the autumn), a half's dated post with
@@ -783,6 +784,35 @@ const aClassRowInTheSwapsShape = (): PlannedCoverageInput => {
   );
 };
 
+/**
+ * Fall L (teknik in turn in the swap's week, 6A's teknik back, the slöjd
+ * first on 6A:1, in the autumn) with a third swap beside it: 6A keeps its
+ * bild, and the halves swap musik for it over the autumn's two halves, 1 × 70
+ * in the same week. The slöjd and the teknik share the one hemkunskap, so
+ * neither is exempt; the bild has its musik to itself, and is. Three kept
+ * rows against two partners: counting the half's kept rows with a partner
+ * against its partners, instead of matching them, finds one too many and
+ * warns the bild too.
+ */
+const aThirdSwapBesideL = (): PlannedCoverageInput => {
+  reset();
+  const c6A = theClass('6A');
+  const halves = halvesOf(c6A);
+  return yearOf(
+    [c6A, ...halves],
+    [
+      post(c6A, S.SL, 2, 25),
+      post(c6A, S.TK, 1, 30),
+      post(c6A, S.BL, 1, 40),
+      ...swapPosts(halves, { first: SPRING, second: AUTUMN }),
+      post(halves[0], S.TK, 1, 70, AUTUMN),
+      post(halves[1], S.TK, 1, 70, SPRING),
+      ...swapPosts(halves, { x: S.BL, y: S.MU, first: period(null, '2026-10-25'), second: period('2026-10-26', '2027-01-10') }),
+    ],
+    [pupil(c6A, [halves[0]]), pupil(c6A, [halves[1]])],
+  );
+};
+
 const added = [
   {
     name: `${PREFIX} hemkunskap swapped with slöjd — 6A's slöjd 2 × 25 and each half's slöjd in the term it reads no hemkunskap, which 6A has no post in, mirrored by the other half in one week, are one planning, not double: 50 + 34 and 50 + 36, both on the target of 80`,
@@ -879,6 +909,10 @@ const added = [
   {
     name: `${PREFIX} 6A's matematik for the spring only in the swap's shape — a class row is no rival of the half's slöjd, so the slöjd stays the swap; 6A:2's pupil is double planned in matematik`,
     input: aClassRowInTheSwapsShape(),
+  },
+  {
+    name: `${PREFIX} fall L with a third swap beside it — bild kept and musik swapped for it over the autumn's two halves, in the swap's week: the slöjd and the teknik share the one hemkunskap and are double planned, the bild has its musik to itself and is not`,
+    input: aThirdSwapBesideL(),
   },
 ];
 
