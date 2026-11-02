@@ -12,6 +12,7 @@ the others flag the busiest teachers with a limit on their teaching in a row:
     python benchmarks/consecutive_teaching.py --mode first --arms off,A
     python benchmarks/consecutive_teaching.py --mode full --arms off,B --budget 90
     python benchmarks/consecutive_teaching.py --mode gate --arms off,A --budget 90
+    python benchmarks/consecutive_teaching.py --mode rerun --arms off,A --budget 60
 
 The schools: `hogstadium` (450 pupils, 26 teachers, 423 lessons) and `bench`
 (the nightly gate's 400 pupils, validate_schedule.py --students 400).
@@ -31,6 +32,13 @@ empty.
     full    solve() end to end on the budget, then validate_schedule.validate
     gate    the nightly gate: solve() on the bench school with a budget, then
             validate, as quality-gates.yml runs it
+    rerun   a school that has a timetable turns the wish on and generates
+            again: the school is solved once as it is (the `off` arm), that
+            timetable goes in as previousLessons, and each arm solves again
+            with it. Besides what the other modes count, `moved` is how many of
+            the previous slots no lesson of the same requirement holds any
+            more, which is what the disruption term (weight_disruption, 8 a
+            slot) prices against the wish (250 a lesson).
 """
 
 from __future__ import annotations
@@ -196,10 +204,41 @@ def _load() -> float:
     return round(os.getloadavg()[0], 1)
 
 
-def measure(args: tuple[str, str, str, float]) -> dict[str, object]:
-    name, mode, arm, budget = args
+def with_previous(request: OptimizeScheduleRequest, previous: list[dict[str, object]]) -> OptimizeScheduleRequest:
+    payload = request.model_dump(by_alias=True, mode="json")
+    payload["previousLessons"] = previous
+    return OptimizeScheduleRequest.model_validate(payload)
+
+
+def previous_of(lessons) -> list[dict[str, object]]:
+    """A timetable as the gateway sends it back: one slot per lesson."""
+    return [
+        {
+            "requirementId": str(lesson.requirement_id),
+            "dayOfWeek": lesson.day_of_week,
+            "startTime": ":".join([*lesson.start_time.split(":"), "00"][:3]),
+        }
+        for lesson in lessons
+    ]
+
+
+def moved_slots(previous: list[dict[str, object]], lessons) -> int:
+    """Previous slots that no lesson of the same requirement holds any more."""
+    held = {
+        (str(lesson.requirement_id), lesson.day_of_week, ":".join([*lesson.start_time.split(":"), "00"][:3]))
+        for lesson in lessons
+    }
+    return sum(
+        (str(slot["requirementId"]), slot["dayOfWeek"], slot["startTime"]) not in held for slot in previous
+    )
+
+
+def measure(args: tuple[str, str, str, float, list[dict[str, object]] | None]) -> dict[str, object]:
+    name, mode, arm, budget, previous = args
     rule = ARMS[arm]
     request = flagged(school(name), arm)
+    if previous is not None:
+        request = with_previous(request, previous)
     base = school(name)
     solver = SchedulerSolver(Settings(SOLVER_MAX_TIME_SECONDS=budget))  # type: ignore[call-arg]
     # The count is always against the arm's own rule; `off` is counted against A
@@ -255,23 +294,50 @@ def measure(args: tuple[str, str, str, float]) -> dict[str, object]:
             spans = spans_of_lessons(request, response.lessons)
             result["breaching"] = breaching(base, spans, counted)
             result["teacherIdleMinutes"] = idle_minutes(spans)
+            if previous is not None:
+                result["previous"] = len(previous)
+                result["moved"] = moved_slots(previous, response.lessons)
     result["load"].append(_load())  # type: ignore[union-attr]
     return result
+
+
+def rerun_base(name: str, args: argparse.Namespace) -> list[dict[str, object]]:
+    """The school's timetable as it is today, kept in `--previous` when given."""
+    path = Path(args.previous) if args.previous else None
+    if path is not None and path.exists():
+        return json.loads(path.read_text())
+    request = school(name)
+    solver = SchedulerSolver(Settings(SOLVER_MAX_TIME_SECONDS=args.budget))  # type: ignore[call-arg]
+    response = solver.solve(request)
+    print(json.dumps({
+        "base": name, "status": response.status, "lessons": len(response.lessons),
+        # What the wish has to move: the teachers of the busiest who break rule A today.
+        "breaching": breaching(request, spans_of_lessons(request, response.lessons), ARMS["A"]),
+    }), flush=True)
+    previous = previous_of(response.lessons)
+    if path is not None:
+        path.write_text(json.dumps(previous))
+    return previous
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--school", choices=["hogstadium", "bench"], default=None)
-    parser.add_argument("--mode", choices=["first", "full", "gate"], default="first")
+    parser.add_argument("--mode", choices=["first", "full", "gate", "rerun"], default="first")
+    parser.add_argument(
+        "--previous", default=None,
+        help="rerun: the file the first timetable is kept in (made when missing), so a round can be repeated",
+    )
     parser.add_argument("--arms", default="off,A")
     parser.add_argument("--budget", type=float, default=90.0)
     parser.add_argument("--rounds", type=int, default=1)
     args = parser.parse_args()
     name = args.school or ("bench" if args.mode == "gate" else "hogstadium")
     arms = args.arms.split(",")
+    previous = rerun_base(name, args) if args.mode == "rerun" else None
     for _ in range(args.rounds):
         with multiprocessing.get_context("spawn").Pool(len(arms)) as pool:
-            for result in pool.map(measure, [(name, args.mode, arm, args.budget) for arm in arms]):
+            for result in pool.map(measure, [(name, args.mode, arm, args.budget, previous) for arm in arms]):
                 print(json.dumps(result), flush=True)
     return 0
 

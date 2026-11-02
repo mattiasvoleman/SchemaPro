@@ -221,13 +221,26 @@ CASES = [
     # A locked stretch longer than the limit: the lesson that joins it is part
     # of a stretch over the limit, and one that keeps its distance is not.
     (90, 30, [60], [("08:00", "10:00")]),
+    # The break is not a whole number of start steps, so the starts the lesson
+    # may take cannot be confined to the lattice of the others.
+    (120, 15, [40, 60, 80], []),
+    (150, 20, [40, 40, 80], []),
+    # A limit one slot off a boundary: three lessons of 35 minutes with five
+    # free between two of them are one stretch of exactly X + 5, which is over,
+    # and without the five minutes one of exactly X, which is not.
+    (100, 10, [50, 50, 50], []),
+    (105, 10, [35, 35, 35], []),
+    # Locked windows Y - 5 apart are one stretch (exactly Y apart: SILENT_CASES).
+    (120, 30, [60], [("08:00", "09:00"), ("09:25", "10:25")]),
+    # A lock that ends between two steps.
+    (90, 15, [45], [("08:07", "09:00")]),
 ]
 
 
-@pytest.mark.parametrize(("limit", "pause", "lengths", "locked"), CASES)
-def test_every_placement_is_priced_as_the_definition_prices_it(
+def _check_every_placement(
     limit: int, pause: int, lengths: list[int], locked: list[tuple[str, str]],
-) -> None:
+) -> tuple[int, int]:
+    """(placements tried, placements charged): every one agrees with the definition."""
     payload = _payload(limit=limit, pause=pause, lengths=lengths, locked=locked)
     solver, request, (model, _registry, decisions, *_rest) = _build(
         payload, objective=True, **QUIET,
@@ -266,10 +279,171 @@ def test_every_placement_is_priced_as_the_definition_prices_it(
             )
         tried += 1
         priced += violated
+    return tried, priced
+
+
+@pytest.mark.parametrize(("limit", "pause", "lengths", "locked"), CASES)
+def test_every_placement_is_priced_as_the_definition_prices_it(
+    limit: int, pause: int, lengths: list[int], locked: list[tuple[str, str]],
+) -> None:
+    tried, priced = _check_every_placement(limit, pause, lengths, locked)
     assert tried > 0
     # The wish must bind for the case to prove anything: some placement the
     # teacher's own no-overlap allows is charged, and some is not.
     assert 0 < priced < tried
+
+
+#: Cases the definition never charges, which the model must not charge either.
+#: What they hold apart is a mutant that reads the break wrongly: locks exactly
+#: Y apart are two stretches of an hour, and the lesson that joins one makes
+#: exactly X; read as one stretch of 150 minutes they would charge it.
+SILENT_CASES = [
+    (120, 30, [60], [("08:00", "09:00"), ("09:30", "10:30")]),
+]
+
+
+@pytest.mark.parametrize(("limit", "pause", "lengths", "locked"), SILENT_CASES)
+def test_a_placement_no_stretch_of_which_is_over_is_never_charged(
+    limit: int, pause: int, lengths: list[int], locked: list[tuple[str, str]],
+) -> None:
+    tried, priced = _check_every_placement(limit, pause, lengths, locked)
+    assert tried > 0
+    assert priced == 0
+
+
+def _read_days(
+    solver, decisions, recurrence: list[str | None], starts: list[int], limit: int, pause: int,
+    locked: list[tuple[int, int, int]],
+) -> bool | None:
+    """The definition on minutes, day by day, week by week, for placements over several days.
+
+    `starts` are absolute slots (a day is `slots_per_day` of them) and `locked`
+    are (weekday index, start minute, end minute). None when two lessons of one
+    week overlap; otherwise whether a stretch with one of the solver's lessons
+    in it is over the limit. The night ends a stretch: the days are read apart,
+    and an odd week's lessons are not beside an even week's.
+    """
+    per_day = solver._grid.slots_per_day
+    slot = solver._grid.slot_minutes
+    base = solver._grid.day_start_minutes
+    placed = []
+    for decision, week, start in zip(decisions, recurrence, starts):
+        day, offset = divmod(start, per_day)
+        placed.append((day, week, base + offset * slot, base + (offset + decision.duration) * slot))
+    violated = False
+    for week in ("ODD_WEEKS", "EVEN_WEEKS"):
+        mine = [(day, a, b) for day, kind, a, b in placed if kind in (None, week)]
+        runs = mine + list(locked)
+        for day in sorted({run[0] for run in runs}):
+            windows = sorted((a, b) for d, a, b in runs if d == day)
+            for (_s1, e1), (s2, _e2) in zip(windows, windows[1:]):
+                if s2 < e1:
+                    return None
+            held = {(a, b) for d, a, b in mine if d == day}
+            stretch = None  # [first start, latest end, holds a placed lesson]
+            for window in windows:
+                if stretch is not None and window[0] - stretch[1] < pause:
+                    stretch[1] = max(stretch[1], window[1])
+                    stretch[2] = stretch[2] or window in held
+                else:
+                    if stretch is not None and stretch[2] and stretch[1] - stretch[0] > limit:
+                        violated = True
+                    stretch = [window[0], window[1], window in held]
+            if stretch is not None and stretch[2] and stretch[1] - stretch[0] > limit:
+                violated = True
+    return violated
+
+
+#: (limit, pause, lengths, recurrence, locks as (weekday index, start, end)).
+#: Two four-hour days: a clock that restarted each morning and a clock that ran
+#: on through the night price these differently, and so do a break that is not
+#: a whole number of steps and a lock that ends one day beside one that opens
+#: the next.
+OVER_DAYS = [
+    (90, 30, [60, 60, 60], [None, None, None], []),
+    (90, 15, [60, 60, 60], [None, None, None], []),
+    (60, 15, [60, 60, 60], ["ODD_WEEKS", None, None], []),
+    (90, 30, [60, 60], [None, None], [(0, "11:00", "12:00"), (1, "08:00", "09:00")]),
+    (60, 15, [60, 60], [None, None], [(0, "11:00", "12:00"), (1, "08:00", "09:00")]),
+    (120, 30, [60, 60], [None, None], [(0, "10:30", "12:00"), (1, "08:00", "09:30")]),
+]
+
+
+def _check_over_days(
+    limit: int, pause: int, lengths: list[int], recurrence: list[str | None],
+    locks: list[tuple[int, str, str]],
+) -> tuple[int, int]:
+    """(placements tried, placements charged) over two days: every one agrees with the definition."""
+    payload = _payload(
+        limit=limit, pause=pause, lengths=lengths, recurrence=recurrence,
+        locked=[(start, end) for _day, start, end in locks],
+    )
+    for fixed, (day, _start, _end) in zip(payload["fixedLessons"], locks):  # type: ignore[arg-type]
+        fixed["dayOfWeek"] = day + 1
+    windows = [(day, _minutes(start), _minutes(end)) for day, start, end in locks]
+    solver, request, (model, _registry, decisions, *_rest) = _build(
+        payload, objective=True, days="1,2", **QUIET,
+    )
+    per_day = solver._grid.slots_per_day
+    grid = range(0, 2 * per_day, _start_step(request, solver._grid))
+    tried = priced = 0
+    for starts in itertools.product(grid, repeat=len(decisions)):
+        if any((start % per_day) + decision.duration > per_day for decision, start in zip(decisions, starts)):
+            continue
+        violated = _read_days(solver, decisions, recurrence, list(starts), limit, pause, windows)
+        got = _cost(solver, model, decisions, list(starts))
+        if violated is None:
+            # A/B: lessons of different weeks may share an hour, which the
+            # definition's per-week reading never calls an overlap.
+            assert got is None, f"placement {starts}: two lessons of one week overlap, the model took it"
+            continue
+        assert got is not None, f"placement {starts}: the wish refused a week"
+        assert (got > 0) == violated, (
+            f"placement {starts} limit {limit} break {pause}: the model charges {got}, "
+            f"the definition says a stretch is over: {violated}"
+        )
+        tried += 1
+        priced += violated
+    return tried, priced
+
+
+@pytest.mark.parametrize(("limit", "pause", "lengths", "recurrence", "locks"), OVER_DAYS)
+def test_every_placement_over_two_days_is_priced_as_the_definition_prices_it(
+    limit: int, pause: int, lengths: list[int], recurrence: list[str | None],
+    locks: list[tuple[int, str, str]],
+) -> None:
+    tried, priced = _check_over_days(limit, pause, lengths, recurrence, locks)
+    assert tried > 0
+    assert 0 < priced < tried
+
+
+#: Over two days, never charged: an odd week's lesson is not beside an even
+#: week's, so the three hours of lessons that would be one stretch if the weeks
+#: were put together are two hours at most in each.
+SILENT_OVER_DAYS = [
+    (120, 30, [60, 60, 60], ["ODD_WEEKS", "EVEN_WEEKS", None], []),
+]
+
+
+@pytest.mark.parametrize(("limit", "pause", "lengths", "recurrence", "locks"), SILENT_OVER_DAYS)
+def test_two_weeks_apart_are_never_charged_as_one_stretch(
+    limit: int, pause: int, lengths: list[int], recurrence: list[str | None],
+    locks: list[tuple[int, str, str]],
+) -> None:
+    tried, priced = _check_over_days(limit, pause, lengths, recurrence, locks)
+    assert tried > 0
+    assert priced == 0
+
+
+def test_a_limit_as_long_as_the_day_prices_nothing() -> None:
+    # X of four hours in a four-hour day: no stretch of the day can pass it.
+    payload = _payload(limit=240, pause=30, lengths=[60, 60])
+    solver, request, (model, _registry, decisions, *_rest) = _build(payload, objective=True, **QUIET)
+    spd = solver._grid.slots_per_day
+    for starts in itertools.product(range(0, spd, _start_step(request, solver._grid)), repeat=2):
+        if any(start + decision.duration > spd for decision, start in zip(decisions, starts)):
+            continue
+        assert _cost(solver, model, decisions, list(starts)) in (0, None)
 
 
 def _fixture_cases() -> list[dict]:
