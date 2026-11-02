@@ -19,7 +19,7 @@ import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 import * as Notifications from 'expo-notifications';
 import RootLayout from '../../../app/_layout';
-import { forgetTap } from '../pushRegistration';
+import { forgetTap, startSignedIn, takeLastTap } from '../pushRegistration';
 
 type AuthShape = { authState: { isAuthenticated: boolean; teacherId: string | null; role: string | null }; isLoading: boolean };
 
@@ -165,6 +165,12 @@ describe('AuthGate (app/_layout.tsx)', () => {
       expect(mockReplace).toHaveBeenCalledWith('/(auth)/login');
     });
 
+    it('moves a person who signs in as another role on the same screen', async () => {
+      await mount(signedIn('TEACHER'), ['(app)', 'schedule']);
+      await rerender(signedIn('STUDENT'));
+      expect(mockReplace).toHaveBeenCalledWith('/(student)/schedule');
+    });
+
     it('moves a person whose route changes under the same session (segments is a dependency of the effect)', async () => {
       // A link or a tap on a push takes a signed-in guardian into the staff
       // shell with nothing else about them changing. Every other re-render in
@@ -210,6 +216,55 @@ describe('AuthGate (app/_layout.tsx)', () => {
       expect(mockPush).toHaveBeenCalledWith(notifications);
       // The tap is forgotten once it has led somewhere, so no later sign-in replays it.
       expect(forgetTap).toHaveBeenCalledTimes(1);
+    });
+
+    it('goes to the Notiser tab of the role the person has by then, when the role came after the session did', async () => {
+      // The listener is registered for the role it was made with; with role
+      // out of the effect's dependencies it would stay the staff shell's, and a
+      // guardian's tap would open the register's notices.
+      await mount(signedIn(null), ['(app)', 'schedule']);
+      await rerender(signedIn('GUARDIAN'));
+      await act(async () => tapListener()());
+      expect(mockPush).toHaveBeenCalledTimes(1);
+      expect(mockPush).toHaveBeenCalledWith('/(guardian)/notifications');
+    });
+
+    it('is heard once: the listener a re-run replaces is removed, and the last one goes with the screen', async () => {
+      await mount(signedIn(null), ['(app)', 'schedule']);
+      await rerender(signedIn('GUARDIAN'));
+      const subscriptions = jest.mocked(Notifications.addNotificationResponseReceivedListener).mock.results.map(
+        (result) => result.value as { remove: jest.Mock },
+      );
+      expect(subscriptions).toHaveLength(2);
+      expect(subscriptions[0]!.remove).toHaveBeenCalledTimes(1);
+      expect(subscriptions[1]!.remove).not.toHaveBeenCalled();
+      await act(async () => tree?.unmount());
+      tree = null;
+      expect(subscriptions[1]!.remove).toHaveBeenCalledTimes(1);
+    });
+
+    it('opens the Notiser tab of a tap that launched the app, which arrived before there was a listener', async () => {
+      jest.mocked(takeLastTap).mockReturnValueOnce(true);
+      await mount(signedIn('GUARDIAN'), ['(guardian)', 'children']);
+      expect(mockPush).toHaveBeenCalledTimes(1);
+      expect(mockPush).toHaveBeenCalledWith('/(guardian)/notifications');
+    });
+  });
+
+  describe('the push side of a start', () => {
+    it('begins for the person who is signed in', async () => {
+      await mount(signedIn('GUARDIAN'), ['(guardian)', 'children']);
+      expect(startSignedIn).toHaveBeenCalledTimes(1);
+      expect(startSignedIn).toHaveBeenCalledWith('u1');
+    });
+
+    it('does not begin, listen or take a launching tap while nobody is signed in', async () => {
+      // A launching tap is kept for the person who signs in; taking it signed
+      // out would spend it on the login screen.
+      await mount(signedOut, ['(auth)', 'login']);
+      expect(startSignedIn).not.toHaveBeenCalled();
+      expect(Notifications.addNotificationResponseReceivedListener).not.toHaveBeenCalled();
+      expect(takeLastTap).not.toHaveBeenCalled();
     });
   });
 });
