@@ -53,7 +53,6 @@ QUIET = {
     "WEIGHT_ROOM_PREFERENCE": 0,
     "WEIGHT_DATE_UNAVAILABLE": 0,
 }
-WEIGHT = 40
 
 
 def _settings(*, day_end: int = 720, days: str = "1", **overrides: object) -> Settings:
@@ -63,6 +62,10 @@ def _settings(*, day_end: int = 720, days: str = "1", **overrides: object) -> Se
         SCHEDULE_DAY_END_MINUTES=day_end,
         **overrides,
     )
+
+
+#: What the wish pays for a lesson: the setting's own default.
+WEIGHT = _settings().weight_consecutive_teaching
 
 
 def _payload(
