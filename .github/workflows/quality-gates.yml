@@ -62,7 +62,7 @@ env:
   # How many slices the API's mutants are dealt into: the whole API is covered
   # every this many nights. docs/verification-baseline.md has the slices as
   # measured and why the number is what it is.
-  MUTATION_SLICES_NIGHTLY: '20'
+  MUTATION_SLICES_NIGHTLY: '10'
 
 jobs:
   visual-baselines:

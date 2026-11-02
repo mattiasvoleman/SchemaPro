@@ -258,6 +258,10 @@ async function main() {
   writeFileSync(join(dir, 'summary.md'), markdown);
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, markdown);
   console.log(markdown.split('\n').slice(0, 3).join('\n'));
+  // The log keeps the ten weakest files, so a red night is readable without the artifact.
+  for (const f of summary?.files.slice(0, 10) ?? []) {
+    console.log(`${pct(f.score).padStart(9)}  ${String(f.survived).padStart(4)} survived  ${String(f.noCoverage).padStart(4)} no coverage  ${f.file}`);
+  }
 
   return stryker.status ?? 1;
 }
