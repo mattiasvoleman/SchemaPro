@@ -550,16 +550,22 @@ SELECT id, 'rls-fixture-revoked',
 FROM "Schools" WHERE slug <> 'rls-fixture-school' ORDER BY "createdAt" LIMIT 1
 ON CONFLICT ("keyHash") DO NOTHING;
 
--- A THIRD school for gallring (sections 80 to 89), planted once. Its own
--- school, because a purge deletes rows and sections 83 and 84 must count
--- exactly what goes; nothing of school A or B may move. Every date is
--- relative to today in Europe/Stockholm and a month or more from its cutoff,
--- so the cutoffs below hold whenever the suite runs, a midnight between these
--- fixtures and the suite included. A row ON a cutoff has no such margin: the
--- lesson on the attendance cutoff is planted by sections 83, 86 and 87 inside
--- their own transactions, a year before their own school day. Planted here,
--- a Stockholm midnight before the suite would leave it a day before the
--- cutoff, and the night would take it.
+-- A THIRD school for gallring (sections 80 to 89). Its own school, because a
+-- purge deletes rows and sections 83 and 84 must count exactly what goes;
+-- nothing of school A or B may move. It is planted afresh on every run: a
+-- database that has it loses it and its rows first, so a change made here
+-- reaches a database used before the change. (#222 took a lesson ON the
+-- attendance cutoff out of this block; a database planted before it kept the
+-- lesson, which a day later lay a day before the cutoff, and section 86
+-- counted three rows due.) The read log's old row of this school, which
+-- section 125 needs, is planted at the end of the block for the same reason.
+-- Every date is relative to today in Europe/Stockholm and a month or more
+-- from its cutoff, so the cutoffs below hold whenever the suite runs, a
+-- midnight between these fixtures and the suite included. A row ON a cutoff
+-- has no such margin: the lesson on the attendance cutoff is planted by
+-- sections 83, 86 and 87 inside their own transactions, a year before their
+-- own school day. Planted here, a Stockholm midnight before the suite would
+-- leave it a day before the cutoff, and the night would take it.
 --
 --   ATTENDANCE       12 months   lessons 13 months ago (go) and 11 months ago
 --                                (stays); the sections add one on the
@@ -595,9 +601,7 @@ DECLARE
   l_old uuid; l_new uuid;
   a_old uuid;
 BEGIN
-  IF EXISTS (SELECT 1 FROM "Schools" WHERE slug = 'rls-gallring-school') THEN
-    RETURN;
-  END IF;
+  DELETE FROM "Schools" WHERE slug = 'rls-gallring-school';
   INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
   VALUES ('RLS Gallring School', 'rls-gallring-school', 'Europe/Stockholm', now())
   RETURNING id INTO g;
@@ -713,6 +717,11 @@ BEGIN
     (g, 'ABSENCE_REASONS', 'PURGE_AFTER', 12, NULL, admin, now() - interval '2 days'),
     (g, 'DEPARTED_PEOPLE', 'PURGE_AFTER', 12, NULL, admin, now() - interval '2 days');
   ALTER TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_stamped";
+
+  -- The school has decided nothing for ACCESS_LOG: this read-log row, five
+  -- years old, is one no other school's purge may take (section 125).
+  INSERT INTO "PersonalDataAccess" ("schoolId", "at", "actorId", "actorRole", channel, kind, "subjectIds", "readSize")
+  VALUES (g, now() - interval '5 years', admin, 'SCHOOL_ADMIN', 'WEB', 'PEOPLE', ARRAY[pupil], 1);
 END $$;
 
 -- Old rows of every kind in the SECOND school, which has decided nothing:
@@ -781,13 +790,12 @@ ON CONFLICT ("schoolId") DO NOTHING;
 -- 123's roster 13 and 11 months ago, and ACCESS_LOG is to be kept 12
 -- months, decided two days ago (section 125 gallrar the first). The
 -- GALLRING school, which has decided nothing for ACCESS_LOG, has a log row
--- five years old that no other school's purge may take. The rows section
--- 121 measures the quarter-hour against are planted fresh on every run,
--- below.
+-- five years old that no other school's purge may take; it is planted with
+-- that school, above. The rows section 121 measures the quarter-hour
+-- against are planted fresh on every run, below.
 DO $$
 DECLARE
   l uuid;
-  g uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-gallring-school');
   today date := (now() AT TIME ZONE 'Europe/Stockholm')::date;
   y uuid; home uuid; tg uuid; sub uuid; lesson uuid;
   admin uuid; t122 uuid; t126 uuid; p123 uuid; p124 uuid; g125 uuid;
@@ -840,9 +848,6 @@ BEGIN
   INSERT INTO "PersonalDataAccess" ("schoolId", "at", "actorId", "actorRole", channel, kind, "subjectIds", "readSize") VALUES
     (l, now() - interval '13 months', t122, 'TEACHER', 'APP', 'ROSTER', ARRAY[p123], 1),
     (l, now() - interval '11 months', t122, 'TEACHER', 'APP', 'ROSTER', ARRAY[p123], 1);
-  INSERT INTO "PersonalDataAccess" ("schoolId", "at", "actorId", "actorRole", channel, kind, "subjectIds", "readSize")
-  SELECT g, now() - interval '5 years', u.id, 'SCHOOL_ADMIN', 'WEB', 'PEOPLE', ARRAY[(SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000083')], 1
-    FROM "Users" u WHERE u."authId" = '00000000-0000-4000-8000-000000000081';
 
   ALTER TABLE "RetentionDecisions" DISABLE TRIGGER "RetentionDecisions_stamped";
   INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months, reference, "decidedById", "decidedAt")
