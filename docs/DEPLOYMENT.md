@@ -760,25 +760,41 @@ Walk the full product loop once, in order:
   append-only. It is a one-way door for the API as soon as the first limit is
   set; the API is also the door most often opened in an incident. Consider
   setting no first limit until the release has stood for a week.
-  **What the allow list in Historik (#239) changes about that, and what it does
-  not.** The rule stays: it is about an API from before this release (#231),
-  which does not know the limit's keys and shows them. An API from #231 on
-  masks them, and the floor of the rule is #231. From #239 on, Historik is an
-  allow list: for a reader without HR-läs `hideHrChanges` shows a field of the
-  post only if it has been argued in (`NOT_HR_IN_A_POST` in
-  `src/staffing/hr-visibility.ts`), says that a percentage or one of SCB's
-  three changed, and leaves out everything else, name and value. So a column
-  added AFTER #239 is hidden in Historik also when the API is rolled back to
-  a release that has the allow list (#239 or later): that API does not know
-  the column, and what it does not know it does not show. No rule like this
-  one is needed for the next column, as long as the rollback stays at or after
-  #239. Rolled back past #239 (to #231 or earlier), the next column is
-  shown again, values and all, as the limit is by an API from before #231, and
-  those versions are append-only too. #239 also stops handing the version
-  numbers to a reader without HR-läs, so that an older API shows them again,
-  with the holes where an HR version was left out, and a web rolled back past
-  #239 beside this API writes "Version undefined" for that reader until the
-  API goes back with it.
+  **What the allow lists of #239 change about that, and what they do not.**
+  The rule stays: it is about an API from before this release (#231), which
+  does not know the limit's keys and shows them. An API from #231 on masks
+  them, and the floor of the rule is #231. From #239 on, what a reader without
+  HR-läs is handed of a post is an allow list in both places the post leaves
+  the gateway. In Historik, `hideHrChanges` shows a field of the post only if
+  it has been argued in (`NOT_HR_IN_A_POST` in `src/staffing/hr-visibility.ts`),
+  says that a percentage or one of SCB's three changed, and leaves out
+  everything else, name and value. In the post as the list and the PUT answer
+  hand it out, `hideHr` hands over the columns of `POST_READ_AS_IS` with their
+  values, nulls those of `POST_READ_NULLED` beside `hrHidden`, and leaves out
+  every other key of the row. So a column added AFTER #239 is hidden in
+  Historik also when the API is rolled back to a release that has the allow
+  list (#239 or later): that API does not know the column, and what it does
+  not know it does not show. No rule like this one is needed for the next
+  column, as long as the rollback stays at or after #239. Rolled back past #239
+  (to #231 or earlier), the next column is shown in Historik again, values and
+  all, as the limit is by an API from before #231, and the versions written
+  meanwhile are append-only. The post is not exposed by a rollback: Prisma
+  selects only the columns of its own model, so an API that predates a column
+  never reads it into a post. There the allow list is for a column that has
+  been added to the model and not yet placed: it is left out of the answer to
+  a reader without HR-läs until somebody places it, and a spec
+  (`hr-visibility.spec.ts`) fails on the model's column list until then.
+  Two things a reader without HR-läs notices when #239 is deployed, which the
+  manual (4.3) now says. A version that only wrote or changed the post's note
+  (`noteChanged`) is no longer in their Historik: the post hands the note over
+  as null, so that one was written is what it withholds, and it is where the
+  reason for a nedsättning would be written. This changes the versions already
+  written as well, since the mask is applied when the history is read. And they
+  are no longer handed version numbers, which would have holes where an HR
+  version was left out; an older API hands them again, and a web rolled back
+  past #239 beside this API writes an empty number for that reader ("Version "
+  on the card, "version  (datum)" on the printed stamp) until the API goes back
+  with it.
   **Rolling it back:** the engine before this release refuses the two fields
   (its request models are `extra="forbid"`: 422), so once a school has turned
   the switch on and a post has a limit, an engine rolled back alone fails that
