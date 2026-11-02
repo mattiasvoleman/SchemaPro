@@ -11,10 +11,11 @@
 --     pupils, 26 teachers, 423 lessons, the eight busiest teachers flagged):
 --     the first solution took 27–85 s where the school's own takes 8, and the
 --     full solve found no timetable at all in 90 s in three pairs of three.
---     Soft, the same school solves 423 of 423 in all three pairs and leaves 0–1
---     of the 8 teachers over the limit where today's model leaves 6–8
---     (docs/verification-baseline.md). "Tries" is the promise, and the
---     Generera line names the teachers it did not manage.
+--     Soft, the same school solves 423 of 423 in every pair and leaves 0–3 of
+--     the 8 teachers over the limit (one or two in the usual run) where
+--     today's model leaves 7–8 (docs/verification-baseline.md). "Tries" is
+--     the promise, and the Generera line names the teachers it did not
+--     manage.
 --   * A HAND EDIT OF THE GRUNDSCHEMA IS WARNED when it leaves a teacher's
 --     stretch longer than the limit (TEACHER_CONSECUTIVE_TOO_LONG), never
 --     refused.

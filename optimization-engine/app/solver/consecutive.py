@@ -22,8 +22,9 @@ a measurement and not on taste:
     as one that binds. Pair-links between the lessons' breaks, a single
     cumulative per teacher and solver parameters did not help. As a wish in the
     objective the same school solves 423 of 423 lessons in every pair, with
-    0–1 of the eight teachers left over the limit where main's model leaves
-    6–8 (docs/verification-baseline.md). "The generator tries" is the promise,
+    0–3 of the eight teachers left over the limit (one or two in the usual
+    run) where main's model leaves 7–8 (docs/verification-baseline.md).
+    "The generator tries" is the promise,
     the gateway names the teachers it did not manage (consecutive-wishes.ts),
     and the rule stays hard where it is cheap: the hand edit's warning and the
     Vikarietavla's exclusion.
