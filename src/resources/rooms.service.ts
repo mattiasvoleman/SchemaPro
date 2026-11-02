@@ -4,6 +4,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
+import { assertRoomTypeIsTheSchools } from './room-type-ref';
 import type { CreateRoomDto, UpdateRoomDto } from './dto/room.dto';
 
 @Injectable()
@@ -14,8 +15,9 @@ export class RoomsService {
     const schoolId = requireSchoolId(user);
     assertOrderedGradeRange(dto.minGradeLevel, dto.maxGradeLevel);
     try {
-      return await this.prisma.withRls(user, (tx) =>
-        tx.room.create({
+      return await this.prisma.withRls(user, async (tx) => {
+        await assertRoomTypeIsTheSchools(tx, dto.roomTypeId, 'roomTypeId');
+        return tx.room.create({
           data: {
             schoolId,
             name: dto.name,
@@ -31,8 +33,8 @@ export class RoomsService {
               ? { requiresApproval: dto.requiresApproval }
               : {}),
           },
-        }),
-      );
+        });
+      });
     } catch (error) {
       rethrowPrismaError(error);
     }
@@ -41,8 +43,9 @@ export class RoomsService {
   async update(id: string, dto: UpdateRoomDto, user: AuthenticatedUser): Promise<Room> {
     assertOrderedGradeRange(dto.minGradeLevel, dto.maxGradeLevel);
     try {
-      return await this.prisma.withRls(user, (tx) =>
-        tx.room.update({
+      return await this.prisma.withRls(user, async (tx) => {
+        await assertRoomTypeIsTheSchools(tx, dto.roomTypeId, 'roomTypeId');
+        return tx.room.update({
           where: { id },
           data: {
             ...(dto.name !== undefined ? { name: dto.name } : {}),
@@ -64,8 +67,8 @@ export class RoomsService {
               ? { requiresApproval: dto.requiresApproval }
               : {}),
           },
-        }),
-      );
+        });
+      });
     } catch (error) {
       rethrowPrismaError(error);
     }

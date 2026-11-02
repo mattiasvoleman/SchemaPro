@@ -10,6 +10,7 @@ import {
   rethrowPrismaError,
 } from '../common/utils/prisma-errors';
 import { assertNationalCodeIsKnown, normalizeNationalCode } from './national-codes';
+import { assertRoomTypeIsTheSchools } from './room-type-ref';
 import type { CreateSubjectDto, UpdateSubjectDto } from './dto/subject.dto';
 
 /**
@@ -49,6 +50,7 @@ export class SubjectsService {
         if (nationalCode !== null) {
           await assertNationalCodeIsKnown(tx, nationalCode);
         }
+        await assertRoomTypeIsTheSchools(tx, dto.requiredRoomTypeId, 'requiredRoomTypeId');
         const row = await tx.subject.create({
           data: {
             schoolId,
@@ -88,6 +90,7 @@ export class SubjectsService {
         if (nationalCode != null) {
           await assertNationalCodeIsKnown(tx, nationalCode);
         }
+        await assertRoomTypeIsTheSchools(tx, dto.requiredRoomTypeId, 'requiredRoomTypeId');
         const row = await tx.subject.update({
           where: { id },
           data: {
