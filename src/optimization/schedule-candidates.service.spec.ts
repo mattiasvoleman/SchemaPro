@@ -1668,6 +1668,16 @@ describe('the pieces', () => {
     expect(engineFailureOf(new HttpException({ message: 'x', code: 'not a code' }, 504))).toMatchObject({ code: CANDIDATE_ENGINE_TIMEOUT });
   });
 
+  it('names an engine that broke, and a 3xx that reached the run as one, CANDIDATE_ENGINE_FAILED', () => {
+    expect(engineFailureOf(new HttpException('Broke', HttpStatus.BAD_GATEWAY))).toMatchObject({ code: CANDIDATE_ENGINE_FAILED });
+    // callAiEngine gives a redirect a 502, so none arrives; one that did is no
+    // run without a name.
+    expect(engineFailureOf(new HttpException('Moved', HttpStatus.FOUND))).toMatchObject({ code: CANDIDATE_ENGINE_FAILED });
+    expect(engineFailureOf(new HttpException('Moved', HttpStatus.PERMANENT_REDIRECT))).toMatchObject({ code: CANDIDATE_ENGINE_FAILED });
+    // The engine's own refusal keeps no name of ours.
+    expect(engineFailureOf(new HttpException('Bad request', HttpStatus.UNPROCESSABLE_ENTITY))).toMatchObject({ code: null });
+  });
+
   /*
    * Lärarens dag (work-days.ts): a post's days are HR data. A candidate's page
    * has no HR-läs path, so a sentence about them is kept as the one a reader

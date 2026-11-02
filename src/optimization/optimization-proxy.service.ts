@@ -622,6 +622,8 @@ export type RegenerationScope = { kind: 'NOT_PRESERVED' } | { kind: 'IDS'; ids: 
 const ENGINE_UNREACHABLE = 'The AI engine could not be reached.';
 /** callAiEngine's 503 for a failure before or outside the HTTP call itself. */
 const ENGINE_UNAVAILABLE = 'AI engine unavailable.';
+/** callAiEngine's sentence when the engine answered, and the answer says nothing a school may read. */
+const ENGINE_ERROR = 'The AI engine returned an error.';
 
 /**
  * Whether a failed engine call may have left the engine solving. It did when
@@ -3831,6 +3833,24 @@ export class OptimizationProxyService {
                   throw new ServiceUnavailableException(ENGINE_UNREACHABLE);
                 }
                 /*
+                 * A 3xx is no answer to this request. None is followed
+                 * (maxRedirects above), and an engine that redirects is one
+                 * the address points at wrongly, which is the gateway's
+                 * trouble and not the client's: 502, the status this file
+                 * already gives a bad answer from upstream. Forwarding the
+                 * engine's own 302 would tell the client to go somewhere
+                 * else, for a place it never asked for, with no Location to
+                 * go to. The status is logged and the Location is not, and
+                 * the engine's body is not read: it is the generic sentence
+                 * whatever it says.
+                 */
+                if (error.response.status < 400) {
+                  this.logger.error(
+                    `AI engine at ${this.aiConfig.baseUrl} answered ${error.response.status}; a redirect is not followed`,
+                  );
+                  throw new HttpException({ message: ENGINE_ERROR }, HttpStatus.BAD_GATEWAY);
+                }
+                /*
                  * The engine's own sentence, not a generic one.
                  *
                  * Every named refusal the engine can produce — a lesson length
@@ -3876,7 +3896,7 @@ export class OptimizationProxyService {
                   error.response.status < 500 && typeof body?.message === 'string';
                 const detail = readable
                   ? this.deanonymise(body.message as string, maps)
-                  : 'The AI engine returned an error.';
+                  : ENGINE_ERROR;
                 // The refusal's own name and values travel with it, so the
                 // screen can say in Swedish what the engine said in English.
                 // An object body rather than a string: Nest returns it as the
