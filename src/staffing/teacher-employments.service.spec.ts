@@ -785,6 +785,20 @@ describe('TeacherEmploymentsService', () => {
       expect(shown.entries.map((entry) => entry.entity)).toEqual(['PERIOD', 'EMPLOYMENT', 'DUTY']);
     });
 
+    it("leaves out a period's version that changed nothing the diff names too, which the mask alone would keep", async () => {
+      // An empty version is kept for every reader (it is no HR change), so a
+      // period's must be left out before the mask, not by it.
+      const period = { id: 'per-1', employmentId: 'emp-1', validFrom: '2026-11-01', validTo: null, employmentPercent: 80, reductionPercent: 0 };
+      tx.teacherEmploymentLog.findMany.mockResolvedValue([
+        logRow(2, { entity: 'PERIOD', entityId: 'per-1', before: period, after: period }),
+        logRow(1),
+      ]);
+      const hidden = await service.history(COLLEAGUE, YEAR_ID, testUser({ adminProfile: 'SCHEMALAGGARE' }));
+      expect(hidden.entries.map((entry) => entry.id)).toEqual(['log-1']);
+      const shown = await service.history(COLLEAGUE, YEAR_ID, testUser({ adminProfile: 'REKTOR' }));
+      expect(shown.entries.map((entry) => entry.id)).toEqual(['log-2', 'log-1']);
+    });
+
     it("leaves the values of SCB's three out of a version for a planner without HR-läs, and says they changed", async () => {
       tx.teacherEmploymentLog.findMany.mockResolvedValue([
         logRow(1, { before: { employmentForm: null, firstTeacherPercent: 10 }, after: { employmentForm: 'VISSTID', firstTeacherPercent: 20 } }),
