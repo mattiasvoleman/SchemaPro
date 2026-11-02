@@ -678,6 +678,32 @@ class AnonymousTeacherWorkRule(CamelModel):
     #: hold, is a wish nothing the solver does can keep or break, and builds
     #: nothing at all.
     preferred_free_day: DayOfWeek | None = Field(default=None, alias="preferredFreeDay")
+    #: Sammanhängande undervisning: at most this many minutes of teaching in a
+    #: row, and then `consecutive_break_minutes` with no lesson at all. SOFT:
+    #: the full model's objective pays (weight_consecutive_teaching) for every
+    #: lesson of the teacher's whose stretch is not ended by a break in time,
+    #: and no week is ever refused over it, the way the wished free day is
+    #: treated. The satisfaction phase builds nothing for it. The gateway sends
+    #: the pair only where the school has turned the effort on
+    #: (LunchSettings.generatorKeepsConsecutiveTeaching) and the teacher's
+    #: post sets both (HR data; the gateway carries them on this entry, or on
+    #: one made for the purpose, so the contract is unchanged). They come
+    #: together or not at all (validate_stretch_pair), and are bounded and
+    #: stepped as the database bounds them
+    #: (TeacherEmployments_maxConsecutiveTeachingMinutes_check and its two
+    #: siblings): half an hour is the least that is still a stretch of
+    #: teaching, eight hours the most a day can hold, and the multiple of five
+    #: is this engine's grid. See app/solver/consecutive.py for what a
+    #: "stretch" is.
+    max_consecutive_teaching_minutes: int | None = Field(
+        default=None, alias="maxConsecutiveTeachingMinutes", ge=30, le=480, multiple_of=5,
+    )
+    #: The least free time that ends a stretch: no lesson of the teacher's in
+    #: it at all, the corridor between two rooms included. Five minutes is a
+    #: gap on the grid; two hours is a break that is really a lunch.
+    consecutive_break_minutes: int | None = Field(
+        default=None, alias="consecutiveBreakMinutes", ge=5, le=120, multiple_of=5,
+    )
 
     @model_validator(mode="after")
     def validate_lunch_trio(self) -> AnonymousTeacherWorkRule:
@@ -694,6 +720,24 @@ class AnonymousTeacherWorkRule(CamelModel):
             )
             raise ValueError(msg)
         return self
+
+    @model_validator(mode="after")
+    def validate_stretch_pair(self) -> AnonymousTeacherWorkRule:
+        """Both stretch fields or neither: a limit with no break is unanswerable."""
+        if (self.max_consecutive_teaching_minutes is None) != (
+            self.consecutive_break_minutes is None
+        ):
+            msg = (
+                "A teacher's stretch of teaching needs maxConsecutiveTeachingMinutes "
+                "and consecutiveBreakMinutes together, or neither."
+            )
+            raise ValueError(msg)
+        return self
+
+    @property
+    def has_stretch(self) -> bool:
+        """Whether this rule limits a stretch of teaching. Validated as a pair."""
+        return self.max_consecutive_teaching_minutes is not None
 
     @property
     def has_lunch(self) -> bool:

@@ -48,6 +48,13 @@ export const EMPLOYMENT_FIELDS = [
   // form: the other figure about the teacher's week. HR data, which
   // hideHrChanges leaves out for a reader without HR-läs.
   'maxTeachingDaysPerWeek',
+  // The limit on teaching in a row (20261218090000), the days' sibling:
+  // the limit, then the pause that ends a stretch. HR data too, and left out
+  // whole by hideHrChanges for a reader without HR-läs. The post's log holds
+  // the whole row as JSON (to_jsonb), so a column is in a version without
+  // anything but this list to place it.
+  'maxConsecutiveTeachingMinutes',
+  'consecutiveBreakMinutes',
   'signature',
   'noteChanged',
 ] as const;

@@ -1,12 +1,14 @@
 import type { AiEngineConflictDetail } from './interfaces/ai-engine-payload.interface';
+import { isStretchBearing } from './work-days';
 
 /*
  * A RUN'S SENTENCES AS THEY ARE STORED, AND AS A READER IS SHOWN THEM.
  *
  * Generera's job row (OptimizationJobsService) and a schemaförslag's
  * candidate (ScheduleCandidatesService) keep the engine's conflicts, and the
- * gateway's notes about the free-day wishes a timetable breaks
- * (free-day-wishes.ts), in one conflict-shaped JSON entry. What a reader is
+ * gateway's notes about the free-day wishes and the limits on teaching in a
+ * row a timetable breaks (free-day-wishes.ts, consecutive-wishes.ts), in one
+ * conflict-shaped JSON entry. What a reader is
  * shown of one is built field by field from it (conflictView), never spread
  * from it, so a field kept for the server — the teachers in `subjectIds` —
  * cannot leave beside one that may. Here so both services read a note by the
@@ -121,9 +123,17 @@ export function namesOf(rows: ReadonlyArray<{ id: string; firstName: string; las
   return new Map(rows.map((row) => [row.id, `${row.firstName} ${row.lastName}`]));
 }
 
-/** The teachers stored notes are about: whom their view names (notesViewOf). Anything but a list is nobody. */
+/**
+ * The teachers stored notes are about: whom their view names (notesViewOf).
+ * Anything but a list is nobody. NOT the teachers of a note about a limit on
+ * teaching in a row: the limit is HR data, so that note names its teacher
+ * only to a reader with HR-läs, read back from the post (work-days.ts), and
+ * these names are read for every reader.
+ */
 export function notedTeachersOf(stored: unknown): string[] {
-  return entriesOf(stored).flatMap(subjectsOf);
+  return entriesOf(stored)
+    .filter((entry) => !isStretchBearing(entry.code))
+    .flatMap(subjectsOf);
 }
 
 /**
@@ -177,7 +187,9 @@ export function travelNamesOf(entry: Partial<StoredConflict>, names: ReadonlyMap
 export function notesViewOf(stored: unknown, names: ReadonlyMap<string, string>): ConflictView[] {
   return entriesOf(stored).map((entry) => {
     const note = conflictView(entry);
-    const named = subjectsOf(entry).flatMap((id) => names.get(id) ?? []);
+    // A note about a limit on teaching in a row is never named here (see
+    // notedTeachersOf); where it is shown at all it is shown by forReader.
+    const named = isStretchBearing(entry.code) ? [] : subjectsOf(entry).flatMap((id) => names.get(id) ?? []);
     return { ...note, resourceNames: [...note.resourceNames, ...named] };
   });
 }

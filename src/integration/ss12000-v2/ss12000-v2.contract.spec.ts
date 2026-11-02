@@ -242,6 +242,33 @@ describe('privacy, as properties of the output', () => {
     }
   });
 
+  it('a post with deltid in days and a limit on teaching in a row yields the same Duties as one without, with the opt-in on or off', async () => {
+    // HR data on the post (20261123090000, 20261218090000): the Duty maps the
+    // columns it names, so whatever else the row holds leaves nowhere.
+    for (const share of [false, true]) {
+      const plain = setup();
+      plain.world.policy['shareEmploymentWithIntegrations'] = share;
+      const limited = setup();
+      limited.world.policy['shareEmploymentWithIntegrations'] = share;
+      for (const post of limited.world.employments) {
+        post['maxTeachingDaysPerWeek'] = 3;
+        post['maxConsecutiveTeachingMinutes'] = 180;
+        post['consecutiveBreakMinutes'] = 30;
+      }
+      const bodies = [
+        JSON.stringify(await limited.service.listDuties(caller(), { expand: 'person' })),
+        JSON.stringify(await limited.service.getDuty(caller(), W.emp1, {})),
+      ];
+      expect(bodies).toEqual([
+        JSON.stringify(await plain.service.listDuties(caller(), { expand: 'person' })),
+        JSON.stringify(await plain.service.getDuty(caller(), W.emp1, {})),
+      ]);
+      expect(bodies.join()).not.toMatch(/onsecutive|BreakMinutes|TeachingDays/);
+      // Not a comparison of two empty answers.
+      expect(bodies[1]).toContain(W.emp1);
+    }
+  });
+
   it('dutyPercent leaves only under the school\'s Fas 3 opt-in, and never the nedsättning', async () => {
     const { service, world } = setup();
     world.policy['shareEmploymentWithIntegrations'] = true;

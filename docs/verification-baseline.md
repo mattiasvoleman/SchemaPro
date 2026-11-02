@@ -1278,6 +1278,127 @@ both arms at load 99–107 (phase 1a, the same model on both). Until then a
 Generera solves exactly as the table above measured it.
 
 
+### Sammanhängande undervisning: a hard rule that cost too much, and a wish that works
+
+Measured on 2026-11-01 and 2026-11-02 on branch claude/sammanhangande-undervisning-b67a95
+(main 1d593496 and later below it) with `benchmarks/consecutive_teaching.py`: the
+högstadium week (`benchmarks/hogstadium.py`, 450 pupils, 26 teachers, 423 lessons,
+språkval and elevens val) and the nightly gate's bench school (400 pupils, 576 lessons),
+the eight busiest teachers limited to *A* = 180 minutes in a row then 30 free, or *B* =
+180 then 15, solved with the limit off and on at the same moment in two processes of
+eight workers, on the shared 8-core Mac at load 6–35 (the first run of the wish
+measured at load 45–115 and is not used). "Over the limit" is counted by
+`validate_schedule.stretch_breaches` and by the harness's own spans, independent of the
+engine's model. The rule a hard constraint (the prototype, measured first, dropped):
+
+| Hard rule, A (180/30), 8 flagged | off (main) | on |
+|---|---|---|
+| first solution, three pairs | 16.96 / 8.24 / 8.42 s | 17.83 / 27.47 / 84.52 s |
+| first solution, B (180/15) | 8.31 / 8.10 / 8.72 s | 11.23 / 12.41 / 27.43 s |
+| full solve, 90 s, three pairs | FEASIBLE 423/423 VALID ×3 | TIMEOUT, 0/423 ×3 |
+
+Every second of it was the disjunctive rows that keep a floating break clear of the
+teacher's lessons: with the same variables and no no-overlap the time was main's, a
+rule that hardly bound cost as much as one that did, and pair-links between the breaks,
+a single cumulative per teacher and solver parameters did not help. So the generator
+treats the limit as a wish (`consecutive.py`): the full model's objective pays for each
+generated lesson whose stretch is not ended by a break in time, and the satisfaction
+model, which phase 1a solves, is byte for byte main's (the model files exported with
+and without a flagged teacher are equal, `test_consecutive.py`), so the time to a first
+timetable is main's by construction:
+
+| First solution, satisfaction model | off | on A | off | on B |
+|---|---|---|---|---|
+| three pairs | 10.21 / 10.05 / 20.35 s | 10.32 / 17.07 / 17.92 s | 22.95 / 10.02 / 25.74 s | 22.83 / 16.19 / 20.68 s |
+| variables / rows | 6,735 / 17,094 | 6,735 / 17,094 | 6,735 / 17,094 | 6,735 / 17,094 |
+
+The full model grows from 9,759 variables and 26,470 rows to 10,233 and 27,418 (eight
+teachers); `_estimate_model_size` says 12,085, an upper bound as it must be.
+
+THE SOLVE, 90 s, at the final weight (250 a lesson), three pairs each, head ffd4eea7.
+Cells are teachers over the limit of the eight (teachers' idle minutes, all 26 teachers):
+
+| Week | Rule off | Rule on |
+|---|---|---|
+| högstadiet, A, pairs 1–3 | 8 (4,500), 8 (6,660), 7 (5,130) | 1 (7,200), 0 (7,170), 1 (4,230) |
+| högstadiet, B, pairs 1–3 | 7 (2,850), 8 (3,150), 8 (8,340) | 0 (4,770), 3 (3,840), 2 (4,710) |
+| bench school, A, pairs 1–3 | 5 (13,680), 5 (13,020), 6 (11,730) | 1 (13,560), 1 (14,550), 2 (11,010) |
+
+Every run FEASIBLE with every lesson placed (423/423 and 576/576) and no problem from
+the independent validator, on both arms. The idle minutes move as much between runs of
+one arm as between arms, so what the wish costs the other terms is inside the noise of
+this host; a break is a gap and a teacher kept from a long stretch waits somewhere
+instead, which is what the weight pays for.
+
+WHICH WEIGHT, and what that took. The wish's price was first 40, the free-day wish's.
+At 40, three pairs each on the same head: A left 5, 6, 3 of the eight over the limit
+(off 8, 7, 8), B 7, 3, 3 (off 7, 8, 7), the bench school 1, 0, 0 (off 4, 3, 5), which
+failed the criterion written in the pull request beforehand (at most two of the eight
+in every pair where three or more were over in the off arm). Other runs at 40 gave
+3, 2, 0, 2 and 2, 1, 6, 5 (A, four pairs each); with three teachers flagged (the
+realistic case) four pairs left 2, 1, 2, 1 of three over where off had 3, 3, 3, 3. At 100
+(four runs) 2, 3, 6, 4 and at 250 (eight runs) 0, 0, 3, 5 and 5, 1, 1, 0: the count at
+250 averages 1.9 against 3.2 at 40 (11 runs) and 3.75 at 100, and 7.5 for the school
+with the wish off. The weight is not what a break is worth (a half hour of idle time
+costs the teacher 12): it is the gradient the search needs in the minute and a half it
+has. A single worker and eight seeds shows nothing at any weight (the same timetable
+every time), because the improvement comes from the workers that run LNS; the
+measurement is eight workers or nothing.
+
+AT 250 THE CRITERION IS MET IN FIVE OF THE SIX HÖGSTADIUM PAIRS and missed in one: the
+second B pair leaves three teachers over the limit where the criterion says two. A
+limit is therefore *tried*, not kept: one or two of the eight busiest teachers can be
+left over it in a minute and a half, and the run's notes name them.
+
+THE ORACLE (`test_consecutive.py`, every placement of one to three lessons in a
+four-hour morning, seven cases, 40- and 80-minute lessons on a 30-minute start step,
+locks that are already over the limit, two locks ten minutes apart): the model's price
+is zero exactly when no stretch with a generated lesson in it is over the limit, and
+with nothing locked it is the weight times the number of lessons that begin an
+over-long stretch. A break confined to the start step (six values for X = 180 where
+thirty-seven are open) is exact when X and Y are whole steps and no lock has an edge
+between two steps; paired against the free break at A, four pairs each, the count of
+teachers over was 3, 2, 0, 2 against 6, 1, 0, 2 (within the noise of the host), so
+the smaller search is kept.
+
+THE REVIEW ROUND (2026-11-02, independent review of PR #231; its own numbers marked
+*reviewer*). Three things were added to what is measured above.
+
+Search room (*reviewer*, 60 s = production's `SOLVER_MAX_TIME_SECONDS`, eight workers each,
+load 30–85, rule A on the eight busiest, teachers over the limit of eight, off → on):
+bench school 5→0, 7→1; högstadium on its own 6→4, 7→6, 6→0; högstadium with the pupils'
+idle time and the teacher-day rules also on 5→5, 6→8, 6→7 (and on 120 s 8→7, 6→4);
+with the pupils' idle time alone 7→7, 6→5; all 26 teachers flagged with both on 5→6, 4→7,
+7→6, 8→5, 6→5. The wish works where the search has room and does nothing measurable when
+the pupils' idle time is on beside it; the 0–3 of 8 above is the högstadium without
+those switches, on 90 s. The same arm run twice gave pupil idle time of 53 000–163 000
+minutes, so the cost columns of that run are direction and not measure.
+
+The rerun case, which the review asked to be measured and was only counted before (a school
+that has a timetable turns the switch on and generates again with it as `previousLessons`;
+`--mode rerun`; criterion written before the run: R1 both arms FEASIBLE 423/423 with an
+empty validator, R2 the wish leaves at most four of eight over where the timetable had at
+least five, R3 reported with no requirement): the högstadium solved first as it is
+(FEASIBLE 423/423, **8 of 8** over rule A), then three pairs of 60 s, eight workers each,
+started together, load 22–66. Teachers over / previous slots no lesson of the same
+requirement holds any more / teachers' idle minutes, off → on: 8 / 7 / 450 → **1** / 139 / 2 940;
+8 / 44 / 600 → **3** / 186 / 3 420; 8 / 16 / 390 → **0** / 93 / 2 610. R1 and R2 met. R3: the wish
+moved 139, 186 and 93 of 423 slots (33 %, 44 %, 22 %) where leaving it off moved 7, 44 and
+16, so switching it on in the middle of a term and generating again rearranges a fifth to
+nearly half of the timetable, not only the flagged teachers' lessons, and the teachers'
+idle time rises to the range a fresh generation on today's model gives (2 850–8 340) from
+the lower level the previous timetable had. The sample is three pairs on a loaded host.
+
+The reviewer's mutants against the tests: the engine's fourteen (E01–E14): nine killed,
+including the five the first tests missed (E05 no night shift, E01 X + 5, E10 the lattice
+of starts ignoring Y, E12 locks exactly Y apart, E13 locked stretches merged over the
+night), five survive and are equivalent (E02, E03, E09, E11, E14); the gateway's thirty-one
+plus six more clauses of `holdsOnlyAConsecutiveLimit` (37): 34 killed, S05 and T06
+equivalent, C05 equivalent in practice (`ON_LESSON` stops first); the trigger's T6 (the
+write question asked as a read) killed by the new rows of RLS section 288. The two cases
+that must never be priced (locks exactly Y apart, an odd and an even week's lessons) have
+a test of their own, since the other cases require that something is priced.
+
 ### Corrections to earlier entries in this document
 
 - An earlier revision said the complexity guard was "pessimistic … not the

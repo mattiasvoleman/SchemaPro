@@ -576,6 +576,8 @@ export interface LunchSettingsInput {
   generatorKeepsTravelTime?: boolean;
   /** The same for the pupils' håltimmar. */
   generatorKeepsPupilGapsDown?: boolean;
+  /** The same for the teachers' limit on teaching in a row. */
+  generatorKeepsConsecutiveTeaching?: boolean;
 }
 
 export function useSaveLunchSettings() {
@@ -895,13 +897,18 @@ export interface OptimizationJob {
   conflicts: ConflictDetail[];
   /**
    * What a FINISHED run could not keep of the soft wishes (Lärarens dag:
-   * TEACHER_FREE_DAY_WISH_NOT_KEPT), in the conflicts' shape so the page
-   * renders them the same way. Not refusals: the week was laid, and these are
-   * what it cost. Absent from a gateway before 20261123090100, which reads as
-   * none. The sentence names only the weekday ({day}); whose wish it was is
-   * the note's resourceNames — the teacher's name, which the gateway resolves
-   * from the Users id it keeps beside the note on the server, for every
-   * reader (a wish is staff-readable, not HR).
+   * TEACHER_FREE_DAY_WISH_NOT_KEPT; Sammanhängande undervisning:
+   * TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT), in the conflicts' shape so the
+   * page renders them the same way. Not refusals: the week was laid, and
+   * these are what it cost. Absent from a gateway before 20261123090100, which
+   * reads as none. The sentence names only the weekday ({day}), and whose
+   * wish it was is the note's resourceNames — the teacher's name, which the
+   * gateway resolves from the Users id it keeps beside the note on the
+   * server, for every reader (a free-day wish is staff-readable, not HR).
+   * A limit on teaching in a row is HR, set on the teacher's post: for a
+   * reader with HR-läs the note carries the longest stretch's length and the
+   * limit and names the teacher; for everyone else it is the single note
+   * TEACHER_CONSECUTIVE_TEACHING_HIDDEN, with no figure and no name.
    */
   notes?: ConflictDetail[];
   error: string | null;

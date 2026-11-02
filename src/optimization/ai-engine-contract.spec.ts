@@ -79,6 +79,12 @@ const WORK_RULE_FIELDS = [
  * declares every optional field either way.
  */
 const WORK_RULE_FIELDS_DAY = [...WORK_RULE_FIELDS, 'maxTeachingMinutesPerDay', 'preferredFreeDay'].sort();
+/** Sammanhängande undervisning: both keys, only where the school has turned the effort on and the rule sets them. */
+const WORK_RULE_FIELDS_STRETCH = [
+  ...WORK_RULE_FIELDS,
+  'maxConsecutiveTeachingMinutes',
+  'consecutiveBreakMinutes',
+].sort();
 
 /**
  * Deltid in days, its own list and its own id space (the post's, kept and
@@ -828,6 +834,100 @@ describe('AI engine wire contract', () => {
     expect(rules[0]).toMatchObject({ maxTeachingMinutesPerDay: 270, preferredFreeDay: 5 });
     expect(Object.keys(rules[1]!).sort()).toEqual([...WORK_RULE_FIELDS, 'maxTeachingMinutesPerDay'].sort());
     expect(rules[1]).toMatchObject({ lunchMinutes: null, minDailyRestMinutes: null, maxTeachingMinutesPerDay: 300 });
+  });
+
+  describe('Sammanhängande undervisning', () => {
+    const lunchRow = (keeps: boolean) => ({
+      lunchEnabled: true,
+      lunchStartTime: new Date(0),
+      lunchEndTime: new Date(0),
+      lunchMinutes: 30,
+      diningSeats: 180,
+      maxLessonsPerDayPerGroup: 7,
+      generatorKeepsTravelTime: false,
+      generatorKeepsPupilGapsDown: false,
+      generatorKeepsConsecutiveTeaching: keeps,
+    });
+    // The limit is the post’s (HR data, 20261218090000), not the work rule’s.
+    const postRow = (overrides: Record<string, unknown> = {}) => ({
+      id: 'post-1',
+      userId: 't1',
+      maxTeachingDaysPerWeek: null,
+      maxConsecutiveTeachingMinutes: 180,
+      consecutiveBreakMinutes: 30,
+      ...overrides,
+    });
+    const ruleRow = (overrides: Record<string, unknown> = {}) => ({
+      id: 'wr-1',
+      userId: 't1',
+      lunchMinutes: null,
+      lunchStartTime: null,
+      lunchEndTime: null,
+      minDailyRestMinutes: 660,
+      maxTeachingMinutesPerDay: null,
+      preferredFreeDayOfWeek: null,
+      ...overrides,
+    });
+    const arranged =
+      (keeps: boolean, posts: Array<Record<string, unknown>>, rules: Array<Record<string, unknown>> = []) =>
+      (tx: ReturnType<typeof createTxMock>) => {
+        tx['lunchSetting']!['findUnique']!.mockResolvedValue(lunchRow(keeps));
+        tx['teacherEmployment']!['findMany']!.mockResolvedValue(posts);
+        tx['teacherWorkRule']!['findMany']!.mockResolvedValue(rules);
+      };
+
+    it('sends a school that has not turned it on the payload it always sent: no key, and no entry that exists only for it', async () => {
+      const payload = await buildPayload({}, [], [], arranged(false, [postRow()], [ruleRow()]));
+      const rules = payload['teacherWorkRules'] as Array<Record<string, unknown>>;
+
+      expect(rules).toHaveLength(1);
+      expect(Object.keys(rules[0]!).sort()).toEqual(WORK_RULE_FIELDS);
+      expect(JSON.stringify(payload)).not.toMatch(/Consecutive/);
+      // A post with a limit alone is no day limit either.
+      expect(Object.keys(payload)).not.toContain('teacherDayLimits');
+    });
+
+    it('sends the limit and the pause under the names the engine declares, on the work rule the teacher has', async () => {
+      const payload = await buildPayload({}, [], [], arranged(true, [postRow()], [ruleRow()]));
+      const rules = payload['teacherWorkRules'] as Array<Record<string, unknown>>;
+
+      expect(rules).toHaveLength(1);
+      expect(Object.keys(rules[0]!).sort()).toEqual(WORK_RULE_FIELDS_STRETCH);
+      expect(rules[0]).toMatchObject({
+        minDailyRestMinutes: 660,
+        maxConsecutiveTeachingMinutes: 180,
+        consecutiveBreakMinutes: 30,
+      });
+    });
+
+    it('sends the limit of a teacher with no work rule as an entry of its own, the same declared fields', async () => {
+      const payload = await buildPayload({}, [], [], arranged(true, [postRow()]));
+      const rules = payload['teacherWorkRules'] as Array<Record<string, unknown>>;
+      const requirements = payload['requirements'] as Array<Record<string, unknown>>;
+
+      expect(rules).toHaveLength(1);
+      expect(Object.keys(rules[0]!).sort()).toEqual(WORK_RULE_FIELDS_STRETCH);
+      expect(rules[0]).toMatchObject({
+        teacherId: requirements[0]!['teacherId'],
+        lunchMinutes: null,
+        minDailyRestMinutes: null,
+        maxConsecutiveTeachingMinutes: 180,
+        consecutiveBreakMinutes: 30,
+      });
+      expect(JSON.stringify(payload)).not.toMatch(/post-1|"t1"/);
+    });
+
+    it('sends nothing for a post that sets neither figure, whatever the switch says', async () => {
+      const payload = await buildPayload(
+        {},
+        [],
+        [],
+        arranged(true, [postRow({ maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null })], [ruleRow()]),
+      );
+      const rules = payload['teacherWorkRules'] as Array<Record<string, unknown>>;
+
+      expect(Object.keys(rules[0]!).sort()).toEqual(WORK_RULE_FIELDS);
+    });
   });
 
   it('sends a post’s day limit exactly as the engine declares it, under the key it declares', async () => {

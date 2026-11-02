@@ -94,6 +94,9 @@ export class LunchSettingsService {
       ...(dto.generatorKeepsPupilGapsDown !== undefined
         ? { generatorKeepsPupilGapsDown: dto.generatorKeepsPupilGapsDown }
         : {}),
+      ...(dto.generatorKeepsConsecutiveTeaching !== undefined
+        ? { generatorKeepsConsecutiveTeaching: dto.generatorKeepsConsecutiveTeaching }
+        : {}),
     };
 
     try {

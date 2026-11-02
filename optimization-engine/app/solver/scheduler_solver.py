@@ -21,6 +21,7 @@ from app.exceptions import (
     OptimizationEngineError,
     SolverBuildError,
 )
+from app.solver.consecutive import add_stretch_wish, teacher_windows
 from app.solver.frames import changeover_slots, day_windows, span_of
 from app.solver.pupil_gaps import (
     PupilGapModel,
@@ -104,6 +105,10 @@ class ResolvedWeights:
     #: only, no per-request override: the contract stays the two fields the
     #: work rule carries.
     free_day_wish: int = 0
+    #: Paid per generated lesson of a flagged teacher whose stretch is not
+    #: ended by a break in time (consecutive.py). Settings only, like the
+    #: wish above.
+    consecutive_teaching: int = 0
 
 
 @dataclass(frozen=True)
@@ -1524,6 +1529,9 @@ class SchedulerSolver:
                 ),
                 *self._add_free_day_objective(
                     model, decisions, wished_free, weights, teacher_days, day_literals,
+                ),
+                *self._add_stretch_objective(
+                    model, decisions, request, weights, day_vars, step,
                 ),
             ]
             # Elevernas håltimmar, last: it reads the one-hots the terms above
@@ -5503,6 +5511,17 @@ class SchedulerSolver:
             if lessons_by_teacher.get(limit.teacher_id, 0) > 0
         )
 
+        # _add_stretch_objective (consecutive.py), full model only and counted
+        # always: per generated lesson of a flagged teacher a shifted start, a
+        # break and the literal that says it is kept, in each of the two weeks
+        # where the teacher has two (hence the six), plus the day variable
+        # charged again though the spread usually built it, as above.
+        stretch_vars = sum(
+            6 * lessons_by_teacher[rule.teacher_id] + day_count
+            for rule in request.teacher_work_rules
+            if rule.has_stretch and lessons_by_teacher.get(rule.teacher_id, 0) > 0
+        )
+
         # The walk's own variables (travel.py), at their worst case: every
         # lesson a choice of every site and every row stretched over the
         # night, which the domains almost never ask for. "Every site" counts
@@ -5543,6 +5562,7 @@ class SchedulerSolver:
             + rast_order_vars
             + distribution_vars
             + teacher_day_vars
+            + stretch_vars
             # _add_block_constraints: one literal per block. Its equalities are
             # constraints on starts that exist already, and add no variable.
             + len(_blocks_of(request.requirements))
@@ -10600,6 +10620,7 @@ class SchedulerSolver:
             ),
             date_unavailable=self._settings.weight_date_unavailable,
             free_day_wish=self._settings.weight_free_day_wish,
+            consecutive_teaching=self._settings.weight_consecutive_teaching,
         )
 
     def _add_preference_objective(
@@ -12773,6 +12794,61 @@ class SchedulerSolver:
                 folded, [bounds.first, min(start for start, _end in windows)],
             )
         return folded
+
+    def _add_stretch_objective(
+        self,
+        model: cp_model.CpModel,
+        decisions: list[LessonDecision],
+        request: OptimizeScheduleRequest,
+        weights: ResolvedWeights,
+        day_vars: dict[str, cp_model.IntVar],
+        step: int,
+    ) -> list[cp_model.LinearExpr]:
+        """Sammanhängande undervisning as a wish: the objective terms, week by week.
+
+        In the FULL model only, like every objective term — the satisfaction
+        phase builds nothing for it, so a school's wishes cannot make its
+        timetable harder to find. A flagged teacher with nothing left to place
+        is skipped, as the lunch and the rest skip them; with no flagged
+        teacher this returns before reading anything and the model is the one
+        every school had.
+        """
+        flagged = [rule for rule in request.teacher_work_rules if rule.has_stretch]
+        if not flagged or weights.consecutive_teaching <= 0:
+            return []
+        by_teacher = _lessons_by_teacher(decisions)
+        locked_busy = self._teacher_busy_from_locks(request.fixed_lessons)
+        week_locks = _TeacherWeekLocks(self, request.fixed_lessons)
+        terms: list[cp_model.LinearExpr] = []
+        for rule in flagged:
+            group = by_teacher.get(rule.teacher_id)
+            if not group:
+                continue
+            parts = week_parts(
+                group, _parity, alternating=week_locks.alternate(rule.teacher_id),
+            )
+            terms.extend(
+                add_stretch_wish(
+                    model,
+                    grid=self._grid,
+                    step=step,
+                    rule=rule,
+                    weeks=[
+                        (
+                            week,
+                            members,
+                            teacher_windows(
+                                locked_busy if week is None else week_locks.busy(week),
+                                rule.teacher_id,
+                            ),
+                        )
+                        for week, members in parts
+                    ],
+                    day_of=lambda decision: self._day_var(model, decision, day_vars),
+                    weight=weights.consecutive_teaching,
+                ),
+            )
+        return terms
 
     def _teacher_busy_from_locks(
         self, fixed_lessons: list[FixedLesson],

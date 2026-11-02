@@ -58,6 +58,10 @@ Checks, all derived from the request:
                       post's limit in every week `lockedWeekdays` names; what
                       the school locked judged as the engine is held to it,
                       see _teacher_day_problems
+    (stretches)       Sammanhängande undervisning is a WISH the generator tries
+                      to keep, so a stretch over a teacher's limit is never a
+                      problem here: stretch_breaches counts them, for the
+                      benchmark that measures how many the generator leaves
     travel            Restid i generatorn: between two lessons one party
                       shares on one weekday, at least the school's minutes
                       for the pair of skolområden their rooms stand on — the
@@ -487,6 +491,84 @@ def _teacher_day_problems(request, lessons) -> list[str]:
                     f"teacher post {limit_id}: teaching on {days} days a week "
                     f"({len(held)} of them locked{where}), its post allows {most}")
     return problems
+
+
+def stretch_breaches(request, lessons) -> list[dict]:
+    """Sammanhängande undervisning — every stretch of teaching longer than its teacher's limit.
+
+    NOT A PROBLEM, A COUNT. The generator treats the limit as a wish
+    (app/solver/consecutive.py) and refuses no week over it, so a stretch over
+    the limit is a result and not a defect: the benchmark that measures the
+    wish (benchmarks/consecutive_teaching.py) and the tests count them, and
+    `validate` does not report them.
+
+    THE GATEWAY'S DEFINITION, NOT THE ENGINE'S CODE (src/common/stretch.ts):
+    per teacher and weekday, every lesson the teacher is on — lead or
+    co-teacher, placed or locked — in clock minutes, sorted by start. A lesson
+    joins the stretch before it when it starts less than Y after that
+    stretch's latest end; a stretch is first start to last end, the short gaps
+    inside it counted, and it is over when it is longer than X. Replayed
+    against src/common/__fixtures__/stretch-cases.json by the tests.
+
+    Each breach is a dict: the teacher, the work rule's id, the weekday, the
+    stretch's length in minutes, the limit and the break, and whether a lesson
+    the solver placed is in it (a stretch of the school's locked lessons alone
+    was its own doing, and the generator could do nothing about it).
+    """
+    rules = {
+        rule.teacher_id: rule
+        for rule in request.teacher_work_rules
+        if rule.max_consecutive_teaching_minutes is not None
+    }
+    if not rules:
+        return []
+    req_by_id = {r.id: r for r in request.requirements}
+    days: dict = defaultdict(lambda: defaultdict(list))
+    for lesson in lessons:
+        requirement = req_by_id.get(lesson.requirement_id)
+        if requirement is None or lesson.requirement_id is None:
+            continue
+        span = (_clock(lesson.start_time), _clock(lesson.end_time), True)
+        if span[1] <= span[0]:
+            continue
+        for teacher in _lesson_teachers(requirement, lesson):
+            if teacher in rules:
+                days[teacher][lesson.day_of_week].append(span)
+    for fixed in request.fixed_lessons:
+        span = (_clock(fixed.start_time), _clock(fixed.end_time), False)
+        if span[1] <= span[0]:
+            continue
+        for teacher in {fixed.teacher_id, fixed.co_teacher_id} - {None}:
+            if teacher in rules:
+                days[teacher][fixed.day_of_week].append(span)
+
+    breaches: list[dict] = []
+    for teacher, rule in rules.items():
+        limit = rule.max_consecutive_teaching_minutes
+        pause = rule.consecutive_break_minutes
+        for weekday in sorted(days.get(teacher, {})):
+            stretch = None  # [first start, latest end, holds a placed lesson]
+            found = []
+            for start, end, placed in sorted(
+                days[teacher][weekday], key=lambda span: (span[0], span[1]),
+            ):
+                if stretch is not None and start - stretch[1] < pause:
+                    stretch[1] = max(stretch[1], end)
+                    stretch[2] = stretch[2] or placed
+                else:
+                    if stretch is not None:
+                        found.append(stretch)
+                    stretch = [start, end, placed]
+            if stretch is not None:
+                found.append(stretch)
+            for first, last, placed in found:
+                if last - first > limit:
+                    breaches.append({
+                        "teacher": teacher, "rule": rule.id, "weekday": weekday,
+                        "minutes": last - first, "limit": limit, "break": pause,
+                        "placed": placed,
+                    })
+    return breaches
 
 
 def _travel_problems(request, lessons) -> list[str]:

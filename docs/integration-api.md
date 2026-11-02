@@ -135,9 +135,10 @@ switch knowing it:
   With the switch off neither field is sent and nothing can be told apart.
 * **That a hidden field changed, and when — never to what.** `meta.modified`
   is the post's `updatedAt`, which moves on every save of the post: a changed
-  nedsättning, riktmärke, note, avtalsform or number of teaching days a week
-  (deltid in days, which the feed never sends) moves it while every field the
-  feed sends stays the same. For a post split into stretches it is also the
+  nedsättning, riktmärke, note, avtalsform, number of teaching days a week
+  (deltid in days) or the limit on teaching in a row (the most minutes in a
+  row and the pause that ends a stretch), none of which the feed ever sends,
+  moves it while every field the feed sends stays the same. For a post split into stretches it is also the
   latest `updatedAt` of the post's periods, which moves the same way. A system
   polling the feed can see that something it is not shown changed on that
   teacher's post at that time. Rastra timetable has

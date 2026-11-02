@@ -33,7 +33,8 @@ import { join, relative } from 'node:path';
  * is a read of the table all the same (TABLE_READ's relation arm).
  *
  * DELTID IN DAYS (maxTeachingDaysPerWeek, 20261123090000) is HR data on the
- * post, and the most likely way for it to leak is a new reader nobody told
+ * post, and so is the limit on teaching in a row (below): the most likely way
+ * for either to leak is a new reader nobody told
  * about it: the generator, a hand edit of the grundschema and the
  * Vikarietavla all judge with it, for every reader alike, and only the
  * wording of what they answer may differ. So the spec also fails on
@@ -41,6 +42,14 @@ import { join, relative } from 'node:path';
  *  6. a file that names the column and is not in DAYS_READERS, which says
  *     how its answer keeps the days from a reader without HR-läs;
  *  7. a file in DAYS_READERS that no longer names it.
+ *
+ * THE LIMIT ON TEACHING IN A ROW (maxConsecutiveTeachingMinutes and
+ * consecutiveBreakMinutes, 20261218090000) sits on the post beside the days
+ * and is held to the same two rules: it was first built on the work rule,
+ * which every colleague reads, and moved here because a limit may be an
+ * arbetsanpassning after sick leave. A file naming either of the two is a
+ * file naming the days for this inventory, and says in the same entry how it
+ * keeps both from a reader without HR-läs.
  *
  * A file that reads the post whole and maps a list that leaves the days out
  * (load-input.ts into LoadEmployment, decision 7) names no column and needs
@@ -201,13 +210,13 @@ const files = sourceFiles(SRC).map((path) => ({
 const DEFINES = new Set(['src/staffing/employment-periods.ts']);
 
 /**
- * How a file that names deltid in days keeps them from a reader without
- * HR-läs (hr-visibility.ts readsHr):
- *  - HIDES: hands a post out, through hideHr / hideHrChanges, which null the
- *    days or leave their change out (EMPLOYMENT_HR_FIELDS);
+ * How a file that names deltid in days or the limit on teaching in a row
+ * keeps them from a reader without HR-läs (hr-visibility.ts readsHr):
+ *  - HIDES: hands a post out, through hideHr / hideHrChanges, which null
+ *    them or leave their change out (EMPLOYMENT_HR_FIELDS);
  *  - WORDS: judges with them for every reader alike and words its answer
- *    for the reader: the figure, and a teacher a days refusal names, only
- *    with readsHr, a *_HIDDEN code otherwise;
+ *    for the reader: the figure, and a teacher a refusal or a warning names,
+ *    only with readsHr, a *_HIDDEN code otherwise;
  *  - ENGINE: sends them to the engine, unmasked and anonymised, and masks
  *    what comes back at read;
  *  - WRITES: the post's own write, which only a decider makes (@Decides),
@@ -220,72 +229,80 @@ type DaysUse = 'HIDES' | 'WORDS' | 'ENGINE' | 'WRITES' | 'CARRIES' | 'SHAPE';
 const DAYS_READERS: Record<string, { use: DaysUse; why: string }> = {
   'src/staffing/hr-visibility.ts': {
     use: 'HIDES',
-    why: 'EMPLOYMENT_HR_FIELDS: hideHr nulls the days on a post, hideHrChanges leaves their change out of a version whole',
+    why: 'EMPLOYMENT_HR_FIELDS: hideHr nulls the days and the limit on teaching in a row on a post, hideHrChanges leaves their change out of a version whole (UNSAID_HR_FIELDS)',
   },
   'src/staffing/employment-log-diff.ts': {
     use: 'HIDES',
-    why: 'the Historik field order; the history masks it through hideHrChanges and drops a version that changed only the days',
+    why: 'the Historik field order; the history masks it through hideHrChanges and drops a version that changed only the days or the limit',
   },
   'src/staffing/teacher-employments.service.ts': {
     use: 'HIDES',
-    why: 'writes the days when sent (absent keeps) and hands the post back through hideHr, list and PUT echo alike',
+    why: 'writes the days and the limit (a pair, refused when half) when sent (absent keeps) and hands the post back through hideHr, list and PUT echo alike',
   },
   'src/staffing/dto/teacher-employment.dto.ts': {
     use: 'WRITES',
-    why: 'the post’s PUT body, 1..6 as the CHECK; the route is @Decides',
+    why: 'the post’s PUT body, days 1..6 and the limit 30..480 / 5..120 as the CHECKs; the route is @Decides',
   },
   'src/common/teacher-day.ts': {
     use: 'SHAPE',
     why: 'the arithmetic of a teacher’s day over a rule handed to it; reads no post',
   },
+  'src/common/stretch.ts': {
+    use: 'SHAPE',
+    why: 'the arithmetic of a stretch of teaching over a rule handed to it, and the bounds the DTO and the CHECKs share; reads no post',
+  },
   'src/common/utils/prisma-errors.ts': {
     use: 'SHAPE',
-    why: 'names the column in the CHECK’s 400 sentence, the bound a decider’s own write (@Decides) broke; reads no post',
+    why: 'names the columns in the CHECKs’ 400 sentences, the bound a decider’s own write (@Decides) broke; reads no post',
   },
   'src/year-rollover/rollover-registry.ts': {
     use: 'SHAPE',
-    why: 'the column’s rule in the carry: COPY_UNLESS_DEFAULT',
+    why: 'the columns’ rule in the carry: COPY_UNLESS_DEFAULT',
   },
   'src/year-rollover/rollover-source.ts': {
     use: 'CARRIES',
-    why: 'reads the source year’s posts, the days among them, for the carry',
+    why: 'reads the source year’s posts, the days and the limit among them, for the carry',
   },
   'src/year-rollover/rollover-staffing.ts': {
     use: 'CARRIES',
-    why: 'carries the days with the post and names the posts that have them (withDayLimit) in the preview a decider opens',
+    why: 'carries the days and the limit with the post and names the posts that have them (withDayLimit, withStretchLimit) in the preview a decider opens',
   },
   'src/year-rollover/rollover-apply.ts': {
     use: 'CARRIES',
-    why: 'writes the days the plan carried, only where a post had them',
+    why: 'writes the days and the limit the plan carried, only where a post had them',
   },
   'src/optimization/optimization-proxy.service.ts': {
     use: 'ENGINE',
-    why: 'the generator’s payload: teacherDayLimits, anonymised and unmasked to the engine, recorded EMPLOYMENT; a days refusal is masked at read',
+    why: 'the generator’s payload: teacherDayLimits and the stretch limits, anonymised and unmasked to the engine, recorded EMPLOYMENT; a refusal or a note that states them is masked at read',
   },
   'src/optimization/optimization-jobs.service.ts': {
     use: 'WORDS',
-    why: 'a stored days sentence carries no figure; read back from the post for a reader with HR-läs, TEACHER_WORK_DAYS_HIDDEN otherwise (work-days.ts)',
+    why: 'a stored days or stretch sentence carries no figure; read back from the post for a reader with HR-läs, the *_HIDDEN sentence otherwise (work-days.ts)',
   },
   'src/optimization/interfaces/ai-engine-payload.interface.ts': {
     use: 'SHAPE',
-    why: 'the wire shape of teacherDayLimits, which only the engine reads',
+    why: 'the wire shape of teacherDayLimits and the stretch limits, which only the engine reads',
+  },
+  'src/optimization/consecutive-wishes.ts': {
+    use: 'SHAPE',
+    why: 'the wish the generator sends for a stretch limit, over limits handed to it; reads no post and states no figure to a reader',
   },
   'src/calendar/master-lessons.service.ts': {
     use: 'WORDS',
-    why: 'the hand edit’s TEACHER_WEEK_TOO_MANY_DAYS warning: {days, max} with readsHr, TEACHER_WEEK_TOO_MANY_DAYS_HIDDEN otherwise',
+    why: 'the hand edit’s TEACHER_WEEK_TOO_MANY_DAYS and TEACHER_CONSECUTIVE_TOO_LONG warnings: the figures with readsHr, the *_HIDDEN code otherwise',
   },
   'src/cover/cover-context.ts': {
     use: 'WORDS',
-    why: 'the Vikarietavla’s WORK_DAYS rule reads each candidate’s days in the post read it already makes; maskFindings words it for the reader',
+    why: 'the Vikarietavla’s WORK_DAYS and CONSECUTIVE_TEACHING rules read each candidate’s days and limit in the post read it already makes; maskFindings words them for the reader',
   },
   'src/cover/cover-rules.ts': {
     use: 'WORDS',
-    why: 'hardFindings judges WORK_DAYS {days} for every reader alike; maskFindings / maskWarnings make it WORK_DAYS_HIDDEN without readsHr',
+    why: 'hardFindings judges WORK_DAYS {days} and CONSECUTIVE_TEACHING {minutes, breakMinutes} for every reader alike; maskFindings / maskWarnings make them *_HIDDEN without readsHr',
   },
 };
 
 /** The column, as code names it: a select, a where, a property, a list of field names. */
-const DAYS_READ = /\bmaxTeachingDaysPerWeek\b/;
+const DAYS_READ = /\b(?:maxTeachingDaysPerWeek|maxConsecutiveTeachingMinutes|consecutiveBreakMinutes)\b/;
 
 describe('who reads a post, and whether they read its periods (20261022120000)', () => {
   it('classifies every file that reads or writes a post or its periods', () => {

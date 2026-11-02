@@ -75,8 +75,40 @@ describe('hr-visibility', () => {
     expect(hideHr({ userId: 'u', employmentPercent: 80, reductionPercent: 0 })).not.toHaveProperty('maxTeachingDaysPerWeek');
   });
 
+  it('nulls the limit on teaching in a row where a post carries it, both columns, and gives a row without it none (20261218090000)', () => {
+    expect(
+      hideHr({
+        userId: 'u',
+        employmentPercent: 80,
+        reductionPercent: 0,
+        signature: 'KOL',
+        maxConsecutiveTeachingMinutes: 180,
+        consecutiveBreakMinutes: 30,
+      }),
+    ).toEqual({
+      userId: 'u',
+      employmentPercent: null,
+      reductionPercent: null,
+      signature: 'KOL',
+      maxConsecutiveTeachingMinutes: null,
+      consecutiveBreakMinutes: null,
+      hrHidden: true,
+    });
+    // A load row does not carry the limit, and is not given it.
+    const loadRow = hideHr({ userId: 'u', employmentPercent: 80, reductionPercent: 0 });
+    expect(loadRow).not.toHaveProperty('maxConsecutiveTeachingMinutes');
+    expect(loadRow).not.toHaveProperty('consecutiveBreakMinutes');
+  });
+
   it("is one list of the post's HR columns for the post and for its versions", () => {
-    expect(EMPLOYMENT_HR_FIELDS).toEqual(['employmentForm', 'firstTeacherPercent', 'lecturerPercent', 'maxTeachingDaysPerWeek']);
+    expect(EMPLOYMENT_HR_FIELDS).toEqual([
+      'employmentForm',
+      'firstTeacherPercent',
+      'lecturerPercent',
+      'maxTeachingDaysPerWeek',
+      'maxConsecutiveTeachingMinutes',
+      'consecutiveBreakMinutes',
+    ]);
     const row = Object.fromEntries(EMPLOYMENT_HR_FIELDS.map((field) => [field, 1]));
     const hidden = hideHr({ userId: 'u', employmentPercent: 80, reductionPercent: 0, ...row }) as Record<string, unknown>;
     expect(EMPLOYMENT_HR_FIELDS.filter((field) => hidden[field] !== null)).toEqual([]);
@@ -100,6 +132,33 @@ describe('hr-visibility', () => {
       { field: 'signature', before: 'A', after: 'B' },
     ]);
     expect(hideHrChanges([{ field: 'maxTeachingDaysPerWeek', before: 4, after: 3 }])).toEqual([]);
+  });
+
+  it('leaves a change of the limit on teaching in a row out of a version whole, both columns, where a percentage is said to have changed', () => {
+    /*
+     * The limit is null on most posts, like the days. "Ändrad, dolt" on exactly
+     * the versions where it moved would tell the reader which teacher has one,
+     * and a version that moved only one column of the pair (it cannot, but a
+     * log row written by hand could) says nothing of it either.
+     */
+    expect(
+      hideHrChanges([
+        { field: 'employmentPercent', before: 100, after: 80 },
+        { field: 'maxConsecutiveTeachingMinutes', before: null, after: 180 },
+        { field: 'consecutiveBreakMinutes', before: null, after: 30 },
+        { field: 'signature', before: 'A', after: 'B' },
+      ]),
+    ).toEqual([
+      { field: 'employmentPercent', before: null, after: null, hrHidden: true },
+      { field: 'signature', before: 'A', after: 'B' },
+    ]);
+    expect(
+      hideHrChanges([
+        { field: 'maxConsecutiveTeachingMinutes', before: 180, after: 150 },
+        { field: 'consecutiveBreakMinutes', before: 30, after: 20 },
+      ]),
+    ).toEqual([]);
+    expect(hideHrChanges([{ field: 'consecutiveBreakMinutes', before: 30, after: null }])).toEqual([]);
   });
 
   it('keeps that a percentage changed in a version, without its values', () => {

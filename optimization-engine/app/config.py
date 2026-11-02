@@ -167,6 +167,37 @@ class Settings(BaseSettings):
         alias="WEIGHT_FREE_DAY_WISH",
         description="Penalty per day a teacher teaches on their wished free weekday.",
     )
+    # Sammanhängande undervisning, paid PER GENERATED LESSON whose stretch is not
+    # ended by a break in time (consecutive.py). Per lesson and not per
+    # stretch because the cost of a long stretch is the lessons in it: a
+    # three-lesson run that is half an hour too long pays for the lessons that
+    # begin it, and a five-lesson one pays for more of them.
+    #
+    # TWO HUNDRED AND FIFTY, BECAUSE THE SEARCH NEEDS THE GRADIENT, not
+    # because the break is worth that much. A break of half an hour costs the
+    # teacher 12 in idle time (2 per five-minute slot), and at the free-day
+    # wish's 40 a lesson the wish is worth keeping many times over, yet the
+    # solver only gets there in the minute and a half it has: on the högstadium
+    # school with the eight busiest teachers limited to 180 minutes then 30
+    # free, the model with the wish at 40 left 3.2 of the eight over the limit
+    # on average (11 runs, host load 20–30) and at 250 left 1.9 (8 runs), where
+    # the same model with the wish off leaves 7.5; at 100 it left 3.75 (4 runs),
+    # no better than 40. What a lower count buys is paid for in the other
+    # teachers' and the flagged ones' idle time, which grows with every break
+    # made (docs/verification-baseline.md has the table). The price is far above
+    # the free-day wish on purpose: a limit on a stretch is an arbetsanpassning
+    # more often than a taste, and a school that wants the Friday free more
+    # than the break can lower this in the engine's settings.
+    #
+    # Zero or below switches the wish off entirely and builds nothing.
+    weight_consecutive_teaching: int = Field(
+        default=250,
+        alias="WEIGHT_CONSECUTIVE_TEACHING",
+        description=(
+            "Penalty per generated lesson of a flagged teacher whose stretch of "
+            "teaching is not ended by a break within the teacher's limit."
+        ),
+    )
 
     @computed_field  # type: ignore[prop-decorator]
     @property

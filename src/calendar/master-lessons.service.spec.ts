@@ -380,8 +380,27 @@ describe('MasterLessonsService', () => {
   };
 
   /**
+   * The rows a hand edit's warnings can come from, and the columns it reads of
+   * them. The work rule holds the cap alone (CAPPED); the post holds the other
+   * two limits, the days and the limit for teaching in a row (POST_LIMITED),
+   * HR data both. The gate counts the same filters inside the school's
+   * statement.
+   */
+  const WORK_RULE_FILTER = { maxTeachingMinutesPerDay: { not: null } };
+  const WORK_RULE_SELECT = { userId: true, maxTeachingMinutesPerDay: true };
+  const POST_FILTER = {
+    OR: [{ maxTeachingDaysPerWeek: { not: null } }, { maxConsecutiveTeachingMinutes: { not: null } }],
+  };
+  const POST_SELECT = {
+    userId: true,
+    maxTeachingDaysPerWeek: true,
+    maxConsecutiveTeachingMinutes: true,
+    consecutiveBreakMinutes: true,
+  };
+
+  /**
    * Lärarens dag as teacherDayWarnings reads it: the teachers' caps, the day
-   * limits of their posts, and every lesson of the year they are on — told
+   * limits and the limits for teaching in a row of their posts, and every lesson of the year they are on — told
    * apart from the clash scan of the candidate's DAY and the ämnesfördelning's
    * week of one post by its OR over the two teacher columns, and answered as
    * that OR asks. Every other masterLesson.findMany answers as before. Rows
@@ -397,8 +416,14 @@ describe('MasterLessonsService', () => {
     week = [],
     names = [{ id: LESSON_ID, subjectName: 'Idrott', groupName: '7A' }],
   }: {
-    caps?: Array<{ userId: string; maxTeachingMinutesPerDay: number }>;
-    limits?: Array<{ userId: string; maxTeachingDaysPerWeek: number }>;
+    /** Work-rule rows; any column beyond the cap is a stray the service must not read. */
+    caps?: Array<{ userId: string; maxTeachingMinutesPerDay?: number | null } & Record<string, unknown>>;
+    limits?: Array<{
+      userId: string;
+      maxTeachingDaysPerWeek?: number | null;
+      maxConsecutiveTeachingMinutes?: number | null;
+      consecutiveBreakMinutes?: number | null;
+    }>;
     week?: Row[];
     names?: Array<{ id: string; subjectName: string; groupName: string }>;
   }) => {
@@ -1529,8 +1554,8 @@ describe('MasterLessonsService', () => {
         // is the gate. The day limits are counted in the year's read, and
         // this year's posts hold none, so no post is read.
         expect(tx.teacherWorkRule.findMany).toHaveBeenCalledWith({
-          where: { userId: { in: [TEACHER_ID] }, maxTeachingMinutesPerDay: { not: null } },
-          select: { userId: true, maxTeachingMinutesPerDay: true },
+          where: { userId: { in: [TEACHER_ID] }, ...WORK_RULE_FILTER },
+          select: WORK_RULE_SELECT,
         });
         expect(tx.teacherEmployment.findMany).not.toHaveBeenCalled();
         expect(tx.academicYear.findUnique).toHaveBeenCalledWith(
@@ -1539,7 +1564,7 @@ describe('MasterLessonsService', () => {
               _count: {
                 select: {
                   teacherEmployments: {
-                    where: { userId: { in: [TEACHER_ID] }, maxTeachingDaysPerWeek: { not: null } },
+                    where: { userId: { in: [TEACHER_ID] }, ...POST_FILTER },
                   },
                 },
               },
@@ -1574,13 +1599,74 @@ describe('MasterLessonsService', () => {
               _count: {
                 select: {
                   teacherEmployments: {
-                    where: { userId: { in: [CO_TEACHER_ID] }, maxTeachingDaysPerWeek: { not: null } },
+                    where: { userId: { in: [CO_TEACHER_ID] }, ...POST_FILTER },
                   },
                 },
               },
             }),
           }),
         );
+      });
+
+      it('a lesson created onto a teacher’s long stretch saves and warns, the limit read from the post beside the cap’s own read', async () => {
+        arrangeCreate();
+        arrangeYear(1);
+        arrangeTeacherDay({
+          limits: [{ userId: TEACHER_ID, maxConsecutiveTeachingMinutes: 120, consecutiveBreakMinutes: 30 }],
+          week: [taught(OTHER_LESSON_ID, 1, '08:00', '09:30'), taught(LESSON_ID, 1, '09:45', '11:15')],
+        });
+
+        const created = await service.create(createDto(), testUser({ channel: 'WEB' }));
+
+        expect(tx.masterLesson.create).toHaveBeenCalled();
+        expect(created.warnings).toEqual([
+          {
+            code: 'TEACHER_CONSECUTIVE_TOO_LONG',
+            params: { role: 'LEAD', requirement: 'Idrott för 7A', day: 1, minutes: 195, max: 120, breakMinutes: 30 },
+          },
+        ]);
+        // The cap's one statement (a create's gate), without the stretch's columns; the post's one with them.
+        expect(tx.teacherWorkRule.findMany).toHaveBeenCalledTimes(1);
+        expect(tx.teacherWorkRule.findMany).toHaveBeenCalledWith({
+          where: { userId: { in: [TEACHER_ID] }, ...WORK_RULE_FILTER },
+          select: WORK_RULE_SELECT,
+        });
+        expect(tx.teacherEmployment.findMany).toHaveBeenCalledTimes(1);
+        expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith({
+          where: { academicYearId: YEAR_ID, userId: { in: [TEACHER_ID] }, ...POST_FILTER },
+          select: POST_SELECT,
+        });
+        // The limit is the post's: told, so read, so recorded.
+        expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [TEACHER_ID] }]);
+      });
+
+      it('the same stretch to a reader without HR-läs is the verdict alone, not one figure in the response, and the read is recorded all the same', async () => {
+        arrangeCreate();
+        arrangeYear(1);
+        arrangeTeacherDay({
+          limits: [{ userId: TEACHER_ID, maxConsecutiveTeachingMinutes: 137, consecutiveBreakMinutes: 43 }],
+          week: [taught(OTHER_LESSON_ID, 1, '08:00', '09:30'), taught(LESSON_ID, 1, '09:45', '11:15')],
+        });
+
+        const created = await service.create(createDto(), scheduler());
+
+        expect(created.warnings).toEqual([
+          { code: 'TEACHER_CONSECUTIVE_TOO_LONG_HIDDEN', params: { role: 'LEAD', requirement: 'Idrott för 7A' } },
+        ]);
+        expect(JSON.stringify(created)).not.toMatch(/137|\b43\b|\b195\b|breakMinutes|"max"/);
+        expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [TEACHER_ID] }]);
+      });
+
+      it('a limit for teaching in a row left on the work rule is no limit: only the post’s counts', async () => {
+        arrangeCreate();
+        arrangeYear(0);
+        arrangeTeacherDay({
+          caps: [{ userId: TEACHER_ID, maxConsecutiveTeachingMinutes: 60, consecutiveBreakMinutes: 30 }],
+          week: [taught(OTHER_LESSON_ID, 1, '08:00', '09:30'), taught(LESSON_ID, 1, '09:45', '11:15')],
+        });
+
+        await expect(service.create(createDto(), testUser())).resolves.toMatchObject({ warnings: [] });
+        expect(tx.teacherEmployment.findMany).not.toHaveBeenCalled();
       });
 
       it('a lesson created without a teacher asks nothing about a teacher’s day', async () => {
@@ -1649,8 +1735,8 @@ describe('MasterLessonsService', () => {
           },
         ]);
         expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith({
-          where: { academicYearId: YEAR_ID, userId: { in: [TEACHER_ID] }, maxTeachingDaysPerWeek: { not: null } },
-          select: { userId: true, maxTeachingDaysPerWeek: true },
+          where: { academicYearId: YEAR_ID, userId: { in: [TEACHER_ID] }, ...POST_FILTER },
+          select: POST_SELECT,
         });
         expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [TEACHER_ID] }]);
       });
@@ -1658,7 +1744,9 @@ describe('MasterLessonsService', () => {
       it('a year whose posts hold no limit for them reads no post', async () => {
         arrangeCreate();
         arrangeYear(0);
-        arrangeTeacherDay({ limits: [{ userId: TEACHER_ID, maxTeachingDaysPerWeek: 1 }] });
+        arrangeTeacherDay({
+          limits: [{ userId: TEACHER_ID, maxTeachingDaysPerWeek: 1, maxConsecutiveTeachingMinutes: 60, consecutiveBreakMinutes: 30 }],
+        });
 
         await service.create(createDto(), testUser());
 
@@ -3290,11 +3378,13 @@ describe('MasterLessonsService', () => {
         taught(LESSON_ID, 3, '10:00', '11:00'),
       ];
 
-      it('a school without a cap or a day limit sends not one statement more, however long the day', async () => {
+      it('a school without a cap or a post limit sends not one statement more, however long the day', async () => {
         arrangeEdit({}, {}, TUESDAY);
         arrangeTeacherDay({
           caps: [{ userId: TEACHER_ID, maxTeachingMinutesPerDay: 30 }],
-          limits: [{ userId: TEACHER_ID, maxTeachingDaysPerWeek: 1 }],
+          limits: [
+            { userId: TEACHER_ID, maxTeachingDaysPerWeek: 1, maxConsecutiveTeachingMinutes: 60, consecutiveBreakMinutes: 30 },
+          ],
           week: [taught(LESSON_ID, 2, '07:00', '19:00'), taught(OTHER_LESSON_ID, 4, '08:00', '09:00')],
         });
 
@@ -3304,7 +3394,8 @@ describe('MasterLessonsService', () => {
         expect(weekReads()).toHaveLength(0);
         expect(recordedReads(tx)).toEqual([]);
         // The gate rides in the school's statement the PATCH already makes:
-        // any cap of the school, any day limit of the lesson's own year.
+        // any cap of the school's work rules, any day limit or limit for
+        // teaching in a row of the posts of the lesson's own year.
         const [read] = tx.masterLesson.findUnique.mock.calls[0] as [Query];
         expect(read.select!.school.select._count.select).toEqual({
           academicYears: expect.anything(),
@@ -3312,10 +3403,10 @@ describe('MasterLessonsService', () => {
           siteTravelTimes: true,
           // Delade lektioner's, likewise.
           teachingRequirementShares: true,
-          teacherWorkRules: { where: { maxTeachingMinutesPerDay: { not: null } } },
+          teacherWorkRules: { where: WORK_RULE_FILTER },
           teacherEmployments: {
             where: {
-              maxTeachingDaysPerWeek: { not: null },
+              ...POST_FILTER,
               academicYear: { is: { masterLessons: { some: { id: LESSON_ID } } } },
             },
           },
@@ -3336,8 +3427,8 @@ describe('MasterLessonsService', () => {
           { code: 'TEACHER_DAY_TOO_LONG', params: { role: 'LEAD', requirement: 'Idrott för 7A', day: 2, minutes: 150, cap: 120 } },
         ]);
         expect(tx.teacherWorkRule.findMany).toHaveBeenCalledWith({
-          where: { userId: { in: [TEACHER_ID] }, maxTeachingMinutesPerDay: { not: null } },
-          select: { userId: true, maxTeachingMinutesPerDay: true },
+          where: { userId: { in: [TEACHER_ID] }, ...WORK_RULE_FILTER },
+          select: WORK_RULE_SELECT,
         });
         // The school counts no day limit: no post is read for one.
         expect(tx.teacherEmployment.findMany).not.toHaveBeenCalled();
@@ -3604,6 +3695,339 @@ describe('MasterLessonsService', () => {
         expect(weekReads()).toHaveLength(0);
       });
 
+      describe('Sammanhängande undervisning, a limit of the post like the days', () => {
+        /** At most two hours in a row, then half an hour free: the teacher's post. */
+        const IN_A_ROW = { userId: TEACHER_ID, maxConsecutiveTeachingMinutes: 120, consecutiveBreakMinutes: 30 };
+        const TOO_LONG = (minutes: number, extra: Record<string, unknown> = {}) => ({
+          code: 'TEACHER_CONSECUTIVE_TOO_LONG',
+          params: { role: 'LEAD', requirement: 'Idrott för 7A', day: 2, minutes, max: 120, breakMinutes: 30, ...extra },
+        });
+
+        it('a drag onto a teacher’s long stretch saves and warns with the stretch’s figures to a reader with HR-läs, and records the post', async () => {
+          // 08:00–09:30 and 09:45–11:15: fifteen minutes between them is no break.
+          arrangeEdit({ days: 1 }, {}, TUESDAY);
+          arrangeTeacherDay({
+            limits: [IN_A_ROW],
+            week: [taught(OTHER_LESSON_ID, 2, '08:00', '09:30'), taught(LESSON_ID, 2, '09:45', '11:15')],
+          });
+
+          const updated = await service.update(LESSON_ID, TUESDAY, testUser({ channel: 'WEB' }));
+
+          expect(tx.masterLesson.update).toHaveBeenCalled();
+          expect(updated.warnings).toEqual([TOO_LONG(195)]);
+          // The post of the lesson's own läsår, the one read that also holds the days; the school counts no cap.
+          expect(tx.teacherEmployment.findMany).toHaveBeenCalledTimes(1);
+          expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith({
+            where: { academicYearId: YEAR_ID, userId: { in: [TEACHER_ID] }, ...POST_FILTER },
+            select: POST_SELECT,
+          });
+          expect(tx.teacherWorkRule.findMany).not.toHaveBeenCalled();
+          expect(weekReads()).toHaveLength(1);
+          // The limit is the post's, HR data: told, so read, so recorded.
+          expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [TEACHER_ID] }]);
+          // The school's switch for the generator (Skolregler) is not read.
+          expect(Object.keys(tx).filter((model) => /lunch/i.test(model))).toEqual([]);
+        });
+
+        it('a schemaläggare without HR-läs is told the verdict and not one figure, in no part of the response, and the read is recorded all the same', async () => {
+          // 137 and 43 are in nothing else the response carries.
+          arrangeEdit({ days: 1 }, {}, TUESDAY);
+          arrangeTeacherDay({
+            limits: [{ userId: TEACHER_ID, maxConsecutiveTeachingMinutes: 137, consecutiveBreakMinutes: 43 }],
+            week: [taught(OTHER_LESSON_ID, 2, '08:00', '09:30'), taught(LESSON_ID, 2, '09:45', '11:15')],
+          });
+
+          const updated = await service.update(LESSON_ID, TUESDAY, scheduler());
+
+          expect(updated.warnings).toEqual([
+            { code: 'TEACHER_CONSECUTIVE_TOO_LONG_HIDDEN', params: { role: 'LEAD', requirement: 'Idrott för 7A' } },
+          ]);
+          // Not the longest stretch (195), not the limit, not its free time, not the weekday.
+          expect(JSON.stringify(updated)).not.toMatch(/137|\b43\b|\b195\b|breakMinutes|"max"|"minutes"|"day"/);
+          expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [TEACHER_ID] }]);
+        });
+
+        it('a schemaläggare with HR-läs gets the figures', async () => {
+          arrangeEdit({ days: 1 }, {}, TUESDAY);
+          arrangeTeacherDay({
+            limits: [IN_A_ROW],
+            week: [taught(OTHER_LESSON_ID, 2, '08:00', '09:30'), taught(LESSON_ID, 2, '09:45', '11:15')],
+          });
+
+          const updated = await service.update(
+            LESSON_ID,
+            TUESDAY,
+            testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: true }),
+          );
+
+          expect(updated.warnings).toEqual([TOO_LONG(195)]);
+        });
+
+        it('the days and the stretch of one post, both broken: the stretch first, then the days, and the post is recorded once', async () => {
+          arrangeEdit({ days: 1 }, {}, TUESDAY);
+          arrangeTeacherDay({
+            limits: [{ ...IN_A_ROW, maxTeachingDaysPerWeek: 1 }],
+            week: [
+              taught(OTHER_LESSON_ID, 2, '08:00', '09:30'),
+              taught('00000000-aaaa-4aaa-8aaa-0000000000a1', 1, '08:00', '09:00'),
+              taught(LESSON_ID, 2, '09:45', '11:15'),
+            ],
+          });
+
+          const updated = await service.update(LESSON_ID, TUESDAY, scheduler());
+
+          expect(updated.warnings).toEqual([
+            { code: 'TEACHER_CONSECUTIVE_TOO_LONG_HIDDEN', params: { role: 'LEAD', requirement: 'Idrott för 7A' } },
+            { code: 'TEACHER_WEEK_TOO_MANY_DAYS_HIDDEN', params: { role: 'LEAD', requirement: 'Idrott för 7A' } },
+          ]);
+          expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [TEACHER_ID] }]);
+        });
+
+        it('a post with a limit kept records nothing, and says nothing', async () => {
+          arrangeEdit({ days: 1 }, {}, TUESDAY);
+          arrangeTeacherDay({
+            limits: [IN_A_ROW],
+            week: [taught(OTHER_LESSON_ID, 2, '08:00', '09:00'), taught(LESSON_ID, 2, '09:00', '10:00')],
+          });
+
+          await expect(service.update(LESSON_ID, TUESDAY, scheduler())).resolves.toMatchObject({ warnings: [] });
+          expect(recordedReads(tx)).toEqual([]);
+        });
+
+        it('exactly the limit is fine, and one minute more is not', async () => {
+          arrangeEdit({ days: 1 }, {}, TUESDAY);
+          arrangeTeacherDay({
+            limits: [IN_A_ROW],
+            week: [taught(OTHER_LESSON_ID, 2, '08:00', '09:00'), taught(LESSON_ID, 2, '09:00', '10:00')],
+          });
+          await expect(service.update(LESSON_ID, TUESDAY, testUser())).resolves.toMatchObject({ warnings: [] });
+
+          arrangeEdit({ days: 1 }, {}, TUESDAY);
+          arrangeTeacherDay({
+            limits: [IN_A_ROW],
+            week: [taught(OTHER_LESSON_ID, 2, '08:00', '09:00'), taught(LESSON_ID, 2, '09:00', '10:01')],
+          });
+          const updated = await service.update(LESSON_ID, TUESDAY, testUser());
+          expect(updated.warnings).toEqual([TOO_LONG(121)]);
+        });
+
+        it('a gap of exactly the free time is a break: two stretches of an hour and a half, each within the limit', async () => {
+          arrangeEdit({ days: 1 }, {}, TUESDAY);
+          arrangeTeacherDay({
+            limits: [IN_A_ROW],
+            week: [taught(OTHER_LESSON_ID, 2, '08:00', '09:30'), taught(LESSON_ID, 2, '10:00', '11:30')],
+          });
+
+          await expect(service.update(LESSON_ID, TUESDAY, testUser())).resolves.toMatchObject({ warnings: [] });
+        });
+
+        it('a gap five minutes short of it is no break: the stretch counts the gap in', async () => {
+          arrangeEdit({ days: 1 }, {}, TUESDAY);
+          arrangeTeacherDay({
+            limits: [IN_A_ROW],
+            week: [taught(OTHER_LESSON_ID, 2, '08:00', '09:30'), taught(LESSON_ID, 2, '09:55', '11:25')],
+          });
+
+          const updated = await service.update(LESSON_ID, TUESDAY, testUser());
+
+          expect(updated.warnings).toEqual([TOO_LONG(205)]);
+        });
+
+        it('a stretch the edit is no part of is not this save’s to repeat', async () => {
+          // Wednesday held three hours in a row before the edit; the lesson goes to Thursday.
+          arrangeEdit({ days: 1 }, {}, { dayOfWeek: 4 });
+          arrangeTeacherDay({
+            limits: [IN_A_ROW],
+            week: [taught(OTHER_LESSON_ID, 3, '08:00', '11:00'), taught(LESSON_ID, 4, '10:00', '11:00')],
+          });
+
+          await expect(service.update(LESSON_ID, { dayOfWeek: 4 }, testUser())).resolves.toMatchObject({ warnings: [] });
+          expect(weekReads()).toHaveLength(1);
+          expect(nameReads()).toEqual([]);
+        });
+
+        it('nor one on the same day the edit does not reach: the long morning beside a short afternoon it made', async () => {
+          arrangeEdit({ days: 1 }, {}, TUESDAY);
+          arrangeTeacherDay({
+            limits: [IN_A_ROW],
+            week: [
+              taught(OTHER_LESSON_ID, 2, '08:00', '11:00'),
+              taught(LESSON_ID, 2, '13:00', '14:00'),
+            ],
+          });
+
+          await expect(service.update(LESSON_ID, TUESDAY, testUser())).resolves.toMatchObject({ warnings: [] });
+        });
+
+        it('an odd-week and an even-week lesson on one Tuesday never meet, as the week has them', async () => {
+          arrangeEdit({ days: 1 }, { recurrence: 'EVEN_WEEKS' }, TUESDAY);
+          arrangeTeacherDay({
+            limits: [IN_A_ROW],
+            week: [
+              taught(OTHER_LESSON_ID, 2, '08:00', '09:30', { recurrence: 'ODD_WEEKS' }),
+              taught(LESSON_ID, 2, '09:30', '11:00', { recurrence: 'EVEN_WEEKS' }),
+            ],
+          });
+
+          await expect(service.update(LESSON_ID, TUESDAY, testUser())).resolves.toMatchObject({ warnings: [] });
+        });
+
+        it('the minutes told are the weeks the edit is in: the even Tuesdays’ two hours, not the odd ones already at three', async () => {
+          arrangeEdit({ days: 1 }, { dayOfWeek: 1, recurrence: 'EVEN_WEEKS' }, TUESDAY);
+          arrangeTeacherDay({
+            limits: [{ ...IN_A_ROW, maxConsecutiveTeachingMinutes: 90 }],
+            week: [
+              taught(OTHER_LESSON_ID, 2, '08:00', '11:00', { recurrence: 'ODD_WEEKS' }),
+              taught('00000000-aaaa-4aaa-8aaa-0000000000a5', 2, '08:00', '08:40', { recurrence: 'EVEN_WEEKS' }),
+              taught(LESSON_ID, 2, '09:00', '10:00', { recurrence: 'EVEN_WEEKS' }),
+            ],
+          });
+
+          const updated = await service.update(LESSON_ID, TUESDAY, testUser());
+
+          expect(updated.warnings).toEqual([TOO_LONG(120, { max: 90 })]);
+        });
+
+        it('a term the lesson does not share with another is a week they never meet in', async () => {
+          arrangeEdit({ days: 1 }, { startDate: day('2027-01-11') }, TUESDAY);
+          arrangeTeacherDay({
+            limits: [IN_A_ROW],
+            week: [
+              taught(OTHER_LESSON_ID, 2, '08:00', '09:30', { endDate: day('2026-12-18') }),
+              taught(LESSON_ID, 2, '09:30', '11:00', { startDate: day('2027-01-11') }),
+            ],
+          });
+
+          await expect(service.update(LESSON_ID, TUESDAY, testUser())).resolves.toMatchObject({ warnings: [] });
+        });
+
+        it('the medlärare’s stretch too, named as CO_TEACHER', async () => {
+          arrangeEdit({ days: 1 }, { coTeacherId: CO_TEACHER_ID }, TUESDAY);
+          arrangeTeacherDay({
+            limits: [{ ...IN_A_ROW, userId: CO_TEACHER_ID }],
+            week: [
+              taught(OTHER_LESSON_ID, 2, '08:00', '09:30', { teacherId: CO_TEACHER_ID }),
+              taught(LESSON_ID, 2, '09:45', '11:15', { coTeacherId: CO_TEACHER_ID }),
+            ],
+          });
+
+          const updated = await service.update(LESSON_ID, TUESDAY, testUser());
+
+          expect(updated.warnings).toEqual([TOO_LONG(195, { role: 'CO_TEACHER' })]);
+          expect(weekReads()[0]![0].where!.OR).toEqual([
+            { teacherId: { in: [CO_TEACHER_ID] } },
+            { coTeacherId: { in: [CO_TEACHER_ID] } },
+          ]);
+        });
+
+        it('a parked lesson of the teacher’s is no part of a stretch', async () => {
+          arrangeEdit({ days: 1 }, {}, TUESDAY);
+          arrangeTeacherDay({
+            limits: [IN_A_ROW],
+            week: [
+              taught(OTHER_LESSON_ID, 2, '08:00', '10:00', { isParked: true }),
+              taught(LESSON_ID, 2, '10:00', '11:00'),
+            ],
+          });
+
+          await expect(service.update(LESSON_ID, TUESDAY, testUser())).resolves.toMatchObject({ warnings: [] });
+        });
+
+        it('a cap and a limit on one teacher, both broken: the cap first, then the stretch, each from its own row', async () => {
+          arrangeEdit({ caps: 1, days: 1 }, {}, TUESDAY);
+          arrangeTeacherDay({
+            caps: [{ userId: TEACHER_ID, maxTeachingMinutesPerDay: 150 }],
+            limits: [IN_A_ROW],
+            week: [taught(OTHER_LESSON_ID, 2, '08:00', '09:30'), taught(LESSON_ID, 2, '09:45', '11:15')],
+          });
+
+          const updated = await service.update(LESSON_ID, TUESDAY, testUser());
+
+          expect(updated.warnings).toEqual([
+            { code: 'TEACHER_DAY_TOO_LONG', params: { role: 'LEAD', requirement: 'Idrott för 7A', day: 2, minutes: 180, cap: 150 } },
+            TOO_LONG(195),
+          ]);
+          // Two warnings about one lesson: its name asked once.
+          expect(nameReads()).toEqual([[LESSON_ID]]);
+          // The cap still comes from the work rule, whose one statement selects the cap alone;
+          // the limit comes from the post's one, which selects the days and the limit.
+          expect(tx.teacherWorkRule.findMany).toHaveBeenCalledTimes(1);
+          expect(tx.teacherWorkRule.findMany).toHaveBeenCalledWith({
+            where: { userId: { in: [TEACHER_ID] }, ...WORK_RULE_FILTER },
+            select: WORK_RULE_SELECT,
+          });
+          expect(tx.teacherEmployment.findMany).toHaveBeenCalledTimes(1);
+          expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith({
+            where: { academicYearId: YEAR_ID, userId: { in: [TEACHER_ID] }, ...POST_FILTER },
+            select: POST_SELECT,
+          });
+        });
+
+        it('a cap alone is the work rule’s: no post is read, and the cap warns a reader without HR-läs with its figures', async () => {
+          arrangeEdit({ caps: 1 }, {}, TUESDAY);
+          arrangeTeacherDay({
+            caps: [{ userId: TEACHER_ID, maxTeachingMinutesPerDay: 150 }],
+            week: [taught(OTHER_LESSON_ID, 2, '08:00', '09:30'), taught(LESSON_ID, 2, '09:45', '11:15')],
+          });
+
+          const updated = await service.update(LESSON_ID, TUESDAY, scheduler());
+
+          expect(updated.warnings).toEqual([
+            { code: 'TEACHER_DAY_TOO_LONG', params: { role: 'LEAD', requirement: 'Idrott för 7A', day: 2, minutes: 180, cap: 150 } },
+          ]);
+          expect(tx.teacherEmployment.findMany).not.toHaveBeenCalled();
+          expect(recordedReads(tx)).toEqual([]);
+        });
+
+        it('a post that holds a half-set limit says nothing of a stretch (the table’s CHECK forbids one)', async () => {
+          arrangeEdit({ days: 1 }, {}, TUESDAY);
+          arrangeTeacherDay({
+            limits: [{ userId: TEACHER_ID, maxConsecutiveTeachingMinutes: 30, consecutiveBreakMinutes: null }],
+            week: [taught(OTHER_LESSON_ID, 2, '08:00', '09:30'), taught(LESSON_ID, 2, '09:45', '11:15')],
+          });
+
+          await expect(service.update(LESSON_ID, TUESDAY, testUser())).resolves.toMatchObject({ warnings: [] });
+          expect(recordedReads(tx)).toEqual([]);
+        });
+
+        it('a limit left on the work rule (a stray column) is no limit: only the post’s counts', async () => {
+          arrangeEdit({ caps: 1 }, {}, TUESDAY);
+          arrangeTeacherDay({
+            caps: [{ userId: TEACHER_ID, maxTeachingMinutesPerDay: 600, maxConsecutiveTeachingMinutes: 30, consecutiveBreakMinutes: 30 }],
+            week: [taught(OTHER_LESSON_ID, 2, '08:00', '09:30'), taught(LESSON_ID, 2, '09:45', '11:15')],
+          });
+
+          await expect(service.update(LESSON_ID, TUESDAY, testUser())).resolves.toMatchObject({ warnings: [] });
+        });
+
+        it('a school that counts no post with a limit sends not one statement more, whatever a teacher’s stretch', async () => {
+          arrangeEdit({}, {}, TUESDAY);
+          arrangeTeacherDay({
+            limits: [IN_A_ROW],
+            week: [taught(OTHER_LESSON_ID, 2, '08:00', '11:00'), taught(LESSON_ID, 2, '11:00', '13:00')],
+          });
+
+          await expect(service.update(LESSON_ID, TUESDAY, testUser())).resolves.toMatchObject({ warnings: [] });
+          expect(tx.teacherWorkRule.findMany).not.toHaveBeenCalled();
+          expect(tx.teacherEmployment.findMany).not.toHaveBeenCalled();
+          expect(weekReads()).toHaveLength(0);
+          expect(recordedReads(tx)).toEqual([]);
+        });
+
+        it('a drag that moves no day asks nothing about a stretch either', async () => {
+          arrangeEdit({ days: 1 });
+          arrangeTeacherDay({
+            limits: [IN_A_ROW],
+            week: [taught(LESSON_ID, 1, '10:00', '13:00')],
+          });
+
+          await service.update(LESSON_ID, { roomId: NEW_ROOM_ID }, testUser());
+
+          expect(tx.teacherEmployment.findMany).not.toHaveBeenCalled();
+          expect(recordedReads(tx)).toEqual([]);
+        });
+      });
+
       describe('the days, which are the post’s', () => {
         it('a reader with HR-läs gets the count and the limit, and the read is in the läslogg', async () => {
           arrangeEdit({ days: 1 }, {}, { dayOfWeek: 3 });
@@ -3617,8 +4041,8 @@ describe('MasterLessonsService', () => {
           // The post of the lesson's own läsår; the school counts no cap, so
           // no work rule is read.
           expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith({
-            where: { academicYearId: YEAR_ID, userId: { in: [TEACHER_ID] }, maxTeachingDaysPerWeek: { not: null } },
-            select: { userId: true, maxTeachingDaysPerWeek: true },
+            where: { academicYearId: YEAR_ID, userId: { in: [TEACHER_ID] }, ...POST_FILTER },
+            select: POST_SELECT,
           });
           expect(tx.teacherWorkRule.findMany).not.toHaveBeenCalled();
           expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [TEACHER_ID] }]);
@@ -5061,6 +5485,152 @@ describe('MasterLessonsService', () => {
           expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [TEACHER_ID, FR_TEACHER] }]);
         });
 
+        it('a card moved onto long stretches warns once per teacher, in each one’s role, from the posts’ one read', async () => {
+          arrangeCard([tyska(school(0, 1)), franskaLesson({ coTeacherId: CO_TEACHER_ID, ...school(0, 1) })]);
+          arrangeTeacherDay({
+            limits: [
+              { userId: TEACHER_ID, maxConsecutiveTeachingMinutes: 120, consecutiveBreakMinutes: 30 },
+              { userId: CO_TEACHER_ID, maxConsecutiveTeachingMinutes: 60, consecutiveBreakMinutes: 15 },
+            ],
+            week: tuesday,
+          });
+
+          const result = await move();
+
+          // Tyska 09:00–10:00 and the 10:00–11:30 beside it: 150 minutes in a row.
+          // Franska 09:00–10:00 is the medlärare's too; her 13:00 lesson is four hours on.
+          expect(result.warnings).toEqual([
+            {
+              code: 'TEACHER_CONSECUTIVE_TOO_LONG',
+              params: { role: 'LEAD', requirement: 'Tyska för Ty7', day: 2, minutes: 150, max: 120, breakMinutes: 30 },
+            },
+          ]);
+          expect(tx.teacherEmployment.findMany).toHaveBeenCalledTimes(1);
+          expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith({
+            where: { academicYearId: YEAR_ID, userId: { in: [TEACHER_ID, FR_TEACHER, CO_TEACHER_ID] }, ...POST_FILTER },
+            select: POST_SELECT,
+          });
+          expect(tx.teacherWorkRule.findMany).not.toHaveBeenCalled();
+          expect(weekReads()).toHaveLength(1);
+          // The limits are the posts': told, so read, so recorded for the teacher it was told about.
+          expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: null, ids: [TEACHER_ID] }]);
+        });
+
+        it('two leads with a stretch too long are told apart by the member each leads, and the medlärare as such', async () => {
+          arrangeCard([tyska(school(0, 1)), franskaLesson({ coTeacherId: CO_TEACHER_ID, ...school(0, 1) })]);
+          arrangeTeacherDay({
+            limits: [
+              { userId: TEACHER_ID, maxConsecutiveTeachingMinutes: 120, consecutiveBreakMinutes: 30 },
+              { userId: FR_TEACHER, maxConsecutiveTeachingMinutes: 60, consecutiveBreakMinutes: 30 },
+              { userId: CO_TEACHER_ID, maxConsecutiveTeachingMinutes: 30, consecutiveBreakMinutes: 30 },
+            ],
+            week: [
+              ...tuesday,
+              taught('00000000-aaaa-4aaa-8aaa-0000000000a5', 2, '10:00', '11:00', { teacherId: FR_TEACHER }),
+            ],
+          });
+
+          const result = await move();
+
+          expect(result.warnings).toEqual([
+            {
+              code: 'TEACHER_CONSECUTIVE_TOO_LONG',
+              params: { role: 'LEAD', requirement: 'Tyska för Ty7', day: 2, minutes: 150, max: 120, breakMinutes: 30 },
+            },
+            {
+              code: 'TEACHER_CONSECUTIVE_TOO_LONG',
+              params: { role: 'LEAD', requirement: 'Franska för Fr7', day: 2, minutes: 120, max: 60, breakMinutes: 30 },
+            },
+            {
+              code: 'TEACHER_CONSECUTIVE_TOO_LONG',
+              params: { role: 'CO_TEACHER', requirement: 'Franska för Fr7', day: 2, minutes: 60, max: 30, breakMinutes: 30 },
+            },
+          ]);
+        });
+
+        it('two stretch warnings that say the same thing are one: members a toast cannot tell apart', async () => {
+          arrangeCard([
+            tyska(school(0, 1)),
+            franskaLesson({ subject: { name: 'Tyska' }, studentGroup: { name: 'Ty7' }, ...school(0, 1) }),
+          ]);
+          arrangeTeacherDay({
+            limits: [
+              { userId: TEACHER_ID, maxConsecutiveTeachingMinutes: 60, consecutiveBreakMinutes: 30 },
+              { userId: FR_TEACHER, maxConsecutiveTeachingMinutes: 60, consecutiveBreakMinutes: 30 },
+            ],
+            week: [
+              taught(LESSON_ID, 2, '09:00', '10:00'),
+              taught(OTHER_LESSON_ID, 2, '10:00', '11:30'),
+              taught(FR_LESSON, 2, '09:00', '10:00', { teacherId: FR_TEACHER }),
+              taught('00000000-aaaa-4aaa-8aaa-0000000000a4', 2, '10:00', '11:30', { teacherId: FR_TEACHER }),
+            ],
+          });
+
+          const result = await move();
+
+          expect(result.warnings).toEqual([
+            {
+              code: 'TEACHER_CONSECUTIVE_TOO_LONG',
+              params: { role: 'LEAD', requirement: 'Tyska för Ty7', day: 2, minutes: 150, max: 60, breakMinutes: 30 },
+            },
+          ]);
+        });
+
+        it('two stretch verdicts to a reader without HR-läs: one per member, no figure, and both posts recorded', async () => {
+          arrangeCard([tyska(school(0, 1)), franskaLesson({ coTeacherId: CO_TEACHER_ID, ...school(0, 1) })]);
+          arrangeTeacherDay({
+            limits: [
+              { userId: TEACHER_ID, maxConsecutiveTeachingMinutes: 120, consecutiveBreakMinutes: 30 },
+              { userId: FR_TEACHER, maxConsecutiveTeachingMinutes: 60, consecutiveBreakMinutes: 30 },
+            ],
+            week: [
+              ...tuesday,
+              taught('00000000-aaaa-4aaa-8aaa-0000000000a5', 2, '10:00', '11:00', { teacherId: FR_TEACHER }),
+            ],
+          });
+
+          const result = await service.moveBlockCard(
+            { lessonIds: [LESSON_ID, FR_LESSON], dayOfWeek: 2, startTime: '09:00', endTime: '10:00' } as never,
+            scheduler(),
+          );
+
+          expect(result.warnings).toEqual([
+            { code: 'TEACHER_CONSECUTIVE_TOO_LONG_HIDDEN', params: { role: 'LEAD', requirement: 'Tyska för Ty7' } },
+            { code: 'TEACHER_CONSECUTIVE_TOO_LONG_HIDDEN', params: { role: 'LEAD', requirement: 'Franska för Fr7' } },
+          ]);
+          expect(JSON.stringify(result.warnings)).not.toMatch(/"(minutes|max|breakMinutes|day)"/);
+          expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [TEACHER_ID, FR_TEACHER] }]);
+        });
+
+        it('two hidden stretch verdicts that say the same thing are one, and both posts are still recorded', async () => {
+          arrangeCard([
+            tyska(school(0, 1)),
+            franskaLesson({ subject: { name: 'Tyska' }, studentGroup: { name: 'Ty7' }, ...school(0, 1) }),
+          ]);
+          arrangeTeacherDay({
+            limits: [
+              { userId: TEACHER_ID, maxConsecutiveTeachingMinutes: 60, consecutiveBreakMinutes: 30 },
+              { userId: FR_TEACHER, maxConsecutiveTeachingMinutes: 45, consecutiveBreakMinutes: 20 },
+            ],
+            week: [
+              taught(LESSON_ID, 2, '09:00', '10:00'),
+              taught(OTHER_LESSON_ID, 2, '10:00', '11:30'),
+              taught(FR_LESSON, 2, '09:00', '10:00', { teacherId: FR_TEACHER }),
+              taught('00000000-aaaa-4aaa-8aaa-0000000000a4', 2, '10:00', '11:30', { teacherId: FR_TEACHER }),
+            ],
+          });
+
+          const result = await service.moveBlockCard(
+            { lessonIds: [LESSON_ID, FR_LESSON], dayOfWeek: 2, startTime: '09:00', endTime: '10:00' } as never,
+            scheduler(),
+          );
+
+          expect(result.warnings).toEqual([
+            { code: 'TEACHER_CONSECUTIVE_TOO_LONG_HIDDEN', params: { role: 'LEAD', requirement: 'Tyska för Ty7' } },
+          ]);
+          expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [TEACHER_ID, FR_TEACHER] }]);
+        });
+
         it('a card put back where it stood moves nobody’s day and asks nothing', async () => {
           arrangeCard([tyska(school(1)), franskaLesson({ coTeacherId: CO_TEACHER_ID, ...school(1) })]);
           arrangeTeacherDay({ caps, week: tuesday });
@@ -5083,10 +5653,10 @@ describe('MasterLessonsService', () => {
             ([query]) => query.where && 'id' in query.where && (query.where.id as Row).in,
           )![0];
           expect(cardRead.select!.school.select._count.select).toMatchObject({
-            teacherWorkRules: { where: { maxTeachingMinutesPerDay: { not: null } } },
+            teacherWorkRules: { where: WORK_RULE_FILTER },
             teacherEmployments: {
               where: {
-                maxTeachingDaysPerWeek: { not: null },
+                ...POST_FILTER,
                 academicYear: { is: { masterLessons: { some: { id: LESSON_ID } } } },
               },
             },
@@ -5213,6 +5783,29 @@ describe('teacherDayWarning', () => {
     };
     expect(teacherDayWarning(cap, 'CO_TEACHER', SLOJD, true)).toEqual(told);
     expect(teacherDayWarning(cap, 'CO_TEACHER', SLOJD, false)).toEqual(told);
+  });
+
+  it('the stretch’s figures go to a reader with HR-läs, and the verdict alone to anybody else: the post’s, like the days’', () => {
+    const stretch = {
+      kind: 'CONSECUTIVE' as const,
+      dayOfWeek: 2,
+      minutes: 195,
+      max: 120,
+      breakMinutes: 30,
+      lessonIds: ['a', 'b'],
+    };
+    const told = {
+      code: 'TEACHER_CONSECUTIVE_TOO_LONG',
+      params: { role: 'LEAD', requirement: 'Slöjd för 7A', day: 2, minutes: 195, max: 120, breakMinutes: 30 },
+    };
+    expect(teacherDayWarning(stretch, 'LEAD', SLOJD, true)).toEqual(told);
+    const hidden = teacherDayWarning(stretch, 'LEAD', SLOJD, false);
+    expect(hidden).toEqual({ code: 'TEACHER_CONSECUTIVE_TOO_LONG_HIDDEN', params: { role: 'LEAD', requirement: 'Slöjd för 7A' } });
+    // Not the day, the stretch, the limit nor the free time.
+    expect(JSON.stringify(hidden)).not.toMatch(/195|120|"day"|breakMinutes|"minutes"|"max"/);
+    expect(teacherDayWarning(stretch, 'CO_TEACHER', SLOJD, false).params).toEqual({ role: 'CO_TEACHER', requirement: 'Slöjd för 7A' });
+    // Two members the hidden wording cannot tell apart are the same sentence.
+    expect(teacherDayWarning({ ...stretch, minutes: 300, max: 90, dayOfWeek: 4 }, 'LEAD', SLOJD, false)).toEqual(hidden);
   });
 
   it('the days’ figures go to a reader with HR-läs, and the verdict alone to anybody else', () => {

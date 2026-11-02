@@ -359,6 +359,49 @@ describe('SupervisionCoverService', () => {
       ]);
     });
 
+    it('a pass is not teaching: a teacher whose stretch it would extend is still offered it, and a pick is told nothing', async () => {
+      // S teaches 08:00–10:00 and the pass starts at 10:00; on a lesson the
+      // same minutes would be 140 in a row, over her 60.
+      tx.calendarLessonTeacher.findMany.mockResolvedValue([
+        {
+          teacherId: S,
+          calendarLesson: {
+            id: 'l', date: new Date(`${DATE}T00:00:00Z`), startsAt: new Date('2026-10-14T06:00:00Z'), endsAt: PASS_START,
+            status: 'SCHEDULED', cancelCause: null, studentGroupId: 'g', subjectId: 's', roomId: null,
+          },
+        },
+      ]);
+      // The limit is the post's (HR data); the rule is told, so it is read.
+      tx.teacherEmployment.findMany.mockResolvedValue([
+        {
+          userId: S,
+          employmentPercent: 100,
+          reductionPercent: 0,
+          contractKind: 'FERIE',
+          teachingTargetMinutesPerWeek: null,
+          signature: null,
+          maxTeachingDaysPerWeek: null,
+          maxConsecutiveTeachingMinutes: 60,
+          consecutiveBreakMinutes: 30,
+        },
+      ]);
+      const answer = await service.candidates(SHIFT, DATE, admin);
+      expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: expect.objectContaining({ maxConsecutiveTeachingMinutes: true, consecutiveBreakMinutes: true }),
+        }),
+      );
+      expect(answer.candidates.map((c) => c.userId)).toContain(S);
+      expect(answer.excluded.find((entry) => entry.userId === S)).toBeUndefined();
+
+      tx.$executeRaw.mockClear();
+      const result = await service.decide(SHIFT, DATE, { absenceId: ABSENCE, kind: 'SUBSTITUTE', substituteId: S, expected: 'OPEN' }, admin);
+      expect(result.warnings).toEqual([]);
+      expect(tx.supervisionCover.create).toHaveBeenCalled();
+      // Nothing was told of the limit, so the post is not recorded as read for it.
+      expect(recordedReads(tx).filter((read) => read.kind === 'EMPLOYMENT')).toEqual([]);
+    });
+
     it('answers 404 for a pass that does not run that day, even with a decision standing on it', async () => {
       await expect(service.candidates(SHIFT, '2026-10-15', admin)).rejects.toMatchObject({
         response: { code: 'SUPERVISION_COVER_NOT_AFFECTED' },

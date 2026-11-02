@@ -769,6 +769,8 @@ describe("People page", () => {
           employmentForm: "VISSTID",
           firstTeacherPercent: 10,
           maxTeachingDaysPerWeek: 4,
+          maxConsecutiveTeachingMinutes: 150,
+          consecutiveBreakMinutes: 15,
         },
       ];
       const user = userEvent.setup();
@@ -781,8 +783,9 @@ describe("People page", () => {
       await user.type(percent, "100");
       await user.click(screen.getByRole("button", { name: "save" }));
 
-      // The nedsättning, the note, SCB's fields and the undervisningsdagar set on
-      // the card survive a change made here: PUT replaces the row whole.
+      // The nedsättning, the note, SCB's fields, the undervisningsdagar and the
+      // limit on teaching in a row (Sammanhängande undervisning) set on the card
+      // survive a change made here: PUT replaces the row whole.
       expect(saveEmployment).toHaveBeenCalledWith({
         userId: "t-1",
         academicYearId: "year-1",
@@ -796,6 +799,8 @@ describe("People page", () => {
         firstTeacherPercent: 10,
         lecturerPercent: null,
         maxTeachingDaysPerWeek: 4,
+        maxConsecutiveTeachingMinutes: 150,
+        consecutiveBreakMinutes: 15,
       });
     });
 
@@ -851,6 +856,8 @@ describe("People page", () => {
         firstTeacherPercent: null,
         lecturerPercent: null,
         maxTeachingDaysPerWeek: null,
+        maxConsecutiveTeachingMinutes: null,
+        consecutiveBreakMinutes: null,
       });
     });
   });

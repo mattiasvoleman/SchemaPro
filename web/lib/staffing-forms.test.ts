@@ -1,9 +1,12 @@
+import { createTranslator } from "next-intl";
 import { describe, expect, it } from "vitest";
 import en from "@/messages/en.json";
 import sv from "@/messages/sv.json";
 import {
+  CONSECUTIVE_BOUNDS,
   DEFAULT_POLICY_DRAFT,
   EMPTY_EMPLOYMENT_DRAFT,
+  consecutiveFigure,
   employmentDraftToBody,
   employmentToDraft,
   newQualificationRow,
@@ -123,6 +126,8 @@ describe("employmentDraftToBody", () => {
       firstTeacherPercent: null,
       lecturerPercent: null,
       maxTeachingDaysPerWeek: null,
+      maxConsecutiveTeachingMinutes: null,
+      consecutiveBreakMinutes: null,
     });
   });
 
@@ -148,6 +153,8 @@ describe("employmentDraftToBody", () => {
       firstTeacherPercent: null,
       lecturerPercent: null,
       maxTeachingDaysPerWeek: null,
+      maxConsecutiveTeachingMinutes: null,
+      consecutiveBreakMinutes: null,
     });
   });
 
@@ -166,6 +173,8 @@ describe("employmentDraftToBody", () => {
       firstTeacherPercent: 10,
       lecturerPercent: null,
       maxTeachingDaysPerWeek: 4,
+      maxConsecutiveTeachingMinutes: 150,
+      consecutiveBreakMinutes: 15,
     };
     expect(employmentDraftToBody(employmentToDraft(row))).toEqual({
       employmentPercent: 66.667,
@@ -178,6 +187,8 @@ describe("employmentDraftToBody", () => {
       firstTeacherPercent: 10,
       lecturerPercent: null,
       maxTeachingDaysPerWeek: 4,
+      maxConsecutiveTeachingMinutes: 150,
+      consecutiveBreakMinutes: 15,
     });
     expect(employmentToDraft(null)).toBe(EMPTY_EMPLOYMENT_DRAFT);
   });
@@ -227,6 +238,112 @@ describe("undervisningsdagar per vecka on the post (Lärarens dag, 2026112309000
     expect(employmentToDraft(post).maxTeachingDaysPerWeek).toBe("");
     expect(employmentToDraft({ ...post, maxTeachingDaysPerWeek: null }).maxTeachingDaysPerWeek).toBe("");
     expect(employmentToDraft({ ...post, maxTeachingDaysPerWeek: 3 }).maxTeachingDaysPerWeek).toBe("3");
+  });
+});
+
+describe("undervisning i följd on the post (Sammanhängande undervisning, 20261218090000)", () => {
+  const pair = (max: string, pause: string) =>
+    draft({ maxConsecutiveTeachingMinutes: max, consecutiveBreakMinutes: pause });
+
+  it("takes both figures, or neither", () => {
+    expect(validateEmploymentDraft(pair("", ""))).toBeNull();
+    expect(validateEmploymentDraft(pair("180", "20"))).toBeNull();
+    expect(validateEmploymentDraft(pair(" 30 ", " 5 "))).toBeNull();
+    expect(validateEmploymentDraft(pair("480", "120"))).toBeNull();
+  });
+
+  it("refuses one half without the other, whichever it is", () => {
+    expect(validateEmploymentDraft(pair("180", ""))).toEqual({ reason: "consecutivePairIncomplete" });
+    expect(validateEmploymentDraft(pair("", "20"))).toEqual({ reason: "consecutivePairIncomplete" });
+    expect(validateEmploymentDraft(pair("  ", "20"))).toEqual({ reason: "consecutivePairIncomplete" });
+  });
+
+  it("refuses a maximum outside 30–480 minutes, naming the range, before it asks about the grid", () => {
+    for (const max of ["0", "25", "485", "3000", "tre timmar", "180,5", "-30"]) {
+      expect(validateEmploymentDraft(pair(max, "20"))).toEqual({ reason: "consecutiveMaxOutOfRange", min: 30, max: 480 });
+    }
+    expect(validateEmploymentDraft(pair("182", "20"))).toEqual({ reason: "consecutiveMaxOffGrid", step: 5 });
+  });
+
+  it("refuses a break outside 5–120 minutes, or off the five-minute grid", () => {
+    for (const pause of ["0", "125", "1200", "kvart"]) {
+      expect(validateEmploymentDraft(pair("180", pause))).toEqual({ reason: "consecutiveBreakOutOfRange", min: 5, max: 120 });
+    }
+    expect(validateEmploymentDraft(pair("180", "17"))).toEqual({ reason: "consecutiveBreakOffGrid", step: 5 });
+  });
+
+  it("is checked after every other field, so a wrong tjänst and a wrong count of days are said first", () => {
+    expect(validateEmploymentDraft({ ...pair("180", ""), employmentPercent: "0" })).toMatchObject({
+      reason: "percentOutOfRange",
+    });
+    expect(validateEmploymentDraft({ ...pair("180", ""), maxTeachingDaysPerWeek: "9" })).toMatchObject({
+      reason: "teachingDaysOutOfRange",
+    });
+  });
+
+  it("sends the pair as two numbers and an empty pair as two nulls, both keys always", () => {
+    expect(employmentDraftToBody(pair(" 180 ", "20"))).toMatchObject({
+      maxConsecutiveTeachingMinutes: 180,
+      consecutiveBreakMinutes: 20,
+    });
+    const cleared = employmentDraftToBody(pair("", ""));
+    expect(cleared).toMatchObject({ maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null });
+    // Named, null included: an absent key KEEPS a stored limit, only a null takes it away.
+    expect(Object.keys(cleared)).toEqual(
+      expect.arrayContaining(["maxConsecutiveTeachingMinutes", "consecutiveBreakMinutes"]),
+    );
+  });
+
+  it("reads a post with no limit, or from a gateway before the fields, as no limit", () => {
+    const post = {
+      id: "e1",
+      userId: "u1",
+      academicYearId: "y1",
+      employmentPercent: 100,
+      reductionPercent: 0,
+      contractKind: "FERIE" as const,
+      teachingTargetMinutesPerWeek: null,
+      signature: null,
+      note: null,
+    };
+    expect(employmentToDraft(post)).toMatchObject({ maxConsecutiveTeachingMinutes: "", consecutiveBreakMinutes: "" });
+    expect(
+      employmentToDraft({ ...post, maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null }),
+    ).toMatchObject({ maxConsecutiveTeachingMinutes: "", consecutiveBreakMinutes: "" });
+    expect(
+      employmentToDraft({ ...post, maxConsecutiveTeachingMinutes: 240, consecutiveBreakMinutes: 30 }),
+    ).toMatchObject({ maxConsecutiveTeachingMinutes: "240", consecutiveBreakMinutes: "30" });
+  });
+
+  it("reads a figure back as hours and minutes in both locales, never as '0 tim 45 min'", () => {
+    // The card passes {hours, minutes} to one message; the real ICU decides the
+    // three shapes (under an hour, whole hours, both).
+    for (const [locale, messages, unit] of [
+      ["sv", sv, "tim"],
+      ["en", en, "h"],
+    ] as const) {
+      const t = createTranslator({ locale, messages, namespace: "staffing" }) as unknown as (
+        key: string,
+        values: Record<string, number>,
+      ) => string;
+      const said = (minutes: number) => t("consecutiveSaid", { hours: Math.floor(minutes / 60), minutes: minutes % 60 });
+      expect(said(45)).toBe("= 45 min");
+      expect(said(180)).toBe(`= 3 ${unit}`);
+      expect(said(150)).toBe(`= 2 ${unit} 30 min`);
+    }
+  });
+
+  it("says a figure for the readout as soon as that figure alone is acceptable", () => {
+    // Half a typed value is a wrong hour count on screen, so the readout waits.
+    expect(consecutiveFigure("150", "max")).toBe(150);
+    expect(consecutiveFigure("20", "break")).toBe(20);
+    expect(consecutiveFigure("15", "max")).toBeNull();
+    expect(consecutiveFigure("17", "break")).toBeNull();
+    expect(consecutiveFigure("", "max")).toBeNull();
+    expect(consecutiveFigure("500", "max")).toBeNull();
+    // Each figure is judged by its own bounds: 20 is a fine break and no maximum.
+    expect(consecutiveFigure("20", "max")).toBeNull();
+    expect(CONSECUTIVE_BOUNDS).toEqual({ max: { min: 30, max: 480 }, break: { min: 5, max: 120 } });
   });
 });
 
@@ -448,6 +565,11 @@ describe("every refusal has a sentence in both locales", () => {
     "signatureTooLong",
     "noteTooLong",
     "teachingDaysOutOfRange",
+    "consecutivePairIncomplete",
+    "consecutiveMaxOutOfRange",
+    "consecutiveMaxOffGrid",
+    "consecutiveBreakOutOfRange",
+    "consecutiveBreakOffGrid",
     "subjectRequired",
     "spanReversed",
     "validityReversed",

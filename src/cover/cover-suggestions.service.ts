@@ -37,6 +37,7 @@ import {
   maskFindings,
   overlaps,
   prefersFree,
+  toldFromPost,
   type CoverTarget,
   type PersonLesson,
   type RuleFinding,
@@ -142,15 +143,16 @@ export class CoverSuggestionsService {
       const target = targetOf(lesson);
       const candidates: Candidate[] = [];
       const excluded: CandidatesResponse['excluded'] = [];
-      // Whom the post's deltid in days leaves out: the verdict is a term of
-      // their post whether its figure is shown or not (cover-rules.ts).
-      const outOfDays: string[] = [];
+      // Whom the post's deltid in days or limit for teaching in a row leaves
+      // out: the verdict is a term of their post whether its figures are
+      // shown or not (cover-rules.ts).
+      const byPost: string[] = [];
       const showsHr = readsHr(user);
       for (const [userId, day] of [...read.days].sort(([a], [b]) => a.localeCompare(b))) {
         const findings = hardFindings(day, target);
         if (findings.length > 0) {
           excluded.push({ userId, codes: maskFindings(findings, showsHr) });
-          if (findings.some((finding) => finding.code === 'WORK_DAYS')) outOfDays.push(userId);
+          if (toldFromPost(findings)) byPost.push(userId);
           continue;
         }
         candidates.push(this.candidateOf(lesson, userId, read, context, []));
@@ -158,14 +160,14 @@ export class CoverSuggestionsService {
       const ranked = (c: Candidate) => ({ ...c, tier: poolTier(c.kind, context.poolPreference), counter: { week: c.counter.weekLessons } });
       candidates.sort((a, b) => compareRanked(ranked(a), ranked(b)));
       // Each candidate's week against their tjänst and their cover counter
-      // (EMPLOYMENT), and whom their post's deltid in days leaves out
-      // (EMPLOYMENT too, to a reader shown the figure or not: "the post
-      // stops here" is the post's), and who is left out as away
-      // (STAFF_ABSENCES, the code without the reason). The other exclusions
-      // are the timetable's, the work rule's (which every member of staff
-      // reads, the cap among them) and the pool's, not logged
+      // (EMPLOYMENT), and whom their post's deltid in days or limit for
+      // teaching in a row leaves out (EMPLOYMENT too, to a reader shown the
+      // figures or not: "the post stops here" is the post's), and who is left
+      // out as away (STAFF_ABSENCES, the code without the reason). The other
+      // exclusions are the timetable's, the work rule's (which every member of
+      // staff reads, the cap among them) and the pool's, not logged
       // (src/access-log/access-log.ts).
-      await recordRead(tx, 'EMPLOYMENT', [...candidates.map((candidate) => candidate.userId), ...outOfDays], user.channel);
+      await recordRead(tx, 'EMPLOYMENT', [...candidates.map((candidate) => candidate.userId), ...byPost], user.channel);
       await recordRead(
         tx,
         'STAFF_ABSENCES',

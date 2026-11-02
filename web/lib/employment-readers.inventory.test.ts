@@ -33,7 +33,12 @@ import { describe, expect, it } from "vitest";
  *     gateway hands it over. Its readers are the post's two forms, written out
  *     below; a summary, a toast or a planner's cross-check that started
  *     reading it would put a figure the gateway hides beside the rows it
- *     shows.
+ *     shows. The same two readers, and for the same reason, read the post's
+ *     limit on teaching in a row (Sammanhängande undervisning, 20261218090000):
+ *     the most minutes and the free minutes that end a stretch moved from the
+ *     work rule, which every colleague reads, to the post, where the gateway
+ *     nulls both for a reader without HR-läs. The Arbetstid dialog and its
+ *     summary read the work rule and must not read them.
  *
  * The gateway half also counts a Prisma `_count` or a nested select of the
  * post as a read. The web's equivalent is a PostgREST embed of either table
@@ -129,10 +134,13 @@ const NEXT_RELEASE: string[] = [];
 const TABLE_READ =
   /\/api\/v1\/teacher-employments|"TeacherEmployments"|"TeacherEmploymentPeriods"|\bTeacherEmployment(?:Period)?s(?:![A-Za-z_]+)*\(/;
 const FIGURES_READ =
-  /\btargetMinutesPerWeek\(|\.(?:employmentPercent|reductionPercent|teachingTargetMinutesPerWeek|maxTeachingDaysPerWeek)\b/;
+  /\btargetMinutesPerWeek\(|\.(?:employmentPercent|reductionPercent|teachingTargetMinutesPerWeek|maxTeachingDaysPerWeek|maxConsecutiveTeachingMinutes|consecutiveBreakMinutes)\b/;
 /** The post's undervisningsdagar alone: see 6. */
 const DAYS_READ = /\.maxTeachingDaysPerWeek\b/;
 const DAYS_READERS = ["components/staffing/employment-card.tsx", "lib/staffing-forms.ts"];
+/** The post's limit on teaching in a row (Sammanhängande undervisning): HR like the days, see 6. */
+const STRETCH_READ = /\.(?:maxConsecutiveTeachingMinutes|consecutiveBreakMinutes)\b/;
+const STRETCH_READERS = DAYS_READERS;
 const PERIODS_READ =
   /\bperiods\b|\bpostOn\(|\bpostStretches\(|\bchangesDuringYear\(|\bisJudged\(|\bpercentSteps(?:In)?\(|\bpostAtStart\(/;
 
@@ -212,6 +220,21 @@ describe("who on the web reads a post, and whether they read its periods (202610
         .sort(),
     ).toEqual(DAYS_READERS);
     expect(DAYS_READERS.filter((file) => CLASSIFIED[file]?.basis !== "WRITES")).toEqual([]);
+  });
+
+  it("names the same two forms as the only readers of its limit on teaching in a row (Sammanhängande undervisning)", () => {
+    // It moved from the work rule, which every colleague reads, to the post: a
+    // third reader — the Arbetstid dialog or its summary, say — would show an HR
+    // figure to a reader who may not see the post.
+    expect(FIGURES_READ.test("row.maxConsecutiveTeachingMinutes")).toBe(true);
+    expect(FIGURES_READ.test("row.consecutiveBreakMinutes")).toBe(true);
+    expect(
+      files
+        .filter((file) => STRETCH_READ.test(file.text))
+        .map((file) => file.path)
+        .sort(),
+    ).toEqual(STRETCH_READERS);
+    expect(STRETCH_READERS.filter((file) => CLASSIFIED[file]?.basis !== "WRITES")).toEqual([]);
   });
 
   it("names the web's readers left on the year-start post — none — and every classified file still exists", () => {

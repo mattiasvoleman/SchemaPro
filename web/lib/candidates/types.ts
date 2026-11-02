@@ -89,9 +89,14 @@ export interface CandidateView {
   metrics: CandidateMetrics | null;
   conflicts: CandidateConflict[];
   /**
-   * The free-day wishes the candidate's timetable breaks (Lärarens dag), one
-   * per teacher, said as Generera's notes: TEACHER_FREE_DAY_WISH_NOT_KEPT
-   * with the weekday, the teacher named in resourceNames. Null when it was
+   * The wishes the candidate's timetable breaks, said as Generera's notes,
+   * the teacher named in resourceNames: a free day (Lärarens dag) is
+   * TEACHER_FREE_DAY_WISH_NOT_KEPT with the weekday, one per teacher, and a
+   * limit on teaching in a row (Sammanhängande undervisning) is
+   * TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT with the weekday, the longest
+   * stretch and the limit, one per teacher too — or, for a reader without
+   * HR-läs (the limit is set on the post), the single note
+   * TEACHER_CONSECUTIVE_TEACHING_HIDDEN with no teacher and no figure. Null when it was
    * not measured (no timetable, or stored before the gateway measured it);
    * empty when every wish is kept. Absent from an older gateway.
    */

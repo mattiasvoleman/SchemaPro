@@ -131,7 +131,7 @@ describe('planStaffingCarry — the rollover (nothing in the target yet)', () =>
       expect.objectContaining({ userId: T1, kind: 'AMNESANSVAR', label: 'Ämnesansvar Ma', minutesPerWeek: 40, countsAsTeaching: true, subjectId: 'ma', note: 'note', groupKey: null, slots: [{ dayOfWeek: 3, startTime: '13:00', endTime: '13:45' }] }),
     ]);
     expect(plan.preview.employments).toMatchObject({ carried: 2, withReduction: [T1], withTargetOverride: [T2] });
-    expect(plan.problems).toEqual([{ code: 'STAFFING_PER_YEAR_TERMS_CARRIED', blocking: false, params: { reductions: 1, overrides: 1, dayLimits: 0 } }]);
+    expect(plan.problems).toEqual([{ code: 'STAFFING_PER_YEAR_TERMS_CARRIED', blocking: false, params: { reductions: 1, overrides: 1, dayLimits: 0, stretchLimits: 0 } }]);
   });
 
   it('a post whose only term for the year is its days is still a term to check (Lärarens dag)', () => {
@@ -139,8 +139,64 @@ describe('planStaffingCarry — the rollover (nothing in the target yet)', () =>
 
     expect(plan.preview.employments).toMatchObject({ withReduction: [], withTargetOverride: [], withDayLimit: [T1] });
     expect(plan.problems).toEqual([
-      { code: 'STAFFING_PER_YEAR_TERMS_CARRIED', blocking: false, params: { reductions: 0, overrides: 0, dayLimits: 1 } },
+      { code: 'STAFFING_PER_YEAR_TERMS_CARRIED', blocking: false, params: { reductions: 0, overrides: 0, dayLimits: 1, stretchLimits: 0 } },
     ]);
+  });
+
+  it('carries the limit on teaching in a row with the post, as a pair, and names the post that has one (Sammanhängande undervisning)', () => {
+    const plan = planStaffingCarry(
+      input([post(T1, { maxConsecutiveTeachingMinutes: 180, consecutiveBreakMinutes: 30 }), post(T2)], []),
+    );
+    const written = (userId: string) => plan.writes.employments.find((row) => row.userId === userId)!;
+    expect(written(T1)).toMatchObject({ maxConsecutiveTeachingMinutes: 180, consecutiveBreakMinutes: 30 });
+    // COPY_UNLESS_DEFAULT: a post without the limit names neither column, so its plan hash does not move.
+    expect(Object.keys(written(T2))).not.toContain('maxConsecutiveTeachingMinutes');
+    expect(Object.keys(written(T2))).not.toContain('consecutiveBreakMinutes');
+    expect(plan.preview.employments).toMatchObject({ withDayLimit: [], withStretchLimit: [T1] });
+    expect(plan.problems).toEqual([
+      { code: 'STAFFING_PER_YEAR_TERMS_CARRIED', blocking: false, params: { reductions: 0, overrides: 0, dayLimits: 0, stretchLimits: 1 } },
+    ]);
+    // Named in the läslogg with the other per-year terms: the preview reads the post.
+    expect(staffNamedBy(plan.preview)).toContain(T1);
+  });
+
+  it('carries neither column of a source that somehow held half a pair, so the new year’s table never meets one', () => {
+    // The table's pair CHECK keeps the source from it; the plan does not rely on that.
+    const plan = planStaffingCarry(
+      input([post(T1, { maxConsecutiveTeachingMinutes: 120, consecutiveBreakMinutes: null })], []),
+    );
+    expect(Object.keys(plan.writes.employments[0]!)).not.toContain('maxConsecutiveTeachingMinutes');
+    expect(Object.keys(plan.writes.employments[0]!)).not.toContain('consecutiveBreakMinutes');
+    expect(plan.preview.employments.withStretchLimit).toEqual([]);
+    expect(plan.problems).toEqual([]);
+  });
+
+  it('carries the limit from the post and not from a period: no period states it', () => {
+    const plan = planStaffingCarry(
+      input(
+        [
+          post(T1, {
+            maxConsecutiveTeachingMinutes: 150,
+            consecutiveBreakMinutes: 20,
+            periods: [
+              {
+                validFrom: '2027-01-11',
+                validTo: null,
+                employmentPercent: '50.000',
+                reductionPercent: '0.000',
+                teachingTargetMinutesPerWeek: null,
+              },
+            ],
+          }),
+        ],
+        [],
+      ),
+    );
+    expect(plan.writes.employments[0]).toMatchObject({
+      employmentPercent: '50.000',
+      maxConsecutiveTeachingMinutes: 150,
+      consecutiveBreakMinutes: 20,
+    });
   });
 
   describe('a post that changes during the year', () => {

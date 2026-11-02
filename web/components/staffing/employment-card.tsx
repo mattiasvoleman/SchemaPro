@@ -7,6 +7,8 @@ import { Briefcase } from "lucide-react";
 import { useAcademicYears } from "@/lib/queries";
 import { useTeacherEmploymentActions } from "@/lib/staffing-queries";
 import {
+  CONSECUTIVE_BOUNDS,
+  CONSECUTIVE_STEP,
   EMPLOYMENT_FORMS,
   EMPTY_EMPLOYMENT_DRAFT,
   NOTE_MAX,
@@ -14,6 +16,7 @@ import {
   TARGET_MINUTES_MAX,
   TEACHING_DAYS_MAX,
   TEACHING_DAYS_MIN,
+  consecutiveFigure,
   employmentDraftToBody,
   employmentToDraft,
   parseDecimal,
@@ -55,6 +58,11 @@ import {
 const CONTRACT_KINDS: TeacherContractKind[] = ["FERIE", "SEMESTER"];
 /** The Select's value for an anställningsform not said: Radix takes no "". */
 const FORM_NOT_SAID = "__none__";
+/** The limit on teaching in a row: its two figures, the draft key of each and the label. */
+const CONSECUTIVE_FIELDS = [
+  { figure: "max", key: "maxConsecutiveTeachingMinutes", label: "consecutiveMax" },
+  { figure: "break", key: "consecutiveBreakMinutes", label: "consecutiveBreak" },
+] as const;
 
 export interface EmploymentCardProps {
   teacher: { id: string; firstName: string; lastName: string };
@@ -138,6 +146,14 @@ function derived(
  * card says it only in the visible branch. Not in the hidden one, not even
  * as "dolt" — a line drawn only for the posts that have a limit would say
  * which teachers have one.
+ *
+ * SAMMANHÄNGANDE UNDERVISNING (migration 20261218090000) is the same kind of
+ * figure and sits beside the days: the most minutes a teacher teaches in a
+ * row and the free minutes that end a stretch, a PAIR (both or neither). It
+ * was a field of the Arbetstid dialog while it was thought to be the
+ * working-time rule's, which every colleague reads; it is HR like the days,
+ * so the gateway nulls both for a reader without HR-läs and this card says
+ * them only in the visible branch, by the same rule.
  */
 export function EmploymentCard({
   teacher,
@@ -278,6 +294,14 @@ export function EmploymentCard({
             ) : null}
             {visible.maxTeachingDaysPerWeek != null ? (
               <li>{t("employmentSummaryTeachingDays", { days: visible.maxTeachingDaysPerWeek })}</li>
+            ) : null}
+            {visible.maxConsecutiveTeachingMinutes != null && visible.consecutiveBreakMinutes != null ? (
+              <li>
+                {t("employmentSummaryConsecutive", {
+                  max: visible.maxConsecutiveTeachingMinutes,
+                  breakMinutes: visible.consecutiveBreakMinutes,
+                })}
+              </li>
             ) : null}
             <li>
               {storedTarget === null
@@ -446,6 +470,47 @@ export function EmploymentCard({
               onChange={(event) => patch({ maxTeachingDaysPerWeek: event.target.value })}
             />
             <p className="text-xs text-muted-foreground">{t("teachingDaysHint")}</p>
+          </div>
+          {/*
+            Sammanhängande undervisning: at most X minutes in a row, then Y
+            free. Two fields that belong together (both or neither, said by
+            validateEmploymentDraft), one under the other with the time read
+            back beside each — the labels are long, and side by side they wrap
+            to different heights. Empty is "no limit", in the field itself, as
+            the days': no figure a school can accept without choosing it.
+          */}
+          <div className="space-y-3">
+            {CONSECUTIVE_FIELDS.map(({ figure, key, label }) => {
+              const said = consecutiveFigure(draft[key], figure);
+              return (
+                <div key={key} className="space-y-1.5">
+                  <Label htmlFor={`emp-${figure}-stretch-${teacher.id}`}>{t(label)}</Label>
+                  <div className="flex items-center gap-3">
+                    <Input
+                      id={`emp-${figure}-stretch-${teacher.id}`}
+                      type="number"
+                      inputMode="numeric"
+                      min={CONSECUTIVE_BOUNDS[figure].min}
+                      max={CONSECUTIVE_BOUNDS[figure].max}
+                      step={CONSECUTIVE_STEP}
+                      placeholder={t("teachingDaysNone")}
+                      aria-describedby={`emp-stretch-hint-${teacher.id}`}
+                      value={draft[key]}
+                      onChange={(event) => patch({ [key]: event.target.value })}
+                    />
+                    {said === null ? null : (
+                      <span className="shrink-0 text-sm text-muted-foreground">
+                        {t("consecutiveSaid", { hours: Math.floor(said / 60), minutes: said % 60 })}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+            <div id={`emp-stretch-hint-${teacher.id}`} className="space-y-1 text-xs text-muted-foreground">
+              <p>{t("consecutiveHint")}</p>
+              <p>{t("consecutiveRule")}</p>
+            </div>
           </div>
           <div className="space-y-1.5">
             <Label htmlFor={`emp-note-${teacher.id}`}>

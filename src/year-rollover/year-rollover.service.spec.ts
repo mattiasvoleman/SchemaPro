@@ -565,6 +565,9 @@ describe('YearRolloverService — rollover execute', () => {
         employmentForm: 'VISSTID',
         firstTeacherPercent: 20,
         lecturerPercent: 10,
+        // The limit on teaching in a row (20261218090000), a pair.
+        maxConsecutiveTeachingMinutes: 180,
+        consecutiveBreakMinutes: 30,
       });
     }
     const { world, service } = setup(rows);
@@ -823,13 +826,23 @@ describe('YearRolloverService — rollover execute', () => {
       }
     }
     expect(checked).toBeGreaterThan(40);
-    // The days and SCB's three were written for the one post that has them.
+    // The days, the limit on teaching in a row and SCB's three were written
+    // for the one post that has them.
     const annasPost = world.rows['teacherEmployment']!.find(
       (post) => post['academicYearId'] === target && post['userId'] === IDS.anna,
     );
-    expect(annasPost ? [annasPost['maxTeachingDaysPerWeek'], annasPost['employmentForm'], annasPost['firstTeacherPercent'], annasPost['lecturerPercent']] : null).toEqual(
-      carryStaffing ? [4, 'VISSTID', 20, 10] : null,
-    );
+    expect(
+      annasPost
+        ? [
+            annasPost['maxTeachingDaysPerWeek'],
+            annasPost['employmentForm'],
+            annasPost['firstTeacherPercent'],
+            annasPost['lecturerPercent'],
+            annasPost['maxConsecutiveTeachingMinutes'],
+            annasPost['consecutiveBreakMinutes'],
+          ]
+        : null,
+    ).toEqual(carryStaffing ? [4, 'VISSTID', 20, 10, 180, 30] : null);
     // The block was carried and its rows joined it.
     expect([...new Set(blockRules)].sort()).toEqual(['MAP_BLOCK', 'PROMOTE_BLOCK_NAME']);
     // Both ways a timplan row is written were audited.
@@ -1382,8 +1395,13 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
   it('previews who and what is carried, names every nedsättning, target override and day limit, and blocks on none of it', async () => {
     const rows = staffingRows();
     // Deltid in days on Cecilia's post (20261123090000), and on Bo's, who is not carried.
+    // The limit on teaching in a row (20261218090000) on Anna's and Bo's.
     for (const post of rows['teacherEmployment']!) {
       if (post['userId'] === IDS.cecilia || post['userId'] === IDS.bo) post['maxTeachingDaysPerWeek'] = 3;
+      if (post['userId'] === IDS.anna || post['userId'] === IDS.bo) {
+        post['maxConsecutiveTeachingMinutes'] = 180;
+        post['consecutiveBreakMinutes'] = 30;
+      }
     }
     const { world, service } = setup(rows);
     const preview = await service.previewRollover(IDS.yearA, { ...OPTIONS, carryStaffing: true }, admin);
@@ -1394,6 +1412,7 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
       withReduction: [IDS.anna],
       withTargetOverride: [IDS.cecilia],
       withDayLimit: [IDS.cecilia],
+      withStretchLimit: [IDS.anna],
       notCarried: [{ userId: IDS.bo, reason: 'INACTIVE' }],
       signaturesDropped: [],
       fromPeriod: [],
@@ -1421,7 +1440,7 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
       { code: 'STAFFING_DUTY_GROUP_DROPPED', blocking: false, params: { duties: 1, groups: ['9A'] } },
       { code: 'STAFFING_TEACHERS_NOT_CARRIED', blocking: false, params: { teachers: 2 } },
       { code: 'STAFFING_SLOT_OFF_GRID', blocking: false, params: { duties: 1 } },
-      { code: 'STAFFING_PER_YEAR_TERMS_CARRIED', blocking: false, params: { reductions: 1, overrides: 1, dayLimits: 1 } },
+      { code: 'STAFFING_PER_YEAR_TERMS_CARRIED', blocking: false, params: { reductions: 1, overrides: 1, dayLimits: 1, stretchLimits: 1 } },
     ]);
     // Carried tables are not "left behind".
     expect(preview.skipped.map((entry) => entry.model)).not.toEqual(expect.arrayContaining(['TeacherEmployment']));

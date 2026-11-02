@@ -489,6 +489,13 @@ const NAMED_CHECKS: Record<string, string> = {
     'firstTeacherPercent: förstelärar- och lektorsuppdraget kan tillsammans vara högst hela tjänsten.',
   TeacherEmployments_maxTeachingDaysPerWeek_check:
     'maxTeachingDaysPerWeek: tjänsten medger 1 till 6 undervisningsdagar i veckan, eller ingen gräns.',
+  // Sammanhängande undervisning (20261218090000), on the post beside the days.
+  TeacherEmployments_maxConsecutiveTeachingMinutes_check:
+    'maxConsecutiveTeachingMinutes: gränsen för undervisning i följd är 30 till 480 minuter, i femminuterssteg.',
+  TeacherEmployments_consecutiveBreakMinutes_check:
+    'consecutiveBreakMinutes: pausen som avslutar en följd är 5 till 120 minuter, i femminuterssteg.',
+  TeacherEmployments_consecutive_is_a_pair_check:
+    'maxConsecutiveTeachingMinutes: gränsen för undervisning i följd och pausen anges tillsammans, eller ingen av dem.',
   TeacherWorkRules_maxTeachingMinutesPerDay_check:
     'maxTeachingMinutesPerDay: dagstaket är 30 till 720 minuter, i femminuterssteg.',
   TeacherWorkRules_preferredFreeDayOfWeek_check:

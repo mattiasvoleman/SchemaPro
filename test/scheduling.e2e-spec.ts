@@ -330,6 +330,84 @@ describe('Scheduling surface (e2e)', () => {
         expect(recordedReads(harness.tx)).toEqual([]);
       });
 
+      /*
+       * Sammanhängande undervisning (20261218090000): the limit on teaching in a
+       * row is the post's, HR data beside the days, and a run's note about a
+       * teacher it left over their limit is read by the same rule
+       * (work-days.ts): stored with the weekday and the length and the teacher
+       * server-side, shown with the limit and the teacher's name to a reader
+       * with HR-läs, and as the one hidden note to everybody else.
+       */
+      describe('a note about a limit on teaching in a row', () => {
+        const stretchRun = {
+          ...failedRun,
+          status: 'SUCCEEDED',
+          solverStatus: 'OPTIMAL',
+          lessonsGenerated: 12,
+          error: null,
+          errorCode: null,
+          errorParams: null,
+          notes: [
+            {
+              category: 'AVAILABILITY',
+              code: 'TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT',
+              params: { day: 2, minutes: 250 },
+              message: 'A teacher with a limit on teaching in a row has 250 minutes in a row on Tuesdays …',
+              resourceNames: [],
+              subjectIds: [EVA],
+            },
+          ],
+        };
+        const evasLimit = {
+          ...evasPost,
+          maxTeachingDaysPerWeek: null,
+          maxConsecutiveTeachingMinutes: 180,
+          consecutiveBreakMinutes: 30,
+        };
+
+        it('shows rektor the limit and the pause read back from the post and the teacher named, and records the read', async () => {
+          harness.tx['optimizationJob']!['findUnique']!.mockResolvedValue(stretchRun);
+          harness.tx['teacherEmployment']!['findMany']!.mockResolvedValue([evasLimit]);
+
+          const response = await request(http())
+            .get(`/api/v1/optimization/jobs/${VERSION_ID}`)
+            .set('x-test-user', rektor())
+            .expect(200);
+
+          expect(response.body.notes).toEqual([
+            expect.objectContaining({
+              code: 'TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT',
+              params: { day: 2, minutes: 250, max: 180, breakMinutes: 30 },
+              resourceNames: ['Eva Ek'],
+            }),
+          ]);
+          expect(JSON.stringify(response.body)).not.toContain(EVA);
+          expect(recordedReads(harness.tx)).toEqual([expect.objectContaining({ kind: 'EMPLOYMENT', ids: [EVA] })]);
+        });
+
+        it.each([
+          ['the run', () => request(http()).get(`/api/v1/optimization/jobs/${VERSION_ID}`)],
+          ['the history', () => request(http()).get(`/api/v1/optimization/jobs?academicYearId=${YEAR_ID}`)],
+        ])('shows a schemaläggare without HR-läs %s the one hidden note: no limit, no teacher, no weekday, no length', async (_what, ask) => {
+          harness.tx['optimizationJob']!['findUnique']!.mockResolvedValue(stretchRun);
+          harness.tx['optimizationJob']!['findMany']!.mockResolvedValue([stretchRun]);
+          harness.tx['teacherEmployment']!['findMany']!.mockResolvedValue([evasLimit]);
+
+          const response = await ask().set('x-test-user', planner()).expect(200);
+
+          const view = Array.isArray(response.body) ? response.body[0] : response.body;
+          expect(view.notes).toEqual([
+            expect.objectContaining({ code: 'TEACHER_CONSECUTIVE_TEACHING_HIDDEN', params: {}, resourceNames: [] }),
+          ]);
+          const body = JSON.stringify(response.body);
+          expect(body).not.toMatch(/TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT|Eva|subjectIds|250|180|Tuesdays/);
+          expect(body).not.toContain(EVA);
+          // Were the posts read, they would say all of it.
+          expect(harness.tx['teacherEmployment']!['findMany']).not.toHaveBeenCalled();
+          expect(recordedReads(harness.tx)).toEqual([]);
+        });
+      });
+
       describe('from the synchronous trigger', () => {
         const refuseOverEvasDays = () => {
           harness.tx['teachingRequirement']!['findMany']!.mockResolvedValue([

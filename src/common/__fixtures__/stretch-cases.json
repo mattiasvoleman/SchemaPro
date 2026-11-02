@@ -1,0 +1,638 @@
+{
+  "_comment": "Sammanhängande undervisning (src/common/stretch.ts, teacherDayBreaches' CONSECUTIVE), replayed by src/common/stretch.spec.ts and by the engine's benchmarks/validate_schedule.py check (the every-week cases with open dates only: the engine has no weeks). A lesson is the teacher’s, as lead or medlärare; start and end are HH:MM; recurrence, startDate and endDate are optional (absent = every week, open). The expected breaches are WRITTEN BY HAND from the definition in stretch.ts, not generated from it.",
+  "cases": [
+    {
+      "name": "no rule says nothing about a long Monday",
+      "rule": {
+        "maxTeachingMinutesPerDay": null,
+        "maxTeachingDaysPerWeek": null,
+        "maxConsecutiveTeachingMinutes": null,
+        "consecutiveBreakMinutes": null
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "12:00"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "12:00",
+          "end": "16:00"
+        }
+      ],
+      "breaches": []
+    },
+    {
+      "name": "exactly the limit is fine",
+      "rule": {
+        "maxTeachingMinutesPerDay": null,
+        "maxTeachingDaysPerWeek": null,
+        "maxConsecutiveTeachingMinutes": 120,
+        "consecutiveBreakMinutes": 30
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "10:00"
+        }
+      ],
+      "breaches": []
+    },
+    {
+      "name": "five minutes over the limit is over",
+      "rule": {
+        "maxTeachingMinutesPerDay": null,
+        "maxTeachingDaysPerWeek": null,
+        "maxConsecutiveTeachingMinutes": 120,
+        "consecutiveBreakMinutes": 30
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "10:05"
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "CONSECUTIVE",
+          "dayOfWeek": 1,
+          "minutes": 125,
+          "max": 120,
+          "breakMinutes": 30,
+          "lessonIds": [
+            "a"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a gap of exactly the pause ends the stretch",
+      "rule": {
+        "maxTeachingMinutesPerDay": null,
+        "maxTeachingDaysPerWeek": null,
+        "maxConsecutiveTeachingMinutes": 120,
+        "consecutiveBreakMinutes": 30
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "10:00"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "10:30",
+          "end": "12:30"
+        }
+      ],
+      "breaches": []
+    },
+    {
+      "name": "a gap five minutes short of the pause does not",
+      "rule": {
+        "maxTeachingMinutesPerDay": null,
+        "maxTeachingDaysPerWeek": null,
+        "maxConsecutiveTeachingMinutes": 120,
+        "consecutiveBreakMinutes": 30
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "10:00"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "10:25",
+          "end": "12:30"
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "CONSECUTIVE",
+          "dayOfWeek": 1,
+          "minutes": 270,
+          "max": 120,
+          "breakMinutes": 30,
+          "lessonIds": [
+            "a",
+            "b"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "the gaps inside a stretch count in its length",
+      "rule": {
+        "maxTeachingMinutesPerDay": null,
+        "maxTeachingDaysPerWeek": null,
+        "maxConsecutiveTeachingMinutes": 120,
+        "consecutiveBreakMinutes": 30
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "09:00"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "09:10",
+          "end": "10:10"
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "CONSECUTIVE",
+          "dayOfWeek": 1,
+          "minutes": 130,
+          "max": 120,
+          "breakMinutes": 30,
+          "lessonIds": [
+            "a",
+            "b"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "two overlapping lessons are one stretch",
+      "rule": {
+        "maxTeachingMinutesPerDay": null,
+        "maxTeachingDaysPerWeek": null,
+        "maxConsecutiveTeachingMinutes": 120,
+        "consecutiveBreakMinutes": 30
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "10:00"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "09:00",
+          "end": "11:00"
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "CONSECUTIVE",
+          "dayOfWeek": 1,
+          "minutes": 180,
+          "max": 120,
+          "breakMinutes": 30,
+          "lessonIds": [
+            "a",
+            "b"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "each weekday is its own",
+      "rule": {
+        "maxTeachingMinutesPerDay": null,
+        "maxTeachingDaysPerWeek": null,
+        "maxConsecutiveTeachingMinutes": 120,
+        "consecutiveBreakMinutes": 30
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "11:00"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 2,
+          "start": "08:00",
+          "end": "09:00"
+        },
+        {
+          "id": "c",
+          "dayOfWeek": 2,
+          "start": "09:00",
+          "end": "10:00"
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "CONSECUTIVE",
+          "dayOfWeek": 1,
+          "minutes": 180,
+          "max": 120,
+          "breakMinutes": 30,
+          "lessonIds": [
+            "a"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a long stretch next to a short one: only the long one is named",
+      "rule": {
+        "maxTeachingMinutesPerDay": null,
+        "maxTeachingDaysPerWeek": null,
+        "maxConsecutiveTeachingMinutes": 120,
+        "consecutiveBreakMinutes": 30
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "11:00"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "13:00",
+          "end": "14:00"
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "CONSECUTIVE",
+          "dayOfWeek": 1,
+          "minutes": 180,
+          "max": 120,
+          "breakMinutes": 30,
+          "lessonIds": [
+            "a"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "two stretches over the limit: the longest is the figure, both are named",
+      "rule": {
+        "maxTeachingMinutesPerDay": null,
+        "maxTeachingDaysPerWeek": null,
+        "maxConsecutiveTeachingMinutes": 120,
+        "consecutiveBreakMinutes": 30
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "10:30"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "13:00",
+          "end": "16:00"
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "CONSECUTIVE",
+          "dayOfWeek": 1,
+          "minutes": 180,
+          "max": 120,
+          "breakMinutes": 30,
+          "lessonIds": [
+            "a",
+            "b"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "the evening and the next morning are not one stretch",
+      "rule": {
+        "maxTeachingMinutesPerDay": null,
+        "maxTeachingDaysPerWeek": null,
+        "maxConsecutiveTeachingMinutes": 120,
+        "consecutiveBreakMinutes": 30
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "16:00",
+          "end": "18:00"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 2,
+          "start": "08:00",
+          "end": "10:00"
+        }
+      ],
+      "breaches": []
+    },
+    {
+      "name": "a lesson that takes no time is no teaching",
+      "rule": {
+        "maxTeachingMinutesPerDay": null,
+        "maxTeachingDaysPerWeek": null,
+        "maxConsecutiveTeachingMinutes": 120,
+        "consecutiveBreakMinutes": 30
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "10:00"
+        },
+        {
+          "id": "z",
+          "dayOfWeek": 1,
+          "start": "10:00",
+          "end": "10:00"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "10:10",
+          "end": "10:10"
+        }
+      ],
+      "breaches": []
+    },
+    {
+      "name": "a gap of exactly ten ends a stretch, so three lessons with ten-minute changes are three stretches",
+      "rule": {
+        "maxTeachingMinutesPerDay": null,
+        "maxTeachingDaysPerWeek": null,
+        "maxConsecutiveTeachingMinutes": 240,
+        "consecutiveBreakMinutes": 10
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "09:00"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "09:10",
+          "end": "10:10"
+        },
+        {
+          "id": "c",
+          "dayOfWeek": 1,
+          "start": "10:20",
+          "end": "11:20"
+        }
+      ],
+      "breaches": []
+    },
+    {
+      "name": "the same lessons with a pause of fifteen are one stretch of three hours twenty",
+      "rule": {
+        "maxTeachingMinutesPerDay": null,
+        "maxTeachingDaysPerWeek": null,
+        "maxConsecutiveTeachingMinutes": 190,
+        "consecutiveBreakMinutes": 15
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "09:00"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "09:10",
+          "end": "10:10"
+        },
+        {
+          "id": "c",
+          "dayOfWeek": 1,
+          "start": "10:20",
+          "end": "11:20"
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "CONSECUTIVE",
+          "dayOfWeek": 1,
+          "minutes": 200,
+          "max": 190,
+          "breakMinutes": 15,
+          "lessonIds": [
+            "a",
+            "b",
+            "c"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a pause of five: a gap of five ends it",
+      "rule": {
+        "maxTeachingMinutesPerDay": null,
+        "maxTeachingDaysPerWeek": null,
+        "maxConsecutiveTeachingMinutes": 120,
+        "consecutiveBreakMinutes": 5
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "10:00"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "10:05",
+          "end": "12:05"
+        }
+      ],
+      "breaches": []
+    },
+    {
+      "name": "a pause of ten: the same gap of five does not",
+      "rule": {
+        "maxTeachingMinutesPerDay": null,
+        "maxTeachingDaysPerWeek": null,
+        "maxConsecutiveTeachingMinutes": 120,
+        "consecutiveBreakMinutes": 10
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "10:00"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "10:05",
+          "end": "12:05"
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "CONSECUTIVE",
+          "dayOfWeek": 1,
+          "minutes": 245,
+          "max": 120,
+          "breakMinutes": 10,
+          "lessonIds": [
+            "a",
+            "b"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "odd and even weeks never put the two lessons together",
+      "rule": {
+        "maxTeachingMinutesPerDay": null,
+        "maxTeachingDaysPerWeek": null,
+        "maxConsecutiveTeachingMinutes": 120,
+        "consecutiveBreakMinutes": 30
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "10:00",
+          "recurrence": "ODD_WEEKS"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "10:00",
+          "end": "12:00",
+          "recurrence": "EVEN_WEEKS"
+        }
+      ],
+      "breaches": []
+    },
+    {
+      "name": "an odd-week lesson and an every-week lesson are together in the odd weeks",
+      "rule": {
+        "maxTeachingMinutesPerDay": null,
+        "maxTeachingDaysPerWeek": null,
+        "maxConsecutiveTeachingMinutes": 120,
+        "consecutiveBreakMinutes": 30
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "10:00",
+          "recurrence": "ODD_WEEKS"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "10:00",
+          "end": "12:00"
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "CONSECUTIVE",
+          "dayOfWeek": 1,
+          "minutes": 240,
+          "max": 120,
+          "breakMinutes": 30,
+          "lessonIds": [
+            "a",
+            "b"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "two dated lessons whose windows never meet are never together",
+      "rule": {
+        "maxTeachingMinutesPerDay": null,
+        "maxTeachingDaysPerWeek": null,
+        "maxConsecutiveTeachingMinutes": 120,
+        "consecutiveBreakMinutes": 30
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "10:00",
+          "startDate": "2026-08-17",
+          "endDate": "2026-12-18"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "10:00",
+          "end": "12:00",
+          "startDate": "2027-01-11",
+          "endDate": "2027-06-11"
+        }
+      ],
+      "breaches": []
+    },
+    {
+      "name": "two dated lessons whose windows meet are together",
+      "rule": {
+        "maxTeachingMinutesPerDay": null,
+        "maxTeachingDaysPerWeek": null,
+        "maxConsecutiveTeachingMinutes": 120,
+        "consecutiveBreakMinutes": 30
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "start": "08:00",
+          "end": "10:00",
+          "startDate": "2026-08-17",
+          "endDate": "2026-12-18"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "start": "10:00",
+          "end": "12:00",
+          "startDate": "2026-10-05",
+          "endDate": "2027-06-11"
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "CONSECUTIVE",
+          "dayOfWeek": 1,
+          "minutes": 240,
+          "max": 120,
+          "breakMinutes": 30,
+          "lessonIds": [
+            "a",
+            "b"
+          ]
+        }
+      ]
+    }
+  ]
+}

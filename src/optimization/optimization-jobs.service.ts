@@ -12,10 +12,12 @@ import type {
 } from './interfaces/ai-engine-payload.interface';
 import { rostersOfYear } from '../year-rollover/projected-rosters';
 import {
+  TEACHER_CONSECUTIVE_TEACHING_HIDDEN,
   TEACHER_WORK_DAYS_HIDDEN,
   WorkDaysRefusal,
   forReader,
   isDaysBearing,
+  isStretchBearing,
   type PostShown,
   type SentenceShown,
   type StoredSentence,
@@ -196,15 +198,60 @@ interface JobRow {
 }
 
 /**
- * Every days-bearing sentence of a run, with whom it is about: what a reader
- * with HR-läs needs read back from the posts before the run can be shown.
+ * Every sentence of a run that is HR data of a post — a days-bearing
+ * refusal, and a note about a limit on teaching in a row (work-days.ts) —
+ * with whom it is about: what a reader with HR-läs needs read back from the
+ * posts before the run can be shown.
  */
-function daysSentencesOf(job: JobRow): StoredSentence[] {
+function hrSentencesOf(job: JobRow): StoredSentence[] {
   return [
     ...entriesOf(job.conflicts).map((entry) => sentenceOf(entry.code, entry.params, entry.message, subjectsOf(entry))),
+    ...entriesOf(job.notes).map((entry) => sentenceOf(entry.code, entry.params, entry.message, subjectsOf(entry))),
     summaryOf(job),
     failureOf(job),
-  ].filter((sentence) => isDaysBearing(sentence.code));
+  ].filter((sentence) => isDaysBearing(sentence.code) || isStretchBearing(sentence.code));
+}
+
+/**
+ * A run's notes as one reader is shown them. A note about a limit on teaching
+ * in a row goes through the rule of the days (forReader, work-days.ts): the
+ * limit, the pause and the teacher's name only for a reader with HR-läs, from
+ * the post as it stands, and otherwise the one hidden note. Every other note
+ * names its teacher for every reader (notesViewOf).
+ */
+function notesShown(
+  stored: unknown,
+  names: ReadonlyMap<string, string>,
+  say: (sentence: StoredSentence) => SentenceShown,
+): ConflictView[] {
+  const hiddenCategories = new Set<string>();
+  const out: ConflictView[] = [];
+  for (const entry of entriesOf(stored)) {
+    if (!isStretchBearing(entry.code)) {
+      out.push(...notesViewOf([entry], names));
+      continue;
+    }
+    const note = conflictView(entry);
+    const shown = say(sentenceOf(entry.code, entry.params, entry.message, subjectsOf(entry)));
+    if (shown.code === TEACHER_CONSECUTIVE_TEACHING_HIDDEN) {
+      if (hiddenCategories.has(note.category)) continue;
+      hiddenCategories.add(note.category);
+      out.push({
+        category: note.category,
+        code: TEACHER_CONSECUTIVE_TEACHING_HIDDEN,
+        params: {},
+        message: shown.message as string,
+        resourceNames: [],
+      });
+      continue;
+    }
+    out.push({
+      ...note,
+      ...(shown.params !== null ? { params: shown.params } : {}),
+      resourceNames: [...note.resourceNames, ...shown.names],
+    });
+  }
+  return out;
 }
 
 /** The run's summary as a sentence, its teachers from inside its params. */
@@ -315,8 +362,10 @@ export function jobView(
       errorNames: failure.names,
       conflicts,
       // Whose wish it was, beside the sentence as a conflict's classes are:
-      // the name the school gives the teacher now, never a stored copy.
-      notes: notesViewOf(job.notes, names),
+      // the name the school gives the teacher now, never a stored copy. A
+      // limit on teaching in a row is the exception: HR data, named only to a
+      // reader with HR-läs (notesShown).
+      notes: notesShown(job.notes, names, say),
       error: failure.message,
       supersededBy: null,
       createdAt: job.createdAt.toISOString(),
@@ -548,7 +597,7 @@ export class OptimizationJobsService {
   private forReader(jobs: JobRow[], user: AuthenticatedUser): Promise<OptimizationJobView[]> {
     return this.shownTo(
       user,
-      jobs.map((job) => ({ academicYearId: job.academicYearId, sentences: daysSentencesOf(job) })),
+      jobs.map((job) => ({ academicYearId: job.academicYearId, sentences: hrSentencesOf(job) })),
       notedOf(jobs),
       (posts, names) => {
         const shown = jobs.map((job) => jobView(job, posts(job.academicYearId), names));
@@ -574,13 +623,16 @@ export class OptimizationJobsService {
    * Läslogg in the same transaction — Users ids, which is what
    * app.personal_data_read records.
    *
-   * THE NAMES ARE NOT RECORDED. A note puts a teacher's name beside their
-   * wished free day, which is on the work rule every member of staff reads
-   * (the table's staff policy, GET /teacher-work-rules) and not on the post:
-   * a name beside a staff-readable fact, as the timetable layer names who
-   * teaches what (access-log.ts, NOT RECORDED). What the days sentence
-   * records is the post's days it shows, not the name beside them, and the
-   * publication check names the teachers it stops on the same way.
+   * THE NAMES OF A FREE-DAY NOTE ARE NOT RECORDED. That note puts a teacher's
+   * name beside their wished free day, which is on the work rule every member
+   * of staff reads (the table's staff policy, GET /teacher-work-rules) and
+   * not on the post: a name beside a staff-readable fact, as the timetable
+   * layer names who teaches what (access-log.ts, NOT RECORDED). What the days
+   * sentence records is the post's days it shows, not the name beside them,
+   * and the publication check names the teachers it stops on the same way.
+   * A note about a limit on teaching in a row is the post's, as the days are:
+   * it is read back through this method for a reader with HR-läs, who is
+   * shown it and so recorded (EMPLOYMENT), and for nobody else.
    */
   private async shownTo<T>(
     user: AuthenticatedUser,
@@ -607,12 +659,16 @@ export class OptimizationJobsService {
         where: {
           academicYearId: { in: years },
           userId: { in: subjects },
-          maxTeachingDaysPerWeek: { not: null },
+          // A post with a limit of either kind: deltid in days, or a limit on
+          // teaching in a row (both are read back here, work-days.ts).
+          OR: [{ maxTeachingDaysPerWeek: { not: null } }, { maxConsecutiveTeachingMinutes: { not: null } }],
         },
         select: {
           academicYearId: true,
           userId: true,
           maxTeachingDaysPerWeek: true,
+          maxConsecutiveTeachingMinutes: true,
+          consecutiveBreakMinutes: true,
           user: { select: { firstName: true, lastName: true } },
         },
       });
@@ -620,8 +676,12 @@ export class OptimizationJobsService {
       for (const post of posts) {
         const ofYear = byYear.get(post.academicYearId) ?? new Map<string, PostShown>();
         ofYear.set(post.userId, {
-          // The where admits no null.
-          days: post.maxTeachingDaysPerWeek as number,
+          days: post.maxTeachingDaysPerWeek,
+          // Both columns or neither (the pair CHECK).
+          stretch:
+            post.maxConsecutiveTeachingMinutes !== null && post.consecutiveBreakMinutes !== null
+              ? { max: post.maxConsecutiveTeachingMinutes, breakMinutes: post.consecutiveBreakMinutes }
+              : null,
           name: `${post.user.firstName} ${post.user.lastName}`,
         });
         byYear.set(post.academicYearId, ofYear);

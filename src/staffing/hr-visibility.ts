@@ -24,7 +24,12 @@ import type { LogChange } from './employment-log-diff';
  * employment, read like the tjänst % beside them. And deltid in days
  * (20261123090000), for the same reason: the generator, a hand edit and the
  * Vikarietavla judge with it for every reader alike, and word what they
- * answer for the reader (src/common/teacher-day.ts).
+ * answer for the reader (src/common/teacher-day.ts). And the limit on
+ * teaching in a row (maxConsecutiveTeachingMinutes and consecutiveBreakMinutes,
+ * 20261218090000): a limit like "at most three hours, then half an hour free"
+ * may be an arbetsanpassning after sick leave, so it is kept from a reader
+ * without HR-läs as the days are, and the three places that judge with it
+ * word their answer for the reader (src/common/stretch.ts).
  *
  * A teacher reads their own post and nobody else's, which the services
  * already filter; this answers only for administrators.
@@ -36,9 +41,13 @@ export function readsHr(user: AuthenticatedUser): boolean {
 /**
  * The post's HR columns besides the two percentages, which every reader of
  * a post is handed and so are typed apart: SCB's three (20261111090000),
- * and deltid in days (maxTeachingDaysPerWeek, 20261123090000) — the most
+ * deltid in days (maxTeachingDaysPerWeek, 20261123090000) — the most
  * weekdays with teaching the post allows, a term of the employment like
- * the tjänst % it usually comes with. ONE LIST for the post as it is read
+ * the tjänst % it usually comes with — and the limit on teaching in a row
+ * (maxConsecutiveTeachingMinutes and consecutiveBreakMinutes, 20261218090000):
+ * the most minutes in a row and the free time that ends a stretch, the days'
+ * sibling in the same part of the week, moved here from the work rule that
+ * every colleague reads. ONE LIST for the post as it is read
  * (hideHr) and its versions in Historik (hideHrChanges): a column added to
  * the post that is HR goes here, or both show it.
  */
@@ -47,19 +56,27 @@ export const EMPLOYMENT_HR_FIELDS = [
   'firstTeacherPercent',
   'lecturerPercent',
   'maxTeachingDaysPerWeek',
+  'maxConsecutiveTeachingMinutes',
+  'consecutiveBreakMinutes',
 ] as const;
 
 /** The fields a version's before and after name that a reader without HR-läs is not shown. */
 const HR_FIELDS = new Set<string>(['employmentPercent', 'reductionPercent', ...EMPLOYMENT_HR_FIELDS]);
 
 /**
- * Of those, the ones whose change is not even said. Deltid in days is null
- * on most posts, so a version that names it says the teacher has (or had) a
- * limit at all — which is what the masked reader is not to learn: an
- * "ändrad, dolt" on exactly the versions where the days moved would give it
- * back. A changed percentage says nothing of the kind: every post has one.
+ * Of those, the ones whose change is not even said. Deltid in days and the
+ * limit on teaching in a row are null on most posts, so a version that names
+ * one says the teacher has (or had) a limit at all — which is what the masked
+ * reader is not to learn: an "ändrad, dolt" on exactly the versions where the
+ * days or the limit moved would give it back. A changed percentage says
+ * nothing of the kind: every post has one. Both of the limit's fields are
+ * here, so a version that moved the pair says nothing of either.
  */
-const UNSAID_HR_FIELDS = new Set<string>(['maxTeachingDaysPerWeek']);
+const UNSAID_HR_FIELDS = new Set<string>([
+  'maxTeachingDaysPerWeek',
+  'maxConsecutiveTeachingMinutes',
+  'consecutiveBreakMinutes',
+]);
 
 /**
  * The problem `code` of a read that is HR data through and through (SCB:s
@@ -82,7 +99,7 @@ export function hideHr<T extends { employmentPercent: number; reductionPercent: 
     reductionPercent: null,
     ...('note' in row ? { note: null } : {}),
     ...('periods' in row ? { periods: [] } : {}),
-    // SCB's three and the days, where the row carries them (a post; not a load row).
+    // SCB's three, the days and the limit on teaching in a row, where the row carries them (a post; not a load row).
     ...Object.fromEntries(EMPLOYMENT_HR_FIELDS.filter((field) => field in row).map((field) => [field, null])),
     hrHidden: true,
   };
@@ -90,9 +107,10 @@ export function hideHr<T extends { employmentPercent: number; reductionPercent: 
 
 /**
  * A version's changes with the HR values left out: that a percentage or
- * one of SCB's three changed is still said, a change of the days is left
- * out whole (UNSAID_HR_FIELDS). A version that changed nothing else is then
- * empty, and the history leaves it out (teacher-employments.service.ts).
+ * one of SCB's three changed is still said, a change of the days or of the
+ * limit on teaching in a row is left out whole (UNSAID_HR_FIELDS). A version
+ * that changed nothing else is then empty, and the history leaves it out
+ * (teacher-employments.service.ts).
  */
 export function hideHrChanges(changes: LogChange[]): (LogChange & { hrHidden?: true })[] {
   return changes

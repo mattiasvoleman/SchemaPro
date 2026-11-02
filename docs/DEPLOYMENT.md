@@ -637,6 +637,153 @@ Walk the full product loop once, in order:
   "generatorKeepsPupilGapsDown" = false WHERE "generatorKeepsPupilGapsDown";`,
   as the owner), and tell the schools it was. The column can stay through a
   rollback: nothing before the release reads it.
+- **Sammanhängande undervisning**: 20261218090000 adds two nullable columns to
+  `TeacherEmployments`, the post (`maxConsecutiveTeachingMinutes`, the most
+  minutes of teaching in a row, 30–480, and `consecutiveBreakMinutes`, the free
+  time that ends a stretch, 5–120; both multiples of five, set together or not
+  at all, each range and the pair with a CHECK of its own, named
+  `TeacherEmployments_…_check`), and one to `LunchSettings`
+  (`generatorKeepsConsecutiveTeaching`, boolean, NOT NULL, default false): the
+  Skolregler switch that has the generator *try* to keep each teacher's
+  stretches within their limit. **It is off for every school until that school
+  turns it on**; the migration turns nothing on and changes no row, so every
+  post reads null and null and every Skolregler row reads off.
+  **THE LIMIT IS HR DATA, and sits on the post beside the days**
+  (`maxTeachingDaysPerWeek`, 20261123090000), not on the work rule: it may be
+  an arbetsanpassning after sick leave (the user decided this 2026-11-02, after
+  the first build had put it on the work rule). The work rule is read in every
+  column by every teacher and administrator of the school and row security
+  cannot hide a column; the post is the table whose administrator arms are the
+  API role's alone (20261028090000), whose teacher reads only their own, and
+  whose gateway read leaves HR columns out for an administrator without HR-läs
+  (`hideHr`). So the limit is written by those who decide (rektor, a full
+  administrator: `@Decides`, and a schemaläggare no longer sets it), read in
+  full by anybody with HR-läs and by the teacher themself, and recorded in the
+  Läslogg (EMPLOYMENT) whenever it is shown or read for the generator. Nobody
+  else sees a figure or a weekday of it anywhere, but that is NOT the same as
+  seeing nothing: exactly as for the days, a reader without HR-läs is told "can
+  not, because of a working-time rule" without the number. The Vikarietavla
+  names a teacher it cannot offer a pass (`excluded[]` carries the teacher with
+  `CONSECUTIVE_TEACHING_HIDDEN`, and the candidate dialog shows the name beside
+  "Skulle undervisa längre i följd än anställningen medger"), and a hand edit's
+  warning carries the lesson and the role, so a named teacher's having a limit
+  can show from an exclusion, a warning or a missing substitute. Both are
+  recorded in the Läslogg (EMPLOYMENT). A run's note and a schemaförslag name
+  nobody. That was the user's choice (parity with the days); tightening it
+  (leaving the teacher out of `excluded[]` for a reader without HR-läs) is a
+  behaviour change not made here. A hand edit's warning, the Vikarietavla's
+  "Kan inte" and manual-pick warning and a run's note each have a `_HIDDEN` twin
+  without figures
+  (`TEACHER_CONSECUTIVE_TOO_LONG_HIDDEN`, `CONSECUTIVE_TEACHING_HIDDEN`,
+  `COVER_EXCEEDS_CONSECUTIVE_TEACHING_HIDDEN`,
+  `TEACHER_CONSECUTIVE_TEACHING_HIDDEN`), the post's history leaves out a
+  version that changed only the limit, and a schemaförslag stores the one
+  hidden note for every reader (so its comparison cannot say how many teachers
+  it concerns). The year rollover carries the limit with the post
+  (`COPY_UNLESS_DEFAULT`, and the preview names the posts that have one). The
+  limit is the läsår's, like the days, and a teacher with no post that year
+  cannot have one. It is not emitted by SS12000 (a change to it alone moves the
+  v1 Duty's `meta.modified`, as the days do; `docs/integration-api.md`).
+  The limit is the generator's wish and not its promise (it pays for a lesson
+  whose stretch is not ended in time and refuses no week over it, and Generera
+  names the teachers it did not manage, to those who read HR); a hand edit of
+  the grundschema is warned and the Vikarietavla never proposes a cover that
+  would break it, and neither of those two looks at the switch.
+  **The work rule is untouched**: this migration no longer replaces the trigger
+  function `app.teacher_work_rules_day_is_planned()` (it stays as
+  20261123090000 made it, with its sentence about the cap and the wish), and
+  the work rule's cap (20261123090000) stays staff-readable, which is a known
+  difference from the limit that the user has not asked to change.
+  It takes ACCESS EXCLUSIVE on `TeacherEmployments` and `LunchSettings`, NOWAIT
+  and together in a loop: the generator reads both at the start of every run
+  (the posts for the days and now the limits), the Skolregler card and the
+  anställning card on every load, and requests take them in both orders, so a
+  migration that waited for one while it held the other could close a cycle. A
+  refusal gives back whatever it got and tries again 50 ms later, so it never
+  waits while it holds a lock and no request queues behind it; if the two are
+  not free at once in 30 s it stops with nothing changed —
+  `prisma migrate resolve --rolled-back
+  20261218090000_en_larares_foljd_av_lektioner_har_en_grans_som_generatorn_forsoker_halla`,
+  then deploy again. Before: the three columns absent from
+  `information_schema.columns`. After: the three present, and `SELECT
+  count(*) FROM "TeacherEmployments" WHERE "maxConsecutiveTeachingMinutes" IS
+  NOT NULL OR "consecutiveBreakMinutes" IS NOT NULL` and `SELECT count(*) FROM
+  "LunchSettings" WHERE "generatorKeepsConsecutiveTeaching"` both 0, and
+  `TeacherWorkRules` without them.
+  The API before the release names only the old columns, so it keeps working
+  between the migration and the deploy: its PUT of a post updates the columns
+  it knows and leaves these (absent keeps), its INSERT leaves them null and
+  null, which the pair CHECK admits, and its rollover writes next year's posts
+  without them; its upsert of the Skolregler does not name the switch, so a
+  save leaves it as it was. The new API names the columns in every read of a
+  post and of the Skolregler, so the migration goes in first, then the merge.
+  The engine and the API deploy from the same merge, and the two new optional
+  fields of a teacher in the request (`maxConsecutiveTeachingMinutes`,
+  `consecutiveBreakMinutes`, on the teacher's work-rule entry, the engine's
+  contract unchanged) reach the engine only for a school that has turned the
+  switch on and a post that sets both, which nobody can do before the new web
+  is out: so the short window where the API is new and the engine old sends
+  nothing the old engine refuses. A PUT of a post that leaves the two fields
+  out keeps them, so a web from before the release, open in a tab, clears
+  nothing. The other way round does not hold for the anställning card: the new
+  web sends the two keys, which the API before the release refuses (400,
+  `forbidNonWhitelisted`), so the API goes out before, or with, the web. The
+  Skolregler card leaves the switch's key out unless the API it read named it
+  or the admin turned the switch on, so a lunch save never meets that 400.
+  After the deploy the engine's `/openapi.json` names the two fields on a
+  teacher; the weight is `WEIGHT_CONSECUTIVE_TEACHING` (default 250 per
+  lesson whose stretch is not ended in time, 0 or below switches it off) and
+  needs no setting. 250 is far above the wished free day (40) and the
+  disruption term (8 a slot) on purpose: at 40 the wish did not hold in the
+  measurement (docs/verification-baseline.md). The consequence is a priority a
+  school should be told: with the switch on, a regeneration moves a flagged
+  teacher's lessons before it keeps last term's places or a pupil's free hour,
+  and when the search has little time (the pupils' free hours and the
+  teachers' free days both on, or a short budget) it may not manage the
+  limit at all, which Generera then says by name.
+  What the limit does not see, stated here and in the manual (4.4): a lesson
+  a shared teacher gives at ANOTHER school counts as free time, in all four
+  places (the generator gets it as an UNAVAILABLE reservation, and the hand-edit
+  warning, the notes after a run and the Vikarietavla read this school's own
+  lessons only), so 08–10 here, 10–11 there and 11–12 here is no stretch over
+  180 minutes; the limit is on this school's post. The engine has no
+  terms: a teacher with an autumn post and a spring post that never meet is
+  read as one week, so the engine may pay for a stretch the gateway, which
+  reads real weeks, does not see (it errs toward the stricter reading, never
+  the looser). The engine clips a locked window to the school day, so a lock
+  07:30–08:30 counts 08:00–08:30 there and 07:30–08:30 in the gateway.
+  **Do not roll the API back past this release once a limit is set.** The old
+  API's history lists every key of the post's logged JSON that it does not know,
+  and its `hideHrChanges` masks only the keys it does know, so an administrator
+  without HR-läs would be shown the limit (and that it changed) in Historik by
+  the old code, and those versions cannot be removed afterwards: the history is
+  append-only. It is a one-way door for the API as soon as the first limit is
+  set; the API is also the door most often opened in an incident. Consider
+  setting no first limit until the release has stood for a week.
+  **Rolling it back:** the engine before this release refuses the two fields
+  (its request models are `extra="forbid"`: 422), so once a school has turned
+  the switch on and a post has a limit, an engine rolled back alone fails that
+  school's Generera and schemaförslag. Roll the API back first, or with the
+  engine: the API before the release never sends them. If the API must stay,
+  turn the switch off for every school before the engine goes back (`UPDATE
+  "LunchSettings" SET "generatorKeepsConsecutiveTeaching" = false WHERE
+  "generatorKeepsConsecutiveTeaching";`, as the owner), and tell the schools it
+  was. The columns can stay through a rollback: nothing before the release
+  reads them. **But do not roll the API back once a limit is set.** The old
+  API's history lists every key of the post's logged JSON it does not know, and
+  `hideHrChanges` masks only the keys it does know, so an administrator without
+  HR-läs would be shown the limit (and that it changed) in Historik by the old
+  code. If the API must go back, clear the limits first (as the owner) and
+  accept that they are lost, or leave the old API unserved to anyone but those
+  with HR-läs. Two things an API from before the release does with a post that
+  holds a limit, which a rollback must not forget: its PUT of a post names
+  neither field and so leaves them, and its rollover writes next year's posts
+  without them, so a year rolled by the old API starts with no limits. List the
+  limits before rolling back (`SELECT "userId", "maxConsecutiveTeachingMinutes",
+  "consecutiveBreakMinutes" FROM "TeacherEmployments" WHERE
+  "maxConsecutiveTeachingMinutes" IS NOT NULL;`, as the owner; the figures are
+  HR data, so do not keep the output with names) and tell the schools that, until
+  the release is back, a rollover carries no limit.
 - **Rastvakt i vardagen**: 20261210090000 adds `SupervisionCovers` (the
   vikarietavla's decision on an absent rastvakt's pass on one date: a
   vikarie, or none), the enum `SupervisionCoverDecision`, an `(id,

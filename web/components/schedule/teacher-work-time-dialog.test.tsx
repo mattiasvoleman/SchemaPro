@@ -650,3 +650,44 @@ describe("the rest field read back as hours", () => {
  * while this dialog is fetched only when opened: its tests are in
  * teacher-work-time-summary.test.tsx.
  */
+
+describe("no limit on teaching in a row (Sammanhängande undervisning)", () => {
+  /*
+   * The limit is HR, set on the teacher's POST beside the days (Anställning on
+   * the People page), because this dialog's row is read by every colleague.
+   * A field or a key for it here would show it to the wrong readers, or make
+   * the gateway answer 400 (PUT /teacher-work-rules takes no such key).
+   */
+  it("offers neither of its two fields, with or without a stored rule", () => {
+    const { unmount } = open(undefined);
+    expect(screen.queryByLabelText("consecutiveMax")).toBeNull();
+    expect(screen.queryByLabelText("consecutiveBreak")).toBeNull();
+    expect(screen.queryByText("consecutiveTitle")).toBeNull();
+    unmount();
+
+    open(rule());
+    expect(screen.queryByLabelText("consecutiveMax")).toBeNull();
+    expect(screen.queryByLabelText("consecutiveBreak")).toBeNull();
+  });
+
+  it("sends the six keys of the rule and no key for the limit", async () => {
+    const user = userEvent.setup();
+    open(rule());
+
+    setNumber("restMinutes", "600");
+    await user.click(save());
+
+    const body = saveMock.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(Object.keys(body).sort()).toEqual(
+      [
+        "lunchEndTime",
+        "lunchMinutes",
+        "lunchStartTime",
+        "maxTeachingMinutesPerDay",
+        "minDailyRestMinutes",
+        "preferredFreeDayOfWeek",
+        "userId",
+      ].sort(),
+    );
+  });
+});

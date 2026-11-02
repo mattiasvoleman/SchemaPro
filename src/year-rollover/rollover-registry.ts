@@ -564,6 +564,14 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
       // (withDayLimit), to the deciders it is shown to. Null on most posts,
       // and then not named in the write (the planHash stays).
       maxTeachingDaysPerWeek: 'COPY_UNLESS_DEFAULT',
+      // The limit on teaching in a row (20261218090000) travels the same way,
+      // as a pair: both columns are copied, or neither is named in the write.
+      // It is the days' sibling, HR data on the post, agreed for a year like
+      // them, and so the preview names every post that carries one
+      // (withStretchLimit) to the deciders it is shown to. A period never
+      // states it either.
+      maxConsecutiveTeachingMinutes: 'COPY_UNLESS_DEFAULT',
+      consecutiveBreakMinutes: 'COPY_UNLESS_DEFAULT',
       ...timestamps,
     },
   },

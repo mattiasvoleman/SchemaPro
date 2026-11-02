@@ -18,7 +18,7 @@ export interface ComparisonTableProps {
   /** The mode /check reported: it names the current column. Null until it has answered. */
   mode: PublishMode | null;
   unplaced: CandidatesUnplaced | null;
-  /** The free-day wishes the draft the batch was solved from breaks; null when not measured. */
+  /** The wishes (free days, teaching in a row) the draft the batch was solved from breaks; null when not measured. */
   draftNotes: readonly CandidateConflict[] | null;
   idle: IdleState;
   /** Candidates whose lessons could not be read: their håltimmar cannot be measured. */
@@ -117,11 +117,19 @@ export function ComparisonTable({
   );
 
   /*
-   * Önskad ledig dag (Lärarens dag): whose wished weekday the timetable
-   * gives lessons, one line per teacher, named by the gateway when the page
-   * is read. A count like every other row, with its difference against the
-   * draft, and the names under it — the reason a school would pick another
-   * candidate is who, not how many.
+   * Önskemål (Lärarens dag, Sammanhängande undervisning): whose wished
+   * weekday the timetable gives lessons, and whose longest stretch of
+   * teaching in a row is over the limit, one line per note, named by the
+   * gateway when the page is read. A count like every other row, with its
+   * difference against the draft, and the names under it — the reason a
+   * school would pick another candidate is who, not how many. The count is
+   * of wishes, not of teachers: one teacher can have both kinds.
+   *
+   * A LIMIT ON TEACHING IN A ROW IS HR (it is set on the teacher's post): a
+   * reader without HR-läs is handed TEACHER_CONSECUTIVE_TEACHING_HIDDEN, one
+   * note for the whole category and with no teacher and no figure. It is
+   * drawn as that sentence and nothing is read off the note, so a name that
+   * slipped into it would still not be shown.
    */
   const unmeasured = <span className="text-muted-foreground">{t("cell.notMeasured")}</span>;
   const wishes = (notes: readonly CandidateConflict[], current: readonly CandidateConflict[] | null) => (
@@ -129,17 +137,32 @@ export function ComparisonTable({
       <Line>{t("cell.wishes", { count: notes.length })}</Line>
       {current ? (
         <Line muted>
-          {t("cell.delta", { delta: signed(notes.length - current.length, (value) => t("cell.teacherCount", { count: value })) })}
+          {t("cell.delta", { delta: signed(notes.length - current.length, (value) => t("cell.wishCount", { count: value })) })}
         </Line>
       ) : null}
-      {notes.map((note, index) => (
-        <Line key={index} muted>
-          {t("cell.wish", {
-            name: note.resourceNames && note.resourceNames.length > 0 ? note.resourceNames.join(", ") : t("cell.wishNobody"),
-            day: Number(note.params?.["day"] ?? 0),
-          })}
-        </Line>
-      ))}
+      {notes.map((note, index) => {
+        if (note.code === "TEACHER_CONSECUTIVE_TEACHING_HIDDEN") {
+          return (
+            <Line key={index} muted>
+              {t("cell.stretchHidden")}
+            </Line>
+          );
+        }
+        const name = note.resourceNames && note.resourceNames.length > 0 ? note.resourceNames.join(", ") : t("cell.wishNobody");
+        const day = Number(note.params?.["day"] ?? 0);
+        return (
+          <Line key={index} muted>
+            {note.code === "TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT"
+              ? t("cell.stretch", {
+                  name,
+                  day,
+                  minutes: Number(note.params?.["minutes"] ?? 0),
+                  max: Number(note.params?.["max"] ?? 0),
+                })
+              : t("cell.wish", { name, day })}
+          </Line>
+        );
+      })}
     </>
   );
 

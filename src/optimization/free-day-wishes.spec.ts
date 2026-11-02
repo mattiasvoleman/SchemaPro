@@ -5,6 +5,7 @@ import {
   unkeptFreeDayWishes,
   type FreeDayWish,
   type TeachersOnDay,
+  type TimedLesson,
 } from './free-day-wishes';
 
 const EVA = '22222222-ffff-4fff-8fff-222222222222';
@@ -90,44 +91,78 @@ describe('unkeptFreeDayWishes', () => {
 });
 
 describe('timetableWith', () => {
+  const window = { recurrence: 'ALL_WEEKS' as const, startDate: null, endDate: null };
   const rows = [
-    { id: 'req-ma', teacherId: EVA, coTeacherId: OLLE },
-    { id: 'req-sv', teacherId: null, coTeacherId: null },
+    { id: 'req-ma', teacherId: EVA, coTeacherId: OLLE, ...window },
+    { id: 'req-sv', teacherId: null, coTeacherId: null, ...window },
   ];
+  /** A kept lesson with an hour, as the fetch reads it. */
+  const kept = (overrides: Partial<TimedLesson> = {}): TimedLesson => ({
+    id: 'kept-1',
+    teacherId: OLLE,
+    coTeacherId: null,
+    dayOfWeek: 1,
+    startMinutes: 8 * 60,
+    endMinutes: 9 * 60,
+    ...window,
+    ...overrides,
+  });
+  /** A solved lesson as the engine answers it. */
+  const solved = (overrides: Record<string, unknown>) => ({
+    startTime: '08:00:00',
+    endTime: '09:00:00',
+    ...overrides,
+  });
 
   it('is the kept lessons and each solved lesson with its post’s two adults, as the apply stamps them', () => {
     expect(
-      timetableWith([lesson({ dayOfWeek: 2 })], rows, [
-        { requirementId: 'req-ma', dayOfWeek: 5 },
-        { requirementId: 'req-sv', dayOfWeek: 1 },
-      ]),
+      timetableWith([kept({ dayOfWeek: 2 })], rows, [
+        solved({ requirementId: 'req-ma', dayOfWeek: 5 }) as never,
+        solved({ requirementId: 'req-sv', dayOfWeek: 1, startTime: '10:00', endTime: '11:30' }) as never,
+      ]).map(({ id: _id, ...rest }) => rest),
     ).toEqual([
-      { teacherId: OLLE, coTeacherId: null, dayOfWeek: 2 },
-      { teacherId: EVA, coTeacherId: OLLE, dayOfWeek: 5 },
-      { teacherId: null, coTeacherId: null, dayOfWeek: 1 },
+      { teacherId: OLLE, coTeacherId: null, dayOfWeek: 2, startMinutes: 480, endMinutes: 540, ...window },
+      { teacherId: EVA, coTeacherId: OLLE, dayOfWeek: 5, startMinutes: 480, endMinutes: 540, ...window },
+      { teacherId: null, coTeacherId: null, dayOfWeek: 1, startMinutes: 600, endMinutes: 690, ...window },
     ]);
+  });
+
+  it('gives a solved lesson the window of its post and not the engine’s, as the apply stamps it', () => {
+    const dated = [
+      {
+        id: 'req-ma',
+        teacherId: EVA,
+        coTeacherId: null,
+        recurrence: 'ODD_WEEKS' as const,
+        startDate: new Date('2026-08-17T00:00:00.000Z'),
+        endDate: new Date('2026-12-18T00:00:00.000Z'),
+      },
+    ];
+    expect(
+      timetableWith([], dated, [solved({ requirementId: 'req-ma', dayOfWeek: 3 }) as never]),
+    ).toMatchObject([{ recurrence: 'ODD_WEEKS', startDate: '2026-08-17', endDate: '2026-12-18' }]);
   });
 
   it('delade lektioner: gives a shared post’s lesson its own teacher and the post’s medlärare', () => {
     const BO = 'bo-share';
-    expect(timetableWith([], rows, [{ requirementId: 'req-ma', dayOfWeek: 4, teacherId: BO }])).toEqual([
-      { teacherId: BO, coTeacherId: OLLE, dayOfWeek: 4 },
-    ]);
+    expect(
+      timetableWith([], rows, [solved({ requirementId: 'req-ma', dayOfWeek: 4, teacherId: BO }) as never]),
+    ).toMatchObject([{ teacherId: BO, coTeacherId: OLLE, dayOfWeek: 4 }]);
     // Eva's Thursday wish is kept: the lesson that day is Bo's.
     expect(
       unkeptFreeDayWishes(
         [wish({ userId: EVA, day: 4 })],
-        timetableWith([], rows, [{ requirementId: 'req-ma', dayOfWeek: 4, teacherId: BO }]),
+        timetableWith([], rows, [solved({ requirementId: 'req-ma', dayOfWeek: 4, teacherId: BO }) as never]),
       ),
     ).toEqual([]);
   });
 
   it('leaves out a lesson whose post it was not given, which the demand guard refuses before it is stored', () => {
-    expect(timetableWith([], rows, [{ requirementId: 'req-gone', dayOfWeek: 5 }])).toEqual([]);
+    expect(timetableWith([], rows, [solved({ requirementId: 'req-gone', dayOfWeek: 5 }) as never])).toEqual([]);
   });
 
   it('breaks Olle’s wish by a lesson he co-teaches only through the post, as unkeptFreeDayWishes reads it', () => {
-    const timetable = timetableWith([], rows, [{ requirementId: 'req-ma', dayOfWeek: 3 }]);
+    const timetable = timetableWith([], rows, [solved({ requirementId: 'req-ma', dayOfWeek: 3 }) as never]);
     expect(unkeptFreeDayWishes([wish({ userId: OLLE, ruleId: RULE_OLLE, day: 3 })], timetable)).toHaveLength(1);
   });
 });

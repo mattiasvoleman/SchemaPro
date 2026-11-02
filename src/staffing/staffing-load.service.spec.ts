@@ -433,13 +433,14 @@ describe('StaffingLoadService', () => {
     expect(mine(hidden).subjects.every((subject) => subject.percentOfEmployment === null)).toBe(true);
   });
 
-  it('carries no deltid in days in a teacher’s employment, masked or not (20261123090000)', async () => {
+  it('carries no deltid in days and no limit on teaching in a row in a teacher’s employment, masked or not (20261123090000, 20261218090000)', async () => {
     /*
-     * The post is read whole (load-input.ts, no select), so the days are in
-     * the rows it reads; LoadEmployment maps a list that leaves them out
-     * (decision 7: the report, the checks and the picker do not judge days).
-     * Were they ever mapped, hideHr would null them for the masked reader —
-     * EMPLOYMENT_HR_FIELDS has them — and this says null either way.
+     * The post is read whole (load-input.ts, no select), so the days and the
+     * limit are in the rows it reads; LoadEmployment maps a list that leaves
+     * them out (decision 7: the report, the checks and the picker do not
+     * judge days, nor stretches). Were they ever mapped, hideHr would null
+     * them for the masked reader — EMPLOYMENT_HR_FIELDS has them — and this
+     * says null either way.
      */
     tx.teacherEmployment.findMany.mockResolvedValue([
       {
@@ -450,6 +451,8 @@ describe('StaffingLoadService', () => {
         teachingTargetMinutesPerWeek: null,
         signature: 'ME',
         maxTeachingDaysPerWeek: 4,
+        maxConsecutiveTeachingMinutes: 180,
+        consecutiveBreakMinutes: 30,
       },
     ]);
     const employmentOf = (report: Awaited<ReturnType<StaffingLoadService['load']>>) =>
@@ -459,10 +462,14 @@ describe('StaffingLoadService', () => {
     expect(hidden).toMatchObject({ hrHidden: true });
     expect(hidden!['maxTeachingDaysPerWeek'] ?? null).toBeNull();
     expect(hidden).not.toHaveProperty('maxTeachingDaysPerWeek');
+    expect(hidden).not.toHaveProperty('maxConsecutiveTeachingMinutes');
+    expect(hidden).not.toHaveProperty('consecutiveBreakMinutes');
 
     const shown = employmentOf(await service.load(YEAR_ID, 'planned', testUser()));
     expect(shown).toMatchObject({ employmentPercent: 80 });
     expect(shown).not.toHaveProperty('maxTeachingDaysPerWeek');
+    expect(shown).not.toHaveProperty('maxConsecutiveTeachingMinutes');
+    expect(shown).not.toHaveProperty('consecutiveBreakMinutes');
   });
 
   describe('rastvakt (Rastvaktsschema)', () => {

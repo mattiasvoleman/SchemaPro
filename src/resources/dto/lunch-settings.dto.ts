@@ -77,4 +77,15 @@ export class UpsertLunchSettingsDto {
   @ValidateIf((_, value) => value !== undefined)
   @IsBoolean()
   generatorKeepsPupilGapsDown?: boolean;
+
+  /**
+   * Sammanhängande undervisning (20261218090000): the generator tries to keep
+   * each teacher's stretches of teaching within the limit their work rule
+   * states. A wish and not a guarantee, off until the school turns it on.
+   * Optional on exactly the travel switch's terms above: absent leaves the
+   * stored value as it is, null is refused with the 400 that names the field.
+   */
+  @ValidateIf((_, value) => value !== undefined)
+  @IsBoolean()
+  generatorKeepsConsecutiveTeaching?: boolean;
 }

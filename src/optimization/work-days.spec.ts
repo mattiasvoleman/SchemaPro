@@ -1,10 +1,15 @@
 import {
+  CONSECUTIVE_TEACHING_HIDDEN_MESSAGE,
   DAYS_BEARING_CODES,
+  STRETCH_BEARING_CODES,
+  TEACHER_CONSECUTIVE_TEACHING_HIDDEN,
+  TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT,
   TEACHER_WORK_DAYS_HIDDEN,
   WORK_DAYS_HIDDEN_MESSAGE,
   WorkDaysRefusal,
   forReader,
   isDaysBearing,
+  isStretchBearing,
   withoutDays,
   type PostShown,
   type StoredSentence,
@@ -108,7 +113,7 @@ describe('work-days', () => {
 
     it('shows a reader with HR-läs the days from the post as it stands, and the teacher', () => {
       expect(
-        forReader(stored({ params: { limit: POST, weekMinutes: 1500 } }), posts([[EVA, { days: 3, name: 'Eva Ek' }]])),
+        forReader(stored({ params: { limit: POST, weekMinutes: 1500 } }), posts([[EVA, { days: 3, stretch: null, name: 'Eva Ek' }]])),
       ).toEqual({
         code: 'TEACHER_WORK_DAYS_CANNOT_BE_KEPT',
         params: { limit: POST, weekMinutes: 1500, days: 3 },
@@ -121,17 +126,17 @@ describe('work-days', () => {
     it('reads the figure from the post, never from a stored one', () => {
       // No row is written with one; a hand-edited row that has one must not be
       // the number shown.
-      const shown = forReader(stored({ params: { limit: POST, days: 5 } }), posts([[EVA, { days: 3, name: 'Eva Ek' }]]));
+      const shown = forReader(stored({ params: { limit: POST, days: 5 } }), posts([[EVA, { days: 3, stretch: null, name: 'Eva Ek' }]]));
 
       expect(shown.params).toEqual({ limit: POST, days: 3 });
     });
 
     it('builds the params from nothing when the stored sentence kept none', () => {
-      expect(forReader(stored({ params: null }), posts([[EVA, { days: 4, name: 'Eva Ek' }]])).params).toEqual({ days: 4 });
+      expect(forReader(stored({ params: null }), posts([[EVA, { days: 4, stretch: null, name: 'Eva Ek' }]])).params).toEqual({ days: 4 });
     });
 
     it('keeps the hidden form for a reader with HR-läs when the post has no limit now, or is gone', () => {
-      const hidden = forReader(stored(), posts([[OLLE, { days: 2, name: 'Olle Ås' }]]));
+      const hidden = forReader(stored(), posts([[OLLE, { days: 2, stretch: null, name: 'Olle Ås' }]]));
 
       expect(hidden).toEqual({
         code: TEACHER_WORK_DAYS_HIDDEN,
@@ -143,7 +148,7 @@ describe('work-days', () => {
     });
 
     it('keeps the hidden form when the sentence names nobody the run could resolve', () => {
-      expect(forReader(stored({ subjectIds: [] }), posts([[EVA, { days: 3, name: 'Eva Ek' }]])).code).toBe(
+      expect(forReader(stored({ subjectIds: [] }), posts([[EVA, { days: 3, stretch: null, name: 'Eva Ek' }]])).code).toBe(
         TEACHER_WORK_DAYS_HIDDEN,
       );
     });
@@ -151,16 +156,89 @@ describe('work-days', () => {
     it('shows a sentence about two teachers only when both posts can be read back', () => {
       const both = stored({ subjectIds: [EVA, OLLE] });
 
-      expect(forReader(both, posts([[EVA, { days: 3, name: 'Eva Ek' }]])).code).toBe(TEACHER_WORK_DAYS_HIDDEN);
+      expect(forReader(both, posts([[EVA, { days: 3, stretch: null, name: 'Eva Ek' }]])).code).toBe(TEACHER_WORK_DAYS_HIDDEN);
       expect(
         forReader(
           both,
           posts([
-            [EVA, { days: 3, name: 'Eva Ek' }],
-            [OLLE, { days: 2, name: 'Olle Ås' }],
+            [EVA, { days: 3, stretch: null, name: 'Eva Ek' }],
+            [OLLE, { days: 2, stretch: null, name: 'Olle Ås' }],
           ]),
         ),
       ).toMatchObject({ params: { limit: POST, days: 3 }, names: ['Eva Ek', 'Olle Ås'], revealed: [EVA, OLLE] });
+    });
+  });
+  describe('the limit on teaching in a row (20261218090000), read by the rule of the days', () => {
+    /** A note as the gateway stores it: the weekday and the length, no figure of the limit, Eva beside it. */
+    const note = (overrides: Partial<StoredSentence> = {}): StoredSentence => ({
+      code: TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT,
+      params: { day: 2, minutes: 250 },
+      message: 'A teacher with a limit on teaching in a row has 250 minutes in a row on Tuesdays …',
+      subjectIds: [EVA],
+      ...overrides,
+    });
+    const evasLimit: PostShown = { days: null, stretch: { max: 180, breakMinutes: 30 }, name: 'Eva Ek' };
+
+    it('bears the limit in the note, and in nothing else', () => {
+      expect(STRETCH_BEARING_CODES).toEqual([TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT]);
+      expect(isStretchBearing(TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT)).toBe(true);
+      // The masked note says no figure: masking it again would be a loop. And the days are not the limit.
+      for (const code of [TEACHER_CONSECUTIVE_TEACHING_HIDDEN, 'TEACHER_WORK_DAYS_CANNOT_BE_KEPT', 'TEACHER_FREE_DAY_WISH_NOT_KEPT', null, undefined]) {
+        expect(isStretchBearing(code)).toBe(false);
+      }
+    });
+
+    it('hides the note from a reader without HR-läs: no teacher, no weekday, no length, no figure', () => {
+      expect(forReader(note(), null)).toEqual({
+        code: TEACHER_CONSECUTIVE_TEACHING_HIDDEN,
+        params: {},
+        message: CONSECUTIVE_TEACHING_HIDDEN_MESSAGE,
+        names: [],
+        revealed: [],
+      });
+      expect(CONSECUTIVE_TEACHING_HIDDEN_MESSAGE).not.toMatch(/\d/);
+    });
+
+    it('shows a reader with HR-läs the limit and the pause from the post as it stands, and the teacher', () => {
+      expect(forReader(note(), posts([[EVA, evasLimit]]))).toEqual({
+        code: TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT,
+        params: { day: 2, minutes: 250, max: 180, breakMinutes: 30 },
+        message: note().message,
+        names: ['Eva Ek'],
+        revealed: [EVA],
+      });
+    });
+
+    it('reads the figures from the post, never from a stored one', () => {
+      const shown = forReader(
+        note({ params: { day: 2, minutes: 250, max: 90, breakMinutes: 5 } }),
+        posts([[EVA, evasLimit]]),
+      );
+      expect(shown.params).toEqual({ day: 2, minutes: 250, max: 180, breakMinutes: 30 });
+    });
+
+    it('keeps the hidden form for a reader with HR-läs when the post has no limit now (days alone do not count), or is gone', () => {
+      for (const read of [
+        posts([[EVA, { days: 3, stretch: null, name: 'Eva Ek' }]]),
+        posts([[OLLE, evasLimit]]),
+        posts([]),
+      ]) {
+        expect(forReader(note(), read)).toMatchObject({ code: TEACHER_CONSECUTIVE_TEACHING_HIDDEN, names: [], revealed: [] });
+      }
+      expect(forReader(note({ subjectIds: [] }), posts([[EVA, evasLimit]])).code).toBe(TEACHER_CONSECUTIVE_TEACHING_HIDDEN);
+    });
+
+    it('does not mistake a post with a limit for a days limit, nor the other way round', () => {
+      // A post with a limit alone has no days to read back for a days sentence …
+      expect(forReader(stored(), posts([[EVA, evasLimit]])).code).toBe(TEACHER_WORK_DAYS_HIDDEN);
+      // … and one with days alone has no limit for a note.
+      expect(forReader(note(), posts([[EVA, { days: 3, stretch: null, name: 'Eva Ek' }]])).code).toBe(
+        TEACHER_CONSECUTIVE_TEACHING_HIDDEN,
+      );
+      // A post with both is read back for each by its own figure.
+      const both: PostShown = { days: 3, stretch: { max: 120, breakMinutes: 15 }, name: 'Eva Ek' };
+      expect(forReader(stored(), posts([[EVA, both]])).params).toMatchObject({ days: 3 });
+      expect(forReader(note(), posts([[EVA, both]])).params).toMatchObject({ max: 120, breakMinutes: 15 });
     });
   });
 });

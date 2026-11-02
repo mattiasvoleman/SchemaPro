@@ -2022,7 +2022,8 @@
       lektioner × <span class="ui">Räknas för lärare (%)</span>. Medläraren
       räknas med hela posten, som förut.</li>
     <li>Genereringen lägger varje lektion med sin lärare. Lärarens egna regler
-      (lunch, vila, tak per dag, arbetsdagar och önskad ledig dag, 4.4) räknar
+      (lunch, vila, tak per dag, arbetsdagar, önskad ledig dag och gräns för
+      undervisning i följd, 4.4) räknar
       bara hens egna lektioner av posten. En låst lektion med Bo täcker Bos
       lektion och inte en av Annas.</li>
     <li>Ändrar du en lektion av posten för hand i grundschemat (5.3), till
@@ -3113,7 +3114,8 @@
     per vecka</span> (4.3), av rektor eller en fullständig administratör. Det
     är en HR-uppgift som tjänstgöringsgraden: den som inte har HR-läs ser inte
     antalet, varken i tjänsten, i genereringens svar, i varningarna eller på
-    vikarietavlan, men regeln gäller lika för alla.
+    vikarietavlan, men regeln gäller lika för alla. Gränsen för undervisning i
+    följd (se nedan) sitter på samma ställe och behandlas på samma sätt.
   </p>
   <p>
     Generatorn håller dagstaket och dagarna som hårda regler och säger vilken
@@ -3124,9 +3126,129 @@
     lärare under <span class="ui">Annan lärare</span> får du en varning.
     En vikarie på lärarens önskade lediga dag rankas lägre.
   </p>
+  <h4 id="sammanhangande-undervisning">Sammanhängande undervisning: högst så länge i följd</h4>
+  <p>
+    Under <span class="ui">Anställning</span>, vid sidan av
+    <span class="ui">Undervisningsdagar per vecka</span> (4.3), begränsar du
+    hur länge en lärare undervisar i följd. Det gör rektor eller en
+    fullständig administratör, som läser HR-uppgifter. Du anger två siffror som
+    hör ihop: högst hur många minuter, och hur många minuter ledigt som
+    avslutar en följd. Till exempel 180 och 30 för en lärare som efter en
+    sjukskrivning högst ska undervisa tre timmar och sedan ha en halvtimme
+    ledigt. Fyller du i bara den ena siffran säger formuläret till. Gränsen
+    hör till läsårets anställning och följer med när läsåret rullas.
+  </p>
+  <div class="note">
+    <span class="label">Vem ser gränsen</span>
+    <p>
+      Gränsen är en HR-uppgift, som tjänstgöringsgraden och
+      undervisningsdagarna: den kan vara en anpassning efter sjukskrivning.
+      Den ser bara den som läser HR-uppgifter (rektor, en fullständig
+      administratör och den som har HR-läs), och läraren själv ser sin egen.
+      Kollegor (lärare) ser den inte. För alla andra administratörer visar
+      anställningen inget värde, och historiken nämner inte ens att gränsen
+      ändrats. Siffror och veckodag syns inte heller på något annat ställe,
+      men som för undervisningsdagarna är det inte detsamma som att inget syns:
+      vikarietavlan kan visa att en <em>namngiven</em> lärare inte kan ta ett
+      pass på grund av en dold arbetstidsregel (<span class="ui">Kan
+      inte</span>: <em>Skulle undervisa längre i följd än anställningen
+      medger</em>), och varningen vid handredigering och vid
+      <span class="ui">Annan lärare</span> nämner lektionen och rollen. Att en
+      namngiven lärare har en gräns kan alltså framgå av en uteslutning, en
+      varning eller en saknad vikarie, men inte vilken gräns. Anteckningen efter
+      genereringen och schemaförslagen nämner ingen lärare. Regeln gäller lika
+      för alla; det är bara orden som skiljer. Varje gång någon med HR-läs ser en gräns skrivs det i
+      läsloggen, och genereringens egen läsning av gränserna den skickar till
+      motorn också. Gränsen skickas inte ut i SS12000.
+    </p>
+  </div>
+  <p>
+    En följd räknas från första lektionens start till sista lektionens slut.
+    Har läraren lektioner med mindre ledigt emellan än den angivna tiden hör
+    de till samma följd: fem minuter för att byta sal är ingen paus. Exakt
+    gränsen går bra, och en paus på exakt den angivna tiden avslutar följden.
+    Lektionerna räknas som för dagstaket: som ansvarig lärare eller som
+    medlärare, med sin egen längd. Uppdrag, rastvakt och lunch räknas inte
+    som undervisning, så de ger ledig tid, och natten avslutar alltid en följd.
+  </p>
+  <div class="note">
+    <span class="label">Generatorn försöker, men garanterar inte</span>
+    <p>
+      I generatorn är gränsen ett önskemål, som den önskade lediga dagen, och
+      inget hårt krav. Motorn väger gränsen mot resten av veckan och ger hellre
+      upp den än ett helt schema. Vill du ha det ska du slå på
+      <span class="ui">Generatorn försöker hålla lärarnas sammanhängande
+      undervisning</span> bland skolreglerna (5.1) — avstängt tills skolan
+      slår på det, och då får skolan precis samma schema som förut. Lärare
+      vars gräns genereringen inte lyckades hålla står efter körningen under
+      <span class="ui">Önskemål som inte gick att hålla</span>, med den längsta
+      följden och dagen för den som läser HR-uppgifter (alla andra ser bara
+      att en gräns inte hölls), och schemaförslagens jämförelse har en rad för
+      dem (5.9). Låsta och handlagda lektioner räknas med: en följd som bara
+      består av dem bryter gränsen, fast generatorn inte kunde göra något åt
+      det.
+    </p>
+    <p>
+      <strong>Hur ofta det lyckas beror på hur mycket tid sökningen har.</strong>
+      I våra mätningar höll generatorn gränsen för de flesta av de mest
+      belastade lärarna när gränsen var det enda tunga i veckan och sökningen
+      fick god tid. På den sökningstid som är standard, en minut per fas,
+      och med elevernas håltimmar (5.1) och lärarnas önskade lediga dagar
+      påslagna samtidigt blev det ingen mätbar skillnad mot att inte ha
+      gränsen alls. En skola som slår på alla tre ska räkna med att många
+      lärare hamnar under <span class="ui">Önskemål som inte gick att
+      hålla</span>, och att Skolregler-kortet säger det när både elevernas
+      håltimmar och den här brytaren står på.
+    </p>
+    <p>
+      <strong>Önskemålet går före stabilitet och elevernas håltimmar.</strong>
+      När gränsen väger in väljer generatorn hellre att flytta en flaggad
+      lärares lektion än att behålla förra schemats plats för den, och hellre
+      än att spara en elevs lediga timme. Slå därför på brytaren före den
+      första genereringen om du kan. Slås den på mitt i en termin och du kör
+      Generera igen på ett befintligt schema flyttas många lektioner, inte
+      bara de flaggade lärarnas: på en testskola med 423 lektioner, där de
+      åtta mest belastade lärarna fick en gräns, flyttades mellan 93 och 186
+      lektioner (mitt emellan en femtedel och nästan hälften), och lärarnas
+      lediga tid mellan lektionerna ökade från omkring 450 till omkring 3 000
+      minuter i veckan. Gränsen hölls för fem till åtta av de åtta lärarna.
+    </p>
+  </div>
+  <p>
+    Gränsen är hård där den kostar lite. En handredigering i grundschemat som
+    ger en lärare en längre följd än gränsen tillåts, men ger en varning, vare
+    sig skolan har slagit på det i generatorn eller inte. Den som inte läser
+    HR-uppgifter får varningen utan siffror. Vikarietavlan
+    föreslår ingen vikarie som skulle undervisa längre i följd än sin gräns —
+    följden som själva vikariatet ingår i räknas, andra följder den dagen
+    ligger utanför — och väljer du ändå en sådan lärare under
+    <span class="ui">Annan lärare</span> får du en varning (6.3).
+  </p>
+  <div class="note">
+    <span class="label">Vad gränsen inte ser</span>
+    <p>
+      Gränsen gäller lektionerna på den här skolan. En lärare som delas mellan
+      två skolor har den andra skolans lektioner som ledig tid i följden, på
+      alla fyra ställena: generatorn, varningen vid handredigering,
+      anteckningarna efter körningen och Vikarietavlan. Undervisar läraren
+      08–10 här, 10–11 på den andra skolan och 11–12 här finns alltså ingen
+      följd över tre timmar, fast läraren har undervisat fyra timmar i sträck.
+      Gränsen sätts på lärarens anställning på den här skolan och räknas inte
+      om för lektionerna på den andra skolan.
+    </p>
+    <p>
+      Generatorn har inga terminer: en lärare med en höstpost och en vårpost
+      som aldrig möts räknas som en och samma vecka, så den kan betala för en
+      följd som varningen vid handredigering, som läser verkliga veckor med
+      datum, inte ser. Det gör generatorn strängare än varningen, aldrig lösare. Ett
+      låst fönster som börjar före skoldagen räknas i generatorn från
+      skoldagens början, men i varningen från sin egen början.
+    </p>
+  </div>
   <p>
     Dagstaket och den önskade lediga dagen sätts bara av den som planerar,
-    aldrig av läraren själv.
+    aldrig av läraren själv. Gränsen för undervisning i följd sätts av rektor
+    eller en fullständig administratör, på anställningen.
   </p>
 
   <div class="check">
@@ -3488,7 +3610,9 @@
     De anger garanterad lunchrast för varje klass — inom vilket tidsfönster och
     hur många minuter — antalet platser i matsalen, högsta antal lektioner
     per dag och klass, om generatorn ska hålla restiden mellan skolans
-    skolområden och om den ska hålla nere elevernas håltimmar.
+    skolområden och om den ska hålla nere elevernas håltimmar. Två av dem är
+    egentligen önskemål och inte villkor: elevernas håltimmar och lärarnas
+    sammanhängande undervisning.
   </p>
   <p id="restid-i-generatorn">
     <strong>Restid i generatorn.</strong> Har skolan skolområden med restid
@@ -3631,6 +3755,26 @@
       också mot elevernas.
     </p>
   </div>
+  <p id="lararnas-foljd-i-generatorn">
+    <strong>Lärarnas sammanhängande undervisning i generatorn.</strong> Har
+    någon lärare en gräns för hur länge hen undervisar i följd (4.4) försöker
+    genereringen hålla den om du slår på
+    <span class="ui">Generatorn försöker hålla lärarnas sammanhängande
+    undervisning</span> bland skolreglerna och sparar. Det är avstängt tills
+    skolan slår på det, och en skola som låter det vara får precis samma schema
+    som förut. Det är ett önskemål och inte ett löfte: genereringen betalar för
+    varje lektion vars följd inte avslutas med en paus i tid och väger det mot
+    allt annat, så en lärares gräns kan stå kvar bruten när veckan inte går ihop
+    på annat sätt. Efter körningen står det under
+    <span class="ui">Önskemål som inte gick att hålla</span> när en gräns inte
+    hölls; den som läser HR-uppgifter ser vilken lärare och veckodag och
+    siffrorna, alla andra en rad om att en lärares gräns inte hölls. Handredigeringens
+    varning och Vikarietavlans uteslutning bryr sig inte om reglaget, bara
+    genereringens försök gör det. Önskemålet väger tyngre än att behålla förra
+    schemats platser och än elevernas håltimmar, och står
+    <span class="ui">Generatorn håller nere elevernas håltimmar</span> på
+    samtidigt blir gränserna ofta inte hållna på standardtiden (4.4).
+  </p>
   <div class="note">
     <span class="label">Där generatorn räknar grövre än sidan</span>
     <p>
@@ -4405,7 +4549,7 @@
       <tr><td class="k">Flyttade lektioner</td><td>Hur många av utkastets genererade lektioner förslaget lägger på en annan dag eller tid, till exempel <em>3 av 14</em>.</td></tr>
       <tr><td class="k">Salsbyten</td><td>Lektioner som ligger kvar på samma tid men i en annan sal.</td></tr>
       <tr><td class="k">Lärarnas håltimmar</td><td>Alla lärares håltimmar i minuter en vanlig vecka, hur många lärare som har någon, och den som har flest.</td></tr>
-      <tr><td class="k">Önskad ledig dag som inte hålls</td><td>Hur många lärare som får lektioner den veckodag de önskat ha ledig (4.4), och under det vilka och vilken dag, till exempel <em>Bo Ek · onsdagar</em>. Låsta och handlagda lektioner räknas med, eftersom förslaget behåller dem.</td></tr>
+      <tr><td class="k">Önskemål som inte hålls</td><td>Hur många önskemål som bryts: lärare som får lektioner den veckodag de önskat ha ledig, och, när skolan slagit på det, att någon lärares gräns för undervisning i följd inte hålls (4.4). Gränserna är HR-uppgifter, så förslagen sparar bara en enda mening om dem för alla läsare, utan lärare, siffror och veckodag: hur många lärare det gäller syns alltså inte, bara att någon gräns inte hålls. Under raden står vilka lärare önskade lediga dagar bryts, till exempel <em>Bo Ek · onsdagar</em>. Låsta och handlagda lektioner räknas med, eftersom förslaget behåller dem.</td></tr>
       <tr><td class="k">Elevernas håltimmar</td><td>Minuter per elev en vanlig vecka, hur många klasser som har någon, och den klass som har flest.</td></tr>
     </tbody>
   </table>
@@ -4462,8 +4606,8 @@
       Förslagen gäller grundschemat som det såg ut när de togs fram. Har någon
       sedan dess ändrat timplanen, de låsta eller handlagda lektionerna,
       utkastets lektioner, salarna, skolans regler (där också lärarnas
-      dagstak, önskade lediga dagar och tjänsternas undervisningsdagar
-      ingår) eller klasserna och grupperna, säger sidan vad som ändrats och
+      dagstak, önskade lediga dagar, gränser för undervisning i följd och
+      tjänsternas undervisningsdagar ingår) eller klasserna och grupperna, säger sidan vad som ändrats och
       <span class="ui">Tillämpa</span> går inte att klicka. Klicka
       <span class="ui">Uppdatera förslagen</span>: samma förslag räknas om
       utifrån dagens grundschema och kommer tillbaka så lika de gamla som
@@ -4692,6 +4836,18 @@
     emellan är kortare än restiden. Skälet drar ner förslaget men tar inte bort
     det. Väljer du en sådan vikarie med <span class="ui">Annan lärare</span>
     får du samma varning.
+  </p>
+  <p>
+    Har en lärare en gräns för hur länge hen undervisar i följd (4.4) föreslås
+    hen inte om vikariatet skulle ge hen en längre följd än gränsen, räknad
+    med hens andra lektioner den dagen. Under <span class="ui">Kan inte</span>
+    står då, för den som läser HR-uppgifter, <em>Skulle undervisa mer än 180
+    min i följd innan 30 min ledigt</em> med den lärares egna siffror, och
+    väljer du hen ändå under <span class="ui">Annan lärare</span> får du en
+    varning med samma siffror. Alla andra läsare får <em>Skulle undervisa
+    längre i följd än anställningen medger</em> utan siffror, eftersom gränsen
+    är en HR-uppgift. En rastvaktspass räknas inte, eftersom det inte är
+    undervisning.
   </p>
   <p>
     Under <span class="ui">Kan inte</span> står de som inte föreslås och

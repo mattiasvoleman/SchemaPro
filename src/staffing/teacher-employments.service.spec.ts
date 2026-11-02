@@ -147,6 +147,37 @@ describe('TeacherEmploymentsService', () => {
       }
     });
 
+    describe('the limit on teaching in a row (20261218090000)', () => {
+      const limit = { maxConsecutiveTeachingMinutes: 180, consecutiveBreakMinutes: 30 };
+
+      it('leaves the limit out for a planner without HR-läs, as null beside hrHidden, and hands it to one with it', async () => {
+        tx.teacherEmployment.findMany.mockResolvedValue([storedRow(limit)]);
+        const [hidden] = await service.list(YEAR_ID, testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false }));
+        expect(hidden).toMatchObject({ maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null, hrHidden: true });
+        expect(JSON.stringify(hidden)).not.toMatch(/180|"consecutiveBreakMinutes":30/);
+        for (const principal of [
+          testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: true }),
+          testUser({ adminProfile: 'EXPEDITION', hrRead: true }),
+          testUser({ adminProfile: 'REKTOR' }),
+          testUser(),
+        ]) {
+          const [shown] = await service.list(YEAR_ID, principal);
+          expect(shown).toMatchObject(limit);
+          expect(shown).not.toHaveProperty('hrHidden');
+        }
+      });
+
+      it('hands a teacher their own limit, as it hands them their own days, and asks for nobody else’s post', async () => {
+        tx.teacherEmployment.findMany.mockResolvedValue([storedRow({ ...limit, userId: ME, maxTeachingDaysPerWeek: 4 })]);
+        const [own] = await service.list(YEAR_ID, testUser({ role: Role.TEACHER }));
+        expect(own).toMatchObject({ ...limit, maxTeachingDaysPerWeek: 4 });
+        expect(own).not.toHaveProperty('hrHidden');
+        expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { academicYearId: YEAR_ID, userId: ME } }),
+        );
+      });
+    });
+
     it('answers a PUT by a reader without HR-läs with the post masked as the list would show it', async () => {
       // The row as Prisma returns it, with the SS12000 stretch key no answer carries (20261104090000).
       tx.teacherEmployment.upsert.mockResolvedValue(
@@ -309,6 +340,74 @@ describe('TeacherEmploymentsService', () => {
           testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false }),
         );
         expect(answer).toMatchObject({ maxTeachingDaysPerWeek: null, hrHidden: true });
+      });
+    });
+
+    describe('the limit on teaching in a row (20261218090000)', () => {
+      const sent = { maxConsecutiveTeachingMinutes: 180, consecutiveBreakMinutes: 30 };
+      const written = () =>
+        (tx.teacherEmployment.upsert.mock.calls[0] as [{ update: Record<string, unknown>; create: Record<string, unknown> }])[0];
+
+      it('writes the pair when sent, on create and on update, and hands it back', async () => {
+        tx.teacherEmployment.upsert.mockResolvedValue(storedRow(sent));
+        const answer = await service.upsert(COLLEAGUE, YEAR_ID, { employmentPercent: 80, ...sent }, testUser());
+        expect(written().update).toMatchObject(sent);
+        expect(written().create).toMatchObject(sent);
+        expect(answer).toMatchObject(sent);
+      });
+
+      it('clears the pair sent as null on both', async () => {
+        tx.teacherEmployment.upsert.mockResolvedValue(storedRow());
+        await service.upsert(
+          COLLEAGUE,
+          YEAR_ID,
+          { employmentPercent: 80, maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null },
+          testUser(),
+        );
+        expect(written().update).toMatchObject({ maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null });
+        expect(written().create).toMatchObject({ maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null });
+      });
+
+      it('keeps the pair a PUT leaves out, and records the read of it it hands back', async () => {
+        // The card from before the fields, open over the release, clears nothing.
+        tx.teacherEmployment.upsert.mockResolvedValue(storedRow(sent));
+        await service.upsert(COLLEAGUE, YEAR_ID, { employmentPercent: 80 }, testUser({ channel: 'WEB' }));
+        for (const column of ['maxConsecutiveTeachingMinutes', 'consecutiveBreakMinutes']) {
+          expect(column in written().update).toBe(false);
+          expect(column in written().create).toBe(false);
+        }
+        expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [COLLEAGUE] }]);
+
+        // Sent, it is the caller's own echo: nothing recorded.
+        tx.$executeRaw.mockClear();
+        await service.upsert(COLLEAGUE, YEAR_ID, { employmentPercent: 80, ...sent }, testUser({ channel: 'WEB' }));
+        expect(recordedReads(tx)).toEqual([]);
+      });
+
+      it.each([
+        ['the limit alone', { maxConsecutiveTeachingMinutes: 180 }],
+        ['the break alone', { consecutiveBreakMinutes: 30 }],
+        ['the limit with a null break', { maxConsecutiveTeachingMinutes: 180, consecutiveBreakMinutes: null }],
+        ['a null limit with the break', { maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: 30 }],
+        ['a null limit alone', { maxConsecutiveTeachingMinutes: null }],
+      ])('refuses a half pair (%s) as a 400 naming both fields, before anything is read or written', async (_name, half) => {
+        const refused = service.upsert(COLLEAGUE, YEAR_ID, { employmentPercent: 80, ...half }, testUser());
+        await expect(refused).rejects.toBeInstanceOf(BadRequestException);
+        await expect(refused).rejects.toThrow(/gränsen för undervisning i följd och pausen som avslutar en följd/);
+        expect(prisma.withRls).not.toHaveBeenCalled();
+        expect(tx.teacherEmployment.upsert).not.toHaveBeenCalled();
+        expect(queryRaw).not.toHaveBeenCalled();
+      });
+
+      it('answers a PUT by a reader without HR-läs without the pair', async () => {
+        tx.teacherEmployment.upsert.mockResolvedValue(storedRow(sent));
+        const answer = await service.upsert(
+          COLLEAGUE,
+          YEAR_ID,
+          { employmentPercent: 80, ...sent },
+          testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false }),
+        );
+        expect(answer).toMatchObject({ maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null, hrHidden: true });
       });
     });
 
@@ -606,6 +705,45 @@ describe('TeacherEmploymentsService', () => {
       expect(answer.entries[0]).not.toHaveProperty('before');
     });
 
+    /*
+     * A POST'S HISTORY IS A READ OF THE POST (EMPLOYMENT): the log keeps the
+     * whole row as JSON, the percentages, the days and the limit among them.
+     * Recorded for the teacher whose versions were handed out, in the read's
+     * own transaction — for a reader without HR-läs too, since the versions
+     * were read although the HR values are left out of what they are given.
+     */
+    it('records the read of a teacher’s history in the Läslogg (EMPLOYMENT), in the same transaction', async () => {
+      tx.teacherEmploymentLog.findMany.mockResolvedValue([logRow(2), logRow(1, { action: 'CREATE', before: null })]);
+
+      await service.history(COLLEAGUE, YEAR_ID, testUser({ channel: 'WEB' } as never));
+
+      expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [COLLEAGUE] }]);
+    });
+
+    it('records it for a planner without HR-läs as well, although every version of the post is left out of what they are given', async () => {
+      const limit = (value: number | null) => ({
+        id: 'emp-1', userId: COLLEAGUE, academicYearId: YEAR_ID, employmentPercent: 100, reductionPercent: 0,
+        maxConsecutiveTeachingMinutes: value, consecutiveBreakMinutes: value === null ? null : 30,
+      });
+      tx.teacherEmploymentLog.findMany.mockResolvedValue([logRow(2, { before: limit(null), after: limit(120) })]);
+
+      const answer = await service.history(
+        COLLEAGUE, YEAR_ID, testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false, channel: 'WEB' } as never),
+      );
+
+      // The only version changed the limit alone: nothing of it is said.
+      expect(answer.entries).toEqual([]);
+      expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [COLLEAGUE] }]);
+    });
+
+    it('records nothing when there is no version to hand out', async () => {
+      tx.teacherEmploymentLog.findMany.mockResolvedValue([]);
+
+      await service.history(COLLEAGUE, YEAR_ID, testUser({ channel: 'WEB' } as never));
+
+      expect(recordedReads(tx)).toEqual([]);
+    });
+
     it('lets a teacher read their own, and 403s a colleague’s before a statement is sent', async () => {
       tx.teacherEmploymentLog.findMany.mockResolvedValue([]);
       const teacher = testUser({ role: Role.TEACHER });
@@ -713,6 +851,63 @@ describe('TeacherEmploymentsService', () => {
       it('keeps a version that changed nothing at all, for every reader, as it always did', async () => {
         tx.teacherEmploymentLog.findMany.mockResolvedValue([logRow(2, { before: post, after: post })]);
         expect((await hidden()).entries.map((entry) => [entry.version, entry.changes])).toEqual([[2, []]]);
+      });
+    });
+
+    describe('the limit on teaching in a row in Historik (20261218090000)', () => {
+      const post = { id: 'emp-1', userId: COLLEAGUE, academicYearId: YEAR_ID, employmentPercent: 100, reductionPercent: 0 };
+      const none = { maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null };
+      const set = { maxConsecutiveTeachingMinutes: 180, consecutiveBreakMinutes: 30 };
+      const hidden = () => service.history(COLLEAGUE, YEAR_ID, testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false }));
+      const shown = () => service.history(COLLEAGUE, YEAR_ID, testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: true }));
+
+      it('leaves out a version whose only change was the limit, and says nothing of it, for a reader without HR-läs', async () => {
+        tx.teacherEmploymentLog.findMany.mockResolvedValue([
+          logRow(3, { before: { ...post, ...none }, after: { ...post, ...set } }),
+          logRow(2, { before: { ...post, signature: 'A' }, after: { ...post, signature: 'B' } }),
+        ]);
+        expect((await hidden()).entries.map((entry) => entry.version)).toEqual([2]);
+        const answer = await shown();
+        expect(answer.entries.map((entry) => entry.version)).toEqual([3, 2]);
+        expect(answer.entries[0]!.changes).toEqual([
+          { field: 'maxConsecutiveTeachingMinutes', before: null, after: 180 },
+          { field: 'consecutiveBreakMinutes', before: null, after: 30 },
+        ]);
+      });
+
+      it('keeps a version that changed the limit and the tjänst %, with the limit left out and the percentage said to have changed', async () => {
+        tx.teacherEmploymentLog.findMany.mockResolvedValue([
+          logRow(2, { before: { ...post, ...none }, after: { ...post, employmentPercent: 80, ...set } }),
+        ]);
+        const masked = await hidden();
+        expect(masked.entries[0]!.changes).toEqual([{ field: 'employmentPercent', before: null, after: null, hrHidden: true }]);
+        expect(JSON.stringify(masked)).not.toMatch(/onsecutive|BreakMinutes|180/);
+        expect((await shown()).entries[0]!.changes.map((change) => change.field)).toEqual([
+          'employmentPercent',
+          'maxConsecutiveTeachingMinutes',
+          'consecutiveBreakMinutes',
+        ]);
+      });
+
+      it('keeps a created post that carried the limit, without it', async () => {
+        tx.teacherEmploymentLog.findMany.mockResolvedValue([
+          logRow(1, { action: 'CREATE', before: null, after: { ...post, signature: 'KOL', ...set } }),
+        ]);
+        const [created] = (await hidden()).entries;
+        expect(created!.changes.map((change) => change.field)).toEqual(['employmentPercent', 'reductionPercent', 'signature']);
+        expect(JSON.stringify(created)).not.toMatch(/onsecutive|BreakMinutes/);
+        expect((await shown()).entries[0]!.changes).toContainEqual({ field: 'maxConsecutiveTeachingMinutes', before: null, after: 180 });
+      });
+
+      it('hands a teacher the versions of their own post with the limit in them', async () => {
+        tx.teacherEmploymentLog.findMany.mockResolvedValue([
+          logRow(2, { before: { ...post, userId: ME, ...none }, after: { ...post, userId: ME, ...set } }),
+        ]);
+        const own = await service.history(ME, YEAR_ID, testUser({ role: Role.TEACHER }));
+        expect(own.entries[0]!.changes.map((change) => change.field)).toEqual([
+          'maxConsecutiveTeachingMinutes',
+          'consecutiveBreakMinutes',
+        ]);
       });
     });
 

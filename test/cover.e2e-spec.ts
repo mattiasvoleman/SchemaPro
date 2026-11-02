@@ -563,6 +563,163 @@ describe('Vikarieplanering (e2e)', () => {
   });
 
   /*
+   * Sammanhängande undervisning: the post's limit for teaching in a row is HR
+   * data, like the deltid in days. The rule is the same for every reader and
+   * stops a cover in every path — the candidates exclude, a manual pick on the
+   * board and through the old PATCH is warned — but the limit and the free
+   * time are worded only to a reader with HR-läs; a schemaläggare without it
+   * is told the verdict (CONSECUTIVE_TEACHING_HIDDEN,
+   * COVER_EXCEEDS_CONSECUTIVE_TEACHING_HIDDEN) with no figure, and the read of
+   * the post is in the läslogg whichever wording went out.
+   */
+  describe('Sammanhängande undervisning: the stretch stops a cover, and its figures reach HR-läs only', () => {
+    const planner = (hrRead: boolean) =>
+      asUser({ role: 'SCHOOL_ADMIN' as never, userId: ADMIN_ID, adminProfile: 'SCHEMALAGGARE' as never, hrRead });
+    // 93 and 37 are in nothing else of a response.
+    const LIMIT = 93;
+    const PAUSE = 37;
+    const stopped = { code: 'CONSECUTIVE_TEACHING', params: { minutes: LIMIT, breakMinutes: PAUSE } };
+    const figures = /\b93\b|\b37\b|"minutes"|"breakMinutes"|"CONSECUTIVE_TEACHING"|"COVER_EXCEEDS_CONSECUTIVE_TEACHING"/;
+
+    beforeEach(() => {
+      const { tx } = harness;
+      tx.academicYear.findFirst.mockResolvedValue({
+        id: 'year',
+        isActive: true,
+        predecessorId: null,
+        startDate: new Date(`${isoDay(-60)}T00:00:00.000Z`),
+        endDate: new Date(`${isoDay(200)}T00:00:00.000Z`),
+      });
+      tx.staffingPolicy.findUnique.mockResolvedValue({
+        qualificationMode: 'OFF',
+        overAllocationMode: 'OFF',
+        overAllocationTolerancePercent: 10,
+        fullTimeTeachingMinutesPerWeek: null,
+        unstaffedGeneration: 'ALLOW',
+      });
+      tx.calendarLesson.findMany.mockResolvedValue([
+        {
+          id: LESSON,
+          schoolId: SCHOOL,
+          date: new Date(`${FUTURE}T00:00:00.000Z`),
+          startsAt: at(FUTURE, 8),
+          endsAt: at(FUTURE, 9),
+          status: 'SCHEDULED',
+          subjectId: 'subj',
+          studentGroupId: 'grp',
+          roomId: null,
+          teachers: [{ teacherId: TEACHER_ID }],
+          extraGroups: [],
+          participants: [],
+        },
+      ]);
+      tx.user.findMany.mockResolvedValue([{ id: SUB_ID, role: 'TEACHER', isActive: true }]);
+      // The limit is the post's: at most 93 minutes in a row, then 37 free.
+      tx.teacherEmployment.findMany.mockResolvedValue([
+        {
+          userId: SUB_ID,
+          employmentPercent: 100,
+          reductionPercent: 0,
+          contractKind: 'FERIE',
+          teachingTargetMinutesPerWeek: null,
+          signature: null,
+          maxTeachingDaysPerWeek: null,
+          maxConsecutiveTeachingMinutes: LIMIT,
+          consecutiveBreakMinutes: PAUSE,
+        },
+      ]);
+      // The substitute teaches the hour before the cover: 07:00–09:00 in a row.
+      tx.calendarLessonTeacher.findMany.mockImplementation((query: { where?: { teacherId?: unknown; calendarLesson?: { status?: unknown } } }) =>
+        Promise.resolve(
+          query?.where?.teacherId && !query.where.calendarLesson?.status
+            ? [
+                {
+                  teacherId: SUB_ID,
+                  calendarLesson: {
+                    id: 'their-own',
+                    date: new Date(`${FUTURE}T00:00:00.000Z`),
+                    startsAt: at(FUTURE, 7),
+                    endsAt: at(FUTURE, 8),
+                    status: 'SCHEDULED',
+                    cancelCause: null,
+                    studentGroupId: 'other',
+                    subjectId: 'other',
+                    roomId: null,
+                  },
+                },
+              ]
+            : [],
+        ),
+      );
+    });
+    afterEach(() => {
+      const { tx } = harness;
+      tx.academicYear.findFirst.mockReset();
+      tx.staffingPolicy.findUnique.mockReset();
+      tx.teacherEmployment.findMany.mockReset().mockResolvedValue([]);
+      tx.calendarLessonTeacher.findMany.mockReset().mockResolvedValue([]);
+    });
+
+    it('the candidates exclude the substitute the same to every reader, and say by how much only to HR-läs', async () => {
+      const hidden = await request(http()).get(`/api/v1/cover/lessons/${LESSON}/candidates`).set('x-test-user', planner(false)).expect(200);
+      expect(hidden.body.excluded).toEqual([{ userId: SUB_ID, codes: [{ code: 'CONSECUTIVE_TEACHING_HIDDEN', params: {} }] }]);
+      expect(hidden.body.candidates).toEqual([]);
+      // Not one figure of the post, nor the unmasked code, in the whole response.
+      expect(JSON.stringify(hidden.body)).not.toMatch(figures);
+      // The verdict is a term of the post: its read is recorded, as the days' is.
+      expect(recordedReads(harness.tx)).toContainEqual(expect.objectContaining({ kind: 'EMPLOYMENT', ids: [SUB_ID] }));
+
+      const shown = await request(http()).get(`/api/v1/cover/lessons/${LESSON}/candidates`).set('x-test-user', planner(true)).expect(200);
+      expect(shown.body.excluded).toEqual([{ userId: SUB_ID, codes: [stopped] }]);
+      expect(shown.body.candidates).toEqual([]);
+    });
+
+    it('a manual pick on the board and through the old PATCH is warned without the figures, and the read recorded; with HR-läs, with them', async () => {
+      const decided = await request(http())
+        .post(`/api/v1/cover/lessons/${LESSON}/decision`)
+        .set('x-test-user', planner(false))
+        .send({ absenceId: ABSENCE, kind: 'SUBSTITUTE', substituteId: SUB_ID, expected: 'OPEN' })
+        .expect(200);
+      expect(decided.body.warnings).toEqual([{ code: 'COVER_EXCEEDS_CONSECUTIVE_TEACHING_HIDDEN', params: {} }]);
+      expect(JSON.stringify(decided.body)).not.toMatch(figures);
+      expect(recordedReads(harness.tx)).toContainEqual(expect.objectContaining({ kind: 'EMPLOYMENT', ids: [SUB_ID] }));
+
+      harness.tx.$executeRaw.mockClear();
+      const patched = await request(http())
+        .patch(`/api/v1/calendar-lessons/${LESSON}/substitute`)
+        .set('x-test-user', planner(false))
+        .send({ teacherId: SUB_ID })
+        .expect(200);
+      expect(patched.body.warnings).toEqual([{ code: 'COVER_EXCEEDS_CONSECUTIVE_TEACHING_HIDDEN', params: {} }]);
+      expect(JSON.stringify(patched.body)).not.toMatch(figures);
+      expect(recordedReads(harness.tx)).toContainEqual(expect.objectContaining({ kind: 'EMPLOYMENT', ids: [SUB_ID] }));
+
+      const withHr = await request(http())
+        .patch(`/api/v1/calendar-lessons/${LESSON}/substitute`)
+        .set('x-test-user', planner(true))
+        .send({ teacherId: SUB_ID })
+        .expect(200);
+      expect(withHr.body.warnings).toEqual([
+        { code: 'COVER_EXCEEDS_CONSECUTIVE_TEACHING', params: { minutes: LIMIT, breakMinutes: PAUSE } },
+      ]);
+    });
+
+    it('a limit left on the work rule stops nobody: the post is the only place the cover reads it', async () => {
+      harness.tx.teacherEmployment.findMany.mockResolvedValue([]);
+      harness.tx.teacherWorkRule.findMany.mockResolvedValue([
+        { userId: SUB_ID, maxConsecutiveTeachingMinutes: LIMIT, consecutiveBreakMinutes: PAUSE },
+      ]);
+      try {
+        const response = await request(http()).get(`/api/v1/cover/lessons/${LESSON}/candidates`).set('x-test-user', planner(true)).expect(200);
+        expect(response.body.excluded).toEqual([]);
+        expect(response.body.candidates.map((c: { userId: string }) => c.userId)).toEqual([SUB_ID]);
+      } finally {
+        harness.tx.teacherWorkRule.findMany.mockReset().mockResolvedValue([]);
+      }
+    });
+  });
+
+  /*
    * Lärarens dag: a part-timer's deltid in days is HR data. A schemaläggare
    * without HR-läs runs the board (DRIFT) and is told that the post stops a
    * cover — the rule is the same for every reader — but never by how many

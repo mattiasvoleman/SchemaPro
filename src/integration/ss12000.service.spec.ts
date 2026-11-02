@@ -423,6 +423,24 @@ describe('Ss12000Service', () => {
       }
     });
 
+    it('never selects deltid in days or the limit on teaching in a row, and a post that has them yields the same Duty as one that has not', async () => {
+      // HR data on the post (20261123090000, 20261218090000): the Duty has no
+      // field to carry either, and the feed's select names the Duty's columns
+      // only. What a reader can tell is that the post was saved (meta.modified,
+      // the post's updatedAt), which docs/integration-api.md says.
+      const limits = { maxTeachingDaysPerWeek: 3, maxConsecutiveTeachingMinutes: 180, consecutiveBreakMinutes: 30 };
+      for (const share of [false, true]) {
+        arrange(share);
+        const plain = await service.duties(SCHOOL_ID);
+        arrange(share, [post(limits)]);
+        const limited = await service.duties(SCHOOL_ID);
+        const select = (tx.teacherEmployment.findMany.mock.calls.at(-1)![0] as { select: Record<string, unknown> }).select;
+        for (const column of Object.keys(limits)) expect(select).not.toHaveProperty(column);
+        expect(limited).toEqual(plain);
+        expect(JSON.stringify(limited)).not.toMatch(/onsecutive|BreakMinutes|TeachingDays/);
+      }
+    });
+
     it('emits dutyPercent and hoursPerYear only when the school shares them, hoursPerYear for a ferietjänst only, from the post', async () => {
       arrange(true, [post(), post({ id: 'emp-2', userId: 'user-2', contractKind: 'SEMESTER', employmentPercent: { toString: () => '100.000' } })]);
       const { data } = await service.duties(SCHOOL_ID);

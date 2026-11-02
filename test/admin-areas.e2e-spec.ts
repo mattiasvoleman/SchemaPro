@@ -236,4 +236,52 @@ describe('Administrator profiles and areas (e2e)', () => {
     expect(refused.body).toMatchObject({ code: 'AREA_NOT_YOURS' });
     expect(harness.tx['teacherWorkRule']!['upsert']).toHaveBeenCalledTimes(1);
   });
+
+  it("lets rektor set a teacher's limit on teaching in a row on the post, and refuses the planner and a half pair before the table", async () => {
+    /*
+     * Sammanhängande undervisning (20261218090000) is HR data on the post,
+     * written with it: the post's PUT is a decision (@Decides), so rektor and
+     * a full administrator set the limit, and a planner does not, whether or
+     * not they read HR. A limit with no break (or the other way round) is
+     * refused as the 400 the pair CHECK would otherwise have been.
+     */
+    const post = {
+      id: 'p1', schoolId: '33333333-3333-4333-8333-333333333333', userId: USER_ID, academicYearId: YEAR_ID,
+      employmentPercent: new Prisma.Decimal('80.000'), reductionPercent: new Prisma.Decimal('0.000'),
+      contractKind: 'FERIE', teachingTargetMinutesPerWeek: null, signature: 'KOL', note: null,
+      maxTeachingDaysPerWeek: null, maxConsecutiveTeachingMinutes: 180, consecutiveBreakMinutes: 30,
+      createdAt: new Date('2026-09-01T00:00:00Z'), updatedAt: new Date('2026-09-01T00:00:00Z'),
+      periods: [],
+    };
+    Object.assign(harness.tx, { $queryRaw: jest.fn().mockResolvedValue([{ role: 'TEACHER' }]) });
+    harness.tx['teacherEmployment']!['upsert']!.mockResolvedValue(post);
+    const url = `/api/v1/teacher-employments/${USER_ID}?academicYearId=${YEAR_ID}`;
+    const body = { employmentPercent: 80, signature: 'KOL', maxConsecutiveTeachingMinutes: 180, consecutiveBreakMinutes: 30 };
+
+    const set = await request(http()).put(url).set('x-test-user', as('REKTOR')).send(body).expect(200);
+    expect(set.body).toMatchObject({ maxConsecutiveTeachingMinutes: 180, consecutiveBreakMinutes: 30 });
+    expect(harness.tx['teacherEmployment']!['upsert']).toHaveBeenCalledTimes(1);
+
+    const half = await request(http())
+      .put(url)
+      .set('x-test-user', as('REKTOR'))
+      .send({ employmentPercent: 80, maxConsecutiveTeachingMinutes: 180 })
+      .expect(400);
+    expect(half.body).toMatchObject({ status: 400, detail: expect.stringContaining('en halv regel') });
+    expect(harness.tx['teacherEmployment']!['upsert']).toHaveBeenCalledTimes(1);
+
+    for (const planner of [as('SCHEMALAGGARE', true), as('EXPEDITION', true)]) {
+      const refused = await request(http()).put(url).set('x-test-user', planner).send(body).expect(403);
+      expect(refused.body).toMatchObject({ code: 'DECISION_NOT_YOURS' });
+    }
+    expect(harness.tx['teacherEmployment']!['upsert']).toHaveBeenCalledTimes(1);
+
+    // The work rule, which every colleague reads, no longer carries the limit.
+    const rule = await request(http())
+      .put(`/api/v1/teacher-work-rules/${USER_ID}`)
+      .set('x-test-user', as('SCHEMALAGGARE'))
+      .send({ maxConsecutiveTeachingMinutes: 180, consecutiveBreakMinutes: 30 });
+    expect(rule.status).toBe(400);
+    expect(harness.tx['teacherWorkRule']!['upsert']).not.toHaveBeenCalled();
+  });
 });

@@ -623,8 +623,45 @@ MESSAGES: dict[str, str] = {
         "the new timetable gives them lessons that day. A wish is weighed against the rest of "
         "the week and gives way where keeping it would cost more."
     ),
+    # Sent by the GATEWAY after a run that worked: a teacher the generator did
+    # not manage to keep within their limit on teaching in a row (Sammanhängande
+    # undervisning, 20261218090000). A note beside a result and never a refusal
+    # of one: the generator pays for a lesson whose stretch is not ended in time
+    # and refuses no week over it, so this is the sentence that says "tries".
+    #
+    # `day` is the weekday of the longest stretch the new timetable gives the
+    # teacher, `minutes` its length, `max` the limit and `breakMinutes` the free
+    # time that ends a stretch.
+    #
+    # THE LIMIT IS HR DATA, the post's beside the days (TeacherEmployments, not
+    # the work rule), so the gateway shows this sentence as it is written here
+    # only to a reader with HR-läs: it stores the note with `day` and `minutes`
+    # alone, reads `max` and `breakMinutes` back from the post when the run is
+    # read, and puts the teacher's name in resourceNames then. Everybody else
+    # is shown TEACHER_CONSECUTIVE_TEACHING_HIDDEN below. The engine never
+    # says either: both are rendered by the gateway.
+    "TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT": (
+        "A teacher should teach at most {max} minutes in a row before {breakMinutes} minutes "
+        "free, and the new timetable gives them {minutes} minutes in a row on "
+        "{day, select, 1 {Mondays} 2 {Tuesdays} 3 {Wednesdays} 4 {Thursdays} 5 {Fridays} "
+        "6 {Saturdays} 7 {Sundays} other {day {day}}}. The generator tries to keep the limit "
+        "but weighs it against the rest of the week, and gives way where keeping it would cost "
+        "more."
+    ),
+    # The note above for a reader without HR-läs (work-days.ts): no teacher, no
+    # weekday, no length and no figure, as TEACHER_WORK_DAYS_HIDDEN is to a
+    # days refusal. Two of them say nothing the first did not, so they are one.
+    "TEACHER_CONSECUTIVE_TEACHING_HIDDEN": (
+        "The new timetable does not keep a teacher's limit on teaching in a row. The generator "
+        "tries to keep the limit but weighs it against the rest of the week, and gives way where "
+        "keeping it would cost more. Which teacher, which day and how long is shown to the "
+        "principal, a full administrator and anyone with HR read access."
+    ),
     # Sent by the GATEWAY beside a hand edit of the grundschema that breaks the
-    # cap or the days (master-lessons.service.ts): warnings, never refusals.
+    # cap, the days or the limit on teaching in a row (master-lessons.service.ts):
+    # warnings, never refusals. The cap is the work rule's; the days and the limit
+    # are the post's and HR data, so the figures go to a reader with HR-läs only
+    # and everybody else is told the verdict in the _HIDDEN twin.
     # `role` is the edited lesson's lead or its co-teacher, never a name, and
     # `requirement` the edited lesson's own name as the distribution warnings
     # carry it ("Idrott för 7A") — on a block card the member the teacher is
@@ -634,6 +671,18 @@ MESSAGES: dict[str, str] = {
         "now teaches {minutes} minutes on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} "
         "4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}}, more than the "
         "{cap} minutes a day their working-time rule allows."
+    ),
+    "TEACHER_CONSECUTIVE_TOO_LONG": (
+        "{role, select, CO_TEACHER {The co-teacher} other {The teacher}} of {requirement} "
+        "now teaches {minutes} minutes in a row on {day, select, 1 {Monday} 2 {Tuesday} "
+        "3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}}, "
+        "more than the {max} minutes in a row their post allows before "
+        "{breakMinutes} minutes free."
+    ),
+    "TEACHER_CONSECUTIVE_TOO_LONG_HIDDEN": (
+        "{role, select, CO_TEACHER {The co-teacher} other {The teacher}} of {requirement} "
+        "now teaches longer in a row than their post allows. The limit is shown to the "
+        "principal, a full administrator and anyone with HR read access."
     ),
     "TEACHER_WEEK_TOO_MANY_DAYS": (
         "{role, select, CO_TEACHER {The co-teacher} other {The teacher}} of {requirement} "
