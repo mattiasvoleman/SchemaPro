@@ -35966,6 +35966,86 @@ BEGIN
     PERFORM set_config(setting, '', true);
   END LOOP;
 END $$;
+
+-- THE CAP AND THE WISH STILL SIT ON THE WORK RULE, and their trigger
+-- (app.teacher_work_rules_day_is_planned, 20261123090000) asks `may this person
+-- WRITE planering`. An administrator who only READS planering and also teaches
+-- (the expedition, 108, and the läsare, 115) reads every area, has a work rule
+-- of their own and is a SCHOOL_ADMIN, so the row's arm admits them on their own
+-- row. Asked as a read, the question answers yes for both and the trigger lets
+-- everything through, to be refused only afterwards by the area's write check on
+-- the new row (42501); asked as a write it answers with its own sentence
+-- (AR403), which is what proves it was asked. The review of the first build
+-- (mutant T6) found no row that holds this; it is held here, by the cap and by
+-- the wish. The limit on teaching in a row is the post's and is held above.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+CREATE FUNCTION pg_temp.rls288_refusal(statement text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE st text; msg text; det text;
+BEGIN
+  EXECUTE statement;
+  RETURN 'none';
+EXCEPTION WHEN OTHERS THEN
+  GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT, det = PG_EXCEPTION_DETAIL;
+  RETURN st || '|' || msg || '|' || coalesce(det, '') || '|';
+END $$;
+DO $$
+DECLARE
+  who text;
+  school uuid := (SELECT "schoolId" FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000107' LIMIT 1);
+BEGIN
+  FOREACH who IN ARRAY ARRAY['00000000-0000-4000-8000-000000000108', '00000000-0000-4000-8000-000000000115'] LOOP
+    INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "maxTeachingMinutesPerDay", "preferredFreeDayOfWeek", "updatedAt")
+    VALUES (school, (SELECT id FROM "Users" WHERE "authId" = who::uuid AND "schoolId" = school), 300, 5, now());
+  END LOOP;
+END $$;
+DO $$
+DECLARE
+  who text;
+  me uuid;
+  school uuid := (SELECT "schoolId" FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000107' LIMIT 1);
+  planned constant text := 'AR403|WORK_RULE_DAY_IS_PLANNED: dagstaket och den önskade lediga dagen sätts av en administratör som planerar|area=PLANERING|';
+  got text;
+  c record;
+BEGIN
+  FOREACH who IN ARRAY ARRAY['00000000-0000-4000-8000-000000000108', '00000000-0000-4000-8000-000000000115'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', who)::text, true);
+    me := app.current_user_id();
+    IF app.current_user_may('PLANERING', true) OR NOT app.current_user_may('PLANERING', false) THEN
+      RAISE EXCEPTION 'cap trigger: % should read PLANERING and not write it', who;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = me AND "maxTeachingMinutesPerDay" = 300 AND "preferredFreeDayOfWeek" = 5) THEN
+      RAISE EXCEPTION 'cap trigger: % does not read the row planted for them', who;
+    END IF;
+    FOR c IN SELECT * FROM (VALUES
+        ('raising the cap', 'UPDATE "TeacherWorkRules" SET "maxTeachingMinutesPerDay" = 400 WHERE "userId" = %1$L'),
+        ('moving the wish', 'UPDATE "TeacherWorkRules" SET "preferredFreeDayOfWeek" = 3 WHERE "userId" = %1$L'),
+        ('clearing both', 'UPDATE "TeacherWorkRules" SET "maxTeachingMinutesPerDay" = NULL, "preferredFreeDayOfWeek" = NULL WHERE "userId" = %1$L')
+      ) AS x(what, statement)
+    LOOP
+      got := pg_temp.rls288_refusal(format(c.statement, me));
+      IF got IS DISTINCT FROM planned THEN
+        RAISE EXCEPTION 'cap trigger: % by % on their own row was answered "%", not by the planner''s sentence', c.what, who, got;
+      END IF;
+    END LOOP;
+    -- The upsert's INSERT is checked against the area's write before the
+    -- conflict is looked at: refused by row security, never an update.
+    got := pg_temp.rls288_refusal(format(
+      'INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "maxTeachingMinutesPerDay", "updatedAt") VALUES (%L, %L, 400, now())
+       ON CONFLICT ("userId") DO UPDATE SET "maxTeachingMinutesPerDay" = EXCLUDED."maxTeachingMinutesPerDay", "updatedAt" = EXCLUDED."updatedAt"',
+      school, me));
+    IF split_part(got, '|', 1) <> '42501' OR got NOT LIKE '%row-level security%' THEN
+      RAISE EXCEPTION 'cap trigger: an upsert by % on their own row was answered "%", not by row security', who, got;
+    END IF;
+    DELETE FROM "TeacherWorkRules" WHERE "userId" = me;
+    IF FOUND THEN RAISE EXCEPTION 'cap trigger: % deleted their own row holding the cap and the wish', who; END IF;
+  END LOOP;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+  IF (SELECT count(*) FROM "TeacherWorkRules" r JOIN "Users" u ON u.id = r."userId"
+       WHERE u."authId" IN ('00000000-0000-4000-8000-000000000108', '00000000-0000-4000-8000-000000000115')
+         AND u."schoolId" = school AND r."maxTeachingMinutesPerDay" = 300 AND r."preferredFreeDayOfWeek" = 5) <> 2 THEN
+    RAISE EXCEPTION 'cap trigger: an administrator who only reads planering moved their own cap or wish after all';
+  END IF;
+END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
