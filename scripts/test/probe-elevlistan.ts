@@ -50,9 +50,10 @@
  *         the teacher's last event holding the first, and the teacher
  *         reaches for the first) reaches a withRls caller as the adapter's
  *         error, which the API answers with its 409 WRITE_CONFLICT and the
- *         sync reads as 40P01 (R3-M2). The teacher here is the owner, with a
- *         deadlock_timeout of 5 s, so the commit, which began waiting first,
- *         is the victim every time (R5-L3);
+ *         sync reads as 40P01 (R3-M2). The commit runs on a pool opened under
+ *         a database deadlock_timeout of 6 s and the teacher, the owner, has
+ *         20 s, so the commit, which began waiting first, is the victim as
+ *         long as the teacher comes in within 6 s (R5-L3, R6-L1);
  *   el-i  under a publication of every table's deletes a membership still
  *         commits: the pending table is unlogged and in no publication
  *         (R3-M3);
@@ -87,7 +88,7 @@ import { Client } from 'pg';
 import { Role } from '../../src/auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
 import { WRITE_CONFLICT, isWriteConflict, rethrowPrismaError } from '../../src/common/utils/prisma-errors';
-import type { PrismaService } from '../../src/database/prisma.service';
+import { PrismaService } from '../../src/database/prisma.service';
 import { sqlStateOf } from '../../src/integration/ss12000-sync/errors';
 
 type Check = (label: string, body: () => Promise<void>) => Promise<void>;
@@ -144,8 +145,35 @@ async function within<T>(promise: Promise<T>, ms: number): Promise<T | 'pending'
   }
 }
 
-export async function elevlistanChecks(owner: Client, api: PrismaService, marker: string, check: Check): Promise<void> {
+/**
+ * A PrismaService whose connections all open under the database default
+ * deadlock_timeout of `timeout`. Only a superuser may set the parameter, the
+ * API's role cannot, and a connection keeps the default it opened with, so
+ * the pool is a new one, opened after the ALTER. Sessions opened meanwhile
+ * get the default too; nothing else runs against the database here.
+ */
+async function openWithDeadlockTimeout(owner: Client, timeout: string): Promise<PrismaService> {
+  const { rows } = await owner.query<{ alter: string }>(
+    `SELECT format('ALTER DATABASE %I SET deadlock_timeout = %L', current_database(), $1::text) AS alter`,
+    [timeout],
+  );
+  await owner.query(rows[0]!.alter);
+  const pool = new PrismaService();
+  await pool.onModuleInit();
+  return pool;
+}
+
+/** Back to the server's own default, which nothing in this repository sets for the database. */
+async function resetDeadlockTimeout(owner: Client): Promise<void> {
+  const { rows } = await owner.query<{ reset: string }>(`SELECT format('ALTER DATABASE %I RESET deadlock_timeout', current_database()) AS reset`);
+  await owner.query(rows[0]!.reset);
+}
+
+/** `_api` is the probe's shared pool, which no check here uses: el-h opens one of its own. */
+export async function elevlistanChecks(owner: Client, _api: PrismaService, marker: string, check: Check): Promise<void> {
   await sweepElevlistanSchool(owner, marker);
+  // el-h's 6 s, left behind by a run that was killed inside it, would reach el-f.
+  await resetDeadlockTimeout(owner);
   const one = async <T extends object>(sql: string, params: unknown[] = []): Promise<T> => (await owner.query<T>(sql, params)).rows[0]!;
   try {
     const s = (
@@ -582,21 +610,29 @@ export async function elevlistanChecks(owner: Client, api: PrismaService, marker
     });
 
     await check('el-h a deadlock at the commit reaches withRls as the adapter’s error: the API’s 409 WRITE_CONFLICT, and 40P01 to the sync', async () => {
-      // The teacher is the owner here: only a superuser may set
-      // deadlock_timeout. With 5 s against the commit's 1 s, the commit,
-      // which began waiting first, always finds the deadlock first; under
-      // load the teacher's check could otherwise run first and make it the
-      // victim (review R5-L3). The edit runs the same triggers either way.
+      // A backend looks for a deadlock once, deadlock_timeout after it began
+      // waiting, and the victim is whoever looks once the cycle is closed.
+      // The commit began waiting first: with the default 1 s it is the
+      // victim only if the teacher reaches for the first event within that
+      // second, and a teacher later than that finds the cycle itself and is
+      // the victim, whatever its own timeout (review R6-L1). So the commit's
+      // pool runs under 6 s, and the teacher, the owner, under 20 s: the
+      // teacher may come in up to 6 s late, and its own check never runs.
+      // The edit runs the same triggers either way.
+      const committer = await openWithDeadlockTimeout(owner, '6s');
       const a = await ownerClient();
       let pid = 0;
+      let commitTimeout = '';
       try {
         await a.client.query('BEGIN');
-        await a.client.query(`SET LOCAL deadlock_timeout = '5s'`);
+        await a.client.query(`SET LOCAL deadlock_timeout = '20s'`);
         await a.client.query(`SET LOCAL lock_timeout = '10s'`);
         await edit(a.client, last);
-        const saved = api
+        const saved = committer
           .withRls(admin, async (tx) => {
-            pid = (await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`)[0]!.pid;
+            const [backend] = await tx.$queryRaw<{ pid: number; timeout: string }[]>`SELECT pg_backend_pid() AS pid, current_setting('deadlock_timeout') AS timeout`;
+            pid = backend!.pid;
+            commitTimeout = backend!.timeout;
             // Past a patience of 0 the flush waits as a writer at once.
             await tx.$executeRaw`SELECT set_config('app.ss12000_replaced_patience', '0', true)`;
             await tx.$executeRaw`INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (${s}::uuid, ${sva}::uuid, ${pupils[5]}::uuid)`;
@@ -616,6 +652,7 @@ export async function elevlistanChecks(owner: Client, api: PrismaService, marker
         await edit(a.client, first);
         await a.client.query('COMMIT');
         const error = await saved;
+        assert.equal(commitTimeout, '6s', 'the commit did not run under the 6 s the check relies on');
         assert.ok(error, 'the save committed through a deadlock');
         assert.equal(isWriteConflict(error), true, `not a write conflict: ${String((error as Error).message)}`);
         assert.equal(sqlStateOf(error), '40P01');
@@ -629,6 +666,8 @@ export async function elevlistanChecks(owner: Client, api: PrismaService, marker
         if (pid) await owner.query('SELECT pg_cancel_backend($1)', [pid]);
         await owner.query('SELECT pg_terminate_backend($1)', [a.pid]);
         await a.client.end().catch(() => undefined);
+        await committer.$disconnect();
+        await resetDeadlockTimeout(owner);
       }
       await pendingIsEmpty('el-h');
     });
