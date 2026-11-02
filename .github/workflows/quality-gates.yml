@@ -9,10 +9,10 @@ name: Quality Gates
 # exits non-zero when its threshold is missed. The visual-baselines job,
 # dispatch-only, regenerates the Linux screenshot baselines for review and gates
 # no code. Printed beside the gates and deciding nothing: api-latency's §2
-# milliseconds on every row, its floor-round shares and its write ratios — the
-# write against its interleaved baseline until ten runs have calibrated a
-# threshold for it (docs/verification-baseline.md) — and the solver job's
-# 2,000-student §2 figure, reported after its 400-student gate.
+# milliseconds on every row, its reads' and floor's share of health and its
+# write ratios — the write against its interleaved baseline until ten runs have
+# calibrated a threshold for it (docs/verification-baseline.md) — and the
+# solver job's 2,000-student §2 figure, reported after its 400-student gate.
 #
 # Actions are pinned to commit SHAs for the same reason as in ci.yml — a `@v5`
 # tag is a pointer somebody else can move — with the release name kept in the
@@ -30,13 +30,14 @@ on:
         description: 'Run mutation testing (slow)'
         type: boolean
         default: true
-      # A one-off measurement, not a gate: the api-latency job alone, which then
-      # also measures rounds of the authenticated-read floor after its gated
-      # scenarios (api-latency.mjs --floor). The other four jobs are skipped so
-      # the dispatch bills one job. On schedule `inputs` is empty, so every
-      # condition below is what it was and the nightly run is unchanged.
+      # A one-off measurement: the api-latency job alone, the other four jobs
+      # skipped so the dispatch bills one job. (It once also switched the
+      # authenticated-read floor rounds on; they run every night now, being
+      # the gate's denominator, and the input keeps its name for whoever
+      # dispatches it.) On schedule `inputs` is empty, so every condition
+      # below is what it was and the nightly run is unchanged.
       latency_floor:
-        description: 'Run only the API latency job, plus the ungated authenticated-read floor rounds'
+        description: 'Run only the API latency job'
         type: boolean
         default: false
 
@@ -258,7 +259,7 @@ jobs:
           --students 2000 --json
 
   api-latency:
-    name: API — latency (read share ≥ 0.20 of health)
+    name: API — latency (read share ≥ 0.80 of the authenticated floor)
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
@@ -305,6 +306,15 @@ jobs:
       - run: npm ci
       - run: npm run prisma:generate
 
+      # Which CPU the runner drew, printed so that a night's numbers can be
+      # grouped with the nights that drew the same one. ubuntu-latest is a
+      # mixed pool: of 35 runners one day, 19 were an EPYC 7763, 9 a 9V74, 6 a
+      # 9V45 and one a Xeon 8573C, all with 4 vCPUs, and health ran 2.5× faster
+      # on one model against reads only 1.6× faster
+      # (docs/verification-baseline.md).
+      - name: Runner
+        run: lscpu | grep -E 'Model name|^CPU\(s\)'
+
       # Latency against a mocked Prisma layer is meaningless — the RLS
       # transaction and policy evaluation are the cost being measured, so the
       # benchmark needs the real stack.
@@ -350,23 +360,17 @@ jobs:
       # autocannon is installed --no-save for the same reason as Stryker: its
       # transitive deps carry moderate advisories and it ships nothing.
       #
-      # No `${{ }}` reaches the script text: the fixture outputs and the floor
-      # switch arrive through env. An expression is pasted into the script
-      # before bash parses it, so a quote in the value would close the argument
-      # and the rest would run as shell; a variable expands after parsing and
-      # stays one argument. Semgrep's run-shell-injection rule blocked this step
-      # for the switch alone: it treats every `inputs` expression as
-      # caller-controlled and does not look at step outputs at all. The outputs
-      # go through env anyway. They carry what the fixture query read from the
-      # database — a base64url JWT and a UUID today, neither able to hold a
-      # quote — and staying safe should not rest on the rule's blind spot.
-      # LATENCY_FLOOR is empty unless the dispatch asked for the floor rounds,
-      # so its expansion adds `--floor` or nothing.
+      # No `${{ }}` reaches the script text: the fixture outputs arrive through
+      # env. An expression is pasted into the script before bash parses it, so a
+      # quote in the value would close the argument and the rest would run as
+      # shell; a variable expands after parsing and stays one argument. The
+      # outputs carry what the fixture query read from the database — a
+      # base64url JWT and a UUID today, neither able to hold a quote — and
+      # staying safe should not rest on the value being one.
       - name: Benchmark
         env:
           TOKEN: ${{ steps.fixtures.outputs.token }}
           ACADEMIC_YEAR: ${{ steps.fixtures.outputs.academic_year }}
-          LATENCY_FLOOR: ${{ inputs.latency_floor && 'true' || '' }}
         run: >-
           npm install --no-save --no-audit --no-fund autocannon@^8 &&
           node scripts/bench/api-latency.mjs
@@ -375,7 +379,6 @@ jobs:
           --academic-year "$ACADEMIC_YEAR"
           --write-body /tmp/write-body.json
           --duration 20 --connections 25
-          ${LATENCY_FLOOR:+--floor}
 
       - name: Stack logs
         if: failure()
