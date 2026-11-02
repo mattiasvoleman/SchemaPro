@@ -17,7 +17,9 @@
  */
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
+import * as Notifications from 'expo-notifications';
 import RootLayout from '../../../app/_layout';
+import { forgetTap } from '../pushRegistration';
 
 type AuthShape = { authState: { isAuthenticated: boolean; teacherId: string | null; role: string | null }; isLoading: boolean };
 
@@ -163,10 +165,51 @@ describe('AuthGate (app/_layout.tsx)', () => {
       expect(mockReplace).toHaveBeenCalledWith('/(auth)/login');
     });
 
-    it('moves a person who signs in as another role on the same screen', async () => {
-      await mount(signedIn('TEACHER'), ['(app)', 'schedule']);
-      await rerender(signedIn('STUDENT'));
-      expect(mockReplace).toHaveBeenCalledWith('/(student)/schedule');
+    it('moves a person whose route changes under the same session (segments is a dependency of the effect)', async () => {
+      // A link or a tap on a push takes a signed-in guardian into the staff
+      // shell with nothing else about them changing. Every other re-render in
+      // this file changes the session too, so only this one needs the route
+      // itself to re-run the gate.
+      await mount(signedIn('GUARDIAN'), ['(guardian)', 'children']);
+      expect(mockReplace).not.toHaveBeenCalled();
+      await rerender(mockAuth, ['(app)', 'attendance']);
+      expect(mockReplace).toHaveBeenCalledTimes(1);
+      expect(mockReplace).toHaveBeenCalledWith('/(guardian)/children');
+    });
+
+    it('decides when the restore ends, for the same session on the same screen (isLoading is a dependency)', async () => {
+      // The restored session is the one the screen was already drawn for; the
+      // only thing that changes is that the app now knows it is settled.
+      await mount({ ...signedIn('GUARDIAN'), isLoading: true }, ['(app)', 'schedule']);
+      expect(mockReplace).not.toHaveBeenCalled();
+      await rerender({ ...signedIn('GUARDIAN'), isLoading: false });
+      expect(mockReplace).toHaveBeenCalledTimes(1);
+      expect(mockReplace).toHaveBeenCalledWith('/(guardian)/children');
+    });
+  });
+
+  describe('a tap on a notification', () => {
+    /** The function the app handed expo-notifications to call on a tap. */
+    const tapListener = (): (() => void) => {
+      const calls = jest.mocked(Notifications.addNotificationResponseReceivedListener).mock.calls;
+      const listener = calls[calls.length - 1]?.[0];
+      if (!listener) throw new Error('no listener was registered');
+      return () => listener({} as never);
+    };
+
+    it.each([
+      ['GUARDIAN', '(guardian)', '/(guardian)/notifications'],
+      ['STUDENT', '(student)', '/(student)/notifications'],
+      ['TEACHER', '(app)', '/(app)/notifications'],
+      ['SCHOOL_ADMIN', '(app)', '/(app)/notifications'],
+    ])('opens the Notiser tab of the shell of a signed-in %s', async (role, group, notifications) => {
+      await mount(signedIn(role), [group, 'whatever']);
+      expect(mockPush).not.toHaveBeenCalled();
+      await act(async () => tapListener()());
+      expect(mockPush).toHaveBeenCalledTimes(1);
+      expect(mockPush).toHaveBeenCalledWith(notifications);
+      // The tap is forgotten once it has led somewhere, so no later sign-in replays it.
+      expect(forgetTap).toHaveBeenCalledTimes(1);
     });
   });
 });
