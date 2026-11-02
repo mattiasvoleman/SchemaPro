@@ -14898,10 +14898,12 @@ BEGIN
   END IF;
 END $$;
 
--- Under the admin's own principal the history's guard holds.
+-- Under the admin's own principal the history's guard holds. The run starts
+-- at now(), as the night's does: the night interrupts it at its own now(), and
+-- a run begun at clock_timestamp() would then finish before it started.
 DO $$
 DECLARE
-  run uuid := app.gallring_begin(app.current_school_id(), clock_timestamp());
+  run uuid := app.gallring_begin(app.current_school_id(), now());
 BEGIN
   BEGIN
     PERFORM app.gallring_purge(run, 'CHANGE_LOGS', 5000);
@@ -14995,6 +14997,9 @@ BEGIN
   -- The run's evidence: what went, per kind, and that nothing was left.
   SELECT * INTO run FROM "GallringRuns" WHERE id = current_setting('app.test_rls83_run')::uuid;
   IF run.status <> 'DONE' OR run."finishedAt" IS NULL THEN RAISE EXCEPTION 'gallring: the run is %, not DONE', run.status; END IF;
+  IF EXISTS (SELECT 1 FROM "GallringRuns" WHERE "finishedAt" < "startedAt") THEN
+    RAISE EXCEPTION 'gallring: a run finished before it started; the refused purge''s run was opened after the night that interrupted it';
+  END IF;
   IF (run.counts ->> 'ATTENDANCE')::bigint <> (b ->> 'att_old')::bigint
      OR (run.counts ->> 'ABSENCE_REPORTS')::bigint <> (b ->> 'abs_old')::bigint
      OR (run.counts ->> 'LEAVE_REQUESTS')::bigint <> (b ->> 'leave_old')::bigint
