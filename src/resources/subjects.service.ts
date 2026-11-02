@@ -50,7 +50,7 @@ export class SubjectsService {
         if (nationalCode !== null) {
           await assertNationalCodeIsKnown(tx, nationalCode);
         }
-        await assertRoomTypeIsTheSchools(tx, dto.requiredRoomTypeId, 'requiredRoomTypeId');
+        await assertRoomTypeIsTheSchools(tx, dto.requiredRoomTypeId);
         const row = await tx.subject.create({
           data: {
             schoolId,
@@ -90,7 +90,7 @@ export class SubjectsService {
         if (nationalCode != null) {
           await assertNationalCodeIsKnown(tx, nationalCode);
         }
-        await assertRoomTypeIsTheSchools(tx, dto.requiredRoomTypeId, 'requiredRoomTypeId');
+        await assertRoomTypeIsTheSchools(tx, dto.requiredRoomTypeId);
         const row = await tx.subject.update({
           where: { id },
           data: {

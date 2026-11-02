@@ -16,7 +16,7 @@ export class RoomsService {
     assertOrderedGradeRange(dto.minGradeLevel, dto.maxGradeLevel);
     try {
       return await this.prisma.withRls(user, async (tx) => {
-        await assertRoomTypeIsTheSchools(tx, dto.roomTypeId, 'roomTypeId');
+        await assertRoomTypeIsTheSchools(tx, dto.roomTypeId);
         return tx.room.create({
           data: {
             schoolId,
@@ -44,7 +44,7 @@ export class RoomsService {
     assertOrderedGradeRange(dto.minGradeLevel, dto.maxGradeLevel);
     try {
       return await this.prisma.withRls(user, async (tx) => {
-        await assertRoomTypeIsTheSchools(tx, dto.roomTypeId, 'roomTypeId');
+        await assertRoomTypeIsTheSchools(tx, dto.roomTypeId);
         return tx.room.update({
           where: { id },
           data: {

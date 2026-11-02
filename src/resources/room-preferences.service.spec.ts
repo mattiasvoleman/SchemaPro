@@ -225,7 +225,7 @@ describe('RoomPreferencesService', () => {
       const run = service.create({ subjectId: SUBJECT_ID, roomTypeId: TYPE_ID }, testUser());
 
       await expect(run).rejects.toThrow(BadRequestException);
-      await expect(run).rejects.toThrow('roomTypeId: rumstypen finns inte bland skolans rumstyper.');
+      await expect(run).rejects.toMatchObject({ status: 400, response: { code: 'ROOM_TYPE_NOT_FOUND', message: expect.stringContaining('salstyper') } });
       expect(tx.roomType.findFirst).toHaveBeenCalledWith({ where: { id: TYPE_ID }, select: { id: true } });
       expect(tx.roomPreference.create).not.toHaveBeenCalled();
     });
@@ -326,7 +326,7 @@ describe('RoomPreferencesService', () => {
       const run = service.update(PREF_ID, { roomTypeId: TYPE_ID }, testUser());
 
       await expect(run).rejects.toThrow(BadRequestException);
-      await expect(run).rejects.toThrow('roomTypeId: rumstypen finns inte bland skolans rumstyper.');
+      await expect(run).rejects.toMatchObject({ status: 400, response: { code: 'ROOM_TYPE_NOT_FOUND', message: expect.stringContaining('salstyper') } });
       expect(tx.roomPreference.update).not.toHaveBeenCalled();
     });
 

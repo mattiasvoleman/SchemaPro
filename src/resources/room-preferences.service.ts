@@ -44,7 +44,7 @@ export class RoomPreferencesService {
 
     try {
       return await this.prisma.withRls(user, async (tx) => {
-        await assertRoomTypeIsTheSchools(tx, dto.roomTypeId, 'roomTypeId');
+        await assertRoomTypeIsTheSchools(tx, dto.roomTypeId);
         await this.assertLockCanBeHonoured(
           tx,
           dto.kind ?? 'WISH',
@@ -127,7 +127,7 @@ export class RoomPreferencesService {
         if (!current) {
           throw new NotFoundException(`Room rule ${id} not found.`);
         }
-        await assertRoomTypeIsTheSchools(tx, dto.roomTypeId, 'roomTypeId');
+        await assertRoomTypeIsTheSchools(tx, dto.roomTypeId);
 
         const minGradeLevel =
           dto.minGradeLevel !== undefined ? dto.minGradeLevel : current.minGradeLevel;
