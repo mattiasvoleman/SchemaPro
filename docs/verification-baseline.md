@@ -1361,6 +1361,44 @@ between two steps; paired against the free break at A, four pairs each, the coun
 teachers over was 3, 2, 0, 2 against 6, 1, 0, 2 (within the noise of the host), so
 the smaller search is kept.
 
+THE REVIEW ROUND (2026-11-02, independent review of PR #231; its own numbers marked
+*reviewer*). Three things were added to what is measured above.
+
+Search room (*reviewer*, 60 s = production's `SOLVER_MAX_TIME_SECONDS`, eight workers each,
+load 30–85, rule A on the eight busiest, teachers over the limit of eight, off → on):
+bench school 5→0, 7→1; högstadium on its own 6→4, 7→6, 6→0; högstadium with the pupils'
+idle time and the teacher-day rules also on 5→5, 6→8, 6→7 (and on 120 s 8→7, 6→4);
+with the pupils' idle time alone 7→7, 6→5; all 26 teachers flagged with both on 5→6, 4→7,
+7→6, 8→5, 6→5. The wish works where the search has room and does nothing measurable when
+the pupils' idle time is on beside it; the 0–3 of 8 above is the högstadium without
+those switches, on 90 s. The same arm run twice gave pupil idle time of 53 000–163 000
+minutes, so the cost columns of that run are direction and not measure.
+
+The rerun case, which the review asked to be measured and was only counted before (a school
+that has a timetable turns the switch on and generates again with it as `previousLessons`;
+`--mode rerun`; criterion written before the run: R1 both arms FEASIBLE 423/423 with an
+empty validator, R2 the wish leaves at most four of eight over where the timetable had at
+least five, R3 reported with no requirement): the högstadium solved first as it is
+(FEASIBLE 423/423, **8 of 8** over rule A), then three pairs of 60 s, eight workers each,
+started together, load 22–66. Teachers over / previous slots no lesson of the same
+requirement holds any more / teachers' idle minutes, off → on: 8 / 7 / 450 → **1** / 139 / 2 940;
+8 / 44 / 600 → **3** / 186 / 3 420; 8 / 16 / 390 → **0** / 93 / 2 610. R1 and R2 met. R3: the wish
+moved 139, 186 and 93 of 423 slots (33 %, 44 %, 22 %) where leaving it off moved 7, 44 and
+16, so switching it on in the middle of a term and generating again rearranges a fifth to
+nearly half of the timetable, not only the flagged teachers' lessons, and the teachers'
+idle time rises to the range a fresh generation on today's model gives (2 850–8 340) from
+the lower level the previous timetable had. The sample is three pairs on a loaded host.
+
+The reviewer's mutants against the tests: the engine's fourteen (E01–E14): nine killed,
+including the five the first tests missed (E05 no night shift, E01 X + 5, E10 the lattice
+of starts ignoring Y, E12 locks exactly Y apart, E13 locked stretches merged over the
+night), five survive and are equivalent (E02, E03, E09, E11, E14); the gateway's thirty-one
+plus six more clauses of `holdsOnlyAConsecutiveLimit` (37): 34 killed, S05 and T06
+equivalent, C05 equivalent in practice (`ON_LESSON` stops first); the trigger's T6 (the
+write question asked as a read) killed by the new rows of RLS section 288. The two cases
+that must never be priced (locks exactly Y apart, an odd and an even week's lessons) have
+a test of their own, since the other cases require that something is priced.
+
 ### Corrections to earlier entries in this document
 
 - An earlier revision said the complexity guard was "pessimistic … not the
