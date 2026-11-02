@@ -699,9 +699,27 @@ Walk the full product loop once, in order:
   The Skolregler card leaves the switch's key out unless the API it read named
   it or the admin turned the switch on, so a lunch save never meets that 400.
   After the deploy the engine's `/openapi.json` names the two fields on a
-  teacher; the weight is `WEIGHT_CONSECUTIVE_TEACHING` (default 40 per
+  teacher; the weight is `WEIGHT_CONSECUTIVE_TEACHING` (default 250 per
   lesson whose stretch is not ended in time, 0 or below switches it off) and
-  needs no setting.
+  needs no setting. 250 is far above the wished free day (40) and the
+  disruption term (8 a slot) on purpose: at 40 the wish did not hold in the
+  measurement (docs/verification-baseline.md). The consequence is a priority a
+  school should be told: with the switch on, a regeneration moves a flagged
+  teacher's lessons before it keeps last term's places or a pupil's free hour,
+  and when the search has little time (the pupils' free hours and the
+  teachers' free days both on, or a short budget) it may not manage the
+  limit at all, which Generera then says by name.
+  What the limit does not see, stated here and in the manual (4.4): a lesson
+  a shared teacher gives at ANOTHER school counts as free time, in all four
+  places (the generator gets it as an UNAVAILABLE reservation, and the hand-edit
+  warning, the notes after a run and the Vikarietavla read this school's own
+  lessons only), so 08–10 here, 10–11 there and 11–12 here is no stretch over
+  180 minutes; the limit is a row of this school's work rule. The engine has no
+  terms: a teacher with an autumn post and a spring post that never meet is
+  read as one week, so the engine may pay for a stretch the gateway, which
+  reads real weeks, does not see (it errs toward the stricter reading, never
+  the looser). The engine clips a locked window to the school day, so a lock
+  07:30–08:30 counts 08:00–08:30 there and 07:30–08:30 in the gateway.
   **Rolling it back:** the engine before this release refuses the two fields
   (its request models are `extra="forbid"`: 422), so once a school has turned
   the switch on and a teacher has a limit, an engine rolled back alone fails

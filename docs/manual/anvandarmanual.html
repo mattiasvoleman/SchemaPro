@@ -3163,6 +3163,31 @@
       består av dem bryter gränsen, fast generatorn inte kunde göra något åt
       det.
     </p>
+    <p>
+      <strong>Hur ofta det lyckas beror på hur mycket tid sökningen har.</strong>
+      I våra mätningar höll generatorn gränsen för de flesta av de mest
+      belastade lärarna när gränsen var det enda tunga i veckan och sökningen
+      fick god tid. På den sökningstid som är standard, en minut per fas,
+      och med elevernas håltimmar (5.1) och lärarnas önskade lediga dagar
+      påslagna samtidigt blev det ingen mätbar skillnad mot att inte ha
+      gränsen alls. En skola som slår på alla tre ska räkna med att många
+      lärare hamnar under <span class="ui">Önskemål som inte gick att
+      hålla</span>, och att Skolregler-kortet säger det när både elevernas
+      håltimmar och den här brytaren står på.
+    </p>
+    <p>
+      <strong>Önskemålet går före stabilitet och elevernas håltimmar.</strong>
+      När gränsen väger in väljer generatorn hellre att flytta en flaggad
+      lärares lektion än att behålla förra schemats plats för den, och hellre
+      än att spara en elevs lediga timme. Slå därför på brytaren före den
+      första genereringen om du kan. Slås den på mitt i en termin och du kör
+      Generera igen på ett befintligt schema flyttas många lektioner, inte
+      bara de flaggade lärarnas: på en testskola med 423 lektioner, där de
+      åtta mest belastade lärarna fick en gräns, flyttades mellan 93 och 186
+      lektioner (mitt emellan en femtedel och nästan hälften), och lärarnas
+      lediga tid mellan lektionerna ökade från omkring 450 till omkring 3 000
+      minuter i veckan. Gränsen hölls för fem till åtta av de åtta lärarna.
+    </p>
   </div>
   <p>
     Gränsen är hård där den kostar lite. En handredigering i grundschemat som
@@ -3173,6 +3198,27 @@
     ligger utanför — och väljer du ändå en sådan lärare under
     <span class="ui">Annan lärare</span> får du en varning (6.3).
   </p>
+  <div class="note">
+    <span class="label">Vad gränsen inte ser</span>
+    <p>
+      Gränsen gäller lektionerna på den här skolan. En lärare som delas mellan
+      två skolor har den andra skolans lektioner som ledig tid i följden, på
+      alla fyra ställena: generatorn, varningen vid handredigering,
+      anteckningarna efter körningen och Vikarietavlan. Undervisar läraren
+      08–10 här, 10–11 på den andra skolan och 11–12 här finns alltså ingen
+      följd över tre timmar, fast läraren har undervisat fyra timmar i sträck.
+      Gränsen sätts på den här skolans arbetstidsrad och räknas inte om för
+      lektionerna på den andra skolan.
+    </p>
+    <p>
+      Generatorn har inga terminer: en lärare med en höstpost och en vårpost
+      som aldrig möts räknas som en och samma vecka, så den kan betala för en
+      följd som varningen vid handredigering, som läser verkliga veckor med
+      datum, inte ser. Det gör generatorn strängare än varningen, aldrig lösare. Ett
+      låst fönster som börjar före skoldagen räknas i generatorn från
+      skoldagens början, men i varningen från sin egen början.
+    </p>
+  </div>
   <p>
     Dagstaket, den önskade lediga dagen och gränsen för undervisning i följd
     sätts bara av den som planerar, aldrig av läraren själv.
@@ -3695,7 +3741,10 @@
     på annat sätt. Efter körningen står de lärare det inte lyckades för under
     <span class="ui">Önskemål som inte gick att hålla</span>. Handredigeringens
     varning och Vikarietavlans uteslutning bryr sig inte om reglaget, bara
-    genereringens försök gör det.
+    genereringens försök gör det. Önskemålet väger tyngre än att behålla förra
+    schemats platser och än elevernas håltimmar, och står
+    <span class="ui">Generatorn håller nere elevernas håltimmar</span> på
+    samtidigt blir gränserna ofta inte hållna på standardtiden (4.4).
   </p>
   <div class="note">
     <span class="label">Där generatorn räknar grövre än sidan</span>
