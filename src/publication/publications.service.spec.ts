@@ -213,6 +213,32 @@ describe('PublicationsService (DIRECT)', () => {
     expect(created()).toEqual([]);
   });
 
+  it('reads the other-school check’s lov from the publish’s own year', async () => {
+    // A lesson in a room the school borrows is what makes the check read lov.
+    tx.roomLoan.findMany.mockResolvedValue([
+      {
+        id: 'ht',
+        status: 'APPROVED',
+        ownerSchoolId: '66666666-6666-4666-8666-666666666666',
+        borrowerSchoolId: testUser().schoolId,
+        roomId: 'owners-room',
+        localRoomId: 'room',
+        dayOfWeek: 1,
+        startTime: time(8),
+        endTime: time(9),
+        startDate: day('2026-08-17'),
+        endDate: day('2026-12-18'),
+      },
+    ]);
+    await service.preview({ academicYearId: YEAR_ID }, testUser());
+    // The one read of lov that asks for an overlap with the window is this check's.
+    const overlapping = tx.schoolBreak.findMany.mock.calls
+      .map(([arg]) => arg.where as Record<string, unknown>)
+      .filter((where) => 'startDate' in where && 'endDate' in where);
+    expect(overlapping).toHaveLength(1);
+    expect(overlapping[0]).toMatchObject({ academicYearId: YEAR_ID });
+  });
+
   it('previews the materialiser\'s own counts and writes no log row', async () => {
     const preview = await service.preview({ academicYearId: YEAR_ID }, testUser());
     expect(preview).toMatchObject({ result: RESULT, refused: false, needsAcknowledgement: false, validFrom: '2026-10-12' });

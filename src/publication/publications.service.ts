@@ -816,6 +816,7 @@ export class PublicationsService {
       await otherSchoolFinding(tx, context.schoolId, context.lessons, {
         from: context.validFrom,
         to: context.validTo,
+        yearId: context.year.id,
         yearStart: context.year.start,
         yearEnd: context.year.end,
       }),

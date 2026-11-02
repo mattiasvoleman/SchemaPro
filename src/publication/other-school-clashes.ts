@@ -141,12 +141,16 @@ export function otherSchoolClashes(input: {
     }
 
     if (lesson.roomId === null) continue;
-    for (const window of input.lent) {
-      if (window.roomId !== lesson.roomId || window.dayOfWeek !== lesson.dayOfWeek) continue;
-      if (!(start < minutesOf(window.endTime) && minutesOf(window.startTime) < end)) continue;
-      if (!shareADate(lesson.dayOfWeek, lesson, { ...window, recurrence: 'ALL_WEEKS' })) continue;
-      clashes.push({ kind: 'LENT_ROOM', lessonId: lesson.id, window });
-    }
+    // One clash per lesson, however many windows it meets: an autumn and a
+    // spring loan of the same hall are two windows, and a lesson running all
+    // year is one lesson to move. The earliest names it, so the row does not
+    // depend on the order the loans were read in.
+    const lentTo = input.lent
+      .filter((window) => window.roomId === lesson.roomId && window.dayOfWeek === lesson.dayOfWeek)
+      .filter((window) => start < minutesOf(window.endTime) && minutesOf(window.startTime) < end)
+      .filter((window) => shareADate(lesson.dayOfWeek, lesson, { ...window, recurrence: 'ALL_WEEKS' }))
+      .sort((a, b) => a.startDate.localeCompare(b.startDate) || a.loanId.localeCompare(b.loanId))[0];
+    if (lentTo !== undefined) clashes.push({ kind: 'LENT_ROOM', lessonId: lesson.id, window: lentTo });
 
     if (input.localRoomIds.has(lesson.roomId)) {
       const loans: CoverLoan[] = input.borrowed

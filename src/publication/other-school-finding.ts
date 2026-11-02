@@ -32,7 +32,7 @@ export async function otherSchoolFinding(
   tx: PrismaClient,
   schoolId: string,
   lessons: readonly GateLesson[],
-  window: { from: string; to: string; yearStart: string; yearEnd: string },
+  window: { from: string; to: string; yearId: string; yearStart: string; yearEnd: string },
 ): Promise<GateFinding> {
   const none: GateFinding = { code: 'PUB_OTHER_SCHOOL', count: 0 };
   const siblings = await tx.$queryRaw<Array<{ school_id: string; name: string }>>(
@@ -123,7 +123,13 @@ export async function otherSchoolFinding(
   if (inLocal.length > 0) {
     const breakDays = breakDaysOf(
       await tx.schoolBreak.findMany({
-        where: { startDate: { lte: new Date(`${window.to}T00:00:00.000Z`) }, endDate: { gte: new Date(`${window.from}T00:00:00.000Z`) } },
+        // The year's own, as the calendar's publish reads them: two years of
+        // the school whose dates overlap would otherwise lend each other lov.
+        where: {
+          academicYearId: window.yearId,
+          startDate: { lte: new Date(`${window.to}T00:00:00.000Z`) },
+          endDate: { gte: new Date(`${window.from}T00:00:00.000Z`) },
+        },
         select: { startDate: true, endDate: true, minGradeLevel: true, maxGradeLevel: true },
       }),
       window.from,

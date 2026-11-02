@@ -17,7 +17,8 @@ const LOCAL = 'c0000000-0000-4000-8000-000000000003';
 
 const time = (clock: string) => new Date(`1970-01-01T${clock}:00.000Z`);
 const date = (day: string) => new Date(`${day}T00:00:00.000Z`);
-const WINDOW = { from: '2030-08-19', to: '2031-06-13', yearStart: '2030-08-15', yearEnd: '2031-06-15' };
+const YEAR = '99999999-9999-4999-8999-999999999999';
+const WINDOW = { from: '2030-08-19', to: '2031-06-13', yearId: YEAR, yearStart: '2030-08-15', yearEnd: '2031-06-15' };
 
 const lesson = (patch: Partial<GateLesson>): GateLesson => ({
   id: 'L1',
@@ -217,6 +218,97 @@ describe('otherSchoolFinding', () => {
     tx.schoolBreak.findMany.mockResolvedValue(jullov(1, 6));
     expect((await inHall()).count).toBe(1);
     expect(tx.studentGroup.findMany).toHaveBeenLastCalledWith({ where: { id: { in: ['g'] } }, select: { id: true, gradeLevel: true } });
+  });
+
+  describe('a borrowed room on the lov of its group’s årskurs', () => {
+    const term = (id: string, startDate: string, endDate: string) => ({
+      id,
+      status: 'APPROVED',
+      ownerSchoolId: NORRA,
+      borrowerSchoolId: SCHOOL,
+      roomId: 'y0000000-0000-4000-8000-000000000008',
+      localRoomId: LOCAL,
+      dayOfWeek: 2,
+      startTime: time('08:00'),
+      endTime: time('10:00'),
+      startDate: date(startDate),
+      endDate: date(endDate),
+    });
+    // An autumn and a spring loan with the jullov between, and a lov of some
+    // årskurs over it: the loans cover the year only for a group that lov covers.
+    const jullov = (min: number | null, max: number | null) => [
+      { startDate: date('2030-12-21'), endDate: date('2031-01-07'), minGradeLevel: min, maxGradeLevel: max },
+    ];
+    const arrange = (gradeLevel: number | null, breaks: unknown[]) => {
+      sharing([]);
+      tx.roomLoan.findMany.mockResolvedValue([term('ht', '2030-08-19', '2030-12-20'), term('vt', '2031-01-08', '2031-06-13')]);
+      tx.studentGroup.findMany.mockResolvedValue([{ id: 'g', gradeLevel }]);
+      tx.schoolBreak.findMany.mockResolvedValue(breaks);
+      return find([lesson({ id: 'all-year', teacherId: null, roomId: LOCAL })]);
+    };
+
+    it.each([
+      ['åk 7–9', 7, 9],
+      ['åk 8 alone', 8, 8],
+      ['åk 1–12', 1, 12],
+    ])('is no lov of a teaching group, which has no årskurs: its lesson runs through a lov of %s', async (_name, min, max) => {
+      // A group of åk 8 is off on those days: nothing is written, and the two
+      // loans cover every day its lesson runs.
+      expect((await arrange(8, jullov(min, max))).count).toBe(0);
+      // A group with no årskurs is shown to be inside no årskurs's lov, so the
+      // calendar writes its lesson on those days, which the loans leave open.
+      expect((await arrange(null, jullov(min, max))).count).toBe(1);
+    });
+  });
+
+  it('reads the lov of the publish’s own year, as the calendar does', async () => {
+    sharing([]);
+    tx.roomLoan.findMany.mockResolvedValue([
+      {
+        id: 'ht',
+        status: 'APPROVED',
+        ownerSchoolId: NORRA,
+        borrowerSchoolId: SCHOOL,
+        roomId: 'y0000000-0000-4000-8000-000000000008',
+        localRoomId: LOCAL,
+        dayOfWeek: 2,
+        startTime: time('08:00'),
+        endTime: time('10:00'),
+        startDate: date('2030-08-19'),
+        endDate: date('2030-12-20'),
+      },
+    ]);
+    tx.studentGroup.findMany.mockResolvedValue([{ id: 'g', gradeLevel: 7 }]);
+    await find([lesson({ id: 'all-year', teacherId: null, roomId: LOCAL })]);
+    expect(tx.schoolBreak.findMany).toHaveBeenCalledTimes(1);
+    expect(tx.schoolBreak.findMany).toHaveBeenCalledWith({
+      where: { academicYearId: YEAR, startDate: { lte: date('2031-06-13') }, endDate: { gte: date('2030-08-19') } },
+      select: { startDate: true, endDate: true, minGradeLevel: true, maxGradeLevel: true },
+    });
+  });
+
+  it('names a lesson in a hall lent in an autumn and a spring window once, and counts it once', async () => {
+    sharing([]);
+    const lentTerm = (id: string, startDate: string, endDate: string) => ({
+      id,
+      status: 'APPROVED',
+      ownerSchoolId: SCHOOL,
+      borrowerSchoolId: NORRA,
+      roomId: HALL,
+      localRoomId: 'x0000000-0000-4000-8000-000000000009',
+      dayOfWeek: 2,
+      startTime: time('09:30'),
+      endTime: time('11:00'),
+      startDate: date(startDate),
+      endDate: date(endDate),
+    });
+    tx.roomLoan.findMany.mockResolvedValue([lentTerm('vt', '2031-01-08', '2031-06-13'), lentTerm('ht', '2030-08-19', '2030-12-20')]);
+    const finding = await find([lesson({ id: 'all-year', teacherId: null, roomId: HALL }), lesson({ id: 'spring', teacherId: null, roomId: HALL, startDate: '2031-01-08' })]);
+    expect(finding.count).toBe(2);
+    expect(finding.entries).toEqual([
+      { label: 'Matematik · 7B, tis 09:00–10:00: Idrottshallen är utlånad till Norraskolan tis 09:30–11:00', masterLessonId: 'all-year' },
+      { label: 'Matematik · 7B, tis 09:00–10:00: Idrottshallen är utlånad till Norraskolan tis 09:30–11:00', masterLessonId: 'spring' },
+    ]);
   });
 
   it('reads a request not yet approved as no room of the school\'s: it holds nothing, and names no lesson', async () => {

@@ -104,6 +104,34 @@ describe('otherSchoolClashes', () => {
     expect(run({ lessons: [lesson({ roomId: HALL, startTime: '10:00', endTime: '11:00', startDate: '2031-06-14', endDate: '2031-06-20' })], lent: [window({})] })).toEqual([]);
   });
 
+  it('names a lesson once however many of the room’s windows it meets, by the earliest', () => {
+    const inHall = lesson({ roomId: HALL, startTime: '11:00', endTime: '12:00' });
+    // An autumn and a spring loan of the same hall and time: two windows, one lesson.
+    const autumn = window({ loanId: 'ht', endDate: '2030-12-20' });
+    const spring = window({ loanId: 'vt', startDate: '2031-01-08' });
+    for (const lent of [[autumn, spring], [spring, autumn]]) {
+      const clashes = otherSchoolClashes({ lessons: [inHall], busy: [], lent, borrowed: [], localRoomIds: new Set() });
+      expect(clashes).toEqual([{ kind: 'LENT_ROOM', lessonId: 'L', window: autumn }]);
+    }
+    // Two windows from the same day on: the loan id settles which names it.
+    const twin = [window({ loanId: 'b' }), window({ loanId: 'a' })];
+    expect(otherSchoolClashes({ lessons: [inHall], busy: [], lent: twin, borrowed: [], localRoomIds: new Set() })).toEqual([
+      { kind: 'LENT_ROOM', lessonId: 'L', window: twin[1] },
+    ]);
+    // One per lesson, not one for the room: a second lesson in it is its own.
+    const two = otherSchoolClashes({
+      lessons: [inHall, lesson({ id: 'M', roomId: HALL, startTime: '10:00', endTime: '11:00' })],
+      busy: [],
+      lent: [autumn, spring],
+      borrowed: [],
+      localRoomIds: new Set(),
+    });
+    expect(two.map((clash) => [clash.kind, clash.lessonId])).toEqual([
+      ['LENT_ROOM', 'L'],
+      ['LENT_ROOM', 'M'],
+    ]);
+  });
+
   it('names a lesson in a borrowed room that no approved window holds', () => {
     const local = new Set([LOCAL]);
     const held = window({ roomId: LOCAL });
