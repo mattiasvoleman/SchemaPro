@@ -35025,6 +35025,10 @@ BEGIN
   IF activities && ARRAY['EG-0'] THEN
     RAISE EXCEPTION 'elevlistan 286w: the commit moved last läsår''s EG-0 as an activity';
   END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
 -- Section 287: en lärares gräns för undervisning i följd sitter på
 -- arbetstidsraden, och skolans brytare för den på Skolreglerna
 -- (20261218090000). The columns, their CHECKs and their defaults.
