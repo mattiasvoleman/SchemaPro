@@ -822,13 +822,27 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
           rowsIn(other, x.subjectId).some((row) => meets(row, y)) &&
           rowsIn(other, y.subjectId).some((row) => meets(row, x)),
       );
+    // The swap graph is the class's, not the pupil's: a kept row's partners
+    // (rows of its half in a subject the class has none of, as planned) are
+    // found once.
+    const partnersOf = new Map<PlannedRequirement, PlannedRequirement[]>();
+    const edgesOf = (row: PlannedRequirement): PlannedRequirement[] => {
+      let found = partnersOf.get(row);
+      if (found === undefined) {
+        found = (rowsByGroup.get(row.studentGroupId) ?? []).filter(
+          (partner) => !classSubjects.has(partner.subjectId) && swapped(row, partner),
+        );
+        partnersOf.set(row, found);
+      }
+      return found;
+    };
     // How many of `kept` can each have a partner of their own (augmenting
     // paths; a half has a handful of rows).
-    const matched = (kept: readonly PlannedRequirement[], partners: readonly PlannedRequirement[]): number => {
+    const matched = (kept: readonly PlannedRequirement[]): number => {
       const holderOf = new Map<PlannedRequirement, PlannedRequirement>();
       const place = (row: PlannedRequirement, tried: Set<PlannedRequirement>): boolean => {
-        for (const partner of partners) {
-          if (tried.has(partner) || !swapped(row, partner)) continue;
+        for (const partner of edgesOf(row)) {
+          if (tried.has(partner)) continue;
           tried.add(partner);
           const holder = holderOf.get(partner);
           if (holder === undefined || place(holder, tried)) {
@@ -854,8 +868,7 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
       if (own.length !== 1) return false;
       const x = own[0]!;
       const rivals = pupilRows.filter((row) => row !== x && row.studentGroupId === half && classSubjects.has(row.subjectId));
-      const partners = (rowsByGroup.get(half) ?? []).filter((row) => !classSubjects.has(row.subjectId));
-      return matched([x, ...rivals], partners) > matched(rivals, partners);
+      return matched([x, ...rivals]) > matched(rivals);
     };
     for (const result of pupilResults.get(classId) ?? []) {
       let isBelow = false;

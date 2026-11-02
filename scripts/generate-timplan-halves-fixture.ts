@@ -713,6 +713,76 @@ const classTeknikForTheSpring = (): PlannedCoverageInput => {
   );
 };
 
+/**
+ * The swap, and Studiestöd6, a group that reads matematik in place of
+ * hemkunskap (an anpassad studiegång): THE RULE takes its pupils off their
+ * half's hemkunskap. The half's hemkunskap is still the slöjd's partner, as
+ * planned, since the split took hemkunskap off the class for every pupil:
+ * the slöjd stays the swap for the two in Studiestöd6 as for the third, in
+ * 6A:1 without it.
+ */
+const partnerTakenOffThePupil = (): PlannedCoverageInput => {
+  reset();
+  const c6A = theClass('6A');
+  const halves = halvesOf(c6A);
+  const stod: PlannedGroup = { id: id(groupSerial++), name: 'Studiestöd6', kind: 'TEACHING_GROUP', gradeLevel: null, replacesSubjectId: S.HKK };
+  return yearOf(
+    [c6A, ...halves, stod],
+    [post(c6A, S.SL, 2, 25), ...swapPosts(halves), post(stod, S.MA, 1, 60)],
+    [pupil(c6A, [halves[0], stod]), pupil(c6A, [halves[1], stod]), pupil(c6A, [halves[0]])],
+  );
+};
+
+/**
+ * Fall L (teknik in turn in the swap's week, 6A's teknik back) with bild in
+ * turn too, 2 × 60 over the terms: a subject 6A has none of, so a partner,
+ * but in another week than any kept row. The slöjd and the teknik still
+ * share the one hemkunskap, so neither is exempt. Counting partners instead
+ * of matching them would find two for two.
+ */
+const anUnrelatedPartnerBesideL = (): PlannedCoverageInput => {
+  reset();
+  const c6A = theClass('6A');
+  const halves = halvesOf(c6A);
+  return yearOf(
+    [c6A, ...halves],
+    [
+      post(c6A, S.SL, 2, 25),
+      post(c6A, S.TK, 1, 30),
+      ...swapPosts(halves, { first: SPRING, second: AUTUMN }),
+      post(halves[0], S.TK, 1, 70, AUTUMN),
+      post(halves[1], S.TK, 1, 70, SPRING),
+      post(halves[0], S.BL, 2, 60, AUTUMN),
+      post(halves[1], S.BL, 2, 60, SPRING),
+    ],
+    [pupil(c6A, [halves[0]]), pupil(c6A, [halves[1]])],
+  );
+};
+
+/**
+ * 6A's matematik for the spring only, 1 × 70, and 6A:2's in the autumn. 6A's
+ * row makes the swap's shape with 6A:1's hemkunskap, and 6A:2 mirrors it,
+ * but it is the class's row, not the half's, so it is no rival of 6A:1's
+ * slöjd: the slöjd stays the swap for both pupils. 6A:2's pupil reads
+ * matematik from 6A and from their half with no swap beside it: double
+ * planned.
+ */
+const aClassRowInTheSwapsShape = (): PlannedCoverageInput => {
+  reset();
+  const c6A = theClass('6A');
+  const halves = halvesOf(c6A);
+  return yearOf(
+    [c6A, ...halves],
+    [
+      post(c6A, S.SL, 2, 25),
+      post(c6A, S.MA, 1, 70, SPRING),
+      ...swapPosts(halves),
+      post(halves[1], S.MA, 1, 70, AUTUMN),
+    ],
+    [pupil(c6A, [halves[0]]), pupil(c6A, [halves[1]])],
+  );
+};
+
 const added = [
   {
     name: `${PREFIX} hemkunskap swapped with slöjd — 6A's slöjd 2 × 25 and each half's slöjd in the term it reads no hemkunskap, which 6A has no post in, mirrored by the other half in one week, are one planning, not double: 50 + 34 and 50 + 36, both on the target of 80`,
@@ -797,6 +867,18 @@ const added = [
   {
     name: `${PREFIX} the alternatives as before — a half's dated Spanska with a Tyska group is two språkval, and the class's Svenska with its half's Svenska in the Spanska spring is no swap, double planned`,
     input: alternatives(),
+  },
+  {
+    name: `${PREFIX} the swap beside Studiestöd6, which reads matematik in place of hemkunskap — its pupils read no hemkunskap from their half, but the half's hemkunskap is still the slöjd's partner as planned: not double planned`,
+    input: partnerTakenOffThePupil(),
+  },
+  {
+    name: `${PREFIX} fall L with bild in turn too, in another week — a partner of no kept row, so the slöjd and the teknik still share the one hemkunskap: double planned in slöjd and teknik`,
+    input: anUnrelatedPartnerBesideL(),
+  },
+  {
+    name: `${PREFIX} 6A's matematik for the spring only in the swap's shape — a class row is no rival of the half's slöjd, so the slöjd stays the swap; 6A:2's pupil is double planned in matematik`,
+    input: aClassRowInTheSwapsShape(),
   },
 ];
 
