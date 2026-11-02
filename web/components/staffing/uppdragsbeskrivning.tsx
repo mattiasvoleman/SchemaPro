@@ -32,7 +32,9 @@ export interface UppdragsbeskrivningProps {
   /**
    * The newest version of post and uppdrag (TeacherEmploymentLogs); null only
    * when the history was READ and holds none; "loading" / "unreadable" while
-   * the read is in flight or after it failed (versionStampOf).
+   * the read is in flight or after it failed (versionStampOf). Its number is
+   * null for a reader without HR-läs, who is handed none: the stamp then
+   * names the date of the newest change it shows.
    */
   version: VersionStamp;
   timeZone: string;
@@ -410,11 +412,13 @@ export function Uppdragsbeskrivning({
             : version === "unreadable"
               ? t("stampUnreadable", { printed: printedOn })
               : version
-                ? t("stamp", {
-                    printed: printedOn,
-                    version: version.version,
-                    date: formatStamp(version.createdAt, timeZone),
-                  })
+                ? version.version === null
+                  ? t("stampNoNumber", { printed: printedOn, date: formatStamp(version.createdAt, timeZone) })
+                  : t("stamp", {
+                      printed: printedOn,
+                      version: version.version,
+                      date: formatStamp(version.createdAt, timeZone),
+                    })
                 : t("stampNoVersion", { printed: printedOn })}
           {/* The passes change the hours above and write no version: the
               stamp says they are the schedule's on the day printed. */}

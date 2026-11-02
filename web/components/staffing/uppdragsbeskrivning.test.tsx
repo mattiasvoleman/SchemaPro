@@ -212,6 +212,12 @@ describe("Uppdragsbeskrivning", () => {
     expect(screen.getByText("uppdrag.stampNoVersion(2026-10-09)")).toBeInTheDocument();
   });
 
+  it("names the date and no number for a reader who is handed none, and does not say there is no version", () => {
+    renderPage({ version: { version: null, createdAt: "2026-10-09T12:02:00.000Z" } });
+    expect(screen.getByText("uppdrag.stampNoNumber(2026-10-09|2026-10-09 14:02)")).toBeInTheDocument();
+    expect(screen.queryByText(/stampNoVersion/)).toBeNull();
+  });
+
   it("never says there is no version while the history is read or after it failed, and waits to print", () => {
     const { unmount } = renderPage({ version: "loading" });
     expect(screen.getByText("uppdrag.stampLoading(2026-10-09)")).toBeInTheDocument();

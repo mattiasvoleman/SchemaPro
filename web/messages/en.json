@@ -4705,6 +4705,7 @@
     "postPeriodStatus": "Against target",
     "stamp": "Printed {printed} · Post and duties: version {version} ({date}) · teaching as staffed on the day printed",
     "stampNoVersion": "Printed {printed} · Post and duties: no recorded version · teaching as staffed on the day printed",
+    "stampNoNumber": "Printed {printed} · Post and duties: no version number given, last change to what is shown {date} · teaching as staffed on the day printed",
     "stampLoading": "Printed {printed} · reading the post's version …",
     "stampUnreadable": "Printed {printed} · the post's version could not be read · teaching as staffed on the day printed",
     "signRektor": "Principal",

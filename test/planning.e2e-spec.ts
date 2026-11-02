@@ -2931,7 +2931,9 @@ describe('Planning surface (e2e)', () => {
             .get(`/api/v1/teacher-employments/${COLLEAGUE_ID}/history?academicYearId=${YEAR_ID}`)
             .set('x-test-user', asUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false } as never))
             .expect(200);
-          expect(hidden.body.entries.map((entry: { version: number }) => entry.version)).toEqual([2, 1]);
+          // Two of the three are left out, and the numbers of the two that are not are not handed over: they would have a hole.
+          expect(hidden.body.entries.map((entry: { id: string }) => entry.id)).toEqual([version(2).id, version(1).id]);
+          expect(JSON.stringify(hidden.body)).not.toContain('"version"');
           expect(hidden.body.entries[0].changes).toEqual([{ field: 'employmentPercent', before: null, after: null, hrHidden: true }]);
           expect(JSON.stringify(hidden.body)).not.toContain('maxTeachingDaysPerWeek');
 
@@ -2956,7 +2958,8 @@ describe('Planning surface (e2e)', () => {
             .get(`/api/v1/teacher-employments/${COLLEAGUE_ID}/history?academicYearId=${YEAR_ID}`)
             .set('x-test-user', asUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false } as never))
             .expect(200);
-          expect(hidden.body.entries.map((entry: { version: number }) => entry.version)).toEqual([2, 1]);
+          expect(hidden.body.entries.map((entry: { id: string }) => entry.id)).toEqual([version(2).id, version(1).id]);
+          expect(JSON.stringify(hidden.body)).not.toContain('"version"');
           expect(hidden.body.entries[0].changes).toEqual([{ field: 'employmentPercent', before: null, after: null, hrHidden: true }]);
           expect(JSON.stringify(hidden.body)).not.toMatch(/onsecutive|BreakMinutes/);
 

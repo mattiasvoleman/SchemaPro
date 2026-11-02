@@ -129,7 +129,9 @@ export function EmploymentHistoryCard({
                 return (
                   <li key={entry.id} className="space-y-0.5 py-2">
                     <p className="flex flex-wrap items-baseline gap-x-2">
-                      <span className="font-medium">{t("version", { version: entry.version })}</span>
+                      {entry.version !== undefined ? (
+                        <span className="font-medium">{t("version", { version: entry.version })}</span>
+                      ) : null}
                       <span className="text-muted-foreground">
                         {formatStamp(entry.createdAt, timeZone)} ·{" "}
                         {actorLabel(entry.actorId, personName, {

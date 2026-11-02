@@ -296,6 +296,35 @@ describe("formatStamp and latestVersion", () => {
   });
 });
 
+describe("a reader without HR-läs, who is handed no version numbers (#231 R2-2)", () => {
+  // The versions 2 and 3 moved only HR data and are left out; the rest carry no number.
+  const unnumbered = [
+    entry({ id: "l5", version: undefined, createdAt: "2026-11-05T10:00:00.000Z" }),
+    entry({ id: "l4", version: undefined, createdAt: "2026-11-04T10:00:00.000Z" }),
+    entry({ id: "l1", version: undefined, createdAt: "2026-11-01T10:00:00.000Z" }),
+  ];
+
+  it("cites the newest by its date alone, the first the gateway sends, and never makes up a number", () => {
+    expect(latestVersion(unnumbered)).toEqual({ version: null, createdAt: "2026-11-05T10:00:00.000Z" });
+    expect(versionStampOf({ isSuccess: true, isError: false, data: { entries: unnumbered } })).toEqual({
+      version: null,
+      createdAt: "2026-11-05T10:00:00.000Z",
+    });
+  });
+
+  it("still cites the database's number to a reader who is handed them", () => {
+    expect(
+      latestVersion([entry({ version: 5 }), entry({ version: 4 }), entry({ version: 1, createdAt: "2026-11-01T10:00:00.000Z" })]),
+    ).toMatchObject({ version: 5 });
+  });
+
+  it("writes the lines of a version with no number as it writes any other", () => {
+    expect(
+      historyLines(entry({ version: undefined, changes: [{ field: "employmentPercent", before: null, after: null, hrHidden: true }] }), labels),
+    ).toEqual(["Tjänstgöringsgrad: dolt"]);
+  });
+});
+
 describe("formatHistoryValue in the reader's decimal mark", () => {
   it("writes 66,667 % for a Swedish reader and 66.667 % for an English one", () => {
     const en: HistoryLabels = {

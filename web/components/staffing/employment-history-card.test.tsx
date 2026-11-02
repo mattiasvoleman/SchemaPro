@@ -100,6 +100,42 @@ describe("EmploymentHistoryCard", () => {
     expect(items[1]).toHaveTextContent("field.employmentPercent: percent(80)");
   });
 
+  it("names no version number for a reader who is handed none, and still lists the versions (#231 R2-2)", async () => {
+    // A reader without HR-läs: the versions between are left out, so the numbers would have holes.
+    history.data = {
+      truncated: false,
+      entries: [
+        {
+          id: "l5",
+          entity: "EMPLOYMENT",
+          entityId: "e1",
+          action: "UPDATE",
+          actorId: null,
+          createdAt: "2026-10-09T12:05:00.000Z",
+          changes: [{ field: "employmentPercent", before: null, after: null, hrHidden: true }],
+        },
+        {
+          id: "l1",
+          entity: "EMPLOYMENT",
+          entityId: "e1",
+          action: "CREATE",
+          actorId: null,
+          createdAt: "2026-10-09T12:02:00.000Z",
+          changes: [{ field: "employmentPercent", before: null, after: null, hrHidden: true }],
+        },
+      ],
+    };
+    const user = userEvent.setup();
+    renderCard();
+    await user.click(screen.getByRole("button", { name: "show" }));
+    const items = screen.getAllByRole("listitem").filter((item) => item.querySelector("ul"));
+    expect(items).toHaveLength(2);
+    expect(items[0]).toHaveTextContent("2026-10-09 14:05 · system");
+    expect(items[0]).toHaveTextContent("field.employmentPercent: hrHidden");
+    expect(screen.queryByText(/version\(/)).toBeNull();
+    expect(screen.queryByText(/undefined/)).toBeNull();
+  });
+
   it("names a period's version by its Från (20261022120000)", async () => {
     history.data = {
       truncated: false,

@@ -22,7 +22,10 @@
  * log row carries the teacher and the year, and entityId the row. A key this
  * list does not know — a column added after Fas 3 — goes last, alphabetically,
  * and is never dropped: the history must not hide a change because its
- * reader is older than the write.
+ * reader is older than the write. That is for a reader of HR data. For one
+ * without HR-läs, hideHrChanges (hr-visibility.ts) shows a field of a post
+ * only if somebody has judged it not to be HR data, so a key this list does
+ * not know is left out of what they are handed.
  *
  * PURE. Values are passed through as the JSON holds them (numbers, strings,
  * booleans, null); the web formats them.
