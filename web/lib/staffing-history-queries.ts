@@ -22,8 +22,12 @@ export interface HistoryChange {
  */
 export interface HistoryEntry {
   id: string;
-  /** 1, 2, 3 … per teacher and läsår — what a protokoll cites as "Version 7". */
-  version: number;
+  /**
+   * 1, 2, 3 … per teacher and läsår — what a protokoll cites as "Version 7".
+   * Absent for a reader without HR-läs: the versions they may not see are left
+   * out, and the numbers of the rest would have holes in them.
+   */
+  version?: number;
   /** PERIOD: a period of the post (migration 20261022120000). */
   entity: "EMPLOYMENT" | "DUTY" | "PERIOD";
   entityId: string;

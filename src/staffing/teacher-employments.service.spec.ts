@@ -776,9 +776,9 @@ describe('TeacherEmploymentsService', () => {
         logRow(1, { entity: 'DUTY', entityId: 'duty-1', before: { minutesPerWeek: 60 }, after: { minutesPerWeek: 90 } }),
       ]);
       const hidden = await service.history(COLLEAGUE, YEAR_ID, testUser({ adminProfile: 'SCHEMALAGGARE' }));
-      expect(hidden.entries.map((entry) => [entry.version, entry.entity])).toEqual([
-        [2, 'EMPLOYMENT'],
-        [1, 'DUTY'],
+      expect(hidden.entries.map((entry) => [entry.id, entry.entity])).toEqual([
+        ['log-2', 'EMPLOYMENT'],
+        ['log-1', 'DUTY'],
       ]);
       expect(hidden.entries[0]!.changes).toEqual([{ field: 'employmentPercent', before: null, after: null, hrHidden: true }]);
       const shown = await service.history(COLLEAGUE, YEAR_ID, testUser({ adminProfile: 'REKTOR' }));
@@ -801,6 +801,98 @@ describe('TeacherEmploymentsService', () => {
       ]);
     });
 
+    it('leaves out a column no list knows from a planner without HR-läs, and shows it whole to whoever reads HR', async () => {
+      // A column added to the post after this code: the trigger logs it with
+      // the row, and the diff hands it on under its own name.
+      const period = { id: 'per-1', employmentId: 'emp-1', validFrom: '2026-11-01', validTo: null, employmentPercent: 80, reductionPercent: 0 };
+      const post = { id: 'emp-1', userId: COLLEAGUE, academicYearId: YEAR_ID, reductionPercent: 0 };
+      tx.teacherEmploymentLog.findMany.mockResolvedValue([
+        logRow(3, { entity: 'PERIOD', entityId: 'per-1', action: 'CREATE', before: null, after: { ...period, reason: 'studier' } }),
+        logRow(2, {
+          before: { ...post, employmentPercent: 100, signature: 'ANN', employmentEndsOn: null, noteChanged: null },
+          after: { ...post, employmentPercent: 80, signature: 'ANS', employmentEndsOn: '2027-06-15', noteChanged: true },
+        }),
+        logRow(1, { before: { ...post, employmentEndsOn: null }, after: { ...post, employmentEndsOn: '2027-06-15' } }),
+      ]);
+      const hidden = await service.history(COLLEAGUE, YEAR_ID, testUser({ adminProfile: 'SCHEMALAGGARE' }));
+      expect(hidden.entries.map((entry) => [entry.entity, entry.changes])).toEqual([
+        [
+          'EMPLOYMENT',
+          [
+            { field: 'employmentPercent', before: null, after: null, hrHidden: true },
+            { field: 'signature', before: 'ANN', after: 'ANS' },
+          ],
+        ],
+      ]);
+      expect(JSON.stringify(hidden)).not.toMatch(/employmentEndsOn|2027-06-15|noteChanged|studier/);
+
+      const whole = [
+        [
+          'PERIOD',
+          [
+            { field: 'validFrom', before: null, after: '2026-11-01' },
+            { field: 'validTo', before: null, after: null },
+            { field: 'employmentPercent', before: null, after: 80 },
+            { field: 'reductionPercent', before: null, after: 0 },
+            { field: 'reason', before: null, after: 'studier' },
+          ],
+        ],
+        [
+          'EMPLOYMENT',
+          [
+            { field: 'employmentPercent', before: 100, after: 80 },
+            { field: 'signature', before: 'ANN', after: 'ANS' },
+            { field: 'noteChanged', before: null, after: true },
+            { field: 'employmentEndsOn', before: null, after: '2027-06-15' },
+          ],
+        ],
+        ['EMPLOYMENT', [{ field: 'employmentEndsOn', before: null, after: '2027-06-15' }]],
+      ];
+      const readers = [
+        testUser(),
+        testUser({ adminProfile: 'REKTOR' }),
+        testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: true }),
+        testUser({ adminProfile: 'EXPEDITION', hrRead: true }),
+      ];
+      for (const reader of readers) {
+        const shown = await service.history(COLLEAGUE, YEAR_ID, reader);
+        expect(shown.entries.map((entry) => [entry.entity, entry.changes])).toEqual(whole);
+        expect(shown.entries.map((entry) => entry.version)).toEqual([3, 2, 1]);
+      }
+      // A teacher reads their own post whole.
+      const own = await service.history(ME, YEAR_ID, testUser({ role: Role.TEACHER }));
+      expect(own.entries.map((entry) => [entry.entity, entry.changes])).toEqual(whole);
+      expect(own.entries.map((entry) => entry.version)).toEqual([3, 2, 1]);
+    });
+
+    /*
+     * #231 R2-2. Versions 2 and 3 moved only HR data, so a reader without
+     * HR-läs is handed none of them. Their numbers would have read 5, 4, 1:
+     * the hole says that something HR happened, and the dates around it say
+     * when. They are handed no number at all; whoever reads HR is handed the
+     * database's, as before.
+     */
+    it('hands a planner without HR-läs no version numbers, where the versions between are left out', async () => {
+      const base = { id: 'emp-1', userId: COLLEAGUE, academicYearId: YEAR_ID, employmentPercent: 80, reductionPercent: 0, signature: 'EVA' };
+      const none = { maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null, maxTeachingDaysPerWeek: null };
+      const limit = (minutes: number, pause: number) => ({ ...base, ...none, maxConsecutiveTeachingMinutes: minutes, consecutiveBreakMinutes: pause });
+      tx.teacherEmploymentLog.findMany.mockResolvedValue([
+        logRow(5, { before: { ...limit(235, 45) }, after: { ...limit(235, 45), employmentPercent: 100 } }),
+        logRow(4, { before: { ...limit(235, 45), employmentPercent: 90 }, after: { ...limit(235, 45), employmentPercent: 90, signature: 'EVB' } }),
+        logRow(3, { before: limit(120, 30), after: limit(235, 45) }),
+        logRow(2, { before: { ...base, ...none }, after: limit(120, 30) }),
+        logRow(1, { action: 'CREATE', before: null, after: { ...base, ...none } }),
+      ]);
+      const hidden = await service.history(COLLEAGUE, YEAR_ID, testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false }));
+      // 2 and 3 are left out, and nothing of what is left says that they were there.
+      expect(hidden.entries.map((entry) => entry.id)).toEqual(['log-5', 'log-4', 'log-1']);
+      for (const entry of hidden.entries) expect(entry).not.toHaveProperty('version');
+      expect(JSON.stringify(hidden)).not.toMatch(/version|235|120|onsecutive|BreakMinutes/);
+
+      const shown = await service.history(COLLEAGUE, YEAR_ID, testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: true }));
+      expect(shown.entries.map((entry) => entry.version)).toEqual([5, 4, 3, 2, 1]);
+    });
+
     describe('deltid in days in Historik (20261123090000)', () => {
       const post = { id: 'emp-1', userId: COLLEAGUE, academicYearId: YEAR_ID, employmentPercent: 100, reductionPercent: 0 };
       const hidden = () => service.history(COLLEAGUE, YEAR_ID, testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false }));
@@ -816,7 +908,7 @@ describe('TeacherEmploymentsService', () => {
           logRow(3, { before: { ...post, maxTeachingDaysPerWeek: null }, after: { ...post, maxTeachingDaysPerWeek: 4 } }),
           logRow(2, { before: { ...post, signature: 'A' }, after: { ...post, signature: 'B' } }),
         ]);
-        expect((await hidden()).entries.map((entry) => entry.version)).toEqual([2]);
+        expect((await hidden()).entries.map((entry) => entry.id)).toEqual(['log-2']);
         const answer = await shown();
         expect(answer.entries.map((entry) => entry.version)).toEqual([3, 2]);
         expect(answer.entries[0]!.changes).toEqual([{ field: 'maxTeachingDaysPerWeek', before: null, after: 4 }]);
@@ -850,7 +942,7 @@ describe('TeacherEmploymentsService', () => {
 
       it('keeps a version that changed nothing at all, for every reader, as it always did', async () => {
         tx.teacherEmploymentLog.findMany.mockResolvedValue([logRow(2, { before: post, after: post })]);
-        expect((await hidden()).entries.map((entry) => [entry.version, entry.changes])).toEqual([[2, []]]);
+        expect((await hidden()).entries.map((entry) => [entry.id, entry.changes])).toEqual([['log-2', []]]);
       });
     });
 
@@ -866,7 +958,7 @@ describe('TeacherEmploymentsService', () => {
           logRow(3, { before: { ...post, ...none }, after: { ...post, ...set } }),
           logRow(2, { before: { ...post, signature: 'A' }, after: { ...post, signature: 'B' } }),
         ]);
-        expect((await hidden()).entries.map((entry) => entry.version)).toEqual([2]);
+        expect((await hidden()).entries.map((entry) => entry.id)).toEqual(['log-2']);
         const answer = await shown();
         expect(answer.entries.map((entry) => entry.version)).toEqual([3, 2]);
         expect(answer.entries[0]!.changes).toEqual([

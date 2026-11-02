@@ -27,8 +27,12 @@ import { hideHr, hideHrChanges, readsHr } from './hr-visibility';
 /** One version of a tjänst, as the Historik card and a protokoll cite it. */
 export interface TeacherHistoryEntry {
   id: string;
-  /** 1, 2, 3 … per teacher and year: "Version 7". */
-  version: number;
+  /**
+   * 1, 2, 3 … per teacher and year: "Version 7". Absent for a reader without
+   * HR-läs, who is not handed the versions they may not see, so a number would
+   * have holes in it where an HR change was made.
+   */
+  version?: number;
   entity: 'EMPLOYMENT' | 'DUTY' | 'PERIOD';
   entityId: string;
   action: 'CREATE' | 'UPDATE' | 'DELETE';
@@ -205,20 +209,28 @@ export class TeacherEmploymentsService {
     // A period's versions are left out for a reader without HR-läs, as the
     // periods are from the post (hr-visibility.ts): when and how a post
     // changes is HR data like the percentages. So is a version of the post
-    // whose one change was deltid in days (20261123090000) or the limit on
-    // teaching in a row (20261218090000): hideHrChanges leaves that change
-    // out whole, and the empty version left behind would still say, by being
-    // there, that something HR moved on that date.
+    // whose changes hideHrChanges leaves out whole — deltid in days
+    // (20261123090000), the limit on teaching in a row (20261218090000), a
+    // note, a column nobody has argued in: the empty version left behind
+    // would still say, by being there, that something HR moved on that date.
     const hr = readsHr(user);
     const shown = (hr ? rows : rows.filter((row) => row.entity !== 'PERIOD'))
       .map((row) => {
         const changes = diffLogEntry(row.entity, row.before, row.after);
-        return { row, changes, masked: hr ? changes : hideHrChanges(changes) };
+        return { row, changes, masked: hr ? changes : hideHrChanges(row.entity, changes) };
       })
       .filter(({ changes, masked }) => masked.length > 0 || changes.length === 0);
+    // The number is the database's, and a reader without HR-läs is not handed
+    // it: of the versions 1–5, where 2 and 3 moved only HR data, they would
+    // read 5, 4, 1, and a hole says that something HR happened, and the dates
+    // around it when. Not renumbered either. A samverkansprotokoll cites
+    // "Version 7" (the manual's 4.3), and a number that is another version
+    // to this reader than to the rektor would be cited wrongly across the
+    // two; a read that stops at HISTORY_LIMIT could not count from the first
+    // version in any case.
     const entries = shown.slice(0, HISTORY_LIMIT).map(({ row, masked }) => ({
       id: row.id,
-      version: row.version,
+      ...(hr ? { version: row.version } : {}),
       entity: row.entity,
       entityId: row.entityId,
       action: row.action,

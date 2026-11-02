@@ -1,5 +1,9 @@
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { Prisma } from '@prisma/client';
 import { Role } from '../auth/enums/role.enum';
 import { testUser } from '../../test/utils/prisma-mock';
+import { DUTY_FIELDS, EMPLOYMENT_FIELDS, PERIOD_FIELDS, diffLogEntry } from './employment-log-diff';
 import { EMPLOYMENT_HR_FIELDS, hideHr, hideHrChanges, readsHr } from './hr-visibility';
 
 describe('hr-visibility', () => {
@@ -113,7 +117,7 @@ describe('hr-visibility', () => {
     const hidden = hideHr({ userId: 'u', employmentPercent: 80, reductionPercent: 0, ...row }) as Record<string, unknown>;
     expect(EMPLOYMENT_HR_FIELDS.filter((field) => hidden[field] !== null)).toEqual([]);
     const changes = EMPLOYMENT_HR_FIELDS.map((field) => ({ field, before: 1, after: 2 }));
-    expect(hideHrChanges(changes).filter((change) => change.before !== null || change.after !== null)).toEqual([]);
+    expect(hideHrChanges('EMPLOYMENT', changes).filter((change) => change.before !== null || change.after !== null)).toEqual([]);
   });
 
   it('leaves a change of the days out of a version whole, where a percentage is said to have changed', () => {
@@ -122,7 +126,7 @@ describe('hr-visibility', () => {
      * where they moved would tell the reader which teacher has a limit.
      */
     expect(
-      hideHrChanges([
+      hideHrChanges('EMPLOYMENT', [
         { field: 'employmentPercent', before: 100, after: 80 },
         { field: 'maxTeachingDaysPerWeek', before: null, after: 4 },
         { field: 'signature', before: 'A', after: 'B' },
@@ -131,7 +135,7 @@ describe('hr-visibility', () => {
       { field: 'employmentPercent', before: null, after: null, hrHidden: true },
       { field: 'signature', before: 'A', after: 'B' },
     ]);
-    expect(hideHrChanges([{ field: 'maxTeachingDaysPerWeek', before: 4, after: 3 }])).toEqual([]);
+    expect(hideHrChanges('EMPLOYMENT', [{ field: 'maxTeachingDaysPerWeek', before: 4, after: 3 }])).toEqual([]);
   });
 
   it('leaves a change of the limit on teaching in a row out of a version whole, both columns, where a percentage is said to have changed', () => {
@@ -142,7 +146,7 @@ describe('hr-visibility', () => {
      * log row written by hand could) says nothing of it either.
      */
     expect(
-      hideHrChanges([
+      hideHrChanges('EMPLOYMENT', [
         { field: 'employmentPercent', before: 100, after: 80 },
         { field: 'maxConsecutiveTeachingMinutes', before: null, after: 180 },
         { field: 'consecutiveBreakMinutes', before: null, after: 30 },
@@ -153,17 +157,17 @@ describe('hr-visibility', () => {
       { field: 'signature', before: 'A', after: 'B' },
     ]);
     expect(
-      hideHrChanges([
+      hideHrChanges('EMPLOYMENT', [
         { field: 'maxConsecutiveTeachingMinutes', before: 180, after: 150 },
         { field: 'consecutiveBreakMinutes', before: 30, after: 20 },
       ]),
     ).toEqual([]);
-    expect(hideHrChanges([{ field: 'consecutiveBreakMinutes', before: 30, after: null }])).toEqual([]);
+    expect(hideHrChanges('EMPLOYMENT', [{ field: 'consecutiveBreakMinutes', before: 30, after: null }])).toEqual([]);
   });
 
   it('keeps that a percentage changed in a version, without its values', () => {
     expect(
-      hideHrChanges([
+      hideHrChanges('EMPLOYMENT', [
         { field: 'employmentPercent', before: 100, after: 80 },
         { field: 'reductionPercent', before: 0, after: 20 },
         { field: 'employmentForm', before: null, after: 'VISSTID' },
@@ -179,5 +183,150 @@ describe('hr-visibility', () => {
       { field: 'lecturerPercent', before: null, after: null, hrHidden: true },
       { field: 'signature', before: 'A', after: 'B' },
     ]);
+  });
+
+  /*
+   * A VERSION OF A POST OR A PERIOD, FIELD BY FIELD. The log holds the row as
+   * JSON less a strip list (app.teacher_staffing_log), so every column of the
+   * table is in a version without anything but these lists to place it. The
+   * lists are the decision for each, argued in hr-visibility.ts; a column that
+   * is in none of them is left out, and the third test fails until somebody
+   * has placed it.
+   */
+  describe('a version of a post, for a reader without HR-läs', () => {
+    const said = (field: string) => ({ field, before: null, after: null, hrHidden: true });
+    // Shown with its values: the post hands the column to this reader as well.
+    const SHOWN: [string, unknown, unknown][] = [
+      ['contractKind', 'FERIE', 'SEMESTER'],
+      ['teachingTargetMinutesPerWeek', null, 1200],
+      ['signature', 'ANN', 'ANS'],
+    ];
+    // Said to have changed, not to what: every post has a value.
+    const SAID = ['employmentPercent', 'reductionPercent', 'employmentForm', 'firstTeacherPercent', 'lecturerPercent'];
+    // Left out whole: null on most posts (the days, the limit's pair), or what the post withholds (the note).
+    const LEFT_OUT = [
+      'maxTeachingDaysPerWeek',
+      'maxConsecutiveTeachingMinutes',
+      'consecutiveBreakMinutes',
+      'noteChanged',
+    ];
+    const PLACED = [...SHOWN.map(([field]) => field), ...SAID, ...LEFT_OUT];
+
+    /** The keys the latest app.teacher_staffing_log removes from a row before it is logged. */
+    const stripped = (): string[] => {
+      const root = join(__dirname, '..', '..', 'prisma', 'migrations');
+      for (const dir of readdirSync(root).filter((name) => !name.endsWith('.toml')).sort().reverse()) {
+        const sql = readFileSync(join(root, dir, 'migration.sql'), 'utf8');
+        if (!/FUNCTION app\.teacher_staffing_log\(\) RETURNS trigger/.test(sql)) continue;
+        const list = /stripped text\[\] := ARRAY\[([^\]]*)\]/.exec(sql);
+        if (!list) throw new Error(`${dir} replaces app.teacher_staffing_log without a strip list this spec can read`);
+        return [...list[1]!.matchAll(/'([^']+)'/g)].map((match) => match[1]!);
+      }
+      throw new Error('no migration defines app.teacher_staffing_log');
+    };
+
+    it('places every field the diff knows in exactly one list', () => {
+      expect([...PLACED].sort()).toEqual([...EMPLOYMENT_FIELDS].sort());
+    });
+
+    it('places every column of the post that the log holds, by the latest log function', () => {
+      // Prisma's column list less the trigger's strip list, the identity the
+      // diff leaves out, and the note: its text never enters, and
+      // "noteChanged" says it was written (20261010090000).
+      const identity = ['id', 'userId', 'academicYearId'];
+      const logged = Object.keys(Prisma.TeacherEmploymentScalarFieldEnum)
+        .filter((column) => ![...stripped(), ...identity, 'note'].includes(column))
+        .concat('noteChanged');
+      expect([...logged].sort()).toEqual([...PLACED].sort());
+    });
+
+    it('leaves out every column of a period that the log holds, the target too', () => {
+      const identity = ['id', 'userId', 'academicYearId', 'employmentId'];
+      const logged = Object.keys(Prisma.TeacherEmploymentPeriodScalarFieldEnum).filter(
+        (column) => ![...stripped(), ...identity].includes(column),
+      );
+      expect([...logged].sort()).toEqual([...PERIOD_FIELDS].sort());
+      expect(hideHrChanges('PERIOD', logged.map((field) => ({ field, before: 1, after: 2 })))).toEqual([]);
+    });
+
+    it.each(SHOWN)('shows %s with its values', (field, before, after) => {
+      expect(hideHrChanges('EMPLOYMENT', [{ field, before, after }])).toEqual([{ field, before, after }]);
+    });
+
+    it.each(SAID)('says that %s changed, not to what', (field) => {
+      expect(hideHrChanges('EMPLOYMENT', [{ field, before: 1, after: 2 }])).toEqual([said(field)]);
+    });
+
+    it.each(LEFT_OUT)('says nothing of %s', (field) => {
+      expect(hideHrChanges('EMPLOYMENT', [{ field, before: null, after: 2 }])).toEqual([]);
+    });
+
+    it("leaves out a key no list knows, name and value: a column added after this code, or a gateway rolled back past it", () => {
+      // Through the diff, as the service does: it hands every key it does not know on.
+      const changes = diffLogEntry(
+        'EMPLOYMENT',
+        { id: 'e', userId: 'u', signature: 'ANN', employmentEndsOn: null, probation: false },
+        { id: 'e', userId: 'u', signature: 'ANS', employmentEndsOn: '2027-06-15', probation: true },
+      );
+      expect(changes.map((change) => change.field)).toEqual(['signature', 'employmentEndsOn', 'probation']);
+      const masked = hideHrChanges('EMPLOYMENT', changes);
+      expect(masked).toEqual([{ field: 'signature', before: 'ANN', after: 'ANS' }]);
+      expect(JSON.stringify(masked)).not.toMatch(/employmentEndsOn|probation|2027-06-15/);
+    });
+
+    it('hands over a whole row exactly as the lists say, the limit and the note out', () => {
+      const row = {
+        id: 'e',
+        userId: 'u',
+        academicYearId: 'y',
+        employmentPercent: 80,
+        reductionPercent: 10,
+        contractKind: 'SEMESTER',
+        employmentForm: 'TILLSVIDARE',
+        firstTeacherPercent: 20,
+        lecturerPercent: null,
+        teachingTargetMinutesPerWeek: 1100,
+        maxTeachingDaysPerWeek: 4,
+        maxConsecutiveTeachingMinutes: 180,
+        consecutiveBreakMinutes: 30,
+        signature: 'ANN',
+        noteChanged: true,
+        employmentEndsOn: '2027-06-15',
+      };
+      const masked = hideHrChanges('EMPLOYMENT', diffLogEntry('EMPLOYMENT', null, row));
+      expect(masked).toEqual([
+        said('employmentPercent'),
+        said('reductionPercent'),
+        { field: 'contractKind', before: null, after: 'SEMESTER' },
+        said('employmentForm'),
+        said('firstTeacherPercent'),
+        said('lecturerPercent'),
+        { field: 'teachingTargetMinutesPerWeek', before: null, after: 1100 },
+        { field: 'signature', before: null, after: 'ANN' },
+      ]);
+      // The two fields of the limit, #231's, are not in the answer, by name or by figure.
+      expect(JSON.stringify(masked)).not.toMatch(/onsecutive|BreakMinutes|180|noteChanged/);
+    });
+
+    it("leaves out every field of a period, the dates and the target too: the allow list is the post's alone", () => {
+      expect(
+        hideHrChanges('PERIOD', [
+          { field: 'validFrom', before: null, after: '2026-11-01' },
+          { field: 'validTo', before: null, after: null },
+          { field: 'employmentPercent', before: null, after: 80 },
+          { field: 'teachingTargetMinutesPerWeek', before: null, after: 900 },
+          { field: 'reason', before: null, after: 'föräldraledighet' },
+        ]),
+      ).toEqual([]);
+    });
+
+    it("leaves an uppdrag's version as it is: every administrator reads the duty row whole", () => {
+      const changes = DUTY_FIELDS.map((field) => ({ field, before: null, after: 1 }));
+      expect(hideHrChanges('DUTY', changes)).toEqual(changes);
+    });
+
+    it('leaves out an entity it does not know, like a period', () => {
+      expect(hideHrChanges('SOMETHING_NEW' as never, [{ field: 'signature', before: 'A', after: 'B' }])).toEqual([]);
+    });
   });
 });

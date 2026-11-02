@@ -4705,6 +4705,7 @@
     "postPeriodStatus": "Mot målet",
     "stamp": "Utskriven {printed} · Tjänst och uppdrag: version {version} ({date}) · undervisningen enligt tjänstefördelningen den dag sidan skrevs ut",
     "stampNoVersion": "Utskriven {printed} · Tjänst och uppdrag: ingen registrerad version · undervisningen enligt tjänstefördelningen den dag sidan skrevs ut",
+    "stampNoNumber": "Utskriven {printed} · Tjänst och uppdrag: inget versionsnummer anges, senaste ändring av det som visas {date} · undervisningen enligt tjänstefördelningen den dag sidan skrevs ut",
     "stampLoading": "Utskriven {printed} · läser tjänstens version …",
     "stampUnreadable": "Utskriven {printed} · tjänstens version kunde inte läsas · undervisningen enligt tjänstefördelningen den dag sidan skrevs ut",
     "signRektor": "Rektor",

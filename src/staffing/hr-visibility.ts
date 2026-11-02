@@ -1,7 +1,7 @@
 import { profileReadsHr } from '../auth/admin-areas';
 import { Role } from '../auth/enums/role.enum';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
-import type { LogChange } from './employment-log-diff';
+import type { LogChange, LogEntity } from './employment-log-diff';
 
 /**
  * Tjänst % and nedsättning are HR data (Roller i skolan): rektor and a full
@@ -47,9 +47,10 @@ export function readsHr(user: AuthenticatedUser): boolean {
  * (maxConsecutiveTeachingMinutes and consecutiveBreakMinutes, 20261218090000):
  * the most minutes in a row and the free time that ends a stretch, the days'
  * sibling in the same part of the week, moved here from the work rule that
- * every colleague reads. ONE LIST for the post as it is read
- * (hideHr) and its versions in Historik (hideHrChanges): a column added to
- * the post that is HR goes here, or both show it.
+ * every colleague reads. The list for the post as it is read (hideHr): a
+ * column added to the post that is HR goes here, or the post shows it.
+ * Historik does not depend on it: a version hides a column nobody has
+ * argued in (NOT_HR_IN_A_POST).
  */
 export const EMPLOYMENT_HR_FIELDS = [
   'employmentForm',
@@ -59,24 +60,6 @@ export const EMPLOYMENT_HR_FIELDS = [
   'maxConsecutiveTeachingMinutes',
   'consecutiveBreakMinutes',
 ] as const;
-
-/** The fields a version's before and after name that a reader without HR-läs is not shown. */
-const HR_FIELDS = new Set<string>(['employmentPercent', 'reductionPercent', ...EMPLOYMENT_HR_FIELDS]);
-
-/**
- * Of those, the ones whose change is not even said. Deltid in days and the
- * limit on teaching in a row are null on most posts, so a version that names
- * one says the teacher has (or had) a limit at all — which is what the masked
- * reader is not to learn: an "ändrad, dolt" on exactly the versions where the
- * days or the limit moved would give it back. A changed percentage says
- * nothing of the kind: every post has one. Both of the limit's fields are
- * here, so a version that moved the pair says nothing of either.
- */
-const UNSAID_HR_FIELDS = new Set<string>([
-  'maxTeachingDaysPerWeek',
-  'maxConsecutiveTeachingMinutes',
-  'consecutiveBreakMinutes',
-]);
 
 /**
  * The problem `code` of a read that is HR data through and through (SCB:s
@@ -106,16 +89,82 @@ export function hideHr<T extends { employmentPercent: number; reductionPercent: 
 }
 
 /**
- * A version's changes with the HR values left out: that a percentage or
- * one of SCB's three changed is still said, a change of the days or of the
- * limit on teaching in a row is left out whole (UNSAID_HR_FIELDS). A version
- * that changed nothing else is then empty, and the history leaves it out
- * (teacher-employments.service.ts).
+ * The fields a version of a post shows with their values to a reader without
+ * HR-läs. An ALLOW list, not a list of what to hide. A version is the whole
+ * row as JSON less a strip list (app.teacher_staffing_log, last replaced by
+ * 20261104090000), and diffLogEntry hands on every key it does not know. A
+ * list of what to hide shows a column added to TeacherEmployments in
+ * Historik, values and all, until somebody adds it there — #231 added two HR
+ * columns, and its second review showed exactly that — and shows it for good
+ * from a gateway rolled back to code older than the column. Here such a
+ * column is hidden until somebody argues it in.
+ *
+ * Each of these is a column the post itself hands to a reader without HR-läs
+ * (hideHr leaves them), and Historik shows no more than the post:
  */
-export function hideHrChanges(changes: LogChange[]): (LogChange & { hrHidden?: true })[] {
-  return changes
-    .filter((change) => !UNSAID_HR_FIELDS.has(change.field))
-    .map((change) =>
-      HR_FIELDS.has(change.field) ? { field: change.field, before: null, after: null, hrHidden: true } : change,
-    );
+const NOT_HR_IN_A_POST: ReadonlySet<string> = new Set([
+  // Ferie- or semestertjänst: which arbetstid rules the schedule keeps.
+  'contractKind',
+  // The target in minutes that tjänstefördelning is measured against, read by
+  // every administrator (Roller i skolan). This is the post's own figure; a
+  // period's is part of the period.
+  'teachingTargetMinutesPerWeek',
+  // The lärarsignatur the schedule shows to everyone who reads it.
+  'signature',
+]);
+
+/**
+ * The HR fields of a post whose CHANGE is said, without from what or to what:
+ * "ändrad, dolt". Said only where every post has a value, so that a change
+ * names nobody: the two percentages. SCB's three are here as they were before
+ * the allow list, since the manual (4.3) tells the reader that every change
+ * shows in Historik, as dolt. Of those, förstelärare and lektor are null on
+ * most posts, so a version naming one tells which teacher holds a karriärtjänst;
+ * if that is not to be said, take them out of this list, and a version that
+ * moved only them is then left out.
+ *
+ * Not here, and so left out of the version whole: the days and the limit on
+ * teaching in a row, which are null on most posts (a version that names one
+ * says that the teacher has, or had, a limit, which is what a reader without
+ * HR-läs is not to learn; both columns of the limit go, so a version that
+ * moved the pair says nothing of either). Nor the note (noteChanged): hideHr
+ * hands the post's note over as null, so that one was written is exactly what
+ * the post withholds, and it is where a reason for a nedsättning would stand.
+ * And no column that nobody has judged: said by name, an unknown sparse column
+ * would give away who has a value.
+ */
+const HR_SAID_IN_A_POST: ReadonlySet<string> = new Set([
+  'employmentPercent',
+  'reductionPercent',
+  'employmentForm',
+  'firstTeacherPercent',
+  'lecturerPercent',
+]);
+
+/**
+ * A version's changes as a reader without HR-läs may have them. In a post, a
+ * field NOT_HR_IN_A_POST names is shown whole, one HR_SAID_IN_A_POST names is
+ * said to have changed (values left out), and every other field is left out.
+ * A version that is then empty is left out of the history by the service
+ * (teacher-employments.service.ts).
+ *
+ * A period is left out whole, every field of it: when and how a post changes
+ * during the year is HR data like the percentages, and a version that says a
+ * period was written on a date says as much. The service leaves a period's
+ * versions out before it gets here, and this holds if that filter goes.
+ *
+ * An uppdrag is not HR data. Every administrator reads the duty row whole, so
+ * its version shows what its row does. Any other entity is left out, like a
+ * period, until somebody decides otherwise.
+ */
+export function hideHrChanges(entity: LogEntity, changes: LogChange[]): (LogChange & { hrHidden?: true })[] {
+  if (entity === 'DUTY') return changes;
+  if (entity !== 'EMPLOYMENT') return [];
+  return changes.flatMap((change) => {
+    if (NOT_HR_IN_A_POST.has(change.field)) return [change];
+    if (HR_SAID_IN_A_POST.has(change.field)) {
+      return [{ field: change.field, before: null, after: null, hrHidden: true as const }];
+    }
+    return [];
+  });
 }

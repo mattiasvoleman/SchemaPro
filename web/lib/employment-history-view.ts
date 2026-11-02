@@ -192,7 +192,7 @@ export function formatStamp(iso: string, timeZone: string): string {
  * printed during the deploy window (a new web, an old API: 404) or on a 5xx
  * does not assert that a tjänst with versions 1..7 has none.
  */
-export type VersionStamp = { version: number; createdAt: string } | null | "loading" | "unreadable";
+export type VersionStamp = { version: number | null; createdAt: string } | null | "loading" | "unreadable";
 
 export function versionStampOf(history: {
   isSuccess: boolean;
@@ -205,8 +205,12 @@ export function versionStampOf(history: {
 
 export function latestVersion(
   entries: readonly HistoryEntry[] | undefined,
-): { version: number; createdAt: string } | null {
+): { version: number | null; createdAt: string } | null {
   if (!entries || entries.length === 0) return null;
-  const newest = entries.reduce((best, entry) => (entry.version > best.version ? entry : best));
-  return { version: newest.version, createdAt: newest.createdAt };
+  // A reader without HR-läs is handed no numbers (the gateway leaves out the
+  // versions they may not see, and the rest would have holes): the newest is
+  // then the first, since the gateway sends them newest first. The stamp
+  // names its date and no number.
+  const newest = entries.reduce((best, entry) => ((entry.version ?? 0) > (best.version ?? 0) ? entry : best));
+  return { version: newest.version ?? null, createdAt: newest.createdAt };
 }
