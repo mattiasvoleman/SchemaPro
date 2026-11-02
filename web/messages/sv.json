@@ -2881,7 +2881,9 @@
     "pupilGaps": "Generatorn håller nere elevernas håltimmar",
     "pupilGapsHint": "Luckorna mellan elevens första och sista lektion räknas per elev, med klassen, undervisningsgrupperna, halvorna och de ersättande grupperna, som på sidan Håltimmar. En hel klass som väntar väger dubbelt så mycket som en lärare som väntar. Det kan ta längre tid att få ett bra schema.",
     "consecutive": "Generatorn försöker hålla lärarnas sammanhängande undervisning",
-    "consecutiveHint": "Av som standard. När den är på väger Generera in varje lärares gräns för undervisning i följd (satt under Arbetstid). Det är ett önskemål, inte ett löfte: Generera nämner de lärare det inte lyckades för."
+    "consecutiveHint": "Av som standard. När den är på väger Generera in varje lärares gräns för undervisning i följd (satt under Arbetstid). Det är ett önskemål, inte ett löfte: Generera nämner de lärare det inte lyckades för. Önskemålet går före att behålla förra schemats platser och före elevernas håltimmar, så slå på det före den första genereringen om du kan. Körs Generera om på ett befintligt schema flyttas många lektioner, inte bara de flaggade lärarnas: på vår testskola mellan en femtedel och nästan hälften.",
+    "consecutiveWithPupilGapsTitle": "Elevernas håltimmar och lärarnas gränser står på samtidigt",
+    "consecutiveWithPupilGaps": "När båda väger in har genereringen mycket att pröva mot varandra, och på den sökningstid som är standard blev lärarnas gränser ofta inte hållna i våra mätningar. Generera nämner de lärare det inte lyckades för. Slå bara på båda om du vill det trots det."
   },
   "conflictCategories": {
     "AVAILABILITY": "Tillgänglighet",

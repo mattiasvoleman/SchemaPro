@@ -379,6 +379,15 @@ export function LunchSettingsCard() {
             />
           </div>
 
+          {/* Measured: with the pupils' idle time also weighed in and the
+              default search time, the teachers' limits were often not kept
+              (verification-baseline.md). Said where the two are chosen. */}
+          {form.generatorKeepsPupilGapsDown && form.generatorKeepsConsecutiveTeaching ? (
+            <Notice tone="warning" title={t("consecutiveWithPupilGapsTitle")}>
+              {t("consecutiveWithPupilGaps")}
+            </Notice>
+          ) : null}
+
           {saveError !== null ? (
             <Notice tone="destructive" title={t("saveFailed")}>
               {saveError} {t("saveFailedHint")}

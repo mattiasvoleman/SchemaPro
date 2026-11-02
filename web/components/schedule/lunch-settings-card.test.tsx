@@ -323,6 +323,34 @@ describe("LunchSettingsCard", () => {
     expect(save.mock.calls[0]?.[0]).toMatchObject({ generatorKeepsTravelTime: false, generatorKeepsPupilGapsDown: false });
   });
 
+  it("warns beside the teaching-in-a-row switch only while the pupils' idle time is on too", async () => {
+    // Measured: with both weighed in on the default search time, the limits
+    // were often not kept. The notice is read off the form, so it follows the
+    // switches before anything is saved.
+    saved({
+      generatorKeepsTravelTime: false,
+      generatorKeepsPupilGapsDown: true,
+      generatorKeepsConsecutiveTeaching: false,
+    });
+    const user = userEvent.setup();
+    render(<LunchSettingsCard />);
+
+    const consecutive = await screen.findByRole("switch", { name: "consecutive" });
+    expect(screen.queryByText("consecutiveWithPupilGapsTitle")).not.toBeInTheDocument();
+
+    await user.click(consecutive);
+    expect(screen.getByText("consecutiveWithPupilGapsTitle")).toBeInTheDocument();
+    expect(screen.getByText("consecutiveWithPupilGaps")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("switch", { name: "pupilGaps" }));
+    expect(screen.queryByText("consecutiveWithPupilGapsTitle")).not.toBeInTheDocument();
+
+    // The pupils' switch alone, and this switch alone, say nothing.
+    await user.click(screen.getByRole("switch", { name: "pupilGaps" }));
+    await user.click(consecutive);
+    expect(screen.queryByText("consecutiveWithPupilGapsTitle")).not.toBeInTheDocument();
+  });
+
   it("keeps the other two switches in a save that changes only this one", async () => {
     // Each switch is its own key on one PUT; turning one must not drop or
     // flip the others the school already had on.

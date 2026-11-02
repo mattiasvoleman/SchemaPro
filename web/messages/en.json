@@ -2881,7 +2881,9 @@
     "pupilGaps": "The generator keeps pupils' idle time down",
     "pupilGapsHint": "The gaps between a pupil's first and last lesson are counted per pupil, with the class, the teaching groups, the halves and the replacing groups, as on the Idle gaps page. A whole class waiting weighs twice what a teacher waiting does. A good timetable may take longer to find.",
     "consecutive": "The generator tries to keep teachers' teaching in a row within their limit",
-    "consecutiveHint": "Off by default. When on, Generate weighs in each teacher's limit on teaching in a row (set under Working time). It is a wish, not a promise: Generate names the teachers it did not manage it for."
+    "consecutiveHint": "Off by default. When on, Generate weighs in each teacher's limit on teaching in a row (set under Working time). It is a wish, not a promise: Generate names the teachers it did not manage it for. The wish ranks above keeping the previous timetable's places and above the pupils' idle time, so turn it on before the first generation if you can. Generating again on an existing timetable moves many lessons, not only the flagged teachers': on our test school between a fifth and nearly half.",
+    "consecutiveWithPupilGapsTitle": "The pupils' idle time and the teachers' limits are both on",
+    "consecutiveWithPupilGaps": "When both weigh in, the generation has a lot to trade against each other, and on the default search time the teachers' limits were often not kept in our measurements. Generate names the teachers it did not manage it for. Turn on both only if you want that anyway."
   },
   "conflictCategories": {
     "AVAILABILITY": "Availability",
