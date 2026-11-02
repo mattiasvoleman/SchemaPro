@@ -540,10 +540,12 @@ describe('Publish and regenerate (e2e)', () => {
  * figure in the body at all, and the read of the post is in the läslogg
  * whichever wording went out.
  *
- * Sammanhängande undervisning is the same row's third column pair: a drag
- * that leaves a stretch of the teacher's teaching longer than their limit
- * warns TEACHER_CONSECUTIVE_TOO_LONG with its figures to every reader — the
- * work rule is staff-read, so there is no hidden twin and no läslogg row.
+ * Sammanhängande undervisning is the post's too, in the columns beside the
+ * days: a drag that leaves a stretch of the teacher's teaching longer than
+ * their limit warns TEACHER_CONSECUTIVE_TOO_LONG with its figures to a reader
+ * with HR-läs, and TEACHER_CONSECUTIVE_TOO_LONG_HIDDEN, the verdict with no
+ * figure and no weekday in the body, to anybody else; the read of the post is
+ * in the läslogg whichever wording went out, as for the days.
  */
 describe('Lärarens dag on a hand edit (e2e)', () => {
   const LESSON_ID = '12121212-1212-4212-8212-121212121212';
@@ -646,23 +648,22 @@ describe('Lärarens dag on a hand edit (e2e)', () => {
     expect(harness.tx['masterLesson']!['update']).toHaveBeenCalledTimes(1);
   });
 
-  describe('a stretch of teaching longer than the work rule’s limit', () => {
+  describe('a stretch of teaching longer than the post’s limit', () => {
     // At most two hours in a row, then half an hour free; Tuesday 08:00–09:30
-    // and the dragged lesson 09:45–11:15 are one stretch of 195 minutes.
-    const longStretch = () => {
-      arrange({ caps: 1, days: 0 }, 2, [
+    // and the dragged lesson 09:45–11:15 are one stretch of 195 minutes. The
+    // limit is the post's, so the school counts a post, not a cap.
+    const longStretch = (limit = { maxConsecutiveTeachingMinutes: 120, consecutiveBreakMinutes: 30 }) => {
+      arrange({ caps: 0, days: 1 }, 2, [
         taught('16161616-1616-4616-8616-161616161616', 2, time(8), time(9, 30)),
         taught(LESSON_ID, 2, time(9, 45), time(11, 15)),
       ]);
-      harness.tx['teacherWorkRule']!['findMany']!.mockResolvedValue([
-        { userId: TEACHER_ID, maxConsecutiveTeachingMinutes: 120, consecutiveBreakMinutes: 30 },
-      ]);
+      harness.tx['teacherEmployment']!['findMany']!.mockResolvedValue([{ userId: TEACHER_ID, ...limit }]);
     };
 
-    it('a drag that joins two lessons into one is saved, and the 200 says so with the figures, to a schemaläggare without HR-läs too', async () => {
+    it('a drag that joins two lessons into one is saved, and the 200 says so with the figures to a reader with HR-läs, and records the post', async () => {
       longStretch();
 
-      const response = await drag(2, asUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false })).expect(200);
+      const response = await drag(2, asUser({})).expect(200);
 
       expect(response.body.dayOfWeek).toBe(2);
       expect(response.body.warnings).toEqual([
@@ -672,14 +673,34 @@ describe('Lärarens dag on a hand edit (e2e)', () => {
         },
       ]);
       expect(harness.tx['masterLesson']!['update']).toHaveBeenCalledTimes(1);
-      // A work rule everybody reads: nothing is recorded as a read of a post.
-      expect(recordedReads(harness.tx)).toEqual([]);
+      // The post's own limit: told, so read, so in the läslogg.
+      expect(recordedReads(harness.tx)).toEqual([
+        expect.objectContaining({ kind: 'EMPLOYMENT', ids: [TEACHER_ID] }),
+      ]);
     });
 
-    it('the same drag by a full administrator says the same', async () => {
+    it('the same drag by a schemaläggare without HR-läs is saved with the verdict and not one figure anywhere in the body, and the read is recorded all the same', async () => {
+      // 137 and 43 are in nothing else of the response.
+      longStretch({ maxConsecutiveTeachingMinutes: 137, consecutiveBreakMinutes: 43 });
+
+      const response = await drag(2, asUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false })).expect(200);
+
+      expect(response.body.dayOfWeek).toBe(2);
+      expect(response.body.warnings).toEqual([
+        { code: 'TEACHER_CONSECUTIVE_TOO_LONG_HIDDEN', params: { role: 'LEAD', requirement: 'Idrott för 7A' } },
+      ]);
+      // Not the stretch (195), the limit, the free time, nor the weekday.
+      expect(JSON.stringify(response.body)).not.toMatch(/137|\b43\b|\b195\b|breakMinutes|"max"|"minutes"|"day"/);
+      expect(harness.tx['masterLesson']!['update']).toHaveBeenCalledTimes(1);
+      expect(recordedReads(harness.tx)).toEqual([
+        expect.objectContaining({ kind: 'EMPLOYMENT', ids: [TEACHER_ID] }),
+      ]);
+    });
+
+    it('a schemaläggare who has HR-läs gets the figures', async () => {
       longStretch();
 
-      const response = await drag(2, asUser({})).expect(200);
+      const response = await drag(2, asUser({ adminProfile: 'SCHEMALAGGARE', hrRead: true })).expect(200);
 
       expect(response.body.warnings).toEqual([
         {
@@ -689,10 +710,25 @@ describe('Lärarens dag on a hand edit (e2e)', () => {
       ]);
     });
 
-    it('half an hour free between the two lessons is a break: nothing to say', async () => {
-      arrange({ caps: 1, days: 0 }, 2, [
+    it('half an hour free between the two lessons is a break: nothing to say, nothing recorded', async () => {
+      arrange({ caps: 0, days: 1 }, 2, [
         taught('16161616-1616-4616-8616-161616161616', 2, time(8), time(9, 30)),
         taught(LESSON_ID, 2, time(10), time(11, 30)),
+      ]);
+      harness.tx['teacherEmployment']!['findMany']!.mockResolvedValue([
+        { userId: TEACHER_ID, maxConsecutiveTeachingMinutes: 120, consecutiveBreakMinutes: 30 },
+      ]);
+
+      const response = await drag(2, asUser({})).expect(200);
+
+      expect(response.body.warnings).toEqual([]);
+      expect(recordedReads(harness.tx)).toEqual([]);
+    });
+
+    it('a limit left on the work rule is no limit: the school counts no post with one, so no statement is sent for it', async () => {
+      arrange({ caps: 0, days: 0 }, 2, [
+        taught('16161616-1616-4616-8616-161616161616', 2, time(8), time(9, 30)),
+        taught(LESSON_ID, 2, time(9, 45), time(11, 15)),
       ]);
       harness.tx['teacherWorkRule']!['findMany']!.mockResolvedValue([
         { userId: TEACHER_ID, maxConsecutiveTeachingMinutes: 120, consecutiveBreakMinutes: 30 },
@@ -701,6 +737,9 @@ describe('Lärarens dag on a hand edit (e2e)', () => {
       const response = await drag(2, asUser({})).expect(200);
 
       expect(response.body.warnings).toEqual([]);
+      expect(harness.tx['teacherWorkRule']!['findMany']).not.toHaveBeenCalled();
+      expect(harness.tx['teacherEmployment']!['findMany']).not.toHaveBeenCalled();
+      expect(recordedReads(harness.tx)).toEqual([]);
     });
   });
 

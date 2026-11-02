@@ -13,10 +13,12 @@
  * a line with it.
  *
  * A THIRD LIMIT RIDES WITH THEM, Sammanhängande undervisning (stretch.ts,
- * 20261218090000): at most X minutes of teaching in a row. It is the same
- * work rule and the same weeks, so a hand edit asks the three together and
- * gets one more kind of breach, CONSECUTIVE; the generator treats it as a
- * wish and the Vikarietavla as a rule (src/cover/cover-rules.ts).
+ * 20261218090000): at most X minutes of teaching in a row. It is the post's,
+ * HR data like the days (TeacherEmployments, beside maxTeachingDaysPerWeek),
+ * and the same weeks, so a hand edit asks the three together and gets one
+ * more kind of breach, CONSECUTIVE; the generator treats it as a wish and the
+ * Vikarietavla as a rule (src/cover/cover-rules.ts). Which row each figure is
+ * read from is the caller's: this module is handed a TeacherDayRule.
  *
  * WHAT COUNTS AS TEACHING, ONE DEFINITION FOR ALL THREE. Every lesson the
  * teacher is on — as lead or as medlärare, since a co-taught lesson occupies

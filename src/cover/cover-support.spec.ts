@@ -251,8 +251,8 @@ describe('cover support', () => {
         }
         // The rule reads the limit; the load never carries it.
         expect(read.employments.get('a')).not.toHaveProperty('maxTeachingDaysPerWeek');
-        // Two columns more on the statements there were, and the week of the
-        // one post with a limit: the ISO week, every role, held lessons.
+        // Two columns more on the statements there were (the post's three), and the week of the
+        // one post with a day limit: the ISO week, every role, held lessons.
         expect(tx.teacherWorkRule.findMany).toHaveBeenCalledWith(
           expect.objectContaining({ select: expect.objectContaining({ maxTeachingMinutesPerDay: true, preferredFreeDayOfWeek: true }) }),
         );
@@ -272,12 +272,15 @@ describe('cover support', () => {
         });
       });
 
-      it('reads the limit for teaching in a row with the cap, in the same statement, and leaves a teacher without one at null', async () => {
+      it('reads the limit for teaching in a row from the post, in the statement that reads the days, and leaves a teacher without one at null', async () => {
         const tx = createTxMock();
         tx.user.findMany.mockResolvedValue([
           { id: 'a', role: 'TEACHER', isActive: true },
           { id: 'b', role: 'TEACHER', isActive: true },
+          { id: 'c', role: 'TEACHER', isActive: true },
         ]);
+        // The work rule carries the cap and nothing of the stretch: a row that
+        // still had the columns (an older read) would be ignored for them.
         tx.teacherWorkRule.findMany.mockResolvedValue([
           {
             userId: 'a',
@@ -285,30 +288,70 @@ describe('cover support', () => {
             lunchStartTime: null,
             lunchEndTime: null,
             minDailyRestMinutes: null,
-            maxTeachingMinutesPerDay: null,
-            maxConsecutiveTeachingMinutes: 120,
-            consecutiveBreakMinutes: 30,
+            maxTeachingMinutesPerDay: 300,
+            maxConsecutiveTeachingMinutes: 999,
+            consecutiveBreakMinutes: 99,
             preferredFreeDayOfWeek: null,
           },
-          // A row from before the columns, as an older read would return it: no keys at all.
-          { userId: 'b', lunchMinutes: null, lunchStartTime: null, lunchEndTime: null, minDailyRestMinutes: null },
+        ]);
+        // A post with the limit and no days, one with both, one read before the columns were (no keys at all).
+        tx.teacherEmployment.findMany.mockResolvedValue([
+          post('a', { maxTeachingDaysPerWeek: null, maxConsecutiveTeachingMinutes: 120, consecutiveBreakMinutes: 30 }),
+          post('b', { maxTeachingDaysPerWeek: 3, maxConsecutiveTeachingMinutes: 90, consecutiveBreakMinutes: 20 }),
+          post('c'),
         ]);
 
         const read = await readPersonDays(tx as never, { date: '2026-10-14', timezone: 'Europe/Stockholm', academicYearId: 'y' });
 
         const a = read.days.get('a')!;
-        expect([a.maxConsecutiveTeachingMinutes, a.consecutiveBreakMinutes]).toEqual([120, 30]);
+        expect([a.maxConsecutiveTeachingMinutes, a.consecutiveBreakMinutes, a.dailyCapMinutes]).toEqual([120, 30, 300]);
         const b = read.days.get('b')!;
-        expect([b.maxConsecutiveTeachingMinutes, b.consecutiveBreakMinutes]).toEqual([null, null]);
-        // The same one statement on the work rules, with the two columns more; no statement of its own.
+        expect([b.maxConsecutiveTeachingMinutes, b.consecutiveBreakMinutes, b.maxTeachingDaysPerWeek]).toEqual([90, 20, 3]);
+        const c = read.days.get('c')!;
+        expect([c.maxConsecutiveTeachingMinutes, c.consecutiveBreakMinutes]).toEqual([null, null]);
+        // The cap stays the work rule's: one statement, without the stretch's columns.
         expect(tx.teacherWorkRule.findMany).toHaveBeenCalledTimes(1);
-        expect(tx.teacherWorkRule.findMany).toHaveBeenCalledWith(
+        const ruleSelect = tx.teacherWorkRule.findMany.mock.calls[0][0].select;
+        expect(ruleSelect).toMatchObject({ maxTeachingMinutesPerDay: true });
+        expect(ruleSelect).not.toHaveProperty('maxConsecutiveTeachingMinutes');
+        expect(ruleSelect).not.toHaveProperty('consecutiveBreakMinutes');
+        // The post's one statement carries the two columns more; no statement of its own for the stretch.
+        expect(tx.teacherEmployment.findMany).toHaveBeenCalledTimes(1);
+        expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith(
           expect.objectContaining({
             select: expect.objectContaining({ maxConsecutiveTeachingMinutes: true, consecutiveBreakMinutes: true }),
           }),
         );
+        // The load never carries the figures.
+        expect(read.employments.get('a')).not.toHaveProperty('maxConsecutiveTeachingMinutes');
+        expect(read.employments.get('a')).not.toHaveProperty('consecutiveBreakMinutes');
         // Not the school's switch for the generator: it is read nowhere in the cover.
         expect(Object.keys(tx).filter((model) => /lunch/i.test(model))).toEqual([]);
+      });
+
+      it('a post with a limit for teaching in a row and no days asks no week: the stretch is one date', async () => {
+        const tx = createTxMock();
+        tx.user.findMany.mockResolvedValue([{ id: 'a', role: 'TEACHER', isActive: true }]);
+        tx.teacherEmployment.findMany.mockResolvedValue([
+          post('a', { maxTeachingDaysPerWeek: null, maxConsecutiveTeachingMinutes: 120, consecutiveBreakMinutes: 30 }),
+        ]);
+        await readPersonDays(tx as never, { date: '2026-10-14', timezone: 'Europe/Stockholm', academicYearId: 'y' });
+        expect(tx.calendarLessonTeacher.findMany).toHaveBeenCalledTimes(1);
+        expect(isWeek(tx.calendarLessonTeacher.findMany.mock.calls[0][0])).toBe(false);
+      });
+
+      it('a teacher with no post this year (or no year) has no limit for teaching in a row, whatever the work rule says', async () => {
+        const tx = createTxMock();
+        tx.user.findMany.mockResolvedValue([{ id: 'a', role: 'TEACHER', isActive: true }]);
+        tx.teacherWorkRule.findMany.mockResolvedValue([
+          { userId: 'a', maxTeachingMinutesPerDay: 240, maxConsecutiveTeachingMinutes: 120, consecutiveBreakMinutes: 30 },
+        ]);
+        tx.teacherEmployment.findMany.mockResolvedValue([]);
+        const noPost = await readPersonDays(tx as never, { date: '2026-10-14', timezone: 'Europe/Stockholm', academicYearId: 'y' });
+        expect([noPost.days.get('a')!.maxConsecutiveTeachingMinutes, noPost.days.get('a')!.consecutiveBreakMinutes]).toEqual([null, null]);
+        // Without a year the posts are not read at all.
+        const noYear = await readPersonDays(tx as never, { date: '2026-10-14', timezone: 'Europe/Stockholm', academicYearId: null });
+        expect([noYear.days.get('a')!.maxConsecutiveTeachingMinutes, noYear.days.get('a')!.dailyCapMinutes]).toEqual([null, 240]);
       });
 
       it('a school whose posts set no limit asks no week: the statements it sent before', async () => {

@@ -312,11 +312,14 @@ describe('CoverSuggestionsService', () => {
       lunchEndTime: null,
       minDailyRestMinutes: null,
       maxTeachingMinutesPerDay: null,
-      maxConsecutiveTeachingMinutes: null,
-      consecutiveBreakMinutes: null,
       preferredFreeDayOfWeek: null,
       ...extra,
     });
+    /** S's post, with the limits it is given: the days and the limit for teaching in a row are the post's. */
+    const postWith = (extra: Record<string, unknown>) =>
+      tx.teacherEmployment.findMany.mockResolvedValue([
+        { userId: S, employmentPercent: 100, reductionPercent: 0, contractKind: 'FERIE', teachingTargetMinutesPerWeek: 900, signature: null, ...extra },
+      ]);
     /** S's post allows one teaching day a week, and S taught on Monday: the lesson's Wednesday would be a second. */
     const oneDayPost = () => {
       tx.teacherEmployment.findMany.mockResolvedValue([
@@ -368,36 +371,92 @@ describe('CoverSuggestionsService', () => {
       expect(recordedReads(tx)[0]).toEqual({ kind: 'EMPLOYMENT', channel: 'WEB', ids: [P] });
     });
 
-    it('the limit for teaching in a row excludes with its figures for every reader, is not logged, and a break the gap makes lets the day through', async () => {
+    it('the limit for teaching in a row excludes with its figures for a reader with HR-läs, and a break the gap makes lets the day through', async () => {
       // S's 08:00 lesson ends an hour before the cover (10:00–11:00): 180 minutes if no break comes between.
       const answerWith = (max: number, pause: number) => {
-        tx.teacherWorkRule.findMany.mockResolvedValue([
-          rule(S, { maxConsecutiveTeachingMinutes: max, consecutiveBreakMinutes: pause }),
-        ]);
-        return service.candidates(LESSON, planner(false));
+        postWith({ maxConsecutiveTeachingMinutes: max, consecutiveBreakMinutes: pause });
+        return service.candidates(LESSON, planner(true));
       };
       const answer = await answerWith(120, 90);
       expect(codesOf(answer, S)).toEqual([{ code: 'CONSECUTIVE_TEACHING', params: { minutes: 120, breakMinutes: 90 } }]);
       expect(answer.candidates.map((c) => c.userId)).toEqual([P]);
-      expect(recordedReads(tx)[0]).toEqual({ kind: 'EMPLOYMENT', channel: 'WEB', ids: [P] });
+      // The limit is the post's: S's post was read for the answer, whoever is shown the figures.
+      expect(recordedReads(tx)[0]).toEqual({ kind: 'EMPLOYMENT', channel: 'WEB', ids: [P, S] });
       // An hour free is exactly a break, and 180 minutes are exactly the limit.
       for (const [max, pause] of [[120, 60], [180, 90]] as const) {
+        tx.$executeRaw.mockClear();
         const fine = await answerWith(max, pause);
         expect(codesOf(fine, S)).toBeUndefined();
         expect(fine.candidates.map((c) => c.userId)).toContain(S);
+        // Candidates are read for their counters (EMPLOYMENT) as before; nobody is added for the limit.
+        expect(recordedReads(tx)[0]).toEqual({ kind: 'EMPLOYMENT', channel: 'WEB', ids: [S, P] });
       }
     });
 
-    it('the limit is read with the cap and the lunch: one statement on the work rules, two columns more', async () => {
+    it('the limit for teaching in a row, the post’s, is worded without its figures for a reader without HR-läs, the same verdict, and logged as the post', async () => {
+      postWith({ maxConsecutiveTeachingMinutes: 137, consecutiveBreakMinutes: 97 });
+      tx.teacherWorkRule.findMany.mockResolvedValue([rule(S, { maxTeachingMinutesPerDay: 600 })]);
+      // A cap of 600 and a 137-minute stretch with 97 minutes to rest: the 180 minutes in a row are over the stretch only.
+      const hidden = await service.candidates(LESSON, planner(false));
+      expect(codesOf(hidden, S)).toEqual([{ code: 'CONSECUTIVE_TEACHING_HIDDEN', params: {} }]);
+      expect(hidden.candidates.map((c) => c.userId)).toEqual([P]);
+      // Not one figure of the limit anywhere in what the reader was told.
+      expect(JSON.stringify(hidden)).not.toMatch(/137|\b97\b|breakMinutes|CONSECUTIVE_TEACHING"/);
+      expect(recordedReads(tx)[0]).toEqual({ kind: 'EMPLOYMENT', channel: 'WEB', ids: [P, S] });
+
+      tx.$executeRaw.mockClear();
+      const shown = await service.candidates(LESSON, planner(true));
+      expect(codesOf(shown, S)).toEqual([{ code: 'CONSECUTIVE_TEACHING', params: { minutes: 137, breakMinutes: 97 } }]);
+      expect(shown.candidates.map((c) => c.userId)).toEqual([P]);
+      expect(recordedReads(tx)[0]).toEqual({ kind: 'EMPLOYMENT', channel: 'WEB', ids: [P, S] });
+    });
+
+    it('the days and the stretch together are one read of the post, and each hidden code stands on its own', async () => {
+      oneDayPost();
+      tx.teacherEmployment.findMany.mockResolvedValue([
+        {
+          userId: S,
+          employmentPercent: 20,
+          reductionPercent: 0,
+          contractKind: 'FERIE',
+          teachingTargetMinutesPerWeek: 900,
+          signature: null,
+          maxTeachingDaysPerWeek: 1,
+          maxConsecutiveTeachingMinutes: 120,
+          consecutiveBreakMinutes: 90,
+        },
+      ]);
+      const hidden = await service.candidates(LESSON, planner(false));
+      expect(codesOf(hidden, S)).toEqual([
+        { code: 'CONSECUTIVE_TEACHING_HIDDEN', params: {} },
+        { code: 'WORK_DAYS_HIDDEN', params: {} },
+      ]);
+      expect(recordedReads(tx)[0]).toEqual({ kind: 'EMPLOYMENT', channel: 'WEB', ids: [P, S] });
+    });
+
+    it('the limit is read from the post, not the work rule: the post’s statement carries the two columns, the work rule’s does not', async () => {
       await service.candidates(LESSON, testUser());
       expect(tx.teacherWorkRule.findMany).toHaveBeenCalledTimes(1);
-      expect(tx.teacherWorkRule.findMany).toHaveBeenCalledWith(
+      const ruleSelect = tx.teacherWorkRule.findMany.mock.calls[0][0].select;
+      expect(ruleSelect).not.toHaveProperty('maxConsecutiveTeachingMinutes');
+      expect(ruleSelect).not.toHaveProperty('consecutiveBreakMinutes');
+      expect(tx.teacherEmployment.findMany).toHaveBeenCalledTimes(1);
+      expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           select: expect.objectContaining({ maxConsecutiveTeachingMinutes: true, consecutiveBreakMinutes: true }),
         }),
       );
       // Skolregler's switch for the generator is no part of it.
       expect(Object.keys(tx).filter((model) => /lunch/i.test(model))).toEqual([]);
+    });
+
+    it('a stretch limit left on the work rule (a row an older read returned) is no limit: only the post’s counts', async () => {
+      tx.teacherWorkRule.findMany.mockResolvedValue([
+        rule(S, { maxConsecutiveTeachingMinutes: 120, consecutiveBreakMinutes: 90 }),
+      ]);
+      const answer = await service.candidates(LESSON, planner(true));
+      expect(codesOf(answer, S)).toBeUndefined();
+      expect(answer.candidates.map((c) => c.userId)).toContain(S);
     });
 
     it('the free-day wish ranks down one who teaches nothing that Wednesday, not one who teaches then', async () => {
@@ -483,17 +542,16 @@ describe('CoverSuggestionsService', () => {
     // S teaches 08:00–09:00 local and the cover is 10:00–11:00: with an hour and a half
     // needed to rest, that is 180 minutes in a row on a limit of 120.
     const limit = (extra: Record<string, unknown> = {}) =>
-      tx.teacherWorkRule.findMany.mockResolvedValue([
+      tx.teacherEmployment.findMany.mockResolvedValue([
         {
           userId: S,
-          lunchMinutes: null,
-          lunchStartTime: null,
-          lunchEndTime: null,
-          minDailyRestMinutes: null,
-          maxTeachingMinutesPerDay: null,
+          employmentPercent: 100,
+          reductionPercent: 0,
+          contractKind: 'FERIE',
+          teachingTargetMinutesPerWeek: 900,
+          signature: null,
           maxConsecutiveTeachingMinutes: 120,
           consecutiveBreakMinutes: 90,
-          preferredFreeDayOfWeek: null,
           ...extra,
         },
       ]);
@@ -509,6 +567,26 @@ describe('CoverSuggestionsService', () => {
         service.apply(D, { basis, items: [{ lessonId: LESSON, absenceId: ABSENCE, userId: S }] }, testUser()),
       ).rejects.toMatchObject({ response: { code: 'COVER_PROPOSAL_STALE', params: { lessonId: LESSON } } });
       expect(cover.decideInTransaction).not.toHaveBeenCalled();
+    });
+
+    it('the proposal, and the refusal apply gives, name neither the post nor a figure of its limit to a reader without HR-läs', async () => {
+      queued();
+      // 137 and 97 are in nothing else of a response: S's 180 minutes in a row are over it.
+      limit({ maxConsecutiveTeachingMinutes: 137, consecutiveBreakMinutes: 97 });
+      const planner = testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false, channel: 'WEB' });
+
+      const proposal = await service.proposal(D, [], planner);
+      expect(proposal.items.map((item) => item.userId)).toEqual([P]);
+      expect(JSON.stringify(proposal)).not.toMatch(/137|\b97\b|CONSECUTIVE|breakMinutes/);
+      // S is left out without being named, so S's post is not read for the answer.
+      expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [P] }]);
+
+      const basis = await basisOf(tx as never, D, 'Europe/Stockholm');
+      const refused = await service
+        .apply(D, { basis, items: [{ lessonId: LESSON, absenceId: ABSENCE, userId: S }] }, planner)
+        .catch((error: unknown) => error);
+      expect(refused).toMatchObject({ response: { code: 'COVER_PROPOSAL_STALE', params: { lessonId: LESSON } } });
+      expect(JSON.stringify((refused as { response: unknown }).response)).not.toMatch(/137|\b97\b|CONSECUTIVE|breakMinutes/);
     });
 
     it('with an hour of rest between, the same teacher is proposed and apply takes the item', async () => {

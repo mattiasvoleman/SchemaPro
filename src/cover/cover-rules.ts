@@ -32,7 +32,7 @@
  *                      dag): the minutes the person teaches on the date with
  *                      the cover, overlaps counted once, are more than it
  *   CONSECUTIVE_TEACHING
- *                      the work rule's limit for teaching in a row
+ *                      the post's limit for teaching in a row
  *                      (Sammanhängande undervisning, common/stretch.ts): the
  *                      stretch the cover lands in, as long as from its first
  *                      lesson's start to its last lesson's end with no gap of
@@ -73,10 +73,11 @@
  * PASS target is never a finding, and a pass of the person's own is no part of
  * a stretch either: the yard is work but not what the rule counts (an
  * uppdrag, a rastvakt or the lunch between two lessons is time without
- * teaching, as the generator reads it). Like the cap it is the work rule's
- * and not HR data: the figures go to every reader, nothing is masked, and the
- * school's switch for the generator (generatorKeepsConsecutiveTeaching) plays
- * no part — the generator only tries it, the Vikarietavla keeps it.
+ * teaching, as the generator reads it). Unlike the cap it is the post's, HR
+ * data like the days: see the paragraph below for what a reader without HR-läs
+ * is told. The school's switch for the generator
+ * (generatorKeepsConsecutiveTeaching) plays no part — the generator only
+ * tries it, the Vikarietavla keeps it.
  *
  * A NEW DAY IS JUDGED AGAINST THE STORED WEEK, not against the stored week
  * and the proposal's own picks. Two picks on one date the person does not
@@ -86,17 +87,25 @@
  * post on a fourth day. The count includes the picks: a pick on another new
  * date of the week is a day too.
  *
- * THE DAYS ARE HR DATA AND THE RULE IS NOT (Roller i skolan). The verdict is
- * the same for every reader — an administrator who may not read the post
- * would otherwise put a part-timer on their day off — and hardFindings never
- * asks who is reading. Only the wording is: maskFindings and maskWarnings
- * leave the figure out for a reader without HR-läs, the precedent of
- * STAFF_TEACHER_OVER_TARGET_HIDDEN (src/staffing/staffing-checks.ts). What
- * remains can be counted from the timetable everybody reads: a teacher seen
- * on Monday to Wednesday and refused Thursday has a limit of three. That
- * was weighed for the over-target verdict and accepted (4c65c4b7), and holds
- * here: the rule cannot both bind and say nothing. The cap is the work rule's,
- * which every member of staff reads, and keeps its minutes.
+ * THE DAYS AND THE STRETCH LIMIT ARE HR DATA AND THE RULES ARE NOT (Roller i
+ * skolan). The verdict is the same for every reader — an administrator who
+ * may not read the post would otherwise put a part-timer on their day off —
+ * and hardFindings never asks who is reading. Only the wording is:
+ * maskFindings and maskWarnings leave the figures out for a reader without
+ * HR-läs (WORK_DAYS_HIDDEN, CONSECUTIVE_TEACHING_HIDDEN and their warnings,
+ * all with empty params), the precedent of STAFF_TEACHER_OVER_TARGET_HIDDEN
+ * (src/staffing/staffing-checks.ts). What remains can be counted from the
+ * timetable everybody reads: a teacher seen on Monday to Wednesday and
+ * refused Thursday has a limit of three, and one refused for a fifth hour in
+ * a row has a limit under four. That was weighed for the over-target verdict
+ * and accepted (4c65c4b7), and holds here: the rule cannot both bind and say
+ * nothing. The cap is the work rule's, which every member of staff reads, and
+ * keeps its minutes.
+ *
+ * AND BOTH ARE READS OF THE POST, whoever is shown the figures: a finding or
+ * warning of either kind, masked or not, was told because of what the post
+ * holds, so its callers record the post as read in the läslogg (EMPLOYMENT)
+ * for the person it is about.
  *
  * A PASS IS A TARGET TOO (Rastvakt i vardagen). The board asks the same rules
  * of a rastvaktspass whose teacher is away (`kind: 'PASS'`), with one rule
@@ -126,6 +135,8 @@ export type HardRuleCode =
   | 'DAILY_REST'
   | 'DAILY_CAP'
   | 'CONSECUTIVE_TEACHING'
+  /** Never from hardFindings: maskFindings' CONSECUTIVE_TEACHING, without the figures. */
+  | 'CONSECUTIVE_TEACHING_HIDDEN'
   | 'WORK_DAYS'
   /** Never from hardFindings: maskFindings' WORK_DAYS, without the figure. */
   | 'WORK_DAYS_HIDDEN'
@@ -202,9 +213,10 @@ export interface PersonDay {
   /** The work rule's cap on a day's teaching, in minutes; null or absent = no cap. */
   dailyCapMinutes?: number | null;
   /**
-   * The work rule's limit for teaching in a row, in minutes, and the free time
-   * that ends a stretch (Sammanhängande undervisning, common/stretch.ts): both
-   * or neither; null or absent = no limit.
+   * The post's limit for teaching in a row, in minutes, and the free time that
+   * ends a stretch (Sammanhängande undervisning, common/stretch.ts): both or
+   * neither; null or absent = no limit. HR data like the days
+   * (hr-visibility.ts).
    */
   maxConsecutiveTeachingMinutes?: number | null;
   consecutiveBreakMinutes?: number | null;
@@ -433,6 +445,8 @@ export type CoverWarningCode =
   | 'COVER_BREAKS_DAILY_REST'
   | 'COVER_EXCEEDS_DAILY_CAP'
   | 'COVER_EXCEEDS_CONSECUTIVE_TEACHING'
+  /** Never from softWarnings: maskWarnings' COVER_EXCEEDS_CONSECUTIVE_TEACHING, without the figures. */
+  | 'COVER_EXCEEDS_CONSECUTIVE_TEACHING_HIDDEN'
   | 'COVER_BEYOND_WORK_DAYS'
   /** Never from softWarnings: maskWarnings' COVER_BEYOND_WORK_DAYS, without the figure. */
   | 'COVER_BEYOND_WORK_DAYS_HIDDEN'
@@ -479,22 +493,53 @@ export function softWarnings(findings: readonly RuleFinding[]): SoftWarning[] {
   return warnings;
 }
 
+/** The hidden twin of each finding that carries the post's figures. */
+const HIDDEN_FINDING: Partial<Record<HardRuleCode, HardRuleCode>> = {
+  WORK_DAYS: 'WORK_DAYS_HIDDEN',
+  CONSECUTIVE_TEACHING: 'CONSECUTIVE_TEACHING_HIDDEN',
+};
+/** The same for the warnings a manual pick gets. */
+const HIDDEN_WARNING: Partial<Record<CoverWarningCode, CoverWarningCode>> = {
+  COVER_BEYOND_WORK_DAYS: 'COVER_BEYOND_WORK_DAYS_HIDDEN',
+  COVER_EXCEEDS_CONSECUTIVE_TEACHING: 'COVER_EXCEEDS_CONSECUTIVE_TEACHING_HIDDEN',
+};
+
 /**
- * The findings as a reader may be told them: WORK_DAYS without its figure
- * for a reader without HR-läs (`showsHr`, hr-visibility.ts readsHr), every
- * other finding as it is. The same verdict either way (the header).
+ * The findings as a reader may be told them: WORK_DAYS and
+ * CONSECUTIVE_TEACHING, the post's two limits, without their figures for a
+ * reader without HR-läs (`showsHr`, hr-visibility.ts readsHr), every other
+ * finding as it is. The same verdict either way (the header).
  */
 export function maskFindings(findings: readonly RuleFinding[], showsHr: boolean): RuleFinding[] {
-  return findings.map((finding) =>
-    !showsHr && finding.code === 'WORK_DAYS' ? { code: 'WORK_DAYS_HIDDEN', params: {} } : finding,
-  );
+  return findings.map((finding) => {
+    const hidden = showsHr ? undefined : HIDDEN_FINDING[finding.code];
+    return hidden ? { code: hidden, params: {} } : finding;
+  });
 }
 
 /** The warnings as a reader may be told them, by maskFindings' rule. */
 export function maskWarnings(warnings: readonly SoftWarning[], showsHr: boolean): SoftWarning[] {
-  return warnings.map((warning) =>
-    !showsHr && warning.code === 'COVER_BEYOND_WORK_DAYS' ? { code: 'COVER_BEYOND_WORK_DAYS_HIDDEN', params: {} } : warning,
-  );
+  return warnings.map((warning) => {
+    const hidden = showsHr ? undefined : HIDDEN_WARNING[warning.code];
+    return hidden ? { code: hidden, params: {} } : warning;
+  });
+}
+
+const POST_FINDINGS = new Set<HardRuleCode>([
+  'WORK_DAYS',
+  'WORK_DAYS_HIDDEN',
+  'CONSECUTIVE_TEACHING',
+  'CONSECUTIVE_TEACHING_HIDDEN',
+]);
+
+/**
+ * Whether a finding was told because of what the person's post holds: the
+ * post's two limits, masked or not (asked of the masked findings it says the
+ * same). The callers record the post as read in the läslogg (EMPLOYMENT) for
+ * those people (access-log.ts).
+ */
+export function toldFromPost(findings: readonly RuleFinding[]): boolean {
+  return findings.some((finding) => POST_FINDINGS.has(finding.code));
 }
 
 function dedupe(findings: RuleFinding[]): RuleFinding[] {

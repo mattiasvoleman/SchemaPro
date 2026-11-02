@@ -30,7 +30,7 @@ import {
   type RemovedTeacher,
 } from '../cover/cover-decisions';
 import { readPersonDays, schoolTimezone } from '../cover/cover-context';
-import { hardFindings, holdsTime, maskWarnings, softWarnings, type CoverWarningCode } from '../cover/cover-rules';
+import { hardFindings, holdsTime, maskWarnings, softWarnings, toldFromPost, type CoverWarningCode } from '../cover/cover-rules';
 import { recordRead } from '../access-log/access-log';
 import { readsHr } from '../staffing/hr-visibility';
 import { readSiteMap, travelBreaches } from '../common/site-travel';
@@ -601,11 +601,11 @@ export class CalendarLessonsService {
 
   /**
    * The cover rules a manual pick breaks, as warnings (cover-rules.ts
-   * softWarnings), worded for the reader: the post's deltid in days without
-   * its figure for one without HR-läs (maskWarnings). When the days warning
-   * fires, the substitute's post was read for the answer, masked or not, and
-   * that is recorded (EMPLOYMENT); a pick it does not fire for sends no
-   * statement more than it did.
+   * softWarnings), worded for the reader: the post's deltid in days and its
+   * limit for teaching in a row without their figures for one without HR-läs
+   * (maskWarnings). When either warning fires, the substitute's post was read
+   * for the answer, masked or not, and that is recorded (EMPLOYMENT); a pick
+   * it does not fire for sends no statement more than it did.
    */
   private async coverWarnings(
     tx: PrismaClient,
@@ -634,7 +634,7 @@ export class CalendarLessonsService {
       end: lesson.endsAt.getTime(),
       teacherIds: [],
     });
-    if (findings.some((finding) => finding.code === 'WORK_DAYS')) {
+    if (toldFromPost(findings)) {
       await recordRead(tx, 'EMPLOYMENT', [substitute.id], user.channel);
     }
     const warnings: CoverWarning[] = maskWarnings(softWarnings(findings), readsHr(user));

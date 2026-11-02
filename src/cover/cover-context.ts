@@ -306,10 +306,10 @@ export async function readPersonDays(tx: PrismaClient, options: DayReadOptions):
     }
   }
 
-  // The cap and the wish of Lärarens dag (20261123090000) and the limit for
-  // teaching in a row (Sammanhängande undervisning, 20261218090000) are
-  // columns of the same row, read in the same statement: a school that sets
-  // none of them asks nothing more than it did.
+  // The cap and the wish of Lärarens dag (20261123090000) are columns of the
+  // work rule, read in the same statement: a school that sets neither asks
+  // nothing more than it did. (The limit for teaching in a row, Sammanhängande
+  // undervisning, is HR data like the days and is read from the post below.)
   const rules =
     (await tx.teacherWorkRule.findMany({
       where: { userId: people },
@@ -320,8 +320,6 @@ export async function readPersonDays(tx: PrismaClient, options: DayReadOptions):
         lunchEndTime: true,
         minDailyRestMinutes: true,
         maxTeachingMinutesPerDay: true,
-        maxConsecutiveTeachingMinutes: true,
-        consecutiveBreakMinutes: true,
         preferredFreeDayOfWeek: true,
       },
     })) ?? [];
@@ -333,8 +331,6 @@ export async function readPersonDays(tx: PrismaClient, options: DayReadOptions):
     }
     day.minDailyRestMinutes = rule.minDailyRestMinutes ?? null;
     day.dailyCapMinutes = rule.maxTeachingMinutesPerDay ?? null;
-    day.maxConsecutiveTeachingMinutes = rule.maxConsecutiveTeachingMinutes ?? null;
-    day.consecutiveBreakMinutes = rule.consecutiveBreakMinutes ?? null;
     day.preferredFreeDay = rule.preferredFreeDayOfWeek ?? null;
   }
 
@@ -380,9 +376,14 @@ export async function readPersonDays(tx: PrismaClient, options: DayReadOptions):
           contractKind: true,
           teachingTargetMinutesPerWeek: true,
           signature: true,
-          // Deltid in days (20261123090000), a column of the same post: the
-          // rule reads it, the LoadEmployment below never carries it.
+          // Deltid in days (20261123090000) and the limit for teaching in a
+          // row (Sammanhängande undervisning, 20261218090000), columns of the
+          // same post: HR data both. The rules read them, the LoadEmployment
+          // below never carries them, and cover-rules.ts' maskFindings /
+          // maskWarnings word what they say per reader.
           maxTeachingDaysPerWeek: true,
+          maxConsecutiveTeachingMinutes: true,
+          consecutiveBreakMinutes: true,
         },
       })) ?? [];
     // The posts' periods, under the same arms as the posts, asked only when
@@ -407,6 +408,14 @@ export async function readPersonDays(tx: PrismaClient, options: DayReadOptions):
     // took over while they were away does not teach that Monday any more.
     const limited = rows.filter((row) => days.has(row?.userId) && (row.maxTeachingDaysPerWeek ?? null) !== null);
     for (const row of limited) days.get(row.userId)!.maxTeachingDaysPerWeek = row.maxTeachingDaysPerWeek;
+    // The limit for teaching in a row is the same post's, from the same read:
+    // no statement for it, and a teacher without a post this year has none.
+    for (const row of rows) {
+      const day = row?.userId ? days.get(row.userId) : undefined;
+      if (!day) continue;
+      day.maxConsecutiveTeachingMinutes = row.maxConsecutiveTeachingMinutes ?? null;
+      day.consecutiveBreakMinutes = row.consecutiveBreakMinutes ?? null;
+    }
     if (limited.length > 0) {
       const week = isoWeekOf(date);
       const taught =

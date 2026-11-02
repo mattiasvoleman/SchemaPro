@@ -9,6 +9,7 @@ import {
   passTargetId,
   prefersFree,
   softWarnings,
+  toldFromPost,
   type CoverTarget,
   type PersonDay,
   type PersonLesson,
@@ -378,14 +379,35 @@ describe('cover rules', () => {
       expect(codes(person)).toEqual(['DAILY_CAP', 'CONSECUTIVE_TEACHING', 'WORK_DAYS']);
     });
 
-    it('is no HR data: the figures reach every reader, and a manual pick hears it as a warning', () => {
+    it('is HR data, the post’s like the days: the verdict is the same for every reader, the figures reach those with HR-läs only', () => {
       const finding: RuleFinding = { code: 'CONSECUTIVE_TEACHING', params: { minutes: 120, breakMinutes: 30 } };
-      expect(maskFindings([finding], false)).toEqual([finding]);
+      // hardFindings never asks who is reading: the finding carries the figures.
       expect(maskFindings([finding], true)).toEqual([finding]);
+      expect(maskFindings([finding], false)).toEqual([{ code: 'CONSECUTIVE_TEACHING_HIDDEN', params: {} }]);
+      // And the warning a manual pick hears, from the unmasked finding.
       const warnings = softWarnings([finding]);
       expect(warnings).toEqual([{ code: 'COVER_EXCEEDS_CONSECUTIVE_TEACHING', params: { minutes: 120, breakMinutes: 30 } }]);
-      expect(maskWarnings(warnings, false)).toEqual(warnings);
       expect(maskWarnings(warnings, true)).toEqual(warnings);
+      expect(maskWarnings(warnings, false)).toEqual([{ code: 'COVER_EXCEEDS_CONSECUTIVE_TEACHING_HIDDEN', params: {} }]);
+    });
+
+    it('without HR-läs not one figure of the limit is left in what a reader is told, finding or warning', () => {
+      const person = day({ ...limit(137, 43), lessons: [lesson('a', '08:00', '10:00')] });
+      const found = hardFindings(person, target());
+      expect(found).toEqual([stretch(137, 43)]);
+      const told = JSON.stringify([maskFindings(found, false), maskWarnings(softWarnings(found), false)]);
+      expect(told).toContain('CONSECUTIVE_TEACHING_HIDDEN');
+      expect(told).toContain('COVER_EXCEEDS_CONSECUTIVE_TEACHING_HIDDEN');
+      expect(told).not.toMatch(/137|43|minutes|breakMinutes/);
+      // With HR-läs they are there.
+      expect(JSON.stringify([maskFindings(found, true), maskWarnings(softWarnings(found), true)])).toMatch(/137[^]*43/);
+    });
+
+    it('is a read of the post for the callers to record, masked or not', () => {
+      const found = hardFindings(day({ ...limit(137, 43), lessons: [lesson('a', '08:00', '10:00')] }), target());
+      expect(toldFromPost(found)).toBe(true);
+      expect(toldFromPost(maskFindings(found, false))).toBe(true);
+      expect(toldFromPost(hardFindings(day({ lessons: [lesson('a', '08:00', '10:00')] }), target()))).toBe(false);
     });
 
     describe('property: the cover’s own stretch, against a closure over the lessons, and monotone', () => {
@@ -528,6 +550,25 @@ describe('cover rules', () => {
         { code: 'LUNCH', params: { minutes: 30 } },
       ]);
       expect(maskFindings(findings, true)).toEqual(findings);
+    });
+
+    it('the stretch limit, the post’s too, loses its figures and its code beside them', () => {
+      const both: RuleFinding[] = [
+        { code: 'DAILY_CAP', params: { minutes: 240 } },
+        { code: 'CONSECUTIVE_TEACHING', params: { minutes: 120, breakMinutes: 30 } },
+        { code: 'WORK_DAYS', params: { days: 3 } },
+      ];
+      expect(maskFindings(both, false)).toEqual([
+        { code: 'DAILY_CAP', params: { minutes: 240 } },
+        { code: 'CONSECUTIVE_TEACHING_HIDDEN', params: {} },
+        { code: 'WORK_DAYS_HIDDEN', params: {} },
+      ]);
+      expect(maskFindings(both, true)).toEqual(both);
+      expect(maskWarnings(softWarnings(both), false)).toEqual([
+        { code: 'COVER_EXCEEDS_DAILY_CAP', params: { minutes: 240 } },
+        { code: 'COVER_EXCEEDS_CONSECUTIVE_TEACHING_HIDDEN', params: {} },
+        { code: 'COVER_BEYOND_WORK_DAYS_HIDDEN', params: {} },
+      ]);
     });
 
     it('the warnings a manual pick gets: the cap and the days, the days masked the same way', () => {

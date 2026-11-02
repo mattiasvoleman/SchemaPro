@@ -128,14 +128,14 @@ interface PostLesson {
 const NO_BUFFER: PupilBuffer = { minutesBefore: 0, minutesAfter: 0 };
 
 /**
- * Whether the school can hold a Lärarens dag rule at all: a cap or a limit on
- * teaching in a row (Sammanhängande undervisning) on some teacher's work rule,
- * a day limit on some post of the lesson's year. From counts a read the edit
- * already makes carries (teacherDayCounts).
+ * Whether the school can hold a Lärarens dag rule at all: a cap on some
+ * teacher's work rule, a day limit or a limit for teaching in a row
+ * (Sammanhängande undervisning) on some post of the lesson's year. From counts
+ * a read the edit already makes carries (teacherDayCounts).
  */
 interface TeacherDayGate {
   caps: boolean;
-  days: boolean;
+  posts: boolean;
 }
 
 /** An edited lesson as Lärarens dag asks about it: who teaches it, after the edit. */
@@ -186,9 +186,9 @@ export type TeacherDayRole = 'LEAD' | 'CO_TEACHER';
 
 /**
  * A hand edit that leaves a teacher's day longer than their cap, a stretch of
- * their teaching longer than their limit for teaching in a row, or their week
- * on more days than their post allows (Lärarens dag, common/teacher-day.ts;
- * Sammanhängande undervisning, common/stretch.ts).
+ * their teaching longer than their post's limit for teaching in a row, or
+ * their week on more days than their post allows (Lärarens dag,
+ * common/teacher-day.ts; Sammanhängande undervisning, common/stretch.ts).
  *
  * THE PARAMS NAME A LESSON AND A ROLE, NEVER A PERSON, as every warning here
  * does: `requirement` is the edited lesson the teacher is on, called what the
@@ -199,15 +199,16 @@ export type TeacherDayRole = 'LEAD' | 'CO_TEACHER';
  * two leads over their caps would otherwise be two sentences about
  * "läraren", and two days limits hidden from the reader one sentence twice.
  * The cap is the work rule's, which every member of staff reads, so its
- * figures go to every editor; so do the figures of the limit for teaching in
- * a row, the same row's (TEACHER_CONSECUTIVE_TOO_LONG has no hidden twin, and
- * records nothing in the läslogg). The days are the post's, HR data like the
- * tjänst %: a reader with HR-läs gets the count and the limit, anybody else
- * the verdict alone (TEACHER_WEEK_TOO_MANY_DAYS_HIDDEN) — the rule is the
- * same for every reader, and only its wording is not. That a verdict and the
- * grid together let a careful reader narrow the limit down is accepted, as
- * it was for STAFF_TEACHER_OVER_TARGET_HIDDEN (4c65c4b7): a hand edit that
- * silently breaks a rule the next generation refuses would cost more.
+ * figures go to every editor. The days AND the limit for teaching in a row
+ * are the post's, HR data like the tjänst %: a reader with HR-läs gets the
+ * figures (the count and the limit of the days; the day, the longest stretch,
+ * the limit and the free time of a stretch), anybody else the verdict alone
+ * (TEACHER_WEEK_TOO_MANY_DAYS_HIDDEN, TEACHER_CONSECUTIVE_TOO_LONG_HIDDEN:
+ * the lesson and the role, no number and no weekday) — the rule is the same
+ * for every reader, and only its wording is not. That a verdict and the grid
+ * together let a careful reader narrow the limit down is accepted, as it was
+ * for STAFF_TEACHER_OVER_TARGET_HIDDEN (4c65c4b7): a hand edit that silently
+ * breaks a rule the next generation refuses would cost more.
  */
 export type TeacherDayWarning =
   | {
@@ -227,6 +228,7 @@ export type TeacherDayWarning =
         breakMinutes: number;
       };
     }
+  | { code: 'TEACHER_CONSECUTIVE_TOO_LONG_HIDDEN'; params: { role: TeacherDayRole; requirement: string } }
   | {
       code: 'TEACHER_WEEK_TOO_MANY_DAYS';
       params: { role: TeacherDayRole; requirement: string; days: number; max: number };
@@ -397,12 +399,12 @@ export class MasterLessonsService {
           isActive: true,
           predecessorId: true,
           // Lärarens dag: whether the new lesson's teachers have a day limit
-          // on their post of this year, counted inside this statement
-          // (teacherDayWarnings).
+          // or a limit for teaching in a row on their post of this year,
+          // counted inside this statement (teacherDayWarnings).
           _count: {
             select: {
               teacherEmployments: {
-                where: { userId: { in: teachers.filter((id): id is string => id !== null) }, ...DAY_LIMITED },
+                where: { userId: { in: teachers.filter((id): id is string => id !== null) }, ...POST_LIMITED },
               },
             },
           },
@@ -529,7 +531,7 @@ export class MasterLessonsService {
       // has no relation to the work rules, and selecting its school would be
       // a statement of its own on every create — so a lesson created with a
       // teacher reads the teachers' caps (one statement), which is the gate
-      // itself; the day limit is counted in the year's read above. A lesson
+      // itself; the post's limits are counted in the year's read above. A lesson
       // created without a teacher asks nothing. That one statement is the
       // only thing a create pays in a school without a rule, and it is
       // pinned where the PATCH's statements are: the budget spec
@@ -539,7 +541,7 @@ export class MasterLessonsService {
         ...(await this.teacherDayWarnings(
           tx,
           user,
-          { caps: true, days: (year._count?.teacherEmployments ?? 0) > 0 },
+          { caps: true, posts: (year._count?.teacherEmployments ?? 0) > 0 },
           created.academicYearId,
           [created],
           teachers,
@@ -1789,15 +1791,15 @@ export class MasterLessonsService {
    * LÄRARENS DAG ON A HAND EDIT: the days and weeks of `teachers` that the
    * `edited` lessons leave over the teacher's rule, as warnings.
    *
-   * The rule is the teacher's cap and their limit for teaching in a row, both
-   * columns of the work rule (TeacherWorkRules), and the day limit of their
-   * post for the lesson's own läsår (TeacherEmployments) — a rolled
-   * year's grundschema is laid in spring, against next year's posts. The week
-   * it is asked of is every lesson of that läsår the teacher is on, as lead or
-   * as medlärare, as the edit leaves it, a parked one left out; the arithmetic
-   * is common/teacher-day.ts (and common/stretch.ts for a stretch of
-   * teaching), which the Vikarietavla counts with too and the generator's
-   * checker replays. Only the weeks an edited lesson runs in are
+   * The rule is the teacher's cap, a column of the work rule
+   * (TeacherWorkRules), and both the day limit and the limit for teaching in
+   * a row of their post for the lesson's own läsår (TeacherEmployments) — a
+   * rolled year's grundschema is laid in spring, against next year's posts.
+   * The week it is asked of is every lesson of that läsår the teacher is on,
+   * as lead or as medlärare, as the edit leaves it, a parked one left out;
+   * the arithmetic is common/teacher-day.ts (and common/stretch.ts for a
+   * stretch of teaching), which the Vikarietavla counts with too and the
+   * generator's checker replays. Only the weeks an edited lesson runs in are
    * asked about (teacherDayBreaches' `about`), for the verdict and for its
    * figure, as the ämnesfördelning asks about the edited lesson's weeks: a
    * Tuesday the school had already made too long, or the odd weeks' Monday
@@ -1823,19 +1825,22 @@ export class MasterLessonsService {
    * NOTHING FOR A SCHOOL WITHOUT A RULE, which is every school today: `gate`
    * comes from counts the edit's existing reads carry (teacherDayCounts), and
    * when it is shut not one statement is sent. Where it is open, the
-   * teachers' work rules (the cap and the limit for teaching in a row, one
-   * row, one statement) and their posts' day limits are one statement each,
-   * each only on its own side of the gate; the week is one more, read only
+   * teachers' work rules (the cap, one column of one row, one statement) and
+   * their posts (the day limit and the limit for teaching in a row, columns
+   * of one row, one statement) are one statement each, each only on its own
+   * side of the gate; the week is one more, read only
    * when one of these teachers has a rule; and what an edited lesson is
    * called one more, only when a warning names a lesson the edit has not
    * read the names of (a create's, a PATCH's: their reads select no
    * relation, and two selected ones would be two statements on every edit).
    *
-   * THE DAYS ARE THE POST'S, which is HR data: worded per reader
-   * (teacherDayWarning), and a days warning in either wording is a read of
-   * the post that told it, recorded in the läslogg as one (EMPLOYMENT) for
-   * the teachers it is about. A cap, and a limit for teaching in a row, are
-   * the work rule's, which every member of staff reads, and record nothing.
+   * THE DAYS AND THE LIMIT FOR TEACHING IN A ROW ARE THE POST'S, which is HR
+   * data: worded per reader (teacherDayWarning), and a days or a stretch
+   * warning in either wording is a read of the post that told it, recorded in
+   * the läslogg as one (EMPLOYMENT) for the teachers it is about. The hidden
+   * wording is a read too: it says that this teacher's post holds a limit
+   * this week breaks, which is the post's content. A cap is the work rule's,
+   * which every member of staff reads, and records nothing.
    */
   private async teacherDayWarnings(
     tx: PrismaClient,
@@ -1850,31 +1855,31 @@ export class MasterLessonsService {
     const workRules = gate.caps
       ? await tx.teacherWorkRule.findMany({
           where: { userId: { in: asked }, ...CAPPED },
+          select: { userId: true, maxTeachingMinutesPerDay: true },
+        })
+      : [];
+    const posts = gate.posts
+      ? await tx.teacherEmployment.findMany({
+          where: { academicYearId, userId: { in: asked }, ...POST_LIMITED },
           select: {
             userId: true,
-            maxTeachingMinutesPerDay: true,
+            maxTeachingDaysPerWeek: true,
             maxConsecutiveTeachingMinutes: true,
             consecutiveBreakMinutes: true,
           },
         })
       : [];
-    const limits = gate.days
-      ? await tx.teacherEmployment.findMany({
-          where: { academicYearId, userId: { in: asked }, ...DAY_LIMITED },
-          select: { userId: true, maxTeachingDaysPerWeek: true },
-        })
-      : [];
-    const workRuleOf = new Map(workRules.map((row) => [row.userId, row]));
-    const limitOf = new Map(limits.map((row) => [row.userId, row.maxTeachingDaysPerWeek]));
+    const capOf = new Map(workRules.map((row) => [row.userId, row.maxTeachingMinutesPerDay]));
+    const limitsOf = new Map(posts.map((row) => [row.userId, row]));
     const rules = new Map<string, TeacherDayRule>(
       asked
         .map((teacherId): [string, TeacherDayRule] => [
           teacherId,
           {
-            maxTeachingMinutesPerDay: workRuleOf.get(teacherId)?.maxTeachingMinutesPerDay ?? null,
-            maxTeachingDaysPerWeek: limitOf.get(teacherId) ?? null,
-            maxConsecutiveTeachingMinutes: workRuleOf.get(teacherId)?.maxConsecutiveTeachingMinutes ?? null,
-            consecutiveBreakMinutes: workRuleOf.get(teacherId)?.consecutiveBreakMinutes ?? null,
+            maxTeachingMinutesPerDay: capOf.get(teacherId) ?? null,
+            maxTeachingDaysPerWeek: limitsOf.get(teacherId)?.maxTeachingDaysPerWeek ?? null,
+            maxConsecutiveTeachingMinutes: limitsOf.get(teacherId)?.maxConsecutiveTeachingMinutes ?? null,
+            consecutiveBreakMinutes: limitsOf.get(teacherId)?.consecutiveBreakMinutes ?? null,
           },
         ])
         .filter(([, rule]) => hasTeacherDayRule(rule)),
@@ -1922,7 +1927,8 @@ export class MasterLessonsService {
         told.push(
           led.length > 0 ? { breach, role: 'LEAD', on: led } : { breach, role: 'CO_TEACHER', on: involved },
         );
-        if (breach.kind === 'WORK_DAYS') postsTold.push(teacherId);
+        // A breach of either of the post's two limits is read from the post.
+        if (breach.kind === 'WORK_DAYS' || breach.kind === 'CONSECUTIVE') postsTold.push(teacherId);
       }
     }
     const unnamed = told.flatMap(({ on }) => on.filter((lesson) => lesson.requirement === undefined));
@@ -2706,24 +2712,24 @@ const LESSON_SELECT = {
   participants: { select: { studentId: true } },
 } as const;
 
+/** A work rule that holds a cap (Lärarens dag, 20261123090000). */
+const CAPPED = { maxTeachingMinutesPerDay: { not: null } };
 /**
- * A work rule that holds a cap (Lärarens dag, 20261123090000) or a limit for
- * teaching in a row (Sammanhängande undervisning, 20261218090000): the rows a
- * hand edit's warnings can come from. One filter on the one table, so the
- * gate and the read it opens stay the statements they were.
+ * A post that holds a limit of either kind: a day limit (Lärarens dag,
+ * 20261123090000) or a limit for teaching in a row (Sammanhängande
+ * undervisning, 20261218090000), both HR data of the post. One filter on the
+ * one table, so the gate and the read it opens stay the statements they were.
  */
-const CAPPED = {
-  OR: [{ maxTeachingMinutesPerDay: { not: null } }, { maxConsecutiveTeachingMinutes: { not: null } }],
+const POST_LIMITED = {
+  OR: [{ maxTeachingDaysPerWeek: { not: null } }, { maxConsecutiveTeachingMinutes: { not: null } }],
 };
-/** A post that holds a day limit (Lärarens dag, 20261123090000). */
-const DAY_LIMITED = { maxTeachingDaysPerWeek: { not: null } };
 
 /**
  * LÄRARENS DAG'S GATE, COUNTED INSIDE THE SCHOOL'S STATEMENT: whether any
- * teacher of the school has a cap or a limit for teaching in a row (CAPPED),
- * and whether any post of the edited lesson's year has a day limit — the
- * year found as the one holding the lesson, since the lesson is not read yet
- * when the statement is built.
+ * teacher of the school has a cap (CAPPED), and whether any post of the
+ * edited lesson's year has a day limit or a limit for teaching in a row
+ * (POST_LIMITED) — the year found as the one holding the lesson, since the
+ * lesson is not read yet when the statement is built.
  *
  * update() and moveBlockCard() already read the lesson's school (its clock,
  * and whether R1 or R2 settles its year), so a `_count` there is a join in a
@@ -2741,13 +2747,13 @@ function teacherDayCounts(lessonId: string) {
   return {
     teacherWorkRules: { where: CAPPED },
     teacherEmployments: {
-      where: { ...DAY_LIMITED, academicYear: { is: { masterLessons: { some: { id: lessonId } } } } },
+      where: { ...POST_LIMITED, academicYear: { is: { masterLessons: { some: { id: lessonId } } } } },
     },
   };
 }
 
 function teacherDayGateOf(count: { teacherWorkRules: number; teacherEmployments: number }): TeacherDayGate {
-  return { caps: count.teacherWorkRules > 0, days: count.teacherEmployments > 0 };
+  return { caps: count.teacherWorkRules > 0, posts: count.teacherEmployments > 0 };
 }
 
 /**
@@ -2770,10 +2776,11 @@ async function lessonNames(tx: PrismaClient, lessons: readonly TeacherDayLesson[
 
 /**
  * A breach as the warning a hand edit gets back, worded for its reader: the
- * cap's figures and the stretch's to anybody, the post's to a reader with
- * HR-läs only (see TeacherDayWarning). About the edited lessons the teacher
- * is on in `role`, by name, and named by the first of them as Swedish sorts
- * names: one lesson in a toast, the same one whatever order they were read in.
+ * cap's figures to anybody, the post's (the days' and the stretch's) to a
+ * reader with HR-läs only (see TeacherDayWarning). About the edited lessons
+ * the teacher is on in `role`, by name, and named by the first of them as
+ * Swedish sorts names: one lesson in a toast, the same one whatever order
+ * they were read in.
  */
 export function teacherDayWarning(
   breach: TeacherDayBreach,
@@ -2789,17 +2796,19 @@ export function teacherDayWarning(
     };
   }
   if (breach.kind === 'CONSECUTIVE') {
-    return {
-      code: 'TEACHER_CONSECUTIVE_TOO_LONG',
-      params: {
-        role,
-        requirement,
-        day: breach.dayOfWeek,
-        minutes: breach.minutes,
-        max: breach.max,
-        breakMinutes: breach.breakMinutes,
-      },
-    };
+    return showsHr
+      ? {
+          code: 'TEACHER_CONSECUTIVE_TOO_LONG',
+          params: {
+            role,
+            requirement,
+            day: breach.dayOfWeek,
+            minutes: breach.minutes,
+            max: breach.max,
+            breakMinutes: breach.breakMinutes,
+          },
+        }
+      : { code: 'TEACHER_CONSECUTIVE_TOO_LONG_HIDDEN', params: { role, requirement } };
   }
   return showsHr
     ? { code: 'TEACHER_WEEK_TOO_MANY_DAYS', params: { role, requirement, days: breach.days, max: breach.max } }

@@ -371,26 +371,35 @@ describe('SupervisionCoverService', () => {
           },
         },
       ]);
-      tx.teacherWorkRule.findMany.mockResolvedValue([
+      // The limit is the post's (HR data); the rule is told, so it is read.
+      tx.teacherEmployment.findMany.mockResolvedValue([
         {
           userId: S,
-          lunchMinutes: null,
-          lunchStartTime: null,
-          lunchEndTime: null,
-          minDailyRestMinutes: null,
-          maxTeachingMinutesPerDay: null,
+          employmentPercent: 100,
+          reductionPercent: 0,
+          contractKind: 'FERIE',
+          teachingTargetMinutesPerWeek: null,
+          signature: null,
+          maxTeachingDaysPerWeek: null,
           maxConsecutiveTeachingMinutes: 60,
           consecutiveBreakMinutes: 30,
-          preferredFreeDayOfWeek: null,
         },
       ]);
       const answer = await service.candidates(SHIFT, DATE, admin);
+      expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: expect.objectContaining({ maxConsecutiveTeachingMinutes: true, consecutiveBreakMinutes: true }),
+        }),
+      );
       expect(answer.candidates.map((c) => c.userId)).toContain(S);
       expect(answer.excluded.find((entry) => entry.userId === S)).toBeUndefined();
 
+      tx.$executeRaw.mockClear();
       const result = await service.decide(SHIFT, DATE, { absenceId: ABSENCE, kind: 'SUBSTITUTE', substituteId: S, expected: 'OPEN' }, admin);
       expect(result.warnings).toEqual([]);
       expect(tx.supervisionCover.create).toHaveBeenCalled();
+      // Nothing was told of the limit, so the post is not recorded as read for it.
+      expect(recordedReads(tx).filter((read) => read.kind === 'EMPLOYMENT')).toEqual([]);
     });
 
     it('answers 404 for a pass that does not run that day, even with a decision standing on it', async () => {

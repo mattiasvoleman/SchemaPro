@@ -22,6 +22,7 @@ import {
   passTargetId,
   prefersFree,
   softWarnings,
+  toldFromPost,
   type CoverTarget,
   type CoverWarningCode,
   type PersonDay,
@@ -121,12 +122,12 @@ export class SupervisionCoverService {
       const candidates: PassCandidate[] = [];
       const excluded: PassCandidatesResponse['excluded'] = [];
       const feasible: [string, PersonDay][] = [];
-      const outOfDays: string[] = [];
+      const byPost: string[] = [];
       for (const [userId, day] of [...read.days].sort(([a], [b]) => a.localeCompare(b))) {
         const findings = hardFindings(day, target);
         if (findings.length > 0) {
           excluded.push({ userId, codes: maskFindings(findings, showsHr) });
-          if (findings.some((finding) => finding.code === 'WORK_DAYS')) outOfDays.push(userId);
+          if (toldFromPost(findings)) byPost.push(userId);
           continue;
         }
         feasible.push([userId, day]);
@@ -193,9 +194,10 @@ export class SupervisionCoverService {
       });
       candidates.sort((a, b) => compareRanked(order(a), order(b)));
       // As the lessons' candidates record them: each candidate's cover
-      // counter and whom their post's deltid in days leaves out (EMPLOYMENT),
-      // and who is left out as away (STAFF_ABSENCES, the code alone).
-      await recordRead(tx, 'EMPLOYMENT', [...candidates.map((candidate) => candidate.userId), ...outOfDays], user.channel);
+      // counter and whom their post's deltid in days or limit for teaching in
+      // a row leaves out (EMPLOYMENT), and who is left out as away
+      // (STAFF_ABSENCES, the code alone).
+      await recordRead(tx, 'EMPLOYMENT', [...candidates.map((candidate) => candidate.userId), ...byPost], user.channel);
       await recordRead(
         tx,
         'STAFF_ABSENCES',
@@ -374,7 +376,7 @@ export class SupervisionCoverService {
         code: SUPERVISION_SUBSTITUTE_BUSY,
       });
     }
-    if (findings.some((finding) => finding.code === 'WORK_DAYS')) {
+    if (toldFromPost(findings)) {
       await recordRead(tx, 'EMPLOYMENT', [substituteId], user.channel);
     }
     const warnings: PassWarning[] = maskWarnings(softWarnings(findings), readsHr(user));

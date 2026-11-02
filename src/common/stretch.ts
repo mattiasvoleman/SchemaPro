@@ -2,8 +2,9 @@
  * SAMMANHÄNGANDE UNDERVISNING: HOW LONG A TEACHER TEACHES IN A ROW.
  *
  * The administrator sets, per teacher, "at most X minutes of teaching in a
- * row, then Y minutes free" on the work rule (migration 20261218090000).
- * Three places keep it, each in its own way: the generator TRIES (a wish in
+ * row, then Y minutes free" on the post (TeacherEmployments, HR data like the
+ * deltid in days; migration 20261218090000). Three places keep it, each in
+ * its own way, and word it per reader: the generator TRIES (a wish in
  * the full model's objective, optimization-engine/app/solver/consecutive.py,
  * never a refusal), a hand edit of the grundschema is WARNED about
  * (master-lessons.service.ts), and the Vikarietavla never proposes a cover
