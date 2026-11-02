@@ -1890,13 +1890,7 @@ describe('Planning surface (e2e)', () => {
         .expect(204);
 
       expect(harness.tx['teacherWorkRule']!['deleteMany']).toHaveBeenCalledWith({
-        where: {
-          userId: TEACHER_ID,
-          maxTeachingMinutesPerDay: null,
-          preferredFreeDayOfWeek: null,
-          maxConsecutiveTeachingMinutes: null,
-          consecutiveBreakMinutes: null,
-        },
+        where: { userId: TEACHER_ID, maxTeachingMinutesPerDay: null, preferredFreeDayOfWeek: null },
       });
       expect(harness.tx['teacherWorkRule']!['update']).not.toHaveBeenCalled();
     });
@@ -1956,7 +1950,7 @@ describe('Planning surface (e2e)', () => {
           .expect(403);
 
         expect(response.body.code).toBe('WORK_RULE_DAY_IS_PLANNED');
-        expect(response.body.detail).toBe('Dagstaket, den önskade lediga dagen och gränsen för sammanhängande undervisning sätts av en administratör som planerar.');
+        expect(response.body.detail).toBe('Dagstaket och den önskade lediga dagen sätts av en administratör som planerar.');
         expect(harness.tx['teacherWorkRule']!['upsert']).not.toHaveBeenCalled();
       });
 
@@ -2014,13 +2008,7 @@ describe('Planning surface (e2e)', () => {
           .expect(204);
 
         expect(harness.tx['teacherWorkRule']!['deleteMany']).toHaveBeenCalledWith({
-          where: {
-            userId: COLLEAGUE_ID,
-            maxTeachingMinutesPerDay: null,
-            preferredFreeDayOfWeek: null,
-            maxConsecutiveTeachingMinutes: null,
-            consecutiveBreakMinutes: null,
-          },
+          where: { userId: COLLEAGUE_ID, maxTeachingMinutesPerDay: null, preferredFreeDayOfWeek: null },
         });
         expect(harness.tx['teacherWorkRule']!['update']).toHaveBeenCalledWith({
           where: { userId: COLLEAGUE_ID },
@@ -2652,6 +2640,94 @@ describe('Planning surface (e2e)', () => {
         expect(harness.tx['teacherEmployment']!['upsert']).not.toHaveBeenCalled();
       });
 
+      it('writes the limit on teaching in a row as a pair and hands it to a reader with HR-läs only, a teacher reading their own (20261218090000)', async () => {
+        givenLockedRows(USERS, [{ id: COLLEAGUE_ID, role: 'TEACHER' }]);
+        const limit = { maxConsecutiveTeachingMinutes: 180, consecutiveBreakMinutes: 30 };
+        harness.tx['teacherEmployment']!['upsert']!.mockResolvedValue(storedEmployment(COLLEAGUE_ID, limit));
+
+        const saved = await request(http())
+          .put(`/api/v1/teacher-employments/${COLLEAGUE_ID}?academicYearId=${YEAR_ID}`)
+          .set('x-test-user', admin())
+          .send({ employmentPercent: 80, signature: 'KOL', ...limit })
+          .expect(200);
+        expect(saved.body).toMatchObject(limit);
+        expect(harness.tx['teacherEmployment']!['upsert']).toHaveBeenCalledWith(
+          expect.objectContaining({ update: expect.objectContaining(limit), create: expect.objectContaining(limit) }),
+        );
+
+        // Cleared as a pair, and kept when a PUT leaves it out.
+        harness.tx['teacherEmployment']!['upsert']!.mockClear();
+        await request(http())
+          .put(`/api/v1/teacher-employments/${COLLEAGUE_ID}?academicYearId=${YEAR_ID}`)
+          .set('x-test-user', admin())
+          .send({ employmentPercent: 80, maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null })
+          .expect(200);
+        expect(harness.tx['teacherEmployment']!['upsert']).toHaveBeenLastCalledWith(
+          expect.objectContaining({ update: expect.objectContaining({ maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null }) }),
+        );
+        await request(http())
+          .put(`/api/v1/teacher-employments/${COLLEAGUE_ID}?academicYearId=${YEAR_ID}`)
+          .set('x-test-user', admin())
+          .send({ employmentPercent: 80 })
+          .expect(200);
+        const kept = (harness.tx['teacherEmployment']!['upsert']!.mock.calls.at(-1) as [{ update: Record<string, unknown> }])[0].update;
+        expect(kept).not.toHaveProperty('maxConsecutiveTeachingMinutes');
+        expect(kept).not.toHaveProperty('consecutiveBreakMinutes');
+
+        harness.tx['teacherEmployment']!['findMany']!.mockResolvedValue([storedEmployment(COLLEAGUE_ID, limit)]);
+        const hidden = await request(http())
+          .get(`/api/v1/teacher-employments?academicYearId=${YEAR_ID}`)
+          .set('x-test-user', asUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false } as never))
+          .expect(200);
+        expect(hidden.body[0]).toMatchObject({
+          maxConsecutiveTeachingMinutes: null,
+          consecutiveBreakMinutes: null,
+          hrHidden: true,
+          signature: 'KOL',
+        });
+        const shown = await request(http())
+          .get(`/api/v1/teacher-employments?academicYearId=${YEAR_ID}`)
+          .set('x-test-user', asUser({ adminProfile: 'SCHEMALAGGARE', hrRead: true } as never))
+          .expect(200);
+        expect(shown.body[0]).toMatchObject(limit);
+        expect(shown.body[0]).not.toHaveProperty('hrHidden');
+
+        harness.tx['teacherEmployment']!['findMany']!.mockResolvedValue([storedEmployment(TEACHER_ID, limit)]);
+        const own = await request(http())
+          .get(`/api/v1/teacher-employments?academicYearId=${YEAR_ID}`)
+          .set('x-test-user', teacher())
+          .expect(200);
+        expect(own.body[0]).toMatchObject(limit);
+        expect(own.body[0]).not.toHaveProperty('hrHidden');
+      });
+
+      it('400s a half pair and a limit or pause outside its bounds, before the table, with nothing written', async () => {
+        const queryRaw = givenLockedRows(USERS, [{ id: COLLEAGUE_ID, role: 'TEACHER' }]);
+        const refused = [
+          { maxConsecutiveTeachingMinutes: 180 },
+          { consecutiveBreakMinutes: 30 },
+          { maxConsecutiveTeachingMinutes: 180, consecutiveBreakMinutes: null },
+          { maxConsecutiveTeachingMinutes: 25, consecutiveBreakMinutes: 30 },
+          { maxConsecutiveTeachingMinutes: 485, consecutiveBreakMinutes: 30 },
+          { maxConsecutiveTeachingMinutes: 180, consecutiveBreakMinutes: 0 },
+          { maxConsecutiveTeachingMinutes: 180, consecutiveBreakMinutes: 125 },
+          { maxConsecutiveTeachingMinutes: 182, consecutiveBreakMinutes: 30 },
+        ];
+        for (const body of refused) {
+          const response = await request(http())
+            .put(`/api/v1/teacher-employments/${COLLEAGUE_ID}?academicYearId=${YEAR_ID}`)
+            .set('x-test-user', admin())
+            .send({ employmentPercent: 80, ...body })
+            .expect(400);
+          expect({ body, detail: JSON.stringify(response.body) }).toEqual({
+            body,
+            detail: expect.stringMatching(/gränsen för undervisning i följd|Pausen|Gränsen för undervisning i följd/),
+          });
+        }
+        expect(queryRaw).not.toHaveBeenCalled();
+        expect(harness.tx['teacherEmployment']!['upsert']).not.toHaveBeenCalled();
+      });
+
       it('a teacher reads their own post only — the service narrows, not RLS alone', async () => {
         harness.tx['teacherEmployment']!['findMany']!.mockResolvedValue([storedEmployment(TEACHER_ID)]);
 
@@ -2865,6 +2941,34 @@ describe('Planning surface (e2e)', () => {
             .expect(200);
           expect(shown.body.entries.map((entry: { version: number }) => entry.version)).toEqual([3, 2, 1]);
           expect(shown.body.entries[0].changes).toEqual([{ field: 'maxTeachingDaysPerWeek', before: null, after: 4 }]);
+        });
+
+        it('leaves the limit on teaching in a row out of Historik for a reader without HR-läs, versions and all (20261218090000)', async () => {
+          const post = { id: 'e', userId: COLLEAGUE_ID, academicYearId: YEAR_ID, employmentPercent: 100 };
+          const none = { maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null };
+          const set = { maxConsecutiveTeachingMinutes: 180, consecutiveBreakMinutes: 30 };
+          harness.tx['teacherEmploymentLog']!['findMany']!.mockResolvedValue([
+            version(3, { before: { ...post, ...none }, after: { ...post, ...set } }),
+            version(2, { before: { ...post, ...set }, after: { ...post, employmentPercent: 80, maxConsecutiveTeachingMinutes: 150, consecutiveBreakMinutes: 20 } }),
+            version(1),
+          ]);
+          const hidden = await request(http())
+            .get(`/api/v1/teacher-employments/${COLLEAGUE_ID}/history?academicYearId=${YEAR_ID}`)
+            .set('x-test-user', asUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false } as never))
+            .expect(200);
+          expect(hidden.body.entries.map((entry: { version: number }) => entry.version)).toEqual([2, 1]);
+          expect(hidden.body.entries[0].changes).toEqual([{ field: 'employmentPercent', before: null, after: null, hrHidden: true }]);
+          expect(JSON.stringify(hidden.body)).not.toMatch(/onsecutive|BreakMinutes/);
+
+          const shown = await request(http())
+            .get(`/api/v1/teacher-employments/${COLLEAGUE_ID}/history?academicYearId=${YEAR_ID}`)
+            .set('x-test-user', asUser({ adminProfile: 'SCHEMALAGGARE', hrRead: true } as never))
+            .expect(200);
+          expect(shown.body.entries.map((entry: { version: number }) => entry.version)).toEqual([3, 2, 1]);
+          expect(shown.body.entries[0].changes).toEqual([
+            { field: 'maxConsecutiveTeachingMinutes', before: null, after: 180 },
+            { field: 'consecutiveBreakMinutes', before: null, after: 30 },
+          ]);
         });
 
         it('a teacher reads their own and gets 403 for a colleague before anything is read', async () => {

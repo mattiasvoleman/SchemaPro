@@ -80,6 +80,31 @@ describe('diffLogEntry', () => {
     ]);
   });
 
+  it('lists the limit on teaching in a row after the days, created and changed, and never as unknown keys (20261218090000)', () => {
+    const limited = { ...post, maxTeachingDaysPerWeek: 4, maxConsecutiveTeachingMinutes: 180, consecutiveBreakMinutes: 30 };
+    expect(diffLogEntry('EMPLOYMENT', null, limited).map((change) => change.field)).toEqual([
+      'employmentPercent',
+      'reductionPercent',
+      'contractKind',
+      'teachingTargetMinutesPerWeek',
+      'maxTeachingDaysPerWeek',
+      'maxConsecutiveTeachingMinutes',
+      'consecutiveBreakMinutes',
+      'signature',
+    ]);
+    // The pair moves together in one version, the limit first.
+    expect(diffLogEntry('EMPLOYMENT', limited, { ...limited, maxConsecutiveTeachingMinutes: 150, consecutiveBreakMinutes: 20 })).toEqual([
+      { field: 'maxConsecutiveTeachingMinutes', before: 180, after: 150 },
+      { field: 'consecutiveBreakMinutes', before: 30, after: 20 },
+    ]);
+    expect(
+      diffLogEntry('EMPLOYMENT', limited, { ...limited, maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null }),
+    ).toEqual([
+      { field: 'maxConsecutiveTeachingMinutes', before: 180, after: null },
+      { field: 'consecutiveBreakMinutes', before: 30, after: null },
+    ]);
+  });
+
   it('says a note was written, never what it said, in the note’s place in the form', () => {
     const changes = diffLogEntry('EMPLOYMENT', post, { ...post, signature: 'ANS', noteChanged: true });
     expect(changes).toEqual([

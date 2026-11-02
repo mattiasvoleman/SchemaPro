@@ -125,9 +125,17 @@ export function toEmploymentResponse(
 
 /**
  * The post's columns a PUT that leaves them out keeps (employmentData):
- * SCB's three (20261111090000) and deltid in days (20261123090000).
+ * SCB's three (20261111090000), deltid in days (20261123090000) and the limit
+ * on teaching in a row (20261218090000).
  */
-const KEPT_WHEN_ABSENT = ['employmentForm', 'firstTeacherPercent', 'lecturerPercent', 'maxTeachingDaysPerWeek'] as const;
+const KEPT_WHEN_ABSENT = [
+  'employmentForm',
+  'firstTeacherPercent',
+  'lecturerPercent',
+  'maxTeachingDaysPerWeek',
+  'maxConsecutiveTeachingMinutes',
+  'consecutiveBreakMinutes',
+] as const;
 
 /** Every read of a post includes its periods, by Från. */
 const WITH_PERIODS = { periods: { orderBy: { validFrom: 'asc' } } } satisfies Prisma.TeacherEmploymentInclude;
@@ -197,9 +205,10 @@ export class TeacherEmploymentsService {
     // A period's versions are left out for a reader without HR-läs, as the
     // periods are from the post (hr-visibility.ts): when and how a post
     // changes is HR data like the percentages. So is a version of the post
-    // whose one change was deltid in days (20261123090000): hideHrChanges
-    // leaves that change out whole, and the empty version left behind would
-    // still say, by being there, that something HR moved on that date.
+    // whose one change was deltid in days (20261123090000) or the limit on
+    // teaching in a row (20261218090000): hideHrChanges leaves that change
+    // out whole, and the empty version left behind would still say, by being
+    // there, that something HR moved on that date.
     const hr = readsHr(user);
     const shown = (hr ? rows : rows.filter((row) => row.entity !== 'PERIOD'))
       .map((row) => {
@@ -254,8 +263,9 @@ export class TeacherEmploymentsService {
 
   /**
    * Write (or rewrite) one teacher's post for one year. The whole row is
-   * replaced, every time, for the reason the DTO gives — but for SCB's three
-   * and the days, which a PUT that leaves them out keeps (employmentData).
+   * replaced, every time, for the reason the DTO gives — but for SCB's three,
+   * the days and the limit on teaching in a row, which a PUT that leaves them
+   * out keeps (employmentData).
    */
   async upsert(
     userId: string,
@@ -278,9 +288,9 @@ export class TeacherEmploymentsService {
         // The answer is the post the caller sent and, when it has any, its
         // periods, which the caller did not: a read of them, recorded as the
         // post's reads are (EMPLOYMENT), in the write's own transaction. So is
-        // one of SCB's three, or the days, the PUT left out and the row keeps:
-        // handed back, not sent. A post with neither answers only what was
-        // sent, a write's echo.
+        // one of SCB's three, or the days, or the limit on teaching in a row,
+        // the PUT left out and the row keeps: handed back, not sent. A post
+        // with none of them answers only what was sent, a write's echo.
         const answer = toEmploymentResponse(saved);
         const keptUnsent = KEPT_WHEN_ABSENT.some((field) => dto[field] === undefined && (saved[field] ?? null) !== null);
         if (answer.periods.length > 0 || keptUnsent) await recordRead(tx, 'EMPLOYMENT', [userId], user.channel);
@@ -405,6 +415,8 @@ export function employmentData(dto: UpsertTeacherEmploymentDto): {
   firstTeacherPercent?: number | null;
   lecturerPercent?: number | null;
   maxTeachingDaysPerWeek?: number | null;
+  maxConsecutiveTeachingMinutes?: number | null;
+  consecutiveBreakMinutes?: number | null;
 } {
   const reductionPercent = dto.reductionPercent ?? 0;
   if (reductionPercent > dto.employmentPercent) {
@@ -422,6 +434,7 @@ export function employmentData(dto: UpsertTeacherEmploymentDto): {
       `Förstelärar- och lektorsuppdraget (${firstTeacherPercent} % och ${lecturerPercent} %) kan tillsammans vara högst hela tjänsten.`,
     );
   }
+  assertStretchIsWhole(dto);
   return {
     employmentPercent: dto.employmentPercent,
     reductionPercent,
@@ -438,7 +451,39 @@ export function employmentData(dto: UpsertTeacherEmploymentDto): {
     ...(dto.lecturerPercent !== undefined ? { lecturerPercent } : {}),
     // Deltid in days (20261123090000), the same way and for the same reason.
     ...(dto.maxTeachingDaysPerWeek !== undefined ? { maxTeachingDaysPerWeek: dto.maxTeachingDaysPerWeek } : {}),
+    // The limit on teaching in a row (20261218090000): a pair, written when
+    // sent (null on both clears), kept when absent, for the same reason.
+    // assertStretchIsWhole has seen to it that the two are sent together.
+    ...(dto.maxConsecutiveTeachingMinutes !== undefined
+      ? { maxConsecutiveTeachingMinutes: dto.maxConsecutiveTeachingMinutes }
+      : {}),
+    ...(dto.consecutiveBreakMinutes !== undefined ? { consecutiveBreakMinutes: dto.consecutiveBreakMinutes } : {}),
   };
+}
+
+/**
+ * The limit on teaching in a row and the pause that ends a stretch: both
+ * sent, or neither — and when sent, both set or both null, so that the row
+ * holds both or neither after the write.
+ *
+ * Checked on what the body SAYS and not on what the row holds, because absent
+ * keeps: a body naming one of the two, with the row holding the other, would
+ * otherwise write a half pair that the table's pair CHECK
+ * (TeacherEmployments_consecutive_is_a_pair_check) then refuses as a bare 400
+ * naming the constraint. The database refuses it too — this is the copy that
+ * can say which field is missing. Before anything is read or locked: a refused
+ * half pair writes nothing.
+ */
+function assertStretchIsWhole(
+  dto: Pick<UpsertTeacherEmploymentDto, 'maxConsecutiveTeachingMinutes' | 'consecutiveBreakMinutes'>,
+): void {
+  const { maxConsecutiveTeachingMinutes: limit, consecutiveBreakMinutes: pause } = dto;
+  if (limit === undefined && pause === undefined) return;
+  if (limit === undefined || pause === undefined || (limit === null) !== (pause === null)) {
+    throw new BadRequestException(
+      'Ange både gränsen för undervisning i följd och pausen som avslutar en följd, eller ingen av dem — en halv regel går inte att tolka.',
+    );
+  }
 }
 
 /** The columns a period's DTO describes, dates parsed, defaults filled in. */

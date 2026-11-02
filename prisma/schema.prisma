@@ -2956,19 +2956,6 @@ model TeacherWorkRule {
   /// week over it, and the Vikarietavla ranks a cover on it lower. 1..7. Set by
   /// the administrator, like the cap.
   preferredFreeDayOfWeek   Int?
-  /// Sammanhängande undervisning (20261218090000): the most minutes of teaching
-  /// in a row, a stretch ending at a break of `consecutiveBreakMinutes`
-  /// (src/common/stretch.ts). SOFT IN THE GENERATOR, HARD ELSEWHERE: Generera
-  /// pays for a lesson whose stretch is not ended in time and refuses no week
-  /// over it, and only where the school has turned it on
-  /// (LunchSettings.generatorKeepsConsecutiveTeaching); a hand edit warns, and
-  /// the Vikarietavla never proposes a cover that would break it. 30..480, step
-  /// 5. Both columns or neither. Set by the administrator who writes planering,
-  /// like the cap — a trigger keeps it from the teacher's own write.
-  maxConsecutiveTeachingMinutes Int?
-  /// The free time that ends a stretch: a gap of at least this long between two
-  /// of the teacher's lessons is a break. 5..120, step 5.
-  consecutiveBreakMinutes       Int?
 
   createdAt DateTime @default(now()) @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @db.Timestamptz(6)
@@ -3134,6 +3121,22 @@ model TeacherEmployment {
   /// HR-läs, and no refusal, warning or ranking states it to them. The whole
   /// year's, not a period's: the generator plans one week.
   maxTeachingDaysPerWeek       Int?
+  /// Sammanhängande undervisning (20261218090000): the most minutes of teaching
+  /// in a row, a stretch ending at a break of `consecutiveBreakMinutes`
+  /// (src/common/stretch.ts); null = no limit. SOFT IN THE GENERATOR, HARD
+  /// ELSEWHERE: Generera pays for a lesson whose stretch is not ended in time
+  /// and refuses no week over it, and only where the school has turned it on
+  /// (LunchSettings.generatorKeepsConsecutiveTeaching); a hand edit warns, and
+  /// the Vikarietavla never proposes a cover that would break it. 30..480, step
+  /// 5. Both columns or neither. HR DATA, a limit may be an arbetsanpassning
+  /// after sick leave: it sits beside the days and is treated as they are,
+  /// hideHr leaves it out for an administrator without HR-läs and nothing the
+  /// run, the edit or the cover board says states it to them. The whole year's,
+  /// not a period's.
+  maxConsecutiveTeachingMinutes Int?
+  /// The free time that ends a stretch: a gap of at least this long between two
+  /// of the teacher's lessons is a break. 5..120, step 5.
+  consecutiveBreakMinutes      Int?
   /// Lärarsignatur, 1..8 characters. Unique per school AND YEAR where set — not
   /// per school: the same teacher carries the same signature next year, and a
   /// per-school key would refuse the roll-forward. Prisma cannot state the
@@ -3804,8 +3807,8 @@ model LunchSetting {
   /// the reason the travel switch is: it sits in the same form, Skolregler.
   generatorKeepsPupilGapsDown Boolean @default(false)
   /// Sammanhängande undervisning (20261218090000): the generator tries to keep
-  /// each teacher's stretches of teaching within their work rule's limit
-  /// (TeacherWorkRules.maxConsecutiveTeachingMinutes). Off: nothing is sent, and
+  /// each teacher's stretches of teaching within their post's limit
+  /// (TeacherEmployments.maxConsecutiveTeachingMinutes). Off: nothing is sent, and
   /// the week is generated exactly as before. A wish and not a guarantee, so the
   /// switch is the school's: it moves lessons of every teacher who has the
   /// rule. In this row for the reason the others are: the same form.

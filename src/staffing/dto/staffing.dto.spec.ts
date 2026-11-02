@@ -223,6 +223,41 @@ describe('UpsertTeacherEmploymentDto mirrors the table CHECKs, bound for bound',
     );
   });
 
+  describe('the limit on teaching in a row mirrors the table CHECKs and stretch.ts, bound for bound (20261218090000)', () => {
+    const base = { employmentPercent: 80 };
+    const stretch = (limit: unknown, pause: unknown = undefined) => ({
+      ...base,
+      ...(limit === undefined ? {} : { maxConsecutiveTeachingMinutes: limit }),
+      ...(pause === undefined ? {} : { consecutiveBreakMinutes: pause }),
+    });
+
+    it('accepts the ends of both ranges, null as no limit, and absent as stored', async () => {
+      await expect(failing(UpsertTeacherEmploymentDto, stretch(30, 5))).resolves.toEqual([]);
+      await expect(failing(UpsertTeacherEmploymentDto, stretch(480, 120))).resolves.toEqual([]);
+      await expect(failing(UpsertTeacherEmploymentDto, stretch(null, null))).resolves.toEqual([]);
+      await expect(failing(UpsertTeacherEmploymentDto, base)).resolves.toEqual([]);
+    });
+
+    it('refuses a limit under half an hour and one over eight hours, at the number next to each bound', async () => {
+      await expect(failing(UpsertTeacherEmploymentDto, stretch(25))).resolves.toEqual(['maxConsecutiveTeachingMinutes']);
+      await expect(failing(UpsertTeacherEmploymentDto, stretch(485))).resolves.toEqual(['maxConsecutiveTeachingMinutes']);
+      await expect(messagesOf(UpsertTeacherEmploymentDto, stretch(485))).resolves.toContain('högst 480 minuter');
+    });
+
+    it('refuses a pause that is no pause and one that is a long recess, at the number next to each bound', async () => {
+      await expect(failing(UpsertTeacherEmploymentDto, stretch(undefined, 0))).resolves.toEqual(['consecutiveBreakMinutes']);
+      await expect(failing(UpsertTeacherEmploymentDto, stretch(undefined, 125))).resolves.toEqual(['consecutiveBreakMinutes']);
+      await expect(messagesOf(UpsertTeacherEmploymentDto, stretch(undefined, 0))).resolves.toContain('lägst 5 minuter');
+    });
+
+    it('refuses either off the five-minute grid, and one that is not whole minutes', async () => {
+      await expect(failing(UpsertTeacherEmploymentDto, stretch(182))).resolves.toEqual(['maxConsecutiveTeachingMinutes']);
+      await expect(failing(UpsertTeacherEmploymentDto, stretch('180'))).resolves.toEqual(['maxConsecutiveTeachingMinutes']);
+      await expect(failing(UpsertTeacherEmploymentDto, stretch(undefined, 17))).resolves.toEqual(['consecutiveBreakMinutes']);
+      await expect(failing(UpsertTeacherEmploymentDto, stretch(undefined, 12.5))).resolves.toEqual(['consecutiveBreakMinutes']);
+    });
+  });
+
   it('says why in Swedish, because an admin reads these in the drawer', async () => {
     await expect(
       messagesOf(UpsertTeacherEmploymentDto, { employmentPercent: 110 }),

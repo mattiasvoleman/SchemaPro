@@ -1,5 +1,6 @@
 import { TeacherContractKind, TeacherEmploymentForm } from '@prisma/client';
 import {
+  IsDivisibleBy,
   IsEnum,
   IsInt,
   IsNumber,
@@ -14,6 +15,13 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { IsCalendarDate } from '../../resources/dto/is-calendar-date';
+import {
+  CONSECUTIVE_BREAK_MINUTES_MAX,
+  CONSECUTIVE_BREAK_MINUTES_MIN,
+  CONSECUTIVE_STEP,
+  MAX_CONSECUTIVE_TEACHING_MINUTES_MAX,
+  MAX_CONSECUTIVE_TEACHING_MINUTES_MIN,
+} from '../../common/stretch';
 import { MAX_TEACHING_DAYS_PER_WEEK_MAX, MAX_TEACHING_DAYS_PER_WEEK_MIN } from '../../common/teacher-day';
 
 /**
@@ -37,7 +45,9 @@ import { MAX_TEACHING_DAYS_PER_WEEK_MAX, MAX_TEACHING_DAYS_PER_WEEK_MIN } from '
  * before them, open in a tab over the release, would otherwise clear them on
  * its next save. A new post without them has none. Deltid in days
  * (maxTeachingDaysPerWeek, 20261123090000) came later still, and is read the
- * same way for the same reason.
+ * same way for the same reason; so is the limit on teaching in a row
+ * (maxConsecutiveTeachingMinutes and consecutiveBreakMinutes, 20261218090000),
+ * which is sent as a pair or not at all (see the field).
  *
  * THREE DECIMALS on the two percentages, because SCB and IST report a share of
  * a post "upp till tre decimaler" and 66,667 is how a two-thirds post is
@@ -144,6 +154,52 @@ export class UpsertTeacherEmploymentDto {
     message: `Undervisningsdagarna per vecka kan vara högst ${MAX_TEACHING_DAYS_PER_WEEK_MAX}.`,
   })
   maxTeachingDaysPerWeek?: number | null;
+
+  /**
+   * Sammanhängande undervisning (20261218090000): the most minutes of
+   * teaching in a row (src/common/stretch.ts), on the post beside the days and
+   * HR data as they are — a limit may be an arbetsanpassning after sick
+   * leave. Sent together with `consecutiveBreakMinutes`, or not at all — the
+   * service refuses a half pair, because no per-field decorator can see the
+   * other field. SOFT in the generator (it tries, where the school has turned
+   * that on), warned on a hand edit, hard in the Vikarietavla. Null on both:
+   * no limit. Absent on both: as stored (see the class comment). On the post
+   * only — a period of the post does not state it.
+   *
+   * 30..480 on the five-minute grid, the table's CHECK and the engine's:
+   * under half an hour is a day nobody teaches, and over eight hours is no
+   * limit.
+   */
+  @IsOptional()
+  @IsInt({ message: 'Gränsen för undervisning i följd anges i hela minuter.' })
+  @Min(MAX_CONSECUTIVE_TEACHING_MINUTES_MIN, {
+    message: `Gränsen för undervisning i följd kan vara lägst ${MAX_CONSECUTIVE_TEACHING_MINUTES_MIN} minuter — lämna fältet tomt för ingen gräns.`,
+  })
+  @Max(MAX_CONSECUTIVE_TEACHING_MINUTES_MAX, {
+    message: `Gränsen för undervisning i följd kan vara högst ${MAX_CONSECUTIVE_TEACHING_MINUTES_MAX} minuter (8 timmar).`,
+  })
+  @IsDivisibleBy(CONSECUTIVE_STEP, {
+    message: `Gränsen för undervisning i följd måste vara ett helt antal ${CONSECUTIVE_STEP}-minutersintervall — schemaläggaren räknar i femminuterssteg.`,
+  })
+  maxConsecutiveTeachingMinutes?: number | null;
+
+  /**
+   * The free time that ends a stretch: a gap of at least this long between two
+   * of the teacher's lessons is a break. 5..120 on the same grid. Absent keeps,
+   * null clears, with `maxConsecutiveTeachingMinutes`.
+   */
+  @IsOptional()
+  @IsInt({ message: 'Pausen som avslutar en följd anges i hela minuter.' })
+  @Min(CONSECUTIVE_BREAK_MINUTES_MIN, {
+    message: `Pausen som avslutar en följd kan vara lägst ${CONSECUTIVE_BREAK_MINUTES_MIN} minuter — lämna fältet tomt för ingen gräns.`,
+  })
+  @Max(CONSECUTIVE_BREAK_MINUTES_MAX, {
+    message: `Pausen som avslutar en följd kan vara högst ${CONSECUTIVE_BREAK_MINUTES_MAX} minuter (2 timmar).`,
+  })
+  @IsDivisibleBy(CONSECUTIVE_STEP, {
+    message: `Pausen måste vara ett helt antal ${CONSECUTIVE_STEP}-minutersintervall — schemaläggaren räknar i femminuterssteg.`,
+  })
+  consecutiveBreakMinutes?: number | null;
 }
 
 /**

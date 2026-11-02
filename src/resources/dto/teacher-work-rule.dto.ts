@@ -1,13 +1,6 @@
 import { Transform } from 'class-transformer';
 import { IsBoolean, IsDivisibleBy, IsInt, IsOptional, Matches, Max, Min } from 'class-validator';
 import {
-  CONSECUTIVE_BREAK_MINUTES_MAX,
-  CONSECUTIVE_BREAK_MINUTES_MIN,
-  CONSECUTIVE_STEP,
-  MAX_CONSECUTIVE_TEACHING_MINUTES_MAX,
-  MAX_CONSECUTIVE_TEACHING_MINUTES_MIN,
-} from '../../common/stretch';
-import {
   MAX_TEACHING_MINUTES_PER_DAY_MAX,
   MAX_TEACHING_MINUTES_PER_DAY_MIN,
   MAX_TEACHING_MINUTES_PER_DAY_STEP,
@@ -142,50 +135,6 @@ export class UpsertTeacherWorkRuleDto {
     message: 'Den önskade lediga dagen anges som en veckodag, 1 (måndag) till 7 (söndag).',
   })
   preferredFreeDayOfWeek?: number | null;
-
-  /**
-   * Sammanhängande undervisning (20261218090000): the most minutes of
-   * teaching in a row (src/common/stretch.ts). Sent together with
-   * `consecutiveBreakMinutes`, or not at all — the service refuses a half
-   * rule, because no per-field decorator can see the other field. SOFT in the
-   * generator (it tries, where the school has turned that on), warned on a
-   * hand edit, hard in the Vikarietavla.
-   *
-   * Absent keeps what the row holds, null clears it, a value writes it, as for
-   * the cap: an administrator's, on a row the teacher writes too. 30..480 on
-   * the five-minute grid, the table's CHECK and the engine's: under half an
-   * hour is a day nobody teaches, and over eight hours is no limit.
-   */
-  @IsOptional()
-  @IsInt({ message: 'Gränsen för undervisning i följd anges i hela minuter.' })
-  @Min(MAX_CONSECUTIVE_TEACHING_MINUTES_MIN, {
-    message: `Gränsen för undervisning i följd kan vara lägst ${MAX_CONSECUTIVE_TEACHING_MINUTES_MIN} minuter — lämna fältet tomt för ingen gräns.`,
-  })
-  @Max(MAX_CONSECUTIVE_TEACHING_MINUTES_MAX, {
-    message: `Gränsen för undervisning i följd kan vara högst ${MAX_CONSECUTIVE_TEACHING_MINUTES_MAX} minuter (8 timmar).`,
-  })
-  @IsDivisibleBy(CONSECUTIVE_STEP, {
-    message: `Gränsen för undervisning i följd måste vara ett helt antal ${CONSECUTIVE_STEP}-minutersintervall — schemaläggaren räknar i femminuterssteg.`,
-  })
-  maxConsecutiveTeachingMinutes?: number | null;
-
-  /**
-   * The free time that ends a stretch: a gap of at least this long between two
-   * of the teacher's lessons is a break. 5..120 on the same grid. Absent keeps,
-   * null clears, with `maxConsecutiveTeachingMinutes`.
-   */
-  @IsOptional()
-  @IsInt({ message: 'Pausen som avslutar en följd anges i hela minuter.' })
-  @Min(CONSECUTIVE_BREAK_MINUTES_MIN, {
-    message: `Pausen som avslutar en följd kan vara lägst ${CONSECUTIVE_BREAK_MINUTES_MIN} minuter — lämna fältet tomt för ingen gräns.`,
-  })
-  @Max(CONSECUTIVE_BREAK_MINUTES_MAX, {
-    message: `Pausen som avslutar en följd kan vara högst ${CONSECUTIVE_BREAK_MINUTES_MAX} minuter (2 timmar).`,
-  })
-  @IsDivisibleBy(CONSECUTIVE_STEP, {
-    message: `Pausen måste vara ett helt antal ${CONSECUTIVE_STEP}-minutersintervall — schemaläggaren räknar i femminuterssteg.`,
-  })
-  consecutiveBreakMinutes?: number | null;
 }
 
 /** A query flag as a URL carries it: "true" or "false", nothing else (print.dto.ts's reading). */
@@ -194,9 +143,9 @@ const flag = ({ value }: { value: unknown }) => (value === 'true' ? true : value
 /**
  * DELETE /teacher-work-rules/:userId's query.
  *
- * `includeDay=true` says the delete means the administrator's fields
- * too, the cap, the wished free day and the limit on teaching in a row, and
- * lets a writer who plans delete the row with them. Without it a DELETE takes the lunch and the rest and
+ * `includeDay=true` says the delete means the administrator's two fields
+ * too, the cap and the wished free day, and lets a writer who plans delete
+ * the row with them. Without it a DELETE takes the lunch and the rest and
  * keeps those two, from every writer: a web from before Lärarens dag knows
  * only the lunch and the rest, reads a row that holds only a cap as "Ingen
  * arbetstidsregel", and sends a bare DELETE when its form is empty — so an

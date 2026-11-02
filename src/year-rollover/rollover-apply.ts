@@ -348,6 +348,11 @@ export async function applyStaffingWrites(
         ...(row.firstTeacherPercent ? { firstTeacherPercent: row.firstTeacherPercent } : {}),
         ...(row.lecturerPercent ? { lecturerPercent: row.lecturerPercent } : {}),
         ...(row.maxTeachingDaysPerWeek ? { maxTeachingDaysPerWeek: row.maxTeachingDaysPerWeek } : {}),
+        // The limit on teaching in a row (20261218090000): the plan gives the
+        // pair or neither (rollover-staffing.ts), so the table's pair CHECK
+        // holds for what is written here.
+        ...(row.maxConsecutiveTeachingMinutes ? { maxConsecutiveTeachingMinutes: row.maxConsecutiveTeachingMinutes } : {}),
+        ...(row.consecutiveBreakMinutes ? { consecutiveBreakMinutes: row.consecutiveBreakMinutes } : {}),
       })),
     });
     counts.employments = count;

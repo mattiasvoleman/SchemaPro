@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { TeacherContractKind, TeacherDutyKind, TeacherEmploymentForm, UserRole } from '@prisma/client';
+import { hasStretchRule } from '../common/stretch';
 import { normalizeDutyLabel } from '../staffing/duty-identity';
 import { isOnSolverGrid, slotsOverlap, sortSlots, type DutySlot } from '../staffing/duty-slot';
 
@@ -84,6 +85,13 @@ export interface SourceEmployment {
   lecturerPercent?: number | null;
   /** Deltid in days, 20261123090000: the post's own, no period states it. Absent or null: no limit. */
   maxTeachingDaysPerWeek?: number | null;
+  /**
+   * The limit on teaching in a row, 20261218090000: the post's own, no period
+   * states it. A pair, both set or both null (the table's CHECK); absent or
+   * null: no limit.
+   */
+  maxConsecutiveTeachingMinutes?: number | null;
+  consecutiveBreakMinutes?: number | null;
   /** The post's periods (20261022120000), by Från; [] for a post the same all year. */
   periods: SourcePeriod[];
 }
@@ -164,6 +172,9 @@ export interface StaffingWrites {
     firstTeacherPercent?: number;
     lecturerPercent?: number;
     maxTeachingDaysPerWeek?: number;
+    /** The limit on teaching in a row: both, or neither. */
+    maxConsecutiveTeachingMinutes?: number;
+    consecutiveBreakMinutes?: number;
   }[];
   duties: {
     sourceDutyId: string;
@@ -207,6 +218,11 @@ export interface StaffingCarryPreview {
      * staffing preview is shown to deciders only, who read it.
      */
     withDayLimit: string[];
+    /**
+     * The limit on teaching in a row carried (20261218090000), likewise: HR
+     * data, like the days, in the preview only a decider opens.
+     */
+    withStretchLimit: string[];
     notCarried: { userId: string; reason: EmploymentNotCarried }[];
     signaturesDropped: { userId: string; signature: string }[];
     /**
@@ -256,6 +272,7 @@ export function staffNamedBy(preview: StaffingCarryPreview): string[] {
     ...employments.withReduction,
     ...employments.withTargetOverride,
     ...employments.withDayLimit,
+    ...employments.withStretchLimit,
     ...employments.notCarried.map((row) => row.userId),
     ...employments.signaturesDropped.map((row) => row.userId),
     ...employments.fromPeriod.map((row) => row.userId),
@@ -329,6 +346,7 @@ export function planStaffingCarry(input: StaffingCarryInput): StaffingCarryPlan 
       withReduction: [],
       withTargetOverride: [],
       withDayLimit: [],
+      withStretchLimit: [],
       notCarried: [],
       signaturesDropped: [],
       fromPeriod: [],
@@ -414,12 +432,22 @@ export function planStaffingCarry(input: StaffingCarryInput): StaffingCarryPlan 
       ...(employment.lecturerPercent ? { lecturerPercent: employment.lecturerPercent } : {}),
       // The post's own, never a period's: no period states it (20261123090000).
       ...(employment.maxTeachingDaysPerWeek ? { maxTeachingDaysPerWeek: employment.maxTeachingDaysPerWeek } : {}),
+      // The limit on teaching in a row, likewise and as a pair: a source that
+      // held half of one (the CHECK keeps it from) would carry neither, so
+      // the new year's table never meets a half pair.
+      ...(hasStretchRule(employment)
+        ? {
+            maxConsecutiveTeachingMinutes: employment.maxConsecutiveTeachingMinutes,
+            consecutiveBreakMinutes: employment.consecutiveBreakMinutes,
+          }
+        : {}),
     });
     preview.employments.carried++;
     employmentOf.set(employment.userId, 'CARRIED');
     if (Number(figures.reductionPercent) > 0) preview.employments.withReduction.push(employment.userId);
     if (figures.teachingTargetMinutesPerWeek !== null) preview.employments.withTargetOverride.push(employment.userId);
     if (employment.maxTeachingDaysPerWeek) preview.employments.withDayLimit.push(employment.userId);
+    if (hasStretchRule(employment)) preview.employments.withStretchLimit.push(employment.userId);
   }
 
   // ---- uppdrag
@@ -559,16 +587,19 @@ export function planStaffingCarry(input: StaffingCarryInput): StaffingCarryPlan 
   if (ended > 0) add('STAFFING_DUTY_ENDED', { duties: ended });
   if (preview.duties.fromCleared.length > 0) add('STAFFING_DUTY_FROM_CLEARED', { duties: preview.duties.fromCleared.length });
   // A post's days (Lärarens dag) are such a term too, and a hard one: the
-  // new year's generator refuses a week over them.
+  // new year's generator refuses a week over them. So is the limit on
+  // teaching in a row, a soft one: the generator tries to keep it.
   if (
     preview.employments.withReduction.length > 0 ||
     preview.employments.withTargetOverride.length > 0 ||
-    preview.employments.withDayLimit.length > 0
+    preview.employments.withDayLimit.length > 0 ||
+    preview.employments.withStretchLimit.length > 0
   ) {
     add('STAFFING_PER_YEAR_TERMS_CARRIED', {
       reductions: preview.employments.withReduction.length,
       overrides: preview.employments.withTargetOverride.length,
       dayLimits: preview.employments.withDayLimit.length,
+      stretchLimits: preview.employments.withStretchLimit.length,
     });
   }
   if (preview.employments.signaturesDropped.length > 0) {

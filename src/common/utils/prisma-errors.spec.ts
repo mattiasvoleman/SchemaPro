@@ -286,6 +286,10 @@ describe('rethrowPrismaError and a tjänstefördelning CHECK', () => {
     ['TeacherDuties', 'TeacherDuties_note_is_sane', 'note'],
     ['TeachingRequirements', 'TeachingRequirements_lesson_lengths_are_canonical', 'lessonLengths'],
     ['TeacherEmployments', 'TeacherEmployments_maxTeachingDaysPerWeek_check', 'maxTeachingDaysPerWeek'],
+    // Sammanhängande undervisning (20261218090000) sits on the post, beside the days.
+    ['TeacherEmployments', 'TeacherEmployments_maxConsecutiveTeachingMinutes_check', 'maxConsecutiveTeachingMinutes'],
+    ['TeacherEmployments', 'TeacherEmployments_consecutiveBreakMinutes_check', 'consecutiveBreakMinutes'],
+    ['TeacherEmployments', 'TeacherEmployments_consecutive_is_a_pair_check', 'maxConsecutiveTeachingMinutes'],
     ['TeacherWorkRules', 'TeacherWorkRules_maxTeachingMinutesPerDay_check', 'maxTeachingMinutesPerDay'],
     ['TeacherWorkRules', 'TeacherWorkRules_preferredFreeDayOfWeek_check', 'preferredFreeDayOfWeek'],
   ])('answers %s’s %s with a 400 naming %s', (table, constraint, field) => {
