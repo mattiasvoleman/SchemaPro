@@ -47,10 +47,8 @@ export function readsHr(user: AuthenticatedUser): boolean {
  * (maxConsecutiveTeachingMinutes and consecutiveBreakMinutes, 20261218090000):
  * the most minutes in a row and the free time that ends a stretch, the days'
  * sibling in the same part of the week, moved here from the work rule that
- * every colleague reads. The list for the post as it is read (hideHr): a
- * column added to the post that is HR goes here, or the post shows it.
- * Historik does not depend on it: a version hides a column nobody has
- * argued in (NOT_HR_IN_A_POST).
+ * every colleague reads. The HR columns the post as it is read (hideHr) hands
+ * over as null, beside the two percentages and the note.
  */
 export const EMPLOYMENT_HR_FIELDS = [
   'employmentForm',
@@ -67,27 +65,6 @@ export const EMPLOYMENT_HR_FIELDS = [
  */
 export const HR_NOT_YOURS = 'HR_NOT_YOURS';
 
-/** A post with its HR left out. */
-export function hideHr<T extends { employmentPercent: number; reductionPercent: number }>(
-  row: T,
-): Omit<T, 'employmentPercent' | 'reductionPercent'> & {
-  employmentPercent: null;
-  reductionPercent: null;
-  note?: null;
-  hrHidden: true;
-} {
-  return {
-    ...row,
-    employmentPercent: null,
-    reductionPercent: null,
-    ...('note' in row ? { note: null } : {}),
-    ...('periods' in row ? { periods: [] } : {}),
-    // SCB's three, the days and the limit on teaching in a row, where the row carries them (a post; not a load row).
-    ...Object.fromEntries(EMPLOYMENT_HR_FIELDS.filter((field) => field in row).map((field) => [field, null])),
-    hrHidden: true,
-  };
-}
-
 /**
  * The fields a version of a post shows with their values to a reader without
  * HR-läs. An ALLOW list, not a list of what to hide. A version is the whole
@@ -102,7 +79,7 @@ export function hideHr<T extends { employmentPercent: number; reductionPercent: 
  * Each of these is a column the post itself hands to a reader without HR-läs
  * (hideHr leaves them), and Historik shows no more than the post:
  */
-const NOT_HR_IN_A_POST: ReadonlySet<string> = new Set([
+export const NOT_HR_IN_A_POST: ReadonlySet<string> = new Set([
   // Ferie- or semestertjänst: which arbetstid rules the schedule keeps.
   'contractKind',
   // The target in minutes that tjänstefördelning is measured against, read by
@@ -133,13 +110,73 @@ const NOT_HR_IN_A_POST: ReadonlySet<string> = new Set([
  * And no column that nobody has judged: said by name, an unknown sparse column
  * would give away who has a value.
  */
-const HR_SAID_IN_A_POST: ReadonlySet<string> = new Set([
+export const HR_SAID_IN_A_POST: ReadonlySet<string> = new Set([
   'employmentPercent',
   'reductionPercent',
   'employmentForm',
   'firstTeacherPercent',
   'lecturerPercent',
 ]);
+
+/**
+ * The columns of a post that the read hands a reader without HR-läs with
+ * their values: the row's identity and bookkeeping, and the columns
+ * NOT_HR_IN_A_POST argues in, so that Historik shows no more than the post.
+ * createdAt and updatedAt are handed on as they always were; updatedAt says
+ * when the post was last written, not what changed, and hiding it would be a
+ * decision of its own.
+ */
+export const POST_READ_AS_IS: ReadonlySet<string> = new Set([
+  'id',
+  'schoolId',
+  'userId',
+  'academicYearId',
+  'createdAt',
+  'updatedAt',
+  ...NOT_HR_IN_A_POST,
+]);
+
+/**
+ * The columns the read hands that reader as null beside `hrHidden`, where the
+ * row carries them: the two percentages, the note, and the rest of the post's
+ * HR columns (EMPLOYMENT_HR_FIELDS). A null says nothing about a column that
+ * is null on most posts, which is why these keep their place in the answer
+ * where Historik leaves the sparse ones out. The post's periods go as an empty
+ * list.
+ */
+export const POST_READ_NULLED: ReadonlySet<string> = new Set([
+  'employmentPercent',
+  'reductionPercent',
+  'note',
+  ...EMPLOYMENT_HR_FIELDS,
+]);
+
+/** What hideHr hands on: the columns it keeps, whatever they are, and the HR it has nulled. */
+export type HrHiddenPost<T> = Partial<Omit<T, 'employmentPercent' | 'reductionPercent'>> & {
+  employmentPercent: null;
+  reductionPercent: null;
+  note?: null;
+  hrHidden: true;
+};
+
+/**
+ * A post with its HR left out. An ALLOW list, like the post's versions
+ * (hideHrChanges): a key of the row that POST_READ_AS_IS or POST_READ_NULLED
+ * does not name is left out of the answer, name and value, so a column added
+ * to the post reaches a reader without HR-läs only when somebody has argued
+ * it in, not from the day its migration runs. The keys keep the order the row
+ * had them in, and `hrHidden` comes last. A reader with HR-läs and a teacher
+ * reading their own post are handed the row whole and never come here.
+ */
+export function hideHr<T extends { employmentPercent: number; reductionPercent: number }>(row: T): HrHiddenPost<T> {
+  const shown: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) {
+    if (POST_READ_AS_IS.has(key)) shown[key] = value;
+    else if (key === 'periods') shown[key] = [];
+    else if (POST_READ_NULLED.has(key)) shown[key] = null;
+  }
+  return { ...shown, employmentPercent: null, reductionPercent: null, hrHidden: true } as HrHiddenPost<T>;
+}
 
 /**
  * A version's changes as a reader without HR-läs may have them. In a post, a

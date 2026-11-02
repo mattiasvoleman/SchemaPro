@@ -229,7 +229,7 @@ type DaysUse = 'HIDES' | 'WORDS' | 'ENGINE' | 'WRITES' | 'CARRIES' | 'SHAPE';
 const DAYS_READERS: Record<string, { use: DaysUse; why: string }> = {
   'src/staffing/hr-visibility.ts': {
     use: 'HIDES',
-    why: 'EMPLOYMENT_HR_FIELDS: hideHr nulls the days and the limit on teaching in a row on a post, hideHrChanges leaves their change out of a version whole (UNSAID_HR_FIELDS)',
+    why: 'EMPLOYMENT_HR_FIELDS: hideHr nulls the days and the limit on teaching in a row on a post; hideHrChanges is an allow list that names neither, so their change is left out of a version whole',
   },
   'src/staffing/employment-log-diff.ts': {
     use: 'HIDES',

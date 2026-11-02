@@ -178,6 +178,47 @@ describe('TeacherEmploymentsService', () => {
       });
     });
 
+    describe('a column the post has and no list has placed', () => {
+      // Prisma returns every column of the model, so one added after this code is in the row the day its migration has run.
+      const future = { futureHrColumn: 'hemligt', employmentEndsOn: new Date('2027-06-15T00:00:00.000Z') };
+
+      it('is left out of the list for a planner without HR-läs, name and value, and handed whole to whoever reads HR', async () => {
+        tx.teacherEmployment.findMany.mockResolvedValue([storedRow({ ...future, employmentForm: 'VISSTID' })]);
+        const [hidden] = await service.list(YEAR_ID, testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false }));
+        expect(hidden).toMatchObject({ employmentForm: null, signature: 'KOL', hrHidden: true });
+        expect(hidden).not.toHaveProperty('futureHrColumn');
+        expect(hidden).not.toHaveProperty('employmentEndsOn');
+        expect(JSON.stringify(hidden)).not.toMatch(/futureHrColumn|hemligt|employmentEndsOn|2027-06-15/);
+        for (const principal of [
+          testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: true }),
+          testUser({ adminProfile: 'EXPEDITION', hrRead: true }),
+          testUser({ adminProfile: 'REKTOR' }),
+          testUser(),
+        ]) {
+          const [shown] = await service.list(YEAR_ID, principal);
+          expect(shown).toMatchObject({ futureHrColumn: 'hemligt', employmentEndsOn: future.employmentEndsOn, employmentForm: 'VISSTID' });
+          expect(shown).not.toHaveProperty('hrHidden');
+        }
+      });
+
+      it("is handed to a teacher in their own post, as every other column of it is", async () => {
+        tx.teacherEmployment.findMany.mockResolvedValue([storedRow({ ...future, userId: ME })]);
+        const [own] = await service.list(YEAR_ID, testUser({ role: Role.TEACHER }));
+        expect(own).toMatchObject({ futureHrColumn: 'hemligt' });
+        expect(own).not.toHaveProperty('hrHidden');
+      });
+
+      it('is left out of the answer to a PUT by a reader without HR-läs as well, and kept for one with it', async () => {
+        tx.teacherEmployment.upsert.mockResolvedValue(storedRow(future));
+        const dto = { employmentPercent: 80 };
+        const hidden = await service.upsert(COLLEAGUE, YEAR_ID, dto, testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false }));
+        expect(hidden).toMatchObject({ employmentPercent: null, hrHidden: true });
+        expect(JSON.stringify(hidden)).not.toMatch(/futureHrColumn|hemligt|employmentEndsOn/);
+        const shown = await service.upsert(COLLEAGUE, YEAR_ID, dto, testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: true }));
+        expect(shown).toMatchObject({ futureHrColumn: 'hemligt' });
+      });
+    });
+
     it('answers a PUT by a reader without HR-läs with the post masked as the list would show it', async () => {
       // The row as Prisma returns it, with the SS12000 stretch key no answer carries (20261104090000).
       tx.teacherEmployment.upsert.mockResolvedValue(
