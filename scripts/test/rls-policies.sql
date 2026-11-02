@@ -35336,7 +35336,15 @@ ROLLBACK;
 --     the row is not theirs, so the trigger lets the write on to the arm;
 --   * neither the service principal nor the sync has an arm on the table; with
 --     the teacher's claims beside either setting the teacher's own arm admits
---     the row and the trigger lets the change through on the setting.
+--     the row and the trigger lets the change through on the setting;
+--   * AN ADMINISTRATOR WHO ONLY READS PLANERING AND ALSO TEACHES (the
+--     expedition and the läsare, on a row of their own) sets neither the cap,
+--     the wish, the limit nor the break: the trigger answers each UPDATE with
+--     the planner's sentence, which is what proves it asked for the area's
+--     WRITE (asked for its read, every administrator's, it lets the write on
+--     to the area check and the answer is 42501), the upsert is refused by the
+--     area check and the delete reaches no row. The cap and the wish are in it
+--     because one function keeps all four columns.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -35736,6 +35744,98 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = (t ->> 'teacher')::uuid
                     AND "maxConsecutiveTeachingMinutes" = 240 AND "consecutiveBreakMinutes" = 15) THEN
     RAISE EXCEPTION 'stretch trigger: a profile without PLANERING moved the stretch after all';
+  END IF;
+END $$;
+
+-- AN ADMINISTRATOR WHO READS PLANERING AND ALSO TEACHES. The expedition (108)
+-- and the läsare (115) read every area (app.current_user_may asks the area's
+-- WRITE only when told to), have a work rule of their own, and are
+-- SCHOOL_ADMINs, so the row's arm admits them on their own row. What stops
+-- them from setting the cap, the wish or the limit is the trigger's question
+-- "may this person WRITE planering", which has to be asked as a write: asked as
+-- a read it answers yes for both and the trigger lets everything through, to be
+-- refused only afterwards by the area's write check on the new row (42501).
+-- So the sentence the trigger raises (AR403) is what proves it was asked, and
+-- it covers the cap and the wish as it covers the stretch, one function for all
+-- four columns since 20261123090000.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+DO $$
+DECLARE
+  t jsonb := current_setting('app.test_rls288')::jsonb;
+  who text;
+BEGIN
+  FOREACH who IN ARRAY ARRAY['00000000-0000-4000-8000-000000000108', '00000000-0000-4000-8000-000000000115'] LOOP
+    INSERT INTO "TeacherWorkRules"
+      ("schoolId", "userId", "maxTeachingMinutesPerDay", "preferredFreeDayOfWeek",
+       "maxConsecutiveTeachingMinutes", "consecutiveBreakMinutes", "updatedAt")
+    VALUES ((t ->> 'school')::uuid,
+            (SELECT id FROM "Users" WHERE "authId" = who::uuid AND "schoolId" = (t ->> 'school')::uuid),
+            300, 5, 240, 15, now());
+  END LOOP;
+END $$;
+DO $$
+DECLARE
+  who text;
+  t jsonb := current_setting('app.test_rls288')::jsonb;
+  school uuid := (t ->> 'school')::uuid;
+  me uuid;
+  planned text := current_setting('app.test_rls288_planned');
+  got text;
+  c record;
+BEGIN
+  FOREACH who IN ARRAY ARRAY['00000000-0000-4000-8000-000000000108', '00000000-0000-4000-8000-000000000115'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', who)::text, true);
+    me := app.current_user_id();
+    IF app.current_user_may('PLANERING', true) OR NOT app.current_user_may('PLANERING', false) THEN
+      RAISE EXCEPTION 'stretch trigger: % should read PLANERING and not write it', who;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM "TeacherWorkRules" WHERE "userId" = me
+                      AND "maxTeachingMinutesPerDay" = 300 AND "preferredFreeDayOfWeek" = 5
+                      AND "maxConsecutiveTeachingMinutes" = 240 AND "consecutiveBreakMinutes" = 15) THEN
+      RAISE EXCEPTION 'stretch trigger: % does not read the row planted for them', who;
+    END IF;
+    FOR c IN SELECT * FROM (VALUES
+        ('raising the cap', 'UPDATE "TeacherWorkRules" SET "maxTeachingMinutesPerDay" = 400 WHERE "userId" = %1$L'),
+        ('moving the wish', 'UPDATE "TeacherWorkRules" SET "preferredFreeDayOfWeek" = 3 WHERE "userId" = %1$L'),
+        ('raising the limit', 'UPDATE "TeacherWorkRules" SET "maxConsecutiveTeachingMinutes" = 300 WHERE "userId" = %1$L'),
+        ('moving the break', 'UPDATE "TeacherWorkRules" SET "consecutiveBreakMinutes" = 20 WHERE "userId" = %1$L'),
+        ('clearing all four',
+         'UPDATE "TeacherWorkRules" SET "maxTeachingMinutesPerDay" = NULL, "preferredFreeDayOfWeek" = NULL,
+            "maxConsecutiveTeachingMinutes" = NULL, "consecutiveBreakMinutes" = NULL WHERE "userId" = %1$L')
+      ) AS x(what, statement)
+    LOOP
+      got := pg_temp.rls288_refusal(format(c.statement, me, school));
+      IF got IS DISTINCT FROM planned THEN
+        RAISE EXCEPTION 'stretch trigger: % by % on their own row was answered "%", not by the planner''s sentence', c.what, who, got;
+      END IF;
+    END LOOP;
+    -- The upsert's INSERT is checked against the area's write before the
+    -- conflict is looked at, so it never reaches the trigger as an update.
+    got := pg_temp.rls288_refusal(format(
+      'INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "maxTeachingMinutesPerDay", "maxConsecutiveTeachingMinutes", "consecutiveBreakMinutes", "updatedAt")
+       VALUES (%2$L, %1$L, 400, 300, 15, now())
+       ON CONFLICT ("userId") DO UPDATE SET "maxTeachingMinutesPerDay" = EXCLUDED."maxTeachingMinutesPerDay",
+         "maxConsecutiveTeachingMinutes" = EXCLUDED."maxConsecutiveTeachingMinutes",
+         "consecutiveBreakMinutes" = EXCLUDED."consecutiveBreakMinutes", "updatedAt" = EXCLUDED."updatedAt"', me, school));
+    IF split_part(got, '|', 1) <> '42501' OR got NOT LIKE '%row-level security%' THEN
+      RAISE EXCEPTION 'stretch trigger: an upsert by % on their own row was answered "%", not by row security', who, got;
+    END IF;
+    -- The row is reached by no delete: the delete arm asks PLANERING's write.
+    DELETE FROM "TeacherWorkRules" WHERE "userId" = me;
+    IF FOUND THEN RAISE EXCEPTION 'stretch trigger: % deleted their own row holding the cap, the wish and the stretch', who; END IF;
+  END LOOP;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+DO $$
+DECLARE
+  t jsonb := current_setting('app.test_rls288')::jsonb;
+BEGIN
+  IF (SELECT count(*) FROM "TeacherWorkRules" r JOIN "Users" u ON u.id = r."userId"
+       WHERE u."authId" IN ('00000000-0000-4000-8000-000000000108', '00000000-0000-4000-8000-000000000115')
+         AND u."schoolId" = (t ->> 'school')::uuid
+         AND r."maxTeachingMinutesPerDay" = 300 AND r."preferredFreeDayOfWeek" = 5
+         AND r."maxConsecutiveTeachingMinutes" = 240 AND r."consecutiveBreakMinutes" = 15) <> 2 THEN
+    RAISE EXCEPTION 'stretch trigger: an administrator who only reads planering moved their own cap, wish or stretch after all';
   END IF;
 END $$;
 ROLLBACK;
