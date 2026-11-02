@@ -74,7 +74,11 @@ export function isDaysBearing(code: string | null | undefined): boolean {
  *
  * A limit may be an arbetsanpassning after sick leave, so the user decided it
  * is the post's and not the work rule's: no reader without HR-läs is shown the
- * figures, or the teacher, or even that some teacher has one. The generator
+ * figures or the weekday, and what a RUN says of it names no teacher. (As for
+ * the days, the Vikarietavla and a hand edit's warning can still show that a
+ * named teacher cannot take a lesson because of a hidden working-time rule;
+ * that is recorded in the Läslogg and is the user's choice of parity with the
+ * days.) The generator
  * does not soft-refuse a week over it, so what a run says about it is a NOTE
  * (the teacher whose longest stretch the finished timetable leaves over the
  * limit, consecutive-wishes.ts) and not a conflict, but the note is stored and

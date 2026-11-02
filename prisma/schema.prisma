@@ -3130,9 +3130,10 @@ model TeacherEmployment {
   /// the Vikarietavla never proposes a cover that would break it. 30..480, step
   /// 5. Both columns or neither. HR DATA, a limit may be an arbetsanpassning
   /// after sick leave: it sits beside the days and is treated as they are,
-  /// hideHr leaves it out for an administrator without HR-läs and nothing the
-  /// run, the edit or the cover board says states it to them. The whole year's,
-  /// not a period's.
+  /// hideHr leaves it out for an administrator without HR-läs, and no figure or
+  /// weekday of it reaches them from the run, the edit or the cover board (which
+  /// can still show a named teacher unavailable for a hidden working-time rule,
+  /// as for the days). The whole year's, not a period's.
   maxConsecutiveTeachingMinutes Int?
   /// The free time that ends a stretch: a gap of at least this long between two
   /// of the teacher's lessons is a break. 5..120, step 5.

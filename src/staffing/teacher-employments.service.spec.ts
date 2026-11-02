@@ -705,6 +705,45 @@ describe('TeacherEmploymentsService', () => {
       expect(answer.entries[0]).not.toHaveProperty('before');
     });
 
+    /*
+     * A POST'S HISTORY IS A READ OF THE POST (EMPLOYMENT): the log keeps the
+     * whole row as JSON, the percentages, the days and the limit among them.
+     * Recorded for the teacher whose versions were handed out, in the read's
+     * own transaction — for a reader without HR-läs too, since the versions
+     * were read although the HR values are left out of what they are given.
+     */
+    it('records the read of a teacher’s history in the Läslogg (EMPLOYMENT), in the same transaction', async () => {
+      tx.teacherEmploymentLog.findMany.mockResolvedValue([logRow(2), logRow(1, { action: 'CREATE', before: null })]);
+
+      await service.history(COLLEAGUE, YEAR_ID, testUser({ channel: 'WEB' } as never));
+
+      expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [COLLEAGUE] }]);
+    });
+
+    it('records it for a planner without HR-läs as well, although every version of the post is left out of what they are given', async () => {
+      const limit = (value: number | null) => ({
+        id: 'emp-1', userId: COLLEAGUE, academicYearId: YEAR_ID, employmentPercent: 100, reductionPercent: 0,
+        maxConsecutiveTeachingMinutes: value, consecutiveBreakMinutes: value === null ? null : 30,
+      });
+      tx.teacherEmploymentLog.findMany.mockResolvedValue([logRow(2, { before: limit(null), after: limit(120) })]);
+
+      const answer = await service.history(
+        COLLEAGUE, YEAR_ID, testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false, channel: 'WEB' } as never),
+      );
+
+      // The only version changed the limit alone: nothing of it is said.
+      expect(answer.entries).toEqual([]);
+      expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [COLLEAGUE] }]);
+    });
+
+    it('records nothing when there is no version to hand out', async () => {
+      tx.teacherEmploymentLog.findMany.mockResolvedValue([]);
+
+      await service.history(COLLEAGUE, YEAR_ID, testUser({ channel: 'WEB' } as never));
+
+      expect(recordedReads(tx)).toEqual([]);
+    });
+
     it('lets a teacher read their own, and 403s a colleague’s before a statement is sent', async () => {
       tx.teacherEmploymentLog.findMany.mockResolvedValue([]);
       const teacher = testUser({ role: Role.TEACHER });

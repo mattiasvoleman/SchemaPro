@@ -540,6 +540,13 @@ always says what is wrong in plain English near the bottom.
   the migration again, the same way as in Step 5:
   `DIRECT_URL="<administrator connection string>" npm run migrate:deploy`.
   A `.env` file is not read.
+- **Rolling the API back**: do not roll the API back past the release that
+  introduced "Sammanhängande undervisning" (migration 20261218090000) once a
+  limit on a teacher's teaching in a row has been set. The old API's history
+  lists the limit's keys to administrators without HR access, and the history
+  is append-only, so those versions cannot be removed afterwards. Roll the
+  engine and the API forward instead, or clear the limits first
+  (`docs/DEPLOYMENT.md`, "Sammanhängande undervisning").
 - **Adding schools**: repeat Step 9 with a different name and slug. Each school
   is walled off from the others by the rules you set up in Steps 4 and 5.
 - **Secrets**: if anyone who had access to the values in your notes leaves,

@@ -660,9 +660,20 @@ Walk the full product loop once, in order:
   administrator: `@Decides`, and a schemaläggare no longer sets it), read in
   full by anybody with HR-läs and by the teacher themself, and recorded in the
   Läslogg (EMPLOYMENT) whenever it is shown or read for the generator. Nobody
-  else sees a figure, a teacher or the weekday of it anywhere: a hand edit's
-  warning, the Vikarietavla's "Kan inte" and manual-pick warning and a run's
-  note each have a `_HIDDEN` twin without figures
+  else sees a figure or a weekday of it anywhere, but that is NOT the same as
+  seeing nothing: exactly as for the days, a reader without HR-läs is told "can
+  not, because of a working-time rule" without the number. The Vikarietavla
+  names a teacher it cannot offer a pass (`excluded[]` carries the teacher with
+  `CONSECUTIVE_TEACHING_HIDDEN`, and the candidate dialog shows the name beside
+  "Skulle undervisa längre i följd än anställningen medger"), and a hand edit's
+  warning carries the lesson and the role, so a named teacher's having a limit
+  can show from an exclusion, a warning or a missing substitute. Both are
+  recorded in the Läslogg (EMPLOYMENT). A run's note and a schemaförslag name
+  nobody. That was the user's choice (parity with the days); tightening it
+  (leaving the teacher out of `excluded[]` for a reader without HR-läs) is a
+  behaviour change not made here. A hand edit's warning, the Vikarietavla's
+  "Kan inte" and manual-pick warning and a run's note each have a `_HIDDEN` twin
+  without figures
   (`TEACHER_CONSECUTIVE_TOO_LONG_HIDDEN`, `CONSECUTIVE_TEACHING_HIDDEN`,
   `COVER_EXCEEDS_CONSECUTIVE_TEACHING_HIDDEN`,
   `TEACHER_CONSECUTIVE_TEACHING_HIDDEN`), the post's history leaves out a
@@ -741,6 +752,14 @@ Walk the full product loop once, in order:
   reads real weeks, does not see (it errs toward the stricter reading, never
   the looser). The engine clips a locked window to the school day, so a lock
   07:30–08:30 counts 08:00–08:30 there and 07:30–08:30 in the gateway.
+  **Do not roll the API back past this release once a limit is set.** The old
+  API's history lists every key of the post's logged JSON that it does not know,
+  and its `hideHrChanges` masks only the keys it does know, so an administrator
+  without HR-läs would be shown the limit (and that it changed) in Historik by
+  the old code, and those versions cannot be removed afterwards: the history is
+  append-only. It is a one-way door for the API as soon as the first limit is
+  set; the API is also the door most often opened in an incident. Consider
+  setting no first limit until the release has stood for a week.
   **Rolling it back:** the engine before this release refuses the two fields
   (its request models are `extra="forbid"`: 422), so once a school has turned
   the switch on and a post has a limit, an engine rolled back alone fails that
