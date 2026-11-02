@@ -119,6 +119,22 @@ function listStyle(tree: Tree): Record<string, unknown> {
 
 let tree: Tree | null = null;
 
+// The first render of the screen is the one that loads React Native's list
+// stack (SectionList, VirtualizedList, the touchables: its index requires them
+// on first use), and on a cold transform cache that took 2.2 s here and more
+// than a test's 5 s on a CI runner. A test that times out is not stopped: its
+// body goes on into the next, which then draws a second tree inside its act()
+// (the "overlapping act()" the first run of this file gave in CI), and into
+// the environment's teardown. So the load is done once, before the tests,
+// with an allowance of its own, with a lesson and a pass so that both cards
+// are drawn; the tests are then measured on what they do.
+beforeAll(async () => {
+  mockLessonRows = [LESSON];
+  jest.mocked(fetchSupervisionWeek).mockResolvedValue([PASS]);
+  const warmed = await render();
+  await act(async () => warmed.unmount());
+}, 60_000);
+
 beforeEach(() => {
   mockLessonRows = [];
   mockLessonError = null;
