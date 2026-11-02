@@ -6,7 +6,8 @@ name: Quality Gates
 # nightly and on demand rather than on every pull request.
 #
 # The mutation, Lighthouse, solver and API latency jobs are hard gates: each
-# exits non-zero when its threshold is missed. The visual-baselines job,
+# exits non-zero when its threshold is missed. The mutation gate measures a
+# slice of the API a night, not all of it (see the mutation job). The visual-baselines job,
 # dispatch-only, regenerates the Linux screenshot baselines for review and gates
 # no code. Printed beside the gates and deciding nothing: api-latency's §2
 # milliseconds on every row, its reads' and floor's share of health and its
@@ -30,6 +31,18 @@ on:
         description: 'Run mutation testing (slow)'
         type: boolean
         default: true
+      # Which slice of the API's mutants the mutation job takes: a number below
+      # the slice count, 'all' for every slice at once (one job each), or empty
+      # for tonight's, the day of the year (UTC) modulo the slice count. The
+      # count is the nightly's unless the second input says otherwise.
+      mutation_slice:
+        description: "Mutation slice: a number, 'all', or empty for tonight's"
+        type: string
+        default: ''
+      mutation_slices:
+        description: "How many slices the API's mutants are dealt into (empty: the nightly's)"
+        type: string
+        default: ''
       # A one-off measurement: the api-latency job alone, the other four jobs
       # skipped so the dispatch bills one job. (It once also switched the
       # authenticated-read floor rounds on; they run every night now, being
@@ -44,6 +57,12 @@ on:
 concurrency:
   group: quality-gates-${{ github.ref }}
   cancel-in-progress: false
+
+env:
+  # How many slices the API's mutants are dealt into: the whole API is covered
+  # every this many nights. docs/verification-baseline.md has the slices as
+  # measured and why the number is what it is.
+  MUTATION_SLICES_NIGHTLY: '20'
 
 jobs:
   visual-baselines:
@@ -106,14 +125,50 @@ jobs:
           path: web/e2e/visual.spec.ts-snapshots/*-linux-x64.png
           retention-days: 14
 
+  # Which slices this run takes, as a matrix for the job below: tonight's one
+  # on the schedule, the one asked for on a dispatch, or all of them. Node is
+  # the runner's own; the script's plan mode imports nothing.
+  #
+  # The inputs reach the script through env, never pasted into its text: an
+  # expression is pasted before bash parses it, so a quote in the value would
+  # close the argument and the rest would run as shell.
+  mutation-plan:
+    name: API — mutation, which slices
+    runs-on: ubuntu-latest
+    if: (github.event_name == 'schedule' || inputs.run_mutation) && !inputs.latency_floor
+    timeout-minutes: 5
+    outputs:
+      slices: ${{ steps.plan.outputs.slices }}
+      of: ${{ steps.plan.outputs.of }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: Plan
+        id: plan
+        env:
+          MUTATION_SLICE: ${{ inputs.mutation_slice }}
+          MUTATION_SLICES: ${{ inputs.mutation_slices || env.MUTATION_SLICES_NIGHTLY }}
+        run: node scripts/mutation-slice.mjs --plan | tee -a "$GITHUB_OUTPUT"
+
+  # One slice of the API's mutants per job. On 2026-10-06 this job mutated 57
+  # files and 7,522 mutants in 41 minutes; on 2026-11-02 it was 280 files and
+  # 73,861 mutants, the runner got through 10,097 in the 90 minutes and the job
+  # was cancelled. scripts/mutation-slice.mjs deals the files into slices
+  # balanced by their mutant counts, and the 85% gate is each night's slice.
   mutation:
-    name: API — mutation score (Stryker ≥85%)
+    name: API — mutation score, slice ${{ matrix.slice }} of ${{ needs.mutation-plan.outputs.of }} (Stryker ≥85%)
+    needs: mutation-plan
     runs-on: ubuntu-latest
     if: (github.event_name == 'schedule' || inputs.run_mutation) && !inputs.latency_floor
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        slice: ${{ fromJSON(needs.mutation-plan.outputs.slices) }}
     env:
       DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
       DIRECT_URL: postgresql://ci:ci@localhost:5432/ci
+      MUTATION_SLICE: ${{ matrix.slice }}
+      MUTATION_SLICES: ${{ needs.mutation-plan.outputs.of }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -150,16 +205,21 @@ jobs:
       # on a tool that ships nothing. Keeping it out of the lockfile lets
       # `npm audit` stay at zero-tolerance instead of needing an exception.
       #
-      # stryker.conf.json sets `thresholds.break: 85`, so the run itself fails
-      # below the §2 kill rate — no extra assertion needed here.
+      # stryker.conf.json sets `thresholds.break: 85`, which Stryker applies to
+      # the mutants it was given — the slice — so the run itself fails below
+      # the §2 kill rate. The script prints the slice's files first, writes the
+      # slice's number, score and every file's score to the job summary, and
+      # exits with Stryker's code.
       - name: Stryker
         run: npm run test:mutation
 
+      # The slice's number is in the artifact's name and in every path inside
+      # it, so ten nights can be set side by side.
       - name: Upload mutation report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: mutation-report
+          name: mutation-report-slice-${{ matrix.slice }}
           path: reports/mutation/
           retention-days: 30
 

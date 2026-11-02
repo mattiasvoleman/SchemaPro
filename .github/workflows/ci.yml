@@ -80,11 +80,17 @@ jobs:
         run: npm run test:cov
 
       # The verdict of quality-gates.yml's nightly latency job, run on the rows
-      # of five real CI runs. latency-gate.mjs imports nothing, so this needs
+      # of fourteen real CI runs. latency-gate.mjs imports nothing, so this needs
       # neither autocannon nor the stack, and a change to the gate is proven on
       # the pull request rather than first at night.
       - name: Latency gate verdict (node:test)
         run: node --test scripts/bench/latency-gate.test.mjs
+
+      # Which slice of the API's mutants the nightly mutation job takes, and how
+      # the files are dealt into slices. The script imports Stryker's
+      # instrumenter only when it counts, so this needs no Stryker either.
+      - name: Mutation slices (node:test)
+        run: node --test scripts/mutation-slice.test.mjs
 
       - name: Upload coverage report
         if: always()
