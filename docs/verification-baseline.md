@@ -28,11 +28,11 @@ could be evaluated at all.
 | API coverage | ✗ 95.09% vs 95% (ratcheted at 95; remainder is module wiring) |
 | Mobile coverage | ✗ 12.83% vs 95% (first floor at 12; runner stood up 2026-08-22) |
 | Solver coverage | ✗ 89.50% vs 95% (ratcheted at 81) |
-| Mutation score | ✗ 66.21% vs 85% |
+| Mutation score | ✗ 71.31% of the API vs 85% (2026-11-02: 48,433 of 67,921 valid mutants detected, 5,610 of them uncovered ones that count as survived, in 279 files); gated one slice a night against the slice's own floor (59–88%), so that it fails when a slice gets worse |
 | Bundle size | ✓ pass (tiered; 30/30 routes, shared 126.1/130KB) |
 | Solver, 2,000 students | ✗ 1,300 validated (~9.5 min); 2,000 now measured honestly: TIMEOUT at 570s |
 | Web dependency audit | ✓ pass (0/0/0) |
-| API P99 latency | ✗ §2 not met on the CI runner: reads p99 66–181ms vs 50ms, write p99 85–167ms vs 150ms over 300 samples; gated relative to the run's health check instead, where five runs pass (read shares 0.226–0.265 vs ≥ 0.20) |
+| API P99 latency | ✗ §2 not met on the CI runner: reads p99 46–181ms vs 50ms (their p50 35–61ms, 56–61ms on the slowest CPU model), write p99 17–167ms vs 150ms over 300 samples; gated relative to the run's authenticated-read floor instead, where sixteen healthy runs on three CPU models pass (read shares 0.871–0.962 vs ≥ 0.80) and a handler with four extra statements (about 22% more expensive, as its share has it) fails 4 of 4 |
 | Lighthouse LCP/TTI | — not yet run |
 | Web unit coverage | ✗ 88.98% vs 95% (ratcheted at 87; harness landed) |
 | INP | — not lab-measurable at all |
@@ -68,7 +68,7 @@ could be evaluated at all.
 | API branch coverage | ≥ 95% | 84.98% (1313/1545) | ✗ | same |
 | API function coverage | ≥ 95% | 90.59% (520/574) | ✗ | same |
 | Solver line coverage | ≥ 95% | **89.50%** (1333 stmts, 125 missed) | ✗ | `npm run test:engine:cov` |
-| Mutation score, tested files | ≥ 85% | **66.21%** (192 killed / 97 survived) | ✗ | `npm run test:mutation` |
+| Mutation score, the API | ≥ 85% | **71.31%** (48,433 / 67,921; slices 60.31–89.26%) | ✗ | `npm run test:mutation`, one slice a night |
 | Mobile unit coverage | ≥ 95% | **12.83%** statements (services, utils, hooks) | ✗ | `npm run test:mobile:cov` |
 | Web unit coverage | ≥ 95% | **88.98%** lines (1397/1570) | ✗ | `npm run test:unit:cov` in `web/` |
 
@@ -115,9 +115,83 @@ coverage regress 8 points unnoticed, or fail the build on functions no matter
 what. Raise them via the `COVERAGE_MIN*` repository variables as coverage
 grows; never lower one to green a build.
 
+### The mutation gate: a slice of the API a night, against the slice's own floor
+
+**What it requires, since 2026-11-03.** `quality-gates.yml` → mutation mutates one of twenty slices of the API each night and fails when that slice scores under *its floor*: its measured score minus one percentage point, rounded down, checked in beside the files of the slice in `scripts/mutation-slices.json`. The slice is the day of the year (UTC) modulo 20, so the whole API is covered every twenty nights within a year (across a new year slices 1 to 5 run twice in a row and the longest wait for a slice is 25 or 26 nights). A `workflow_dispatch` takes one slice, a list (`3,7`) or `all` (`mutation_slice`), ten jobs at a time. §2's 85% stays the target; the report prints it beside the floor, and it is **not met**: measured on 2026-11-02, 48,433 of the 67,921 valid mutants are detected, **71.31%** (5,610 of the 67,921 are mutants no test reaches, which count as survived, as they always did; scored on covered code alone it would be 77.73%), and of the twenty slices two are at 85 (slice 1 at 89.26%, slice 11 at 86.39%). The floors run from 59% to 88%. The gate is a ratchet: it fails when a slice gets worse, never because the target is missed, and the target moves into reach by raising the floors as tests are written.
+
+**Why a slice.** On 2026-10-06, the last green night, the job mutated 57 files and 7,522 mutants (1,774 tests) in 41:50 and scored 94.07%. On 2026-11-02 it was 280 files, 73,861 mutants and 7,749 tests, with `mutate` unchanged since 2026-09-13: the API had grown about tenfold in four weeks. The runner gets through about 50 mutants a minute now against about 180 then, so the whole set is half a day of it, and the 90 minutes of a job reach one part in seven. What was tried, all on the 4-vCPU runners:
+
+| Run | What | Result |
+| :--- | :--- | :--- |
+| 37440931235, 2026-10-06 | the whole API in one job: 57 files, 7,522 mutants | 94.07%, 41:50 |
+| 41422825454, 2026-11-02 | the nightly, red since 2026-10-07 | died in the dry run: six specs read files outside the sandbox's whitelist (fixed in the whitelist, not by leaving the specs out) |
+| 41440346900 | the whole API in one job: 73,861 mutants | cancelled at 90 minutes after 10,097 mutants |
+| 41454768502 | 20 slices dealt by mutant count | 22 to over 95 minutes for slices of the same size; two cancelled, one ended by a runner shutdown; scores 55–81% |
+| 41470197321 | 10 slices by mutant count, `ignoreStatic` | four cancelled at 90 minutes, one more took 89 |
+| 41519740264 | 40 slices by mutant count, with the timing reporter | all finished but one, 6–63 minutes; 830 minutes of mutation testing in all, on 266 files |
+
+Mutant count says nothing about time. Among the thirty dearest files the time runs from 0.3 to 8.5 seconds a mutant that has to be run; 19 files are half of all the time and 50 are three quarters; the dearest, `optimization-proxy.service.ts`, is 62 minutes on its own, `common/utils/prisma-errors.ts` 44 and `staffing/teacher-load.ts` 43. Stryker's own estimate does not help: it planned 4 seconds of test time for a file that took 162. So the slices are dealt by *measured* seconds, from the 40-slice run (the nine files of slice 14 from another run: that slice ended four times in a runner shutdown, see below), by the longest-first rule, and the dealing is checked in. One file, `optimization-proxy.service.ts`, is dealt in two line ranges (`:1-2092` and `:2093-99999`) because Stryker runs the mutants that lie wholly inside a range and the cut falls on a line no mutant crosses; the last range runs to the end of any file, so lines added later are mutated too. The twenty slices are 42–44 minutes each, with about a minute of setup, against the 60 that a slice may take.
+
+**What the score leaves out.** Three things, and they are in every floor:
+
+- **Generated code**: `src/**/*.generated.ts` is not mutated. It is one file today, `integration/ss12000-v2/s1-provider.generated.ts`, S1's schemas and parameters as a data module, 3,225 of the 73,861 mutants; a mutant there changes what the generator wrote, not anything a test of the gateway answers for.
+- **Static mutants** (`ignoreStatic`): mutants in code that runs when a module loads (a top-level constant, a lookup table) cannot be pointed at one test, so Stryker would run the whole suite for each. In the 20-slice run Stryker warned, for 18 of the 20 slices, that they were 1–12% of the slice's mutants and, by its own estimate, 42–94% of its test time; they are not run, and count neither as detected nor as undetected. The estimate is Stryker's and the saving was not isolated (the runs that differ in it differ in their slices too); what is given up is the constants and tables no test is pointed at. 2,419 of the 70,636 mutants (3.4%) are ignored this way. It does not flatter the score: on the seven slices of the 20-slice run that finished before the option, the static mutants that were valid were detected at 76.9% against 66.6% for the rest, so leaving them out lowers a slice's score by 0.1–0.6 points.
+- **What counts**: as Stryker counts it, detected = killed or timed out, undetected = survived or not covered by any test (such a mutant takes no time to decide), and mutants that are ignored or do not compile count in neither.
+
+**The slices as measured** (the seconds are wall time of the mutation phase; the figures are from 2026-11-02, with a mutant's time limit of 60 seconds, and a night is somewhat shorter now that it is 10):
+
+| Slice | Files | Mutants | Measured | Floor | Minutes | Dearest files |
+| ---: | ---: | ---: | ---: | ---: | ---: | :--- |
+| 0 | 1 | 820 | 79.95 % | 78 % | 44 | common/utils/prisma-errors.ts (44 min) |
+| 1 | 1 | 692 | 89.26 % | 88 % | 43 | staffing/teacher-load.ts (43 min) |
+| 2 | 9 | 2211 | 79.78 % | 78 % | 42 | optimization/optimization-proxy.service.ts:2093– (39 min), optimization/room-loan-windows.ts (1 min), publication/other-school-clashes.ts (1 min) |
+| 3 | 14 | 2661 | 65.63 % | 64 % | 42 | cover/cover-rules.ts (29 min), notifications/notifications.service.ts (4 min), optimization/other-school-holds.ts (2 min) |
+| 4 | 13 | 5472 | 60.31 % | 59 % | 42 | calendar/master-lessons.service.ts (28 min), cover/cover.service.ts (4 min), optimization/pupil-cohorts.ts (3 min) |
+| 5 | 13 | 4039 | 80.16 % | 79 % | 42 | common/timplan-planned.ts (27 min), optimization/candidate-basis.ts (5 min), publication/publish-mode.ts (2 min) |
+| 6 | 15 | 5110 | 73.59 % | 72 % | 42 | optimization/optimization-proxy.service.ts:1–2092 (23 min), integration/ss12000-sync/diff.ts (5 min), access-log/access-log.ts (4 min) |
+| 7 | 15 | 3879 | 62.27 % | 61 % | 42 | cover/cover-context.ts (22 min), integration/ss12000-sync/outbound.ts (6 min), integration/ss12000-v2/slice.ts (4 min) |
+| 8 | 14 | 4086 | 75.61 % | 74 % | 42 | staffing/teaching-weeks.ts (21 min), optimization/schedule-candidates.service.ts (7 min), year-rollover/rollover-source.ts (4 min) |
+| 9 | 16 | 2377 | 81.05 % | 80 % | 42 | year-rollover/activation-plan.ts (17 min), staffing/employment-periods.ts (7 min), notifications/expo-push.client.ts (5 min) |
+| 10 | 16 | 4000 | 66.44 % | 65 % | 42 | common/timplan-delivered.ts (15 min), calendar/lesson-roster.ts (7 min), staffing/staffing-enforcement.ts (5 min) |
+| 11 | 16 | 2546 | 86.39 % | 85 % | 42 | common/teacher-day.ts (15 min), common/stretch.ts (7 min), timplan/generate-requirements.ts (5 min) |
+| 12 | 25 | 5998 | 61.21 % | 60 % | 42 | optimization/staffing-proposal.service.ts (14 min), common/grade-numbering.ts (8 min), database/pool-config.ts (6 min) |
+| 13 | 16 | 2507 | 76.27 % | 75 % | 42 | common/replacing-groups.ts (14 min), calendar/publish-days.ts (8 min), notifications/push-messages.ts (6 min) |
+| 14 | 16 | 3570 | 76.40 % | 75 % | 42 | year-rollover/projected-rosters.ts (14 min), supervision/supervision-load.ts (8 min), common/subject-distribution.ts (6 min) |
+| 15 | 16 | 3886 | 76.56 % | 75 % | 42 | staffing/staffing-checks.ts (13 min), year-rollover/rollover-plan.ts (8 min), notifications/notification-delivery.service.ts (6 min) |
+| 16 | 16 | 5202 | 67.06 % | 66 % | 42 | common/timplan-scheduled.ts (12 min), common/lesson-lengths.ts (9 min), common/year-rollover.ts (7 min) |
+| 17 | 16 | 4776 | 71.64 % | 70 % | 42 | integration/ss12000-v2/ss12000-v2.service.ts (12 min), staffing/load-input.ts (9 min), integration/ss12000-v2/model.ts (6 min) |
+| 18 | 16 | 2455 | 71.57 % | 70 % | 42 | common/utils/time.ts (11 min), calendar/lesson-recurrence.ts (10 min), optimization/room-eligibility.ts (7 min) |
+| 19 | 16 | 4349 | 71.10 % | 70 % | 42 | import/import.service.ts (10 min), common/timplan-coverage.ts (10 min), timplan/timplan-coverage.service.ts (7 min) |
+
+**Raising a floor.** When the tests of a slice's files improve, run that slice (`mutation_slice=N`), download the artifact `mutation-report-slice-N`, unpack it, and run `node scripts/mutation-slice.mjs --remeasure <unpacked>/slice-N`. It replaces the slice's figures in `scripts/mutation-slices.json` with the run's and sets the floor to floor(score − 1), and it changes nothing else; commit that on its own, saying which tests earned it. A floor is not raised by editing the number: the sums beside it are held against it by a unit test.
+
+**Lowering a floor.** `--remeasure` refuses a floor lower than the slice has. `--lower` says it is meant, and the commit that does it says why (a file removed, a rule deliberately dropped); a slice that fell under its floor because tests were lost is a failure to fix, not a floor to move.
+
+**A slice whose files change.** A slice that is dealt other files gets a new floor only after it has been measured: `--remeasure` refuses a run of other files than the slice's, and `--deal --of N --split file=parts@mutation.json <file-times.json of every slice of a run>` makes a new dealing, with new floors, from a run of all of them. Re-deal when a few files have grown enough to cost more than a slice may, or when the floors have drifted so far up that nobody trusts the old balance.
+
+**A new file, a file that is gone.** A file in `mutate` that the dealing does not know goes to the slice with the least seconds so far (files placed in name order, mutants times the dealing's median seconds a mutant, a tie to the lower slice); the report says which file went to which slice and that the floor was measured without it. A new file the tests do not reach is therefore what takes its slice under the floor: add tests, or measure the slice again. A file in the dealing that no longer exists is skipped and named.
+
+**What a red night is.** The job says which: *under its floor* (the summary names the weakest files; the tests got worse, or a new file in the slice is not covered); *the runner has received a shutdown signal* (not a score: run it again; it ended 3 of the 70 jobs of the three slice runs, at random, and slice 14 four times at one mutant, below); *no report* (Stryker did not finish; the log has its progress). The script itself turns three more nights red, each with exit 1 and a `Slice N: …` line in the log and the summary, because Stryker lets all three through with 0 or with a figure that means nothing: *the report holds no valid mutant* (every mutant Ignored or errored, a score of n/a; the log says why nothing ran, usually a `mutate` pattern or a line range that matches nothing); *has no file to mutate* (every file of the slice's dealing is gone: make a new dealing with `--deal`); and *only X of the slice's Y mutants were in the report* (fewer than 90 % of the mutants the dealing gave the slice, with any new files placed in it). The last is not a failed run: Stryker finished and the score is true, but code has been removed from a file in the slice, so the floor was measured over more mutants than are left, and a run over fewer is not comparable with it. It stays red every time the slice comes round until the slice is counted again: download the red run's artifact `mutation-report-slice-N` (it is uploaded on a red night too) and run `node scripts/mutation-slice.mjs --remeasure <unpacked>/slice-N` on it, which sets the slice's mutant count and a floor from that run, and commit the result with the change that removed the code. `--remeasure` refuses a floor lower than the slice has, so if the removed code was what held the score up, `--lower` says that is meant, as under *Lowering a floor*. A shrink of less than 10 % does not turn the night red; the slice is counted again the next time its floor is raised.
+
+**A mutant that kills the runner.** Slice 14 of the 40-slice run ended four times with "The runner has received a shutdown signal", at the same point (mutant 916 of 1,687), whatever was done to Stryker's processes: a lower priority (`nice`) and a 3 GB cap on Node's heap changed nothing. Bisecting by line range on CI (`mutate: file:from-to`, a throwaway workflow) narrowed it to the 14 mutants wholly inside lines 201–215 of `src/notifications/notification-delivery.service.ts`, and there the job died with a 60-second time limit for a mutant, with one worker, with a 1 GB heap and with two workers, and went through in about a minute with a limit of 8 and of 3 seconds (run 41554633962). `timeoutMS` is therefore 10 seconds.
+
+The mechanism was found afterwards, by running the mutants against that file's own digest test on a laptop. `if (notice.userId !== target.user_id) continue;` is on line 213, and turned into `if (false) continue;` (or `===`) it makes `push()` build a message for every pair of recipient and notice: 1,203 × 1,203, about 1.45 million messages with their formatted text, in the test of a whole-school digest. That was 3,352 MiB after 5 seconds and 7,089 MiB after 10, outside V8's heap limit, which is why the heap caps did nothing; no network is reached, the transport is mocked. With four workers and two such mutants side by side, a 16 GB runner does not hold them. So `timeoutMS` is a memory guard more than a time limit: it has to end the process before the memory is gone, a faster CPU allocates more in the same ten seconds, and it should not be raised. The square is in the code (index the group's notices by user) and is a follow-up, not part of this change. A Timeout counts as detected, so the shorter limit can raise a score and not lower it; of the 70,636 mutants 155 timed out at 60 seconds. Only slices 0, 2, 11 and 15 and the nine files of slice 14 have run at 10 seconds (slice 11, run 41567860495: 86.39 %, floor 85, reproducing the measured score), and the first night of each other slice, and of slice 15 in particular, will be the check of its floor.
+
+**Final runs.** Slices 0, 2 and 15 of this dealing went through the real nightly workflow on the pull request's branch (`mutation_slice=0,2,15`, run 41557289392). All three passed against their floors and reproduced the measured scores to the hundredth:
+
+| Slice | Held | Score | Floor | Mutation phase | Whole job |
+| ---: | :--- | ---: | ---: | ---: | ---: |
+| 0 | `prisma-errors.ts` alone, the dearest slice | 79.95% | 78% | 34:31 | 35.1 min |
+| 2 | the second range of `optimization-proxy.service.ts` (`:2093-99999`) and eight files | 79.78% | 78% | 40:18 | 40.8 min |
+| 15 | `notification-delivery.service.ts`, the file that killed the runner, and fifteen files | 76.56% | 75% | 34:34 | 35.2 min |
+
+Each took less than the 42–44 minutes the dealing says; the dealing was measured with a limit of 60 seconds for a mutant, now 10, and on whatever CPU those runners drew, and which of the two accounts for the difference is not established. Slice 2 shows that a line-range part runs in the real flow, slice 15 that the runner survives the mutants that killed it. The same run's latency job passed (floor 449 req/s on an EPYC 7763, reads at 0.904 and 0.914 of it).
+
+**The weakest files, for the tests that raise the floors.** Of the 67,921 valid mutants, 19,488 are undetected (13,878 survived and 5,610 reached by no test). A run's `summary.md` ranks the slice's files, weakest first; in the three final slices the weakest are `common/utils/prisma-errors.ts` (131 survived) in slice 0; `lesson-log/class-book.service.ts` (55.00%, 94 survived), `gallring/gallring.service.ts` (70.11%, 44) and `users/my-schools.service.ts` in slice 2; `cover/cover-reports.service.ts` (53.67%, 78), `cover/cover-decisions.ts` and `users/per-login-throttler.guard.ts` in slice 15.
+
 ### Mutation score is measured only over files that have tests
 
-Per file, mutating production sources only:
+**History: this section describes 2026-08, when five files had tests; the next section is the gate as it stands.** Per file, mutating production sources only:
 
 | File | Score | Survived |
 | :--- | :--- | :--- |
@@ -317,34 +391,205 @@ at all — in 300 single requests 300ms apart across twelve throttler buckets,
 each with a baseline GET halfway to the next (below). Raise `THROTTLE_LIMIT` on the target before a run —
 the throttler is not what this gate measures.
 
-### The gate is relative to the run's own health check
+### The gate is relative to the run's own authenticated floor
 
-**No absolute millisecond decides the run.** Since 2026-09-14
-`quality-gates.yml` → api-latency fails on quantities that hold across runners,
-measured against the same run's own `GET /health/ready`:
+**No absolute millisecond decides the run, and since 2026-11-02 neither does
+health.** `quality-gates.yml` → api-latency fails on quantities that hold across
+runners, measured against the same run's authenticated-read floor:
 
-- **Reads**: each authenticated read's throughput as a share of health's
-  throughput must be **≥ 0.20**.
-- **Health**: an absolute guard, **p99 ≤ 50ms** and **≥ 1000 req/s**. Passing
-  it proves every read ≥ 200 req/s whatever health did; it bounds the
-  denominator and does not cancel it (below).
+- **Reads**: each authenticated read's throughput as a share of the floor's
+  must be **≥ 0.80**. The floor is `GET /api/v1/schedule-versions` for an
+  academic year that does not exist — `200 []` after everything a real read
+  pays — taken as the median of three 20s rounds that run straight after the
+  reads.
+- **The floor**: an absolute guard, **≥ 300 req/s**. Passing it proves every
+  read ≥ 240 req/s whatever the floor did. It is the only thing that sees a
+  regression on the path every authenticated request shares, and only a large
+  one (below).
+- **Health**: an absolute guard, **p99 ≤ 50ms** and **≥ 1000 req/s**, as
+  before. It no longer divides anything.
 - **The write** is measured against a serial baseline interleaved with it and
   printed as write ÷ baseline at p50, p95 and p99. It is **not gated** until ten
   runs have calibrated a threshold (below).
-- **Invalid, exit 2**: more than 1% non-2xx in any row, as before, and — new —
-  health or either read not measured. A share without its numerator or its
-  denominator has no verdict; before, a missing `--academic-year` skipped both
-  reads and printed PASS.
+- **Invalid, exit 2**: more than 1% non-2xx in any row, and health, either
+  read or the floor rounds not measured. A share without its numerator or its
+  denominator has no verdict.
+- **Printed, deciding nothing**: each read's and the floor's share of health,
+  the gate from 2026-09-14 to 2026-11-02, so a night can still be set beside
+  the old ones; and the CPU model the runner drew (the `Runner` step).
 
 Every p50, p99 and max is still printed, with §2's 50ms / 150ms beside each row
-as met or not met. Unchanged: 25 connections, 20s per read, the scenarios and
-their order, the 300-sample write on twelve trackers, the fixtures and the
-token.
+as met or not met. Unchanged: 25 connections, 20s per read, the scenarios, the
+300-sample write on twelve trackers, the fixtures and the token. Changed: the
+floor rounds run every night and before the write (they were `--floor`, a
+dispatch option, after it).
 
 The verdict is `scripts/bench/latency-gate.mjs`, a pure module with no imports.
-`scripts/bench/latency-gate.test.mjs` runs it on the five runs below with
-`node --test` in `ci.yml` → api, so a change to the gate is proven on the pull
-request, not first at night.
+`scripts/bench/latency-gate.test.mjs` runs it with `node --test` in `ci.yml` →
+api on the rows of fourteen real runs and holds it by eight mutants of the gate,
+so a change to it is proven on the pull request, not first at night.
+
+**Why the share of health stopped holding.** The gate of 2026-09-14 divided
+each read by health and was calibrated on five runs of the private repository's
+2-vCPU runners (0.226–0.265). The repository went public on 2026-09-30 and its
+runs since are on 4-vCPU runners, a mixed pool: all 35 runners of run
+41443397511 (below) report `lscpu` 4 CPUs, and they were 19 AMD EPYC 7763, 9
+EPYC 9V74, 6 EPYC 9V45 and one Xeon 8573C. Health is one `SELECT 1` on the
+pool; a read is token verification, two transactions and an RLS policy, and
+they do not scale alike with the CPU:
+
+| CPU, healthy tree | runs | health req/s | reads req/s | floor req/s | read ÷ health | floor ÷ health | read ÷ floor |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| EPYC 7763 | 9 | 2051–2212 | 403–429 | 433–462 | 0.188–0.199 | 0.206–0.215 | 0.900–0.962 |
+| EPYC 9V74 | 4 | 2902–3114 | 533–568 | 566–605 | 0.175–0.187 | 0.186–0.202 | 0.925–0.952 |
+| EPYC 9V45 | 3 | 4930–5341 | 597–689 | 661–749 | 0.120–0.129 | 0.133–0.140 | 0.871–0.958 |
+| all | 16 | 2051–5341 (2.6×) | 403–689 (1.7×) | 433–749 | 0.120–0.199 | 0.133–0.215 | 0.871–0.962 |
+
+On the same tree, with no change, the share of health fell from 0.20 to 0.12
+with the CPU the night drew, and not one of the sixteen reached 0.20. The
+nightly agrees: of the 35 runs whose logs survive, 2026-09-30 to 2026-11-02,
+32 had a read under 0.20 (31 of the 34 scheduled ones), at shares of
+0.121–0.205, while health ranged 2091–5715 req/s and the reads 395–761. The
+three scheduled runs that passed (10-03, 10-04, 10-08) were 0.201–0.204. The floor
+is a read without its own query, so it moves with the CPU as the reads do: its
+share of the reads has a CV of 2.1% on schedule-versions and 1.5% on
+optimization/jobs where the share of health has 15%.
+
+**The sixteen healthy runs**, all of 41443397511 (a throwaway branch, since
+deleted: the nightly's api-latency job on 35 fresh runners, `--floor-rounds 3`
+and `--json`). Read ÷ floor and read ÷ health are schedule-versions, then
+optimization/jobs:
+
+| Runner | CPU | health | schedule-versions | optimization/jobs | floor (median of 3) | read ÷ floor | read ÷ health |
+| :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+| base #9 | EPYC 7763 | 2051 | 405 | 404 | 436 | 0.930, 0.927 | 0.198, 0.197 |
+| base #6 | EPYC 7763 | 2081 | 403 | 407 | 439 | 0.916, 0.926 | 0.193, 0.196 |
+| base #4 | EPYC 7763 | 2089 | 407 | 404 | 449 | 0.906, 0.900 | 0.195, 0.193 |
+| base #3 | EPYC 7763 | 2103 | 406 | 417 | 433 | 0.937, 0.962 | 0.193, 0.198 |
+| base #1 | EPYC 7763 | 2150 | 424 | 427 | 455 | 0.933, 0.938 | 0.197, 0.199 |
+| base #13 | EPYC 7763 | 2154 | 406 | 417 | 444 | 0.914, 0.939 | 0.188, 0.193 |
+| base #14 | EPYC 7763 | 2155 | 423 | 426 | 457 | 0.926, 0.931 | 0.196, 0.197 |
+| base #5 | EPYC 7763 | 2156 | 411 | 423 | 451 | 0.910, 0.937 | 0.190, 0.196 |
+| base #16 | EPYC 7763 | 2212 | 423 | 429 | 462 | 0.915, 0.928 | 0.191, 0.194 |
+| base #10 | EPYC 9V74 | 2902 | 543 | 544 | 585 | 0.928, 0.929 | 0.187, 0.187 |
+| base #2 | EPYC 9V74 | 3039 | 539 | 533 | 566 | 0.952, 0.941 | 0.177, 0.175 |
+| base #8 | EPYC 9V74 | 3106 | 552 | 546 | 590 | 0.937, 0.925 | 0.178, 0.176 |
+| base #15 | EPYC 9V74 | 3114 | 568 | 562 | 605 | 0.938, 0.928 | 0.182, 0.180 |
+| base #12 | EPYC 9V45 | 4930 | 634 | 638 | 665 | 0.952, 0.958 | 0.129, 0.129 |
+| base #11 | EPYC 9V45 | 4959 | 597 | 608 | 661 | 0.903, 0.919 | 0.120, 0.123 |
+| base #7 | EPYC 9V45 | 5341 | 652 | 689 | 749 | 0.871, 0.920 | 0.122, 0.129 |
+
+**Threshold: 0.80, and exactly 0.80 passes.** Over the 32 shares: min 0.871,
+median 0.928, mean 0.9275, σ 0.018, max 0.962. The rules the earlier gate used
+do not agree this time:
+
+- min − (median − min) = 2 × 0.871 − 0.928 = 0.8137.
+- median × (1 − max(20%, range ÷ min = 10.5%)) = 0.928 × 0.80 = 0.7426.
+- A one-sided 99%/95% tolerance bound over the 16 runs' mean shares: 0.9275 −
+  3.464 × 0.0157 = 0.8730, 3.464 being the factor for n = 16 (and 5.741 for
+  n = 5, the 5.74 used for the first gate). It bounds a mean of two shares and
+  lies on the lowest single share seen, so it is not a threshold for one.
+
+0.80 is the round number under the middle one, 1.7% below it. It sits 8.2%
+below the lowest of the 32 shares, 7σ below their mean. A read that becomes x
+more expensive than the floor fails when share ÷ (1 + x) < 0.80: from +8.9% at
+the lowest share seen, +16.0% at the median, +20.3% at the highest. The gate it
+replaces caught a read a quarter to a third more expensive, on five runs of one
+CPU; this one catches +16% at the median share, because its share has a small
+fraction of the spread.
+
+**Its noise.** A read's 20s window sometimes runs slow beside its neighbours.
+Counting every window that no injected change touched (the sixteen healthy
+runs' 32; schedule-versions in the 13 handler runs below; both reads in the six
+path runs: 57 in the final calibration, 24 in the first, 12 in the older
+private runs) 2 of 93 fell under 0.80:
+
+- 0.792: schedule-versions at 453 req/s against floor rounds of 563, 572 and
+  575, in a run whose jobs carried twelve extra statements.
+- 0.748: optimization/jobs on an EPYC 9V74 in the first calibration, run
+  41441911608 (12 healthy runs, five floor rounds measured after the write, the
+  median taken), where the floor rounds rose from 554 to 598 req/s across the
+  run. The script now measures the floor straight after the reads, so that the
+  two windows are neighbours; none of the sixteen fell under 0.871. The lowest
+  of the older private runs is 0.833 (34839849296's jobs, the window whose p99
+  was 181ms).
+
+That is about one night in twenty red on a tree that has not changed. Rerun it
+before looking at the tree; two reds in a row are not this.
+
+**What it reaches, on a handler.** The same tree with K extra `SELECT 1`
+statements compiled into `optimization/jobs` only, on 13 further runners of the
+same three models (run 41443397511; the switches existed on that branch and are
+not in the tree). What was measured is K: two extra statements passed 3 of 3,
+four failed 4 of 4, eight and twelve failed 3 of 3 each; K = 3 was never run.
+The cost in the table is derived from the share (the healthy median 0.932 ÷ the
+variant's mean), about 5% a statement, so the line between pass and fail lies
+between about +11% and +22%.
+
+| Extra statements | runs | cost of the read, derived from the share | optimization/jobs ÷ floor | fails at 0.80 | old gate, jobs ÷ health |
+| :--- | ---: | ---: | ---: | ---: | ---: |
+| 2 | 3 | about +10% | 0.828–0.853 | 0 of 3 | 0.111–0.174 |
+| 4 | 4 | about +22% | 0.752–0.787 | 4 of 4 | 0.154–0.160 |
+| 8 | 3 | about +40% | 0.647–0.682 | 3 of 3 | 0.126–0.136 |
+| 12 | 3 | about +53% | 0.567–0.648 | 3 of 3 | 0.094–0.118 |
+
+schedule-versions beside it, on the same path without the change, stayed at
+0.79–1.03: one of the 13 below 0.80 (the 0.792 above). The old gate failed all
+13, as it failed every healthy run.
+
+**What each read catches.** Only `optimization/jobs` is a handler the floor does
+not share. The floor is `GET /api/v1/schedule-versions` for a year that does not
+exist, and the read is the same route, `ScheduleVersionsController.list` and its
+handler, for the benchmark's year; only the academic year's UUID differs. A
+regression in that handler, or in `ScheduleVersionsService.list`, slows the read
+and the floor alike, so schedule-versions ÷ floor moves only with what grows
+with the year's rows (the seed has none), and otherwise measures noise and a
+constant level difference: in the 25 runs checked afterwards the floor ran 7–8%
+above both reads, which the runs cannot tell apart as the order (floor last) or
+the year that exists against the one that does not. In effect the gate checks
+one handler. A second one worth checking needs a floor that none of the gated
+reads shares, and a new denominator needs new history; neither is part of this
+change.
+
+**What it cannot see.** A regression on the path every authenticated request
+shares — the token, the identity lookup, the guards, the RLS transaction —
+slows the floor as much as the read, so no share moves. With four extra
+statements in each of a request's two transactions (+35% on an EPYC 7763: the
+floor fell from 455 to 338 req/s) the shares were 0.916–0.947 on all three
+runs and the run passed; with twelve (+120%) two of three failed the floor
+guard, at 205 and 209 req/s, and the third, an EPYC 9V45 at 415, passed it.
+
+| Variant | runs | CPUs | floor req/s | floor ÷ health | reads ÷ floor | floor guard |
+| :--- | ---: | :--- | ---: | ---: | ---: | :--- |
+| 4 statements per transaction | 3 | 7763, 7763, Xeon 8573C | 323–405 | 0.115–0.155 | 0.916–0.947 | 3 pass |
+| 12 | 3 | 7763, 7763, 9V45 | 205–415 | 0.078–0.101 | 0.871–0.970 | 2 fail, 1 passes |
+
+That is what the share of health used to see, and it saw it on the one CPU it
+was calibrated on. **The floor guard is a tripwire, not a regression gate.**
+≥ 300 req/s sits 28% below the lowest healthy floor seen (414; 433 in the
+sixteen) and fires at about +50% on a request on the slowest model, later on
+the faster ones (749 → 300 is +150%). Within one CPU model the floor ÷ health
+ratio is steady (0.206–0.215 on the nine 7763s) and fell to 0.154 and 0.097 in
+those runs, so comparing a night with the same model's nights would see what
+the guard does not; the `Runner` step prints the model for that, and nothing
+gates on it, because a model nobody has calibrated has no baseline. A reference
+that does not contain the gateway's code but costs what an authenticated read
+costs (a Postgres-only probe, say) would be the proper denominator for this
+path, and is not part of this change.
+
+**The health guard.**
+
+- **p99 ≤ 50ms**, failing above: §2's own read target, the one row that meets
+  it on the runner. Seen: 12–32ms.
+- **≥ 1000 req/s**, failing below. Seen: 1722–5715.
+- Health is the framework and a pooled `SELECT 1`. A regression on that path — a
+  global interceptor, the pool — slows the floor as much as health, so no share
+  sees it; only this guard can, and only when it is large: if health's p99
+  grows with its cost it fires at +56% on the runs at 32ms and at +317% on the
+  12ms ones the fast CPUs give.
+
+**History: the gates before 2026-11-02.** Absolute budgets first, then a share
+of health.
 
 **Why the absolute budgets failed.** Five latency-only runs on the 2-vCPU
 `ubuntu-latest` runner, 25 connections, 20s per read, zero non-2xx in every
@@ -391,117 +636,20 @@ Ten route shares: min 0.2259, median 0.2474, mean 0.2475, max 0.2648,
 σ 0.0104 (CV 4.2%). Range ÷ min is 17.2%, and the worst drop below the median
 is 8.7% — 34839849296's jobs row, the same window whose p99 was 181ms.
 
-**Threshold: 0.20, and exactly 0.20 passes.** The rules that bound it land
-within about 1% of it on either side:
-
-- min − (median − min) = 2 × 0.2259 − 0.2474 = 0.2043.
-- median × (1 − max(20%, 17.2%)) = 0.2474 × 0.80 = 0.1979, the margin rule
-  behind the 140ms budget this replaces.
-- A one-sided 99%/95% tolerance bound over runs: 0.2475 − 5.74 × 0.0087 =
-  0.1976 from the five runs' mean shares (0.242, 0.251, 0.247, 0.237, 0.260),
-  5.74 being the factor for n = 5. Not over the ten route shares: a run's two
-  reads divide by the same health window, so they are not ten independent
-  draws, and treating them as such (0.2475 − 3.98 × 0.0104 = 0.2061) would
-  claim more evidence than five runs hold.
-
-0.20 is the round number in 0.198–0.204, about 1% tighter than the two lower
-bounds. The lowest share seen is 12.9% above 0.20, 1.5× the worst drop seen, and from
-the median it takes a 19.2% drop to fail, 2.2× the worst drop. At 0.21 the
-lowest observation would sit 7.6% above the line, less than the 8.7% drop
-already seen; at 0.19 a typical run would need a +30% cost increase to fail,
-and the best +39%.
-
-**Sensitivity.** At saturation req/s ∝ 1 ÷ per-request core time, so a read
-that becomes x more expensive fails when share ÷ (1 + x) < 0.20:
-
-| Share seen | share | fails from |
-| :--- | ---: | ---: |
-| lowest (34839849296, jobs) | 0.2259 | +12.9% |
-| median | 0.2474 | +23.7% |
-| highest (34839859422, jobs) | 0.2648 | +32.4% |
-
-The unit test holds the gate to it: reads 33% more expensive fail all five
-runs, 12% more expensive pass all five. In core time on two saturated vCPUs,
-34839849296's health costs 1.13ms and schedule-versions 4.54ms, which fails
-above 5.65ms (+1.1ms per request); 34838510625's cost 0.74 and 2.99ms and fail
-above 3.69ms (+0.7ms). In general the increase that fails is health's cost ×
-(1/0.20 − 1/share): about one health request.
-
-**What that reaches, on the runner.** Two older runs of the same command — 25
-connections, 20s per read, zero non-2xx in every row — measure it on real
-changes. Both ran the benchmark client on Node 20, where the runs since
-`15edbcc` use 22; 34825468923 on `48c82db` also ran on Node 20, and its shares
-of 0.241 and 0.242 sit inside the Node 22 runs' range, so the client's runtime
-does not account for the difference. Latencies are p50/p99 in ms.
-
-| Run | Commit | health | schedule-versions | optimization/jobs | Verdict |
-| :--- | :--- | ---: | ---: | ---: | :--- |
-| 34680196887 | `7634a55`, nightly | 1874 req/s, 11/29 | 252 req/s, 95/144, share **0.134** | 259 req/s, 94/129, share **0.138** | FAIL |
-| 34754776477 | `a017b19`, dispatch | 1703 req/s, 13/36 | 363 req/s, 65/136, share **0.213** | 371 req/s, 65/105, share **0.218** | PASS |
-
-- **#60's perf work reverted passes.** `git log a017b19..48c82db` is exactly
-  the rebased `e1d90c1`, `e1e2789` and `ccb2d80`, and `src` outside its tests
-  is identical between `48c82db` and `849858c`, so 34754776477 is today's
-  stack with those three commits reverted. Its mean share, 0.2155, is 12.9%
-  below the five runs' 0.2475, and 13.3% below 34839849296 and 34839859422 on
-  the same runner cluster (1703–1771 req/s). It is one run and carries one
-  run's noise. Applied to the ten observations, a 13% lower share fails only
-  where the share was below 0.230: 1 of 10. The local measurements in those
-  commits' bodies (reverting `ccb2d80` −7% to −24% req/s, `e1e2789` and
-  `e1d90c1` −20% to −27%) come from Docker Desktop, whose shape this gate does
-  not share; an earlier version of this section used them to claim the second
-  revert would fail 7 to 10 of the 10 observations.
-- **The stack before the pool fix fails.** From `7634a55` to `a017b19` the
-  shares rose 1.57×. At `68d0a08` they were still 0.136 and 0.139 (34745482891,
-  a run its write's 24/24 403 makes invalid), so the rise lies in the four
-  commits after it: the benchmark's write fixed (`7b63991`), identity looked up
-  once instead of twice (`80e60a4`), the API's pool sized to the 25 connections
-  the stack runs (`6c8917c`) and the throttler's window storage (`a017b19`). A
-  regression that size, −36% of the share, fails in every runner state seen.
-- **So the gate catches a read roughly a quarter to a third more expensive,**
-  not a change the size of #60's perf work. The ten shares' own spread — worst
-  drop 8.7% below the median — is most of that 13%, so no floor between them
-  both catches it and leaves room for the noise. That needs less noise per
-  route first, e.g. several rounds per read at about 40s a night per extra
-  round. Not part of this change.
-
-The unit test holds both runs to these verdicts.
-
-**What the share cannot see.** A regression on the path health shares — the
-framework, the pool, a global interceptor — slows health too, and the share
-rises. Only the health guard can catch that, and only when it is large: if
-health's p99 grows with its cost, the p99 guard fires at +56% on the runs at
-32ms and +127% on 34838510625 at 22ms. An upper limit on the share was
-rejected: #60's three perf commits raised the shares about 15% on the runner
-(0.2155 → 0.2475), and a ceiling would fail the nightly on every such
-improvement.
-
-**The health guard.**
-
-- **p99 ≤ 50ms**, failing above: §2's own read target, the one row that meets
-  it on the runner, and the guard it already had. Seen: 22–32ms, 1.56–2.27×
-  headroom.
-- **≥ 1000 req/s**, failing below: this guards the denominator directly.
-  Passing both proves each read ≥ 200 req/s — a mean latency ≤ 125ms at 25
-  connections — whatever health did. At 900 req/s the reads of 34839859422
-  would show shares of 0.49 and 0.51, and the run still fails.
-- **What it does not prove.** Health is one 20s window, and a window slowed but
-  still inside both guards inflates every share by the same factor.
-  34839859422 with health at 1240 req/s and p99 49ms — 28% below its own
-  health throughput, both guards passing — lets reads 60% more expensive pass
-  at shares of 0.221 and 0.230, and the unit test holds that too. Health is
-  always the run's first saturated window. The floor rounds, whose first round
-  likewise follows a quiet stretch (the serial write), show that window 2–8%
-  below the next two in all four runs with them (469 against 479, 677 against
-  694–697, 444 against 480–481, 460 against 481–483 req/s). That much is inside
-  the ten calibration shares; a larger one-off disturbance in health's single
-  window is not. Measuring health again after the reads and dividing by the
-  faster window would close most of it for about 20s a night — a design
-  change, not part of this one.
-- **No new false failures.** Health's p99 ÷ mean latency is 2.20–2.47 in the
-  logs, so a p99 of 50ms corresponds to about 1100–1240 req/s. Slowed
-  uniformly, 34839859422 (1722 req/s, p99 32ms) fails the p99 guard at 1.56×
-  and the req/s floor only at 1.72×: the p99 guard fires first.
+**The share of health, 2026-09-14 to 2026-11-02.** Its threshold was 0.20, and
+exactly 0.20 passed: the same three rules, applied to those five runs, gave
+0.198–0.204 (min − (median − min) = 0.2043, median × 0.80 = 0.1979, the
+99%/95% tolerance bound over the five runs' mean shares 0.1976). The lowest
+share seen was 12.9% above it, so a read failed it from +12.9% (+23.7% at the
+median, +32.4% at the highest). Two older runs of the same command measured it
+on real changes. 34680196887 on `7634a55`, before the pool was sized to the load
+and identity looked up once, failed at shares of 0.134 and 0.138. 34754776477 on
+`a017b19`, the stack of that time with #60's three auth/RLS perf commits
+reverted, passed at 0.213 and 0.218: the gate caught a read roughly a quarter to
+a third more expensive, not a change the size of that perf work. The unit test
+held both runs until 2026-11-02 and cannot now, since neither has floor rounds.
+The derivations, the sensitivity table and the argument about a slowed health
+window are in this file's git history before that date.
 
 **The write takes 300 samples on twelve trackers.** Over 24 samples the p99 is
 the slowest single write — 152ms in run 34825468923, 194ms in 34832429087 —
@@ -564,23 +712,31 @@ Setting that threshold also makes the write and its baseline required rows.
 split in two — so the baseline adds 300 serial GETs, about 3–5s and at most
 15s. One disclosed trade-off: each write now follows 150ms idle and a GET
 instead of 300ms idle, so later absolute write numbers are not strictly
-continuous with the table above. The benchmark step took 226–228s with
-`--floor` on `849858c`, 304s in 34832429087, which ran both writes, and 138s in
-34825468923 with neither the floor rounds nor the 300-sample write. `--floor`
-adds the three floor rounds, about 60s.
+continuous with the table above. The benchmark step took 226–228s with the
+floor rounds on `849858c`, 304s in 34832429087, which ran both writes, and 138s
+in 34825468923 with neither the floor rounds nor the 300-sample write. The three
+floor rounds, about 60s, now run every night and before the write rather than
+after it; the step took 215–221s on the 35 runners of 41443397511 and the whole
+job 5–5.7 minutes, against 4.5–5 for the nightly it replaces (which failed at
+its last step).
 
-**Scope.** The thresholds are calibrated for GitHub `ubuntu-latest`, 2 vCPU,
-25 connections, 20s per read. The Docker Desktop table above is not
-comparable: health's p50 there is a tenth of a read's (5 against 52–54ms),
-where on the runner it is about a quarter, so a local run can fail the share on
-the laptop's shape alone. Read its milliseconds, not its verdict.
+**Scope.** The thresholds are calibrated for GitHub `ubuntu-latest` as a public
+repository gets it — 4 vCPU, a mixed pool of CPU models — 25 connections, 20s
+per read; the earlier ones were calibrated on 2 vCPU. The Docker Desktop table
+above is not comparable: health's p50 there is a tenth of a read's (5 against
+52–54ms), where on the runner it is a fifth to a quarter, so a local run can
+look different from the runner's on the laptop's shape alone. Read its
+milliseconds, not its verdict. The reads' p50 on the runner, 56–61ms on the
+slowest model (35–61 over all three), against §2's 50ms, is a separate question
+from this gate and is not touched by it.
 
 The floor is
 `GET /api/v1/schedule-versions?academicYearId=00000000-0000-4000-8000-000000000000`:
 a valid v4 UUID naming no academic year, so the answer is `200 []` after
-everything a real authenticated read pays. The 140ms read budget this gate
-replaces was derived from 34832429087's floor rounds; the derivation is in this
-file's git history.
+everything a real authenticated read pays. It is also what the write's baseline
+samples serially, and, since 2026-11-02, the gate's denominator. The 140ms read
+budget the first gate replaced was derived from 34832429087's floor rounds; the
+derivation is in this file's git history.
 
 ### The solver cannot accept a 2,000-student school
 

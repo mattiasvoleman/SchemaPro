@@ -6,13 +6,15 @@ name: Quality Gates
 # nightly and on demand rather than on every pull request.
 #
 # The mutation, Lighthouse, solver and API latency jobs are hard gates: each
-# exits non-zero when its threshold is missed. The visual-baselines job,
+# exits non-zero when its threshold is missed. The mutation gate measures a
+# slice of the API a night, not all of it, against that slice's own floor (see
+# the mutation job). The visual-baselines job,
 # dispatch-only, regenerates the Linux screenshot baselines for review and gates
 # no code. Printed beside the gates and deciding nothing: api-latency's §2
-# milliseconds on every row, its floor-round shares and its write ratios — the
-# write against its interleaved baseline until ten runs have calibrated a
-# threshold for it (docs/verification-baseline.md) — and the solver job's
-# 2,000-student §2 figure, reported after its 400-student gate.
+# milliseconds on every row, its reads' and floor's share of health and its
+# write ratios — the write against its interleaved baseline until ten runs have
+# calibrated a threshold for it (docs/verification-baseline.md) — and the
+# solver job's 2,000-student §2 figure, reported after its 400-student gate.
 #
 # Actions are pinned to commit SHAs for the same reason as in ci.yml — a `@v5`
 # tag is a pointer somebody else can move — with the release name kept in the
@@ -30,15 +32,30 @@ on:
         description: 'Run mutation testing (slow)'
         type: boolean
         default: true
-      # A one-off measurement, not a gate: the api-latency job alone, which then
-      # also measures rounds of the authenticated-read floor after its gated
-      # scenarios (api-latency.mjs --floor). The other four jobs are skipped so
-      # the dispatch bills one job. On schedule `inputs` is empty, so every
-      # condition below is what it was and the nightly run is unchanged.
+      # Which slice of the API the mutation job takes: a number, a comma list
+      # of numbers ('3,7'), 'all' for every slice (one job each, ten at a time),
+      # or empty for tonight's, the day of the year (UTC) modulo the number of
+      # slices in scripts/mutation-slices.json.
+      mutation_slice:
+        description: "Mutation slice: a number, a comma list, 'all', or empty for tonight's"
+        type: string
+        default: ''
+      # A one-off measurement: the api-latency job alone, the other four jobs
+      # skipped so the dispatch bills one job. (It once also switched the
+      # authenticated-read floor rounds on; they run every night now, being
+      # the gate's denominator, and the input keeps its name for whoever
+      # dispatches it.) On schedule `inputs` is empty, so every condition
+      # below is what it was and the nightly run is unchanged.
       latency_floor:
-        description: 'Run only the API latency job, plus the ungated authenticated-read floor rounds'
+        description: 'Run only the API latency job'
         type: boolean
         default: false
+
+# Nothing here writes to the repository: the artifacts go through the runtime
+# token that upload-artifact uses, not GITHUB_TOKEN. The mutation job runs
+# mutated code and an unpinned `npm install`; its token reads and no more.
+permissions:
+  contents: read
 
 concurrency:
   group: quality-gates-${{ github.ref }}
@@ -105,16 +122,68 @@ jobs:
           path: web/e2e/visual.spec.ts-snapshots/*-linux-x64.png
           retention-days: 14
 
+  # Which slices this run takes, as a matrix for the job below: tonight's one
+  # on the schedule, the ones asked for on a dispatch, or all of them. The
+  # script's plan mode imports nothing and reads the number of slices from the
+  # checked-in dealing, but the script as a whole wants Node 22 (fs.globSync),
+  # so the job sets it up as the mutation job does.
+  #
+  # The inputs reach the script through env, never pasted into its text: an
+  # expression is pasted before bash parses it, so a quote in the value would
+  # close the argument and the rest would run as shell.
+  mutation-plan:
+    name: API — mutation, which slices
+    runs-on: ubuntu-latest
+    if: (github.event_name == 'schedule' || inputs.run_mutation) && !inputs.latency_floor
+    timeout-minutes: 5
+    outputs:
+      slices: ${{ steps.plan.outputs.slices }}
+      of: ${{ steps.plan.outputs.of }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+      # pipefail: a plan that fails must fail the step, and not leave `slices`
+      # empty for the next job's matrix to choke on.
+      - name: Plan
+        id: plan
+        env:
+          MUTATION_SLICE: ${{ inputs.mutation_slice }}
+        run: |
+          set -o pipefail
+          node scripts/mutation-slice.mjs --plan | tee -a "$GITHUB_OUTPUT"
+
+  # One slice of the API per job. On 2026-10-06 this job mutated 57 files and
+  # 7,522 mutants in 41 minutes; on 2026-11-02 it was 280 files and 73,861
+  # mutants, the runner got through 10,097 in the 90 minutes and the job was
+  # cancelled. scripts/mutation-slices.json deals the files into slices by the
+  # seconds each was measured to cost, and gives each slice a floor, its
+  # measured score minus a point, which is what the job fails under. §2's 85%
+  # stays the target and is printed beside it.
   mutation:
-    name: API — mutation score (Stryker ≥85%)
+    name: API — mutation score, slice ${{ matrix.slice }} of ${{ needs.mutation-plan.outputs.of }} (against its floor)
+    needs: mutation-plan
     runs-on: ubuntu-latest
     if: (github.event_name == 'schedule' || inputs.run_mutation) && !inputs.latency_floor
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      # A night is one slice. A dispatch of 'all' is as many jobs as there are
+      # slices, and the runner pool is shared with ci.yml's pull-request jobs.
+      max-parallel: 10
+      matrix:
+        slice: ${{ fromJSON(needs.mutation-plan.outputs.slices) }}
     env:
       DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
       DIRECT_URL: postgresql://ci:ci@localhost:5432/ci
+      MUTATION_SLICE: ${{ matrix.slice }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
       # Node 22, as in ci.yml's API jobs: the two workflows build and test the
       # same package, so a version that differs here gates code on a runtime
@@ -149,16 +218,21 @@ jobs:
       # on a tool that ships nothing. Keeping it out of the lockfile lets
       # `npm audit` stay at zero-tolerance instead of needing an exception.
       #
-      # stryker.conf.json sets `thresholds.break: 85`, so the run itself fails
-      # below the §2 kill rate — no extra assertion needed here.
+      # The script sets `thresholds.break` to the slice's floor in the config it
+      # writes for the run, which Stryker applies to the mutants it was given —
+      # the slice — so the run itself fails under the floor and only then. It
+      # prints the slice's files first, writes the slice's number, score, floor
+      # and every file's score to the job summary, and exits with Stryker's code.
       - name: Stryker
         run: npm run test:mutation
 
+      # The slice's number is in the artifact's name and in every path inside
+      # it, so ten nights can be set side by side.
       - name: Upload mutation report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: mutation-report
+          name: mutation-report-slice-${{ matrix.slice }}
           path: reports/mutation/
           retention-days: 30
 
@@ -258,7 +332,7 @@ jobs:
           --students 2000 --json
 
   api-latency:
-    name: API — latency (read share ≥ 0.20 of health)
+    name: API — latency (read share ≥ 0.80 of the authenticated floor)
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
@@ -305,6 +379,15 @@ jobs:
       - run: npm ci
       - run: npm run prisma:generate
 
+      # Which CPU the runner drew, printed so that a night's numbers can be
+      # grouped with the nights that drew the same one. ubuntu-latest is a
+      # mixed pool: of 35 runners one day, 19 were an EPYC 7763, 9 a 9V74, 6 a
+      # 9V45 and one a Xeon 8573C, all with 4 vCPUs, and health ran 2.5× faster
+      # on one model against reads only 1.6× faster
+      # (docs/verification-baseline.md).
+      - name: Runner
+        run: lscpu | grep -E 'Model name|^CPU\(s\)'
+
       # Latency against a mocked Prisma layer is meaningless — the RLS
       # transaction and policy evaluation are the cost being measured, so the
       # benchmark needs the real stack.
@@ -350,23 +433,17 @@ jobs:
       # autocannon is installed --no-save for the same reason as Stryker: its
       # transitive deps carry moderate advisories and it ships nothing.
       #
-      # No `${{ }}` reaches the script text: the fixture outputs and the floor
-      # switch arrive through env. An expression is pasted into the script
-      # before bash parses it, so a quote in the value would close the argument
-      # and the rest would run as shell; a variable expands after parsing and
-      # stays one argument. Semgrep's run-shell-injection rule blocked this step
-      # for the switch alone: it treats every `inputs` expression as
-      # caller-controlled and does not look at step outputs at all. The outputs
-      # go through env anyway. They carry what the fixture query read from the
-      # database — a base64url JWT and a UUID today, neither able to hold a
-      # quote — and staying safe should not rest on the rule's blind spot.
-      # LATENCY_FLOOR is empty unless the dispatch asked for the floor rounds,
-      # so its expansion adds `--floor` or nothing.
+      # No `${{ }}` reaches the script text: the fixture outputs arrive through
+      # env. An expression is pasted into the script before bash parses it, so a
+      # quote in the value would close the argument and the rest would run as
+      # shell; a variable expands after parsing and stays one argument. The
+      # outputs carry what the fixture query read from the database — a
+      # base64url JWT and a UUID today, neither able to hold a quote — and
+      # staying safe should not rest on the value being one.
       - name: Benchmark
         env:
           TOKEN: ${{ steps.fixtures.outputs.token }}
           ACADEMIC_YEAR: ${{ steps.fixtures.outputs.academic_year }}
-          LATENCY_FLOOR: ${{ inputs.latency_floor && 'true' || '' }}
         run: >-
           npm install --no-save --no-audit --no-fund autocannon@^8 &&
           node scripts/bench/api-latency.mjs
@@ -375,7 +452,6 @@ jobs:
           --academic-year "$ACADEMIC_YEAR"
           --write-body /tmp/write-body.json
           --duration 20 --connections 25
-          ${LATENCY_FLOOR:+--floor}
 
       - name: Stack logs
         if: failure()

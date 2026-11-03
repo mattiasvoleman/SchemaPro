@@ -1,0 +1,1908 @@
+{
+  "comment": "The dealing scripts/mutation-slice.mjs runs by: each file's measured seconds, mutants, detected and valid mutants, and each slice's score and floor (its measured score minus one point, rounded down). Made by `node scripts/mutation-slice.mjs --deal --of N <file-times.json of every slice of a run>`; see the header of the script for how a floor is raised and when a slice needs a new one.",
+  "measured": "2026-11-02",
+  "run": "41519740264 (the nine files of the slice that died: 41554992606)",
+  "ignoreStatic": true,
+  "slices": [
+    {
+      "slice": 0,
+      "seconds": 2656.5,
+      "mutants": 820,
+      "detected": 586,
+      "valid": 733,
+      "score": 79.95,
+      "floor": 78,
+      "files": {
+        "src/common/utils/prisma-errors.ts": {
+          "seconds": 2656.5,
+          "mutants": 820,
+          "detected": 586,
+          "valid": 733
+        }
+      }
+    },
+    {
+      "slice": 1,
+      "seconds": 2564.4,
+      "mutants": 692,
+      "detected": 607,
+      "valid": 680,
+      "score": 89.26,
+      "floor": 88,
+      "files": {
+        "src/staffing/teacher-load.ts": {
+          "seconds": 2564.4,
+          "mutants": 692,
+          "detected": 607,
+          "valid": 680
+        }
+      }
+    },
+    {
+      "slice": 2,
+      "seconds": 2536.2,
+      "mutants": 2211,
+      "detected": 1744,
+      "valid": 2186,
+      "score": 79.78,
+      "floor": 78,
+      "files": {
+        "src/gallring/gallring.service.ts": {
+          "seconds": 17,
+          "mutants": 178,
+          "detected": 122,
+          "valid": 174
+        },
+        "src/lesson-log/class-book.service.ts": {
+          "seconds": 28.2,
+          "mutants": 222,
+          "detected": 121,
+          "valid": 220
+        },
+        "src/optimization/optimization-proxy.service.ts:2093-99999": {
+          "seconds": 2342.3,
+          "mutants": 1425,
+          "detected": 1193,
+          "valid": 1415
+        },
+        "src/optimization/room-loan-windows.ts": {
+          "seconds": 63.9,
+          "mutants": 81,
+          "detected": 54,
+          "valid": 75
+        },
+        "src/publication/other-school-clashes.ts": {
+          "seconds": 45.3,
+          "mutants": 183,
+          "detected": 157,
+          "valid": 182
+        },
+        "src/realtime/cors-io.adapter.ts": {
+          "seconds": 6.4,
+          "mutants": 10,
+          "detected": 10,
+          "valid": 10
+        },
+        "src/staffing/staff-candidates.ts": {
+          "seconds": 20.9,
+          "mutants": 17,
+          "detected": 17,
+          "valid": 17
+        },
+        "src/supervision/lesson-clashes.ts": {
+          "seconds": 9.3,
+          "mutants": 64,
+          "detected": 48,
+          "valid": 62
+        },
+        "src/users/my-schools.service.ts": {
+          "seconds": 2.9,
+          "mutants": 31,
+          "detected": 22,
+          "valid": 31
+        }
+      }
+    },
+    {
+      "slice": 3,
+      "seconds": 2534.8,
+      "mutants": 2661,
+      "detected": 1692,
+      "valid": 2578,
+      "score": 65.63,
+      "floor": 64,
+      "files": {
+        "src/cover/cover-rules.ts": {
+          "seconds": 1724.1,
+          "mutants": 430,
+          "detected": 348,
+          "valid": 408
+        },
+        "src/cover/supervision-board.ts": {
+          "seconds": 68.8,
+          "mutants": 149,
+          "detected": 127,
+          "valid": 148
+        },
+        "src/huvudman/huvudman-errors.ts": {
+          "seconds": 11.7,
+          "mutants": 71,
+          "detected": 13,
+          "valid": 60
+        },
+        "src/integration/ss12000-duties.ts": {
+          "seconds": 124.1,
+          "mutants": 180,
+          "detected": 126,
+          "valid": 168
+        },
+        "src/integration/ss12000-sync/secret-box.ts": {
+          "seconds": 41.6,
+          "mutants": 80,
+          "detected": 62,
+          "valid": 77
+        },
+        "src/lesson-log/substitute-noted.ts": {
+          "seconds": 12.8,
+          "mutants": 9,
+          "detected": 8,
+          "valid": 9
+        },
+        "src/notifications/notifications.service.ts": {
+          "seconds": 211.3,
+          "mutants": 100,
+          "detected": 83,
+          "valid": 100
+        },
+        "src/optimization/other-school-holds.ts": {
+          "seconds": 139.3,
+          "mutants": 227,
+          "detected": 165,
+          "valid": 212
+        },
+        "src/publication/cancellation-digest.ts": {
+          "seconds": 21.7,
+          "mutants": 99,
+          "detected": 75,
+          "valid": 99
+        },
+        "src/publication/print-timetables.service.ts": {
+          "seconds": 1.3,
+          "mutants": 82,
+          "detected": 11,
+          "valid": 78
+        },
+        "src/resources/student-groups.service.ts": {
+          "seconds": 94,
+          "mutants": 418,
+          "detected": 319,
+          "valid": 411
+        },
+        "src/room-bookings/loan-holds.ts": {
+          "seconds": 26.1,
+          "mutants": 127,
+          "detected": 114,
+          "valid": 125
+        },
+        "src/timplan/academic-year-timplans.service.ts": {
+          "seconds": 7.6,
+          "mutants": 103,
+          "detected": 84,
+          "valid": 102
+        },
+        "src/timplan/timplan-stage.service.ts": {
+          "seconds": 50.4,
+          "mutants": 586,
+          "detected": 157,
+          "valid": 581
+        }
+      }
+    },
+    {
+      "slice": 4,
+      "seconds": 2533.7,
+      "mutants": 5472,
+      "detected": 3255,
+      "valid": 5397,
+      "score": 60.31,
+      "floor": 59,
+      "files": {
+        "src/access-log/access-log.service.ts": {
+          "seconds": 20.4,
+          "mutants": 156,
+          "detected": 93,
+          "valid": 154
+        },
+        "src/calendar/master-lessons.service.ts": {
+          "seconds": 1675.6,
+          "mutants": 1928,
+          "detected": 1520,
+          "valid": 1917
+        },
+        "src/cover/cover-suggestions.service.ts": {
+          "seconds": 60.8,
+          "mutants": 578,
+          "detected": 292,
+          "valid": 576
+        },
+        "src/cover/cover.service.ts": {
+          "seconds": 237.8,
+          "mutants": 667,
+          "detected": 440,
+          "valid": 647
+        },
+        "src/family/school-days.ts": {
+          "seconds": 31.5,
+          "mutants": 107,
+          "detected": 103,
+          "valid": 107
+        },
+        "src/gallring/gallring.job.ts": {
+          "seconds": 10,
+          "mutants": 146,
+          "detected": 101,
+          "valid": 143
+        },
+        "src/integration/ss12000-sync/ss12000-sync.service.ts": {
+          "seconds": 77.4,
+          "mutants": 845,
+          "detected": 132,
+          "valid": 819
+        },
+        "src/integration/ss12000-v2/scopes.ts": {
+          "seconds": 13.9,
+          "mutants": 31,
+          "detected": 21,
+          "valid": 25
+        },
+        "src/optimization/pupil-cohorts.ts": {
+          "seconds": 154.4,
+          "mutants": 155,
+          "detected": 111,
+          "valid": 155
+        },
+        "src/publication/public-links.service.ts": {
+          "seconds": 8.8,
+          "mutants": 314,
+          "detected": 43,
+          "valid": 310
+        },
+        "src/sign-in/sign-in-methods.service.ts": {
+          "seconds": 33,
+          "mutants": 213,
+          "detected": 188,
+          "valid": 212
+        },
+        "src/timplan/timplan-delivered.sql.ts": {
+          "seconds": 135,
+          "mutants": 159,
+          "detected": 91,
+          "valid": 159
+        },
+        "src/year-rollover/rollover-timplans.ts": {
+          "seconds": 75.1,
+          "mutants": 173,
+          "detected": 120,
+          "valid": 173
+        }
+      }
+    },
+    {
+      "slice": 5,
+      "seconds": 2533.7,
+      "mutants": 4039,
+      "detected": 3140,
+      "valid": 3917,
+      "score": 80.16,
+      "floor": 79,
+      "files": {
+        "src/calendar/lesson-notices.ts": {
+          "seconds": 12.5,
+          "mutants": 30,
+          "detected": 30,
+          "valid": 30
+        },
+        "src/common/timplan-planned.ts": {
+          "seconds": 1648,
+          "mutants": 823,
+          "detected": 716,
+          "valid": 817
+        },
+        "src/optimization/candidate-basis.ts": {
+          "seconds": 282,
+          "mutants": 259,
+          "detected": 207,
+          "valid": 259
+        },
+        "src/optimization/room-optimization.service.ts": {
+          "seconds": 122.1,
+          "mutants": 442,
+          "detected": 346,
+          "valid": 388
+        },
+        "src/publication/embed-origins.ts": {
+          "seconds": 7.9,
+          "mutants": 59,
+          "detected": 50,
+          "valid": 56
+        },
+        "src/publication/publish-mode.ts": {
+          "seconds": 145.7,
+          "mutants": 59,
+          "detected": 33,
+          "valid": 58
+        },
+        "src/resources/rasts.service.ts": {
+          "seconds": 11.8,
+          "mutants": 97,
+          "detected": 90,
+          "valid": 97
+        },
+        "src/school-units/school-units.service.ts": {
+          "seconds": 22.1,
+          "mutants": 236,
+          "detected": 170,
+          "valid": 228
+        },
+        "src/staffing/scb/scb-pedpers.ts": {
+          "seconds": 99.1,
+          "mutants": 991,
+          "detected": 737,
+          "valid": 965
+        },
+        "src/staffing/teacher-duties.service.ts": {
+          "seconds": 42,
+          "mutants": 380,
+          "detected": 294,
+          "valid": 367
+        },
+        "src/staffing/teacher-employments.service.ts": {
+          "seconds": 64.8,
+          "mutants": 424,
+          "detected": 337,
+          "valid": 417
+        },
+        "src/timplan/timplan-planned-messages.ts": {
+          "seconds": 49.4,
+          "mutants": 53,
+          "detected": 26,
+          "valid": 51
+        },
+        "src/year-rollover/staffing-rollover.service.ts": {
+          "seconds": 26.3,
+          "mutants": 186,
+          "detected": 104,
+          "valid": 184
+        }
+      }
+    },
+    {
+      "slice": 6,
+      "seconds": 2537.4,
+      "mutants": 5110,
+      "detected": 3673,
+      "valid": 4991,
+      "score": 73.59,
+      "floor": 72,
+      "files": {
+        "src/access-log/access-log.ts": {
+          "seconds": 237.9,
+          "mutants": 38,
+          "detected": 36,
+          "valid": 36
+        },
+        "src/auth/school-account.ts": {
+          "seconds": 18.4,
+          "mutants": 119,
+          "detected": 90,
+          "valid": 97
+        },
+        "src/calendar-feed/ics-check.ts": {
+          "seconds": 9,
+          "mutants": 135,
+          "detected": 94,
+          "valid": 135
+        },
+        "src/common/timplan-stage.ts": {
+          "seconds": 124.2,
+          "mutants": 768,
+          "detected": 631,
+          "valid": 753
+        },
+        "src/common/year-numbering.ts": {
+          "seconds": 94.8,
+          "mutants": 45,
+          "detected": 34,
+          "valid": 45
+        },
+        "src/integration/ss12000-sync/diff.ts": {
+          "seconds": 313.7,
+          "mutants": 1833,
+          "detected": 1229,
+          "valid": 1805
+        },
+        "src/integration/ss12000-sync/ss12000-scheduler.service.ts": {
+          "seconds": 18.7,
+          "mutants": 73,
+          "detected": 26,
+          "valid": 69
+        },
+        "src/optimization/candidate-metrics.ts": {
+          "seconds": 34.3,
+          "mutants": 132,
+          "detected": 110,
+          "valid": 128
+        },
+        "src/optimization/optimization-proxy.service.ts:1-2092": {
+          "seconds": 1360.5,
+          "mutants": 848,
+          "detected": 644,
+          "valid": 833
+        },
+        "src/publication/publication-gates.reader.ts": {
+          "seconds": 55.2,
+          "mutants": 364,
+          "detected": 157,
+          "valid": 347
+        },
+        "src/resources/school-breaks.service.ts": {
+          "seconds": 31.2,
+          "mutants": 183,
+          "detected": 170,
+          "valid": 183
+        },
+        "src/resources/teaching-blocks.service.ts": {
+          "seconds": 67.7,
+          "mutants": 375,
+          "detected": 281,
+          "valid": 373
+        },
+        "src/sharing/loan-coverage.ts": {
+          "seconds": 161.8,
+          "mutants": 110,
+          "detected": 99,
+          "valid": 109
+        },
+        "src/staffing/duty-identity.ts": {
+          "seconds": 5.4,
+          "mutants": 5,
+          "detected": 4,
+          "valid": 5
+        },
+        "src/timplan/timplan-verdict-messages.ts": {
+          "seconds": 4.6,
+          "mutants": 82,
+          "detected": 68,
+          "valid": 73
+        }
+      }
+    },
+    {
+      "slice": 7,
+      "seconds": 2534.1,
+      "mutants": 3879,
+      "detected": 2289,
+      "valid": 3676,
+      "score": 62.27,
+      "floor": 61,
+      "files": {
+        "src/auth/huvudman-reader.ts": {
+          "seconds": 30.2,
+          "mutants": 27,
+          "detected": 14,
+          "valid": 21
+        },
+        "src/calendar/calendar-lessons.service.ts": {
+          "seconds": 204.1,
+          "mutants": 715,
+          "detected": 579,
+          "valid": 711
+        },
+        "src/common/solver-grid.ts": {
+          "seconds": 63.5,
+          "mutants": 31,
+          "detected": 26,
+          "valid": 29
+        },
+        "src/common/utils/max-code-points.ts": {
+          "seconds": 9.1,
+          "mutants": 16,
+          "detected": 10,
+          "valid": 10
+        },
+        "src/cover/cover-context.ts": {
+          "seconds": 1301.2,
+          "mutants": 706,
+          "detected": 430,
+          "valid": 697
+        },
+        "src/cover/cover-notices.ts": {
+          "seconds": 74.6,
+          "mutants": 124,
+          "detected": 81,
+          "valid": 124
+        },
+        "src/integration/ss12000-sync/fetch-plan.ts": {
+          "seconds": 76.9,
+          "mutants": 189,
+          "detected": 141,
+          "valid": 189
+        },
+        "src/integration/ss12000-sync/outbound.ts": {
+          "seconds": 380.4,
+          "mutants": 386,
+          "detected": 215,
+          "valid": 322
+        },
+        "src/integration/ss12000-v2/in-turn.ts": {
+          "seconds": 0.6,
+          "mutants": 2,
+          "detected": 0,
+          "valid": 0
+        },
+        "src/integration/ss12000-v2/slice.ts": {
+          "seconds": 211.6,
+          "mutants": 472,
+          "detected": 153,
+          "valid": 397
+        },
+        "src/notifications/notification-preferences.service.ts": {
+          "seconds": 6.6,
+          "mutants": 57,
+          "detected": 50,
+          "valid": 55
+        },
+        "src/publication/publications.service.ts": {
+          "seconds": 106,
+          "mutants": 743,
+          "detected": 338,
+          "valid": 718
+        },
+        "src/sites/sites.service.ts": {
+          "seconds": 16.9,
+          "mutants": 204,
+          "detected": 126,
+          "valid": 196
+        },
+        "src/staffing/last-year-teachers.ts": {
+          "seconds": 31.8,
+          "mutants": 45,
+          "detected": 41,
+          "valid": 45
+        },
+        "src/staffing/scb/scb-file.service.ts": {
+          "seconds": 20.6,
+          "mutants": 162,
+          "detected": 85,
+          "valid": 162
+        }
+      }
+    },
+    {
+      "slice": 8,
+      "seconds": 2533.6,
+      "mutants": 4086,
+      "detected": 2932,
+      "valid": 3878,
+      "score": 75.61,
+      "floor": 74,
+      "files": {
+        "src/cover/cover-board.ts": {
+          "seconds": 44.2,
+          "mutants": 120,
+          "detected": 79,
+          "valid": 120
+        },
+        "src/cover/cover-errors.ts": {
+          "seconds": 47.4,
+          "mutants": 99,
+          "detected": 58,
+          "valid": 92
+        },
+        "src/family/family-access.ts": {
+          "seconds": 12.4,
+          "mutants": 52,
+          "detected": 52,
+          "valid": 52
+        },
+        "src/family/family-schedule.service.ts": {
+          "seconds": 162.5,
+          "mutants": 429,
+          "detected": 320,
+          "valid": 419
+        },
+        "src/integration/integration-key.ts": {
+          "seconds": 10.2,
+          "mutants": 67,
+          "detected": 13,
+          "valid": 59
+        },
+        "src/integration/ss12000-v2/ids.ts": {
+          "seconds": 25.2,
+          "mutants": 51,
+          "detected": 28,
+          "valid": 34
+        },
+        "src/notifications/notification-types.ts": {
+          "seconds": 72.1,
+          "mutants": 88,
+          "detected": 31,
+          "valid": 32
+        },
+        "src/optimization/schedule-candidates.service.ts": {
+          "seconds": 395,
+          "mutants": 1173,
+          "detected": 844,
+          "valid": 1093
+        },
+        "src/resources/lunch-settings.service.ts": {
+          "seconds": 8.6,
+          "mutants": 71,
+          "detected": 70,
+          "valid": 71
+        },
+        "src/resources/room-preferences.service.ts": {
+          "seconds": 23.1,
+          "mutants": 212,
+          "detected": 192,
+          "valid": 212
+        },
+        "src/resources/term-halves.service.ts": {
+          "seconds": 90.2,
+          "mutants": 594,
+          "detected": 428,
+          "valid": 577
+        },
+        "src/staffing/staffing-reconciliation.ts": {
+          "seconds": 127.6,
+          "mutants": 402,
+          "detected": 295,
+          "valid": 395
+        },
+        "src/staffing/teaching-weeks.ts": {
+          "seconds": 1259.4,
+          "mutants": 186,
+          "detected": 165,
+          "valid": 183
+        },
+        "src/year-rollover/rollover-source.ts": {
+          "seconds": 255.7,
+          "mutants": 542,
+          "detected": 357,
+          "valid": 539
+        }
+      }
+    },
+    {
+      "slice": 9,
+      "seconds": 2535.2,
+      "mutants": 2377,
+      "detected": 1869,
+      "valid": 2306,
+      "score": 81.05,
+      "floor": 80,
+      "files": {
+        "src/calendar-feed/calendar-feed-throttler.guard.ts": {
+          "seconds": 11.3,
+          "mutants": 33,
+          "detected": 23,
+          "valid": 30
+        },
+        "src/common/utils/request-context.ts": {
+          "seconds": 135.8,
+          "mutants": 12,
+          "detected": 12,
+          "valid": 12
+        },
+        "src/common/year-clashes.ts": {
+          "seconds": 106.1,
+          "mutants": 352,
+          "detected": 264,
+          "valid": 351
+        },
+        "src/config/env.validation.ts": {
+          "seconds": 23.7,
+          "mutants": 42,
+          "detected": 37,
+          "valid": 41
+        },
+        "src/integration/ss12000-sync/errors.ts": {
+          "seconds": 26.5,
+          "mutants": 29,
+          "detected": 25,
+          "valid": 29
+        },
+        "src/notifications/expo-push.client.ts": {
+          "seconds": 301,
+          "mutants": 124,
+          "detected": 106,
+          "valid": 122
+        },
+        "src/optimization/optimization-jobs.service.ts": {
+          "seconds": 55.8,
+          "mutants": 325,
+          "detected": 309,
+          "valid": 325
+        },
+        "src/optimization/work-days.ts": {
+          "seconds": 85,
+          "mutants": 84,
+          "detected": 71,
+          "valid": 72
+        },
+        "src/publication/published-grundschema.ts": {
+          "seconds": 205.7,
+          "mutants": 320,
+          "detected": 149,
+          "valid": 315
+        },
+        "src/resources/lesson-shape-merge.ts": {
+          "seconds": 38.4,
+          "mutants": 110,
+          "detected": 100,
+          "valid": 105
+        },
+        "src/resources/rooms.service.ts": {
+          "seconds": 7.5,
+          "mutants": 126,
+          "detected": 109,
+          "valid": 126
+        },
+        "src/school-units/school-unit-map.ts": {
+          "seconds": 72.2,
+          "mutants": 126,
+          "detected": 94,
+          "valid": 117
+        },
+        "src/sharing/sharing.service.ts": {
+          "seconds": 12,
+          "mutants": 168,
+          "detected": 149,
+          "valid": 163
+        },
+        "src/sign-in/dto.ts": {
+          "seconds": 1.8,
+          "mutants": 27,
+          "detected": 5,
+          "valid": 6
+        },
+        "src/staffing/employment-periods.ts": {
+          "seconds": 427.1,
+          "mutants": 128,
+          "detected": 106,
+          "valid": 122
+        },
+        "src/year-rollover/activation-plan.ts": {
+          "seconds": 1025.3,
+          "mutants": 371,
+          "detected": 310,
+          "valid": 370
+        }
+      }
+    },
+    {
+      "slice": 10,
+      "seconds": 2537.9,
+      "mutants": 4000,
+      "detected": 2588,
+      "valid": 3895,
+      "score": 66.44,
+      "floor": 65,
+      "files": {
+        "src/calendar/lesson-roster.ts": {
+          "seconds": 428.7,
+          "mutants": 181,
+          "detected": 155,
+          "valid": 181
+        },
+        "src/calendar/rasts-for-span.ts": {
+          "seconds": 26.3,
+          "mutants": 44,
+          "detected": 44,
+          "valid": 44
+        },
+        "src/common/timplan-delivered.ts": {
+          "seconds": 927,
+          "mutants": 1474,
+          "detected": 1026,
+          "valid": 1447
+        },
+        "src/cover/day-proposal.ts": {
+          "seconds": 72,
+          "mutants": 148,
+          "detected": 116,
+          "valid": 146
+        },
+        "src/database/ended-transaction-guard.ts": {
+          "seconds": 126.9,
+          "mutants": 35,
+          "detected": 25,
+          "valid": 26
+        },
+        "src/integration/ss12000-sync/client.ts": {
+          "seconds": 239.9,
+          "mutants": 398,
+          "detected": 248,
+          "valid": 393
+        },
+        "src/optimization/parallel-blocks.ts": {
+          "seconds": 160.9,
+          "mutants": 149,
+          "detected": 136,
+          "valid": 146
+        },
+        "src/optimization/regeneration-lock.ts": {
+          "seconds": 90.1,
+          "mutants": 92,
+          "detected": 72,
+          "valid": 88
+        },
+        "src/publication/draft.service.ts": {
+          "seconds": 5.2,
+          "mutants": 378,
+          "detected": 42,
+          "valid": 372
+        },
+        "src/publication/other-school-finding.ts": {
+          "seconds": 45.4,
+          "mutants": 212,
+          "detected": 118,
+          "valid": 201
+        },
+        "src/publication/public-viewer-throttler.guard.ts": {
+          "seconds": 12.1,
+          "mutants": 68,
+          "detected": 29,
+          "valid": 66
+        },
+        "src/sharing/room-loans.service.ts": {
+          "seconds": 11.5,
+          "mutants": 194,
+          "detected": 158,
+          "valid": 189
+        },
+        "src/staffing/duty-slot.ts": {
+          "seconds": 44.8,
+          "mutants": 63,
+          "detected": 58,
+          "valid": 62
+        },
+        "src/staffing/employment-log-diff.ts": {
+          "seconds": 6.7,
+          "mutants": 60,
+          "detected": 47,
+          "valid": 50
+        },
+        "src/staffing/staffing-enforcement.ts": {
+          "seconds": 317.1,
+          "mutants": 393,
+          "detected": 240,
+          "valid": 377
+        },
+        "src/timplan/year-timplans.ts": {
+          "seconds": 23.3,
+          "mutants": 111,
+          "detected": 74,
+          "valid": 107
+        }
+      }
+    },
+    {
+      "slice": 11,
+      "seconds": 2533.6,
+      "mutants": 2546,
+      "detected": 2159,
+      "valid": 2499,
+      "score": 86.39,
+      "floor": 85,
+      "files": {
+        "src/auth/roles.guard.ts": {
+          "seconds": 76.1,
+          "mutants": 97,
+          "detected": 88,
+          "valid": 91
+        },
+        "src/auth/signing-key.provider.ts": {
+          "seconds": 9,
+          "mutants": 20,
+          "detected": 15,
+          "valid": 20
+        },
+        "src/common/class-halves.ts": {
+          "seconds": 151.8,
+          "mutants": 60,
+          "detected": 52,
+          "valid": 60
+        },
+        "src/common/stretch.ts": {
+          "seconds": 432.9,
+          "mutants": 51,
+          "detected": 49,
+          "valid": 51
+        },
+        "src/common/teacher-day.ts": {
+          "seconds": 901.4,
+          "mutants": 277,
+          "detected": 240,
+          "valid": 266
+        },
+        "src/integration/ss12000-v2/errors.ts": {
+          "seconds": 20.6,
+          "mutants": 65,
+          "detected": 45,
+          "valid": 65
+        },
+        "src/optimization/free-day-wishes.ts": {
+          "seconds": 59.2,
+          "mutants": 61,
+          "detected": 52,
+          "valid": 53
+        },
+        "src/optimization/stored-conflicts.ts": {
+          "seconds": 132,
+          "mutants": 93,
+          "detected": 90,
+          "valid": 91
+        },
+        "src/resources/academic-year-bounds.ts": {
+          "seconds": 0.1,
+          "mutants": 3,
+          "detected": 3,
+          "valid": 3
+        },
+        "src/resources/availability-constraints.service.ts": {
+          "seconds": 17.5,
+          "mutants": 167,
+          "detected": 154,
+          "valid": 167
+        },
+        "src/resources/room-types.service.ts": {
+          "seconds": 6.6,
+          "mutants": 70,
+          "detected": 69,
+          "valid": 70
+        },
+        "src/resources/teaching-requirements.service.ts": {
+          "seconds": 78,
+          "mutants": 317,
+          "detected": 253,
+          "valid": 317
+        },
+        "src/staffing/scheduled-load.ts": {
+          "seconds": 28.7,
+          "mutants": 75,
+          "detected": 63,
+          "valid": 75
+        },
+        "src/supervision/pass-days.ts": {
+          "seconds": 36.3,
+          "mutants": 70,
+          "detected": 60,
+          "valid": 65
+        },
+        "src/timplan/generate-requirements.ts": {
+          "seconds": 317.9,
+          "mutants": 382,
+          "detected": 314,
+          "valid": 376
+        },
+        "src/users/users.service.ts": {
+          "seconds": 265.5,
+          "mutants": 738,
+          "detected": 612,
+          "valid": 729
+        }
+      }
+    },
+    {
+      "slice": 12,
+      "seconds": 2533.6,
+      "mutants": 5998,
+      "detected": 3598,
+      "valid": 5878,
+      "score": 61.21,
+      "floor": 60,
+      "files": {
+        "src/auth/huvudman.guard.ts": {
+          "seconds": 0,
+          "mutants": 35,
+          "detected": 0,
+          "valid": 35
+        },
+        "src/calendar-feed/calendar-feeds.service.ts": {
+          "seconds": 0,
+          "mutants": 113,
+          "detected": 0,
+          "valid": 113
+        },
+        "src/calendar/calendar.service.ts": {
+          "seconds": 252.1,
+          "mutants": 342,
+          "detected": 310,
+          "valid": 340
+        },
+        "src/common/grade-numbering.ts": {
+          "seconds": 459.9,
+          "mutants": 108,
+          "detected": 100,
+          "valid": 106
+        },
+        "src/database/pool-config.ts": {
+          "seconds": 339.8,
+          "mutants": 74,
+          "detected": 66,
+          "valid": 72
+        },
+        "src/family/family-reads.service.ts": {
+          "seconds": 21.7,
+          "mutants": 91,
+          "detected": 59,
+          "valid": 90
+        },
+        "src/family/leave.service.ts": {
+          "seconds": 82.6,
+          "mutants": 340,
+          "detected": 270,
+          "valid": 334
+        },
+        "src/huvudman/huvudman-ownership.service.ts": {
+          "seconds": 0,
+          "mutants": 64,
+          "detected": 0,
+          "valid": 64
+        },
+        "src/huvudman/huvudman.dto.ts": {
+          "seconds": 0,
+          "mutants": 0,
+          "detected": 0,
+          "valid": 0
+        },
+        "src/huvudman/huvudman.service.ts": {
+          "seconds": 0,
+          "mutants": 278,
+          "detected": 0,
+          "valid": 278
+        },
+        "src/integration/ss12000-sync/apply.ts": {
+          "seconds": 150.2,
+          "mutants": 602,
+          "detected": 446,
+          "valid": 599
+        },
+        "src/integration/ss12000-sync/dto.ts": {
+          "seconds": 0,
+          "mutants": 0,
+          "detected": 0,
+          "valid": 0
+        },
+        "src/notifications/notification-outbox.ts": {
+          "seconds": 0,
+          "mutants": 0,
+          "detected": 0,
+          "valid": 0
+        },
+        "src/optimization/staffing-proposal.service.ts": {
+          "seconds": 868.9,
+          "mutants": 1382,
+          "detected": 978,
+          "valid": 1364
+        },
+        "src/publication/draft-publish.ts": {
+          "seconds": 7.7,
+          "mutants": 350,
+          "detected": 28,
+          "valid": 341
+        },
+        "src/realtime/realtime.types.ts": {
+          "seconds": 0,
+          "mutants": 4,
+          "detected": 0,
+          "valid": 0
+        },
+        "src/resources/default-room-types.ts": {
+          "seconds": 0,
+          "mutants": 0,
+          "detected": 0,
+          "valid": 0
+        },
+        "src/sharing/sharing-errors.ts": {
+          "seconds": 11.2,
+          "mutants": 75,
+          "detected": 55,
+          "valid": 61
+        },
+        "src/staffing/duty-slot-year.ts": {
+          "seconds": 37.1,
+          "mutants": 10,
+          "detected": 10,
+          "valid": 10
+        },
+        "src/staffing/travel-load.ts": {
+          "seconds": 73.2,
+          "mutants": 190,
+          "detected": 124,
+          "valid": 185
+        },
+        "src/supervision/supervision.service.ts": {
+          "seconds": 130.3,
+          "mutants": 1142,
+          "detected": 688,
+          "valid": 1109
+        },
+        "src/timplan/local-timplans.service.ts": {
+          "seconds": 28.4,
+          "mutants": 344,
+          "detected": 258,
+          "valid": 336
+        },
+        "src/timplan/timplan-credits.service.ts": {
+          "seconds": 57.1,
+          "mutants": 234,
+          "detected": 164,
+          "valid": 229
+        },
+        "src/timplan/timplan-delivered-messages.ts": {
+          "seconds": 0,
+          "mutants": 95,
+          "detected": 0,
+          "valid": 93
+        },
+        "src/timplan/timplan-stage-messages.ts": {
+          "seconds": 13.4,
+          "mutants": 125,
+          "detected": 42,
+          "valid": 119
+        }
+      }
+    },
+    {
+      "slice": 13,
+      "seconds": 2535.1,
+      "mutants": 2507,
+      "detected": 1716,
+      "valid": 2250,
+      "score": 76.27,
+      "floor": 75,
+      "files": {
+        "src/auth/jwt.strategy.ts": {
+          "seconds": 13.7,
+          "mutants": 96,
+          "detected": 88,
+          "valid": 96
+        },
+        "src/auth/school-choice.ts": {
+          "seconds": 61.7,
+          "mutants": 53,
+          "detected": 34,
+          "valid": 38
+        },
+        "src/calendar/publish-days.ts": {
+          "seconds": 475.7,
+          "mutants": 173,
+          "detected": 163,
+          "valid": 173
+        },
+        "src/common/replacing-groups.ts": {
+          "seconds": 845.8,
+          "mutants": 265,
+          "detected": 218,
+          "valid": 261
+        },
+        "src/family/leave-notices.ts": {
+          "seconds": 73.5,
+          "mutants": 48,
+          "detected": 34,
+          "valid": 40
+        },
+        "src/gallring/retention.ts": {
+          "seconds": 1.7,
+          "mutants": 20,
+          "detected": 13,
+          "valid": 13
+        },
+        "src/integration/ss12000-sync/s1.ts": {
+          "seconds": 219.3,
+          "mutants": 357,
+          "detected": 259,
+          "valid": 337
+        },
+        "src/integration/ss12000-v2/subscriptions.service.ts": {
+          "seconds": 9.5,
+          "mutants": 198,
+          "detected": 16,
+          "valid": 189
+        },
+        "src/integration/ss12000-v2/webhook-delivery.service.ts": {
+          "seconds": 32.9,
+          "mutants": 152,
+          "detected": 79,
+          "valid": 143
+        },
+        "src/notifications/push-messages.ts": {
+          "seconds": 354.5,
+          "mutants": 364,
+          "detected": 163,
+          "valid": 193
+        },
+        "src/publication/cancellation-selection.ts": {
+          "seconds": 20.3,
+          "mutants": 93,
+          "detected": 76,
+          "valid": 93
+        },
+        "src/resources/lunch-servings.service.ts": {
+          "seconds": 9,
+          "mutants": 90,
+          "detected": 85,
+          "valid": 90
+        },
+        "src/staffing/duty-dates.ts": {
+          "seconds": 197.8,
+          "mutants": 107,
+          "detected": 83,
+          "valid": 107
+        },
+        "src/staffing/hr-visibility.ts": {
+          "seconds": 31.5,
+          "mutants": 33,
+          "detected": 25,
+          "valid": 25
+        },
+        "src/users/supabase-admin.service.ts": {
+          "seconds": 79.9,
+          "mutants": 228,
+          "detected": 191,
+          "valid": 224
+        },
+        "src/year-rollover/rollover-apply.ts": {
+          "seconds": 108.3,
+          "mutants": 230,
+          "detected": 189,
+          "valid": 228
+        }
+      }
+    },
+    {
+      "slice": 14,
+      "seconds": 2536.8,
+      "mutants": 3570,
+      "detected": 2422,
+      "valid": 3170,
+      "score": 76.4,
+      "floor": 75,
+      "files": {
+        "src/calendar/propagate-template.ts": {
+          "seconds": 188.6,
+          "mutants": 272,
+          "detected": 188,
+          "valid": 271
+        },
+        "src/calendar/schedule-versions.service.ts": {
+          "seconds": 109.1,
+          "mutants": 179,
+          "detected": 174,
+          "valid": 179
+        },
+        "src/calendar/travel-warnings.ts": {
+          "seconds": 52.4,
+          "mutants": 184,
+          "detected": 136,
+          "valid": 182
+        },
+        "src/common/subject-distribution.ts": {
+          "seconds": 381.7,
+          "mutants": 127,
+          "detected": 123,
+          "valid": 126
+        },
+        "src/cover/teacher-absences.service.ts": {
+          "seconds": 103.4,
+          "mutants": 648,
+          "detected": 387,
+          "valid": 638
+        },
+        "src/integration/integration-key.guard.ts": {
+          "seconds": 7.9,
+          "mutants": 31,
+          "detected": 31,
+          "valid": 31
+        },
+        "src/integration/ss12000-sync/connection.ts": {
+          "seconds": 11.9,
+          "mutants": 38,
+          "detected": 33,
+          "valid": 38
+        },
+        "src/notifications/devices.service.ts": {
+          "seconds": 3.9,
+          "mutants": 35,
+          "detected": 30,
+          "valid": 33
+        },
+        "src/resources/lunch-sittings.service.ts": {
+          "seconds": 24.3,
+          "mutants": 99,
+          "detected": 96,
+          "valid": 99
+        },
+        "src/resources/subjects.service.ts": {
+          "seconds": 10.3,
+          "mutants": 124,
+          "detected": 104,
+          "valid": 124
+        },
+        "src/staffing/unstaffed-requirements.ts": {
+          "seconds": 24,
+          "mutants": 16,
+          "detected": 8,
+          "valid": 16
+        },
+        "src/supervision/supervision-load.ts": {
+          "seconds": 481.9,
+          "mutants": 236,
+          "detected": 180,
+          "valid": 229
+        },
+        "src/timplan/timplan-stage-input.ts": {
+          "seconds": 64,
+          "mutants": 417,
+          "detected": 264,
+          "valid": 413
+        },
+        "src/year-rollover/projected-rosters.ts": {
+          "seconds": 814.3,
+          "mutants": 192,
+          "detected": 157,
+          "valid": 182
+        },
+        "src/year-rollover/rollover-registry.ts": {
+          "seconds": 40.7,
+          "mutants": 432,
+          "detected": 66,
+          "valid": 74
+        },
+        "src/year-rollover/rollover-staffing.ts": {
+          "seconds": 218.4,
+          "mutants": 540,
+          "detected": 445,
+          "valid": 535
+        }
+      }
+    },
+    {
+      "slice": 15,
+      "seconds": 2534.9,
+      "mutants": 3886,
+      "detected": 2741,
+      "valid": 3580,
+      "score": 76.56,
+      "floor": 75,
+      "files": {
+        "src/auth/admin-areas.ts": {
+          "seconds": 130.2,
+          "mutants": 256,
+          "detected": 48,
+          "valid": 63
+        },
+        "src/calendar-feed/ics.ts": {
+          "seconds": 10.8,
+          "mutants": 179,
+          "detected": 122,
+          "valid": 146
+        },
+        "src/calendar/block-lessons.ts": {
+          "seconds": 40.1,
+          "mutants": 75,
+          "detected": 62,
+          "valid": 74
+        },
+        "src/cover/cover-decisions.ts": {
+          "seconds": 81.1,
+          "mutants": 85,
+          "detected": 52,
+          "valid": 76
+        },
+        "src/cover/cover-reports.service.ts": {
+          "seconds": 22.8,
+          "mutants": 177,
+          "detected": 95,
+          "valid": 177
+        },
+        "src/family/family.service.ts": {
+          "seconds": 25.4,
+          "mutants": 124,
+          "detected": 113,
+          "valid": 124
+        },
+        "src/integration/ss12000-sync/ss12000-sync.providers.ts": {
+          "seconds": 7.9,
+          "mutants": 15,
+          "detected": 9,
+          "valid": 12
+        },
+        "src/integration/ss12000-v2/signing.ts": {
+          "seconds": 12.5,
+          "mutants": 33,
+          "detected": 28,
+          "valid": 33
+        },
+        "src/lesson-log/lesson-log.service.ts": {
+          "seconds": 73.5,
+          "mutants": 496,
+          "detected": 325,
+          "valid": 451
+        },
+        "src/notifications/notification-delivery.service.ts": {
+          "seconds": 379.7,
+          "mutants": 214,
+          "detected": 191,
+          "valid": 214
+        },
+        "src/optimization/same-times.ts": {
+          "seconds": 216.7,
+          "mutants": 203,
+          "detected": 164,
+          "valid": 198
+        },
+        "src/staffing/staffing-checks.ts": {
+          "seconds": 798.6,
+          "mutants": 328,
+          "detected": 277,
+          "valid": 321
+        },
+        "src/staffing/suggest-teachers.ts": {
+          "seconds": 173,
+          "mutants": 310,
+          "detected": 237,
+          "valid": 308
+        },
+        "src/timplan/timplan-requirements.service.ts": {
+          "seconds": 58.1,
+          "mutants": 315,
+          "detected": 245,
+          "valid": 312
+        },
+        "src/users/per-login-throttler.guard.ts": {
+          "seconds": 1.5,
+          "mutants": 19,
+          "detected": 12,
+          "valid": 17
+        },
+        "src/year-rollover/rollover-plan.ts": {
+          "seconds": 503,
+          "mutants": 1057,
+          "detected": 761,
+          "valid": 1054
+        }
+      }
+    },
+    {
+      "slice": 16,
+      "seconds": 2536.7,
+      "mutants": 5202,
+      "detected": 3453,
+      "valid": 5149,
+      "score": 67.06,
+      "floor": 66,
+      "files": {
+        "src/attendance/attendance.service.ts": {
+          "seconds": 53.3,
+          "mutants": 407,
+          "detected": 347,
+          "valid": 406
+        },
+        "src/common/lesson-lengths.ts": {
+          "seconds": 510.8,
+          "mutants": 126,
+          "detected": 112,
+          "valid": 124
+        },
+        "src/common/site-travel.ts": {
+          "seconds": 116.5,
+          "mutants": 195,
+          "detected": 148,
+          "valid": 194
+        },
+        "src/common/timplan-scheduled.ts": {
+          "seconds": 732.3,
+          "mutants": 625,
+          "detected": 501,
+          "valid": 622
+        },
+        "src/common/year-rollover.ts": {
+          "seconds": 406.3,
+          "mutants": 754,
+          "detected": 643,
+          "valid": 742
+        },
+        "src/cover/cover-rank.ts": {
+          "seconds": 65.4,
+          "mutants": 174,
+          "detected": 159,
+          "valid": 173
+        },
+        "src/cover/cover-settings.service.ts": {
+          "seconds": 30.1,
+          "mutants": 222,
+          "detected": 125,
+          "valid": 219
+        },
+        "src/cover/supervision-cover.service.ts": {
+          "seconds": 103.5,
+          "mutants": 552,
+          "detected": 249,
+          "valid": 545
+        },
+        "src/integration/integration-scope.guard.ts": {
+          "seconds": 6.2,
+          "mutants": 36,
+          "detected": 30,
+          "valid": 34
+        },
+        "src/integration/ss12000-v2/ss12000-v2.guard.ts": {
+          "seconds": 17.5,
+          "mutants": 96,
+          "detected": 55,
+          "valid": 92
+        },
+        "src/integration/ss12000.service.ts": {
+          "seconds": 147.7,
+          "mutants": 713,
+          "detected": 538,
+          "valid": 713
+        },
+        "src/publication/cancellation-batches.service.ts": {
+          "seconds": 3.5,
+          "mutants": 648,
+          "detected": 2,
+          "valid": 636
+        },
+        "src/publication/publication-validity.ts": {
+          "seconds": 278.6,
+          "mutants": 165,
+          "detected": 121,
+          "valid": 164
+        },
+        "src/resources/teacher-work-rules.service.ts": {
+          "seconds": 19.1,
+          "mutants": 175,
+          "detected": 155,
+          "valid": 173
+        },
+        "src/room-bookings/room-bookings.service.ts": {
+          "seconds": 36.5,
+          "mutants": 222,
+          "detected": 191,
+          "valid": 221
+        },
+        "src/staffing/teacher-qualifications.service.ts": {
+          "seconds": 9.4,
+          "mutants": 92,
+          "detected": 77,
+          "valid": 91
+        }
+      }
+    },
+    {
+      "slice": 17,
+      "seconds": 2536.8,
+      "mutants": 4776,
+      "detected": 3236,
+      "valid": 4517,
+      "score": 71.64,
+      "floor": 70,
+      "files": {
+        "src/auth/jwt-auth.guard.ts": {
+          "seconds": 15.7,
+          "mutants": 17,
+          "detected": 14,
+          "valid": 16
+        },
+        "src/calendar-feed/feed-token.ts": {
+          "seconds": 4,
+          "mutants": 10,
+          "detected": 10,
+          "valid": 10
+        },
+        "src/calendar/share-warnings.ts": {
+          "seconds": 29.7,
+          "mutants": 62,
+          "detected": 54,
+          "valid": 61
+        },
+        "src/common/timplan-cohorts.ts": {
+          "seconds": 150.1,
+          "mutants": 290,
+          "detected": 229,
+          "valid": 290
+        },
+        "src/config/configuration.ts": {
+          "seconds": 20.3,
+          "mutants": 91,
+          "detected": 79,
+          "valid": 88
+        },
+        "src/integration/ss12000-v2/attendance.ts": {
+          "seconds": 72.4,
+          "mutants": 118,
+          "detected": 73,
+          "valid": 106
+        },
+        "src/integration/ss12000-v2/model.ts": {
+          "seconds": 385,
+          "mutants": 510,
+          "detected": 298,
+          "valid": 436
+        },
+        "src/integration/ss12000-v2/query.ts": {
+          "seconds": 250.7,
+          "mutants": 415,
+          "detected": 255,
+          "valid": 343
+        },
+        "src/integration/ss12000-v2/ss12000-v2.service.ts": {
+          "seconds": 723.5,
+          "mutants": 2249,
+          "detected": 1530,
+          "valid": 2177
+        },
+        "src/optimization/consecutive-wishes.ts": {
+          "seconds": 82.9,
+          "mutants": 82,
+          "detected": 65,
+          "valid": 73
+        },
+        "src/optimization/other-school-busy.ts": {
+          "seconds": 58,
+          "mutants": 97,
+          "detected": 73,
+          "valid": 96
+        },
+        "src/resources/frame-times.service.ts": {
+          "seconds": 9.5,
+          "mutants": 90,
+          "detected": 84,
+          "valid": 90
+        },
+        "src/staffing/load-input.ts": {
+          "seconds": 563,
+          "mutants": 239,
+          "detected": 168,
+          "valid": 237
+        },
+        "src/staffing/staffing-policy.service.ts": {
+          "seconds": 6.7,
+          "mutants": 55,
+          "detected": 48,
+          "valid": 55
+        },
+        "src/timplan/publish-context.ts": {
+          "seconds": 36.6,
+          "mutants": 30,
+          "detected": 2,
+          "valid": 30
+        },
+        "src/year-rollover/year-rollover.service.ts": {
+          "seconds": 128.7,
+          "mutants": 421,
+          "detected": 254,
+          "valid": 409
+        }
+      }
+    },
+    {
+      "slice": 18,
+      "seconds": 2537,
+      "mutants": 2455,
+      "detected": 1704,
+      "valid": 2381,
+      "score": 71.57,
+      "floor": 70,
+      "files": {
+        "src/calendar/lesson-recurrence.ts": {
+          "seconds": 601.4,
+          "mutants": 100,
+          "detected": 98,
+          "valid": 100
+        },
+        "src/common/utils/time.ts": {
+          "seconds": 634.9,
+          "mutants": 86,
+          "detected": 58,
+          "valid": 65
+        },
+        "src/common/windowed-throttler-storage.ts": {
+          "seconds": 138.4,
+          "mutants": 100,
+          "detected": 65,
+          "valid": 99
+        },
+        "src/cover/pass-rank.ts": {
+          "seconds": 12.1,
+          "mutants": 39,
+          "detected": 35,
+          "valid": 39
+        },
+        "src/cover/supervision-cover-reads.ts": {
+          "seconds": 99.4,
+          "mutants": 330,
+          "detected": 102,
+          "valid": 329
+        },
+        "src/cover/supervision-notices.ts": {
+          "seconds": 24.9,
+          "mutants": 62,
+          "detected": 47,
+          "valid": 61
+        },
+        "src/database/prisma.service.ts": {
+          "seconds": 298.5,
+          "mutants": 120,
+          "detected": 89,
+          "valid": 119
+        },
+        "src/integration/ss12000-v2/huvudman-reads.ts": {
+          "seconds": 66.9,
+          "mutants": 505,
+          "detected": 310,
+          "valid": 490
+        },
+        "src/notifications/push-receipts.service.ts": {
+          "seconds": 11.5,
+          "mutants": 85,
+          "detected": 57,
+          "valid": 82
+        },
+        "src/optimization/candidate-variants.ts": {
+          "seconds": 23.4,
+          "mutants": 63,
+          "detected": 47,
+          "valid": 47
+        },
+        "src/optimization/locked-coverage.ts": {
+          "seconds": 52,
+          "mutants": 82,
+          "detected": 65,
+          "valid": 82
+        },
+        "src/optimization/room-eligibility.ts": {
+          "seconds": 411.1,
+          "mutants": 102,
+          "detected": 86,
+          "valid": 102
+        },
+        "src/publication/public-token.ts": {
+          "seconds": 3.9,
+          "mutants": 9,
+          "detected": 4,
+          "valid": 5
+        },
+        "src/resources/academic-years.service.ts": {
+          "seconds": 40.7,
+          "mutants": 330,
+          "detected": 300,
+          "valid": 328
+        },
+        "src/resources/national-codes.ts": {
+          "seconds": 7.1,
+          "mutants": 22,
+          "detected": 21,
+          "valid": 22
+        },
+        "src/supervision/supervision-coverage.ts": {
+          "seconds": 110.8,
+          "mutants": 420,
+          "detected": 320,
+          "valid": 411
+        }
+      }
+    },
+    {
+      "slice": 19,
+      "seconds": 2536.3,
+      "mutants": 4349,
+      "detected": 3029,
+      "valid": 4260,
+      "score": 71.1,
+      "floor": 70,
+      "files": {
+        "src/common/filters/http-exception.filter.ts": {
+          "seconds": 16.9,
+          "mutants": 198,
+          "detected": 174,
+          "valid": 189
+        },
+        "src/common/lesson-shares.ts": {
+          "seconds": 298.8,
+          "mutants": 185,
+          "detected": 170,
+          "valid": 184
+        },
+        "src/common/timplan-coverage.ts": {
+          "seconds": 604,
+          "mutants": 377,
+          "detected": 312,
+          "valid": 352
+        },
+        "src/import/import.service.ts": {
+          "seconds": 613.9,
+          "mutants": 1726,
+          "detected": 1457,
+          "valid": 1722
+        },
+        "src/integration/ss12000-sync/local-slice.ts": {
+          "seconds": 54.8,
+          "mutants": 227,
+          "detected": 82,
+          "valid": 226
+        },
+        "src/integration/ss12000-sync/ss12000-source.service.ts": {
+          "seconds": 3.1,
+          "mutants": 316,
+          "detected": 6,
+          "valid": 311
+        },
+        "src/jobs/job-runner.ts": {
+          "seconds": 105.1,
+          "mutants": 127,
+          "detected": 112,
+          "valid": 127
+        },
+        "src/publication/publication-gates.ts": {
+          "seconds": 19.7,
+          "mutants": 72,
+          "detected": 42,
+          "valid": 52
+        },
+        "src/realtime/realtime.gateway.ts": {
+          "seconds": 145.6,
+          "mutants": 143,
+          "detected": 131,
+          "valid": 139
+        },
+        "src/realtime/realtime.service.ts": {
+          "seconds": 35.3,
+          "mutants": 45,
+          "detected": 42,
+          "valid": 45
+        },
+        "src/resources/national-timplans.service.ts": {
+          "seconds": 6.2,
+          "mutants": 38,
+          "detected": 16,
+          "valid": 38
+        },
+        "src/resources/requirement-shares.ts": {
+          "seconds": 67.3,
+          "mutants": 66,
+          "detected": 36,
+          "valid": 58
+        },
+        "src/staffing/staff-lock.ts": {
+          "seconds": 9.5,
+          "mutants": 23,
+          "detected": 17,
+          "valid": 18
+        },
+        "src/staffing/staffing-load.service.ts": {
+          "seconds": 111,
+          "mutants": 382,
+          "detected": 201,
+          "valid": 379
+        },
+        "src/timplan/timplan-coverage.service.ts": {
+          "seconds": 414.9,
+          "mutants": 393,
+          "detected": 213,
+          "valid": 390
+        },
+        "src/timplan/timplan-scheduled-messages.ts": {
+          "seconds": 30.2,
+          "mutants": 31,
+          "detected": 18,
+          "valid": 30
+        }
+      }
+    }
+  ]
+}

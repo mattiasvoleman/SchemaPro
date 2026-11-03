@@ -20,7 +20,7 @@
     "test:unit": "TZ=UTC jest --selectProjects unit",
     "test:watch": "TZ=UTC jest --selectProjects unit --watch",
     "test:cov": "TZ=UTC jest --coverage --runInBand",
-    "test:mutation": "npm install --no-save --no-audit --no-fund @stryker-mutator/core@^9 @stryker-mutator/jest-runner@^9 && stryker run",
+    "test:mutation": "npm install --no-save --no-audit --no-fund @stryker-mutator/core@9.6.1 @stryker-mutator/jest-runner@9.6.1 @stryker-mutator/instrumenter@9.6.1 @stryker-mutator/api@9.6.1 typed-inject@5.0.0 && node scripts/mutation-slice.mjs",
     "test:e2e": "TZ=UTC jest --selectProjects e2e --runInBand",
     "prisma:generate": "prisma generate",
     "prisma:format": "prisma format",

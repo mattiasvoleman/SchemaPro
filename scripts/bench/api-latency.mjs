@@ -8,21 +8,22 @@
  * Drives autocannon against a *running* API and prints every scenario's p50,
  * p99, max and throughput, with §2's target beside it as information. The run
  * passes or fails on latency-gate.mjs: each authenticated read's throughput as
- * a share of the same run's GET /health/ready, and an absolute guard on health
- * itself. Absolute milliseconds on a shared runner move with the runner; that
- * module has the runs, the thresholds and why. Reads and writes are measured
- * separately because they have different cost profiles.
+ * a share of the same run's authenticated-read floor (FLOOR below), and an
+ * absolute guard on health and on the floor. Absolute milliseconds on a shared
+ * runner move with the runner, and so does health's throughput against a read's
+ * (it follows the CPU model the runner drew); that module has the runs, the
+ * thresholds and why. Reads and writes are measured separately because they
+ * have different cost profiles.
  *
  *   node scripts/bench/api-latency.mjs --url http://localhost:4000 \
  *     --token "$JWT" --academic-year "$YEAR" --write-body body.json --duration 20
  *
  * Exits 0 on PASS, 1 on FAIL and 2 on an invalid run: more than 1% non-2xx in
- * any row, or health or either read not measured.
+ * any row, or health, either read or the floor not measured.
  *
- * `--floor` (with `--floor-rounds`, default 3) also measures, after the other
- * scenarios and without gating it, the authenticated-read floor — see FLOOR.
- * Without it nothing new runs. `--json` prints the rows and the verdict as
- * JSON instead of the report.
+ * `--floor-rounds` (default 3) is the number of rounds of the floor, which run
+ * straight after the load scenarios and before the serial write — see FLOOR.
+ * `--json` prints the rows and the verdict as JSON instead of the report.
  *
  * Requires a real database behind the API: the numbers are meaningless against
  * a mocked Prisma layer, since the transaction and RLS cost is the thing being
@@ -56,10 +57,9 @@ const CONNECTIONS = Number(flag('--connections', '25'));
 const WRITE_BODY_FILE = flag('--write-body');
 const ACADEMIC_YEAR_ID = flag('--academic-year', process.env.ACADEMIC_YEAR_ID);
 const asJson = args.includes('--json');
-const MEASURE_FLOOR = args.includes('--floor');
 const FLOOR_ROUNDS = Number(flag('--floor-rounds', '3'));
 
-if (MEASURE_FLOOR && !(Number.isInteger(FLOOR_ROUNDS) && FLOOR_ROUNDS > 0)) {
+if (!(Number.isInteger(FLOOR_ROUNDS) && FLOOR_ROUNDS > 0)) {
   console.error('--floor-rounds must be a positive integer.');
   process.exit(2);
 }
@@ -91,15 +91,15 @@ const SCENARIOS = [
     // versions or optimization jobs — so their query matches no row, and their
     // distance above this row is that authenticated path.
     //
-    // It is also the gate's denominator. The reads are judged by their share
-    // of this row's throughput in the same run, which cancels the runner's
-    // speed, and this row alone keeps an absolute guard. The guard bounds the
-    // denominator without cancelling it: passing proves every read ≥ 200 req/s,
-    // and a window slowed but still inside it inflates every share alike.
+    // It was the gate's denominator until 2026-11-02 and is not now: how fast
+    // it runs against an authenticated read depends on the CPU the runner drew
+    // (a read's share of it was 0.12 on one model and 0.20 on another, same
+    // code), so it keeps an absolute guard and a printed share, and decides
+    // nothing else. latency-gate.mjs has the runs.
     request: { method: 'GET', path: '/health/ready' },
   },
   // The two authenticated reads are gated on their throughput as a share of
-  // health's, at ≥ 0.20; latency-gate.mjs has the five CI runs that set it.
+  // the floor's (FLOOR below); latency-gate.mjs has the runs that set it.
   // Their p99 is printed against §2's 50 ms and does not decide the run: on
   // the runner that target lies below the floor of every authenticated read,
   // which pays JWT verification, the identity lookup's transaction, the
@@ -177,12 +177,14 @@ const SCENARIOS = [
 ];
 
 /**
- * Measured in rounds only with --floor, and only after every other scenario
- * has run, so those run in the nightly's order and warm state. It is not
- * gated: the gate prints each round's share of health's throughput beside the
- * reads' and never fails on it. Its rows still count in the non-2xx check — a
- * floor made of 401s would be a flattering number. Its path is also what the
- * write's baseline samples serially, on every run.
+ * The gate's denominator, measured in rounds straight after the load scenarios
+ * and before the serial write, so the reads and the floor they are divided by
+ * run in the same stretch of the same machine's afternoon: 2026-11-02's
+ * calibration put the floor after the write, and a runner that sped up during
+ * the write's 100 s showed a read at 0.75 of it where the other eleven showed
+ * 0.89–0.97. The gate takes the median of the rounds. Its rows count in the
+ * non-2xx check — a floor made of 401s would be a flattering number. Its path
+ * is also what the write's baseline samples serially, on every run.
  *
  * FLOOR is the cheapest request that pays everything a real authenticated read
  * pays: token verification, the identity lookup's transaction, the guards and
@@ -192,7 +194,8 @@ const SCENARIOS = [
  * route on purpose: the stack runs the production image, which should neither
  * ship a benchmark-only route nor be measured with a module graph production
  * does not have. Several rounds, because their spread beside the two list rows
- * is the run's own noise.
+ * is the run's own noise, and the first of them, which follows a read, still
+ * ran 2–8% below the next two in all four older runs that measured them.
  */
 const FLOOR = {
   name: 'floor: GET /api/v1/schedule-versions (no matching row)',
@@ -314,6 +317,10 @@ const loadRow = (scenario, result) => ({
   rps: result.requests.average,
   totalRequests: result.requests?.total ?? 0,
   non2xx: result.non2xx ?? 0,
+  // Connections that failed and requests that timed out are not in `requests.total`; the
+  // gate counts them with the non-2xx answers, since a run that mostly failed measured nothing.
+  errors: result.errors ?? 0,
+  timeouts: result.timeouts ?? 0,
 });
 
 // Write scenarios need ids from a seeded database. Rather than invent them,
@@ -347,21 +354,22 @@ const runnable = SCENARIOS.filter((s) => {
 
 const results = [];
 
-for (const scenario of runnable) {
-  if (scenario.serialSamples) results.push(...(await runSerial(scenario)));
-  else results.push(loadRow(scenario, await load(scenario)));
+for (const scenario of runnable.filter((s) => !s.serialSamples)) {
+  results.push(loadRow(scenario, await load(scenario)));
 }
 
-if (MEASURE_FLOOR) {
-  for (let round = 1; round <= FLOOR_ROUNDS; round++) {
-    const scenario = {
-      ...FLOOR,
-      id: `floor:${round}`,
-      name: `${FLOOR.name}, round ${round}/${FLOOR_ROUNDS}`,
-      request: { ...FLOOR.request },
-    };
-    results.push(loadRow(scenario, await load(scenario)));
-  }
+for (let round = 1; round <= FLOOR_ROUNDS; round++) {
+  const scenario = {
+    ...FLOOR,
+    id: `floor:${round}`,
+    name: `${FLOOR.name}, round ${round}/${FLOOR_ROUNDS}`,
+    request: { ...FLOOR.request },
+  };
+  results.push(loadRow(scenario, await load(scenario)));
+}
+
+for (const scenario of runnable.filter((s) => s.serialSamples)) {
+  results.push(...(await runSerial(scenario)));
 }
 
 const verdict = gate(results);

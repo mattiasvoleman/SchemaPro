@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
-  "thresholds_comment": "Mutation testing for the API package. §2 of the engineering spec sets an 85% kill rate as the gate; `break` fails the run below it, so CI needs no extra assertion. `high`/`low` only colour the report. Stryker treats any `<option>_comment` key as documentation and ignores it.",
+  "thresholds_comment": "Mutation testing for the API package. §2 of the engineering spec sets an 85% kill rate as the target. `break` is 85 for a direct `npx stryker run`, which mutates the whole API (a day of runner time). The nightly does not run that: scripts/mutation-slice.mjs mutates one slice of twenty and writes a config for it whose `break` is the slice's own floor from scripts/mutation-slices.json (its measured score minus a point), so the job fails when that slice gets worse, not because the target is missed. `high`/`low` only colour the report. Stryker treats any `<option>_comment` key as documentation and ignores it.",
   "packageManager": "npm",
   "testRunner": "jest",
   "jest": {
@@ -9,7 +9,9 @@
     "enableFindRelatedTests": true
   },
   "coverageAnalysis": "perTest",
-  "ignorePatterns_comment": "Stryker copies the project into .stryker-tmp before mutating. In this monorepo an unrestricted sandbox tries to copy optimization-engine/.venv (138M), web/node_modules (439M) and mobile/node_modules (169M) — it never finishes. This whitelist keeps the sandbox to what the API package actually needs to run its unit tests. If a new top-level file becomes a test dependency, add it here or the run fails with a missing-module error.",
+  "ignoreStatic_comment": "A static mutant sits in code that runs when a module loads (a top-level constant, a lookup table, a decorator argument), so no single test reaches it and Stryker runs the whole suite for it. In the 20-slice run of 2026-11-02 (workflow run 41454768502) they were 1–12% of a slice's mutants and 42–94% of its test time (Stryker's own warning, typically about three quarters), which is why slices of the same mutant count took 21 to over 95 minutes. They are not run: the report lists them as Ignored and they count neither as killed nor as survived, so the score is the score of the mutants a test can reach. Stryker documents the option for this reason. What it gives up is the constants and tables no test can be pointed at; the number of ignored mutants is in each slice's report.",
+  "ignoreStatic": true,
+  "ignorePatterns_comment": "Stryker copies the project into .stryker-tmp before mutating. In this monorepo an unrestricted sandbox tries to copy optimization-engine/.venv (138M), web/node_modules (439M) and mobile/node_modules (169M) — it never finishes. This whitelist keeps the sandbox to what the API package actually needs to run its unit tests. If a new top-level file becomes a test dependency, add it here or the run fails with a missing-module error. After nest-cli.json come the files unit specs read from outside src/: contract specs that hold the gateway to the migrations, the web's messages and the app's types. Each entry is read by a spec Stryker runs, and without it that spec fails (checked by moving each out of the sandbox in turn): prisma/migrations/**/migration.sql (admin-areas, access-log and notification-types list the directory and read every migration; stretch, teacher-day, timplan-coverage, huvudman-reads, teacher-work-rules and sign-in/dto each name one), scripts/test/rls-policies.sql and generate-rls-area-matrix.ts and web/lib/admin-areas.ts (admin-areas: the web's copy of the matrix, and the block generated into the RLS suite), web/messages/{sv,en}.json (access-log, notification-types, staffing-checks), web/i18n/__fixtures__/engine-messages.json (staffing-checks, catalogue-sentences), and one file each for access-log, notification-types, sign-in/dto and ss12000-v2/attendance. Stryker runs only the specs that import a mutated file (jest.enableFindRelatedTests), so a spec that reads files but imports none, product-name.spec.ts, needs no entry. The specs stay in the run: each holds a mutant in src/ against a file outside it. Find the next missing entry with `npx stryker run --dryRunOnly`, which names the path. A bracket in a path is escaped, because the patterns are globs.",
   "ignorePatterns": [
     "**",
     "!src/**",
@@ -21,9 +23,25 @@
     "!tsconfig.build.json",
     "!jest.base.js",
     "!jest.mutation.config.js",
-    "!nest-cli.json"
+    "!nest-cli.json",
+    "!prisma/migrations/**/migration.sql",
+    "!scripts/test/generate-rls-area-matrix.ts",
+    "!scripts/test/rls-policies.sql",
+    "!web/lib/admin-areas.ts",
+    "!web/lib/notification-preferences-queries.ts",
+    "!web/components/layout/notification-bell.tsx",
+    "!web/messages/sv.json",
+    "!web/messages/en.json",
+    "!web/i18n/__fixtures__/engine-messages.json",
+    "!web/app/\\[locale\\]/(app)/admin/dataskydd/use-access-log.ts",
+    "!web/app/\\[locale\\]/(app)/admin/integrations/sign-in-types.ts",
+    "!web/app/\\[locale\\]/(app)/admin/reports/attendance-report.tsx",
+    "!mobile/src/services/notificationText.ts",
+    "!mobile/src/types/index.ts",
+    "!mobile/src/i18n/sv.ts",
+    "!mobile/src/i18n/en.ts"
   ],
-  "mutate_comment": "Mutated is what a unit spec can observe, because unit specs are all Stryker runs (jest.mutation.config.js: src/**/*.spec.ts, never test/*.e2e-spec.ts). Left out on that principle, not by score. Bootstrap and wiring that only exists once Nest has built the application: main.ts, *.module.ts, and common/http-defaults.ts, which hands constant body-parser limits to the live Express instance and is proven by test/payload-limits.e2e-spec.ts. Controllers: their contract (route, guards, pipes, status code, throttling) lives in the request pipeline the e2e suite drives, so a unit spec calling a handler as a plain method skips exactly what makes it a controller; logic a controller grows belongs in a service, where it is mutated. auth/decorators: SetMetadata and createParamDecorator wrappers whose only output is metadata the guards read inside that pipeline. Anything that decides something stays in even while no spec reaches it: the guards, realtime/cors-io.adapter.ts (allowlist or no origin), config/configuration.ts (a pure function of the environment), the event names in realtime.types.ts, subjects.service.ts. The dto/, interfaces/ and enums/ exclusions predate this note and are not argued by it.",
+  "mutate_comment": "Mutated is what a unit spec can observe, because unit specs are all Stryker runs (jest.mutation.config.js: src/**/*.spec.ts, never test/*.e2e-spec.ts). Left out on that principle, not by score. Bootstrap and wiring that only exists once Nest has built the application: main.ts, *.module.ts, and common/http-defaults.ts, which hands constant body-parser limits to the live Express instance and is proven by test/payload-limits.e2e-spec.ts. Controllers: their contract (route, guards, pipes, status code, throttling) lives in the request pipeline the e2e suite drives, so a unit spec calling a handler as a plain method skips exactly what makes it a controller; logic a controller grows belongs in a service, where it is mutated. auth/decorators: SetMetadata and createParamDecorator wrappers whose only output is metadata the guards read inside that pipeline. Anything that decides something stays in even while no spec reaches it: the guards, realtime/cors-io.adapter.ts (allowlist or no origin), config/configuration.ts (a pure function of the environment), the event names in realtime.types.ts, subjects.service.ts. The dto/, interfaces/ and enums/ exclusions predate this note and are not argued by it. Generated files (*.generated.ts) are left out too: src/integration/ss12000-v2/s1-provider.generated.ts is S1's OpenAPI schemas and parameter lists as a data module, 3,225 of the API's 73,861 mutants, and a mutant in it changes what the generator wrote, not anything a test of the gateway holds to account. Which of the rest is mutated on a given night is scripts/mutation-slice.mjs's business: it reads this list and deals the files into slices.",
   "mutate": [
     "src/**/*.ts",
     "!src/**/*.spec.ts",
@@ -34,7 +52,8 @@
     "!src/common/http-defaults.ts",
     "!src/**/dto/**",
     "!src/**/interfaces/**",
-    "!src/**/enums/**"
+    "!src/**/enums/**",
+    "!src/**/*.generated.ts"
   ],
   "thresholds": {
     "high": 95,
@@ -44,7 +63,8 @@
   "reporters": ["progress", "clear-text", "html", "json"],
   "htmlReporter": { "fileName": "reports/mutation/index.html" },
   "jsonReporter": { "fileName": "reports/mutation/mutation.json" },
-  "timeoutMS": 60000,
+  "timeoutMS_comment": "How long a mutant may run beyond 1.5 times the net time of the tests that cover it, before Stryker calls it a Timeout (which counts as detected). 60 s killed the runner, so it is 10 s, and the limit is a memory guard more than a time limit: do not raise it. On 2026-11-02 the slice that held src/notifications/notification-delivery.service.ts ended four times at the same mutant with 'The runner has received a shutdown signal'; bisecting by line range on CI narrowed it to the 14 mutants wholly inside lines 201-215 of that file (run 41554633962), where the job died with 60 s, with one worker, with a 1 GB heap and with two workers, and went through in about a minute with 8 s and 3 s. The mechanism was found afterwards by running the mutants against that file's digest test: `if (notice.userId !== target.user_id) continue;` on line 213, turned into `if (false) continue;` (and `===`), makes push() build a message for every pair of recipient and notice, 1,203 x 1,203, about 1.45 million messages and their formatted text, in a test of a whole-school digest. On a laptop that was 3,352 MiB after 5 s and 7,089 MiB after 10 s, outside V8's heap limit, which is why a 1 GB or 3 GB heap cap did nothing; no network is reached, the transport is mocked. Four workers and two such mutants side by side are more than a 16 GB runner holds, and the limit has to end the process before they get there. The square itself is in the code and is a follow-up, not part of this change. A Timeout is detected, so a shorter limit can raise a score and not lower it, and it shortens the slices, whose seconds in scripts/mutation-slices.json were measured at 60 s; only slices 0, 2, 11 and 15 and the nine files of slice 14 have been run at 10 s.",
+  "timeoutMS": 10000,
   "concurrency": 4,
   "tempDirName": ".stryker-tmp"
 }
