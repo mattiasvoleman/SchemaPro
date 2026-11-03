@@ -480,6 +480,19 @@ describe('StudentGroupsService', () => {
     const savepoints = () =>
       tx.$executeRaw.mock.calls.map(([strings]) => (strings as readonly string[]).join('?'));
 
+    /**
+     * A bulk statement's answer as Prisma gives it: the rows it wrote, here
+     * every row its `id in` names. writeAll tries the rows one by one when
+     * the count falls short, so an unstubbed statement would not pass as one.
+     */
+    const writesEveryRowNamed = ({ where }: { where?: { id?: { in?: string[] } } }) =>
+      Promise.resolve({ count: where?.id?.in?.length ?? 0 });
+
+    beforeEach(() => {
+      tx.studentGroup.updateMany.mockImplementation(writesEveryRowNamed);
+      tx.studentGroup.deleteMany.mockImplementation(writesEveryRowNamed);
+    });
+
     describe('bulkUpdate', () => {
       it('refuses a body whose changes name nothing before it opens a transaction', async () => {
         await expect(service.bulkUpdate({ ids: [G1], changes: {} }, user)).rejects.toThrow(BadRequestException);
@@ -572,6 +585,25 @@ describe('StudentGroupsService', () => {
           data: { gradeLevel: null, replacesSubjectId: null },
         });
         expect(tx.subject.findUnique).not.toHaveBeenCalled();
+      });
+
+      it('refuses a group another request deleted after the read, by name, rather than counting it done unwritten', async () => {
+        givenGroups(teachingGroup(G1), teachingGroup(G2));
+        // The groups are read without a lock: G2 goes before the UPDATE, which passes over it.
+        tx.studentGroup.updateMany.mockResolvedValueOnce({ count: 1 });
+        tx.studentGroup.update.mockImplementation(({ where }: { where: { id: string } }) =>
+          where.id === G2 ? Promise.reject(prismaError('P2025')) : Promise.resolve({ id: where.id }),
+        );
+
+        const result = await service.bulkUpdate({ ids: [G1, G2], changes: { gradeLevel: 7 } }, user);
+
+        expect(result).toEqual({
+          applied: false,
+          dryRun: false,
+          done: [G1],
+          refused: [{ id: G2, code: 'BULK_ROW_NOT_FOUND', message: 'The requested record does not exist.' }],
+        });
+        await expectRolledBack();
       });
 
       it('names an id that is not there and writes nothing: the report, applied false, the rest in done', async () => {

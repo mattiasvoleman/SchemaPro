@@ -159,6 +159,24 @@ describe('bulk', () => {
       ]);
     });
 
+    it('tries the rows one by one when the whole wrote fewer than it named, and refuses the one not found', async () => {
+      // B deleted by another request since it was read, or not the caller's to write under RLS.
+      const { tx, statements } = fakeTx();
+      const whole = jest.fn().mockResolvedValue({ count: 2 });
+      const one = jest.fn((id: string) => (id === B ? Promise.reject(prismaError('P2025')) : Promise.resolve({ id })));
+      const refused = await writeAll(tx, [A, B, C], whole, one);
+      expect(refused).toEqual([{ id: B, code: BULK_ROW_NOT_FOUND, message: 'The requested record does not exist.' }]);
+      expect(statements.slice(0, 2)).toEqual(['SAVEPOINT bulk_whole', 'ROLLBACK TO SAVEPOINT bulk_whole']);
+      expect(one).toHaveBeenCalledTimes(3);
+    });
+
+    it('writes every row one by one when a short whole finds them all after all', async () => {
+      const { tx } = fakeTx();
+      const one = jest.fn().mockResolvedValue({});
+      await expect(writeAll(tx, [A, B], jest.fn().mockResolvedValue({ count: 1 }), one)).resolves.toEqual([]);
+      expect(one).toHaveBeenCalledTimes(2);
+    });
+
     it('rethrows the whole statement\'s error when every row passes alone', async () => {
       const { tx } = fakeTx();
       const error = prismaError('P2002');

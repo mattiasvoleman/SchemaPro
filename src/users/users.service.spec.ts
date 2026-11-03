@@ -1698,6 +1698,14 @@ describe('UsersService', () => {
       Object.assign(tx, { $queryRaw: queryRaw });
     };
 
+    /**
+     * A bulk statement's answer as Prisma gives it: the rows it wrote, here
+     * every row its `id in` names. writeAll tries the rows one by one when
+     * the count falls short, so an unstubbed statement would not pass as one.
+     */
+    const writesEveryRowNamed = ({ where }: { where?: { id?: { in?: string[] } } }) =>
+      Promise.resolve({ count: where?.id?.in?.length ?? 0 });
+
     beforeEach(() => {
       table = [pupil(P1), pupil(P2), pupil(P3), staff(TEACHER, 'TEACHER')];
       heldLogins = new Set();
@@ -1708,6 +1716,8 @@ describe('UsersService', () => {
         { deliver } as unknown as NotificationsService,
       );
       tx.studentGroup.findUnique.mockResolvedValue({ kind: 'CLASS' });
+      tx.user.updateMany.mockImplementation(writesEveryRowNamed);
+      tx.user.deleteMany.mockImplementation(writesEveryRowNamed);
     });
 
     /** The transaction of the last withRls call: it rejects when its body threw, which rolls it back. */

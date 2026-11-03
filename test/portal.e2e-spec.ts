@@ -500,6 +500,22 @@ describe('Portal and platform surfaces (e2e)', () => {
       const post = (path: string, body: unknown) =>
         request(http()).post(path).set('x-test-user', admin()).send(body as object);
       const manyIds = (count: number) => Array.from({ length: count }, () => randomUUID());
+
+      /*
+       * A bulk statement answers with the rows it wrote, here every row its
+       * `id in` names: writeAll tries the rows one by one when the count
+       * falls short. Reset after, since the harness outlives the test.
+       */
+      const writesEveryRowNamed = ({ where }: { where?: { id?: { in?: string[] } } }) =>
+        Promise.resolve({ count: where?.id?.in?.length ?? 0 });
+      beforeEach(() => {
+        harness.tx['user']!['updateMany']!.mockImplementation(writesEveryRowNamed);
+        harness.tx['user']!['deleteMany']!.mockImplementation(writesEveryRowNamed);
+      });
+      afterEach(() => {
+        harness.tx['user']!['updateMany']!.mockReset();
+        harness.tx['user']!['deleteMany']!.mockReset();
+      });
       const pupil = (id: string, overrides: Record<string, unknown> = {}) => ({
         id,
         role: 'STUDENT',

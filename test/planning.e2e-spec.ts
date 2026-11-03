@@ -368,6 +368,22 @@ describe('Planning surface (e2e)', () => {
         request(http()).post(path).set('x-test-user', admin()).send(body as object);
       const groups = () => harness.tx['studentGroup']!;
 
+      /*
+       * A bulk statement answers with the rows it wrote, here every row its
+       * `id in` names: writeAll tries the rows one by one when the count
+       * falls short. Reset after, since the harness outlives the test.
+       */
+      const writesEveryRowNamed = ({ where }: { where?: { id?: { in?: string[] } } }) =>
+        Promise.resolve({ count: where?.id?.in?.length ?? 0 });
+      beforeEach(() => {
+        harness.tx['studentGroup']!['updateMany']!.mockImplementation(writesEveryRowNamed);
+        harness.tx['studentGroup']!['deleteMany']!.mockImplementation(writesEveryRowNamed);
+      });
+      afterEach(() => {
+        harness.tx['studentGroup']!['updateMany']!.mockReset();
+        harness.tx['studentGroup']!['deleteMany']!.mockReset();
+      });
+
       it('answers a dry-run delete 200 with the report and what goes with the groups', async () => {
         // The groups themselves, then the halves of a class the call does not name.
         groups()['findMany']!

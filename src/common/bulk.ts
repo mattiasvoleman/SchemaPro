@@ -154,38 +154,50 @@ export function refusalOf(id: string, error: unknown): BulkRefusal | null {
  *
  * When every row passes alone but not together, that is no row's refusal
  * and the whole statement's error is rethrown, as the single route would.
+ *
+ * A WHOLE THAT WROTE FEWER ROWS THAN IT NAMED is tried row by row too. An
+ * updateMany or deleteMany passes over a row it does not find: one deleted
+ * by another request since the caller read it (a group's rows are read
+ * without a lock), or one RLS lets the caller read but not write. The
+ * single route answers both with a 404 (P2025), and so does `one` here, so
+ * the row is refused by name and nothing is applied, rather than counted as
+ * done unwritten. Should every row then pass alone, all of them are written.
  */
 export async function writeAll(
   tx: PrismaClient,
   rows: readonly string[],
-  whole: (ids: string[]) => Promise<unknown>,
+  whole: (ids: string[]) => Promise<{ count: number }>,
   one: (id: string) => Promise<unknown>,
 ): Promise<BulkRefusal[]> {
   if (rows.length === 0) return [];
   await tx.$executeRaw`SAVEPOINT bulk_whole`;
+  let failure: { error: unknown } | null = null;
   try {
-    await whole([...rows]);
-    await tx.$executeRaw`RELEASE SAVEPOINT bulk_whole`;
-    return [];
-  } catch (error) {
-    await tx.$executeRaw`ROLLBACK TO SAVEPOINT bulk_whole`;
-    if (refusalOf('', error) === null) throw error;
-    const refused: BulkRefusal[] = [];
-    for (const id of rows) {
-      await tx.$executeRaw`SAVEPOINT bulk_row`;
-      try {
-        await one(id);
-        await tx.$executeRaw`RELEASE SAVEPOINT bulk_row`;
-      } catch (rowError) {
-        await tx.$executeRaw`ROLLBACK TO SAVEPOINT bulk_row`;
-        const refusal = refusalOf(id, rowError);
-        if (!refusal) throw rowError;
-        refused.push(refusal);
-      }
+    const written = await whole([...rows]);
+    if (written.count === rows.length) {
+      await tx.$executeRaw`RELEASE SAVEPOINT bulk_whole`;
+      return [];
     }
-    if (refused.length === 0) throw error;
-    return refused;
+  } catch (error) {
+    failure = { error };
   }
+  await tx.$executeRaw`ROLLBACK TO SAVEPOINT bulk_whole`;
+  if (failure && refusalOf('', failure.error) === null) throw failure.error;
+  const refused: BulkRefusal[] = [];
+  for (const id of rows) {
+    await tx.$executeRaw`SAVEPOINT bulk_row`;
+    try {
+      await one(id);
+      await tx.$executeRaw`RELEASE SAVEPOINT bulk_row`;
+    } catch (rowError) {
+      await tx.$executeRaw`ROLLBACK TO SAVEPOINT bulk_row`;
+      const refusal = refusalOf(id, rowError);
+      if (!refusal) throw rowError;
+      refused.push(refusal);
+    }
+  }
+  if (refused.length === 0 && failure) throw failure.error;
+  return refused;
 }
 
 /** Thrown inside the transaction to roll it back with the report in hand. */
