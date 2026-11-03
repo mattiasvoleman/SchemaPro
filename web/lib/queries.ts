@@ -894,6 +894,14 @@ export interface OptimizationJob {
    * other reader; absent from a gateway before Lärarens dag.
    */
   conflictSummaryNames?: string[];
+  /**
+   * The longest a run can take, in seconds: how long the gateway waits for the
+   * engine (AI_ENGINE_TIMEOUT_MS), which the page quotes while a run is going
+   * instead of a number written into a sentence. Absent from a gateway before
+   * this field, and before the first read of a run just started, which then
+   * reads as "a few minutes".
+   */
+  waitSeconds?: number;
   conflicts: ConflictDetail[];
   /**
    * What a FINISHED run could not keep of the soft wishes (Lärarens dag:

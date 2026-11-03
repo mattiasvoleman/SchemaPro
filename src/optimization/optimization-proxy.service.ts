@@ -1087,6 +1087,18 @@ export class OptimizationProxyService {
   private readonly logger = new Logger(OptimizationProxyService.name);
   private readonly aiConfig: AiEngineConfig;
 
+  /**
+   * The longest a run can take, in whole seconds: how long the API waits for
+   * the engine before it gives the call up (AI_ENGINE_TIMEOUT_MS). The engine
+   * answers a timed-out solve after its own budget and its probe, which this
+   * must exceed (docs/DEPLOYMENT.md), so it is the honest upper bound to put
+   * in front of someone watching the spinner — read from the configuration the
+   * wait is enforced by, not written into a sentence that outlives it.
+   */
+  get waitSeconds(): number {
+    return Math.ceil(this.aiConfig.timeoutMs / 1000);
+  }
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly http: HttpService,

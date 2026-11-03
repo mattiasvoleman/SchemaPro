@@ -443,6 +443,46 @@ describe("every timplanspost has a teacher (Fas 2 pre-flight)", () => {
   });
 });
 
+describe("the wait quoted while a run is going", () => {
+  const runButton = () => screen.getByRole("button", { name: /generate\.run/ });
+  const going = (waitSeconds?: number) => ({
+    id: "job-9",
+    status: "RUNNING",
+    solverStatus: null,
+    lessonsGenerated: 0,
+    conflictSummary: null,
+    conflictSummaryCode: null,
+    conflictSummaryParams: null,
+    conflicts: [],
+    createdAt: "2026-11-03T10:00:00.000Z",
+    ...(waitSeconds === undefined ? {} : { waitSeconds }),
+  });
+
+  it("reads the gateway's wait and rounds it up to whole minutes", () => {
+    // 240 s is a 180 s budget with its probe and the headroom: four minutes.
+    state.job = going(240);
+    render(<GeneratePage />);
+
+    expect(within(runButton()).getByText("generate.runningUpTo(4)")).toBeInTheDocument();
+    expect(screen.queryByText("generate.running")).toBeNull();
+  });
+
+  it("rounds a part of a minute up, never down to a number that would be passed", () => {
+    state.job = going(61);
+    render(<GeneratePage />);
+
+    expect(within(runButton()).getByText("generate.runningUpTo(2)")).toBeInTheDocument();
+  });
+
+  it("claims no number it was not given: an older gateway, or a run not yet read", () => {
+    state.job = going();
+    render(<GeneratePage />);
+
+    expect(within(runButton()).getByText("generate.running")).toBeInTheDocument();
+    expect(screen.queryByText(/runningUpTo/)).toBeNull();
+  });
+});
+
 describe("a run that hit the time limit", () => {
 
   it("shows what the probe measured, with its own label", () => {
