@@ -1050,7 +1050,7 @@
       "under": "below target",
       "none": "no national comparison"
     },
-    "legend": "Green meets the target. Amber is below the target but within what the school's choice may take. Red is below the target where the ordinance does not allow it: a protected subject, more than the cap, or a science or social studies subject under its minimum. When the plan's year span covers only part of a stage, it is compared with its share of the stage, and below that is amber, never red.",
+    "legend": "Green meets the target. Amber is below the target but within what the school's choice may take. Red is below the target where the ordinance does not allow it: a protected subject, more than the cap, or a science or social studies subject under its minimum. When the plan's year span covers only part of a stage, it is compared with its share of the stage, and below that is amber, never red. In the footer, amber is a note: the total or the pool is missed only because of the stages the plan holds in part.",
     "countedHeading": "Counts as teaching time",
     "notCountedHeading": "Does not count as teaching time",
     "notCountedHint": "Mentor time, resource time and the like. The minutes are saved but join no total.",
