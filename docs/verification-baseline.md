@@ -21,8 +21,8 @@ could be evaluated at all.
 
 | Gate | Status |
 | :--- | :--- |
-| API dependency audit | ✓ pass (0/0/0) |
-| Mobile dependency audit | ✓ pass (12 advisories allowlisted: zod, with no patch in the range the Expo CLI declares, and 11 whose fix is a new major (glob, minimatch) or younger than the seven-day rule (nine node-forge, which a plain lockfile bump takes once 1.4.1 is admitted on 2026-11-03); leases expire 2026-11-05, zod's and GHSA-86w9-cpqp-85rv's 2026-11-20; braces and sprintf-js are no longer reported and image-size left with Expo SDK 57, measured 2026-11-01) |
+| API dependency audit | ✓ pass (0 failing; 1 advisory allowlisted: minimatch 3.1.5, pinned through ^3 by fork-ts-checker-webpack-plugin 9 and by test-exclude 6 and glob 7 under jest, which call the module as a function and cannot take the patched 11.0.1; dev-only, lease expires 2026-12-03; glob 14.0.2 and minimatch 11.0.1 are locked by overrides since 2026-11-03; braces and sprintf-js still hold leases to 2026-11-20 but are no longer reported, measured 2026-11-03) |
+| Mobile dependency audit | ✓ pass (2 advisories allowlisted: zod, with no patch in the range the Expo CLI declares, lease expires 2026-11-20; and minimatch 3.1.5 under jest, which test-exclude 6 pins by calling the module as a function so it cannot take the patched 11.0.1, test time only, lease expires 2026-12-03; glob 14.0.2 and minimatch 11.0.1 are locked by overrides under the five @expo packages since 2026-11-03, and the nine node-forge entries are gone since #234 locked 1.4.2; braces and sprintf-js are no longer reported and image-size left with Expo SDK 57, measured 2026-11-03) |
 | WCAG 2.1 AA (axe-core) | ✓ pass (10/10, one real defect fixed) |
 | Visual regression | ✓ pass (16/16 on linux-x64 baselines) |
 | API coverage | ✗ 95.09% vs 95% (ratcheted at 95; remainder is module wiring) |
@@ -1588,8 +1588,8 @@ a test of their own, since the other cases require that something is priced.
 | Metric | Target | Measured | Status |
 | :--- | :--- | :--- | :--- |
 | RLS / tenancy policies | no cross-tenant leak | **all assertions pass** | ✓ |
-| API dependency audit | 0 critical/high/moderate | **0 / 0 / 0** | ✓ |
-| Mobile dependency audit | 0 critical/high/moderate | **0 failing** (12 suppressed — zod has no patch in range, the rest are fixes that are a new major or younger than the seven-day rule; build-time-only surface; expiring allowlist; measured 2026-11-01) | ✓ |
+| API dependency audit | 0 critical/high/moderate | **0 failing** (1 suppressed — minimatch 3.1.5 under jest and @nestjs/cli's fork-ts-checker-webpack-plugin, which cannot take the patched 11.0.1; dev-only surface; expiring allowlist; measured 2026-11-03) | ✓ |
+| Mobile dependency audit | 0 critical/high/moderate | **0 failing** (2 suppressed — zod has no patch in range, minimatch 3.1.5 under jest cannot take the patched 11.0.1; build-time and test-time-only surface; expiring allowlist; measured 2026-11-03) | ✓ |
 | Web dependency audit | 0 critical/high/moderate | **0 / 0 / 0** | ✓ |
 | Solver dependency audit (`pip-audit`) | 0 critical/high/moderate | not measured | — |
 | Semgrep SAST | 0 findings | not measured | — |
