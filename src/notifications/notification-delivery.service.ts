@@ -186,13 +186,23 @@ export class NotificationDeliveryService {
     const groups = new Map<string, PushNotice[]>();
     for (const notice of notices.values()) {
       const key = `${notice.schoolId}|${notice.type}|${notice.required}`;
-      groups.set(key, [...(groups.get(key) ?? []), notice]);
+      const group = groups.get(key);
+      if (group) group.push(notice);
+      else groups.set(key, [notice]);
     }
 
     const bySchool = new Map<string, Array<{ message: ExpoMessage; tokenId: string }>>();
     for (const group of groups.values()) {
       const { schoolId, type, required } = group[0]!;
-      const people = [...new Set(group.map((n) => n.userId))];
+      // Each person's notices, found by the person: a device is given its owner's, and a
+      // whole-school digest is not read once per device (1,800 people twice over, 1,800 times each).
+      const noticesOf = new Map<string, PushNotice[]>();
+      for (const notice of group) {
+        const own = noticesOf.get(notice.userId);
+        if (own) own.push(notice);
+        else noticesOf.set(notice.userId, [notice]);
+      }
+      const people = [...noticesOf.keys()];
       const targets: PushTarget[] = [];
       // A whole-school digest is one group of some 1,800 people: asked 500 at a time.
       for (let at = 0; at < people.length; at += RECIPIENT_CHUNK) {
@@ -209,8 +219,7 @@ export class NotificationDeliveryService {
       const out = bySchool.get(schoolId) ?? [];
       for (const target of targets) {
         const locale: PushLocale = target.locale === 'en' ? 'en' : 'sv';
-        for (const notice of group) {
-          if (notice.userId !== target.user_id) continue;
+        for (const notice of noticesOf.get(target.user_id) ?? []) {
           const text = pushText(notice.kind, notice.meta, locale, target.timezone, notice.count);
           out.push({
             tokenId: target.token_id,
