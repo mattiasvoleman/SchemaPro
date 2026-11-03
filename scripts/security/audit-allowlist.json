@@ -15,18 +15,11 @@
       "expires": "2026-11-20"
     },
     {
-      "id": "GHSA-3g3m-2fjr-6pw4",
-      "package": "glob",
-      "reason": "Patched only in glob 14.0.2 (published 2026-10-27T22:07Z; the seven-day rule admits it from 2026-11-03T22:07Z), a new major for every consumer here. The advisory matches glob >=9.0.0 <=14.0.1, so only glob 13.0.6 (node_modules/glob) is affected; the glob 7.2.3 copies under jest are outside that range and are flagged only through their minimatch ^3 dependency (see GHSA-g3hv-75wg-m249). glob 13.0.6 is reached only through @nestjs/cli (a devDependency, pinned there exactly as glob 13.0.6), which runs `nest build`; `npm prune --omit=dev` leaves it out of the production image. The bypass keeps walking after an AbortSignal fires, and nothing here passes an AbortSignal or a request-supplied pattern to glob, so the surface is the build's own patterns on this repository's own files. The later bump has to settle whether glob 14.0.2 can be forced under @nestjs/cli with an override: the pin is exact, and @nestjs/cli 12.0.11 (npm's suggested fix) drops glob but needs TypeScript 6 and pins minimatch 10.2.6, which is still in range. Re-check with `npm view @nestjs/cli@latest dependencies`. Remove when glob 14.0.2 or newer is locked.",
-      "addedAt": "2026-11-01",
-      "expires": "2026-11-05"
-    },
-    {
       "id": "GHSA-g3hv-75wg-m249",
       "package": "minimatch",
-      "reason": "Patched only in minimatch 11.0.1 (published 2026-10-27T22:26Z; the seven-day rule admits it from 2026-11-03T22:26Z). The advisory marks every release below 11.0.1 vulnerable, so no release inside the ^3 or ^10 lines the consumers declare is patched. Two copies, both dev-only and absent from the production image: 10.2.5 (glob 13.0.6, ^10.2.2) and 3.1.5 (fork-ts-checker-webpack-plugin 9.1.0 under @nestjs/cli, test-exclude 6.0.0 under jest's coverage, and glob 7.2.3 under jest, all ^3). They match this repository's own glob patterns at build and test time; no request-supplied pattern reaches them, so the globparts amplification has no exposed surface. The later bump has to settle each copy on its own. 10.2.5 can take an override to 11.0.1 if it lands with glob 14.0.2 (which wants ^11.0.0). The 3.1.5 copies cannot take one as they stand: test-exclude 6 and fork-ts-checker-webpack-plugin 9 call the module itself as a function, and minimatch 11 only has named exports, so they pin an old major with no patched release in its line and stay flagged until jest and Nest move off them (test-exclude 8.0.0 still declares ^10.2.2). If they cannot move by the expiry, renew this entry with that reason rather than forcing the override. Re-check with `npm ls minimatch --package-lock-only`.",
-      "addedAt": "2026-11-01",
-      "expires": "2026-11-05"
+      "reason": "Patched only in minimatch 11.0.1 (published 2026-10-27T22:26Z), and the advisory marks every release below it vulnerable, so no release inside the ^3 line is patched. 11.0.1 is locked where it can be: glob 14.0.2, which an override puts under @nestjs/cli, depends on it, and the 10.2.5 copy is gone. What stays flagged is minimatch 3.1.5, pinned through ^3 by three consumers that are all dev-only and absent from the production image: fork-ts-checker-webpack-plugin 9.1.0 (under @nestjs/cli), and glob 7.2.3 and test-exclude 6.0.0 under jest (test-exclude through babel-plugin-istanbul 6.1.1, which the coverage run loads). None of them can take an override to 11.0.1: test-exclude 6 and fork-ts-checker-webpack-plugin 9 call the module itself as a function, and minimatch 11 only has named exports (`require('minimatch')` is an object there, and calling it throws `TypeError: m is not a function`, checked 2026-11-03). Nothing newer leaves the line: fork-ts-checker-webpack-plugin 9.1.0 is the newest release, and @nestjs/cli 12.0.11 pins minimatch 10.2.6, still in range. jest 30.5.2 would move its copies off ^3 (@jest/reporters and jest-config declare glob ^13.0.6, babel-plugin-istanbul 8 declares test-exclude ^7), but that is a jest major and not part of this change. The copies match this repository's own glob patterns at build and test time; no request-supplied pattern reaches them, so the globparts amplification has no exposed surface. Renew while they pin ^3; remove when jest and Nest move off them. Re-check with `npm ls minimatch --package-lock-only`.",
+      "addedAt": "2026-11-03",
+      "expires": "2026-12-03"
     }
   ],
   "web": [
@@ -47,18 +40,11 @@
       "expires": "2026-11-20"
     },
     {
-      "id": "GHSA-3g3m-2fjr-6pw4",
-      "package": "glob",
-      "reason": "Patched only in glob 14.0.2 (published 2026-10-27T22:07Z; the seven-day rule admits it from 2026-11-03T22:07Z), a new major for every consumer here. The advisory matches glob >=9.0.0 <=14.0.1, so only glob 13.0.6 (node_modules/glob) is affected; the glob 7.2.3 copies under jest are outside that range and are flagged only through their minimatch ^3 dependency (see GHSA-g3hv-75wg-m249). glob 13.0.6 is required as ^13.0.0 by @expo/cli, @expo/config, @expo/config-plugins, @expo/fingerprint and @expo/metro-config, expo's prebuild, fingerprint and bundling tooling. The lockfile marks it a runtime dependency only because expo is one; it runs on the developer's machine or in EAS Build over this repository's own files, no app code imports it and the app bundle does not contain it, and nothing gives its walk an AbortSignal over an attacker-chosen pattern. The later bump has to settle whether an override to glob 14.0.2 holds under all five @expo packages (@expo/cli 58.1.18, the newest release, still declares ^13.0.0), proven by `expo export` bundling. Re-check with `npm view @expo/cli@latest dependencies.glob`. Remove when glob 14.0.2 or newer is locked.",
-      "addedAt": "2026-11-01",
-      "expires": "2026-11-05"
-    },
-    {
       "id": "GHSA-g3hv-75wg-m249",
       "package": "minimatch",
-      "reason": "Patched only in minimatch 11.0.1 (published 2026-10-27T22:26Z; the seven-day rule admits it from 2026-11-03T22:26Z). The advisory marks every release below 11.0.1 vulnerable, so no release inside the ^3 or ^10 lines the consumers declare is patched. Two kinds of copy: 10.2.5 (glob 13.0.6 and @expo/fingerprint, both ^10.2.2; expo's tooling, not in the app bundle) and the 3.1.5 copies under jest (glob 7.2.3, test-exclude 6.0.0 via babel-plugin-istanbul; test time only). They match this repository's own glob patterns at build and test time; no request-supplied pattern reaches them, so the globparts amplification has no exposed surface. The later bump has to settle each kind on its own. 10.2.5 can take an override to 11.0.1 if it lands with glob 14.0.2. The 3.1.5 copies cannot take one as they stand: test-exclude 6 calls the module itself as a function and minimatch 11 only has named exports, so they pin an old major with no patched release in its line and stay flagged until jest moves off test-exclude 6; renew this entry with that reason rather than forcing the override. Re-check with `npm ls minimatch --package-lock-only` in mobile/.",
-      "addedAt": "2026-11-01",
-      "expires": "2026-11-05"
+      "reason": "Patched only in minimatch 11.0.1 (published 2026-10-27T22:26Z), and the advisory marks every release below it vulnerable, so no release inside the ^3 line is patched. 11.0.1 is locked where it can be: an override puts glob 14.0.2 under the five @expo packages and takes @expo/fingerprint's own ^10.2.2 to 11.0.1, so expo's tooling no longer carries a flagged copy (`expo export` and the fingerprint CLI run on it with the same output as before). What stays flagged is minimatch 3.1.5 under jest, which is test time only and not in the app bundle: glob 7.2.3 (@jest/reporters, jest-config, jest-runtime) and test-exclude 6.0.0 through babel-plugin-istanbul 6.1.1 (@react-native/jest-preset, babel-jest), which the coverage run loads. They cannot take an override to 11.0.1: test-exclude 6 calls the module itself as a function and minimatch 11 only has named exports (`require('minimatch')` is an object there, and calling it throws `TypeError: m is not a function`, checked 2026-11-03). jest 30.5.2 would move them off ^3 (@jest/reporters and jest-config declare glob ^13.0.6, babel-plugin-istanbul 8 declares test-exclude ^7), but that is a jest major and not part of this change. The copies match this repository's own glob patterns at test time; no request-supplied pattern reaches them, so the globparts amplification has no exposed surface. Renew while they pin ^3; remove when jest moves off them. Re-check with `npm ls minimatch --package-lock-only` in mobile/.",
+      "addedAt": "2026-11-03",
+      "expires": "2026-12-03"
     }
   ]
 }
