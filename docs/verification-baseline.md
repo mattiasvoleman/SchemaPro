@@ -175,17 +175,17 @@ Mutant count says nothing about time. Among the thirty dearest files the time ru
 
 **A mutant that kills the runner.** Slice 14 of the 40-slice run ended four times with "The runner has received a shutdown signal", at the same point (mutant 916 of 1,687), whatever was done to Stryker's processes: a lower priority (`nice`) and a 3 GB cap on Node's heap changed nothing. Bisecting by line range on CI (`mutate: file:from-to`, a throwaway workflow) narrowed it to the 14 mutants wholly inside lines 201–215 of `src/notifications/notification-delivery.service.ts`, and there the job died with a 60-second time limit for a mutant, with one worker, with a 1 GB heap and with two workers, and went through in about a minute with a limit of 8 and of 3 seconds (run 41554633962). `timeoutMS` is therefore 10 seconds. Which mutant it is and what it does to the machine is not established; the two that also time out on a laptop, `if (false)` and `===` for `if (notice.userId !== target.user_id) continue` on line 214, which make `push()` build a message for every recipient and notice pair, are the likely ones. A Timeout counts as detected, so the shorter limit can raise a score and not lower it.
 
-**Final runs.** Slices 0, 2 and 15 of this dealing went through the real nightly workflow on the pull request's branch (\`mutation_slice=0,2,15\`, run 41557289392). All three passed against their floors and reproduced the measured scores to the hundredth:
+**Final runs.** Slices 0, 2 and 15 of this dealing went through the real nightly workflow on the pull request's branch (`mutation_slice=0,2,15`, run 41557289392). All three passed against their floors and reproduced the measured scores to the hundredth:
 
 | Slice | Held | Score | Floor | Mutation phase | Whole job |
 | ---: | :--- | ---: | ---: | ---: | ---: |
-| 0 | \`prisma-errors.ts\` alone, the dearest slice | 79.95% | 78% | 34:31 | 35.1 min |
-| 2 | the second range of \`optimization-proxy.service.ts\` (\`:2093-99999\`) and eight files | 79.78% | 78% | 40:18 | 40.8 min |
-| 15 | \`notification-delivery.service.ts\`, the file that killed the runner, and fifteen files | 76.56% | 75% | 34:34 | 35.2 min |
+| 0 | `prisma-errors.ts` alone, the dearest slice | 79.95% | 78% | 34:31 | 35.1 min |
+| 2 | the second range of `optimization-proxy.service.ts` (`:2093-99999`) and eight files | 79.78% | 78% | 40:18 | 40.8 min |
+| 15 | `notification-delivery.service.ts`, the file that killed the runner, and fifteen files | 76.56% | 75% | 34:34 | 35.2 min |
 
-Each took less than the 42–44 minutes the dealing says, because a mutant that hung now ends after 10 seconds and not after 60. Slice 2 shows that a line-range part runs in the real flow, slice 15 that the runner survives the mutants that killed it. The same run's latency job passed (floor 449 req/s on an EPYC 7763, reads at 0.904 and 0.914 of it).
+Each took less than the 42–44 minutes the dealing says; the dealing was measured with a limit of 60 seconds for a mutant, now 10, and on whatever CPU those runners drew, and which of the two accounts for the difference is not established. Slice 2 shows that a line-range part runs in the real flow, slice 15 that the runner survives the mutants that killed it. The same run's latency job passed (floor 449 req/s on an EPYC 7763, reads at 0.904 and 0.914 of it).
 
-**The weakest files, for the tests that raise the floors.** Of the 67,921 mutants a test can reach, 19,488 are undetected. \`stad-b-latency/stryker-svagaste-filer.md\` in the session's notes ranks the files by undetected mutants per slice; the three of each final slice are \`common/utils/prisma-errors.ts\` (131 survived) in slice 0; \`lesson-log/class-book.service.ts\` (55.00%, 94 survived), \`gallring/gallring.service.ts\` (70.11%, 44) and \`users/my-schools.service.ts\` in slice 2; \`cover/cover-reports.service.ts\` (53.67%, 78), \`cover/cover-decisions.ts\` and \`users/per-login-throttler.guard.ts\` in slice 15.
+**The weakest files, for the tests that raise the floors.** Of the 67,921 mutants a test can reach, 19,488 are undetected. A run's `summary.md` ranks the slice's files, weakest first; in the three final slices the weakest are `common/utils/prisma-errors.ts` (131 survived) in slice 0; `lesson-log/class-book.service.ts` (55.00%, 94 survived), `gallring/gallring.service.ts` (70.11%, 44) and `users/my-schools.service.ts` in slice 2; `cover/cover-reports.service.ts` (53.67%, 78), `cover/cover-decisions.ts` and `users/per-login-throttler.guard.ts` in slice 15.
 
 ### Mutation score is measured only over files that have tests
 
