@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { heldStageGrades, type BaseStage, type TimplanCheck } from "@/lib/timplan-coverage";
+import { heldStageGrades, type BaseStage, type TimplanCheck, type TimplanVerdict } from "@/lib/timplan-coverage";
 import {
   cellFor,
   cellKey,
@@ -247,11 +247,17 @@ export function TimplanGrid({
   // part of the form is not held to (check.total.judged).
   const estimated = check.gradeSpan?.partial === true;
   const totalJudged = check.total.judged !== false;
-  const totalUnder = check.verdicts.some((v) => v.code === "TIMPLAN_TOTAL_BELOW_GUARANTEE");
-  const totalTone: Tone = !totalJudged ? "none" : totalUnder ? "under" : "met";
-  const poolOverspent = check.verdicts.some((v) => v.code === "TIMPLAN_SKOLANS_VAL_OVERSPENT");
+  // A total short, or a pool overspent, only by the stadier the plan holds in
+  // part is a NOTICE: the tone is the cell's "below", not "under".
+  const toneOf = (code: TimplanVerdict["code"]): Tone | null => {
+    const found = check.verdicts.filter((v) => v.code === code);
+    if (found.length === 0) return null;
+    return found.some((v) => v.severity === "warning") ? "under" : "below";
+  };
+  const totalTone: Tone = !totalJudged ? "none" : (toneOf("TIMPLAN_TOTAL_BELOW_GUARANTEE") ?? "met");
   // No colour where no pool figure is printed: TONE_CLASS.none is "".
-  const poolTone: Tone = poolPrinted && !nothingPlanned ? (poolOverspent ? "under" : "met") : "none";
+  const poolTone: Tone =
+    poolPrinted && !nothingPlanned ? (toneOf("TIMPLAN_SKOLANS_VAL_OVERSPENT") ?? "met") : "none";
   const footerLit = highlight?.footer === true;
   const span = columns.length;
 

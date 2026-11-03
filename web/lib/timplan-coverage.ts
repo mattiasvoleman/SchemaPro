@@ -580,6 +580,10 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
   let taken = 0;
   let placed = 0;
   let plannedTotal = 0;
+  // The partly held cells, as one group: what they are short of their shares
+  // and what they are short by in all, net of what they are over.
+  let takenFromShares = 0;
+  let shareShortNet = 0;
   const cap = version.reductionCapPercent;
 
   const cellCoverage: CellCoverage[] = sortedCells.map((cell) => {
@@ -588,6 +592,10 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
     taken += deficit;
     placed += surplus;
     plannedTotal += cell.planned;
+    if (cell.share) {
+      takenFromShares += deficit;
+      shareShortNet += cell.national - cell.planned;
+    }
     const subjectIds = [...cell.subjectIds].sort(byCode);
     const where = { subjectCode: cell.subjectCode, stage: cell.stage, subjectIds };
 
@@ -694,14 +702,18 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
   }
 
   if (pool !== null && taken > pool * HOUR) {
+    // A warning when the cells held whole alone overspend it; else the partly
+    // held cells' deficits are what does, and they are an estimate.
+    const firm = taken - takenFromShares > pool * HOUR;
     verdicts.push({
       code: "TIMPLAN_SKOLANS_VAL_OVERSPENT",
-      severity: "warning",
+      severity: firm ? "warning" : "notice",
       params: {
         takenHours: hoursUp(taken),
         availableHours: pool,
         overspentHours: hoursUp(taken - pool * HOUR),
         ...(partial ? { estimated: 1 } : {}),
+        ...(firm ? {} : { fromShares: 1 }),
       },
     });
   }
@@ -732,14 +744,18 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
       },
     });
   } else if (plannedTotal < guaranteed) {
+    // The partly held cells' net shortfall is an estimate: with it counted as
+    // met, is the plan still short? Then it is a warning; else a notice.
+    const firm = plannedTotal + Math.max(0, shareShortNet) < guaranteed;
     verdicts.push({
       code: "TIMPLAN_TOTAL_BELOW_GUARANTEE",
-      severity: "warning",
+      severity: firm ? "warning" : "notice",
       params: {
         plannedHours: totalShown,
         guaranteedHours: guaranteedShown,
         deficitHours: hoursUp(guaranteed - plannedTotal),
         ...(partial ? { estimated: 1 } : {}),
+        ...(firm ? {} : { fromShares: 1 }),
       },
     });
   }

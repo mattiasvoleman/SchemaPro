@@ -170,9 +170,25 @@
  *     ones scaled, and the POOL of skolans val is the bilaga's pool times the
  *     same fraction of the national hours that the plan holds (600 h × 4 988 /
  *     6 890 = 434,4 h for 4–9). Both are derived, not printed in any bilaga, so
- *     the two verdicts that quote them carry `estimated`. A shortfall against a
- *     partly held cell counts as taken from the pool like any other: the pool
- *     was sized from the hours that cell holds.
+ *     the two verdicts that quote them carry `estimated`. A share is an estimate
+ *     to the minute-tenth (it is rounded once, to whole minute-tenths, and the
+ *     pool to a tenth of an hour) and every comparison is made on those
+ *     integers.
+ *   * The partly held cells are judged as ONE GROUP, at their NET. The huvudman
+ *     divides the time freely, so one share may run over and another under,
+ *     and the part of a plan's shortfall that is only an estimate is the
+ *     group's net shortfall: what the partly held cells are short by, less
+ *     what they are over by. A total that falls short of the guarantee, and a
+ *     pool that is overspent, are a WARNING when the rest of the plan alone
+ *     makes them so (a cell held whole, a stadium, an own subject missing) and
+ *     only a NOTICE — the same code, `fromShares` — when it is the group's net
+ *     shortfall that does it. Estimates may not warn, in either direction.
+ *     A surplus in a partly held cell is time PLACED like any other: it is in
+ *     the plan's total and offsets a shortfall elsewhere before anything is
+ *     added back (adding every deficit back and keeping every surplus would
+ *     count the same hours twice). The pool counts what is TAKEN, gross —
+ *     it never nets time placed — so there the partly held cells' deficits
+ *     are simply left out of the warning's test and kept in the notice's.
  *   * A version with no cells has only a total for the WHOLE form. A span that
  *     does not hold every årskurs of it is then not held to that total:
  *     TIMPLAN_TOTAL_NOT_JUDGED_FOR_SPAN says so instead.
@@ -739,6 +755,10 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
   let taken = 0;
   let placed = 0;
   let plannedTotal = 0;
+  // The partly held cells, as one group: what they are short of their shares
+  // and what they are short by in all, net of what they are over.
+  let takenFromShares = 0;
+  let shareShortNet = 0;
   const cap = version.reductionCapPercent;
 
   const cellCoverage: CellCoverage[] = sortedCells.map((cell) => {
@@ -747,6 +767,10 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
     taken += deficit;
     placed += surplus;
     plannedTotal += cell.planned;
+    if (cell.share) {
+      takenFromShares += deficit;
+      shareShortNet += cell.national - cell.planned;
+    }
     const subjectIds = [...cell.subjectIds].sort(byCode);
     const where = { subjectCode: cell.subjectCode, stage: cell.stage, subjectIds };
 
@@ -853,14 +877,18 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
   }
 
   if (pool !== null && taken > pool * HOUR) {
+    // A warning when the cells held whole alone overspend it; else the partly
+    // held cells' deficits are what does, and they are an estimate.
+    const firm = taken - takenFromShares > pool * HOUR;
     verdicts.push({
       code: 'TIMPLAN_SKOLANS_VAL_OVERSPENT',
-      severity: 'warning',
+      severity: firm ? 'warning' : 'notice',
       params: {
         takenHours: hoursUp(taken),
         availableHours: pool,
         overspentHours: hoursUp(taken - pool * HOUR),
         ...(partial ? { estimated: 1 } : {}),
+        ...(firm ? {} : { fromShares: 1 }),
       },
     });
   }
@@ -891,14 +919,18 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
       },
     });
   } else if (plannedTotal < guaranteed) {
+    // The partly held cells' net shortfall is an estimate: with it counted as
+    // met, is the plan still short? Then it is a warning; else a notice.
+    const firm = plannedTotal + Math.max(0, shareShortNet) < guaranteed;
     verdicts.push({
       code: 'TIMPLAN_TOTAL_BELOW_GUARANTEE',
-      severity: 'warning',
+      severity: firm ? 'warning' : 'notice',
       params: {
         plannedHours: totalShown,
         guaranteedHours: guaranteedShown,
         deficitHours: hoursUp(guaranteed - plannedTotal),
         ...(partial ? { estimated: 1 } : {}),
+        ...(firm ? {} : { fromShares: 1 }),
       },
     });
   }

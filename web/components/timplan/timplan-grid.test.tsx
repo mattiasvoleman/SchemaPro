@@ -1,8 +1,8 @@
-import { render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { checkLocalTimplan, stageGradesFor, type GradeSpan } from "@/lib/timplan-coverage";
+import { checkLocalTimplan, stageGradesFor, type GradeSpan, type TimplanCheck, type TimplanVerdict } from "@/lib/timplan-coverage";
 import {
   cellKey,
   entriesFromDraft,
@@ -486,5 +486,40 @@ describe("TimplanGrid: a plan with an årskurs span", () => {
     const total = within(footer).getByText(/footerTotalNotJudged\(.*\|7424\)/);
     expect(total).toHaveAttribute("data-tone", "none");
     expect(footer).not.toHaveTextContent("footerTotalValue");
+  });
+});
+
+describe("TimplanGrid: a total and a pool that only the stadier held in part breach", () => {
+  const draft: DraftCells = new Map(Object.entries(CELLS).map(([key, minutes]) => [key, String(minutes)]));
+
+  /** The footer's two toned lines (Totalt, Skolans val) of a check whose two plan-wide verdicts have `severity`. */
+  function footerTones(severity: "warning" | "notice") {
+    const verdicts: TimplanVerdict[] = [
+      { code: "TIMPLAN_TOTAL_BELOW_GUARANTEE", severity, params: { plannedHours: 3007, guaranteedHours: 3471.4, deficitHours: 464.4 } },
+      { code: "TIMPLAN_SKOLANS_VAL_OVERSPENT", severity, params: { takenHours: 620, availableHours: 302.3, overspentHours: 317.7 } },
+    ];
+    const check: TimplanCheck = { ...checkOf(draft), verdicts };
+    render(
+      <TimplanGrid
+        subjects={SUBJECTS}
+        parentOf={parentOf}
+        columns={gridColumns(check.stageGrades)}
+        stageGrades={check.stageGrades}
+        draft={draft}
+        notes={new Map()}
+        check={check}
+        weeksTenths={356}
+        readOnly={false}
+        highlight={null}
+        onCellChange={() => {}}
+      />,
+    );
+    return [...document.querySelectorAll("tfoot td[data-tone]")].map((cell) => cell.getAttribute("data-tone"));
+  }
+
+  it("paints them red as a warning and yellow as a notice, an estimate never red", () => {
+    expect(footerTones("warning")).toEqual(["under", "under"]);
+    cleanup();
+    expect(footerTones("notice")).toEqual(["below", "below"]);
   });
 });

@@ -217,6 +217,25 @@ add('a span of every årskurs is the whole form: the numbers of no span', B1, { 
   add('an F–5 plan: lågstadiet is judged whole, so a protected subject reduced there is a warning, in mellanstadiet a notice', B1, { gradeFrom: 0, gradeTo: 5 }, plan);
 }
 
+// 6a. An estimate may not warn: what only the partly held cells breach is a notice, what the rest breaches is a warning.
+{
+  const base = compliant(B1, WEEKS, { gradeFrom: 0, gradeTo: 5 });
+  add(
+    'an F–5 plan with matematik and svenska not given in åk 4–5: the pool and the total are overspent and short only by shares, so notices',
+    B1,
+    { gradeFrom: 0, gradeTo: 5 },
+    withMinutes(withMinutes(base, 'MA', [4, 5], 0), 'SV_SVA', [4, 5], 0),
+  );
+  let netted = withMinutes(base, 'BL', [1, 2, 3], 10);
+  netted = withMinutes(withMinutes(netted, 'BL', [4, 5], 20), 'MA', [4, 5], 255);
+  add(
+    'an F–5 plan short in lågstadiet while two shares net out (matematik over, bild under): the total is a warning, the surplus does not hide it',
+    B1,
+    { gradeFrom: 0, gradeTo: 5 },
+    netted,
+  );
+}
+
 // 6b. A short share is an estimate to the tenth and reads as planned + deficit.
 add('an empty F–5 plan: every share is short and reads as planned + deficit', B1, { gradeFrom: 0, gradeTo: 5 }, { subjects: [], entries: [] });
 

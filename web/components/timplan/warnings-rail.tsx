@@ -55,6 +55,8 @@ export function WarningsRail({ verdicts, nationalNames, live, selected, onSelect
     // cell's, and a pool or guarantee of a part of a school form is an estimate.
     values.hasChild = verdict.childCode ? "yes" : "no";
     values.estimated = verdict.params.estimated ? "yes" : "no";
+    // A pool or a total that only the stadier held in part breach is a notice, and says why.
+    values.fromShares = verdict.params.fromShares ? "yes" : "no";
     return t(`verdicts.${verdict.code}`, values);
   };
 

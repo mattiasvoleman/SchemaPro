@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import {
   assertGradeSpan,
   checkLocalTimplan,
+  gradeSpanOf,
   heldStageGrades,
   inGradeSpan,
   planningWeeksInTenths,
@@ -999,18 +1000,71 @@ describe('checkLocalTimplan — the plan’s årskurs span', () => {
       expect(withSpan(B1, 356, { ...plan, entries }, FROM_F_TO_5).skolansVal.takenHours).toBe(184.3);
     });
 
-    it('warns that the pool is overspent, and calls its figure an estimate only for a span', () => {
+    it('overspends the pool as a NOTICE when only the partly held cells do, and says so', () => {
       const plan = spanPlan(B1, 356, FROM_F_TO_5);
-      // MA and Svenska not given at all in 4–5: 273,3 + 346,7 = 620 h of a 302,3 h pool.
+      // MA and Svenska not given at all in åk 4–5: 273,3 + 346,7 = 620 h of a 302,3 h pool,
+      // all of it from cells the plan holds in part.
       const entries = setMinutes(setMinutes(plan.entries, 'MA', [4, 5], 0), 'SV_SVA', [4, 5], 0);
       const result = withSpan(B1, 356, { ...plan, entries }, FROM_F_TO_5);
       const overspent = result.verdicts.find((v) => v.code === 'TIMPLAN_SKOLANS_VAL_OVERSPENT')!;
       expect(overspent).toMatchObject({
-        severity: 'warning',
-        params: { takenHours: 620, availableHours: 302.3, overspentHours: 317.7, estimated: 1 },
+        severity: 'notice',
+        params: { takenHours: 620, availableHours: 302.3, overspentHours: 317.7, estimated: 1, fromShares: 1 },
       });
+      expect(result.verdicts.filter((v) => v.severity === 'warning')).toEqual([]);
+    });
+
+    it('overspends the pool as a WARNING when the cells held whole do, without the shares in the test', () => {
+      const plan = spanPlan(B1, 356, FROM_F_TO_5);
+      // Svenska and matematik not given in lågstadiet (1 100 h, whole cells): past 302,3 h alone.
+      const entries = setMinutes(setMinutes(plan.entries, 'MA', [1, 2, 3], 0), 'SV_SVA', [1, 2, 3], 0);
+      const result = withSpan(B1, 356, { ...plan, entries }, FROM_F_TO_5);
+      const overspent = result.verdicts.find((v) => v.code === 'TIMPLAN_SKOLANS_VAL_OVERSPENT')!;
+      expect(overspent.severity).toBe('warning');
+      expect(overspent.params).toMatchObject({ availableHours: 302.3, estimated: 1 });
+      expect(overspent.params).not.toHaveProperty('fromShares');
+      // A plan that is not for a part of the form never says it is an estimate.
       const whole = withSpan(B1, 356, { ...plan, entries: setMinutes(plan.entries, 'MA', [1, 2, 3], 0) }, null);
       expect(whole.verdicts.find((v) => v.code === 'TIMPLAN_SKOLANS_VAL_OVERSPENT')!.params).not.toHaveProperty('estimated');
+      expect(whole.verdicts.find((v) => v.code === 'TIMPLAN_SKOLANS_VAL_OVERSPENT')!.params).not.toHaveProperty('fromShares');
+    });
+
+    it('is short of the total as a NOTICE when only the partly held cells are, a few per cent or many', () => {
+      const plan = spanPlan(B1, 356, FROM_F_TO_5);
+      for (const minutes of [200, 100]) {
+        const result = withSpan(B1, 356, { ...plan, entries: setMinutes(plan.entries, 'MA', [4, 5], minutes) }, FROM_F_TO_5);
+        const total = result.verdicts.find((v) => v.code === 'TIMPLAN_TOTAL_BELOW_GUARANTEE')!;
+        expect(total.severity).toBe('notice');
+        expect(total.params).toMatchObject({ estimated: 1, fromShares: 1 });
+        expect(result.verdicts.filter((v) => v.severity === 'warning')).toEqual([]);
+        expect(result.total.deficitHours).toBeGreaterThan(0);
+      }
+    });
+
+    it('is short of the total as a WARNING when the rest of the plan alone is, a share’s surplus and deficit netting out', () => {
+      const plan = spanPlan(B1, 356, FROM_F_TO_5);
+      // Bild in lågstadiet (a whole cell) cut to 10 min a week: 42,2 h short. In åk 4–5 matematik is
+      // 28,9 h over its share and bild 29,6 h under: the partly held cells net out to a shortfall
+      // of 0,7 h. Adding the 29,6 h of deficit back and keeping the 28,9 h of surplus would count
+      // the same hours twice and hide the 42 h.
+      let entries = setMinutes(plan.entries, 'BL', [1, 2, 3], 10);
+      entries = setMinutes(setMinutes(entries, 'BL', [4, 5], 20), 'MA', [4, 5], 255);
+      const result = withSpan(B1, 356, { ...plan, entries }, FROM_F_TO_5);
+      const total = result.verdicts.find((v) => v.code === 'TIMPLAN_TOTAL_BELOW_GUARANTEE')!;
+      expect(total.severity).toBe('warning');
+      expect(total.params).not.toHaveProperty('fromShares');
+      expect(total.params).toMatchObject({ estimated: 1 });
+      // Without the surplus the same cuts leave the total short in the same way.
+      const without = withSpan(B1, 356, { ...plan, entries: setMinutes(setMinutes(plan.entries, 'BL', [1, 2, 3], 10), 'BL', [4, 5], 20) }, FROM_F_TO_5);
+      expect(without.verdicts.find((v) => v.code === 'TIMPLAN_TOTAL_BELOW_GUARANTEE')!.severity).toBe('warning');
+    });
+
+    it('counts a partly held cell’s surplus as time placed, like any cell’s', () => {
+      const plan = spanPlan(B1, 356, FROM_F_TO_5);
+      const base = withSpan(B1, 356, plan, FROM_F_TO_5);
+      const more = withSpan(B1, 356, { ...plan, entries: setMinutes(plan.entries, 'MA', [4, 5], 255) }, FROM_F_TO_5);
+      expect(more.skolansVal.placedHours - base.skolansVal.placedHours).toBeCloseTo(28.9 - 0.7, 0);
+      expect(more.total.plannedHours).toBeGreaterThan(base.total.plannedHours);
     });
 
     it('holds the total to the guarantee of the cells held, marked as an estimate', () => {
@@ -1098,6 +1152,19 @@ describe('checkLocalTimplan — the plan’s årskurs span', () => {
       }
       expect(() => assertGradeSpan({ gradeFrom: 0, gradeTo: 11 })).not.toThrow();
       expect(() => assertGradeSpan({ gradeFrom: 7, gradeTo: 7 })).not.toThrow();
+    });
+
+    it('reads a plan row’s span only when both ends are numbers, and anything else as the whole form', () => {
+      expect(gradeSpanOf({ gradeFrom: 4, gradeTo: 9 })).toEqual({ gradeFrom: 4, gradeTo: 9 });
+      expect(gradeSpanOf({ gradeFrom: 4, gradeTo: 4 })).toEqual({ gradeFrom: 4, gradeTo: 4 });
+      expect(gradeSpanOf({ gradeFrom: 0, gradeTo: 0 })).toEqual({ gradeFrom: 0, gradeTo: 0 });
+      // The CHECK admits no half a pair, but a row from before the columns, or a mock, has none or one.
+      expect(gradeSpanOf({ gradeFrom: 4, gradeTo: null })).toBeNull();
+      expect(gradeSpanOf({ gradeFrom: null, gradeTo: 9 })).toBeNull();
+      expect(gradeSpanOf({ gradeFrom: 4 })).toBeNull();
+      expect(gradeSpanOf({ gradeTo: 9 })).toBeNull();
+      expect(gradeSpanOf({ gradeFrom: null, gradeTo: null })).toBeNull();
+      expect(gradeSpanOf({})).toBeNull();
     });
 
     it('holds an årskurs at both of its ends, and every årskurs with no span', () => {

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import { describe, expect, it } from "vitest";
 import { checkLocalTimplan, type GradeSpan, type TimplanVerdict } from "@/lib/timplan-coverage";
@@ -88,8 +88,32 @@ describe("the rail, in Swedish, for a plan that holds part of a stadium", () => 
   it("calls the pool and the guarantee of a part of the form estimates, and a whole form's plainly", () => {
     const part = verdictsOf({ gradeFrom: 4, gradeTo: 9 }, {});
     const say = show("sv", part);
-    expect(say("TIMPLAN_SKOLANS_VAL_OVERSPENT")).toContain("(en uppskattning efter planens årskurser) timplanen medger.");
+    expect(say("TIMPLAN_SKOLANS_VAL_OVERSPENT")).toContain("timplanen medger (en uppskattning efter planens årskurser).");
     expect(say("TIMPLAN_TOTAL_BELOW_GUARANTEE")).toMatch(/undervisningstiden 4 988 h \(en uppskattning efter planens årskurser\)\.$|undervisningstiden 4988 h \(en uppskattning efter planens årskurser\)\.$/);
+  });
+
+  it("says a pool or a total that only the stadier held in part breach is a notice, and a warning's sentence does not", () => {
+    const notice = (code: "TIMPLAN_SKOLANS_VAL_OVERSPENT" | "TIMPLAN_TOTAL_BELOW_GUARANTEE"): TimplanVerdict => ({
+      code,
+      severity: "notice",
+      params:
+        code === "TIMPLAN_TOTAL_BELOW_GUARANTEE"
+          ? { plannedHours: 3007, guaranteedHours: 3471.4, deficitHours: 464.4, estimated: 1, fromShares: 1 }
+          : { takenHours: 620, availableHours: 302.3, overspentHours: 317.7, estimated: 1, fromShares: 1 },
+    });
+    const say = show("sv", [notice("TIMPLAN_SKOLANS_VAL_OVERSPENT"), notice("TIMPLAN_TOTAL_BELOW_GUARANTEE")]);
+    for (const code of ["TIMPLAN_SKOLANS_VAL_OVERSPENT", "TIMPLAN_TOTAL_BELOW_GUARANTEE"]) {
+      const text = say(code);
+      expect(text).toMatch(/^Notering/);
+      expect(text).toContain("(en uppskattning efter planens årskurser).");
+      expect(text).toContain("Det ligger helt i stadier som skolan bara har delvis, där andelen är en uppskattning, och är därför bara en notis.");
+    }
+    // The warning's own sentence, estimate and all, never says notis.
+    cleanup();
+    const warning = verdictsOf({ gradeFrom: 4, gradeTo: 9 }, {});
+    const warned = show("sv", warning)("TIMPLAN_TOTAL_BELOW_GUARANTEE");
+    expect(warned).toMatch(/^Under mål/);
+    expect(warned).not.toContain("bara en notis");
   });
 
   it("states them without the word for a plan with no span", () => {
@@ -125,7 +149,7 @@ describe("the rail, in English, for the same verdicts", () => {
     ]);
     expect(say("TIMPLAN_PARTIAL_STAGE_BELOW_SHARE", "Matematik in the middle stage")).toContain("the school has 2 of the stage's 3 years");
     expect(say("TIMPLAN_PARTIAL_STAGE_BELOW_SHARE", "Matematik")).toContain("The share is an estimate");
-    expect(say("TIMPLAN_SKOLANS_VAL_OVERSPENT")).toContain("(an estimate for the plan's years) the timplan allows.");
+    expect(say("TIMPLAN_SKOLANS_VAL_OVERSPENT")).toContain("the timplan allows (an estimate for the plan's years).");
     expect(say("TIMPLAN_TOTAL_BELOW_GUARANTEE")).toContain("(an estimate for the plan's years).");
     expect(say("TIMPLAN_TOTAL_NOT_JUDGED_FOR_SPAN")).toContain("The plan is for years 5–10");
     expect(say("TIMPLAN_TOTAL_NOT_JUDGED_FOR_SPAN")).toContain("The total is therefore not compared.");

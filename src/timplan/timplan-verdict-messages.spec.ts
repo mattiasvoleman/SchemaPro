@@ -80,13 +80,28 @@ describe('describeVerdict', () => {
       describeVerdict({ ...verdict, params: { ...verdict.params, estimated: 1 } }, NAMES);
 
     expect(estimated(overspent)).toBe(
-      'Skolans val: 600,5 h har tagits från ämnena, 0,5 h mer än de 600 h (en uppskattning efter planens årskurser) timplanen medger.',
+      'Skolans val: 600,5 h har tagits från ämnena, 0,5 h mer än de 600 h timplanen medger (en uppskattning efter planens årskurser).',
     );
     expect(estimated(guarantee)).toBe(
       'Totalt 6 889,5 h planerat, 0,5 h under den garanterade undervisningstiden 6 890 h (en uppskattning efter planens årskurser).',
     );
     expect(describeVerdict(overspent, NAMES)).not.toContain('uppskattning');
     expect(describeVerdict(guarantee, NAMES)).not.toContain('uppskattning');
+  });
+
+  it('says why a pool or a total is only a notice when the partly held stadier are what breach it', () => {
+    const overspent = ONE_OF_EACH[6]!;
+    const guarantee = ONE_OF_EACH[7]!;
+    const fromShares = (verdict: TimplanVerdict) =>
+      describeVerdict({ ...verdict, severity: 'notice', params: { ...verdict.params, estimated: 1, fromShares: 1 } }, NAMES);
+
+    for (const sentence of [fromShares(overspent), fromShares(guarantee)]) {
+      expect(sentence).toMatch(/ Det ligger helt i stadier som skolan bara har delvis, där andelen är en uppskattning, och är därför bara en notis\.$/);
+      expect(sentence).not.toMatch(/\bfel/i);
+    }
+    expect(fromShares(overspent)).toContain('timplanen medger (en uppskattning efter planens årskurser). Det ligger');
+    // The sentence of a warning never carries it.
+    expect(describeVerdict({ ...overspent, params: { ...overspent.params, estimated: 1 } }, NAMES)).not.toContain('notis');
   });
 
   it('falls back to the code for a subject it has no name for', () => {
