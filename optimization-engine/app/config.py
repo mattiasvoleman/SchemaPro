@@ -37,7 +37,19 @@ class Settings(BaseSettings):
     )
     schedule_days_env: str = Field(default="1,2,3,4,5", alias="SCHEDULE_DAYS")
 
-    solver_timeout_seconds: float = Field(default=60.0, alias="SOLVER_TIMEOUT_SECONDS")
+    # THE ONE SOLVE BUDGET, in seconds: the wall-clock a generation may search
+    # before it answers TIMEOUT (the satisfaction search takes all of it; phase
+    # 1a is capped inside it, see SchedulerSolver.CLEAN_SAT_CAP_SECONDS). The
+    # probe below is spent AFTER it, so a timed-out solve answers in about
+    # SOLVER_MAX_TIME_SECONDS + SOLVER_PROBE_SECONDS, and the API's
+    # AI_ENGINE_TIMEOUT_MS must exceed that sum.
+    #
+    # There used to be a second setting, SOLVER_TIMEOUT_SECONDS, validated and
+    # logged at start-up and read by nothing: raising it changed no solve, and
+    # a deployment that raised it believed it had given the solver more time.
+    # It is gone rather than wired in, because two budgets for one search can
+    # only disagree. A deployment that still sets it is not broken (extra
+    # variables are ignored) and not helped; set this one.
     solver_max_time_seconds: float = Field(default=60.0, alias="SOLVER_MAX_TIME_SECONDS")
     # Extra seconds spent AFTER a phase-1 timeout, relaxing one rule at a time to
     # name the one that does not fit. Zero switches the probe off. Spent only on
@@ -210,7 +222,6 @@ class Settings(BaseSettings):
         return [int(day.strip()) for day in self.schedule_days_env.split(",") if day.strip()]
 
     @field_validator(
-        "solver_timeout_seconds",
         "solver_max_time_seconds",
         "room_solver_max_time_seconds",
         "staff_solver_max_time_seconds",

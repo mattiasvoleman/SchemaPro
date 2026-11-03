@@ -268,7 +268,7 @@ GitHub repository.
 | `APP_ENV` | `production` |
 | `API_KEY` | a long random secret you invent now — save it as `SOLVER_SECRET` |
 | `ALLOWED_ORIGINS` | `http://localhost` for now; you will correct it in Step 8 |
-| `SOLVER_TIMEOUT_SECONDS` | `60` |
+| `SOLVER_MAX_TIME_SECONDS` | `60` (the solve budget in seconds; a solve that times out answers after this plus `SOLVER_PROBE_SECONDS`, default `20`) |
 
 > `API_KEY` **must be at least 32 characters.** The solver refuses to start
 > with anything shorter and the only sign will be a container that keeps
