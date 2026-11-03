@@ -144,7 +144,7 @@ Mutant count says nothing about time. Among the thirty dearest files the time ru
 | ---: | ---: | ---: | ---: | ---: | ---: | :--- |
 | 0 | 1 | 820 | 79.95 % | 78 % | 44 | common/utils/prisma-errors.ts (44 min) |
 | 1 | 1 | 692 | 89.26 % | 88 % | 43 | staffing/teacher-load.ts (43 min) |
-| 2 | 9 | 2211 | 79.78 % | 78 % | 42 | optimization/optimization-proxy.service.ts:2093– (39 min), optimization/room-loan-windows.ts (1 min), publication/other-school-clashes.ts (1 min) |
+| 2 | 9 | 2237 | 80.06 % | 79 % | 53 | optimization/optimization-proxy.service.ts:2093– (48 min), optimization/room-loan-windows.ts (3 min), publication/other-school-clashes.ts (1 min) |
 | 3 | 14 | 2661 | 65.63 % | 64 % | 42 | cover/cover-rules.ts (29 min), notifications/notifications.service.ts (4 min), optimization/other-school-holds.ts (2 min) |
 | 4 | 13 | 5472 | 60.31 % | 59 % | 42 | calendar/master-lessons.service.ts (28 min), cover/cover.service.ts (4 min), optimization/pupil-cohorts.ts (3 min) |
 | 5 | 13 | 4039 | 80.16 % | 79 % | 42 | common/timplan-planned.ts (27 min), optimization/candidate-basis.ts (5 min), publication/publish-mode.ts (2 min) |
@@ -162,6 +162,8 @@ Mutant count says nothing about time. Among the thirty dearest files the time ru
 | 17 | 16 | 4776 | 71.64 % | 70 % | 42 | integration/ss12000-v2/ss12000-v2.service.ts (12 min), staffing/load-input.ts (9 min), integration/ss12000-v2/model.ts (6 min) |
 | 18 | 16 | 2455 | 71.57 % | 70 % | 42 | common/utils/time.ts (11 min), calendar/lesson-recurrence.ts (10 min), optimization/room-eligibility.ts (7 min) |
 | 19 | 16 | 4349 | 71.10 % | 70 % | 42 | import/import.service.ts (10 min), common/timplan-coverage.ts (10 min), timplan/timplan-coverage.service.ts (7 min) |
+
+Slice 2 was measured again on 2026-11-03 with `--remeasure` on the artifact of workflow run 41635172824 (the branch of the pull request that added the moving cut, the cut free in the file as it was): 2,237 mutants (the slice's files had grown by 26 since 2026-11-02), 80.06 %, floor 78 → 79. Its 53 minutes are one run on a slow runner; the same slice, with three comment lines fewer, took 33 minutes in another run on the same day, and the 42 of the dealing are from 2026-11-02. The other nineteen rows are as measured on 2026-11-02.
 
 **Raising a floor.** When the tests of a slice's files improve, run that slice (`mutation_slice=N`), download the artifact `mutation-report-slice-N`, unpack it, and run `node scripts/mutation-slice.mjs --remeasure <unpacked>/slice-N`. It replaces the slice's figures in `scripts/mutation-slices.json` with the run's and sets the floor to floor(score − 1), and it changes nothing else; commit that on its own, saying which tests earned it. A floor is not raised by editing the number: the sums beside it are held against it by a unit test.
 
