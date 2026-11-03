@@ -40,13 +40,6 @@
   ],
   "mobile": [
     {
-      "id": "GHSA-86w9-cpqp-85rv",
-      "package": "node-forge",
-      "reason": "No patched release exists: <=1.4.0 is marked vulnerable and 1.4.0 is the newest version (checked 2026-10-06); npm's only suggestion is a major expo upgrade. node-forge is pulled in by expo's development tooling (the dev server and CLI), not imported by the application bundle; the affected RSA PKCS#1 v1.5 verification is never performed on anything the app receives. Re-check the chain with `npm ls node-forge --package-lock-only` before renewing; remove when upstream ships a fix.",
-      "addedAt": "2026-10-06",
-      "expires": "2026-11-20"
-    },
-    {
       "id": "GHSA-mrhx-c7xc-m3w5",
       "package": "zod",
       "reason": "No patched release in the range that can be installed: zod is fixed only in 4.6.6, a new major, and the one package that pulls zod in, @expo/cli (Expo's development and build CLI), declares zod ^3.25.76 in every release up to the newest, 58.1.17 (checked 2026-10-31). The SDK 57 CLI that mobile/ installs (@expo/cli 57.0.32) does the same. No app code imports zod and the app bundle does not contain it; the CLI validates the developer's own config and command-line input on the developer's machine or in EAS Build, so an attacker-sized collection never reaches it. Remove when @expo/cli moves to zod 4.6.6+; re-check with `npm view @expo/cli@latest dependencies.zod`.",
@@ -64,62 +57,6 @@
       "id": "GHSA-g3hv-75wg-m249",
       "package": "minimatch",
       "reason": "Patched only in minimatch 11.0.1 (published 2026-10-27T22:26Z; the seven-day rule admits it from 2026-11-03T22:26Z). The advisory marks every release below 11.0.1 vulnerable, so no release inside the ^3 or ^10 lines the consumers declare is patched. Two kinds of copy: 10.2.5 (glob 13.0.6 and @expo/fingerprint, both ^10.2.2; expo's tooling, not in the app bundle) and the 3.1.5 copies under jest (glob 7.2.3, test-exclude 6.0.0 via babel-plugin-istanbul; test time only). They match this repository's own glob patterns at build and test time; no request-supplied pattern reaches them, so the globparts amplification has no exposed surface. The later bump has to settle each kind on its own. 10.2.5 can take an override to 11.0.1 if it lands with glob 14.0.2. The 3.1.5 copies cannot take one as they stand: test-exclude 6 calls the module itself as a function and minimatch 11 only has named exports, so they pin an old major with no patched release in its line and stay flagged until jest moves off test-exclude 6; renew this entry with that reason rather than forcing the override. Re-check with `npm ls minimatch --package-lock-only` in mobile/.",
-      "addedAt": "2026-11-01",
-      "expires": "2026-11-05"
-    },
-    {
-      "id": "GHSA-7wch-p9px-956x",
-      "package": "node-forge",
-      "reason": "Patched in node-forge 1.4.1 (published 2026-10-27T04:44Z) and 1.4.2 (2026-10-27T14:09Z); the seven-day rule admits 1.4.2 from 2026-11-03T14:09Z, so today the patch is only too young. The bump is a plain lockfile refresh: both consumers declare a range that already takes it (@expo/cli ^1.3.3 and @expo/code-signing-certificates ^1.3.3), so no override is needed. node-forge is pulled in by expo's development tooling only, @expo/cli (the dev server and CLI) and the code-signing helper it uses, and is not imported by the application bundle. Checked in the published sources of @expo/cli 56.1.19 and @expo/code-signing-certificates 0.0.6: they call only forge.pki (certificate and key creation and parsing, such as certificateFromPem on the developer's own keychain certificate in `expo run:ios`), forge.md.sha256, forge.util and forge.random. The PEM decoder therefore only sees the developer's own certificates, on the developer's machine or in EAS Build; the ReDoS has no attacker-supplied input here. Delete this entry together with the other node-forge entries when the bump lands, including GHSA-86w9-cpqp-85rv, whose 'no patched release' reason no longer holds. Re-check with `npm ls node-forge --package-lock-only` in mobile/.",
-      "addedAt": "2026-11-01",
-      "expires": "2026-11-05"
-    },
-    {
-      "id": "GHSA-8hrf-8g6f-7xwp",
-      "package": "node-forge",
-      "reason": "Patched in node-forge 1.4.1 (published 2026-10-27T04:44Z) and 1.4.2 (2026-10-27T14:09Z); the seven-day rule admits 1.4.2 from 2026-11-03T14:09Z, so today the patch is only too young. Same chain and the same lockfile refresh as GHSA-7wch-p9px-956x. Surface: forge.tls record processing; expo's tooling does not use forge.tls. Remove with that entry.",
-      "addedAt": "2026-11-01",
-      "expires": "2026-11-05"
-    },
-    {
-      "id": "GHSA-hqq3-7jhf-c5jx",
-      "package": "node-forge",
-      "reason": "Patched in node-forge 1.4.1 (published 2026-10-27T04:44Z) and 1.4.2 (2026-10-27T14:09Z); the seven-day rule admits 1.4.2 from 2026-11-03T14:09Z, so today the patch is only too young. Same chain and the same lockfile refresh as GHSA-7wch-p9px-956x. Surface: forge.tls record processing; expo's tooling does not use forge.tls. Remove with that entry.",
-      "addedAt": "2026-11-01",
-      "expires": "2026-11-05"
-    },
-    {
-      "id": "GHSA-jc66-7q78-782g",
-      "package": "node-forge",
-      "reason": "Patched in node-forge 1.4.1 (published 2026-10-27T04:44Z) and 1.4.2 (2026-10-27T14:09Z); the seven-day rule admits 1.4.2 from 2026-11-03T14:09Z, so today the patch is only too young. Same chain and the same lockfile refresh as GHSA-7wch-p9px-956x. Surface: PKCS#12 parsing; expo's tooling does not use forge.pkcs12. Remove with that entry.",
-      "addedAt": "2026-11-01",
-      "expires": "2026-11-05"
-    },
-    {
-      "id": "GHSA-5x38-2vff-x55p",
-      "package": "node-forge",
-      "reason": "Patched in node-forge 1.4.1 (published 2026-10-27T04:44Z) and 1.4.2 (2026-10-27T14:09Z); the seven-day rule admits 1.4.2 from 2026-11-03T14:09Z, so today the patch is only too young. Same chain and the same lockfile refresh as GHSA-7wch-p9px-956x. Surface: forge.pki.verifyCertificateChain(); expo's tooling never verifies a chain with it. Remove with that entry.",
-      "addedAt": "2026-11-01",
-      "expires": "2026-11-05"
-    },
-    {
-      "id": "GHSA-5cwg-6vw7-rj6p",
-      "package": "node-forge",
-      "reason": "Patched in node-forge 1.4.1 (published 2026-10-27T04:44Z) and 1.4.2 (2026-10-27T14:09Z); the seven-day rule admits 1.4.2 from 2026-11-03T14:09Z, so today the patch is only too young. Same chain and the same lockfile refresh as GHSA-7wch-p9px-956x. Surface: AES-GCM with a caller-chosen tagLength; expo's tooling uses no forge cipher. Remove with that entry.",
-      "addedAt": "2026-11-01",
-      "expires": "2026-11-05"
-    },
-    {
-      "id": "GHSA-525v-9gp9-w22h",
-      "package": "node-forge",
-      "reason": "Patched in node-forge 1.4.1 (published 2026-10-27T04:44Z) and 1.4.2 (2026-10-27T14:09Z); the seven-day rule admits 1.4.2 from 2026-11-03T14:09Z, so today the patch is only too young. Same chain and the same lockfile refresh as GHSA-7wch-p9px-956x. Surface: the forge.tls client; expo's tooling does not open a TLS connection through forge. Remove with that entry.",
-      "addedAt": "2026-11-01",
-      "expires": "2026-11-05"
-    },
-    {
-      "id": "GHSA-6wvx-3r32-xmcg",
-      "package": "node-forge",
-      "reason": "Patched in node-forge 1.4.1 (published 2026-10-27T04:44Z) and 1.4.2 (2026-10-27T14:09Z); the seven-day rule admits 1.4.2 from 2026-11-03T14:09Z, so today the patch is only too young. Same chain and the same lockfile refresh as GHSA-7wch-p9px-956x. Surface: forge.http cookie handling; expo's tooling does not use forge.http. Remove with that entry.",
       "addedAt": "2026-11-01",
       "expires": "2026-11-05"
     }
