@@ -18,8 +18,9 @@
  *   node scripts/bench/api-latency.mjs --url http://localhost:4000 \
  *     --token "$JWT" --academic-year "$YEAR" --write-body body.json --duration 20
  *
- * Exits 0 on PASS, 1 on FAIL and 2 on an invalid run: more than 1% non-2xx in
- * any row, or health, either read or the floor not measured.
+ * Exits 0 on PASS, 1 on FAIL and 2 on an invalid run: more than 1% of any row's
+ * attempts failed (non-2xx answers, connection errors, timeouts), or health,
+ * either read or the floor not measured.
  *
  * `--floor-rounds` (default 3) is the number of rounds of the floor, which run
  * straight after the load scenarios and before the serial write — see FLOOR.
@@ -39,6 +40,7 @@ import autocannon from 'autocannon';
 import {
   exitCodeOf,
   gate,
+  loadRow,
   scenarioLines,
   SPEC_READ_TARGET_MS,
   SPEC_UPDATE_TARGET_MS,
@@ -305,25 +307,6 @@ function load(scenario) {
     );
   });
 }
-
-const loadRow = (scenario, result) => ({
-  id: scenario.id,
-  scenario: scenario.name,
-  kind: scenario.kind,
-  p50Ms: result.latency.p50,
-  p99Ms: result.latency.p99,
-  maxMs: result.latency.max,
-  // Unrounded: the gate divides it.
-  rps: result.requests.average,
-  totalRequests: result.requests?.total ?? 0,
-  non2xx: result.non2xx ?? 0,
-  // Connections that failed and requests that timed out are not in `requests.total`; the
-  // gate counts them with the non-2xx answers, since a run that mostly failed measured nothing.
-  // A timeout is in both fields (autocannon: `errors` includes its timeouts), and the gate
-  // counts it once.
-  errors: result.errors ?? 0,
-  timeouts: result.timeouts ?? 0,
-});
 
 // Write scenarios need ids from a seeded database. Rather than invent them,
 // skip the scenario and say so. A skipped write prints SKIPPED and, while the
