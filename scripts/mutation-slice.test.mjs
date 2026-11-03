@@ -28,11 +28,12 @@ import {
   floorOf,
   placeNew,
   plan,
+  planRanges,
   rangeOf,
-  rangeProblems,
   remeasure,
   scoreOf,
   scoreOfCounts,
+  shiftLimit,
   sliceLines,
   splitEntry,
   summarise,
@@ -417,17 +418,18 @@ process.exit(!spec.ignoreBreak && score < config.thresholds.break ? 1 : 0);
 `;
 
 // Stryker's instrumenter, API and typed-inject as the script imports them. A source file's first
-// line is `// [[from, to], ...]`: the mutants it has, by the lines they span (from 1). `mutate` is
-// true or mutation ranges, lines from 0, and a mutant is made when a range holds it wholly.
+// line is `// [[from, to, startColumn?, endColumn?], ...]`: the mutants it has, by the lines they
+// span (from 1) and, if given, their columns. `mutate` is true or mutation ranges, lines from 0, and
+// a mutant is made when a range holds it wholly, columns included, as Stryker's instrumenter has it.
 const FAKE_INSTRUMENTER = `
 export function createInstrumenter() {
   return {
     async instrument(files) {
       const mutants = [];
       for (const { name, content, mutate } of files) {
-        for (const [from, to] of JSON.parse(content.split('\\n')[0].slice(3))) {
-          const location = { start: { line: from - 1, column: 0 }, end: { line: to - 1, column: 8 } };
-          const inside = mutate === true || mutate.some((r) => r.start.line <= location.start.line && location.end.line <= r.end.line);
+        for (const [from, to, startColumn = 0, endColumn = 8] of JSON.parse(content.split('\\n')[0].slice(3))) {
+          const location = { start: { line: from - 1, column: startColumn }, end: { line: to - 1, column: endColumn } };
+          const inside = mutate === true || mutate.some((r) => (r.start.line < location.start.line || (r.start.line === location.start.line && r.start.column <= location.start.column)) && (r.end.line > location.end.line || (r.end.line === location.end.line && r.end.column >= location.end.column)));
           if (inside) mutants.push({ fileName: name, location, mutatorName: 'Fake', replacement: 'x' });
         }
       }
@@ -752,174 +754,311 @@ test('a range key names its lines, and a whole file names none', () => {
   assert.equal(rangeOf('src/a:b.ts'), null);
 });
 
-// ---- A file dealt in line ranges must keep each of its mutants in exactly one of them.
+// ---- A file dealt in line ranges: the cuts as they are tonight, and every mutant in exactly one range.
 
-/** The instrumenter's mutants by the lines they span (from 1), as it gives them (lines from 0) for `true` or ranges. */
-const mutantsStub = (files) => async (file, mutate) =>
-  (files[file] ?? [])
-    .map(([from, to]) => ({ location: { start: { line: from - 1, column: 0 }, end: { line: to - 1, column: 8 } } }))
-    .filter((m) => mutate === true || mutate.some((r) => r.start.line <= m.location.start.line && m.location.end.line <= r.end.line));
+/** Stryker's own test of whether a range holds a location wholly, columns included. */
+const holds = (r, location) =>
+  (r.start.line < location.start.line || (r.start.line === location.start.line && r.start.column <= location.start.column)) &&
+  (r.end.line > location.end.line || (r.end.line === location.end.line && r.end.column >= location.end.column));
 
-/** A dealing of the given slices, each a list of keys. */
-const dealtAs = (...slices) => ({ slices: slices.map((keys, slice) => ({ slice, files: Object.fromEntries(keys.map((key) => [key, {}])) })) });
+/** The instrumenter's mutants by the lines they span (from 1, columns optional), as it gives them (lines from 0), for `true` or ranges. */
+const mutantsStub = (files, calls = []) => async (file, mutate) => {
+  calls.push([file, mutate]);
+  return (files[file] ?? [])
+    .map(([from, to, startColumn = 0, endColumn = 8]) => ({ location: { start: { line: from - 1, column: startColumn }, end: { line: to - 1, column: endColumn } } }))
+    .filter((m) => mutate === true || mutate.some((r) => holds(r, m.location)));
+};
 
-test('ranges that hold every mutant of the file are no problem, in one slice or two, in order or not', async () => {
+/** A dealing of the given slices, each a list of keys, each key with this many dealt mutants. */
+const dealtAs = (...slices) => ({ slices: slices.map((keys, slice) => ({ slice, files: Object.fromEntries(keys.map((key) => [key, { mutants: 100 }])) })) });
+
+/** Plan the cuts of `src/x.ts` dealt as these ranges (each a slice of its own) over these mutants. */
+const planOf = (ranges, mutants, options) => planRanges(dealtAs(...ranges.map((r) => [`src/x.ts:${r}`])), ['src/x.ts'], mutantsStub({ 'src/x.ts': mutants }), options);
+/** What the plan runs, as the keys with the file taken off. */
+const runs = (plan) => [...plan.effective.values()].map((key) => key.replace('src/x.ts', ''));
+
+test('a limit on a move is a tenth of the smaller part, as the 90 % guard lets a part lose', () => {
+  assert.equal(shiftLimit(848), 84);
+  assert.equal(shiftLimit(1425), 142);
+  assert.equal(shiftLimit(100), 10);
+  assert.equal(shiftLimit(9), 0);
+  assert.equal(shiftLimit(0), 0);
+});
+
+test('cuts that no mutant crosses stay where the dealing has them, in one slice or two, in order or not, and nothing is said', async () => {
   const stub = mutantsStub({ 'src/big.ts': [[1, 1], [10, 12], [49, 50], [51, 51], [60, 70]] });
-  assert.deepEqual(await rangeProblems(dealtAs(['src/big.ts:1-50', 'src/a.ts'], ['src/big.ts:51-99999']), ['src/big.ts', 'src/a.ts'], stub), []);
-  assert.deepEqual(await rangeProblems(dealtAs(['src/big.ts:51-99999'], ['src/big.ts:1-50']), ['src/big.ts'], stub), []);
+  const dealt = dealtAs(['src/big.ts:1-50', 'src/a.ts'], ['src/big.ts:51-99999']);
+  const plan = await planRanges(dealt, ['src/big.ts', 'src/a.ts'], stub);
+  assert.deepEqual([...plan.effective], [['src/big.ts:1-50', 'src/big.ts:1-50'], ['src/big.ts:51-99999', 'src/big.ts:51-99999']]);
+  assert.deepEqual({ notes: plan.notes, moves: plan.moves, problems: plan.problems }, { notes: [], moves: [], problems: [] });
+  assert.deepEqual([...(await planRanges(dealtAs(['src/big.ts:51-99999'], ['src/big.ts:1-50']), ['src/big.ts'], stub)).effective.values()], ['src/big.ts:1-50', 'src/big.ts:51-99999']);
   // Three parts; a whole file in the dealing is not a range and is not asked for.
   const three = mutantsStub({ 'src/big.ts': [[1, 1], [3, 9], [20, 30], [60, 70]] });
-  assert.deepEqual(await rangeProblems(dealtAs(['src/big.ts:1-10', 'src/whole.ts'], ['src/big.ts:11-50'], ['src/big.ts:51-99999']), ['src/big.ts', 'src/whole.ts'], three), []);
+  const parts = await planRanges(dealtAs(['src/big.ts:1-10', 'src/whole.ts'], ['src/big.ts:11-50'], ['src/big.ts:51-99999']), ['src/big.ts', 'src/whole.ts'], three);
+  assert.deepEqual([parts.notes, parts.problems], [[], []]);
+  assert.equal(parts.effective.size, 3);
   // A file that is gone has nothing to lose, and no range keys is nothing to ask.
-  assert.deepEqual(await rangeProblems(dealtAs(['src/big.ts:1-50'], ['src/big.ts:51-99999']), [], async () => assert.fail('asked for a file that is gone')), []);
-  assert.deepEqual(await rangeProblems(dealtAs(['src/a.ts']), ['src/a.ts'], async () => assert.fail('asked for a file with no ranges')), []);
+  const gone = await planRanges(dealtAs(['src/big.ts:1-50'], ['src/big.ts:51-99999']), [], async () => assert.fail('asked for a file that is gone'));
+  assert.deepEqual([gone.effective.size, gone.problems], [0, []]);
+  assert.equal((await planRanges(dealtAs(['src/a.ts']), ['src/a.ts'], async () => assert.fail('asked for a file with no ranges'))).effective.size, 0);
 });
 
-test('a mutant that crosses a cut is in no part: the message says how many, which cut, where to move it and what to do', async () => {
+test('a slice asks about the files it holds and no others: a file it has no part of is not asked for, and cannot make it red', async () => {
+  const calls = [];
+  const stub = mutantsStub({ 'src/big.ts': [[1, 10]], 'src/other.ts': [[1, 1], [60, 70]] }, calls);
+  const dealt = dealtAs(['src/big.ts:1-3', 'src/other.ts:1-50'], ['src/big.ts:4-5', 'src/other.ts:51-99999']);
+  // big.ts cannot be cut (one mutant spans it all); other.ts can.
+  const held = await planRanges(dealt, ['src/big.ts', 'src/other.ts'], stub, { only: new Set(['src/other.ts']) });
+  assert.deepEqual([held.problems, [...held.effective.keys()]], [[], ['src/other.ts:1-50', 'src/other.ts:51-99999']]);
+  assert.ok(calls.every(([file]) => file === 'src/other.ts'), JSON.stringify(calls));
+  // Asked about all of them, as --check-ranges does, it is a problem.
+  const every = await planRanges(dealt, ['src/big.ts', 'src/other.ts'], stub);
+  assert.equal(every.problems.length, 1);
+  assert.match(every.problems[0], /^src\/big\.ts is dealt in the line ranges :1-3, :4-5/);
+  // A slice that holds nothing of them asks for nothing.
+  assert.equal((await planRanges(dealt, ['src/big.ts'], async () => assert.fail('asked'), { only: new Set(['src/c.ts']) })).effective.size, 0);
+});
+
+test('a cut a mutant crosses is moved to the nearest line none crosses; the dealing keeps its line as a hint, and the move is said', async () => {
   // [45, 55] starts before the cut at line 50 and ends after it.
-  const stub = mutantsStub({ 'src/big.ts': [[1, 1], [10, 12], [45, 55], [60, 70]] });
-  const [problem, ...rest] = await rangeProblems(dealtAs(['src/big.ts:1-50'], ['src/big.ts:51-99999']), ['src/big.ts'], stub);
-  assert.deepEqual(rest, []);
-  assert.match(problem, /^src\/big\.ts is dealt in the line ranges :1-50, :51-99999, which hold 3 mutants, and the file has 4: 1 mutant lies across a cut or outside the ranges, so no slice runs it\./);
+  const plan = await planOf(['1-50', '51-99999'], [[1, 1], [10, 12], [45, 55], [60, 70]]);
+  assert.deepEqual(plan.problems, []);
   // The nearest line no mutant crosses is 55 (the mutant ends there); 44 is further off.
-  assert.match(problem, /move the cut at line 50 to line 55, the nearest line no mutant crosses, so that the keys of src\/big\.ts in scripts\/mutation-slices\.json are :1-55, :56-99999/);
-  assert.match(problem, /or make a new dealing with --deal\.$/);
-  // The advice is good: with the keys it gives, the parts hold the file.
-  assert.deepEqual(await rangeProblems(dealtAs(['src/big.ts:1-55'], ['src/big.ts:56-99999']), ['src/big.ts'], stub), []);
-  // Two mutants lost to the same cut are said in the plural.
-  const two = await rangeProblems(dealtAs(['src/big.ts:1-50'], ['src/big.ts:51-99999']), ['src/big.ts'], mutantsStub({ 'src/big.ts': [[45, 55], [48, 52], [60, 70]] }));
-  assert.match(two[0], /hold 1 mutants, and the file has 3: 2 mutants lie across a cut/);
-  assert.match(two[0], /move the cut at line 50 to line 55,/);
-  // The nearer side wins: a mutant that ends just after the cut moves it down to where it starts.
-  const near = await rangeProblems(dealtAs(['src/big.ts:1-50'], ['src/big.ts:51-99999']), ['src/big.ts'], mutantsStub({ 'src/big.ts': [[49, 90]] }));
-  assert.match(near[0], /move the cut at line 50 to line 48,/);
+  assert.deepEqual(runs(plan), [':1-55', ':56-99999']);
+  assert.deepEqual([...plan.effective], [['src/x.ts:1-50', 'src/x.ts:1-55'], ['src/x.ts:51-99999', 'src/x.ts:56-99999']]);
+  assert.deepEqual(plan.moves, [{ file: 'src/x.ts', hint: 50, line: 55, handed: 0 }]);
+  assert.equal(plan.notes.length, 1);
+  assert.match(plan.notes[0], /^src\/x\.ts: a mutant crosses the cut at line 50, so tonight the parts are :1-55 and :56-99999 \(the nearest line none crosses; 0 mutants change part\)\. scripts\/mutation-slices\.json keeps :1-50, :51-99999 as its hint\.$/);
+  // With these keys the parts hold the file, so nothing is moved.
+  assert.deepEqual((await planOf(['1-55', '56-99999'], [[1, 1], [10, 12], [45, 55], [60, 70]])).moves, []);
 });
 
-test('the advice holds at the edges: the ranges in any order, a mutant on the cut\'s own line, one that ends on it, equal distances, and the limits of the parts', async () => {
-  const check = (ranges, mutants) => rangeProblems(dealtAs(...ranges.map((r) => [`src/x.ts:${r}`])), ['src/x.ts'], mutantsStub({ 'src/x.ts': mutants }));
+test('the move goes to the nearer side, the lower of two equally near, and stays between the parts it divides', async () => {
+  // A mutant on the cut line, running past it: line 49 is free and one step away.
+  assert.deepEqual(runs(await planOf(['1-50', '51-99999'], [[50, 60], [70, 70]])), [':1-49', ':50-99999']);
+  // A mutant that ends on the cut line is wholly in the part before it, and does not cross it.
+  const ends = await planOf(['1-50', '51-60'], [[45, 50], [70, 70]]);
+  assert.deepEqual(ends.moves, []);
+  // As near below as above: the one below.
+  assert.deepEqual(runs(await planOf(['1-50', '51-99999'], [[49, 52]])), [':1-48', ':49-99999']);
+  // The first line of the part before the cut is the lowest it may go to, and the last line of the part after it is not allowed.
+  const lowest = await planOf(['5-10', '11-12'], [[6, 12]]);
+  assert.deepEqual(runs(lowest), [':5-5', ':6-12']);
+  // Line 4 is free and nearer than anything else, but it is before the part that starts at line 5: not a place for the cut.
+  const below = await planOf(['5-10', '11-12'], [[5, 12]]);
+  assert.match(below.problems[0], /a mutant crosses the cut at line 10 with no line near it/);
+  const highest = await planOf(['1-50', '51-60'], [[40, 49], [49, 60]]);
+  assert.deepEqual(runs(highest), [':1-39', ':40-60']);
+  assert.equal(highest.moves[0].handed, 1, 'the mutant on lines 40-49 changes part');
   // The ranges are read in line order whichever slice holds them first.
-  const unsorted = await check(['51-99999', '1-50'], [[1, 1], [45, 55], [60, 70]]);
-  assert.match(unsorted[0], /line ranges :1-50, :51-99999, which hold 2 mutants, and the file has 3/);
-  assert.match(unsorted[0], /move the cut at line 50 to line 55,.* are :1-55, :56-99999/);
-  // A mutant that starts on the last line of a part and ends after it crosses the cut; one that ends on it does not.
-  const starts = await check(['1-50', '51-99999'], [[50, 60], [70, 70]]);
-  assert.match(starts[0], /move the cut at line 50 to line 49,.* are :1-49, :50-99999/);
-  const ends = await check(['1-50', '51-60'], [[45, 50], [70, 70]]);
-  assert.match(ends[0], /hold 1 mutants, and the file has 2/);
-  assert.match(ends[0], /follow on from one another/);
-  assert.doesNotMatch(ends[0], /move the cut/);
-  // A line as near below as above: the one below, so that the part before it stays the shorter change.
-  const tie = await check(['1-50', '51-99999'], [[49, 52]]);
-  assert.match(tie[0], /move the cut at line 50 to line 48,/);
-  // The first line of the part before the cut is the lowest it may move to, and the last line of the part after it is not allowed.
-  const lowest = await check(['5-10', '11-12'], [[6, 12]]);
-  assert.match(lowest[0], /move the cut at line 10 to line 5,.* are :5-5, :6-12/);
-  const highest = await check(['1-50', '51-60'], [[40, 49], [49, 60]]);
-  assert.match(highest[0], /move the cut at line 50 to line 39,.* are :1-39, :40-60/);
-  // Two cuts that would be moved onto the same line leave no keys that follow on: said so, not advised.
-  const collide = await check(['1-50', '51-60', '61-99999'], [[40, 49], [49, 56], [57, 62], [62, 70]]);
-  assert.match(collide[0], /no line near the cut is free of the mutants that cross it/);
-  assert.doesNotMatch(collide[0], /move the cut/);
+  const unsorted = await planOf(['51-99999', '1-50'], [[1, 1], [45, 55], [60, 70]]);
+  assert.deepEqual(runs(unsorted), [':1-55', ':56-99999']);
 });
 
-test('every cut a mutant crosses is moved, and the keys that result are given whole', async () => {
-  const stub = mutantsStub({ 'src/big.ts': [[45, 55], [95, 105], [200, 200]] });
-  const [problem] = await rangeProblems(dealtAs(['src/big.ts:1-50'], ['src/big.ts:51-100'], ['src/big.ts:101-99999']), ['src/big.ts'], stub);
-  assert.match(problem, /hold 1 mutants, and the file has 3: 2 mutants lie across a cut/);
-  assert.match(problem, /move the cut at line 50 to line 55 and the cut at line 100 to line 105, the nearest lines no mutant crosses, so that the keys of src\/big\.ts in scripts\/mutation-slices\.json are :1-55, :56-105, :106-99999/);
-  assert.deepEqual(await rangeProblems(dealtAs(['src/big.ts:1-55'], ['src/big.ts:56-105'], ['src/big.ts:106-99999']), ['src/big.ts'], stub), []);
-  // A cut that is not crossed stays where it is.
-  const one = await rangeProblems(dealtAs(['src/big.ts:1-50'], ['src/big.ts:51-100'], ['src/big.ts:101-99999']), ['src/big.ts'], mutantsStub({ 'src/big.ts': [[45, 55], [200, 200]] }));
-  assert.match(one[0], /move the cut at line 50 to line 55, the nearest line no mutant crosses, so that the keys of src\/big\.ts in scripts\/mutation-slices\.json are :1-55, :56-100, :101-99999/);
+test('every cut a mutant crosses is moved, one that none crosses stays, and the keys that result follow on from one another', async () => {
+  const three = ['1-50', '51-100', '101-99999'];
+  assert.deepEqual(runs(await planOf(three, [[45, 55], [95, 105], [200, 200]])), [':1-55', ':56-105', ':106-99999']);
+  assert.deepEqual(runs(await planOf(three, [[45, 55], [200, 200]])), [':1-55', ':56-100', ':101-99999']);
+  const both = await planOf(three, [[45, 55], [95, 105], [200, 200]]);
+  assert.deepEqual(both.moves.map((m) => [m.hint, m.line]), [[50, 55], [100, 105]]);
+  assert.equal(both.notes.length, 2);
+  // Two cuts that would land on the same line leave no parts that follow on: said, not run.
+  const collide = await planOf(['1-50', '51-60', '61-99999'], [[40, 49], [49, 56], [57, 62], [62, 70]]);
+  assert.equal(collide.problems.length, 1);
+  assert.match(collide.problems[0], /a mutant crosses the cut at line 50 and 60 with no line near it, between the parts, that none crosses/);
+  assert.match(collide.problems[0], /Cut src\/x\.ts somewhere else in scripts\/mutation-slices\.json, or make a new dealing with --deal\./);
 });
 
-test('ranges that overlap run a mutant twice, ranges that stop short or start late lose mutants, and a cut with no free line near it says so', async () => {
-  const keys = (...ranges) => ranges.map((r) => `src/x.ts:${r}`);
+test('a move that hands over more than a part may lose is a dealing too old to go on with; one within the limit is not', async () => {
+  // A block over lines 30-70 crosses the cut at 50. The nearest free line is 70, and the 30 mutants on lines 52-66 change part.
+  const inside = Array.from({ length: 30 }, (_, i) => [52 + (i % 15), 52 + (i % 15)]);
+  const mutants = [[30, 70], ...inside];
+  // Each part was dealt 100 mutants: a part may lose ten.
+  const red = await planOf(['1-50', '51-99999'], mutants);
+  assert.equal(red.problems.length, 1);
+  assert.match(red.problems[0], /^src\/x\.ts is dealt in the line ranges :1-50, :51-99999, and the cut at line 50 would move to line 70 and hand 30 mutants to the other part, more than the 10 that a move may: the dealing is out of date, so make a new dealing with --deal\.$/);
+  assert.deepEqual([red.moves, runs(red)], [[], [':1-50', ':51-99999']], 'nothing is moved when the move is too far');
+  // The limit is a tenth of the smaller part: 30 is within it when the smaller part was dealt 300 mutants.
+  const roomy = planRanges({ slices: [{ files: { 'src/x.ts:1-50': { mutants: 300 } } }, { files: { 'src/x.ts:51-99999': { mutants: 900 } } }] }, ['src/x.ts'], mutantsStub({ 'src/x.ts': mutants }));
+  assert.deepEqual(runs(await roomy), [':1-70', ':71-99999']);
+  // What changes part is what lies wholly in the lines between the hint and the new cut, the new cut's line included
+  // and the hint's line not: [50, 50] is on the hint's line and stays, [70, 70] is on the new cut's line and moves.
+  const edges = await planOf(['1-50', '51-99999'], [[30, 70], [50, 50], [70, 70], [55, 55], [60, 62]], { maxShift: 99 });
+  assert.deepEqual([edges.moves[0].line, edges.moves[0].handed], [70, 3]);
+  // The smaller of the two parts sets the limit and not the larger: 50 mutants handed to a part dealt 300 is more than a tenth of it.
+  const fifty = Array.from({ length: 50 }, (_, i) => [52 + (i % 15), 52 + (i % 15)]);
+  const lopsided = await planRanges({ slices: [{ files: { 'src/x.ts:1-50': { mutants: 300 } } }, { files: { 'src/x.ts:51-99999': { mutants: 900 } } }] }, ['src/x.ts'], mutantsStub({ 'src/x.ts': [[30, 70], ...fifty] }));
+  assert.match(lopsided.problems[0], /hand 50 mutants to the other part, more than the 30 that a move may/);
+  const lopsided2 = await planRanges({ slices: [{ files: { 'src/x.ts:1-50': { mutants: 900 } } }, { files: { 'src/x.ts:51-99999': { mutants: 300 } } }] }, ['src/x.ts'], mutantsStub({ 'src/x.ts': [[30, 70], ...fifty] }));
+  assert.match(lopsided2.problems[0], /more than the 30 that a move may/);
+  // Exactly the limit passes, one over does not; a limit can also be given.
+  assert.equal((await planOf(['1-50', '51-99999'], mutants, { maxShift: 30 })).problems.length, 0);
+  assert.equal((await planOf(['1-50', '51-99999'], mutants, { maxShift: 29 })).problems.length, 1);
+  // A part the dealing gives no mutants for may hand over none.
+  const none = await planRanges({ slices: [{ files: { 'src/x.ts:1-50': {} } }, { files: { 'src/x.ts:51-99999': {} } }] }, ['src/x.ts'], mutantsStub({ 'src/x.ts': [[45, 55]] }));
+  assert.equal(none.problems.length, 0, 'a move of no mutants is within a limit of none');
+  const none2 = await planRanges({ slices: [{ files: { 'src/x.ts:1-50': {} } }, { files: { 'src/x.ts:51-99999': {} } }] }, ['src/x.ts'], mutantsStub({ 'src/x.ts': [[30, 70], [60, 60]] }));
+  assert.equal(none2.problems.length, 1);
+});
+
+test('ranges that overlap run a mutant twice, ranges that stop short or start late lose mutants: these are for the dealing, not for a cut to move', async () => {
   // Two ranges that share lines 40-50: a mutant there is run by both slices.
-  const overlap = await rangeProblems(dealtAs(keys('1-50'), keys('40-99999')), ['src/x.ts'], mutantsStub({ 'src/x.ts': [[42, 44], [60, 61]] }));
-  assert.match(overlap[0], /hold 3 mutants, and the file has 2: 1 mutant is in two ranges, so two slices run it\./);
-  assert.match(overlap[0], /make the keys of src\/x\.ts in scripts\/mutation-slices\.json follow on from one another, the first from line 1 and the last to line 99999/);
+  const overlap = await planOf(['1-50', '40-99999'], [[42, 44], [60, 61]]);
+  assert.match(overlap.problems[0], /hold 3 mutants, and the file has 2: 1 mutant is in two ranges, so two slices run it\./);
+  assert.match(overlap.problems[0], /make the keys of src\/x\.ts in scripts\/mutation-slices\.json follow on from one another, the first from line 1 and the last to line 99999/);
   // The last range stops at 60 and a mutant is on line 70; the first starts at 10 and a mutant is on line 2.
-  const short = await rangeProblems(dealtAs(keys('1-50'), keys('51-60')), ['src/x.ts'], mutantsStub({ 'src/x.ts': [[70, 70]] }));
-  assert.match(short[0], /hold 0 mutants, and the file has 1: 1 mutant lies across a cut or outside the ranges/);
-  assert.match(short[0], /follow on from one another/);
-  const late = await rangeProblems(dealtAs(keys('10-50'), keys('51-99999')), ['src/x.ts'], mutantsStub({ 'src/x.ts': [[2, 2], [60, 60]] }));
-  assert.match(late[0], /hold 1 mutants, and the file has 2/);
-  // Ranges too narrow to move a cut within: the mutant spans them all.
-  const narrow = await rangeProblems(dealtAs(keys('1-3'), keys('4-5')), ['src/x.ts'], mutantsStub({ 'src/x.ts': [[1, 10]] }));
-  assert.match(narrow[0], /no line near the cut is free of the mutants that cross it, so cut src\/x\.ts somewhere else in scripts\/mutation-slices\.json/);
+  const short = await planOf(['1-50', '51-60'], [[70, 70]]);
+  assert.match(short.problems[0], /hold 0 mutants, and the file has 1: 1 mutant lies outside the ranges, so no slice runs it/);
+  const late = await planOf(['10-50', '51-99999'], [[2, 2], [60, 60]]);
+  assert.match(late.problems[0], /hold 1 mutants, and the file has 2/);
   // One range alone is a file cut short, not a cut: nothing to move.
-  const alone = await rangeProblems(dealtAs(keys('1-2000')), ['src/x.ts'], mutantsStub({ 'src/x.ts': [[3000, 3000]] }));
-  assert.match(alone[0], /follow on from one another/);
+  assert.match((await planOf(['1-2000'], [[3000, 3000]])).problems[0], /follow on from one another/);
   // One mutant lost and another run twice give the same totals as a file with nothing wrong: 2 held, 2 in the file.
-  const balanced = await rangeProblems(dealtAs(keys('1-50'), keys('40-60')), ['src/x.ts'], mutantsStub({ 'src/x.ts': [[42, 44], [70, 70]] }));
-  assert.equal(balanced.length, 1);
-  assert.match(balanced[0], /which hold 2 mutants, and the file has 2: 1 mutant lies across a cut or outside the ranges, so no slice runs it; and 1 mutant is in two ranges, so two slices run it\./);
+  const balanced = await planOf(['1-50', '40-60'], [[42, 44], [70, 70]]);
+  assert.equal(balanced.problems.length, 1);
+  assert.match(balanced.problems[0], /which hold 2 mutants, and the file has 2: 1 mutant lies outside the ranges, so no slice runs it; and 1 mutant is in two ranges, so two slices run it\./);
   // Two identical mutants (one place, one mutation) are two, so a range that holds only one of them is a loss.
-  const twins = await rangeProblems(dealtAs(keys('1-50'), keys('51-99999')), ['src/x.ts'], async (file, mutate) => (mutate === true ? [{ location: { start: { line: 49, column: 0 }, end: { line: 51, column: 4 } } }, { location: { start: { line: 49, column: 0 }, end: { line: 51, column: 4 } } }, { location: { start: { line: 5, column: 0 }, end: { line: 5, column: 4 } } }] : mutate[0].start.line === 0 ? [{ location: { start: { line: 5, column: 0 }, end: { line: 5, column: 4 } } }] : []));
-  assert.match(twins[0], /hold 1 mutants, and the file has 3: 2 mutants lie across a cut/);
+  const at = (startLine, endLine, endColumn) => ({ location: { start: { line: startLine, column: 0 }, end: { line: endLine, column: endColumn } } });
+  const twins = await planRanges(dealtAs(['src/x.ts:1-50'], ['src/x.ts:51-99999']), ['src/x.ts'], async (file, mutate) => (mutate === true ? [at(5, 5, 4), at(5, 5, 4), at(5, 5, 4)] : mutate[0].start.line === 0 ? [at(5, 5, 4)] : []));
+  assert.match(twins.problems[0], /hold 1 mutants, and the file has 3: 2 mutants lie outside the ranges/);
   // Each file is its own problem, in name order.
-  const two = await rangeProblems(dealtAs(['src/y.ts:1-5', 'src/x.ts:1-5'], ['src/y.ts:6-99999', 'src/x.ts:6-99999']), ['src/x.ts', 'src/y.ts'], mutantsStub({ 'src/x.ts': [[4, 8]], 'src/y.ts': [[4, 8]] }));
-  assert.deepEqual(two.map((text) => text.split(' ')[0]), ['src/x.ts', 'src/y.ts']);
+  const two = await planRanges(dealtAs(['src/y.ts:1-5', 'src/x.ts:1-5'], ['src/y.ts:7-99999', 'src/x.ts:7-99999']), ['src/x.ts', 'src/y.ts'], mutantsStub({ 'src/x.ts': [[4, 8]], 'src/y.ts': [[4, 8]] }));
+  assert.equal(two.problems.length, 2);
+  assert.deepEqual(two.problems.map((text) => text.split(' ')[0]), ['src/x.ts', 'src/y.ts']);
 });
 
+test("a range is asked for the way Stryker's own reader reads file:from-to: whole lines, from column 0 to the last column, lines from 0", async () => {
+  const calls = [];
+  // A mutant that starts in column 0 of the first line of its range and one that ends in a column far out on the last line of its range.
+  const stub = mutantsStub({ 'src/x.ts': [[1, 1, 0, 20], [5, 5, 0, 99], [6, 6, 0, 3], [9, 9, 0, 120]] }, calls);
+  const plan = await planRanges(dealtAs(['src/x.ts:1-5'], ['src/x.ts:6-99999']), ['src/x.ts'], stub);
+  assert.deepEqual(plan.problems, []);
+  assert.deepEqual(calls, [
+    ['src/x.ts', true],
+    ['src/x.ts', [{ start: { line: 0, column: 0 }, end: { line: 4, column: Number.MAX_SAFE_INTEGER } }]],
+    ['src/x.ts', [{ start: { line: 5, column: 0 }, end: { line: 99998, column: Number.MAX_SAFE_INTEGER } }]],
+  ]);
+});
+
+test('with the real instrumenter a mutant in column 0 and one far out on the last line of a range are in the range', async (t) => {
+  let real;
+  try {
+    await import('@stryker-mutator/instrumenter');
+    await import('@stryker-mutator/api/plugin');
+    await import('typed-inject');
+    real = (await import('./mutation-slice.mjs')).mutantsOf;
+  } catch {
+    t.skip('Stryker is not installed here (npm run test:mutation installs it)');
+    return;
+  }
+  const dir = mkdtempSync(join(tmpdir(), 'mutation-slice-real-'));
+  try {
+    const file = join(dir, 'x.ts');
+    // A statement that starts in column 0 on its first line; the file's last line ends in a column far out.
+    writeFileSync(file, '[1, 2].forEach((x) => x + 1);\nconst y = 1 + 2;\nexport const z = y > 0 ? "long enough to end far out on the line" : "other";\n');
+    const everything = await real(file, true);
+    assert.ok(everything.length >= 5, String(everything.length));
+    const plan = await planRanges({ slices: [{ files: { [`${file}:1-3`]: { mutants: everything.length } } }] }, [file], real);
+    assert.deepEqual(plan.problems, []);
+    // Cut in two, at a line no mutant crosses: the parts hold the file, each mutant once.
+    const cut = await planRanges({ slices: [{ files: { [`${file}:1-1`]: { mutants: 10 } } }, { files: { [`${file}:2-99999`]: { mutants: 10 } } }] }, [file], real);
+    assert.deepEqual(cut.problems, []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Slices over a file dealt in two ranges. `big.js` is cut at line 50 and has a mutant over lines 45-55 when it is CROSSED.
 const CROSSED = { 'src/big.js': source([1, 1], [10, 12], [45, 55], [60, 70]), 'src/a.js': source() };
 const CLEAN = { 'src/big.js': source([1, 1], [10, 12], [60, 70]), 'src/a.js': source() };
 const RANGED = [
   { slice: 0, seconds: 20, mutants: 2, detected: 2, valid: 2, score: 100, floor: 98, files: { 'src/a.js': { seconds: 5, mutants: 0, detected: 0, valid: 0 }, 'src/big.js:1-50': { seconds: 10, mutants: 2, detected: 2, valid: 2 } } },
   { slice: 1, seconds: 10, mutants: 1, detected: 1, valid: 1, score: 100, floor: 98, files: { 'src/big.js:51-99999': { seconds: 10, mutants: 1, detected: 1, valid: 1 } } },
+  { slice: 2, seconds: 0, mutants: 0, detected: 0, valid: 0, score: null, floor: 0, files: {} },
 ];
 
-test('--check-ranges asks Stryker\'s instrumenter, and fails with what to do when a cut loses a mutant', () => {
+test('--check-ranges asks Stryker\'s instrumenter and says where each cut is tonight: green when a cut can move, red when it cannot', () => {
   const crossed = project({ sources: CROSSED, slices: RANGED });
   const clean = project({ sources: CLEAN, slices: RANGED });
+  // One mutant over the whole of both parts: no line between them is free.
+  const stuck = project({ sources: { 'src/big.js': source([1, 10]), 'src/a.js': source() }, slices: RANGED.map((s) => ({ ...s, files: Object.fromEntries(Object.entries(s.files).map(([key, f]) => [key.replace(':1-50', ':1-3').replace(':51-99999', ':4-5'), f])) })) });
   try {
-    const bad = crossed.spawn(['--check-ranges'], {});
-    assert.equal(bad.status, 1, bad.stdout + bad.stderr);
-    assert.match(bad.stderr, /src\/big\.js is dealt in the line ranges :1-50, :51-99999, which hold 3 mutants, and the file has 4/);
-    assert.match(bad.stderr, /move the cut at line 50 to line 55/);
+    const moved = crossed.spawn(['--check-ranges'], {});
+    assert.equal(moved.status, 0, moved.stdout + moved.stderr);
+    assert.match(moved.stdout, /src\/big\.js: a mutant crosses the cut at line 50, so tonight the parts are :1-55 and :56-99999 \(the nearest line none crosses; 0 mutants change part\)\./);
+    assert.match(moved.stdout, /Every file dealt in line ranges has each of its mutants in exactly one range, with the cuts above moved\./);
     const good = clean.spawn(['--check-ranges'], {});
     assert.equal(good.status, 0, good.stdout + good.stderr);
-    assert.match(good.stdout, /Every file dealt in line ranges has each of its mutants in exactly one range\./);
+    assert.equal(good.stdout, 'Every file dealt in line ranges has each of its mutants in exactly one range.\n');
+    const bad = stuck.spawn(['--check-ranges'], {});
+    assert.equal(bad.status, 1, bad.stdout + bad.stderr);
+    assert.match(bad.stderr, /src\/big\.js is dealt in the line ranges :1-3, :4-5, and a mutant crosses the cut at line 3 with no line near it/);
     // The check is of the files as they are: the file gone, nothing to lose.
-    crossed.remove('src/big.js');
-    assert.equal(crossed.spawn(['--check-ranges'], {}).status, 0);
+    stuck.remove('src/big.js');
+    assert.equal(stuck.spawn(['--check-ranges'], {}).status, 0);
   } finally {
     crossed.done();
     clean.done();
+    stuck.done();
   }
 });
 
-test('a slice that is run first checks the cuts, runs all the same, and is red for a mutant no slice runs, however well it scored', () => {
+test('a slice runs the parts as they are tonight, says so, and is green: nothing in the dealing is renamed, and Stryker\'s own failure code is kept', () => {
   const crossed = project({ sources: CROSSED, slices: RANGED });
-  const clean = project({ sources: CLEAN, slices: RANGED });
   try {
-    // Stryker's report is by the keys it was given: the part of the file is `src/big.js:1-50`.
-    const statuses = { 'src/a.js': [], 'src/big.js:1-50': repeat('Killed', 2) };
-    const onlyPart = { 'src/big.js:51-99999': repeat('Killed', 1) };
-    const red = crossed.run({ statuses }, { slice: 0 });
-    assert.equal(red.code, 1, red.out);
-    assert.match(red.out, /src\/big\.js is dealt in the line ranges :1-50, :51-99999/);
-    assert.match(red.out, /the line ranges lose mutants \(above\), so the night is red until a cut is moved or the dealing is made again/);
-    // It ran: the score is in the summary, with the problem under it, and the config is the slice's.
-    assert.match(red.summary, /\*\*Score 100\.00 %\*\* against this slice's floor of 98 %/);
-    assert.match(red.summary, /move the cut at line 50 to line 55/);
-    assert.deepEqual(red.config.mutate, ['src/a.js', 'src/big.js:1-50']);
-    // On Actions it is an annotation, outside the collapsed group of the slice's files.
-    const onActions = crossed.spawn([], { MUTATION_SLICE: '0', FAKE_STRYKER: JSON.stringify({ statuses }), GITHUB_ACTIONS: 'true' });
-    assert.match(onActions.stderr, /^::error::src\/big\.js is dealt in the line ranges/m);
-    // The other slice that holds a part is red for the same cut; a slice with no part of the file would be too.
-    assert.equal(crossed.run({ statuses: onlyPart }, { slice: 1 }).code, 1);
-    // Without the lost mutant both are green.
-    const green = clean.run({ statuses }, { slice: 0 });
+    // Stryker's report is by the keys it was given: tonight's, `src/big.js:1-55`, which holds 3 mutants.
+    const statuses = { 'src/a.js': [], 'src/big.js:1-55': repeat('Killed', 3) };
+    const green = crossed.run({ statuses }, { slice: 0 });
     assert.equal(green.code, 0, green.out);
-    assert.doesNotMatch(green.out, /line ranges/);
-    assert.equal(clean.run({ statuses: onlyPart }, { slice: 1 }).code, 0);
-    // Stryker's own failure code is kept, and a lost mutant only turns a pass into a failure.
+    assert.deepEqual(green.config.mutate, ['src/a.js', 'src/big.js:1-55']);
+    assert.match(green.out, /src\/big\.js: a mutant crosses the cut at line 50, so tonight the parts are :1-55 and :56-99999/);
+    assert.match(green.summary, /\*\*Score 100\.00 %\*\* against this slice's floor of 98 %/);
+    assert.match(green.summary, /src\/big\.js: a mutant crosses the cut at line 50/);
+    const manifest = JSON.parse(readFileSync(join(crossed.dir, 'reports', 'mutation', 'slice-0', 'slice.json'), 'utf8'));
+    assert.deepEqual(manifest.files, ['src/a.js', 'src/big.js:1-55']);
+    assert.ok(manifest.notes.some((note) => /tonight the parts are :1-55 and :56-99999/.test(note)));
+    assert.equal(readFileSync(join(crossed.dir, 'scripts', 'mutation-slices.json'), 'utf8').includes('src/big.js:1-50'), true, 'the dealing is as it was');
+    // The other part is run as :56-99999.
+    const other = crossed.run({ statuses: { 'src/big.js:56-99999': repeat('Killed', 1) } }, { slice: 1 });
+    assert.equal(other.code, 0, other.out);
+    assert.deepEqual(other.config.mutate, ['src/big.js:56-99999']);
+    // On Actions the note is in the group of the slice's files; Stryker's own failure code is kept.
     assert.equal(crossed.run({ statuses, exit: 2 }, { slice: 0 }).code, 2);
-    assert.equal(clean.run({ statuses, exit: 2 }, { slice: 0 }).code, 2);
+    // A slice that is short of mutants is short whether or not a cut moved.
+    assert.equal(crossed.run({ statuses: { 'src/a.js': [], 'src/big.js:1-55': [] } }, { slice: 0 }).code, 1);
   } finally {
     crossed.done();
-    clean.done();
+  }
+});
+
+test('a slice is red for a file it holds that cannot be run in parts, with a message on Actions, and a slice that holds none of it is green', () => {
+  // One mutant over lines 1-10 crosses every line a cut could go to between the two parts.
+  const slices = [
+    { slice: 0, seconds: 20, mutants: 1, detected: 1, valid: 1, score: 100, floor: 98, files: { 'src/big.js:1-3': { seconds: 10, mutants: 1, detected: 1, valid: 1 } } },
+    { slice: 1, seconds: 10, mutants: 0, detected: 0, valid: 0, score: null, floor: 0, files: { 'src/big.js:4-5': { seconds: 10, mutants: 0, detected: 0, valid: 0 } } },
+    { slice: 2, seconds: 5, mutants: 2, detected: 2, valid: 2, score: 100, floor: 98, files: { 'src/a.js': { seconds: 5, mutants: 2, detected: 2, valid: 2 } } },
+  ];
+  const p = project({ sources: { 'src/big.js': source([1, 10]), 'src/a.js': source() }, slices });
+  try {
+    const statuses = { 'src/big.js:1-3': repeat('Killed', 1), 'src/a.js': repeat('Killed', 2) };
+    const red = p.run({ statuses }, { slice: 0 });
+    assert.equal(red.code, 1, red.out);
+    assert.match(red.out, /src\/big\.js is dealt in the line ranges :1-3, :4-5, and a mutant crosses the cut at line 3 with no line near it/);
+    assert.match(red.out, /the line ranges of a file it holds cannot be run as dealt \(above\), so the night is red until the dealing is made again/);
+    // It ran as dealt, and the score is true: the summary has it, and the problem under it.
+    assert.deepEqual(red.config.mutate, ['src/big.js:1-3']);
+    assert.match(red.summary, /\*\*Score 100\.00 %\*\*.*\n\nsrc\/big\.js is dealt in the line ranges/);
+    // On Actions it is an annotation, outside the collapsed group of the slice's files.
+    const onActions = p.spawn([], { MUTATION_SLICE: '0', FAKE_STRYKER: JSON.stringify({ statuses }), GITHUB_ACTIONS: 'true' });
+    assert.match(onActions.stderr, /^::error::src\/big\.js is dealt in the line ranges/m);
+    // Stryker's own failure code is kept.
+    assert.equal(p.run({ statuses, exit: 2 }, { slice: 0 }).code, 2);
+    assert.equal(p.run({ statuses: { 'src/big.js:4-5': [] } }, { slice: 1 }).code, 1);
+    // A slice with none of the file is green, and is not asked: nothing is said about it.
+    const green = p.run({ statuses: { 'src/a.js': repeat('Killed', 2) } }, { slice: 2 });
+    assert.equal(green.code, 0, green.out);
+    assert.doesNotMatch(green.out, /line ranges|cut at line/);
+  } finally {
+    p.done();
   }
 });

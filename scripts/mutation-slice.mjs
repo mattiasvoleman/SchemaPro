@@ -41,15 +41,24 @@
  * Edits shift the lines, and a mutant that moves into the next part moves its
  * score with it: the one point under the measured score is for that as well.
  *
- * A CUT A MUTANT CROSSES. A cut is made at a line no mutant crosses, but an edit
- * above it moves the lines, and a mutant that starts before the cut and ends
- * after it is wholly inside neither part: no slice runs it, and nothing in the
- * score shows that it was lost. So every run of a slice first asks Stryker's
- * instrumenter (the version `npm run test:mutation` installs, the one that will
- * run the mutants) for the mutants of each file that is dealt in parts, whole
- * and part by part, and the night is red when a mutant of the file is in no part or
- * in two. The message says which cut and the nearest line to move it to.
- * `--check-ranges` does only that, for use when the file has been edited.
+ * A CUT A MUTANT CROSSES. A mutant that starts above a cut and ends below it is
+ * wholly inside neither part: no slice would run it, and nothing in a score
+ * would show that it was lost. The cut is made at a line no mutant crosses, but
+ * the lines move when the file is edited, and the file is edited nearly every
+ * day, so the line in the dealing is only a hint. A slice that holds a part of
+ * such a file asks Stryker's instrumenter (the version `npm run test:mutation`
+ * installs, the one that will run the mutants) for the file's mutants, whole and
+ * part by part, and runs the parts as they are tonight: a cut that no mutant
+ * crosses stays where the dealing has it, and one that a mutant crosses is
+ * moved to the nearest line none does. The move is written in the log, in
+ * slice.json and in the summary, and nothing in the dealing has to be renamed.
+ * The night is red only where that cannot be done: no free line between the two
+ * parts, a move that hands more than shiftLimit mutants to the other part (the
+ * dealing is out of date: --deal), or ranges that leave a mutant out or run it
+ * twice for another reason (a gap, an overlap, a last range that stops short).
+ * A slice that holds no part of the file is never made red by it.
+ * `--check-ranges` does the same for every such file and says where each cut is
+ * tonight, for use after editing one.
  *
  * THE FLOOR. A slice's floor is its measured score minus one percentage point,
  * rounded down. It is the slice's `break` threshold, so the night's job fails
@@ -85,8 +94,8 @@
  * tonight) and summary.md (score against floor and target, every file's score,
  * weakest first). The summary is also appended to the Actions job summary. The
  * exit code is Stryker's, and 1 where Stryker's is 0 but the night measured
- * nothing, scored under the floor, or lost mutants to a cut (exitCodeFor,
- * rangeProblems).
+ * nothing, scored under the floor, or holds a file whose ranges cannot be run
+ * (exitCodeFor, planRanges).
  */
 
 import { spawnSync } from 'node:child_process';
@@ -404,15 +413,16 @@ async function countMutants(files) {
 }
 
 /** One file's mutants for `mutate` as Stryker passes it on: true, or mutation ranges with lines from 0. */
-async function mutantsOf(file, mutate) {
+export async function mutantsOf(file, mutate) {
   const instrument = await instrumenter();
   return instrument([{ name: file, content: readFileSync(file, 'utf8'), mutate }]);
 }
 
 /**
- * The lines to move a cut to: the one nearest `cut` that no mutant crosses,
+ * The line to move a cut to: the one nearest `cut` that no mutant crosses,
  * between the start of the part before it and the end of the part after it
- * (exclusive of the latter). `crossing` is [{ from, to }] per mutant, lines from 1.
+ * (exclusive of the latter), the lower of two equally near. `crossing` is
+ * [{ from, to }] per mutant, lines from 1. Null where there is none.
  */
 function nearestFreeLine(cut, lo, hi, crossing) {
   const free = (line) => !crossing.some((m) => m.from <= line && m.to > line);
@@ -424,18 +434,55 @@ function nearestFreeLine(cut, lo, hi, crossing) {
 }
 
 /**
- * Whether every file the dealing cuts in line ranges still has each of its
- * mutants in exactly one of them. Stryker runs the mutants that lie wholly
- * inside a range, so a mutant that crosses a cut is in neither part and no slice
- * runs it, and ranges that overlap run a mutant twice. Each mutant is followed
- * to the ranges that hold it, so that one lost and one run twice do not make the
- * totals agree. `mutantsOf(file, mutate)` is the instrumenter's mutants of the file for `mutate` as Stryker passes it on
- * (true, or ranges with lines from 0), the very ones a run of the part would
- * make. `files` are the files that exist; a file that is gone has nothing to
- * lose. Returns one text for each file that loses or doubles mutants, and none
- * when the parts hold the files.
+ * The most mutants a cut may hand from one part of a file to the other when it
+ * is moved off the mutant that crosses it: a tenth of the smaller of the two
+ * parts' dealt mutants, which is what a slice may lose before its 90 % guard
+ * (MIN_RAN) calls it short. A cut is a hint: the dealing's line is where it was
+ * when the file was measured, tonight it is the line nearest to it that no mutant
+ * crosses, and the mutants between the two lines change part. A move that alone
+ * takes more than a part may lose is a dealing too old to go on with, and
+ * --deal is the answer; one that takes less is within what the guard, the point
+ * under each measured score and the note in the summary answer for.
+ * For optimization-proxy.service.ts that is 84 mutants (848 in the smaller part).
+ * Measured over its history: after one edit to a fresh dealing the move handed
+ * over 0 to 37 mutants in 29 of 30 edits and 274 in the one of +937 lines;
+ * dealt once and never again, 9 of the 31 versions would need more, the same
+ * 9 in which the part has lost more than a tenth anyway.
  */
-export async function rangeProblems(dealing, files, mutantsOf) {
+export const shiftLimit = (smaller) => Math.floor(smaller - smaller * MIN_RAN + 1e-9);
+
+const mutationRange = (from, to) => [{ start: { line: from - 1, column: 0 }, end: { line: to - 1, column: Number.MAX_SAFE_INTEGER } }];
+
+/**
+ * Where the cuts of the files the dealing cuts in line ranges are tonight, and
+ * whether every mutant of such a file is then in exactly one range.
+ *
+ * Stryker runs the mutants that lie wholly inside a range, so a mutant that
+ * crosses a cut is in neither part and no slice runs it, and ranges that
+ * overlap run a mutant twice. A cut is made at a line no mutant crosses, but
+ * the lines move when the file is edited, and the file is edited nearly every
+ * day. So the dealing's line is only a hint: a cut that no mutant crosses stays
+ * where it is, and one that a mutant crosses is moved to the nearest line none
+ * does (shiftLimit is how many mutants it may hand to the other part). Nothing in
+ * the dealing has to be renamed for it.
+ *
+ * Returns { effective, notes, moves, problems }: `effective` maps each dealt key to the
+ * key to run (the same key where nothing moved), `notes` says which cuts were
+ * moved and how far (`moves` is the same as { file, hint, line, handed }), and `problems` is one text for each file that cannot be run
+ * in parts: no free line within reach, a move that shifts more than shiftLimit
+ * mutants, or ranges that leave a mutant out or run it twice for another reason
+ * than a cut (a gap, an overlap, a last range that stops short). Each mutant is
+ * followed to the ranges that hold it, so that one lost and one run twice do not
+ * make the totals agree.
+ *
+ * `mutantsOf(file, mutate)` is the instrumenter's mutants of the file for
+ * `mutate` as Stryker passes it on (true, or ranges with lines from 0), the very
+ * ones a run of the part would make. `files` are the files that exist; a file
+ * that is gone has nothing to lose. `only`, when given, are the files to plan:
+ * a night asks for the files its slice holds and no others, so that a slice with
+ * no part of such a file cannot be made red by it.
+ */
+export async function planRanges(dealing, files, mutantsOf, { only = null, maxShift = null } = {}) {
   const present = new Set(files);
   const parts = new Map();
   for (const slice of dealing.slices) {
@@ -444,54 +491,71 @@ export async function rangeProblems(dealing, files, mutantsOf) {
       if (range) parts.set(baseOf(key), [...(parts.get(baseOf(key)) ?? []), { key, ...range }]);
     }
   }
+  const effective = new Map();
+  const notes = [];
+  const moves = [];
   const problems = [];
-  for (const [file, ranges] of [...parts].filter(([file]) => present.has(file)).sort(([a], [b]) => (a < b ? -1 : 1))) {
+  const wanted = [...parts].filter(([file]) => present.has(file) && (only === null || only.has(file)));
+  for (const [file, ranges] of wanted.sort(([a], [b]) => (a < b ? -1 : 1))) {
     ranges.sort((a, b) => a.from - b.from);
+    for (const { key } of ranges) effective.set(key, key);
     const all = await mutantsOf(file, true);
-    // Mutant by mutant, and not by the totals: a mutant lost at one cut and another run twice
-    // by two ranges that overlap would otherwise cancel out. A mutant is the same in the whole
-    // file's run and in a range's: where it is, what mutates it and what it becomes.
-    const mutantKey = (m) => JSON.stringify([m.location, m.mutatorName, m.replacement]);
-    const wanted = new Map();
-    for (const m of all) wanted.set(mutantKey(m), (wanted.get(mutantKey(m)) ?? 0) + 1);
-    const heldBy = new Map();
-    let held = 0;
-    for (const { from, to } of ranges) {
-      const mutate = [{ start: { line: from - 1, column: 0 }, end: { line: to - 1, column: Number.MAX_SAFE_INTEGER } }];
-      for (const m of await mutantsOf(file, mutate)) {
-        heldBy.set(mutantKey(m), (heldBy.get(mutantKey(m)) ?? 0) + 1);
-        held++;
-      }
-    }
-    let lost = 0;
-    for (const [key, n] of wanted) lost += Math.max(0, n - (heldBy.get(key) ?? 0));
-    let doubled = 0;
-    for (const [key, n] of heldBy) doubled += Math.max(0, n - (wanted.get(key) ?? 0));
-    if (lost === 0 && doubled === 0) continue;
     const keys = ranges.map(({ key }) => key.slice(file.length));
     const crossing = all.map((m) => ({ from: m.location.start.line + 1, to: m.location.end.line + 1 }));
     const cuts = ranges.slice(0, -1).map(({ to }) => to);
     const isCrossed = (line) => crossing.some((m) => m.from <= line && m.to > line);
     // Each cut a mutant crosses moves to the nearest line none does, within the two parts it divides.
     const moved = cuts.map((to, i) => (isCrossed(to) ? nearestFreeLine(to, ranges[i].from, ranges[i + 1].to, crossing) : to));
-    const movable = moved.every((line, i) => line !== null && line >= ranges[i].from && (i === 0 || line > moved[i - 1]));
-    const effect = [
-      ...(lost > 0 ? [`${lost} ${lost === 1 ? 'mutant lies' : 'mutants lie'} across a cut or outside the ranges, so no slice runs ${lost === 1 ? 'it' : 'them'}`] : []),
-      ...(doubled > 0 ? [`${doubled} ${doubled === 1 ? 'mutant is' : 'mutants are'} in two ranges, so two slices run ${doubled === 1 ? 'it' : 'them'}`] : []),
-    ].join('; and ');
-    let fix;
-    if (cuts.some(isCrossed) && movable) {
-      const now = ranges.map(({ from, to }, i) => `:${i === 0 ? from : moved[i - 1] + 1}-${i === ranges.length - 1 ? to : moved[i]}`);
-      const moves = cuts.flatMap((to, i) => (to === moved[i] ? [] : [`the cut at line ${to} to line ${moved[i]}`]));
-      fix = `move ${moves.join(' and ')}, the nearest ${moves.length === 1 ? 'line' : 'lines'} no mutant crosses, so that the keys of ${file} in ${DEALING} are ${now.join(', ')} (the figures of the parts then move a few mutants; the point under each measured score is for that)`;
-    } else if (cuts.some(isCrossed)) {
-      fix = `no line near the cut is free of the mutants that cross it, so cut ${file} somewhere else in ${DEALING}`;
-    } else {
-      fix = `make the keys of ${file} in ${DEALING} follow on from one another, the first from line 1 and the last to line ${LAST_LINE}`;
+    // nearestFreeLine keeps a cut between the two parts it divides; two cuts moved onto one line leave no part between them.
+    const movable = moved.every((line, i) => line !== null && (i === 0 || line > moved[i - 1]));
+    const handed = cuts.map((to, i) => (moved[i] === null ? 0 : crossing.filter((m) => m.from > Math.min(to, moved[i]) && m.to <= Math.max(to, moved[i])).length));
+    const crossed = cuts.filter(isCrossed);
+    if (crossed.length > 0 && !movable) {
+      problems.push(`${file} is dealt in the line ranges ${keys.join(', ')}, and a mutant crosses the cut at line ${crossed.join(' and ')} with no line near it, between the parts, that none crosses. Cut ${file} somewhere else in ${DEALING}, or make a new dealing with --deal.`);
+      continue;
     }
-    problems.push(`${file} is dealt in the line ranges ${keys.join(', ')}, which hold ${held} mutants, and the file has ${all.length}: ${effect}. Fix it: ${fix}; or make a new dealing with --deal.`);
+    // The dealt mutants of a part, from the dealing; a part it gives none for may hand over none.
+    const dealt = (key) => dealing.slices.map((slice) => slice.files[key]?.mutants).find((n) => n !== undefined) ?? 0;
+    const limits = cuts.map((_, i) => maxShift ?? shiftLimit(Math.min(dealt(ranges[i].key), dealt(ranges[i + 1].key))));
+    const tooMany = cuts.flatMap((to, i) => (moved[i] !== to && handed[i] > limits[i] ? [`the cut at line ${to} would move to line ${moved[i]} and hand ${handed[i]} mutants to the other part, more than the ${limits[i]} that a move may`] : []));
+    if (tooMany.length > 0) {
+      problems.push(`${file} is dealt in the line ranges ${keys.join(', ')}, and ${tooMany.join(', and ')}: the dealing is out of date, so make a new dealing with --deal.`);
+      continue;
+    }
+    // A gap or an overlap between two keys is kept as the dealing has it, so that the count below finds it.
+    const now = ranges.map(({ from, to }, i) => ({ from: i === 0 ? from : moved[i - 1] + (from - ranges[i - 1].to), to: moved[i] ?? to }));
+    // Followed mutant by mutant, and not by the totals, with Stryker's own count of what each range runs.
+    const mutantKey = (m) => JSON.stringify([m.location, m.mutatorName, m.replacement]);
+    const count = new Map();
+    for (const m of all) count.set(mutantKey(m), (count.get(mutantKey(m)) ?? 0) + 1);
+    const heldBy = new Map();
+    let held = 0;
+    for (const { from, to } of now) {
+      for (const m of await mutantsOf(file, mutationRange(from, to))) {
+        heldBy.set(mutantKey(m), (heldBy.get(mutantKey(m)) ?? 0) + 1);
+        held++;
+      }
+    }
+    let lost = 0;
+    for (const [key, n] of count) lost += Math.max(0, n - (heldBy.get(key) ?? 0));
+    let doubled = 0;
+    for (const [key, n] of heldBy) doubled += Math.max(0, n - (count.get(key) ?? 0));
+    if (lost > 0 || doubled > 0) {
+      const effect = [
+        ...(lost > 0 ? [`${lost} ${lost === 1 ? 'mutant lies' : 'mutants lie'} outside the ranges, so no slice runs ${lost === 1 ? 'it' : 'them'}`] : []),
+        ...(doubled > 0 ? [`${doubled} ${doubled === 1 ? 'mutant is' : 'mutants are'} in two ranges, so two slices run ${doubled === 1 ? 'it' : 'them'}`] : []),
+      ].join('; and ');
+      problems.push(`${file} is dealt in the line ranges ${keys.join(', ')}, which hold ${held} mutants, and the file has ${all.length}: ${effect}. Fix it: make the keys of ${file} in ${DEALING} follow on from one another, the first from line 1 and the last to line ${LAST_LINE}; or make a new dealing with --deal.`);
+      continue;
+    }
+    ranges.forEach(({ key }, i) => effective.set(key, `${file}:${now[i].from}-${now[i].to}`));
+    cuts.forEach((to, i) => {
+      if (moved[i] === to) return;
+      moves.push({ file, hint: to, line: moved[i], handed: handed[i] });
+      notes.push(`${file}: a mutant crosses the cut at line ${to}, so tonight the parts are ${now.map(({ from, to: end }) => `:${from}-${end}`).join(' and ')} (the nearest line none crosses; ${handed[i]} ${handed[i] === 1 ? 'mutant changes' : 'mutants change'} part). ${DEALING} keeps ${keys.join(', ')} as its hint.`);
+    });
   }
-  return problems;
+  return { effective, notes, moves, problems };
 }
 
 /** The slice's score and each file's from Stryker's JSON report, weakest file first. */
@@ -695,9 +759,10 @@ async function main() {
   const known = new Set(dealing.slices.flatMap((s) => Object.keys(s.files).map(baseOf)));
 
   if (args.checkRanges) {
-    const problems = await rangeProblems(dealing, files, mutantsOf);
+    const { notes: moves, problems } = await planRanges(dealing, files, mutantsOf);
+    for (const move of moves) console.log(move);
     for (const problem of problems) console.error(problem);
-    if (problems.length === 0) console.log('Every file dealt in line ranges has each of its mutants in exactly one range.');
+    if (problems.length === 0) console.log('Every file dealt in line ranges has each of its mutants in exactly one range' + (moves.length > 0 ? ', with the cuts above moved.' : '.'));
     return problems.length > 0 ? 1 : 0;
   }
 
@@ -720,11 +785,14 @@ async function main() {
   }
 
   const [n] = plan({ input: args.asked, of });
-  // A cut that a mutant crosses loses it from every slice: found before the slice is run.
-  const crossed = await rangeProblems(dealing, files, mutantsOf);
   const chosen = dealing.slices[n];
   const sliceFiles = filesOf(dealing, n, files, placement.placed);
-  const notes = dealingNotes(placement, n);
+  // The cuts of a file this slice holds a part of, as they are tonight: a cut that a mutant crosses would
+  // lose that mutant from every slice, so it is moved to the nearest line none crosses. A slice that holds
+  // no part of such a file does not ask, and cannot be made red by it.
+  const cuts = await planRanges(dealing, files, mutantsOf, { only: new Set(sliceFiles.map(baseOf)) });
+  const runKeys = sliceFiles.map((key) => cuts.effective.get(key) ?? key);
+  const notes = [...dealingNotes(placement, n), ...cuts.notes];
   const dir = join(REPORTS, `slice-${n}`);
   mkdirSync(dir, { recursive: true });
 
@@ -732,7 +800,7 @@ async function main() {
   printSlice(chosen, n, of, chosen.floor, sliceFiles, notes, placement.placed);
   if (process.env.GITHUB_ACTIONS) console.log('::endgroup::');
   // Said here, outside the collapsed group, and again in the summary; the slice is run all the same, since its score is true, and the night is red.
-  for (const problem of crossed) console.error(`${process.env.GITHUB_ACTIONS ? '::error::' : ''}${problem}`);
+  for (const problem of cuts.problems) console.error(`${process.env.GITHUB_ACTIONS ? '::error::' : ''}${problem}`);
 
   if (sliceFiles.length === 0) {
     console.error(`Slice ${n} has no file to mutate: every file in the dealing is gone. A night that mutated nothing is not a pass; make a new dealing with --deal.`);
@@ -746,7 +814,7 @@ async function main() {
       {
         ...base,
         slice_comment: `Slice ${n} of ${of}, written by scripts/mutation-slice.mjs: \`mutate\` is this slice's files, \`thresholds.break\` its floor, the reports carry its number.`,
-        mutate: sliceFiles,
+        mutate: runKeys,
         thresholds: { ...base.thresholds, break: chosen.floor },
         // Beside Stryker's own: what each file cost, see mutation-timing-reporter.mjs.
         plugins: [...(base.plugins ?? ['@stryker-mutator/*']), './scripts/mutation-timing-reporter.mjs'],
@@ -758,7 +826,7 @@ async function main() {
       2,
     ) + '\n',
   );
-  const slice = { slice: n, of, mutants: chosen.mutants, floor: chosen.floor, measured: dealing.measured, files: sliceFiles, notes: [...notes, ...crossed] };
+  const slice = { slice: n, of, mutants: chosen.mutants, floor: chosen.floor, measured: dealing.measured, files: runKeys, notes: [...notes, ...cuts.problems] };
   writeFileSync(join(dir, 'slice.json'), JSON.stringify({ ...slice, date: new Date().toISOString() }, null, 2) + '\n');
 
   // A report left by an earlier run of the slice is not this run's: without it, a Stryker that dies is read as the one that finished.
@@ -785,8 +853,8 @@ async function main() {
   const expected = expectedMutants(chosen.files, sliceFiles, placement.placed);
   const { code, reason } = exitCodeFor({ status: stryker.status, summary, ran, expected, floor: chosen.floor });
   if (reason !== null) console.error(`Slice ${n}: ${reason}.`);
-  if (crossed.length > 0) console.error(`Slice ${n}: the line ranges lose mutants (above), so the night is red until a cut is moved or the dealing is made again.`);
-  return crossed.length > 0 ? code || 1 : code;
+  if (cuts.problems.length > 0) console.error(`Slice ${n}: the line ranges of a file it holds cannot be run as dealt (above), so the night is red until the dealing is made again.`);
+  return cuts.problems.length > 0 ? code || 1 : code;
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
