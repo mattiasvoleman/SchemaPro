@@ -23,6 +23,9 @@ import { dirname, relative } from 'node:path';
 import { declareClassPlugin, PluginKind } from '@stryker-mutator/api/plugin';
 
 const OUT = process.env.MUTATION_TIMING_FILE;
+// For finding a mutant that hurts the runner: the plan, in the order Stryker runs it.
+// MUTATION_PLAN_ONLY=1 stops after writing it, before any mutant is run.
+const PLAN_OUT = process.env.MUTATION_PLAN_FILE;
 
 const relativeToProject = (file) => relative(process.cwd(), file);
 
@@ -42,6 +45,12 @@ class TimingReporter {
   }
 
   onMutationTestingPlanReady({ mutantPlans }) {
+    if (PLAN_OUT) {
+      mkdirSync(dirname(PLAN_OUT), { recursive: true });
+      const rows = mutantPlans.map((p, i) => [i, p.plan, relativeToProject(p.mutant.fileName), p.mutant.location?.start?.line, p.mutant.mutatorName, p.mutant.replacement]);
+      writeFileSync(PLAN_OUT, JSON.stringify(rows) + '\n');
+      if (process.env.MUTATION_PLAN_ONLY === '1') process.exit(0);
+    }
     for (const plan of mutantPlans) {
       const entry = this.entry(relativeToProject(plan.mutant.fileName));
       entry.mutants++;

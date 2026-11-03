@@ -63,7 +63,8 @@
   "reporters": ["progress", "clear-text", "html", "json"],
   "htmlReporter": { "fileName": "reports/mutation/index.html" },
   "jsonReporter": { "fileName": "reports/mutation/mutation.json" },
-  "timeoutMS": 60000,
+  "timeoutMS_comment": "How long a mutant may run beyond 1.5 times the net time of the tests that cover it, before Stryker calls it a Timeout (which counts as detected). 60 s killed the runner. On 2026-11-02 the slice that held src/notifications/notification-delivery.service.ts ended four times at the same mutant with 'The runner has received a shutdown signal', and bisecting by line range on CI narrowed it to the 14 mutants wholly inside lines 201-215 of that file: there, with 60 s, with one worker, with a 1 GB heap and at concurrency 2 the job died (and the whole slice died at the same place under a 3 GB heap cap and under `nice`), and with 8 s and with 3 s the same 14 mutants went through in about a minute (run 41554633962). Which mutant it is and what it does to the machine is not established; the two that also time out on a laptop, `if (notice.userId !== target.user_id) continue` turned into `if (false)` and into `===` on line 214, are the likely ones. A Timeout is detected, so a shorter limit can raise a score and not lower it, and it shortens the slices, whose seconds in scripts/mutation-slices.json were measured at 60 s.",
+  "timeoutMS": 10000,
   "concurrency": 4,
   "tempDirName": ".stryker-tmp"
 }
