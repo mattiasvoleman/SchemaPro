@@ -317,6 +317,10 @@ const loadRow = (scenario, result) => ({
   rps: result.requests.average,
   totalRequests: result.requests?.total ?? 0,
   non2xx: result.non2xx ?? 0,
+  // Connections that failed and requests that timed out are not in `requests.total`; the
+  // gate counts them with the non-2xx answers, since a run that mostly failed measured nothing.
+  errors: result.errors ?? 0,
+  timeouts: result.timeouts ?? 0,
 });
 
 // Write scenarios need ids from a seeded database. Rather than invent them,

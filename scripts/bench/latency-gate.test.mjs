@@ -164,7 +164,7 @@ const NEW = {
       [31, 46, 87, 768.9, 15377],
     ],
   }),
-  // jobs2: two extra statements in optimization/jobs only, +10% on that read.
+  // jobs2: two extra statements in optimization/jobs only; about +10% on that read, as the share puts it.
   jobs2: runOf({
     health: [11, 22, 198, 2110, 42193],
     versions: [60, 96, 397, 397.4, 7948],
@@ -176,7 +176,7 @@ const NEW = {
       [55, 67, 155, 443.7, 8873],
     ],
   }),
-  // jobs4: +22%.
+  // jobs4: four statements, about +22%.
   jobs4: runOf({
     health: [11, 21, 173, 2131.9, 42628],
     versions: [59, 94, 389, 406.6, 8132],
@@ -188,7 +188,7 @@ const NEW = {
       [55, 68, 147, 442, 8839],
     ],
   }),
-  // jobs8: +40%, on the EPYC 9V74.
+  // jobs8: eight statements, about +40%, on the EPYC 9V74.
   jobs8: runOf({
     health: [7, 15, 149, 3033.4, 60658],
     versions: [42, 71, 283, 561.2, 11223],
@@ -200,7 +200,7 @@ const NEW = {
       [42, 53, 119, 581.3, 11626],
     ],
   }),
-  // jobs12: +53%, on the EPYC 9V45.
+  // jobs12: twelve statements, about +53%, on the EPYC 9V45.
   jobs12: runOf({
     health: [5, 14, 110, 4398.5, 87964],
     versions: [41, 81, 264, 567.3, 11345],
@@ -344,7 +344,7 @@ test('reads 35% more expensive fail every healthy run; 3% more expensive passes 
 
 // What the gate reaches, on a handler: the same tree with K extra statements
 // compiled into optimization/jobs, drawn on runners of three CPU models.
-test('a handler made 22% to 53% more expensive fails on every CPU model; 10% passes', () => {
+test('a handler with four to twelve extra statements fails on every CPU model; two pass', () => {
   const j2 = gate(NEW.jobs2);
   assert.equal(exitCodeOf(j2), 0, report(j2));
   assert.deepEqual(shares(j2), ['0.896', '0.828']);
@@ -356,8 +356,9 @@ test('a handler made 22% to 53% more expensive fails on every CPU model; 10% pas
   ]) {
     const verdict = gate(NEW[name]);
     assert.equal(exitCodeOf(verdict), 1, `${name}\n${report(verdict)}`);
-    // The read that was changed fails; the one beside it, on the same path
-    // without the change, does not.
+    // The read that was changed fails; the one beside it does not move, because
+    // it is the very handler the floor calls (only the year's id differs), not
+    // because it is a read the change missed by luck.
     assert.ok(has(verdict, '✓ read share', 'GET /api/v1/schedule-versions', `${versions} ≥ 0.80`), name);
     assert.ok(has(verdict, '✗ read share', 'GET /api/v1/optimization/jobs', `${jobs} < 0.80`), name);
     assert.equal(verdict.lines.at(-1), 'FAIL: 1 gate(s) failed.', name);
@@ -377,7 +378,7 @@ test('a regression on the shared authenticated path moves no share; only a large
   // +120%: the floor is 205 req/s, under its guard, and the shares are still fine.
   const a12 = gate(NEW.auth12);
   assert.equal(exitCodeOf(a12), 1, report(a12));
-  assert.ok(has(a12, '✗ floor throughput', '205 req/s < 300 req/s'));
+  assert.ok(has(a12, '✗ floor throughput', '204 req/s < 300 req/s', 'its lowest round; median 205 of 211, 205, 204'));
   assert.deepEqual(shares(a12), ['0.936', '0.968']);
   assert.equal(a12.lines.at(-1), 'FAIL: 1 gate(s) failed.');
 });
@@ -397,20 +398,45 @@ test('the share is compared unrounded: 359.99 ÷ 450 fails and prints 0.799, 360
   assert.ok(has(exact, '✓ read share', 'GET /api/v1/optimization/jobs', '0.800 ≥ 0.80'));
 });
 
-test('the floor is the median of its rounds: one wild round moves it no further than a neighbouring round, two move it', () => {
-  // E's rounds are 460, 481 and 483: whichever one collapses to 5 or inflates
-  // to 5000, the median is one of the other two.
-  for (const rps of [5, 5000]) {
-    for (const round of ['floor:1', 'floor:2', 'floor:3']) {
-      const one = gate(edit(E, round, { rps }));
-      assert.equal(exitCodeOf(one), 0, `${round} ${rps}\n${report(one)}`);
-      const floor = Number(one.lines.find((l) => l.includes('floor throughput')).match(/(\d+) req\/s [≥<]/)[1]);
-      assert.ok(floor >= 460 && floor <= 483, `${round} ${rps}: ${floor}`);
-    }
+test('the floor is the median of its rounds; a round that is wild upward moves nothing, one that collapsed fails the run, and the two good ones do not hide it', () => {
+  // E's rounds are 460, 481 and 483. Inflated to 5000, whichever it is, the median is one of the other two.
+  for (const round of ['floor:1', 'floor:2', 'floor:3']) {
+    const up = gate(edit(E, round, { rps: 5000 }));
+    assert.equal(exitCodeOf(up), 0, `${round}\n${report(up)}`);
+    const floor = Number(up.lines.find((l) => l.includes('floor throughput')).match(/(\d+) req\/s [≥<]/)[1]);
+    assert.ok(floor >= 460 && floor <= 483, `${round}: ${floor}`);
+  }
+  // Collapsed to nothing, a round is a floor that did not hold: 430, 430, 0 has a median of 430 and fails.
+  for (const round of ['floor:1', 'floor:2', 'floor:3']) {
+    const down = gate(edit(E, round, { rps: 0, totalRequests: 0 }));
+    assert.equal(exitCodeOf(down), 1, `${round}\n${report(down)}`);
+    assert.ok(has(down, '✗ floor throughput', '0 req/s < 300 req/s', 'its lowest round'), report(down));
+    assert.equal(down.lines.at(-1), 'FAIL: 1 gate(s) failed.');
   }
   const two = gate(edit(edit(E, 'floor:1', { rps: 100 }), 'floor:2', { rps: 100 }));
   assert.equal(exitCodeOf(two), 1, report(two));
-  assert.ok(has(two, '✗ floor throughput', '100 req/s < 300 req/s', '(median of 100, 100, 483)'));
+  assert.ok(has(two, '✗ floor throughput', '100 req/s < 300 req/s', 'its lowest round; median 100 of 100, 100, 483'));
+  // 430, 430 and 0 as the review asked for it.
+  const dead = gate([1, 2, 3].reduce((rows, i) => edit(rows, `floor:${i}`, { rps: [430, 430, 0][i - 1], totalRequests: i === 3 ? 0 : 8600 }), D));
+  assert.equal(exitCodeOf(dead), 1, report(dead));
+});
+
+test("autocannon's errors and timeouts count with the non-2xx answers: a run that mostly failed is invalid, in any row", () => {
+  // 90 of 8,910 attempts, a connection error count that autocannon keeps apart from requests.total.
+  const errored = gate(edit(D, 'read:schedule-versions', { errors: 90, totalRequests: 8820 }));
+  assert.equal(exitCodeOf(errored), 2, report(errored));
+  assert.ok(has(errored, '✗ non-2xx', 'GET /api/v1/schedule-versions', '1.0% (90/8910; non-2xx 0, errors 90, timeouts 0)'));
+  const timed = gate(edit(D, 'health', { timeouts: 400 }));
+  assert.equal(exitCodeOf(timed), 2, report(timed));
+  assert.ok(has(timed, '✗ non-2xx', 'GET /health/ready', 'timeouts 400'));
+  // All three kinds add up: 30 + 30 + 30 of 8,880 attempts is 1.01%, and 30 + 29 + 29 of 8,878 is 0.99%.
+  assert.equal(exitCodeOf(gate(edit(D, 'floor:1', { non2xx: 30, errors: 30, timeouts: 30, totalRequests: 8820 }))), 2);
+  assert.equal(exitCodeOf(gate(edit(D, 'floor:1', { non2xx: 30, errors: 29, timeouts: 29, totalRequests: 8820 }))), 0);
+  // A floor round that never got a request through, every attempt an error, is polluted and not just a 0.
+  const dead = gate(edit(D, 'floor:2', { rps: 0, totalRequests: 0, errors: 25 }));
+  assert.equal(exitCodeOf(dead), 2, report(dead));
+  // Rows that carry neither field, like the logged ones above, are as they were.
+  assert.equal(exitCodeOf(gate(D)), 0);
 });
 
 test('the floor below 300 req/s fails the run; 300 passes', () => {

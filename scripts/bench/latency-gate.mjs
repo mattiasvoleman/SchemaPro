@@ -25,9 +25,10 @@
  * (1.7×), so the share fell with the CPU: 0.188–0.199 on the nine 7763s,
  * 0.175–0.187 on the four 9V74s, 0.120–0.129 on the three 9V45s. Health is
  * one `SELECT 1` on the pool; a read is token verification, two transactions
- * and an RLS policy, and the two do not scale alike with the CPU. The nightly
- * failed 33 of the 35 runs whose logs survive (2026-09-30 to 11-02), at
- * shares of 0.121–0.205; the two it passed, 10-03 and 10-04, were 0.201–0.204.
+ * and an RLS policy, and the two do not scale alike with the CPU. Of the 35
+ * runs whose logs survive (2026-09-30 to 11-02) 32 had a read under 0.20, 31 of
+ * the 34 scheduled ones, at shares of 0.121–0.205; the three scheduled runs
+ * that passed, 10-03, 10-04 and 10-08, were 0.201–0.204.
  *
  * WHAT IS GATED. Each authenticated read's throughput as a share of the same
  * run's authenticated-read FLOOR — GET /api/v1/schedule-versions for a year
@@ -62,12 +63,27 @@
  *
  * WHAT THAT REACHES, ON A HANDLER. The same tree with K extra statements
  * compiled into optimization/jobs only, on 13 further runners of the same
- * three models (run 41443397511): +10% on that read passed 3 of 3 (0.828–
- * 0.853), +22% failed 4 of 4 (0.752–0.787), +40% 3 of 3 (0.647–0.682) and
- * +53% 3 of 3 (0.567–0.648). schedule-versions beside it, on the same path
- * without the change, stayed at 0.79–1.03 and passed but once (the 0.792
- * above). The old gate saw the same thirteen runs at 0.094–0.174 on jobs
- * against its 0.20: it failed all of them, and the healthy tree with them.
+ * three models (run 41443397511). What was measured is K: two statements
+ * passed 3 of 3 (0.828–0.853), four failed 4 of 4 (0.752–0.787), eight 3 of 3
+ * (0.647–0.682) and twelve 3 of 3 (0.567–0.648); three was never run. The
+ * cost of the read is derived from the share (the healthy median 0.932 ÷ the
+ * variant's mean): about +10%, +22%, +40% and +53%, some 5% a statement, so the
+ * line between pass and fail lies between about +11% and +22%. The old gate saw
+ * the same thirteen runs at 0.094–0.174 on jobs against its 0.20: it failed
+ * all of them, and the healthy tree with them.
+ *
+ * WHAT EACH READ CATCHES. Only optimization/jobs is a handler the floor does not
+ * share. The floor is the schedule-versions route for a year that does not
+ * exist, and the schedule-versions read is the same route, controller and
+ * handler for the benchmark's year; only the UUID differs. A regression in
+ * that handler slows the read and the floor alike, so that share moves only
+ * with what grows with the year's rows (the seed has none) and otherwise
+ * measures noise and a constant level difference of 7–8% (the floor ran that
+ * far above both reads; the order, floor last, and the year that exists
+ * against the one that does not cannot be told apart in the runs). It stayed
+ * at 0.79–1.03 beside the changed handler, and below 0.80 once (the 0.792
+ * above). In effect the gate checks one handler; a second needs a floor none of
+ * the gated reads shares, and a new denominator needs new history.
  *
  * WHAT IT CANNOT SEE. A regression on the path every authenticated request
  * shares — the token, the identity lookup, the guards, the RLS transaction —
@@ -217,12 +233,14 @@ export function gate(results) {
   // a run that is mostly non-2xx reports flattering numbers for work that
   // never happened. Tight rather than "all failed": the first version fired
   // only at 100%, and a real run came back 99.3% rate-limited and passed.
-  const polluted = results.filter(
-    (r) => r.totalRequests > 0 && r.non2xx / r.totalRequests > MAX_NON_2XX_RATIO,
-  );
+  const failedOf = (r) => r.non2xx + (r.errors ?? 0) + (r.timeouts ?? 0);
+  const attemptsOf = (r) => r.totalRequests + (r.errors ?? 0) + (r.timeouts ?? 0);
+  const polluted = results.filter((r) => attemptsOf(r) > 0 && failedOf(r) / attemptsOf(r) > MAX_NON_2XX_RATIO);
   for (const r of polluted) {
-    const pct = ((r.non2xx / r.totalRequests) * 100).toFixed(1);
-    lines.push(`  ✗ ${label('non-2xx')}${r.scenario}   ${pct}% (${r.non2xx}/${r.totalRequests})`);
+    const pct = ((failedOf(r) / attemptsOf(r)) * 100).toFixed(1);
+    const detail =
+      (r.errors ?? 0) + (r.timeouts ?? 0) > 0 ? `; non-2xx ${r.non2xx}, errors ${r.errors ?? 0}, timeouts ${r.timeouts ?? 0}` : '';
+    lines.push(`  ✗ ${label('non-2xx')}${r.scenario}   ${pct}% (${failedOf(r)}/${attemptsOf(r)}${detail})`);
   }
 
   // 2. A share with no numerator or no denominator has no verdict. Before the
@@ -255,11 +273,14 @@ export function gate(results) {
     // 4. The absolute guard on the floor: the one place a regression on the
     // path every authenticated request shares can show, since the reads are
     // divided by that path.
-    const floorOk = floor >= FLOOR_RPS_MIN;
+    // Every round, not the median: a round that counted nothing is a floor that did not hold,
+    // and two good rounds beside it must not hide it (430, 430, 0 is a median of 430).
+    const lowest = Math.min(...floors.map((r) => r.rps));
+    const floorOk = lowest >= FLOOR_RPS_MIN;
     lines.push(
       `  ${mark(floorOk)} ${label('floor throughput')}` +
-        `${beside(floor, FLOOR_RPS_MIN, 0, floorOk)} req/s ${floorOk ? '≥' : '<'} ${FLOOR_RPS_MIN} req/s   ` +
-        `(median of ${floors.map((r) => reqs(r.rps)).join(', ')})`,
+        `${beside(floorOk ? floor : lowest, FLOOR_RPS_MIN, 0, floorOk)} req/s ${floorOk ? '≥' : '<'} ${FLOOR_RPS_MIN} req/s   ` +
+        `(${floorOk ? 'median' : `its lowest round; median ${reqs(floor)}`} of ${floors.map((r) => reqs(r.rps)).join(', ')})`,
     );
     if (!floorOk) failures++;
 
