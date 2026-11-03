@@ -68,6 +68,66 @@ const plan = (input: Partial<CohortTimplanInput> & { source: SourceTimplanRow[] 
 const summary = (planned: ReturnType<typeof planCohortTimplans>) =>
   planned.map((entry) => [entry.gradeLevel, entry.reason, entry.localTimplanId, entry.fromGradeLevel]);
 
+/**
+ * Plans with an årskurs span: a decided 4–9 plan and a newer decided F–3 plan.
+ * Between them they speak for every årskurs, each for its own, and the newest
+ * of all speaks for none above åk 3.
+ */
+describe('planCohortTimplans — decided plans with different spans', () => {
+  const FROM_4: Plan = { id: 'p-4-9', name: 'Åk 4–9', status: 'DECIDED' };
+  const TO_3: Plan = { id: 'p-f-3', name: 'F–3', status: 'DECIDED' };
+  const spanned = (plan: Plan, grades: number[]): DecidedTimplanChoice => ({ ...decidedOf(plan), gradeLevels: grades });
+  // Newest first, as readDecidedTimplans gives them: F–3 was decided last.
+  const decided = [spanned(TO_3, range(0, 3)), spanned(FROM_4, range(4, 9))];
+
+  it('gives each årskurs the plan that speaks for it when the old year had no rows, not only the newest plan’s årskurser', () => {
+    const planned = plan({ source: [], decided });
+    expect(summary(planned)).toEqual([
+      ...range(0, 3).map((grade) => [grade, 'DEFAULT', TO_3.id, null]),
+      ...range(4, 9).map((grade) => [grade, 'DEFAULT', FROM_4.id, null]),
+    ]);
+  });
+
+  it('leaves another school form’s plans out of the årskurser a year with no rows is given', () => {
+    const special: Plan = { id: 'p-special', name: 'Specialskolan', status: 'DECIDED', schoolForm: 'SPECIALSKOLA' };
+    const mixed = [spanned(TO_3, range(0, 3)), { ...spanned(special, range(1, 10)), schoolForm: 'SPECIALSKOLA' }];
+    const result = cohortTimplans({
+      graduatingGradeLevel: 9,
+      movingCohorts: new Set(range(0, 9)),
+      decided: mixed,
+      targetStartYear: 2027,
+      source: [],
+    });
+    expect(summary(result.rows)).toEqual(range(0, 3).map((grade) => [grade, 'DEFAULT', TO_3.id, null]));
+    expect(result.unattached).toEqual([]);
+  });
+
+  it('carries a year with rows on both plans up a grade, and gives the entry grade the plan that speaks for it', () => {
+    // 2026/27: F–3 on the F–3 plan, 4–9 on the 4–9 plan.
+    const source = [...rows(range(0, 3), TO_3), ...rows(range(4, 9), FROM_4)];
+    const planned = plan({ source, decided });
+    expect(summary(planned)).toEqual([
+      [0, 'DEFAULT', TO_3.id, null],
+      [1, 'CARRIED', TO_3.id, 0],
+      [2, 'CARRIED', TO_3.id, 1],
+      [3, 'CARRIED', TO_3.id, 2],
+      // The cohort leaving åk 3 for åk 4 keeps the F–3 plan it was on.
+      [4, 'CARRIED', TO_3.id, 3],
+      [5, 'CARRIED', FROM_4.id, 4],
+      [6, 'CARRIED', FROM_4.id, 5],
+      [7, 'CARRIED', FROM_4.id, 6],
+      [8, 'CARRIED', FROM_4.id, 7],
+      [9, 'CARRIED', FROM_4.id, 8],
+    ]);
+  });
+
+  it('gives a grade the old year left empty the plan that speaks for it, whichever is newer', () => {
+    // Only åk 6 had a row. Its own årskurs takes the default among the plans that speak for it, and the row carries up.
+    const planned = plan({ source: rows([6], FROM_4), movingCohorts: new Set([5, 6]), decided });
+    expect(summary(planned)).toEqual([[6, 'DEFAULT', FROM_4.id, null], [7, 'CARRIED', FROM_4.id, 6]]);
+  });
+});
+
 describe('planCohortTimplans', () => {
   it('moves an F–9 school’s bilaga line up a grade with its cohort, and gives F the newest decided plan', () => {
     // 2026/27: F–2 on the new bilaga, 3–9 still on the old one.

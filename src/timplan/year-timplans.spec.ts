@@ -71,7 +71,7 @@ describe('the decided plans a läsår chooses among', () => {
   });
 
   it('attaches a new year only to the årskurser a decided span plan is for', async () => {
-    tx.localTimplan.findFirst.mockResolvedValue(plan({ gradeFrom: 4, gradeTo: 9 }));
+    tx.localTimplan.findMany.mockResolvedValue([plan({ gradeFrom: 4, gradeTo: 9 })]);
     tx.academicYearTimplan.createMany.mockResolvedValue({ count: 6 });
 
     const rows = await attachDefaultTimplans(tx as never, 'school-1', 'year-1');
@@ -85,14 +85,85 @@ describe('the decided plans a läsår chooses among', () => {
         localTimplanId: 'plan-1',
       })),
     });
+    // Newest first, and only decided plans: a draft is never a default.
+    expect(tx.localTimplan.findMany.mock.calls[0]![0]).toMatchObject({
+      where: { status: 'DECIDED' },
+      orderBy: [{ decidedAt: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }],
+    });
   });
 
   it('keeps attaching every årskurs of the form for a plan without a span', async () => {
-    tx.localTimplan.findFirst.mockResolvedValue(plan());
+    tx.localTimplan.findMany.mockResolvedValue([plan()]);
     tx.academicYearTimplan.createMany.mockResolvedValue({ count: 9 });
 
     const rows = await attachDefaultTimplans(tx as never, 'school-1', 'year-1');
 
     expect(rows.map((row) => row.gradeLevel)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  });
+
+  describe('two decided plans with different spans', () => {
+    // Newest first, as the query gives them: F–3 was decided after 4–9.
+    const f3 = () => plan({ id: 'plan-f-3', name: 'Grundskolan F–3', gradeFrom: 0, gradeTo: 3 });
+    const from4 = () => plan({ id: 'plan-4-9', name: 'Grundskolan 4–9', gradeFrom: 4, gradeTo: 9 });
+    const attached = (rows: { gradeLevel: number; localTimplanId: string }[]) =>
+      rows.map((row) => [row.gradeLevel, row.localTimplanId]);
+
+    it('attaches each årskurs to the plan that speaks for it, not only the newest plan’s årskurser', async () => {
+      tx.localTimplan.findMany.mockResolvedValue([f3(), from4()]);
+      tx.academicYearTimplan.createMany.mockResolvedValue({ count: 9 });
+
+      const rows = await attachDefaultTimplans(tx as never, 'school-1', 'year-1');
+
+      expect(attached(rows)).toEqual([
+        [1, 'plan-f-3'],
+        [2, 'plan-f-3'],
+        [3, 'plan-f-3'],
+        [4, 'plan-4-9'],
+        [5, 'plan-4-9'],
+        [6, 'plan-4-9'],
+        [7, 'plan-4-9'],
+        [8, 'plan-4-9'],
+        [9, 'plan-4-9'],
+      ]);
+      expect(tx.academicYearTimplan.createMany).toHaveBeenCalledTimes(1);
+    });
+
+    it('gives an årskurs both speak for to the newest of them', async () => {
+      const overlapping = plan({ id: 'plan-1-6', name: 'Grundskolan 1–6', gradeFrom: 1, gradeTo: 6 });
+      tx.localTimplan.findMany.mockResolvedValue([overlapping, from4()]);
+      tx.academicYearTimplan.createMany.mockResolvedValue({ count: 9 });
+
+      const rows = await attachDefaultTimplans(tx as never, 'school-1', 'year-1');
+
+      expect(attached(rows)).toEqual([
+        ...[1, 2, 3, 4, 5, 6].map((grade) => [grade, 'plan-1-6']),
+        ...[7, 8, 9].map((grade) => [grade, 'plan-4-9']),
+      ]);
+    });
+
+    it('leaves a gap no plan covers unattached', async () => {
+      tx.localTimplan.findMany.mockResolvedValue([f3(), plan({ id: 'plan-7-9', name: '7–9', gradeFrom: 7, gradeTo: 9 })]);
+      tx.academicYearTimplan.createMany.mockResolvedValue({ count: 6 });
+
+      const rows = await attachDefaultTimplans(tx as never, 'school-1', 'year-1');
+
+      expect(rows.map((row) => row.gradeLevel)).toEqual([1, 2, 3, 7, 8, 9]);
+    });
+
+    it('does not attach another school form’s plan to a year of the newest plan’s form', async () => {
+      const special = plan({ id: 'plan-special', name: 'Specialskolan', schoolForm: 'SPECIALSKOLA', nationalVersion: { schoolForm: 'SPECIALSKOLA', appliesFromCohortTerm: 'HT2024' } });
+      tx.localTimplan.findMany.mockResolvedValue([f3(), special]);
+      tx.academicYearTimplan.createMany.mockResolvedValue({ count: 3 });
+
+      const rows = await attachDefaultTimplans(tx as never, 'school-1', 'year-1');
+
+      expect(attached(rows)).toEqual([[1, 'plan-f-3'], [2, 'plan-f-3'], [3, 'plan-f-3']]);
+    });
+
+    it('attaches nothing when there is no decided plan', async () => {
+      tx.localTimplan.findMany.mockResolvedValue([]);
+      await expect(attachDefaultTimplans(tx as never, 'school-1', 'year-1')).resolves.toEqual([]);
+      expect(tx.academicYearTimplan.createMany).not.toHaveBeenCalled();
+    });
   });
 });
