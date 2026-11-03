@@ -27,6 +27,8 @@ import {
  *   LocalTimplans_name_is_sane           non-blank, at most 100 characters
  *   LocalTimplans_planningWeeks_is_sane  20.0..40.0, NUMERIC(4,1)
  *   LocalTimplans_decisionNote_is_sane   non-blank, at most 500
+ *   LocalTimplans_gradeSpan_is_a_pair    gradeFrom and gradeTo, or neither
+ *   LocalTimplans_gradeSpan_is_sane      0..11 and gradeFrom <= gradeTo (20261219090000)
  *   LocalTimplanEntries_gradeLevel_is_sane      0..11 (20261126090000)
  *   LocalTimplanEntries_minutesPerWeek_is_sane  0..1200, any integer
  *   LocalTimplanEntries_note_is_sane            at most 500 (blank allowed)
@@ -45,6 +47,17 @@ const WEEKS_SHAPE = 'planningWeeks: antalet veckor anges som ett tal med högst 
 const WEEKS_LOW = 'planningWeeks: minst 20,0 veckor.';
 const WEEKS_HIGH = 'planningWeeks: högst 40,0 veckor.';
 const VERSION_ID = 'nationalTimplanVersionId: den nationella timplanen anges med sitt id.';
+const GRADE_SHAPE = 'gradeFrom och gradeTo: årskurserna anges som heltal, 0 för förskoleklass.';
+const GRADE_LOW = 'gradeFrom och gradeTo: lägsta årskurs är 0 (förskoleklass).';
+const GRADE_HIGH = 'gradeFrom och gradeTo: högsta årskurs är 11.';
+
+/*
+ * The plan's årskurs span is two optional integers. `null` is a value, not an
+ * absence: both null is "the whole school form" (and, on an update or a copy,
+ * "clear the span"); both absent is "say nothing". Whether the pair is whole
+ * and in order, and whether it holds any årskurs of the plan's lydelse, needs
+ * both fields and the version, so it is the service's (readGradeSpan).
+ */
 
 export class CreateLocalTimplanDto {
   @IsString({ message: NAME_BLANK })
@@ -71,6 +84,23 @@ export class CreateLocalTimplanDto {
   @Min(20, { message: WEEKS_LOW })
   @Max(40, { message: WEEKS_HIGH })
   planningWeeks?: number;
+
+  /**
+   * The årskurser the plan is for, in the numbering of its lydelse; both or
+   * neither (the service refuses half a pair and an inverted one by name).
+   * Absent or null: the whole school form.
+   */
+  @IsOptional()
+  @IsInt({ message: GRADE_SHAPE })
+  @Min(0, { message: GRADE_LOW })
+  @Max(11, { message: GRADE_HIGH })
+  gradeFrom?: number | null;
+
+  @IsOptional()
+  @IsInt({ message: GRADE_SHAPE })
+  @Min(0, { message: GRADE_LOW })
+  @Max(11, { message: GRADE_HIGH })
+  gradeTo?: number | null;
 }
 
 /**
@@ -101,6 +131,24 @@ export class UpdateLocalTimplanDto {
   @ValidateIf((_, value) => value !== undefined)
   @IsUUID('4', { message: VERSION_ID })
   nationalTimplanVersionId?: string;
+
+  /**
+   * The årskurs span of a DRAFT; absent leaves it, both null clears it. A
+   * DECIDED plan takes a span here once, from none, and nothing else with it
+   * (the service names the one change it admits, the trigger of 20261219090000
+   * holds it).
+   */
+  @IsOptional()
+  @IsInt({ message: GRADE_SHAPE })
+  @Min(0, { message: GRADE_LOW })
+  @Max(11, { message: GRADE_HIGH })
+  gradeFrom?: number | null;
+
+  @IsOptional()
+  @IsInt({ message: GRADE_SHAPE })
+  @Min(0, { message: GRADE_LOW })
+  @Max(11, { message: GRADE_HIGH })
+  gradeTo?: number | null;
 }
 
 /**
@@ -170,11 +218,29 @@ export class DecideLocalTimplanDto {
   decisionNote!: string;
 }
 
-/** The new draft's name; absent = the source's name with "(utkast)" or "(kopia)". */
+/**
+ * The new draft's name; absent = the source's name with "(utkast)" or
+ * "(kopia)". The span: absent copies the source's, both null makes the draft
+ * for the whole form, two årskurser give it that span (a plan decided before
+ * the span existed has none to copy, and reopening it is the moment to give
+ * it one).
+ */
 export class CopyLocalTimplanDto {
   @IsOptional()
   @IsString({ message: NAME_BLANK })
   @Matches(/\S/, { message: NAME_BLANK })
   @MaxCodePoints(100, { message: NAME_LONG })
   name?: string;
+
+  @IsOptional()
+  @IsInt({ message: GRADE_SHAPE })
+  @Min(0, { message: GRADE_LOW })
+  @Max(11, { message: GRADE_HIGH })
+  gradeFrom?: number | null;
+
+  @IsOptional()
+  @IsInt({ message: GRADE_SHAPE })
+  @Min(0, { message: GRADE_LOW })
+  @Max(11, { message: GRADE_HIGH })
+  gradeTo?: number | null;
 }

@@ -27,6 +27,11 @@ export interface WarningsRailProps {
  * admin types. The figures are spelled with the decimal comma the grid uses,
  * so "25,2 h" in the rail is "25,2" in the cell.
  *
+ * A plan whose årskurs span holds part of a stadium is told so in the
+ * sentence: a shortfall against its share (TIMPLAN_PARTIAL_STAGE_BELOW_SHARE)
+ * names the årskurser held, and the pool and the guarantee are said to be
+ * estimates (`estimated`). The verdicts carry the figures; the words are here.
+ *
  * A warning is labelled "Under mål", a notice "Notering". Neither says "fel",
  * and the hint under the heading says outright that nothing here blocks a save
  * or a decision: the law lets a school deviate, and the list is there to make
@@ -46,6 +51,12 @@ export function WarningsRail({ verdicts, nationalNames, live, selected, onSelect
     values.stage = verdict.stage ? t(`stagesInline.${verdict.stage}`) : "";
     // A check from before the parameter existed meant the pool.
     values.timeCountsAs = values.timeCountsAs ?? "skolansVal";
+    // Words chosen by select: the sentence of a child's minimum differs from a
+    // cell's, and a pool or guarantee of a part of a school form is an estimate.
+    values.hasChild = verdict.childCode ? "yes" : "no";
+    values.estimated = verdict.params.estimated ? "yes" : "no";
+    // A pool or a total that only the stadier held in part breach is a notice, and says why.
+    values.fromShares = verdict.params.fromShares ? "yes" : "no";
     return t(`verdicts.${verdict.code}`, values);
   };
 

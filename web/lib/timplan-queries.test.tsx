@@ -28,6 +28,10 @@ const planWith = (entries: number) => ({
   decidedByUserId: null,
   decisionNote: null,
   copiedFromId: null,
+  gradeFrom: null,
+  gradeTo: null,
+  gradeSpanSetAt: null,
+  gradeSpanSetByUserId: null,
   createdAt: "",
   updatedAt: "",
   entries: Array.from({ length: entries }, (_, i) => ({
@@ -64,7 +68,12 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import { api } from "@/lib/api";
-import { useLocalTimplan, useLocalTimplanActions, useLocalTimplanCheck } from "@/lib/timplan-queries";
+import {
+  useLocalTimplan,
+  useLocalTimplanActions,
+  useLocalTimplanCheck,
+  useSchoolUnitsForSpan,
+} from "@/lib/timplan-queries";
 
 describe("saving a plan as PATCH then PUT, as the timplan page does", () => {
   beforeEach(() => {
@@ -122,5 +131,82 @@ describe("saving a plan as PATCH then PUT, as the timplan page does", () => {
     await waitFor(() => expect(result.current.plan.data?.entries).toHaveLength(1));
     expect(get).toHaveBeenCalledWith("/api/v1/local-timplans/p1");
     expect(get).toHaveBeenCalledWith("/api/v1/local-timplans/p1/check");
+  });
+});
+
+describe("the årskurs span on the wire", () => {
+  const client = () => new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  const wrapperOf = (queryClient: QueryClient) =>
+    function Wrapper({ children }: { children: ReactNode }) {
+      return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+    };
+  const posted = (call: number) => vi.mocked(api.post).mock.calls[call]!;
+
+  beforeEach(() => {
+    vi.mocked(api.post).mockReset();
+    vi.mocked(api.patch).mockClear();
+    vi.mocked(api.post).mockResolvedValue(planWith(0));
+  });
+
+  it("leaves the span keys out of a copy or a reopen that states none, so the gateway copies the source's", async () => {
+    const { result } = renderHook(() => useLocalTimplanActions(), { wrapper: wrapperOf(client()) });
+    await act(async () => {
+      await result.current.copy.mutateAsync({ id: "p1" });
+      await result.current.copy.mutateAsync({ id: "p1", name: "Kopia" });
+      await result.current.reopen.mutateAsync({ id: "p1", name: undefined });
+    });
+    expect(posted(0)).toEqual(["/api/v1/local-timplans/p1/copy", {}]);
+    expect(posted(1)).toEqual(["/api/v1/local-timplans/p1/copy", { name: "Kopia" }]);
+    expect(posted(2)).toEqual(["/api/v1/local-timplans/p1/reopen", {}]);
+  });
+
+  it("sends the span a copy or a reopen states: two numbers, or two nulls for the whole form", async () => {
+    const { result } = renderHook(() => useLocalTimplanActions(), { wrapper: wrapperOf(client()) });
+    await act(async () => {
+      await result.current.reopen.mutateAsync({ id: "p1", gradeFrom: 4, gradeTo: 9 });
+      await result.current.copy.mutateAsync({ id: "p1", name: "Hel", gradeFrom: null, gradeTo: null });
+    });
+    expect(posted(0)).toEqual(["/api/v1/local-timplans/p1/reopen", { gradeFrom: 4, gradeTo: 9 }]);
+    expect(posted(1)).toEqual(["/api/v1/local-timplans/p1/copy", { name: "Hel", gradeFrom: null, gradeTo: null }]);
+  });
+
+  it("sets a plan's span on a request of its own, null for the whole form", async () => {
+    const queryClient = client();
+    queryClient.setQueryData(["localTimplan", "p1"], planWith(1));
+    const { result } = renderHook(() => useLocalTimplanActions(), { wrapper: wrapperOf(queryClient) });
+    await act(async () => {
+      await result.current.setSpan.mutateAsync({ id: "p1", span: { gradeFrom: 7, gradeTo: 9 } });
+      await result.current.setSpan.mutateAsync({ id: "p1", span: null });
+    });
+    expect(vi.mocked(api.patch).mock.calls.map((call) => call.slice(0, 2))).toEqual([
+      ["/api/v1/local-timplans/p1", { gradeFrom: 7, gradeTo: 9 }],
+      ["/api/v1/local-timplans/p1", { gradeFrom: null, gradeTo: null }],
+    ]);
+  });
+
+  it("reads the plan again when the gateway answers a stale span change with 409 TIMPLAN_IS_DECIDED", async () => {
+    const queryClient = client();
+    const { result } = renderHook(() => ({ plan: useLocalTimplan("p1"), actions: useLocalTimplanActions() }), {
+      wrapper: wrapperOf(queryClient),
+    });
+    await waitFor(() => expect(result.current.plan.data).toBeDefined());
+    vi.mocked(api.patch).mockRejectedValueOnce(Object.assign(new Error("Planen är beslutad."), { status: 409, code: "TIMPLAN_IS_DECIDED" }));
+    vi.mocked(api.get).mockClear();
+    await act(async () => {
+      await expect(result.current.actions.setSpan.mutateAsync({ id: "p1", span: { gradeFrom: 7, gradeTo: 9 } })).rejects.toThrow("beslutad");
+    });
+    await waitFor(() => expect(vi.mocked(api.get)).toHaveBeenCalledWith("/api/v1/local-timplans/p1"));
+  });
+
+  it("asks for the skolenheter only when told the caller may read them: a teacher never sends the request", async () => {
+    vi.mocked(api.get).mockClear();
+    const { rerender } = renderHook(({ enabled }) => useSchoolUnitsForSpan(enabled), {
+      wrapper: wrapperOf(client()),
+      initialProps: { enabled: false },
+    });
+    await act(async () => {});
+    expect(vi.mocked(api.get)).not.toHaveBeenCalledWith("/api/v1/school-units");
+    rerender({ enabled: true });
+    await waitFor(() => expect(vi.mocked(api.get)).toHaveBeenCalledWith("/api/v1/school-units"));
   });
 });

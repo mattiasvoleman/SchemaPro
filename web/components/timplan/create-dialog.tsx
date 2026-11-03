@@ -2,10 +2,13 @@
 
 import { useState } from "react";
 import { useTranslations } from "next-intl";
-import type { SchoolForm } from "@/lib/timplan-coverage";
+import type { SchoolUnit } from "@/lib/school-units";
+import type { GradeSpan, SchoolForm } from "@/lib/timplan-coverage";
 import type { CreatePlanBody } from "@/lib/timplan-queries";
+import { sameSpan, spanGradeOptions, suggestedSpan, versionKeepsNumbering } from "@/lib/timplan-span";
 import { parseWeeksTenths, SUGGESTED_WEEKS } from "@/lib/timplan-view";
 import type { NationalTimplanVersion } from "@/lib/types";
+import { SpanFields } from "@/components/timplan/span-fields";
 import { Button } from "@/components/ui/button";
 import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
@@ -54,6 +57,11 @@ export interface CreateDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   versions: NationalTimplanVersion[];
+  /**
+   * The school's skolenheter, which the årskurs span is prefilled from. Only a
+   * SCHOOL_ADMIN can read them; absent, the span starts as the whole form.
+   */
+  units?: readonly SchoolUnit[];
   pending: boolean;
   onConfirm: (body: CreatePlanBody) => Promise<void>;
 }
@@ -64,8 +72,14 @@ export interface CreateDialogProps {
  * PATCH does not take it — another form is a copy), so the body says so here,
  * where it is chosen. The version list follows the form, as the gateway's
  * composite key does: a grundskola plan cannot name the specialskola bilaga.
+ *
+ * The årskurs span starts as the skolenheternas, in the numbering of the
+ * lydelse chosen — and starts again when the form or the lydelse is changed,
+ * since a span is stated in its lydelse's numbering. It is a suggestion the
+ * admin sees and may change to "Hela skolformen"; the plan is created with
+ * whatever the fields say.
  */
-export function CreateDialog({ open, onOpenChange, versions, pending, onConfirm }: CreateDialogProps) {
+export function CreateDialog({ open, onOpenChange, versions, units, pending, onConfirm }: CreateDialogProps) {
   const t = useTranslations("timplan");
   const tCommon = useTranslations("common");
   const [name, setName] = useState("");
@@ -73,6 +87,8 @@ export function CreateDialog({ open, onOpenChange, versions, pending, onConfirm 
   const [versionId, setVersionId] = useState<string | null>(null);
   const [weeks, setWeeks] = useState(String(SUGGESTED_WEEKS).replace(".", ","));
   const [touched, setTouched] = useState(false);
+  // undefined: not touched, so the skolenheternas span; null is the whole form.
+  const [spanChoice, setSpanChoice] = useState<GradeSpan | null | undefined>(undefined);
 
   const ofForm = versions.filter((version) => version.schoolForm === schoolForm);
   const chosen =
@@ -80,11 +96,14 @@ export function CreateDialog({ open, onOpenChange, versions, pending, onConfirm 
   const weeksTenths = parseWeeksTenths(weeks);
   const nameProblem =
     name.trim() === "" ? t("nameRequired") : name.trim().length > 100 ? t("nameTooLong") : null;
+  const suggested = chosen ? suggestedSpan(units, chosen) : null;
+  const span = spanChoice === undefined ? suggested : spanChoice;
 
   const reset = () => {
     setName("");
     setSchoolForm("GRUNDSKOLA");
     setVersionId(null);
+    setSpanChoice(undefined);
     setWeeks(String(SUGGESTED_WEEKS).replace(".", ","));
     setTouched(false);
   };
@@ -97,6 +116,7 @@ export function CreateDialog({ open, onOpenChange, versions, pending, onConfirm 
       schoolForm,
       nationalTimplanVersionId: chosen.id,
       planningWeeks: weeksTenths / 10,
+      ...(span ? { gradeFrom: span.gradeFrom, gradeTo: span.gradeTo } : {}),
     });
     reset();
   };
@@ -126,6 +146,7 @@ export function CreateDialog({ open, onOpenChange, versions, pending, onConfirm 
                 onValueChange={(value) => {
                   setSchoolForm(value as SchoolForm);
                   setVersionId(null);
+                  setSpanChoice(undefined);
                 }}
               >
                 <SelectTrigger {...control}>
@@ -145,7 +166,18 @@ export function CreateDialog({ open, onOpenChange, versions, pending, onConfirm 
             {/* By hand: with no version for the form there is no control to label, only the sentence. */}
             <Label htmlFor={chosen ? "timplan-create-version" : undefined}>{t("versionLabel")}</Label>
             {chosen ? (
-              <Select value={chosen.id} onValueChange={setVersionId}>
+              <Select
+                value={chosen.id}
+                onValueChange={(value) => {
+                  setVersionId(value);
+                  // The span is stated in the lydelse's numbering: another
+                  // numbering is another span, within one it still holds.
+                  const next = ofForm.find((version) => version.id === value);
+                  if (!next || !versionKeepsNumbering(chosen.appliesFromCohortTerm, next.appliesFromCohortTerm)) {
+                    setSpanChoice(undefined);
+                  }
+                }}
+              >
                 <SelectTrigger id="timplan-create-version">
                   <SelectValue />
                 </SelectTrigger>
@@ -166,6 +198,15 @@ export function CreateDialog({ open, onOpenChange, versions, pending, onConfirm 
               <p className="text-sm text-destructive">{t("noVersionForForm")}</p>
             )}
           </div>
+          {chosen ? (
+            <SpanFields
+              id="timplan-create-span"
+              grades={spanGradeOptions(chosen)}
+              value={span}
+              onChange={setSpanChoice}
+              hint={t(span !== null && sameSpan(span, suggested) ? "spanHintFromUnits" : "spanHint")}
+            />
+          ) : null}
           {/* The line under the field is the hint, or the error in its place. */}
           <FormField
             id="timplan-create-weeks"

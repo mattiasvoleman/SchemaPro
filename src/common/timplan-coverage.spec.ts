@@ -2,13 +2,18 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Prisma } from '@prisma/client';
 import {
+  assertGradeSpan,
   checkLocalTimplan,
+  gradeSpanOf,
+  heldStageGrades,
+  inGradeSpan,
   planningWeeksInTenths,
   stageGradesFor,
   type CoverageEntry,
   type CoverageNationalSubject,
   type CoverageSubject,
   type CoverageVersion,
+  type GradeSpan,
   type SchoolForm,
   type TimplanCheck,
   type TimplanStage,
@@ -710,5 +715,472 @@ describe('checkLocalTimplan — the input it refuses', () => {
     });
     expect(result.total.plannedHours).toBe(0);
     expect(result.unmapped).toEqual([]);
+  });
+});
+
+/*
+ * The plan's årskurs span. The figures below are counted by hand from the
+ * bilaga, not read back from the module:
+ *
+ *   B1 lågstadiet's top-level cells sum to 1 882 h, mellanstadiet's to 2 334 h,
+ *   högstadiet's to 2 634 h, and hem- och konsumentkunskap's merged låg- och
+ *   mellanstadium cell is 40 h (+ 90 h in högstadiet, inside the 2 634): 6 890.
+ *
+ *   4–9   holds mellanstadiet, högstadiet and 3/6 of the merged cell:
+ *         6 890 − 1 882 − 20 = 4 988 h; pool 600 × 4 988 / 6 890 = 434,4 h.
+ *   F–5   holds lågstadiet, 2/3 of mellanstadiet (1 556 h), 5/6 of the merged
+ *         cell: 1 882 + 1 556 + 33⅓ = 3 471,3 h; pool 302,3 h.
+ *   6–9   holds 1/3 of mellanstadiet (778 h), 1/6 of the merged cell and
+ *         högstadiet: 778 + 6⅔ + 2 634 = 3 418,7 h; pool 297,7 h.
+ */
+describe('checkLocalTimplan — the plan’s årskurs span', () => {
+  const FROM_4_TO_9: GradeSpan = { gradeFrom: 4, gradeTo: 9 };
+  const FROM_F_TO_5: GradeSpan = { gradeFrom: 0, gradeTo: 5 };
+  const FROM_6_TO_9: GradeSpan = { gradeFrom: 6, gradeTo: 9 };
+
+  /**
+   * A plan that meets the bilaga for the årskurser `span` holds: every cell's
+   * minutes a week divided over ALL the årskurser of its stadium and given to
+   * each held one, so a partly held stadium is met to exactly its share.
+   */
+  function spanPlan(code: string, weeksTenths: number, span: GradeSpan) {
+    const v = version(code);
+    const held = (grade: number) => grade >= span.gradeFrom && grade <= span.gradeTo;
+    const subjects = new Map<string, CoverageSubject>();
+    const entries: CoverageEntry[] = [];
+    const plan = (nationalCode: string, hours: number, stage: TimplanStage) => {
+      subjects.set(nationalCode, subjects.get(nationalCode) ?? coded(nationalCode));
+      const grades = gradesOf(v, stage);
+      const perGrade = Math.ceil(minutesFor(hours, weeksTenths) / grades.length);
+      for (const gradeLevel of grades.filter(held)) {
+        entries.push({ subjectId: `s-${nationalCode}`, gradeLevel, minutesPerWeek: perGrade });
+      }
+    };
+    for (const cell of v.entries) {
+      if (parentOf.get(cell.subjectCode)) continue;
+      const children = v.entries.filter(
+        (e) => parentOf.get(e.subjectCode) === cell.subjectCode && e.stage === cell.stage,
+      );
+      if (children.length === 0) {
+        plan(cell.subjectCode, cell.hours, cell.stage);
+        continue;
+      }
+      const free = cell.hours - children.reduce((sum, c) => sum + c.hours, 0);
+      for (const child of children) plan(child.subjectCode, child.hours + free / children.length, cell.stage);
+    }
+    return { subjects: [...subjects.values()], entries };
+  }
+
+  const withSpan = (
+    code: string,
+    weeksTenths: number,
+    plan: { subjects: CoverageSubject[]; entries: CoverageEntry[] },
+    gradeSpan: GradeSpan | null | undefined,
+  ): TimplanCheck =>
+    checkLocalTimplan({
+      planningWeeksTenths: weeksTenths,
+      version: version(code),
+      nationalSubjects: STATUTE.subjects,
+      subjects: plan.subjects,
+      entries: plan.entries,
+      gradeSpan,
+    });
+
+  /** The plan's minutes in `grades` for one subject, replaced. */
+  const setMinutes = (entries: CoverageEntry[], code: string, grades: number[], minutes: number) =>
+    entries.map((e) => (e.subjectId === `s-${code}` && grades.includes(e.gradeLevel) ? { ...e, minutesPerWeek: minutes } : e));
+
+  const stagesOf = (result: TimplanCheck) => [...new Set(result.cells.map((c) => c.stage))].sort();
+
+  /** Time the school moves elsewhere (an uncoded subject, skolans val placed), so a cut cell does not also leave the total short. */
+  const placedElsewhere = (plan: { subjects: CoverageSubject[]; entries: CoverageEntry[] }) => ({
+    subjects: [...plan.subjects, { id: 's-PROG', name: 'Programmering', nationalCode: null, countsTowardTimplan: true }],
+    entries: [
+      ...plan.entries,
+      ...[1, 2, 3, 4, 5].map((gradeLevel) => ({ subjectId: 's-PROG', gradeLevel, minutesPerWeek: 150 })),
+    ],
+  });
+
+  describe('no span, or a span of the whole form, is the check of before', () => {
+    it('treats an absent, an undefined and a null span alike, and adds nothing to the document', () => {
+      const plan = compliantPlan(B1, 356);
+      const bare = check(B1, 356, plan.subjects, plan.entries);
+      expect(withSpan(B1, 356, plan, null)).toEqual(bare);
+      expect(withSpan(B1, 356, plan, undefined)).toEqual(bare);
+      expect(Object.keys(bare)).not.toContain('gradeSpan');
+      expect(Object.keys(bare.total)).not.toContain('judged');
+      expect(bare.cells.some((c) => 'share' in c)).toBe(false);
+    });
+
+    it.each([
+      ['0–9', 0, 9],
+      ['1–9', 1, 9],
+      ['1–11', 1, 11],
+    ])('reads a span %s that holds every årskurs of grundskolan as no span: the same numbers, partial false', (_label, gradeFrom, gradeTo) => {
+      const plan = spanPlan(B1, 356, { gradeFrom: 1, gradeTo: 9 });
+      const whole = withSpan(B1, 356, plan, { gradeFrom, gradeTo });
+      const none = withSpan(B1, 356, plan, null);
+      expect(whole.gradeSpan).toEqual({ gradeFrom, gradeTo, partial: false });
+      expect({ ...whole, gradeSpan: undefined }).toEqual(none);
+      expect(whole.total.guaranteedHours).toBe(6890);
+      expect(whole.skolansVal.availableHours).toBe(600);
+    });
+
+    it('judges the same short plan the same way with and without a whole span', () => {
+      const { subjects, entries } = compliantPlan(B1, 356);
+      const short = setMinutes(entries, 'MA', [1, 2, 3], 100);
+      const none = withSpan(B1, 356, { subjects, entries: short }, null);
+      const whole = withSpan(B1, 356, { subjects, entries: short }, { gradeFrom: 0, gradeTo: 9 });
+      expect(codes(none)).toContain('TIMPLAN_PROTECTED_SUBJECT_REDUCED');
+      expect({ ...whole, gradeSpan: undefined }).toEqual(none);
+    });
+  });
+
+  describe('the three schools of the report', () => {
+    it('a correct 4–9 plan has no verdict: lågstadiet is not judged, 4 988 h guaranteed, 434,4 h of skolans val', () => {
+      const result = withSpan(B1, 356, spanPlan(B1, 356, FROM_4_TO_9), FROM_4_TO_9);
+      expect(result.verdicts).toEqual([]);
+      expect(result.total).toMatchObject({ guaranteedHours: 4988, deficitHours: 0 });
+      expect(result.skolansVal).toMatchObject({ availableHours: 434.4, takenHours: 0 });
+      expect(result.gradeSpan).toEqual({ gradeFrom: 4, gradeTo: 9, partial: true });
+      // The stadium it lacks has no cell at all, not a cell with zero planned.
+      expect(stagesOf(result)).toEqual(['HOG', 'LAG_MELLAN', 'MELLAN']);
+      expect(result.cells.filter((c) => c.subjectCode === 'NO').map((c) => c.stage).sort()).toEqual(['HOG', 'MELLAN']);
+      expect(result.cells.some((c) => c.subjectCode === 'BI' && c.stage === 'LAG')).toBe(false);
+    });
+
+    it('a correct F–5 plan has no verdict: lågstadiet whole, mellanstadiet two thirds, 3 471,3 h and 302,3 h', () => {
+      const result = withSpan(B1, 356, spanPlan(B1, 356, FROM_F_TO_5), FROM_F_TO_5);
+      expect(result.verdicts).toEqual([]);
+      expect(result.total.guaranteedHours).toBe(3471.3);
+      expect(result.skolansVal.availableHours).toBe(302.3);
+      expect(stagesOf(result)).toEqual(['LAG', 'LAG_MELLAN', 'MELLAN']);
+      expect(result.cells.some((c) => c.stage === 'HOG')).toBe(false);
+    });
+
+    it('a correct 6–9 plan has no verdict: mellanstadiet one third, 3 418,7 h and 297,7 h', () => {
+      const result = withSpan(B1, 356, spanPlan(B1, 356, FROM_6_TO_9), FROM_6_TO_9);
+      expect(result.verdicts).toEqual([]);
+      expect(result.total.guaranteedHours).toBe(3418.7);
+      expect(result.skolansVal.availableHours).toBe(297.7);
+      expect(result.cells.some((c) => c.stage === 'LAG')).toBe(false);
+    });
+
+    it('the same 4–9 plan without its span is the 12 warnings the report began with', () => {
+      // The report's plan puts the whole of hem- och konsumentkunskap's 40 h in åk 4–6.
+      const base = spanPlan(B1, 356, FROM_4_TO_9);
+      const plan = { ...base, entries: setMinutes(base.entries, 'HKK', [4, 5, 6], 24) };
+      const result = withSpan(B1, 356, plan, null);
+      expect(result.verdicts.filter((v) => v.severity === 'warning')).toHaveLength(12);
+      expect(result.skolansVal.takenHours).toBe(1882); // lågstadiet, all of it, "taken" from a pool of 600
+      expect(result.total.deficitHours).toBeGreaterThan(1800);
+    });
+  });
+
+  describe('a stadium held in part is judged by its share, and only as a notice', () => {
+    it('cuts a cell to held årskurser over the stadium’s, and says so on the cell', () => {
+      const result = withSpan(B1, 356, spanPlan(B1, 356, FROM_F_TO_5), FROM_F_TO_5);
+      const ma = cell(result, 'MA', 'MELLAN');
+      expect(ma.share).toEqual({ held: 2, of: 3 });
+      expect(ma.nationalHours).toBe(273.3); // 410 × 2/3
+      expect(cell(result, 'MA', 'LAG').share).toBeUndefined();
+      expect(cell(result, 'MA', 'LAG').nationalHours).toBe(420);
+      expect(cell(result, 'HKK', 'LAG_MELLAN')).toMatchObject({ share: { held: 5, of: 6 }, nationalHours: 33.3 });
+      const six = withSpan(B1, 356, spanPlan(B1, 356, FROM_6_TO_9), FROM_6_TO_9);
+      expect(cell(six, 'MA', 'MELLAN')).toMatchObject({ share: { held: 1, of: 3 }, nationalHours: 136.7 });
+      expect(cell(six, 'MA', 'HOG').share).toBeUndefined();
+    });
+
+    it('a protected subject under its share is a notice, not PROTECTED_SUBJECT_REDUCED', () => {
+      const plan = placedElsewhere(spanPlan(B1, 356, FROM_F_TO_5));
+      const result = withSpan(B1, 356, { ...plan, entries: setMinutes(plan.entries, 'MA', [4, 5], 100) }, FROM_F_TO_5);
+      const verdict = result.verdicts.find((v) => v.subjectCode === 'MA')!;
+      expect(verdict).toMatchObject({
+        code: 'TIMPLAN_PARTIAL_STAGE_BELOW_SHARE',
+        severity: 'notice',
+        stage: 'MELLAN',
+        // 2 × 100 min × 35.6 weeks = 118,7 h (down) of the share 273,3 h
+        params: { nationalHours: 273.3, plannedHours: 118.6, deficitHours: 154.7, heldGrades: 2, ofGrades: 3 },
+      });
+      expect(codes(result)).not.toContain('TIMPLAN_PROTECTED_SUBJECT_REDUCED');
+      expect(result.verdicts.filter((v) => v.severity === 'warning')).toEqual([]);
+    });
+
+    it('still holds the total to the guarantee: time cut from a partly held cell and placed nowhere is a warning there', () => {
+      const plan = spanPlan(B1, 356, FROM_F_TO_5);
+      const result = withSpan(B1, 356, { ...plan, entries: setMinutes(plan.entries, 'MA', [4, 5], 100) }, FROM_F_TO_5);
+      expect(codes(result)).toEqual(['TIMPLAN_PARTIAL_STAGE_BELOW_SHARE', 'TIMPLAN_TOTAL_BELOW_GUARANTEE']);
+    });
+
+    it('shows a short share as the sum of what it shows: planned + deficit is the target, to the tenth', () => {
+      // Nothing planned in åk 4–5 of F–5: the share of HKK's 40 h over six årskurser is 33⅓ h
+      // for five of them, and "0 h planerat, 33,4 h under andelen 33,3 h" does not add up.
+      const result = withSpan(B1, 356, { subjects: [coded('HKK')], entries: [] }, FROM_F_TO_5);
+      const hkk = result.verdicts.find((v) => v.subjectCode === 'HKK')!;
+      expect(hkk.params).toMatchObject({ plannedHours: 0, deficitHours: 33.4, nationalHours: 33.4, heldGrades: 5, ofGrades: 6 });
+      expect(cell(result, 'HKK', 'LAG_MELLAN').nationalHours).toBe(33.4);
+      // The guarantee of the cells held is shown the same way: nothing planned, 3 471⅓ h short.
+      expect(result.total).toMatchObject({ plannedHours: 0, guaranteedHours: 3471.4, deficitHours: 3471.4 });
+      for (const verdict of result.verdicts.filter((v) => v.code === 'TIMPLAN_PARTIAL_STAGE_BELOW_SHARE')) {
+        const { plannedHours, deficitHours, nationalHours } = verdict.params as Record<string, number>;
+        expect(Math.round((plannedHours! + deficitHours!) * 10) / 10).toBe(nationalHours);
+      }
+      // A share that is met is shown to the nearest tenth, as ever.
+      const met = withSpan(B1, 356, spanPlan(B1, 356, FROM_F_TO_5), FROM_F_TO_5);
+      expect(cell(met, 'HKK', 'LAG_MELLAN').nationalHours).toBe(33.3);
+    });
+
+    it('a cell cut past the cap is a notice too, in a partly held stadium', () => {
+      const plan = placedElsewhere(spanPlan(B1, 356, FROM_F_TO_5));
+      const cut = { ...plan, entries: setMinutes(plan.entries, 'BL', [4, 5], 20) };
+      const partly = withSpan(B1, 356, cut, FROM_F_TO_5);
+      const notUnmapped = (result: TimplanCheck) => codes(result).filter((code) => code !== 'TIMPLAN_SUBJECT_UNMAPPED');
+      expect(notUnmapped(partly)).toEqual(['TIMPLAN_PARTIAL_STAGE_BELOW_SHARE']);
+      // The same cut to lågstadiet, which F–5 holds whole, is past the cap.
+      const whole = withSpan(B1, 356, { ...plan, entries: setMinutes(plan.entries, 'BL', [1, 2, 3], 10) }, FROM_F_TO_5);
+      expect(notUnmapped(whole)).toEqual(['TIMPLAN_REDUCTION_OVER_CAP']);
+    });
+
+    it('a stadium the span holds whole is judged as ever: a protected subject reduced is a warning', () => {
+      const plan = spanPlan(B1, 356, FROM_4_TO_9);
+      const result = withSpan(B1, 356, { ...plan, entries: setMinutes(plan.entries, 'MA', [7, 8, 9], 100) }, FROM_4_TO_9);
+      expect(result.verdicts[0]).toMatchObject({ code: 'TIMPLAN_PROTECTED_SUBJECT_REDUCED', severity: 'warning', stage: 'HOG' });
+    });
+
+    it('judges a per-child minimum against its share, as a notice naming the child', () => {
+      // KE needs 60 h in mellanstadiet; two of three årskurser need 40.
+      const plan = spanPlan(B1, 356, FROM_F_TO_5);
+      const result = withSpan(B1, 356, { ...plan, entries: setMinutes(plan.entries, 'KE', [4, 5], 25) }, FROM_F_TO_5);
+      const ke = result.verdicts.find((v) => v.childCode === 'KE')!;
+      expect(ke).toMatchObject({
+        code: 'TIMPLAN_PARTIAL_STAGE_BELOW_SHARE',
+        severity: 'notice',
+        subjectCode: 'NO',
+        params: { childCode: 'KE', minimumHours: 40, heldGrades: 2, ofGrades: 3 },
+      });
+      expect(codes(result)).not.toContain('TIMPLAN_GROUP_MINIMUM_UNMET');
+      expect(cell(result, 'NO', 'MELLAN').children!.find((c) => c.subjectCode === 'KE')!.minimumHours).toBe(40);
+      // 25 min is under 60/3 × 2 = 40 h of the whole stadium too: a full stadium warns.
+      const whole = withSpan(B1, 356, { ...plan, entries: setMinutes(plan.entries, 'KE', [1, 2, 3], 5) }, FROM_F_TO_5);
+      expect(codes(whole)).not.toContain('TIMPLAN_GROUP_MINIMUM_UNMET'); // KE is only judged where the plan names a child
+    });
+
+    it('cuts the merged cell over every årskurs it spans, an uneven seven in specialskolan', () => {
+      const span: GradeSpan = { gradeFrom: 5, gradeTo: 10 };
+      const plan = spanPlan(B3, 356, span);
+      const met = withSpan(B3, 356, plan, span);
+      expect(met.verdicts).toEqual([]);
+      expect(cell(met, 'HKK', 'LAG_MELLAN')).toMatchObject({ share: { held: 3, of: 7 }, nationalHours: 21.4 }); // 50 × 3/7
+      const low = withSpan(B3, 356, { ...plan, entries: setMinutes(plan.entries, 'HKK', [5, 6, 7], 8) }, span);
+      expect(low.verdicts).toHaveLength(1);
+      expect(low.verdicts[0]).toMatchObject({
+        code: 'TIMPLAN_PARTIAL_STAGE_BELOW_SHARE',
+        stage: 'LAG_MELLAN',
+        params: { heldGrades: 3, ofGrades: 7 },
+      });
+    });
+  });
+
+  describe('the guarantee and the pool of skolans val', () => {
+    it('sums the cells the plan holds, the shared ones scaled, and scales the pool by the same fraction', () => {
+      for (const [span, guaranteed, pool] of [
+        [FROM_4_TO_9, 4988, 434.4],
+        [FROM_F_TO_5, 3471.3, 302.3],
+        [FROM_6_TO_9, 3418.7, 297.7],
+      ] as const) {
+        const result = withSpan(B1, 356, spanPlan(B1, 356, span), span);
+        expect([result.total.guaranteedHours, result.skolansVal.availableHours]).toEqual([guaranteed, pool]);
+      }
+    });
+
+    it('counts a shortfall against a partly held cell as taken from the pool', () => {
+      // MA 4–5 at 100 min: 273,3 − 118,7 = 154,7 h; BL 4–5 at 20 min: 53,3 − 23,7 = 29,6 h.
+      const plan = spanPlan(B1, 356, FROM_F_TO_5);
+      const entries = setMinutes(setMinutes(plan.entries, 'MA', [4, 5], 100), 'BL', [4, 5], 20);
+      expect(withSpan(B1, 356, { ...plan, entries }, FROM_F_TO_5).skolansVal.takenHours).toBe(184.3);
+    });
+
+    it('overspends the pool as a NOTICE when only the partly held cells do, and says so', () => {
+      const plan = spanPlan(B1, 356, FROM_F_TO_5);
+      // MA and Svenska not given at all in åk 4–5: 273,3 + 346,7 = 620 h of a 302,3 h pool,
+      // all of it from cells the plan holds in part.
+      const entries = setMinutes(setMinutes(plan.entries, 'MA', [4, 5], 0), 'SV_SVA', [4, 5], 0);
+      const result = withSpan(B1, 356, { ...plan, entries }, FROM_F_TO_5);
+      const overspent = result.verdicts.find((v) => v.code === 'TIMPLAN_SKOLANS_VAL_OVERSPENT')!;
+      expect(overspent).toMatchObject({
+        severity: 'notice',
+        params: { takenHours: 620, availableHours: 302.3, overspentHours: 317.7, estimated: 1, fromShares: 1 },
+      });
+      expect(result.verdicts.filter((v) => v.severity === 'warning')).toEqual([]);
+    });
+
+    it('overspends the pool as a WARNING when the cells held whole do, without the shares in the test', () => {
+      const plan = spanPlan(B1, 356, FROM_F_TO_5);
+      // Svenska and matematik not given in lågstadiet (1 100 h, whole cells): past 302,3 h alone.
+      const entries = setMinutes(setMinutes(plan.entries, 'MA', [1, 2, 3], 0), 'SV_SVA', [1, 2, 3], 0);
+      const result = withSpan(B1, 356, { ...plan, entries }, FROM_F_TO_5);
+      const overspent = result.verdicts.find((v) => v.code === 'TIMPLAN_SKOLANS_VAL_OVERSPENT')!;
+      expect(overspent.severity).toBe('warning');
+      expect(overspent.params).toMatchObject({ availableHours: 302.3, estimated: 1 });
+      expect(overspent.params).not.toHaveProperty('fromShares');
+      // A plan that is not for a part of the form never says it is an estimate.
+      const whole = withSpan(B1, 356, { ...plan, entries: setMinutes(plan.entries, 'MA', [1, 2, 3], 0) }, null);
+      expect(whole.verdicts.find((v) => v.code === 'TIMPLAN_SKOLANS_VAL_OVERSPENT')!.params).not.toHaveProperty('estimated');
+      expect(whole.verdicts.find((v) => v.code === 'TIMPLAN_SKOLANS_VAL_OVERSPENT')!.params).not.toHaveProperty('fromShares');
+    });
+
+    it('is short of the total as a NOTICE when only the partly held cells are, a few per cent or many', () => {
+      const plan = spanPlan(B1, 356, FROM_F_TO_5);
+      for (const minutes of [200, 100]) {
+        const result = withSpan(B1, 356, { ...plan, entries: setMinutes(plan.entries, 'MA', [4, 5], minutes) }, FROM_F_TO_5);
+        const total = result.verdicts.find((v) => v.code === 'TIMPLAN_TOTAL_BELOW_GUARANTEE')!;
+        expect(total.severity).toBe('notice');
+        expect(total.params).toMatchObject({ estimated: 1, fromShares: 1 });
+        expect(result.verdicts.filter((v) => v.severity === 'warning')).toEqual([]);
+        expect(result.total.deficitHours).toBeGreaterThan(0);
+      }
+    });
+
+    it('is short of the total as a WARNING when the rest of the plan alone is, a share’s surplus and deficit netting out', () => {
+      const plan = spanPlan(B1, 356, FROM_F_TO_5);
+      // Bild in lågstadiet (a whole cell) cut to 10 min a week: 42,2 h short. In åk 4–5 matematik is
+      // 28,9 h over its share and bild 29,6 h under: the partly held cells net out to a shortfall
+      // of 0,7 h. Adding the 29,6 h of deficit back and keeping the 28,9 h of surplus would count
+      // the same hours twice and hide the 42 h.
+      let entries = setMinutes(plan.entries, 'BL', [1, 2, 3], 10);
+      entries = setMinutes(setMinutes(entries, 'BL', [4, 5], 20), 'MA', [4, 5], 255);
+      const result = withSpan(B1, 356, { ...plan, entries }, FROM_F_TO_5);
+      const total = result.verdicts.find((v) => v.code === 'TIMPLAN_TOTAL_BELOW_GUARANTEE')!;
+      expect(total.severity).toBe('warning');
+      expect(total.params).not.toHaveProperty('fromShares');
+      expect(total.params).toMatchObject({ estimated: 1 });
+      // Without the surplus the same cuts leave the total short in the same way.
+      const without = withSpan(B1, 356, { ...plan, entries: setMinutes(setMinutes(plan.entries, 'BL', [1, 2, 3], 10), 'BL', [4, 5], 20) }, FROM_F_TO_5);
+      expect(without.verdicts.find((v) => v.code === 'TIMPLAN_TOTAL_BELOW_GUARANTEE')!.severity).toBe('warning');
+    });
+
+    it('counts a partly held cell’s surplus as time placed, like any cell’s', () => {
+      const plan = spanPlan(B1, 356, FROM_F_TO_5);
+      const base = withSpan(B1, 356, plan, FROM_F_TO_5);
+      const more = withSpan(B1, 356, { ...plan, entries: setMinutes(plan.entries, 'MA', [4, 5], 255) }, FROM_F_TO_5);
+      expect(more.skolansVal.placedHours - base.skolansVal.placedHours).toBeCloseTo(28.9 - 0.7, 0);
+      expect(more.total.plannedHours).toBeGreaterThan(base.total.plannedHours);
+    });
+
+    it('holds the total to the guarantee of the cells held, marked as an estimate', () => {
+      const plan = spanPlan(B1, 356, FROM_4_TO_9);
+      const result = withSpan(B1, 356, { ...plan, entries: setMinutes(plan.entries, 'MA', [7, 8, 9], 100) }, FROM_4_TO_9);
+      const total = result.verdicts.find((v) => v.code === 'TIMPLAN_TOTAL_BELOW_GUARANTEE')!;
+      expect(total.params).toMatchObject({ guaranteedHours: 4988, estimated: 1 });
+      expect(total.params.deficitHours).toBe(result.total.deficitHours);
+      expect(result.total.deficitHours).toBeGreaterThan(0);
+    });
+
+    it('does not judge a span-less lydelse’s total for part of the form, and says so in a notice', () => {
+      // SFS 2025:729 prints 7 424 h and no cells; åk 5–10 is part of 1–10.
+      const subjects = [coded('MA')];
+      const entries = [5, 6, 7, 8, 9, 10].map((gradeLevel) => ({ subjectId: 's-MA', gradeLevel, minutesPerWeek: 180 }));
+      const part = withSpan(LAW_2028, 356, { subjects, entries }, { gradeFrom: 5, gradeTo: 10 });
+      expect(codes(part)).toEqual(['TIMPLAN_NATIONAL_DISTRIBUTION_UNPUBLISHED', 'TIMPLAN_TOTAL_NOT_JUDGED_FOR_SPAN']);
+      expect(part.verdicts[1]).toMatchObject({
+        severity: 'notice',
+        params: { totalHours: 7424, gradeFrom: 5, gradeTo: 10 },
+      });
+      expect(part.total).toEqual({ plannedHours: 640.8, guaranteedHours: 7424, deficitHours: 0, judged: false });
+      // The whole form, by span or by none, is held to it as before.
+      for (const gradeSpan of [{ gradeFrom: 1, gradeTo: 10 }, null]) {
+        const whole = withSpan(LAW_2028, 356, { subjects, entries }, gradeSpan);
+        expect(codes(whole)).toEqual(['TIMPLAN_NATIONAL_DISTRIBUTION_UNPUBLISHED', 'TIMPLAN_TOTAL_BELOW_GUARANTEE']);
+        expect(whole.verdicts[1]!.params).not.toHaveProperty('estimated');
+        expect(whole.total).not.toHaveProperty('judged');
+      }
+    });
+  });
+
+  describe('årskurser outside the span', () => {
+    it('reports minutes there in gradesOutsideStages and counts them nowhere', () => {
+      const plan = spanPlan(B1, 356, FROM_4_TO_9);
+      const base = withSpan(B1, 356, plan, FROM_4_TO_9);
+      const extra = [
+        { subjectId: 's-MA', gradeLevel: 2, minutesPerWeek: 400 },
+        { subjectId: 's-PROG', gradeLevel: 1, minutesPerWeek: 90 },
+      ];
+      const result = withSpan(
+        B1,
+        356,
+        {
+          subjects: [...plan.subjects, { id: 's-PROG', name: 'Programmering', nationalCode: null, countsTowardTimplan: true }],
+          entries: [...plan.entries, ...extra],
+        },
+        FROM_4_TO_9,
+      );
+      expect(result.gradesOutsideStages).toEqual([1, 2]);
+      expect(result.total.plannedHours).toBe(base.total.plannedHours);
+      expect(result.unmapped).toEqual([]);
+      expect(result.cells).toEqual(base.cells);
+    });
+
+    it('keeps förskoleklassen outside every stadium, held or not', () => {
+      const plan = spanPlan(B1, 356, FROM_F_TO_5);
+      const result = withSpan(B1, 356, { ...plan, entries: [...plan.entries, { subjectId: 's-MA', gradeLevel: 0, minutesPerWeek: 60 }] }, FROM_F_TO_5);
+      expect(result.gradesOutsideStages).toEqual([0]);
+    });
+  });
+
+  describe('a sameskola without högstadium', () => {
+    it('holds åk 1–3: lågstadiet whole, the merged cell half, no mellanstadium cell', () => {
+      const span: GradeSpan = { gradeFrom: 1, gradeTo: 3 };
+      const result = withSpan(B4, 356, spanPlan(B4, 356, span), span);
+      expect(result.verdicts).toEqual([]);
+      expect(stagesOf(result)).toEqual(['LAG', 'LAG_MELLAN']);
+      expect(cell(result, 'HKK', 'LAG_MELLAN').share).toEqual({ held: 3, of: 6 });
+    });
+  });
+
+  describe('the span itself', () => {
+    it('is refused unless two whole årskurser of a plan row in order', () => {
+      const { subjects, entries } = compliantPlan(B1, 356);
+      for (const bad of [
+        { gradeFrom: 5, gradeTo: 4 },
+        { gradeFrom: -1, gradeTo: 4 },
+        { gradeFrom: 4, gradeTo: 12 },
+        { gradeFrom: 4.5, gradeTo: 9 },
+        { gradeFrom: 4, gradeTo: Number.NaN },
+      ]) {
+        expect(() => assertGradeSpan(bad)).toThrow();
+        expect(() => withSpan(B1, 356, { subjects, entries }, bad)).toThrow();
+      }
+      expect(() => assertGradeSpan({ gradeFrom: 0, gradeTo: 11 })).not.toThrow();
+      expect(() => assertGradeSpan({ gradeFrom: 7, gradeTo: 7 })).not.toThrow();
+    });
+
+    it('reads a plan row’s span only when both ends are numbers, and anything else as the whole form', () => {
+      expect(gradeSpanOf({ gradeFrom: 4, gradeTo: 9 })).toEqual({ gradeFrom: 4, gradeTo: 9 });
+      expect(gradeSpanOf({ gradeFrom: 4, gradeTo: 4 })).toEqual({ gradeFrom: 4, gradeTo: 4 });
+      expect(gradeSpanOf({ gradeFrom: 0, gradeTo: 0 })).toEqual({ gradeFrom: 0, gradeTo: 0 });
+      // The CHECK admits no half a pair, but a row from before the columns, or a mock, has none or one.
+      expect(gradeSpanOf({ gradeFrom: 4, gradeTo: null })).toBeNull();
+      expect(gradeSpanOf({ gradeFrom: null, gradeTo: 9 })).toBeNull();
+      expect(gradeSpanOf({ gradeFrom: 4 })).toBeNull();
+      expect(gradeSpanOf({ gradeTo: 9 })).toBeNull();
+      expect(gradeSpanOf({ gradeFrom: null, gradeTo: null })).toBeNull();
+      expect(gradeSpanOf({})).toBeNull();
+    });
+
+    it('holds an årskurs at both of its ends, and every årskurs with no span', () => {
+      expect(inGradeSpan({ gradeFrom: 4, gradeTo: 9 }, 4)).toBe(true);
+      expect(inGradeSpan({ gradeFrom: 4, gradeTo: 9 }, 9)).toBe(true);
+      expect(inGradeSpan({ gradeFrom: 4, gradeTo: 9 }, 3)).toBe(false);
+      expect(inGradeSpan({ gradeFrom: 4, gradeTo: 9 }, 10)).toBe(false);
+      expect(inGradeSpan(null, 11)).toBe(true);
+      expect(inGradeSpan(undefined, 0)).toBe(true);
+    });
+
+    it('lists the held årskurser per stadium', () => {
+      const stages = stageGradesFor(version(B1));
+      expect(heldStageGrades(stages, FROM_F_TO_5)).toEqual({ LAG: [1, 2, 3], MELLAN: [4, 5], HOG: [] });
+      expect(heldStageGrades(stages, FROM_6_TO_9)).toEqual({ LAG: [], MELLAN: [6], HOG: [7, 8, 9] });
+      expect(heldStageGrades(stages, null)).toEqual(stages);
+    });
   });
 });

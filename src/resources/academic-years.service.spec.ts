@@ -109,7 +109,7 @@ describe('AcademicYearsService', () => {
       tx.academicYear.create.mockResolvedValue(row);
       const user = testUser();
 
-      // No decided timplan in the school (the mock's findFirst finds
+      // No decided timplan in the school (the mock's findMany finds
       // nothing): the year carries no attachments, exactly as before P2.
       await expect(service.create(dto(), user)).resolves.toEqual({ ...row, timplans: [] });
 
@@ -129,18 +129,18 @@ describe('AcademicYearsService', () => {
 
     it('attaches every årskurs the newest decided plan speaks for, in the transaction that creates the year', async () => {
       tx.academicYear.create.mockResolvedValue({ id: YEAR_ID });
-      tx.localTimplan.findFirst.mockResolvedValue({
+      tx.localTimplan.findMany.mockResolvedValue([{
         id: 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1',
         name: 'Grundskolan 2024',
         status: 'DECIDED',
         nationalVersion: { schoolForm: 'GRUNDSKOLA', appliesFromCohortTerm: 'HT2024' },
         entries: [],
-      });
+      }]);
 
       const created = await service.create(dto(), testUser());
 
       // Newest by decision, and only decided plans: a draft is never a default.
-      expect(tx.localTimplan.findFirst).toHaveBeenCalledWith(
+      expect(tx.localTimplan.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { status: 'DECIDED' },
           orderBy: [{ decidedAt: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }],
@@ -163,15 +163,14 @@ describe('AcademicYearsService', () => {
 
     it('attaches an older plan one årskurs up in a tioårig year, to the old årskullar only: åk 2–10, never the new åk 1', async () => {
       tx.academicYear.create.mockResolvedValue({ id: YEAR_ID, gradeNumbering: 'TIOARIG' });
-      tx.localTimplan.findFirst.mockResolvedValue({
+      tx.localTimplan.findMany.mockResolvedValue([{
         id: 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1',
         name: 'Grundskolan 2024',
         status: 'DECIDED',
         schoolForm: 'GRUNDSKOLA',
         nationalVersion: { schoolForm: 'GRUNDSKOLA', appliesFromCohortTerm: 'HT2024' },
         entries: [{ gradeLevel: 0 }],
-      });
-      tx.localTimplan.findMany.mockResolvedValue([]);
+      }]);
 
       await service.create(dto({ name: '2028/29', startDate: '2028-08-21', endDate: '2029-06-12' }), testUser());
 
@@ -201,7 +200,6 @@ describe('AcademicYearsService', () => {
         entries: [],
       };
       tx.academicYear.create.mockResolvedValue({ id: YEAR_ID, gradeNumbering: 'TIOARIG' });
-      tx.localTimplan.findFirst.mockResolvedValue(reformed);
       tx.localTimplan.findMany.mockResolvedValue([reformed, older]);
 
       await service.create(dto({ name: '2028/29', startDate: '2028-08-21', endDate: '2029-06-12' }), testUser());
@@ -217,13 +215,13 @@ describe('AcademicYearsService', () => {
 
     it('attaches förskoleklassen only when the plan itself plans it, and follows the version’s stages', async () => {
       tx.academicYear.create.mockResolvedValue({ id: YEAR_ID });
-      tx.localTimplan.findFirst.mockResolvedValue({
+      tx.localTimplan.findMany.mockResolvedValue([{
         id: 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1',
         name: 'Sameskolan',
         status: 'DECIDED',
         nationalVersion: { schoolForm: 'SAMESKOLA', appliesFromCohortTerm: 'HT2024' },
         entries: [{ gradeLevel: 0 }],
-      });
+      }]);
 
       await service.create(dto(), testUser());
 
@@ -236,13 +234,13 @@ describe('AcademicYearsService', () => {
 
     it('a failed default rolls the year back with it — one transaction, one error', async () => {
       tx.academicYear.create.mockResolvedValue({ id: YEAR_ID });
-      tx.localTimplan.findFirst.mockResolvedValue({
+      tx.localTimplan.findMany.mockResolvedValue([{
         id: 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1',
         name: 'Grundskolan 2024',
         status: 'DECIDED',
         nationalVersion: { schoolForm: 'GRUNDSKOLA', appliesFromCohortTerm: 'HT2024' },
         entries: [],
-      });
+      }]);
       tx.academicYearTimplan.createMany.mockRejectedValue(prismaError('P2003'));
 
       await expect(service.create(dto(), testUser())).rejects.toThrow(ConflictException);

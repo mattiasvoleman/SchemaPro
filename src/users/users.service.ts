@@ -697,17 +697,23 @@ export class UsersService {
             await keepADecider(tx, target.schoolId, id);
           }
         }
-        // A decided lokal timplan names who recorded the decision, and the
-        // record keeps that name: LocalTimplans_decidedByUserId_schoolId_fkey
-        // is ON DELETE RESTRICT. Asked first so the answer names the plans
-        // and the way out, instead of the generic "references a record".
+        // A decided lokal timplan names who recorded the decision, and who set
+        // its årskurs span after it (20261219090000), and the record keeps both
+        // names: LocalTimplans_decidedByUserId_schoolId_fkey and
+        // LocalTimplans_gradeSpanSetByUserId_schoolId_fkey are ON DELETE
+        // RESTRICT. Asked first so the answer names the plans and the way out,
+        // instead of the generic "references a record".
         const decided = await tx.localTimplan.findMany({
-          where: { decidedByUserId: id },
-          select: { name: true },
+          where: { OR: [{ decidedByUserId: id }, { gradeSpanSetByUserId: id }] },
+          select: { name: true, decidedByUserId: true, gradeSpanSetByUserId: true },
           orderBy: { name: 'asc' },
         });
         if (decided.length > 0) {
-          throw recordedATimplanDecision(decided.map((plan) => plan.name));
+          throw recordedATimplanDecision(
+            decided.map((plan) => plan.name),
+            decided.some((plan) => plan.gradeSpanSetByUserId === id),
+            decided.some((plan) => plan.decidedByUserId === id),
+          );
         }
         // Rastvakt i vardagen (20261210090000): a vikarie booked ahead for
         // this person's rastvaktspass. The delete takes the pass, the absence
@@ -733,7 +739,8 @@ export class UsersService {
     } catch (error) {
       if (error instanceof NotFoundException || error instanceof ConflictException) throw error;
       // A plan decided by this person between the question and the delete.
-      if (isDeciderReference(error)) throw recordedATimplanDecision([]);
+      const reference = timplanReference(error);
+      if (reference) throw recordedATimplanDecision([], reference === 'span', reference === 'decision');
       rethrowPrismaError(error);
     }
 
@@ -938,19 +945,29 @@ export class UsersService {
 }
 
 /**
- * The 409 for removing someone a decided timplan names as its decider. A
- * decision's who is part of the record; the person is deactivated instead,
- * which keeps the name on the plan and takes every access away.
+ * The 409 for removing someone a decided timplan names as its decider, or as
+ * the one who set its årskurs span after the decision. A decision's who is
+ * part of the record; the person is deactivated instead, which keeps the name
+ * on the plan and takes every access away.
  */
-function recordedATimplanDecision(planNames: string[]): ConflictException {
+function recordedATimplanDecision(
+  planNames: string[],
+  setASpan = false,
+  decided = true,
+): ConflictException {
   const which =
     planNames.length === 0
       ? 'en beslutad lokal timplan'
       : planNames.length === 1
         ? `den beslutade lokala timplanen ${listNames(planNames)}`
         : `de beslutade lokala timplanerna ${listNames(planNames)}`;
+  const what = setASpan
+    ? decided
+      ? 'beslutet eller årskurspannet för'
+      : 'årskurspannet för'
+    : 'beslutet om';
   return new ConflictException(
-    `Personen står som den som registrerade beslutet om ${which} och kan inte tas bort. ` +
+    `Personen står som den som registrerade ${what} ${which} och kan inte tas bort. ` +
       'Inaktivera kontot i stället; beslutet behåller sitt namn.',
   );
 }
@@ -970,13 +987,16 @@ function hasBookedPassCovers(firstDate: string): ConflictException {
   });
 }
 
-/** The restrict foreign key from a decided plan to its decider, as the pg adapter reports it. */
-function isDeciderReference(error: unknown): boolean {
-  return (
-    error instanceof Prisma.PrismaClientKnownRequestError &&
-    error.code === 'P2003' &&
-    JSON.stringify(error.meta ?? {}).includes('LocalTimplans_decidedByUserId_schoolId_fkey')
-  );
+/**
+ * The restrict foreign key from a decided plan to its decider, or to the one who
+ * set its årskurs span, as the pg adapter reports it: which of the two refused.
+ */
+function timplanReference(error: unknown): 'decision' | 'span' | null {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2003') return null;
+  const meta = JSON.stringify(error.meta ?? {});
+  if (meta.includes('LocalTimplans_decidedByUserId_schoolId_fkey')) return 'decision';
+  if (meta.includes('LocalTimplans_gradeSpanSetByUserId_schoolId_fkey')) return 'span';
+  return null;
 }
 
 /**

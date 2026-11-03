@@ -51,6 +51,10 @@ const storedPlan = (overrides: Record<string, unknown> = {}) => ({
   decidedByUserId: null,
   decisionNote: null,
   copiedFromId: null,
+  gradeFrom: null,
+  gradeTo: null,
+  gradeSpanSetAt: null,
+  gradeSpanSetByUserId: null,
   createdAt: new Date('2026-09-01T00:00:00.000Z'),
   updatedAt: new Date('2026-09-01T00:00:00.000Z'),
   ...overrides,
@@ -99,7 +103,11 @@ describe('LocalTimplansService', () => {
 
   const givenTheStatute = () => {
     tx.nationalTimplanVersion.findUnique.mockImplementation((args: { select?: { entries?: unknown } }) =>
-      Promise.resolve(args.select?.entries ? VERSION : { code: VERSION.code, schoolForm: 'GRUNDSKOLA' }),
+      Promise.resolve(
+        args.select?.entries
+          ? VERSION
+          : { code: VERSION.code, schoolForm: 'GRUNDSKOLA', appliesFromCohortTerm: 'HT2024' },
+      ),
     );
     tx.nationalSubject.findMany.mockResolvedValue([{ code: 'MA', name: 'Matematik', parentCode: null }]);
     tx.subject.findMany.mockResolvedValue([
@@ -190,6 +198,8 @@ describe('LocalTimplansService', () => {
           schoolForm: 'GRUNDSKOLA',
           nationalTimplanVersionId: VERSION_ID,
           planningWeeks: '36.5',
+          gradeFrom: null,
+          gradeTo: null,
         },
       });
     });
@@ -534,6 +544,8 @@ describe('LocalTimplansService', () => {
           schoolForm: 'GRUNDSKOLA',
           nationalTimplanVersionId: VERSION_ID,
           planningWeeks: new Prisma.Decimal('35.6'),
+          gradeFrom: null,
+          gradeTo: null,
           copiedFromId: PLAN_ID,
         },
       });
@@ -590,6 +602,286 @@ describe('LocalTimplansService', () => {
     it('404s a source RLS hides', async () => {
       tx.localTimplan.findUnique.mockResolvedValue(null);
       await expect(service.copy(PLAN_ID, {}, testUser())).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('the årskurs span', () => {
+    const SPAN_4_9 = { gradeFrom: 4, gradeTo: 9 };
+    const NEW_VERSION = 'f6f6f6f6-f6f6-4f6f-8f6f-f6f6f6f6f6f6';
+    const LAW_2028 = { code: 'SFS2025:729', schoolForm: 'GRUNDSKOLA', appliesFromCohortTerm: 'HT2028' };
+    const create = (extra: Record<string, unknown> = {}) =>
+      service.create(
+        { name: 'G', schoolForm: 'GRUNDSKOLA', nationalTimplanVersionId: VERSION_ID, ...extra },
+        testUser(),
+      );
+
+    describe('create', () => {
+      it('stores a span, or none when it is absent or null (the whole school form)', async () => {
+        givenTheStatute();
+        tx.localTimplan.create.mockResolvedValue(storedPlan(SPAN_4_9));
+
+        await expect(create(SPAN_4_9)).resolves.toMatchObject(SPAN_4_9);
+        expect(tx.localTimplan.create.mock.calls[0]![0].data).toMatchObject(SPAN_4_9);
+
+        await create({ gradeFrom: null, gradeTo: null });
+        expect(tx.localTimplan.create.mock.calls[1]![0].data).toMatchObject({ gradeFrom: null, gradeTo: null });
+        await create();
+        expect(tx.localTimplan.create.mock.calls[2]![0].data).toMatchObject({ gradeFrom: null, gradeTo: null });
+      });
+
+      it('400s half a pair, an inverted pair and a span that holds no årskurs of the lydelse, naming the fields', async () => {
+        givenTheStatute();
+        await expect(create({ gradeFrom: 4 })).rejects.toThrow('årskurspannet anges med båda');
+        await expect(create({ gradeFrom: 4, gradeTo: null })).rejects.toThrow('årskurspannet anges med båda');
+        await expect(create({ gradeFrom: 9, gradeTo: 4 })).rejects.toThrow(
+          'första årskursen (9) kan inte komma efter den sista (4)',
+        );
+        await expect(create({ gradeFrom: 10, gradeTo: 11 })).rejects.toThrow(
+          'årskurs 10–11 innehåller ingen årskurs i SFS2023:945/B1, som gäller årskurs 1–9',
+        );
+        expect(tx.localTimplan.create).not.toHaveBeenCalled();
+      });
+
+      it('accepts a span of a single årskurs: from equal to to', async () => {
+        givenTheStatute();
+        tx.localTimplan.create.mockResolvedValue(storedPlan());
+        for (const grade of [1, 4, 9]) {
+          await expect(create({ gradeFrom: grade, gradeTo: grade })).resolves.toBeDefined();
+          expect(tx.localTimplan.create.mock.calls.at(-1)![0].data).toMatchObject({ gradeFrom: grade, gradeTo: grade });
+        }
+        // The edge of the form is a span too, and so is one beside it that holds the årskurs.
+        await expect(create({ gradeFrom: 9, gradeTo: 11 })).resolves.toBeDefined();
+        await expect(create({ gradeFrom: 0, gradeTo: 1 })).resolves.toBeDefined();
+      });
+
+      it('accepts förskoleklassen in the span, and a span wider than the form', async () => {
+        givenTheStatute();
+        tx.localTimplan.create.mockResolvedValue(storedPlan());
+        await expect(create({ gradeFrom: 0, gradeTo: 5 })).resolves.toBeDefined();
+        await expect(create({ gradeFrom: 0, gradeTo: 11 })).resolves.toBeDefined();
+      });
+    });
+
+    describe('update', () => {
+      it('sets, changes and clears a draft’s span without touching the rest', async () => {
+        givenTheStatute();
+        tx.localTimplan.findUnique.mockResolvedValue(storedPlan());
+        tx.localTimplan.update.mockResolvedValue(storedPlan(SPAN_4_9));
+
+        await service.update(PLAN_ID, SPAN_4_9, testUser());
+        expect(tx.localTimplan.update).toHaveBeenLastCalledWith({ where: { id: PLAN_ID }, data: SPAN_4_9 });
+
+        await service.update(PLAN_ID, { gradeFrom: null, gradeTo: null }, testUser());
+        expect(tx.localTimplan.update).toHaveBeenLastCalledWith({
+          where: { id: PLAN_ID },
+          data: { gradeFrom: null, gradeTo: null },
+        });
+      });
+
+      it('sets a single årskurs on a draft, and a decided plan takes one too', async () => {
+        givenTheStatute();
+        tx.localTimplan.findUnique.mockResolvedValue(storedPlan());
+        tx.localTimplan.update.mockResolvedValue(storedPlan({ gradeFrom: 4, gradeTo: 4 }));
+        await service.update(PLAN_ID, { gradeFrom: 4, gradeTo: 4 }, testUser());
+        expect(tx.localTimplan.update).toHaveBeenLastCalledWith({ where: { id: PLAN_ID }, data: { gradeFrom: 4, gradeTo: 4 } });
+
+        tx.localTimplan.findUnique.mockResolvedValue(decided());
+        await service.update(PLAN_ID, { gradeFrom: 9, gradeTo: 9 }, testUser());
+        expect(tx.localTimplan.update).toHaveBeenLastCalledWith({ where: { id: PLAN_ID }, data: { gradeFrom: 9, gradeTo: 9 } });
+      });
+
+      it('leaves the span alone when the request names none', async () => {
+        givenTheStatute();
+        tx.localTimplan.findUnique.mockResolvedValue(storedPlan(SPAN_4_9));
+        tx.localTimplan.update.mockResolvedValue(storedPlan(SPAN_4_9));
+
+        await service.update(PLAN_ID, { name: 'Ny' }, testUser());
+
+        expect(tx.localTimplan.update).toHaveBeenCalledWith({ where: { id: PLAN_ID }, data: { name: 'Ny' } });
+      });
+
+      it('refuses to carry a span over to a lydelse that numbers the årskurser differently, unless the request restates it', async () => {
+        tx.localTimplan.findUnique.mockResolvedValue(storedPlan(SPAN_4_9));
+        tx.nationalTimplanVersion.findUnique.mockImplementation((args: { where: { id: string } }) =>
+          Promise.resolve(
+            args.where.id === NEW_VERSION
+              ? LAW_2028
+              : { code: VERSION.code, schoolForm: 'GRUNDSKOLA', appliesFromCohortTerm: 'HT2024' },
+          ),
+        );
+        tx.localTimplan.update.mockResolvedValue(storedPlan());
+
+        await expect(
+          service.update(PLAN_ID, { nationalTimplanVersionId: NEW_VERSION }, testUser()),
+        ).rejects.toThrow('numrerar årskurserna på ett annat sätt');
+        expect(tx.localTimplan.update).not.toHaveBeenCalled();
+
+        await service.update(
+          PLAN_ID,
+          { nationalTimplanVersionId: NEW_VERSION, gradeFrom: 5, gradeTo: 10 },
+          testUser(),
+        );
+        expect(tx.localTimplan.update).toHaveBeenCalledWith({
+          where: { id: PLAN_ID },
+          data: { nationalTimplanVersionId: NEW_VERSION, gradeFrom: 5, gradeTo: 10 },
+        });
+      });
+
+      it('lets a plan without a span change lydelse freely', async () => {
+        tx.localTimplan.findUnique.mockResolvedValue(storedPlan());
+        tx.nationalTimplanVersion.findUnique.mockResolvedValue(LAW_2028);
+        tx.localTimplan.update.mockResolvedValue(storedPlan());
+        await expect(
+          service.update(PLAN_ID, { nationalTimplanVersionId: NEW_VERSION }, testUser()),
+        ).resolves.toBeDefined();
+      });
+
+      it('holds the span to the version it is written against', async () => {
+        givenTheStatute();
+        tx.localTimplan.findUnique.mockResolvedValue(storedPlan());
+        await expect(service.update(PLAN_ID, { gradeFrom: 10, gradeTo: 11 }, testUser())).rejects.toThrow(
+          'innehåller ingen årskurs i SFS2023:945/B1',
+        );
+        expect(tx.localTimplan.update).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('a decided plan', () => {
+      it('takes a span once, from none, and nothing else in the request', async () => {
+        givenTheStatute();
+        tx.localTimplan.findUnique.mockResolvedValue(decided());
+        tx.localTimplan.update.mockResolvedValue(
+          decided({ ...SPAN_4_9, gradeSpanSetAt: new Date('2026-11-03T08:00:00.000Z'), gradeSpanSetByUserId: USER_ID }),
+        );
+
+        const result = await service.update(PLAN_ID, SPAN_4_9, testUser());
+
+        expect(tx.localTimplan.update).toHaveBeenCalledWith({ where: { id: PLAN_ID }, data: SPAN_4_9 });
+        expect(result).toMatchObject({ ...SPAN_4_9, gradeSpanSetByUserId: USER_ID });
+      });
+
+      it.each([
+        ['a name beside the span', { name: 'x', ...SPAN_4_9 }],
+        ['weeks beside the span', { planningWeeks: 36, ...SPAN_4_9 }],
+        ['a version beside the span', { nationalTimplanVersionId: NEW_VERSION, ...SPAN_4_9 }],
+        ['clearing a span that is not there', { gradeFrom: null, gradeTo: null }],
+        ['no span at all', {}],
+      ])('409s %s, naming the plan, and writes nothing', async (_label, dto) => {
+        givenTheStatute();
+        tx.localTimplan.findUnique.mockResolvedValue(decided());
+
+        const error = await service.update(PLAN_ID, dto, testUser()).catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(ConflictException);
+        expect((error as ConflictException).getResponse()).toMatchObject({ code: 'TIMPLAN_IS_DECIDED' });
+        expect(tx.localTimplan.update).not.toHaveBeenCalled();
+      });
+
+      it('409s a second span, and changing or clearing the first: reopening is the way', async () => {
+        givenTheStatute();
+        tx.localTimplan.findUnique.mockResolvedValue(decided(SPAN_4_9));
+        for (const dto of [{ gradeFrom: 1, gradeTo: 9 }, SPAN_4_9, { gradeFrom: null, gradeTo: null }]) {
+          await expect(service.update(PLAN_ID, dto, testUser())).rejects.toMatchObject({
+            response: { code: 'TIMPLAN_IS_DECIDED' },
+          });
+        }
+        expect(tx.localTimplan.update).not.toHaveBeenCalled();
+      });
+
+      it('400s a span the version cannot hold before it asks the database', async () => {
+        givenTheStatute();
+        tx.localTimplan.findUnique.mockResolvedValue(decided());
+        await expect(service.update(PLAN_ID, { gradeFrom: 10, gradeTo: 11 }, testUser())).rejects.toThrow(
+          BadRequestException,
+        );
+        expect(tx.localTimplan.update).not.toHaveBeenCalled();
+      });
+
+      it('turns the trigger’s refusal — a span set by someone else between the read and the write — into the same 409', async () => {
+        givenTheStatute();
+        tx.localTimplan.findUnique.mockResolvedValue(decided());
+        tx.localTimplan.update.mockRejectedValue(triggerRefusal('Grundskolan 2024'));
+        await expect(service.update(PLAN_ID, SPAN_4_9, testUser())).rejects.toMatchObject({
+          response: { code: 'TIMPLAN_IS_DECIDED' },
+        });
+      });
+    });
+
+    describe('copy and reopen', () => {
+      const givenSource = (source: Record<string, unknown>) => {
+        givenTheStatute();
+        tx.localTimplan.findUnique
+          .mockResolvedValueOnce({ ...source, entries: [] })
+          .mockResolvedValueOnce({ ...storedPlan({ id: NEW_ID }), entries: [] });
+        tx.localTimplan.create.mockResolvedValue(storedPlan({ id: NEW_ID }));
+        tx.localTimplan.findMany.mockResolvedValue([]);
+      };
+
+      it('carries the source’s span into the draft, and none of the stamps of a span set after the decision', async () => {
+        givenSource(
+          decided({ ...SPAN_4_9, gradeSpanSetAt: new Date('2026-11-03T08:00:00.000Z'), gradeSpanSetByUserId: USER_ID }),
+        );
+
+        await service.reopen(PLAN_ID, {}, testUser());
+
+        const data = tx.localTimplan.create.mock.calls[0]![0].data;
+        expect(data).toMatchObject(SPAN_4_9);
+        expect(data).not.toHaveProperty('gradeSpanSetAt');
+        expect(data).not.toHaveProperty('gradeSpanSetByUserId');
+      });
+
+      it('gives the draft the span the request states, null for the whole form', async () => {
+        givenSource(decided(SPAN_4_9));
+        await service.reopen(PLAN_ID, { gradeFrom: 1, gradeTo: 9 }, testUser());
+        expect(tx.localTimplan.create.mock.calls[0]![0].data).toMatchObject({ gradeFrom: 1, gradeTo: 9 });
+
+        givenSource(decided(SPAN_4_9));
+        await service.copy(PLAN_ID, { gradeFrom: null, gradeTo: null }, testUser());
+        expect(tx.localTimplan.create.mock.calls[1]![0].data).toMatchObject({ gradeFrom: null, gradeTo: null });
+      });
+
+      it('gives a plan decided before the span existed one when it is reopened', async () => {
+        givenSource(decided());
+        await service.reopen(PLAN_ID, SPAN_4_9, testUser());
+        expect(tx.localTimplan.create.mock.calls[0]![0].data).toMatchObject(SPAN_4_9);
+      });
+
+      it('400s a span the source’s version cannot hold', async () => {
+        givenSource(decided());
+        await expect(service.reopen(PLAN_ID, { gradeFrom: 10, gradeTo: 11 }, testUser())).rejects.toThrow(
+          BadRequestException,
+        );
+        expect(tx.localTimplan.create).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('the check', () => {
+      it('judges a stored plan against its span: a 4–9 plan is not told about lågstadiet, and the document says which span', async () => {
+        givenTheStatute();
+        tx.localTimplan.findUnique.mockResolvedValue({
+          ...storedPlan(SPAN_4_9),
+          entries: [],
+        });
+
+        const result = await service.check(PLAN_ID, testUser());
+
+        expect(result.gradeSpan).toEqual({ ...SPAN_4_9, partial: true });
+        // VERSION holds matematik lågstadiet only: with lågstadiet outside the
+        // span there is no cell to judge and no guarantee to fall short of.
+        expect(result.cells).toEqual([]);
+        expect(result.total).toMatchObject({ guaranteedHours: 0, deficitHours: 0 });
+        expect(result.verdicts).toEqual([]);
+      });
+
+      it('answers the same without a span as it always did', async () => {
+        givenTheStatute();
+        tx.localTimplan.findUnique.mockResolvedValue({ ...storedPlan(), entries: [] });
+
+        const result = await service.check(PLAN_ID, testUser());
+
+        expect(result).not.toHaveProperty('gradeSpan');
+        expect(result.verdicts.map((v) => v.code)).toContain('TIMPLAN_PROTECTED_SUBJECT_REDUCED');
+      });
     });
   });
 });

@@ -461,7 +461,8 @@ export function writeConflict(): ConflictException {
 /**
  * The lokal timplan CHECKs (migrations 20261006120000 and 20261007130000),
  * the Fas 2 tjänstefördelning CHECKs (20261007090000), the lektionslängder
- * CHECK (20261008090000), Lärarens dag's three (20261123090000) and the
+ * CHECK (20261008090000), the plan's årskurs span (20261219090000, the two a
+ * request can reach: the stamps are the trigger's), Lärarens dag's three (20261123090000) and the
  * rastvaktsschema's (20261207090000) by constraint name, as the field and the bound a 400 should state. The DTOs mirror each
  * bound, so this is the second line: a value a DTO counted differently from
  * the column (lengths are code points on both sides now, but the next
@@ -473,6 +474,10 @@ const NAMED_CHECKS: Record<string, string> = {
   LocalTimplans_planningWeeks_is_sane: 'planningWeeks: mellan 20,0 och 40,0 veckor.',
   LocalTimplans_decisionNote_is_sane:
     'decisionNote: beslutet behöver en anteckning på högst 500 tecken som identifierar det.',
+  LocalTimplans_gradeSpan_is_a_pair:
+    'gradeFrom och gradeTo: årskurspannet anges med båda, eller med inget av dem för hela skolformen.',
+  LocalTimplans_gradeSpan_is_sane:
+    'gradeFrom och gradeTo: årskurserna är 0 (förskoleklass) till 11, och den första kan inte komma efter den sista.',
   LocalTimplanEntries_gradeLevel_is_sane: 'gradeLevel: årskursen är 0 (förskoleklass) till 11.',
   LocalTimplanEntries_minutesPerWeek_is_sane: 'minutesPerWeek: 0 till 1200 minuter per vecka.',
   LocalTimplanEntries_note_is_sane: 'note: anteckningen kan vara högst 500 tecken.',

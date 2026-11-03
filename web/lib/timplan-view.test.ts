@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { checkLocalTimplan, stageGradesFor } from "@/lib/timplan-coverage";
+import { checkLocalTimplan, heldStageGrades, stageGradesFor, type GradeSpan } from "@/lib/timplan-coverage";
 import {
   cellKey,
+  cellTone,
   entriesFromDraft,
   formatH,
   gridColumns,
@@ -99,6 +100,141 @@ describe("gridColumns follows the lydelse's årskurser", () => {
     const columns = gridColumns(stageGradesFor(SAMESKOLA), [7, 2]);
     expect(columns.at(-1)).toEqual({ kind: "grade", grade: 7, stage: null });
     expect(columns.filter((column) => column.kind === "grade" && column.grade === 2)).toHaveLength(1);
+  });
+});
+
+describe("gridColumns follows the plan's årskurs span", () => {
+  const shape = (columns: ReturnType<typeof gridColumns>) =>
+    columns.map((column) => (column.kind === "grade" ? `${column.grade}${column.stage === null ? "·" : ""}` : `Σ${column.stage}`));
+  const grades = stageGradesFor(B1);
+  const span = (gradeFrom: number, gradeTo: number): GradeSpan => ({ gradeFrom, gradeTo });
+
+  it("shows a 4–9 plan's lågstadium grey, like förskoleklassen, and gives it no sum", () => {
+    // · marks a column of no stage: the grey ones, whose minutes are stored and counted nowhere.
+    expect(shape(gridColumns(grades, [], span(4, 9)))).toEqual([
+      "0·", "1·", "2·", "3·", "4", "5", "6", "ΣMELLAN", "7", "8", "9", "ΣHOG",
+    ]);
+  });
+
+  it("keeps a stadium the span holds whole exactly as with no span", () => {
+    expect(gridColumns(grades, [], span(1, 9))).toEqual(gridColumns(grades));
+    expect(gridColumns(grades, [], span(0, 9))).toEqual(gridColumns(grades));
+    expect(gridColumns(grades, [], null)).toEqual(gridColumns(grades));
+  });
+
+  it("says a stadium the span holds part of is a share: åk 4–5 of mellanstadiet's three", () => {
+    const columns = gridColumns(grades, [], span(0, 5));
+    expect(shape(columns)).toEqual(["0·", "1", "2", "3", "ΣLAG", "4", "5", "6·", "ΣMELLAN", "7·", "8·", "9·"]);
+    expect(columns.find((column) => column.kind === "stage" && column.stage === "MELLAN")).toEqual({
+      kind: "stage",
+      stage: "MELLAN",
+      share: { held: 2, of: 3 },
+    });
+    // The whole stadium carries no share to state.
+    expect(columns.find((column) => column.kind === "stage" && column.stage === "LAG")).toEqual({ kind: "stage", stage: "LAG" });
+  });
+
+  it("has no sum column for a stadium with no årskurs in the span", () => {
+    const columns = gridColumns(grades, [], span(7, 9));
+    expect(columns.filter((column) => column.kind === "stage").map((column) => column.stage)).toEqual(["HOG"]);
+    expect(columns.filter((column) => column.kind === "grade" && column.stage === null)).toHaveLength(7);
+  });
+
+  it("cuts the 2028 lydelse in its own numbering", () => {
+    expect(shape(gridColumns(stageGradesFor(LAW_2028), [], span(5, 10)))).toEqual([
+      "0·", "1·", "2·", "3·", "4·", "5", "6", "7", "ΣMELLAN", "8", "9", "10", "ΣHOG",
+    ]);
+  });
+
+  it("still puts a stored årskurs outside the form at the end, whatever the span", () => {
+    const columns = gridColumns(stageGradesFor(SAMESKOLA), [7], span(4, 6));
+    expect(columns.at(-1)).toEqual({ kind: "grade", grade: 7, stage: null });
+  });
+});
+
+describe("tones with a span: a share is a notice, never a warning", () => {
+  // F–5: lågstadiet whole, mellanstadiet two thirds. Matematik is protected,
+  // and short in both stadier; biologi and kemi under the NO minima.
+  const f5 = { gradeFrom: 0, gradeTo: 5 };
+  const short = checkLocalTimplan({
+    planningWeeksTenths: 356,
+    version: toCoverageVersion(B1),
+    nationalSubjects: NATIONAL.subjects,
+    subjects: SUBJECTS,
+    entries: entriesFromDraft(
+      draftOf({
+        [cellKey("s-ma", 1)]: 236,
+        [cellKey("s-ma", 2)]: 236,
+        [cellKey("s-ma", 3)]: 235,
+        [cellKey("s-ma", 4)]: 100,
+        [cellKey("s-ma", 5)]: 100,
+        [cellKey("s-bl", 4)]: 10,
+        [cellKey("s-bl", 5)]: 10,
+        [cellKey("s-bi", 4)]: 10,
+        [cellKey("s-ke", 4)]: 10,
+      }),
+      new Map(),
+    ).entries,
+    gradeSpan: f5,
+  });
+
+  it("the check raises the notice for the part-held stadium and the warning for the whole one", () => {
+    expect(
+      short.verdicts.some((v) => v.code === "TIMPLAN_PROTECTED_SUBJECT_REDUCED" && v.subjectCode === "MA" && v.stage === "LAG"),
+    ).toBe(true);
+    expect(
+      short.verdicts.some((v) => v.code === "TIMPLAN_PARTIAL_STAGE_BELOW_SHARE" && v.subjectCode === "MA" && v.stage === "MELLAN"),
+    ).toBe(true);
+    expect(
+      short.verdicts.some((v) => v.code === "TIMPLAN_PROTECTED_SUBJECT_REDUCED" && v.stage === "MELLAN"),
+    ).toBe(false);
+  });
+
+  it("paints the stadium held whole red and the share amber, protected subject or not", () => {
+    expect(rowTone(short, "MA", top("MA"), "LAG")).toBe("under");
+    expect(rowTone(short, "MA", top("MA"), "MELLAN")).toBe("below");
+    expect(rowTone(short, "BL", top("BL"), "MELLAN")).toBe("below");
+  });
+
+  it("paints a NO child under its share of the minimum amber, and does not let it tint its sibling", () => {
+    const child = short.verdicts.find((v) => v.code === "TIMPLAN_PARTIAL_STAGE_BELOW_SHARE" && v.childCode === "KE");
+    expect(child).toBeDefined();
+    expect(short.verdicts.some((v) => v.code === "TIMPLAN_GROUP_MINIMUM_UNMET" && v.stage === "MELLAN")).toBe(false);
+    expect(rowTone(short, "KE", top("KE"), "MELLAN")).toBe("below");
+    // The group's own view of its cell, without the children's shares, is below too (the cell itself is short).
+    const cell = short.cells.find((c) => c.subjectCode === "NO" && c.stage === "MELLAN");
+    expect(cell?.share).toEqual({ held: 2, of: 3 });
+    expect(cellTone(short, cell, false)).toBe("below");
+  });
+
+  it("a part-held cell states the share in hours, and the column says how many årskurser", () => {
+    const cell = short.cells.find((c) => c.subjectCode === "MA" && c.stage === "MELLAN")!;
+    expect(cell.share).toEqual({ held: 2, of: 3 });
+    const columns = gridColumns(short.stageGrades, [], short.gradeSpan ?? null);
+    expect(columns.some((column) => column.kind === "stage" && column.stage === "MELLAN" && column.share?.held === 2)).toBe(true);
+  });
+
+  it("lights only the årskurser the span holds when a share verdict is clicked", () => {
+    const verdict = short.verdicts.find((v) => v.code === "TIMPLAN_PARTIAL_STAGE_BELOW_SHARE" && v.subjectCode === "MA")!;
+    const lit = verdictHighlight(verdict, SUBJECTS, heldStageGrades(short.stageGrades, short.gradeSpan), parentOf);
+    expect([...lit.subjectIds!]).toEqual(["s-ma"]);
+    expect([...lit.grades!]).toEqual([4, 5]);
+    expect([...lit.stages]).toEqual(["MELLAN"]);
+    expect(lit.footer).toBe(false);
+  });
+
+  it("lights the footer for the total that is not judged for a span", () => {
+    const unjudged = checkLocalTimplan({
+      planningWeeksTenths: 356,
+      version: toCoverageVersion(LAW_2028),
+      nationalSubjects: NATIONAL.subjects,
+      subjects: SUBJECTS,
+      entries: [],
+      gradeSpan: { gradeFrom: 5, gradeTo: 10 },
+    });
+    const verdict = unjudged.verdicts.find((v) => v.code === "TIMPLAN_TOTAL_NOT_JUDGED_FOR_SPAN")!;
+    expect(unjudged.total.judged).toBe(false);
+    expect(verdictHighlight(verdict, SUBJECTS, unjudged.stageGrades).footer).toBe(true);
   });
 });
 

@@ -20,6 +20,11 @@
  *          code the version prints no cell for, a lydelse whose fördelning
  *          is not published
  *
+ * A stadium the plan's årskurs span holds only PART of is judged against its
+ * share and a shortfall there is a NOTICE (TIMPLAN_PARTIAL_STAGE_BELOW_SHARE):
+ * it takes the `below` tone, never `under`, for the group's cell and for a
+ * child of it alike.
+ *
  * A stage sum is shown per school subject, but judged per NATIONAL cell:
  * Svenska and Svenska som andraspråk share SV_SVA (as alternatives, the
  * longer per årskurs), Biologi rolls into NO, and a row is coloured by the
@@ -30,9 +35,11 @@
 
 import {
   TIMPLAN_ALTERNATIVE_CODES,
+  inGradeSpan,
   type BaseStage,
   type CellCoverage,
   type CoverageVersion,
+  type GradeSpan,
   type TimplanCheck,
   type TimplanStage,
   type TimplanVerdict,
@@ -46,7 +53,8 @@ export const BASE_STAGES: BaseStage[] = ["LAG", "MELLAN", "HOG"];
 
 export type GridColumn =
   | { kind: "grade"; grade: number; stage: BaseStage | null }
-  | { kind: "stage"; stage: BaseStage };
+  /** `share`: the plan's span holds `held` of the stadium's `of` årskurser. */
+  | { kind: "stage"; stage: BaseStage; share?: { held: number; of: number } };
 
 /**
  * The grid's columns for a plan: F, then each stage's årskurser followed by
@@ -56,21 +64,33 @@ export type GridColumn =
  * minutes for outside that range (an imported årskurs 10 in a nine-year plan)
  * gets a column of its own at the end rather than being hidden: the minutes
  * are stored, so they are shown, greyed as outside every stage.
+ *
+ * The plan's årskurs span cuts the same way: an årskurs outside it keeps its
+ * place but is a grey column of no stage, like F, and the minutes in it are
+ * stored and counted nowhere. A stadium the span holds no årskurs of has no sum
+ * column at all, and one it holds part of says so (`share`).
  */
 export function gridColumns(
   stageGrades: Record<BaseStage, number[]>,
   extraGrades: Iterable<number> = [],
+  span: GradeSpan | null = null,
 ): GridColumn[] {
   const columns: GridColumn[] = [{ kind: "grade", grade: 0, stage: null }];
   const placed = new Set<number>([0]);
   for (const stage of BASE_STAGES) {
     const grades = stageGrades[stage];
     if (grades.length === 0) continue;
+    const held = grades.filter((grade) => inGradeSpan(span, grade));
     for (const grade of grades) {
-      columns.push({ kind: "grade", grade, stage });
+      columns.push({ kind: "grade", grade, stage: held.includes(grade) ? stage : null });
       placed.add(grade);
     }
-    columns.push({ kind: "stage", stage });
+    if (held.length === 0) continue;
+    columns.push(
+      held.length < grades.length
+        ? { kind: "stage", stage, share: { held: held.length, of: grades.length } }
+        : { kind: "stage", stage },
+    );
   }
   for (const grade of [...new Set(extraGrades)].sort((a, b) => a - b)) {
     if (!placed.has(grade)) {
@@ -95,6 +115,9 @@ export function cellFor(
   );
 }
 
+/** A shortfall against the SHARE of a stadium the plan's span holds part of: a notice, for a cell or a child. */
+const SHARE_CODE: TimplanVerdict["code"] = "TIMPLAN_PARTIAL_STAGE_BELOW_SHARE";
+
 const UNDER_CODES = new Set<TimplanVerdict["code"]>([
   "TIMPLAN_PROTECTED_SUBJECT_REDUCED",
   "TIMPLAN_REDUCTION_OVER_CAP",
@@ -116,11 +139,13 @@ export function cellTone(
     (verdict) =>
       verdict.subjectCode === cell.subjectCode &&
       verdict.stage === cell.stage &&
-      (withChildMinima || verdict.code !== "TIMPLAN_GROUP_MINIMUM_UNMET"),
+      (withChildMinima ||
+        (verdict.code !== "TIMPLAN_GROUP_MINIMUM_UNMET" && verdict.childCode === undefined)),
   );
   if (about.some((verdict) => UNDER_CODES.has(verdict.code))) return "under";
-  if (about.some((verdict) => verdict.code === "TIMPLAN_STAGE_BELOW_NATIONAL")) return "below";
-  return "met";
+  const short = (verdict: TimplanVerdict) =>
+    verdict.code === "TIMPLAN_STAGE_BELOW_NATIONAL" || verdict.code === SHARE_CODE;
+  return about.some(short) ? "below" : "met";
 }
 
 /**
@@ -140,13 +165,13 @@ export function rowTone(
   if (nationalCode === null || topCode === null) return "none";
   const cell = cellFor(check, topCode, stage);
   if (nationalCode === topCode || !cell) return cellTone(check, cell);
-  const childUnder = check.verdicts.some(
-    (verdict) =>
-      verdict.code === "TIMPLAN_GROUP_MINIMUM_UNMET" &&
-      verdict.childCode === nationalCode &&
-      verdict.stage === cell.stage,
+  const about = check.verdicts.filter(
+    (verdict) => verdict.childCode === nationalCode && verdict.stage === cell.stage,
   );
-  return childUnder ? "under" : cellTone(check, cell, false);
+  if (about.some((verdict) => verdict.code === "TIMPLAN_GROUP_MINIMUM_UNMET")) return "under";
+  // Under the share of its minimum in a part-held stadium: a notice, not a warning.
+  if (about.some((verdict) => verdict.code === SHARE_CODE)) return "below";
+  return cellTone(check, cell, false);
 }
 
 /** The årskurser of a stage in this check, the merged LAG_MELLAN included. */

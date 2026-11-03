@@ -1268,7 +1268,9 @@
     för en annan skolform är en kopia. Fältet
     <span class="ui">Planeringsveckor</span> är förifyllt med 35,6: 178
     skoldagar delat med fem. Minuter per vecka gånger veckorna, delat med 60,
-    blir stadiets timmar.
+    blir stadiets timmar. Under <span class="ui">Årskurspann</span> väljer du
+    vilka årskurser planen är till för; det räknas bara de (se
+    <em>Planens årskurspann</em> nedan).
   </p>
   <p>
     Rutnätet har en rad per ämne och en kolumn per årskurs. Skriv hela minuter
@@ -1334,7 +1336,10 @@
     <span class="k">arskurs</span> (<em>F</em> för förskoleklass, annars 1–10),
     <span class="k">minuter_per_vecka</span> och en valfri
     <span class="k">notering</span>. Importen lägger till och skriver över
-    rutor men tar inte bort några, och den går bara till ett utkast.
+    rutor men tar inte bort några, och den går bara till ett utkast. En rad
+    för en årskurs utanför planens årskurspann nekas inte: den sparas, men
+    räknas inte. Dialogen säger före importen hur många rader det gäller och
+    vilka årskurser.
   </p>
   <div class="warn">
     <span class="label">2028 års timplan</span>
@@ -1365,6 +1370,105 @@
       som en ny lydelse i referensdatan. Uppgifterna är lästa 10 oktober 2026.
     </p>
   </div>
+
+  <h4>Planens årskurspann</h4>
+  <p>
+    Förordningens timplan beskriver en hel skolform, till exempel grundskolans
+    åk 1–9 med tre stadier. En skola som bara har åk 4–9 har inget
+    lågstadium, och en plan som jämfördes mot hela bilagan räknade de saknade
+    årskurserna som skolans val som tagits, som skyddade ämnen som minskats och
+    som en garanterad tid som inte nåtts — tolv varningar för en riktig plan,
+    som skolan inte kunde få bort. Därför har planen ett
+    <strong>årskurspann</strong>: de årskurser den är till för. Kontrollen
+    räknar bara dem. En plan utan spann gäller hela skolformen, som förut.
+  </p>
+  <p>
+    Spannet anges med <span class="ui">Från årskurs</span> och
+    <span class="ui">Till årskurs</span> när planen skapas, och kan ändras på
+    ett utkast under <span class="ui">Årskurspann</span> på planen.
+    <span class="ui">Hela skolformen</span> är valet för inget spann. Årskurserna
+    räknas som planens nationella timplan räknar dem: förskoleklass (F) till
+    åk 9 i de nioåriga lydelserna, åk 1–10 i den tioåriga grundskolan
+    (SFS 2025:729). Ett spann som rymmer alla årskurser skolformen har ger
+    samma siffror som inget spann.
+  </p>
+  <p>
+    Årskurserna utanför spannet visas gråa, som förskoleklassen: rutorna går
+    att fylla i och minuterna sparas, men de räknas inte i någon summa.
+    Raden <span class="ui">Summa</span> visar fortfarande minuterna i de gråa
+    kolumnerna, men stadiernas summor lägger bara ihop årskurserna i spannet.
+    Planen kan då visa tre slags stadier:
+  </p>
+  <table>
+    <thead><tr><th style="width:22%">Stadiet</th><th>Så räknas det</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Saknas</td><td>Spannet har ingen av stadiets årskurser. Stadiet har ingen kolumn med summa, och ingenting i det jämförs: dess timmar finns inte i planens garanti eller i potten för skolans val.</td></tr>
+      <tr><td class="k">Hela</td><td>Spannet har alla stadiets årskurser. Stadiet jämförs som förut, med samma färger och samma varningar.</td></tr>
+      <tr><td class="k">Delvis</td><td>Spannet har några av stadiets årskurser, till exempel åk 4 och 5 av mellanstadiets tre i en plan för F–5. Stadiet jämförs mot sin andel av förordningens timmar: de årskurser planen har delat med stadiets alla. Kolumnen säger <em>2 av 3 årskurser</em>, och rutan visar andelen i stället för hela målet.</td></tr>
+    </tbody>
+  </table>
+  <p>
+    Ligger ett delvis stadium under sin andel är det en <strong>notering</strong>
+    och gult, aldrig rött — inte heller för ett skyddat ämne eller ett
+    NO/SO-ämne under sin minsta tid, som är skalad på samma sätt. Förordningen
+    säger inte hur tiden delas mellan årskurserna (huvudmannen bestämmer det,
+    skolförordningen 9 kap. 4 §), så andelen är en uppskattning av vad skolan
+    är skyldig, och en uppskattning ska inte vara en varning. Ämnet
+    hem- och konsumentkunskap, som förordningen anger för låg- och
+    mellanstadiet tillsammans, delas på samma sätt över alla de årskurserna.
+  </p>
+  <p>
+    <span class="ui">Totalt</span> och <span class="ui">Skolans val</span> är
+    uppskattningar för en plan som har en del av en skolform, och säger det.
+    Den garanterade tiden är summan av de stadier planen har, de delvisa
+    skalade med sin andel. Potten för skolans val är bilagans pott gånger den
+    andel av de nationella timmarna som planen har: för åk 4–9 i grundskolan 434,4
+    timmar av 600. Ingen bilaga skriver ut de siffrorna; de är räknade, och
+    meddelandena som nämner dem säger <em>en uppskattning efter planens
+    årskurser</em>. Det som saknas i stadier som planen har delvis är en
+    uppskattning också när det räknas ihop: når totalen inte garantin, eller
+    överskrids potten, <em>bara</em> för att de delvis hållna stadierna ligger
+    under sina andelar, är det en <strong>notering</strong> (gul rad, och
+    meddelandet säger att det ligger i stadier skolan bara har delvis). Saknas
+    det något utöver det — ett helt stadium, ett ämne som inte är lagt —
+    är det en varning som förut. De delvis hållna stadierna räknas som en grupp:
+    ett ämne som ligger över sin andel är tid planen har lagt, och kvittar mot
+    ett annat som ligger under, innan något räknas som uppskattat saknat. En
+    plan mot 2028 års lydelse har bara en total för hela
+    skolformen. Har planen en del av årskurserna jämförs den inte mot den
+    totalen, och raden säger det.
+  </p>
+  <p>
+    <strong>Förifyllt från skolenheterna.</strong> Är du administratör föreslår
+    systemet spannet från skolenheterna (3.4): från den lägsta till den
+    högsta årskurs hos de skolenheter som har planens skolform, räknat i planens
+    numrering — enheter för åk 4–9 ger åk 5–10 i en plan mot 2028 års lydelse.
+    Hela skolformen föreslås när enheterna har alla dess årskurser, eller när
+    ingen enhet har skolformen. Förslaget är bara ett förslag: det står i
+    fälten, du ser det och kan ändra det, och planen får det du lämnar. Det
+    gäller <span class="ui">Ny timplan</span>, <span class="ui">Kopiera</span>,
+    <span class="ui">Öppna igen</span> och dialogen för att ange spannet; de
+    tre senare börjar med planens eget spann, och bara en plan som inget har
+    får skolenheternas. Skiljer sig
+    planens spann från skolenheternas visar sidan en rad om det, med knappen
+    för att ändra. Raden är en ledtråd till dig som sköter skolenheterna.
+    Kontrollen av planen beror aldrig på dem, bara på planen och förordningen,
+    så en lärare som läser planen ser exakt samma varningar som du.
+  </p>
+  <p>
+    <strong>En beslutad plan.</strong> Spannet följer med beslutet och ändras
+    inte efteråt. Undantaget är en plan som beslutades innan årskurspannet
+    fanns, eller som beslutades med <span class="ui">Hela skolformen</span>:
+    en beslutad plan som inte har något spann får sätta ett <em>en gång</em>
+    (<span class="ui">Ange årskurspann</span>). Minuterna ändras inte; spannet
+    registreras med ditt namn och datum, och planen visar
+    <em>Årskurspannet satt av …</em>. Har en beslutad plan redan ett spann är
+    det låst: använd <span class="ui">Öppna igen</span>, så får det nya
+    utkastet ett eget spann. Samma gäller för att byta till en lydelse som
+    räknar årskurserna på ett annat sätt än planens spann: det väljs när
+    spannet är borttaget, eftersom åk 4–9 inte är samma årskurser i de två
+    numreringarna.
+  </p>
 
   <h4>Timplaner per årskull</h4>
   <p>

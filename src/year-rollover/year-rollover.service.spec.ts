@@ -1308,7 +1308,22 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
       );
     });
     expect(lydelseReads).toHaveLength(2);
+    // The SIXTH: the read of the decided plans selects each plan's årskurs span
+    // (20261219090000), which decides the årskurser it speaks for. Asserted,
+    // then taken out.
+    const spanReads = world.calls.filter(
+      (call) =>
+        call.model === 'localTimplan' &&
+        call.method === 'findMany' &&
+        'gradeFrom' in ((call.args as { select?: Record<string, unknown> }).select ?? {}),
+    );
+    expect(spanReads).toHaveLength(1);
     const asAtFa4a3d6 = world.calls.map((call) => {
+      if (spanReads.includes(call)) {
+        const args = call.args as { select: Record<string, unknown> };
+        const { gradeFrom: _from, gradeTo: _to, ...select } = args.select;
+        return { ...call, args: { ...args, select } };
+      }
       if (lydelseReads.includes(call)) {
         const args = call.args as { select: Record<string, unknown> & { localTimplan?: { select: Record<string, unknown> } } };
         if (call.model === 'localTimplan') {

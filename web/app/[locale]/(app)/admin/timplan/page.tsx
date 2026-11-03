@@ -29,6 +29,16 @@
 // can still be deleted, as an explicit act whose confirmation names it a
 // decided plan.
 //
+// A PLAN'S ÅRSKURS SPAN (gradeFrom..gradeTo) says which årskurser the plan is
+// for, and the check counts only those: a 4–9 plan is not held to a lågstadium.
+// An årskurs outside it is a grey column like förskoleklassen, whose minutes are
+// stored and counted nowhere. The span is prefilled from the school's
+// skolenheter, which only a SCHOOL_ADMIN can read; the VERDICT never depends on
+// them (a teacher must get exactly the verdict an admin gets), so what they
+// give the page is a prefill for the dialogs and one notice, both the
+// admin's, drawn here from the browser's own comparison and not computed in the
+// gateway.
+//
 // The six dialogs of this page are fetched on the click that opens them,
 // through React.lazy — not next/dynamic, whose loader costs 1.4KB of its own
 // on the route (see admin/people). None is reachable during SSR: `dialog`
@@ -74,10 +84,18 @@ import {
   useLocalTimplanActions,
   useLocalTimplanCheck,
   useLocalTimplans,
+  useSchoolUnitsForSpan,
   type LocalTimplanDetail,
   type UpdatePlanBody,
 } from "@/lib/timplan-queries";
-import { checkLocalTimplan, planningWeeksInTenths } from "@/lib/timplan-coverage";
+import { checkLocalTimplan, gradeSpanOf, heldStageGrades, planningWeeksInTenths } from "@/lib/timplan-coverage";
+import {
+  spanGradeOptions,
+  spanNotice,
+  spanText,
+  suggestedSpan,
+  versionKeepsNumbering,
+} from "@/lib/timplan-span";
 import { lydelseIsTioarig } from "@/lib/grade-numbering";
 import {
   draftFromEntries,
@@ -97,7 +115,7 @@ import { PLAN_STATUS_VARIANT } from "@/lib/status-variants";
 import { NextStep } from "@/components/layout/next-step";
 import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
-import { useReadOnly } from "@/components/profile-context";
+import { useProfile, useReadOnly } from "@/components/profile-context";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { TimplanGrid } from "@/components/timplan/timplan-grid";
 import { WarningsRail } from "@/components/timplan/warnings-rail";
@@ -144,13 +162,25 @@ const SchoolCohortNotice = lazy<ComponentType<SchoolCohortNoticeProps>>(() =>
     () => ({ default: () => null }),
   ),
 );
+const SpanDialog = lazy(() =>
+  import("@/components/timplan/span-dialog").then((module) => ({ default: module.SpanDialog })),
+);
 const TimplanImportDialog = lazy(() =>
   import("@/components/timplan/timplan-import-dialog").then((module) => ({
     default: module.TimplanImportDialog,
   })),
 );
 
-type DialogName = "create" | "decide" | "reopen" | "copy" | "delete" | "import" | "generate" | "yearTimplans";
+type DialogName =
+  | "create"
+  | "decide"
+  | "reopen"
+  | "copy"
+  | "delete"
+  | "import"
+  | "generate"
+  | "yearTimplans"
+  | "span";
 
 /** What the admin has changed on one plan and not saved. */
 interface Draft {
@@ -189,6 +219,13 @@ export default function TimplanPage() {
   const { data: people } = usePeople();
   const { data: years } = useAcademicYears();
   const { data: groups } = useGroups();
+  // The skolenheter are a SCHOOL_ADMIN's to read (no RLS arm for anyone else,
+  // and the gateway's route is theirs), so nobody else sends the request. The
+  // /admin layout lets only an admin in; this keeps the page from asking for
+  // what a role it were ever shown to could not read. They are not in the
+  // gateway's check either: the verdict is the plan's and the statute's.
+  const admin = useProfile().profile.role === "SCHOOL_ADMIN";
+  const { data: units } = useSchoolUnitsForSpan(admin);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const activeId =
@@ -245,6 +282,27 @@ export default function TimplanPage() {
 
   const versions = national?.versions ?? [];
   const version = versions.find((entry) => entry.id === current?.versionId);
+  // The lydelse the plan is SAVED against: its span is stated in that one's
+  // numbering, whatever the version field shows while it is being changed.
+  const savedVersion = versions.find((entry) => entry.id === shown?.nationalTimplanVersionId);
+  const spanFrom = shown?.gradeFrom ?? null;
+  const spanTo = shown?.gradeTo ?? null;
+  const planSpan = useMemo(() => gradeSpanOf({ gradeFrom: spanFrom, gradeTo: spanTo }), [spanFrom, spanTo]);
+  const spanEditable = !reader && (!decided || planSpan === null);
+  const unitSpan = admin && savedVersion ? suggestedSpan(units, savedVersion) : null;
+  // The notice is the ADMIN's, drawn here from the browser's own comparison and
+  // not computed by the gateway: SchoolUnits are readable only by SCHOOL_ADMIN
+  // under RLS, and the notice is a configuration hint for the person who can
+  // fix it, not a finding about the plan. The verdict depends on the plan and
+  // the statute only, so a teacher gets exactly the verdict an admin gets.
+  const unitsDiffer = admin && savedVersion ? spanNotice(planSpan, units, savedVersion) : null;
+  // A lydelse that numbers the årskurser the other way cannot be chosen under a
+  // span: the gateway refuses it without a new span, and a span carried over
+  // would change which årskurser the plan is for without a word.
+  const versionLocked = (entry: { appliesFromCohortTerm: string }) =>
+    planSpan !== null &&
+    savedVersion !== undefined &&
+    !versionKeepsNumbering(savedVersion.appliesFromCohortTerm, entry.appliesFromCohortTerm);
   const parentOf = useMemo(
     () => new Map((national?.subjects ?? []).map((subject) => [subject.code, subject.parentCode])),
     [national],
@@ -267,8 +325,9 @@ export default function TimplanPage() {
         countsTowardTimplan,
       })),
       entries: entriesFromDraft(current.cells, notes, known).entries,
+      gradeSpan: planSpan,
     });
-  }, [current, version, national, subjects, weeksTenths, notes, known]);
+  }, [current, version, national, subjects, weeksTenths, notes, known, planSpan]);
 
   const serverCheck = savedCheck && savedCheck.localTimplanId === activeId ? savedCheck : null;
   const live = dirty || serverCheck === null;
@@ -276,7 +335,13 @@ export default function TimplanPage() {
 
   const highlight =
     check && selectedVerdict !== null && check.verdicts[selectedVerdict]
-      ? verdictHighlight(check.verdicts[selectedVerdict], subjects ?? [], check.stageGrades, parentOf)
+      ? verdictHighlight(
+          check.verdicts[selectedVerdict],
+          subjects ?? [],
+          // Only the årskurser the span holds are lit: the grey ones are in no stadium.
+          heldStageGrades(check.stageGrades, check.gradeSpan),
+          parentOf,
+        )
       : null;
 
   const extraGrades = useMemo(() => {
@@ -286,7 +351,7 @@ export default function TimplanPage() {
     }
     return grades;
   }, [current]);
-  const columns = check ? gridColumns(check.stageGrades, extraGrades) : [];
+  const columns = check ? gridColumns(check.stageGrades, extraGrades, check.gradeSpan ?? null) : [];
 
   // Counted subjects without a national code: their minutes feed no national
   // cell, so a school whose subjects are all uncoded sees every stage under
@@ -352,9 +417,27 @@ export default function TimplanPage() {
   const decidedDate = shown?.decidedAt
     ? new Intl.DateTimeFormat(locale, { dateStyle: "long" }).format(new Date(shown.decidedAt))
     : "";
+  // A span set after the decision carries who and when; the name is read from
+  // the people the page already holds, else the date stands alone.
+  const spanSetBy = shown?.gradeSpanSetByUserId
+    ? people?.find((person) => person.id === shown.gradeSpanSetByUserId)
+    : undefined;
+  const spanSetDate = shown?.gradeSpanSetAt
+    ? new Intl.DateTimeFormat(locale, { dateStyle: "long" }).format(new Date(shown.gradeSpanSetAt))
+    : "";
+  const spanLine = !decided
+    ? t("spanHint")
+    : planSpan === null
+      ? t("spanSetOnceHint")
+      : shown?.gradeSpanSetAt
+        ? spanSetBy
+          ? t("spanSetBy", { name: `${spanSetBy.firstName} ${spanSetBy.lastName}`, date: spanSetDate })
+          : t("spanSetOn", { date: spanSetDate })
+        : t("spanLockedHint");
 
   const pending =
     actions.update.isPending ||
+    actions.setSpan.isPending ||
     actions.replaceEntries.isPending ||
     actions.decide.isPending ||
     actions.reopen.isPending ||
@@ -378,6 +461,7 @@ export default function TimplanPage() {
                 {decided ? t("statusDecided") : t("statusDraft")}
               </Badge>
               <Badge variant="outline">{t(`schoolForms.${shown.schoolForm}`)}</Badge>
+              {planSpan ? <Badge variant="outline">{spanText(t, planSpan)}</Badge> : null}
             </>
           ) : undefined
         }
@@ -479,7 +563,11 @@ export default function TimplanPage() {
                   onChange={(event) => change({ name: event.target.value })}
                 />
               </FormField>
-              <FormField id="timplan-version" label={t("versionLabel")}>
+              <FormField
+                id="timplan-version"
+                label={t("versionLabel")}
+                hint={!fixed && versions.some((entry) => versionLocked(entry)) ? t("spanVersionLocked") : undefined}
+              >
                 {(control) => (
                   <Select
                     value={current.versionId}
@@ -493,7 +581,7 @@ export default function TimplanPage() {
                       {versions
                         .filter((entry) => entry.schoolForm === shown.schoolForm)
                         .map((entry) => (
-                          <SelectItem key={entry.id} value={entry.id}>
+                          <SelectItem key={entry.id} value={entry.id} disabled={versionLocked(entry)}>
                             {t("versionOption", {
                               sfs: entry.sfs,
                               total: entry.totalHours,
@@ -539,6 +627,28 @@ export default function TimplanPage() {
                   {typedWeeksTenths === null ? t("weeksInvalid") : t("weeksHint")}
                 </p>
               </div>
+            </div>
+            {/* The årskurser the plan is for: the check counts only these. */}
+            <div className="space-y-1">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                <span className="font-medium">{t("spanLabel")}</span>
+                <span>{planSpan ? spanText(t, planSpan) : t("spanWholeForm")}</span>
+                {spanEditable ? (
+                  <Button
+                    data-writes="PLANERING"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setDialog("span")}
+                    disabled={dirty || pending}
+                  >
+                    {planSpan ? t("spanChange") : t("spanSet")}
+                  </Button>
+                ) : null}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {spanLine}
+                {check?.gradeSpan?.partial ? ` ${t("spanEstimate")}` : ""}
+              </p>
             </div>
           </SectionCard>
 
@@ -604,6 +714,34 @@ export default function TimplanPage() {
           ) : null}
           {invalidCells.length > 0 ? (
             <Notice tone="destructive">{t("invalidCells", { count: invalidCells.length })}</Notice>
+          ) : null}
+
+          {unitsDiffer ? (
+            <Notice
+              action={
+                spanEditable ? (
+                  <Button
+                    data-writes="PLANERING"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setDialog("span")}
+                    disabled={dirty || pending}
+                  >
+                    {planSpan ? t("spanChange") : t("spanSet")}
+                  </Button>
+                ) : undefined
+              }
+            >
+              <p>
+                {unitsDiffer.plan
+                  ? t("spanNoticeDiffers", {
+                      plan: spanText(t, unitsDiffer.plan),
+                      units: spanText(t, unitsDiffer.units),
+                    })
+                  : t("spanNoticeWhole", { units: spanText(t, unitsDiffer.units) })}
+              </p>
+              <p className="text-xs text-muted-foreground">{t("spanNoticeVerdict")}</p>
+            </Notice>
           ) : null}
 
           {version && version.entries.length === 0 ? (
@@ -691,6 +829,7 @@ export default function TimplanPage() {
             open
             onOpenChange={(open) => !open && setDialog(null)}
             versions={versions}
+            units={admin ? units : undefined}
             pending={actions.create.isPending}
             onConfirm={(body) =>
               run(async () => {
@@ -725,11 +864,21 @@ export default function TimplanPage() {
             onOpenChange={(open) => !open && setDialog(null)}
             planName={shown.name}
             takenNames={(plans ?? []).map((entry) => entry.name)}
+            spanGrades={savedVersion ? spanGradeOptions(savedVersion) : []}
+            sourceSpan={planSpan}
+            suggestedSpan={unitSpan}
             pending={actions.reopen.isPending || actions.copy.isPending}
-            onConfirm={(name) =>
+            onConfirm={(name, span) =>
               run(async () => {
                 const mutation = dialog === "reopen" ? actions.reopen : actions.copy;
-                const created = await mutation.mutateAsync({ id: shown.id, name });
+                // No keys copies the plan's own span; two numbers or two nulls state one.
+                const created = await mutation.mutateAsync({
+                  id: shown.id,
+                  name,
+                  ...(span === undefined
+                    ? {}
+                    : { gradeFrom: span?.gradeFrom ?? null, gradeTo: span?.gradeTo ?? null }),
+                });
                 setSelectedId(created.id);
                 setEdit(null);
                 setDialog(null);
@@ -762,11 +911,28 @@ export default function TimplanPage() {
             initialYearId={null}
           />
         ) : null}
+        {dialog === "span" && shown && savedVersion ? (
+          <SpanDialog
+            open
+            onOpenChange={(open) => !open && setDialog(null)}
+            plan={{ name: shown.name, status: shown.status, span: planSpan }}
+            grades={spanGradeOptions(savedVersion)}
+            suggestedSpan={unitSpan}
+            pending={actions.setSpan.isPending}
+            onConfirm={(span) =>
+              run(async () => {
+                await actions.setSpan.mutateAsync({ id: shown.id, span });
+                setDialog(null);
+                toast.success(t("spanSaved"));
+              })
+            }
+          />
+        ) : null}
         {dialog === "import" && shown ? (
           <TimplanImportDialog
             open
             onOpenChange={(open) => !open && setDialog(null)}
-            plan={{ id: shown.id, name: shown.name, status: shown.status }}
+            plan={{ id: shown.id, name: shown.name, status: shown.status, span: planSpan }}
           />
         ) : null}
         {dialog === "delete" && shown ? (

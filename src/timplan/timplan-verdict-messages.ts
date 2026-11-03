@@ -22,6 +22,10 @@ const STAGE: Record<TimplanStage, string> = {
   LAG_MELLAN: 'låg- och mellanstadiet',
 };
 
+/** What a pool or a total that only the partly held stadier breach adds: it is a notice, and why. */
+const FROM_SHARES =
+  ' Det ligger helt i stadier som skolan bara har delvis, där andelen är en uppskattning, och är därför bara en notis.';
+
 const number = new Intl.NumberFormat('sv-SE', { maximumFractionDigits: 1 });
 const h = (value: string | number | undefined): string => `${number.format(Number(value ?? 0))} h`;
 const pct = (value: string | number | undefined): string => `${number.format(Number(value ?? 0))} %`;
@@ -81,15 +85,41 @@ export function describeVerdict(
         `${where}: ${h(p.plannedHours)} planerat, ${h(p.deficitHours)} (${pct(p.reducedPercent)}) under målet ` +
         `${h(p.nationalHours)}.${p.timeCountsAs === undefined || p.timeCountsAs === 'skolansVal' ? ' Tiden räknas mot skolans val.' : ''}`
       );
+    // A stadium the plan's årskurs span holds only part of: the target is the
+    // plan's share of it, an estimate, and a shortfall is a notice for every
+    // subject, protected or not.
+    case 'TIMPLAN_PARTIAL_STAGE_BELOW_SHARE':
+      if (verdict.childCode) {
+        return (
+          `${name(verdict.childCode)} i ${verdict.stage ? STAGE[verdict.stage] : ''}: skolan har ${p.heldGrades} av ` +
+          `${p.ofGrades} årskurser i stadiet. ${h(p.plannedHours)} planerat, under andelen ${h(p.minimumHours)} av ` +
+          `minsta tiden inom ${name(verdict.subjectCode).toLowerCase()}. Andelen är en uppskattning.`
+        );
+      }
+      return (
+        `${where}: skolan har ${p.heldGrades} av ${p.ofGrades} årskurser i stadiet. ${h(p.plannedHours)} planerat, ` +
+        `${h(p.deficitHours)} (${pct(p.reducedPercent)}) under andelen ${h(p.nationalHours)} av stadiets timmar. ` +
+        'Andelen är en uppskattning, eftersom huvudmannen fördelar tiden fritt mellan årskurserna.'
+      );
+    // `estimated`: the pool or the guarantee is derived from a plan's årskurs span.
+    // `fromShares`: the stadier the school holds only in part are what overspends
+    // or falls short, which is an estimate, so it is a notice.
     case 'TIMPLAN_SKOLANS_VAL_OVERSPENT':
       return (
         `Skolans val: ${h(p.takenHours)} har tagits från ämnena, ${h(p.overspentHours)} mer än de ` +
-        `${h(p.availableHours)} timplanen medger.`
+        `${h(p.availableHours)} timplanen medger${p.estimated ? ' (en uppskattning efter planens årskurser)' : ''}.` +
+        (p.fromShares ? FROM_SHARES : '')
       );
     case 'TIMPLAN_TOTAL_BELOW_GUARANTEE':
       return (
         `Totalt ${h(p.plannedHours)} planerat, ${h(p.deficitHours)} under den garanterade ` +
-        `undervisningstiden ${h(p.guaranteedHours)}.`
+        `undervisningstiden ${h(p.guaranteedHours)}${p.estimated ? ' (en uppskattning efter planens årskurser)' : ''}.` +
+        (p.fromShares ? FROM_SHARES : '')
+      );
+    case 'TIMPLAN_TOTAL_NOT_JUDGED_FOR_SPAN':
+      return (
+        `Planen gäller årskurs ${p.gradeFrom}–${p.gradeTo}, och den garanterade totalen ${h(p.totalHours)} gäller ` +
+        'hela skolformen. Totalen jämförs därför inte.'
       );
   }
 }

@@ -262,8 +262,14 @@ export function cohortTimplans(input: CohortTimplanInput): {
   if (source.length === 0) {
     const newest = decided[0];
     if (!newest) return { rows, unattached, misfits };
-    const grades = newest.gradeLevels
-      .map((row) => (input.targetNumbering === undefined ? row : gradeOfPlanRowFor(newest, targetNumbering, row)))
+    // The årskurser of every decided plan of the newest one's form, not the
+    // newest plan's alone: a 4–9 plan and a newer F–3 plan between them speak
+    // for F–9, and byDefault then gives each årskurs the plan that speaks for it.
+    const grades = decided
+      .filter((plan) => plan.schoolForm === newest.schoolForm)
+      .flatMap((plan) =>
+        plan.gradeLevels.map((row) => (input.targetNumbering === undefined ? row : gradeOfPlanRowFor(plan, targetNumbering, row))),
+      )
       .filter((grade): grade is number => grade !== null && grade <= MAX_GRADE);
     for (const gradeLevel of [...new Set([...grades, ...(input.alsoGrades ?? [])])].sort((a, b) => a - b)) {
       byDefault(gradeLevel, newest.schoolForm, undefined);

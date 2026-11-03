@@ -1,8 +1,8 @@
-import { render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { checkLocalTimplan, stageGradesFor } from "@/lib/timplan-coverage";
+import { checkLocalTimplan, stageGradesFor, type GradeSpan, type TimplanCheck, type TimplanVerdict } from "@/lib/timplan-coverage";
 import {
   cellKey,
   entriesFromDraft,
@@ -12,7 +12,7 @@ import {
   type DraftCells,
 } from "@/lib/timplan-view";
 import type { Subject } from "@/lib/types";
-import { B1, NATIONAL } from "@/lib/__fixtures__/timplan-statute";
+import { B1, LAW_2028, NATIONAL } from "@/lib/__fixtures__/timplan-statute";
 import { TimplanGrid } from "./timplan-grid";
 
 vi.mock("next-intl", () => ({
@@ -381,5 +381,145 @@ describe("TimplanGrid: an empty plan", () => {
     expect(footer).not.toHaveTextContent("footerSkolansValValue");
     // Neutral, not the red of an overspent pool; the total row stays red.
     expect(within(footer).getByText("footerSkolansValEmpty")).toHaveAttribute("data-tone", "none");
+  });
+});
+
+describe("TimplanGrid: a plan with an årskurs span", () => {
+  /** The grid as the page draws it for a plan with `span`: columns and sums from the same check. */
+  function renderSpan(span: GradeSpan, cells: Record<string, number>, version = B1) {
+    const draft: DraftCells = new Map(Object.entries(cells).map(([key, minutes]) => [key, String(minutes)]));
+    const check = checkLocalTimplan({
+      planningWeeksTenths: 356,
+      version: toCoverageVersion(version),
+      nationalSubjects: NATIONAL.subjects,
+      subjects: SUBJECTS,
+      entries: entriesFromDraft(draft, new Map()).entries,
+      gradeSpan: span,
+    });
+    render(
+      <TimplanGrid
+        subjects={SUBJECTS}
+        parentOf={parentOf}
+        columns={gridColumns(check.stageGrades, [], check.gradeSpan ?? null)}
+        stageGrades={check.stageGrades}
+        draft={draft}
+        notes={new Map()}
+        check={check}
+        weeksTenths={356}
+        readOnly={false}
+        highlight={null}
+        onCellChange={() => {}}
+      />,
+    );
+    return check;
+  }
+  const headers = () => screen.getAllByRole("columnheader").map((cell) => cell.textContent);
+
+  it("draws the årskurser outside a 4–9 span grey, as förskoleklassen is, and gives the lågstadium no sum", () => {
+    renderSpan({ gradeFrom: 4, gradeTo: 9 }, {});
+    expect(headers()).toEqual([
+      "subjectColumn",
+      "gradeColumn(0)", "gradeColumn(1)", "gradeColumn(2)", "gradeColumn(3)",
+      "gradeColumn(4)", "gradeColumn(5)", "gradeColumn(6)", "stageSumColumn(stagesShort.MELLAN)",
+      "gradeColumn(7)", "gradeColumn(8)", "gradeColumn(9)", "stageSumColumn(stagesShort.HOG)",
+    ]);
+    const header = (grade: number) => screen.getByText(`gradeColumn(${grade})`).closest("th")!;
+    for (const grade of [0, 1, 2, 3]) {
+      expect(header(grade)).toHaveClass("bg-muted/40");
+      expect(header(grade)).toHaveAttribute("title", "outsideStagesHint");
+    }
+    for (const grade of [4, 9]) expect(header(grade)).not.toHaveClass("bg-muted/40");
+    expect(document.querySelectorAll('td[data-stage="LAG"]')).toHaveLength(0);
+  });
+
+  it("keeps the grey cells editable and stores their minutes, counting them in no stage sum", () => {
+    renderSpan({ gradeFrom: 4, gradeTo: 9 }, { [cellKey("s-ma", 2)]: 236, [cellKey("s-ma", 4)]: 60 });
+    expect(input("s-ma", 2)).not.toHaveAttribute("readonly");
+    expect(input("s-ma", 2)).toHaveValue("236");
+    // 60 min × 35,6 weeks / 60 = 35,6 h in mellanstadiet; the 236 in åk 2 is in no sum.
+    expect(stageCell("s-ma", "MELLAN")).toHaveTextContent("35,6");
+    expect(stageCell("s-ma", "HOG")).toHaveTextContent(/^0stageCellNational\(0\|/);
+    // The column sum still reads what the column holds.
+    const columnSums = document.querySelector("tfoot tr")!.querySelectorAll("td");
+    expect(columnSums[2]).toHaveTextContent("236");
+  });
+
+  it("says a part-held stadium is a share, in its header and in the cell's national figure", () => {
+    const check = renderSpan(
+      { gradeFrom: 0, gradeTo: 5 },
+      { [cellKey("s-bl", 4)]: 50, [cellKey("s-bl", 5)]: 50, [cellKey("s-bl", 6)]: 50 },
+    );
+    expect(headers()).toContain("stageSumColumn(stagesShort.MELLAN)stageShareColumn(2|3)");
+    // Åk 6 is outside the span: the two held årskurser add to 59,3 h, the third is in no sum.
+    expect(stageCell("s-bl", "MELLAN")).toHaveTextContent("59,3");
+    const cell = check.cells.find((c) => c.subjectCode === "BL" && c.stage === "MELLAN")!;
+    expect(cell.share).toEqual({ held: 2, of: 3 });
+    expect(stageCell("s-bl", "MELLAN")).toHaveTextContent(/stageCellShare\(59,3\|53,3\)/);
+    // The stadium held whole states no share.
+    expect(stageCell("s-bl", "LAG")).toHaveTextContent("stageCellNational");
+    expect(headers()).not.toContain("stageSumColumn(stagesShort.LAG)stageShareColumn(3|3)");
+  });
+
+  it("tones a share short of its figure amber, never red", () => {
+    renderSpan({ gradeFrom: 0, gradeTo: 5 }, { [cellKey("s-ma", 4)]: 100, [cellKey("s-ma", 5)]: 100 });
+    expect(stageCell("s-ma", "MELLAN")).toHaveAttribute("data-tone", "below");
+  });
+
+  it("calls the guarantee and the pool of a part of the form estimates", () => {
+    renderSpan({ gradeFrom: 4, gradeTo: 9 }, { [cellKey("s-ma", 4)]: 100 });
+    const footer = document.querySelector("tfoot")!;
+    expect(within(footer).getByText(/footerTotalValueEstimated\(.*\|4988\)/)).toBeInTheDocument();
+    expect(footer).not.toHaveTextContent(/footerTotalValue\(/);
+    expect(within(footer).getByText(/footerSkolansValEstimated\(.*\|434,4\|/)).toBeInTheDocument();
+  });
+
+  it("states the figures plainly when the span holds every årskurs of the form: no estimate", () => {
+    renderSpan({ gradeFrom: 0, gradeTo: 9 }, { [cellKey("s-ma", 4)]: 100 });
+    const footer = document.querySelector("tfoot")!;
+    expect(within(footer).getByText(/footerTotalValue\(.*\|6890\)/)).toBeInTheDocument();
+    expect(within(footer).getByText(/footerSkolansValValue\(.*\|600\|/)).toBeInTheDocument();
+  });
+
+  it("says the guarantee belongs to the whole form, and compares nothing, for a lydelse with no cells", () => {
+    renderSpan({ gradeFrom: 5, gradeTo: 10 }, { [cellKey("s-ma", 6)]: 100 }, LAW_2028);
+    const footer = document.querySelector("tfoot")!;
+    const total = within(footer).getByText(/footerTotalNotJudged\(.*\|7424\)/);
+    expect(total).toHaveAttribute("data-tone", "none");
+    expect(footer).not.toHaveTextContent("footerTotalValue");
+  });
+});
+
+describe("TimplanGrid: a total and a pool that only the stadier held in part breach", () => {
+  const draft: DraftCells = new Map(Object.entries(CELLS).map(([key, minutes]) => [key, String(minutes)]));
+
+  /** The footer's two toned lines (Totalt, Skolans val) of a check whose two plan-wide verdicts have `severity`. */
+  function footerTones(severity: "warning" | "notice") {
+    const verdicts: TimplanVerdict[] = [
+      { code: "TIMPLAN_TOTAL_BELOW_GUARANTEE", severity, params: { plannedHours: 3007, guaranteedHours: 3471.4, deficitHours: 464.4 } },
+      { code: "TIMPLAN_SKOLANS_VAL_OVERSPENT", severity, params: { takenHours: 620, availableHours: 302.3, overspentHours: 317.7 } },
+    ];
+    const check: TimplanCheck = { ...checkOf(draft), verdicts };
+    render(
+      <TimplanGrid
+        subjects={SUBJECTS}
+        parentOf={parentOf}
+        columns={gridColumns(check.stageGrades)}
+        stageGrades={check.stageGrades}
+        draft={draft}
+        notes={new Map()}
+        check={check}
+        weeksTenths={356}
+        readOnly={false}
+        highlight={null}
+        onCellChange={() => {}}
+      />,
+    );
+    return [...document.querySelectorAll("tfoot td[data-tone]")].map((cell) => cell.getAttribute("data-tone"));
+  }
+
+  it("paints them red as a warning and yellow as a notice, an estimate never red", () => {
+    expect(footerTones("warning")).toEqual(["under", "under"]);
+    cleanup();
+    expect(footerTones("notice")).toEqual(["below", "below"]);
   });
 });
