@@ -10,7 +10,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -850,6 +850,7 @@ test('the move goes to the nearer side, the lower of two equally near, and stays
   const highest = await planOf(['1-50', '51-60'], [[40, 49], [49, 60]]);
   assert.deepEqual(runs(highest), [':1-39', ':40-60']);
   assert.equal(highest.moves[0].handed, 1, 'the mutant on lines 40-49 changes part');
+  assert.match(highest.notes[0], /\(the nearest line none crosses; 1 mutant changes part\)/);
   // The ranges are read in line order whichever slice holds them first.
   const unsorted = await planOf(['51-99999', '1-50'], [[1, 1], [45, 55], [60, 70]]);
   assert.deepEqual(runs(unsorted), [':1-55', ':56-99999']);
@@ -1058,6 +1059,70 @@ test('a slice is red for a file it holds that cannot be run in parts, with a mes
     const green = p.run({ statuses: { 'src/a.js': repeat('Killed', 2) } }, { slice: 2 });
     assert.equal(green.code, 0, green.out);
     assert.doesNotMatch(green.out, /line ranges|cut at line/);
+  } finally {
+    p.done();
+  }
+});
+
+test('the script runs when node was given a path through a symlink, which node resolves differently from how it was typed, and not when it is imported', () => {
+  const p = project();
+  const links = [];
+  try {
+    const script = join(p.dir, 'scripts', 'mutation-slice.mjs');
+    const plan = (path) => spawnSync(process.execPath, [path, '--plan'], { cwd: p.dir, encoding: 'utf8', env: { PATH: process.env.PATH, MUTATION_SLICE: '' } });
+    const ran = /^slices=\[\d+\]\nof=2\n$/;
+    // As CI calls it (relative to the checkout), and by its real absolute path.
+    const relative = spawnSync(process.execPath, ['scripts/mutation-slice.mjs', '--plan'], { cwd: p.dir, encoding: 'utf8', env: { PATH: process.env.PATH, MUTATION_SLICE: '' } });
+    assert.match(relative.stdout, ran, relative.stdout + relative.stderr);
+    assert.match(plan(script).stdout, ran);
+    // Through a symlinked directory: the path as typed is not the path node resolves.
+    const linkedDir = join(tmpdir(), `mutation-slice-link-${process.pid}-${Date.now()}`);
+    symlinkSync(p.dir, linkedDir, 'dir');
+    links.push(linkedDir);
+    const viaDir = plan(join(linkedDir, 'scripts', 'mutation-slice.mjs'));
+    assert.match(viaDir.stdout, ran, `through a symlinked directory: ${JSON.stringify(viaDir.stdout)} ${viaDir.stderr}`);
+    assert.equal(viaDir.status, 0);
+    // With --preserve-symlinks-main node keeps the symlink in import.meta.url too: both sides are made real.
+    const preserved = spawnSync(process.execPath, ['--preserve-symlinks-main', join(linkedDir, 'scripts', 'mutation-slice.mjs'), '--plan'], { cwd: p.dir, encoding: 'utf8', env: { PATH: process.env.PATH, MUTATION_SLICE: '' } });
+    assert.match(preserved.stdout, ran, `with --preserve-symlinks-main: ${JSON.stringify(preserved.stdout)} ${preserved.stderr}`);
+    // Through a symlink to the file itself.
+    const linkedFile = join(p.dir, 'linked.mjs');
+    symlinkSync(script, linkedFile);
+    const viaFile = plan(linkedFile);
+    assert.match(viaFile.stdout, ran, `through a symlinked file: ${JSON.stringify(viaFile.stdout)} ${viaFile.stderr}`);
+    // A command that does not run the script as the program (an import) runs nothing.
+    const imported = spawnSync(process.execPath, ['--input-type=module', '-e', `await import(${JSON.stringify(script)}); console.log('imported');`], { cwd: p.dir, encoding: 'utf8', env: { PATH: process.env.PATH } });
+    assert.equal(imported.stdout, 'imported\n', imported.stdout + imported.stderr);
+    assert.equal(imported.status, 0);
+  } finally {
+    for (const link of links) rmSync(link, { force: true });
+    p.done();
+  }
+});
+
+test('an instrumenter that fails makes the night of a slice that holds a part of a ranged file red with exit 2 and its error in the log, and a slice that holds none is not asked', () => {
+  const slices = [
+    { slice: 0, seconds: 20, mutants: 1, detected: 1, valid: 1, score: 100, floor: 98, files: { 'src/big.js:1-3': { seconds: 10, mutants: 1, detected: 1, valid: 1 } } },
+    { slice: 1, seconds: 10, mutants: 0, detected: 0, valid: 0, score: null, floor: 0, files: { 'src/big.js:4-5': { seconds: 10, mutants: 0, detected: 0, valid: 0 } } },
+    { slice: 2, seconds: 5, mutants: 2, detected: 2, valid: 2, score: 100, floor: 98, files: { 'src/a.js': { seconds: 5, mutants: 2, detected: 2, valid: 2 } } },
+  ];
+  const p = project({ sources: { 'src/big.js': source([1, 1]), 'src/a.js': source() }, slices });
+  try {
+    writeFileSync(join(p.dir, 'node_modules', '@stryker-mutator', 'instrumenter', 'index.js'), "export function createInstrumenter() { return { async instrument() { throw new Error('instrumenter broke'); } }; }\n");
+    const statuses = { 'src/big.js:1-3': repeat('Killed', 1), 'src/a.js': repeat('Killed', 2) };
+    // The slices that hold a part: red, and not a pass that measured nothing, whatever Stryker would have said.
+    for (const slice of [0, 1]) {
+      const red = p.run({ statuses }, { slice });
+      assert.equal(red.code, 2, red.out);
+      assert.match(red.out, /instrumenter broke/);
+      assert.equal(red.summary, null, 'Stryker was not run');
+    }
+    const check = p.spawn(['--check-ranges'], {});
+    assert.equal(check.status, 2, check.stdout + check.stderr);
+    assert.match(check.stderr, /instrumenter broke/);
+    // A slice with none of the file never asks the instrumenter, so it cannot fail on it.
+    const green = p.run({ statuses: { 'src/a.js': repeat('Killed', 2) } }, { slice: 2 });
+    assert.equal(green.code, 0, green.out);
   } finally {
     p.done();
   }

@@ -99,9 +99,9 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, globSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, globSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 export const TARGET = 85;
 const BASE_CONFIG = 'stryker.conf.json';
@@ -436,18 +436,22 @@ function nearestFreeLine(cut, lo, hi, crossing) {
 /**
  * The most mutants a cut may hand from one part of a file to the other when it
  * is moved off the mutant that crosses it: a tenth of the smaller of the two
- * parts' dealt mutants, which is what a slice may lose before its 90 % guard
- * (MIN_RAN) calls it short. A cut is a hint: the dealing's line is where it was
+ * parts' dealt mutants, the share MIN_RAN lets a slice lose (1 - 0.9) but counted
+ * on the part and not on the slice. The slice's own 90 % guard is looser: it is a
+ * tenth of everything the slice runs (223 mutants for slice 2, 511 for slice 6),
+ * while a move shifts mutants between the two parts of one file, and 84 of the
+ * smaller part's 848 is the size of change that part's score should not take
+ * without a new measurement. A cut is a hint: the dealing's line is where it was
  * when the file was measured, tonight it is the line nearest to it that no mutant
  * crosses, and the mutants between the two lines change part. A move that alone
  * takes more than a part may lose is a dealing too old to go on with, and
- * --deal is the answer; one that takes less is within what the guard, the point
- * under each measured score and the note in the summary answer for.
- * For optimization-proxy.service.ts that is 84 mutants (848 in the smaller part).
- * Measured over its history: after one edit to a fresh dealing the move handed
- * over 0 to 37 mutants in 29 of 30 edits and 274 in the one of +937 lines;
- * dealt once and never again, 9 of the 31 versions would need more, the same
- * 9 in which the part has lost more than a tenth anyway.
+ * --deal is the answer; one that takes less is within what the slice's guard,
+ * the point under each measured score and the note in the summary answer for.
+ * For optimization-proxy.service.ts that is 84 mutants. Measured over its
+ * history: after one edit to a fresh dealing the move handed over 0 to 37
+ * mutants in 29 of 30 edits and 274 in the one of +937 lines; dealt once and
+ * never again, 9 of the 31 versions would need more (with that dealing's own
+ * figures for the parts; with the first version's own, 15).
  */
 export const shiftLimit = (smaller) => Math.floor(smaller - smaller * MIN_RAN + 1e-9);
 
@@ -857,7 +861,23 @@ async function main() {
   return cuts.problems.length > 0 ? code || 1 : code;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+/**
+ * Whether node started this file as the program. Node gives `import.meta.url` with
+ * every symlink resolved and `process.argv[1]` as it was typed, so a path through a
+ * symlink (a symlinked directory or file, or macOS's /tmp and /var) made the two
+ * differ and the script do nothing and exit 0, which `npm run test:mutation` would
+ * have shown as a green step that measured nothing. Both sides are real paths.
+ */
+const startedAsProgram = () => {
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    // No script path (node -e), or a path that is not there: this is an import.
+    return false;
+  }
+};
+
+if (startedAsProgram()) {
   main().then(
     (code) => {
       process.exitCode = code;
