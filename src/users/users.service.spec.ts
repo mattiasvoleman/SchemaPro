@@ -1506,7 +1506,29 @@ describe('UsersService', () => {
         }),
       );
 
-      await expect(service.remove(USER_ID, testUser())).rejects.toThrow('Inaktivera kontot i stället');
+      await expect(service.remove(USER_ID, testUser())).rejects.toThrow(
+        'registrerade årskurspannet för en beslutad lokal timplan och kan inte tas bort',
+      );
+    });
+
+    it('says the decision when the decider key refuses a decision recorded after the question', async () => {
+      tx.user.findUnique.mockResolvedValue({ authId: AUTH_ID, invitedAt: null });
+      tx.user.delete.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Foreign key constraint violated', {
+          code: 'P2003',
+          clientVersion: Prisma.prismaVersion.client,
+          meta: {
+            modelName: 'User',
+            driverAdapterError: {
+              cause: { constraint: { index: 'LocalTimplans_decidedByUserId_schoolId_fkey' } },
+            },
+          },
+        }),
+      );
+
+      await expect(service.remove(USER_ID, testUser())).rejects.toThrow(
+        'registrerade beslutet om en beslutad lokal timplan och kan inte tas bort',
+      );
     });
 
     it('409s removing a person whose rastvaktspass has a vikarie booked ahead, under the board\'s teacher lock', async () => {

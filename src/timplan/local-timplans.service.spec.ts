@@ -642,6 +642,18 @@ describe('LocalTimplansService', () => {
         expect(tx.localTimplan.create).not.toHaveBeenCalled();
       });
 
+      it('accepts a span of a single årskurs: from equal to to', async () => {
+        givenTheStatute();
+        tx.localTimplan.create.mockResolvedValue(storedPlan());
+        for (const grade of [1, 4, 9]) {
+          await expect(create({ gradeFrom: grade, gradeTo: grade })).resolves.toBeDefined();
+          expect(tx.localTimplan.create.mock.calls.at(-1)![0].data).toMatchObject({ gradeFrom: grade, gradeTo: grade });
+        }
+        // The edge of the form is a span too, and so is one beside it that holds the årskurs.
+        await expect(create({ gradeFrom: 9, gradeTo: 11 })).resolves.toBeDefined();
+        await expect(create({ gradeFrom: 0, gradeTo: 1 })).resolves.toBeDefined();
+      });
+
       it('accepts förskoleklassen in the span, and a span wider than the form', async () => {
         givenTheStatute();
         tx.localTimplan.create.mockResolvedValue(storedPlan());
@@ -664,6 +676,18 @@ describe('LocalTimplansService', () => {
           where: { id: PLAN_ID },
           data: { gradeFrom: null, gradeTo: null },
         });
+      });
+
+      it('sets a single årskurs on a draft, and a decided plan takes one too', async () => {
+        givenTheStatute();
+        tx.localTimplan.findUnique.mockResolvedValue(storedPlan());
+        tx.localTimplan.update.mockResolvedValue(storedPlan({ gradeFrom: 4, gradeTo: 4 }));
+        await service.update(PLAN_ID, { gradeFrom: 4, gradeTo: 4 }, testUser());
+        expect(tx.localTimplan.update).toHaveBeenLastCalledWith({ where: { id: PLAN_ID }, data: { gradeFrom: 4, gradeTo: 4 } });
+
+        tx.localTimplan.findUnique.mockResolvedValue(decided());
+        await service.update(PLAN_ID, { gradeFrom: 9, gradeTo: 9 }, testUser());
+        expect(tx.localTimplan.update).toHaveBeenLastCalledWith({ where: { id: PLAN_ID }, data: { gradeFrom: 9, gradeTo: 9 } });
       });
 
       it('leaves the span alone when the request names none', async () => {

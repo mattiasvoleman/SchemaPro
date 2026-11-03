@@ -739,7 +739,8 @@ export class UsersService {
     } catch (error) {
       if (error instanceof NotFoundException || error instanceof ConflictException) throw error;
       // A plan decided by this person between the question and the delete.
-      if (isDeciderReference(error)) throw recordedATimplanDecision([], false, true);
+      const reference = timplanReference(error);
+      if (reference) throw recordedATimplanDecision([], reference === 'span', reference === 'decision');
       rethrowPrismaError(error);
     }
 
@@ -986,13 +987,16 @@ function hasBookedPassCovers(firstDate: string): ConflictException {
   });
 }
 
-/** The restrict foreign key from a decided plan to its decider, as the pg adapter reports it. */
-function isDeciderReference(error: unknown): boolean {
-  return (
-    error instanceof Prisma.PrismaClientKnownRequestError &&
-    error.code === 'P2003' &&
-    /LocalTimplans_(decidedByUserId|gradeSpanSetByUserId)_schoolId_fkey/.test(JSON.stringify(error.meta ?? {}))
-  );
+/**
+ * The restrict foreign key from a decided plan to its decider, or to the one who
+ * set its årskurs span, as the pg adapter reports it: which of the two refused.
+ */
+function timplanReference(error: unknown): 'decision' | 'span' | null {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2003') return null;
+  const meta = JSON.stringify(error.meta ?? {});
+  if (meta.includes('LocalTimplans_decidedByUserId_schoolId_fkey')) return 'decision';
+  if (meta.includes('LocalTimplans_gradeSpanSetByUserId_schoolId_fkey')) return 'span';
+  return null;
 }
 
 /**
