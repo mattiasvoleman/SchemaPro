@@ -374,7 +374,7 @@ export function summarise(report) {
 
 const pct = (score) => (score === null ? 'n/a' : `${score.toFixed(2)} %`);
 
-/** A slice that ran fewer than this share of the mutants it was dealt did not run its slice. */
+/** A slice whose report holds fewer than this share of the mutants it was dealt is red until it is measured again. */
 export const MIN_RAN = 0.9;
 
 /**
@@ -390,7 +390,7 @@ export function exitCodeFor({ status, summary, ran, expected }) {
   if (summary === null) return { code: stryker || 1, reason: 'Stryker left no report' };
   if (summary.total.valid === 0) return { code: stryker || 1, reason: 'the report holds no valid mutant, and a score of n/a is not a pass' };
   if (ran < expected * MIN_RAN) {
-    return { code: stryker || 1, reason: `only ${ran} of the slice's ${expected} mutants were in the report (at least ${Math.ceil(expected * MIN_RAN)} are expected): the slice did not run` };
+    return { code: stryker || 1, reason: `only ${ran} of the slice's ${expected} mutants were in the report (at least ${Math.ceil(expected * MIN_RAN)} are expected): Stryker finished, so a file in the slice has lost code or the slice is not the one that was dealt; if the code was removed on purpose, run --remeasure on this run's artifact to count the slice again and set its floor` };
   }
   return { code: stryker, reason: null };
 }

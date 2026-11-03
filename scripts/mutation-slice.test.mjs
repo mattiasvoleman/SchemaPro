@@ -512,6 +512,8 @@ test('a night that measured nothing is never a pass, whatever Stryker says: no f
     const few = p.run({ statuses: { 'src/a.js': repeat('Killed', 3), 'src/b.js': repeat('Killed', 3) } });
     assert.equal(few.code, 1, few.out);
     assert.match(few.out, /only 6 of the slice's 20 mutants were in the report/);
+    assert.match(few.out, /run --remeasure on this run's artifact/);
+    assert.doesNotMatch(few.out, /did not run/);
     // Stryker killed by a signal has no exit status, which is a failure.
     const killed = p.run({ statuses: {}, die: true });
     assert.equal(killed.code, 1, killed.out);
