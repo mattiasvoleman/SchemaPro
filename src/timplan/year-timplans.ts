@@ -1,7 +1,13 @@
 import type { GradeNumbering, LocalTimplanStatus, Prisma } from '@prisma/client';
 import { gradeOfPlanRow, lydelseIsTioarig, planRowOf } from '../common/grade-numbering';
 import { htOf, planFitsCohort } from '../common/timplan-cohorts';
-import { stageGradesFor, type CoverageVersion } from '../common/timplan-coverage';
+import {
+  gradeSpanOf,
+  inGradeSpan,
+  stageGradesFor,
+  type CoverageVersion,
+  type GradeSpan,
+} from '../common/timplan-coverage';
 
 /**
  * Which lokal timplan each årskurs of a läsår follows — AcademicYearTimplans,
@@ -168,6 +174,8 @@ const DECIDED_SELECT = {
   status: true,
   schoolForm: true,
   nationalVersion: { select: { schoolForm: true, appliesFromCohortTerm: true } },
+  gradeFrom: true,
+  gradeTo: true,
   entries: { where: { gradeLevel: 0 }, select: { gradeLevel: true }, take: 1 },
 } as const;
 
@@ -177,6 +185,8 @@ function decidedTimplanOf(plan: {
   status: LocalTimplanStatus;
   schoolForm: string;
   nationalVersion: Pick<CoverageVersion, 'schoolForm' | 'appliesFromCohortTerm'>;
+  gradeFrom?: number | null;
+  gradeTo?: number | null;
   entries: unknown[];
 }): DecidedTimplan {
   return {
@@ -185,7 +195,7 @@ function decidedTimplanOf(plan: {
     status: plan.status,
     schoolForm: plan.schoolForm,
     appliesFromCohortTerm: plan.nationalVersion.appliesFromCohortTerm,
-    gradeLevels: defaultTimplanGrades(plan.nationalVersion, plan.entries.length > 0),
+    gradeLevels: defaultTimplanGrades(plan.nationalVersion, plan.entries.length > 0, gradeSpanOf(plan)),
   };
 }
 
@@ -220,14 +230,20 @@ export async function readDecidedTimplans(tx: Prisma.TransactionClient): Promise
 
 /**
  * The grades a plan of this national version speaks for by default: its
- * stadier's grades, plus förskoleklass when the plan itself plans one.
+ * stadier's grades, plus förskoleklass when the plan itself plans one. A plan
+ * with an årskurs span speaks for the årskurser of it and no others: a 4–9
+ * plan is not attached to the lågstadium it was never written for, and
+ * förskoleklassen only when the span holds it.
  */
 export function defaultTimplanGrades(
   version: Pick<CoverageVersion, 'schoolForm' | 'appliesFromCohortTerm'>,
   plansForskoleklass: boolean,
+  span: GradeSpan | null = null,
 ): number[] {
   const stages = stageGradesFor(version);
-  const grades = new Set([...stages.LAG, ...stages.MELLAN, ...stages.HOG]);
-  if (plansForskoleklass) grades.add(0);
+  const grades = new Set(
+    [...stages.LAG, ...stages.MELLAN, ...stages.HOG].filter((grade) => inGradeSpan(span, grade)),
+  );
+  if (plansForskoleklass && inGradeSpan(span, 0)) grades.add(0);
   return [...grades].sort((a, b) => a - b);
 }

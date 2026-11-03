@@ -1455,12 +1455,58 @@ describe('UsersService', () => {
       );
       expect((error as ConflictException).message).toContain('Inaktivera kontot i stället');
       expect(tx.localTimplan.findMany).toHaveBeenCalledWith({
-        where: { decidedByUserId: USER_ID },
-        select: { name: true },
+        where: { OR: [{ decidedByUserId: USER_ID }, { gradeSpanSetByUserId: USER_ID }] },
+        select: { name: true, decidedByUserId: true, gradeSpanSetByUserId: true },
         orderBy: { name: 'asc' },
       });
       expect(tx.user.delete).not.toHaveBeenCalled();
       expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
+    });
+
+    it('409s removing the person who set a decided timplan’s årskurs span, in those words', async () => {
+      tx.user.findUnique.mockResolvedValue({ authId: AUTH_ID, invitedAt: null });
+      tx.localTimplan.findMany.mockResolvedValue([
+        { name: 'Grundskolan 2024', decidedByUserId: 'someone-else', gradeSpanSetByUserId: USER_ID },
+      ]);
+
+      const error = await service.remove(USER_ID, testUser()).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ConflictException);
+      expect((error as ConflictException).message).toContain(
+        'registrerade årskurspannet för den beslutade lokala timplanen "Grundskolan 2024"',
+      );
+      expect((error as ConflictException).message).not.toContain('registrerade beslutet');
+      expect(tx.user.delete).not.toHaveBeenCalled();
+    });
+
+    it('names both when one person decided a plan and set another’s span', async () => {
+      tx.user.findUnique.mockResolvedValue({ authId: AUTH_ID, invitedAt: null });
+      tx.localTimplan.findMany.mockResolvedValue([
+        { name: 'A', decidedByUserId: USER_ID, gradeSpanSetByUserId: null },
+        { name: 'B', decidedByUserId: 'someone-else', gradeSpanSetByUserId: USER_ID },
+      ]);
+
+      await expect(service.remove(USER_ID, testUser())).rejects.toThrow(
+        'registrerade beslutet eller årskurspannet för de beslutade lokala timplanerna "A" och "B"',
+      );
+    });
+
+    it('says the same when the restrict key of the span refuses a span set after the question', async () => {
+      tx.user.findUnique.mockResolvedValue({ authId: AUTH_ID, invitedAt: null });
+      tx.user.delete.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Foreign key constraint violated', {
+          code: 'P2003',
+          clientVersion: Prisma.prismaVersion.client,
+          meta: {
+            modelName: 'User',
+            driverAdapterError: {
+              cause: { constraint: { index: 'LocalTimplans_gradeSpanSetByUserId_schoolId_fkey' } },
+            },
+          },
+        }),
+      );
+
+      await expect(service.remove(USER_ID, testUser())).rejects.toThrow('Inaktivera kontot i stället');
     });
 
     it('409s removing a person whose rastvaktspass has a vikarie booked ahead, under the board\'s teacher lock', async () => {

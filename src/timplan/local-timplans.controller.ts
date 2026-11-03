@@ -83,7 +83,12 @@ export class LocalTimplansController {
     return this.timplans.get(id, user);
   }
 
-  /** The national comparison as a verdict document. Every verdict is a warning. */
+  /**
+   * The national comparison as a verdict document. Every verdict is a warning.
+   * It counts only the årskurser and stadier the plan's span holds, and the
+   * same for every role that may read it: it never looks at the school's
+   * skolenheter.
+   */
   @Get(':id/check')
   check(
     @Param('id', uuid()) id: string,
@@ -101,6 +106,13 @@ export class LocalTimplansController {
     return this.timplans.create(dto, user);
   }
 
+  /**
+   * Name, weeks, version and årskurs span of a DRAFT. A DECIDED plan answers
+   * 409 TIMPLAN_IS_DECIDED to everything but one request: a span (gradeFrom
+   * and gradeTo, nothing else in the body) on a plan that has none. That is
+   * set once and stamped with the caller and the time by the database; to
+   * change it, reopen the plan.
+   */
   @Patch(':id')
   @Roles(Role.SCHOOL_ADMIN)
   update(

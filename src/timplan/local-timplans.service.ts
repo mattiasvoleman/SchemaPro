@@ -19,9 +19,13 @@ import {
   rethrowPrismaError,
   timplanInUseConflict,
 } from '../common/utils/prisma-errors';
+import { lydelseIsTioarig } from '../common/grade-numbering';
 import {
   checkLocalTimplan,
+  gradeSpanOf,
   planningWeeksInTenths,
+  stageGradesFor,
+  type GradeSpan,
   type TimplanCheck,
   type TimplanVerdict,
 } from '../common/timplan-coverage';
@@ -161,9 +165,11 @@ export class LocalTimplansService {
   async create(dto: CreateLocalTimplanDto, user: AuthenticatedUser): Promise<LocalTimplanDetail> {
     const schoolId = requireSchoolId(user);
     const name = dto.name.trim();
+    const span = readGradeSpan(dto) ?? null;
     try {
       return await this.prisma.withRls(user, async (tx) => {
-        await assertVersionFits(tx, dto.nationalTimplanVersionId, dto.schoolForm);
+        const version = await assertVersionFits(tx, dto.nationalTimplanVersionId, dto.schoolForm);
+        if (span) assertSpanFits(span, version);
         const row = await tx.localTimplan.create({
           data: {
             schoolId,
@@ -173,6 +179,8 @@ export class LocalTimplansService {
             // Stated rather than left to the column default, like the
             // subjects service states countsTowardTimplan.
             planningWeeks: weeksDecimal(dto.planningWeeks ?? 35.6),
+            gradeFrom: span?.gradeFrom ?? null,
+            gradeTo: span?.gradeTo ?? null,
           },
         });
         return { ...toPlanResponse(row), entries: [] };
@@ -182,7 +190,14 @@ export class LocalTimplansService {
     }
   }
 
-  /** Name, weeks and version of a DRAFT. */
+  /**
+   * Name, weeks, version and årskurs span of a DRAFT.
+   *
+   * A DECIDED plan admits ONE change: a span, set once, from none, and nothing
+   * else in the same request. It is the record's only exception (the trigger of
+   * migration 20261219090000 holds it and stamps who and when); a plan that
+   * already has a span, or any other change, is 409 TIMPLAN_IS_DECIDED as ever.
+   */
   async update(
     id: string,
     dto: UpdateLocalTimplanDto,
@@ -190,11 +205,45 @@ export class LocalTimplansService {
   ): Promise<LocalTimplanResponse> {
     requireSchoolId(user);
     const name = dto.name?.trim();
+    const span = readGradeSpan(dto);
     try {
       return await this.prisma.withRls(user, async (tx) => {
-        const plan = await readDraft(tx, id);
+        const plan = await tx.localTimplan.findUnique({ where: { id } });
+        if (!plan) throw notFound();
+
+        if (plan.status === 'DECIDED') {
+          const onlyASpan =
+            dto.name === undefined &&
+            dto.planningWeeks === undefined &&
+            dto.nationalTimplanVersionId === undefined;
+          if (!span || !onlyASpan || gradeSpanOf(plan) !== null) throw decidedTimplanConflict([plan.name]);
+          assertSpanFits(span, await readVersion(tx, plan.nationalTimplanVersionId));
+          const row = await tx.localTimplan.update({
+            where: { id },
+            data: { gradeFrom: span.gradeFrom, gradeTo: span.gradeTo },
+          });
+          return toPlanResponse(row);
+        }
+
+        let version = undefined as VersionFacts | undefined;
         if (dto.nationalTimplanVersionId !== undefined) {
-          await assertVersionFits(tx, dto.nationalTimplanVersionId, plan.schoolForm);
+          version = await assertVersionFits(tx, dto.nationalTimplanVersionId, plan.schoolForm);
+          // A span is stated in its lydelse's numbering: åk 4–9 of a nine-year
+          // lydelse is not åk 4–9 of the tioårig one, and carrying it over
+          // would change which årskurser the plan is for without a word.
+          if (span === undefined && gradeSpanOf(plan) !== null) {
+            const was = await readVersion(tx, plan.nationalTimplanVersionId);
+            if (lydelseIsTioarig(was.appliesFromCohortTerm) !== lydelseIsTioarig(version.appliesFromCohortTerm)) {
+              throw new BadRequestException(
+                'nationalTimplanVersionId: den nya lydelsen numrerar årskurserna på ett annat sätt än planens nuvarande. ' +
+                  'Ange planens årskurspann för den nya lydelsen i samma anrop (gradeFrom och gradeTo), eller null för hela skolformen.',
+              );
+            }
+          }
+        }
+        const effective = span === undefined ? gradeSpanOf(plan) : span;
+        if (effective && (span !== undefined || version)) {
+          assertSpanFits(effective, version ?? (await readVersion(tx, plan.nationalTimplanVersionId)));
         }
         const row = await tx.localTimplan.update({
           where: { id },
@@ -205,6 +254,9 @@ export class LocalTimplansService {
               : {}),
             ...(dto.nationalTimplanVersionId !== undefined
               ? { nationalTimplanVersionId: dto.nationalTimplanVersionId }
+              : {}),
+            ...(span !== undefined
+              ? { gradeFrom: span?.gradeFrom ?? null, gradeTo: span?.gradeTo ?? null }
               : {}),
           },
         });
@@ -389,6 +441,7 @@ export class LocalTimplansService {
   ): Promise<LocalTimplanDetail> {
     const schoolId = requireSchoolId(user);
     const requested = dto.name?.trim();
+    const asked = readGradeSpan(dto);
     try {
       return await this.prisma.withRls(user, async (tx) => {
         const source = await tx.localTimplan.findUnique({
@@ -397,6 +450,11 @@ export class LocalTimplansService {
         });
         if (!source) throw notFound();
         assertSource(source);
+        // The draft is for what the request says, else for what its source is
+        // for. The stamps of a span set after a decision are the source's own
+        // record and are not copied: the draft is a new proposal.
+        const span = asked === undefined ? gradeSpanOf(source) : asked;
+        if (asked) assertSpanFits(asked, await readVersion(tx, source.nationalTimplanVersionId));
 
         const name = requested ?? (await freeName(tx, source.name, suffix));
         const created = await tx.localTimplan.create({
@@ -406,6 +464,8 @@ export class LocalTimplansService {
             schoolForm: source.schoolForm,
             nationalTimplanVersionId: source.nationalTimplanVersionId,
             planningWeeks: source.planningWeeks,
+            gradeFrom: span?.gradeFrom ?? null,
+            gradeTo: span?.gradeTo ?? null,
             copiedFromId: source.id,
           },
         });
@@ -462,10 +522,10 @@ async function assertVersionFits(
   tx: PrismaClient,
   versionId: string,
   schoolForm: SchoolForm,
-): Promise<void> {
+): Promise<VersionFacts> {
   const version = await tx.nationalTimplanVersion.findUnique({
     where: { id: versionId },
-    select: { code: true, schoolForm: true },
+    select: { code: true, schoolForm: true, appliesFromCohortTerm: true },
   });
   if (!version) {
     throw new BadRequestException(
@@ -478,6 +538,61 @@ async function assertVersionFits(
         `och planen gäller ${SCHOOL_FORM_NAME[schoolForm]}.`,
     );
   }
+  return version;
+}
+
+/** What a span is read against: the version's code, form and lydelse. */
+type VersionFacts = { code: string; schoolForm: SchoolForm; appliesFromCohortTerm: string };
+
+/** A plan's version, which its composite key guarantees exists. */
+async function readVersion(tx: PrismaClient, versionId: string): Promise<VersionFacts> {
+  const version = await tx.nationalTimplanVersion.findUnique({
+    where: { id: versionId },
+    select: { code: true, schoolForm: true, appliesFromCohortTerm: true },
+  });
+  if (!version) throw new Error(`national timplan version ${versionId} is unreadable`);
+  return version;
+}
+
+/**
+ * The span a request states: undefined when it says nothing, null for the
+ * whole school form, else the span. Half a pair and an inverted one are 400s
+ * that name the fields; the CHECKs of 20261219090000 are the second line.
+ */
+function readGradeSpan(dto: {
+  gradeFrom?: number | null;
+  gradeTo?: number | null;
+}): GradeSpan | null | undefined {
+  if (dto.gradeFrom === undefined && dto.gradeTo === undefined) return undefined;
+  const from = dto.gradeFrom ?? null;
+  const to = dto.gradeTo ?? null;
+  if (from === null && to === null) return null;
+  if (from === null || to === null) {
+    throw new BadRequestException(
+      'gradeFrom och gradeTo: årskurspannet anges med båda, eller med inget av dem för hela skolformen.',
+    );
+  }
+  if (from > to) {
+    throw new BadRequestException(
+      `gradeFrom och gradeTo: första årskursen (${from}) kan inte komma efter den sista (${to}).`,
+    );
+  }
+  return { gradeFrom: from, gradeTo: to };
+}
+
+/**
+ * A span must hold at least one årskurs of the plan's lydelse, or the plan
+ * would be judged against nothing and read as correct. Årskurser outside the
+ * form on either side are allowed (förskoleklassen, a span written wider).
+ */
+function assertSpanFits(span: GradeSpan, version: VersionFacts): void {
+  const stages = stageGradesFor(version);
+  const grades = [...stages.LAG, ...stages.MELLAN, ...stages.HOG];
+  if (grades.some((grade) => grade >= span.gradeFrom && grade <= span.gradeTo)) return;
+  throw new BadRequestException(
+    `gradeFrom och gradeTo: årskurs ${span.gradeFrom}–${span.gradeTo} innehåller ingen årskurs i ${version.code}, ` +
+      `som gäller årskurs ${Math.min(...grades)}–${Math.max(...grades)}.`,
+  );
 }
 
 /**
@@ -525,7 +640,7 @@ async function freeName(tx: PrismaClient, base: string, suffix: string): Promise
 async function computeCheck(
   tx: PrismaClient,
   // The stored Decimal or the response's number: both read to the same tenths.
-  plan: Pick<LocalTimplan, 'id' | 'nationalTimplanVersionId'> & {
+  plan: Pick<LocalTimplan, 'id' | 'nationalTimplanVersionId' | 'gradeFrom' | 'gradeTo'> & {
     planningWeeks: Prisma.Decimal | number;
   },
   entries: Pick<LocalTimplanEntry, 'subjectId' | 'gradeLevel' | 'minutesPerWeek'>[],
@@ -573,6 +688,7 @@ async function computeCheck(
     nationalSubjects,
     subjects,
     entries,
+    gradeSpan: gradeSpanOf(plan),
   });
   const names = new Map(nationalSubjects.map((subject) => [subject.code, subject.name]));
   return {

@@ -989,6 +989,89 @@ async function runChecks(
     assert.equal(await entriesOf(draft.id), 0);
   });
 
+  // ---- (l2) a decided lokal timplan takes its årskurs span once
+  await check('(l2) a decided timplan with no span takes one once, stamped by the trigger, and then answers 409 TIMPLAN_IS_DECIDED', async () => {
+    const timplans = new LocalTimplansService(api);
+    const subjects = new SubjectsService(api);
+    const isDecided = (error: unknown) => {
+      assert.ok(error instanceof ConflictException, `expected ConflictException, got ${summarise(error)}`);
+      assert.equal((error.getResponse() as { code?: string }).code, 'TIMPLAN_IS_DECIDED', summarise(error));
+      return true;
+    };
+    const row = async (planId: string) =>
+      (await owner.query<{
+        gradeFrom: number | null; gradeTo: number | null; gradeSpanSetAt: Date | null; gradeSpanSetByUserId: string | null;
+        name: string; planningWeeks: string;
+      }>('SELECT "gradeFrom", "gradeTo", "gradeSpanSetAt", "gradeSpanSetByUserId", name, "planningWeeks"::text FROM "LocalTimplans" WHERE id = $1', [planId])).rows[0];
+
+    const subject = await subjects.create({ name: `${MARKER} spann`, nationalCode: 'MA' } as never, admin);
+    const draft = await timplans.create(
+      { name: `${MARKER} spannutkast`, schoolForm: 'GRUNDSKOLA', nationalTimplanVersionId: fixture.grundskolaVersionId, gradeFrom: 4, gradeTo: 9 },
+      admin,
+    );
+    assert.deepEqual([draft.gradeFrom, draft.gradeTo, draft.gradeSpanSetAt], [4, 9, null], 'a draft is created with its span and no stamp');
+    await assert.rejects(
+      timplans.create({ name: `${MARKER} dåligt`, schoolForm: 'GRUNDSKOLA', nationalTimplanVersionId: fixture.grundskolaVersionId, gradeFrom: 9, gradeTo: 4 }, admin),
+      /första årskursen \(9\) kan inte komma efter den sista \(4\)/,
+    );
+
+    // A plan decided before the span existed has none: that is the one a school sets it on.
+    const plan = await timplans.create(
+      { name: `${MARKER} spann beslutad`, schoolForm: 'GRUNDSKOLA', nationalTimplanVersionId: fixture.grundskolaVersionId },
+      admin,
+    );
+    await timplans.replaceEntries(
+      plan.id,
+      { entries: [4, 5, 6].map((gradeLevel) => ({ subjectId: subject.id, gradeLevel, minutesPerWeek: 120 })) },
+      admin,
+    );
+    await timplans.decide(plan.id, { decisionNote: MARKER }, admin);
+
+    // A rename beside the span is the decided plan's old refusal; the span alone is not.
+    await assert.rejects(timplans.update(plan.id, { name: `${MARKER} omdöpt`, gradeFrom: 4, gradeTo: 9 }, admin), isDecided);
+    await assert.rejects(timplans.update(plan.id, { gradeFrom: null, gradeTo: null }, admin), isDecided);
+    assert.deepEqual(await row(plan.id), { gradeFrom: null, gradeTo: null, gradeSpanSetAt: null, gradeSpanSetByUserId: null, name: `${MARKER} spann beslutad`, planningWeeks: '35.6' });
+
+    const before = Date.now();
+    const set = await timplans.update(plan.id, { gradeFrom: 4, gradeTo: 9 }, admin);
+    assert.deepEqual([set.gradeFrom, set.gradeTo, set.gradeSpanSetByUserId], [4, 9, admin.userId], 'the trigger stamps the caller');
+    const stamped = (await row(plan.id)).gradeSpanSetAt;
+    assert.ok(stamped && Math.abs(stamped.getTime() - before) < 60_000, `the span was stamped at ${stamped?.toISOString()}`);
+    assert.equal((await owner.query('SELECT 1 FROM "LocalTimplanEntries" WHERE "localTimplanId" = $1', [plan.id])).rowCount, 3, 'the minutes did not move');
+
+    // Once: the service refuses a second, and the trigger refuses the same write when it skips the service.
+    await assert.rejects(timplans.update(plan.id, { gradeFrom: 1, gradeTo: 9 }, admin), isDecided);
+    await assert.rejects(
+      (async () => {
+        try {
+          await api.withRls(admin, (tx) => tx.localTimplan.update({ where: { id: plan.id }, data: { gradeFrom: 1, gradeTo: 9 } }));
+        } catch (error) {
+          assert.equal(sqlStateOf(error), 'TP409', summarise(error));
+          rethrowPrismaError(error);
+        }
+        assert.fail('the second span went through');
+      })(),
+      isDecided,
+    );
+    assert.deepEqual(
+      [(await row(plan.id)).gradeFrom, (await row(plan.id)).gradeTo],
+      [4, 9],
+      'a refused second span changed the first',
+    );
+
+    // The check reads the plan's span, and a reopened plan carries the span and none of the stamps.
+    const check = await timplans.check(plan.id, admin);
+    assert.deepEqual(check.gradeSpan, { gradeFrom: 4, gradeTo: 9, partial: true });
+    assert.ok(check.cells.every((cell) => cell.stage !== 'LAG'), 'lågstadiet was judged for a 4–9 plan');
+    const reopened = await timplans.reopen(plan.id, {}, admin);
+    assert.deepEqual([reopened.gradeFrom, reopened.gradeTo, reopened.gradeSpanSetAt, reopened.gradeSpanSetByUserId], [4, 9, null, null]);
+
+    await timplans.remove(reopened.id, admin);
+    await timplans.remove(plan.id, admin);
+    await timplans.remove(draft.id, admin);
+    await subjects.remove(subject.id, admin);
+  });
+
   // ---- (m) a timplan save and a subject delete meeting in one draft
   await check('(m) a subject delete waits for a draft’s save instead of deadlocking with it, and a deadlock is a 409', async () => {
     const timplans = new LocalTimplansService(api);
