@@ -22,6 +22,7 @@ import {
   floorOf,
   placeNew,
   plan,
+  remeasure,
   scoreOf,
   scoreOfCounts,
   splitEntry,
@@ -309,4 +310,36 @@ test("a file's range key is the file as far as presence, newness and being gone 
   // With the file gone, both its parts go.
   assert.deepEqual(filesOf(dealing, 1, ['src/a.ts'], []), []);
   assert.deepEqual(placeNew(dealing, ['src/a.ts'], []).gone, ['src/big.ts']);
+});
+
+test("a slice measured again takes the run's figures and a floor of its score minus a point, rounded down; it never lowers a floor unless told to", () => {
+  const dealing = {
+    comment: 'x',
+    slices: [
+      { slice: 0, seconds: 50, mutants: 12, detected: 6, valid: 10, score: 60, floor: 58, files: { 'src/a.ts': { seconds: 30, mutants: 8, detected: 4, valid: 6 }, 'src/b.ts': { seconds: 20, mutants: 4, detected: 2, valid: 4 } } },
+      { slice: 1, seconds: 9, mutants: 1, detected: 1, valid: 1, score: 100, floor: 98, files: { 'src/c.ts': { seconds: 9, mutants: 1, detected: 1, valid: 1 } } },
+    ],
+  };
+  const killed = (n) => Array.from({ length: n }, () => ({ status: 'Killed' }));
+  const survived = (n) => Array.from({ length: n }, () => ({ status: 'Survived' }));
+  const better = { report: { files: { 'src/a.ts': { mutants: [...killed(6), ...survived(1), { status: 'Ignored' }] }, 'src/b.ts': { mutants: [...killed(3), ...survived(1)] } } }, times: { files: { 'src/a.ts': { ms: 28_040 }, 'src/b.ts': { ms: 19_000 } } } };
+  const after = remeasure(dealing, 0, better, { date: '2026-12-01' });
+  // 9 of 11 detected = 81.82 %: floor 80. Slice 1 is as it was.
+  assert.deepEqual(after.slices[0], {
+    slice: 0, seconds: 47, mutants: 12, detected: 9, valid: 11, score: 81.82, floor: 80, measured: '2026-12-01',
+    files: { 'src/a.ts': { seconds: 28, mutants: 8, detected: 6, valid: 7 }, 'src/b.ts': { seconds: 19, mutants: 4, detected: 3, valid: 4 } },
+  });
+  assert.equal(after.slices[1], dealing.slices[1]);
+  assert.equal(dealing.slices[0].floor, 58, 'the dealing given is not changed');
+  // Worse than the floor it has: refused, unless it is meant.
+  const worse = { ...better, report: { files: { 'src/a.ts': { mutants: [...killed(3), ...survived(4)] }, 'src/b.ts': { mutants: [...killed(1), ...survived(3)] } } } };
+  assert.throws(() => remeasure(dealing, 0, worse), /would lower its floor from 58 % to 35 %: pass --lower/);
+  assert.equal(remeasure(dealing, 0, worse, { lower: true }).slices[0].floor, 35);
+  // A run of other files is not a measurement of this slice.
+  assert.throws(() => remeasure(dealing, 0, { ...better, report: { files: { 'src/a.ts': better.report.files['src/a.ts'], 'src/c.ts': { mutants: killed(1) } } } }), /not run on its own files \(ran src\/c\.ts; did not run src\/b\.ts\)/);
+  // A range key reads the file's figures: only that range ran.
+  const ranged = { slices: [{ slice: 0, seconds: 5, mutants: 2, detected: 1, valid: 2, score: 50, floor: 49, files: { 'src/big.ts:1-30': { seconds: 5, mutants: 2, detected: 1, valid: 2 } } }] };
+  const reranged = remeasure(ranged, 0, { report: { files: { 'src/big.ts': { mutants: [...killed(2), ...survived(1)] } } }, times: { files: { 'src/big.ts': { ms: 6000 } } } });
+  assert.deepEqual(reranged.slices[0].files['src/big.ts:1-30'], { seconds: 6, mutants: 3, detected: 2, valid: 3 });
+  assert.equal(reranged.slices[0].floor, 65);
 });

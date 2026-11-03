@@ -8,6 +8,7 @@
  *   node scripts/mutation-slice.mjs --list --slice 3 one slice's files, and any new file placed in it
  *   node scripts/mutation-slice.mjs --plan           which slices a workflow run takes
  *   node scripts/mutation-slice.mjs --deal --of 20 file-times.json ...   make a dealing
+ *   node scripts/mutation-slice.mjs --remeasure reports/mutation/slice-3 [--lower]   a slice's new floor
  *
  * WHY A SLICE. The API has 70,636 mutants in 279 files (2026-11-02; 73,861
  * before the generated file was left out), against 7,522 in 57 on 2026-10-06,
@@ -40,12 +41,15 @@
  * THE FLOOR. A slice's floor is its measured score minus one percentage point,
  * rounded down. It is the slice's `break` threshold, so the night's job fails
  * when the slice scores under it, and only then; §2's 85% stays the target and
- * is what the report is set against. A floor is raised by hand when the tests
- * get better: measure the slice again (any run of it writes mutation.json and
- * summary.md) and put floor(score − 1) in the dealing. Lowering one is an
- * explicit decision, made in the commit that does it. A slice whose files
- * change gets a new floor only after it has been measured again: `--deal`
- * does it for all slices from a run of all of them.
+ * is what the report is set against. A floor is raised when the tests get
+ * better: run the slice (a dispatch of `mutation_slice=N`), download its
+ * artifact and `--remeasure` the slice's directory, which puts that run's
+ * figures and floor(score − 1) in the dealing for that slice, in a commit of
+ * its own. It refuses to lower a floor unless given `--lower`, which is an
+ * explicit decision, said in the commit that does it. A slice whose files
+ * change gets a new floor only after it has been measured again: `--remeasure`
+ * refuses a run of other files than the slice's, and `--deal` makes a new
+ * dealing, with new floors, from a run of all the slices.
  *
  * A NEW FILE. A file in `mutate` that the dealing does not know goes to the
  * slice with the least seconds so far, counting the files placed before it (in
@@ -241,6 +245,51 @@ export function deal(measured, of, { run = null, date = new Date().toISOString()
 }
 
 /**
+ * A slice measured again: `report` is Stryker's mutation.json from a run of
+ * slice `n` and `times` its file-times.json. The run must have mutated the
+ * slice's files and no others, or the figures are not the slice's. Returns the
+ * dealing with that slice's figures and floor replaced; a lower floor than the
+ * one it had is refused unless `lower` says it is meant.
+ */
+export function remeasure(dealing, n, { report, times }, { lower = false, date = new Date().toISOString().slice(0, 10) } = {}) {
+  const slice = dealing.slices[n];
+  const keys = Object.keys(slice.files);
+  const bases = keys.map(baseOf);
+  if (new Set(bases).size !== bases.length) throw new Error(`slice ${n} holds two parts of one file; measure it with --deal`);
+  const ran = Object.keys(report.files ?? {});
+  const unexpected = ran.filter((f) => !bases.includes(f));
+  const missing = keys.filter((key) => slice.files[key].mutants > 0 && !ran.includes(baseOf(key)));
+  if (unexpected.length > 0 || missing.length > 0) {
+    throw new Error(`slice ${n} was not run on its own files (ran ${unexpected.join(', ') || 'no other file'}; did not run ${missing.map(baseOf).join(', ') || 'none'}): measure all slices with --deal`);
+  }
+  const files = {};
+  let detected = 0;
+  let valid = 0;
+  let mutants = 0;
+  let seconds = 0;
+  for (const key of keys) {
+    const base = baseOf(key);
+    const list = report.files[base]?.mutants ?? [];
+    const { detected: d, valid: v } = scoreOf(list.map((m) => m.status));
+    const secs = Math.round((times.files?.[base]?.ms ?? 0) / 100) / 10;
+    files[key] = { seconds: secs, mutants: list.length, detected: d, valid: v };
+    detected += d;
+    valid += v;
+    mutants += list.length;
+    seconds += secs;
+  }
+  const score = valid === 0 ? null : (detected / valid) * 100;
+  const floor = score === null ? 0 : floorOf(score);
+  if (floor < slice.floor && !lower) {
+    throw new Error(`slice ${n} scored ${score.toFixed(2)} %, which would lower its floor from ${slice.floor} % to ${floor} %: pass --lower to say that is meant`);
+  }
+  const slices = dealing.slices.map((s) =>
+    s.slice === n ? { slice: n, seconds: Math.round(seconds * 10) / 10, mutants, detected, valid, score: score === null ? null : Math.round(score * 100) / 100, floor, measured: date, files } : s,
+  );
+  return { ...dealing, slices };
+}
+
+/**
  * New files, those in `files` the dealing does not know, each placed in the
  * slice with the least seconds so far, in name order. `counts` is [{ file,
  * mutants }] for the new ones. Returns { placed: [{ file, mutants, slice,
@@ -380,6 +429,8 @@ function parseArgs(argv, env) {
     plan: flag('--plan'),
     list: flag('--list'),
     deal: flag('--deal'),
+    remeasure: value('--remeasure') ?? null,
+    lower: flag('--lower'),
     of: value('--of'),
     run: value('--run') ?? null,
     splits: argv.flatMap((a, i) => (a === '--split' ? [argv[i + 1]] : [])),
@@ -431,6 +482,25 @@ async function main() {
 
   if (args.deal) {
     await makeDealing(args);
+    return 0;
+  }
+
+  if (args.remeasure) {
+    const dir = args.remeasure;
+    const { slice: n } = JSON.parse(readFileSync(join(dir, 'slice.json'), 'utf8'));
+    const before = loadDealing();
+    const after = remeasure(
+      before,
+      n,
+      {
+        report: JSON.parse(readFileSync(join(dir, 'mutation.json'), 'utf8')),
+        times: JSON.parse(readFileSync(join(dir, 'file-times.json'), 'utf8')),
+      },
+      { lower: args.lower },
+    );
+    writeFileSync(DEALING, JSON.stringify(after, null, 2) + '\n');
+    const [was, is] = [before.slices[n], after.slices[n]];
+    console.log(`slice ${n}: score ${was.score} % → ${is.score} %, floor ${was.floor} % → ${is.floor} %, ${minutes(was.seconds)} → ${minutes(is.seconds)}`);
     return 0;
   }
 
