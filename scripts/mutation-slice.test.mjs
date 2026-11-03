@@ -851,6 +851,13 @@ test('ranges that overlap run a mutant twice, ranges that stop short or start la
   // One range alone is a file cut short, not a cut: nothing to move.
   const alone = await rangeProblems(dealtAs(keys('1-2000')), ['src/x.ts'], mutantsStub({ 'src/x.ts': [[3000, 3000]] }));
   assert.match(alone[0], /follow on from one another/);
+  // One mutant lost and another run twice give the same totals as a file with nothing wrong: 2 held, 2 in the file.
+  const balanced = await rangeProblems(dealtAs(keys('1-50'), keys('40-60')), ['src/x.ts'], mutantsStub({ 'src/x.ts': [[42, 44], [70, 70]] }));
+  assert.equal(balanced.length, 1);
+  assert.match(balanced[0], /which hold 2 mutants, and the file has 2: 1 mutant lies across a cut or outside the ranges, so no slice runs it; and 1 mutant is in two ranges, so two slices run it\./);
+  // Two identical mutants (one place, one mutation) are two, so a range that holds only one of them is a loss.
+  const twins = await rangeProblems(dealtAs(keys('1-50'), keys('51-99999')), ['src/x.ts'], async (file, mutate) => (mutate === true ? [{ location: { start: { line: 49, column: 0 }, end: { line: 51, column: 4 } } }, { location: { start: { line: 49, column: 0 }, end: { line: 51, column: 4 } } }, { location: { start: { line: 5, column: 0 }, end: { line: 5, column: 4 } } }] : mutate[0].start.line === 0 ? [{ location: { start: { line: 5, column: 0 }, end: { line: 5, column: 4 } } }] : []));
+  assert.match(twins[0], /hold 1 mutants, and the file has 3: 2 mutants lie across a cut/);
   // Each file is its own problem, in name order.
   const two = await rangeProblems(dealtAs(['src/y.ts:1-5', 'src/x.ts:1-5'], ['src/y.ts:6-99999', 'src/x.ts:6-99999']), ['src/x.ts', 'src/y.ts'], mutantsStub({ 'src/x.ts': [[4, 8]], 'src/y.ts': [[4, 8]] }));
   assert.deepEqual(two.map((text) => text.split(' ')[0]), ['src/x.ts', 'src/y.ts']);

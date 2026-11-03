@@ -47,8 +47,8 @@
  * score shows that it was lost. So every run of a slice first asks Stryker's
  * instrumenter (the version `npm run test:mutation` installs, the one that will
  * run the mutants) for the mutants of each file that is dealt in parts, whole
- * and part by part, and the night is red when the parts hold another number than
- * the file has. The message says which cut and the nearest line to move it to.
+ * and part by part, and the night is red when a mutant of the file is in no part or
+ * in two. The message says which cut and the nearest line to move it to.
  * `--check-ranges` does only that, for use when the file has been edited.
  *
  * THE FLOOR. A slice's floor is its measured score minus one percentage point,
@@ -427,9 +427,9 @@ function nearestFreeLine(cut, lo, hi, crossing) {
  * Whether every file the dealing cuts in line ranges still has each of its
  * mutants in exactly one of them. Stryker runs the mutants that lie wholly
  * inside a range, so a mutant that crosses a cut is in neither part and no slice
- * runs it, and ranges that overlap run a mutant twice: both show as the parts
- * holding another number of mutants than the file has. `mutantsOf(file, mutate)`
- * is the instrumenter's mutants of the file for `mutate` as Stryker passes it on
+ * runs it, and ranges that overlap run a mutant twice. Each mutant is followed
+ * to the ranges that hold it, so that one lost and one run twice do not make the
+ * totals agree. `mutantsOf(file, mutate)` is the instrumenter's mutants of the file for `mutate` as Stryker passes it on
  * (true, or ranges with lines from 0), the very ones a run of the part would
  * make. `files` are the files that exist; a file that is gone has nothing to
  * lose. Returns one text for each file that loses or doubles mutants, and none
@@ -448,12 +448,26 @@ export async function rangeProblems(dealing, files, mutantsOf) {
   for (const [file, ranges] of [...parts].filter(([file]) => present.has(file)).sort(([a], [b]) => (a < b ? -1 : 1))) {
     ranges.sort((a, b) => a.from - b.from);
     const all = await mutantsOf(file, true);
+    // Mutant by mutant, and not by the totals: a mutant lost at one cut and another run twice
+    // by two ranges that overlap would otherwise cancel out. A mutant is the same in the whole
+    // file's run and in a range's: where it is, what mutates it and what it becomes.
+    const mutantKey = (m) => JSON.stringify([m.location, m.mutatorName, m.replacement]);
+    const wanted = new Map();
+    for (const m of all) wanted.set(mutantKey(m), (wanted.get(mutantKey(m)) ?? 0) + 1);
+    const heldBy = new Map();
     let held = 0;
     for (const { from, to } of ranges) {
       const mutate = [{ start: { line: from - 1, column: 0 }, end: { line: to - 1, column: Number.MAX_SAFE_INTEGER } }];
-      held += (await mutantsOf(file, mutate)).length;
+      for (const m of await mutantsOf(file, mutate)) {
+        heldBy.set(mutantKey(m), (heldBy.get(mutantKey(m)) ?? 0) + 1);
+        held++;
+      }
     }
-    if (held === all.length) continue;
+    let lost = 0;
+    for (const [key, n] of wanted) lost += Math.max(0, n - (heldBy.get(key) ?? 0));
+    let doubled = 0;
+    for (const [key, n] of heldBy) doubled += Math.max(0, n - (wanted.get(key) ?? 0));
+    if (lost === 0 && doubled === 0) continue;
     const keys = ranges.map(({ key }) => key.slice(file.length));
     const crossing = all.map((m) => ({ from: m.location.start.line + 1, to: m.location.end.line + 1 }));
     const cuts = ranges.slice(0, -1).map(({ to }) => to);
@@ -461,12 +475,10 @@ export async function rangeProblems(dealing, files, mutantsOf) {
     // Each cut a mutant crosses moves to the nearest line none does, within the two parts it divides.
     const moved = cuts.map((to, i) => (isCrossed(to) ? nearestFreeLine(to, ranges[i].from, ranges[i + 1].to, crossing) : to));
     const movable = moved.every((line, i) => line !== null && line >= ranges[i].from && (i === 0 || line > moved[i - 1]));
-    const off = Math.abs(all.length - held);
-    const them = off === 1 ? 'it' : 'them';
-    const effect =
-      held < all.length
-        ? `${off} ${off === 1 ? 'mutant lies' : 'mutants lie'} across a cut or outside the ranges, so no slice runs ${them}`
-        : `${off} ${off === 1 ? 'mutant is' : 'mutants are'} in two ranges, so two slices run ${them}`;
+    const effect = [
+      ...(lost > 0 ? [`${lost} ${lost === 1 ? 'mutant lies' : 'mutants lie'} across a cut or outside the ranges, so no slice runs ${lost === 1 ? 'it' : 'them'}`] : []),
+      ...(doubled > 0 ? [`${doubled} ${doubled === 1 ? 'mutant is' : 'mutants are'} in two ranges, so two slices run ${doubled === 1 ? 'it' : 'them'}`] : []),
+    ].join('; and ');
     let fix;
     if (cuts.some(isCrossed) && movable) {
       const now = ranges.map(({ from, to }, i) => `:${i === 0 ? from : moved[i - 1] + 1}-${i === ranges.length - 1 ? to : moved[i]}`);
