@@ -234,6 +234,8 @@ jobs:
         with:
           name: mutation-report-slice-${{ matrix.slice }}
           path: reports/mutation/
+          # A run that wrote nothing measured nothing: the step is red, not a warning.
+          if-no-files-found: error
           retention-days: 30
 
   lighthouse:

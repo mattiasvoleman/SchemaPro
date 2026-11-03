@@ -40,63 +40,64 @@
     },
     {
       "slice": 2,
-      "seconds": 2536.2,
-      "mutants": 2211,
-      "detected": 1744,
-      "valid": 2186,
-      "score": 79.78,
-      "floor": 78,
+      "seconds": 3197.4,
+      "mutants": 2237,
+      "detected": 1771,
+      "valid": 2212,
+      "score": 80.06,
+      "floor": 79,
+      "measured": "2026-11-03",
       "files": {
         "src/gallring/gallring.service.ts": {
-          "seconds": 17,
+          "seconds": 17.3,
           "mutants": 178,
           "detected": 122,
           "valid": 174
         },
         "src/lesson-log/class-book.service.ts": {
-          "seconds": 28.2,
+          "seconds": 28.4,
           "mutants": 222,
           "detected": 121,
           "valid": 220
         },
         "src/optimization/optimization-proxy.service.ts:2093-99999": {
-          "seconds": 2342.3,
-          "mutants": 1425,
-          "detected": 1193,
-          "valid": 1415
+          "seconds": 2871.8,
+          "mutants": 1431,
+          "detected": 1199,
+          "valid": 1421
         },
         "src/optimization/room-loan-windows.ts": {
-          "seconds": 63.9,
+          "seconds": 165.5,
           "mutants": 81,
           "detected": 54,
           "valid": 75
         },
         "src/publication/other-school-clashes.ts": {
-          "seconds": 45.3,
-          "mutants": 183,
-          "detected": 157,
-          "valid": 182
+          "seconds": 70,
+          "mutants": 203,
+          "detected": 178,
+          "valid": 202
         },
         "src/realtime/cors-io.adapter.ts": {
-          "seconds": 6.4,
+          "seconds": 8,
           "mutants": 10,
           "detected": 10,
           "valid": 10
         },
         "src/staffing/staff-candidates.ts": {
-          "seconds": 20.9,
+          "seconds": 24.5,
           "mutants": 17,
           "detected": 17,
           "valid": 17
         },
         "src/supervision/lesson-clashes.ts": {
-          "seconds": 9.3,
+          "seconds": 8.6,
           "mutants": 64,
           "detected": 48,
           "valid": 62
         },
         "src/users/my-schools.service.ts": {
-          "seconds": 2.9,
+          "seconds": 3.3,
           "mutants": 31,
           "detected": 22,
           "valid": 31

@@ -14,6 +14,7 @@ import {
   FLOOR_RPS_MIN,
   gate,
   HEALTH_RPS_MIN,
+  loadRow,
   READ_SHARE_MIN,
   scenarioLines,
 } from './latency-gate.mjs';
@@ -421,20 +422,33 @@ test('the floor is the median of its rounds; a round that is wild upward moves n
   assert.equal(exitCodeOf(dead), 1, report(dead));
 });
 
-test("autocannon's errors and timeouts count with the non-2xx answers: a run that mostly failed is invalid, in any row", () => {
+test("autocannon's errors count with the non-2xx answers, a timeout once: a run that mostly failed is invalid, in any row", () => {
   // 90 of 8,910 attempts, a connection error count that autocannon keeps apart from requests.total.
   const errored = gate(edit(D, 'read:schedule-versions', { errors: 90, totalRequests: 8820 }));
   assert.equal(exitCodeOf(errored), 2, report(errored));
-  assert.ok(has(errored, '✗ non-2xx', 'GET /api/v1/schedule-versions', '1.0% (90/8910; non-2xx 0, errors 90, timeouts 0)'));
+  assert.ok(has(errored, '✗ non-2xx', 'GET /api/v1/schedule-versions', '1.0% (90/8910; non-2xx 0, errors 90, of which timeouts 0)'));
+  // The errors are attempts too: 89 of 8,909 is 0.999%, and 89 of the 8,820 answers alone would be 1.009%.
+  assert.equal(exitCodeOf(gate(edit(D, 'read:schedule-versions', { errors: 89, totalRequests: 8820 }))), 0);
+  // A row that carries only timeouts counts them.
   const timed = gate(edit(D, 'health', { timeouts: 400 }));
   assert.equal(exitCodeOf(timed), 2, report(timed));
-  assert.ok(has(timed, '✗ non-2xx', 'GET /health/ready', 'timeouts 400'));
-  // All three kinds add up: 30 + 30 + 30 of 8,880 attempts is 1.01%, and 30 + 29 + 29 of 8,878 is 0.99%.
-  assert.equal(exitCodeOf(gate(edit(D, 'floor:1', { non2xx: 30, errors: 30, timeouts: 30, totalRequests: 8820 }))), 2);
-  assert.equal(exitCodeOf(gate(edit(D, 'floor:1', { non2xx: 30, errors: 29, timeouts: 29, totalRequests: 8820 }))), 0);
+  assert.ok(has(timed, '✗ non-2xx', 'GET /health/ready', 'errors 400, of which timeouts 400'));
+  // autocannon's `errors` includes its timeouts. 60 timeouts are 60 failed attempts and not 120: they
+  // are 0.68% of 8,880 and no reason to call the run invalid (counted twice they were 1.34%).
+  const same = gate(edit(D, 'floor:1', { errors: 60, timeouts: 60, totalRequests: 8820 }));
+  assert.equal(exitCodeOf(same), 0, report(same));
+  // Non-2xx answers and connection errors do add up: 58 + 30 of 8,850 attempts is 0.994%, 59 + 30 is 1.00x%.
+  assert.equal(exitCodeOf(gate(edit(D, 'floor:1', { non2xx: 59, errors: 30, timeouts: 30, totalRequests: 8820 }))), 2);
+  assert.equal(exitCodeOf(gate(edit(D, 'floor:1', { non2xx: 58, errors: 30, timeouts: 30, totalRequests: 8820 }))), 0);
+  // Errors that are not timeouts count in full beside timeouts that are: 70 errors, 30 of them timeouts, 90 non-2xx.
+  const mixed = gate(edit(D, 'floor:1', { non2xx: 20, errors: 70, timeouts: 30, totalRequests: 8820 }));
+  assert.equal(exitCodeOf(mixed), 2, report(mixed));
+  assert.ok(has(mixed, '✗ non-2xx', 'round 1/3', '1.0% (90/8890; non-2xx 20, errors 70, of which timeouts 30)'));
   // A floor round that never got a request through, every attempt an error, is polluted and not just a 0.
   const dead = gate(edit(D, 'floor:2', { rps: 0, totalRequests: 0, errors: 25 }));
   assert.equal(exitCodeOf(dead), 2, report(dead));
+  // Said as all failed, not as a share of a count that is zero (over the responses alone it would be Infinity %).
+  assert.ok(has(dead, '✗ non-2xx', 'round 2/3', '100.0% (25/25; non-2xx 0, errors 25, of which timeouts 0)'), report(dead));
   // Rows that carry neither field, like the logged ones above, are as they were.
   assert.equal(exitCodeOf(gate(D)), 0);
 });
@@ -512,7 +526,7 @@ test('more than 1% non-2xx in any row is invalid: a read, health, 4 of 300 write
   const floor = gate(edit(D, 'floor:1', { non2xx: 445 }));
   assert.equal(exitCodeOf(floor), 2);
   assert.ok(has(floor, '✗ non-2xx', 'round 1/3', '5.0% (445/8889)'));
-  assert.ok(has(floor, 'INVALID: 1 scenario(s) exceeded 1% non-2xx'));
+  assert.ok(has(floor, 'INVALID: 1 scenario(s) exceeded 1% failed attempts (non-2xx answers, connection errors and timeouts)'));
   assert.ok(has(floor, 'Usual causes: an invalid --token (401)'));
 
   // Invalid wins over a failed gate in the same run.
@@ -547,4 +561,30 @@ test('each row prints its numbers and §2 as met or not met, the serial rows wit
     '  write baseline: GET floor, interleaved with the write',
     '      p50 1.0ms   p95 1.2ms   p99 1.7ms   max 9.4ms   300 serial samples   non-2xx 0/300',
   ]);
+});
+
+test("a load row takes autocannon's result field by field, with errors and timeouts carried as they come and a missing count as none", () => {
+  const scenario = { id: 'read:optimization-jobs', name: 'GET /api/v1/optimization/jobs', kind: 'read' };
+  // autocannon 8.0.0 for ten connections that never answered: run.js onTimeout does errors++ and timeouts++.
+  const hung = { latency: { p50: 0, p99: 0, max: 0 }, requests: { average: 0, total: 0 }, non2xx: 0, errors: 10, timeouts: 10 };
+  assert.deepEqual(loadRow(scenario, hung), {
+    id: 'read:optimization-jobs', scenario: 'GET /api/v1/optimization/jobs', kind: 'read',
+    p50Ms: 0, p99Ms: 0, maxMs: 0, rps: 0, totalRequests: 0, non2xx: 0, errors: 10, timeouts: 10,
+  });
+  // Unrounded throughput, the three latencies, and each count as it is.
+  const busy = { latency: { p50: 8, p99: 31, max: 140 }, requests: { average: 398.4375, total: 7969 }, non2xx: 3, errors: 4, timeouts: 2 };
+  assert.deepEqual(loadRow(scenario, busy), {
+    id: 'read:optimization-jobs', scenario: 'GET /api/v1/optimization/jobs', kind: 'read',
+    p50Ms: 8, p99Ms: 31, maxMs: 140, rps: 398.4375, totalRequests: 7969, non2xx: 3, errors: 4, timeouts: 2,
+  });
+  // A result that leaves out what it did not count has none of it, and not undefined.
+  const quiet = loadRow(scenario, { latency: { p50: 8, p99: 31, max: 140 }, requests: { average: 400 } });
+  assert.deepEqual([quiet.totalRequests, quiet.non2xx, quiet.errors, quiet.timeouts], [0, 0, 0, 0]);
+  // Through the gate: ten timeouts and nothing else is ten failed attempts of ten, and not twenty.
+  const verdict = gate(D.map((row) => (row.id === scenario.id ? loadRow(scenario, hung) : row)));
+  assert.equal(exitCodeOf(verdict), 2, report(verdict));
+  assert.ok(has(verdict, '✗ non-2xx', 'GET /api/v1/optimization/jobs', '100.0% (10/10; non-2xx 0, errors 10, of which timeouts 10)'), report(verdict));
+  // Every 50th request timing out, as autocannon counted it: 10 timeouts among 735 answers is 1.3 %.
+  const half = gate(D.map((row) => (row.id === scenario.id ? loadRow(scenario, { ...busy, requests: { average: 36.75, total: 735 }, non2xx: 0, errors: 10, timeouts: 10 }) : row)));
+  assert.ok(has(half, '1.3% (10/745; non-2xx 0, errors 10, of which timeouts 10)'), report(half));
 });

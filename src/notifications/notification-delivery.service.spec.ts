@@ -213,6 +213,37 @@ describe('NotificationDeliveryService (push)', () => {
     expect(sent[0]!.body).toBe('2 lektioner 19 okt–20 okt är inställda.');
   });
 
+  it('gives each device its owner’s notices and no one else’s, in the order they arrived, once per device, and nothing to a row nobody asked about', async () => {
+    // One group (the same school, type and opt-out rule) holding two kinds: a digest and its reversal.
+    const digest = (extra: Record<string, unknown>, recipients: Array<{ userId: string; notificationId: string }>) =>
+      lesson({ type: 'CANCELLATION_DIGEST', meta: { lessonCount: 2, startDate: '2026-10-19', endDate: '2026-10-20', ...extra }, recipients });
+    const device = (id: string, user: string, locale: string) => ({ token_id: `t-${id}`, user_id: user, token: `ExponentPushToken[${id}]`, locale, timezone: 'Europe/Stockholm' });
+    // The rows come back in an order of their own, with one for a person nobody asked about.
+    targets = [device('u1-sv', 'u1', 'sv'), device('stray', 'stray', 'sv'), device('u2', 'u2', 'sv'), device('u1-en', 'u1', 'en'), device('u3', 'u3', 'en')];
+    tx.$queryRaw.mockImplementation(async (sql: { strings: string[]; values: unknown[] }) => {
+      if (!sql.strings.join('?').includes('app.push_targets(')) return [];
+      targetCalls.push(sql);
+      return targets;
+    });
+    delivery.enqueue([
+      digest({ reversed: true }, [{ userId: 'u1', notificationId: 'n-r1' }, { userId: 'u3', notificationId: 'n-r3' }]),
+      digest({}, [{ userId: 'u1', notificationId: 'n-d1' }, { userId: 'u2', notificationId: 'n-d2' }, { userId: 'u1', notificationId: 'n-d1-again' }]),
+    ]);
+    await delivery.idle();
+    expect(targetCalls.map((call) => call.values[1])).toEqual([['u1', 'u3', 'u2']]);
+    const sent = expo.send.mock.calls.flatMap(([messages]) => messages as Array<{ to: string; title: string; data: { notificationId: string } }>);
+    expect(sent.map((m) => [m.to, m.data.notificationId])).toEqual([
+      ['ExponentPushToken[u1-sv]', 'n-r1'],
+      ['ExponentPushToken[u1-sv]', 'n-d1'],
+      ['ExponentPushToken[u2]', 'n-d2'],
+      ['ExponentPushToken[u1-en]', 'n-r1'],
+      ['ExponentPushToken[u1-en]', 'n-d1'],
+      ['ExponentPushToken[u3]', 'n-r3'],
+    ]);
+    // Each in its device's language: the same two kinds, told twice.
+    expect(sent.map((m) => m.title)).toEqual(['Lektioner blir av', 'Inställda lektioner', 'Inställda lektioner', 'Lessons back on', 'Lessons cancelled', 'Lessons back on']);
+  });
+
   it('sends each device its language, with only the notice id and type as data', async () => {
     delivery.enqueue([lesson()]);
     await delivery.idle();

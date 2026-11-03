@@ -124,8 +124,9 @@
  * read, on the 4-vCPU runners of a public repository. A local Docker Desktop
  * run is not comparable: its health p50 is a tenth of a read's, not a quarter.
  *
- * STILL INVALID, exit 2: more than 1% non-2xx in any row — latency over 401s
- * and 429s is not latency — and a required row that was not measured, since a
+ * STILL INVALID, exit 2: more than 1% of any row's attempts failed, a non-2xx
+ * answer, a connection error or a timeout (latency over 401s and 429s is not
+ * latency, and a connection that never answered has none) — and a required row that was not measured, since a
  * share without its numerator or denominator has no verdict. A run without
  * floor rounds is such a run.
  */
@@ -163,6 +164,32 @@ const ms = (v) =>
         : `${Math.round(v)}ms`;
 
 const reqs = (v) => (Number.isFinite(v) ? `${Math.round(v)}` : 'n/a');
+
+/**
+ * A load scenario's row from autocannon's result, as api-latency.mjs hands it to
+ * `gate`. Kept here, with nothing imported, so that the mapping of autocannon's
+ * fields is tested without autocannon: `scenario` is { id, name, kind } and
+ * `result` is what autocannon calls back with (`latency` in whole ms,
+ * `requests.average` and `requests.total`, `non2xx`, `errors`, `timeouts`).
+ */
+export const loadRow = (scenario, result) => ({
+  id: scenario.id,
+  scenario: scenario.name,
+  kind: scenario.kind,
+  p50Ms: result.latency.p50,
+  p99Ms: result.latency.p99,
+  maxMs: result.latency.max,
+  // Unrounded: the gate divides it.
+  rps: result.requests.average,
+  totalRequests: result.requests?.total ?? 0,
+  non2xx: result.non2xx ?? 0,
+  // Connections that failed and requests that timed out are not in `requests.total`; the
+  // gate counts them with the non-2xx answers, since a run that mostly failed measured nothing.
+  // A timeout is in both fields (autocannon: `errors` includes its timeouts, run.js onTimeout
+  // does errors++ and timeouts++), and the gate counts it once.
+  errors: result.errors ?? 0,
+  timeouts: result.timeouts ?? 0,
+});
 
 const median = (values) => {
   const sorted = [...values].sort((a, b) => a - b);
@@ -233,13 +260,18 @@ export function gate(results) {
   // a run that is mostly non-2xx reports flattering numbers for work that
   // never happened. Tight rather than "all failed": the first version fired
   // only at 100%, and a real run came back 99.3% rate-limited and passed.
-  const failedOf = (r) => r.non2xx + (r.errors ?? 0) + (r.timeouts ?? 0);
-  const attemptsOf = (r) => r.totalRequests + (r.errors ?? 0) + (r.timeouts ?? 0);
+  // autocannon counts a timeout in `errors` ("connection errors, including
+  // timeouts") and again in `timeouts`, so the two are not added: the larger is
+  // the connections that failed, and a row that carries only `timeouts` counts
+  // them. Neither is in `totalRequests`, which is the responses that came back.
+  const brokenOf = (r) => Math.max(r.errors ?? 0, r.timeouts ?? 0);
+  const failedOf = (r) => r.non2xx + brokenOf(r);
+  const attemptsOf = (r) => r.totalRequests + brokenOf(r);
   const polluted = results.filter((r) => attemptsOf(r) > 0 && failedOf(r) / attemptsOf(r) > MAX_NON_2XX_RATIO);
   for (const r of polluted) {
     const pct = ((failedOf(r) / attemptsOf(r)) * 100).toFixed(1);
     const detail =
-      (r.errors ?? 0) + (r.timeouts ?? 0) > 0 ? `; non-2xx ${r.non2xx}, errors ${r.errors ?? 0}, timeouts ${r.timeouts ?? 0}` : '';
+      brokenOf(r) > 0 ? `; non-2xx ${r.non2xx}, errors ${brokenOf(r)}, of which timeouts ${r.timeouts ?? 0}` : '';
     lines.push(`  ✗ ${label('non-2xx')}${r.scenario}   ${pct}% (${failedOf(r)}/${attemptsOf(r)}${detail})`);
   }
 
@@ -337,8 +369,8 @@ export function gate(results) {
   lines.push('');
   if (polluted.length > 0) {
     lines.push(
-      `INVALID: ${polluted.length} scenario(s) exceeded ${MAX_NON_2XX_RATIO * 100}% non-2xx ` +
-        'responses, so their latencies are not measurements of real work.',
+      `INVALID: ${polluted.length} scenario(s) exceeded ${MAX_NON_2XX_RATIO * 100}% failed attempts ` +
+        '(non-2xx answers, connection errors and timeouts), so their latencies are not measurements of real work.',
       'Usual causes: an invalid --token (401), or the rate limiter rejecting the load (429). ' +
         'The benchmark drives far more traffic than THROTTLE_LIMIT allows by design, so raise ' +
         'THROTTLE_LIMIT on the target for the run — the throttler is not what this gate is measuring.',
