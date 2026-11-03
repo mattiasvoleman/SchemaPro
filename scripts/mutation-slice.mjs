@@ -7,6 +7,7 @@
  *   node scripts/mutation-slice.mjs --list           the dealing: every slice, its floor and its files
  *   node scripts/mutation-slice.mjs --list --slice 3 one slice's files, and any new file placed in it
  *   node scripts/mutation-slice.mjs --plan           which slices a workflow run takes
+ *   node scripts/mutation-slice.mjs --check-ranges   whether a cut of a file dealt in line ranges still holds all its mutants
  *   node scripts/mutation-slice.mjs --deal --of 20 file-times.json ...   make a dealing
  *   node scripts/mutation-slice.mjs --remeasure reports/mutation/slice-3 [--lower]   a slice's new floor
  *
@@ -39,6 +40,16 @@
  * exact, from the file's mutants. `--deal ... --split <file>=<parts>@<mutation.json>`.
  * Edits shift the lines, and a mutant that moves into the next part moves its
  * score with it: the one point under the measured score is for that as well.
+ *
+ * A CUT A MUTANT CROSSES. A cut is made at a line no mutant crosses, but an edit
+ * above it moves the lines, and a mutant that starts before the cut and ends
+ * after it is wholly inside neither part: no slice runs it, and nothing in the
+ * score shows that it was lost. So every run of a slice first asks Stryker's
+ * instrumenter (the version `npm run test:mutation` installs, the one that will
+ * run the mutants) for the mutants of each file that is dealt in parts, whole
+ * and part by part, and the night is red when the parts hold another number than
+ * the file has. The message says which cut and the nearest line to move it to.
+ * `--check-ranges` does only that, for use when the file has been edited.
  *
  * THE FLOOR. A slice's floor is its measured score minus one percentage point,
  * rounded down. It is the slice's `break` threshold, so the night's job fails
@@ -73,7 +84,9 @@
  * Stryker's index.html and mutation.json, file-times.json (what each file cost
  * tonight) and summary.md (score against floor and target, every file's score,
  * weakest first). The summary is also appended to the Actions job summary. The
- * exit code is Stryker's.
+ * exit code is Stryker's, and 1 where Stryker's is 0 but the night measured
+ * nothing, scored under the floor, or lost mutants to a cut (exitCodeFor,
+ * rangeProblems).
  */
 
 import { spawnSync } from 'node:child_process';
@@ -90,6 +103,12 @@ const byName = (a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0);
 
 /** A dealt key is a file, or a file's line range: `src/a.ts:1-812`. */
 export const baseOf = (key) => key.replace(/:\d+-\d+$/, '');
+
+/** The lines a dealt key names, { from, to } from 1, or null for a whole file. */
+export function rangeOf(key) {
+  const match = /:(\d+)-(\d+)$/.exec(key);
+  return match ? { from: Number(match[1]), to: Number(match[2]) } : null;
+}
 const LAST_LINE = 99999;
 const COSTS_TIME = new Set(['Killed', 'Timeout', 'Survived']);
 
@@ -325,6 +344,16 @@ export function filesOf(dealing, n, files, placed) {
 }
 
 /**
+ * The mutants tonight's slice is expected to run: those the dealing gave its
+ * files that are still there, and the mutants counted for the new files placed
+ * in it. A file that is gone is not expected, and a slice that lost one is not
+ * short of mutants for it. `dealt` is the slice's `files`.
+ */
+export function expectedMutants(dealt, sliceFiles, placed) {
+  return sliceFiles.reduce((sum, key) => sum + (dealt[key]?.mutants ?? placed.find((p) => p.file === key)?.mutants ?? 0), 0);
+}
+
+/**
  * The files the config's `mutate` list names, in Stryker's own sense: patterns
  * in order, a `!` pattern taking files out of what the ones before it put in.
  */
@@ -340,23 +369,117 @@ export function filesToMutate(patterns, glob = (pattern) => globSync(pattern)) {
   return [...files].filter((file) => /\.[cm]?[jt]sx?$/.test(file)).sort();
 }
 
+let instrumenterOnce = null;
+
+/**
+ * Stryker's instrumenter, which makes the mutants a run would run, imported when
+ * it is first needed: the tests of this script run without Stryker installed.
+ * Takes [{ name, content, mutate }], `mutate` being true or Stryker's mutation
+ * ranges (lines from 0), and returns the API mutants.
+ */
+function instrumenter() {
+  instrumenterOnce ??= (async () => {
+    const { createInstrumenter } = await import('@stryker-mutator/instrumenter');
+    const { commonTokens } = await import('@stryker-mutator/api/plugin');
+    const { createInjector } = await import('typed-inject');
+    const quiet = {
+      trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {},
+      isTraceEnabled: () => false, isDebugEnabled: () => false, isInfoEnabled: () => false,
+      isWarnEnabled: () => false, isErrorEnabled: () => false, isFatalEnabled: () => false,
+    };
+    const instrumenter = createInstrumenter(createInjector().provideValue(commonTokens.logger, quiet));
+    return async (input) => (await instrumenter.instrument(input, { plugins: null, excludedMutations: [], ignorers: [] })).mutants;
+  })();
+  return instrumenterOnce;
+}
+
 /** Mutants per file, counted by Stryker's instrumenter. Only a file the dealing does not know needs it. */
 async function countMutants(files) {
   if (files.length === 0) return [];
-  const { createInstrumenter } = await import('@stryker-mutator/instrumenter');
-  const { commonTokens } = await import('@stryker-mutator/api/plugin');
-  const { createInjector } = await import('typed-inject');
-  const quiet = {
-    trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {},
-    isTraceEnabled: () => false, isDebugEnabled: () => false, isInfoEnabled: () => false,
-    isWarnEnabled: () => false, isErrorEnabled: () => false, isFatalEnabled: () => false,
-  };
-  const instrumenter = createInstrumenter(createInjector().provideValue(commonTokens.logger, quiet));
-  const input = files.map((name) => ({ name, content: readFileSync(name, 'utf8'), mutate: true }));
-  const { mutants } = await instrumenter.instrument(input, { plugins: null, excludedMutations: [], ignorers: [] });
+  const instrument = await instrumenter();
+  const mutants = await instrument(files.map((name) => ({ name, content: readFileSync(name, 'utf8'), mutate: true })));
   const perFile = new Map(files.map((file) => [file, 0]));
   for (const mutant of mutants) perFile.set(mutant.fileName, (perFile.get(mutant.fileName) ?? 0) + 1);
   return files.map((file) => ({ file, mutants: perFile.get(file) ?? 0 }));
+}
+
+/** One file's mutants for `mutate` as Stryker passes it on: true, or mutation ranges with lines from 0. */
+async function mutantsOf(file, mutate) {
+  const instrument = await instrumenter();
+  return instrument([{ name: file, content: readFileSync(file, 'utf8'), mutate }]);
+}
+
+/**
+ * The lines to move a cut to: the one nearest `cut` that no mutant crosses,
+ * between the start of the part before it and the end of the part after it
+ * (exclusive of the latter). `crossing` is [{ from, to }] per mutant, lines from 1.
+ */
+function nearestFreeLine(cut, lo, hi, crossing) {
+  const free = (line) => !crossing.some((m) => m.from <= line && m.to > line);
+  for (let distance = 1; distance < hi - lo; distance++) {
+    if (cut - distance >= lo && free(cut - distance)) return cut - distance;
+    if (cut + distance < hi && free(cut + distance)) return cut + distance;
+  }
+  return null;
+}
+
+/**
+ * Whether every file the dealing cuts in line ranges still has each of its
+ * mutants in exactly one of them. Stryker runs the mutants that lie wholly
+ * inside a range, so a mutant that crosses a cut is in neither part and no slice
+ * runs it, and ranges that overlap run a mutant twice: both show as the parts
+ * holding another number of mutants than the file has. `mutantsOf(file, mutate)`
+ * is the instrumenter's mutants of the file for `mutate` as Stryker passes it on
+ * (true, or ranges with lines from 0), the very ones a run of the part would
+ * make. `files` are the files that exist; a file that is gone has nothing to
+ * lose. Returns one text for each file that loses or doubles mutants, and none
+ * when the parts hold the files.
+ */
+export async function rangeProblems(dealing, files, mutantsOf) {
+  const present = new Set(files);
+  const parts = new Map();
+  for (const slice of dealing.slices) {
+    for (const key of Object.keys(slice.files)) {
+      const range = rangeOf(key);
+      if (range) parts.set(baseOf(key), [...(parts.get(baseOf(key)) ?? []), { key, ...range }]);
+    }
+  }
+  const problems = [];
+  for (const [file, ranges] of [...parts].filter(([file]) => present.has(file)).sort(([a], [b]) => (a < b ? -1 : 1))) {
+    ranges.sort((a, b) => a.from - b.from);
+    const all = await mutantsOf(file, true);
+    let held = 0;
+    for (const { from, to } of ranges) {
+      const mutate = [{ start: { line: from - 1, column: 0 }, end: { line: to - 1, column: Number.MAX_SAFE_INTEGER } }];
+      held += (await mutantsOf(file, mutate)).length;
+    }
+    if (held === all.length) continue;
+    const keys = ranges.map(({ key }) => key.slice(file.length));
+    const crossing = all.map((m) => ({ from: m.location.start.line + 1, to: m.location.end.line + 1 }));
+    const cuts = ranges.slice(0, -1).map(({ to }) => to);
+    const isCrossed = (line) => crossing.some((m) => m.from <= line && m.to > line);
+    // Each cut a mutant crosses moves to the nearest line none does, within the two parts it divides.
+    const moved = cuts.map((to, i) => (isCrossed(to) ? nearestFreeLine(to, ranges[i].from, ranges[i + 1].to, crossing) : to));
+    const movable = moved.every((line, i) => line !== null && line >= ranges[i].from && (i === 0 || line > moved[i - 1]));
+    const off = Math.abs(all.length - held);
+    const them = off === 1 ? 'it' : 'them';
+    const effect =
+      held < all.length
+        ? `${off} ${off === 1 ? 'mutant lies' : 'mutants lie'} across a cut or outside the ranges, so no slice runs ${them}`
+        : `${off} ${off === 1 ? 'mutant is' : 'mutants are'} in two ranges, so two slices run ${them}`;
+    let fix;
+    if (cuts.some(isCrossed) && movable) {
+      const now = ranges.map(({ from, to }, i) => `:${i === 0 ? from : moved[i - 1] + 1}-${i === ranges.length - 1 ? to : moved[i]}`);
+      const moves = cuts.flatMap((to, i) => (to === moved[i] ? [] : [`the cut at line ${to} to line ${moved[i]}`]));
+      fix = `move ${moves.join(' and ')}, the nearest ${moves.length === 1 ? 'line' : 'lines'} no mutant crosses, so that the keys of ${file} in ${DEALING} are ${now.join(', ')} (the figures of the parts then move a few mutants; the point under each measured score is for that)`;
+    } else if (cuts.some(isCrossed)) {
+      fix = `no line near the cut is free of the mutants that cross it, so cut ${file} somewhere else in ${DEALING}`;
+    } else {
+      fix = `make the keys of ${file} in ${DEALING} follow on from one another, the first from line 1 and the last to line ${LAST_LINE}`;
+    }
+    problems.push(`${file} is dealt in the line ranges ${keys.join(', ')}, which hold ${held} mutants, and the file has ${all.length}: ${effect}. Fix it: ${fix}; or make a new dealing with --deal.`);
+  }
+  return problems;
 }
 
 /** The slice's score and each file's from Stryker's JSON report, weakest file first. */
@@ -384,14 +507,25 @@ export const MIN_RAN = 0.9;
  * whose files are all gone, whose range matches no mutant, or whose report is
  * empty. `ran` is the number of mutants in the report, `expected` those the
  * dealing gave the slice (and the new files placed in it).
+ *
+ * The floor is compared here too, on the report's own score, and not left to
+ * Stryker's `thresholds.break`: a Stryker that read the threshold another way,
+ * or was killed after it wrote the report, would otherwise pass a slice that is
+ * under its floor. The comparison is Stryker's (`score < floor` fails, the
+ * floor itself passes).
  */
-export function exitCodeFor({ status, summary, ran, expected }) {
+export function exitCodeFor({ status, summary, ran, expected, floor }) {
+  if (!Number.isFinite(floor)) throw new Error('exitCodeFor needs the slice\'s floor');
   const stryker = status ?? 1;
   if (summary === null) return { code: stryker || 1, reason: 'Stryker left no report' };
   if (summary.total.valid === 0) return { code: stryker || 1, reason: 'the report holds no valid mutant, and a score of n/a is not a pass' };
+  if (summary.total.score < floor) {
+    return { code: stryker || 1, reason: `the score ${pct(summary.total.score)} is under the slice's floor of ${floor} %, whatever Stryker's own exit code says` };
+  }
   if (ran < expected * MIN_RAN) {
     return { code: stryker || 1, reason: `only ${ran} of the slice's ${expected} mutants were in the report (at least ${Math.ceil(expected * MIN_RAN)} are expected): Stryker finished, so a file in the slice has lost code or the slice is not the one that was dealt; if the code was removed on purpose, run --remeasure on this run's artifact to count the slice again and set its floor` };
   }
+  if (status === null || status === undefined) return { code: 1, reason: 'Stryker was stopped by a signal after it wrote its report, so the run is not taken as finished' };
   return { code: stryker, reason: null };
 }
 
@@ -456,6 +590,7 @@ function parseArgs(argv, env) {
   return {
     asked: value('--slice') || env.MUTATION_SLICE || '',
     plan: flag('--plan'),
+    checkRanges: flag('--check-ranges'),
     list: flag('--list'),
     deal: flag('--deal'),
     remeasure: value('--remeasure') ?? null,
@@ -546,6 +681,14 @@ async function main() {
   const base = JSON.parse(readFileSync(BASE_CONFIG, 'utf8'));
   const files = filesToMutate(base.mutate);
   const known = new Set(dealing.slices.flatMap((s) => Object.keys(s.files).map(baseOf)));
+
+  if (args.checkRanges) {
+    const problems = await rangeProblems(dealing, files, mutantsOf);
+    for (const problem of problems) console.error(problem);
+    if (problems.length === 0) console.log('Every file dealt in line ranges has each of its mutants in exactly one range.');
+    return problems.length > 0 ? 1 : 0;
+  }
+
   const placement = placeNew(dealing, files, await countMutants(files.filter((f) => !known.has(f))));
 
   if (args.list) {
@@ -565,6 +708,8 @@ async function main() {
   }
 
   const [n] = plan({ input: args.asked, of });
+  // A cut that a mutant crosses loses it from every slice: found before the slice is run.
+  const crossed = await rangeProblems(dealing, files, mutantsOf);
   const chosen = dealing.slices[n];
   const sliceFiles = filesOf(dealing, n, files, placement.placed);
   const notes = dealingNotes(placement, n);
@@ -574,6 +719,8 @@ async function main() {
   if (process.env.GITHUB_ACTIONS) console.log('::group::The slice');
   printSlice(chosen, n, of, chosen.floor, sliceFiles, notes, placement.placed);
   if (process.env.GITHUB_ACTIONS) console.log('::endgroup::');
+  // Said here, outside the collapsed group, and again in the summary; the slice is run all the same, since its score is true, and the night is red.
+  for (const problem of crossed) console.error(`${process.env.GITHUB_ACTIONS ? '::error::' : ''}${problem}`);
 
   if (sliceFiles.length === 0) {
     console.error(`Slice ${n} has no file to mutate: every file in the dealing is gone. A night that mutated nothing is not a pass; make a new dealing with --deal.`);
@@ -599,7 +746,7 @@ async function main() {
       2,
     ) + '\n',
   );
-  const slice = { slice: n, of, mutants: chosen.mutants, floor: chosen.floor, measured: dealing.measured, files: sliceFiles, notes };
+  const slice = { slice: n, of, mutants: chosen.mutants, floor: chosen.floor, measured: dealing.measured, files: sliceFiles, notes: [...notes, ...crossed] };
   writeFileSync(join(dir, 'slice.json'), JSON.stringify({ ...slice, date: new Date().toISOString() }, null, 2) + '\n');
 
   // A report left by an earlier run of the slice is not this run's: without it, a Stryker that dies is read as the one that finished.
@@ -623,10 +770,11 @@ async function main() {
   }
 
   const ran = Object.values(report?.files ?? {}).reduce((sum, f) => sum + f.mutants.length, 0);
-  const expected = sliceFiles.reduce((sum, key) => sum + (chosen.files[key]?.mutants ?? placement.placed.find((p) => p.file === key)?.mutants ?? 0), 0);
-  const { code, reason } = exitCodeFor({ status: stryker.status, summary, ran, expected });
+  const expected = expectedMutants(chosen.files, sliceFiles, placement.placed);
+  const { code, reason } = exitCodeFor({ status: stryker.status, summary, ran, expected, floor: chosen.floor });
   if (reason !== null) console.error(`Slice ${n}: ${reason}.`);
-  return code;
+  if (crossed.length > 0) console.error(`Slice ${n}: the line ranges lose mutants (above), so the night is red until a cut is moved or the dealing is made again.`);
+  return crossed.length > 0 ? code || 1 : code;
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
