@@ -28,11 +28,11 @@ could be evaluated at all.
 | API coverage | ✗ 95.09% vs 95% (ratcheted at 95; remainder is module wiring) |
 | Mobile coverage | ✗ 12.83% vs 95% (first floor at 12; runner stood up 2026-08-22) |
 | Solver coverage | ✗ 89.50% vs 95% (ratcheted at 81) |
-| Mutation score | ✗ 71.31% of the API vs 85% (2026-11-02: 48,433 of 67,921 reachable mutants detected, in 279 files); gated one slice a night against the slice's own floor (59–88%), so that it fails when a slice gets worse |
+| Mutation score | ✗ 71.31% of the API vs 85% (2026-11-02: 48,433 of 67,921 valid mutants detected, 5,610 of them uncovered ones that count as survived, in 279 files); gated one slice a night against the slice's own floor (59–88%), so that it fails when a slice gets worse |
 | Bundle size | ✓ pass (tiered; 30/30 routes, shared 126.1/130KB) |
 | Solver, 2,000 students | ✗ 1,300 validated (~9.5 min); 2,000 now measured honestly: TIMEOUT at 570s |
 | Web dependency audit | ✓ pass (0/0/0) |
-| API P99 latency | ✗ §2 not met on the CI runner: reads p99 46–181ms vs 50ms (their p50 35–61ms, 56–61ms on the slowest CPU model), write p99 17–167ms vs 150ms over 300 samples; gated relative to the run's authenticated-read floor instead, where sixteen healthy runs on three CPU models pass (read shares 0.871–0.962 vs ≥ 0.80) and a handler made 22% more expensive fails 4 of 4 |
+| API P99 latency | ✗ §2 not met on the CI runner: reads p99 46–181ms vs 50ms (their p50 35–61ms, 56–61ms on the slowest CPU model), write p99 17–167ms vs 150ms over 300 samples; gated relative to the run's authenticated-read floor instead, where sixteen healthy runs on three CPU models pass (read shares 0.871–0.962 vs ≥ 0.80) and a handler with four extra statements (about 22% more expensive, as its share has it) fails 4 of 4 |
 | Lighthouse LCP/TTI | — not yet run |
 | Web unit coverage | ✗ 88.98% vs 95% (ratcheted at 87; harness landed) |
 | INP | — not lab-measurable at all |
@@ -117,7 +117,7 @@ grows; never lower one to green a build.
 
 ### The mutation gate: a slice of the API a night, against the slice's own floor
 
-**What it requires, since 2026-11-03.** `quality-gates.yml` → mutation mutates one of twenty slices of the API each night and fails when that slice scores under *its floor*: its measured score minus one percentage point, rounded down, checked in beside the files of the slice in `scripts/mutation-slices.json`. The slice is the day of the year (UTC) modulo 20, so the whole API is covered every twenty nights. A `workflow_dispatch` takes one slice, a list (`3,7`) or `all` (`mutation_slice`), ten jobs at a time. §2's 85% stays the target; the report prints it beside the floor, and it is **not met**: measured on 2026-11-02, 48,433 of the 67,921 mutants a test can reach are detected, **71.31%**, and of the twenty slices two are at 85 (slice 1 at 89.26%, slice 11 at 86.39%). The floors run from 59% to 88%. The gate is a ratchet: it fails when a slice gets worse, never because the target is missed, and the target moves into reach by raising the floors as tests are written.
+**What it requires, since 2026-11-03.** `quality-gates.yml` → mutation mutates one of twenty slices of the API each night and fails when that slice scores under *its floor*: its measured score minus one percentage point, rounded down, checked in beside the files of the slice in `scripts/mutation-slices.json`. The slice is the day of the year (UTC) modulo 20, so the whole API is covered every twenty nights within a year (across a new year slices 1 to 5 run twice in a row and the longest wait for a slice is 25 or 26 nights). A `workflow_dispatch` takes one slice, a list (`3,7`) or `all` (`mutation_slice`), ten jobs at a time. §2's 85% stays the target; the report prints it beside the floor, and it is **not met**: measured on 2026-11-02, 48,433 of the 67,921 valid mutants are detected, **71.31%** (5,610 of the 67,921 are mutants no test reaches, which count as survived, as they always did; scored on covered code alone it would be 77.73%), and of the twenty slices two are at 85 (slice 1 at 89.26%, slice 11 at 86.39%). The floors run from 59% to 88%. The gate is a ratchet: it fails when a slice gets worse, never because the target is missed, and the target moves into reach by raising the floors as tests are written.
 
 **Why a slice.** On 2026-10-06, the last green night, the job mutated 57 files and 7,522 mutants (1,774 tests) in 41:50 and scored 94.07%. On 2026-11-02 it was 280 files, 73,861 mutants and 7,749 tests, with `mutate` unchanged since 2026-09-13: the API had grown about tenfold in four weeks. The runner gets through about 50 mutants a minute now against about 180 then, so the whole set is half a day of it, and the 90 minutes of a job reach one part in seven. What was tried, all on the 4-vCPU runners:
 
@@ -135,7 +135,7 @@ Mutant count says nothing about time. Among the thirty dearest files the time ru
 **What the score leaves out.** Three things, and they are in every floor:
 
 - **Generated code**: `src/**/*.generated.ts` is not mutated. It is one file today, `integration/ss12000-v2/s1-provider.generated.ts`, S1's schemas and parameters as a data module, 3,225 of the 73,861 mutants; a mutant there changes what the generator wrote, not anything a test of the gateway answers for.
-- **Static mutants** (`ignoreStatic`): mutants in code that runs when a module loads (a top-level constant, a lookup table) cannot be pointed at one test, so Stryker would run the whole suite for each. In the 20-slice run Stryker warned, for 18 of the 20 slices, that they were 1–12% of the slice's mutants and, by its own estimate, 42–94% of its test time; they are not run, and count neither as detected nor as undetected. The estimate is Stryker's and the saving was not isolated (the runs that differ in it differ in their slices too); what is given up is the constants and tables no test is pointed at.
+- **Static mutants** (`ignoreStatic`): mutants in code that runs when a module loads (a top-level constant, a lookup table) cannot be pointed at one test, so Stryker would run the whole suite for each. In the 20-slice run Stryker warned, for 18 of the 20 slices, that they were 1–12% of the slice's mutants and, by its own estimate, 42–94% of its test time; they are not run, and count neither as detected nor as undetected. The estimate is Stryker's and the saving was not isolated (the runs that differ in it differ in their slices too); what is given up is the constants and tables no test is pointed at. 2,419 of the 70,636 mutants (3.4%) are ignored this way. It does not flatter the score: on the seven slices of the 20-slice run that finished before the option, the static mutants that were valid were detected at 76.9% against 66.6% for the rest, so leaving them out lowers a slice's score by 0.1–0.6 points.
 - **What counts**: as Stryker counts it, detected = killed or timed out, undetected = survived or not covered by any test (such a mutant takes no time to decide), and mutants that are ignored or do not compile count in neither.
 
 **The slices as measured** (the seconds are wall time of the mutation phase; the figures are from 2026-11-02, with a mutant's time limit of 60 seconds, and a night is somewhat shorter now that it is 10):
@@ -173,7 +173,9 @@ Mutant count says nothing about time. Among the thirty dearest files the time ru
 
 **What a red night is.** The job says which: *under its floor* (the summary names the weakest files; the tests got worse, or a new file in the slice is not covered); *the runner has received a shutdown signal* (not a score: run it again; it ended 3 of the 70 jobs of the three slice runs, at random, and slice 14 four times at one mutant, below); *no report* (Stryker did not finish; the log has its progress).
 
-**A mutant that kills the runner.** Slice 14 of the 40-slice run ended four times with "The runner has received a shutdown signal", at the same point (mutant 916 of 1,687), whatever was done to Stryker's processes: a lower priority (`nice`) and a 3 GB cap on Node's heap changed nothing. Bisecting by line range on CI (`mutate: file:from-to`, a throwaway workflow) narrowed it to the 14 mutants wholly inside lines 201–215 of `src/notifications/notification-delivery.service.ts`, and there the job died with a 60-second time limit for a mutant, with one worker, with a 1 GB heap and with two workers, and went through in about a minute with a limit of 8 and of 3 seconds (run 41554633962). `timeoutMS` is therefore 10 seconds. Which mutant it is and what it does to the machine is not established; the two that also time out on a laptop, `if (false)` and `===` for `if (notice.userId !== target.user_id) continue` on line 214, which make `push()` build a message for every recipient and notice pair, are the likely ones. A Timeout counts as detected, so the shorter limit can raise a score and not lower it.
+**A mutant that kills the runner.** Slice 14 of the 40-slice run ended four times with "The runner has received a shutdown signal", at the same point (mutant 916 of 1,687), whatever was done to Stryker's processes: a lower priority (`nice`) and a 3 GB cap on Node's heap changed nothing. Bisecting by line range on CI (`mutate: file:from-to`, a throwaway workflow) narrowed it to the 14 mutants wholly inside lines 201–215 of `src/notifications/notification-delivery.service.ts`, and there the job died with a 60-second time limit for a mutant, with one worker, with a 1 GB heap and with two workers, and went through in about a minute with a limit of 8 and of 3 seconds (run 41554633962). `timeoutMS` is therefore 10 seconds.
+
+The mechanism was found afterwards, by running the mutants against that file's own digest test on a laptop. `if (notice.userId !== target.user_id) continue;` is on line 213, and turned into `if (false) continue;` (or `===`) it makes `push()` build a message for every pair of recipient and notice: 1,203 × 1,203, about 1.45 million messages with their formatted text, in the test of a whole-school digest. That was 3.4 GB after 5 seconds and 7.1 GB after 10, outside V8's heap limit, which is why the heap caps did nothing; no network is reached, the transport is mocked. With four workers and two such mutants side by side, a 16 GB runner does not hold them. So `timeoutMS` is a memory guard more than a time limit: it has to end the process before the memory is gone, a faster CPU allocates more in the same ten seconds, and it should not be raised. The square is in the code (index the group's notices by user) and is a follow-up, not part of this change. A Timeout counts as detected, so the shorter limit can raise a score and not lower it; of the 70,636 mutants 155 timed out at 60 seconds. Only slices 0, 2 and 15 and the nine files of slice 14 have run at 10 seconds, and the first night of each other slice, and of slice 15 in particular, will be the check of its floor.
 
 **Final runs.** Slices 0, 2 and 15 of this dealing went through the real nightly workflow on the pull request's branch (`mutation_slice=0,2,15`, run 41557289392). All three passed against their floors and reproduced the measured scores to the hundredth:
 
@@ -185,7 +187,7 @@ Mutant count says nothing about time. Among the thirty dearest files the time ru
 
 Each took less than the 42–44 minutes the dealing says; the dealing was measured with a limit of 60 seconds for a mutant, now 10, and on whatever CPU those runners drew, and which of the two accounts for the difference is not established. Slice 2 shows that a line-range part runs in the real flow, slice 15 that the runner survives the mutants that killed it. The same run's latency job passed (floor 449 req/s on an EPYC 7763, reads at 0.904 and 0.914 of it).
 
-**The weakest files, for the tests that raise the floors.** Of the 67,921 mutants a test can reach, 19,488 are undetected. A run's `summary.md` ranks the slice's files, weakest first; in the three final slices the weakest are `common/utils/prisma-errors.ts` (131 survived) in slice 0; `lesson-log/class-book.service.ts` (55.00%, 94 survived), `gallring/gallring.service.ts` (70.11%, 44) and `users/my-schools.service.ts` in slice 2; `cover/cover-reports.service.ts` (53.67%, 78), `cover/cover-decisions.ts` and `users/per-login-throttler.guard.ts` in slice 15.
+**The weakest files, for the tests that raise the floors.** Of the 67,921 valid mutants, 19,488 are undetected (13,878 survived and 5,610 reached by no test). A run's `summary.md` ranks the slice's files, weakest first; in the three final slices the weakest are `common/utils/prisma-errors.ts` (131 survived) in slice 0; `lesson-log/class-book.service.ts` (55.00%, 94 survived), `gallring/gallring.service.ts` (70.11%, 44) and `users/my-schools.service.ts` in slice 2; `cover/cover-reports.service.ts` (53.67%, 78), `cover/cover-decisions.ts` and `users/per-login-throttler.guard.ts` in slice 15.
 
 ### Mutation score is measured only over files that have tests
 
@@ -445,9 +447,10 @@ they do not scale alike with the CPU:
 
 On the same tree, with no change, the share of health fell from 0.20 to 0.12
 with the CPU the night drew, and not one of the sixteen reached 0.20. The
-nightly agrees: of the 35 runs whose logs survive, 2026-09-30 to 2026-11-02, 33
-failed, at shares of 0.121–0.205, while health ranged 2091–5715 req/s and the
-reads 395–761. The two that passed (10-03, 10-04) were 0.201–0.204. The floor
+nightly agrees: of the 35 runs whose logs survive, 2026-09-30 to 2026-11-02,
+32 had a read under 0.20 (31 of the 34 scheduled ones), at shares of
+0.121–0.205, while health ranged 2091–5715 req/s and the reads 395–761. The
+three scheduled runs that passed (10-03, 10-04, 10-08) were 0.201–0.204. The floor
 is a read without its own query, so it moves with the CPU as the reads do: its
 share of the reads has a CV of 2.1% on schedule-versions and 1.5% on
 optimization/jobs where the share of health has 15%.
@@ -517,19 +520,36 @@ before looking at the tree; two reds in a row are not this.
 **What it reaches, on a handler.** The same tree with K extra `SELECT 1`
 statements compiled into `optimization/jobs` only, on 13 further runners of the
 same three models (run 41443397511; the switches existed on that branch and are
-not in the tree). The injected cost is read off the share: the healthy median
-0.932 ÷ the variant's mean.
+not in the tree). What was measured is K: two extra statements passed 3 of 3,
+four failed 4 of 4, eight and twelve failed 3 of 3 each; K = 3 was never run.
+The cost in the table is derived from the share (the healthy median 0.932 ÷ the
+variant's mean), about 5% a statement, so the line between pass and fail lies
+between about +11% and +22%.
 
-| Variant | runs | cost of the read | optimization/jobs ÷ floor | fails at 0.80 | old gate, jobs ÷ health |
+| Extra statements | runs | cost of the read, derived from the share | optimization/jobs ÷ floor | fails at 0.80 | old gate, jobs ÷ health |
 | :--- | ---: | ---: | ---: | ---: | ---: |
-| 2 statements | 3 | +10% | 0.828–0.853 | 0 of 3 | 0.111–0.174 |
-| 4 | 4 | +22% | 0.752–0.787 | 4 of 4 | 0.154–0.160 |
-| 8 | 3 | +40% | 0.647–0.682 | 3 of 3 | 0.126–0.136 |
-| 12 | 3 | +53% | 0.567–0.648 | 3 of 3 | 0.094–0.118 |
+| 2 | 3 | about +10% | 0.828–0.853 | 0 of 3 | 0.111–0.174 |
+| 4 | 4 | about +22% | 0.752–0.787 | 4 of 4 | 0.154–0.160 |
+| 8 | 3 | about +40% | 0.647–0.682 | 3 of 3 | 0.126–0.136 |
+| 12 | 3 | about +53% | 0.567–0.648 | 3 of 3 | 0.094–0.118 |
 
 schedule-versions beside it, on the same path without the change, stayed at
 0.79–1.03: one of the 13 below 0.80 (the 0.792 above). The old gate failed all
 13, as it failed every healthy run.
+
+**What each read catches.** Only `optimization/jobs` is a handler the floor does
+not share. The floor is `GET /api/v1/schedule-versions` for a year that does not
+exist, and the read is the same route, `ScheduleVersionsController.list` and its
+handler, for the benchmark's year; only the academic year's UUID differs. A
+regression in that handler, or in `ScheduleVersionsService.list`, slows the read
+and the floor alike, so schedule-versions ÷ floor moves only with what grows
+with the year's rows (the seed has none), and otherwise measures noise and a
+constant level difference: in the 25 runs checked afterwards the floor ran 7–8%
+above both reads, which the runs cannot tell apart as the order (floor last) or
+the year that exists against the one that does not. In effect the gate checks
+one handler. A second one worth checking needs a floor that none of the gated
+reads shares, and a new denominator needs new history; neither is part of this
+change.
 
 **What it cannot see.** A regression on the path every authenticated request
 shares — the token, the identity lookup, the guards, the RLS transaction —
