@@ -51,6 +51,12 @@ on:
         type: boolean
         default: false
 
+# Nothing here writes to the repository: the artifacts go through the runtime
+# token that upload-artifact uses, not GITHUB_TOKEN. The mutation job runs
+# mutated code and an unpinned `npm install`; its token reads and no more.
+permissions:
+  contents: read
+
 concurrency:
   group: quality-gates-${{ github.ref }}
   cancel-in-progress: false
@@ -117,9 +123,10 @@ jobs:
           retention-days: 14
 
   # Which slices this run takes, as a matrix for the job below: tonight's one
-  # on the schedule, the ones asked for on a dispatch, or all of them. Node is
-  # the runner's own; the script's plan mode imports nothing and reads the
-  # number of slices from the checked-in dealing.
+  # on the schedule, the ones asked for on a dispatch, or all of them. The
+  # script's plan mode imports nothing and reads the number of slices from the
+  # checked-in dealing, but the script as a whole wants Node 22 (fs.globSync),
+  # so the job sets it up as the mutation job does.
   #
   # The inputs reach the script through env, never pasted into its text: an
   # expression is pasted before bash parses it, so a quote in the value would
@@ -134,11 +141,20 @@ jobs:
       of: ${{ steps.plan.outputs.of }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+      # pipefail: a plan that fails must fail the step, and not leave `slices`
+      # empty for the next job's matrix to choke on.
       - name: Plan
         id: plan
         env:
           MUTATION_SLICE: ${{ inputs.mutation_slice }}
-        run: node scripts/mutation-slice.mjs --plan | tee -a "$GITHUB_OUTPUT"
+        run: |
+          set -o pipefail
+          node scripts/mutation-slice.mjs --plan | tee -a "$GITHUB_OUTPUT"
 
   # One slice of the API per job. On 2026-10-06 this job mutated 57 files and
   # 7,522 mutants in 41 minutes; on 2026-11-02 it was 280 files and 73,861
@@ -148,7 +164,7 @@ jobs:
   # measured score minus a point, which is what the job fails under. §2's 85%
   # stays the target and is printed beside it.
   mutation:
-    name: API — mutation score, slice ${{ matrix.slice }} of ${{ needs.mutation-plan.outputs.of }} (Stryker ≥85%)
+    name: API — mutation score, slice ${{ matrix.slice }} of ${{ needs.mutation-plan.outputs.of }} (against its floor)
     needs: mutation-plan
     runs-on: ubuntu-latest
     if: (github.event_name == 'schedule' || inputs.run_mutation) && !inputs.latency_floor
@@ -166,6 +182,8 @@ jobs:
       MUTATION_SLICE: ${{ matrix.slice }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
       # Node 22, as in ci.yml's API jobs: the two workflows build and test the
       # same package, so a version that differs here gates code on a runtime
