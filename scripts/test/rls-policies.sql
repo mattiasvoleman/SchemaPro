@@ -36352,3 +36352,319 @@ BEGIN
   END IF;
 END $$;
 ROLLBACK;
+
+
+-- ---------------------------------------------------------------------------
+-- Section 290: en lokal timplan gäller ett årskurspann, och en beslutad plan
+-- får det en gång (LocalTimplans."gradeFrom", "gradeTo", "gradeSpanSetAt",
+-- "gradeSpanSetByUserId", 20261219090000).
+--
+-- The check (P1) counts only the årskurser a plan is for. The columns are the
+-- plan's own, so the arms of section 16 cover them; what this section holds is
+-- what the migration added:
+--   * the CHECKs: both or neither, 0..11, from <= to, and a stamp only on a
+--     decided plan that has a span, both stamps or none;
+--   * a DRAFT takes, changes and clears a span freely, and carries no stamp: a
+--     writer with a JWT subject who names one on an INSERT, on an UPDATE of a
+--     draft or on the transition that decides it finds it cleared;
+--   * a DECIDED plan with no span takes one ONCE, from NULL, with nothing else
+--     different in the same UPDATE, and the trigger writes who (the caller, not
+--     the user the writer names) and when (now(), not the date the writer
+--     names). A second change, the same values again, a clearing, half a pair,
+--     the stamps alone, and the span beside a different name, weeks, status,
+--     decision note or copy pointer are TP409, as every change to a decided
+--     plan is. A plan decided WITH a span changes in no way;
+--   * the minutes stay put: a decided plan's entries refuse INSERT, UPDATE and
+--     DELETE after the span is set, as before;
+--   * the same through PostgREST's role (authenticated) as through the API's;
+--   * the statements the API that serves before the migration sends name
+--     none of the four columns, and do what they did: a plan born with no span,
+--     a draft renamed, a decided plan refused;
+--   * the setter's key is the decider's: (id, schoolId), ON DELETE and ON UPDATE
+--     RESTRICT, so the record keeps the name.
+-- The owner's side (no JWT subject: the stamps must be stated) is in
+-- rls-owner-checks.sql.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school  uuid := app.current_school_id();
+  me      uuid := app.current_user_id();
+  pupil   uuid;
+  b1      uuid;
+  s1      uuid;
+  fresh   uuid;
+  draft   uuid;
+  spanned uuid;
+  plain   uuid;
+  pointed uuid;
+  other   uuid;
+  via     text;
+  n       bigint;
+  rec     record;
+  c       text;
+BEGIN
+  IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'span: expected to be acting as an admin, am %', app.current_user_role();
+  END IF;
+  SELECT id INTO b1 FROM "NationalTimplanVersions" WHERE code = 'SFS2023:945/B1';
+  SELECT id INTO pupil FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' LIMIT 1;
+  IF pupil IS NULL THEN
+    RAISE EXCEPTION 'span: the fixture school has no pupil to name as a setter';
+  END IF;
+
+  -- Every plan that exists is NULL: nothing was backfilled.
+  SELECT count(*) INTO n FROM "LocalTimplans"
+   WHERE "gradeFrom" IS NOT NULL OR "gradeTo" IS NOT NULL
+      OR "gradeSpanSetAt" IS NOT NULL OR "gradeSpanSetByUserId" IS NOT NULL;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'span: % existing plan(s) already carry a span or a stamp', n;
+  END IF;
+
+  INSERT INTO "Subjects" ("schoolId", name, code, "nationalCode", "updatedAt")
+  VALUES (school, 'RLS-span-matematik', 'RLSSPAN1', 'MA', now());
+  SELECT id INTO s1 FROM "Subjects" WHERE "schoolId" = school AND code = 'RLSSPAN1';
+
+  -- The CHECKs, on a draft.
+  FOREACH c IN ARRAY ARRAY['4,NULL', 'NULL,9', '9,4', '-1,4', '4,12', '12,12'] LOOP
+    BEGIN
+      EXECUTE format(
+        $q$INSERT INTO "LocalTimplans" ("schoolId", name, "schoolForm", "nationalTimplanVersionId", "gradeFrom", "gradeTo", "updatedAt")
+           VALUES (%L, 'RLS-span check %s', 'GRUNDSKOLA', %L, %s, now())$q$,
+        school, c, b1, c);
+      RAISE EXCEPTION 'span: a plan with the span (%) was stored', c;
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+  END LOOP;
+  FOREACH c IN ARRAY ARRAY['0,11', '7,7', '0,0'] LOOP
+    EXECUTE format(
+      $q$INSERT INTO "LocalTimplans" ("schoolId", name, "schoolForm", "nationalTimplanVersionId", "gradeFrom", "gradeTo", "updatedAt")
+         VALUES (%L, 'RLS-span ok %s', 'GRUNDSKOLA', %L, %s, now())$q$,
+      school, c, b1, c);
+  END LOOP;
+
+  -- A draft takes, changes and clears a span, and carries no stamp, whatever
+  -- the writer says: on an INSERT, on an UPDATE, and at the decision.
+  INSERT INTO "LocalTimplans"
+    ("schoolId", name, "schoolForm", "nationalTimplanVersionId", "gradeFrom", "gradeTo",
+     "gradeSpanSetAt", "gradeSpanSetByUserId", "updatedAt")
+  VALUES (school, 'RLS-span utkast', 'GRUNDSKOLA', b1, 4, 9, '2019-01-01', pupil, now())
+  RETURNING id INTO draft;
+  SELECT "gradeSpanSetAt" AS set_at, "gradeSpanSetByUserId" AS set_by INTO rec FROM "LocalTimplans" WHERE id = draft;
+  IF rec.set_at IS NOT NULL OR rec.set_by IS NOT NULL THEN
+    RAISE EXCEPTION 'span: a draft was born with a span stamp (%, %)', rec.set_at, rec.set_by;
+  END IF;
+  UPDATE "LocalTimplans" SET "gradeFrom" = 0, "gradeTo" = 5, "updatedAt" = now() WHERE id = draft;
+  UPDATE "LocalTimplans" SET "gradeFrom" = 4, "gradeTo" = 9, "gradeSpanSetAt" = now(), "gradeSpanSetByUserId" = me, "updatedAt" = now() WHERE id = draft;
+  SELECT "gradeSpanSetAt" AS set_at, "gradeSpanSetByUserId" AS set_by, "gradeFrom" AS f, "gradeTo" AS t INTO rec FROM "LocalTimplans" WHERE id = draft;
+  IF rec.set_at IS NOT NULL OR rec.set_by IS NOT NULL OR rec.f <> 4 OR rec.t <> 9 THEN
+    RAISE EXCEPTION 'span: an UPDATE of a draft left a stamp or lost the span (%)', rec;
+  END IF;
+  UPDATE "LocalTimplans" SET "gradeFrom" = NULL, "gradeTo" = NULL, "updatedAt" = now() WHERE id = draft;
+  UPDATE "LocalTimplans" SET "gradeFrom" = 4, "gradeTo" = 9, "updatedAt" = now() WHERE id = draft;
+  INSERT INTO "LocalTimplanEntries" ("schoolId", "localTimplanId", "subjectId", "gradeLevel", "minutesPerWeek")
+  VALUES (school, draft, s1, 4, 180), (school, draft, s1, 5, 180);
+  -- The decision of a plan that already has a span: the writer's forged
+  -- stamps are cleared, the span stays, and the decision is the caller's.
+  UPDATE "LocalTimplans"
+     SET status = 'DECIDED', "decidedAt" = now(), "decidedByUserId" = me, "decisionNote" = 'RLS-span beslut',
+         "gradeSpanSetAt" = '2019-01-01', "gradeSpanSetByUserId" = pupil, "updatedAt" = now()
+   WHERE id = draft;
+  spanned := draft;
+  SELECT "gradeSpanSetAt" AS set_at, "gradeSpanSetByUserId" AS set_by, "gradeFrom" AS f, "gradeTo" AS t, status AS st
+    INTO rec FROM "LocalTimplans" WHERE id = spanned;
+  IF rec.set_at IS NOT NULL OR rec.set_by IS NOT NULL OR rec.f <> 4 OR rec.t <> 9 OR rec.st <> 'DECIDED' THEN
+    RAISE EXCEPTION 'span: deciding a plan with a span left a forged stamp or moved the span (%)', rec;
+  END IF;
+
+  -- A plan decided WITH a span changes in no way: another span, the same span
+  -- again, none.
+  FOREACH c IN ARRAY ARRAY['"gradeFrom" = 1, "gradeTo" = 9', '"gradeFrom" = 4, "gradeTo" = 9', '"gradeFrom" = NULL, "gradeTo" = NULL',
+                           '"gradeTo" = 8', '"gradeSpanSetAt" = now()'] LOOP
+    BEGIN
+      EXECUTE format('UPDATE "LocalTimplans" SET %s, "updatedAt" = now() WHERE id = %L', c, spanned);
+      RAISE EXCEPTION 'span: a plan decided with a span was changed by SET %', c;
+    EXCEPTION WHEN SQLSTATE 'TP409' THEN NULL;
+    END;
+  END LOOP;
+
+  -- A decided plan with no span: entries first (the minutes), then the decision.
+  INSERT INTO "LocalTimplans" ("schoolId", name, "schoolForm", "nationalTimplanVersionId", "updatedAt")
+  VALUES (school, 'RLS-span beslutad utan', 'GRUNDSKOLA', b1, now())
+  RETURNING id INTO plain;
+  INSERT INTO "LocalTimplanEntries" ("schoolId", "localTimplanId", "subjectId", "gradeLevel", "minutesPerWeek")
+  VALUES (school, plain, s1, 4, 180), (school, plain, s1, 5, 180), (school, plain, s1, 2, 90);
+  UPDATE "LocalTimplans"
+     SET status = 'DECIDED', "decidedAt" = now(), "decidedByUserId" = me, "decisionNote" = 'RLS-span beslut utan', "updatedAt" = now()
+   WHERE id = plain;
+  INSERT INTO "LocalTimplans" ("schoolId", name, "schoolForm", "nationalTimplanVersionId", "updatedAt")
+  VALUES (school, 'RLS-span peka', 'GRUNDSKOLA', b1, now())
+  RETURNING id INTO other;
+
+  -- The refusals first: none of them may leave a trace on the row.
+  FOREACH c IN ARRAY ARRAY[
+    '"gradeFrom" = 4',                                                     -- half a pair
+    '"gradeTo" = 9',
+    '"gradeFrom" = 4, "gradeTo" = 9, name = ''omdöpt''',                   -- the span beside anything else
+    '"gradeFrom" = 4, "gradeTo" = 9, "planningWeeks" = 30.0',
+    '"gradeFrom" = 4, "gradeTo" = 9, "decisionNote" = ''annat beslut''',
+    '"gradeFrom" = 4, "gradeTo" = 9, "decidedAt" = ''2019-01-01''',
+    '"gradeFrom" = 4, "gradeTo" = 9, status = ''DRAFT'', "decidedAt" = NULL, "decidedByUserId" = NULL, "decisionNote" = NULL',
+    format('"gradeFrom" = 4, "gradeTo" = 9, "copiedFromId" = %L', other),
+    '"gradeSpanSetAt" = now(), "gradeSpanSetByUserId" = app.current_user_id()', -- the stamps alone
+    '"gradeFrom" = NULL, "gradeTo" = NULL'                                  -- no span to clear
+  ] LOOP
+    BEGIN
+      EXECUTE format('UPDATE "LocalTimplans" SET %s, "updatedAt" = now() WHERE id = %L', c, plain);
+      RAISE EXCEPTION 'span: a decided plan was changed by SET %', c;
+    EXCEPTION WHEN SQLSTATE 'TP409' THEN NULL;
+    END;
+  END LOOP;
+  SELECT count(*) INTO n FROM "LocalTimplans"
+   WHERE id = plain AND "gradeFrom" IS NULL AND "gradeTo" IS NULL AND name = 'RLS-span beslutad utan'
+     AND "gradeSpanSetAt" IS NULL AND "gradeSpanSetByUserId" IS NULL AND "copiedFromId" IS NULL;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'span: a refused statement left a trace on the decided plan';
+  END IF;
+
+  -- The one change: both columns, from none, nothing else, and the writer's
+  -- own idea of who and when is overwritten (a pupil, in 2019).
+  -- (updatedAt is moved with clock_timestamp(), as the gateway's Prisma moves
+  -- it with the clock: now() is this transaction's start and would equal the
+  -- INSERT's, so the exception for it could be removed unseen.)
+  UPDATE "LocalTimplans"
+     SET "gradeFrom" = 4, "gradeTo" = 9, "gradeSpanSetAt" = '2019-01-01', "gradeSpanSetByUserId" = pupil,
+         "updatedAt" = clock_timestamp()
+   WHERE id = plain;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'span: an admin could not give a decided plan its span once (% row(s))', n;
+  END IF;
+  SELECT "gradeSpanSetAt" AS set_at, "gradeSpanSetByUserId" AS set_by, "gradeFrom" AS f, "gradeTo" AS t, status AS st, name AS nm,
+         "decidedByUserId" AS dec
+    INTO rec FROM "LocalTimplans" WHERE id = plain;
+  IF rec.f <> 4 OR rec.t <> 9 OR rec.st <> 'DECIDED' OR rec.nm <> 'RLS-span beslutad utan' OR rec.dec <> me THEN
+    RAISE EXCEPTION 'span: setting the span once changed more than the span (%)', rec;
+  END IF;
+  IF rec.set_at IS DISTINCT FROM now() OR rec.set_by IS DISTINCT FROM me THEN
+    RAISE EXCEPTION 'span: the span was stamped % by % instead of now() by the caller', rec.set_at, rec.set_by;
+  END IF;
+
+  -- And only once: every statement that was refused is refused again, now for
+  -- a plan that holds a span, together with a second set of the same values,
+  -- another span and a clearing.
+  FOREACH c IN ARRAY ARRAY[
+    '"gradeFrom" = 4, "gradeTo" = 9',
+    '"gradeFrom" = 1, "gradeTo" = 9',
+    '"gradeFrom" = NULL, "gradeTo" = NULL',
+    '"gradeSpanSetAt" = NULL, "gradeSpanSetByUserId" = NULL',
+    '"gradeSpanSetByUserId" = app.current_user_id()',
+    'name = ''omdöpt'''
+  ] LOOP
+    BEGIN
+      EXECUTE format('UPDATE "LocalTimplans" SET %s, "updatedAt" = now() WHERE id = %L', c, plain);
+      RAISE EXCEPTION 'span: a decided plan with a span set after the decision was changed by SET %', c;
+    EXCEPTION WHEN SQLSTATE 'TP409' THEN NULL;
+    END;
+  END LOOP;
+
+  -- The minutes stay put, span or not: the entries trigger is untouched.
+  BEGIN
+    UPDATE "LocalTimplanEntries" SET "minutesPerWeek" = 200 WHERE "localTimplanId" = plain AND "gradeLevel" = 4;
+    RAISE EXCEPTION 'span: a minute was changed under a decided plan that took its span';
+  EXCEPTION WHEN SQLSTATE 'TP409' THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "LocalTimplanEntries" ("schoolId", "localTimplanId", "subjectId", "gradeLevel", "minutesPerWeek")
+    VALUES (school, plain, s1, 6, 60);
+    RAISE EXCEPTION 'span: a minute was added under a decided plan that took its span';
+  EXCEPTION WHEN SQLSTATE 'TP409' THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM "LocalTimplanEntries" WHERE "localTimplanId" = plain AND "gradeLevel" = 2;
+    RAISE EXCEPTION 'span: a minute outside the span was deleted under a decided plan';
+  EXCEPTION WHEN SQLSTATE 'TP409' THEN NULL;
+  END;
+  SELECT count(*) INTO n FROM "LocalTimplanEntries"
+   WHERE "localTimplanId" = plain AND "minutesPerWeek" IN (180, 90);
+  IF n <> 3 THEN
+    RAISE EXCEPTION 'span: the decided plan holds % of its 3 entries unchanged', n;
+  END IF;
+
+  -- The same through PostgREST's role as through the API's: a plan is made,
+  -- decided and given its span once, and refused a second time.
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    IF current_user <> via THEN
+      RAISE EXCEPTION 'span: expected to be % and am %', via, current_user;
+    END IF;
+    INSERT INTO "LocalTimplans" ("schoolId", name, "schoolForm", "nationalTimplanVersionId", "updatedAt")
+    VALUES (school, 'RLS-span via ' || via, 'GRUNDSKOLA', b1, now())
+    RETURNING id INTO fresh;
+    UPDATE "LocalTimplans"
+       SET status = 'DECIDED', "decidedAt" = now(), "decidedByUserId" = me, "decisionNote" = 'via ' || via, "updatedAt" = now()
+     WHERE id = fresh;
+    UPDATE "LocalTimplans" SET "gradeFrom" = 6, "gradeTo" = 9, "updatedAt" = clock_timestamp() WHERE id = fresh;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 1 THEN
+      RAISE EXCEPTION 'span: % could not give a decided plan its span once (% row(s))', via, n;
+    END IF;
+    SELECT "gradeSpanSetAt" AS set_at, "gradeSpanSetByUserId" AS set_by INTO rec FROM "LocalTimplans" WHERE id = fresh;
+    IF rec.set_at IS DISTINCT FROM now() OR rec.set_by IS DISTINCT FROM me THEN
+      RAISE EXCEPTION 'span: % left the stamp as (%, %)', via, rec.set_at, rec.set_by;
+    END IF;
+    BEGIN
+      UPDATE "LocalTimplans" SET "gradeFrom" = 7, "gradeTo" = 9, "updatedAt" = now() WHERE id = fresh;
+      RAISE EXCEPTION 'span: % changed a span that was set after the decision', via;
+    EXCEPTION WHEN SQLSTATE 'TP409' THEN NULL;
+    END;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+
+  -- A decided plan's column is no wider than it was: the statements of the API
+  -- that serves before the migration name none of the four columns.
+  INSERT INTO "LocalTimplans" ("schoolId", name, "schoolForm", "nationalTimplanVersionId", "planningWeeks", "updatedAt")
+  VALUES (school, 'RLS-span gamla API:t', 'GRUNDSKOLA', b1, 36.0, now())
+  RETURNING id INTO fresh;
+  UPDATE "LocalTimplans" SET name = 'RLS-span gamla API:t omdöpt', "planningWeeks" = 35.6, "updatedAt" = now() WHERE id = fresh;
+  SELECT count(*) INTO n FROM "LocalTimplans"
+   WHERE id = fresh AND "gradeFrom" IS NULL AND "gradeTo" IS NULL
+     AND "gradeSpanSetAt" IS NULL AND "gradeSpanSetByUserId" IS NULL;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'span: a plan written by the old API''s statements carries a span or a stamp';
+  END IF;
+  UPDATE "LocalTimplans"
+     SET status = 'DECIDED', "decidedAt" = now(), "decidedByUserId" = me, "decisionNote" = 'gamla API:t', "updatedAt" = now()
+   WHERE id = fresh;
+  BEGIN
+    UPDATE "LocalTimplans" SET name = 'gamla API:t igen', "updatedAt" = now() WHERE id = fresh;
+    RAISE EXCEPTION 'span: the old API''s rename of a decided plan was admitted';
+  EXCEPTION WHEN SQLSTATE 'TP409' THEN NULL;
+  END;
+
+  -- The setter's key is the decider's: the composite key to Users, RESTRICT both ways.
+  FOREACH c IN ARRAY ARRAY['LocalTimplans_decidedByUserId_schoolId_fkey', 'LocalTimplans_gradeSpanSetByUserId_schoolId_fkey'] LOOP
+    SELECT confdeltype AS d, confupdtype AS u, confrelid::regclass::text AS ref,
+           (SELECT array_agg(attname::text ORDER BY k.ord) FROM unnest(conkey) WITH ORDINALITY k(attnum, ord)
+              JOIN pg_attribute a ON a.attrelid = conrelid AND a.attnum = k.attnum) AS cols
+      INTO rec
+      FROM pg_constraint WHERE conrelid = 'public."LocalTimplans"'::regclass AND conname = c;
+    IF rec IS NULL OR rec.d <> 'r' OR rec.u <> 'r' OR rec.ref <> '"Users"' OR rec.cols[2] <> 'schoolId' THEN
+      RAISE EXCEPTION 'span: % is not a RESTRICT/RESTRICT key on Users(id, schoolId) (%)', c, rec;
+    END IF;
+  END LOOP;
+  BEGIN
+    DELETE FROM "Users" WHERE id = me;
+    RAISE EXCEPTION 'span: the person who decided and set a span was deleted';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+
+  -- Tenant: only this school's plans are visible, spans and stamps included.
+  SELECT count(*) INTO n FROM "LocalTimplans" WHERE "schoolId" <> school;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'span: % local timplan(s) from another school visible', n;
+  END IF;
+END $$;
+ROLLBACK;

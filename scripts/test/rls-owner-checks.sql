@@ -221,3 +221,124 @@ BEGIN
   END IF;
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 290o: årskurspannet på en beslutad plan, ägarens sida
+-- (20261219090000).
+--
+-- Section 290 of rls-policies.sql runs as a signed-in admin, whose span the
+-- trigger stamps with who (the caller) and when (now()). The owner (migrations,
+-- the seed, these fixtures) carries no JWT subject: it is not a person, so the
+-- trigger does not choose a name for it, and a span it gives a decided plan has
+-- to state both stamps itself. The CHECKs that tie a stamp to a decided plan
+-- that has a span hold for everyone, which only the owner can reach without the
+-- trigger clearing the stamps first.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  school  uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-fixture-school');
+  admin_  uuid;
+  stranger uuid;
+  b1      uuid;
+  plan    uuid;
+  drafty  uuid;
+  rec     record;
+BEGIN
+  SELECT id INTO admin_ FROM "Users" WHERE "schoolId" = school AND role = 'SCHOOL_ADMIN' AND "isActive" LIMIT 1;
+  SELECT id INTO stranger FROM "Users" WHERE "schoolId" <> school LIMIT 1;
+  SELECT id INTO b1 FROM "NationalTimplanVersions" WHERE code = 'SFS2023:945/B1';
+  IF school IS NULL OR admin_ IS NULL OR stranger IS NULL OR b1 IS NULL THEN
+    RAISE EXCEPTION 'span (owner): the fixture school, its admin, another school''s user or bilaga 1 is missing';
+  END IF;
+
+  INSERT INTO "LocalTimplans" ("schoolId", name, "schoolForm", "nationalTimplanVersionId", "updatedAt")
+  VALUES (school, 'RLS-span ägare utkast', 'GRUNDSKOLA', b1, now()) RETURNING id INTO drafty;
+  INSERT INTO "LocalTimplans" ("schoolId", name, "schoolForm", "nationalTimplanVersionId",
+                               status, "decidedAt", "decidedByUserId", "decisionNote", "updatedAt")
+  VALUES (school, 'RLS-span ägare beslutad', 'GRUNDSKOLA', b1, 'DECIDED', now(), admin_, 'ägarens beslut', now())
+  RETURNING id INTO plan;
+
+  -- The owner is no person, so a span with no stamp is not a change the record can attribute.
+  BEGIN
+    UPDATE "LocalTimplans" SET "gradeFrom" = 4, "gradeTo" = 9 WHERE id = plan;
+    RAISE EXCEPTION 'span (owner): a decided plan took a span with no stamp';
+  EXCEPTION WHEN SQLSTATE 'TP409' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "LocalTimplans" SET "gradeFrom" = 4, "gradeTo" = 9, "gradeSpanSetAt" = now() WHERE id = plan;
+    RAISE EXCEPTION 'span (owner): a stamp with no person was admitted';
+  EXCEPTION WHEN SQLSTATE 'TP409' THEN NULL;
+  END;
+  -- A stamp that names another school's user is a foreign key violation: the key is (id, schoolId).
+  BEGIN
+    UPDATE "LocalTimplans" SET "gradeFrom" = 4, "gradeTo" = 9, "gradeSpanSetAt" = now(), "gradeSpanSetByUserId" = stranger
+     WHERE id = plan;
+    RAISE EXCEPTION 'span (owner): another school''s user was named as the setter';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+
+  UPDATE "LocalTimplans"
+     SET "gradeFrom" = 4, "gradeTo" = 9, "gradeSpanSetAt" = '2026-11-03 08:00+00', "gradeSpanSetByUserId" = admin_
+   WHERE id = plan;
+  SELECT "gradeFrom" AS f, "gradeTo" AS t, "gradeSpanSetAt" AS set_at, "gradeSpanSetByUserId" AS set_by INTO rec
+    FROM "LocalTimplans" WHERE id = plan;
+  IF rec.f <> 4 OR rec.t <> 9 OR rec.set_at <> '2026-11-03 08:00+00'::timestamptz OR rec.set_by <> admin_ THEN
+    RAISE EXCEPTION 'span (owner): the stated stamp was not kept as written (%)', rec;
+  END IF;
+  BEGIN
+    UPDATE "LocalTimplans" SET "gradeFrom" = 1, "gradeTo" = 9 WHERE id = plan;
+    RAISE EXCEPTION 'span (owner): a span set once was set again';
+  EXCEPTION WHEN SQLSTATE 'TP409' THEN NULL;
+  END;
+
+  -- The stamp belongs to a decided plan that has a span, whoever writes it,
+  -- and is both halves or neither (the trigger lets a draft's row through
+  -- untouched for the owner, so the CHECKs are what answer).
+  BEGIN
+    INSERT INTO "LocalTimplans" ("schoolId", name, "schoolForm", "nationalTimplanVersionId",
+                                 status, "decidedAt", "decidedByUserId", "decisionNote",
+                                 "gradeFrom", "gradeTo", "gradeSpanSetAt", "updatedAt")
+    VALUES (school, 'RLS-span ägare halv stämpel', 'GRUNDSKOLA', b1, 'DECIDED', now(), admin_, 'x', 4, 9, now(), now());
+    RAISE EXCEPTION 'span (owner): a stamp of one half was admitted';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE "LocalTimplans" SET "gradeFrom" = 4, "gradeTo" = 9, "gradeSpanSetAt" = now(), "gradeSpanSetByUserId" = admin_
+     WHERE id = drafty;
+    RAISE EXCEPTION 'span (owner): a draft carries a span stamp';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "LocalTimplans" ("schoolId", name, "schoolForm", "nationalTimplanVersionId",
+                                 status, "decidedAt", "decidedByUserId", "decisionNote",
+                                 "gradeSpanSetAt", "gradeSpanSetByUserId", "updatedAt")
+    VALUES (school, 'RLS-span ägare stämpel utan spann', 'GRUNDSKOLA', b1, 'DECIDED', now(), admin_, 'x', now(), admin_, now());
+    RAISE EXCEPTION 'span (owner): a decided plan with no span carries a span stamp';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+
+  -- A plan born decided, with its span and stamps in one INSERT, is the owner's to plant (the fixtures do).
+  INSERT INTO "LocalTimplans" ("schoolId", name, "schoolForm", "nationalTimplanVersionId",
+                               status, "decidedAt", "decidedByUserId", "decisionNote",
+                               "gradeFrom", "gradeTo", "gradeSpanSetAt", "gradeSpanSetByUserId", "updatedAt")
+  VALUES (school, 'RLS-span ägare född med spann', 'GRUNDSKOLA', b1, 'DECIDED', now(), admin_, 'x', 6, 9, now(), admin_, now());
+
+  -- Last, because the claim stays for the rest of the transaction: a signed-in
+  -- writer with no user of the school behind the subject is refused, as the
+  -- decision's own guard refuses one, and a setter that does not exist is not
+  -- named. (Unreachable through row security, which admits no such writer to
+  -- the plan at all; the owner bypasses it, so the guard can be asked here.)
+  INSERT INTO "LocalTimplans" ("schoolId", name, "schoolForm", "nationalTimplanVersionId",
+                               status, "decidedAt", "decidedByUserId", "decisionNote", "updatedAt")
+  VALUES (school, 'RLS-span ägare utan användare', 'GRUNDSKOLA', b1, 'DECIDED', now(), admin_, 'x', now())
+  RETURNING id INTO plan;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', gen_random_uuid())::text, true);
+  BEGIN
+    UPDATE "LocalTimplans" SET "gradeFrom" = 4, "gradeTo" = 9 WHERE id = plan;
+    RAISE EXCEPTION 'span (owner): a subject with no user set a span';
+  EXCEPTION WHEN SQLSTATE 'TP403' THEN NULL;
+  END;
+END $$;
+ROLLBACK;

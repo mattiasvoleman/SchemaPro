@@ -385,6 +385,7 @@ model User {
   /// Local timplans this person recorded as decided. Restrict on the other
   /// side: a person who recorded a decision is deactivated, not deleted.
   decidedLocalTimplans    LocalTimplan[]                @relation("LocalTimplanDecider")
+  spanSetLocalTimplans    LocalTimplan[]                @relation("LocalTimplanSpanSetter")
 
   // Relations where this user is the student.
   attendanceRecords   AttendanceRecord[]      @relation("AttendanceStudent")
@@ -961,12 +962,27 @@ model LocalTimplan {
   /// ON DELETE SET NULL ("copiedFromId")) when the source is deleted; Prisma
   /// cannot state the column list and the migration does.
   copiedFromId             String?            @db.Uuid
+  /// The årskurser the plan is for, both ends included, in the numbering of
+  /// the plan's lydelse (the tioårig grundskola of SFS 2025:729 counts 1-10,
+  /// every older lydelse 0-9). Both or neither, 0..11 and from <= to (DB
+  /// CHECKs); NULL is the whole school form. The check (P1) counts only the
+  /// årskurser and stadier the span holds. A DECIDED plan gets a span once,
+  /// from NULL, with no other change (the keep_the_record trigger).
+  gradeFrom                Int?
+  gradeTo                  Int?
+  /// Who set the span, and when, on a plan that was already DECIDED. Written
+  /// by the trigger (now(), the caller), never by a writer with a JWT
+  /// subject; null for a span chosen with the draft, which the decision's own
+  /// stamps cover. Both or neither, only on a decided plan with a span.
+  gradeSpanSetAt           DateTime?          @db.Timestamptz(6)
+  gradeSpanSetByUserId     String?            @db.Uuid
   createdAt                DateTime           @default(now()) @db.Timestamptz(6)
   updatedAt                DateTime           @updatedAt @db.Timestamptz(6)
 
   school          School                 @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   nationalVersion NationalTimplanVersion @relation(fields: [nationalTimplanVersionId, schoolForm], references: [id, schoolForm], onDelete: Restrict, onUpdate: Restrict)
   decidedBy       User?                  @relation("LocalTimplanDecider", fields: [decidedByUserId, schoolId], references: [id, schoolId], onDelete: Restrict, onUpdate: Restrict)
+  gradeSpanSetBy  User?                  @relation("LocalTimplanSpanSetter", fields: [gradeSpanSetByUserId, schoolId], references: [id, schoolId], onDelete: Restrict, onUpdate: Restrict)
   copiedFrom      LocalTimplan?          @relation("LocalTimplanCopy", fields: [copiedFromId, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
   copies          LocalTimplan[]         @relation("LocalTimplanCopy")
   entries         LocalTimplanEntry[]
