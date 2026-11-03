@@ -6656,7 +6656,7 @@
     "selectAll": "{entity, select, groups {Markera alla {count} klasser och grupper som visas} students {Markera alla {count} elever som visas} other {Markera alla {count} som visas}}",
     "selectRow": "Markera {name}",
     "selected": "{count, plural, one {# markerad} other {# markerade}} av {shown} {entity, select, groups {klasser och grupper} students {elever} other {rader}} som visas",
-    "tooMany": "Högst {max} åt gången. Avmarkera några, eller sök fram färre.",
+    "tooMany": "Högst {max} åt gången, eftersom allt sparas eller tas bort i ett enda steg. Avmarkera några, eller sök fram en klass eller en årskurs i taget.",
     "shiftHint": "Skift-klicka för att markera alla rader emellan.",
     "clear": "Avmarkera",
     "edit": "Redigera",
@@ -6689,11 +6689,14 @@
     "saveOthers": "Spara för de {count} andra",
     "saved": "Sparat för {count}",
     "refusal": {
-      "BULK_ROW_NOT_FOUND": "Finns inte längre. Någon annan kan ha tagit bort den.",
+      "BULK_ROW_NOT_FOUND": "Finns inte längre, eller får inte ändras härifrån.",
       "NOT_A_STUDENT": "Ingen elev. Lärare, administratörer och vårdnadshavare ändras och tas bort en i taget.",
       "REPLACING_GROUP_NOT_A_TEACHING_GROUP": "Bara en undervisningsgrupp som inte är en halvklass kan ersätta ett ämne.",
       "USER_IS_PSEUDONYMISED": "Pseudonymiserad efter skolans gallringsbeslut och kan inte aktiveras igen.",
-      "USER_HAS_BOOKED_PASS_COVERS": "En vikarie är inbokad för ett rastvaktspass, första gången {date}. Ångra besluten på vikarietavlan först."
+      "USER_HAS_BOOKED_PASS_COVERS": "En vikarie är inbokad för ett rastvaktspass, första gången {date}. Ångra besluten på vikarietavlan först.",
+      "BULK_ROW_TAKEN": "Skulle krocka med en annan rad som redan har samma värden.",
+      "BULK_ROW_REFERENCE_GONE": "Skulle peka på något som inte längre finns.",
+      "STUDENT_HOME_GROUP_NOT_A_CLASS": "En elevs hemklass måste vara en klass. Lägg eleven i en undervisningsgrupp under Medlemmar i stället."
     },
     "groupFields": {
       "gradeLevel": "Årskurs",
@@ -6714,7 +6717,14 @@
       "homePupils": "{count, plural, one {# elev blir} other {# elever blir}} utan klass",
       "enrolments": "{count, plural, one {# avsnitt} other {# avsnitt}} i elevernas klasshistorik tappar klassen",
       "mentorDuties": "{count, plural, one {# mentorsuppdrag} other {# mentorsuppdrag}} tappar klassen",
-      "sharedLessons": "{count, plural, one {# lektion} other {# lektioner}} i grundschemat som delas med andra grupper tappar gruppen"
+      "sharedLessons": "{count, plural, one {# lektion} other {# lektioner}} i grundschemat och kalendern som delas med andra grupper tappar gruppen",
+      "lessonLogs": "{count, plural, one {# lektionslogg} other {# lektionsloggar}} på de lektionerna",
+      "lunchSittings": "{count, plural, one {# lunch} other {# luncher}} i grundschemat",
+      "calendarBreaks": "{count, plural, one {# rast eller lunch} other {# raster och luncher}} i kalendern",
+      "availabilityConstraints": "{count, plural, one {# tillgänglighetsregel} other {# tillgänglighetsregler}}",
+      "timplanCredits": "{count, plural, one {# tillgodoräknande} other {# tillgodoräknanden}} i timplanen",
+      "publicLinks": "{count, plural, one {# publik schemalänk, som slutar fungera} other {# publika schemalänkar, som slutar fungera}}",
+      "successors": "{count, plural, one {# klass} other {# klasser}} i nästa läsår tappar kopplingen till sin föregångare"
     },
     "studentFields": {
       "class": "Klass",
@@ -6733,7 +6743,12 @@
       "leaveRequests": "{count, plural, one {# ledighetsansökan} other {# ledighetsansökningar}}",
       "attendanceMarks": "{count, plural, one {# närvaromarkering} other {# närvaromarkeringar}}",
       "logins": "{count, plural, one {# inloggning} other {# inloggningar}}, utom där samma inloggning används på en annan skola",
-      "deactivateInstead": "Vill du behålla historiken? Gör eleverna inaktiva under Redigera i stället."
+      "deactivateInstead": "Vill du behålla historiken? Gör eleverna inaktiva under Redigera i stället.",
+      "lessonParticipations": "{count, plural, one {# plats} other {# platser}} som namngiven elev på enskilda lektioner",
+      "teachingTimeStatements": "{count, plural, one {# utdrag} other {# utdrag}} över undervisningstid",
+      "otherRows": "{count, plural, one {# annan uppgift} other {# andra uppgifter}} om eleverna, till exempel rollhistorik",
+      "otherLinks": "{count, plural, one {# uppgift} other {# uppgifter}} som eleverna gjorde finns kvar utan deras namn",
+      "accounts": "Det som hör till elevernas egna konton och som ingen administratör ser: notiser, notisinställningar, enheter för pushnotiser och kalenderprenumerationer, också vårdnadshavarnas prenumerationer på eleverna"
     }
   }
 }

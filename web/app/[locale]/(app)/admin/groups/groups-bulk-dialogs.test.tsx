@@ -71,12 +71,19 @@ describe("describeGroupRemoval", () => {
   const none = {
     halves: 0,
     homePupils: 0,
+    successors: 0,
     memberships: 0,
     requirements: 0,
     masterLessons: 0,
     sharedLessons: 0,
     calendarLessons: 0,
     attendanceMarks: 0,
+    lessonLogs: 0,
+    availabilityConstraints: 0,
+    lunchSittings: 0,
+    calendarBreaks: 0,
+    timplanCredits: 0,
+    publicLinks: 0,
     enrolments: 0,
     mentorDuties: 0,
     fromSource: 0,
@@ -84,11 +91,26 @@ describe("describeGroupRemoval", () => {
 
   it("says what goes with the groups and what is left without them, and nothing for a count of 0", () => {
     expect(
-      describeGroupRemoval(t, { ...none, halves: 2, requirements: 9, attendanceMarks: 120, homePupils: 20, enrolments: 20 }),
+      describeGroupRemoval(t, {
+        ...none,
+        halves: 2,
+        requirements: 9,
+        attendanceMarks: 120,
+        publicLinks: 1,
+        homePupils: 20,
+        enrolments: 20,
+        successors: 1,
+      }),
     ).toEqual({
-      goes: ["groupConsequences.halves(2)", "groupConsequences.requirements(9)", "groupConsequences.attendanceMarks(120)"],
-      loses: ["groupConsequences.homePupils(20)", "groupConsequences.enrolments(20)"],
+      goes: [
+        "groupConsequences.halves(2)",
+        "groupConsequences.requirements(9)",
+        "groupConsequences.attendanceMarks(120)",
+        "groupConsequences.publicLinks(1)",
+      ],
+      loses: ["groupConsequences.homePupils(20)", "groupConsequences.enrolments(20)", "groupConsequences.successors(1)"],
       notes: [],
+      exhaustive: true,
     });
   });
 
@@ -117,7 +139,7 @@ describe("GroupsBulkDialogs", () => {
     expect(screen.getByRole("combobox", { name: "groupFields.gradeLevel" })).toHaveTextContent("mixed");
     await choose("groupFields.gradeLevel", "gradeShort(9)");
     await userEvent.setup().click(screen.getByRole("button", { name: "saveCount(2)" }));
-    expect(calls.update).toHaveBeenCalledWith({ ids: ["g-7a", "g-7b"], changes: { gradeLevel: 9 } });
+    expect(calls.update).toHaveBeenCalledWith({ ids: ["g-7a", "g-7b"], changes: { gradeLevel: 9 }, dryRun: false });
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(toast.success).toHaveBeenCalledWith("saved(2)");
   });
@@ -128,7 +150,7 @@ describe("GroupsBulkDialogs", () => {
     expect(screen.getByRole("combobox", { name: "groupFields.gradeLevel" })).toHaveTextContent("gradeShort(7)");
     await choose("groupFields.gradeLevel", "groupFields.gradeNone");
     await userEvent.setup().click(screen.getByRole("button", { name: "saveCount(1)" }));
-    expect(calls.update).toHaveBeenCalledWith({ ids: ["g-7a"], changes: { gradeLevel: null } });
+    expect(calls.update).toHaveBeenCalledWith({ ids: ["g-7a"], changes: { gradeLevel: null }, dryRun: false });
   });
 
   it("offers Ersätter ämne only when every ticked group may replace one: a class or a half in the selection says why not", () => {
@@ -143,7 +165,7 @@ describe("GroupsBulkDialogs", () => {
     expect(screen.getByRole("combobox", { name: "groupFields.replaces" })).toHaveTextContent("mixed");
     await choose("groupFields.replaces", "Svenska");
     await userEvent.setup().click(screen.getByRole("button", { name: "saveCount(2)" }));
-    expect(calls.update).toHaveBeenCalledWith({ ids: ["g-sva7", "g-sva8"], changes: { replacesSubjectId: "s-sv" } });
+    expect(calls.update).toHaveBeenCalledWith({ ids: ["g-sva7", "g-sva8"], changes: { replacesSubjectId: "s-sv" }, dryRun: false });
   });
 
   it("asks the delete's dry run of the ticked groups, names them, and thanks with a count", async () => {
@@ -153,7 +175,11 @@ describe("GroupsBulkDialogs", () => {
         dryRun: true,
         done: ["g-7a", "g-7a1"],
         refused: [],
-        consequences: { halves: 1, homePupils: 20, memberships: 0, requirements: 9, masterLessons: 0, sharedLessons: 0, calendarLessons: 0, attendanceMarks: 0, enrolments: 20, mentorDuties: 0, fromSource: 0 },
+        consequences: {
+          halves: 1, homePupils: 20, successors: 0, memberships: 0, requirements: 9, masterLessons: 0, sharedLessons: 0,
+          calendarLessons: 0, attendanceMarks: 0, lessonLogs: 0, availabilityConstraints: 0, lunchSittings: 0,
+          calendarBreaks: 0, timplanCredits: 0, publicLinks: 0, enrolments: 20, mentorDuties: 0, fromSource: 0,
+        },
       })
       .mockResolvedValueOnce({ applied: true, dryRun: false, done: ["g-7a", "g-7a1"], refused: [] });
     const { onDeleted } = open("delete", ["g-7a", "g-7a1"]);
@@ -161,7 +187,7 @@ describe("GroupsBulkDialogs", () => {
     expect(screen.getByText("groupConsequences.homePupils(20)")).toBeInTheDocument();
     expect(screen.getByRole("list", { name: "goesTitle(groups|2)" })).toHaveTextContent("7A7A:1");
     await userEvent.setup().click(screen.getByRole("button", { name: "deleteCount(2)" }));
-    expect(calls.remove).toHaveBeenLastCalledWith({ ids: ["g-7a", "g-7a1"] });
+    expect(calls.remove).toHaveBeenLastCalledWith(expect.objectContaining({ ids: ["g-7a", "g-7a1"], dryRun: false }));
     await waitFor(() => expect(onDeleted).toHaveBeenCalled());
     expect(toast.success).toHaveBeenCalledWith("deleted(2)");
   });

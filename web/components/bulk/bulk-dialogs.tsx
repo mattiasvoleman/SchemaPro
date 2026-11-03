@@ -16,6 +16,7 @@ import { Notice } from "@/components/ui/notice";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { BulkEntity } from "@/components/bulk/bulk-selection";
+import { ApiError } from "@/lib/api";
 import type { BulkDeleteBody, BulkRefusal, BulkResult, BulkUpdateBody } from "@/lib/bulk-api";
 
 /*
@@ -32,16 +33,32 @@ import type { BulkDeleteBody, BulkRefusal, BulkResult, BulkUpdateBody } from "@/
  * the others. Either way the rows acted on are the ones the dialog showed.
  */
 
-/** The codes whose reason the reader's language gives; any other shows the gateway's sentence. */
+/**
+ * The codes whose reason the reader's language gives; any other shows the
+ * gateway's sentence. The bulk routes give Prisma's generic answers a code of
+ * their own (BULK_ROW_*), so no English sentence for a log reaches the list.
+ */
 const KNOWN_REFUSALS = [
   "BULK_ROW_NOT_FOUND",
+  "BULK_ROW_TAKEN",
+  "BULK_ROW_REFERENCE_GONE",
   "NOT_A_STUDENT",
   "REPLACING_GROUP_NOT_A_TEACHING_GROUP",
   "USER_IS_PSEUDONYMISED",
   "USER_HAS_BOOKED_PASS_COVERS",
+  "STUDENT_HOME_GROUP_NOT_A_CLASS",
 ] as const;
 
-const errorText = (error: unknown, fallback: string) => (error instanceof Error ? error.message : fallback);
+const known = (code: string | null | undefined): code is (typeof KNOWN_REFUSALS)[number] =>
+  code != null && (KNOWN_REFUSALS as readonly string[]).includes(code);
+
+/** A failed call's sentence: the reader's language for a known code, the gateway's otherwise. */
+const errorText = (error: unknown, fallback: string, t: (key: string) => string) =>
+  error instanceof ApiError && known(error.code)
+    ? t(`refusal.${error.code}`)
+    : error instanceof Error
+      ? error.message
+      : fallback;
 
 /** Each refused row by name, and why. */
 export function RefusalList({ refused, nameOf }: { refused: BulkRefusal[]; nameOf: (id: string) => string }) {
@@ -52,9 +69,7 @@ export function RefusalList({ refused, nameOf }: { refused: BulkRefusal[]; nameO
         <li key={refusal.id}>
           <span className="font-medium">{nameOf(refusal.id)}</span>
           {": "}
-          {refusal.code !== null && (KNOWN_REFUSALS as readonly string[]).includes(refusal.code)
-            ? t(`refusal.${refusal.code}`, refusal.params ?? {})
-            : refusal.message}
+          {known(refusal.code) ? t(`refusal.${refusal.code}`, refusal.params ?? {}) : refusal.message}
         </li>
       ))}
     </ul>
@@ -79,11 +94,16 @@ function NameList({ ids, nameOf, label }: { ids: string[]; nameOf: (id: string) 
   );
 }
 
-/** What a list says goes with its rows: removed with them, left without them, and anything else to know. */
+/**
+ * What a list says goes with its rows: removed with them, left without them,
+ * and anything else to know. `exhaustive` when every row that hangs on them
+ * is counted: only then may the dialog say that nothing else does.
+ */
 export interface DeleteLines {
   goes: string[];
   loses: string[];
   notes: string[];
+  exhaustive: boolean;
 }
 
 export interface BulkDeleteDialogProps<Consequences> {
@@ -125,7 +145,10 @@ export function BulkDeleteDialog<Consequences>({
     try {
       setReport(await remove({ ids, dryRun: true }));
     } catch (error) {
-      setFailed(errorText(error, tCommon("error")));
+      // No list beside a failed check: a button under an old one would
+      // delete what the reader can no longer see is still so.
+      setReport(null);
+      setFailed(errorText(error, tCommon("error"), t));
     } finally {
       setBusy(null);
     }
@@ -137,26 +160,41 @@ export function BulkDeleteDialog<Consequences>({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /**
+   * Deletes the rows the check named, with its counts: the gateway counts
+   * again and deletes nothing when a kind grew (consequencesGrew), answering
+   * the new counts, which the dialog shows to be confirmed again. A refusal
+   * found only now (a row changed meanwhile) is asked afresh with a dry run.
+   */
   const confirm = async () => {
     if (!report) return;
     setBusy("deleting");
     setFailed(null);
+    let result: BulkResult<Consequences>;
     try {
-      const result = await remove({ ids: report.done });
-      if (result.applied) {
-        onDeleted(result.done.length);
-        return;
-      }
-      setChanged(true);
-      setReport(await remove({ ids, dryRun: true }));
+      result = await remove({ ids: report.done, dryRun: false, expected: report.consequences as object | undefined });
     } catch (error) {
-      setFailed(errorText(error, tCommon("error")));
-    } finally {
+      setFailed(errorText(error, tCommon("error"), t));
       setBusy(null);
+      return;
     }
+    if (result.applied) {
+      setBusy(null);
+      onDeleted(result.done.length);
+      return;
+    }
+    setChanged(true);
+    if (result.consequencesGrew && result.consequences) {
+      setReport(result);
+      setBusy(null);
+      return;
+    }
+    await check();
   };
 
-  const lines = report?.consequences ? describe(report.consequences) : { goes: [], loses: [], notes: [] };
+  const lines = report?.consequences
+    ? describe(report.consequences)
+    : { goes: [], loses: [], notes: [], exhaustive: false };
   const going = report?.done.length ?? 0;
 
   return (
@@ -211,7 +249,7 @@ export function BulkDeleteDialog<Consequences>({
               </section>
             ) : null}
             {going > 0 ? (
-              lines.goes.length > 0 || lines.loses.length > 0 ? (
+              lines.goes.length > 0 || lines.loses.length > 0 || !lines.exhaustive ? (
                 <>
                   {lines.goes.length > 0 ? (
                     <section aria-labelledby="bulk-delete-with" className="space-y-1">
@@ -367,14 +405,14 @@ export function BulkEditDialog<Changes>({
     setSaving(true);
     setFailed(null);
     try {
-      const result = await update({ ids: targets, changes });
+      const result = await update({ ids: targets, changes, dryRun: false });
       if (result.applied) {
         onSaved(result.done.length);
         return;
       }
       setRefusal(result);
     } catch (error) {
-      setFailed(errorText(error, tCommon("error")));
+      setFailed(errorText(error, tCommon("error"), t));
     } finally {
       setSaving(false);
     }

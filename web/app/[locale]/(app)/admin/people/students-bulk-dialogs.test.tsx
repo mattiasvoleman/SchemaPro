@@ -76,16 +76,34 @@ describe("describeStudentRemoval", () => {
     absenceReports: 0,
     leaveRequests: 0,
     attendanceMarks: 0,
+    lessonParticipations: 0,
+    teachingTimeStatements: 0,
+    otherRows: 0,
+    otherLinks: 0,
     logins: 0,
     fromSource: 0,
   };
 
-  it("says what goes with the pupils, nothing for a count of 0, and that making them inactive keeps it", () => {
-    expect(describeStudentRemoval(t, { ...none, enrolments: 2, absenceReports: 5, logins: 1, fromSource: 2 })).toEqual({
-      goes: ["studentConsequences.enrolments(2)", "studentConsequences.absenceReports(5)", "studentConsequences.logins(1)"],
-      loses: [],
+  it("says what goes with the pupils, nothing for a count of 0, their accounts always, and that making them inactive keeps it", () => {
+    expect(
+      describeStudentRemoval(t, { ...none, enrolments: 2, absenceReports: 5, teachingTimeStatements: 1, logins: 1, otherRows: 3, otherLinks: 1, fromSource: 2 }),
+    ).toEqual({
+      goes: [
+        "studentConsequences.enrolments(2)",
+        "studentConsequences.absenceReports(5)",
+        "studentConsequences.teachingTimeStatements(1)",
+        "studentConsequences.logins(1)",
+        "studentConsequences.otherRows(3)",
+        "studentConsequences.accounts",
+      ],
+      loses: ["studentConsequences.otherLinks(1)"],
       notes: ["fromSource(2)", "studentConsequences.deactivateInstead"],
+      exhaustive: false,
     });
+  });
+
+  it("names the pupils' accounts even when nothing else is counted: the list is never all there is", () => {
+    expect(describeStudentRemoval(t, none)).toMatchObject({ goes: ["studentConsequences.accounts"], exhaustive: false });
   });
 });
 
@@ -112,7 +130,7 @@ describe("StudentsBulkDialogs", () => {
     expect(offered).toEqual(["studentFields.classNone", "7A", "7B"]);
     await userEvent.setup().click(screen.getByRole("option", { name: "7B" }));
     await userEvent.setup().click(screen.getByRole("button", { name: "saveCount(2)" }));
-    expect(calls.update).toHaveBeenCalledWith({ ids: ["st-1", "st-2"], changes: { studentGroupId: "g-7b" } });
+    expect(calls.update).toHaveBeenCalledWith({ ids: ["st-1", "st-2"], changes: { studentGroupId: "g-7b" }, dryRun: false });
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(toast.success).toHaveBeenCalledWith("saved(2)");
   });
@@ -124,7 +142,7 @@ describe("StudentsBulkDialogs", () => {
     expect(screen.getByRole("combobox", { name: "studentFields.status" })).toHaveTextContent("mixed");
     await choose("studentFields.status", "studentFields.inactive");
     await userEvent.setup().click(screen.getByRole("button", { name: "saveCount(2)" }));
-    expect(calls.update).toHaveBeenCalledWith({ ids: ["st-1", "st-3"], changes: { isActive: false } });
+    expect(calls.update).toHaveBeenCalledWith({ ids: ["st-1", "st-3"], changes: { isActive: false }, dryRun: false });
   });
 
   it("takes the pupils out of every class with Ingen klass, sent as null", async () => {
@@ -132,7 +150,7 @@ describe("StudentsBulkDialogs", () => {
     open("edit", ["st-1"]);
     await choose("studentFields.class", "studentFields.classNone");
     await userEvent.setup().click(screen.getByRole("button", { name: "saveCount(1)" }));
-    expect(calls.update).toHaveBeenCalledWith({ ids: ["st-1"], changes: { studentGroupId: null } });
+    expect(calls.update).toHaveBeenCalledWith({ ids: ["st-1"], changes: { studentGroupId: null }, dryRun: false });
   });
 
   it("asks the delete's dry run of the ticked pupils, names them, and says what goes with them", async () => {
@@ -141,7 +159,10 @@ describe("StudentsBulkDialogs", () => {
       dryRun: true,
       done: ["st-1", "st-2"],
       refused: [],
-      consequences: { memberships: 1, enrolments: 2, guardianLinks: 3, absenceReports: 0, leaveRequests: 0, attendanceMarks: 40, logins: 0, fromSource: 0 },
+      consequences: {
+        memberships: 1, enrolments: 2, guardianLinks: 3, absenceReports: 0, leaveRequests: 0, attendanceMarks: 40,
+        lessonParticipations: 0, teachingTimeStatements: 0, otherRows: 0, otherLinks: 0, logins: 0, fromSource: 0,
+      },
     });
     open("delete", ["st-1", "st-2"]);
     expect(await screen.findByText("studentConsequences.attendanceMarks(40)")).toBeInTheDocument();

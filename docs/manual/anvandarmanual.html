@@ -1073,7 +1073,9 @@
     Den säger hur många som är markerade av hur många som visas, och har
     knapparna <span class="ui">Avmarkera</span>,
     <span class="ui">Redigera</span> och <span class="ui">Ta bort</span>.
-    Högst 500 rader åt gången.
+    Högst 500 rader åt gången, eftersom allt sparas eller tas bort i ett enda
+    steg. Har skolan fler kan du söka fram en klass eller en årskurs i taget.
+    Raden säger det innan du kan välja Redigera eller Ta bort.
   </p>
   <p>
     <strong>Redigera</strong> sätter samma värde på alla markerade. För
@@ -1090,11 +1092,26 @@
   <p>
     <strong>Ta bort</strong> kontrollerar först vad som skulle hända och visar
     det innan något tas bort. Dialogen visar vilka rader som tas bort och vad
-    som försvinner med dem: halvklasser, medlemskap, timplansposter, lektioner
-    i grundschemat och i kalendern och närvaron på dem. Den visar också vad
-    som finns kvar men tappar kopplingen, som elever som blir utan klass och
-    avsnitt i klasshistoriken. Kommer en grupp från elevregistret (SS12000)
-    står det också, eftersom nästa synkronisering kan lägga till den igen.
+    som försvinner med dem. För klasser och grupper räknas allt som hänger på
+    dem:
+  </p>
+  <ul>
+    <li>halvklasserna som hör till klasserna;</li>
+    <li>medlemskap i grupperna;</li>
+    <li>timplansposter och tillgodoräknanden i timplanen;</li>
+    <li>lektioner, luncher och tillgänglighetsregler i grundschemat;</li>
+    <li>lektioner i kalendern, även passerade, med närvaron och
+      lektionsloggarna på dem, och kalenderns raster och luncher;</li>
+    <li>publika schemalänkar till grupperna, som slutar fungera.</li>
+  </ul>
+  <p>
+    Dialogen visar också vad som finns kvar men tappar kopplingen. Det gäller
+    elever som blir utan klass, avsnitt i klasshistoriken och mentorsuppdrag
+    som tappar klassen. Det gäller också gemensamma lektioner som tappar
+    gruppen och klasser i nästa läsår som tappar sin föregångare. Det står
+    <em>Inget annat hänger på dem</em> bara när ingenting av detta finns.
+    Kommer en grupp från elevregistret (SS12000) står det också, eftersom
+    nästa synkronisering kan lägga till den igen.
   </p>
   <p>
     Samma regler gäller som när du ändrar eller tar bort en rad i taget, och
@@ -1105,10 +1122,14 @@
     <span class="ui">Spara för de … andra</span> eller
     <span class="ui">Ta bort de … andra</span> gör det för resten. Det är
     alltså du som bestämmer att resten ska gå, med listan framför dig.
-    Siffrorna i dialogen gäller när den öppnades. Har någon annan under tiden
-    tagit bort en av raderna, eller ändrat den så att den inte längre kan
-    ändras eller tas bort, sparas eller tas inget bort. Dialogen visar då läget
-    som det är nu.
+  </p>
+  <p>
+    När du bekräftar räknar Rastra Schema om det som följer med. Har något
+    tillkommit sedan dialogen öppnades, till exempel en lektion eller en elev
+    i klassen, tas inget bort. Dialogen visar de nya siffrorna, och du
+    bekräftar igen. Detsamma gäller om någon annan under tiden har tagit bort
+    en av raderna, eller ändrat den så att den inte längre kan ändras eller tas
+    bort.
   </p>
 
   <h3><span class="num">3.5</span>Personer och inbjudningar</h3>
@@ -1218,16 +1239,33 @@
     halvklasser.
   </p>
   <p>
-    <span class="ui">Ta bort</span> visar vad som försvinner med eleverna:
-    medlemskap i undervisningsgrupper, klasshistorik, kopplingar till
-    vårdnadshavare (vårdnadshavarna finns kvar), frånvaroanmälningar,
-    ledighetsansökningar, närvaro och de inbjudnas inloggningar. En inloggning
-    som används på en annan skola finns kvar. Vill du behålla elevens historik
-    gör du eleven inaktiv i stället. Kontrollen räknar elevernas frånvaro,
-    ledighet, närvaro, vårdnadshavare och grupper, och därför står den i
-    läsloggen (7.4) som en läsning av de uppgifterna. Kryssrutorna visas för
-    dem som ändrar personerna: expeditionen, rektor och en fullständig
-    administratör.
+    <span class="ui">Ta bort</span> räknar det som försvinner med eleverna och
+    som en administratör ser:
+  </p>
+  <ul>
+    <li>medlemskap i undervisningsgrupper och klasshistorik;</li>
+    <li>platser som namngiven elev på enskilda lektioner;</li>
+    <li>kopplingar till vårdnadshavare (vårdnadshavarna finns kvar);</li>
+    <li>frånvaroanmälningar, ledighetsansökningar och närvaro;</li>
+    <li>utdrag över undervisningstid;</li>
+    <li>de inbjudnas inloggningar;</li>
+    <li>övriga uppgifter, till exempel rollhistoriken, som ett antal.</li>
+  </ul>
+  <p>
+    En inloggning som används på en annan skola finns kvar. Det som hör till
+    elevernas egna konton räknas inte, eftersom ingen administratör ser det.
+    Det gäller notiser, notisinställningar, enheter för pushnotiser och
+    kalenderprenumerationer, också vårdnadshavarnas prenumerationer på
+    eleverna. Dialogen nämner det i stället varje gång, så för elever står det
+    aldrig att inget annat hänger på dem.
+  </p>
+  <p>
+    Vill du behålla elevens historik gör du eleven inaktiv i stället.
+    Kontrollen räknar elevernas grupper, vårdnadshavare, frånvaro, ledighet,
+    närvaro och undervisningstid. Därför står den i läsloggen (7.4) som en
+    läsning av de uppgifterna, även om du stänger dialogen utan att ta bort
+    något. Kryssrutorna visas för dem som ändrar personerna: expeditionen,
+    rektor och en fullständig administratör.
   </p>
   <p>
     Har skolan ett elevregister som stöder SS12000 kan personerna hämtas

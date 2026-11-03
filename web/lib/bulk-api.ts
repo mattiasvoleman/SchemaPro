@@ -27,24 +27,40 @@ export interface BulkResult<Consequences = Record<string, number>> {
   done: string[];
   refused: BulkRefusal[];
   consequences?: Consequences;
+  /** The kinds that grew since the dry run a delete confirmed: nothing deleted, `consequences` the new counts. */
+  consequencesGrew?: string[];
 }
 
-/** GroupRemovalConsequences in src/resources/student-groups.service.ts. */
+/**
+ * GroupRemovalConsequences in src/resources/student-groups.service.ts: every
+ * key to a group in the catalogue, counted (src/common/removal-inventory.ts).
+ */
 export interface GroupRemovalConsequences {
   halves: number;
   homePupils: number;
+  successors: number;
   memberships: number;
   requirements: number;
   masterLessons: number;
   sharedLessons: number;
   calendarLessons: number;
   attendanceMarks: number;
+  lessonLogs: number;
+  availabilityConstraints: number;
+  lunchSittings: number;
+  calendarBreaks: number;
+  timplanCredits: number;
+  publicLinks: number;
   enrolments: number;
   mentorDuties: number;
   fromSource: number;
 }
 
-/** StudentRemovalConsequences in src/users/users.service.ts. */
+/**
+ * StudentRemovalConsequences in src/users/users.service.ts: the kinds named,
+ * the rest an administrator reads in otherRows and otherLinks. The pupils'
+ * own accounts, which no administrator reads, are not counted.
+ */
 export interface StudentRemovalConsequences {
   memberships: number;
   enrolments: number;
@@ -52,19 +68,25 @@ export interface StudentRemovalConsequences {
   absenceReports: number;
   leaveRequests: number;
   attendanceMarks: number;
+  lessonParticipations: number;
+  teachingTimeStatements: number;
+  otherRows: number;
+  otherLinks: number;
   logins: number;
   fromSource: number;
 }
 
+/** A delete: `dryRun` required (src/common/bulk.ts), and the real one carries its dry run's counts back. */
 export interface BulkDeleteBody {
   ids: string[];
-  dryRun?: boolean;
+  dryRun: boolean;
+  expected?: object;
 }
 
 export interface BulkUpdateBody<Changes> {
   ids: string[];
   changes: Changes;
-  dryRun?: boolean;
+  dryRun: boolean;
 }
 
 /**

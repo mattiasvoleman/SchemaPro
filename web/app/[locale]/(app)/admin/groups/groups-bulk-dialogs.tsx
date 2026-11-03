@@ -112,7 +112,12 @@ export function GroupsBulkDialogs({
   );
 }
 
-/** The lines the delete dialog shows for a group's consequences; a count of 0 says nothing. */
+/**
+ * The lines the delete dialog shows for a group's consequences; a count of 0
+ * says nothing. Every key to a group is counted (GROUP_KEYS in
+ * src/common/removal-inventory.ts, held to the catalogue), so the list is
+ * exhaustive and "nothing else depends on them" may be said when it is empty.
+ */
 export function describeGroupRemoval(
   t: (key: string, values: Record<string, number>) => string,
   consequences: GroupRemovalConsequences,
@@ -120,9 +125,23 @@ export function describeGroupRemoval(
   const lines = (keys: (keyof GroupRemovalConsequences)[]) =>
     keys.filter((key) => consequences[key] > 0).map((key) => t(`groupConsequences.${key}`, { count: consequences[key] }));
   return {
-    goes: lines(["halves", "memberships", "requirements", "masterLessons", "calendarLessons", "attendanceMarks"]),
-    loses: lines(["homePupils", "enrolments", "mentorDuties", "sharedLessons"]),
+    goes: lines([
+      "halves",
+      "memberships",
+      "requirements",
+      "masterLessons",
+      "calendarLessons",
+      "attendanceMarks",
+      "lessonLogs",
+      "lunchSittings",
+      "calendarBreaks",
+      "availabilityConstraints",
+      "timplanCredits",
+      "publicLinks",
+    ]),
+    loses: lines(["homePupils", "enrolments", "mentorDuties", "sharedLessons", "successors"]),
     notes: consequences.fromSource > 0 ? [t("fromSource", { count: consequences.fromSource })] : [],
+    exhaustive: true,
   };
 }
 

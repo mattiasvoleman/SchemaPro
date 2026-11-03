@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
+import { ApiError } from "@/lib/api";
 import type { BulkResult } from "@/lib/bulk-api";
 import { BulkDeleteDialog, BulkEditDialog, BulkSelectField, RefusalList, type DeleteLines } from "./bulk-dialogs";
 
@@ -19,6 +20,7 @@ const describeCounts = (counts: Counts): DeleteLines => ({
   goes: counts.halves > 0 ? [`${counts.halves} halvklasser`] : [],
   loses: [],
   notes: ["note"],
+  exhaustive: true,
 });
 
 /** The refusal list's line for a row, by the row's name. */
@@ -104,7 +106,8 @@ describe("BulkDeleteDialog", () => {
     const { onDeleted } = open(remove);
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "deleteOthers(2)" }));
-    expect(remove).toHaveBeenLastCalledWith({ ids: ["a", "c"] });
+    // With the dry run's counts, which the gateway counts again before it deletes.
+    expect(remove).toHaveBeenLastCalledWith({ ids: ["a", "c"], dryRun: false, expected: { halves: 0 } });
     expect(onDeleted).toHaveBeenCalledWith(2);
   });
 
@@ -126,11 +129,62 @@ describe("BulkDeleteDialog", () => {
     expect(await screen.findByText("changedMeanwhile")).toBeInTheDocument();
     expect(remove.mock.calls.map((call) => call[0])).toEqual([
       { ids: ["a", "b", "c"], dryRun: true },
-      { ids: ["a", "b", "c"] },
+      { ids: ["a", "b", "c"], dryRun: false, expected: { halves: 0 } },
       { ids: ["a", "b", "c"], dryRun: true },
     ]);
     expect(onDeleted).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "deleteOthers(2)" })).toBeInTheDocument();
+  });
+
+  it("deletes nothing when what goes with the rows grew since the check, and shows the new counts to be confirmed again", async () => {
+    const remove = vi
+      .fn()
+      .mockResolvedValueOnce(report({ done: ["a"], consequences: { halves: 1 } }))
+      .mockResolvedValueOnce(
+        report({ dryRun: false, done: ["a"], consequences: { halves: 2 }, consequencesGrew: ["halves"] }),
+      )
+      .mockResolvedValueOnce(report({ applied: true, dryRun: false, done: ["a"] }));
+    const { onDeleted } = open(remove);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "deleteCount(1)" }));
+    expect(await screen.findByText("changedMeanwhile")).toBeInTheDocument();
+    expect(screen.getByText("2 halvklasser")).toBeInTheDocument();
+    // The new counts came with the refusal: no new dry run is asked.
+    expect(remove).toHaveBeenCalledTimes(2);
+    expect(onDeleted).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "deleteCount(1)" }));
+    expect(remove).toHaveBeenLastCalledWith({ ids: ["a"], dryRun: false, expected: { halves: 2 } });
+    await waitFor(() => expect(onDeleted).toHaveBeenCalledWith(1));
+  });
+
+  it("never says nothing else depends on the rows when the list is not all there is", async () => {
+    render(
+      <BulkDeleteDialog
+        entity="students"
+        ids={["a"]}
+        nameOf={nameOf}
+        remove={vi.fn().mockResolvedValueOnce(report({ done: ["a"], consequences: { halves: 0 } }))}
+        describe={() => ({ goes: [], loses: [], notes: [], exhaustive: false })}
+        onClose={() => undefined}
+        onDeleted={() => undefined}
+      />,
+    );
+    expect(await screen.findByRole("button", { name: "deleteCount(1)" })).toBeInTheDocument();
+    expect(screen.queryByText("nothingElse")).not.toBeInTheDocument();
+  });
+
+  it("shows no list and no delete after a check that failed, only the way to ask again", async () => {
+    const remove = vi
+      .fn()
+      .mockResolvedValueOnce(report({ done: ["a", "b"], consequences: { halves: 0 } }))
+      .mockResolvedValueOnce(report({ dryRun: false, done: ["a"], refused: [{ id: "b", code: "BULK_ROW_NOT_FOUND", message: "x" }] }))
+      .mockRejectedValueOnce(new Error("HTTP 500"));
+    open(remove);
+    await userEvent.setup().click(await screen.findByRole("button", { name: "deleteCount(2)" }));
+    expect(await screen.findByText("deleteCheckFailed")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^delete/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: /goesTitle/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "retry" })).toBeInTheDocument();
   });
 
   it("offers no delete when nothing of the selection can go", async () => {
@@ -248,7 +302,7 @@ describe("BulkEditDialog", () => {
     const update = vi.fn().mockResolvedValue({ applied: true, dryRun: false, done: ["a", "b", "c"], refused: [] });
     const { onSaved } = open(update);
     await userEvent.setup().click(screen.getByRole("button", { name: "saveCount(3)" }));
-    expect(update).toHaveBeenCalledWith({ ids: ["a", "b", "c"], changes: { gradeLevel: 8 } });
+    expect(update).toHaveBeenCalledWith({ ids: ["a", "b", "c"], changes: { gradeLevel: 8 }, dryRun: false });
     expect(onSaved).toHaveBeenCalledWith(3);
   });
 
@@ -270,7 +324,7 @@ describe("BulkEditDialog", () => {
     expect(screen.getByText("nothingSavedOthers(2)")).toBeInTheDocument();
     expect(onSaved).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "saveOthers(2)" }));
-    expect(update).toHaveBeenLastCalledWith({ ids: ["a", "c"], changes: { gradeLevel: 8 } });
+    expect(update).toHaveBeenLastCalledWith({ ids: ["a", "c"], changes: { gradeLevel: 8 }, dryRun: false });
     await waitFor(() => expect(onSaved).toHaveBeenCalledWith(2));
   });
 
@@ -286,6 +340,12 @@ describe("BulkEditDialog", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: "saveCount(3)" }));
     expect(await screen.findByText("nothingSaved")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^save/ })).not.toBeInTheDocument();
+  });
+
+  it("says a refusal the gateway gives a known code in the reader's language", async () => {
+    open(vi.fn().mockRejectedValueOnce(new ApiError(400, "A pupil's home class must be a class.", "STUDENT_HOME_GROUP_NOT_A_CLASS")));
+    await userEvent.setup().click(screen.getByRole("button", { name: "saveCount(3)" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("refusal.STUDENT_HOME_GROUP_NOT_A_CLASS");
   });
 
   it("says why a call failed, and keeps the dialog", async () => {

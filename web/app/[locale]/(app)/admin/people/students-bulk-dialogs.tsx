@@ -108,23 +108,42 @@ export function StudentsBulkDialogs({
   );
 }
 
-/** The lines the delete dialog shows for the pupils' consequences; a count of 0 says nothing. */
+/**
+ * The lines the delete dialog shows for the pupils' consequences; a count of
+ * 0 says nothing. What an administrator reads is counted, by name or in
+ * otherRows and otherLinks (STUDENT_KEYS in src/common/removal-inventory.ts).
+ * The pupils' own accounts (notices, settings, devices, calendar feeds) are
+ * read by no administrator, so they are named without a number, always, and
+ * the list is never said to be all there is.
+ */
 export function describeStudentRemoval(
   t: (key: string, values?: Record<string, number>) => string,
   consequences: StudentRemovalConsequences,
 ): DeleteLines {
-  const goes = (
-    ["memberships", "enrolments", "guardianLinks", "absenceReports", "leaveRequests", "attendanceMarks", "logins"] as const
-  )
-    .filter((key) => consequences[key] > 0)
-    .map((key) => t(`studentConsequences.${key}`, { count: consequences[key] }));
+  const lines = (keys: (keyof StudentRemovalConsequences)[]) =>
+    keys.filter((key) => consequences[key] > 0).map((key) => t(`studentConsequences.${key}`, { count: consequences[key] }));
   return {
-    goes,
-    loses: [],
+    goes: [
+      ...lines([
+        "memberships",
+        "enrolments",
+        "lessonParticipations",
+        "guardianLinks",
+        "absenceReports",
+        "leaveRequests",
+        "attendanceMarks",
+        "teachingTimeStatements",
+        "logins",
+        "otherRows",
+      ]),
+      t("studentConsequences.accounts"),
+    ],
+    loses: lines(["otherLinks"]),
     notes: [
       ...(consequences.fromSource > 0 ? [t("fromSource", { count: consequences.fromSource })] : []),
       t("studentConsequences.deactivateInstead"),
     ],
+    exhaustive: false,
   };
 }
 
