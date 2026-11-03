@@ -8004,6 +8004,380 @@
       }
     },
     {
+      "name": "an empty F–5 plan: every share is short and reads as planned + deficit",
+      "versionCode": "SFS2023:945/B1",
+      "planningWeeksTenths": 356,
+      "gradeSpan": { "gradeFrom": 0, "gradeTo": 5 },
+      "subjects": [],
+      "entries": [],
+      "check": {
+        "versionCode": "SFS2023:945/B1",
+        "distributionPublished": true,
+        "planningWeeks": 35.6,
+        "stageGrades": { "LAG": [1,2,3], "MELLAN": [4,5,6], "HOG": [7,8,9] },
+        "cells": [
+          { "subjectCode": "BL", "stage": "LAG", "nationalHours": 60, "plannedHours": 0, "deficitHours": 60, "surplusHours": 0, "reducedPercent": 100, "protectedFromReduction": false, "subjectIds": [] },
+          {
+            "subjectCode": "BL",
+            "stage": "MELLAN",
+            "nationalHours": 53.4,
+            "plannedHours": 0,
+            "deficitHours": 53.4,
+            "surplusHours": 0,
+            "reducedPercent": 100,
+            "protectedFromReduction": false,
+            "share": { "held": 2, "of": 3 },
+            "subjectIds": []
+          },
+          { "subjectCode": "EN", "stage": "LAG", "nationalHours": 60, "plannedHours": 0, "deficitHours": 60, "surplusHours": 0, "reducedPercent": 100, "protectedFromReduction": true, "subjectIds": [] },
+          {
+            "subjectCode": "EN",
+            "stage": "MELLAN",
+            "nationalHours": 146.7,
+            "plannedHours": 0,
+            "deficitHours": 146.7,
+            "surplusHours": 0,
+            "reducedPercent": 100,
+            "protectedFromReduction": true,
+            "share": { "held": 2, "of": 3 },
+            "subjectIds": []
+          },
+          {
+            "subjectCode": "HKK",
+            "stage": "LAG_MELLAN",
+            "nationalHours": 33.4,
+            "plannedHours": 0,
+            "deficitHours": 33.4,
+            "surplusHours": 0,
+            "reducedPercent": 100,
+            "protectedFromReduction": false,
+            "share": { "held": 5, "of": 6 },
+            "subjectIds": []
+          },
+          { "subjectCode": "IDH", "stage": "LAG", "nationalHours": 140, "plannedHours": 0, "deficitHours": 140, "surplusHours": 0, "reducedPercent": 100, "protectedFromReduction": false, "subjectIds": [] },
+          {
+            "subjectCode": "IDH",
+            "stage": "MELLAN",
+            "nationalHours": 120,
+            "plannedHours": 0,
+            "deficitHours": 120,
+            "surplusHours": 0,
+            "reducedPercent": 100,
+            "protectedFromReduction": false,
+            "share": { "held": 2, "of": 3 },
+            "subjectIds": []
+          },
+          {
+            "subjectCode": "M2",
+            "stage": "MELLAN",
+            "nationalHours": 32,
+            "plannedHours": 0,
+            "deficitHours": 32,
+            "surplusHours": 0,
+            "reducedPercent": 100,
+            "protectedFromReduction": true,
+            "share": { "held": 2, "of": 3 },
+            "subjectIds": []
+          },
+          { "subjectCode": "MA", "stage": "LAG", "nationalHours": 420, "plannedHours": 0, "deficitHours": 420, "surplusHours": 0, "reducedPercent": 100, "protectedFromReduction": true, "subjectIds": [] },
+          {
+            "subjectCode": "MA",
+            "stage": "MELLAN",
+            "nationalHours": 273.4,
+            "plannedHours": 0,
+            "deficitHours": 273.4,
+            "surplusHours": 0,
+            "reducedPercent": 100,
+            "protectedFromReduction": true,
+            "share": { "held": 2, "of": 3 },
+            "subjectIds": []
+          },
+          { "subjectCode": "MU", "stage": "LAG", "nationalHours": 80, "plannedHours": 0, "deficitHours": 80, "surplusHours": 0, "reducedPercent": 100, "protectedFromReduction": false, "subjectIds": [] },
+          {
+            "subjectCode": "MU",
+            "stage": "MELLAN",
+            "nationalHours": 53.4,
+            "plannedHours": 0,
+            "deficitHours": 53.4,
+            "surplusHours": 0,
+            "reducedPercent": 100,
+            "protectedFromReduction": false,
+            "share": { "held": 2, "of": 3 },
+            "subjectIds": []
+          },
+          { "subjectCode": "NO", "stage": "LAG", "nationalHours": 145, "plannedHours": 0, "deficitHours": 145, "surplusHours": 0, "reducedPercent": 100, "protectedFromReduction": false, "subjectIds": [] },
+          {
+            "subjectCode": "NO",
+            "stage": "MELLAN",
+            "nationalHours": 144,
+            "plannedHours": 0,
+            "deficitHours": 144,
+            "surplusHours": 0,
+            "reducedPercent": 100,
+            "protectedFromReduction": false,
+            "children": [
+              { "subjectCode": "BI", "minimumHours": 40, "plannedHours": 0 },
+              { "subjectCode": "FY", "minimumHours": 40, "plannedHours": 0 },
+              { "subjectCode": "KE", "minimumHours": 40, "plannedHours": 0 }
+            ],
+            "share": { "held": 2, "of": 3 },
+            "subjectIds": []
+          },
+          { "subjectCode": "SL", "stage": "LAG", "nationalHours": 50, "plannedHours": 0, "deficitHours": 50, "surplusHours": 0, "reducedPercent": 100, "protectedFromReduction": false, "subjectIds": [] },
+          {
+            "subjectCode": "SL",
+            "stage": "MELLAN",
+            "nationalHours": 93.4,
+            "plannedHours": 0,
+            "deficitHours": 93.4,
+            "surplusHours": 0,
+            "reducedPercent": 100,
+            "protectedFromReduction": false,
+            "share": { "held": 2, "of": 3 },
+            "subjectIds": []
+          },
+          { "subjectCode": "SO", "stage": "LAG", "nationalHours": 200, "plannedHours": 0, "deficitHours": 200, "surplusHours": 0, "reducedPercent": 100, "protectedFromReduction": false, "subjectIds": [] },
+          {
+            "subjectCode": "SO",
+            "stage": "MELLAN",
+            "nationalHours": 250,
+            "plannedHours": 0,
+            "deficitHours": 250,
+            "surplusHours": 0,
+            "reducedPercent": 100,
+            "protectedFromReduction": false,
+            "children": [
+              { "subjectCode": "GE", "minimumHours": 50, "plannedHours": 0 },
+              { "subjectCode": "HI", "minimumHours": 60, "plannedHours": 0 },
+              { "subjectCode": "RE", "minimumHours": 50, "plannedHours": 0 },
+              { "subjectCode": "SH", "minimumHours": 50, "plannedHours": 0 }
+            ],
+            "share": { "held": 2, "of": 3 },
+            "subjectIds": []
+          },
+          { "subjectCode": "SV_SVA", "stage": "LAG", "nationalHours": 680, "plannedHours": 0, "deficitHours": 680, "surplusHours": 0, "reducedPercent": 100, "protectedFromReduction": true, "subjectIds": [] },
+          {
+            "subjectCode": "SV_SVA",
+            "stage": "MELLAN",
+            "nationalHours": 346.7,
+            "plannedHours": 0,
+            "deficitHours": 346.7,
+            "surplusHours": 0,
+            "reducedPercent": 100,
+            "protectedFromReduction": true,
+            "share": { "held": 2, "of": 3 },
+            "subjectIds": []
+          },
+          { "subjectCode": "TK", "stage": "LAG", "nationalHours": 47, "plannedHours": 0, "deficitHours": 47, "surplusHours": 0, "reducedPercent": 100, "protectedFromReduction": false, "subjectIds": [] },
+          {
+            "subjectCode": "TK",
+            "stage": "MELLAN",
+            "nationalHours": 43.4,
+            "plannedHours": 0,
+            "deficitHours": 43.4,
+            "surplusHours": 0,
+            "reducedPercent": 100,
+            "protectedFromReduction": false,
+            "share": { "held": 2, "of": 3 },
+            "subjectIds": []
+          }
+        ],
+        "unmapped": [],
+        "gradesOutsideStages": [],
+        "skolansVal": { "availableHours": 302.3, "takenHours": 3471.4, "placedHours": 0 },
+        "total": { "plannedHours": 0, "guaranteedHours": 3471.4, "deficitHours": 3471.4 },
+        "gradeSpan": { "gradeFrom": 0, "gradeTo": 5, "partial": true },
+        "verdicts": [
+          {
+            "code": "TIMPLAN_PROTECTED_SUBJECT_REDUCED",
+            "severity": "warning",
+            "subjectCode": "EN",
+            "stage": "LAG",
+            "subjectIds": [],
+            "params": { "nationalHours": 60, "plannedHours": 0, "deficitHours": 60, "reducedPercent": 100 }
+          },
+          {
+            "code": "TIMPLAN_PROTECTED_SUBJECT_REDUCED",
+            "severity": "warning",
+            "subjectCode": "MA",
+            "stage": "LAG",
+            "subjectIds": [],
+            "params": { "nationalHours": 420, "plannedHours": 0, "deficitHours": 420, "reducedPercent": 100 }
+          },
+          {
+            "code": "TIMPLAN_PROTECTED_SUBJECT_REDUCED",
+            "severity": "warning",
+            "subjectCode": "SV_SVA",
+            "stage": "LAG",
+            "subjectIds": [],
+            "params": { "nationalHours": 680, "plannedHours": 0, "deficitHours": 680, "reducedPercent": 100 }
+          },
+          {
+            "code": "TIMPLAN_REDUCTION_OVER_CAP",
+            "severity": "warning",
+            "subjectCode": "BL",
+            "stage": "LAG",
+            "subjectIds": [],
+            "params": { "nationalHours": 60, "plannedHours": 0, "deficitHours": 60, "reducedPercent": 100, "capPercent": 20 }
+          },
+          {
+            "code": "TIMPLAN_REDUCTION_OVER_CAP",
+            "severity": "warning",
+            "subjectCode": "IDH",
+            "stage": "LAG",
+            "subjectIds": [],
+            "params": { "nationalHours": 140, "plannedHours": 0, "deficitHours": 140, "reducedPercent": 100, "capPercent": 20 }
+          },
+          {
+            "code": "TIMPLAN_REDUCTION_OVER_CAP",
+            "severity": "warning",
+            "subjectCode": "MU",
+            "stage": "LAG",
+            "subjectIds": [],
+            "params": { "nationalHours": 80, "plannedHours": 0, "deficitHours": 80, "reducedPercent": 100, "capPercent": 20 }
+          },
+          {
+            "code": "TIMPLAN_REDUCTION_OVER_CAP",
+            "severity": "warning",
+            "subjectCode": "NO",
+            "stage": "LAG",
+            "subjectIds": [],
+            "params": { "nationalHours": 145, "plannedHours": 0, "deficitHours": 145, "reducedPercent": 100, "capPercent": 20 }
+          },
+          {
+            "code": "TIMPLAN_REDUCTION_OVER_CAP",
+            "severity": "warning",
+            "subjectCode": "SL",
+            "stage": "LAG",
+            "subjectIds": [],
+            "params": { "nationalHours": 50, "plannedHours": 0, "deficitHours": 50, "reducedPercent": 100, "capPercent": 20 }
+          },
+          {
+            "code": "TIMPLAN_REDUCTION_OVER_CAP",
+            "severity": "warning",
+            "subjectCode": "SO",
+            "stage": "LAG",
+            "subjectIds": [],
+            "params": { "nationalHours": 200, "plannedHours": 0, "deficitHours": 200, "reducedPercent": 100, "capPercent": 20 }
+          },
+          {
+            "code": "TIMPLAN_REDUCTION_OVER_CAP",
+            "severity": "warning",
+            "subjectCode": "TK",
+            "stage": "LAG",
+            "subjectIds": [],
+            "params": { "nationalHours": 47, "plannedHours": 0, "deficitHours": 47, "reducedPercent": 100, "capPercent": 20 }
+          },
+          {
+            "code": "TIMPLAN_PARTIAL_STAGE_BELOW_SHARE",
+            "severity": "notice",
+            "subjectCode": "HKK",
+            "stage": "LAG_MELLAN",
+            "subjectIds": [],
+            "params": { "nationalHours": 33.4, "plannedHours": 0, "deficitHours": 33.4, "reducedPercent": 100, "heldGrades": 5, "ofGrades": 6 }
+          },
+          {
+            "code": "TIMPLAN_PARTIAL_STAGE_BELOW_SHARE",
+            "severity": "notice",
+            "subjectCode": "BL",
+            "stage": "MELLAN",
+            "subjectIds": [],
+            "params": { "nationalHours": 53.4, "plannedHours": 0, "deficitHours": 53.4, "reducedPercent": 100, "heldGrades": 2, "ofGrades": 3 }
+          },
+          {
+            "code": "TIMPLAN_PARTIAL_STAGE_BELOW_SHARE",
+            "severity": "notice",
+            "subjectCode": "EN",
+            "stage": "MELLAN",
+            "subjectIds": [],
+            "params": { "nationalHours": 146.7, "plannedHours": 0, "deficitHours": 146.7, "reducedPercent": 100, "heldGrades": 2, "ofGrades": 3 }
+          },
+          {
+            "code": "TIMPLAN_PARTIAL_STAGE_BELOW_SHARE",
+            "severity": "notice",
+            "subjectCode": "IDH",
+            "stage": "MELLAN",
+            "subjectIds": [],
+            "params": { "nationalHours": 120, "plannedHours": 0, "deficitHours": 120, "reducedPercent": 100, "heldGrades": 2, "ofGrades": 3 }
+          },
+          {
+            "code": "TIMPLAN_PARTIAL_STAGE_BELOW_SHARE",
+            "severity": "notice",
+            "subjectCode": "M2",
+            "stage": "MELLAN",
+            "subjectIds": [],
+            "params": { "nationalHours": 32, "plannedHours": 0, "deficitHours": 32, "reducedPercent": 100, "heldGrades": 2, "ofGrades": 3 }
+          },
+          {
+            "code": "TIMPLAN_PARTIAL_STAGE_BELOW_SHARE",
+            "severity": "notice",
+            "subjectCode": "MA",
+            "stage": "MELLAN",
+            "subjectIds": [],
+            "params": { "nationalHours": 273.4, "plannedHours": 0, "deficitHours": 273.4, "reducedPercent": 100, "heldGrades": 2, "ofGrades": 3 }
+          },
+          {
+            "code": "TIMPLAN_PARTIAL_STAGE_BELOW_SHARE",
+            "severity": "notice",
+            "subjectCode": "MU",
+            "stage": "MELLAN",
+            "subjectIds": [],
+            "params": { "nationalHours": 53.4, "plannedHours": 0, "deficitHours": 53.4, "reducedPercent": 100, "heldGrades": 2, "ofGrades": 3 }
+          },
+          {
+            "code": "TIMPLAN_PARTIAL_STAGE_BELOW_SHARE",
+            "severity": "notice",
+            "subjectCode": "NO",
+            "stage": "MELLAN",
+            "subjectIds": [],
+            "params": { "nationalHours": 144, "plannedHours": 0, "deficitHours": 144, "reducedPercent": 100, "heldGrades": 2, "ofGrades": 3 }
+          },
+          {
+            "code": "TIMPLAN_PARTIAL_STAGE_BELOW_SHARE",
+            "severity": "notice",
+            "subjectCode": "SL",
+            "stage": "MELLAN",
+            "subjectIds": [],
+            "params": { "nationalHours": 93.4, "plannedHours": 0, "deficitHours": 93.4, "reducedPercent": 100, "heldGrades": 2, "ofGrades": 3 }
+          },
+          {
+            "code": "TIMPLAN_PARTIAL_STAGE_BELOW_SHARE",
+            "severity": "notice",
+            "subjectCode": "SO",
+            "stage": "MELLAN",
+            "subjectIds": [],
+            "params": { "nationalHours": 250, "plannedHours": 0, "deficitHours": 250, "reducedPercent": 100, "heldGrades": 2, "ofGrades": 3 }
+          },
+          {
+            "code": "TIMPLAN_PARTIAL_STAGE_BELOW_SHARE",
+            "severity": "notice",
+            "subjectCode": "SV_SVA",
+            "stage": "MELLAN",
+            "subjectIds": [],
+            "params": { "nationalHours": 346.7, "plannedHours": 0, "deficitHours": 346.7, "reducedPercent": 100, "heldGrades": 2, "ofGrades": 3 }
+          },
+          {
+            "code": "TIMPLAN_PARTIAL_STAGE_BELOW_SHARE",
+            "severity": "notice",
+            "subjectCode": "TK",
+            "stage": "MELLAN",
+            "subjectIds": [],
+            "params": { "nationalHours": 43.4, "plannedHours": 0, "deficitHours": 43.4, "reducedPercent": 100, "heldGrades": 2, "ofGrades": 3 }
+          },
+          {
+            "code": "TIMPLAN_SKOLANS_VAL_OVERSPENT",
+            "severity": "warning",
+            "params": { "takenHours": 3471.4, "availableHours": 302.3, "overspentHours": 3169.1, "estimated": 1 }
+          },
+          {
+            "code": "TIMPLAN_TOTAL_BELOW_GUARANTEE",
+            "severity": "warning",
+            "params": { "plannedHours": 0, "guaranteedHours": 3471.4, "deficitHours": 3471.4, "estimated": 1 }
+          }
+        ]
+      }
+    },
+    {
       "name": "a 4–9 plan with minutes in åk 2: outside the span, reported and not counted",
       "versionCode": "SFS2023:945/B1",
       "planningWeeksTenths": 356,

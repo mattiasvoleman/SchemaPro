@@ -39,7 +39,9 @@
  * planned + deficit is the target the reader sees: 231 + 230 + 230 min of
  * matematik over 35.6 weeks is 409,99 h, which to the nearest tenth read
  * "410 h planerat, 0,1 h under målet 410 h". The same holds for a NO/SO
- * child under its minimum and for a total under the guarantee.
+ * child under its minimum and for a total under the guarantee. A SHARE of a
+ * cell (below) is an estimate to the tenth and is shown, when it is short, as
+ * that sum: planned rounded down plus the deficit rounded up.
  *
  * ## Rolling school subjects into national cells
  *
@@ -752,7 +754,14 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
     // + deficit reads as the target (see "Display rounding").
     const plannedShown = deficit > 0 ? hoursDown(cell.planned) : hours(cell.planned);
     // The target as shown: the cell's hours, or a share of them to the tenth.
-    const nationalShown = cell.share ? hours(cell.national) : cell.national / HOUR;
+    // A share that is short is shown as planned + deficit, so the sentence adds
+    // up: 33⅓ h of nothing planned read "0 h planerat, 33,4 h under andelen
+    // 33,3 h" while the target was rounded to the nearest and the deficit up.
+    const nationalShown = cell.share
+      ? deficit > 0
+        ? Math.round((plannedShown + hoursUp(deficit)) * 10) / 10
+        : hours(cell.national)
+      : cell.national / HOUR;
     if (deficit > 0) {
       const figures = {
         nationalHours: nationalShown,
@@ -795,7 +804,11 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
         .map(([childCode, minimum]) => {
           const childPlanned = cell.childPlanned.get(childCode) ?? 0;
           const childShown = childPlanned < minimum ? hoursDown(childPlanned) : hours(childPlanned);
-          const minimumShown = cell.share ? hours(minimum) : minimum / HOUR;
+          const minimumShown = cell.share
+            ? childPlanned < minimum
+              ? Math.round((childShown + hoursUp(minimum - childPlanned)) * 10) / 10
+              : hours(minimum)
+            : minimum / HOUR;
           if (judged && childPlanned < minimum) {
             const figures = {
               childCode,
@@ -857,7 +870,14 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
   // held to.
   const totalJudged = !(partial && !published);
   const guaranteed = partial && published ? heldNational : version.totalHours * HOUR;
-  const guaranteedShown = partial && published ? hours(guaranteed) : version.totalHours;
+  // A guarantee derived from the cells held is shown, when the plan is short of
+  // it, as planned + deficit like a share (see "Display rounding").
+  const guaranteedShown =
+    partial && published
+      ? plannedTotal < guaranteed
+        ? Math.round((hoursDown(plannedTotal) + hoursUp(guaranteed - plannedTotal)) * 10) / 10
+        : hours(guaranteed)
+      : version.totalHours;
   const totalShown =
     totalJudged && plannedTotal < guaranteed ? hoursDown(plannedTotal) : hours(plannedTotal);
   if (!totalJudged) {

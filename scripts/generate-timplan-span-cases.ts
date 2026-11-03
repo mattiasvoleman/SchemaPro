@@ -217,6 +217,9 @@ add('a span of every årskurs is the whole form: the numbers of no span', B1, { 
   add('an F–5 plan: lågstadiet is judged whole, so a protected subject reduced there is a warning, in mellanstadiet a notice', B1, { gradeFrom: 0, gradeTo: 5 }, plan);
 }
 
+// 6b. A short share is an estimate to the tenth and reads as planned + deficit.
+add('an empty F–5 plan: every share is short and reads as planned + deficit', B1, { gradeFrom: 0, gradeTo: 5 }, { subjects: [], entries: [] });
+
 // 7. Minutes in an årskurs the span lacks enter no sum.
 add(
   'a 4–9 plan with minutes in åk 2: outside the span, reported and not counted',

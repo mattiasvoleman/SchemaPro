@@ -911,6 +911,24 @@ describe('checkLocalTimplan — the plan’s årskurs span', () => {
       expect(codes(result)).toEqual(['TIMPLAN_PARTIAL_STAGE_BELOW_SHARE', 'TIMPLAN_TOTAL_BELOW_GUARANTEE']);
     });
 
+    it('shows a short share as the sum of what it shows: planned + deficit is the target, to the tenth', () => {
+      // Nothing planned in åk 4–5 of F–5: the share of HKK's 40 h over six årskurser is 33⅓ h
+      // for five of them, and "0 h planerat, 33,4 h under andelen 33,3 h" does not add up.
+      const result = withSpan(B1, 356, { subjects: [coded('HKK')], entries: [] }, FROM_F_TO_5);
+      const hkk = result.verdicts.find((v) => v.subjectCode === 'HKK')!;
+      expect(hkk.params).toMatchObject({ plannedHours: 0, deficitHours: 33.4, nationalHours: 33.4, heldGrades: 5, ofGrades: 6 });
+      expect(cell(result, 'HKK', 'LAG_MELLAN').nationalHours).toBe(33.4);
+      // The guarantee of the cells held is shown the same way: nothing planned, 3 471⅓ h short.
+      expect(result.total).toMatchObject({ plannedHours: 0, guaranteedHours: 3471.4, deficitHours: 3471.4 });
+      for (const verdict of result.verdicts.filter((v) => v.code === 'TIMPLAN_PARTIAL_STAGE_BELOW_SHARE')) {
+        const { plannedHours, deficitHours, nationalHours } = verdict.params as Record<string, number>;
+        expect(Math.round((plannedHours! + deficitHours!) * 10) / 10).toBe(nationalHours);
+      }
+      // A share that is met is shown to the nearest tenth, as ever.
+      const met = withSpan(B1, 356, spanPlan(B1, 356, FROM_F_TO_5), FROM_F_TO_5);
+      expect(cell(met, 'HKK', 'LAG_MELLAN').nationalHours).toBe(33.3);
+    });
+
     it('a cell cut past the cap is a notice too, in a partly held stadium', () => {
       const plan = placedElsewhere(spanPlan(B1, 356, FROM_F_TO_5));
       const cut = { ...plan, entries: setMinutes(plan.entries, 'BL', [4, 5], 20) };

@@ -21,7 +21,7 @@ import {
  * The fixture was generated from the GATEWAY copy, so this test proves the web
  * arrives at the same hours to the tenth, the same deficits rounded up, the
  * same verdict codes, severities and params, and the same sort order — for
- * thirty-three plans that between them reach every verdict code, every school
+ * thirty-four plans that between them reach every verdict code, every school
  * form, the unpublished 2028 lydelse, an empty plan, and plans for part of a
  * form (a 4–9, an F–5, a 6–9 school) whose årskurs span cuts the stadier they
  * are judged against. `toEqual`, not `toBeCloseTo`:
