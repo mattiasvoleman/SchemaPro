@@ -14,7 +14,20 @@ import { tellNewMentors } from '../family/leave-notices';
 import { NotificationsService } from '../notifications/notifications.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError, studentGroupHasEnrolmentHistory } from '../common/utils/prisma-errors';
+import {
+  BULK_TIMEOUT_MS,
+  assertSomeChange,
+  notFound,
+  refusalOf,
+  runBulk,
+  uniqueIds,
+  writeAll,
+  type BulkIdsDto,
+  type BulkRefusal,
+  type BulkResult,
+} from '../common/bulk';
 import type {
+  BulkUpdateStudentGroupsDto,
   CreateStudentGroupDto,
   PlaceHalvesDto,
   SetGroupMembersDto,
@@ -44,17 +57,83 @@ async function assertMayReplace(
   subjectId: string | null | undefined,
 ): Promise<void> {
   if (!subjectId) return;
-  if (group.kind !== 'TEACHING_GROUP' || group.halfOfId !== null) {
-    throw new BadRequestException({
-      message:
-        group.kind === 'TEACHING_GROUP'
-          ? 'En halvklass är en del av klassen och kan inte ersätta klassens lektioner i ett ämne.'
-          : 'En klass är elevernas hemklass och kan inte ersätta sina egna lektioner i ett ämne. Gör en undervisningsgrupp för SvA.',
-      code: REPLACING_GROUP_NOT_A_TEACHING_GROUP,
-    });
-  }
+  const refusal = replaceRefusal(group);
+  if (refusal) throw refusal;
+  await assertSubjectIsTheSchools(tx, subjectId);
+}
+
+/** Why `group` may not replace a subject (Ersättande grupper), or null when it may. */
+function replaceRefusal(group: { kind: string; halfOfId: string | null }): BadRequestException | null {
+  if (group.kind === 'TEACHING_GROUP' && group.halfOfId === null) return null;
+  return new BadRequestException({
+    message:
+      group.kind === 'TEACHING_GROUP'
+        ? 'En halvklass är en del av klassen och kan inte ersätta klassens lektioner i ett ämne.'
+        : 'En klass är elevernas hemklass och kan inte ersätta sina egna lektioner i ett ämne. Gör en undervisningsgrupp för SvA.',
+    code: REPLACING_GROUP_NOT_A_TEACHING_GROUP,
+  });
+}
+
+async function assertSubjectIsTheSchools(tx: Prisma.TransactionClient, subjectId: string): Promise<void> {
   const subject = await tx.subject.findUnique({ where: { id: subjectId }, select: { id: true } });
   if (!subject) throw new BadRequestException('replacesSubjectId: ämnet finns inte i skolan.');
+}
+
+/**
+ * What goes with a bulk delete of groups, counted on its dry run: the rows
+ * the database removes or empties with them (ON DELETE CASCADE / SET NULL),
+ * as a delete of one group does too, unsaid. Counts only, none naming a
+ * pupil, so the dry run is no read in the läslogg's sense: the attendance
+ * marks are a figure over the groups' lessons, as the attendance summary is.
+ */
+export interface GroupRemovalConsequences {
+  /** Halves of a class in the call that go with it without being named. */
+  halves: number;
+  /** Pupils whose home class goes: they are left without a class. */
+  homePupils: number;
+  /** Teaching-group memberships (StudentGroupMembers) of the groups and those halves. */
+  memberships: number;
+  /** Timplansposter (TeachingRequirements). */
+  requirements: number;
+  /** The groups' own lessons in the grundschema (MasterLessons). */
+  masterLessons: number;
+  /** Other lessons in the grundschema the groups take part in, which lose them (MasterLessonGroups). */
+  sharedLessons: number;
+  /** The groups' lessons in the calendar, past and coming (CalendarLessons). */
+  calendarLessons: number;
+  /** Attendance marks on those calendar lessons, which go with them. */
+  attendanceMarks: number;
+  /** Pupils' class-history segments that lose their class (StudentEnrollments). */
+  enrolments: number;
+  /** Mentorskap uppdrag that lose their class (TeacherDuties). */
+  mentorDuties: number;
+  /** Groups linked to the school's SS12000 source, which its next sync may add again. */
+  fromSource: number;
+}
+
+async function groupRemovalConsequences(
+  tx: Prisma.TransactionClient,
+  groups: { id: string; ss12000Id: string | null }[],
+): Promise<GroupRemovalConsequences> {
+  const named = groups.map((group) => group.id);
+  const halves = await tx.studentGroup.findMany({
+    where: { halfOfId: { in: named }, id: { notIn: named } },
+    select: { id: true },
+  });
+  const inGroups = { studentGroupId: { in: [...named, ...halves.map((half) => half.id)] } };
+  return {
+    halves: halves.length,
+    homePupils: await tx.user.count({ where: inGroups }),
+    memberships: await tx.studentGroupMember.count({ where: inGroups }),
+    requirements: await tx.teachingRequirement.count({ where: inGroups }),
+    masterLessons: await tx.masterLesson.count({ where: inGroups }),
+    sharedLessons: await tx.masterLessonGroup.count({ where: inGroups }),
+    calendarLessons: await tx.calendarLesson.count({ where: inGroups }),
+    attendanceMarks: await tx.attendanceRecord.count({ where: { calendarLesson: inGroups } }),
+    enrolments: await tx.studentEnrollment.count({ where: inGroups }),
+    mentorDuties: await tx.teacherDuty.count({ where: inGroups }),
+    fromSource: groups.filter((group) => group.ss12000Id !== null).length,
+  };
 }
 
 /**
@@ -299,6 +378,145 @@ export class StudentGroupsService {
         tx.studentGroup.delete({ where: { id } }),
       );
     } catch (error) {
+      rethrowPrismaError(error);
+    }
+  }
+
+  /**
+   * Massåtgärder: an årskurs or an "Ersätter ämne" for many groups at once,
+   * all or nothing (src/common/bulk.ts), under update()'s rules for the
+   * fields it takes: a subject is replaced only by a teaching group that is
+   * not a half (the same refusal, row by row) and only by one of the
+   * school's subjects (asked once), and a class's new årskurs is its halves'
+   * and may give a mentor a leave request (told once, after every row).
+   *
+   * Not the name (one per year), the kind (a class's pupils are its home
+   * pupils, a teaching group's its members) or the läsår (where a group's
+   * timplan, lessons and class history live; moving years is the rollover's).
+   *
+   * A row whose fields already hold the values is judged but not written:
+   * an UPDATE moves updatedAt, which the SS12000 sync reads as a local edit
+   * (LOCAL_EDIT_SINCE_LAST_SYNC), and twenty classes already in åk 7 were
+   * not edited by being in the selection.
+   */
+  async bulkUpdate(dto: BulkUpdateStudentGroupsDto, user: AuthenticatedUser): Promise<BulkResult> {
+    assertSomeChange(dto.changes);
+    const ids = uniqueIds(dto.ids);
+    const { gradeLevel, replacesSubjectId } = dto.changes;
+    const dryRun = dto.dryRun === true;
+    const data = {
+      ...(gradeLevel !== undefined ? { gradeLevel } : {}),
+      ...(replacesSubjectId !== undefined ? { replacesSubjectId } : {}),
+    };
+    try {
+      return await runBulk(
+        (fn) => this.prisma.withRls(user, fn, { timeoutMs: BULK_TIMEOUT_MS }),
+        dryRun,
+        async (tx) => {
+          const found = await tx.studentGroup.findMany({
+            where: { id: { in: ids } },
+            select: { id: true, kind: true, halfOfId: true, gradeLevel: true, replacesSubjectId: true },
+          });
+          const byId = new Map(found.map((group) => [group.id, group]));
+          const refused: BulkRefusal[] = [];
+          const judged: typeof found = [];
+          for (const id of ids) {
+            const group = byId.get(id);
+            const why = group && replacesSubjectId ? replaceRefusal(group) : null;
+            const refusal = !group ? notFound(id) : why ? refusalOf(id, why) : null;
+            if (refusal) refused.push(refusal);
+            else if (group) judged.push(group);
+          }
+          if (replacesSubjectId && judged.length > 0) await assertSubjectIsTheSchools(tx, replacesSubjectId);
+          const moving = judged.filter(
+            (group) =>
+              (gradeLevel !== undefined && group.gradeLevel !== gradeLevel) ||
+              (replacesSubjectId !== undefined && group.replacesSubjectId !== replacesSubjectId),
+          );
+          const classes = new Set(judged.filter((group) => group.kind === 'CLASS').map((group) => group.id));
+          refused.push(
+            ...(await writeAll(
+              tx,
+              moving.map((group) => group.id),
+              (rows) => tx.studentGroup.updateMany({ where: { id: { in: rows } }, data }),
+              (id) => tx.studentGroup.update({ where: { id }, data }),
+            )),
+          );
+          // update() carries the årskurs to a class's halves whenever it is
+          // sent, also when the class already had it: a half left behind is
+          // brought along. Every class judged, then, not only those moving,
+          // and only the halves that do not already hold it.
+          if (gradeLevel !== undefined && classes.size > 0 && refused.length === 0) {
+            await tx.studentGroup.updateMany({
+              where: {
+                halfOfId: { in: [...classes] },
+                ...(gradeLevel === null
+                  ? { gradeLevel: { not: null } }
+                  : { OR: [{ gradeLevel: null }, { gradeLevel: { not: gradeLevel } }] }),
+              },
+              data: { gradeLevel },
+            });
+          }
+          if (this.notifications && gradeLevel !== undefined && moving.length > 0 && !dryRun && refused.length === 0) {
+            await tellNewMentors(this.notifications, tx, requireSchoolId(user));
+          }
+          const refusedIds = new Set(refused.map((refusal) => refusal.id));
+          return { done: judged.map((group) => group.id).filter((id) => !refusedIds.has(id)), refused };
+        },
+      );
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      rethrowPrismaError(error);
+    }
+  }
+
+  /**
+   * Massåtgärder: many groups deleted at once, all or nothing
+   * (src/common/bulk.ts), as remove() deletes one: the database takes what
+   * hangs on each (halves, memberships, timplansposter, lessons and their
+   * attendance) and empties what only names it (a pupil's home class, a
+   * class-history segment, a mentorskap). A dry run counts those first
+   * (GroupRemovalConsequences), so the confirmation can say them.
+   *
+   * Halves go first when tried one by one: a class takes its halves with it,
+   * and its half tried after it would not be found.
+   */
+  async bulkRemove(
+    dto: BulkIdsDto,
+    user: AuthenticatedUser,
+  ): Promise<BulkResult<GroupRemovalConsequences>> {
+    const ids = uniqueIds(dto.ids);
+    const dryRun = dto.dryRun === true;
+    try {
+      return await runBulk(
+        (fn) => this.prisma.withRls(user, fn, { timeoutMs: BULK_TIMEOUT_MS }),
+        dryRun,
+        async (tx) => {
+          const found = await tx.studentGroup.findMany({
+            where: { id: { in: ids } },
+            select: { id: true, halfOfId: true, ss12000Id: true },
+          });
+          const present = new Set(found.map((group) => group.id));
+          const refused = ids.filter((id) => !present.has(id)).map(notFound);
+          const consequences = dryRun ? await groupRemovalConsequences(tx, found) : undefined;
+          const order = [
+            ...found.filter((group) => group.halfOfId !== null),
+            ...found.filter((group) => group.halfOfId === null),
+          ].map((group) => group.id);
+          refused.push(
+            ...(await writeAll(
+              tx,
+              order,
+              (rows) => tx.studentGroup.deleteMany({ where: { id: { in: rows } } }),
+              (id) => tx.studentGroup.delete({ where: { id } }),
+            )),
+          );
+          const refusedIds = new Set(refused.map((refusal) => refusal.id));
+          return { done: ids.filter((id) => !refusedIds.has(id)), refused, consequences };
+        },
+      );
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
       rethrowPrismaError(error);
     }
   }

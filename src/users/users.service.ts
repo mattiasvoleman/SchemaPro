@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
   Injectable,
   Logger,
   NotFoundException,
@@ -25,12 +26,26 @@ import {
   type EmailChange,
   type LoginOwner,
 } from './supabase-admin.service';
-import type { CreateUserDto, UpdateUserDto } from './dto/user.dto';
+import {
+  BULK_TIMEOUT_MS,
+  assertSomeChange,
+  notFound,
+  refusalOf,
+  runBulk,
+  uniqueIds,
+  writeAll,
+  type BulkIdsDto,
+  type BulkRefusal,
+  type BulkResult,
+} from '../common/bulk';
+import type { BulkUpdateStudentsDto, CreateUserDto, UpdateUserDto } from './dto/user.dto';
 
 /** A pseudonymised person (gallring, 20261021110000) cannot be made active again. */
 export const USER_IS_PSEUDONYMISED = 'USER_IS_PSEUDONYMISED';
 /** A change that would leave the school with nobody who decides (Roller i skolan). */
 export const LAST_DECIDER = 'LAST_DECIDER';
+/** A row of a bulk call of the register that is no pupil (Massåtgärder). */
+export const NOT_A_STUDENT = 'NOT_A_STUDENT';
 
 /** The profiles HR-läs is given to: rektor and a full administrator read tjänst % anyway. */
 const HR_READ_PROFILES: readonly AdminProfile[] = ['SCHEMALAGGARE', 'EXPEDITION', 'LASARE'];
@@ -526,11 +541,7 @@ export class UsersService {
         // (Users_a_pseudonym_stays_inactive). Said here, with the way out,
         // rather than as the constraint.
         if (current.pseudonymisedAt && dto.isActive === true) {
-          throw new ConflictException({
-            message:
-              'Personen är pseudonymiserad efter skolans gallringsbeslut och kan inte aktiveras igen. Lägg till personen på nytt.',
-            code: USER_IS_PSEUDONYMISED,
-          });
+          throw isPseudonymised();
         }
         const role = dto.role ?? current.role;
         // Roller i skolan: an administrator's row, and anybody's role,
@@ -759,6 +770,220 @@ export class UsersService {
   }
 
   /**
+   * Massåtgärder: a class or a status (aktiv / inaktiv) set on many pupils at
+   * once, all or nothing (src/common/bulk.ts), under update()'s rules for
+   * the fields it takes. Pupils only (notAStudent). A pseudonymised pupil is
+   * not made active (the same refusal, row by row), the class is a class
+   * (asked once), and a move or a status change may give a mentor a leave
+   * request (told once, after every row).
+   *
+   * The rows are read FOR NO KEY UPDATE in id order, as update() reads its
+   * one: a role or a class written meanwhile waits, and the rule is judged on
+   * what is written. A row already in the class and status asked is judged
+   * but not written, so it keeps its updatedAt (the SS12000 sync reads a
+   * newer one as a local edit) and its class history.
+   *
+   * Answers ids only, so it reads nobody in the läslogg's sense: update()
+   * records its echo of the whole row (PEOPLE), and the register the page
+   * reads again afterwards records its own read.
+   */
+  async bulkUpdateStudents(dto: BulkUpdateStudentsDto, user: AuthenticatedUser): Promise<BulkResult> {
+    assertSomeChange(dto.changes);
+    const ids = uniqueIds(dto.ids);
+    const { studentGroupId, isActive } = dto.changes;
+    const dryRun = dto.dryRun === true;
+    const data = {
+      ...(studentGroupId !== undefined ? { studentGroupId } : {}),
+      ...(isActive !== undefined ? { isActive } : {}),
+    };
+    try {
+      return await runBulk(
+        (fn) => this.prisma.withRls(user, fn, { timeoutMs: BULK_TIMEOUT_MS }),
+        dryRun,
+        async (tx) => {
+          const rows = await tx.$queryRaw<
+            Pick<User, 'id' | 'role' | 'studentGroupId' | 'isActive' | 'pseudonymisedAt'>[]
+          >`
+            SELECT "id", "role", "studentGroupId", "isActive", "pseudonymisedAt"
+            FROM "Users"
+            WHERE "id" = ANY(${ids}::uuid[])
+            ORDER BY "id"
+            FOR NO KEY UPDATE
+          `;
+          const byId = new Map(rows.map((row) => [row.id, row]));
+          const refused: BulkRefusal[] = [];
+          const judged: typeof rows = [];
+          for (const id of ids) {
+            const row = byId.get(id);
+            if (!row) refused.push(notFound(id));
+            else if (row.role !== 'STUDENT') refused.push(notAStudent(id));
+            else if (row.pseudonymisedAt && isActive === true) refused.push(refusalOf(id, isPseudonymised())!);
+            else judged.push(row);
+          }
+          const moving = judged.filter(
+            (row) =>
+              (studentGroupId !== undefined && row.studentGroupId !== studentGroupId) ||
+              (isActive !== undefined && row.isActive !== isActive),
+          );
+          if (studentGroupId && moving.some((row) => row.studentGroupId !== studentGroupId)) {
+            await assertHomeIsAClass(tx, studentGroupId);
+          }
+          refused.push(
+            ...(await writeAll(
+              tx,
+              moving.map((row) => row.id),
+              (rows) => tx.user.updateMany({ where: { id: { in: rows } }, data }),
+              (id) => tx.user.update({ where: { id }, data }),
+            )),
+          );
+          if (this.notifications && user.schoolId && moving.length > 0 && !dryRun && refused.length === 0) {
+            await tellNewMentors(this.notifications, tx, user.schoolId);
+          }
+          const refusedIds = new Set(refused.map((refusal) => refusal.id));
+          return { done: judged.map((row) => row.id).filter((id) => !refusedIds.has(id)), refused };
+        },
+      );
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      rethrowPrismaError(error);
+    }
+  }
+
+  /**
+   * Massåtgärder: many pupils removed at once, all or nothing
+   * (src/common/bulk.ts), as remove() removes one: refused where it refuses
+   * (a decided timplan names the person, a vikarie is booked for their
+   * rastvaktspass — staff's, never a pupil's, but asked of every row as
+   * remove() asks), and every row naming them goes with them. A dry run
+   * counts those (StudentRemovalConsequences) in a read of its own after it,
+   * which commits: the counts are recorded in the läslogg, and a record
+   * written inside the dry run would be rolled back with it.
+   *
+   * The rows are read FOR UPDATE in id order: the role is judged on what is
+   * deleted, so no row of the call becomes a teacher meanwhile, and two calls
+   * over the same pupils queue. remove()'s per-teacher cover lock is not
+   * taken: it guards the vikarietavla's passes and absences, and a pupil has
+   * none.
+   *
+   * The logins of the invited go after the commit, as remove()'s does, and
+   * after the answer too: a few hundred calls to the identity provider are
+   * not held against the request. Each is left when another school's row
+   * holds it (Flera skolor per inloggning).
+   */
+  async bulkRemoveStudents(
+    dto: BulkIdsDto,
+    user: AuthenticatedUser,
+  ): Promise<BulkResult<StudentRemovalConsequences>> {
+    const ids = uniqueIds(dto.ids);
+    const dryRun = dto.dryRun === true;
+    let result: BulkResult<StudentRemovalConsequences>;
+    try {
+      result = await runBulk<StudentRemovalConsequences>(
+        (fn) => this.prisma.withRls(user, fn, { timeoutMs: BULK_TIMEOUT_MS }),
+        dryRun,
+        async (tx) => {
+          const rows = await tx.$queryRaw<
+            Pick<User, 'id' | 'role' | 'authId' | 'invitedAt' | 'ss12000Id'>[]
+          >`
+            SELECT "id", "role", "authId", "invitedAt", "ss12000Id"
+            FROM "Users"
+            WHERE "id" = ANY(${ids}::uuid[])
+            ORDER BY "id"
+            FOR UPDATE
+          `;
+          const byId = new Map(rows.map((row) => [row.id, row]));
+          const refused: BulkRefusal[] = [];
+          const pupils = ids.flatMap((id) => {
+            const row = byId.get(id);
+            if (!row) refused.push(notFound(id));
+            else if (row.role !== 'STUDENT') refused.push(notAStudent(id));
+            else return [row];
+            return [];
+          });
+          const candidates = pupils.map((pupil) => pupil.id);
+          const decided = await tx.localTimplan.findMany({
+            where: { OR: [{ decidedByUserId: { in: candidates } }, { gradeSpanSetByUserId: { in: candidates } }] },
+            select: { name: true, decidedByUserId: true, gradeSpanSetByUserId: true },
+            orderBy: { name: 'asc' },
+          });
+          const booked = await tx.supervisionCover.findMany({
+            where: { absentTeacherId: { in: candidates }, decision: 'SUBSTITUTE', endsAt: { gt: new Date() } },
+            select: { absentTeacherId: true, date: true },
+            orderBy: { date: 'asc' },
+          });
+          const removable = pupils.filter((pupil) => {
+            const plans = decided.filter(
+              (plan) => plan.decidedByUserId === pupil.id || plan.gradeSpanSetByUserId === pupil.id,
+            );
+            const pass = booked.find((cover) => cover.absentTeacherId === pupil.id);
+            const why = plans.length > 0
+              ? recordedATimplanDecision(
+                  plans.map((plan) => plan.name),
+                  plans.some((plan) => plan.gradeSpanSetByUserId === pupil.id),
+                  plans.some((plan) => plan.decidedByUserId === pupil.id),
+                )
+              : pass
+                ? hasBookedPassCovers(pass.date.toISOString().slice(0, 10))
+                : null;
+            if (why) refused.push(refusalOf(pupil.id, why)!);
+            return why === null;
+          });
+          refused.push(
+            ...(await writeAll(
+              tx,
+              removable.map((pupil) => pupil.id),
+              (rows) => tx.user.deleteMany({ where: { id: { in: rows } } }),
+              (id) =>
+                tx.user.delete({ where: { id } }).catch((error: unknown) => {
+                  const reference = timplanReference(error);
+                  if (reference) throw recordedATimplanDecision([], reference === 'span', reference === 'decision');
+                  throw error;
+                }),
+            )),
+          );
+          const logins = removable
+            .filter((pupil) => pupil.invitedAt !== null)
+            .map((pupil) => pupil.authId);
+          if (!dryRun && refused.length === 0 && logins.length > 0) {
+            this.prisma.onCommit(tx, () => this.removeLogins(logins, user));
+          }
+          const refusedIds = new Set(refused.map((refusal) => refusal.id));
+          return { done: removable.map((pupil) => pupil.id).filter((id) => !refusedIds.has(id)), refused };
+        },
+      );
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      rethrowPrismaError(error);
+    }
+    if (!dryRun || result.done.length === 0) return result;
+    // The counts are a read of the pupils, and a read is recorded in a
+    // transaction that commits: the dry run's own is rolled back, its
+    // record with it. Counted after the dry run, of the pupils it would take.
+    const consequences = await this.prisma.withRls(user, async (tx) => {
+      const pupils = await tx.user.findMany({
+        where: { id: { in: result.done } },
+        select: { id: true, invitedAt: true, ss12000Id: true },
+      });
+      return studentRemovalConsequences(tx, pupils, user.channel);
+    });
+    return { ...result, consequences };
+  }
+
+  /** The logins a bulk delete left, removed one by one as remove() removes its one; best effort. */
+  private async removeLogins(authIds: string[], user: AuthenticatedUser): Promise<void> {
+    let failed = 0;
+    for (const authId of authIds) {
+      if (await this.loginIsHeldElsewhere(authId, null, user)) continue;
+      try {
+        await this.supabaseAdmin.deleteUser(authId);
+      } catch {
+        failed += 1;
+      }
+    }
+    if (failed > 0) this.logger.warn(`Failed to delete ${failed} Supabase identities for removed users.`);
+  }
+
+  /**
    * Asks the provider for the identity behind an address, minting one for
    * row `id` if needed.
    */
@@ -970,6 +1195,81 @@ function recordedATimplanDecision(
     `Personen står som den som registrerade ${what} ${which} och kan inte tas bort. ` +
       'Inaktivera kontot i stället; beslutet behåller sitt namn.',
   );
+}
+
+/** A pseudonymised person (gallring) stays inactive: update()'s refusal, and the bulk update's per row. */
+function isPseudonymised(): ConflictException {
+  return new ConflictException({
+    message:
+      'Personen är pseudonymiserad efter skolans gallringsbeslut och kan inte aktiveras igen. Lägg till personen på nytt.',
+    code: USER_IS_PSEUDONYMISED,
+  });
+}
+
+/**
+ * The bulk routes of the register are the pupils' (Massåtgärder). A member
+ * of staff carries a post, behörigheter, uppdrag and rastvaktspass, an
+ * administrator's row is rektor's to change, and a guardian is linked to
+ * pupils: each is changed or removed one at a time, where the row's own
+ * refusals are said, and a row of another role in a bulk call is refused.
+ */
+function notAStudent(id: string): BulkRefusal {
+  return {
+    id,
+    code: NOT_A_STUDENT,
+    message: 'Raden är ingen elev. Lärare, administratörer och vårdnadshavare ändras och tas bort en i taget.',
+  };
+}
+
+/**
+ * What goes with a bulk delete of pupils, counted on its dry run: every row
+ * that names them goes with them (ON DELETE CASCADE), as it does when one
+ * pupil is removed. Each count is a fact about the pupils in the call — a
+ * call may name one — so the dry run records a read of each kind it counts
+ * about them (the läslogg's GUARDIANS, ABSENCE_REPORTS, LEAVE_REQUESTS,
+ * ATTENDANCE and ROSTER). The logins and the SS12000 link are on the
+ * register the page has already read.
+ */
+export interface StudentRemovalConsequences {
+  /** Teaching-group memberships (StudentGroupMembers). */
+  memberships: number;
+  /** Class-history segments (StudentEnrollments). */
+  enrolments: number;
+  /** Links to guardians (GuardianStudents). */
+  guardianLinks: number;
+  /** Absence reported for them (AbsenceReports). */
+  absenceReports: number;
+  /** Their leave requests (LeaveRequests). */
+  leaveRequests: number;
+  /** Attendance marks (AttendanceRecords). */
+  attendanceMarks: number;
+  /** Invited pupils, whose login is removed too unless another school's row holds it. */
+  logins: number;
+  /** Pupils linked to the school's SS12000 source, whom its next sync may add again. */
+  fromSource: number;
+}
+
+async function studentRemovalConsequences(
+  tx: PrismaClient,
+  pupils: { id: string; invitedAt: Date | null; ss12000Id: string | null }[],
+  channel: AuthenticatedUser['channel'],
+): Promise<StudentRemovalConsequences> {
+  const ids = pupils.map((pupil) => pupil.id);
+  const theirs = { studentId: { in: ids } };
+  const counts: StudentRemovalConsequences = {
+    memberships: await tx.studentGroupMember.count({ where: theirs }),
+    enrolments: await tx.studentEnrollment.count({ where: theirs }),
+    guardianLinks: await tx.guardianStudent.count({ where: theirs }),
+    absenceReports: await tx.absenceReport.count({ where: theirs }),
+    leaveRequests: await tx.leaveRequest.count({ where: theirs }),
+    attendanceMarks: await tx.attendanceRecord.count({ where: theirs }),
+    logins: pupils.filter((pupil) => pupil.invitedAt !== null).length,
+    fromSource: pupils.filter((pupil) => pupil.ss12000Id !== null).length,
+  };
+  for (const kind of ['ROSTER', 'GUARDIANS', 'ABSENCE_REPORTS', 'LEAVE_REQUESTS', 'ATTENDANCE'] as const) {
+    await recordRead(tx, kind, ids, channel);
+  }
+  return counts;
 }
 
 /**

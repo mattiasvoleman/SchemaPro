@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import request from 'supertest';
 import { AxiosError } from 'axios';
@@ -352,6 +353,178 @@ describe('Planning surface (e2e)', () => {
         .set('x-test-user', admin())
         .send({ halves: [{ groupId: '7A:1', studentIds: [] }] })
         .expect(400);
+    });
+
+    // Massåtgärder: the lists' selection acted on in one call. Each handler is
+    // reached by an administrator's request, not only refused by the guard
+    // (the area gates are in admin-areas.e2e-spec.ts).
+    describe('bulk actions (Massåtgärder)', () => {
+      const OTHER_ID = '5b5b5b5b-5b5b-4b5b-8b5b-5b5b5b5b5b5b';
+      const MISSING_ID = '5c5c5c5c-5c5c-4c5c-8c5c-5c5c5c5c5c5c';
+      const DELETE = '/api/v1/student-groups/bulk-delete';
+      const UPDATE = '/api/v1/student-groups/bulk-update';
+      const manyIds = (count: number) => Array.from({ length: count }, () => randomUUID());
+      const post = (path: string, body: unknown) =>
+        request(http()).post(path).set('x-test-user', admin()).send(body as object);
+      const groups = () => harness.tx['studentGroup']!;
+
+      it('answers a dry-run delete 200 with the report and what goes with the groups', async () => {
+        // The groups themselves, then the halves of a class the call does not name.
+        groups()['findMany']!
+          .mockResolvedValueOnce([{ id: GROUP_ID, halfOfId: null, ss12000Id: 'ss-1' }])
+          .mockResolvedValueOnce([{ id: OTHER_ID }]);
+        const counts = {
+          user: 12,
+          studentGroupMember: 30,
+          teachingRequirement: 4,
+          masterLesson: 7,
+          masterLessonGroup: 3,
+          calendarLesson: 200,
+          attendanceRecord: 1000,
+          studentEnrollment: 25,
+          teacherDuty: 1,
+        };
+        for (const [model, count] of Object.entries(counts)) harness.tx[model]!['count']!.mockResolvedValueOnce(count);
+
+        const response = await post(DELETE, { ids: [GROUP_ID], dryRun: true }).expect(200);
+
+        expect(response.body).toEqual({
+          applied: false,
+          dryRun: true,
+          done: [GROUP_ID],
+          refused: [],
+          consequences: {
+            halves: 1,
+            homePupils: 12,
+            memberships: 30,
+            requirements: 4,
+            masterLessons: 7,
+            sharedLessons: 3,
+            calendarLessons: 200,
+            attendanceMarks: 1000,
+            enrolments: 25,
+            mentorDuties: 1,
+            fromSource: 1,
+          },
+        });
+        // The delete was done to be counted and rolled back: the transaction threw, which withRls rolls back.
+        expect(groups()['deleteMany']).toHaveBeenCalledWith({ where: { id: { in: [GROUP_ID] } } });
+      });
+
+      it('deletes the selection in one request and answers 200 applied, with no consequences', async () => {
+        groups()['findMany']!.mockResolvedValueOnce([
+          { id: GROUP_ID, halfOfId: null, ss12000Id: null },
+          { id: OTHER_ID, halfOfId: null, ss12000Id: null },
+        ]);
+
+        const response = await post(DELETE, { ids: [OTHER_ID, GROUP_ID] }).expect(200);
+
+        expect(response.body).toEqual({ applied: true, dryRun: false, done: [GROUP_ID, OTHER_ID], refused: [] });
+        expect(groups()['deleteMany']).toHaveBeenCalledWith({ where: { id: { in: [GROUP_ID, OTHER_ID] } } });
+      });
+
+      it('sets an årskurs on the selection and answers 200 applied with the report', async () => {
+        groups()['findMany']!.mockResolvedValueOnce([
+          { id: GROUP_ID, kind: 'TEACHING_GROUP', halfOfId: null, gradeLevel: 6, replacesSubjectId: null },
+        ]);
+
+        const response = await post(UPDATE, { ids: [GROUP_ID], changes: { gradeLevel: 7 } }).expect(200);
+
+        expect(response.body).toEqual({ applied: true, dryRun: false, done: [GROUP_ID], refused: [] });
+        expect(groups()['updateMany']).toHaveBeenCalledWith({
+          where: { id: { in: [GROUP_ID] } },
+          data: { gradeLevel: 7 },
+        });
+      });
+
+      it('answers 200, not 409, for rows it refused: the report names each with the single route’s code and sentence', async () => {
+        groups()['findMany']!.mockResolvedValueOnce([
+          { id: GROUP_ID, kind: 'CLASS', halfOfId: null, gradeLevel: 6, replacesSubjectId: null },
+        ]);
+
+        const response = await post(UPDATE, {
+          ids: [GROUP_ID, MISSING_ID],
+          changes: { replacesSubjectId: SUBJECT_ID },
+          dryRun: true,
+        }).expect(200);
+
+        expect(response.body).toEqual({
+          applied: false,
+          dryRun: true,
+          done: [],
+          refused: [
+            {
+              id: GROUP_ID,
+              code: 'REPLACING_GROUP_NOT_A_TEACHING_GROUP',
+              message:
+                'En klass är elevernas hemklass och kan inte ersätta sina egna lektioner i ett ämne. Gör en undervisningsgrupp för SvA.',
+            },
+            { id: MISSING_ID, code: 'BULK_ROW_NOT_FOUND', message: expect.stringContaining('finns inte längre') },
+          ],
+        });
+        expect(groups()['updateMany']).not.toHaveBeenCalled();
+      });
+
+      it('answers 400 for the whole call when the subject is not the school’s', async () => {
+        groups()['findMany']!.mockResolvedValueOnce([
+          { id: GROUP_ID, kind: 'TEACHING_GROUP', halfOfId: null, gradeLevel: 6, replacesSubjectId: null },
+        ]);
+        harness.tx['subject']!['findUnique']!.mockResolvedValueOnce(null);
+
+        const response = await post(UPDATE, { ids: [GROUP_ID], changes: { replacesSubjectId: SUBJECT_ID } }).expect(400);
+
+        expect(response.body.detail).toContain('ämnet finns inte i skolan');
+        expect(groups()['updateMany']).not.toHaveBeenCalled();
+      });
+
+      it('takes 500 ids, the most a call may name', async () => {
+        groups()['findMany']!.mockResolvedValueOnce([]);
+
+        const response = await post(DELETE, { ids: manyIds(500) }).expect(200);
+
+        expect(response.body.refused).toHaveLength(500);
+        expect(response.body.applied).toBe(false);
+      });
+
+      it.each([
+        ['501 ids', { ids: manyIds(501) }],
+        ['no ids', { ids: [] }],
+        ['an id that is no uuid', { ids: ['7A'] }],
+        ['an id that is a name', { ids: [GROUP_ID, 'Ma71'] }],
+        ['a dryRun that is not a boolean', { ids: [GROUP_ID], dryRun: 'yes' }],
+        ['a field it does not know', { ids: [GROUP_ID], force: true }],
+      ])('refuses a bulk delete with %s, before any transaction', async (_what, body) => {
+        await post(DELETE, body).expect(400);
+        expect(harness.prisma.withRls).not.toHaveBeenCalled();
+        expect(groups()['deleteMany']).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ['501 ids', { ids: manyIds(501), changes: { gradeLevel: 7 } }],
+        ['an id that is no uuid', { ids: ['7A'], changes: { gradeLevel: 7 } }],
+        ['no changes', { ids: [GROUP_ID] }],
+        ['changes that are not an object', { ids: [GROUP_ID], changes: 7 }],
+        ['changes that name nothing', { ids: [GROUP_ID], changes: {} }],
+        ['an årskurs outside 0–12', { ids: [GROUP_ID], changes: { gradeLevel: 13 } }],
+        ['a subject that is no uuid', { ids: [GROUP_ID], changes: { replacesSubjectId: 'Svenska' } }],
+        ['a field a bulk update may not set', { ids: [GROUP_ID], changes: { name: '7B' } }],
+        ['a kind', { ids: [GROUP_ID], changes: { kind: 'CLASS' } }],
+      ])('refuses a bulk update with %s, before any transaction', async (_what, body) => {
+        await post(UPDATE, body).expect(400);
+        expect(harness.prisma.withRls).not.toHaveBeenCalled();
+        expect(groups()['updateMany']).not.toHaveBeenCalled();
+      });
+
+      it('denies a teacher both routes', async () => {
+        for (const path of [DELETE, UPDATE]) {
+          await request(http())
+            .post(path)
+            .set('x-test-user', asUser({ role: Role.TEACHER }))
+            .send({ ids: [GROUP_ID], changes: { gradeLevel: 7 } })
+            .expect(403);
+        }
+        expect(harness.prisma.withRls).not.toHaveBeenCalled();
+      });
     });
   });
 

@@ -20,7 +20,9 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { StudentGroupsService } from './student-groups.service';
+import { BulkIdsDto } from '../common/bulk';
 import {
+  BulkUpdateStudentGroupsDto,
   CreateStudentGroupDto,
   PlaceHalvesDto,
   SetGroupMembersDto,
@@ -34,6 +36,24 @@ import {
 @Area('PLANERING')
 export class StudentGroupsController {
   constructor(private readonly studentGroups: StudentGroupsService) {}
+
+  /**
+   * Massåtgärder: many groups deleted at once, all or nothing; with dryRun,
+   * what would go, what would not and why, and what goes with them. Answers
+   * 200 with the report either way (src/common/bulk.ts).
+   */
+  @Post('bulk-delete')
+  @HttpCode(HttpStatus.OK)
+  bulkRemove(@Body() dto: BulkIdsDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.studentGroups.bulkRemove(dto, user);
+  }
+
+  /** Massåtgärder: an årskurs or "Ersätter ämne" set on many groups at once, all or nothing. */
+  @Post('bulk-update')
+  @HttpCode(HttpStatus.OK)
+  bulkUpdate(@Body() dto: BulkUpdateStudentGroupsDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.studentGroups.bulkUpdate(dto, user);
+  }
 
   @Post()
   create(@Body() dto: CreateStudentGroupDto, @CurrentUser() user: AuthenticatedUser) {

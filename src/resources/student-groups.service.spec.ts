@@ -7,6 +7,8 @@ import {
   type PrismaMock,
   type TxMock,
 } from '../../test/utils/prisma-mock';
+import { BULK_TIMEOUT_MS } from '../common/bulk';
+import { WRITE_CONFLICT } from '../common/utils/prisma-errors';
 import type { PrismaService } from '../database/prisma.service';
 import type { NotificationsService } from '../notifications/notifications.service';
 import { StudentGroupsService } from './student-groups.service';
@@ -408,6 +410,587 @@ describe('StudentGroupsService', () => {
       await expect(service.remove(GROUP_ID, testUser())).rejects.toThrow(
         NotFoundException,
       );
+    });
+  });
+
+  describe('Massåtgärder (bulk)', () => {
+    const G1 = 'aaaaaaaa-0000-4000-8000-000000000001';
+    const G2 = 'bbbbbbbb-0000-4000-8000-000000000002';
+    const G3 = 'cccccccc-0000-4000-8000-000000000003';
+    const MISSING = 'dddddddd-0000-4000-8000-000000000004';
+    const HALF = 'eeeeeeee-0000-4000-8000-000000000005';
+    const SUBJECT = '77777777-7777-4777-8777-777777777777';
+    const MENTOR = '78787878-7878-4878-8878-787878787878';
+    const NOTICE = 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1';
+    const TELL = 'app.leave_requests_tell_new_mentors()';
+    const user = testUser();
+
+    interface GroupRow {
+      id: string;
+      kind: 'CLASS' | 'TEACHING_GROUP';
+      halfOfId: string | null;
+      gradeLevel: number | null;
+      replacesSubjectId: string | null;
+      ss12000Id: string | null;
+    }
+    const group = (id: string, overrides: Partial<GroupRow> = {}): GroupRow => ({
+      id,
+      kind: 'CLASS',
+      halfOfId: null,
+      gradeLevel: 6,
+      replacesSubjectId: null,
+      ss12000Id: null,
+      ...overrides,
+    });
+    const teachingGroup = (id: string, overrides: Partial<GroupRow> = {}): GroupRow =>
+      group(id, { kind: 'TEACHING_GROUP', ...overrides });
+
+    type GroupsWhere = { id?: { in?: string[]; notIn?: string[] }; halfOfId?: { in: string[] } };
+
+    /**
+     * The groups table as the bulk calls' reads see it: the rows an `id in`
+     * names (minus any `id notIn`) and the rows that are a half of an
+     * `halfOfId in`, each with the fields the query selected. A condition the
+     * service starts to send that this does not know throws, rather than being
+     * ignored.
+     */
+    const givenGroups = (...rows: GroupRow[]) =>
+      tx.studentGroup.findMany.mockImplementation(({ where, select }: { where: GroupsWhere; select: Selection }) => {
+        const unknown = Object.keys(where).filter((key) => key !== 'id' && key !== 'halfOfId');
+        if (unknown.length > 0) throw new Error(`The groups read grew a condition tests do not know: ${unknown.join(', ')}`);
+        return Promise.resolve(
+          rows
+            .filter(
+              (row) =>
+                (where.id?.in === undefined || where.id.in.includes(row.id)) &&
+                (where.id?.notIn === undefined || !where.id.notIn.includes(row.id)) &&
+                (where.halfOfId === undefined || (row.halfOfId !== null && where.halfOfId.in.includes(row.halfOfId))),
+            )
+            .map((row) => selected(row as unknown as Record<string, unknown>, select)),
+        );
+      });
+
+    /** The transaction of the last withRls call: it rejects when its body threw, which rolls it back. */
+    const lastTransaction = (): Promise<unknown> =>
+      prisma.withRls.mock.results[prisma.withRls.mock.results.length - 1]!.value as Promise<unknown>;
+    const expectCommitted = () => expect(lastTransaction()).resolves.toMatchObject({ applied: true });
+    const expectRolledBack = () => expect(lastTransaction()).rejects.toThrow();
+
+    /** The SQL of every statement sent with $executeRaw: the savepoints a bulk write takes. */
+    const savepoints = () =>
+      tx.$executeRaw.mock.calls.map(([strings]) => (strings as readonly string[]).join('?'));
+
+    describe('bulkUpdate', () => {
+      it('refuses a body whose changes name nothing before it opens a transaction', async () => {
+        await expect(service.bulkUpdate({ ids: [G1], changes: {} }, user)).rejects.toThrow(BadRequestException);
+        await expect(
+          service.bulkUpdate({ ids: [G1], changes: { gradeLevel: undefined } }, user),
+        ).rejects.toThrow(BadRequestException);
+        expect(prisma.withRls).not.toHaveBeenCalled();
+      });
+
+      it('reads each id once, in id order, in one transaction with the bulk timeout', async () => {
+        givenGroups(teachingGroup(G1), teachingGroup(G3));
+
+        await service.bulkUpdate({ ids: [G3, G1, G3], changes: { gradeLevel: 7 } }, user);
+
+        expect(prisma.withRls).toHaveBeenCalledTimes(1);
+        expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function), { timeoutMs: BULK_TIMEOUT_MS });
+        expect(tx.studentGroup.findMany).toHaveBeenCalledWith({
+          where: { id: { in: [G1, G3] } },
+          select: { id: true, kind: true, halfOfId: true, gradeLevel: true, replacesSubjectId: true },
+        });
+      });
+
+      it('writes the groups that move in one statement, sending only the fields asked, and commits', async () => {
+        givenGroups(teachingGroup(G1), teachingGroup(G2, { gradeLevel: null }));
+
+        const result = await service.bulkUpdate({ ids: [G2, G1], changes: { gradeLevel: 7 } }, user);
+
+        expect(result).toEqual({ applied: true, dryRun: false, done: [G1, G2], refused: [] });
+        expect(tx.studentGroup.updateMany).toHaveBeenCalledTimes(1);
+        expect(tx.studentGroup.updateMany).toHaveBeenCalledWith({
+          where: { id: { in: [G1, G2] } },
+          data: { gradeLevel: 7 },
+        });
+        expect(tx.studentGroup.update).not.toHaveBeenCalled();
+        expect(savepoints()).toEqual(['SAVEPOINT bulk_whole', 'RELEASE SAVEPOINT bulk_whole']);
+        await expectCommitted();
+      });
+
+      it('does not write a group that already holds the values: an UPDATE would move updatedAt, which the sync reads as a local edit', async () => {
+        givenGroups(teachingGroup(G1, { gradeLevel: 7 }), teachingGroup(G2, { gradeLevel: 6 }));
+        await service.bulkUpdate({ ids: [G1, G2], changes: { gradeLevel: 7 } }, user);
+        expect(tx.studentGroup.updateMany).toHaveBeenCalledWith({ where: { id: { in: [G2] } }, data: { gradeLevel: 7 } });
+
+        tx.studentGroup.updateMany.mockClear();
+        tx.subject.findUnique.mockResolvedValue({ id: SUBJECT });
+        givenGroups(teachingGroup(G1, { replacesSubjectId: SUBJECT }), teachingGroup(G2));
+        const result = await service.bulkUpdate({ ids: [G1, G2], changes: { replacesSubjectId: SUBJECT } }, user);
+        expect(tx.studentGroup.updateMany).toHaveBeenCalledWith({
+          where: { id: { in: [G2] } },
+          data: { replacesSubjectId: SUBJECT },
+        });
+        // Judged all the same: the group that holds it is done, not skipped.
+        expect(result.done).toEqual([G1, G2]);
+      });
+
+      it('writes nothing, and says applied, when every group holds the values already', async () => {
+        givenGroups(teachingGroup(G1, { gradeLevel: 7 }), teachingGroup(G2, { gradeLevel: 7 }));
+
+        const result = await service.bulkUpdate({ ids: [G1, G2], changes: { gradeLevel: 7 } }, user);
+
+        expect(result).toEqual({ applied: true, dryRun: false, done: [G1, G2], refused: [] });
+        expect(tx.studentGroup.updateMany).not.toHaveBeenCalled();
+        expect(savepoints()).toEqual([]);
+      });
+
+      it('moves a group when either field differs, and sends both fields then', async () => {
+        tx.subject.findUnique.mockResolvedValue({ id: SUBJECT });
+        givenGroups(teachingGroup(G1, { gradeLevel: 7 }), teachingGroup(G2, { gradeLevel: 7, replacesSubjectId: SUBJECT }));
+
+        await service.bulkUpdate({ ids: [G1, G2], changes: { gradeLevel: 7, replacesSubjectId: SUBJECT } }, user);
+
+        expect(tx.studentGroup.updateMany).toHaveBeenCalledWith({
+          where: { id: { in: [G1] } },
+          data: { gradeLevel: 7, replacesSubjectId: SUBJECT },
+        });
+      });
+
+      it('takes null as a change: no årskurs, replaces nothing, and asks the school for no subject', async () => {
+        givenGroups(teachingGroup(G1, { gradeLevel: 7, replacesSubjectId: SUBJECT }), group(G2, { gradeLevel: 7 }));
+
+        const result = await service.bulkUpdate(
+          { ids: [G1, G2], changes: { gradeLevel: null, replacesSubjectId: null } },
+          user,
+        );
+
+        // A class is no refusal for "replaces nothing": only the subject it would replace is.
+        expect(result).toMatchObject({ applied: true, done: [G1, G2], refused: [] });
+        expect(tx.studentGroup.updateMany).toHaveBeenNthCalledWith(1, {
+          where: { id: { in: [G1, G2] } },
+          data: { gradeLevel: null, replacesSubjectId: null },
+        });
+        expect(tx.subject.findUnique).not.toHaveBeenCalled();
+      });
+
+      it('names an id that is not there and writes nothing: the report, applied false, the rest in done', async () => {
+        givenGroups(teachingGroup(G1));
+
+        const result = await service.bulkUpdate({ ids: [G1, MISSING], changes: { gradeLevel: 7 } }, user);
+
+        expect(result).toEqual({
+          applied: false,
+          dryRun: false,
+          done: [G1],
+          refused: [{ id: MISSING, code: 'BULK_ROW_NOT_FOUND', message: expect.stringContaining('finns inte längre') }],
+        });
+        // The group that passed was written in the transaction, which the body's throw rolls back.
+        await expectRolledBack();
+      });
+
+      it('refuses a class and a half as a replacing group, in the single route’s sentences, while a teaching group passes', async () => {
+        tx.subject.findUnique.mockResolvedValue({ id: SUBJECT });
+        givenGroups(group(G1), teachingGroup(G2), teachingGroup(G3, { halfOfId: G1 }));
+
+        const result = await service.bulkUpdate({ ids: [G3, G2, G1], changes: { replacesSubjectId: SUBJECT } }, user);
+
+        expect(result).toEqual({
+          applied: false,
+          dryRun: false,
+          done: [G2],
+          refused: [
+            {
+              id: G1,
+              code: 'REPLACING_GROUP_NOT_A_TEACHING_GROUP',
+              message:
+                'En klass är elevernas hemklass och kan inte ersätta sina egna lektioner i ett ämne. Gör en undervisningsgrupp för SvA.',
+            },
+            {
+              id: G3,
+              code: 'REPLACING_GROUP_NOT_A_TEACHING_GROUP',
+              message: 'En halvklass är en del av klassen och kan inte ersätta klassens lektioner i ett ämne.',
+            },
+          ],
+        });
+        // Only the teaching group was offered to the database, and the transaction is rolled back with it.
+        expect(tx.studentGroup.updateMany).toHaveBeenCalledTimes(1);
+        expect(tx.studentGroup.updateMany).toHaveBeenCalledWith({
+          where: { id: { in: [G2] } },
+          data: { replacesSubjectId: SUBJECT },
+        });
+        await expectRolledBack();
+      });
+
+      it('asks once whether the subject is the school’s, and answers 400 for the whole call when it is not', async () => {
+        givenGroups(teachingGroup(G1), teachingGroup(G2));
+        tx.subject.findUnique.mockResolvedValue({ id: SUBJECT });
+        await service.bulkUpdate({ ids: [G1, G2], changes: { replacesSubjectId: SUBJECT } }, user);
+        expect(tx.subject.findUnique).toHaveBeenCalledTimes(1);
+        expect(tx.subject.findUnique).toHaveBeenCalledWith({ where: { id: SUBJECT }, select: { id: true } });
+
+        tx.studentGroup.updateMany.mockClear();
+        tx.subject.findUnique.mockResolvedValue(null);
+        const error = await service
+          .bulkUpdate({ ids: [G1, G2], changes: { replacesSubjectId: SUBJECT } }, user)
+          .catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(BadRequestException);
+        expect((error as BadRequestException).message).toBe('replacesSubjectId: ämnet finns inte i skolan.');
+        expect(tx.studentGroup.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('asks about the subject only for the groups that may replace one', async () => {
+        // Every group refused: nothing to ask the subject for.
+        givenGroups(group(G1));
+        tx.subject.findUnique.mockResolvedValue(null);
+
+        const result = await service.bulkUpdate({ ids: [G1], changes: { replacesSubjectId: SUBJECT } }, user);
+
+        expect(result.refused).toHaveLength(1);
+        expect(tx.subject.findUnique).not.toHaveBeenCalled();
+      });
+
+      it('names the group the database refused when it refuses the statement, trying the groups one by one', async () => {
+        givenGroups(teachingGroup(G1), teachingGroup(G2), teachingGroup(G3));
+        tx.studentGroup.updateMany.mockRejectedValue(prismaError('P2003'));
+        tx.studentGroup.update.mockImplementation(({ where }: { where: { id: string } }) =>
+          where.id === G2 ? Promise.reject(prismaError('P2003')) : Promise.resolve({ id: where.id }),
+        );
+
+        const result = await service.bulkUpdate({ ids: [G1, G2, G3], changes: { gradeLevel: 7 } }, user);
+
+        expect(result).toEqual({
+          applied: false,
+          dryRun: false,
+          done: [G1, G3],
+          refused: [{ id: G2, code: null, message: 'The operation references a record that does not exist.' }],
+        });
+        expect(tx.studentGroup.update.mock.calls.map(([args]) => (args as { where: { id: string } }).where.id)).toEqual([
+          G1,
+          G2,
+          G3,
+        ]);
+        await expectRolledBack();
+      });
+
+      it('on a dry run does the work and rolls it back, saying what would be done', async () => {
+        givenGroups(teachingGroup(G1), teachingGroup(G2, { gradeLevel: 7 }));
+
+        const result = await service.bulkUpdate({ ids: [G1, G2], changes: { gradeLevel: 7 }, dryRun: true }, user);
+
+        expect(result).toEqual({ applied: false, dryRun: true, done: [G1, G2], refused: [] });
+        expect(tx.studentGroup.updateMany).toHaveBeenCalledWith({ where: { id: { in: [G1] } }, data: { gradeLevel: 7 } });
+        await expectRolledBack();
+      });
+
+      it('rethrows a failure that is no group’s refusal: the call fails, it is not a report', async () => {
+        givenGroups(teachingGroup(G1));
+        tx.studentGroup.updateMany.mockRejectedValue(new Error('connection reset'));
+
+        await expect(service.bulkUpdate({ ids: [G1], changes: { gradeLevel: 7 } }, user)).rejects.toThrow(
+          'connection reset',
+        );
+        expect(tx.studentGroup.update).not.toHaveBeenCalled();
+      });
+
+      describe('a class’s årskurs is its halves’', () => {
+        it('moves the halves that do not hold it, whether they hold nothing or another årskurs', async () => {
+          givenGroups(group(G1, { gradeLevel: 6 }), teachingGroup(G2, { gradeLevel: 6 }));
+
+          await service.bulkUpdate({ ids: [G1, G2], changes: { gradeLevel: 7 } }, user);
+
+          expect(tx.studentGroup.updateMany).toHaveBeenCalledTimes(2);
+          expect(tx.studentGroup.updateMany).toHaveBeenNthCalledWith(2, {
+            where: { halfOfId: { in: [G1] }, OR: [{ gradeLevel: null }, { gradeLevel: { not: 7 } }] },
+            data: { gradeLevel: 7 },
+          });
+        });
+
+        it('clears the halves’ årskurs with the class’s, touching only those that hold one', async () => {
+          givenGroups(group(G1, { gradeLevel: 6 }));
+
+          await service.bulkUpdate({ ids: [G1], changes: { gradeLevel: null } }, user);
+
+          expect(tx.studentGroup.updateMany).toHaveBeenNthCalledWith(2, {
+            where: { halfOfId: { in: [G1] }, gradeLevel: { not: null } },
+            data: { gradeLevel: null },
+          });
+        });
+
+        it('brings the halves of a class along that already holds the årskurs, as update() does when it is sent', async () => {
+          givenGroups(group(G1, { gradeLevel: 7 }));
+
+          const result = await service.bulkUpdate({ ids: [G1], changes: { gradeLevel: 7 } }, user);
+
+          expect(result).toMatchObject({ applied: true, done: [G1] });
+          // The class itself is not written; its halves, which may have been left behind, are.
+          expect(tx.studentGroup.updateMany).toHaveBeenCalledTimes(1);
+          expect(tx.studentGroup.updateMany).toHaveBeenCalledWith({
+            where: { halfOfId: { in: [G1] }, OR: [{ gradeLevel: null }, { gradeLevel: { not: 7 } }] },
+            data: { gradeLevel: 7 },
+          });
+        });
+
+        it('leaves halves alone for a teaching group, and for a change that is not an årskurs', async () => {
+          tx.subject.findUnique.mockResolvedValue({ id: SUBJECT });
+          givenGroups(teachingGroup(G1), teachingGroup(G2));
+          await service.bulkUpdate({ ids: [G1], changes: { gradeLevel: 7 } }, user);
+          await service.bulkUpdate({ ids: [G2], changes: { replacesSubjectId: SUBJECT } }, user);
+
+          expect(tx.studentGroup.updateMany).toHaveBeenCalledTimes(2);
+          for (const [args] of tx.studentGroup.updateMany.mock.calls) {
+            expect(args).not.toHaveProperty('where.halfOfId');
+          }
+        });
+
+        it('does not reach the halves when a group is refused', async () => {
+          givenGroups(group(G1));
+
+          const result = await service.bulkUpdate({ ids: [G1, MISSING], changes: { gradeLevel: 7 } }, user);
+
+          expect(result.applied).toBe(false);
+          // The statement for the class itself, and no second one for its halves.
+          expect(tx.studentGroup.updateMany).toHaveBeenCalledTimes(1);
+        });
+      });
+
+      // The new årskurs of a class can give a mentor a leave request
+      // (app.leave_school_days), as update() tells them.
+      describe('the mentors, told once after every group', () => {
+        let deliver: jest.Mock;
+        let queryRaw: jest.Mock;
+        const told = () => queryRaw.mock.calls.filter((call) => String((call[0] as string[]).join('?')).includes(TELL));
+
+        beforeEach(() => {
+          deliver = jest.fn();
+          service = new StudentGroupsService(prisma as unknown as PrismaService, { deliver } as unknown as NotificationsService);
+          queryRaw = jest.fn(() =>
+            Promise.resolve([
+              { notificationId: NOTICE, userId: MENTOR, email: null, meta: { leaveRequestId: 'r1', schoolDays: 2 } },
+            ]),
+          );
+          Object.assign(tx, { $queryRaw: queryRaw });
+        });
+
+        it('tells them once for the whole call, after the last statement, in its transaction', async () => {
+          givenGroups(group(G1), group(G2), teachingGroup(G3));
+
+          await service.bulkUpdate({ ids: [G1, G2, G3], changes: { gradeLevel: 7 } }, user);
+
+          expect(told()).toHaveLength(1);
+          const updates = tx.studentGroup.updateMany.mock.invocationCallOrder;
+          expect(queryRaw.mock.invocationCallOrder[0]!).toBeGreaterThan(updates[updates.length - 1]!);
+          expect(deliver).toHaveBeenCalledTimes(1);
+          expect(deliver).toHaveBeenCalledWith(
+            tx,
+            expect.objectContaining({
+              schoolId: SCHOOL_ID,
+              type: 'LEAVE_REQUESTED',
+              recipients: [{ userId: MENTOR, notificationId: NOTICE }],
+            }),
+          );
+          await expectCommitted();
+        });
+
+        it('tells nobody on a dry run: the notices would be written in a transaction that is rolled back', async () => {
+          givenGroups(group(G1));
+
+          await service.bulkUpdate({ ids: [G1], changes: { gradeLevel: 7 }, dryRun: true }, user);
+
+          expect(told()).toEqual([]);
+          expect(deliver).not.toHaveBeenCalled();
+        });
+
+        it('tells nobody of a change that is not an årskurs, of groups that already hold it, or of a refusal', async () => {
+          tx.subject.findUnique.mockResolvedValue({ id: SUBJECT });
+          givenGroups(teachingGroup(G1), group(G2, { gradeLevel: 7 }));
+
+          await service.bulkUpdate({ ids: [G1], changes: { replacesSubjectId: SUBJECT } }, user);
+          await service.bulkUpdate({ ids: [G2], changes: { gradeLevel: 7 } }, user);
+          await service.bulkUpdate({ ids: [G1, MISSING], changes: { gradeLevel: 7 } }, user);
+
+          expect(told()).toEqual([]);
+          expect(deliver).not.toHaveBeenCalled();
+        });
+      });
+    });
+
+    describe('bulkRemove', () => {
+      /** How many each count answers, per model; the keys are the tables the counts read. */
+      const COUNTS = {
+        user: 12,
+        studentGroupMember: 30,
+        teachingRequirement: 4,
+        masterLesson: 7,
+        masterLessonGroup: 3,
+        calendarLesson: 200,
+        attendanceRecord: 1000,
+        studentEnrollment: 25,
+        teacherDuty: 1,
+      };
+      const givenCounts = () => {
+        for (const [model, count] of Object.entries(COUNTS)) tx[model]!['count']!.mockResolvedValue(count);
+      };
+      const counted = () => Object.keys(COUNTS).flatMap((model) => tx[model]!['count']!.mock.calls);
+
+      it('reads each id once, in id order, and names an id that is not there: the rest in done, nothing applied', async () => {
+        givenGroups(teachingGroup(G1), teachingGroup(G3));
+
+        const result = await service.bulkRemove({ ids: [G3, MISSING, G1, G3] }, user);
+
+        expect(tx.studentGroup.findMany).toHaveBeenCalledWith({
+          where: { id: { in: [G1, G3, MISSING] } },
+          select: { id: true, halfOfId: true, ss12000Id: true },
+        });
+        expect(result).toEqual({
+          applied: false,
+          dryRun: false,
+          done: [G1, G3],
+          refused: [{ id: MISSING, code: 'BULK_ROW_NOT_FOUND', message: expect.stringContaining('finns inte längre') }],
+        });
+        expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function), { timeoutMs: BULK_TIMEOUT_MS });
+        await expectRolledBack();
+      });
+
+      it('deletes the groups in one statement, halves first, and counts nothing on a real call', async () => {
+        // The half's id sorts after its class's: id order is not the order it is written in.
+        givenGroups(group(G1), teachingGroup(G2, { halfOfId: G1 }), teachingGroup(G3));
+
+        const result = await service.bulkRemove({ ids: [G3, G2, G1] }, user);
+
+        expect(result).toEqual({ applied: true, dryRun: false, done: [G1, G2, G3], refused: [] });
+        expect(result).not.toHaveProperty('consequences');
+        expect(tx.studentGroup.deleteMany).toHaveBeenCalledTimes(1);
+        expect(tx.studentGroup.deleteMany).toHaveBeenCalledWith({ where: { id: { in: [G2, G1, G3] } } });
+        expect(savepoints()).toEqual(['SAVEPOINT bulk_whole', 'RELEASE SAVEPOINT bulk_whole']);
+        // Only the one read of the rows themselves: no halves lookup, no counts.
+        expect(tx.studentGroup.findMany).toHaveBeenCalledTimes(1);
+        expect(counted()).toEqual([]);
+        await expectCommitted();
+      });
+
+      it('on a dry run counts what goes with the groups, every kind, and rolls the delete back', async () => {
+        // G1 is a class with a half the call does not name; G2 is linked to the school’s SS12000 source.
+        givenGroups(
+          group(G1),
+          teachingGroup(G2, { ss12000Id: 'ss-group-2' }),
+          teachingGroup(HALF, { halfOfId: G1 }),
+        );
+        givenCounts();
+
+        const result = await service.bulkRemove({ ids: [G1, G2], dryRun: true }, user);
+
+        expect(result).toEqual({
+          applied: false,
+          dryRun: true,
+          done: [G1, G2],
+          refused: [],
+          consequences: {
+            halves: 1,
+            homePupils: 12,
+            memberships: 30,
+            requirements: 4,
+            masterLessons: 7,
+            sharedLessons: 3,
+            calendarLessons: 200,
+            attendanceMarks: 1000,
+            enrolments: 25,
+            mentorDuties: 1,
+            fromSource: 1,
+          },
+        });
+        expect(tx.studentGroup.findMany).toHaveBeenNthCalledWith(2, {
+          where: { halfOfId: { in: [G1, G2] }, id: { notIn: [G1, G2] } },
+          select: { id: true },
+        });
+        // The groups, and the halves that go with them: all counted by the same filter.
+        const inGroups = { studentGroupId: { in: [G1, G2, HALF] } };
+        for (const model of Object.keys(COUNTS).filter((model) => model !== 'attendanceRecord')) {
+          expect(tx[model]!['count']).toHaveBeenCalledWith({ where: inGroups });
+        }
+        // The attendance marks are on the groups’ calendar lessons.
+        expect(tx.attendanceRecord.count).toHaveBeenCalledWith({ where: { calendarLesson: inGroups } });
+        // The delete was done, so it is counted before it is rolled back, and rolled back.
+        expect(tx.studentGroup.deleteMany).toHaveBeenCalledWith({ where: { id: { in: [G1, G2] } } });
+        await expectRolledBack();
+      });
+
+      it('counts the halves a class takes with it once: not those the call names itself', async () => {
+        givenGroups(group(G1), teachingGroup(G2, { halfOfId: G1 }));
+        givenCounts();
+
+        const result = await service.bulkRemove({ ids: [G1, G2], dryRun: true }, user);
+
+        expect(result.consequences).toMatchObject({ halves: 0 });
+        expect(tx.user.count).toHaveBeenCalledWith({ where: { studentGroupId: { in: [G1, G2] } } });
+      });
+
+      it('tries the groups one by one when the database refuses the statement, halves first, and lists the refused', async () => {
+        givenGroups(group(G1), teachingGroup(G2, { halfOfId: G1 }), teachingGroup(G3));
+        tx.studentGroup.deleteMany.mockRejectedValue(prismaError('P2003'));
+        tx.studentGroup.delete.mockImplementation(({ where }: { where: { id: string } }) => {
+          if (where.id === G1) return Promise.reject(prismaError('P2003'));
+          if (where.id === G3) {
+            return Promise.reject(
+              new ConflictException({ message: 'Gruppen används.', code: 'GROUP_IN_USE', params: { lessons: 2 } }),
+            );
+          }
+          return Promise.resolve({ id: where.id });
+        });
+
+        const result = await service.bulkRemove({ ids: [G1, G2, G3] }, user);
+
+        expect(result).toEqual({
+          applied: false,
+          dryRun: false,
+          done: [G2],
+          refused: [
+            { id: G1, code: null, message: 'The operation references a record that does not exist.' },
+            { id: G3, code: 'GROUP_IN_USE', message: 'Gruppen används.', params: { lessons: 2 } },
+          ],
+        });
+        // The half before its class, which would take it with it and then not find it.
+        expect(tx.studentGroup.delete.mock.calls.map(([args]) => (args as { where: { id: string } }).where.id)).toEqual([
+          G2,
+          G1,
+          G3,
+        ]);
+        expect(savepoints()).toEqual([
+          'SAVEPOINT bulk_whole',
+          'ROLLBACK TO SAVEPOINT bulk_whole',
+          'SAVEPOINT bulk_row',
+          'RELEASE SAVEPOINT bulk_row',
+          'SAVEPOINT bulk_row',
+          'ROLLBACK TO SAVEPOINT bulk_row',
+          'SAVEPOINT bulk_row',
+          'ROLLBACK TO SAVEPOINT bulk_row',
+        ]);
+        await expectRolledBack();
+      });
+
+      it('answers a refusal of one group by a ConflictException from the single delete as that group’s line', async () => {
+        givenGroups(teachingGroup(G1), teachingGroup(G2));
+        tx.studentGroup.deleteMany.mockRejectedValue(prismaError('P2003'));
+        tx.studentGroup.delete.mockImplementation(({ where }: { where: { id: string } }) =>
+          where.id === G2 ? Promise.reject(new ConflictException('Gruppen har ett beslut.')) : Promise.resolve({}),
+        );
+
+        const result = await service.bulkRemove({ ids: [G1, G2] }, user);
+
+        expect(result.refused).toEqual([{ id: G2, code: null, message: 'Gruppen har ett beslut.' }]);
+        expect(result.done).toEqual([G1]);
+      });
+
+      it('fails the call, with the deadlock’s own answer, when the database’s error is no group’s refusal', async () => {
+        givenGroups(teachingGroup(G1), teachingGroup(G2));
+        tx.studentGroup.deleteMany.mockRejectedValue(prismaError('P2034'));
+
+        await expect(service.bulkRemove({ ids: [G1, G2] }, user)).rejects.toMatchObject({
+          status: 409,
+          response: { code: WRITE_CONFLICT },
+        });
+        expect(tx.studentGroup.delete).not.toHaveBeenCalled();
+      });
     });
   });
 });

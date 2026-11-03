@@ -117,7 +117,8 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
  * a recorded year with a present one.
  */
 const ENROLLED: Record<string, string> = {
-  'src/resources/student-groups.service.ts': 'a class with history keeps its läsår: counted before a year change (409 STUDENT_GROUP_HAS_ENROLMENT_HISTORY)',
+  'src/resources/student-groups.service.ts':
+    'a class with history keeps its läsår: counted before a year change (409 STUDENT_GROUP_HAS_ENROLMENT_HISTORY); and the segments that lose their class are counted on a bulk delete’s dry run (a figure, no roster)',
   'src/timplan/timplan-coverage.service.ts':
     'a past year’s rosters for planned and delivered coverage, when the history has rows for it (enrolmentBasisOf); rostersOfYear otherwise',
   'src/timplan/timplan-stage.service.ts':
@@ -128,6 +129,8 @@ const ENROLLED: Record<string, string> = {
     'one pupil’s segments over one leave request: the årskurs of each day, so a lov or studiedag for that årskurs gets no absence (app.leave_school_days, its SQL twin, reads the same)',
   'src/integration/ss12000-v2/slice.ts':
     'SS12000 Group.groupMemberships (a class’s segments, S1’s inclusive endDate) and Person.enrolments (the unbroken chain’s start): who sat where, as recorded, for the active and past years',
+  'src/users/users.service.ts':
+    'a bulk delete’s dry run counts the pupils’ segments that go with them (ON DELETE CASCADE): a figure about the pupils named, no roster and no basis',
 };
 
 const STAFF = new Set(['SCHOOL_ADMIN', 'TEACHER']);

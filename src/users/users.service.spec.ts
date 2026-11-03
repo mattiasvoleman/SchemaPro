@@ -16,6 +16,7 @@ import {
 } from '../../test/utils/prisma-mock';
 import { lockingRead, rawSql, transactionsOf, type LockedTable } from '../../test/utils/locking-read';
 import { recordedReads } from '../../test/utils/recorded-reads';
+import { BULK_TIMEOUT_MS } from '../common/bulk';
 import type { PrismaService } from '../database/prisma.service';
 import type { NotificationsService } from '../notifications/notifications.service';
 import type { CreateUserDto } from './dto/user.dto';
@@ -1608,6 +1609,743 @@ describe('UsersService', () => {
       await expect(service.remove(USER_ID, testUser())).resolves.toBeUndefined();
 
       expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Massåtgärder (bulk)', () => {
+    const P1 = 'aaaaaaaa-0000-4000-8000-000000000001';
+    const P2 = 'bbbbbbbb-0000-4000-8000-000000000002';
+    const P3 = 'cccccccc-0000-4000-8000-000000000003';
+    const TEACHER = 'dddddddd-0000-4000-8000-000000000004';
+    const MISSING = 'eeeeeeee-0000-4000-8000-000000000005';
+    const CLASS_A = '1a1a1a1a-0000-4000-8000-00000000000a';
+    const CLASS_B = '1b1b1b1b-0000-4000-8000-00000000000b';
+    const AUTH_1 = 'a1000000-0000-4000-8000-000000000001';
+    const AUTH_2 = 'a2000000-0000-4000-8000-000000000002';
+    const AUTH_3 = 'a3000000-0000-4000-8000-000000000003';
+    const MENTOR = '78787878-7878-4878-8878-787878787878';
+    const NOTICE = 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1';
+    const TELL = 'app.leave_requests_tell_new_mentors()';
+    const HELD = 'app.login_is_held_elsewhere';
+    const user = testUser();
+
+    const NOT_A_STUDENT_SENTENCE =
+      'Raden är ingen elev. Lärare, administratörer och vårdnadshavare ändras och tas bort en i taget.';
+    const NOT_FOUND = { code: 'BULK_ROW_NOT_FOUND', message: expect.stringContaining('finns inte längre') };
+
+    /** The columns the bulk reads of Users may name. */
+    const COLUMNS = ['id', 'role', 'studentGroupId', 'isActive', 'pseudonymisedAt', 'authId', 'invitedAt', 'ss12000Id'];
+
+    /** A pupil as the Users table holds them: not invited, in no class, active. */
+    const pupil = (id: string, overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+      id,
+      role: 'STUDENT',
+      studentGroupId: null,
+      isActive: true,
+      pseudonymisedAt: null,
+      authId: id.replace(/^......../, 'f0000000'),
+      invitedAt: null,
+      ss12000Id: null,
+      ...overrides,
+    });
+    const staff = (id: string, role: string): Record<string, unknown> => pupil(id, { role });
+
+    /** The Users table. */
+    let table: Record<string, unknown>[];
+    /** The logins another school's row holds (app.login_is_held_elsewhere answers true); 'fails' for a question that cannot be answered. */
+    let heldLogins: Set<string> | 'fails';
+    let deliver: jest.Mock;
+    let queryRaw: jest.Mock;
+
+    /**
+     * What the table answers a bulk call's locking read with: the rows whose
+     * id is in the one array bound into the statement, in id order, each with
+     * the columns the SELECT names and no others. A statement that is not
+     * `SELECT … FROM "Users" WHERE "id" = ANY($1::uuid[]) ORDER BY "id" <lock>`,
+     * that takes another lock, or names a column the table lacks, throws, so
+     * a read that drops its lock, its order or a column fails the test
+     * instead of passing on rows it never asked for.
+     */
+    const lockedRead = (lock: 'FOR UPDATE' | 'FOR NO KEY UPDATE', call: unknown[]) => {
+      const sql = rawSql(call).replace(/\s+/g, ' ').trim();
+      const read = /^SELECT (.+) FROM "Users" WHERE "id" = ANY\(\?::uuid\[\]\) ORDER BY "id" (FOR (?:NO KEY )?UPDATE)$/.exec(sql);
+      if (read === null || read[2] !== lock || call.length !== 2) throw new Error(`Not a ${lock} read of the call's pupils: ${sql}`);
+      const columns = read[1]!.split(',').map((column) => {
+        const name = /^"(\w+)"$/.exec(column.trim())?.[1];
+        if (name === undefined || !COLUMNS.includes(name)) throw new Error(`"Users" has no column ${column.trim()}`);
+        return name;
+      });
+      const ids = call[1] as string[];
+      return table
+        .filter((row) => ids.includes(row['id'] as string))
+        .sort((a, b) => ((a['id'] as string) < (b['id'] as string) ? -1 : 1))
+        .map((row) => Object.fromEntries(columns.map((column) => [column, row[column]])));
+    };
+    const givenReadsUnder = (lock: 'FOR UPDATE' | 'FOR NO KEY UPDATE') => {
+      queryRaw = jest.fn((...call: unknown[]) => {
+        const sql = rawSql(call);
+        if (sql.includes(HELD)) {
+          if (heldLogins === 'fails') return Promise.reject(new Error('connection reset'));
+          return Promise.resolve([{ held: heldLogins.has(call[1] as string) }]);
+        }
+        if (sql.includes(TELL)) {
+          return Promise.resolve([
+            { notificationId: NOTICE, userId: MENTOR, email: null, meta: { leaveRequestId: 'r1', schoolDays: 2 } },
+          ]);
+        }
+        return Promise.resolve(lockedRead(lock, call));
+      });
+      Object.assign(tx, { $queryRaw: queryRaw });
+    };
+
+    beforeEach(() => {
+      table = [pupil(P1), pupil(P2), pupil(P3), staff(TEACHER, 'TEACHER')];
+      heldLogins = new Set();
+      deliver = jest.fn();
+      service = new UsersService(
+        prisma as unknown as PrismaService,
+        supabaseAdmin as unknown as SupabaseAdminService,
+        { deliver } as unknown as NotificationsService,
+      );
+      tx.studentGroup.findUnique.mockResolvedValue({ kind: 'CLASS' });
+    });
+
+    /** The transaction of the last withRls call: it rejects when its body threw, which rolls it back. */
+    const lastTransaction = (): Promise<unknown> =>
+      prisma.withRls.mock.results[prisma.withRls.mock.results.length - 1]!.value as Promise<unknown>;
+    const expectCommitted = () => expect(lastTransaction()).resolves.toMatchObject({ applied: true });
+    const expectRolledBack = () => expect(lastTransaction()).rejects.toThrow();
+
+    /** The savepoint statements sent with $executeRaw's tagged template (the läslogg's are Prisma.sql objects). */
+    const savepoints = () =>
+      tx.$executeRaw.mock.calls
+        .filter(([statement]) => Array.isArray(statement))
+        .map(([strings]) => (strings as readonly string[]).join('?'));
+
+    const told = () => queryRaw.mock.calls.filter((call) => rawSql(call).includes(TELL));
+
+    /** The turns after the answer in which the shared mock runs the hooks of a commit. */
+    const afterCommit = async () => {
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+    };
+
+    describe('bulkUpdateStudents', () => {
+      beforeEach(() => givenReadsUnder('FOR NO KEY UPDATE'));
+
+      it('refuses a body whose changes name nothing before it opens a transaction', async () => {
+        await expect(service.bulkUpdateStudents({ ids: [P1], changes: {} }, user)).rejects.toThrow(BadRequestException);
+        await expect(
+          service.bulkUpdateStudents({ ids: [P1], changes: { isActive: undefined } }, user),
+        ).rejects.toThrow(BadRequestException);
+        expect(prisma.withRls).not.toHaveBeenCalled();
+      });
+
+      it('locks the pupils once each, in id order, in one transaction with the bulk timeout', async () => {
+        await service.bulkUpdateStudents({ ids: [P3, P1, P3], changes: { isActive: false } }, user);
+
+        expect(prisma.withRls).toHaveBeenCalledTimes(1);
+        expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function), { timeoutMs: BULK_TIMEOUT_MS });
+        expect(queryRaw.mock.calls[0]!.slice(1)).toEqual([[P1, P3]]);
+      });
+
+      it('moves the pupils into the class in one statement, commits, and records no read in the läslogg', async () => {
+        table = [pupil(P1), pupil(P2, { studentGroupId: CLASS_B })];
+
+        const result = await service.bulkUpdateStudents({ ids: [P2, P1], changes: { studentGroupId: CLASS_A } }, user);
+
+        expect(result).toEqual({ applied: true, dryRun: false, done: [P1, P2], refused: [] });
+        expect(tx.user.updateMany).toHaveBeenCalledTimes(1);
+        expect(tx.user.updateMany).toHaveBeenCalledWith({
+          where: { id: { in: [P1, P2] } },
+          data: { studentGroupId: CLASS_A },
+        });
+        expect(tx.user.update).not.toHaveBeenCalled();
+        expect(savepoints()).toEqual(['SAVEPOINT bulk_whole', 'RELEASE SAVEPOINT bulk_whole']);
+        // The answer is ids only: the register the page reads afterwards records its own read.
+        expect(recordedReads(tx)).toEqual([]);
+        await expectCommitted();
+      });
+
+      it('sets the status alone without asking about any class', async () => {
+        const result = await service.bulkUpdateStudents({ ids: [P1, P2], changes: { isActive: false } }, user);
+
+        expect(result).toMatchObject({ applied: true, done: [P1, P2] });
+        expect(tx.user.updateMany).toHaveBeenCalledWith({ where: { id: { in: [P1, P2] } }, data: { isActive: false } });
+        expect(tx.studentGroup.findUnique).not.toHaveBeenCalled();
+      });
+
+      it('takes null as a change, "no class", and asks about no class for it', async () => {
+        table = [pupil(P1, { studentGroupId: CLASS_A }), pupil(P2)];
+
+        await service.bulkUpdateStudents({ ids: [P1, P2], changes: { studentGroupId: null } }, user);
+
+        // P2 is in no class already: not written.
+        expect(tx.user.updateMany).toHaveBeenCalledWith({ where: { id: { in: [P1] } }, data: { studentGroupId: null } });
+        expect(tx.studentGroup.findUnique).not.toHaveBeenCalled();
+      });
+
+      it('does not write a pupil already in the class and status asked: updatedAt and the class history stay', async () => {
+        table = [pupil(P1, { studentGroupId: CLASS_A }), pupil(P2), pupil(P3, { studentGroupId: CLASS_A, isActive: false })];
+
+        const result = await service.bulkUpdateStudents({ ids: [P1, P2, P3], changes: { studentGroupId: CLASS_A } }, user);
+        expect(tx.user.updateMany).toHaveBeenLastCalledWith({
+          where: { id: { in: [P2] } },
+          data: { studentGroupId: CLASS_A },
+        });
+        // Judged all the same: the pupil who is there already is done, not skipped.
+        expect(result.done).toEqual([P1, P2, P3]);
+
+        // Both fields: a pupil who differs in either is written, with both.
+        await service.bulkUpdateStudents({ ids: [P1, P3], changes: { studentGroupId: CLASS_A, isActive: true } }, user);
+        expect(tx.user.updateMany).toHaveBeenLastCalledWith({
+          where: { id: { in: [P3] } },
+          data: { studentGroupId: CLASS_A, isActive: true },
+        });
+      });
+
+      it('writes nothing, and says applied, when every pupil is as asked already', async () => {
+        table = [pupil(P1, { studentGroupId: CLASS_A }), pupil(P2, { studentGroupId: CLASS_A })];
+
+        const result = await service.bulkUpdateStudents({ ids: [P1, P2], changes: { studentGroupId: CLASS_A } }, user);
+
+        expect(result).toEqual({ applied: true, dryRun: false, done: [P1, P2], refused: [] });
+        expect(tx.user.updateMany).not.toHaveBeenCalled();
+        // And nobody is moved, so the class is not asked about either.
+        expect(tx.studentGroup.findUnique).not.toHaveBeenCalled();
+        expect(told()).toEqual([]);
+      });
+
+      it('asks once whether the class is a class, and refuses a teaching group for the whole call, writing nothing', async () => {
+        await service.bulkUpdateStudents({ ids: [P1, P2, P3], changes: { studentGroupId: CLASS_A } }, user);
+        expect(tx.studentGroup.findUnique).toHaveBeenCalledTimes(1);
+        expect(tx.studentGroup.findUnique).toHaveBeenCalledWith({ where: { id: CLASS_A }, select: { kind: true } });
+
+        tx.user.updateMany.mockClear();
+        queryRaw.mockClear();
+        tx.studentGroup.findUnique.mockResolvedValue({ kind: 'TEACHING_GROUP' });
+        table = [pupil(P1), pupil(P2)];
+        await expect(
+          service.bulkUpdateStudents({ ids: [P1, P2], changes: { studentGroupId: CLASS_B } }, user),
+        ).rejects.toMatchObject({ status: 400, response: { code: 'STUDENT_HOME_GROUP_NOT_A_CLASS' } });
+        expect(tx.user.updateMany).not.toHaveBeenCalled();
+        expect(told()).toEqual([]);
+      });
+
+      it('refuses a member of staff, a administrator and a guardian as no pupil, and writes nothing', async () => {
+        table = [pupil(P1), staff(TEACHER, 'TEACHER'), staff(P2, 'SCHOOL_ADMIN'), staff(P3, 'GUARDIAN')];
+
+        const result = await service.bulkUpdateStudents({ ids: [P1, P2, P3, TEACHER], changes: { isActive: false } }, user);
+
+        expect(result).toEqual({
+          applied: false,
+          dryRun: false,
+          done: [P1],
+          refused: [P2, P3, TEACHER].map((id) => ({ id, code: 'NOT_A_STUDENT', message: NOT_A_STUDENT_SENTENCE })),
+        });
+        // The pupil that passed was written in the transaction and rolled back with it; no other row was offered.
+        expect(tx.user.updateMany).toHaveBeenCalledWith({ where: { id: { in: [P1] } }, data: { isActive: false } });
+        await expectRolledBack();
+      });
+
+      it('names an id that is not there', async () => {
+        const result = await service.bulkUpdateStudents({ ids: [P1, MISSING], changes: { isActive: false } }, user);
+
+        expect(result).toEqual({ applied: false, dryRun: false, done: [P1], refused: [{ id: MISSING, ...NOT_FOUND }] });
+        await expectRolledBack();
+      });
+
+      it('refuses to make a pseudonymised pupil active, naming the way out, and lets everything else be done to them', async () => {
+        table = [pupil(P1), pupil(P2, { pseudonymisedAt: new Date('2026-10-21T01:10:00Z'), isActive: false })];
+
+        const result = await service.bulkUpdateStudents({ ids: [P1, P2], changes: { isActive: true } }, user);
+
+        expect(result).toEqual({
+          applied: false,
+          dryRun: false,
+          done: [P1],
+          refused: [
+            {
+              id: P2,
+              code: 'USER_IS_PSEUDONYMISED',
+              message:
+                'Personen är pseudonymiserad efter skolans gallringsbeslut och kan inte aktiveras igen. Lägg till personen på nytt.',
+            },
+          ],
+        });
+        await expectRolledBack();
+
+        // Made inactive or moved to a class they are not refused: the rule is about being made active.
+        const other = await service.bulkUpdateStudents({ ids: [P1, P2], changes: { studentGroupId: CLASS_A } }, user);
+        expect(other).toMatchObject({ applied: true, done: [P1, P2], refused: [] });
+        const inactive = await service.bulkUpdateStudents({ ids: [P2], changes: { isActive: false } }, user);
+        expect(inactive).toMatchObject({ applied: true, done: [P2], refused: [] });
+      });
+
+      it('names the pupil the database refused when it refuses the statement, trying the pupils one by one', async () => {
+        const classIsNotTheSchools = new Prisma.PrismaClientKnownRequestError('Foreign key constraint violated', {
+          code: 'P2003',
+          clientVersion: Prisma.prismaVersion.client,
+          meta: {
+            modelName: 'User',
+            driverAdapterError: {
+              cause: {
+                originalMessage:
+                  'insert or update on table "Users" violates foreign key constraint "Users_studentGroupId_fkey"',
+                constraint: { index: 'Users_studentGroupId_fkey' },
+              },
+            },
+          },
+        });
+        tx.user.updateMany.mockRejectedValue(classIsNotTheSchools);
+        tx.user.update.mockImplementation(({ where }: { where: { id: string } }) =>
+          where.id === P2 ? Promise.reject(classIsNotTheSchools) : Promise.resolve({ id: where.id }),
+        );
+
+        const result = await service.bulkUpdateStudents({ ids: [P1, P2, P3], changes: { studentGroupId: CLASS_A } }, user);
+
+        expect(result).toEqual({
+          applied: false,
+          dryRun: false,
+          done: [P1, P3],
+          refused: [{ id: P2, code: null, message: 'studentGroupId: klassen finns inte i skolan.' }],
+        });
+        expect(tx.user.update.mock.calls.map(([args]) => (args as { where: { id: string } }).where.id)).toEqual([P1, P2, P3]);
+        expect(told()).toEqual([]);
+        await expectRolledBack();
+      });
+
+      it('on a dry run does the work and rolls it back, saying what would be done, and tells the mentors nothing', async () => {
+        const result = await service.bulkUpdateStudents(
+          { ids: [P1, P2], changes: { studentGroupId: CLASS_A }, dryRun: true },
+          user,
+        );
+
+        expect(result).toEqual({ applied: false, dryRun: true, done: [P1, P2], refused: [] });
+        expect(tx.user.updateMany).toHaveBeenCalledWith({ where: { id: { in: [P1, P2] } }, data: { studentGroupId: CLASS_A } });
+        expect(told()).toEqual([]);
+        expect(deliver).not.toHaveBeenCalled();
+        expect(recordedReads(tx)).toEqual([]);
+        await expectRolledBack();
+      });
+
+      it('rethrows a failure that is no pupil’s refusal: the call fails, it is not a report', async () => {
+        tx.user.updateMany.mockRejectedValue(new Error('connection reset'));
+
+        await expect(service.bulkUpdateStudents({ ids: [P1], changes: { isActive: false } }, user)).rejects.toThrow(
+          'connection reset',
+        );
+        expect(tx.user.update).not.toHaveBeenCalled();
+      });
+
+      // A move, a reactivation or a deactivation changes who a pupil's mentor is
+      // told about (app.leave_school_days), as update() tells them.
+      describe('the mentors, told once after every pupil', () => {
+        it('tells them once for the whole call, after the last statement, in its transaction', async () => {
+          const ranIn = transactionsOf(prisma);
+          const toldIn = ranIn(queryRaw);
+          const writtenIn = ranIn(tx.user.updateMany);
+
+          await service.bulkUpdateStudents({ ids: [P1, P2, P3], changes: { studentGroupId: CLASS_A } }, user);
+
+          expect(told()).toHaveLength(1);
+          const at = queryRaw.mock.invocationCallOrder[queryRaw.mock.calls.findIndex((call) => rawSql(call).includes(TELL))]!;
+          const writes = tx.user.updateMany.mock.invocationCallOrder;
+          expect(at).toBeGreaterThan(writes[writes.length - 1]!);
+          expect(new Set([...toldIn, ...writtenIn]).size).toBe(1);
+          expect(deliver).toHaveBeenCalledTimes(1);
+          expect(deliver).toHaveBeenCalledWith(
+            tx,
+            expect.objectContaining({
+              schoolId: SCHOOL_ID,
+              type: 'LEAVE_REQUESTED',
+              recipients: [{ userId: MENTOR, notificationId: NOTICE }],
+            }),
+          );
+        });
+
+        it('tells them of a status change as well as of a class move', async () => {
+          table = [pupil(P1, { isActive: false })];
+          await service.bulkUpdateStudents({ ids: [P1], changes: { isActive: true } }, user);
+          expect(told()).toHaveLength(1);
+        });
+
+        it('tells nobody when no pupil moves, or when a row is refused', async () => {
+          table = [pupil(P1, { studentGroupId: CLASS_A }), pupil(P2), staff(TEACHER, 'TEACHER')];
+
+          await service.bulkUpdateStudents({ ids: [P1], changes: { studentGroupId: CLASS_A } }, user);
+          await service.bulkUpdateStudents({ ids: [P2, TEACHER], changes: { studentGroupId: CLASS_A } }, user);
+
+          expect(told()).toEqual([]);
+          expect(deliver).not.toHaveBeenCalled();
+        });
+      });
+    });
+
+    describe('bulkRemoveStudents', () => {
+      /** What the counts of the dry run answer, per model. */
+      const COUNTS = {
+        studentGroupMember: 5,
+        studentEnrollment: 6,
+        guardianStudent: 3,
+        absenceReport: 20,
+        leaveRequest: 2,
+        attendanceRecord: 400,
+      };
+      const givenCounts = () => {
+        for (const [model, count] of Object.entries(COUNTS)) tx[model]!['count']!.mockResolvedValue(count);
+      };
+      /** What the second transaction of a dry run reads the pupils from: the table, as `select` has it. */
+      const givenPupilsToCount = () =>
+        tx.user.findMany.mockImplementation(({ where, select }: { where: { id: { in: string[] } }; select: Record<string, unknown> }) =>
+          Promise.resolve(table.filter((row) => where.id.in.includes(row['id'] as string)).map((row) => asSelected(row, select))),
+        );
+
+      const decidedPlan = (name: string, overrides: Record<string, unknown> = {}) => ({
+        name,
+        decidedByUserId: null,
+        gradeSpanSetByUserId: null,
+        ...overrides,
+      });
+      const timplanSentence = (which: string, what: string) =>
+        `Personen står som den som registrerade ${what} ${which} och kan inte tas bort. ` +
+        'Inaktivera kontot i stället; beslutet behåller sitt namn.';
+
+      beforeEach(() => {
+        givenReadsUnder('FOR UPDATE');
+        table = [
+          pupil(P1, { authId: AUTH_1, invitedAt: new Date('2026-08-01T00:00:00Z'), ss12000Id: 'ss-1' }),
+          pupil(P2, { authId: AUTH_2, invitedAt: new Date('2026-08-02T00:00:00Z') }),
+          pupil(P3, { authId: AUTH_3, invitedAt: null }),
+          staff(TEACHER, 'TEACHER'),
+        ];
+      });
+
+      it('locks the pupils FOR UPDATE once each, in id order, and asks the questions of the pupils alone', async () => {
+        await service.bulkRemoveStudents({ ids: [TEACHER, P2, P1, P2] }, user);
+
+        expect(queryRaw.mock.calls[0]!.slice(1)).toEqual([[P1, P2, TEACHER]]);
+        expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function), { timeoutMs: BULK_TIMEOUT_MS });
+        expect(tx.localTimplan.findMany).toHaveBeenCalledWith({
+          where: { OR: [{ decidedByUserId: { in: [P1, P2] } }, { gradeSpanSetByUserId: { in: [P1, P2] } }] },
+          select: { name: true, decidedByUserId: true, gradeSpanSetByUserId: true },
+          orderBy: { name: 'asc' },
+        });
+        expect(tx.supervisionCover.findMany).toHaveBeenCalledWith({
+          where: { absentTeacherId: { in: [P1, P2] }, decision: 'SUBSTITUTE', endsAt: { gt: expect.any(Date) } },
+          select: { absentTeacherId: true, date: true },
+          orderBy: { date: 'asc' },
+        });
+      });
+
+      it('deletes the pupils in one statement, counts nothing, and takes no cover lock a pupil has no use for', async () => {
+        const result = await service.bulkRemoveStudents({ ids: [P2, P1, P3] }, user);
+
+        expect(result).toEqual({ applied: true, dryRun: false, done: [P1, P2, P3], refused: [] });
+        expect(result).not.toHaveProperty('consequences');
+        expect(tx.user.deleteMany).toHaveBeenCalledTimes(1);
+        expect(tx.user.deleteMany).toHaveBeenCalledWith({ where: { id: { in: [P1, P2, P3] } } });
+        expect(savepoints()).toEqual(['SAVEPOINT bulk_whole', 'RELEASE SAVEPOINT bulk_whole']);
+        // A real call is no read of the pupils: it counts nothing and records nothing.
+        expect(prisma.withRls).toHaveBeenCalledTimes(1);
+        for (const model of Object.keys(COUNTS)) expect(tx[model]!['count']).not.toHaveBeenCalled();
+        expect(recordedReads(tx)).toEqual([]);
+        expect(tx.$executeRaw.mock.calls.some((call) => rawSql(call).includes("'cover-teacher:'"))).toBe(false);
+        await expectCommitted();
+      });
+
+      it('refuses a member of staff as no pupil, and a missing id, and deletes nothing', async () => {
+        const result = await service.bulkRemoveStudents({ ids: [P1, TEACHER, MISSING] }, user);
+
+        expect(result).toEqual({
+          applied: false,
+          dryRun: false,
+          done: [P1],
+          // In id order, whatever the reason.
+          refused: [
+            { id: TEACHER, code: 'NOT_A_STUDENT', message: NOT_A_STUDENT_SENTENCE },
+            { id: MISSING, ...NOT_FOUND },
+          ],
+        });
+        // Only the pupil was offered to the delete, which the body’s throw rolls back.
+        expect(tx.user.deleteMany).toHaveBeenCalledWith({ where: { id: { in: [P1] } } });
+        await expectRolledBack();
+      });
+
+      it('refuses a pupil a decided timplan names, in the sentence remove() gives, naming the plans', async () => {
+        tx.localTimplan.findMany.mockResolvedValue([
+          decidedPlan('Grundskolan 2024', { decidedByUserId: P1 }),
+          decidedPlan('Grundskolan 2025', { decidedByUserId: 'someone-else', gradeSpanSetByUserId: P2 }),
+        ]);
+
+        const result = await service.bulkRemoveStudents({ ids: [P1, P2, P3] }, user);
+
+        expect(result.refused).toEqual([
+          {
+            id: P1,
+            code: null,
+            message: timplanSentence('den beslutade lokala timplanen "Grundskolan 2024"', 'beslutet om'),
+          },
+          {
+            id: P2,
+            code: null,
+            message: timplanSentence('den beslutade lokala timplanen "Grundskolan 2025"', 'årskurspannet för'),
+          },
+        ]);
+        expect(result).toMatchObject({ applied: false, done: [P3] });
+        expect(tx.user.deleteMany).toHaveBeenCalledWith({ where: { id: { in: [P3] } } });
+        await expectRolledBack();
+
+        // The very words of the single route, asked of the same plans.
+        tx.user.findUnique.mockResolvedValue({ authId: AUTH_1, invitedAt: null, role: 'STUDENT' });
+        tx.localTimplan.findMany.mockResolvedValue([decidedPlan('Grundskolan 2024', { decidedByUserId: P1 })]);
+        const single = await service.remove(P1, user).catch((e: unknown) => e);
+        expect(single).toBeInstanceOf(ConflictException);
+        expect((single as ConflictException).message).toBe(result.refused[0]!.message);
+      });
+
+      it('names both when one pupil decided a plan and set another’s span', async () => {
+        tx.localTimplan.findMany.mockResolvedValue([
+          decidedPlan('A', { decidedByUserId: P1 }),
+          decidedPlan('B', { gradeSpanSetByUserId: P1 }),
+        ]);
+
+        const result = await service.bulkRemoveStudents({ ids: [P1] }, user);
+
+        expect(result.refused).toEqual([
+          {
+            id: P1,
+            code: null,
+            message: timplanSentence('de beslutade lokala timplanerna "A" och "B"', 'beslutet eller årskurspannet för'),
+          },
+        ]);
+      });
+
+      it('refuses a pupil whose rastvaktspass has a vikarie booked ahead, with the date, as the single route does', async () => {
+        tx.supervisionCover.findMany.mockResolvedValue([
+          { absentTeacherId: P2, date: new Date('2030-09-02T00:00:00.000Z') },
+          { absentTeacherId: P2, date: new Date('2030-09-09T00:00:00.000Z') },
+        ]);
+
+        const result = await service.bulkRemoveStudents({ ids: [P1, P2] }, user);
+
+        expect(result.refused).toEqual([
+          {
+            id: P2,
+            code: 'USER_HAS_BOOKED_PASS_COVERS',
+            message:
+              'Personens rastvaktspass har en inbokad vikarie framåt, första gången 2030-09-02. ' +
+              'Ångra besluten på vikarietavlan först, så att vikarien får veta det.',
+            params: { date: '2030-09-02' },
+          },
+        ]);
+        expect(result).toMatchObject({ applied: false, done: [P1] });
+      });
+
+      it('gives a pupil with both a decided plan and a booked pass the plan, as remove() asks first', async () => {
+        tx.localTimplan.findMany.mockResolvedValue([decidedPlan('A', { decidedByUserId: P1 })]);
+        tx.supervisionCover.findMany.mockResolvedValue([{ absentTeacherId: P1, date: new Date('2030-09-02T00:00:00.000Z') }]);
+
+        const result = await service.bulkRemoveStudents({ ids: [P1] }, user);
+
+        expect(result.refused).toHaveLength(1);
+        expect(result.refused[0]!.code).toBeNull();
+        expect(result.refused[0]!.message).toContain('beslutet om den beslutade lokala timplanen "A"');
+      });
+
+      it.each([
+        ['decider', 'LocalTimplans_decidedByUserId_schoolId_fkey', 'beslutet om'],
+        ['span', 'LocalTimplans_gradeSpanSetByUserId_schoolId_fkey', 'årskurspannet för'],
+      ])('lists the pupil the %s key refuses when a plan is decided after the question, trying the pupils one by one', async (_which, constraint, what) => {
+        const restrict = new Prisma.PrismaClientKnownRequestError('Foreign key constraint violated', {
+          code: 'P2003',
+          clientVersion: Prisma.prismaVersion.client,
+          meta: { modelName: 'User', driverAdapterError: { cause: { constraint: { index: constraint } } } },
+        });
+        tx.user.deleteMany.mockRejectedValue(restrict);
+        tx.user.delete.mockImplementation(({ where }: { where: { id: string } }) =>
+          where.id === P2 ? Promise.reject(restrict) : Promise.resolve({ id: where.id }),
+        );
+
+        const result = await service.bulkRemoveStudents({ ids: [P1, P2, P3] }, user);
+
+        expect(result).toEqual({
+          applied: false,
+          dryRun: false,
+          done: [P1, P3],
+          refused: [{ id: P2, code: null, message: timplanSentence('en beslutad lokal timplan', what) }],
+        });
+        expect(tx.user.delete.mock.calls.map(([args]) => (args as { where: { id: string } }).where.id)).toEqual([P1, P2, P3]);
+        await afterCommit();
+        expect(prisma.onCommit).not.toHaveBeenCalled();
+        expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
+        await expectRolledBack();
+      });
+
+      it('fails the call, with its own answer, when the database’s error is no pupil’s refusal', async () => {
+        tx.user.deleteMany.mockRejectedValue(new Error('connection reset'));
+
+        await expect(service.bulkRemoveStudents({ ids: [P1] }, user)).rejects.toThrow('connection reset');
+        expect(tx.user.delete).not.toHaveBeenCalled();
+        await afterCommit();
+        expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
+      });
+
+      describe('a dry run', () => {
+        beforeEach(() => {
+          givenCounts();
+          givenPupilsToCount();
+        });
+
+        it('counts what goes with the pupils in a transaction of its own after the rolled-back delete, and records the reads it counts', async () => {
+          const ranIn = transactionsOf(prisma);
+          const deletedIn = ranIn(tx.user.deleteMany);
+          const countedIn = ranIn(tx.studentGroupMember.count);
+          const app = testUser({ channel: 'APP' });
+
+          const result = await service.bulkRemoveStudents({ ids: [TEACHER, P2, P1], dryRun: true }, app);
+
+          expect(result).toEqual({
+            applied: false,
+            dryRun: true,
+            done: [P1, P2],
+            refused: [{ id: TEACHER, code: 'NOT_A_STUDENT', message: NOT_A_STUDENT_SENTENCE }],
+            consequences: {
+              memberships: 5,
+              enrolments: 6,
+              guardianLinks: 3,
+              absenceReports: 20,
+              leaveRequests: 2,
+              attendanceMarks: 400,
+              logins: 2,
+              fromSource: 1,
+            },
+          });
+          // Two transactions: the dry run's, rolled back with its delete, and the counts', which commits with its läslogg rows.
+          expect(prisma.withRls).toHaveBeenCalledTimes(2);
+          expect(prisma.withRls.mock.calls[1]!.slice(0, 2)).toEqual([app, expect.any(Function)]);
+          await expect(prisma.withRls.mock.results[0]!.value).rejects.toThrow();
+          await expect(prisma.withRls.mock.results[1]!.value).resolves.toMatchObject({ memberships: 5 });
+          expect(deletedIn).toHaveLength(1);
+          expect(countedIn).toHaveLength(1);
+          expect(deletedIn[0]).not.toBe(countedIn[0]);
+          expect(tx.user.deleteMany.mock.invocationCallOrder[0]!).toBeLessThan(
+            tx.studentGroupMember.count.mock.invocationCallOrder[0]!,
+          );
+          // The pupils the dry run would take, and the figures about them only.
+          expect(tx.user.findMany).toHaveBeenCalledWith({
+            where: { id: { in: [P1, P2] } },
+            select: { id: true, invitedAt: true, ss12000Id: true },
+          });
+          for (const model of Object.keys(COUNTS).filter((model) => model !== 'attendanceRecord')) {
+            expect(tx[model]!['count']).toHaveBeenCalledWith({ where: { studentId: { in: [P1, P2] } } });
+          }
+          expect(tx.attendanceRecord.count).toHaveBeenCalledWith({ where: { studentId: { in: [P1, P2] } } });
+          // Each kind of fact counted about them is a read of them in the läslogg, by the channel the caller came by.
+          expect(recordedReads(tx)).toEqual(
+            ['ROSTER', 'GUARDIANS', 'ABSENCE_REPORTS', 'LEAVE_REQUESTS', 'ATTENDANCE'].map((kind) => ({
+              kind,
+              channel: 'APP',
+              ids: [P1, P2],
+            })),
+          );
+        });
+
+        it('asks the provider for nothing, then or after, and takes no login from anyone', async () => {
+          await service.bulkRemoveStudents({ ids: [P1, P2], dryRun: true }, user);
+          await afterCommit();
+
+          expect(prisma.onCommit).not.toHaveBeenCalled();
+          expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
+        });
+
+        it('opens no second transaction when no pupil would be removed, and counts nothing', async () => {
+          const result = await service.bulkRemoveStudents({ ids: [TEACHER, MISSING], dryRun: true }, user);
+
+          expect(result).toEqual({
+            applied: false,
+            dryRun: true,
+            done: [],
+            refused: [
+              { id: TEACHER, code: 'NOT_A_STUDENT', message: NOT_A_STUDENT_SENTENCE },
+              { id: MISSING, ...NOT_FOUND },
+            ],
+          });
+          expect(prisma.withRls).toHaveBeenCalledTimes(1);
+          expect(recordedReads(tx)).toEqual([]);
+        });
+      });
+
+      describe('the logins of the invited', () => {
+        it('goes after the commit, not before the answer, for the invited pupils only', async () => {
+          const result = await service.bulkRemoveStudents({ ids: [P1, P2, P3] }, user);
+
+          expect(result.applied).toBe(true);
+          expect(prisma.onCommit).toHaveBeenCalledTimes(1);
+          expect(prisma.onCommit).toHaveBeenCalledWith(tx, expect.any(Function));
+          // Not held against the request: the answer is out before the provider is asked.
+          expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
+
+          await afterCommit();
+
+          expect(supabaseAdmin.deleteUser.mock.calls).toEqual([[AUTH_1], [AUTH_2]]);
+          expect(supabaseAdmin.deleteUser.mock.invocationCallOrder[0]!).toBeGreaterThan(
+            tx.user.deleteMany.mock.invocationCallOrder[0]!,
+          );
+        });
+
+        it('keeps a login another school’s row holds, asking after the delete with no row excepted', async () => {
+          heldLogins = new Set([AUTH_1]);
+
+          await service.bulkRemoveStudents({ ids: [P1, P2] }, user);
+          await afterCommit();
+
+          expect(supabaseAdmin.deleteUser.mock.calls).toEqual([[AUTH_2]]);
+          const asked = queryRaw.mock.calls.filter((call) => rawSql(call).includes(HELD));
+          expect(asked.map((call) => call.slice(1))).toEqual([
+            [AUTH_1, null],
+            [AUTH_2, null],
+          ]);
+          expect(asked[0] && queryRaw.mock.invocationCallOrder[queryRaw.mock.calls.indexOf(asked[0])]!).toBeGreaterThan(
+            tx.user.deleteMany.mock.invocationCallOrder[0]!,
+          );
+        });
+
+        it('keeps every login it cannot ask about', async () => {
+          jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+          heldLogins = 'fails';
+
+          await service.bulkRemoveStudents({ ids: [P1, P2] }, user);
+          await afterCommit();
+
+          expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
+        });
+
+        it('goes on with the rest when the provider fails one, and logs how many failed', async () => {
+          const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+          supabaseAdmin.deleteUser.mockRejectedValueOnce(new Error('gotrue down'));
+
+          const result = await service.bulkRemoveStudents({ ids: [P1, P2] }, user);
+          await afterCommit();
+
+          // The rows are gone whatever the provider says.
+          expect(result.applied).toBe(true);
+          expect(supabaseAdmin.deleteUser.mock.calls).toEqual([[AUTH_1], [AUTH_2]]);
+          expect(warn).toHaveBeenCalledWith('Failed to delete 1 Supabase identities for removed users.');
+        });
+
+        it('asks the provider for nothing when nobody removed was invited, or when a row is refused', async () => {
+          await service.bulkRemoveStudents({ ids: [P3] }, user);
+          await afterCommit();
+          expect(prisma.onCommit).not.toHaveBeenCalled();
+
+          // One row refused: nothing is removed, and nothing is asked of the provider.
+          await service.bulkRemoveStudents({ ids: [P1, P2, TEACHER] }, user);
+          await afterCommit();
+          expect(prisma.onCommit).not.toHaveBeenCalled();
+          expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
+        });
+      });
     });
   });
 

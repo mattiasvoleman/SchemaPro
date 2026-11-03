@@ -7,6 +7,7 @@ import {
   IsArray,
   IsInt,
   IsNotEmpty,
+  IsObject,
   IsOptional,
   IsString,
   IsUUID,
@@ -15,6 +16,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+import { BulkIdsDto } from '../../common/bulk';
 
 export class CreateStudentGroupDto {
   @IsUUID('4')
@@ -134,4 +136,30 @@ export class SetGroupMembersDto {
   @ArrayMaxSize(500)
   @IsUUID('4', { each: true })
   studentIds!: string[];
+}
+
+/**
+ * Massåtgärder: what may be set on many groups at once, each field only when
+ * sent. The årskurs (its halves follow a class, and the skolenhet follows
+ * the årskurs) and "Ersätter ämne" (null: replaces nothing). Validated as
+ * UpdateStudentGroupDto validates them.
+ */
+export class BulkStudentGroupChangesDto {
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(12)
+  gradeLevel?: number | null;
+
+  @IsOptional()
+  @IsUUID('4')
+  replacesSubjectId?: string | null;
+}
+
+/** Many groups, and the fields to set on every one of them (src/common/bulk.ts). */
+export class BulkUpdateStudentGroupsDto extends BulkIdsDto {
+  @IsObject()
+  @ValidateNested()
+  @Type(() => BulkStudentGroupChangesDto)
+  changes!: BulkStudentGroupChangesDto;
 }
