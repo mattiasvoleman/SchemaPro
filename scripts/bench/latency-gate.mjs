@@ -233,13 +233,18 @@ export function gate(results) {
   // a run that is mostly non-2xx reports flattering numbers for work that
   // never happened. Tight rather than "all failed": the first version fired
   // only at 100%, and a real run came back 99.3% rate-limited and passed.
-  const failedOf = (r) => r.non2xx + (r.errors ?? 0) + (r.timeouts ?? 0);
-  const attemptsOf = (r) => r.totalRequests + (r.errors ?? 0) + (r.timeouts ?? 0);
+  // autocannon counts a timeout in `errors` ("connection errors, including
+  // timeouts") and again in `timeouts`, so the two are not added: the larger is
+  // the connections that failed, and a row that carries only `timeouts` counts
+  // them. Neither is in `totalRequests`, which is the responses that came back.
+  const brokenOf = (r) => Math.max(r.errors ?? 0, r.timeouts ?? 0);
+  const failedOf = (r) => r.non2xx + brokenOf(r);
+  const attemptsOf = (r) => r.totalRequests + brokenOf(r);
   const polluted = results.filter((r) => attemptsOf(r) > 0 && failedOf(r) / attemptsOf(r) > MAX_NON_2XX_RATIO);
   for (const r of polluted) {
     const pct = ((failedOf(r) / attemptsOf(r)) * 100).toFixed(1);
     const detail =
-      (r.errors ?? 0) + (r.timeouts ?? 0) > 0 ? `; non-2xx ${r.non2xx}, errors ${r.errors ?? 0}, timeouts ${r.timeouts ?? 0}` : '';
+      brokenOf(r) > 0 ? `; non-2xx ${r.non2xx}, errors ${brokenOf(r)}, of which timeouts ${r.timeouts ?? 0}` : '';
     lines.push(`  ✗ ${label('non-2xx')}${r.scenario}   ${pct}% (${failedOf(r)}/${attemptsOf(r)}${detail})`);
   }
 
