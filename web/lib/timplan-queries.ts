@@ -2,7 +2,8 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import type { SchoolForm, TimplanCheck, TimplanVerdict } from "@/lib/timplan-coverage";
+import type { SchoolUnit } from "@/lib/school-units";
+import type { GradeSpan, SchoolForm, TimplanCheck, TimplanVerdict } from "@/lib/timplan-coverage";
 import type { GenerateBody, GenerateRequirementsResponse } from "@/lib/timplan-generate";
 import { TIMPLAN_COVERAGE_KEYS } from "@/lib/year-timplan-keys";
 
@@ -43,6 +44,20 @@ export interface LocalTimplan {
   decidedByUserId: string | null;
   decisionNote: string | null;
   copiedFromId: string | null;
+  /**
+   * The årskurser the plan is for, in the numbering of its lydelse (0 =
+   * förskoleklass in the nine-year ones, the tioårig lydelse counts 1..10):
+   * both set or both null, and null is the whole school form. See "The plan's
+   * årskurs span" in src/common/timplan-coverage.ts.
+   */
+  gradeFrom: number | null;
+  gradeTo: number | null;
+  /**
+   * Who and when, for a span set AFTER the plan was decided (the one change a
+   * decided plan admits, once); null for a span chosen with the draft.
+   */
+  gradeSpanSetAt: string | null;
+  gradeSpanSetByUserId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -81,12 +96,25 @@ export interface CreatePlanBody {
   schoolForm: SchoolForm;
   nationalTimplanVersionId: string;
   planningWeeks?: number;
+  /** Both or neither; absent is the whole school form. */
+  gradeFrom?: number | null;
+  gradeTo?: number | null;
 }
 
 export interface UpdatePlanBody {
   name?: string;
   planningWeeks?: number;
   nationalTimplanVersionId?: string;
+}
+
+/**
+ * The span of a copy or a reopened draft: ABSENT keys copy the source's span,
+ * both null make the draft for the whole form, two numbers give it that span.
+ */
+export interface CopyPlanBody {
+  name?: string;
+  gradeFrom?: number | null;
+  gradeTo?: number | null;
 }
 
 /** One row of a lokal timplan file, as ImportTimplanRowDto takes it. */
@@ -115,6 +143,20 @@ export const TIMPLAN_KEYS = {
 } as const;
 
 const path = (id: string, rest = "") => `/api/v1/local-timplans/${encodeURIComponent(id)}${rest}`;
+
+/**
+ * The body of a copy or a reopen. The name only when typed; the span keys only
+ * when the request states a span (two numbers, or two nulls for the whole
+ * form): leaving them out is how the gateway knows to copy the source's.
+ */
+function copyBody({ name, gradeFrom, gradeTo }: CopyPlanBody): CopyPlanBody {
+  return {
+    ...(name ? { name } : {}),
+    ...(gradeFrom !== undefined || gradeTo !== undefined
+      ? { gradeFrom: gradeFrom ?? null, gradeTo: gradeTo ?? null }
+      : {}),
+  };
+}
 
 export function useLocalTimplans() {
   return useQuery({
@@ -171,6 +213,18 @@ export function useLocalTimplanActions() {
     queryClient.setQueryData(TIMPLAN_KEYS.plan(plan.id), plan);
     refreshList();
   };
+  // The PATCH answers with the plan's columns and no entries: merged into
+  // the cached detail at once, so the weeks field never flashes back to
+  // the old figure while the refetch (which also recomputes the check —
+  // new weeks, a new lydelse or a new span change every stage sum) is in
+  // flight.
+  const merge = (plan: LocalTimplan) => {
+    queryClient.setQueryData<LocalTimplanDetail>(TIMPLAN_KEYS.plan(plan.id), (old) =>
+      old ? { ...old, ...plan } : old,
+    );
+    refreshPlan(plan.id);
+    refreshList();
+  };
 
   return {
     create: useMutation({
@@ -181,16 +235,28 @@ export function useLocalTimplanActions() {
     update: useMutation({
       mutationFn: ({ id, ...body }: UpdatePlanBody & { id: string }) =>
         api.patch<LocalTimplan>(path(id), body),
-      // The PATCH answers with the plan's columns and no entries: merged into
-      // the cached detail at once, so the weeks field never flashes back to
-      // the old figure while the refetch (which also recomputes the check —
-      // new weeks or a new lydelse change every stage sum) is in flight.
-      onSuccess: (plan) => {
-        queryClient.setQueryData<LocalTimplanDetail>(TIMPLAN_KEYS.plan(plan.id), (old) =>
-          old ? { ...old, ...plan } : old,
-        );
-        refreshPlan(plan.id);
-        refreshList();
+      onSuccess: merge,
+    }),
+    /**
+     * The årskurs span of a plan, on its own request: a DRAFT takes any span
+     * (null for the whole form), a DECIDED plan takes one ONCE, from none, and
+     * nothing else with it — which is why it is not a field of `update`, whose
+     * Spara sends the name and the weeks with it. The gateway stamps who and
+     * when on the decided plan's span.
+     */
+    setSpan: useMutation({
+      mutationFn: ({ id, span }: { id: string; span: GradeSpan | null }) =>
+        api.patch<LocalTimplan>(path(id), {
+          gradeFrom: span?.gradeFrom ?? null,
+          gradeTo: span?.gradeTo ?? null,
+        }),
+      onSuccess: merge,
+      // 409 TIMPLAN_IS_DECIDED: the page showed a draft that was decided (or a
+      // decided plan that has since been given its span) in another tab. The
+      // message is shown as it comes; the plan is read again so the page stops
+      // offering what the gateway has just refused.
+      onError: (error, { id }) => {
+        if ((error as { code?: string }).code === "TIMPLAN_IS_DECIDED") refreshPlan(id);
       },
     }),
     replaceEntries: useMutation({
@@ -223,13 +289,13 @@ export function useLocalTimplanActions() {
       },
     }),
     reopen: useMutation({
-      mutationFn: ({ id, name }: { id: string; name?: string }) =>
-        api.post<LocalTimplanDetail>(path(id, "/reopen"), name ? { name } : {}),
+      mutationFn: ({ id, ...body }: CopyPlanBody & { id: string }) =>
+        api.post<LocalTimplanDetail>(path(id, "/reopen"), copyBody(body)),
       onSuccess: seed,
     }),
     copy: useMutation({
-      mutationFn: ({ id, name }: { id: string; name?: string }) =>
-        api.post<LocalTimplanDetail>(path(id, "/copy"), name ? { name } : {}),
+      mutationFn: ({ id, ...body }: CopyPlanBody & { id: string }) =>
+        api.post<LocalTimplanDetail>(path(id, "/copy"), copyBody(body)),
       onSuccess: seed,
     }),
     remove: useMutation({
@@ -240,6 +306,23 @@ export function useLocalTimplanActions() {
       },
     }),
   };
+}
+
+/**
+ * The school's skolenheter, for the span a new plan is prefilled with and the
+ * notice that says when a plan's span is not the skolenheternas. SCHOOL_ADMIN
+ * only (the table has no arm for anyone else under RLS), so a caller that is
+ * not an admin passes `enabled` false and never sends the request. The key and
+ * the path are admin/groups/use-school-units.ts's, so the two pages share one
+ * cached answer; the hook is repeated here rather than imported from a route's
+ * folder.
+ */
+export function useSchoolUnitsForSpan(enabled: boolean) {
+  return useQuery({
+    queryKey: ["school-units"],
+    enabled,
+    queryFn: () => api.get<SchoolUnit[]>("/api/v1/school-units"),
+  });
 }
 
 /**

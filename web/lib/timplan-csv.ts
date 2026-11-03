@@ -25,10 +25,16 @@
  * A file of more than 400 rows is refused here, before upload: 400 is both the
  * endpoint's cap and the plan's (PUT /entries), so such a file cannot be one
  * plan and splitting it into batches would only write half of it.
+ *
+ * A row for an årskurs outside the plan's årskurs span is not refused either,
+ * as an årskurs 10 in a nine-year plan is not: it is stored, shown in a grey
+ * column and counted nowhere. rowsOutsideSpan finds them so the dialog can say
+ * so before the file is sent.
  */
 
 import type { ParsedCsv, RowError } from "@/lib/csv";
 import { normalizeHeader, serializeCsv } from "@/lib/csv-export";
+import { inGradeSpan, type GradeSpan } from "@/lib/timplan-coverage";
 import type { TimplanImportRow } from "@/lib/timplan-queries";
 
 export const TIMPLAN_CSV_TEMPLATE = {
@@ -177,6 +183,22 @@ export function mapTimplanRows(parsed: ParsedCsv): {
   });
 
   return { rows, errors, columns };
+}
+
+/**
+ * The rows of a file that are for an årskurs the plan's span does not hold: how
+ * many, and which årskurser they name (once each, in order). Nothing with no
+ * span, where every årskurs is the plan's.
+ */
+export function rowsOutsideSpan(
+  rows: ReadonlyArray<Pick<TimplanImportRow, "gradeLevel">>,
+  span: GradeSpan | null,
+): { count: number; grades: number[] } {
+  const outside = rows.filter((row) => !inGradeSpan(span, row.gradeLevel));
+  return {
+    count: outside.length,
+    grades: [...new Set(outside.map((row) => row.gradeLevel))].sort((a, b) => a - b),
+  };
 }
 
 /**

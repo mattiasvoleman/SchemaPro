@@ -6,11 +6,15 @@ import { toast } from "sonner";
 import { Download } from "lucide-react";
 import { downloadCsv, parseCsv, type RowError } from "@/lib/csv";
 import {
+  formatTimplanGrade,
   mapTimplanRows,
+  rowsOutsideSpan,
   TIMPLAN_CSV_TEMPLATE,
   timplanTemplateCsv,
   type TimplanFileColumn,
 } from "@/lib/timplan-csv";
+import type { GradeSpan } from "@/lib/timplan-coverage";
+import { spanText } from "@/lib/timplan-span";
 import {
   useImportTimplan,
   type LocalTimplanStatus,
@@ -48,7 +52,8 @@ interface FilePreview {
 }
 
 export interface TimplanImportDialogProps {
-  plan: { id: string; name: string; status: LocalTimplanStatus };
+  /** `span`: the årskurser the plan is for, null for the whole school form. */
+  plan: { id: string; name: string; status: LocalTimplanStatus; span: GradeSpan | null };
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -71,6 +76,11 @@ export interface TimplanImportDialogProps {
  * report. A DECIDED plan takes no file: the dialog says so and offers no
  * button, and the gateway answers 409 TIMPLAN_IS_DECIDED should a stale page
  * try anyway — that answer is shown as it comes.
+ *
+ * Rows for an årskurs outside the plan's årskurs span are imported all the
+ * same, as an åk 10 in a nine-year plan is: stored, shown in a grey column,
+ * counted nowhere. The preview says how many there are and which årskurser,
+ * so the file's author is told before the numbers are missing from a sum.
  */
 export function TimplanImportDialog({ plan, open, onOpenChange }: TimplanImportDialogProps) {
   const t = useTranslations("timplan");
@@ -124,6 +134,7 @@ export function TimplanImportDialog({ plan, open, onOpenChange }: TimplanImportD
   };
 
   const notice = <Notice role={null}>{t("importUpdates")}</Notice>;
+  const outside = preview && plan.span ? rowsOutsideSpan(preview.rows, plan.span) : null;
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -200,6 +211,15 @@ export function TimplanImportDialog({ plan, open, onOpenChange }: TimplanImportD
                         ))}
                       </ul>
                     </div>
+                  ) : null}
+                  {outside && outside.count > 0 && plan.span ? (
+                    <Notice>
+                      {t("importOutsideSpan", {
+                        count: outside.count,
+                        span: spanText(t, plan.span),
+                        grades: outside.grades.map(formatTimplanGrade).join(", "),
+                      })}
+                    </Notice>
                   ) : null}
                   {preview.previewRows.length > 0 ? (
                     <div className="max-h-56 overflow-auto rounded-md border">

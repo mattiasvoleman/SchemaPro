@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import type { BaseStage, TimplanCheck } from "@/lib/timplan-coverage";
+import { heldStageGrades, type BaseStage, type TimplanCheck } from "@/lib/timplan-coverage";
 import {
   cellFor,
   cellKey,
@@ -60,6 +60,13 @@ export interface TimplanGridProps {
  * (Mentorstid, Resurs) follow under their own heading, still editable — the
  * school may plan them here — but with no sums and no colour, so they cannot
  * be mistaken for part of the total.
+ *
+ * The plan's årskurs span (check.gradeSpan) is already in the `columns`: an
+ * årskurs outside it is a grey column of no stage, as F is, and its cells are
+ * as editable as F's — the minutes are stored and counted nowhere. What the
+ * grid adds is that a stage sum, and the footer's column sum under it, adds
+ * only the årskurser the span holds; and that a guarantee and a pool derived
+ * from part of a school form are said to be estimates.
  */
 export function TimplanGrid({
   subjects,
@@ -79,6 +86,8 @@ export function TimplanGrid({
   const notCounted = subjects.filter((subject) => !subject.countsTowardTimplan);
   const gradeLabel = (grade: number) => t("gradeAria", { grade });
   const topOf = (code: string | null) => (code === null ? null : (parentOf.get(code) ?? code));
+  // The årskurser of each stadium that the plan's span holds: the stage sums add these.
+  const held = heldStageGrades(stageGrades, check.gradeSpan);
 
   const lit = (subjectId: string, grade: number | null, stage: BaseStage | null): boolean => {
     if (!highlight || !highlight.subjectIds?.has(subjectId)) return false;
@@ -170,7 +179,7 @@ export function TimplanGrid({
           }
 
           if (!countsToward) return <td key={`s${column.stage}`} className="px-2" />;
-          const grades = stageGrades[column.stage];
+          const grades = held[column.stage];
           const tone = rowTone(check, subject.nationalCode, top, column.stage);
           const hours = stageHours(draft, subject.id, grades, weeksTenths, tone === "below" || tone === "under");
           const cell = top ? cellFor(check, top, column.stage) : undefined;
@@ -194,14 +203,20 @@ export function TimplanGrid({
               <span className="block font-medium">{hours === 0 && tone === "none" ? "—" : formatH(hours)}</span>
               {child ? (
                 <span className="block text-[11px] text-foreground/80">
-                  {t("stageCellChild", { minimum: formatH(child.minimumHours) })}
+                  {t(cell?.share ? "stageCellChildShare" : "stageCellChild", { minimum: formatH(child.minimumHours) })}
                 </span>
               ) : cell && cell.nationalHours > 0 ? (
                 <span className="block text-[11px] text-foreground/80">
-                  {t(cell.stage === "LAG_MELLAN" ? "stageCellMerged" : "stageCellNational", {
-                    planned: formatH(cell.plannedHours),
-                    national: formatH(cell.nationalHours),
-                  })}
+                  {t(
+                    cell.share
+                      ? cell.stage === "LAG_MELLAN"
+                        ? "stageCellMergedShare"
+                        : "stageCellShare"
+                      : cell.stage === "LAG_MELLAN"
+                        ? "stageCellMerged"
+                        : "stageCellNational",
+                    { planned: formatH(cell.plannedHours), national: formatH(cell.nationalHours) },
+                  )}
                 </span>
               ) : null}
               <span className="sr-only">{t(`tones.${tone}`)}</span>
@@ -217,9 +232,7 @@ export function TimplanGrid({
   // minute-tenths so the stage figure is the same arithmetic as the check's.
   const gradeSum = (grade: number) => pupilGradeMinutes(draft, counted, grade, parentOf);
   const stageSum = (stage: BaseStage) =>
-    Math.round(
-      stageGrades[stage].reduce((sum, grade) => sum + gradeSum(grade) * weeksTenths, 0) / 60,
-    ) / 10;
+    Math.round(held[stage].reduce((sum, grade) => sum + gradeSum(grade) * weeksTenths, 0) / 60) / 10;
   const alternatives = hasAlternatives(counted, parentOf);
   const poolPrinted = check.skolansVal.availableHours !== null;
   // An empty plan "takes" every national hour from the subjects: true
@@ -228,7 +241,14 @@ export function TimplanGrid({
   // the sentence says neither "nothing at all" nor "skolans val".
   const nothingPlanned = !check.total.plannedHours;
 
+  // A part of a school form: the guarantee and the pool are what the plan's
+  // årskurser hold of the form's, not a figure any bilaga prints. And a
+  // lydelse with no distribution has only the whole form's total, which a
+  // part of the form is not held to (check.total.judged).
+  const estimated = check.gradeSpan?.partial === true;
+  const totalJudged = check.total.judged !== false;
   const totalUnder = check.verdicts.some((v) => v.code === "TIMPLAN_TOTAL_BELOW_GUARANTEE");
+  const totalTone: Tone = !totalJudged ? "none" : totalUnder ? "under" : "met";
   const poolOverspent = check.verdicts.some((v) => v.code === "TIMPLAN_SKOLANS_VAL_OVERSPENT");
   // No colour where no pool figure is printed: TONE_CLASS.none is "".
   const poolTone: Tone = poolPrinted && !nothingPlanned ? (poolOverspent ? "under" : "met") : "none";
@@ -267,6 +287,11 @@ export function TimplanGrid({
                   title={t(`stages.${column.stage}`)}
                 >
                   {t("stageSumColumn", { stage: t(`stagesShort.${column.stage}`) })}
+                  {column.share ? (
+                    <span className="block text-[11px] font-normal text-muted-foreground">
+                      {t("stageShareColumn", column.share)}
+                    </span>
+                  ) : null}
                 </th>
               ),
             )}
@@ -321,14 +346,14 @@ export function TimplanGrid({
             </th>
             <td
               colSpan={span}
-              data-tone={totalUnder ? "under" : "met"}
-              className={cn("px-3 py-1.5 tabular-nums", TONE_CLASS[totalUnder ? "under" : "met"])}
+              data-tone={totalTone}
+              className={cn("px-3 py-1.5 tabular-nums", TONE_CLASS[totalTone])}
             >
-              {t("footerTotalValue", {
+              {t(!totalJudged ? "footerTotalNotJudged" : estimated ? "footerTotalValueEstimated" : "footerTotalValue", {
                 planned: formatH(check.total.plannedHours),
                 guaranteed: formatH(check.total.guaranteedHours),
               })}
-              <span className="sr-only"> {t(`tones.${totalUnder ? "under" : "met"}`)}</span>
+              <span className="sr-only"> {t(`tones.${totalTone}`)}</span>
             </td>
           </tr>
           <tr className="border-t">
@@ -347,7 +372,7 @@ export function TimplanGrid({
                     t("footerSkolansValUnpublished")
                   : check.skolansVal.availableHours === null
                     ? t("footerSkolansValNone", { placed: formatH(check.skolansVal.placedHours) })
-                    : t("footerSkolansValValue", {
+                    : t(estimated ? "footerSkolansValEstimated" : "footerSkolansValValue", {
                         taken: formatH(check.skolansVal.takenHours),
                         available: formatH(check.skolansVal.availableHours),
                         placed: formatH(check.skolansVal.placedHours),

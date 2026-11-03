@@ -15,7 +15,9 @@ import { ADMIN, GROUPS, NEXT_YEAR, SCHOOL, SUBJECT_LIST, SUBJECTS, YEAR } from "
 
 /**
  * Exempelskolan's lokala timplaner: the decided one this läsår's åk 7–9
- * follow, and next läsår's draft copied from it. Ids are uid(KIND.misc,
+ * follow, next läsår's draft copied from it, and an underlag for åk 7–9 alone
+ * that carries the plan's årskurs span (the other two are for the whole school
+ * form, as plans written before the span existed are). Ids are uid(KIND.misc,
  * 7000–7999), the timplan area's range.
  */
 
@@ -84,6 +86,10 @@ export const DECIDED_PLAN: LocalTimplanDetail = {
   decidedByUserId: ADMIN.id,
   decisionNote: "Fastställd av rektor på delegation från huvudmannen.",
   copiedFromId: null,
+  gradeFrom: null,
+  gradeTo: null,
+  gradeSpanSetAt: null,
+  gradeSpanSetByUserId: null,
   createdAt: stockholmInstant(addDays(YEAR_START, -90), "09:00"),
   updatedAt: decidedAt,
   entries: entriesOf(7100, DECIDED_MINUTES),
@@ -101,12 +107,47 @@ export const DRAFT_PLAN: LocalTimplanDetail = {
   decidedByUserId: null,
   decisionNote: null,
   copiedFromId: DECIDED_PLAN.id,
+  gradeFrom: null,
+  gradeTo: null,
+  gradeSpanSetAt: null,
+  gradeSpanSetByUserId: null,
   createdAt: stockholmInstant(addDays(TODAY, -21), "13:45"),
   updatedAt: stockholmInstant(addDays(TODAY, -14), "10:05"),
   entries: entriesOf(7200, DRAFT_MINUTES),
 };
 
-export const PLANS = [DECIDED_PLAN, DRAFT_PLAN];
+/**
+ * A draft for åk 7–9 ONLY, with the årskurs span to say so: the check holds it
+ * to the högstadium alone — no lågstadium to find missing, a pool and a
+ * guarantee that are estimates for its part of the form — and the grid draws
+ * åk 1–6 grey. Matematik in åk 6 is stored and counted nowhere. Named to sort
+ * after the other two, so the page still opens on the decided plan.
+ */
+export const SPAN_PLAN: LocalTimplanDetail = {
+  id: uid(KIND.misc, 7003),
+  schoolId: SCHOOL.id,
+  name: "Underlag åk 7–9",
+  schoolForm: "GRUNDSKOLA",
+  nationalTimplanVersionId: BILAGA_1.id,
+  planningWeeks: 35.6,
+  status: "DRAFT",
+  decidedAt: null,
+  decidedByUserId: null,
+  decisionNote: null,
+  copiedFromId: null,
+  gradeFrom: 7,
+  gradeTo: 9,
+  gradeSpanSetAt: null,
+  gradeSpanSetByUserId: null,
+  createdAt: stockholmInstant(addDays(TODAY, -7), "11:30"),
+  updatedAt: stockholmInstant(addDays(TODAY, -6), "09:10"),
+  entries: [
+    ...entriesOf(7400, DECIDED_MINUTES),
+    { id: uid(KIND.misc, 7490), subjectId: SUBJECTS.ma.id, gradeLevel: 6, minutesPerWeek: 225, note: null },
+  ].sort((a, b) => a.gradeLevel - b.gradeLevel || (a.subjectId < b.subjectId ? -1 : 1)),
+};
+
+export const PLANS = [DECIDED_PLAN, DRAFT_PLAN, SPAN_PLAN];
 
 /** GET /local-timplans: by name, as the gateway lists them, with no entries. */
 export const PLAN_LIST: LocalTimplanListItem[] = [...PLANS]
@@ -180,8 +221,7 @@ const byCode = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 const STAGE_ORDER: Record<TimplanStage, number> = { LAG: 0, LAG_MELLAN: 1, MELLAN: 2, HOG: 3 };
 /** Bilaga 1's cut, a nine-year grundskola: 1–3, 4–6, 7–9. */
-const stageOfGrade = (gradeLevel: number): "LAG" | "MELLAN" | "HOG" | undefined =>
-  gradeLevel < 1 || gradeLevel > 9 ? undefined : gradeLevel <= 3 ? "LAG" : gradeLevel <= 6 ? "MELLAN" : "HOG";
+const STAGE_GRADES = { LAG: [1, 2, 3], MELLAN: [4, 5, 6], HOG: [7, 8, 9] };
 const VERDICT_ORDER: TimplanVerdict["code"][] = [
   "TIMPLAN_NATIONAL_DISTRIBUTION_UNPUBLISHED",
   "TIMPLAN_SUBJECT_UNMAPPED",
@@ -208,6 +248,29 @@ interface CellSum {
 
 function checkPlan(plan: LocalTimplanDetail, version: NationalTimplanVersion) {
   const weeks = Math.round(plan.planningWeeks * 10);
+  // The plan's årskurs span. This stub models one that holds each stadium whole
+  // or not at all (the module's part-held share is covered by its own fixture).
+  const inSpan = (gradeLevel: number) =>
+    plan.gradeFrom === null || plan.gradeTo === null || (gradeLevel >= plan.gradeFrom && gradeLevel <= plan.gradeTo);
+  const stageOfGrade = (gradeLevel: number): "LAG" | "MELLAN" | "HOG" | undefined =>
+    !inSpan(gradeLevel) || gradeLevel < 1 || gradeLevel > 9
+      ? undefined
+      : gradeLevel <= 3
+        ? "LAG"
+        : gradeLevel <= 6
+          ? "MELLAN"
+          : "HOG";
+  const heldStage = (stage: TimplanStage): boolean => {
+    const grades = stage === "LAG_MELLAN" ? [...STAGE_GRADES.LAG, ...STAGE_GRADES.MELLAN] : STAGE_GRADES[stage];
+    const held = grades.filter(inSpan).length;
+    if (held !== 0 && held !== grades.length) throw new Error(`${plan.name}: the stub models whole stadiums only, not ${stage}`);
+    return held > 0;
+  };
+  const partial = [...STAGE_GRADES.LAG, ...STAGE_GRADES.MELLAN, ...STAGE_GRADES.HOG].some((gradeLevel) => !inSpan(gradeLevel));
+  // The version's printed national hours, and the part of them the plan holds.
+  let printedNational = 0;
+  let heldNational = 0;
+  const outside = new Set<number>();
   const sums = new Map<string, CellSum>();
   const cellOf = (code: string, stage: TimplanStage, national = 0, prot = false) => {
     const key = `${code}:${stage}`;
@@ -230,17 +293,22 @@ function checkPlan(plan: LocalTimplanDetail, version: NationalTimplanVersion) {
     return sum;
   };
   for (const entry of version.entries) {
-    if (!PARENT_OF.get(entry.subjectCode)) cellOf(entry.subjectCode, entry.stage, entry.hours * HOUR, entry.protectedFromReduction);
+    if (PARENT_OF.get(entry.subjectCode)) continue;
+    printedNational += entry.hours * HOUR;
+    if (!heldStage(entry.stage)) continue;
+    heldNational += entry.hours * HOUR;
+    cellOf(entry.subjectCode, entry.stage, entry.hours * HOUR, entry.protectedFromReduction);
   }
   for (const entry of version.entries) {
     const parent = PARENT_OF.get(entry.subjectCode);
-    if (parent) cellOf(parent, entry.stage).minima.set(entry.subjectCode, entry.hours * HOUR);
+    if (parent && heldStage(entry.stage)) cellOf(parent, entry.stage).minima.set(entry.subjectCode, entry.hours * HOUR);
   }
   const merged = new Set(version.entries.filter((entry) => entry.stage === "LAG_MELLAN").map((entry) => entry.subjectCode));
 
   for (const entry of plan.entries) {
     const school = SUBJECT_LIST.find((candidate) => candidate.id === entry.subjectId);
     const base = stageOfGrade(entry.gradeLevel);
+    if (school?.countsTowardTimplan && !base && entry.gradeLevel > 0 && entry.minutesPerWeek > 0) outside.add(entry.gradeLevel);
     if (!school?.countsTowardTimplan || !school.nationalCode || !base || entry.minutesPerWeek <= 0) continue;
     const code = school.nationalCode;
     const top = PARENT_OF.get(code) ?? code;
@@ -318,21 +386,36 @@ function checkPlan(plan: LocalTimplanDetail, version: NationalTimplanVersion) {
       };
     });
 
-  const pool = version.skolansValHours;
+  // A part of the form: the pool is its share of the national hours, an estimate.
+  const pool =
+    version.skolansValHours !== null && partial && printedNational > 0
+      ? Math.round((version.skolansValHours * 10 * heldNational) / printedNational) / 10
+      : version.skolansValHours;
   if (pool !== null && taken > pool * HOUR) {
     verdicts.push({
       code: "TIMPLAN_SKOLANS_VAL_OVERSPENT",
       severity: "warning",
-      params: { takenHours: hoursUp(taken), availableHours: pool, overspentHours: hoursUp(taken - pool * HOUR) },
+      params: {
+        takenHours: hoursUp(taken),
+        availableHours: pool,
+        overspentHours: hoursUp(taken - pool * HOUR),
+        ...(partial ? { estimated: 1 } : {}),
+      },
     });
   }
-  const guaranteed = version.totalHours * HOUR;
+  const guaranteed = partial ? heldNational : version.totalHours * HOUR;
+  const guaranteedShown = partial ? hours(guaranteed) : version.totalHours;
   const totalShown = total < guaranteed ? hoursDown(total) : hours(total);
   if (total < guaranteed) {
     verdicts.push({
       code: "TIMPLAN_TOTAL_BELOW_GUARANTEE",
       severity: "warning",
-      params: { plannedHours: totalShown, guaranteedHours: version.totalHours, deficitHours: hoursUp(guaranteed - total) },
+      params: {
+        plannedHours: totalShown,
+        guaranteedHours: guaranteedShown,
+        deficitHours: hoursUp(guaranteed - total),
+        ...(partial ? { estimated: 1 } : {}),
+      },
     });
   }
   verdicts.sort(
@@ -350,9 +433,10 @@ function checkPlan(plan: LocalTimplanDetail, version: NationalTimplanVersion) {
     stageGrades: { LAG: [1, 2, 3], MELLAN: [4, 5, 6], HOG: [7, 8, 9] },
     cells,
     unmapped: [],
-    gradesOutsideStages: [],
+    gradesOutsideStages: [...outside].sort((a, b) => a - b),
     skolansVal: { availableHours: pool, takenHours: hoursUp(taken), placedHours: hours(placed) },
-    total: { plannedHours: totalShown, guaranteedHours: version.totalHours, deficitHours: hoursUp(Math.max(0, guaranteed - total)) },
+    total: { plannedHours: totalShown, guaranteedHours: guaranteedShown, deficitHours: hoursUp(Math.max(0, guaranteed - total)) },
+    ...(plan.gradeFrom !== null && plan.gradeTo !== null ? { gradeSpan: { gradeFrom: plan.gradeFrom, gradeTo: plan.gradeTo, partial } } : {}),
     verdicts,
   };
 }
@@ -383,9 +467,9 @@ function describe(verdict: TimplanVerdict): string {
     case "TIMPLAN_STAGE_BELOW_NATIONAL":
       return `${where}: ${h(p.plannedHours)} planerat, ${h(p.deficitHours)} (${pct(p.reducedPercent)}) under målet ${h(p.nationalHours)}. Tiden räknas mot skolans val.`;
     case "TIMPLAN_SKOLANS_VAL_OVERSPENT":
-      return `Skolans val: ${h(p.takenHours)} har tagits från ämnena, ${h(p.overspentHours)} mer än de ${h(p.availableHours)} timplanen medger.`;
+      return `Skolans val: ${h(p.takenHours)} har tagits från ämnena, ${h(p.overspentHours)} mer än de ${h(p.availableHours)}${p.estimated ? " (en uppskattning efter planens årskurser)" : ""} timplanen medger.`;
     case "TIMPLAN_TOTAL_BELOW_GUARANTEE":
-      return `Totalt ${h(p.plannedHours)} planerat, ${h(p.deficitHours)} under den garanterade undervisningstiden ${h(p.guaranteedHours)}.`;
+      return `Totalt ${h(p.plannedHours)} planerat, ${h(p.deficitHours)} under den garanterade undervisningstiden ${h(p.guaranteedHours)}${p.estimated ? " (en uppskattning efter planens årskurser)" : ""}.`;
     default:
       // Not raised by these plans (an unpublished lydelse, an uncoded subject).
       return verdict.code;

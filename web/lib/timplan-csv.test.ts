@@ -4,6 +4,7 @@ import {
   formatTimplanGrade,
   mapTimplanRows,
   parseTimplanGrade,
+  rowsOutsideSpan,
   TIMPLAN_CSV_TEMPLATE,
   timplanTemplateCsv,
   timplanToCsv,
@@ -71,6 +72,29 @@ describe("mapTimplanRows: a lokal timplan file to ImportTimplanRowDto rows", () 
     const { rows, errors } = mapTimplanRows(file(...lines));
     expect(rows).toEqual([]);
     expect(errors[0]!.message).toContain("400");
+  });
+});
+
+describe("rowsOutsideSpan: rows the plan's årskurs span does not hold", () => {
+  const rows = [1, 2, 2, 4, 9, 0].map((gradeLevel) => ({ gradeLevel }));
+
+  it("counts them and names the årskurser once each, in order, so the dialog can say before the file is sent", () => {
+    expect(rowsOutsideSpan(rows, { gradeFrom: 4, gradeTo: 9 })).toEqual({ count: 4, grades: [0, 1, 2] });
+  });
+
+  it("is nothing for a plan with no span, where every årskurs is the plan's", () => {
+    expect(rowsOutsideSpan(rows, null)).toEqual({ count: 0, grades: [] });
+  });
+
+  it("is nothing when the span holds every row, förskoleklass included when it starts at F", () => {
+    expect(rowsOutsideSpan(rows, { gradeFrom: 0, gradeTo: 9 })).toEqual({ count: 0, grades: [] });
+  });
+
+  it("does not make such a row an error: the mapper keeps it, as it keeps an åk 10 in a nine-year plan", () => {
+    const { rows: mapped, errors } = mapTimplanRows(file("amne;arskurs;minuter_per_vecka", "MA;1;236", "MA;5;200"));
+    expect(errors).toEqual([]);
+    expect(mapped.map((row) => row.gradeLevel)).toEqual([1, 5]);
+    expect(rowsOutsideSpan(mapped, { gradeFrom: 4, gradeTo: 9 })).toEqual({ count: 1, grades: [1] });
   });
 });
 
