@@ -4363,13 +4363,15 @@ describe('Planning surface (e2e)', () => {
 
     it('a new year answers with the årskurser it follows the newest decided plan in', async () => {
       harness.tx['academicYear']!['create']!.mockResolvedValueOnce({ id: YEAR_ID, name: '2027/2028' });
-      harness.tx['localTimplan']!['findFirst']!.mockResolvedValueOnce({
-        id: PLAN_ID,
-        name: 'Grundskolan 2024',
-        status: 'DECIDED',
-        nationalVersion: { schoolForm: 'GRUNDSKOLA', appliesFromCohortTerm: 'HT2024' },
-        entries: [],
-      });
+      harness.tx['localTimplan']!['findMany']!.mockResolvedValueOnce([
+        {
+          id: PLAN_ID,
+          name: 'Grundskolan 2024',
+          status: 'DECIDED',
+          nationalVersion: { schoolForm: 'GRUNDSKOLA', appliesFromCohortTerm: 'HT2024' },
+          entries: [],
+        },
+      ]);
 
       const response = await request(http())
         .post('/api/v1/academic-years')
