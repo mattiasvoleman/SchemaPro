@@ -133,6 +133,53 @@
  * fördelning is not) yields TIMPLAN_NATIONAL_DISTRIBUTION_UNPUBLISHED and no
  * cell verdicts at all: "fördelning ej publicerad", never zero hours in every
  * cell. Its total IS law (7 424 h), so the plan's total is still held to it.
+ *
+ * ## The plan's årskurs span
+ *
+ * The bilagor describe a WHOLE school form. A 4–9 school holds no lågstadium, a
+ * F–5 school half of mellanstadiet, and checking their plans against the whole
+ * bilaga reported the missing årskurser as skolans val taken (1 882 h of a pool
+ * of 600), as protected subjects reduced and as a guarantee 1 863 h short — 12
+ * warnings for a correct plan, none of which the school could silence. So a
+ * plan may carry a SPAN (LocalTimplans.gradeFrom..gradeTo, in the plan's
+ * lydelse's numbering — the same numbering as stageGrades), and the check
+ * counts only the årskurser and stadier the plan is for. No span is the whole
+ * form: exactly the check this module made before the span existed, and the
+ * fixture's old cases replay it byte for byte.
+ *
+ *   * A stadium the span LACKS entirely is not judged: its cells are not cells
+ *     of this plan, its guarantee is not in the plan's and its hours are not in
+ *     the pool. An årskurs outside the span is an årskurs in no stadium, like
+ *     förskoleklassen: minutes planned there are reported in
+ *     gradesOutsideStages and enter no sum.
+ *   * A stadium the span HOLDS is judged exactly as before.
+ *   * A stadium the span holds PART OF (F–5: åk 4 and 5 of 4–6) is judged
+ *     against its proportional share, held årskurser over the stadium's, and a
+ *     shortfall there is only ever a NOTICE (TIMPLAN_PARTIAL_STAGE_BELOW_SHARE),
+ *     protected subjects and the reduction cap included. The huvudman divides
+ *     the time freely between the årskurser (skolförordningen 9 kap. 4 §), so
+ *     "two thirds of the stadium's hours in two of its three årskurser" is an
+ *     estimate of what the school owes, not the statute's figure, and an
+ *     estimate may not be a warning. A merged cell (hem- och konsumentkunskap,
+ *     låg- och mellanstadiet) is cut the same way over all the årskurser it
+ *     spans. A group's per-child minimum is scaled with its cell and is a
+ *     notice too.
+ *   * The GUARANTEE is the sum of the cells the plan holds, the partly held
+ *     ones scaled, and the POOL of skolans val is the bilaga's pool times the
+ *     same fraction of the national hours that the plan holds (600 h × 4 988 /
+ *     6 890 = 434,4 h for 4–9). Both are derived, not printed in any bilaga, so
+ *     the two verdicts that quote them carry `estimated`. A shortfall against a
+ *     partly held cell counts as taken from the pool like any other: the pool
+ *     was sized from the hours that cell holds.
+ *   * A version with no cells has only a total for the WHOLE form. A span that
+ *     does not hold every årskurs of it is then not held to that total:
+ *     TIMPLAN_TOTAL_NOT_JUDGED_FOR_SPAN says so instead.
+ *   * A span holding every årskurs of the form (0–9, 1–9) changes nothing: the
+ *     numbers are the numbers of no span. The output says `partial: false`.
+ *
+ * The verdict depends on the plan and on the statute, never on the school's
+ * skolenheter: a teacher, who cannot read SchoolUnits, gets exactly the verdict
+ * the admin gets.
  */
 
 export type SchoolForm =
@@ -184,6 +231,17 @@ export interface CoverageEntry {
   minutesPerWeek: number;
 }
 
+/**
+ * The årskurser a plan is for, both ends included, in the numbering of the
+ * plan's lydelse (the numbering of stageGrades): 4–9 is {4, 9} on a nine-year
+ * form, and the tioårig grundskola of SFS 2025:729 counts 1–10. See "The
+ * plan's årskurs span".
+ */
+export interface GradeSpan {
+  gradeFrom: number;
+  gradeTo: number;
+}
+
 export interface CoverageInput {
   /** planningWeeks × 10, an integer: 356 for 35.6. See planningWeeksInTenths. */
   planningWeeksTenths: number;
@@ -191,6 +249,8 @@ export interface CoverageInput {
   nationalSubjects: CoverageNationalSubject[];
   subjects: CoverageSubject[];
   entries: CoverageEntry[];
+  /** Absent or null: the whole school form, as before the span existed. */
+  gradeSpan?: GradeSpan | null;
 }
 
 export type TimplanVerdictCode =
@@ -200,8 +260,10 @@ export type TimplanVerdictCode =
   | 'TIMPLAN_REDUCTION_OVER_CAP'
   | 'TIMPLAN_GROUP_MINIMUM_UNMET'
   | 'TIMPLAN_STAGE_BELOW_NATIONAL'
+  | 'TIMPLAN_PARTIAL_STAGE_BELOW_SHARE'
   | 'TIMPLAN_SKOLANS_VAL_OVERSPENT'
-  | 'TIMPLAN_TOTAL_BELOW_GUARANTEE';
+  | 'TIMPLAN_TOTAL_BELOW_GUARANTEE'
+  | 'TIMPLAN_TOTAL_NOT_JUDGED_FOR_SPAN';
 
 export type TimplanVerdictSeverity = 'notice' | 'warning';
 
@@ -244,6 +306,12 @@ export interface CellCoverage {
   protectedFromReduction: boolean;
   /** Present when the version prints child minima for this group cell. */
   children?: ChildCoverage[];
+  /**
+   * Present on a cell of a stadium the plan's span holds PART of: `held` of the
+   * stadium's `of` årskurser. nationalHours (and the children's minima) are then
+   * the proportional share the plan is compared with, to the nearest tenth.
+   */
+  share?: { held: number; of: number };
   subjectIds: string[];
 }
 
@@ -270,7 +338,14 @@ export interface TimplanCheck {
     plannedHours: number;
     guaranteedHours: number;
     deficitHours: number;
+    /** false: no cells to sum a guarantee from, and the span is part of the form (deficitHours 0). */
+    judged?: false;
   };
+  /**
+   * Present when the plan has a span. `partial` is false when it holds every
+   * årskurs of the form, and the numbers are then those of no span.
+   */
+  gradeSpan?: GradeSpan & { partial: boolean };
   verdicts: TimplanVerdict[];
 }
 
@@ -283,8 +358,10 @@ const VERDICT_ORDER: Record<TimplanVerdictCode, number> = {
   TIMPLAN_REDUCTION_OVER_CAP: 3,
   TIMPLAN_GROUP_MINIMUM_UNMET: 4,
   TIMPLAN_STAGE_BELOW_NATIONAL: 5,
-  TIMPLAN_SKOLANS_VAL_OVERSPENT: 6,
-  TIMPLAN_TOTAL_BELOW_GUARANTEE: 7,
+  TIMPLAN_PARTIAL_STAGE_BELOW_SHARE: 6,
+  TIMPLAN_SKOLANS_VAL_OVERSPENT: 7,
+  TIMPLAN_TOTAL_BELOW_GUARANTEE: 8,
+  TIMPLAN_TOTAL_NOT_JUDGED_FOR_SPAN: 9,
 };
 
 /** One hour in minute-tenths. */
@@ -333,6 +410,58 @@ export function planningWeeksInTenths(value: number | string | { toString(): str
     throw new Error(`planningWeeks ${text} is outside 20.0..40.0`);
   }
   return tenths;
+}
+
+/**
+ * Refuses a span that is not two whole årskurser of a plan row (0..11) in
+ * order. Like planningWeeks, a span that could not be read must fail loudly:
+ * quietly reading it as "the whole form" would judge a 4–9 plan against the
+ * lågstadium again.
+ */
+export function assertGradeSpan(span: GradeSpan): void {
+  const { gradeFrom, gradeTo } = span;
+  if (
+    !Number.isInteger(gradeFrom) ||
+    !Number.isInteger(gradeTo) ||
+    gradeFrom < 0 ||
+    gradeTo > 11 ||
+    gradeFrom > gradeTo
+  ) {
+    throw new Error(`gradeSpan ${gradeFrom}..${gradeTo} is not a span of årskurser inside 0..11`);
+  }
+}
+
+/**
+ * A plan row's span: both columns set, or none. Anything that is not two
+ * numbers (null, or a row that predates the columns) is the whole school form.
+ */
+export function gradeSpanOf(plan: {
+  gradeFrom?: number | null;
+  gradeTo?: number | null;
+}): GradeSpan | null {
+  return typeof plan.gradeFrom === 'number' && typeof plan.gradeTo === 'number'
+    ? { gradeFrom: plan.gradeFrom, gradeTo: plan.gradeTo }
+    : null;
+}
+
+/** Whether `grade` is inside the span; every årskurs is, with no span. */
+export function inGradeSpan(span: GradeSpan | null | undefined, grade: number): boolean {
+  return !span || (grade >= span.gradeFrom && grade <= span.gradeTo);
+}
+
+/**
+ * The årskurser of each stadium that the span holds; the stadier themselves
+ * with no span. A stadium with none is one the plan is not for.
+ */
+export function heldStageGrades(
+  stageGrades: Record<BaseStage, number[]>,
+  span: GradeSpan | null | undefined,
+): Record<BaseStage, number[]> {
+  return {
+    LAG: stageGrades.LAG.filter((grade) => inGradeSpan(span, grade)),
+    MELLAN: stageGrades.MELLAN.filter((grade) => inGradeSpan(span, grade)),
+    HOG: stageGrades.HOG.filter((grade) => inGradeSpan(span, grade)),
+  };
 }
 
 /** The lydelse's first cohort year: 'HT2024' → 2024. */
@@ -396,8 +525,19 @@ interface CellAccumulator {
   childPlanned: Map<string, number>;
   /** årskurs → the longest alternative's minute-tenths (alternative codes only). */
   longestByGrade: Map<number, number>;
+  /** Set when the plan's span holds part of the cell's stadium: national is then the share. */
+  share?: Share;
   subjectIds: Set<string>;
 }
+
+/** `held` of a stadium's `of` årskurser. */
+interface Share {
+  held: number;
+  of: number;
+}
+
+/** A cell of a plan without a span, or of a stadium the span holds whole. */
+const WHOLE: Share = { held: 1, of: 1 };
 
 const cellKey = (code: string, stage: TimplanStage): string => `${code}:${stage}`;
 
@@ -425,11 +565,33 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
     throw new Error(`planningWeeksTenths ${weeks} is not a positive integer`);
   }
 
+  const span = input.gradeSpan ?? null;
+  if (span !== null) assertGradeSpan(span);
+
   const stageGrades = stageGradesFor(version);
   const stageOfGrade = new Map<number, BaseStage>();
   for (const stage of ['LAG', 'MELLAN', 'HOG'] as const) {
     for (const grade of stageGrades[stage]) stageOfGrade.set(grade, stage);
   }
+  // An årskurs outside the span belongs to no stadium of this plan, whatever
+  // the form says (see "The plan's årskurs span").
+  const stageOfHeldGrade = (grade: number): BaseStage | undefined =>
+    inGradeSpan(span, grade) ? stageOfGrade.get(grade) : undefined;
+  // How much of a cell's stadium the plan holds. The merged låg- och
+  // mellanstadiet cell spans both stadiers' årskurser.
+  const shareOf = (stage: TimplanStage): Share => {
+    if (span === null) return WHOLE;
+    const grades =
+      stage === 'LAG_MELLAN' ? [...stageGrades.LAG, ...stageGrades.MELLAN] : stageGrades[stage];
+    return { held: grades.filter((grade) => inGradeSpan(span, grade)).length, of: grades.length };
+  };
+  // Whole minute-tenths, so every comparison below stays between integers: a
+  // whole cell is untouched, a share (a rounded estimate by nature) is rounded
+  // once, here.
+  const scaled = (minuteTenths: number, share: Share): number =>
+    share.held === share.of ? minuteTenths : Math.round((minuteTenths * share.held) / share.of);
+  const allGrades = [...stageGrades.LAG, ...stageGrades.MELLAN, ...stageGrades.HOG];
+  const partial = span !== null && allGrades.some((grade) => !inGradeSpan(span, grade));
 
   const parentOf = new Map(input.nationalSubjects.map((s) => [s.code, s.parentCode]));
 
@@ -451,18 +613,35 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
     cells.set(cellKey(code, stage), cell);
     return cell;
   };
+  // What the version prints, and what of it this plan holds: the guarantee and
+  // the pool of a span are the held part of these.
+  let printedNational = 0;
+  let heldNational = 0;
   for (const entry of version.entries) {
     if (parentOf.get(entry.subjectCode)) continue;
-    newCell(entry.subjectCode, entry.stage, entry.hours * HOUR, entry.protectedFromReduction);
+    printedNational += entry.hours * HOUR;
+    const share = shareOf(entry.stage);
+    // A stadium the span lacks: not a cell of this plan, not judged.
+    if (share.held === 0) continue;
+    const cell = newCell(
+      entry.subjectCode,
+      entry.stage,
+      scaled(entry.hours * HOUR, share),
+      entry.protectedFromReduction,
+    );
+    if (share.held < share.of) cell.share = share;
+    heldNational += cell.national;
   }
   for (const entry of version.entries) {
     const parent = parentOf.get(entry.subjectCode);
     if (!parent) continue;
+    const share = shareOf(entry.stage);
+    if (share.held === 0) continue;
     // A child line without its group's cell cannot be seeded (P0's self-check
     // 4c); were one to appear, it is held as an extra group cell's minimum.
     const cell =
       cells.get(cellKey(parent, entry.stage)) ?? newCell(parent, entry.stage, 0, false);
-    cell.minima.set(entry.subjectCode, entry.hours * HOUR);
+    cell.minima.set(entry.subjectCode, scaled(entry.hours * HOUR, share));
   }
   const hasMergedCell = new Set(
     version.entries.filter((e) => e.stage === 'LAG_MELLAN').map((e) => e.subjectCode),
@@ -477,7 +656,7 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
   for (const entry of input.entries) {
     const subject = subjects.get(entry.subjectId);
     if (!subject || !subject.countsTowardTimplan || entry.minutesPerWeek <= 0) continue;
-    const baseStage = stageOfGrade.get(entry.gradeLevel);
+    const baseStage = stageOfHeldGrade(entry.gradeLevel);
     if (!baseStage) {
       outside.add(entry.gradeLevel);
       continue;
@@ -513,6 +692,12 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
 
   const published = version.entries.length > 0;
   const poolPrinted = published && version.skolansValHours !== null;
+  // The bilaga's pool for the whole form, and the plan's share of it: the
+  // fraction of the printed national hours that the plan holds.
+  const pool =
+    version.skolansValHours !== null && partial && published && printedNational > 0
+      ? Math.round((version.skolansValHours * 10 * heldNational) / printedNational) / 10
+      : version.skolansValHours;
   const unmappedCountsAs: TimplanTimeCountsAs = poolPrinted
     ? 'skolansVal'
     : version.entries.some((e) => e.subjectCode === FREE_TIME_CODE)
@@ -566,14 +751,24 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
     // A cell that is short shows its planned figure rounded down, so planned
     // + deficit reads as the target (see "Display rounding").
     const plannedShown = deficit > 0 ? hoursDown(cell.planned) : hours(cell.planned);
+    // The target as shown: the cell's hours, or a share of them to the tenth.
+    const nationalShown = cell.share ? hours(cell.national) : cell.national / HOUR;
     if (deficit > 0) {
       const figures = {
-        nationalHours: cell.national / HOUR,
+        nationalHours: nationalShown,
         plannedHours: plannedShown,
         deficitHours: hoursUp(deficit),
         reducedPercent: percentUp(deficit, cell.national),
       };
-      if (cell.protectedFromReduction) {
+      if (cell.share) {
+        // Only ever a notice, protected or not (see "The plan's årskurs span").
+        verdicts.push({
+          code: 'TIMPLAN_PARTIAL_STAGE_BELOW_SHARE',
+          severity: 'notice',
+          ...where,
+          params: { ...figures, heldGrades: cell.share.held, ofGrades: cell.share.of },
+        });
+      } else if (cell.protectedFromReduction) {
         verdicts.push({ code: 'TIMPLAN_PROTECTED_SUBJECT_REDUCED', severity: 'warning', ...where, params: figures });
       } else if (cap !== null && deficit * 100 > cap * cell.national) {
         verdicts.push({
@@ -600,34 +795,41 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
         .map(([childCode, minimum]) => {
           const childPlanned = cell.childPlanned.get(childCode) ?? 0;
           const childShown = childPlanned < minimum ? hoursDown(childPlanned) : hours(childPlanned);
+          const minimumShown = cell.share ? hours(minimum) : minimum / HOUR;
           if (judged && childPlanned < minimum) {
-            verdicts.push({
-              code: 'TIMPLAN_GROUP_MINIMUM_UNMET',
-              severity: 'warning',
-              ...where,
+            const figures = {
               childCode,
-              params: {
-                childCode,
-                minimumHours: minimum / HOUR,
-                plannedHours: childShown,
-                deficitHours: hoursUp(minimum - childPlanned),
-              },
-            });
+              minimumHours: minimumShown,
+              plannedHours: childShown,
+              deficitHours: hoursUp(minimum - childPlanned),
+            };
+            verdicts.push(
+              cell.share
+                ? {
+                    code: 'TIMPLAN_PARTIAL_STAGE_BELOW_SHARE',
+                    severity: 'notice',
+                    ...where,
+                    childCode,
+                    params: { ...figures, heldGrades: cell.share.held, ofGrades: cell.share.of },
+                  }
+                : { code: 'TIMPLAN_GROUP_MINIMUM_UNMET', severity: 'warning', ...where, childCode, params: figures },
+            );
           }
-          return { subjectCode: childCode, minimumHours: minimum / HOUR, plannedHours: childShown };
+          return { subjectCode: childCode, minimumHours: minimumShown, plannedHours: childShown };
         });
     }
 
     return {
       subjectCode: cell.subjectCode,
       stage: cell.stage,
-      nationalHours: cell.national / HOUR,
+      nationalHours: nationalShown,
       plannedHours: plannedShown,
       deficitHours: hoursUp(deficit),
       surplusHours: hours(surplus),
       reducedPercent: percentUp(deficit, cell.national),
       protectedFromReduction: cell.protectedFromReduction,
       ...(children ? { children } : {}),
+      ...(cell.share ? { share: cell.share } : {}),
       subjectIds,
     };
   });
@@ -637,7 +839,6 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
     plannedTotal += planned;
   }
 
-  const pool = version.skolansValHours;
   if (pool !== null && taken > pool * HOUR) {
     verdicts.push({
       code: 'TIMPLAN_SKOLANS_VAL_OVERSPENT',
@@ -646,20 +847,38 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
         takenHours: hoursUp(taken),
         availableHours: pool,
         overspentHours: hoursUp(taken - pool * HOUR),
+        ...(partial ? { estimated: 1 } : {}),
       },
     });
   }
 
-  const guaranteed = version.totalHours * HOUR;
-  const totalShown = plannedTotal < guaranteed ? hoursDown(plannedTotal) : hours(plannedTotal);
-  if (plannedTotal < guaranteed) {
+  // The guarantee of a span is the sum of the cells it holds. A version with
+  // no cells has only the whole form's total, which a part of the form is not
+  // held to.
+  const totalJudged = !(partial && !published);
+  const guaranteed = partial && published ? heldNational : version.totalHours * HOUR;
+  const guaranteedShown = partial && published ? hours(guaranteed) : version.totalHours;
+  const totalShown =
+    totalJudged && plannedTotal < guaranteed ? hoursDown(plannedTotal) : hours(plannedTotal);
+  if (!totalJudged) {
+    verdicts.push({
+      code: 'TIMPLAN_TOTAL_NOT_JUDGED_FOR_SPAN',
+      severity: 'notice',
+      params: {
+        totalHours: version.totalHours,
+        gradeFrom: span!.gradeFrom,
+        gradeTo: span!.gradeTo,
+      },
+    });
+  } else if (plannedTotal < guaranteed) {
     verdicts.push({
       code: 'TIMPLAN_TOTAL_BELOW_GUARANTEE',
       severity: 'warning',
       params: {
         plannedHours: totalShown,
-        guaranteedHours: version.totalHours,
+        guaranteedHours: guaranteedShown,
         deficitHours: hoursUp(guaranteed - plannedTotal),
+        ...(partial ? { estimated: 1 } : {}),
       },
     });
   }
@@ -692,9 +911,11 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
       : { availableHours: null, takenHours: 0, placedHours: 0 },
     total: {
       plannedHours: totalShown,
-      guaranteedHours: version.totalHours,
-      deficitHours: hoursUp(Math.max(0, guaranteed - plannedTotal)),
+      guaranteedHours: guaranteedShown,
+      deficitHours: totalJudged ? hoursUp(Math.max(0, guaranteed - plannedTotal)) : 0,
+      ...(totalJudged ? {} : { judged: false as const }),
     },
+    ...(span !== null ? { gradeSpan: { ...span, partial } } : {}),
     verdicts,
   };
 }

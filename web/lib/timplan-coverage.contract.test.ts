@@ -7,6 +7,7 @@ import {
   type CoverageNationalSubject,
   type CoverageSubject,
   type CoverageVersion,
+  type GradeSpan,
   type TimplanCheck,
 } from "@/lib/timplan-coverage";
 
@@ -20,8 +21,10 @@ import {
  * The fixture was generated from the GATEWAY copy, so this test proves the web
  * arrives at the same hours to the tenth, the same deficits rounded up, the
  * same verdict codes, severities and params, and the same sort order — for
- * fifteen plans that between them reach every verdict code, every school form,
- * the unpublished 2028 lydelse and an empty plan. `toEqual`, not `toBeCloseTo`:
+ * thirty-three plans that between them reach every verdict code, every school
+ * form, the unpublished 2028 lydelse, an empty plan, and plans for part of a
+ * form (a 4–9, an F–5, a 6–9 school) whose årskurs span cuts the stadier they
+ * are judged against. `toEqual`, not `toBeCloseTo`:
  * every figure is rounded by the arithmetic itself, so a mismatch is a
  * different answer, not a different ulp.
  *
@@ -35,6 +38,7 @@ interface FixtureCase {
   name: string;
   versionCode: string;
   planningWeeksTenths: number;
+  gradeSpan?: GradeSpan;
   subjects: CoverageSubject[];
   entries: CoverageEntry[];
   check: TimplanCheck;
@@ -51,8 +55,10 @@ describe("the timplan check agrees with the gateway's fixture", () => {
   it("has cases to replay, reaching every verdict code", () => {
     expect(cases.length).toBeGreaterThanOrEqual(12);
     const seen = new Set(cases.flatMap((entry) => entry.check.verdicts.map((v) => v.code)));
-    expect(seen.size).toBe(8);
+    expect(seen.size).toBe(10);
     expect(cases.some((entry) => !entry.check.distributionPublished)).toBe(true);
+    expect(cases.filter((entry) => entry.gradeSpan === undefined)).toHaveLength(20);
+    expect(cases.filter((entry) => entry.gradeSpan !== undefined).length).toBeGreaterThanOrEqual(13);
   });
 
   it.each(cases.map((entry) => [entry.name, entry] as const))("%s", (_name, entry) => {
@@ -63,6 +69,7 @@ describe("the timplan check agrees with the gateway's fixture", () => {
         nationalSubjects: statute.nationalSubjects,
         subjects: entry.subjects,
         entries: entry.entries,
+        gradeSpan: entry.gradeSpan ?? null,
       }),
     ).toEqual(entry.check);
   });

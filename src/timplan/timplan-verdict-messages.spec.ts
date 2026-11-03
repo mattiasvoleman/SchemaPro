@@ -17,6 +17,9 @@ const ONE_OF_EACH: TimplanVerdict[] = [
   { code: 'TIMPLAN_STAGE_BELOW_NATIONAL', severity: 'notice', subjectCode: 'BL', stage: 'LAG_MELLAN', params: { nationalHours: 60, plannedHours: 48, deficitHours: 12, reducedPercent: 20 } },
   { code: 'TIMPLAN_SKOLANS_VAL_OVERSPENT', severity: 'warning', params: { takenHours: 600.5, availableHours: 600, overspentHours: 0.5 } },
   { code: 'TIMPLAN_TOTAL_BELOW_GUARANTEE', severity: 'warning', params: { plannedHours: 6889.5, guaranteedHours: 6890, deficitHours: 0.5 } },
+  { code: 'TIMPLAN_PARTIAL_STAGE_BELOW_SHARE', severity: 'notice', subjectCode: 'MA', stage: 'MELLAN', params: { nationalHours: 273.3, plannedHours: 250, deficitHours: 23.3, reducedPercent: 8.6, heldGrades: 2, ofGrades: 3 } },
+  { code: 'TIMPLAN_PARTIAL_STAGE_BELOW_SHARE', severity: 'notice', subjectCode: 'NO', stage: 'MELLAN', childCode: 'KE', params: { childCode: 'KE', minimumHours: 40, plannedHours: 30, deficitHours: 10, heldGrades: 2, ofGrades: 3 } },
+  { code: 'TIMPLAN_TOTAL_NOT_JUDGED_FOR_SPAN', severity: 'notice', params: { totalHours: 7424, gradeFrom: 4, gradeTo: 10 } },
 ];
 
 describe('describeVerdict', () => {
@@ -31,6 +34,10 @@ describe('describeVerdict', () => {
       'Bild i låg- och mellanstadiet: 48 h planerat, 12 h (20 %) under målet 60 h. Tiden räknas mot skolans val.',
       'Skolans val: 600,5 h har tagits från ämnena, 0,5 h mer än de 600 h timplanen medger.',
       'Totalt 6 889,5 h planerat, 0,5 h under den garanterade undervisningstiden 6 890 h.',
+      'Matematik i mellanstadiet: skolan har 2 av 3 årskurser i stadiet. 250 h planerat, 23,3 h (8,6 %) under andelen 273,3 h av stadiets timmar. ' +
+        'Andelen är en uppskattning, eftersom huvudmannen fördelar tiden fritt mellan årskurserna.',
+      'Kemi i mellanstadiet: skolan har 2 av 3 årskurser i stadiet. 30 h planerat, under andelen 40 h av minsta tiden inom naturorienterande ämnen. Andelen är en uppskattning.',
+      'Planen gäller årskurs 4–10, och den garanterade totalen 7 424 h gäller hela skolformen. Totalen jämförs därför inte.',
     ]);
   });
 
@@ -64,6 +71,22 @@ describe('describeVerdict', () => {
       expect(said(unmapped, value)).not.toContain('skolans val');
       expect(said(below, value)).not.toContain('skolans val');
     }
+  });
+
+  it('calls a pool and a guarantee derived from a span an estimate, and a whole form not', () => {
+    const overspent = ONE_OF_EACH[6]!;
+    const guarantee = ONE_OF_EACH[7]!;
+    const estimated = (verdict: TimplanVerdict) =>
+      describeVerdict({ ...verdict, params: { ...verdict.params, estimated: 1 } }, NAMES);
+
+    expect(estimated(overspent)).toBe(
+      'Skolans val: 600,5 h har tagits från ämnena, 0,5 h mer än de 600 h (en uppskattning efter planens årskurser) timplanen medger.',
+    );
+    expect(estimated(guarantee)).toBe(
+      'Totalt 6 889,5 h planerat, 0,5 h under den garanterade undervisningstiden 6 890 h (en uppskattning efter planens årskurser).',
+    );
+    expect(describeVerdict(overspent, NAMES)).not.toContain('uppskattning');
+    expect(describeVerdict(guarantee, NAMES)).not.toContain('uppskattning');
   });
 
   it('falls back to the code for a subject it has no name for', () => {
