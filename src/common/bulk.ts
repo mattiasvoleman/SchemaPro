@@ -1,6 +1,7 @@
 import { BadRequestException, HttpException, NotFoundException } from '@nestjs/common';
 import type { PrismaClient } from '@prisma/client';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsOptional, IsUUID } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsObject, IsOptional, IsUUID } from 'class-validator';
 import { WRITE_CONFLICT, rethrowPrismaError } from './utils/prisma-errors';
 
 /*
@@ -15,7 +16,9 @@ import { WRITE_CONFLICT, rethrowPrismaError } from './utils/prisma-errors';
  * would not and why, and then sends only the rows that would. So "the rest
  * goes" is the administrator's decision on a list they have read, and what
  * is written is exactly what they confirmed: a row refused only at the real
- * call (somebody changed it meanwhile) writes nothing and is shown again.
+ * call (somebody changed it meanwhile) writes nothing and is shown again, and
+ * a delete whose consequences grew since its dry run (removal-inventory.ts,
+ * grownSince) deletes nothing either.
  *
  * A 200 WITH THE REPORT, not a 409. The exception filter forwards a
  * problem's detail, code and flat params only (http-exception.filter.ts),
@@ -41,8 +44,36 @@ export const BULK_MAX = 500;
  */
 export const BULK_TIMEOUT_MS = 60_000;
 
-/** The problem code of a row that is not there, or not the caller's to see. */
+/**
+ * The problem code of a row that is not there, or not the caller's to change
+ * (RLS hides it from the write: P2025, which the single route answers 404).
+ * The two cannot be told apart, so the sentence names neither cause alone.
+ */
 export const BULK_ROW_NOT_FOUND = 'BULK_ROW_NOT_FOUND';
+/** A row the write would make a second of what may exist once (P2002). */
+export const BULK_ROW_TAKEN = 'BULK_ROW_TAKEN';
+/** A row the write would point at something that is not there (P2003). */
+export const BULK_ROW_REFERENCE_GONE = 'BULK_ROW_REFERENCE_GONE';
+
+const NOT_FOUND_SENTENCE = 'Raden finns inte längre, eller får inte ändras härifrån.';
+
+/**
+ * The single routes' generic Prisma answers (rethrowPrismaError), which carry
+ * no code and an English sentence for a log. In a report they become a code
+ * the web says in the reader's language, and a Swedish sentence for any
+ * other client. A refusal with a code or a sentence of its own keeps it.
+ */
+const GENERIC_ANSWERS: Record<string, { code: string; message: string }> = {
+  'The requested record does not exist.': { code: BULK_ROW_NOT_FOUND, message: NOT_FOUND_SENTENCE },
+  'A record with these values already exists.': {
+    code: BULK_ROW_TAKEN,
+    message: 'Raden skulle krocka med en annan rad som redan har samma värden.',
+  },
+  'The operation references a record that does not exist.': {
+    code: BULK_ROW_REFERENCE_GONE,
+    message: 'Raden skulle peka på något som inte längre finns.',
+  },
+};
 
 /** One row the call would not write, and why. */
 export interface BulkRefusal {
@@ -65,20 +96,50 @@ export interface BulkResult<Consequences = undefined> {
   refused: BulkRefusal[];
   /** What goes with the rows (a delete's dry run): counts by kind. */
   consequences?: Consequences;
+  /**
+   * The kinds whose count grew since the dry run the delete confirmed
+   * (`expected`): nothing is deleted, and `consequences` has the new counts.
+   */
+  consequencesGrew?: string[];
 }
+
+/** A uuid as the database answers it, lower case: ids are compared as strings here. */
+export const lowerCaseIds = Transform(({ value }: { value: unknown }) =>
+  Array.isArray(value) ? value.map((id) => (typeof id === 'string' ? id.toLowerCase() : id)) : value,
+);
+/** The same for one uuid of a body (a class, a subject). */
+export const lowerCaseId = Transform(({ value }: { value: unknown }) =>
+  typeof value === 'string' ? value.toLowerCase() : value,
+);
 
 /** The body every bulk call shares: the rows, and whether to only ask. */
 export class BulkIdsDto {
+  @lowerCaseIds
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(BULK_MAX)
   @IsUUID('4', { each: true })
   ids!: string[];
 
-  /** Do the work and roll it back: what would go, what would not, and what goes with it. */
-  @IsOptional()
+  /**
+   * True: do the work and roll it back, saying what would go, what would not,
+   * and what goes with it. Required, and a boolean: a null or a missing field
+   * that read as "no" would delete for real.
+   */
   @IsBoolean()
-  dryRun?: boolean;
+  dryRun!: boolean;
+}
+
+/** A delete's body: the rows, and the counts of the dry run it confirms. */
+export class BulkDeleteDto extends BulkIdsDto {
+  /**
+   * The consequences the dry run answered, sent back with the real delete:
+   * a kind whose count has grown since refuses it (consequencesGrew). Counts
+   * by kind; a kind not named is not compared.
+   */
+  @IsOptional()
+  @IsObject()
+  expected?: Record<string, unknown>;
 }
 
 /** The ids once each, in id order: the order rows are locked and tried in. */
@@ -91,7 +152,7 @@ export function notFound(id: string): BulkRefusal {
   return {
     id,
     code: BULK_ROW_NOT_FOUND,
-    message: 'Raden finns inte längre. Den kan ha tagits bort av någon annan.',
+    message: NOT_FOUND_SENTENCE,
   };
 }
 
@@ -131,6 +192,8 @@ export function refusalOf(id: string, error: unknown): BulkRefusal | null {
         ? record.message.map(String).join(' ')
         : http.message;
   const params = record.params;
+  const generic = code === null ? GENERIC_ANSWERS[message] : undefined;
+  if (generic) return { id, ...generic };
   return {
     id,
     // A 404 from the single route carries no code; the report names it.
@@ -209,7 +272,8 @@ class RollBack<T> extends Error {
 
 /**
  * Runs one bulk call in `transaction` (the service's withRls) and commits it
- * only when it is no dry run and no row was refused. `work` judges and
+ * only when it is no dry run, no row was refused and no consequence grew
+ * since the dry run the call confirms. `work` judges and
  * writes the rows and answers what it did; on a dry run or a refusal the
  * transaction is rolled back and the same report comes back with
  * `applied: false`. Anything else `work` throws fails the call as usual.
@@ -217,17 +281,21 @@ class RollBack<T> extends Error {
 export async function runBulk<C>(
   transaction: <T>(fn: (tx: PrismaClient) => Promise<T>) => Promise<T>,
   dryRun: boolean,
-  work: (tx: PrismaClient) => Promise<{ done: string[]; refused: BulkRefusal[]; consequences?: C }>,
+  work: (
+    tx: PrismaClient,
+  ) => Promise<{ done: string[]; refused: BulkRefusal[]; consequences?: C; consequencesGrew?: string[] }>,
 ): Promise<BulkResult<C>> {
   try {
     return await transaction(async (tx) => {
       const report = await work(tx);
+      const grew = report.consequencesGrew ?? [];
       const result: BulkResult<C> = {
-        applied: !dryRun && report.refused.length === 0,
+        applied: !dryRun && report.refused.length === 0 && grew.length === 0,
         dryRun,
         done: report.done,
         refused: report.refused,
         ...(report.consequences !== undefined ? { consequences: report.consequences } : {}),
+        ...(grew.length > 0 ? { consequencesGrew: grew } : {}),
       };
       if (!result.applied) throw new RollBack(result);
       return result;

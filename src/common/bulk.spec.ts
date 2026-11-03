@@ -7,6 +7,8 @@ import {
 import { Prisma, type PrismaClient } from '@prisma/client';
 import {
   BULK_ROW_NOT_FOUND,
+  BULK_ROW_REFERENCE_GONE,
+  BULK_ROW_TAKEN,
   assertSomeChange,
   notFound,
   refusalOf,
@@ -16,6 +18,9 @@ import {
   type BulkRefusal,
 } from './bulk';
 import { writeConflict } from './utils/prisma-errors';
+
+/** The sentence a row that is not there, or not the caller's to change, is refused with. */
+const NOT_FOUND = 'Raden finns inte längre, eller får inte ändras härifrån.';
 
 const A = 'aaaaaaaa-0000-4000-8000-000000000001';
 const B = 'bbbbbbbb-0000-4000-8000-000000000002';
@@ -89,12 +94,25 @@ describe('bulk', () => {
       });
     });
 
-    it('maps a Prisma refusal through rethrowPrismaError, as the single route answers it', () => {
-      expect(refusalOf(A, prismaError('P2025'))).toMatchObject({ id: A, code: BULK_ROW_NOT_FOUND });
+    it('maps a Prisma refusal through rethrowPrismaError, and gives its generic English answer a code and a Swedish sentence', () => {
+      expect(refusalOf(A, prismaError('P2025'))).toEqual({ id: A, code: BULK_ROW_NOT_FOUND, message: NOT_FOUND });
       expect(refusalOf(A, prismaError('P2002'))).toEqual({
         id: A,
+        code: BULK_ROW_TAKEN,
+        message: 'Raden skulle krocka med en annan rad som redan har samma värden.',
+      });
+      expect(refusalOf(A, prismaError('P2003'))).toEqual({
+        id: A,
+        code: BULK_ROW_REFERENCE_GONE,
+        message: 'Raden skulle peka på något som inte längre finns.',
+      });
+    });
+
+    it("keeps a refusal's own sentence when it has no code: only the generic answers are rewritten", () => {
+      expect(refusalOf(A, new BadRequestException('studentGroupId: klassen finns inte i skolan.'))).toEqual({
+        id: A,
         code: null,
-        message: 'A record with these values already exists.',
+        message: 'studentGroupId: klassen finns inte i skolan.',
       });
     });
 
@@ -144,7 +162,7 @@ describe('bulk', () => {
       const one = jest.fn((id: string) => (id === B ? Promise.reject(prismaError('P2002')) : Promise.resolve({ id })));
       const refused = await writeAll(tx, [A, B, C], whole, one);
       expect(refused).toEqual([
-        { id: B, code: null, message: 'A record with these values already exists.' },
+        { id: B, code: BULK_ROW_TAKEN, message: 'Raden skulle krocka med en annan rad som redan har samma värden.' },
       ] satisfies BulkRefusal[]);
       expect(one.mock.calls.map((call) => call[0])).toEqual([A, B, C]);
       expect(statements).toEqual([
@@ -165,7 +183,7 @@ describe('bulk', () => {
       const whole = jest.fn().mockResolvedValue({ count: 2 });
       const one = jest.fn((id: string) => (id === B ? Promise.reject(prismaError('P2025')) : Promise.resolve({ id })));
       const refused = await writeAll(tx, [A, B, C], whole, one);
-      expect(refused).toEqual([{ id: B, code: BULK_ROW_NOT_FOUND, message: 'The requested record does not exist.' }]);
+      expect(refused).toEqual([{ id: B, code: BULK_ROW_NOT_FOUND, message: NOT_FOUND }]);
       expect(statements.slice(0, 2)).toEqual(['SAVEPOINT bulk_whole', 'ROLLBACK TO SAVEPOINT bulk_whole']);
       expect(one).toHaveBeenCalledTimes(3);
     });

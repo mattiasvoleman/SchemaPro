@@ -1,0 +1,268 @@
+import { Prisma, type PrismaClient } from '@prisma/client';
+
+/*
+ * WHAT HANGS ON A ROW THAT IS DELETED: every foreign key in the catalogue
+ * that points at a group (StudentGroups) or a person (Users), and what a bulk
+ * delete's dry run says of it (Massåtgärder, src/common/bulk.ts).
+ *
+ * Taken from pg_constraint, not from schema.prisma: 26 of the keys to Users
+ * and StudentGroups are written in migrations alone and never declared there.
+ * Two checks hold this list to the database:
+ *  - scripts/test/probe-massatgarder.ts (the Database job) reads pg_constraint
+ *    and fails on any key to either table that is missing here, on any key
+ *    here that is gone, and on an ON DELETE that differs;
+ *  - removal-inventory.spec.ts (the API job) fails on a relation
+ *    schema.prisma declares that is missing here, so a key added the Prisma
+ *    way fails before the database job runs.
+ *
+ * EVERY KEY IS TOLD. A key is
+ *  - COUNTED into a consequence the dialog names, or into otherRows /
+ *    otherLinks, which it gives as a number ("och 3 andra uppgifter");
+ *  - ACCOUNT: the person's own notices, settings, devices and calendar feeds,
+ *    which no administrator reads (no SELECT arm of theirs, or no grant). The
+ *    dialog names them as kinds, never with a number, rather than counting
+ *    what it cannot see;
+ *  - UNCOUNTED, with why: a key no row of the kind deleted can hold, or one
+ *    whose rows are read only with a record of their own;
+ *  - REFUSES: ON DELETE RESTRICT, which the single route's check refuses
+ *    before the delete (recordedATimplanDecision).
+ * So "nothing else depends on them" is said only when it is true.
+ *
+ * COUNTED THE SAME WAY THEY ARE CHECKED. The dry run counts a key's rows with
+ * SQL built from the table and the key's first column here, the same names
+ * the probe holds to the catalogue, under the caller's RLS. One statement per
+ * table: a row a table holds through two keys (an absence report a pupil
+ * reported about themselves) is counted once. The names are constants of this
+ * file, never input.
+ */
+
+export type OnDelete = 'CASCADE' | 'SET NULL' | 'RESTRICT';
+
+/** One foreign key as pg_constraint has it: the referencing table and its columns. */
+export interface RowKey {
+  table: string;
+  /** The key's columns in the catalogue's order; the first names the row. */
+  columns: readonly string[];
+  onDelete: OnDelete;
+}
+
+/** How a dry run tells a key's rows. */
+export type Telling<Kind extends string> =
+  | { counted: Kind }
+  | { account: string }
+  | { uncounted: string }
+  | { refuses: string };
+
+export interface InventoryKey<Kind extends string> extends RowKey {
+  tell: Telling<Kind>;
+}
+
+const key = <Kind extends string>(
+  table: string,
+  columns: readonly string[],
+  onDelete: OnDelete,
+  tell: Telling<Kind>,
+): InventoryKey<Kind> => ({ table, columns, onDelete, tell });
+
+/** The consequences a group delete counts by key (GroupRemovalConsequences adds the rest). */
+export type GroupKeyKind =
+  | 'halves'
+  | 'requirements'
+  | 'masterLessons'
+  | 'calendarLessons'
+  | 'availabilityConstraints'
+  | 'sharedLessons'
+  | 'memberships'
+  | 'lunchSittings'
+  | 'calendarBreaks'
+  | 'timplanCredits'
+  | 'publicLinks'
+  | 'homePupils'
+  | 'successors'
+  | 'mentorDuties'
+  | 'enrolments';
+
+/** Every key to StudentGroups. Each is counted: an administrator reads them all. */
+export const GROUP_KEYS: readonly InventoryKey<GroupKeyKind>[] = [
+  key('StudentGroups', ['halfOfId', 'schoolId'], 'CASCADE', { counted: 'halves' }),
+  key('TeachingRequirements', ['studentGroupId', 'schoolId'], 'CASCADE', { counted: 'requirements' }),
+  key('MasterLessons', ['studentGroupId', 'schoolId'], 'CASCADE', { counted: 'masterLessons' }),
+  key('CalendarLessons', ['studentGroupId'], 'CASCADE', { counted: 'calendarLessons' }),
+  key('AvailabilityConstraints', ['studentGroupId'], 'CASCADE', { counted: 'availabilityConstraints' }),
+  key('MasterLessonGroups', ['studentGroupId', 'schoolId'], 'CASCADE', { counted: 'sharedLessons' }),
+  key('CalendarLessonGroups', ['studentGroupId'], 'CASCADE', { counted: 'sharedLessons' }),
+  key('StudentGroupMembers', ['studentGroupId'], 'CASCADE', { counted: 'memberships' }),
+  key('LunchSittings', ['studentGroupId', 'schoolId'], 'CASCADE', { counted: 'lunchSittings' }),
+  key('CalendarLunches', ['studentGroupId', 'schoolId'], 'CASCADE', { counted: 'calendarBreaks' }),
+  key('CalendarRasts', ['studentGroupId', 'schoolId'], 'CASCADE', { counted: 'calendarBreaks' }),
+  key('TimplanCredits', ['studentGroupId', 'schoolId'], 'CASCADE', { counted: 'timplanCredits' }),
+  key('PublicTimetableLinks', ['targetGroupId', 'schoolId'], 'CASCADE', { counted: 'publicLinks' }),
+  key('Users', ['studentGroupId'], 'SET NULL', { counted: 'homePupils' }),
+  key('StudentGroups', ['predecessorId', 'schoolId'], 'SET NULL', { counted: 'successors' }),
+  key('TeacherDuties', ['studentGroupId', 'schoolId'], 'SET NULL', { counted: 'mentorDuties' }),
+  key('StudentEnrollments', ['studentGroupId', 'academicYearId', 'schoolId'], 'SET NULL', { counted: 'enrolments' }),
+];
+
+/** The consequences a pupil delete counts by key (StudentRemovalConsequences adds the rest). */
+export type StudentKeyKind =
+  | 'memberships'
+  | 'enrolments'
+  | 'guardianLinks'
+  | 'absenceReports'
+  | 'leaveRequests'
+  | 'attendanceMarks'
+  | 'lessonParticipations'
+  | 'teachingTimeStatements'
+  | 'otherRows'
+  | 'otherLinks';
+
+/**
+ * A key a pupil holds no row by in the app's use (a member of staff's post,
+ * a booking, a guardian's link): counted in otherRows all the same, so a row
+ * left from an earlier role is said rather than taken unsaid.
+ */
+const others: Telling<StudentKeyKind> = { counted: 'otherRows' };
+/** Who did something, kept without the person: counted in otherLinks. */
+const kept: Telling<StudentKeyKind> = { counted: 'otherLinks' };
+/** The person's own account, which no administrator reads. */
+const account = (what: string): Telling<StudentKeyKind> => ({ account: what });
+
+/** Every key to Users, told for a pupil. */
+export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
+  key('AttendanceRecords', ['studentId'], 'CASCADE', { counted: 'attendanceMarks' }),
+  key('MasterLessonStudents', ['studentId', 'schoolId'], 'CASCADE', { counted: 'lessonParticipations' }),
+  key('CalendarLessonStudents', ['studentId'], 'CASCADE', { counted: 'lessonParticipations' }),
+  key('GuardianStudents', ['studentId', 'schoolId'], 'CASCADE', { counted: 'guardianLinks' }),
+  key('GuardianStudents', ['guardianId', 'schoolId'], 'CASCADE', others),
+  key('AbsenceReports', ['studentId'], 'CASCADE', { counted: 'absenceReports' }),
+  key('AbsenceReports', ['reportedById'], 'CASCADE', { counted: 'absenceReports' }),
+  key('LeaveRequests', ['studentId'], 'CASCADE', { counted: 'leaveRequests' }),
+  key('LeaveRequests', ['requestedById'], 'CASCADE', { counted: 'leaveRequests' }),
+  key('StudentGroupMembers', ['studentId'], 'CASCADE', { counted: 'memberships' }),
+  key('StudentEnrollments', ['studentId', 'schoolId'], 'CASCADE', { counted: 'enrolments' }),
+  key('TimplanStatements', ['studentId', 'schoolId'], 'CASCADE', { counted: 'teachingTimeStatements' }),
+  key('UserRoleChanges', ['userId', 'schoolId'], 'CASCADE', { counted: 'otherRows' }),
+  key('RoomBookings', ['bookedById'], 'CASCADE', others),
+  key('CalendarLessonTeachers', ['teacherId'], 'CASCADE', others),
+  key('AvailabilityConstraints', ['userId'], 'CASCADE', others),
+  key('TeacherWorkRules', ['userId', 'schoolId'], 'CASCADE', others),
+  key('TeacherEmployments', ['userId', 'schoolId'], 'CASCADE', others),
+  key('TeacherSubjectQualifications', ['userId', 'schoolId'], 'CASCADE', others),
+  key('TeacherDuties', ['userId', 'schoolId'], 'CASCADE', others),
+  key('TeacherEmploymentLogs', ['userId', 'schoolId'], 'CASCADE', others),
+  key('TeacherPublicLabels', ['userId', 'schoolId'], 'CASCADE', others),
+  key('PublicTimetableLinks', ['targetTeacherId', 'schoolId'], 'CASCADE', others),
+  key('TeacherAbsences', ['userId', 'schoolId'], 'CASCADE', others),
+  key('SubstitutePoolMembers', ['userId', 'schoolId'], 'CASCADE', others),
+  key('Ss12000DutyLinks', ['userId', 'schoolId'], 'CASCADE', others),
+  key('SupervisionShifts', ['userId', 'schoolId'], 'CASCADE', others),
+  key('SupervisionCovers', ['substituteId', 'schoolId'], 'CASCADE', others),
+  key('SharedTeacherMarks', ['teacherId', 'schoolId'], 'CASCADE', others),
+  key('Notifications', ['userId'], 'CASCADE', account('notices')),
+  key('NotificationOptOuts', ['userId', 'schoolId'], 'CASCADE', account('noticeSettings')),
+  key('DevicePushTokens', ['userId', 'schoolId'], 'CASCADE', account('pushDevices')),
+  key('LeaveRequestNotices', ['userId', 'schoolId'], 'CASCADE', account('notices')),
+  key('CalendarFeeds', ['studentId', 'schoolId'], 'CASCADE', account('calendarFeeds')),
+  key('CalendarFeeds', ['userId', 'schoolId'], 'CASCADE', account('calendarFeeds')),
+  key('TeachingRequirements', ['coTeacherId', 'schoolId'], 'SET NULL', kept),
+  key('TeachingRequirements', ['teacherId', 'schoolId'], 'SET NULL', kept),
+  key('MasterLessons', ['coTeacherId', 'schoolId'], 'SET NULL', kept),
+  key('MasterLessons', ['teacherId', 'schoolId'], 'SET NULL', kept),
+  key('AttendanceRecords', ['recordedById'], 'SET NULL', kept),
+  key('LeaveRequests', ['decidedById'], 'SET NULL', kept),
+  key('LeaveRequests', ['referredById'], 'SET NULL', kept),
+  key('RoomBookings', ['decidedById'], 'SET NULL', kept),
+  key('TimplanStatementPublications', ['publishedByUserId', 'schoolId'], 'SET NULL', kept),
+  key('TimetablePublications', ['publishedByUserId', 'schoolId'], 'SET NULL', kept),
+  key('CancellationBatches', ['createdByUserId', 'schoolId'], 'SET NULL', kept),
+  key('CancellationBatches', ['reversedByUserId', 'schoolId'], 'SET NULL', kept),
+  key('PublicTimetableLinks', ['createdByUserId', 'schoolId'], 'SET NULL', kept),
+  key('TeacherAbsences', ['createdByUserId', 'schoolId'], 'SET NULL', kept),
+  key('TeacherAbsences', ['withdrawnByUserId', 'schoolId'], 'SET NULL', kept),
+  key('TeacherAbsenceCovers', ['decidedByUserId', 'schoolId'], 'SET NULL', kept),
+  key('TeacherAbsenceCovers', ['substituteId', 'schoolId'], 'SET NULL', kept),
+  key('SubstitutePoolMembers', ['createdByUserId', 'schoolId'], 'SET NULL', kept),
+  key('RetentionDecisions', ['decidedById', 'schoolId'], 'SET NULL', kept),
+  key('LeaveDelegationDecisions', ['decidedById', 'schoolId'], 'SET NULL', kept),
+  key('AttendanceSharingDecisions', ['decidedById', 'schoolId'], 'SET NULL', kept),
+  key('LessonLogs', ['writtenById', 'schoolId'], 'SET NULL', kept),
+  key('TeachingRequirementShares', ['teacherId', 'schoolId'], 'SET NULL', kept),
+  key('SupervisionCovers', ['decidedByUserId', 'schoolId'], 'SET NULL', kept),
+  key('HuvudmanSchools', ['acceptedById', 'schoolId'], 'SET NULL', kept),
+  key('HuvudmanSchoolEvents', ['byUserId', 'schoolId'], 'SET NULL', kept),
+  key('RoomLoans', ['decidedById', 'ownerSchoolId'], 'SET NULL', kept),
+  key('RoomLoans', ['requestedById', 'borrowerSchoolId'], 'SET NULL', kept),
+  key('PersonalDataAccess', ['actorId', 'schoolId'], 'SET NULL', {
+    uncounted:
+      'the läslogg, read with a record of its own (ACCESS_LOG); a row that names the pupil as the reader stays, without them',
+  }),
+  key('LessonSubstituteNotes', ['writtenById', 'schoolId'], 'SET NULL', {
+    uncounted: 'written only by a lesson’s teachers and read by no administrator (RLS 232): no pupil writes one',
+  }),
+  key('LocalTimplans', ['decidedByUserId', 'schoolId'], 'RESTRICT', {
+    refuses: 'recordedATimplanDecision: a decided plan keeps the name of who decided it',
+  }),
+  key('LocalTimplans', ['gradeSpanSetByUserId', 'schoolId'], 'RESTRICT', {
+    refuses: 'recordedATimplanDecision: a decided plan keeps the name of who set its årskurs span',
+  }),
+];
+
+/** The account kinds a pupil delete names without a number, in the order the dialog says them. */
+export const STUDENT_ACCOUNT_KINDS = ['notices', 'noticeSettings', 'pushDevices', 'calendarFeeds'] as const;
+
+const identifier = (name: string): Prisma.Sql => Prisma.raw(`"${name.replace(/"/g, '""')}"`);
+
+/**
+ * Counts, under the transaction's RLS, the rows `keys` hold for `ids`, kind
+ * by kind: one statement per table, a row matched by any of the table's keys
+ * of that kind counted once. Kinds in `skip` are counted by their caller.
+ */
+export async function countByKind<Kind extends string>(
+  tx: PrismaClient,
+  keys: readonly InventoryKey<Kind>[],
+  ids: readonly string[],
+  skip: readonly Kind[] = [],
+): Promise<Record<Kind, number>> {
+  const counts = {} as Record<Kind, number>;
+  const byKindAndTable = new Map<Kind, Map<string, string[]>>();
+  for (const entry of keys) {
+    if (!('counted' in entry.tell)) continue;
+    const kind = entry.tell.counted;
+    counts[kind] = 0;
+    if (skip.includes(kind)) continue;
+    const tables = byKindAndTable.get(kind) ?? new Map<string, string[]>();
+    tables.set(entry.table, [...(tables.get(entry.table) ?? []), entry.columns[0]!]);
+    byKindAndTable.set(kind, tables);
+  }
+  if (ids.length === 0) return counts;
+  for (const [kind, tables] of byKindAndTable) {
+    for (const [table, columns] of tables) {
+      const matches = Prisma.join(
+        columns.map((column) => Prisma.sql`${identifier(column)} = ANY(${[...ids]}::uuid[])`),
+        ' OR ',
+      );
+      const [row] = await tx.$queryRaw<{ n: number }[]>(
+        Prisma.sql`SELECT count(*)::int AS n FROM ${identifier(table)} WHERE ${matches}`,
+      );
+      counts[kind] += row?.n ?? 0;
+    }
+  }
+  return counts;
+}
+
+/**
+ * The kinds whose count grew since the dry run the caller confirmed:
+ * `expected` is that dry run's consequences, as the web sends them back. A
+ * kind it did not name is not compared (an older client, or a kind added
+ * since), and a count that fell is no reason to ask again.
+ */
+export function grownSince(
+  expected: Record<string, unknown> | undefined,
+  now: Record<string, number>,
+): string[] {
+  if (!expected) return [];
+  return Object.entries(now)
+    .filter(([kind, count]) => typeof expected[kind] === 'number' && count > (expected[kind] as number))
+    .map(([kind]) => kind)
+    .sort();
+}

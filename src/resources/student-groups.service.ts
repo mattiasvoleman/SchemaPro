@@ -6,7 +6,7 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
-import type { Prisma, StudentGroup } from '@prisma/client';
+import type { Prisma, PrismaClient, StudentGroup } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { recordRead } from '../access-log/access-log';
 import { PrismaService } from '../database/prisma.service';
@@ -22,10 +22,11 @@ import {
   runBulk,
   uniqueIds,
   writeAll,
-  type BulkIdsDto,
+  type BulkDeleteDto,
   type BulkRefusal,
   type BulkResult,
 } from '../common/bulk';
+import { GROUP_KEYS, countByKind, grownSince, type GroupKeyKind } from '../common/removal-inventory';
 import type {
   BulkUpdateStudentGroupsDto,
   CreateStudentGroupDto,
@@ -80,33 +81,21 @@ async function assertSubjectIsTheSchools(tx: Prisma.TransactionClient, subjectId
 }
 
 /**
- * What goes with a bulk delete of groups, counted on its dry run: the rows
- * the database removes or empties with them (ON DELETE CASCADE / SET NULL),
- * as a delete of one group does too, unsaid. Counts only, none naming a
- * pupil, so the dry run is no read in the läslogg's sense: the attendance
- * marks are a figure over the groups' lessons, as the attendance summary is.
+ * What goes with a bulk delete of groups: every key to StudentGroups in the
+ * catalogue, counted (GROUP_KEYS in src/common/removal-inventory.ts), plus
+ * two kinds a level down that a reader needs to know go: the attendance
+ * marks and the lesson logs on the groups' calendar lessons. A delete of one
+ * group takes the same rows, unsaid. Counts only, none naming a pupil, so
+ * the dry run is no read in the läslogg's sense: the attendance marks are a
+ * figure over the groups' lessons, as the attendance summary is.
+ *
+ * Counted over the named groups and the halves a named class takes with it.
  */
-export interface GroupRemovalConsequences {
-  /** Halves of a class in the call that go with it without being named. */
-  halves: number;
-  /** Pupils whose home class goes: they are left without a class. */
-  homePupils: number;
-  /** Teaching-group memberships (StudentGroupMembers) of the groups and those halves. */
-  memberships: number;
-  /** Timplansposter (TeachingRequirements). */
-  requirements: number;
-  /** The groups' own lessons in the grundschema (MasterLessons). */
-  masterLessons: number;
-  /** Other lessons in the grundschema the groups take part in, which lose them (MasterLessonGroups). */
-  sharedLessons: number;
-  /** The groups' lessons in the calendar, past and coming (CalendarLessons). */
-  calendarLessons: number;
-  /** Attendance marks on those calendar lessons, which go with them. */
+export interface GroupRemovalConsequences extends Record<GroupKeyKind, number> {
+  /** Attendance marks on the groups' calendar lessons, which go with them. */
   attendanceMarks: number;
-  /** Pupils' class-history segments that lose their class (StudentEnrollments). */
-  enrolments: number;
-  /** Mentorskap uppdrag that lose their class (TeacherDuties). */
-  mentorDuties: number;
+  /** Lesson logs (klassbok entries) on those lessons, which go with them. */
+  lessonLogs: number;
   /** Groups linked to the school's SS12000 source, which its next sync may add again. */
   fromSource: number;
 }
@@ -116,22 +105,21 @@ async function groupRemovalConsequences(
   groups: { id: string; ss12000Id: string | null }[],
 ): Promise<GroupRemovalConsequences> {
   const named = groups.map((group) => group.id);
+  // A half the call names goes as itself, not with its class; a successor the
+  // call deletes too loses nothing it keeps.
   const halves = await tx.studentGroup.findMany({
     where: { halfOfId: { in: named }, id: { notIn: named } },
     select: { id: true },
   });
-  const inGroups = { studentGroupId: { in: [...named, ...halves.map((half) => half.id)] } };
+  const all = [...named, ...halves.map((half) => half.id)];
+  const byKey = await countByKind(tx as PrismaClient, GROUP_KEYS, all, ['halves', 'successors']);
+  const inGroups = { studentGroupId: { in: all } };
   return {
+    ...byKey,
     halves: halves.length,
-    homePupils: await tx.user.count({ where: inGroups }),
-    memberships: await tx.studentGroupMember.count({ where: inGroups }),
-    requirements: await tx.teachingRequirement.count({ where: inGroups }),
-    masterLessons: await tx.masterLesson.count({ where: inGroups }),
-    sharedLessons: await tx.masterLessonGroup.count({ where: inGroups }),
-    calendarLessons: await tx.calendarLesson.count({ where: inGroups }),
+    successors: await tx.studentGroup.count({ where: { predecessorId: { in: all }, id: { notIn: all } } }),
     attendanceMarks: await tx.attendanceRecord.count({ where: { calendarLesson: inGroups } }),
-    enrolments: await tx.studentEnrollment.count({ where: inGroups }),
-    mentorDuties: await tx.teacherDuty.count({ where: inGroups }),
+    lessonLogs: await tx.lessonLog.count({ where: { calendarLesson: inGroups } }),
     fromSource: groups.filter((group) => group.ss12000Id !== null).length,
   };
 }
@@ -413,6 +401,12 @@ export class StudentGroupsService {
         (fn) => this.prisma.withRls(user, fn, { timeoutMs: BULK_TIMEOUT_MS }),
         dryRun,
         async (tx) => {
+          // The rows FOR NO KEY UPDATE in id order, as the pupils' are read:
+          // a kind or a half judged below is the one written, and two calls
+          // over the same groups queue. NO KEY: rows written to the groups
+          // meanwhile (their keys' KEY SHARE) do not wait on it.
+          await tx.$queryRaw`
+            SELECT 1 FROM "StudentGroups" WHERE "id" = ANY(${ids}::uuid[]) ORDER BY "id" FOR NO KEY UPDATE`;
           const found = await tx.studentGroup.findMany({
             where: { id: { in: ids } },
             select: { id: true, kind: true, halfOfId: true, gradeLevel: true, replacesSubjectId: true },
@@ -473,16 +467,24 @@ export class StudentGroupsService {
   /**
    * Massåtgärder: many groups deleted at once, all or nothing
    * (src/common/bulk.ts), as remove() deletes one: the database takes what
-   * hangs on each (halves, memberships, timplansposter, lessons and their
-   * attendance) and empties what only names it (a pupil's home class, a
-   * class-history segment, a mentorskap). A dry run counts those first
+   * hangs on each and empties what only names it, every key told in
+   * GROUP_KEYS (src/common/removal-inventory.ts). A dry run counts them
    * (GroupRemovalConsequences), so the confirmation can say them.
    *
-   * Halves go first when tried one by one: a class takes its halves with it,
-   * and its half tried after it would not be found.
+   * THE CONFIRMATION BINDS THE COUNTS. The real call carries the dry run's
+   * counts back (`expected`) and counts again in its own transaction, after
+   * the rows are locked: a kind that grew meanwhile (a lesson written, a
+   * pupil placed) refuses the call with the new counts (`consequencesGrew`),
+   * nothing deleted, so the dialog can show them and ask again.
+   *
+   * THE ROWS ARE LOCKED FOR UPDATE, in id order, the named groups and the
+   * halves a named class takes along: a row written to them meanwhile takes
+   * its key's KEY SHARE and waits for the delete, so what was counted is what
+   * goes. Halves go first when tried one by one: a class takes its halves
+   * with it, and its half tried after it would not be found.
    */
   async bulkRemove(
-    dto: BulkIdsDto,
+    dto: BulkDeleteDto,
     user: AuthenticatedUser,
   ): Promise<BulkResult<GroupRemovalConsequences>> {
     const ids = uniqueIds(dto.ids);
@@ -492,13 +494,21 @@ export class StudentGroupsService {
         (fn) => this.prisma.withRls(user, fn, { timeoutMs: BULK_TIMEOUT_MS }),
         dryRun,
         async (tx) => {
+          await tx.$queryRaw`
+            SELECT 1 FROM "StudentGroups"
+             WHERE "id" = ANY(${ids}::uuid[]) OR "halfOfId" = ANY(${ids}::uuid[])
+             ORDER BY "id" FOR UPDATE`;
           const found = await tx.studentGroup.findMany({
             where: { id: { in: ids } },
             select: { id: true, halfOfId: true, ss12000Id: true },
           });
           const present = new Set(found.map((group) => group.id));
           const refused = ids.filter((id) => !present.has(id)).map(notFound);
-          const consequences = dryRun ? await groupRemovalConsequences(tx, found) : undefined;
+          const counts = dryRun || dto.expected ? await groupRemovalConsequences(tx, found) : undefined;
+          const consequencesGrew = dryRun || !counts ? [] : grownSince(dto.expected, { ...counts });
+          if (consequencesGrew.length > 0) {
+            return { done: found.map((group) => group.id), refused, consequences: counts, consequencesGrew };
+          }
           const order = [
             ...found.filter((group) => group.halfOfId !== null),
             ...found.filter((group) => group.halfOfId === null),
@@ -512,7 +522,11 @@ export class StudentGroupsService {
             )),
           );
           const refusedIds = new Set(refused.map((refusal) => refusal.id));
-          return { done: ids.filter((id) => !refusedIds.has(id)), refused, consequences };
+          return {
+            done: ids.filter((id) => !refusedIds.has(id)),
+            refused,
+            consequences: dryRun ? counts : undefined,
+          };
         },
       );
     } catch (error) {

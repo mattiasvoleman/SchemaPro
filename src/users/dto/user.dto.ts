@@ -15,7 +15,7 @@ import {
   MaxLength,
   ValidateNested,
 } from 'class-validator';
-import { BulkIdsDto } from '../../common/bulk';
+import { BulkIdsDto, lowerCaseId } from '../../common/bulk';
 
 export class CreateUserDto {
   @IsEnum(UserRole)
@@ -126,6 +126,7 @@ export class UpdateUserDto {
  * UpdateUserDto validates them.
  */
 export class BulkStudentChangesDto {
+  @lowerCaseId
   @IsOptional()
   @IsUUID('4')
   studentGroupId?: string | null;

@@ -20,7 +20,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { UsersService, type PersonView, type UserCounts } from './users.service';
-import { BulkIdsDto } from '../common/bulk';
+import { BulkDeleteDto } from '../common/bulk';
 import { BulkUpdateStudentsDto, CreateUserDto, InviteUsersDto, UpdateUserDto } from './dto/user.dto';
 
 @Controller('api/v1/users')
@@ -76,7 +76,7 @@ export class UsersController {
    */
   @Post('students/bulk-delete')
   @HttpCode(HttpStatus.OK)
-  bulkRemoveStudents(@Body() dto: BulkIdsDto, @CurrentUser() user: AuthenticatedUser) {
+  bulkRemoveStudents(@Body() dto: BulkDeleteDto, @CurrentUser() user: AuthenticatedUser) {
     return this.users.bulkRemoveStudents(dto, user);
   }
 

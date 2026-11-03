@@ -495,17 +495,29 @@ describe('StudentGroupsService', () => {
 
     describe('bulkUpdate', () => {
       it('refuses a body whose changes name nothing before it opens a transaction', async () => {
-        await expect(service.bulkUpdate({ ids: [G1], changes: {} }, user)).rejects.toThrow(BadRequestException);
+        await expect(service.bulkUpdate({ ids: [G1], changes: {}, dryRun: false }, user)).rejects.toThrow(BadRequestException);
         await expect(
-          service.bulkUpdate({ ids: [G1], changes: { gradeLevel: undefined } }, user),
+          service.bulkUpdate({ ids: [G1], changes: { gradeLevel: undefined }, dryRun: false }, user),
         ).rejects.toThrow(BadRequestException);
         expect(prisma.withRls).not.toHaveBeenCalled();
+      });
+
+      it('locks the groups FOR NO KEY UPDATE in id order before it judges them', async () => {
+        givenGroups(teachingGroup(G1), teachingGroup(G3));
+
+        await service.bulkUpdate({ ids: [G3, G1], changes: { gradeLevel: 7 }, dryRun: false }, user);
+
+        const [first] = tx.$queryRaw.mock.calls;
+        expect((first![0] as string[]).join('?').replace(/\s+/g, ' ').trim()).toBe(
+          'SELECT 1 FROM "StudentGroups" WHERE "id" = ANY(?::uuid[]) ORDER BY "id" FOR NO KEY UPDATE',
+        );
+        expect(first![1]).toEqual([G1, G3]);
       });
 
       it('reads each id once, in id order, in one transaction with the bulk timeout', async () => {
         givenGroups(teachingGroup(G1), teachingGroup(G3));
 
-        await service.bulkUpdate({ ids: [G3, G1, G3], changes: { gradeLevel: 7 } }, user);
+        await service.bulkUpdate({ ids: [G3, G1, G3], changes: { gradeLevel: 7 }, dryRun: false }, user);
 
         expect(prisma.withRls).toHaveBeenCalledTimes(1);
         expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function), { timeoutMs: BULK_TIMEOUT_MS });
@@ -518,7 +530,7 @@ describe('StudentGroupsService', () => {
       it('writes the groups that move in one statement, sending only the fields asked, and commits', async () => {
         givenGroups(teachingGroup(G1), teachingGroup(G2, { gradeLevel: null }));
 
-        const result = await service.bulkUpdate({ ids: [G2, G1], changes: { gradeLevel: 7 } }, user);
+        const result = await service.bulkUpdate({ ids: [G2, G1], changes: { gradeLevel: 7 }, dryRun: false }, user);
 
         expect(result).toEqual({ applied: true, dryRun: false, done: [G1, G2], refused: [] });
         expect(tx.studentGroup.updateMany).toHaveBeenCalledTimes(1);
@@ -533,13 +545,13 @@ describe('StudentGroupsService', () => {
 
       it('does not write a group that already holds the values: an UPDATE would move updatedAt, which the sync reads as a local edit', async () => {
         givenGroups(teachingGroup(G1, { gradeLevel: 7 }), teachingGroup(G2, { gradeLevel: 6 }));
-        await service.bulkUpdate({ ids: [G1, G2], changes: { gradeLevel: 7 } }, user);
+        await service.bulkUpdate({ ids: [G1, G2], changes: { gradeLevel: 7 }, dryRun: false }, user);
         expect(tx.studentGroup.updateMany).toHaveBeenCalledWith({ where: { id: { in: [G2] } }, data: { gradeLevel: 7 } });
 
         tx.studentGroup.updateMany.mockClear();
         tx.subject.findUnique.mockResolvedValue({ id: SUBJECT });
         givenGroups(teachingGroup(G1, { replacesSubjectId: SUBJECT }), teachingGroup(G2));
-        const result = await service.bulkUpdate({ ids: [G1, G2], changes: { replacesSubjectId: SUBJECT } }, user);
+        const result = await service.bulkUpdate({ ids: [G1, G2], changes: { replacesSubjectId: SUBJECT }, dryRun: false }, user);
         expect(tx.studentGroup.updateMany).toHaveBeenCalledWith({
           where: { id: { in: [G2] } },
           data: { replacesSubjectId: SUBJECT },
@@ -551,7 +563,7 @@ describe('StudentGroupsService', () => {
       it('writes nothing, and says applied, when every group holds the values already', async () => {
         givenGroups(teachingGroup(G1, { gradeLevel: 7 }), teachingGroup(G2, { gradeLevel: 7 }));
 
-        const result = await service.bulkUpdate({ ids: [G1, G2], changes: { gradeLevel: 7 } }, user);
+        const result = await service.bulkUpdate({ ids: [G1, G2], changes: { gradeLevel: 7 }, dryRun: false }, user);
 
         expect(result).toEqual({ applied: true, dryRun: false, done: [G1, G2], refused: [] });
         expect(tx.studentGroup.updateMany).not.toHaveBeenCalled();
@@ -562,7 +574,7 @@ describe('StudentGroupsService', () => {
         tx.subject.findUnique.mockResolvedValue({ id: SUBJECT });
         givenGroups(teachingGroup(G1, { gradeLevel: 7 }), teachingGroup(G2, { gradeLevel: 7, replacesSubjectId: SUBJECT }));
 
-        await service.bulkUpdate({ ids: [G1, G2], changes: { gradeLevel: 7, replacesSubjectId: SUBJECT } }, user);
+        await service.bulkUpdate({ ids: [G1, G2], changes: { gradeLevel: 7, replacesSubjectId: SUBJECT }, dryRun: false }, user);
 
         expect(tx.studentGroup.updateMany).toHaveBeenCalledWith({
           where: { id: { in: [G1] } },
@@ -574,7 +586,7 @@ describe('StudentGroupsService', () => {
         givenGroups(teachingGroup(G1, { gradeLevel: 7, replacesSubjectId: SUBJECT }), group(G2, { gradeLevel: 7 }));
 
         const result = await service.bulkUpdate(
-          { ids: [G1, G2], changes: { gradeLevel: null, replacesSubjectId: null } },
+          { ids: [G1, G2], changes: { gradeLevel: null, replacesSubjectId: null }, dryRun: false },
           user,
         );
 
@@ -595,13 +607,13 @@ describe('StudentGroupsService', () => {
           where.id === G2 ? Promise.reject(prismaError('P2025')) : Promise.resolve({ id: where.id }),
         );
 
-        const result = await service.bulkUpdate({ ids: [G1, G2], changes: { gradeLevel: 7 } }, user);
+        const result = await service.bulkUpdate({ ids: [G1, G2], changes: { gradeLevel: 7 }, dryRun: false }, user);
 
         expect(result).toEqual({
           applied: false,
           dryRun: false,
           done: [G1],
-          refused: [{ id: G2, code: 'BULK_ROW_NOT_FOUND', message: 'The requested record does not exist.' }],
+          refused: [{ id: G2, code: 'BULK_ROW_NOT_FOUND', message: 'Raden finns inte längre, eller får inte ändras härifrån.' }],
         });
         await expectRolledBack();
       });
@@ -609,7 +621,7 @@ describe('StudentGroupsService', () => {
       it('names an id that is not there and writes nothing: the report, applied false, the rest in done', async () => {
         givenGroups(teachingGroup(G1));
 
-        const result = await service.bulkUpdate({ ids: [G1, MISSING], changes: { gradeLevel: 7 } }, user);
+        const result = await service.bulkUpdate({ ids: [G1, MISSING], changes: { gradeLevel: 7 }, dryRun: false }, user);
 
         expect(result).toEqual({
           applied: false,
@@ -625,7 +637,7 @@ describe('StudentGroupsService', () => {
         tx.subject.findUnique.mockResolvedValue({ id: SUBJECT });
         givenGroups(group(G1), teachingGroup(G2), teachingGroup(G3, { halfOfId: G1 }));
 
-        const result = await service.bulkUpdate({ ids: [G3, G2, G1], changes: { replacesSubjectId: SUBJECT } }, user);
+        const result = await service.bulkUpdate({ ids: [G3, G2, G1], changes: { replacesSubjectId: SUBJECT }, dryRun: false }, user);
 
         expect(result).toEqual({
           applied: false,
@@ -657,14 +669,14 @@ describe('StudentGroupsService', () => {
       it('asks once whether the subject is the school’s, and answers 400 for the whole call when it is not', async () => {
         givenGroups(teachingGroup(G1), teachingGroup(G2));
         tx.subject.findUnique.mockResolvedValue({ id: SUBJECT });
-        await service.bulkUpdate({ ids: [G1, G2], changes: { replacesSubjectId: SUBJECT } }, user);
+        await service.bulkUpdate({ ids: [G1, G2], changes: { replacesSubjectId: SUBJECT }, dryRun: false }, user);
         expect(tx.subject.findUnique).toHaveBeenCalledTimes(1);
         expect(tx.subject.findUnique).toHaveBeenCalledWith({ where: { id: SUBJECT }, select: { id: true } });
 
         tx.studentGroup.updateMany.mockClear();
         tx.subject.findUnique.mockResolvedValue(null);
         const error = await service
-          .bulkUpdate({ ids: [G1, G2], changes: { replacesSubjectId: SUBJECT } }, user)
+          .bulkUpdate({ ids: [G1, G2], changes: { replacesSubjectId: SUBJECT }, dryRun: false }, user)
           .catch((e: unknown) => e);
         expect(error).toBeInstanceOf(BadRequestException);
         expect((error as BadRequestException).message).toBe('replacesSubjectId: ämnet finns inte i skolan.');
@@ -676,7 +688,7 @@ describe('StudentGroupsService', () => {
         givenGroups(group(G1));
         tx.subject.findUnique.mockResolvedValue(null);
 
-        const result = await service.bulkUpdate({ ids: [G1], changes: { replacesSubjectId: SUBJECT } }, user);
+        const result = await service.bulkUpdate({ ids: [G1], changes: { replacesSubjectId: SUBJECT }, dryRun: false }, user);
 
         expect(result.refused).toHaveLength(1);
         expect(tx.subject.findUnique).not.toHaveBeenCalled();
@@ -689,13 +701,13 @@ describe('StudentGroupsService', () => {
           where.id === G2 ? Promise.reject(prismaError('P2003')) : Promise.resolve({ id: where.id }),
         );
 
-        const result = await service.bulkUpdate({ ids: [G1, G2, G3], changes: { gradeLevel: 7 } }, user);
+        const result = await service.bulkUpdate({ ids: [G1, G2, G3], changes: { gradeLevel: 7 }, dryRun: false }, user);
 
         expect(result).toEqual({
           applied: false,
           dryRun: false,
           done: [G1, G3],
-          refused: [{ id: G2, code: null, message: 'The operation references a record that does not exist.' }],
+          refused: [{ id: G2, code: 'BULK_ROW_REFERENCE_GONE', message: 'Raden skulle peka på något som inte längre finns.' }],
         });
         expect(tx.studentGroup.update.mock.calls.map(([args]) => (args as { where: { id: string } }).where.id)).toEqual([
           G1,
@@ -719,7 +731,7 @@ describe('StudentGroupsService', () => {
         givenGroups(teachingGroup(G1));
         tx.studentGroup.updateMany.mockRejectedValue(new Error('connection reset'));
 
-        await expect(service.bulkUpdate({ ids: [G1], changes: { gradeLevel: 7 } }, user)).rejects.toThrow(
+        await expect(service.bulkUpdate({ ids: [G1], changes: { gradeLevel: 7 }, dryRun: false }, user)).rejects.toThrow(
           'connection reset',
         );
         expect(tx.studentGroup.update).not.toHaveBeenCalled();
@@ -729,7 +741,7 @@ describe('StudentGroupsService', () => {
         it('moves the halves that do not hold it, whether they hold nothing or another årskurs', async () => {
           givenGroups(group(G1, { gradeLevel: 6 }), teachingGroup(G2, { gradeLevel: 6 }));
 
-          await service.bulkUpdate({ ids: [G1, G2], changes: { gradeLevel: 7 } }, user);
+          await service.bulkUpdate({ ids: [G1, G2], changes: { gradeLevel: 7 }, dryRun: false }, user);
 
           expect(tx.studentGroup.updateMany).toHaveBeenCalledTimes(2);
           expect(tx.studentGroup.updateMany).toHaveBeenNthCalledWith(2, {
@@ -741,7 +753,7 @@ describe('StudentGroupsService', () => {
         it('clears the halves’ årskurs with the class’s, touching only those that hold one', async () => {
           givenGroups(group(G1, { gradeLevel: 6 }));
 
-          await service.bulkUpdate({ ids: [G1], changes: { gradeLevel: null } }, user);
+          await service.bulkUpdate({ ids: [G1], changes: { gradeLevel: null }, dryRun: false }, user);
 
           expect(tx.studentGroup.updateMany).toHaveBeenNthCalledWith(2, {
             where: { halfOfId: { in: [G1] }, gradeLevel: { not: null } },
@@ -752,7 +764,7 @@ describe('StudentGroupsService', () => {
         it('brings the halves of a class along that already holds the årskurs, as update() does when it is sent', async () => {
           givenGroups(group(G1, { gradeLevel: 7 }));
 
-          const result = await service.bulkUpdate({ ids: [G1], changes: { gradeLevel: 7 } }, user);
+          const result = await service.bulkUpdate({ ids: [G1], changes: { gradeLevel: 7 }, dryRun: false }, user);
 
           expect(result).toMatchObject({ applied: true, done: [G1] });
           // The class itself is not written; its halves, which may have been left behind, are.
@@ -766,8 +778,8 @@ describe('StudentGroupsService', () => {
         it('leaves halves alone for a teaching group, and for a change that is not an årskurs', async () => {
           tx.subject.findUnique.mockResolvedValue({ id: SUBJECT });
           givenGroups(teachingGroup(G1), teachingGroup(G2));
-          await service.bulkUpdate({ ids: [G1], changes: { gradeLevel: 7 } }, user);
-          await service.bulkUpdate({ ids: [G2], changes: { replacesSubjectId: SUBJECT } }, user);
+          await service.bulkUpdate({ ids: [G1], changes: { gradeLevel: 7 }, dryRun: false }, user);
+          await service.bulkUpdate({ ids: [G2], changes: { replacesSubjectId: SUBJECT }, dryRun: false }, user);
 
           expect(tx.studentGroup.updateMany).toHaveBeenCalledTimes(2);
           for (const [args] of tx.studentGroup.updateMany.mock.calls) {
@@ -778,7 +790,7 @@ describe('StudentGroupsService', () => {
         it('does not reach the halves when a group is refused', async () => {
           givenGroups(group(G1));
 
-          const result = await service.bulkUpdate({ ids: [G1, MISSING], changes: { gradeLevel: 7 } }, user);
+          const result = await service.bulkUpdate({ ids: [G1, MISSING], changes: { gradeLevel: 7 }, dryRun: false }, user);
 
           expect(result.applied).toBe(false);
           // The statement for the class itself, and no second one for its halves.
@@ -807,11 +819,12 @@ describe('StudentGroupsService', () => {
         it('tells them once for the whole call, after the last statement, in its transaction', async () => {
           givenGroups(group(G1), group(G2), teachingGroup(G3));
 
-          await service.bulkUpdate({ ids: [G1, G2, G3], changes: { gradeLevel: 7 } }, user);
+          await service.bulkUpdate({ ids: [G1, G2, G3], changes: { gradeLevel: 7 }, dryRun: false }, user);
 
           expect(told()).toHaveLength(1);
           const updates = tx.studentGroup.updateMany.mock.invocationCallOrder;
-          expect(queryRaw.mock.invocationCallOrder[0]!).toBeGreaterThan(updates[updates.length - 1]!);
+          const tell = queryRaw.mock.calls.findIndex((call) => String((call[0] as string[]).join('?')).includes(TELL));
+          expect(queryRaw.mock.invocationCallOrder[tell]!).toBeGreaterThan(updates[updates.length - 1]!);
           expect(deliver).toHaveBeenCalledTimes(1);
           expect(deliver).toHaveBeenCalledWith(
             tx,
@@ -837,9 +850,9 @@ describe('StudentGroupsService', () => {
           tx.subject.findUnique.mockResolvedValue({ id: SUBJECT });
           givenGroups(teachingGroup(G1), group(G2, { gradeLevel: 7 }));
 
-          await service.bulkUpdate({ ids: [G1], changes: { replacesSubjectId: SUBJECT } }, user);
-          await service.bulkUpdate({ ids: [G2], changes: { gradeLevel: 7 } }, user);
-          await service.bulkUpdate({ ids: [G1, MISSING], changes: { gradeLevel: 7 } }, user);
+          await service.bulkUpdate({ ids: [G1], changes: { replacesSubjectId: SUBJECT }, dryRun: false }, user);
+          await service.bulkUpdate({ ids: [G2], changes: { gradeLevel: 7 }, dryRun: false }, user);
+          await service.bulkUpdate({ ids: [G1, MISSING], changes: { gradeLevel: 7 }, dryRun: false }, user);
 
           expect(told()).toEqual([]);
           expect(deliver).not.toHaveBeenCalled();
@@ -849,26 +862,55 @@ describe('StudentGroupsService', () => {
 
     describe('bulkRemove', () => {
       /** How many each count answers, per model; the keys are the tables the counts read. */
-      const COUNTS = {
-        user: 12,
-        studentGroupMember: 30,
-        teachingRequirement: 4,
-        masterLesson: 7,
-        masterLessonGroup: 3,
-        calendarLesson: 200,
-        attendanceRecord: 1000,
-        studentEnrollment: 25,
-        teacherDuty: 1,
+      /** What each table holds for the groups, as the inventory's SQL counts it (GROUP_KEYS). */
+      const TABLE_COUNTS: Record<string, number> = {
+        Users: 12,
+        StudentGroupMembers: 30,
+        TeachingRequirements: 4,
+        MasterLessons: 7,
+        MasterLessonGroups: 2,
+        CalendarLessonGroups: 1,
+        CalendarLessons: 200,
+        AvailabilityConstraints: 3,
+        LunchSittings: 5,
+        CalendarLunches: 6,
+        CalendarRasts: 4,
+        TimplanCredits: 1,
+        PublicTimetableLinks: 2,
+        StudentEnrollments: 25,
+        TeacherDuties: 1,
       };
+      /** The SQL of a $queryRaw call: a tagged template's strings, or a Prisma.sql's text. */
+      const textOf = (first: unknown): string =>
+        typeof (first as { text?: unknown }).text === 'string'
+          ? (first as { text: string }).text
+          : (first as string[]).join('?');
+      /** The count statements sent, with the ids each was sent. */
+      const countStatements = () =>
+        tx.$queryRaw.mock.calls
+          .filter(([first]) => textOf(first).startsWith('SELECT count(*)'))
+          .map(([first]) => ({ text: textOf(first), values: (first as { values: unknown[] }).values }));
       const givenCounts = () => {
-        for (const [model, count] of Object.entries(COUNTS)) tx[model]!['count']!.mockResolvedValue(count);
+        tx.$queryRaw.mockImplementation((first: unknown) => {
+          const text = textOf(first);
+          if (!text.startsWith('SELECT count(*)')) return Promise.resolve([]);
+          return Promise.resolve([{ n: TABLE_COUNTS[/FROM "(\w+)"/.exec(text)![1]!] ?? 0 }]);
+        });
+        tx.attendanceRecord.count.mockResolvedValue(1000);
+        tx.lessonLog.count.mockResolvedValue(9);
+        tx.studentGroup.count.mockResolvedValue(1);
       };
-      const counted = () => Object.keys(COUNTS).flatMap((model) => tx[model]!['count']!.mock.calls);
+      const counted = () => [
+        ...countStatements(),
+        ...tx.attendanceRecord.count.mock.calls,
+        ...tx.lessonLog.count.mock.calls,
+        ...tx.studentGroup.count.mock.calls,
+      ];
 
       it('reads each id once, in id order, and names an id that is not there: the rest in done, nothing applied', async () => {
         givenGroups(teachingGroup(G1), teachingGroup(G3));
 
-        const result = await service.bulkRemove({ ids: [G3, MISSING, G1, G3] }, user);
+        const result = await service.bulkRemove({ ids: [G3, MISSING, G1, G3], dryRun: false }, user);
 
         expect(tx.studentGroup.findMany).toHaveBeenCalledWith({
           where: { id: { in: [G1, G3, MISSING] } },
@@ -888,7 +930,7 @@ describe('StudentGroupsService', () => {
         // The half's id sorts after its class's: id order is not the order it is written in.
         givenGroups(group(G1), teachingGroup(G2, { halfOfId: G1 }), teachingGroup(G3));
 
-        const result = await service.bulkRemove({ ids: [G3, G2, G1] }, user);
+        const result = await service.bulkRemove({ ids: [G3, G2, G1], dryRun: false }, user);
 
         expect(result).toEqual({ applied: true, dryRun: false, done: [G1, G2, G3], refused: [] });
         expect(result).not.toHaveProperty('consequences');
@@ -925,7 +967,14 @@ describe('StudentGroupsService', () => {
             masterLessons: 7,
             sharedLessons: 3,
             calendarLessons: 200,
+            availabilityConstraints: 3,
+            lunchSittings: 5,
+            calendarBreaks: 10,
+            timplanCredits: 1,
+            publicLinks: 2,
+            successors: 1,
             attendanceMarks: 1000,
+            lessonLogs: 9,
             enrolments: 25,
             mentorDuties: 1,
             fromSource: 1,
@@ -935,13 +984,23 @@ describe('StudentGroupsService', () => {
           where: { halfOfId: { in: [G1, G2] }, id: { notIn: [G1, G2] } },
           select: { id: true },
         });
-        // The groups, and the halves that go with them: all counted by the same filter.
-        const inGroups = { studentGroupId: { in: [G1, G2, HALF] } };
-        for (const model of Object.keys(COUNTS).filter((model) => model !== 'attendanceRecord')) {
-          expect(tx[model]!['count']).toHaveBeenCalledWith({ where: inGroups });
+        // The groups, and the halves that go with them: every table counted by
+        // the same ids, once, and the groups' own table only by its two
+        // special counts (halves, successors).
+        const statements = countStatements();
+        expect(statements).toHaveLength(Object.keys(TABLE_COUNTS).length);
+        for (const statement of statements) {
+          expect(statement.values).toEqual([[G1, G2, HALF]]);
+          expect(statement.text).not.toContain('"StudentGroups"');
         }
-        // The attendance marks are on the groups’ calendar lessons.
+        const inGroups = { studentGroupId: { in: [G1, G2, HALF] } };
+        // The attendance marks and lesson logs are on the groups’ calendar lessons.
         expect(tx.attendanceRecord.count).toHaveBeenCalledWith({ where: { calendarLesson: inGroups } });
+        expect(tx.lessonLog.count).toHaveBeenCalledWith({ where: { calendarLesson: inGroups } });
+        // A successor the call deletes as well loses nothing it keeps.
+        expect(tx.studentGroup.count).toHaveBeenCalledWith({
+          where: { predecessorId: { in: [G1, G2, HALF] }, id: { notIn: [G1, G2, HALF] } },
+        });
         // The delete was done, so it is counted before it is rolled back, and rolled back.
         expect(tx.studentGroup.deleteMany).toHaveBeenCalledWith({ where: { id: { in: [G1, G2] } } });
         await expectRolledBack();
@@ -954,7 +1013,75 @@ describe('StudentGroupsService', () => {
         const result = await service.bulkRemove({ ids: [G1, G2], dryRun: true }, user);
 
         expect(result.consequences).toMatchObject({ halves: 0 });
-        expect(tx.user.count).toHaveBeenCalledWith({ where: { studentGroupId: { in: [G1, G2] } } });
+        const pupils = countStatements().find((statement) => statement.text.includes('FROM "Users"'));
+        expect(pupils?.values).toEqual([[G1, G2]]);
+      });
+
+      it('locks the named groups and the halves they take along FOR UPDATE, in id order, before it reads or counts', async () => {
+        givenGroups(group(G1));
+        givenCounts();
+
+        await service.bulkRemove({ ids: [G1], dryRun: true }, user);
+
+        const [first] = tx.$queryRaw.mock.calls;
+        expect(textOf(first![0]).replace(/\s+/g, ' ').trim()).toBe(
+          'SELECT 1 FROM "StudentGroups" WHERE "id" = ANY(?::uuid[]) OR "halfOfId" = ANY(?::uuid[]) ORDER BY "id" FOR UPDATE',
+        );
+        expect(first!.slice(1)).toEqual([[G1], [G1]]);
+        expect(tx.$queryRaw.mock.invocationCallOrder[0]!).toBeLessThan(tx.studentGroup.findMany.mock.invocationCallOrder[0]!);
+      });
+
+      describe('the confirmation binds the counts (expected)', () => {
+        const dryRunCounts = {
+          halves: 0, homePupils: 12, memberships: 30, requirements: 4, masterLessons: 7, sharedLessons: 3,
+          calendarLessons: 200, availabilityConstraints: 3, lunchSittings: 5, calendarBreaks: 10, timplanCredits: 1,
+          publicLinks: 2, successors: 1, attendanceMarks: 1000, lessonLogs: 9, enrolments: 25, mentorDuties: 1, fromSource: 0,
+        };
+
+        it('deletes when nothing grew since the dry run, and answers no counts', async () => {
+          givenGroups(group(G1));
+          givenCounts();
+
+          const result = await service.bulkRemove({ ids: [G1], dryRun: false, expected: dryRunCounts }, user);
+
+          expect(result).toEqual({ applied: true, dryRun: false, done: [G1], refused: [] });
+          expect(tx.studentGroup.deleteMany).toHaveBeenCalledTimes(1);
+          await expectCommitted();
+        });
+
+        it('deletes nothing when a kind grew, and answers which and the new counts so the dialog can ask again', async () => {
+          givenGroups(group(G1));
+          givenCounts();
+
+          const result = await service.bulkRemove(
+            { ids: [G1], dryRun: false, expected: { ...dryRunCounts, calendarLessons: 199, attendanceMarks: 990 } },
+            user,
+          );
+
+          expect(result).toMatchObject({
+            applied: false,
+            dryRun: false,
+            done: [G1],
+            refused: [],
+            consequencesGrew: ['attendanceMarks', 'calendarLessons'],
+            consequences: expect.objectContaining({ calendarLessons: 200, attendanceMarks: 1000 }),
+          });
+          expect(tx.studentGroup.deleteMany).not.toHaveBeenCalled();
+          await expectRolledBack();
+        });
+
+        it('deletes when a count fell, or the dry run did not name a kind', async () => {
+          givenGroups(group(G1));
+          givenCounts();
+          const { lessonLogs: _dropped, ...withoutLogs } = dryRunCounts;
+
+          const result = await service.bulkRemove(
+            { ids: [G1], dryRun: false, expected: { ...withoutLogs, homePupils: 40 } },
+            user,
+          );
+
+          expect(result.applied).toBe(true);
+        });
       });
 
       it('tries the groups one by one when the database refuses the statement, halves first, and lists the refused', async () => {
@@ -970,14 +1097,14 @@ describe('StudentGroupsService', () => {
           return Promise.resolve({ id: where.id });
         });
 
-        const result = await service.bulkRemove({ ids: [G1, G2, G3] }, user);
+        const result = await service.bulkRemove({ ids: [G1, G2, G3], dryRun: false }, user);
 
         expect(result).toEqual({
           applied: false,
           dryRun: false,
           done: [G2],
           refused: [
-            { id: G1, code: null, message: 'The operation references a record that does not exist.' },
+            { id: G1, code: 'BULK_ROW_REFERENCE_GONE', message: 'Raden skulle peka på något som inte längre finns.' },
             { id: G3, code: 'GROUP_IN_USE', message: 'Gruppen används.', params: { lessons: 2 } },
           ],
         });
@@ -1007,7 +1134,7 @@ describe('StudentGroupsService', () => {
           where.id === G2 ? Promise.reject(new ConflictException('Gruppen har ett beslut.')) : Promise.resolve({}),
         );
 
-        const result = await service.bulkRemove({ ids: [G1, G2] }, user);
+        const result = await service.bulkRemove({ ids: [G1, G2], dryRun: false }, user);
 
         expect(result.refused).toEqual([{ id: G2, code: null, message: 'Gruppen har ett beslut.' }]);
         expect(result.done).toEqual([G1]);
@@ -1017,7 +1144,7 @@ describe('StudentGroupsService', () => {
         givenGroups(teachingGroup(G1), teachingGroup(G2));
         tx.studentGroup.deleteMany.mockRejectedValue(prismaError('P2034'));
 
-        await expect(service.bulkRemove({ ids: [G1, G2] }, user)).rejects.toMatchObject({
+        await expect(service.bulkRemove({ ids: [G1, G2], dryRun: false }, user)).rejects.toMatchObject({
           status: 409,
           response: { code: WRITE_CONFLICT },
         });

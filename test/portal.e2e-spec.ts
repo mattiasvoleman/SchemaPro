@@ -535,12 +535,15 @@ describe('Portal and platform surfaces (e2e)', () => {
        * The auto-vivifying tx hands back a model proxy for `$queryRaw`, and a
        * proxy is not callable.
        */
-      const givenRows = (rows: Record<string, unknown>[]) =>
+      const givenRows = (rows: Record<string, unknown>[], counts: Record<string, number> = {}) =>
         Object.assign(harness.tx, {
           $queryRaw: jest.fn((...call: unknown[]) => {
             const sql = rawSql(call);
             if (sql.includes('app.leave_requests_tell_new_mentors')) return Promise.resolve([]);
             if (sql.includes('app.login_is_held_elsewhere')) return Promise.resolve([{ held: false }]);
+            // The inventory's counts (src/common/removal-inventory.ts), by table and first key column.
+            const count = /^SELECT count\(\*\)::int AS n FROM "(\w+)" WHERE "(\w+)"/.exec(sql);
+            if (count) return Promise.resolve([{ n: counts[`${count[1]}.${count[2]}`] ?? 0 }]);
             const ids = call[1] as string[];
             return Promise.resolve(rows.filter((row) => ids.includes(row['id'] as string)));
           }),
@@ -553,19 +556,20 @@ describe('Portal and platform surfaces (e2e)', () => {
       });
 
       it('answers a dry-run delete 200 with the report and the counts, which it records as reads', async () => {
-        givenRows([pupil(STUDENT_ID, { invitedAt: new Date('2026-08-01T00:00:00Z'), ss12000Id: 'ss-1' })]);
+        givenRows([pupil(STUDENT_ID, { invitedAt: new Date('2026-08-01T00:00:00Z'), ss12000Id: 'ss-1' })], {
+          'StudentGroupMembers.studentId': 5,
+          'StudentEnrollments.studentId': 6,
+          'GuardianStudents.studentId': 3,
+          'AbsenceReports.studentId': 20,
+          'LeaveRequests.studentId': 2,
+          'AttendanceRecords.studentId': 400,
+          'CalendarLessonStudents.studentId': 7,
+          'TimplanStatements.studentId': 1,
+          'UserRoleChanges.userId': 1,
+        });
         harness.tx['user']!['findMany']!.mockResolvedValueOnce([
           { id: STUDENT_ID, invitedAt: new Date('2026-08-01T00:00:00Z'), ss12000Id: 'ss-1' },
         ]);
-        const counts = {
-          studentGroupMember: 5,
-          studentEnrollment: 6,
-          guardianStudent: 3,
-          absenceReport: 20,
-          leaveRequest: 2,
-          attendanceRecord: 400,
-        };
-        for (const [model, count] of Object.entries(counts)) harness.tx[model]!['count']!.mockResolvedValueOnce(count);
 
         const response = await post(DELETE, { ids: [STUDENT_ID], dryRun: true }).expect(200);
 
@@ -581,6 +585,10 @@ describe('Portal and platform surfaces (e2e)', () => {
             absenceReports: 20,
             leaveRequests: 2,
             attendanceMarks: 400,
+            lessonParticipations: 7,
+            teachingTimeStatements: 1,
+            otherRows: 1,
+            otherLinks: 0,
             logins: 1,
             fromSource: 1,
           },
@@ -591,6 +599,7 @@ describe('Portal and platform surfaces (e2e)', () => {
           'ABSENCE_REPORTS',
           'LEAVE_REQUESTS',
           'ATTENDANCE',
+          'TEACHING_TIME',
         ]);
         // A dry run removes no login, then or later.
         await new Promise((resolve) => setImmediate(resolve));
@@ -603,7 +612,7 @@ describe('Portal and platform surfaces (e2e)', () => {
           pupil(OTHER_ID, { authId: '9b9b9b9b-9b9b-4b9b-8b9b-9b9b9b9b9b9b', invitedAt: null }),
         ]);
 
-        const response = await post(DELETE, { ids: [OTHER_ID, STUDENT_ID] }).expect(200);
+        const response = await post(DELETE, { ids: [OTHER_ID, STUDENT_ID], dryRun: false }).expect(200);
 
         expect(response.body).toEqual({ applied: true, dryRun: false, done: [STUDENT_ID, OTHER_ID], refused: [] });
         expect(harness.tx['user']!['deleteMany']).toHaveBeenCalledWith({ where: { id: { in: [STUDENT_ID, OTHER_ID] } } });
@@ -616,7 +625,7 @@ describe('Portal and platform surfaces (e2e)', () => {
       it('refuses what is no pupil in the report, 200, and deletes nothing at the provider', async () => {
         givenRows([pupil(STUDENT_ID, { invitedAt: new Date('2026-08-01T00:00:00Z') }), pupil(GUARDIAN_ID, { role: 'GUARDIAN' })]);
 
-        const response = await post(DELETE, { ids: [STUDENT_ID, GUARDIAN_ID, ROOM_ID] }).expect(200);
+        const response = await post(DELETE, { ids: [STUDENT_ID, GUARDIAN_ID, ROOM_ID], dryRun: false }).expect(200);
 
         expect(response.body).toEqual({
           applied: false,
@@ -626,7 +635,7 @@ describe('Portal and platform surfaces (e2e)', () => {
             {
               id: ROOM_ID,
               code: 'BULK_ROW_NOT_FOUND',
-              message: 'Raden finns inte längre. Den kan ha tagits bort av någon annan.',
+              message: 'Raden finns inte längre, eller får inte ändras härifrån.',
             },
             {
               id: GUARDIAN_ID,
@@ -646,6 +655,7 @@ describe('Portal and platform surfaces (e2e)', () => {
         const response = await post(UPDATE, {
           ids: [OTHER_ID, STUDENT_ID],
           changes: { studentGroupId: CLASS_ID },
+          dryRun: false,
         }).expect(200);
 
         expect(response.body).toEqual({ applied: true, dryRun: false, done: [STUDENT_ID, OTHER_ID], refused: [] });
@@ -673,7 +683,7 @@ describe('Portal and platform surfaces (e2e)', () => {
       it('refuses a pseudonymised pupil made active in the report, 200, and a teaching group as a home class with 400', async () => {
         givenRows([pupil(STUDENT_ID), pupil(OTHER_ID, { pseudonymisedAt: new Date('2026-10-21T01:10:00Z'), isActive: false })]);
 
-        const report = await post(UPDATE, { ids: [STUDENT_ID, OTHER_ID], changes: { isActive: true } }).expect(200);
+        const report = await post(UPDATE, { ids: [STUDENT_ID, OTHER_ID], changes: { isActive: true }, dryRun: false }).expect(200);
         expect(report.body).toMatchObject({
           applied: false,
           done: [STUDENT_ID],
@@ -681,24 +691,26 @@ describe('Portal and platform surfaces (e2e)', () => {
         });
 
         harness.tx['studentGroup']!['findUnique']!.mockResolvedValueOnce({ kind: 'TEACHING_GROUP' });
-        const refused = await post(UPDATE, { ids: [STUDENT_ID], changes: { studentGroupId: CLASS_ID } }).expect(400);
+        const refused = await post(UPDATE, { ids: [STUDENT_ID], changes: { studentGroupId: CLASS_ID }, dryRun: false }).expect(400);
         expect(refused.body).toMatchObject({ code: 'STUDENT_HOME_GROUP_NOT_A_CLASS' });
       });
 
       it('takes 500 ids, the most a call may name', async () => {
         givenRows([]);
 
-        const response = await post(DELETE, { ids: manyIds(500) }).expect(200);
+        const response = await post(DELETE, { ids: manyIds(500), dryRun: false }).expect(200);
 
         expect(response.body.refused).toHaveLength(500);
       });
 
       it.each([
-        ['501 ids', { ids: manyIds(501) }],
-        ['no ids', { ids: [] }],
-        ['an id that is no uuid', { ids: ['karin.ek@example.com'] }],
+        ['501 ids', { ids: manyIds(501), dryRun: false }],
+        ['no ids', { ids: [], dryRun: false }],
+        ['an id that is no uuid', { ids: ['karin.ek@example.com'], dryRun: false }],
         ['a dryRun that is not a boolean', { ids: [STUDENT_ID], dryRun: 1 }],
-        ['a field it does not know', { ids: [STUDENT_ID], includeStaff: true }],
+        ['a dryRun that is null', { ids: [STUDENT_ID], dryRun: null }],
+        ['no dryRun', { ids: [STUDENT_ID] }],
+        ['a field it does not know', { ids: [STUDENT_ID], dryRun: false, includeStaff: true }],
       ])('refuses a bulk delete with %s, before any transaction', async (_what, body) => {
         await post(DELETE, body).expect(400);
         expect(harness.prisma.withRls).not.toHaveBeenCalled();
@@ -706,14 +718,15 @@ describe('Portal and platform surfaces (e2e)', () => {
       });
 
       it.each([
-        ['501 ids', { ids: manyIds(501), changes: { isActive: false } }],
-        ['an id that is no uuid', { ids: ['karin'], changes: { isActive: false } }],
-        ['no changes', { ids: [STUDENT_ID] }],
-        ['changes that name nothing', { ids: [STUDENT_ID], changes: {} }],
-        ['a class that is no uuid', { ids: [STUDENT_ID], changes: { studentGroupId: '7A' } }],
-        ['a status that is no boolean', { ids: [STUDENT_ID], changes: { isActive: 'false' } }],
-        ['a role, which only one person at a time may be given', { ids: [STUDENT_ID], changes: { role: 'TEACHER' } }],
-        ['a field a bulk update may not set', { ids: [STUDENT_ID], changes: { email: 'a@example.com' } }],
+        ['501 ids', { ids: manyIds(501), changes: { isActive: false }, dryRun: false }],
+        ['an id that is no uuid', { ids: ['karin'], changes: { isActive: false }, dryRun: false }],
+        ['no changes', { ids: [STUDENT_ID], dryRun: false }],
+        ['changes that name nothing', { ids: [STUDENT_ID], changes: {}, dryRun: false }],
+        ['a class that is no uuid', { ids: [STUDENT_ID], changes: { studentGroupId: '7A' }, dryRun: false }],
+        ['a status that is no boolean', { ids: [STUDENT_ID], changes: { isActive: 'false' }, dryRun: false }],
+        ['a role, which only one person at a time may be given', { ids: [STUDENT_ID], changes: { role: 'TEACHER' }, dryRun: false }],
+        ['a field a bulk update may not set', { ids: [STUDENT_ID], changes: { email: 'a@example.com' }, dryRun: false }],
+        ['no dryRun', { ids: [STUDENT_ID], changes: { isActive: false } }],
       ])('refuses a bulk update with %s, before any transaction', async (_what, body) => {
         await post(UPDATE, body).expect(400);
         expect(harness.prisma.withRls).not.toHaveBeenCalled();

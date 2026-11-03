@@ -34,10 +34,11 @@ import {
   runBulk,
   uniqueIds,
   writeAll,
-  type BulkIdsDto,
+  type BulkDeleteDto,
   type BulkRefusal,
   type BulkResult,
 } from '../common/bulk';
+import { STUDENT_KEYS, countByKind, grownSince, type StudentKeyKind } from '../common/removal-inventory';
 import type { BulkUpdateStudentsDto, CreateUserDto, UpdateUserDto } from './dto/user.dto';
 
 /** A pseudonymised person (gallring, 20261021110000) cannot be made active again. */
@@ -826,7 +827,12 @@ export class UsersService {
               (isActive !== undefined && row.isActive !== isActive),
           );
           if (studentGroupId && moving.some((row) => row.studentGroupId !== studentGroupId)) {
-            await assertHomeIsAClass(tx, studentGroupId);
+            // A class the school does not have is the call's 400, as the
+            // single route's (the class history's key answers it there), not
+            // a refusal of every pupil in turn.
+            const home = await tx.studentGroup.findUnique({ where: { id: studentGroupId }, select: { kind: true } });
+            if (!home) throw new BadRequestException('studentGroupId: klassen finns inte i skolan.');
+            if (home.kind !== 'CLASS') throw homeIsNotAClass();
           }
           refused.push(
             ...(await writeAll(
@@ -859,6 +865,13 @@ export class UsersService {
    * which commits: the counts are recorded in the läslogg, and a record
    * written inside the dry run would be rolled back with it.
    *
+   * THE CONFIRMATION BINDS THE COUNTS. The real call carries the dry run's
+   * counts back (`expected`) and counts again in its own transaction, after
+   * the rows are locked: a kind that grew meanwhile (an absence reported, a
+   * guardian linked) refuses the call (`consequencesGrew`), nothing deleted,
+   * and the new counts come back as the dry run's do, read and recorded in a
+   * transaction of their own.
+   *
    * The rows are read FOR UPDATE in id order: the role is judged on what is
    * deleted, so no row of the call becomes a teacher meanwhile, and two calls
    * over the same pupils queue. remove()'s per-teacher cover lock is not
@@ -871,7 +884,7 @@ export class UsersService {
    * holds it (Flera skolor per inloggning).
    */
   async bulkRemoveStudents(
-    dto: BulkIdsDto,
+    dto: BulkDeleteDto,
     user: AuthenticatedUser,
   ): Promise<BulkResult<StudentRemovalConsequences>> {
     const ids = uniqueIds(dto.ids);
@@ -928,6 +941,12 @@ export class UsersService {
             if (why) refused.push(refusalOf(pupil.id, why)!);
             return why === null;
           });
+          if (!dryRun && dto.expected) {
+            const consequencesGrew = grownSince(dto.expected, { ...(await studentRemovalConsequences(tx, removable)) });
+            if (consequencesGrew.length > 0) {
+              return { done: removable.map((pupil) => pupil.id), refused, consequencesGrew };
+            }
+          }
           refused.push(
             ...(await writeAll(
               tx,
@@ -955,16 +974,19 @@ export class UsersService {
       if (error instanceof HttpException) throw error;
       rethrowPrismaError(error);
     }
-    if (!dryRun || result.done.length === 0) return result;
+    if ((!dryRun && !result.consequencesGrew) || result.done.length === 0) return result;
     // The counts are a read of the pupils, and a read is recorded in a
     // transaction that commits: the dry run's own is rolled back, its
-    // record with it. Counted after the dry run, of the pupils it would take.
+    // record with it, and so is a refused delete's. Counted after it, of the
+    // pupils it would take.
     const consequences = await this.prisma.withRls(user, async (tx) => {
       const pupils = await tx.user.findMany({
         where: { id: { in: result.done } },
         select: { id: true, invitedAt: true, ss12000Id: true },
       });
-      return studentRemovalConsequences(tx, pupils, user.channel);
+      const counts = await studentRemovalConsequences(tx, pupils);
+      await studentRemovalReads(tx, result.done, user.channel);
+      return counts;
     });
     return { ...result, consequences };
   }
@@ -1222,54 +1244,56 @@ function notAStudent(id: string): BulkRefusal {
 }
 
 /**
- * What goes with a bulk delete of pupils, counted on its dry run: every row
- * that names them goes with them (ON DELETE CASCADE), as it does when one
- * pupil is removed. Each count is a fact about the pupils in the call — a
- * call may name one — so the dry run records a read of each kind it counts
- * about them (the läslogg's GUARDIANS, ABSENCE_REPORTS, LEAVE_REQUESTS,
- * ATTENDANCE and ROSTER). The logins and the SS12000 link are on the
- * register the page has already read.
+ * What goes with a bulk delete of pupils: every key to Users in the
+ * catalogue, told for a pupil (STUDENT_KEYS in src/common/removal-inventory.ts).
+ * The kinds an administrator needs by name are counted by name; the rest of
+ * what an administrator reads is counted in otherRows (goes with them) and
+ * otherLinks (stays without them); the pupils' own accounts (notices,
+ * settings, devices, calendar feeds), which no administrator reads, are named
+ * by the dialog without a number. A delete of one pupil takes the same rows.
+ *
+ * Each named count is a fact about the pupils in the call, and a call may
+ * name one, so a count that reaches the caller records a read of its kind
+ * (studentRemovalReads). otherRows and otherLinks are sums over many tables
+ * of no one kind, and record none. The logins and the SS12000 link are on
+ * the register the page has already read.
  */
-export interface StudentRemovalConsequences {
-  /** Teaching-group memberships (StudentGroupMembers). */
-  memberships: number;
-  /** Class-history segments (StudentEnrollments). */
-  enrolments: number;
-  /** Links to guardians (GuardianStudents). */
-  guardianLinks: number;
-  /** Absence reported for them (AbsenceReports). */
-  absenceReports: number;
-  /** Their leave requests (LeaveRequests). */
-  leaveRequests: number;
-  /** Attendance marks (AttendanceRecords). */
-  attendanceMarks: number;
+export interface StudentRemovalConsequences extends Record<StudentKeyKind, number> {
   /** Invited pupils, whose login is removed too unless another school's row holds it. */
   logins: number;
   /** Pupils linked to the school's SS12000 source, whom its next sync may add again. */
   fromSource: number;
 }
 
+/** The läslogg's kinds the named counts are reads of, and what each covers. */
+const STUDENT_REMOVAL_READS = [
+  'ROSTER', // memberships, class history, the lessons a pupil is named on
+  'GUARDIANS', // the guardian links
+  'ABSENCE_REPORTS',
+  'LEAVE_REQUESTS',
+  'ATTENDANCE',
+  'TEACHING_TIME', // the pupils' statements of undervisningstid (TimplanStatements)
+] as const;
+
 async function studentRemovalConsequences(
   tx: PrismaClient,
   pupils: { id: string; invitedAt: Date | null; ss12000Id: string | null }[],
-  channel: AuthenticatedUser['channel'],
 ): Promise<StudentRemovalConsequences> {
   const ids = pupils.map((pupil) => pupil.id);
-  const theirs = { studentId: { in: ids } };
-  const counts: StudentRemovalConsequences = {
-    memberships: await tx.studentGroupMember.count({ where: theirs }),
-    enrolments: await tx.studentEnrollment.count({ where: theirs }),
-    guardianLinks: await tx.guardianStudent.count({ where: theirs }),
-    absenceReports: await tx.absenceReport.count({ where: theirs }),
-    leaveRequests: await tx.leaveRequest.count({ where: theirs }),
-    attendanceMarks: await tx.attendanceRecord.count({ where: theirs }),
+  return {
+    ...(await countByKind(tx, STUDENT_KEYS, ids)),
     logins: pupils.filter((pupil) => pupil.invitedAt !== null).length,
     fromSource: pupils.filter((pupil) => pupil.ss12000Id !== null).length,
   };
-  for (const kind of ['ROSTER', 'GUARDIANS', 'ABSENCE_REPORTS', 'LEAVE_REQUESTS', 'ATTENDANCE'] as const) {
-    await recordRead(tx, kind, ids, channel);
-  }
-  return counts;
+}
+
+/** Records the read the counts are, in a transaction that commits. */
+async function studentRemovalReads(
+  tx: PrismaClient,
+  ids: string[],
+  channel: AuthenticatedUser['channel'],
+): Promise<void> {
+  for (const kind of STUDENT_REMOVAL_READS) await recordRead(tx, kind, ids, channel);
 }
 
 /**
@@ -1335,10 +1359,12 @@ export const STUDENT_HOME_GROUP_NOT_A_CLASS = 'STUDENT_HOME_GROUP_NOT_A_CLASS';
  */
 async function assertHomeIsAClass(tx: PrismaClient, groupId: string): Promise<void> {
   const group = await tx.studentGroup.findUnique({ where: { id: groupId }, select: { kind: true } });
-  if (group && group.kind !== 'CLASS') {
-    throw new BadRequestException({
-      message: "A pupil's home class must be a class. Add the pupil to a teaching group under Medlemmar instead.",
-      code: STUDENT_HOME_GROUP_NOT_A_CLASS,
-    });
-  }
+  if (group && group.kind !== 'CLASS') throw homeIsNotAClass();
+}
+
+function homeIsNotAClass(): BadRequestException {
+  return new BadRequestException({
+    message: "A pupil's home class must be a class. Add the pupil to a teaching group under Medlemmar instead.",
+    code: STUDENT_HOME_GROUP_NOT_A_CLASS,
+  });
 }

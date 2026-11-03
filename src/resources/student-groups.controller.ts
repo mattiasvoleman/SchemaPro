@@ -20,7 +20,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { StudentGroupsService } from './student-groups.service';
-import { BulkIdsDto } from '../common/bulk';
+import { BulkDeleteDto } from '../common/bulk';
 import {
   BulkUpdateStudentGroupsDto,
   CreateStudentGroupDto,
@@ -44,7 +44,7 @@ export class StudentGroupsController {
    */
   @Post('bulk-delete')
   @HttpCode(HttpStatus.OK)
-  bulkRemove(@Body() dto: BulkIdsDto, @CurrentUser() user: AuthenticatedUser) {
+  bulkRemove(@Body() dto: BulkDeleteDto, @CurrentUser() user: AuthenticatedUser) {
     return this.studentGroups.bulkRemove(dto, user);
   }
 

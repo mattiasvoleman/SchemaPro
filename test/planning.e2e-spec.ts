@@ -389,18 +389,30 @@ describe('Planning surface (e2e)', () => {
         groups()['findMany']!
           .mockResolvedValueOnce([{ id: GROUP_ID, halfOfId: null, ss12000Id: 'ss-1' }])
           .mockResolvedValueOnce([{ id: OTHER_ID }]);
-        const counts = {
-          user: 12,
-          studentGroupMember: 30,
-          teachingRequirement: 4,
-          masterLesson: 7,
-          masterLessonGroup: 3,
-          calendarLesson: 200,
-          attendanceRecord: 1000,
-          studentEnrollment: 25,
-          teacherDuty: 1,
+        // The inventory's counts (src/common/removal-inventory.ts) are SQL, one per table.
+        const tables: Record<string, number> = {
+          Users: 12,
+          StudentGroupMembers: 30,
+          TeachingRequirements: 4,
+          MasterLessons: 7,
+          MasterLessonGroups: 3,
+          CalendarLessons: 200,
+          PublicTimetableLinks: 1,
+          StudentEnrollments: 25,
+          TeacherDuties: 1,
         };
-        for (const [model, count] of Object.entries(counts)) harness.tx[model]!['count']!.mockResolvedValueOnce(count);
+        Object.assign(harness.tx, {
+          $queryRaw: jest.fn((first: { text?: string }) =>
+            Promise.resolve(
+              typeof first.text === 'string' && first.text.startsWith('SELECT count(*)')
+                ? [{ n: tables[/FROM "(\w+)"/.exec(first.text)![1]!] ?? 0 }]
+                : [],
+            ),
+          ),
+        });
+        harness.tx['attendanceRecord']!['count']!.mockResolvedValueOnce(1000);
+        harness.tx['lessonLog']!['count']!.mockResolvedValueOnce(6);
+        harness.tx['studentGroup']!['count']!.mockResolvedValueOnce(0);
 
         const response = await post(DELETE, { ids: [GROUP_ID], dryRun: true }).expect(200);
 
@@ -417,7 +429,14 @@ describe('Planning surface (e2e)', () => {
             masterLessons: 7,
             sharedLessons: 3,
             calendarLessons: 200,
+            availabilityConstraints: 0,
+            lunchSittings: 0,
+            calendarBreaks: 0,
+            timplanCredits: 0,
+            publicLinks: 1,
+            successors: 0,
             attendanceMarks: 1000,
+            lessonLogs: 6,
             enrolments: 25,
             mentorDuties: 1,
             fromSource: 1,
@@ -433,7 +452,7 @@ describe('Planning surface (e2e)', () => {
           { id: OTHER_ID, halfOfId: null, ss12000Id: null },
         ]);
 
-        const response = await post(DELETE, { ids: [OTHER_ID, GROUP_ID] }).expect(200);
+        const response = await post(DELETE, { ids: [OTHER_ID, GROUP_ID], dryRun: false }).expect(200);
 
         expect(response.body).toEqual({ applied: true, dryRun: false, done: [GROUP_ID, OTHER_ID], refused: [] });
         expect(groups()['deleteMany']).toHaveBeenCalledWith({ where: { id: { in: [GROUP_ID, OTHER_ID] } } });
@@ -444,7 +463,7 @@ describe('Planning surface (e2e)', () => {
           { id: GROUP_ID, kind: 'TEACHING_GROUP', halfOfId: null, gradeLevel: 6, replacesSubjectId: null },
         ]);
 
-        const response = await post(UPDATE, { ids: [GROUP_ID], changes: { gradeLevel: 7 } }).expect(200);
+        const response = await post(UPDATE, { ids: [GROUP_ID], changes: { gradeLevel: 7 }, dryRun: false }).expect(200);
 
         expect(response.body).toEqual({ applied: true, dryRun: false, done: [GROUP_ID], refused: [] });
         expect(groups()['updateMany']).toHaveBeenCalledWith({
@@ -487,7 +506,7 @@ describe('Planning surface (e2e)', () => {
         ]);
         harness.tx['subject']!['findUnique']!.mockResolvedValueOnce(null);
 
-        const response = await post(UPDATE, { ids: [GROUP_ID], changes: { replacesSubjectId: SUBJECT_ID } }).expect(400);
+        const response = await post(UPDATE, { ids: [GROUP_ID], changes: { replacesSubjectId: SUBJECT_ID }, dryRun: false }).expect(400);
 
         expect(response.body.detail).toContain('ämnet finns inte i skolan');
         expect(groups()['updateMany']).not.toHaveBeenCalled();
@@ -496,19 +515,23 @@ describe('Planning surface (e2e)', () => {
       it('takes 500 ids, the most a call may name', async () => {
         groups()['findMany']!.mockResolvedValueOnce([]);
 
-        const response = await post(DELETE, { ids: manyIds(500) }).expect(200);
+        const response = await post(DELETE, { ids: manyIds(500), dryRun: false }).expect(200);
 
         expect(response.body.refused).toHaveLength(500);
         expect(response.body.applied).toBe(false);
       });
 
       it.each([
-        ['501 ids', { ids: manyIds(501) }],
-        ['no ids', { ids: [] }],
-        ['an id that is no uuid', { ids: ['7A'] }],
-        ['an id that is a name', { ids: [GROUP_ID, 'Ma71'] }],
+        ['501 ids', { ids: manyIds(501), dryRun: false }],
+        ['no ids', { ids: [], dryRun: false }],
+        ['an id that is no uuid', { ids: ['7A'], dryRun: false }],
+        ['an id that is a name', { ids: [GROUP_ID, 'Ma71'], dryRun: false }],
         ['a dryRun that is not a boolean', { ids: [GROUP_ID], dryRun: 'yes' }],
-        ['a field it does not know', { ids: [GROUP_ID], force: true }],
+        // Required, and a boolean: a null or a missing one that read as "no" would delete for real.
+        ['a dryRun that is null', { ids: [GROUP_ID], dryRun: null }],
+        ['no dryRun', { ids: [GROUP_ID] }],
+        ['expected counts that are not an object', { ids: [GROUP_ID], dryRun: false, expected: 3 }],
+        ['a field it does not know', { ids: [GROUP_ID], dryRun: false, force: true }],
       ])('refuses a bulk delete with %s, before any transaction', async (_what, body) => {
         await post(DELETE, body).expect(400);
         expect(harness.prisma.withRls).not.toHaveBeenCalled();
@@ -516,19 +539,56 @@ describe('Planning surface (e2e)', () => {
       });
 
       it.each([
-        ['501 ids', { ids: manyIds(501), changes: { gradeLevel: 7 } }],
-        ['an id that is no uuid', { ids: ['7A'], changes: { gradeLevel: 7 } }],
-        ['no changes', { ids: [GROUP_ID] }],
-        ['changes that are not an object', { ids: [GROUP_ID], changes: 7 }],
-        ['changes that name nothing', { ids: [GROUP_ID], changes: {} }],
-        ['an årskurs outside 0–12', { ids: [GROUP_ID], changes: { gradeLevel: 13 } }],
-        ['a subject that is no uuid', { ids: [GROUP_ID], changes: { replacesSubjectId: 'Svenska' } }],
-        ['a field a bulk update may not set', { ids: [GROUP_ID], changes: { name: '7B' } }],
-        ['a kind', { ids: [GROUP_ID], changes: { kind: 'CLASS' } }],
+        ['501 ids', { ids: manyIds(501), changes: { gradeLevel: 7 }, dryRun: false }],
+        ['an id that is no uuid', { ids: ['7A'], changes: { gradeLevel: 7 }, dryRun: false }],
+        ['no changes', { ids: [GROUP_ID], dryRun: false }],
+        ['changes that are not an object', { ids: [GROUP_ID], changes: 7, dryRun: false }],
+        ['changes that name nothing', { ids: [GROUP_ID], changes: {}, dryRun: false }],
+        ['an årskurs outside 0–12', { ids: [GROUP_ID], changes: { gradeLevel: 13 }, dryRun: false }],
+        ['a subject that is no uuid', { ids: [GROUP_ID], changes: { replacesSubjectId: 'Svenska' }, dryRun: false }],
+        ['a field a bulk update may not set', { ids: [GROUP_ID], changes: { name: '7B' }, dryRun: false }],
+        ['a kind', { ids: [GROUP_ID], changes: { kind: 'CLASS' }, dryRun: false }],
+        ['no dryRun', { ids: [GROUP_ID], changes: { gradeLevel: 7 } }],
       ])('refuses a bulk update with %s, before any transaction', async (_what, body) => {
         await post(UPDATE, body).expect(400);
         expect(harness.prisma.withRls).not.toHaveBeenCalled();
         expect(groups()['updateMany']).not.toHaveBeenCalled();
+      });
+
+      it('takes upper-case ids as the database has them, lower case: the row is found, not refused', async () => {
+        groups()['findMany']!.mockResolvedValueOnce([{ id: GROUP_ID, halfOfId: null, ss12000Id: null }]);
+
+        const response = await post(DELETE, { ids: [GROUP_ID.toUpperCase()], dryRun: false }).expect(200);
+
+        expect(response.body).toEqual({ applied: true, dryRun: false, done: [GROUP_ID], refused: [] });
+        expect(groups()['findMany']).toHaveBeenCalledWith(expect.objectContaining({ where: { id: { in: [GROUP_ID] } } }));
+      });
+
+      it('deletes nothing when what goes with the groups grew since the dry run the call confirms, and says which', async () => {
+        groups()['findMany']!
+          .mockResolvedValueOnce([{ id: GROUP_ID, halfOfId: null, ss12000Id: null }])
+          .mockResolvedValueOnce([]);
+        Object.assign(harness.tx, {
+          $queryRaw: jest.fn((first: { text?: string }) =>
+            Promise.resolve(
+              typeof first.text === 'string' && first.text.includes('FROM "CalendarLessons"') ? [{ n: 3 }] : [{ n: 0 }],
+            ),
+          ),
+        });
+        harness.tx['attendanceRecord']!['count']!.mockResolvedValueOnce(0);
+        harness.tx['lessonLog']!['count']!.mockResolvedValueOnce(0);
+        harness.tx['studentGroup']!['count']!.mockResolvedValueOnce(0);
+
+        const response = await post(DELETE, { ids: [GROUP_ID], dryRun: false, expected: { calendarLessons: 2 } }).expect(200);
+
+        expect(response.body).toMatchObject({
+          applied: false,
+          dryRun: false,
+          done: [GROUP_ID],
+          consequencesGrew: ['calendarLessons'],
+          consequences: { calendarLessons: 3 },
+        });
+        expect(groups()['deleteMany']).not.toHaveBeenCalled();
       });
 
       it('denies a teacher both routes', async () => {

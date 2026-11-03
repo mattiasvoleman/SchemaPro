@@ -16,7 +16,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { BulkIdsDto } from '../../common/bulk';
+import { BulkIdsDto, lowerCaseId } from '../../common/bulk';
 
 export class CreateStudentGroupDto {
   @IsUUID('4')
@@ -151,6 +151,7 @@ export class BulkStudentGroupChangesDto {
   @Max(12)
   gradeLevel?: number | null;
 
+  @lowerCaseId
   @IsOptional()
   @IsUUID('4')
   replacesSubjectId?: string | null;
