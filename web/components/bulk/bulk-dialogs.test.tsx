@@ -1,0 +1,297 @@
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { useState } from "react";
+import { describe, expect, it, vi } from "vitest";
+import type { BulkResult } from "@/lib/bulk-api";
+import { BulkDeleteDialog, BulkEditDialog, BulkSelectField, RefusalList, type DeleteLines } from "./bulk-dialogs";
+
+// Echo the key and its values, so assertions read against stable text.
+vi.mock("next-intl", () => ({
+  useTranslations: () => (key: string, values?: Record<string, unknown>) =>
+    values && Object.keys(values).length > 0 ? `${key}(${Object.values(values).join("|")})` : key,
+}));
+
+const NAMES: Record<string, string> = { a: "7A", b: "7B", c: "Ma71" };
+const nameOf = (id: string) => NAMES[id] ?? "?";
+
+type Counts = { halves: number };
+const describeCounts = (counts: Counts): DeleteLines => ({
+  goes: counts.halves > 0 ? [`${counts.halves} halvklasser`] : [],
+  loses: [],
+  notes: ["note"],
+});
+
+/** The refusal list's line for a row, by the row's name. */
+const refusalLine = (name: string) =>
+  screen
+    .getAllByRole("listitem")
+    .map((item) => item.textContent)
+    .find((text) => text?.startsWith(`${name}:`));
+
+const report = (overrides: Partial<BulkResult<Counts>>): BulkResult<Counts> => ({
+  applied: false,
+  dryRun: true,
+  done: [],
+  refused: [],
+  ...overrides,
+});
+
+describe("RefusalList", () => {
+  it("names each refused row, in the reader's language where the code is known and the gateway's sentence otherwise", () => {
+    render(
+      <RefusalList
+        nameOf={nameOf}
+        refused={[
+          { id: "a", code: "BULK_ROW_NOT_FOUND", message: "Raden finns inte längre." },
+          { id: "b", code: "USER_HAS_BOOKED_PASS_COVERS", message: "…", params: { date: "2026-11-04" } },
+          { id: "c", code: null, message: "Läsåret har redan en grupp som heter Ma71." },
+        ]}
+      />,
+    );
+    const items = screen.getAllByRole("listitem").map((item) => item.textContent);
+    expect(items).toEqual([
+      "7A: refusal.BULK_ROW_NOT_FOUND",
+      "7B: refusal.USER_HAS_BOOKED_PASS_COVERS(2026-11-04)",
+      "Ma71: Läsåret har redan en grupp som heter Ma71.",
+    ]);
+  });
+});
+
+describe("BulkDeleteDialog", () => {
+  const open = (remove: (body: { ids: string[]; dryRun?: boolean }) => Promise<BulkResult<Counts>>) => {
+    const onDeleted = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <BulkDeleteDialog
+        entity="groups"
+        ids={["a", "b", "c"]}
+        nameOf={nameOf}
+        remove={remove}
+        describe={describeCounts}
+        onClose={onClose}
+        onDeleted={onDeleted}
+      />,
+    );
+    return { onDeleted, onClose };
+  };
+
+  it("asks with a dry run as it opens, and says what goes, what goes with it and what does not, before anything is deleted", async () => {
+    const remove = vi.fn().mockResolvedValueOnce(
+      report({
+        done: ["a", "c"],
+        refused: [{ id: "b", code: "BULK_ROW_NOT_FOUND", message: "x" }],
+        consequences: { halves: 2 },
+      }),
+    );
+    open(remove);
+    expect(screen.getByText("deleteChecking")).toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog", { name: "deleteTitle(groups|3)" });
+    await within(dialog).findByText("goesTitle(groups|2)", { selector: "h3" });
+    expect(remove).toHaveBeenCalledWith({ ids: ["a", "b", "c"], dryRun: true });
+    expect(within(dialog).getByRole("list", { name: "goesTitle(groups|2)" })).toHaveTextContent("7AMa71");
+    expect(within(dialog).getByText("2 halvklasser")).toBeInTheDocument();
+    expect(within(dialog).getByText("note")).toBeInTheDocument();
+    expect(within(dialog).getByText("refusedDelete(1)")).toBeInTheDocument();
+    expect(refusalLine("7B")).toBe("7B: refusal.BULK_ROW_NOT_FOUND");
+    expect(remove).toHaveBeenCalledTimes(1);
+  });
+
+  it("deletes exactly the rows the dry run said would go, and says how many went", async () => {
+    const remove = vi
+      .fn()
+      .mockResolvedValueOnce(report({ done: ["a", "c"], refused: [{ id: "b", code: null, message: "Nej." }], consequences: { halves: 0 } }))
+      .mockResolvedValueOnce(report({ applied: true, dryRun: false, done: ["a", "c"] }));
+    const { onDeleted } = open(remove);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "deleteOthers(2)" }));
+    expect(remove).toHaveBeenLastCalledWith({ ids: ["a", "c"] });
+    expect(onDeleted).toHaveBeenCalledWith(2);
+  });
+
+  it("says nothing else depends on the rows when nothing does", async () => {
+    open(vi.fn().mockResolvedValueOnce(report({ done: ["a", "b", "c"], consequences: { halves: 0 } })));
+    expect(await screen.findByText("nothingElse")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "deleteCount(3)" })).toBeInTheDocument();
+  });
+
+  it("deletes nothing when the real call meets a refusal the dry run did not, and shows how it stands now", async () => {
+    const remove = vi
+      .fn()
+      .mockResolvedValueOnce(report({ done: ["a", "b", "c"], consequences: { halves: 0 } }))
+      .mockResolvedValueOnce(report({ dryRun: false, done: ["a", "c"], refused: [{ id: "b", code: "BULK_ROW_NOT_FOUND", message: "x" }] }))
+      .mockResolvedValueOnce(report({ done: ["a", "c"], refused: [{ id: "b", code: "BULK_ROW_NOT_FOUND", message: "x" }], consequences: { halves: 0 } }));
+    const { onDeleted } = open(remove);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "deleteCount(3)" }));
+    expect(await screen.findByText("changedMeanwhile")).toBeInTheDocument();
+    expect(remove.mock.calls.map((call) => call[0])).toEqual([
+      { ids: ["a", "b", "c"], dryRun: true },
+      { ids: ["a", "b", "c"] },
+      { ids: ["a", "b", "c"], dryRun: true },
+    ]);
+    expect(onDeleted).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "deleteOthers(2)" })).toBeInTheDocument();
+  });
+
+  it("offers no delete when nothing of the selection can go", async () => {
+    open(
+      vi.fn().mockResolvedValueOnce(
+        report({ refused: ["a", "b", "c"].map((id) => ({ id, code: "NOT_A_STUDENT", message: "x" })) }),
+      ),
+    );
+    expect(await screen.findByText("nothingToDelete")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^delete/ })).not.toBeInTheDocument();
+    // The dialog's own X and the footer's Stäng: nothing but leaving.
+    expect(screen.getAllByRole("button", { name: "close" })).toHaveLength(2);
+  });
+
+  it("says when the dry run fails, deletes nothing, and asks again on Försök igen", async () => {
+    const remove = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("HTTP 500"))
+      .mockResolvedValueOnce(report({ done: ["a"], consequences: { halves: 0 } }));
+    open(remove);
+    expect(await screen.findByText("deleteCheckFailed")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^delete/ })).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "retry" }));
+    expect(await screen.findByRole("button", { name: "deleteCount(1)" })).toBeInTheDocument();
+  });
+});
+
+describe("BulkSelectField", () => {
+  const OPTIONS = [
+    { value: "__none__", label: "Ingen årskurs" },
+    { value: "7", label: "Åk 7" },
+    { value: "8", label: "Åk 8" },
+  ];
+
+  function Field({ shared, onValue }: { shared: string | null; onValue: (value: string | null) => void }) {
+    const [value, setValue] = useState<string | null>(null);
+    return (
+      <BulkSelectField
+        id="grade"
+        label="Årskurs"
+        options={OPTIONS}
+        shared={shared}
+        value={value}
+        count={4}
+        onChange={(next) => {
+          setValue(next);
+          onValue(next);
+        }}
+      />
+    );
+  }
+
+  it("shows Olika värden while the rows differ, and leaves the field until a value is chosen", async () => {
+    const onValue = vi.fn();
+    const user = userEvent.setup();
+    render(<Field shared={null} onValue={onValue} />);
+    const select = screen.getByRole("combobox", { name: "Årskurs" });
+    expect(select).toHaveTextContent("mixed");
+    expect(select).toHaveAccessibleDescription("fieldMixed");
+    await user.click(select);
+    await user.click(await screen.findByRole("option", { name: "Åk 8" }));
+    expect(onValue).toHaveBeenLastCalledWith("8");
+    expect(select).toHaveAccessibleDescription("fieldSets(4)");
+    // Olika värden again leaves the field as each row has it.
+    await user.click(select);
+    await user.click(await screen.findByRole("option", { name: "mixed" }));
+    expect(onValue).toHaveBeenLastCalledWith(null);
+  });
+
+  it("shows the value every row has, and choosing it again changes nothing", async () => {
+    const onValue = vi.fn();
+    const user = userEvent.setup();
+    render(<Field shared="7" onValue={onValue} />);
+    const select = screen.getByRole("combobox", { name: "Årskurs" });
+    expect(select).toHaveTextContent("Åk 7");
+    expect(screen.queryByRole("option", { name: "mixed" })).not.toBeInTheDocument();
+    await user.click(select);
+    await user.click(await screen.findByRole("option", { name: "Ingen årskurs" }));
+    expect(onValue).toHaveBeenLastCalledWith("__none__");
+    await user.click(select);
+    await user.click(await screen.findByRole("option", { name: "Åk 7" }));
+    expect(onValue).toHaveBeenLastCalledWith(null);
+  });
+});
+
+describe("BulkEditDialog", () => {
+  const open = (
+    update: (body: { ids: string[]; changes: { gradeLevel: number } }) => Promise<BulkResult<never>>,
+    changes: { gradeLevel: number } | null = { gradeLevel: 8 },
+  ) => {
+    const onSaved = vi.fn();
+    render(
+      <BulkEditDialog
+        entity="groups"
+        ids={["a", "b", "c"]}
+        nameOf={nameOf}
+        update={update}
+        changes={changes}
+        onClose={() => undefined}
+        onSaved={onSaved}
+      >
+        <p>fields</p>
+      </BulkEditDialog>,
+    );
+    return { onSaved };
+  };
+
+  it("saves nothing until a field is changed", () => {
+    open(vi.fn(), null);
+    expect(screen.getByRole("dialog", { name: "editTitle(groups|3)" })).toHaveTextContent("fields");
+    expect(screen.getByRole("button", { name: "saveCount(3)" })).toBeDisabled();
+  });
+
+  it("saves the changed fields on every ticked row", async () => {
+    const update = vi.fn().mockResolvedValue({ applied: true, dryRun: false, done: ["a", "b", "c"], refused: [] });
+    const { onSaved } = open(update);
+    await userEvent.setup().click(screen.getByRole("button", { name: "saveCount(3)" }));
+    expect(update).toHaveBeenCalledWith({ ids: ["a", "b", "c"], changes: { gradeLevel: 8 } });
+    expect(onSaved).toHaveBeenCalledWith(3);
+  });
+
+  it("when a row refuses, saves nothing, names it and why, and saves the others on request", async () => {
+    const update = vi
+      .fn()
+      .mockResolvedValueOnce({
+        applied: false,
+        dryRun: false,
+        done: ["a", "c"],
+        refused: [{ id: "b", code: "REPLACING_GROUP_NOT_A_TEACHING_GROUP", message: "x" }],
+      })
+      .mockResolvedValueOnce({ applied: true, dryRun: false, done: ["a", "c"], refused: [] });
+    const { onSaved } = open(update);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "saveCount(3)" }));
+    expect(await screen.findByText("refusedEdit(1)")).toBeInTheDocument();
+    expect(refusalLine("7B")).toBe("7B: refusal.REPLACING_GROUP_NOT_A_TEACHING_GROUP");
+    expect(screen.getByText("nothingSavedOthers(2)")).toBeInTheDocument();
+    expect(onSaved).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "saveOthers(2)" }));
+    expect(update).toHaveBeenLastCalledWith({ ids: ["a", "c"], changes: { gradeLevel: 8 } });
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith(2));
+  });
+
+  it("offers no save when every row refuses", async () => {
+    open(
+      vi.fn().mockResolvedValueOnce({
+        applied: false,
+        dryRun: false,
+        done: [],
+        refused: ["a", "b", "c"].map((id) => ({ id, code: null, message: "Nej." })),
+      }),
+    );
+    await userEvent.setup().click(screen.getByRole("button", { name: "saveCount(3)" }));
+    expect(await screen.findByText("nothingSaved")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^save/ })).not.toBeInTheDocument();
+  });
+
+  it("says why a call failed, and keeps the dialog", async () => {
+    open(vi.fn().mockRejectedValueOnce(new Error("replacesSubjectId: ämnet finns inte i skolan.")));
+    await userEvent.setup().click(screen.getByRole("button", { name: "saveCount(3)" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("ämnet finns inte i skolan");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+});

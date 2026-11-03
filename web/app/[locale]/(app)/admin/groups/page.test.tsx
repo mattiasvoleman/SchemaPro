@@ -124,6 +124,19 @@ vi.mock("./school-units-card", () => ({
   },
 }));
 
+/**
+ * Massåtgärder's dialogs, which the page fetches on the first click of
+ * Redigera or Ta bort: a stand-in saying what it was opened with
+ * (groups-bulk-dialogs.test.tsx tests the real ones).
+ */
+vi.mock("./groups-bulk-dialogs", () => ({
+  GroupsBulkDialogs: ({ mode, ids }: { mode: string; ids: string[] }) => (
+    <div role="dialog" aria-label={`bulk-${mode}`}>
+      {ids.join(",")}
+    </div>
+  ),
+}));
+
 vi.mock("@/components/import/csv-import-dialog", () => ({
   CsvImportDialog: () => null,
 }));
@@ -154,11 +167,14 @@ vi.mock("next-intl", () => ({
  */
 const searchBox = () => screen.getByRole("searchbox", { name: "searchLabel" });
 
+/** The cells after the row's selection box (Massval), which is the first. */
+const dataCells = (row: HTMLElement) => within(row).getAllByRole("cell").slice(1);
+
 const rowNames = () =>
   screen
     .getAllByRole("row")
     .slice(1)
-    .map((row) => within(row).getAllByRole("cell")[0]?.textContent ?? "");
+    .map((row) => dataCells(row)[0]?.textContent ?? "");
 
 describe("Groups page", () => {
   beforeEach(() => {
@@ -249,9 +265,9 @@ describe("Groups page", () => {
     expect(screen.getByRole("columnheader", { name: "year" })).toBeInTheDocument();
     const rows = screen.getAllByRole("row").slice(1);
     const rowOf = (name: string) =>
-      rows.find((row) => within(row).getAllByRole("cell")[0]?.textContent?.startsWith(name));
-    expect(within(rowOf("7A")!).getAllByRole("cell")[1]).toHaveTextContent("2026/2027");
-    expect(within(rowOf("8A")!).getAllByRole("cell")[1]).toHaveTextContent("2027/2028");
+      rows.find((row) => dataCells(row)[0]?.textContent?.startsWith(name));
+    expect(dataCells(rowOf("7A")!)[1]).toHaveTextContent("2026/2027");
+    expect(dataCells(rowOf("8A")!)[1]).toHaveTextContent("2027/2028");
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   });
 
@@ -623,5 +639,89 @@ describe("Läsbehörighet: the controls that write are marked with planering", (
     yearState.years = [];
     render(<GroupsPage />);
     expect(writes(screen.getByRole("link", { name: "noYearAction" }))).toBeUndefined();
+  });
+});
+
+describe("Massval: ticking groups and acting on them", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    yearState.years = [YEAR, NEXT_YEAR];
+    groupState.groups = groups;
+  });
+
+  const status = () => screen.getByRole("status");
+  const box = (name: string) => screen.getByRole("checkbox", { name: `selectRow(${name})` });
+
+  it("gives every row a box named by its group, and the header a box that ticks every row shown", async () => {
+    const user = userEvent.setup();
+    render(<GroupsPage />);
+    for (const name of ["7A", "Ma71", "En74", "8A"]) expect(box(name)).not.toBeChecked();
+    expect(status()).toHaveTextContent("");
+    await user.click(screen.getByRole("checkbox", { name: "selectAll(groups|4)" }));
+    for (const name of ["7A", "Ma71", "En74", "8A"]) expect(box(name)).toBeChecked();
+    expect(status()).toHaveTextContent("selected(groups|4|4)");
+    // The ticked rows are drawn as selected.
+    expect(box("7A").closest("tr")).toHaveAttribute("data-state", "selected");
+  });
+
+  it("ticks only what the search shows, and lets go of a row a new search hides", async () => {
+    const user = userEvent.setup();
+    render(<GroupsPage />);
+    await user.type(searchBox(), "En74");
+    await user.click(screen.getByRole("checkbox", { name: "selectAll(groups|1)" }));
+    expect(status()).toHaveTextContent("selected(groups|1|1)");
+    // Clearing the search shows the rest unticked; En74 stays ticked.
+    await user.clear(searchBox());
+    expect(status()).toHaveTextContent("selected(groups|1|4)");
+    expect((screen.getByRole("checkbox", { name: "selectAll(groups|4)" }) as HTMLInputElement).indeterminate).toBe(true);
+    // A search that hides En74 lets go of it, and clearing it does not bring it back.
+    await user.click(box("7A"));
+    await user.type(searchBox(), "7A");
+    expect(status()).toHaveTextContent("selected(groups|1|1)");
+    await user.clear(searchBox());
+    expect(box("En74")).not.toBeChecked();
+    expect(box("7A")).toBeChecked();
+  });
+
+  it("follows the kind tab: Undervisningsgrupper's header box ticks the teaching groups alone", async () => {
+    const user = userEvent.setup();
+    render(<GroupsPage />);
+    await user.click(screen.getByRole("tab", { name: "kindTeachingGroup" }));
+    await user.click(screen.getByRole("checkbox", { name: "selectAll(groups|2)" }));
+    await user.click(screen.getByRole("tab", { name: "filterAll" }));
+    expect(box("Ma71")).toBeChecked();
+    expect(box("En74")).toBeChecked();
+    expect(box("7A")).not.toBeChecked();
+  });
+
+  it("opens Redigera and Ta bort with the ticked groups, in list order", async () => {
+    const user = userEvent.setup();
+    render(<GroupsPage />);
+    await user.click(box("Ma71"));
+    await user.click(box("7A"));
+    await user.click(screen.getByRole("button", { name: "edit" }));
+    expect(await screen.findByRole("dialog", { name: "bulk-edit" })).toHaveTextContent("g-7a,g-ma71");
+  });
+
+  it("ticks a run of rows with Shift", async () => {
+    const user = userEvent.setup();
+    render(<GroupsPage />);
+    await user.click(box("7A"));
+    await user.keyboard("{Shift>}");
+    await user.click(box("En74"));
+    await user.keyboard("{/Shift}");
+    expect(status()).toHaveTextContent("selected(groups|3|4)");
+    expect(box("8A")).not.toBeChecked();
+  });
+
+  it("marks the boxes and the bar with planering, so a profile that does not write it sees none of them", async () => {
+    const user = userEvent.setup();
+    render(<GroupsPage />);
+    const writes = (element: HTMLElement) => element.closest("[data-writes]")?.getAttribute("data-writes");
+    expect(writes(screen.getByRole("checkbox", { name: "selectAll(groups|4)" }))).toBe("PLANERING");
+    expect(writes(box("7A"))).toBe("PLANERING");
+    await user.click(box("7A"));
+    expect(writes(screen.getByRole("button", { name: "delete" }))).toBe("PLANERING");
+    expect(writes(status())).toBe("PLANERING");
   });
 });
