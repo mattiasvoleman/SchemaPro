@@ -28,7 +28,7 @@ could be evaluated at all.
 | API coverage | ✗ 95.09% vs 95% (ratcheted at 95; remainder is module wiring) |
 | Mobile coverage | ✗ 12.83% vs 95% (first floor at 12; runner stood up 2026-08-22) |
 | Solver coverage | ✗ 89.50% vs 95% (ratcheted at 81) |
-| Mutation score | ✗ 66.21% vs 85% |
+| Mutation score | ✗ 71.31% of the API vs 85% (2026-11-02: 48,433 of 67,921 reachable mutants detected, in 279 files); gated one slice a night against the slice's own floor (59–88%), so that it fails when a slice gets worse |
 | Bundle size | ✓ pass (tiered; 30/30 routes, shared 126.1/130KB) |
 | Solver, 2,000 students | ✗ 1,300 validated (~9.5 min); 2,000 now measured honestly: TIMEOUT at 570s |
 | Web dependency audit | ✓ pass (0/0/0) |
@@ -68,7 +68,7 @@ could be evaluated at all.
 | API branch coverage | ≥ 95% | 84.98% (1313/1545) | ✗ | same |
 | API function coverage | ≥ 95% | 90.59% (520/574) | ✗ | same |
 | Solver line coverage | ≥ 95% | **89.50%** (1333 stmts, 125 missed) | ✗ | `npm run test:engine:cov` |
-| Mutation score, tested files | ≥ 85% | **66.21%** (192 killed / 97 survived) | ✗ | `npm run test:mutation` |
+| Mutation score, the API | ≥ 85% | **71.31%** (48,433 / 67,921; slices 60.31–89.26%) | ✗ | `npm run test:mutation`, one slice a night |
 | Mobile unit coverage | ≥ 95% | **12.83%** statements (services, utils, hooks) | ✗ | `npm run test:mobile:cov` |
 | Web unit coverage | ≥ 95% | **88.98%** lines (1397/1570) | ✗ | `npm run test:unit:cov` in `web/` |
 
@@ -115,9 +115,81 @@ coverage regress 8 points unnoticed, or fail the build on functions no matter
 what. Raise them via the `COVERAGE_MIN*` repository variables as coverage
 grows; never lower one to green a build.
 
+### The mutation gate: a slice of the API a night, against the slice's own floor
+
+**What it requires, since 2026-11-03.** `quality-gates.yml` → mutation mutates one of twenty slices of the API each night and fails when that slice scores under *its floor*: its measured score minus one percentage point, rounded down, checked in beside the files of the slice in `scripts/mutation-slices.json`. The slice is the day of the year (UTC) modulo 20, so the whole API is covered every twenty nights. A `workflow_dispatch` takes one slice, a list (`3,7`) or `all` (`mutation_slice`), ten jobs at a time. §2's 85% stays the target; the report prints it beside the floor, and it is **not met**: measured on 2026-11-02, 48,433 of the 67,921 mutants a test can reach are detected, **71.31%**, and of the twenty slices two are at 85 (slice 1 at 89.26%, slice 11 at 86.39%). The floors run from 59% to 88%. The gate is a ratchet: it fails when a slice gets worse, never because the target is missed, and the target moves into reach by raising the floors as tests are written.
+
+**Why a slice.** On 2026-10-06, the last green night, the job mutated 57 files and 7,522 mutants (1,774 tests) in 41:50 and scored 94.07%. On 2026-11-02 it was 280 files, 73,861 mutants and 7,749 tests, with `mutate` unchanged since 2026-09-13: the API had grown about tenfold in four weeks. The runner gets through about 50 mutants a minute now against about 180 then, so the whole set is half a day of it, and the 90 minutes of a job reach one part in seven. What was tried, all on the 4-vCPU runners:
+
+| Run | What | Result |
+| :--- | :--- | :--- |
+| 37440931235, 2026-10-06 | the whole API in one job: 57 files, 7,522 mutants | 94.07%, 41:50 |
+| 41422825454, 2026-11-02 | the nightly, red since 2026-10-07 | died in the dry run: six specs read files outside the sandbox's whitelist (fixed in the whitelist, not by leaving the specs out) |
+| 41440346900 | the whole API in one job: 73,861 mutants | cancelled at 90 minutes after 10,097 mutants |
+| 41454768502 | 20 slices dealt by mutant count | 22 to over 95 minutes for slices of the same size; two cancelled, one ended by a runner shutdown; scores 55–81% |
+| 41470197321 | 10 slices by mutant count, `ignoreStatic` | four cancelled at 90 minutes, one more took 89 |
+| 41519740264 | 40 slices by mutant count, with the timing reporter | all finished but one, 6–63 minutes; 830 minutes of mutation testing in all, on 266 files |
+
+Mutant count says nothing about time. Among the thirty dearest files the time runs from 0.3 to 8.5 seconds a mutant that has to be run; 19 files are half of all the time and 50 are three quarters; the dearest, `optimization-proxy.service.ts`, is 62 minutes on its own, `common/utils/prisma-errors.ts` 44 and `staffing/teacher-load.ts` 43. Stryker's own estimate does not help: it planned 4 seconds of test time for a file that took 162. So the slices are dealt by *measured* seconds, from the 40-slice run (the nine files of slice 14 from another run: that slice ended four times in a runner shutdown, see below), by the longest-first rule, and the dealing is checked in. One file, `optimization-proxy.service.ts`, is dealt in two line ranges (`:1-2092` and `:2093-99999`) because Stryker runs the mutants that lie wholly inside a range and the cut falls on a line no mutant crosses; the last range runs to the end of any file, so lines added later are mutated too. The twenty slices are 42–44 minutes each, with about a minute of setup, against the 60 that a slice may take.
+
+**What the score leaves out.** Three things, and they are in every floor:
+
+- **Generated code**: `src/**/*.generated.ts` is not mutated. It is one file today, `integration/ss12000-v2/s1-provider.generated.ts`, S1's schemas and parameters as a data module, 3,225 of the 73,861 mutants; a mutant there changes what the generator wrote, not anything a test of the gateway answers for.
+- **Static mutants** (`ignoreStatic`): mutants in code that runs when a module loads (a top-level constant, a lookup table) cannot be pointed at one test, so Stryker would run the whole suite for each. In the 20-slice run Stryker warned, for 18 of the 20 slices, that they were 1–12% of the slice's mutants and, by its own estimate, 42–94% of its test time; they are not run, and count neither as detected nor as undetected. The estimate is Stryker's and the saving was not isolated (the runs that differ in it differ in their slices too); what is given up is the constants and tables no test is pointed at.
+- **What counts**: as Stryker counts it, detected = killed or timed out, undetected = survived or not covered by any test (such a mutant takes no time to decide), and mutants that are ignored or do not compile count in neither.
+
+**The slices as measured** (the seconds are wall time of the mutation phase; the figures are from 2026-11-02, with a mutant's time limit of 60 seconds, and a night is somewhat shorter now that it is 10):
+
+| Slice | Files | Mutants | Measured | Floor | Minutes | Dearest files |
+| ---: | ---: | ---: | ---: | ---: | ---: | :--- |
+| 0 | 1 | 820 | 79.95 % | 78 % | 44 | common/utils/prisma-errors.ts (44 min) |
+| 1 | 1 | 692 | 89.26 % | 88 % | 43 | staffing/teacher-load.ts (43 min) |
+| 2 | 9 | 2211 | 79.78 % | 78 % | 42 | optimization/optimization-proxy.service.ts:2093– (39 min), optimization/room-loan-windows.ts (1 min), publication/other-school-clashes.ts (1 min) |
+| 3 | 14 | 2661 | 65.63 % | 64 % | 42 | cover/cover-rules.ts (29 min), notifications/notifications.service.ts (4 min), optimization/other-school-holds.ts (2 min) |
+| 4 | 13 | 5472 | 60.31 % | 59 % | 42 | calendar/master-lessons.service.ts (28 min), cover/cover.service.ts (4 min), optimization/pupil-cohorts.ts (3 min) |
+| 5 | 13 | 4039 | 80.16 % | 79 % | 42 | common/timplan-planned.ts (27 min), optimization/candidate-basis.ts (5 min), publication/publish-mode.ts (2 min) |
+| 6 | 15 | 5110 | 73.59 % | 72 % | 42 | optimization/optimization-proxy.service.ts:1–2092 (23 min), integration/ss12000-sync/diff.ts (5 min), access-log/access-log.ts (4 min) |
+| 7 | 15 | 3879 | 62.27 % | 61 % | 42 | cover/cover-context.ts (22 min), integration/ss12000-sync/outbound.ts (6 min), integration/ss12000-v2/slice.ts (4 min) |
+| 8 | 14 | 4086 | 75.61 % | 74 % | 42 | staffing/teaching-weeks.ts (21 min), optimization/schedule-candidates.service.ts (7 min), year-rollover/rollover-source.ts (4 min) |
+| 9 | 16 | 2377 | 81.05 % | 80 % | 42 | year-rollover/activation-plan.ts (17 min), staffing/employment-periods.ts (7 min), notifications/expo-push.client.ts (5 min) |
+| 10 | 16 | 4000 | 66.44 % | 65 % | 42 | common/timplan-delivered.ts (15 min), calendar/lesson-roster.ts (7 min), staffing/staffing-enforcement.ts (5 min) |
+| 11 | 16 | 2546 | 86.39 % | 85 % | 42 | common/teacher-day.ts (15 min), common/stretch.ts (7 min), timplan/generate-requirements.ts (5 min) |
+| 12 | 25 | 5998 | 61.21 % | 60 % | 42 | optimization/staffing-proposal.service.ts (14 min), common/grade-numbering.ts (8 min), database/pool-config.ts (6 min) |
+| 13 | 16 | 2507 | 76.27 % | 75 % | 42 | common/replacing-groups.ts (14 min), calendar/publish-days.ts (8 min), notifications/push-messages.ts (6 min) |
+| 14 | 16 | 3570 | 76.40 % | 75 % | 42 | year-rollover/projected-rosters.ts (14 min), supervision/supervision-load.ts (8 min), common/subject-distribution.ts (6 min) |
+| 15 | 16 | 3886 | 76.56 % | 75 % | 42 | staffing/staffing-checks.ts (13 min), year-rollover/rollover-plan.ts (8 min), notifications/notification-delivery.service.ts (6 min) |
+| 16 | 16 | 5202 | 67.06 % | 66 % | 42 | common/timplan-scheduled.ts (12 min), common/lesson-lengths.ts (9 min), common/year-rollover.ts (7 min) |
+| 17 | 16 | 4776 | 71.64 % | 70 % | 42 | integration/ss12000-v2/ss12000-v2.service.ts (12 min), staffing/load-input.ts (9 min), integration/ss12000-v2/model.ts (6 min) |
+| 18 | 16 | 2455 | 71.57 % | 70 % | 42 | common/utils/time.ts (11 min), calendar/lesson-recurrence.ts (10 min), optimization/room-eligibility.ts (7 min) |
+| 19 | 16 | 4349 | 71.10 % | 70 % | 42 | import/import.service.ts (10 min), common/timplan-coverage.ts (10 min), timplan/timplan-coverage.service.ts (7 min) |
+
+**Raising a floor.** When the tests of a slice's files improve, run that slice (`mutation_slice=N`), download the artifact `mutation-report-slice-N`, unpack it, and run `node scripts/mutation-slice.mjs --remeasure <unpacked>/slice-N`. It replaces the slice's figures in `scripts/mutation-slices.json` with the run's and sets the floor to floor(score − 1), and it changes nothing else; commit that on its own, saying which tests earned it. A floor is not raised by editing the number: the sums beside it are held against it by a unit test.
+
+**Lowering a floor.** `--remeasure` refuses a floor lower than the slice has. `--lower` says it is meant, and the commit that does it says why (a file removed, a rule deliberately dropped); a slice that fell under its floor because tests were lost is a failure to fix, not a floor to move.
+
+**A slice whose files change.** A slice that is dealt other files gets a new floor only after it has been measured: `--remeasure` refuses a run of other files than the slice's, and `--deal --of N --split file=parts@mutation.json <file-times.json of every slice of a run>` makes a new dealing, with new floors, from a run of all of them. Re-deal when a few files have grown enough to cost more than a slice may, or when the floors have drifted so far up that nobody trusts the old balance.
+
+**A new file, a file that is gone.** A file in `mutate` that the dealing does not know goes to the slice with the least seconds so far (files placed in name order, mutants times the dealing's median seconds a mutant, a tie to the lower slice); the report says which file went to which slice and that the floor was measured without it. A new file the tests do not reach is therefore what takes its slice under the floor: add tests, or measure the slice again. A file in the dealing that no longer exists is skipped and named.
+
+**What a red night is.** The job says which: *under its floor* (the summary names the weakest files; the tests got worse, or a new file in the slice is not covered); *the runner has received a shutdown signal* (not a score: run it again; it ended 3 of the 70 jobs of the three slice runs, at random, and slice 14 four times at one mutant, below); *no report* (Stryker did not finish; the log has its progress).
+
+**A mutant that kills the runner.** Slice 14 of the 40-slice run ended four times with "The runner has received a shutdown signal", at the same point (mutant 916 of 1,687), whatever was done to Stryker's processes: a lower priority (`nice`) and a 3 GB cap on Node's heap changed nothing. Bisecting by line range on CI (`mutate: file:from-to`, a throwaway workflow) narrowed it to the 14 mutants wholly inside lines 201–215 of `src/notifications/notification-delivery.service.ts`, and there the job died with a 60-second time limit for a mutant, with one worker, with a 1 GB heap and with two workers, and went through in about a minute with a limit of 8 and of 3 seconds (run 41554633962). `timeoutMS` is therefore 10 seconds. Which mutant it is and what it does to the machine is not established; the two that also time out on a laptop, `if (false)` and `===` for `if (notice.userId !== target.user_id) continue` on line 214, which make `push()` build a message for every recipient and notice pair, are the likely ones. A Timeout counts as detected, so the shorter limit can raise a score and not lower it.
+
+**Final runs.** Slices 0, 2 and 15 of this dealing went through the real nightly workflow on the pull request's branch (\`mutation_slice=0,2,15\`, run 41557289392). All three passed against their floors and reproduced the measured scores to the hundredth:
+
+| Slice | Held | Score | Floor | Mutation phase | Whole job |
+| ---: | :--- | ---: | ---: | ---: | ---: |
+| 0 | \`prisma-errors.ts\` alone, the dearest slice | 79.95% | 78% | 34:31 | 35.1 min |
+| 2 | the second range of \`optimization-proxy.service.ts\` (\`:2093-99999\`) and eight files | 79.78% | 78% | 40:18 | 40.8 min |
+| 15 | \`notification-delivery.service.ts\`, the file that killed the runner, and fifteen files | 76.56% | 75% | 34:34 | 35.2 min |
+
+Each took less than the 42–44 minutes the dealing says, because a mutant that hung now ends after 10 seconds and not after 60. Slice 2 shows that a line-range part runs in the real flow, slice 15 that the runner survives the mutants that killed it. The same run's latency job passed (floor 449 req/s on an EPYC 7763, reads at 0.904 and 0.914 of it).
+
+**The weakest files, for the tests that raise the floors.** Of the 67,921 mutants a test can reach, 19,488 are undetected. \`stad-b-latency/stryker-svagaste-filer.md\` in the session's notes ranks the files by undetected mutants per slice; the three of each final slice are \`common/utils/prisma-errors.ts\` (131 survived) in slice 0; \`lesson-log/class-book.service.ts\` (55.00%, 94 survived), \`gallring/gallring.service.ts\` (70.11%, 44) and \`users/my-schools.service.ts\` in slice 2; \`cover/cover-reports.service.ts\` (53.67%, 78), \`cover/cover-decisions.ts\` and \`users/per-login-throttler.guard.ts\` in slice 15.
+
 ### Mutation score is measured only over files that have tests
 
-Per file, mutating production sources only:
+**History: this section describes 2026-08, when five files had tests; the next section is the gate as it stands.** Per file, mutating production sources only:
 
 | File | Score | Survived |
 | :--- | :--- | :--- |

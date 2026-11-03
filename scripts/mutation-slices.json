@@ -1,7 +1,7 @@
 {
   "comment": "The dealing scripts/mutation-slice.mjs runs by: each file's measured seconds, mutants, detected and valid mutants, and each slice's score and floor (its measured score minus one point, rounded down). Made by `node scripts/mutation-slice.mjs --deal --of N <file-times.json of every slice of a run>`; see the header of the script for how a floor is raised and when a slice needs a new one.",
-  "measured": "2026-11-03",
-  "run": "41519740264+41554992606",
+  "measured": "2026-11-02",
+  "run": "41519740264 (the nine files of the slice that died: 41554992606)",
   "ignoreStatic": true,
   "slices": [
     {
