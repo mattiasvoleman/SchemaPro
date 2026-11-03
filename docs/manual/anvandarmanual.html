@@ -1056,6 +1056,59 @@
     gruppen ersätta, men gruppen finns kvar.
   </p>
 
+  <h4 id="massval">Markera flera — ändra eller ta bort på en gång</h4>
+  <p>
+    Varje rad i listan har en kryssruta. Kryssrutan i tabellhuvudet markerar
+    <strong>alla rader som visas</strong>, alltså de som sökningen och fliken
+    tar fram just nu. Listan har inga sidor, så det som visas är allt som
+    matchar. Söker du på <em>2025/2026</em> och markerar alla har du förra
+    läsårets grupper och inga andra. Håll ned <span class="ui">Skift</span>
+    och klicka för att markera alla rader mellan två klick. Kryssrutorna nås
+    med tabbtangenten och kryssas med mellanslag.
+  </p>
+  <p>
+    Markeringen följer det du ser. Ändrar du sökningen eller fliken släpps de
+    rader som inte längre visas, så det du ändrar eller tar bort står alltid
+    på skärmen. Så länge något är markerat står en rad längst ned på skärmen.
+    Den säger hur många som är markerade av hur många som visas, och har
+    knapparna <span class="ui">Avmarkera</span>,
+    <span class="ui">Redigera</span> och <span class="ui">Ta bort</span>.
+    Högst 500 rader åt gången.
+  </p>
+  <p>
+    <strong>Redigera</strong> sätter samma värde på alla markerade. För
+    klasser och grupper är det <span class="ui">Årskurs</span>, och när bara
+    undervisningsgrupper är markerade även
+    <span class="ui">Ersätter ämne</span> (se Ersättande grupper ovan). En
+    klass halvor följer med till den nya årskursen, och skolenheten följer
+    årskursen. Har de markerade olika värden står fältet på
+    <span class="ui">Olika värden</span>. Det lämnas då som det är på varje
+    rad tills du väljer ett värde, och bara de fält du ändrar sparas. Namn och
+    sort ändras en rad i taget. Läsåret byts med läsårsrullningen (8.1), och
+    en grupps lärare sätts på timplansposterna (4.2).
+  </p>
+  <p>
+    <strong>Ta bort</strong> kontrollerar först vad som skulle hända och visar
+    det innan något tas bort. Dialogen visar vilka rader som tas bort och vad
+    som försvinner med dem: halvklasser, medlemskap, timplansposter, lektioner
+    i grundschemat och i kalendern och närvaron på dem. Den visar också vad
+    som finns kvar men tappar kopplingen, som elever som blir utan klass och
+    avsnitt i klasshistoriken. Kommer en grupp från elevregistret (SS12000)
+    står det också, eftersom nästa synkronisering kan lägga till den igen.
+  </p>
+  <p>
+    Samma regler gäller som när du ändrar eller tar bort en rad i taget, och
+    allt sker i ett enda steg: antingen går hela ändringen igenom eller inget
+    av den. Kan någon rad inte ändras eller tas bort listas den med skälet, till
+    exempel en klass som inte kan ersätta ett ämne eller en rad som någon
+    annan just har tagit bort. Då sparas inget, och knappen
+    <span class="ui">Spara för de … andra</span> eller
+    <span class="ui">Ta bort de … andra</span> gör det för resten. Det är
+    alltså du som bestämmer att resten ska gå, med listan framför dig. Ändrade
+    någon något medan dialogen var öppen tas inget bort, och dialogen visar
+    läget som det är nu.
+  </p>
+
   <h3><span class="num">3.5</span>Personer och inbjudningar</h3>
   <p>
     Lägg upp lärare, elever och vårdnadshavare. Varje elev måste tillhöra en
@@ -1150,6 +1203,29 @@
     båda delarna och skriver dessutom tjänsterna. En läsare ser personerna,
     deras behörigheter och uppdrag och elevernas vårdnadshavare men ändrar
     inget av det.
+  </p>
+  <p>
+    <strong>Flera elever på en gång.</strong> Elevernas rader har kryssrutor
+    som fungerar som på klasslistan (se <em>Markera flera</em> i 3.4).
+    Kryssrutan i tabellhuvudet markerar alla elever som sökningen och fliken
+    visar. Lärare, administratörer och vårdnadshavare har ingen kryssruta. De
+    ändras och tas bort en i taget, där varje rads egna regler kan sägas.
+    <span class="ui">Redigera</span> byter <span class="ui">Klass</span> för
+    de markerade eleverna eller sätter <span class="ui">Status</span> till
+    aktiv eller inaktiv. En elev som byter klass lämnar den gamla klassens
+    halvklasser.
+  </p>
+  <p>
+    <span class="ui">Ta bort</span> visar vad som försvinner med eleverna:
+    medlemskap i undervisningsgrupper, klasshistorik, kopplingar till
+    vårdnadshavare (vårdnadshavarna finns kvar), frånvaroanmälningar,
+    ledighetsansökningar, närvaro och de inbjudnas inloggningar. En inloggning
+    som används på en annan skola finns kvar. Vill du behålla elevens historik
+    gör du eleven inaktiv i stället. Kontrollen räknar elevernas frånvaro,
+    ledighet, närvaro, vårdnadshavare och grupper, och därför står den i
+    läsloggen (7.4) som en läsning av de uppgifterna. Kryssrutorna visas för
+    dem som ändrar personerna: expeditionen, rektor och en fullständig
+    administratör.
   </p>
   <p>
     Har skolan ett elevregister som stöder SS12000 kan personerna hämtas
