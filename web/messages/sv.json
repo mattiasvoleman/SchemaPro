@@ -1050,7 +1050,7 @@
       "under": "under mål",
       "none": "ingen nationell jämförelse"
     },
-    "legend": "Grönt når målet. Gult är under målet men inom vad skolans val får ta. Rött är under målet där förordningen inte medger det: ett skyddat ämne, mer än taket, eller ett NO/SO-ämne under sin minsta tid. Har planen ett årskurspann som bara täcker en del av ett stadium jämförs den med sin andel av stadiet, och ligger den under är det gult, aldrig rött. I foten är gult en notering: totalen eller potten bryts bara av de stadier planen har delvis.",
+    "legend": "Grönt når målet. Gult är under målet men inom vad skolans val får ta. Rött är under målet där förordningen inte medger det: ett skyddat ämne, mer än taket, eller ett NO/SO-ämne under sin minsta tid. Har planen ett årskurspann som bara täcker en del av ett stadium jämförs den med sin andel av stadiet, och ligger den under är det gult, aldrig rött. I raderna längst ned är gult en notering: totalen eller potten bryts bara av de stadier planen har delvis.",
     "countedHeading": "Räknas som undervisningstid",
     "notCountedHeading": "Räknas inte som undervisningstid",
     "notCountedHint": "Mentorstid, resurs och liknande. Minuterna sparas men ingår inte i någon summa.",
