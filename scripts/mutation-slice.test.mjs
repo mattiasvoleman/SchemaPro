@@ -10,13 +10,18 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   balance,
   baseOf,
   dayOfYear,
   deal,
   dealingNotes,
+  exitCodeFor,
   filesOf,
   filesToMutate,
   floorOf,
@@ -25,6 +30,7 @@ import {
   remeasure,
   scoreOf,
   scoreOfCounts,
+  sliceLines,
   splitEntry,
   summarise,
   summaryMarkdown,
@@ -50,9 +56,41 @@ test("tonight's slice is the day of the year modulo the number of slices, so tha
   assert.equal(tonightsSlice(new Date('2026-11-02T02:30:00Z'), 20), 6);
   const nights = Array.from({ length: 20 }, (_, i) => tonightsSlice(new Date(Date.UTC(2026, 10, 2 + i, 2, 30)), 20));
   assert.deepEqual([...nights].sort((a, b) => a - b), Array.from({ length: 20 }, (_, i) => i));
-  // The change of year repeats or skips one night, never more.
+  // The change of year breaks the rotation: 31 December is slice 5 and 1 January slice 1, so
+  // slices 1 to 5 run twice in a row, and every other slice waits 25 or 26 nights over the turn
+  // of the year. Within one year the wait is 20.
   assert.equal(tonightsSlice(new Date('2026-12-31T02:30:00Z'), 20), 5);
   assert.equal(tonightsSlice(new Date('2027-01-01T02:30:00Z'), 20), 1);
+  const longestWait = (from, to) => {
+    const wait = new Map();
+    const last = new Map();
+    for (let i = from; i < to; i++) {
+      const slice = tonightsSlice(new Date(Date.UTC(2026, 0, 1 + i, 2, 30)), 20);
+      if (last.has(slice)) wait.set(slice, Math.max(wait.get(slice) ?? 0, i - last.get(slice)));
+      last.set(slice, i);
+    }
+    return Math.max(...wait.values());
+  };
+  assert.equal(longestWait(0, 365), 20);
+  const overTheYears = longestWait(0, 3 * 366);
+  assert.ok(overTheYears >= 25 && overTheYears <= 26, String(overTheYears));
+});
+
+test('the day and the slice are the UTC ones wherever the machine is: a night that is still the day before in Los Angeles', () => {
+  const was = process.env.TZ;
+  try {
+    for (const zone of ['America/Los_Angeles', 'Pacific/Auckland', 'UTC']) {
+      process.env.TZ = zone;
+      // 02:30 UTC on 2 November is 19:30 on 1 November in Los Angeles and 15:30 on 2 November in Auckland.
+      assert.equal(dayOfYear(new Date('2026-11-02T02:30:00Z')), 306, zone);
+      assert.equal(dayOfYear(new Date('2026-01-01T00:00:00Z')), 1, zone);
+      assert.equal(dayOfYear(new Date('2026-12-31T23:59:59Z')), 365, zone);
+      assert.equal(tonightsSlice(new Date('2026-11-02T02:30:00Z'), 20), 6, zone);
+    }
+  } finally {
+    if (was === undefined) delete process.env.TZ;
+    else process.env.TZ = was;
+  }
 });
 
 test('a dispatch names one slice, a few, all of them, or leaves it to the date', () => {
@@ -342,4 +380,206 @@ test("a slice measured again takes the run's figures and a floor of its score mi
   const reranged = remeasure(ranged, 0, { report: { files: { 'src/big.ts': { mutants: [...killed(2), ...survived(1)] } } }, times: { files: { 'src/big.ts': { ms: 6000 } } } });
   assert.deepEqual(reranged.slices[0].files['src/big.ts:1-30'], { seconds: 6, mutants: 3, detected: 2, valid: 3 });
   assert.equal(reranged.slices[0].floor, 65);
+});
+
+// ---- A run of the script itself, with a Stryker that behaves like Stryker's exit code: it
+// writes the report it is told to and exits 1 when the score is under `thresholds.break`
+// of the config it was given, and 0 when the score is NaN (nothing valid to score).
+
+const SCRIPT = fileURLToPath(new URL('./mutation-slice.mjs', import.meta.url));
+
+const FAKE_STRYKER = `#!/usr/bin/env node
+const fs = require('node:fs');
+const config = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+const spec = JSON.parse(process.env.FAKE_STRYKER);
+if (spec.die) process.kill(process.pid, 'SIGKILL');
+const files = {};
+for (const file of config.mutate) files[file] = { mutants: (spec.statuses[file] ?? []).map((status) => ({ status })) };
+if (!spec.noReport) fs.writeFileSync(config.jsonReporter.fileName, JSON.stringify({ files }));
+let detected = 0;
+let undetected = 0;
+for (const { mutants } of Object.values(files)) for (const { status } of mutants) {
+  if (status === 'Killed' || status === 'Timeout') detected++;
+  else if (status === 'Survived' || status === 'NoCoverage') undetected++;
+}
+const score = detected + undetected === 0 ? NaN : (100 * detected) / (detected + undetected);
+process.exit(score < config.thresholds.break ? 1 : 0);
+`;
+
+const repeat = (status, n) => Array.from({ length: n }, () => status);
+
+/** A project of two source files and a dealing with slice 0 holding both; returns a function that runs the script in it. */
+function project({ floor = 70, mutants = 20, withFiles = true } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'mutation-slice-'));
+  mkdirSync(join(dir, 'src'), { recursive: true });
+  mkdirSync(join(dir, 'scripts'), { recursive: true });
+  mkdirSync(join(dir, 'node_modules', '.bin'), { recursive: true });
+  if (withFiles) for (const name of ['a.js', 'b.js']) writeFileSync(join(dir, 'src', name), '// source\n');
+  writeFileSync(join(dir, 'stryker.conf.json'), JSON.stringify({ mutate: ['src/*.js'], thresholds: { high: 95, low: 85, break: 85 }, reporters: ['clear-text'] }));
+  const half = mutants / 2;
+  const entry = { seconds: 10, mutants: half, detected: 0, valid: half };
+  writeFileSync(
+    join(dir, 'scripts', 'mutation-slices.json'),
+    JSON.stringify({
+      measured: '2026-11-02',
+      slices: [
+        { slice: 0, seconds: 20, mutants, detected: 0, valid: mutants, score: 0, floor, files: { 'src/a.js': entry, 'src/b.js': entry } },
+        { slice: 1, seconds: 0, mutants: 0, detected: 0, valid: 0, score: null, floor: 0, files: {} },
+      ],
+    }),
+  );
+  writeFileSync(join(dir, 'node_modules', '.bin', 'stryker'), FAKE_STRYKER);
+  chmodSync(join(dir, 'node_modules', '.bin', 'stryker'), 0o755);
+  return {
+    dir,
+    run: (spec) => {
+      const result = spawnSync(process.execPath, [SCRIPT], {
+        cwd: dir,
+        encoding: 'utf8',
+        env: { PATH: process.env.PATH, MUTATION_SLICE: '0', FAKE_STRYKER: JSON.stringify(spec) },
+      });
+      const summaryPath = join(dir, 'reports', 'mutation', 'slice-0', 'summary.md');
+      return {
+        code: result.status,
+        out: result.stdout + result.stderr,
+        summary: existsSync(summaryPath) ? readFileSync(summaryPath, 'utf8') : null,
+        config: JSON.parse(readFileSync(join(dir, 'reports', 'mutation', 'slice-0', 'stryker.conf.json'), 'utf8')),
+      };
+    },
+    done: () => rmSync(dir, { recursive: true, force: true }),
+  };
+}
+
+const statusesFor = (killed, survived) => ({ 'src/a.js': [...repeat('Killed', killed / 2), ...repeat('Survived', survived / 2)], 'src/b.js': [...repeat('Killed', killed / 2), ...repeat('Survived', survived / 2)] });
+
+test("the night fails under the slice's floor and only then: break is the floor, not the floor minus one and not 85", () => {
+  const p = project({ floor: 70, mutants: 20 });
+  try {
+    // 80 % against a floor of 70: passes, though 80 is under the target of 85.
+    const above = p.run({ statuses: statusesFor(16, 4) });
+    assert.equal(above.code, 0, above.out);
+    assert.equal(above.config.thresholds.break, 70);
+    assert.deepEqual(above.config.mutate, ['src/a.js', 'src/b.js']);
+    assert.match(above.summary, /\*\*Score 80\.00 %\*\* against this slice's floor of 70 % \(at or above its floor\)/);
+    // Exactly the floor passes.
+    const exact = p.run({ statuses: statusesFor(14, 6) });
+    assert.equal(exact.code, 0, exact.out);
+    assert.match(exact.summary, /\*\*Score 70\.00 %\*\*.*\(at or above its floor\)/);
+    // Under it fails.
+    const under = p.run({ statuses: statusesFor(12, 8) });
+    assert.equal(under.code, 1, under.out);
+    assert.match(under.summary, /\*\*Score 60\.00 %\*\*.*\(UNDER ITS FLOOR\)/);
+  } finally {
+    p.done();
+  }
+});
+
+test('a score a hair under the floor fails: the floor is not softened by a point', () => {
+  const p = project({ floor: 70, mutants: 200 });
+  try {
+    // 139 of 200 = 69.5 %: under 70, over 69.
+    const under = p.run({ statuses: { 'src/a.js': [...repeat('Killed', 70), ...repeat('Survived', 30)], 'src/b.js': [...repeat('Killed', 69), ...repeat('Survived', 31)] } });
+    assert.equal(under.code, 1, under.out);
+    assert.equal(under.config.thresholds.break, 70);
+  } finally {
+    p.done();
+  }
+});
+
+test('a night that measured nothing is never a pass, whatever Stryker says: no files, nothing valid, no report, too few mutants, a killed Stryker', () => {
+  // Every file of the slice is gone: Stryker would be given mutate: [] and score NaN.
+  const gone = project({ withFiles: false });
+  try {
+    const result = spawnSync(process.execPath, [SCRIPT], { cwd: gone.dir, encoding: 'utf8', env: { PATH: process.env.PATH, MUTATION_SLICE: '0', FAKE_STRYKER: '{"statuses":{}}' } });
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(result.stderr, /Slice 0 has no file to mutate: every file in the dealing is gone/);
+  } finally {
+    gone.done();
+  }
+
+  const p = project({ floor: 70, mutants: 20 });
+  try {
+    // Files, a report, and nothing valid in it: NaN, which Stryker lets through with 0.
+    const nothing = p.run({ statuses: { 'src/a.js': repeat('Ignored', 10), 'src/b.js': repeat('Ignored', 10) } });
+    assert.equal(nothing.code, 1, nothing.out);
+    assert.match(nothing.out, /the report holds no valid mutant, and a score of n\/a is not a pass/);
+    // Stryker leaves no report and exits 0.
+    const none = p.run({ statuses: statusesFor(20, 0), noReport: true });
+    assert.equal(none.code, 1, none.out);
+    assert.match(none.summary, /No report: Stryker did not finish/);
+    assert.match(none.out, /Stryker left no report/);
+    // A report with a third of the mutants the slice was dealt: the range matched less than it should.
+    const few = p.run({ statuses: { 'src/a.js': repeat('Killed', 3), 'src/b.js': repeat('Killed', 3) } });
+    assert.equal(few.code, 1, few.out);
+    assert.match(few.out, /only 6 of the slice's 20 mutants were in the report/);
+    // Stryker killed by a signal has no exit status, which is a failure.
+    const killed = p.run({ statuses: {}, die: true });
+    assert.equal(killed.code, 1, killed.out);
+    assert.match(killed.summary, /No report/);
+  } finally {
+    p.done();
+  }
+});
+
+test('the exit code keeps Stryker\'s when the run measured something, and is never 0 when it did not', () => {
+  const measured = { total: { valid: 20 } };
+  assert.deepEqual(exitCodeFor({ status: 0, summary: measured, ran: 20, expected: 20 }), { code: 0, reason: null });
+  assert.deepEqual(exitCodeFor({ status: 1, summary: measured, ran: 20, expected: 20 }), { code: 1, reason: null });
+  assert.equal(exitCodeFor({ status: null, summary: measured, ran: 20, expected: 20 }).code, 1);
+  assert.equal(exitCodeFor({ status: 0, summary: null, ran: 0, expected: 20 }).code, 1);
+  assert.equal(exitCodeFor({ status: 0, summary: { total: { valid: 0 } }, ran: 20, expected: 20 }).code, 1);
+  // 90 % of the expected mutants pass, 89 % do not.
+  assert.equal(exitCodeFor({ status: 0, summary: measured, ran: 90, expected: 100 }).code, 0);
+  assert.equal(exitCodeFor({ status: 0, summary: measured, ran: 89, expected: 100 }).code, 1);
+  // Stryker's own failure code is kept.
+  assert.equal(exitCodeFor({ status: 2, summary: null, ran: 0, expected: 20 }).code, 2);
+});
+
+test('the summary calls a score exactly at the floor "at or above its floor"', () => {
+  const summary = summarise({ files: { 'src/a.ts': { mutants: [...repeat('Killed', 7), ...repeat('Survived', 3)].map((status) => ({ status })) } } });
+  assert.equal(summary.total.score, 70);
+  const base = { slice: 3, of: 20, mutants: 10, files: [{}], measured: '2026-11-02' };
+  assert.match(summaryMarkdown({ ...base, floor: 70 }, summary), /\(at or above its floor\)/);
+  assert.match(summaryMarkdown({ ...base, floor: 71 }, summary), /\(UNDER ITS FLOOR\)/);
+  assert.match(summaryMarkdown({ ...base, floor: 70 }, summarise({ files: { 'src/a.ts': { mutants: [{ status: 'Ignored' }] } } })), /\(no valid mutants\)/);
+});
+
+test('a slice with nothing valid in it has a floor of 0 and no score, and is still dealt', () => {
+  const dealing = deal(new Map([['src/types.ts', { ms: 0, mutants: 3, statuses: { Ignored: 3 } }]]), 1, { date: '2026-11-02' });
+  assert.deepEqual({ score: dealing.slices[0].score, floor: dealing.slices[0].floor, valid: dealing.slices[0].valid }, { score: null, floor: 0, valid: 0 });
+});
+
+test('--list shows a new file with the mutants counted for it, and `new` where the seconds would be', () => {
+  const slice = { mutants: 30, seconds: 120, floor: 70, files: { 'src/a.ts': { seconds: 120, mutants: 30 } } };
+  const lines = sliceLines(slice, 2, 20, 70, ['src/a.ts', 'src/fresh.ts'], ['Not in the dealing: fresh.'], [{ file: 'src/fresh.ts', mutants: 15, slice: 2, seconds: 40 }]);
+  assert.equal(lines[0], 'Slice 2 of 20: 30 mutants in 2 files, about 2 min of mutation testing, floor 70 %');
+  assert.equal(lines[1], '    30    120 s  src/a.ts');
+  assert.equal(lines[2], '    15    new    src/fresh.ts');
+  assert.equal(lines[3], 'Not in the dealing: fresh.');
+});
+
+test('--remeasure refuses a run that is not of the slice\'s own files, and accepts one that is: each guard on its own', () => {
+  const dealing = {
+    slices: [
+      { slice: 0, seconds: 10, mutants: 3, detected: 2, valid: 3, score: 66.67, floor: 65, files: { 'src/a.ts': { seconds: 5, mutants: 2, detected: 1, valid: 2 }, 'src/types.ts': { seconds: 0, mutants: 0, detected: 0, valid: 0 }, 'src/b.ts': { seconds: 5, mutants: 1, detected: 1, valid: 1 } } },
+      { slice: 1, seconds: 4, mutants: 2, detected: 1, valid: 2, score: 50, floor: 49, files: { 'src/big.ts:1-30': { seconds: 2, mutants: 1, detected: 1, valid: 1 }, 'src/big.ts:31-99999': { seconds: 2, mutants: 1, detected: 0, valid: 1 } } },
+    ],
+  };
+  const ok = (n) => Array.from({ length: n }, () => ({ status: 'Killed' }));
+  const run = (files) => ({ report: { files }, times: { files: {} } });
+  const same = { 'src/a.ts': { mutants: ok(2) }, 'src/b.ts': { mutants: ok(1) } };
+  // A file with no mutants is not run and not missed; exactly the same floor is accepted.
+  const accepted = remeasure(dealing, 0, run(same));
+  assert.equal(accepted.slices[0].floor, 99);
+  assert.throws(() => remeasure(dealing, 0, run({ ...same, 'src/extra.ts': { mutants: ok(1) } })), /ran src\/extra\.ts; did not run none/);
+  assert.throws(() => remeasure(dealing, 0, run({ 'src/a.ts': same['src/a.ts'] })), /ran no other file; did not run src\/b\.ts/);
+  assert.throws(() => remeasure(dealing, 0, run({ 'src/a.ts': same['src/a.ts'], 'src/extra.ts': { mutants: ok(1) } })), /ran src\/extra\.ts; did not run src\/b\.ts/);
+  // Two parts of one file in a slice cannot be told apart in a run of the file.
+  assert.throws(() => remeasure(dealing, 1, run({ 'src/big.ts': { mutants: ok(2) } })), /holds two parts of one file/);
+  // The floor is compared, not the score: a lower score with the same floor is accepted, a lower floor is not.
+  const sameFloor = { slices: [{ slice: 0, seconds: 1, mutants: 10, detected: 7, valid: 10, score: 70.9, floor: 69, files: { 'src/a.ts': { seconds: 1, mutants: 10, detected: 7, valid: 10 } } }] };
+  const lowerScore = { 'src/a.ts': { mutants: [...ok(7), ...Array.from({ length: 3 }, () => ({ status: 'Survived' }))] } };
+  assert.equal(remeasure(sameFloor, 0, run({ 'src/a.ts': { mutants: [...ok(70), ...Array.from({ length: 30 }, () => ({ status: 'Survived' }))] } })).slices[0].floor, 69);
+  assert.equal(remeasure(sameFloor, 0, run(lowerScore)).slices[0].floor, 69);
+  assert.throws(() => remeasure(sameFloor, 0, run({ 'src/a.ts': { mutants: [...ok(6), ...Array.from({ length: 4 }, () => ({ status: 'Survived' }))] } })), /would lower its floor from 69 % to 59 %/);
 });

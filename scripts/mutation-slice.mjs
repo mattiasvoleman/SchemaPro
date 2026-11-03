@@ -16,7 +16,9 @@
  * mutants a minute on the runner, and the whole set is half a day of it. The
  * gate is a slice a night: the files are dealt into a number of slices,
  * tonight's is the day of the year (UTC) modulo that number, and the whole API
- * is covered every that many nights.
+ * is covered every that many nights within a year; across a new year the
+ * slices after 31 December run twice in a row and the longest wait for a slice
+ * is a few nights more (25 or 26 for twenty slices).
  *
  * DEALT BY MEASURED SECONDS, NOT BY MUTANTS. Mutant counts say nothing about
  * time: slices of the same size took 21 to over 95 minutes. So the dealing is
@@ -75,7 +77,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, globSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, globSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -372,6 +374,27 @@ export function summarise(report) {
 
 const pct = (score) => (score === null ? 'n/a' : `${score.toFixed(2)} %`);
 
+/** A slice that ran fewer than this share of the mutants it was dealt did not run its slice. */
+export const MIN_RAN = 0.9;
+
+/**
+ * The job's exit code. Stryker's own is kept when the run measured something,
+ * but a run that did not is never a pass: Stryker scores NaN when there is
+ * nothing valid to score, and `NaN < break` is false, so it exits 0 on a slice
+ * whose files are all gone, whose range matches no mutant, or whose report is
+ * empty. `ran` is the number of mutants in the report, `expected` those the
+ * dealing gave the slice (and the new files placed in it).
+ */
+export function exitCodeFor({ status, summary, ran, expected }) {
+  const stryker = status ?? 1;
+  if (summary === null) return { code: stryker || 1, reason: 'Stryker left no report' };
+  if (summary.total.valid === 0) return { code: stryker || 1, reason: 'the report holds no valid mutant, and a score of n/a is not a pass' };
+  if (ran < expected * MIN_RAN) {
+    return { code: stryker || 1, reason: `only ${ran} of the slice's ${expected} mutants were in the report (at least ${Math.ceil(expected * MIN_RAN)} are expected): the slice did not run` };
+  }
+  return { code: stryker, reason: null };
+}
+
 /** What the summary says about how tonight's slice differs from the dealing. */
 export function dealingNotes({ placed, gone }, n) {
   const lines = [];
@@ -409,13 +432,19 @@ export function summaryMarkdown({ slice, of, mutants, files, floor, measured, no
 const number = (n) => String(n).padStart(6);
 const minutes = (seconds) => `${Math.round(seconds / 60)} min`;
 
-function printSlice(s, n, of, floor, files, notes) {
-  console.log(`Slice ${n} of ${of}: ${s.mutants} mutants in ${files.length} files, about ${minutes(s.seconds)} of mutation testing, floor ${floor} %`);
+/** The lines that say what a slice runs: its files with mutants and seconds, `new` and the mutants counted for a file the dealing did not know. */
+export function sliceLines(s, n, of, floor, files, notes, placed = []) {
+  const lines = [`Slice ${n} of ${of}: ${s.mutants} mutants in ${files.length} files, about ${minutes(s.seconds)} of mutation testing, floor ${floor} %`];
   for (const file of files) {
     const dealt = s.files[file];
-    console.log(`${number(dealt?.mutants ?? 0)}  ${dealt ? `${String(Math.round(dealt.seconds)).padStart(5)} s` : '  new  '}  ${file}`);
+    const added = placed.find((p) => p.file === file);
+    lines.push(`${number(dealt?.mutants ?? added?.mutants ?? 0)}  ${dealt ? `${String(Math.round(dealt.seconds)).padStart(5)} s` : '  new  '}  ${file}`);
   }
-  for (const note of notes) console.log(note);
+  return [...lines, ...notes];
+}
+
+function printSlice(...args) {
+  for (const line of sliceLines(...args)) console.log(line);
 }
 
 function parseArgs(argv, env) {
@@ -529,7 +558,7 @@ async function main() {
       for (const line of dealingNotes(placement, -1)) console.log(line);
     } else {
       for (const n of plan({ input: wanted, of })) {
-        printSlice(dealing.slices[n], n, of, dealing.slices[n].floor, filesOf(dealing, n, files, placement.placed), dealingNotes(placement, n));
+        printSlice(dealing.slices[n], n, of, dealing.slices[n].floor, filesOf(dealing, n, files, placement.placed), dealingNotes(placement, n), placement.placed);
       }
     }
     return 0;
@@ -543,8 +572,13 @@ async function main() {
   mkdirSync(dir, { recursive: true });
 
   if (process.env.GITHUB_ACTIONS) console.log('::group::The slice');
-  printSlice(chosen, n, of, chosen.floor, sliceFiles, notes);
+  printSlice(chosen, n, of, chosen.floor, sliceFiles, notes, placement.placed);
   if (process.env.GITHUB_ACTIONS) console.log('::endgroup::');
+
+  if (sliceFiles.length === 0) {
+    console.error(`Slice ${n} has no file to mutate: every file in the dealing is gone. A night that mutated nothing is not a pass; make a new dealing with --deal.`);
+    return 1;
+  }
 
   const configPath = join(dir, 'stryker.conf.json');
   writeFileSync(
@@ -568,13 +602,17 @@ async function main() {
   const slice = { slice: n, of, mutants: chosen.mutants, floor: chosen.floor, measured: dealing.measured, files: sliceFiles, notes };
   writeFileSync(join(dir, 'slice.json'), JSON.stringify({ ...slice, date: new Date().toISOString() }, null, 2) + '\n');
 
+  // A report left by an earlier run of the slice is not this run's: without it, a Stryker that dies is read as the one that finished.
+  rmSync(join(dir, 'mutation.json'), { force: true });
+
   const stryker = spawnSync(join('node_modules', '.bin', 'stryker'), ['run', configPath], {
     stdio: 'inherit',
     env: { ...process.env, MUTATION_TIMING_FILE: join(dir, 'file-times.json') },
   });
 
   const reportPath = join(dir, 'mutation.json');
-  const summary = existsSync(reportPath) ? summarise(JSON.parse(readFileSync(reportPath, 'utf8'))) : null;
+  const report = existsSync(reportPath) ? JSON.parse(readFileSync(reportPath, 'utf8')) : null;
+  const summary = report === null ? null : summarise(report);
   const markdown = summaryMarkdown(slice, summary);
   writeFileSync(join(dir, 'summary.md'), markdown);
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, markdown);
@@ -584,7 +622,11 @@ async function main() {
     console.log(`${pct(f.score).padStart(9)}  ${String(f.survived).padStart(4)} survived  ${String(f.noCoverage).padStart(4)} no coverage  ${f.file}`);
   }
 
-  return stryker.status ?? 1;
+  const ran = Object.values(report?.files ?? {}).reduce((sum, f) => sum + f.mutants.length, 0);
+  const expected = sliceFiles.reduce((sum, key) => sum + (chosen.files[key]?.mutants ?? placement.placed.find((p) => p.file === key)?.mutants ?? 0), 0);
+  const { code, reason } = exitCodeFor({ status: stryker.status, summary, ran, expected });
+  if (reason !== null) console.error(`Slice ${n}: ${reason}.`);
+  return code;
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
