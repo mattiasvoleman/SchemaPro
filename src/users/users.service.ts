@@ -881,9 +881,10 @@ export class UsersService {
    * checks (judgeStudentRemoval) and counts what goes with them
    * (StudentRemovalConsequences), without a row lock, and commits: the counts
    * are a read of the pupils, recorded in the läslogg. The delete itself
-   * would scan AttendanceRecords once per pupil for a key without an index
-   * (recordedById), so a dry run of 500 pupils that deleted and rolled back
-   * ran for most of a minute and held them FOR UPDATE meanwhile.
+   * removes every mark of every pupil, seconds for 500 pupils over 1.5
+   * million marks (half a minute before recordedById had an index,
+   * 20261220090000), so a dry run that deleted and rolled back would hold
+   * them FOR UPDATE for that long.
    *
    * THE CONFIRMATION BINDS THE COUNTS. The real call carries the dry run's
    * counts back (`expected`) and counts again in its own transaction, after

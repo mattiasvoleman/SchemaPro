@@ -30,11 +30,13 @@ import { WRITE_CONFLICT, rethrowPrismaError } from './utils/prisma-errors';
  * A DELETE'S DRY RUN DELETES NOTHING. It reads the rows, judges them with
  * the real call's checks and counts what hangs on them, without a row lock
  * and without the delete. The delete itself visits every table with a key
- * to the rows, and some of those keys have no index: a pupil's delete scans
- * AttendanceRecords for recordedById, 74 ms a pupil over 1.5 million marks.
- * Rolled back, a dry run cost that much and held the pupils FOR UPDATE for
- * it, and a teacher saving attendance for one of them waited. An update's
- * dry run (no client asks one) is still the write, rolled back.
+ * to the rows and removes what hangs on them: the pupils' own marks go with
+ * them, seconds for 500 pupils over 1.5 million marks. It also scanned
+ * AttendanceRecords for recordedById, 74 ms a pupil over that many marks,
+ * until that key had an index (20261220090000). Rolled back, a dry run costs
+ * what the delete costs and holds the pupils FOR UPDATE for it, and a
+ * teacher saving attendance for one of them waits. An update's dry run (no
+ * client asks one) is still the write, rolled back.
  *
  * ONE LOCK ORDER (lock-order.ts): the school's people lock, every group
  * row the call writes in id order, then the pupils, as every other write of
