@@ -1617,7 +1617,7 @@ investigation; the result column is the investigation's, eight workers, 120-180 
 | own teacher per group (L1) | 81.4 % | found at 92, 117, 165 s |
 | own teacher per group + one block per year (L2) | 81.4 % | found at 9.4, 10.3, 10.3, 11.6 s |
 | frame ends +120 min | 76.8 % | found at 6.4 s |
-| frames of years 7-9 dropped | 74.6 % | found at 8.4 s |
+| frames of years 7-9 dropped | 63.5 / 64.3 / 62.3 % (years 7 / 8 / 9) | found at 8.4 s |
 | no frames | 64.3 % | found at 8.7 s |
 
 The bound reproduces the investigation's own figures (2,115 / 2,150 / 2,075 of
@@ -1634,25 +1634,65 @@ week a block solves in ten seconds.
 the school's week 0.06 s (0.13 s for L1 and L2, which still need column
 generation to be cleared); högstadium 0.03-0.04 s; the bench school at 400 /
 1,000 / 2,000 pupils 0.007 / 0.02 / 0.05 s, also with the day cut to 16:00
-(96 % — a refusal) and 17:00 (86 %). A year whose whole weight fits under the
-threshold is cleared before a graph is built. The clique cover of a graph of
-800 nodes at 90 % density takes 1.3 s; the column generation is capped at
-`WEEK_LOAD_SECONDS` (4 s), after which what is proved is said and nothing more.
+(96 % — a refusal) and 17:00 (86 %). The graph is built for every year that
+survives one cheap test (all its weight in a row fits under the threshold), and
+a year of several classes rarely does, because the classes run side by side and
+that sum lines them up. After it an ordinary year is cheap (a greedy cover under
+the threshold needs no linear program); what costs is the graph and its clique
+cover, and the deadline does not interrupt them. The review's worst cases within
+the lesson cap: 2,000 entries on one teacher 6.2 s, and 416 shared entries of 12
+teachers each (4,992 lessons) 4.1 s, on a host at load 29. The clique cover of a
+graph of 800 nodes at 90 % density takes 1.3 s. The column generation is capped
+at `WEEK_LOAD_SECONDS` (4 s), after which what is proved is said and nothing
+more.
 
 **Soundness** (`tests/test_week_load.py`): 40 random graphs of up to nine nodes
 against the fractional chromatic number by enumerating every independent set
 (`lower <= exact <= upper`, and equal once converged); every edge of the clique
 cover is a real edge and every edge is covered; alternating weeks are counted
 one real week at a time (an odd-week and an even-week group of one teacher never
-queue); a meal placed by hand after the frame closes costs the frame nothing
-(this caught a first version that refused such a week); two classes' lessons
-under one teacher are no pattern and name nobody.
+queue, in the refusal and in the probe's offer); a meal placed by hand after the
+frame closes costs the frame nothing (this caught a first version that refused
+such a week); two classes' lessons under one teacher are no pattern and name
+nobody.
+
+**Never a false refusal, by exact weeks and by mutants.** The first version of
+the file left 15 of the 34 hand mutants of `week_load.py` that the review of #247
+made alive, and seven of those survived the 1,369 engine tests too; four of the
+seven (M04 the supply of one span only, M08 a meal for a closed day, M23 the
+union of windows dropping one window's end, M25 the margin of the widest span
+for every entry) refuse a week the model solves. Seven small weeks are
+now each counted to the minute and each one the real model finds a timetable
+for: two spans with different frames (450 of 620) and a window inside another
+(540 of 850), a class closed for a day (480 of 480; open, 495 and impossible),
+a meal placed by hand after the frame (480 of 480; unplaced, 510 and
+impossible), a post split between two teachers (150 of 150), unrelated parts of
+a year (150, not 300) and spans with different margins (150 of 160). An eighth
+test counts a meal placed across the frame's end four ways (0, 10, 10 and 30
+minutes inside). Against the 34 mutants, one run of the file each: 30 die. The
+four that live cannot raise the bound (M13: a meal for a class with no lessons
+in the year is no node; M18: rounding of a proved number, at most 1e-6; M32:
+the same pupil key left unjoined, only weaker; M34: the pricing time). Of the
+seven that survived the whole suite, M04, M08, M12, M23 and M25 now die, each
+of a test of its own. `pytest -m slow` also runs a smoke fuzz: 60 random small
+weeks, each with its day shortened until the count first refuses it; 58 are
+proved impossible by the model and none is solved (of the other two, the
+engine's own validation stopped one before the count refused it, and one was
+already refused at the longest day). It finds only
+gross errors; the review's 3,500-week fuzz found the subtle ones, and the exact
+weeks are what keep them found.
 
 **The probe** (`PROBE_SOLVED_WITH_OWN_TEACHERS_AND_BLOCK`): on a tight year with
-shared teachers the probe builds the school's own fix — a teacher of its own on
-each shared group (an id made from the entry's, so no real teacher is touched)
-and the year's groups that could then run together declared one block — and
-reports whether the relaxed week solves. It gets 60 % of `SOLVER_PROBE_SECONDS`.
+shared teachers the probe builds the school's own fix — in each year, a teacher
+of its own on each group that shares one with another group of the year (an id
+made from the entry's, so no real teacher is touched) and the year's groups that
+could then run together declared one block — and reports whether the relaxed
+week solves. A teacher with a group in each of years 7-9 keeps one group in each
+year: the pattern relaxed is a year's groups waiting on one teacher, not a
+teacher's every group. A school with odd and even weeks is offered the probe
+only for a year tight in a real week (counted a week at a time, as the refusal
+is), and a year tight in both weeks is relaxed on the teachers of both. It gets
+60 % of `SOLVER_PROBE_SECONDS`.
 Measured against the investigation's hand-made fix (L2), paired and started
 together on a host at load 9-21, so each had about half the machine: the probe's
 relaxed week reached a first timetable in 14.6 s and 14.8 s, L2 in 18.1 s and
