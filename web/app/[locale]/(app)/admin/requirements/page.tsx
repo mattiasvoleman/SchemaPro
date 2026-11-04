@@ -145,6 +145,7 @@ import {
   useCrudMutations,
   useGroupMemberships,
   useGroups,
+  useNationalTimplans,
   usePeople,
   useRequirements,
   useSchoolBreaks,
@@ -188,6 +189,7 @@ import { EXTRA_ROW_GRID } from "@/components/timplan/lesson-lengths-grid";
 import { useReadOnly } from "@/components/profile-context";
 import { useLengthsInWords } from "@/components/timplan/use-lengths-in-words";
 import type { TargetSources } from "@/lib/requirements-target";
+import { withParentCodes } from "@/lib/national-subjects";
 import type { TargetState } from "@/components/timplan/requirements-target";
 import { subjectColor } from "@/lib/utils";
 import { sortByName } from "@/lib/sorting";
@@ -412,6 +414,7 @@ export default function RequirementsPage() {
     isLoading: subjectsLoading,
     isError: subjectsFailed,
   } = useSubjects();
+  const { data: national, isError: nationalFailed } = useNationalTimplans();
   const {
     data: groups,
     isLoading: groupsLoading,
@@ -870,20 +873,29 @@ export default function RequirementsPage() {
    * the roster has answered: without it every class would read as having no
    * pupils, and "covered" would be judged on the class's own posts alone.
    */
+  // The subjects with the ämnesgrupp of their national code, which the timplan
+  // keys a line on (Biologi, Fysik and Kemi are NO's one line), for Mål mode and
+  // for Dela i halvklass. A national list that has not answered holds Mål mode
+  // back; one that failed leaves the groups out, the figures it gave before
+  // the children of a group were rolled up, rather than none.
+  const timplanSubjects = useMemo(
+    () => (subjects && (national || nationalFailed) ? withParentCodes(subjects, national?.subjects ?? []) : undefined),
+    [subjects, national, nationalFailed],
+  );
   const targetSources = useMemo<Omit<TargetSources, "attachments" | "plans"> | null>(
     () =>
-      yearBounds && people && memberships && subjects
+      yearBounds && people && memberships && timplanSubjects
         ? {
             year: yearBounds,
             closures: breaks ?? [],
-            subjects,
+            subjects: timplanSubjects,
             groups: yearGroups,
             requirements: requirements ?? [],
             people,
             memberships,
           }
         : null,
-    [yearBounds, breaks, subjects, yearGroups, requirements, people, memberships],
+    [yearBounds, breaks, timplanSubjects, yearGroups, requirements, people, memberships],
   );
   const target =
     targetMode && targetModule && targetState?.status === "ready"
@@ -2233,7 +2245,7 @@ export default function RequirementsPage() {
         <termHalves.module.TermHalvesDialog
           requirement={termHalves.post}
           groups={yearGroups}
-          subjects={subjects ?? []}
+          subjects={timplanSubjects ?? subjects ?? []}
           teachers={teachers}
           qualifications={qualifications}
           gradeSpans={gradeSpanOf}

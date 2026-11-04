@@ -10,6 +10,7 @@ import {
   presetPeriods,
   proposedLessons,
   readsPostLine,
+  topCodeOf,
   termHalfway,
   type HalvesRead,
 } from "./half-class-periods";
@@ -169,6 +170,42 @@ describe("how the halves read the post's line", () => {
     ["a post without a code swapped with another subject without one", ["own", "own2"], "own", "swapWithOther"],
   ] as const)("reads %s", (_, pair, post, read) => {
     expect(halvesRead(pair, post, subjects)).toBe(read);
+  });
+});
+
+describe("how the halves read two children of one ämnesgrupp", () => {
+  // Biologi and Kemi are NO's: the timplan reads them as one line.
+  const subjects = [
+    { id: "no", nationalCode: "NO" },
+    { id: "bi", nationalCode: "BI", parentCode: "NO" },
+    { id: "ke", nationalCode: "KE", parentCode: "NO" },
+    { id: "ge", nationalCode: "GE", parentCode: "SO" },
+    { id: "ma", nationalCode: "MA" },
+  ];
+
+  it("counts a child of the post's ämnesgrupp, and the group's own subject, as the post's line", () => {
+    expect(readsPostLine("ke", "bi", subjects)).toBe(true);
+    expect(readsPostLine("no", "bi", subjects)).toBe(true);
+    expect(readsPostLine("bi", "no", subjects)).toBe(true);
+    // Another group's child, and a subject with no group, are not.
+    expect(readsPostLine("ge", "bi", subjects)).toBe(false);
+    expect(readsPostLine("ma", "bi", subjects)).toBe(false);
+  });
+
+  it("reads Biologi swapped with Kemi as a swap within the line, and with Matematik as a swap with another", () => {
+    expect(halvesRead(["bi", "ke"], "bi", subjects)).toBe("swapWithinLine");
+    expect(halvesRead(["bi", "ma"], "bi", subjects)).toBe("swapWithOther");
+    // Without the groups they are two codes, as they were read before.
+    const flat = subjects.map(({ parentCode: _parentCode, ...subject }) => subject);
+    expect(halvesRead(["bi", "ke"], "bi", flat)).toBe("swapWithOther");
+  });
+
+  it("names the code a subject rolls up under", () => {
+    expect(topCodeOf(subjects[1])).toBe("NO");
+    expect(topCodeOf(subjects[0])).toBe("NO");
+    expect(topCodeOf({ id: "x", nationalCode: null, parentCode: "NO" })).toBeNull();
+    expect(topCodeOf({ id: "x" })).toBeNull();
+    expect(topCodeOf(undefined)).toBeNull();
   });
 });
 

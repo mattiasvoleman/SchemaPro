@@ -89,12 +89,14 @@ import {
   presetPeriods,
   proposedLessons,
   readsPostLine,
+  topCodeOf,
   PERIOD_PRESETS,
   type HalfPeriod,
   type PeriodPreset,
   type UniformLessons,
 } from "@/lib/half-class-periods";
 import {
+  childOnOwnLine,
   classPostReduction,
   halvesTimplan,
   type HalfLine,
@@ -147,7 +149,14 @@ export interface TermHalvesDialogProps {
   requirement: TeachingRequirement | null;
   /** The year's groups: the class and its halves are found among them. */
   groups: readonly { id: string; name: string; halfOfId?: string | null; gradeLevel?: number | null }[];
-  subjects: readonly { id: string; name: string; nationalCode?: string | null; countsTowardTimplan?: boolean }[];
+  subjects: readonly {
+    id: string;
+    name: string;
+    nationalCode?: string | null;
+    /** The ämnesgrupp of the code, where there is one (withParentCodes): the timplan's lines roll up to it. */
+    parentCode?: string | null;
+    countsTowardTimplan?: boolean;
+  }[];
   /**
    * The year's timplansposter, for what each half gets against the timplan:
    * the class's other posts (its slöjd, when hemkunskap is swapped with
@@ -491,22 +500,28 @@ function TermHalvesForm({
     !Object.values(problems).some((problem) => problem !== null) && halves.length !== 1 && periods !== null && periodsFault === null;
   // Neither slöjd subject found: the school has one "Slöjd" and adds the two first.
   const none = slojd && guessTermSubjects(subjects).every((id) => id === "");
-  // The chosen subjects that do not carry the post's national code (any,
+  // The chosen subjects that do not roll up to the post's national code (any,
   // when the post's subject has none) — the post's own subject always counts.
-  const postCode = subjects.find((subject) => subject.id === requirement.subjectId)?.nationalCode ?? null;
+  // The code is the one the timplan's lines are keyed on: Kemi under NO is the
+  // line of a Biologi post, as it is for the swap's pace (readsPostLine).
+  const postCode = topCodeOf(subjects.find((subject) => subject.id === requirement.subjectId));
   const uncoded = pair
     .filter((id, index) => id !== "" && id !== requirement.subjectId && pair.indexOf(id) === index)
     .map((id) => subjects.find((subject) => subject.id === id))
     .filter((subject): subject is (typeof subjects)[number] => subject !== undefined)
-    .filter((subject) => postCode === null || (subject.nationalCode ?? null) !== postCode);
+    .filter((subject) => postCode === null || topCodeOf(subject) !== postCode);
   /** A sentence of the code notice, and whether it asks for Ämnen. */
   const codeLine = (subject: (typeof subjects)[number]) => {
-    const code = subject.nationalCode ?? null;
+    const code = topCodeOf(subject);
     // The swap's other line: its own code is what it should have.
     if (subject.id === otherSubjectId) {
       return code === null
         ? { text: t("codeSwapMissing", { subject: subject.name, post: postSubject }), asks: true }
-        : { text: t("codeSwapOwn", { subject: subject.name, post: postSubject, code }), asks: false };
+        : {
+            // The row its minutes count on: the group's, or its own where the plan names it.
+            text: t("codeSwapOwn", { subject: subject.name, post: postSubject, row: childOnOwnLine(timplan, subject) ? subject.name : code }),
+            asks: false,
+          };
     }
     return postCode === null
       ? { text: t("codeMissingOnPost", { subject: subject.name, post: postSubject }), asks: true }

@@ -67,20 +67,61 @@ import { keptByOf, leavesLesson, replacedSubjectOf, replacementsOf } from './rep
  *
  * The third kind is a NATIONAL SUBJECT the school divides into parts: counted
  * subjects that share a national code which is not an alternative (Slöjd,
- * Textilslöjd and Trä- och metallslöjd are all SL) are one line, 'national:<code>',
- * the way P1, Stadium (P4) and Skapa timplansposter already roll them up. The
- * parts are read TOGETHER, not instead of one another: the line's target is the
- * SUM of the attached plan's entries over its subjects, and what is planned is
- * the sum of their rows. A class whose halves read textil in the autumn and trä
- * in the spring is met on the one slöjd the plan asks for, whichever of the
- * three subjects carries the target. The cost of summing: a plan with an entry
- * on each part (Textilslöjd 30 and Trä- och metallslöjd 30) is judged as one line
- * of 60, so 60 minutes of textil alone are MET; the cells still print each
- * subject's own entry and rows, and no plan of the pilot schools does this. A
- * subject whose code no other counted subject shares keeps its own line, key
- * and all: for it the sum and the maximum are the same figure. Whether a code
- * is shared is read from the school's counted subjects, not from the rows, so
- * a line has the same key for every class and every pupil.
+ * Textilslöjd and Trä- och metallslöjd are all SL) are one line,
+ * 'national:<code>'. The parts are read TOGETHER, not instead of one another:
+ * the line's target is the SUM of the attached plan's entries over its
+ * subjects, and what is planned is the sum of their rows. A class whose halves
+ * read textil in the autumn and trä in the spring is met on the one slöjd the
+ * plan asks for, whichever of the three subjects carries the target. The cost
+ * of summing: a plan with an entry on each part (Textilslöjd 30 and Trä- och
+ * metallslöjd 30) is judged as one line of 60, so 60 minutes of textil alone
+ * are MET; the cells still print each subject's own entry and rows, and no
+ * plan of the pilot schools does this. A subject whose code no other counted
+ * subject shares keeps its own line, key and all: for it the sum and the
+ * maximum are the same figure.
+ *
+ * ÄMNESGRUPPER. NO and SO are groups: NationalSubject.parentCode puts BI, FY
+ * and KE under NO and GE, HI, RE and SH under SO, and P1 (nationalCellOf,
+ * timplan-coverage.ts) and Stadium (P4, timplan-stage.ts) roll a child up to
+ * its group's cell. So does this module, for the children the plan does NOT
+ * name: they and the group's own subject (a school's "Naturorienterande
+ * ämnen", code NO) are one line, 'national:NO', keyed on the TOP code, which
+ * nationalTopOf gives (parentCode ?? nationalCode; a test holds it to
+ * nationalCellOf's). A plan whose target is on NO is met by posts on Biologi,
+ * Fysik and Kemi, and a target on SO by Geografi, Historia, Religion and
+ * Samhällskunskap; without it that plan read UNPLANNED on NO beside three
+ * NO_TARGET lines. The subject's code and its group's arrive on PlannedSubject
+ * (nationalCode, parentCode).
+ *
+ * A CHILD THE PLAN NAMES KEEPS ITS OWN LINE. A child has an entry of at least
+ * a minute in the årskurs's plan (Biologi 60, Fysik 60, Kemi 60: the form P1
+ * itself prefers, since it judges a child only where the plan tells them
+ * apart) and the plan asks for that child. It is keyed on its own code as any
+ * subject is ('subject:<id>', or 'national:<code>' with its entries and rows
+ * summed when more than one counted subject carries that child code), and its
+ * posts count there and not toward the group's line. Rolled up into one line
+ * of 180, a class that gave Kemi nothing would read 180 of 180 MET, and a
+ * warning this module gave before the roll-up (TIMPLAN_GROUP_UNPLANNED for the
+ * Kemi it was asked for) would be lost on the very plans that state the
+ * children. The price, and it is a choice between two: a plan with NO 90 and
+ * Biologi 30 holds Biologi's posts to the 30 and the others (Fysik, Kemi, NO
+ * itself) to the 90, so a post on Biologi does not help the 90; whichever the
+ * plan names is what the timetable is held to. And which lines there are
+ * depends on the årskurs's plan, so a child can be on the group's line in
+ * åk 7 and on its own in åk 8; a class and its pupils, who read the same plan,
+ * always key the same line the same way.
+ *
+ * A CHILD'S MINIMUM IS NOT JUDGED HERE. P1 holds each child of an ämnesgrupp
+ * to the minimum its lydelse prints (TIMPLAN_GROUP_MINIMUM_UNMET), and only
+ * where the plan distinguishes the children at all; that is a rule about the
+ * PLAN's entries against the statute's hours over a stadium, and Stadium (P4)
+ * judges a pupil's minimum per child over the stadium from the classes' posts.
+ * This module has neither the lydelse nor the stadium: it compares the posts of
+ * a class with the plan's line for one årskurs. So a plan with its target on NO
+ * alone is met when the posts of Biologi, Fysik and Kemi add up to it, whatever
+ * the split among them, and a class that gives Kemi nothing while Biologi has
+ * the time is not flagged for it here — as a class whose slöjd is all textil is
+ * not.
  *
  * ## The class
  *
@@ -193,6 +234,14 @@ export interface PlannedSubject {
   id: string;
   name: string;
   nationalCode: string | null;
+  /**
+   * The ämnesgrupp the subject's nationalCode is a child of
+   * (NationalSubject.parentCode: BI, FY and KE → NO, GE, HI, RE and SH → SO).
+   * Absent or null when the code has none, which is every code but those
+   * seven and every input made before the field existed; the readers leave it
+   * out then.
+   */
+  parentCode?: string | null;
   countsTowardTimplan: boolean;
 }
 
@@ -289,10 +338,11 @@ export interface PlannedLine {
   key: string;
   alternativeCode: string | null;
   /**
-   * The national code of a line made of the parts of one national subject
-   * (key 'national:<code>'; see Lines in src/common/timplan-planned.ts). Absent
-   * on every other line, so a line that is not one reads as it did before the
-   * kind existed.
+   * The code a line of parts is keyed on (key 'national:<code>'): SL for the
+   * parts of slöjd, NO for the children of NO the plan does not name (with the
+   * group's own subject), BI for the subjects of a child the plan names; see
+   * Lines in src/common/timplan-planned.ts. Absent on every other line, so a
+   * line that is not one reads as it did before the kind existed.
    */
   nationalCode?: string;
   subjectIds: string[];
@@ -312,7 +362,7 @@ export interface PlannedCell {
   studentGroupId: string;
   subjectId: string;
   alternativeCode: string | null;
-  /** The code of a national line the subject is a part of; absent otherwise. */
+  /** The code of the national line the subject is a part of (see PlannedLine); absent otherwise. */
   nationalCode?: string;
   /** The subject's own entry for the årskurs; null when the plan has none. */
   targetMinutesPerWeek: number | null;
@@ -422,6 +472,17 @@ const byName = (a: string, b: string): number => a.localeCompare(b, 'sv');
 
 /** Minutes → hours to the tenth. */
 const hours = (minutes: number): number => Math.round(minutes / 6) / 10;
+
+/**
+ * The national code a subject's minutes roll up under: the ämnesgrupp its
+ * code is a child of, else the code itself — P1's nationalCellOf `top`
+ * (timplan-coverage.ts), the cell the statute states the hours of. Null for a
+ * subject outside the national timplan. The web reads a line's parts by it too
+ * (half-class-timplan.ts).
+ */
+export function nationalTopOf(subject: Pick<PlannedSubject, 'nationalCode' | 'parentCode'>): string | null {
+  return subject.nationalCode === null ? null : (subject.parentCode ?? subject.nationalCode);
+}
 
 const subjectKey = (id: string): string => `subject:${id}`;
 const altKey = (code: string): string => `alt:${code}`;
@@ -544,31 +605,52 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
     rowsByGroup.set(row.studentGroupId, list);
   }
 
-  // The national codes that more than one counted subject carries: the school
-  // divides one national subject into parts (SL on Slöjd, Textilslöjd and
-  // Trä- och metallslöjd). The alternatives share theirs too and are keyed
-  // first, below. Read from the counted subjects of the school and not from
-  // what a class has rows or a target in, so a class and its pupils key the
-  // same line the same way.
-  const sharedCodes = new Set<string>();
-  const seenCodes = new Set<string>();
-  for (const subject of subjects.values()) {
-    const code = subject.nationalCode;
-    if (code === null) continue;
-    if (seenCodes.has(code)) sharedCodes.add(code);
-    seenCodes.add(code);
+  // Which line a subject is on. A line is the school's one national subject in
+  // parts (SL on Slöjd, Textilslöjd and Trä- och metallslöjd) or one ämnesgrupp
+  // in its children (NO on Biologi, Fysik and Kemi) when more than one counted
+  // subject is keyed on the same code, and the alternatives are keyed first.
+  // Which code a subject is keyed on depends on the årskurs's plan: a child of
+  // an ämnesgrupp the plan NAMES (an entry of at least a minute on a subject
+  // with its code) is keyed on its own code, as any subject is, and one it does
+  // not name is keyed on the group's, with the group's own subject. Read from
+  // the counted subjects of the school and the plan's entries, and not from
+  // what a class has rows in, so a class and its pupils key the same line the
+  // same way; the keys are per set of targets, which is per årskurs.
+  interface LineKey {
+    key: string;
+    alternativeCode: string | null;
+    nationalCode: string | null;
   }
-
-  const lineKeyOf = (
-    subjectId: string,
-  ): { key: string; alternativeCode: string | null; nationalCode: string | null } => {
-    const code = subjects.get(subjectId)?.nationalCode ?? null;
-    if (code !== null && TIMPLAN_ALTERNATIVE_CODES.includes(code)) {
-      return { key: altKey(code), alternativeCode: code, nationalCode: null };
+  const isChild = (subject: PlannedSubject): boolean =>
+    subject.nationalCode !== null && nationalTopOf(subject) !== subject.nationalCode;
+  const keyers = new Map<Map<string, number> | null, (subjectId: string) => LineKey>();
+  const keyerFor = (targets: Map<string, number> | null): ((subjectId: string) => LineKey) => {
+    let keyer = keyers.get(targets);
+    if (keyer) return keyer;
+    const named = new Set<string>();
+    for (const [subjectId, minutes] of targets ?? []) {
+      const subject = subjects.get(subjectId);
+      if (minutes > 0 && subject !== undefined && isChild(subject)) named.add(subject.nationalCode!);
     }
-    return code !== null && sharedCodes.has(code)
-      ? { key: nationalKey(code), alternativeCode: null, nationalCode: code }
-      : { key: subjectKey(subjectId), alternativeCode: null, nationalCode: null };
+    const keyedOn = (subject: PlannedSubject): string | null =>
+      isChild(subject) && named.has(subject.nationalCode!) ? subject.nationalCode : nationalTopOf(subject);
+    const sharing = new Map<string, number>();
+    for (const subject of subjects.values()) {
+      const code = keyedOn(subject);
+      if (code !== null) sharing.set(code, (sharing.get(code) ?? 0) + 1);
+    }
+    keyer = (subjectId) => {
+      const subject = subjects.get(subjectId);
+      const code = subject === undefined ? null : keyedOn(subject);
+      if (code !== null && TIMPLAN_ALTERNATIVE_CODES.includes(code)) {
+        return { key: altKey(code), alternativeCode: code, nationalCode: null };
+      }
+      return code !== null && (sharing.get(code) ?? 0) > 1
+        ? { key: nationalKey(code), alternativeCode: null, nationalCode: code }
+        : { key: subjectKey(subjectId), alternativeCode: null, nationalCode: null };
+    };
+    keyers.set(targets, keyer);
+    return keyer;
   };
 
   /** Lines for one årskurs from its targets and the rows that reach it. */
@@ -578,8 +660,9 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
     grade: number | null,
   ): Map<string, LineDraft> => {
     const lines = new Map<string, LineDraft>();
+    const keyOf = keyerFor(targets);
     const lineFor = (subjectId: string): LineDraft => {
-      const { key, alternativeCode, nationalCode } = lineKeyOf(subjectId);
+      const { key, alternativeCode, nationalCode } = keyOf(subjectId);
       let line = lines.get(key);
       if (!line) {
         line = {
@@ -601,7 +684,8 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
       const line = lineFor(subjectId);
       // The alternatives are read one OR the other, so the highest entry is
       // the line, the parts of a national subject are read together, so
-      // theirs add up. A line of one subject is the same figure either way.
+      // theirs add up — an ämnesgrupp's entry and its children's too, as P1
+      // sums its cell. A line of one subject is the same figure either way.
       line.target =
         line.alternativeCode !== null ? Math.max(line.target ?? 0, minutes) : (line.target ?? 0) + minutes;
     }
@@ -701,7 +785,7 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
           ? []
           : reaching
               .filter((row) => row.studentGroupId === classId && !rows.includes(row))
-              .map((row) => lineKeyOf(row.subjectId).key),
+              .map((row) => keyerFor(targets)(row.subjectId).key),
       );
       results.push({ pupil, grade, teachingGroupIds: own, lines: buildLines(targets, rows, grade), perSource, classTakenOff, rows });
     }
@@ -811,7 +895,7 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
       const target = draft.target;
       const carriedBy = [...carriers]
         .filter((id) =>
-          (rowsByGroup.get(id) ?? []).some((row) => lineKeyOf(row.subjectId).key === draft.key),
+          (rowsByGroup.get(id) ?? []).some((row) => keyerFor(targets)(row.subjectId).key === draft.key),
         )
         .sort(groupOrder);
       // Pupils of the class a carrying group reaches: the class stops being

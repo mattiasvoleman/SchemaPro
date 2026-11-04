@@ -30,10 +30,15 @@ import { GROUP_LIST, MASTER_LESSONS, REQUIREMENTS, STUDENT_LIST, SUBJECT_LIST } 
  * timplan-plans.ts's plans, so the figures agree with every other page.
  *
  * Layer 1 follows lib/timplan-planned.ts's rules: a line per subject (one per
- * alternative, Svenska/SvA and språkval), MET within one lesson of surplus,
+ * alternative, Svenska/SvA and språkval, and one per national subject the
+ * school divides into parts or an ämnesgrupp into children, 'national:<top>',
+ * whose target is the SUM of the entries; a child of an ämnesgrupp the plan
+ * names keeps a line of its own), MET within one lesson of surplus,
  * judged through the teaching groups when they reach half the class. No pupil
  * here reads a subject from two groups, so the double-planned findings are
- * not modelled.
+ * not modelled. The world has one subject under NO (Biologi) and one under SO
+ * (Historia), so no national line is drawn here today; the rule is written
+ * out so that a second one does not silently draw as two.
  */
 
 const byCode = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -61,16 +66,58 @@ const teachingGroupsOf = (studentId: string) =>
     .map((row) => row.studentGroupId)
     .sort(groupOrder);
 
-const lineKeyOf = (subjectId: string) => {
+/** The code a subject's minutes roll up under: its ämnesgrupp when its code is a child of one (BI → NO). */
+const topCodeOf = (subjectId: string | null) => {
+  const code = subjectId === null ? null : (counted.get(subjectId)?.nationalCode ?? null);
+  return code === null ? null : (PARENT_OF.get(code) ?? code);
+};
+/** A child of an ämnesgrupp (BI under NO): its code is not its top code. */
+const isChild = (subjectId: string) => {
   const code = counted.get(subjectId)?.nationalCode ?? null;
-  return code !== null && ALTERNATIVE_CODES.includes(code)
-    ? { key: `alt:${code}`, alternativeCode: code }
-    : { key: `subject:${subjectId}`, alternativeCode: null };
+  return code !== null && topCodeOf(subjectId) !== code;
+};
+
+/**
+ * Which line a subject is on, as the module reads it for one årskurs's targets
+ * (lib/timplan-planned.ts): keyed on its top code, except a child of an
+ * ämnesgrupp the plan names (an entry of at least a minute on a subject with
+ * its code), which is keyed on its own; more than one counted subject keyed on
+ * the same code is a line of parts, 'national:<code>'.
+ */
+const keyers = new Map<Map<string, number> | null, (subjectId: string) => { key: string; alternativeCode: string | null; nationalCode: string | null }>();
+const keyerFor = (targets: Map<string, number> | null) => {
+  let keyer = keyers.get(targets);
+  if (keyer) return keyer;
+  const named = new Set<string>();
+  for (const [subjectId, minutes] of targets ?? []) {
+    if (minutes > 0 && isChild(subjectId)) named.add(counted.get(subjectId)!.nationalCode!);
+  }
+  const keyedOn = (subjectId: string) => {
+    const own = counted.get(subjectId)?.nationalCode ?? null;
+    return own !== null && isChild(subjectId) && named.has(own) ? own : topCodeOf(subjectId);
+  };
+  const sharing = new Map<string, number>();
+  for (const id of counted.keys()) {
+    const code = keyedOn(id);
+    if (code !== null) sharing.set(code, (sharing.get(code) ?? 0) + 1);
+  }
+  keyer = (subjectId) => {
+    const code = keyedOn(subjectId);
+    if (code !== null && ALTERNATIVE_CODES.includes(code)) {
+      return { key: `alt:${code}`, alternativeCode: code, nationalCode: null };
+    }
+    return code !== null && (sharing.get(code) ?? 0) > 1
+      ? { key: `national:${code}`, alternativeCode: null, nationalCode: code }
+      : { key: `subject:${subjectId}`, alternativeCode: null, nationalCode: null };
+  };
+  keyers.set(targets, keyer);
+  return keyer;
 };
 
 interface LineDraft {
   key: string;
   alternativeCode: string | null;
+  nationalCode: string | null;
   subjectIds: Set<string>;
   target: number | null;
   week: number;
@@ -79,11 +126,12 @@ interface LineDraft {
 
 function buildLines(targets: Map<string, number> | null, rows: TeachingRequirement[]): Map<string, LineDraft> {
   const lines = new Map<string, LineDraft>();
+  const keyOf = keyerFor(targets);
   const lineFor = (subjectId: string) => {
-    const { key, alternativeCode } = lineKeyOf(subjectId);
+    const { key, alternativeCode, nationalCode } = keyOf(subjectId);
     let line = lines.get(key);
     if (!line) {
-      line = { key, alternativeCode, subjectIds: new Set(), target: null, week: 0, smallestLesson: Infinity };
+      line = { key, alternativeCode, nationalCode, subjectIds: new Set(), target: null, week: 0, smallestLesson: Infinity };
       lines.set(key, line);
     }
     line.subjectIds.add(subjectId);
@@ -91,7 +139,8 @@ function buildLines(targets: Map<string, number> | null, rows: TeachingRequireme
   };
   for (const [subjectId, minutes] of targets ?? []) {
     const line = lineFor(subjectId);
-    line.target = Math.max(line.target ?? 0, minutes);
+    // The alternatives are read one OR the other, the parts of a national subject together.
+    line.target = line.alternativeCode !== null ? Math.max(line.target ?? 0, minutes) : (line.target ?? 0) + minutes;
   }
   for (const row of rows) {
     const line = lineFor(row.subjectId);
@@ -232,7 +281,7 @@ export function plannedCoverage(academicYearId: string, drillGroupId: string | n
       const planned = Math.round(draft.week);
       const target = draft.target;
       const carriedBy = carriers
-        .filter((id) => rowsOf(id).some((row) => lineKeyOf(row.subjectId).key === draft.key))
+        .filter((id) => rowsOf(id).some((row) => keyerFor(targets)(row.subjectId).key === draft.key))
         .sort(groupOrder);
       const reached = results.filter((result) => result.own.some((id) => carriedBy.includes(id))).length;
       let status: PlannedStatus;
@@ -258,6 +307,7 @@ export function plannedCoverage(academicYearId: string, drillGroupId: string | n
       lines.push({
         key: draft.key,
         alternativeCode: draft.alternativeCode,
+        ...(draft.nationalCode !== null ? { nationalCode: draft.nationalCode } : {}),
         subjectIds,
         targetMinutesPerWeek: target,
         plannedMinutesPerWeek: planned,
@@ -312,6 +362,7 @@ export function plannedCoverage(academicYearId: string, drillGroupId: string | n
           studentGroupId: group.id,
           subjectId,
           alternativeCode: draft.alternativeCode,
+          ...(draft.nationalCode !== null ? { nationalCode: draft.nationalCode } : {}),
           targetMinutesPerWeek: ownTarget,
           plannedMinutesPerWeek: week,
           targetHours: ownTarget === null ? null : hours(ownTarget * YEAR_WEEKS),
@@ -357,6 +408,7 @@ export function plannedCoverage(academicYearId: string, drillGroupId: string | n
         own.push({
           key: draft.key,
           alternativeCode: draft.alternativeCode,
+          ...(draft.nationalCode !== null ? { nationalCode: draft.nationalCode } : {}),
           subjectIds,
           targetMinutesPerWeek: target,
           plannedMinutesPerWeek: planned,
@@ -440,11 +492,6 @@ const AS_OF = THIS_MONDAY < YEAR_START ? YEAR_START : THIS_MONDAY > YEAR_END ? Y
 const HELD_WEEKS = 8;
 const HOG = [7, 8, 9];
 
-const topCodeOf = (subjectId: string | null) => {
-  const entry = subjectId === null ? undefined : counted.get(subjectId);
-  if (!entry?.nationalCode) return null;
-  return PARENT_OF.get(entry.nationalCode) ?? entry.nationalCode;
-};
 const lessonMinutes = (start: string, end: string) => {
   const [startHours, startMinutes] = start.split(":").map(Number);
   const [endHours, endMinutes] = end.split(":").map(Number);

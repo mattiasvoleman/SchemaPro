@@ -51,3 +51,22 @@ export function sectionNationalSubjects(subjects: NationalSubject[]): NationalSu
   }
   return sections;
 }
+
+/**
+ * The school's subjects with the ämnesgrupp of their national code, on the
+ * ones that have one (Biologi under NO, Historia under SO). The timplan's
+ * Planerat layer keys a line on the top code, so the children of a group are
+ * one line with it (lib/timplan-planned.ts nationalTopOf); the subject rows
+ * the pages hold carry the code and not its group. Every other subject is
+ * handed back as it is, the same object.
+ */
+export function withParentCodes<T extends { nationalCode: string | null }>(
+  subjects: readonly T[],
+  national: readonly Pick<NationalSubject, "code" | "parentCode">[],
+): (T & { parentCode?: string })[] {
+  const parents = new Map(national.map((subject) => [subject.code, subject.parentCode]));
+  return subjects.map((subject) => {
+    const parentCode = subject.nationalCode === null ? null : parents.get(subject.nationalCode);
+    return parentCode ? { ...subject, parentCode } : subject;
+  });
+}

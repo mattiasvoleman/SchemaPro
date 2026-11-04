@@ -162,6 +162,41 @@ describe('TimplanCoverageService', () => {
     );
   });
 
+  it('reads the ämnesgrupp of the national codes that have one in a statement of its own and hands it on with the children alone', async () => {
+    // Biologi (BI) sits under NO, Matematik has no group: only the child
+    // carries parentCode, every other subject reaches the modules as before.
+    // The parents are one more statement, the children of the groups only.
+    const BIOLOGI = 'b1b1b1b1-b1b1-4b1b-8b1b-b1b1b1b1b1b1';
+    givenTheYear();
+    tx.subject.findMany.mockResolvedValue([
+      { id: BIOLOGI, name: 'Biologi', nationalCode: 'BI', countsTowardTimplan: true },
+      { id: MA, name: 'Matematik', nationalCode: 'MA', countsTowardTimplan: true },
+      { id: SPA, name: 'Spanska', nationalCode: null, countsTowardTimplan: true },
+    ]);
+    tx.nationalSubject.findMany.mockResolvedValue([
+      { code: 'BI', parentCode: 'NO' },
+      { code: 'KE', parentCode: 'NO' },
+    ]);
+
+    const rows = await readPlannedRows(tx as never, YEAR_ID);
+    expect(tx.subject.findMany).toHaveBeenCalledTimes(1);
+    expect(tx.subject.findMany).toHaveBeenCalledWith({
+      select: { id: true, name: true, nationalCode: true, countsTowardTimplan: true },
+    });
+    expect(tx.nationalSubject.findMany).toHaveBeenCalledTimes(1);
+    expect(tx.nationalSubject.findMany).toHaveBeenCalledWith({
+      where: { parentCode: { not: null } },
+      select: { code: true, parentCode: true },
+    });
+    expect(rows.subjects).toEqual([
+      { id: BIOLOGI, name: 'Biologi', nationalCode: 'BI', countsTowardTimplan: true, parentCode: 'NO' },
+      { id: MA, name: 'Matematik', nationalCode: 'MA', countsTowardTimplan: true },
+      { id: SPA, name: 'Spanska', nationalCode: null, countsTowardTimplan: true },
+    ]);
+    // Nothing carries the field on a subject without a group, not even as undefined.
+    expect(rows.subjects.filter((subject) => 'parentCode' in subject).map((subject) => subject.id)).toEqual([BIOLOGI]);
+  });
+
   it('reads which groups replace a subject and hands it on with those alone: a pupil of Ma 8 anpassad is judged on its Matematik, not 8A’s', async () => {
     // Ersättande grupper (common/replacing-groups.ts): Ma 8 anpassad replaces
     // Matematik, so Anna gets its 2 × 60 instead of 8A's 3 × 60 — short of

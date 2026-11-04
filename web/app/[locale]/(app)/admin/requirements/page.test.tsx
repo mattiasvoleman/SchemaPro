@@ -325,6 +325,15 @@ const freshState = () => ({
   /** The year's blocks, and the years the page asked for them (null: not asked). */
   blocks: loaded([] as { id: string; academicYearId: string; name: string; sameTimesAsBlockId: string | null }[]),
   blocksAskedFor: [] as (string | null)[],
+  /**
+   * The national subjects, whose parentCode puts Biologi under NO: Mål mode and
+   * Dela i halvklass read the children of a group as its line. None by default,
+   * which is a school whose subjects have no group, as before.
+   */
+  national: loaded({
+    versions: [] as unknown[],
+    subjects: [] as { code: string; name: string; parentCode: string | null; isGroup: boolean }[],
+  }),
 });
 
 interface YearTimplanFixture {
@@ -369,6 +378,7 @@ vi.mock("@/lib/queries", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/queries")>()),
   useAcademicYears: () => state.years,
   useSubjects: () => state.subjects,
+  useNationalTimplans: () => state.national,
   useGroups: () => state.groups,
   usePeople: () => state.people,
   useGroupMemberships: () => state.memberships,
@@ -478,16 +488,20 @@ vi.mock("@/components/timplan/term-halves-dialog", () => ({
   TermHalvesDialog: ({
     requirement,
     groups,
+    subjects,
     year,
     onClose,
   }: {
     requirement: { id: string };
     groups: unknown[];
+    subjects: { name: string; parentCode?: string | null }[];
     year: { startDate: string } | null;
     onClose: () => void;
   }) => (
     <section aria-label="term-halves">
       {`${requirement.id}: ${groups.length} groups from ${year?.startDate}`}
+      {/* The subjects it was handed that sit under an ämnesgrupp: what the dialog's timplan lines roll up by. */}
+      {` ${subjects.filter((subject) => subject.parentCode).map((subject) => `${subject.name}>${subject.parentCode}`).join(",")}`}
       <button type="button" onClick={onClose}>
         close-term-halves
       </button>
@@ -2431,6 +2445,104 @@ describe("Timplansposter in Mål mode", () => {
     expect(screen.getByText("3×60")).toBeInTheDocument();
   });
 
+  // The children of an ämnesgrupp are one line with it, as the gateway reads
+  // them and P1 does: a plan's NO is met by Biologi and Fysik. The page joins
+  // the national list's parentCode onto its subjects; without it each child
+  // is a line of its own with no entry, and NO reads unplanned.
+  describe("with the subjects of an ämnesgrupp", () => {
+    const children = [
+      { id: "s-bio", name: "Biologi", code: "BIO", color: "#16a34a", requiredRoomTypeId: null, nationalCode: "BI", countsTowardTimplan: true },
+      { id: "s-fys", name: "Fysik", code: "FYS", color: "#2563eb", requiredRoomTypeId: null, nationalCode: "FY", countsTowardTimplan: true },
+      { id: "s-nog", name: "Naturorienterande ämnen", code: "NOG", color: "#9333ea", requiredRoomTypeId: null, nationalCode: "NO", countsTowardTimplan: true },
+    ];
+    const national = {
+      versions: [] as unknown[],
+      subjects: [
+        { code: "NO", name: "Naturorienterande ämnen", parentCode: null, isGroup: true },
+        { code: "BI", name: "Biologi", parentCode: "NO", isGroup: false },
+        { code: "FY", name: "Fysik", parentCode: "NO", isGroup: false },
+      ],
+    };
+    beforeEach(() => {
+      state.subjects = loaded([...subjects, ...children]);
+      state.requirements = loaded([
+        { ...requirements[0]!, id: "r-bio", subjectId: "s-bio", lessonsPerWeek: 1, minutesPerLesson: 45, recurrence: "ALL_WEEKS" },
+        { ...requirements[0]!, id: "r-fys", subjectId: "s-fys", lessonsPerWeek: 1, minutesPerLesson: 45, recurrence: "ALL_WEEKS" },
+      ]);
+      state.planDetails = {
+        data: [{ ...plan("DECIDED"), entries: [{ id: "e-nog", subjectId: "s-nog", gradeLevel: 7, minutesPerWeek: 90, note: null }] }],
+        isError: false,
+      };
+    });
+
+    it("meets a target on NO with posts on Biologi and Fysik, each cell saying the line it is on", async () => {
+      state.national = loaded(national);
+      render(<RequirementsPage />);
+      await enterTargetMode();
+      // The cells are painted a render after the legend.
+      await waitFor(() =>
+        expect(cellOf("Biologi")).toHaveAttribute(
+          "aria-label",
+          "cellLabelSet(7A|Biologi|1|45). target.cellMet(90|90|0|0) target.cellParts(Fysik, Naturorienterande ämnen)",
+        ),
+      );
+      expect(within(cellOf("Biologi")).getByText("45 / —")).toBeInTheDocument();
+      expect(within(cellOf("Biologi")).getByText("target.tagParts")).toBeInTheDocument();
+      expect(cellOf("Fysik").className).toContain("bg-accent/70");
+      expect(within(cellOf("Naturorienterande ämnen")).getByText("0 / 90")).toBeInTheDocument();
+    });
+
+    it("still reads each as a line of its own while the national list has no group for them", async () => {
+      render(<RequirementsPage />);
+      await enterTargetMode();
+
+      expect(cellOf("Naturorienterande ämnen")).toHaveAttribute(
+        "aria-label",
+        expect.stringContaining("target.cellUnplanned(0|90|90|-90)"),
+      );
+      expect(within(cellOf("Biologi")).queryByText("target.tagParts")).toBeNull();
+    });
+
+    it("waits for the national list", async () => {
+      state.national = { data: undefined, isLoading: true, isError: false } as unknown as typeof state.national;
+      render(<RequirementsPage />);
+      await userEvent.click(screen.getByRole("button", { name: "target.toggle" }));
+      expect(await screen.findByText("target.loading")).toBeInTheDocument();
+    });
+
+    it("leaves the groups out when the national list failed, and paints the cells as before the roll-up", async () => {
+      state.national = { data: undefined, isLoading: false, isError: true } as unknown as typeof state.national;
+      render(<RequirementsPage />);
+      await enterTargetMode();
+
+      // Not held back for ever: the cells are painted, each subject its own line.
+      await waitFor(() =>
+        expect(cellOf("Naturorienterande ämnen")).toHaveAttribute(
+          "aria-label",
+          expect.stringContaining("target.cellUnplanned(0|90|90|-90)"),
+        ),
+      );
+      expect(within(cellOf("Biologi")).queryByText("target.tagParts")).toBeNull();
+      expect(screen.queryByText("target.loading")).toBeNull();
+    });
+
+    it("lets Mål mode through when the list fails after it was asked for, as the retries give up", async () => {
+      state.national = { data: undefined, isLoading: true, isError: false } as unknown as typeof state.national;
+      const { rerender } = render(<RequirementsPage />);
+      await userEvent.click(screen.getByRole("button", { name: "target.toggle" }));
+      expect(await screen.findByText("target.loading")).toBeInTheDocument();
+
+      state.national = { data: undefined, isLoading: false, isError: true } as unknown as typeof state.national;
+      rerender(<RequirementsPage />);
+      await waitFor(() =>
+        expect(cellOf("Naturorienterande ämnen")).toHaveAttribute(
+          "aria-label",
+          expect.stringContaining("target.cellUnplanned(0|90|90|-90)"),
+        ),
+      );
+    });
+  });
+
   it("goes back to the posts when pressed again", async () => {
     render(<RequirementsPage />);
     await enterTargetMode();
@@ -2765,6 +2877,26 @@ describe("Dela terminsvis i halvklass", () => {
     expect(screen.queryByRole("button", { name: "save" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "close-term-halves" }));
     expect(screen.queryByRole("region", { name: "term-halves" })).toBeNull();
+  });
+
+  it("hands the dialog the subjects with the ämnesgrupp of their national code, which its timplan lines roll up by", async () => {
+    state.subjects = loaded([
+      ...subjects,
+      { id: "s-bio", name: "Biologi", code: "BIO", color: "#16a34a", requiredRoomTypeId: null, nationalCode: "BI", countsTowardTimplan: true },
+    ]);
+    state.national = loaded({
+      versions: [],
+      subjects: [
+        { code: "NO", name: "Naturorienterande ämnen", parentCode: null, isGroup: true },
+        { code: "BI", name: "Biologi", parentCode: "NO", isGroup: false },
+      ],
+    });
+    render(<RequirementsPage />);
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText(SO_CELL));
+    await user.click(screen.getByRole("button", { name: "termHalves.action" }));
+
+    expect(await screen.findByRole("region", { name: "term-halves" })).toHaveTextContent("Biologi>NO");
   });
 
   it.each([
