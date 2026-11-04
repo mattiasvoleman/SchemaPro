@@ -1,8 +1,8 @@
 import * as React from "react";
-import { describe, expect, it, vi, type Mock } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { DateField } from "./date-field";
+import { DateField, hasTopLayer, placeCalendar } from "./date-field";
 import { Dialog, DialogContent, DialogTitle } from "./dialog";
 
 /*
@@ -568,6 +568,294 @@ describe("DateField", () => {
 
       await user.keyboard("{Escape}");
       expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
+  });
+
+  /*
+   * Where the calendar opens. Reported on "Lägg till lov": Sista dagen sits in
+   * the dialog's right column, the calendar hung under it wider than the room
+   * left, and the dialog's overflow-x-hidden cut off its right third with Nästa
+   * månad in it. e2e/date-field.smoke.spec.ts proves the fix in a browser,
+   * which is the only place a box can be seen to be clipped; this block pins
+   * the rule and the wiring, which jsdom can check.
+   */
+  describe("where it opens", () => {
+    const calendar = { width: 302, height: 294 };
+    const view = { width: 1280, height: 800 };
+
+    describe("placeCalendar", () => {
+      it("opens under its field with the left edges lined up when there is room", () => {
+        expect(placeCalendar({ top: 320, bottom: 356, left: 648 }, calendar, view)).toEqual({ top: 360, left: 648 });
+      });
+
+      it("slides left off the window's right edge instead of running past it", () => {
+        // A field in the right column of a phone-width form.
+        expect(placeCalendar({ top: 320, bottom: 356, left: 200 }, calendar, { width: 375, height: 812 })).toEqual({
+          top: 360,
+          left: 375 - 8 - 302,
+        });
+      });
+
+      it("keeps the left edge in the window when the window is narrower than the calendar", () => {
+        expect(placeCalendar({ top: 320, bottom: 356, left: 0 }, calendar, { width: 300, height: 812 }).left).toBe(8);
+      });
+
+      it("fits exactly under the field, eight pixels from the window's bottom", () => {
+        // 356 + 4 + 294 = 654 = 662 − 8: the last height that still opens under.
+        expect(placeCalendar({ top: 320, bottom: 356, left: 25 }, calendar, { width: 375, height: 662 }).top).toBe(360);
+      });
+
+      it("opens over the field when there is no room under it but there is over it", () => {
+        expect(placeCalendar({ top: 351, bottom: 387, left: 25 }, calendar, { width: 375, height: 600 })).toEqual({
+          top: 351 - 4 - 294,
+          left: 25,
+        });
+      });
+
+      it("covers the field, as low as the window allows, when neither side has room", () => {
+        expect(placeCalendar({ top: 200, bottom: 236, left: 25 }, calendar, { width: 375, height: 480 }).top).toBe(
+          480 - 8 - 294,
+        );
+      });
+
+      it("keeps its top in a window shorter than itself, and leaves the rest to scroll", () => {
+        expect(placeCalendar({ top: 100, bottom: 136, left: 25 }, calendar, { width: 375, height: 250 }).top).toBe(8);
+      });
+
+      it("opens over the field right up to eight pixels from the top, and not one pixel closer", () => {
+        // 306 − 4 − 294 = 8 fits over the field; at 305 it would be 7, so the
+        // calendar goes as low as the window allows instead (600 − 8 − 294).
+        const phone = { width: 375, height: 600 };
+        expect(placeCalendar({ top: 306, bottom: 342, left: 25 }, calendar, phone).top).toBe(8);
+        expect(placeCalendar({ top: 305, bottom: 341, left: 25 }, calendar, phone).top).toBe(298);
+      });
+
+      it("stays in the window when its field has scrolled out over the top", () => {
+        // The dialog scrolled in a 300 px window: the field at −47…−11 put the
+        // calendar's top at −7, outside the window.
+        expect(placeCalendar({ top: -47, bottom: -11, left: 648 }, calendar, { width: 1280, height: 300 }).top).toBe(8);
+      });
+
+      it("stays in the window when its field has scrolled out under the bottom", () => {
+        const short = { width: 302, height: 200 };
+        // Over the field would be 400 − 4 − 200 = 196, running to 396 in a
+        // 300 px window; the lowest place inside it is 300 − 8 − 200 = 92.
+        expect(placeCalendar({ top: 400, bottom: 436, left: 25 }, short, { width: 375, height: 300 }).top).toBe(92);
+      });
+    });
+
+    describe("in a browser with the top layer", () => {
+      /*
+       * jsdom has neither the Popover API nor layout, so both are stood in for:
+       * showPopover and hidePopover as spies, and every box the component
+       * measures given a size. The field stands where Sista dagen stands in a
+       * dialog low in a 1280×800 window.
+       */
+      const FIELD = { top: 500, bottom: 536, left: 648 };
+      // The calendar's height is its header plus 32 px a week, as in a browser:
+      // 230 px for a four-week month, 294 px for a six-week one.
+      const PANEL_WIDTH = 302;
+      const HEADER = 102;
+      const ROW = 32;
+      let fieldBox = FIELD;
+      const restore: Array<() => void> = [];
+
+      const box = ({ top, left, width, height }: { top: number; left: number; width: number; height: number }) =>
+        ({ top, left, width, height, x: left, y: top, right: left + width, bottom: top + height, toJSON: () => ({}) }) as DOMRect;
+
+      beforeEach(() => {
+        fieldBox = FIELD;
+        // jsdom's own stylesheet hides a [popover] that is not open, so the
+        // stand-in shows the box the way the browser would.
+        const showPopover = vi.fn(function (this: HTMLElement) {
+          this.style.display = "block";
+        });
+        Object.assign(HTMLElement.prototype, { showPopover, hidePopover: vi.fn() });
+        restore.push(() => {
+          delete (HTMLElement.prototype as Partial<HTMLElement>).showPopover;
+          delete (HTMLElement.prototype as Partial<HTMLElement>).hidePopover;
+        });
+        for (const [name, value] of [["clientWidth", 1280], ["clientHeight", 800]] as const) {
+          Object.defineProperty(document.documentElement, name, { configurable: true, value });
+          restore.push(() => delete (document.documentElement as unknown as Record<string, unknown>)[name]);
+        }
+        const measure = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+          this: HTMLElement,
+        ) {
+          if (this.getAttribute("role") === "dialog") {
+            const weeks = this.querySelectorAll("tbody tr").length;
+            return box({ top: 0, left: 0, width: PANEL_WIDTH, height: HEADER + weeks * ROW });
+          }
+          if (this.tagName === "TR") return box({ top: 0, left: 0, width: PANEL_WIDTH, height: ROW });
+          if (this.querySelector(":scope > div > input")) {
+            return box({ top: fieldBox.top, left: fieldBox.left, width: 223, height: fieldBox.bottom - fieldBox.top });
+          }
+          return box({ top: 0, left: 0, width: 0, height: 0 });
+        });
+        restore.push(() => measure.mockRestore());
+      });
+
+      afterEach(() => {
+        // Unmounted first: an open calendar's cleanup still calls hidePopover.
+        cleanup();
+        while (restore.length > 0) restore.pop()!();
+      });
+
+      const showPopover = () => HTMLElement.prototype.showPopover as Mock<() => void>;
+      const hidePopover = () => HTMLElement.prototype.hidePopover as Mock<() => void>;
+      const panel = () => screen.getByRole("dialog");
+
+      it("lifts the calendar into the top layer as a manual popover", async () => {
+        renderField({ value: "2027-02-24" });
+        await openCalendar();
+
+        expect(panel()).toHaveAttribute("popover", "manual");
+        expect(showPopover()).toHaveBeenCalledTimes(1);
+        expect(showPopover().mock.contexts[0]).toBe(panel());
+      });
+
+      it("places it by the tallest month, not by the four-week February on show", async () => {
+        /*
+         * February 2027 has four rows; a month can have six. 230 px as shown
+         * would fit under the field (540 + 230 = 770, under 792), but the six
+         * rows it may grow to would not (540 + 294 = 834). So it opens over the
+         * field, at 500 − 4 − 294 = 202, where stepping to a long month cannot
+         * push it out of the window or move its chevrons.
+         *
+         * Today is pinned in that February too. The calendar is placed before
+         * it has moved to the field's own month, while it still shows the one
+         * it last showed — today's, on a first open — and the test must not
+         * pass or fail with the month the suite happens to run in.
+         */
+        vi.useFakeTimers({ toFake: ["Date"] });
+        vi.setSystemTime(new Date("2027-02-10T12:00:00"));
+        restore.push(() => vi.useRealTimers());
+        renderField({ value: "2027-02-24" });
+        await openCalendar();
+
+        expect(within(grid()).getAllByRole("rowheader")).toHaveLength(4);
+        expect(panel().style.top).toBe("202px");
+        expect(panel().style.left).toBe("648px");
+      });
+
+      it("follows its field when something it sits in scrolls", async () => {
+        // The dialog scrolls, not the window: scroll does not bubble, so only a
+        // capturing listener hears it.
+        fieldBox = { top: 320, bottom: 356, left: 648 };
+        render(
+          <div data-testid="scroller">
+            <DateField id="d" value="2027-03-10" onChange={vi.fn()} />
+          </div>,
+        );
+        await openCalendar();
+        expect(panel().style.top).toBe("360px");
+
+        fieldBox = { top: 200, bottom: 236, left: 648 };
+        screen.getByTestId("scroller").dispatchEvent(new Event("scroll"));
+
+        expect(panel().style.top).toBe("240px");
+      });
+
+      it("stops following once closed, and leaves the top layer with its box", async () => {
+        fieldBox = { top: 320, bottom: 356, left: 648 };
+        renderField({ value: "2027-03-10" });
+        const user = await openCalendar();
+        const opened = panel();
+
+        await user.keyboard("{Escape}");
+        fieldBox = { top: 200, bottom: 236, left: 648 };
+        // Both listeners, one at a time: a scroll anywhere in the app, then a
+        // resize. Either one left behind would place the closed box again.
+        screen.getByRole("textbox").dispatchEvent(new Event("scroll"));
+        expect(opened.style.top).toBe("360px");
+        window.dispatchEvent(new Event("resize"));
+
+        expect(screen.queryByRole("dialog")).toBeNull();
+        expect(opened.style.top).toBe("360px");
+        // Removing the element takes it out of the top layer; a hidePopover on
+        // a disconnected element would throw in a real browser.
+        expect(hidePopover()).not.toHaveBeenCalled();
+      });
+
+      it("takes itself out of the top layer when the field goes while it is open", async () => {
+        // Its dialog closing under it, or React hiding it in an <Activity>:
+        // the box is still connected then, and still showing.
+        const { unmount } = render(<DateField id="d" value="2027-03-10" onChange={vi.fn()} />);
+        await openCalendar();
+        const opened = panel();
+
+        unmount();
+
+        expect(hidePopover()).toHaveBeenCalledTimes(1);
+        expect(hidePopover().mock.contexts[0]).toBe(opened);
+      });
+
+      /** The window `fixed` measures from, as `positionCalendar` reads it. */
+      const setWindow = (width: number, height: number) => {
+        Object.defineProperty(document.documentElement, "clientWidth", { configurable: true, value: width });
+        Object.defineProperty(document.documentElement, "clientHeight", { configurable: true, value: height });
+      };
+
+      it("follows its field when the window changes size", async () => {
+        // A window narrowed to a phone with the calendar open: the dialog drops
+        // to one column, the field moves, and the calendar is placed again and
+        // slid in from the new right edge (375 − 8 − 302 = 65).
+        fieldBox = { top: 320, bottom: 356, left: 648 };
+        renderField({ value: "2027-03-10" });
+        await openCalendar();
+        expect([panel().style.top, panel().style.left]).toEqual(["360px", "648px"]);
+
+        setWindow(375, 812);
+        fieldBox = { top: 280, bottom: 316, left: 200 };
+        window.dispatchEvent(new Event("resize"));
+
+        expect([panel().style.top, panel().style.left]).toEqual(["320px", "65px"]);
+      });
+
+      it("is capped at the window and scrolls inside it, under month chevrons that stay put", async () => {
+        // A window lower than the calendar's six weeks (294 px): it gets the
+        // top of the window, the window less its two edges as its height, and
+        // scrolls. The chevrons' row is sticky, so scrolling to a day near the
+        // bottom does not carry them out of the box.
+        setWindow(1280, 200);
+        renderField({ value: "2027-03-10" });
+        await openCalendar();
+
+        expect(panel().style.top).toBe("8px");
+        expect(panel().style.maxHeight).toBe("184px");
+        expect(panel().style.maxWidth).toBe("1264px");
+        // scroll-pt-10 keeps a focused day out from under the sticky row; that
+        // it does is a matter of layout, proved in e2e/date-field.smoke.spec.ts.
+        expect(panel()).toHaveClass("overflow-auto", "scroll-pt-10");
+        expect(screen.getByRole("button", { name: "nextMonth" }).parentElement).toHaveClass("sticky", "top-0", "bg-card");
+      });
+
+      it("paints in the app's colours, not the browser's popover defaults", async () => {
+        // The UA sheet gives a [popover] `color: CanvasText` and `background:
+        // Canvas`, which in the dark theme is black text on the dark card.
+        renderField({ value: "2027-03-10" });
+        await openCalendar();
+
+        expect(panel()).toHaveClass("bg-card", "text-foreground");
+      });
+    });
+
+    it("keeps the old box under the field in a browser without the top layer", async () => {
+      renderField();
+      await openCalendar();
+
+      const box = screen.getByRole("dialog");
+      expect(box).not.toHaveAttribute("popover");
+      expect(box).toHaveClass("absolute", "mt-1");
+    });
+
+    it("asks for the top layer without failing where there is no HTMLElement, as on the server", () => {
+      vi.stubGlobal("HTMLElement", undefined);
+      try {
+        expect(hasTopLayer()).toBe(false);
+      } finally {
+        vi.unstubAllGlobals();
+      }
     });
   });
 });
