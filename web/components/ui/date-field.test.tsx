@@ -621,6 +621,27 @@ describe("DateField", () => {
       it("keeps its top in a window shorter than itself, and leaves the rest to scroll", () => {
         expect(placeCalendar({ top: 100, bottom: 136, left: 25 }, calendar, { width: 375, height: 250 }).top).toBe(8);
       });
+
+      it("opens over the field right up to eight pixels from the top, and not one pixel closer", () => {
+        // 306 − 4 − 294 = 8 fits over the field; at 305 it would be 7, so the
+        // calendar goes as low as the window allows instead (600 − 8 − 294).
+        const phone = { width: 375, height: 600 };
+        expect(placeCalendar({ top: 306, bottom: 342, left: 25 }, calendar, phone).top).toBe(8);
+        expect(placeCalendar({ top: 305, bottom: 341, left: 25 }, calendar, phone).top).toBe(298);
+      });
+
+      it("stays in the window when its field has scrolled out over the top", () => {
+        // The dialog scrolled in a 300 px window: the field at −47…−11 put the
+        // calendar's top at −7, outside the window.
+        expect(placeCalendar({ top: -47, bottom: -11, left: 648 }, calendar, { width: 1280, height: 300 }).top).toBe(8);
+      });
+
+      it("stays in the window when its field has scrolled out under the bottom", () => {
+        const short = { width: 302, height: 200 };
+        // Over the field would be 400 − 4 − 200 = 196, running to 396 in a
+        // 300 px window; the lowest place inside it is 300 − 8 − 200 = 92.
+        expect(placeCalendar({ top: 400, bottom: 436, left: 25 }, short, { width: 375, height: 300 }).top).toBe(92);
+      });
     });
 
     describe("in a browser with the top layer", () => {
@@ -763,6 +784,53 @@ describe("DateField", () => {
 
         expect(hidePopover()).toHaveBeenCalledTimes(1);
         expect(hidePopover().mock.contexts[0]).toBe(opened);
+      });
+
+      /** The window `fixed` measures from, as `positionCalendar` reads it. */
+      const setWindow = (width: number, height: number) => {
+        Object.defineProperty(document.documentElement, "clientWidth", { configurable: true, value: width });
+        Object.defineProperty(document.documentElement, "clientHeight", { configurable: true, value: height });
+      };
+
+      it("follows its field when the window changes size", async () => {
+        // A window narrowed to a phone with the calendar open: the dialog drops
+        // to one column, the field moves, and the calendar is placed again and
+        // slid in from the new right edge (375 − 8 − 302 = 65).
+        fieldBox = { top: 320, bottom: 356, left: 648 };
+        renderField({ value: "2027-03-10" });
+        await openCalendar();
+        expect([panel().style.top, panel().style.left]).toEqual(["360px", "648px"]);
+
+        setWindow(375, 812);
+        fieldBox = { top: 280, bottom: 316, left: 200 };
+        window.dispatchEvent(new Event("resize"));
+
+        expect([panel().style.top, panel().style.left]).toEqual(["320px", "65px"]);
+      });
+
+      it("is capped at the window and scrolls inside it, under month chevrons that stay put", async () => {
+        // A window lower than the calendar's six weeks (294 px): it gets the
+        // top of the window, the window less its two edges as its height, and
+        // scrolls. The chevrons' row is sticky, so scrolling to a day near the
+        // bottom does not carry them out of the box.
+        setWindow(1280, 200);
+        renderField({ value: "2027-03-10" });
+        await openCalendar();
+
+        expect(panel().style.top).toBe("8px");
+        expect(panel().style.maxHeight).toBe("184px");
+        expect(panel().style.maxWidth).toBe("1264px");
+        expect(panel()).toHaveClass("overflow-auto");
+        expect(screen.getByRole("button", { name: "nextMonth" }).parentElement).toHaveClass("sticky", "top-0", "bg-card");
+      });
+
+      it("paints in the app's colours, not the browser's popover defaults", async () => {
+        // The UA sheet gives a [popover] `color: CanvasText` and `background:
+        // Canvas`, which in the dark theme is black text on the dark card.
+        renderField({ value: "2027-03-10" });
+        await openCalendar();
+
+        expect(panel()).toHaveClass("bg-card", "text-foreground");
       });
     });
 

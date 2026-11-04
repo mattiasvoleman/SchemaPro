@@ -140,6 +140,10 @@ const EDGE = 8;
  * With room on neither side the calendar goes as low as the window allows and
  * covers the field. A window shorter than the calendar itself gets its top, and
  * the calendar scrolls (`maxHeight` in `positionCalendar`).
+ *
+ * Whatever the side, the answer is held inside the window. The calendar follows
+ * its field as the dialog scrolls, and a field scrolled out over the top edge
+ * (a window about 300 px high) took the calendar 7 px out with it.
  */
 export function placeCalendar(
   field: { top: number; bottom: number; left: number },
@@ -147,11 +151,11 @@ export function placeCalendar(
   view: { width: number; height: number },
 ): { top: number; left: number } {
   const left = Math.max(EDGE, Math.min(field.left, view.width - EDGE - size.width));
+  const lowest = Math.max(EDGE, view.height - EDGE - size.height);
   const below = field.bottom + GAP;
-  if (below + size.height <= view.height - EDGE) return { top: below, left };
   const above = field.top - GAP - size.height;
-  if (above >= EDGE) return { top: above, left };
-  return { top: Math.max(EDGE, view.height - EDGE - size.height), left };
+  const top = below + size.height <= view.height - EDGE ? below : above >= EDGE ? above : lowest;
+  return { top: Math.min(Math.max(top, EDGE), lowest), left };
 }
 
 /** Measures what `placeCalendar` needs and writes its answer onto the calendar. */
@@ -522,13 +526,22 @@ export function DateField({
           ref={panelRef}
           popover={topLayer ? "manual" : undefined}
           className={cn(
-            "rounded-md border bg-card p-2 text-foreground shadow-md",
+            "rounded-md border bg-card p-2 pt-0 text-foreground shadow-md",
             // The UA's popover style centres the box with `inset: 0; margin:
             // auto` and scrolls an overflow; top and left are set inline.
             topLayer ? "fixed inset-auto m-0 overflow-auto" : "absolute z-50 mt-1",
           )}
         >
-          <div className="mb-1 flex items-center justify-between gap-2">
+          {/*
+            Sticky, so the chevrons stay in reach when a window lower than the
+            calendar makes it scroll: focus landing on a day near the bottom
+            would otherwise scroll them out of the box. The box's top padding
+            is this row's own (pt-2, and pt-0 on the box, which also overrides
+            the UA's 0.25em popover padding): a sticky row stops at the box's
+            content edge, and with padding on the box the weeks scrolled past
+            in the strip above the chevrons.
+          */}
+          <div className="sticky top-0 mb-1 flex items-center justify-between gap-2 bg-card pt-2">
             <button
               type="button"
               aria-label={t("previousMonth")}
