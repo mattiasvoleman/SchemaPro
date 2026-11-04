@@ -6,21 +6,26 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  * elever), one row or many, takes them in this order:
  *
  *   1. the school's people lock, shared (holdTheSchoolsPeople);
- *   2. every group row it will write, in one statement, in id order
+ *   2. every group row it will write or lock, in one statement, in id order
  *      (lockGroups): the groups it names, and the rows their writes reach,
- *      a class's halves and next year's successors;
+ *      a class's halves, next year's successors, and a half's class when
+ *      the write wakes the trigger that holds it;
  *   3. the pupils, in id order.
  *
  * Two writes that take what they share in one order queue; two that take it
  * in opposite orders can each hold the row the other waits for, and Postgres
  * then aborts one (40P01, answered 409 WRITE_CONFLICT "försök igen").
  *
- * EVERY ROW IT WILL WRITE, FIRST. A bulk write that locked the groups it
- * named but reached their halves only through its UPDATE, or a single
- * update or delete that took a class and then its halves as the statement
- * and its cascade reached them, took a class before its half whatever their
- * ids, against a write that held the half because its id was the lower. Held
- * in one statement before anything is written, the order is the statement's.
+ * EVERY ROW IT WILL WRITE OR LOCK, FIRST. A bulk write that locked the
+ * groups it named but reached their halves only through its UPDATE, or a
+ * single update or delete that took a class and then its halves as the
+ * statement and its cascade reached them, took a class before its half
+ * whatever their ids, against a write that held the half because its id was
+ * the lower. The other way round, a half's own edit that names its kind or
+ * läsår wakes StudentGroups_half_is_of_a_class, which holds the half's class
+ * FOR SHARE after the half: against a write over the class whose id is the
+ * lower, each held what the other waited for. Held in one statement before
+ * anything is written, the order is the statement's.
  *
  * ID ORDER, because it is the order the writes that hold many groups and do
  * not come through here already take: the rollover and the year's activation
@@ -44,8 +49,9 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  * The SS12000 apply locks every pupil of the school and then every group,
  * in the tables' order, under the same school lock held alone
  * (local-slice.ts), as a guardian's calendar feed holds it shared
- * (20261112091000). So does every write here: no apply runs between their
- * row locks.
+ * (20261112091000). So does every write that takes its locks here: no apply
+ * runs between their row locks. The rollover, the year's activation and the
+ * term halves take their row locks without it.
  */
 
 /** Step 1: the school's people lock, shared. First in its transaction, before any row lock. */
@@ -65,13 +71,16 @@ export type RowLock = 'UPDATE' | 'NO KEY UPDATE' | 'SHARE' | 'KEY SHARE';
  * årskurs is written to its halves, and a class's delete takes them. With
  * `successors`, also the groups whose predecessor is one of those (next
  * year's class after the rollover, StudentGroups.predecessorId), which a
- * delete writes (SET NULL).
+ * delete writes (SET NULL). With `classes`, also the class of those that
+ * are halves (StudentGroups.halfOfId, which never changes): a half's write
+ * that names its halfOfId, kind or academicYearId wakes the trigger
+ * StudentGroups_half_is_of_a_class, which holds the class FOR SHARE.
  */
 export async function lockGroups(
   tx: PrismaClient,
   ids: readonly string[],
   lock: RowLock,
-  options: { halves?: boolean; successors?: boolean } = {},
+  options: { halves?: boolean; successors?: boolean; classes?: boolean } = {},
 ): Promise<void> {
   if (ids.length === 0) return;
   const named = [...ids];
@@ -80,9 +89,12 @@ export async function lockGroups(
     ? Prisma.sql` OR g."predecessorId" = ANY(${named}::uuid[])
         OR g."predecessorId" IN (SELECT h."id" FROM "StudentGroups" h WHERE h."halfOfId" = ANY(${named}::uuid[]))`
     : Prisma.empty;
+  const classes = options.classes
+    ? Prisma.sql` OR g."id" IN (SELECT h."halfOfId" FROM "StudentGroups" h WHERE h."id" = ANY(${named}::uuid[]) AND h."halfOfId" IS NOT NULL)`
+    : Prisma.empty;
   await tx.$executeRaw(Prisma.sql`
     SELECT 1 FROM "StudentGroups" g
-     WHERE g."id" = ANY(${named}::uuid[])${halves}${successors}
+     WHERE g."id" = ANY(${named}::uuid[])${halves}${successors}${classes}
      ORDER BY g."id"
      FOR ${Prisma.raw(lock)}`);
 }

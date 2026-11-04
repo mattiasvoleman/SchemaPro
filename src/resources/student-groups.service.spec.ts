@@ -246,6 +246,41 @@ describe('StudentGroupsService', () => {
       ]);
     });
 
+    it.each<[string, UpdateStudentGroupDto]>([
+      ['the edit dialog’s save, which sends both', { name: '7A:1', kind: 'TEACHING_GROUP', academicYearId: YEAR_ID, gradeLevel: 7 }],
+      ['a kind', { kind: 'TEACHING_GROUP' }],
+      ['a läsår', { academicYearId: YEAR_ID }],
+    ])(
+      "holds a half's class in the same id-ordered statement when the edit names %s, as the half trigger then holds the class",
+      async (_what, dto) => {
+        tx.studentGroup.findUnique.mockResolvedValue(null);
+        tx.studentGroup.update.mockResolvedValue({ id: GROUP_ID, kind: 'TEACHING_GROUP', schoolId: SCHOOL_ID });
+
+        await service.update(GROUP_ID, dto, testUser());
+
+        // StudentGroups_half_is_of_a_class takes the class FOR SHARE after
+        // the half; held here with it, the class comes in id order, before
+        // or after the half, as every write over the class takes the two.
+        const groupLock = lockStatements(tx)[1]!;
+        expect(groupLock).toContain(
+          'OR g."id" IN (SELECT h."halfOfId" FROM "StudentGroups" h WHERE h."id" = ANY($',
+        );
+        expect(groupLock).toMatch(/AND h\."halfOfId" IS NOT NULL\) ORDER BY g\."id" FOR NO KEY UPDATE$/);
+        expect(lockStatements(tx)).toHaveLength(dto.gradeLevel !== undefined ? 3 : 2);
+        expect(tx.$executeRaw.mock.invocationCallOrder.at(-1)!).toBeLessThan(tx.studentGroup.update.mock.invocationCallOrder[0]!);
+      },
+    );
+
+    it("leaves a half's class alone for an edit the trigger does not watch: a name, an årskurs, a subject", async () => {
+      tx.studentGroup.update.mockResolvedValue({ id: GROUP_ID, kind: 'TEACHING_GROUP', schoolId: SCHOOL_ID });
+
+      for (const dto of [{ name: '7A:1' }, { gradeLevel: 7 }, { replacesSubjectId: null }] as UpdateStudentGroupDto[]) {
+        tx.$executeRaw.mockClear();
+        await service.update(GROUP_ID, dto, testUser());
+        expect(lockStatements(tx).join(' ')).not.toContain('h."halfOfId" IS NOT NULL');
+      }
+    });
+
     it('clears the grade level with an explicit null', async () => {
       tx.studentGroup.update.mockResolvedValue({ id: GROUP_ID });
 

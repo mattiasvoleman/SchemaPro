@@ -16,10 +16,11 @@
  *        through CASCADE keys, at any depth, is GROUP_BELOW's or STUDENT_BELOW's;
  *   mv3  a delete that carries its dry run's counts back deletes nothing when
  *        a kind grew meanwhile, says which, and deletes with the new counts;
- *   mv4  the bulk and single writes take a class and its half (the half's id
- *        the lower) in one order (src/common/lock-order.ts): overlapping
- *        pairs end without a deadlock (409 WRITE_CONFLICT), a pupils' move
- *        between two classes being deleted included;
+ *   mv4  the bulk and single writes take a class and its half in one order
+ *        (src/common/lock-order.ts), the half's id the lower and, for a
+ *        half's own edit (whose trigger holds the class), the class's:
+ *        overlapping pairs end without a deadlock (409 WRITE_CONFLICT), a
+ *        pupils' move between two classes being deleted included;
  *   mv6  that order is the rollover's: a write over a class waits for a
  *        transaction that holds the half and then the class FOR SHARE, as
  *        the rollover and the year's activation hold a year's groups in id
@@ -267,27 +268,35 @@ export async function massvalChecks(owner: Client, api: PrismaService, marker: s
         0,
       );
     });
-    // A class and its half, the half's id the lower: a lock in plain id
-    // order takes the half first, the cascade and the single routes the class.
-    const family = async (label: string) => {
+    // A class and its half, the half's id the lower unless `classLower`: a
+    // lock in plain id order takes the half first, the cascade and the single
+    // routes the class; a half's own edit holds the half, and its trigger then
+    // the class, against a write that holds the class first when its id is the
+    // lower.
+    const family = async (label: string, classLower = false) => {
       const [low, high] = [randomUUID(), randomUUID()].sort();
+      const [classId, halfId] = classLower ? [low!, high!] : [high!, low!];
       const cls = await one<{ id: string }>(
         `INSERT INTO "StudentGroups" (id, "schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
          VALUES ($1, $2, $3, $4, 'CLASS', 7, now()) RETURNING id`,
-        [high, s, year.id, `MV-F${label}`],
+        [classId, s, year.id, `MV-F${label}`],
       );
       await owner.query(
         `INSERT INTO "StudentGroups" (id, "schoolId", "academicYearId", name, kind, "gradeLevel", "halfOfId", "updatedAt")
          VALUES ($1, $2, $3, $4, 'TEACHING_GROUP', 7, $5, now())`,
-        [low, s, year.id, `MV-F${label}:1`, cls.id],
+        [halfId, s, year.id, `MV-F${label}:1`, cls.id],
       );
       const pupils = [(await person('STUDENT', `f${label}a`, cls.id)).id, (await person('STUDENT', `f${label}b`, cls.id)).id];
-      return { cls: cls.id, half: low!, pupils };
+      return { cls: cls.id, half: halfId, name: `MV-F${label}:1`, pupils };
     };
     type Family = Awaited<ReturnType<typeof family>>;
 
     await check('(mv4) a class and its half are locked in one order by every write: overlapping pairs end without a deadlock', async () => {
-      const pairs: [string, (a: Family, b: Family) => Promise<unknown>, (a: Family, b: Family) => Promise<unknown>][] = [
+      // What the edit dialog sends when a half is saved: the whole form, its
+      // kind and läsår among it, which wake the half trigger.
+      const editHalf = (a: Family) =>
+        groups.update(a.half, { name: a.name, kind: 'TEACHING_GROUP', academicYearId: year.id, gradeLevel: 7 }, asAdmin);
+      const pairs: [string, (a: Family, b: Family) => Promise<unknown>, (a: Family, b: Family) => Promise<unknown>, 'class lower'?][] = [
         ['update(A) × bulkRemove([A])', (a) => groups.update(a.cls, { gradeLevel: 8 }, asAdmin), (a) =>
           groups.bulkRemove({ ids: [a.cls], dryRun: false }, asAdmin)],
         ['bulkUpdate([A]) × bulkRemove([H, A])', (a) => groups.bulkUpdate({ ids: [a.cls], changes: { gradeLevel: 9 }, dryRun: false }, asAdmin), (a) =>
@@ -304,12 +313,20 @@ export async function massvalChecks(owner: Client, api: PrismaService, marker: s
         ['bulkUpdateStudents(A → B) × bulkRemove([A, B])', (a, b) =>
           users.bulkUpdateStudents({ ids: a.pupils, changes: { studentGroupId: b.cls }, dryRun: false }, asAdmin), (a, b) =>
           groups.bulkRemove({ ids: [a.cls, b.cls], dryRun: false }, asAdmin)],
+        ['update(A) × bulkRemove([A]), the class\'s id the lower', (a) => groups.update(a.cls, { gradeLevel: 8 }, asAdmin), (a) =>
+          groups.bulkRemove({ ids: [a.cls], dryRun: false }, asAdmin), 'class lower'],
+        ['update(H, the edit dialog) × remove(A)', editHalf, (a) => groups.remove(a.cls, asAdmin), 'class lower'],
+        ['update(H, the edit dialog) × bulkRemove([A])', editHalf, (a) =>
+          groups.bulkRemove({ ids: [a.cls], dryRun: false }, asAdmin), 'class lower'],
+        ['update(H, the edit dialog) × bulkUpdate([A])', editHalf, (a) =>
+          groups.bulkUpdate({ ids: [a.cls], changes: { gradeLevel: 9 }, dryRun: false }, asAdmin), 'class lower'],
+        ['update(H, the edit dialog) × update(A)', editHalf, (a) => groups.update(a.cls, { gradeLevel: 8 }, asAdmin), 'class lower'],
       ];
       const ended: string[] = [];
-      for (const [name, first, second] of pairs) {
+      for (const [name, first, second, layout] of pairs) {
         for (let round = 0; round < 6; round += 1) {
-          const a = await family(`${pairs.findIndex(([n]) => n === name)}-${round}a`);
-          const b = await family(`${pairs.findIndex(([n]) => n === name)}-${round}b`);
+          const a = await family(`${pairs.findIndex(([n]) => n === name)}-${round}a`, layout === 'class lower');
+          const b = await family(`${pairs.findIndex(([n]) => n === name)}-${round}b`, layout === 'class lower');
           const outcomes = await Promise.allSettled([
             first(a, b),
             new Promise((resolve) => setTimeout(resolve, round % 4)).then(() => second(a, b)),

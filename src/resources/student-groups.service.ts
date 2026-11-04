@@ -313,8 +313,11 @@ export class StudentGroupsService {
    * mentors it gives a request, once each, in its own transaction.
    *
    * The rows it writes are held first, in the one order (lock-order.ts):
-   * the class, and with an årskurs its halves and then its pupils, whose
-   * class history the årskurs rewrites (StudentEnrollments_enrollment_grade).
+   * the group; with an årskurs a class's halves, and then its pupils, whose
+   * class history the årskurs rewrites (StudentEnrollments_enrollment_grade);
+   * and with a kind or a läsår a half's class, which the trigger
+   * StudentGroups_half_is_of_a_class then holds FOR SHARE. The edit dialog
+   * sends both with every save.
    */
   async update(
     id: string,
@@ -325,7 +328,10 @@ export class StudentGroupsService {
     try {
       return await this.prisma.withRls(user, async (tx) => {
         await holdTheSchoolsPeople(tx, schoolId);
-        await lockGroups(tx, [id], 'NO KEY UPDATE', { halves: dto.gradeLevel !== undefined });
+        await lockGroups(tx, [id], 'NO KEY UPDATE', {
+          halves: dto.gradeLevel !== undefined,
+          classes: dto.kind !== undefined || dto.academicYearId !== undefined,
+        });
         if (dto.gradeLevel !== undefined) await lockHomePupils(tx, [id], 'SHARE');
         if (dto.academicYearId !== undefined) {
           const current = await tx.studentGroup.findUnique({
