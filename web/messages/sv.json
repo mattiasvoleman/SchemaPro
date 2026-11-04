@@ -955,7 +955,7 @@
       "codeTitle": "Ämnen utan samma nationella kod",
       "codeDiffers": "{subject} har inte samma nationella kod som {post} ({code}). Skapa timplansposter ser då inte att halvorna läser klassens {post}, och timplanens nationella rader räknar inte {subject} som {code}.",
       "codeMissingOnPost": "{post} har ingen nationell kod, så Skapa timplansposter ser inte att halvornas {subject} läses i stället för klassens {post}. Ge ämnena samma nationella kod.",
-      "codeSwapOwn": "{subject} har en annan nationell kod än {post}. Vid bytet räknas halvornas minuter i {subject} på dess egen kod ({code}), tillsammans med klassens egna poster där, som raderna mot timplanen visar.",
+      "codeSwapOwn": "{subject} har en annan nationell kod än {post}. Vid bytet räknas halvornas minuter i {subject} på timplanens rad för {code}, tillsammans med klassens egna poster där, som raderna mot timplanen visar.",
       "codeSwapMissing": "{subject} har ingen nationell kod. Dialogen räknar det då som ett eget ämne bredvid {post}, och timplanens nationella rader räknar halvornas minuter i det som skolans val. Ge ämnet en kod under Ämnen: samma som {post} om halvorna läser {post} i det, så räcker klassens takt.",
       "codeAction": "Öppna Ämnen",
       "generatorNote": "Den andra periodens block läggs på den första periodens tider, så halvorna har lektion samtidigt hela året: genereringen ger varje post i den andra perioden tiderna och salen som den första periodens post i samma ämne fick. Låser du det ena blocket med Lås blocket, eller drar dess kort, i grundschemat följer det andra med (se manualen, 4.2).",

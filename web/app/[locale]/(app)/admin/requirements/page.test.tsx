@@ -2503,11 +2503,43 @@ describe("Timplansposter in Mål mode", () => {
       expect(within(cellOf("Biologi")).queryByText("target.tagParts")).toBeNull();
     });
 
-    it("waits for the national list, and leaves the groups out when it failed", async () => {
+    it("waits for the national list", async () => {
       state.national = { data: undefined, isLoading: true, isError: false } as unknown as typeof state.national;
       render(<RequirementsPage />);
       await userEvent.click(screen.getByRole("button", { name: "target.toggle" }));
       expect(await screen.findByText("target.loading")).toBeInTheDocument();
+    });
+
+    it("leaves the groups out when the national list failed, and paints the cells as before the roll-up", async () => {
+      state.national = { data: undefined, isLoading: false, isError: true } as unknown as typeof state.national;
+      render(<RequirementsPage />);
+      await enterTargetMode();
+
+      // Not held back for ever: the cells are painted, each subject its own line.
+      await waitFor(() =>
+        expect(cellOf("Naturorienterande ämnen")).toHaveAttribute(
+          "aria-label",
+          expect.stringContaining("target.cellUnplanned(0|90|90|-90)"),
+        ),
+      );
+      expect(within(cellOf("Biologi")).queryByText("target.tagParts")).toBeNull();
+      expect(screen.queryByText("target.loading")).toBeNull();
+    });
+
+    it("lets Mål mode through when the list fails after it was asked for, as the retries give up", async () => {
+      state.national = { data: undefined, isLoading: true, isError: false } as unknown as typeof state.national;
+      const { rerender } = render(<RequirementsPage />);
+      await userEvent.click(screen.getByRole("button", { name: "target.toggle" }));
+      expect(await screen.findByText("target.loading")).toBeInTheDocument();
+
+      state.national = { data: undefined, isLoading: false, isError: true } as unknown as typeof state.national;
+      rerender(<RequirementsPage />);
+      await waitFor(() =>
+        expect(cellOf("Naturorienterande ämnen")).toHaveAttribute(
+          "aria-label",
+          expect.stringContaining("target.cellUnplanned(0|90|90|-90)"),
+        ),
+      );
     });
   });
 

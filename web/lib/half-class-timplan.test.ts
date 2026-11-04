@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { halvesRow, plannedRows, presetPeriods, proposedLessons, type HalvesRead } from "./half-class-periods";
+import { halvesRead, halvesRow, plannedRows, presetPeriods, proposedLessons, type HalvesRead } from "./half-class-periods";
 import {
   classPostReduction,
   halvesTimplan,
@@ -453,6 +453,69 @@ describe("what there is to judge", () => {
       [null, ["bi"], null],
       [null, ["ke"], null],
     ]);
+  });
+
+  describe("a swap of two children of one ämnesgrupp, the way the dialog draws it", () => {
+    // The dialog reads how the halves read the post's line (halvesRead) and
+    // proposes the week from it, then asks the timplan for the lines. Biologi
+    // and Kemi are both NO's: one line, so the class's pace stays.
+    const groupSubjects: { id: string; name: string; nationalCode: string; parentCode?: string }[] = [
+      ...SUBJECTS,
+      { id: "no", name: "Naturorienterande ämnen", nationalCode: "NO" },
+      { id: "bi", name: "Biologi", nationalCode: "BI", parentCode: "NO" },
+      { id: "ke", name: "Kemi", nationalCode: "KE", parentCode: "NO" },
+    ];
+    const drawn = (
+      subjects: typeof groupSubjects,
+      entries: { subjectId: string; minutesPerWeek: number }[],
+      pair: [string, string] = ["bi", "ke"],
+    ) => {
+      const biologi = post("r-bi", "bi", 2, 60);
+      const read = halvesRead(pair, "bi", subjects);
+      const split = swap(TERMS, pair, read, [biologi], biologi);
+      const result = halvesTimplan({ ...sources(entries), subjects }, split, "bi");
+      if (result.kind !== "lines") throw new Error(result.kind);
+      return { read, split, lines: result.halves.map((lines) => lines.map((line) => [line.key, line.target, line.planned])) };
+    };
+
+    it("keeps the class’s 2 × 60 and a half’s line at the plan’s NO 120", () => {
+      const { read, split, lines } = drawn(groupSubjects, [{ subjectId: "no", minutesPerWeek: 120 }]);
+      expect(read).toBe("swapWithinLine");
+      expect(split.rows.map((row) => [row.lessonsPerWeek, row.minutesPerLesson])).toEqual([[2, 60], [2, 60], [2, 60], [2, 60]]);
+      expect(lines).toEqual([[["national:NO", 120, 120]], [["national:NO", 120, 120]]]);
+    });
+
+    it("was read as a swap with another line, and drew 270 of 120, when each had only its own code", () => {
+      const flat = groupSubjects.map(({ parentCode: _parentCode, ...subject }) => subject);
+      const { read, split } = drawn(flat, [{ subjectId: "no", minutesPerWeek: 120 }]);
+      expect(read).toBe("swapWithOther");
+      expect(split.rows[0]!.lessonsPerWeek * split.rows[0]!.minutesPerLesson).toBeGreaterThan(2 * 60);
+    });
+
+    it("finds the line of two subjects of a child the plan names by the child’s own code", () => {
+      // Biologi and Biologi fördjupning are both BI: with the plan naming Biologi
+      // they are 'national:BI', whose code is the child's and not NO's.
+      const withDeeper = [...groupSubjects, { id: "bif", name: "Biologi fördjupning", nationalCode: "BI", parentCode: "NO" }];
+      const { lines } = drawn(withDeeper, [{ subjectId: "bi", minutesPerWeek: 120 }], ["bi", "bif"]);
+      expect(lines).toEqual([[["national:BI", 120, 120]], [["national:BI", 120, 120]]]);
+    });
+
+    it("draws each child on its own line under a plan that names them, the group’s line not taking either", () => {
+      const { lines } = drawn(groupSubjects, [
+        { subjectId: "bi", minutesPerWeek: 60 },
+        { subjectId: "ke", minutesPerWeek: 60 },
+      ]);
+      // Each half reads Biologi in one term and Kemi in the other (a share of
+      // the year each), against the 60 the plan names for each.
+      expect(lines[0]!.map(([key, target]) => [key, target])).toEqual([
+        ["subject:bi", 60],
+        ["subject:ke", 60],
+      ]);
+      expect(lines[1]!.map(([key, target]) => [key, target])).toEqual([
+        ["subject:bi", 60],
+        ["subject:ke", 60],
+      ]);
+    });
   });
 
   it("proposes nothing for the part of a line whose own entry is absent when no class post is there to bring down", () => {

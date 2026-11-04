@@ -26,6 +26,7 @@
 import { teachingWeeks, type ClosedRange, type RequirementLoad, type TeachingPeriod, type YearBounds } from "@/lib/teaching-hours";
 import { lessonCountOf, longestLessonOf, weeklyMinutesOf, type LessonShape } from "@/lib/lesson-lengths";
 import { standardWeekWeight } from "@/lib/standard-week";
+import { nationalTopOf } from "@/lib/timplan-planned";
 
 /** One of the two periods, both days included, YYYY-MM-DD. */
 export interface HalfPeriod {
@@ -152,19 +153,30 @@ export interface UniformLessons {
  */
 export type HalvesRead = "inTurn" | "swapWithOther" | "swapWithinLine";
 
-/** A subject as the line question reads it. */
-type CodedSubject = { id: string; nationalCode?: string | null };
+/** A subject as the line question reads it; parentCode is the ämnesgrupp of its code (withParentCodes). */
+export type CodedSubject = { id: string; nationalCode?: string | null; parentCode?: string | null };
+
+/** The code a subject's minutes roll up under on the timplan's lines: its ämnesgrupp when it has one, else its own. */
+export function topCodeOf(subject: CodedSubject | undefined): string | null {
+  return subject === undefined ? null : nationalTopOf({ nationalCode: subject.nationalCode ?? null, parentCode: subject.parentCode });
+}
 
 /**
  * Whether a subject is the post's line: the post's subject, or one with its
- * national code. One without a code is not: the dialog cannot tell a code
- * the Ämnen form left empty from a subject of the school's own, and reading
- * it as another line keeps each pupil's hours either way — the pace is a
- * floor (the dialog says how to get the class's pace back: the same code).
+ * national code, or one under the same ämnesgrupp (Biologi and Kemi are both
+ * NO's: the timplan reads them as one line, so a swap of the two keeps the
+ * class's minutes on it as textilslöjd and trä- och metallslöjd do). One
+ * without a code is not: the dialog cannot tell a code the Ämnen form left
+ * empty from a subject of the school's own, and reading it as another line
+ * keeps each pupil's hours either way — the pace is a floor (the dialog says
+ * how to get the class's pace back: the same code). Under a plan that names
+ * the children (Biologi 60, Kemi 60) each is a line of its own on the timplan,
+ * which this does not know: the pace keeps the class's minutes, and the lines
+ * the dialog draws say what each half then gets on each.
  */
 export function readsPostLine(subjectId: string, postSubjectId: string, subjects: readonly CodedSubject[]): boolean {
   if (subjectId === postSubjectId) return true;
-  const codeOf = (id: string) => subjects.find((subject) => subject.id === id)?.nationalCode ?? null;
+  const codeOf = (id: string) => topCodeOf(subjects.find((subject) => subject.id === id));
   const postCode = codeOf(postSubjectId);
   return postCode !== null && codeOf(subjectId) === postCode;
 }

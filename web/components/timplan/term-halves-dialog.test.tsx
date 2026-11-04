@@ -374,6 +374,49 @@ describe("TermHalvesDialog", () => {
     expect(state.post).toHaveBeenCalledTimes(1);
   });
 
+  describe("a swap between subjects under one ämnesgrupp", () => {
+    // Biologi and Kemi are both NO's: the timplan has one line for them.
+    const groupSubjects = [
+      { id: "s-no", name: "Naturorienterande ämnen", nationalCode: "NO" },
+      { id: "s-bi", name: "Biologi", nationalCode: "BI", parentCode: "NO" },
+      { id: "s-ke", name: "Kemi", nationalCode: "KE", parentCode: "NO" },
+      { id: "s-ma", name: "Matematik", nationalCode: "MA" },
+    ];
+    const chooseSecond = async (user: ReturnType<typeof userEvent.setup>, name: string) => {
+      await user.click(document.getElementById("term-subject-1")!);
+      await user.click(screen.getByRole("option", { name }));
+    };
+    const biologi = () => post({ subjectId: "s-bi", lessonsPerWeek: 2, minutesPerLesson: 60 });
+
+    it("reads Kemi for a Biologi post as the post's line: each half reads it in both periods, 5 × 60 where Matematik needs 9, and no notice about the code", async () => {
+      const { user } = renderDialog({ requirement: biologi(), subjects: groupSubjects });
+      await chooseSecond(user, "Kemi");
+
+      // The halves of the autumn: the class's 2 × 60 over the half of the year
+      // a half reads the line in, as for textilslöjd and trä- och metallslöjd.
+      expect(screen.getByLabelText("lessonsCount")).toHaveValue(5);
+      expect(screen.getByLabelText("lessonsMinutes")).toHaveValue(60);
+      expect(screen.queryByText("codeTitle")).toBeNull();
+      expect(screen.queryByText(/^code(Differs|SwapOwn|SwapMissing|MissingOnPost)\(/)).toBeNull();
+    });
+
+    it("reads Matematik as another line, which pays the surplus twice (9 × 60), and says on which row its minutes count", async () => {
+      const { user } = renderDialog({ requirement: biologi(), subjects: groupSubjects });
+      await chooseSecond(user, "Matematik");
+
+      expect(screen.getByLabelText("lessonsCount")).toHaveValue(9);
+      expect(screen.getByLabelText("lessonsMinutes")).toHaveValue(60);
+      expect(screen.getByText("codeSwapOwn(Matematik|Biologi|MA)")).toBeInTheDocument();
+    });
+
+    it("names the group's row, and not the child's own code, for a child swapped in for another line's post", async () => {
+      const { user } = renderDialog({ requirement: post({ subjectId: "s-ma", lessonsPerWeek: 2, minutesPerLesson: 60 }), subjects: groupSubjects });
+      await chooseSecond(user, "Kemi");
+
+      expect(screen.getByText("codeSwapOwn(Kemi|Matematik|NO)")).toBeInTheDocument();
+    });
+  });
+
   it("reads a subject without a code beside one of the line's as another line, keeps each pupil's hours, and sends it to Ämnen", () => {
     renderDialog({
       subjects: subjects.map((subject) => (subject.id === "s-tm" ? { ...subject, nationalCode: null } : subject)),

@@ -172,18 +172,14 @@ function coverageOf(sources: HalvesTimplanSources, split: HalvesSplit, half: 0 |
 }
 
 /**
- * Whether `subjectId` is on the class's `line`: one of the subjects it lists,
- * or a part of the same national subject. The class's line lists the subjects
- * of its own posts and of the plan's entries, so a part only the halves read
- * (textilslöjd beside a Slöjd entry, kemi beside a NO entry) is on it by its
- * top code (the line's nationalCode, which a child of an ämnesgrupp shares
- * with its group).
+ * Whether `subjectId` is on the class's `line` by its code: a part of the same
+ * national subject. The class's line lists the subjects of its own posts and
+ * of the plan's entries, so a part only the halves read (textilslöjd beside a
+ * Slöjd entry, kemi beside a NO entry) is on it by the line's nationalCode,
+ * which is the part's own code (a child the plan names) or its ämnesgrupp's.
  */
-function onLine(line: PlannedLine, subjectId: string, codes: ReadonlyMap<string, string | null>): boolean {
-  return (
-    line.subjectIds.includes(subjectId) ||
-    (line.nationalCode !== undefined && codes.get(subjectId) === line.nationalCode)
-  );
+function onLine(line: PlannedLine, subjectId: string, codes: ReadonlyMap<string, readonly string[]>): boolean {
+  return line.nationalCode !== undefined && (codes.get(subjectId) ?? []).includes(line.nationalCode);
 }
 
 /** The lines `subjectIds` are on, as one pupil reads them in a coverage of one pupil. */
@@ -191,13 +187,17 @@ function linesOf(
   coverage: PlannedCoverage,
   classId: string,
   subjectIds: readonly string[],
-  codes: ReadonlyMap<string, string | null>,
+  codes: ReadonlyMap<string, readonly string[]>,
 ): HalfLine[] {
   const summary = coverage.groups.find((group) => group.studentGroupId === classId);
   const doubles = coverage.verdicts.filter((verdict) => verdict.code === "TIMPLAN_PUPIL_DOUBLE_PLANNED");
   const lines: HalfLine[] = [];
   for (const subjectId of subjectIds) {
-    const line = summary?.lines.find((candidate) => onLine(candidate, subjectId, codes));
+    // The line that lists the subject first: a child the plan names is on its
+    // own, beside the group's line its code would also reach.
+    const line =
+      summary?.lines.find((candidate) => candidate.subjectIds.includes(subjectId)) ??
+      summary?.lines.find((candidate) => onLine(candidate, subjectId, codes));
     const seen = line ? lines.find((entry) => entry.key === line.key) : undefined;
     if (line && seen) {
       // A second part of a national line the split touches is named on the
@@ -233,12 +233,19 @@ function linesOf(
   return lines;
 }
 
-/** The top national code of each subject the timplan counts, to find the parts of one national subject. */
-const codesOf = (sources: HalvesTimplanSources): Map<string, string | null> =>
+/**
+ * The national codes each subject the timplan counts can be on a line under —
+ * its own and its ämnesgrupp's — to find the parts of one national subject.
+ */
+const codesOf = (sources: HalvesTimplanSources): Map<string, readonly string[]> =>
   new Map(
     sources.subjects
       .filter((subject) => subject.countsTowardTimplan !== false)
-      .map((subject) => [subject.id, nationalTopOf({ nationalCode: subject.nationalCode ?? null, parentCode: subject.parentCode })]),
+      .map((subject) => {
+        const own = subject.nationalCode ?? null;
+        const top = nationalTopOf({ nationalCode: own, parentCode: subject.parentCode });
+        return [subject.id, [...new Set([own, top].filter((code): code is string => code !== null))]];
+      }),
   );
 
 /**
