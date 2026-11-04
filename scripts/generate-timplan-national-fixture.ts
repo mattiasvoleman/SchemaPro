@@ -19,7 +19,11 @@
  * were: the same part from two groups is double planned, a plan with an entry
  * on each part is one line of their sum, a subject no other counted subject
  * shares the code with keeps its own line (a subject that does not count
- * toward the timplan does not share it).
+ * toward the timplan does not share it). An ersättande grupp (SvA7 replaces
+ * Svenska) replaces ONE SUBJECT: one that replaces a part of the line takes its
+ * pupils off the class's rows in that part only, whether or not the line is
+ * short for them; one that replaces the subject the plan's entry is on (Slöjd)
+ * while the class's rows are on a part takes nothing off the pupil.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -99,6 +103,14 @@ const theClass = (name: string, gradeLevel: number): PlannedGroup => ({
   name,
   kind: 'CLASS',
   gradeLevel,
+});
+/** A group that replaces a subject (StudentGroups.replacesSubjectId), as the fixtures of ersättande grupper have it. */
+const replacingGroup = (name: string, replacesSubjectId: string): PlannedGroup => ({
+  id: id(groupSerial++),
+  name,
+  kind: 'TEACHING_GROUP',
+  gradeLevel: null,
+  replacesSubjectId,
 });
 const halvesOf = (group: PlannedGroup): [PlannedGroup, PlannedGroup] =>
   [1, 2].map((n) => ({
@@ -337,6 +349,36 @@ const sharedWithAnUncountedSubject = (): PlannedCoverageInput => {
   );
 };
 
+/**
+ * An ersättande grupp on a line of parts. 7A: textil 1 × 50 is all the class
+ * plans of slöjd, and 7A-val replaces Textilslöjd (its pupils read hemkunskap
+ * there): the class is 50 of 65, and the pupil in the group has none of the
+ * class's textil, so their 0 is their own finding and the other pupil's 50 is
+ * the class's. 7B: textil 1 × 65 meets the line, and 7B-val replaces Slöjd,
+ * the subject the entry is on, which the class has no post in: it takes
+ * nothing off its pupil, who gets the class's textil and the group's slöjd,
+ * 130 of 65, and nothing says so.
+ */
+const replacingAPart = (): PlannedCoverageInput => {
+  reset();
+  const c7A = theClass('7A', 7);
+  const val7A = replacingGroup('7A-val', S.TX);
+  const c7B = theClass('7B', 7);
+  const val7B = replacingGroup('7B-val', S.SL);
+  return yearOf(
+    [7],
+    [SLOJD, TEXTIL, TRA, HEMKUNSKAP],
+    [c7A, val7A, c7B, val7B],
+    [
+      post(c7A, S.TX, 1, 50),
+      post(val7A, S.HKK, 1, 30),
+      post(c7B, S.TX, 1, 65),
+      post(val7B, S.SL, 1, 65),
+    ],
+    [pupil(c7A, [val7A]), pupil(c7A, []), pupil(c7B, [val7B]), pupil(c7B, [])],
+  );
+};
+
 const added: { name: string; input: PlannedCoverageInput }[] = [
   {
     name: `${PREFIX} åk 4 — two halves of ten swap textilslöjd and trä- och metallslöjd at 1 × 60 across 2027-01-03 and 2027-01-04, the plan's Slöjd entry of 60 is read through the parts: 4A is carried by its halves and each pupil reads 60, nobody is double planned`,
@@ -361,6 +403,10 @@ const added: { name: string; input: PlannedCoverageInput }[] = [
   {
     name: `${PREFIX} a plan with an entry on each part is judged as one line of their sum — Slöjd 20, Textilslöjd 20 and Trä- och metallslöjd 20 make 60, which textil alone meets (5A), as do 40 + 20 (5B), slöjd 40 is short (5C) and textil 3 × 40 is over (5D)`,
     input: entryOnEachPart(),
+  },
+  {
+    name: `${PREFIX} an ersättande grupp on a line of parts takes the pupil off the class's rows in the part it replaces and nothing else — 7A-val replaces Textilslöjd, so its pupil has none of the class's textil and is 0 of 65 on their own; 7B-val replaces Slöjd, which 7B has no post in, so its pupil keeps the class's textil and reads 130 of 65 with no warning`,
+    input: replacingAPart(),
   },
   {
     name: `${PREFIX} a code shared only with a subject that does not count toward the timplan is no shared code — Slöjd keeps its own line with its own 80, Slöjdverkstad is in none`,

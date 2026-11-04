@@ -186,6 +186,13 @@ export interface TargetCellView {
    * and its own entry, and the delta is the line, where the parts add up.
    */
   national: boolean;
+  /**
+   * The line the cell is on: where the parts add up, and where a part the
+   * plan has no entry for (the target is on Slöjd, the posts on Textilslöjd)
+   * has a target at all. cellSentence reads a national cell by these.
+   */
+  linePlanned: number;
+  lineTarget: number | null;
   /** The line's subjects other than this cell's, for the sentence. */
   partnerSubjectIds: string[];
 }
@@ -343,6 +350,8 @@ export function buildTargetView(coverage: PlannedCoverage, plans: PlannedPlan[])
         tone: toneOf(cell.status),
         alternative: cell.alternativeCode !== null,
         national: cell.nationalCode !== undefined,
+        linePlanned: line.plannedMinutesPerWeek,
+        lineTarget: line.targetMinutesPerWeek,
         partnerSubjectIds: line.subjectIds.filter((id) => id !== subjectId),
       };
     },

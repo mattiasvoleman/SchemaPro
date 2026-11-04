@@ -210,6 +210,8 @@ describe("buildTargetView", () => {
       tone: "met",
       alternative: false,
       national: false,
+      linePlanned: 180,
+      lineTarget: 175,
       partnerSubjectIds: [],
     });
     expect(view.cell("g-7a", "s-bi")).toMatchObject({ planned: 40, target: 60, delta: -20, tone: "under" });
@@ -224,6 +226,8 @@ describe("buildTargetView", () => {
       tone: "met",
       alternative: true,
       national: false,
+      linePlanned: 180,
+      lineTarget: 180,
       partnerSubjectIds: ["s-sv"],
     });
   });
@@ -502,6 +506,9 @@ describe("the parts of a national subject", () => {
       tone: "pupils",
       alternative: false,
       national: true,
+      // The line's figures: 7A's textil 40 of the Slöjd entry of 65.
+      linePlanned: 40,
+      lineTarget: 65,
       partnerSubjectIds: ["s-sl"],
     });
     expect(view.cell("g-7a", "s-sl")).toMatchObject({

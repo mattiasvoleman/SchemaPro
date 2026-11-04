@@ -152,9 +152,9 @@ export interface PlannedLine {
   alternativeCode: string | null;
   /**
    * The national code of a line made of the parts of one national subject
-   * (key 'national:<code>'; see Lines in the gateway file). Absent on every
-   * other line, so a line that is not one reads as it did before the kind
-   * existed.
+   * (key 'national:<code>'; see Lines in src/common/timplan-planned.ts). Absent
+   * on every other line, so a line that is not one reads as it did before the
+   * kind existed.
    */
   nationalCode?: string;
   subjectIds: string[];

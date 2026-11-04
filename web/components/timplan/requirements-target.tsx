@@ -194,9 +194,12 @@ type Translate = (key: string, values?: Record<string, string | number>) => stri
  * two numbers and their verdict have to be said here or to nobody.
  */
 export function cellSentence(t: Translate, cell: TargetCellView, input: PlannedCoverageInput): string {
+  // A part of a national line is read by its line, as its delta and tone are:
+  // a part the plan has no entry for has no target of its own to read, and
+  // would be read out as "40 of 0 minutes" (Textilslöjd under a Slöjd entry).
   const values = {
-    planned: cell.planned,
-    target: cell.target ?? 0,
+    planned: cell.national ? cell.linePlanned : cell.planned,
+    target: (cell.national ? cell.lineTarget : cell.target) ?? 0,
     deficit: cell.delta === null ? 0 : -cell.delta,
     surplus: cell.delta ?? 0,
   };

@@ -562,10 +562,13 @@ function CoverageCell({ view, subjectName }: { view: CoverageCellView; subjectNa
           : delta !== null && delta !== 0
             ? signedMinutes(delta)
             : null;
+  // A part of a national line is read by its line, as its delta and tone are:
+  // a part the plan has no entry for has no target of its own to read out.
+  const national = cell.nationalCode !== undefined;
   const values = {
     subject: subjectName,
-    planned: cell.plannedMinutesPerWeek,
-    target: cell.targetMinutesPerWeek ?? 0,
+    planned: national ? line.plannedMinutesPerWeek : cell.plannedMinutesPerWeek,
+    target: (national ? line.targetMinutesPerWeek : cell.targetMinutesPerWeek) ?? 0,
     deficit: delta === null ? 0 : -delta,
     surplus: delta ?? 0,
   };

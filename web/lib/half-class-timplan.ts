@@ -223,7 +223,11 @@ function linesOf(
 
 /** The national code of each subject the timplan counts, to find the parts of one national subject. */
 const codesOf = (sources: HalvesTimplanSources): Map<string, string | null> =>
-  new Map(sources.subjects.map((subject) => [subject.id, subject.nationalCode ?? null]));
+  new Map(
+    sources.subjects
+      .filter((subject) => subject.countsTowardTimplan !== false)
+      .map((subject) => [subject.id, subject.nationalCode ?? null]),
+  );
 
 /**
  * Each half's lines: the post's subject's first, then each chosen subject's,

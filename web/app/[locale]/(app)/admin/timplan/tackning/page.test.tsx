@@ -6,6 +6,7 @@ import {
   EMPTY_PLAN,
   LANGUAGES,
   NATIONAL_ENTRIES,
+  NATIONAL_NO_OWN_ENTRY,
   TWO_ALTERNATIVES,
   UNATTACHED_AND_DRAFT,
 } from "@/lib/__fixtures__/timplan-tackning";
@@ -148,6 +149,17 @@ describe("TimplanCoveragePage", () => {
     expect(within(line).getByText("partsTogether")).toBeInTheDocument();
     // An alternative's "together" is not said of parts: they add up, not stand in for one another.
     expect(within(line).queryByText("together")).not.toBeInTheDocument();
+  });
+
+  it("reads a part the plan has no entry for by its line, not as '50 of 0 minutes'", () => {
+    // 7A keeps trä- och metallslöjd 2 × 25 and the plan's 65 is on Slöjd: the
+    // cell shows "50 / —", and what a screen reader gets is the line's 50 of 65.
+    state.case = coverageCase(NATIONAL_NO_OWN_ENTRY) as typeof state.case;
+    render(<TimplanCoveragePage />);
+    const row = screen.getByRole("row", { name: /7A/ });
+    expect(within(row).getByText("50 / —")).toBeInTheDocument();
+    expect(within(row).getByText(/^cell\.pupils\(Trä- och metallslöjd\|50\|65\|15\|/)).toBeInTheDocument();
+    expect(within(row).queryByText(/^cell\.pupils\(Trä- och metallslöjd\|50\|0\|/)).not.toBeInTheDocument();
   });
 
   it("says a class attached to a plan with no time for its årskurs has none, rather than 0/0", () => {

@@ -404,6 +404,23 @@ describe("what there is to judge", () => {
     ]);
   });
 
+  it("leaves a subject the timplan does not count off the national line, though it has the code", () => {
+    // Slöjdverkstad is SLJ too and counts toward nothing: it has no line to
+    // be put on, and does not get Slöjd's target.
+    const textil = post("r-tx", "tx", 2, 60);
+    const split = swap(TERMS, ["tx", "slv"], "swapWithinLine", [textil], textil);
+    const withVerkstad: HalvesTimplanSources = {
+      ...sources([{ subjectId: "sl", minutesPerWeek: 120 }]),
+      subjects: [...SUBJECTS, { id: "slv", name: "Slöjdverkstad", nationalCode: "SLJ", countsTowardTimplan: false }],
+    };
+    const result = halvesTimplan(withVerkstad, split, "tx");
+    if (result.kind !== "lines") throw new Error(result.kind);
+    expect(result.halves[0].map((line) => [line.key, line.subjectIds, line.target])).toEqual([
+      ["national:SLJ", ["sl", "tx"], 120],
+      [null, ["slv"], null],
+    ]);
+  });
+
   it("proposes nothing for the part of a line whose own entry is absent when no class post is there to bring down", () => {
     const textil = post("r-tx", "tx", 2, 60);
     const split = swap(TERMS, ["tx", "tm"], "swapWithinLine", [textil], textil);
