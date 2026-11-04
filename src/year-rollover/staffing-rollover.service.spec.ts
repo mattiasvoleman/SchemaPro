@@ -100,6 +100,19 @@ describe('StaffingRolloverService — execute', () => {
     expect(raw.map((call) => call.values![0])).toEqual([yearB, yearB, expect.any(Array), IDS.yearA, IDS.yearA]);
   });
 
+  it('takes the school’s people lock, shared, before the target year: an SS12000 apply holds the staff and waits for the groups the carry holds', async () => {
+    const { world, service, yearB } = await rolledWithoutStaffing();
+    const preview = await service.preview(yearB, admin);
+    world.calls.length = 0;
+    await service.execute(yearB, preview.planHash, admin);
+    expect(world.calls[0]).toMatchObject({
+      model: '$executeRaw',
+      sql: 'SELECT pg_advisory_xact_lock_shared(hashtextextended(?, 0))',
+      values: [`Users:${IDS.school}`],
+    });
+    expect(world.calls.findIndex((call) => call.model === '$queryRaw')).toBeGreaterThan(0);
+  });
+
   it('writes into the target only, inserts only, with the groups found through predecessorId, and a second run writes nothing', async () => {
     const { world, service, yearB } = await rolledWithoutStaffing();
     const sourceBefore = JSON.stringify(world.rows['teacherDuty']!.concat(world.rows['teacherEmployment']!));

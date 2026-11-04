@@ -51,7 +51,14 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  * (local-slice.ts), as a guardian's calendar feed holds it shared
  * (20261112091000). So does every write that takes its locks here: no apply
  * runs between their row locks. The rollover, the year's activation and the
- * term halves take their row locks without it.
+ * carry of tjänster into a rolled year take it too: each holds a year's
+ * groups FOR SHARE and then rows of Users (the activation's pupils, a half's
+ * members the member trigger holds FOR SHARE, the staff of a carry), which an
+ * apply holds while it waits for those groups. Without the lock first the
+ * activation deadlocked against the apply's lock statements in 80 of 80
+ * forced overlaps. The term halves' split holds the year and one class and
+ * no Users row beyond the keys it references, so it waits on nothing an
+ * apply holds and takes no lock here.
  */
 
 /** Step 1: the school's people lock, shared. First in its transaction, before any row lock. */

@@ -5,6 +5,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { PrismaService } from '../database/prisma.service';
 import { tellNewMentors } from '../family/leave-notices';
 import { NotificationsService } from '../notifications/notifications.service';
+import { holdTheSchoolsPeople } from '../common/lock-order';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
 import { toWallClock } from '../common/utils/time';
@@ -140,6 +141,10 @@ export class StaffingRolloverService {
       const result = await this.prisma.withRls(
         user,
         async (tx) => {
+          // The school's people lock before any row (src/common/lock-order.ts):
+          // the target's groups below are held FOR SHARE, and the staff after
+          // them wait for an SS12000 apply that holds them and waits for the groups.
+          await holdTheSchoolsPeople(tx, schoolId);
           const [year] = await tx.$queryRaw<{ id: string; name: string; predecessorId: string | null }[]>`
             SELECT "id", "name", "predecessorId"
             FROM "AcademicYears"

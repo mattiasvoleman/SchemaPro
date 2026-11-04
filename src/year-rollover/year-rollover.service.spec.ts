@@ -31,6 +31,9 @@ const OPTIONS: RolloverOptionsDto = {
 
 const BLOCK_ID = '00000000-0000-4000-8000-0000000000b1';
 
+/** The school's people lock, shared (src/common/lock-order.ts): the first statement of every write that holds a year's groups. */
+const PEOPLE_LOCK = 'SELECT pg_advisory_xact_lock_shared(hashtextextended(?, 0))';
+
 /**
  * A parallel block over two rows of åk 7 with the same lessons: Svenska for
  * 7A and Matematik for Ma7 grupp 1, each 3 × 60 every week. The rollover
@@ -473,6 +476,12 @@ describe('YearRolloverService — rollover execute', () => {
     );
 
     for (const call of world.calls) {
+      if (call.model === '$executeRaw') {
+        // The one raw execute: the school's people lock, before the reads.
+        expect(call).toMatchObject({ sql: PEOPLE_LOCK, values: [`Users:${IDS.school}`] });
+        expect(call).toBe(world.calls[0]);
+        continue;
+      }
       if (call.model === '$queryRaw') {
         expect(call.sql).toMatch(/^SELECT .* FROM "(AcademicYears|StudentGroups)" WHERE .* FOR SHARE$/);
         expect(call.values![0]).toBe(IDS.yearA);
@@ -1386,12 +1395,14 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
       { ...OPTIONS, ...option, graduatingGradeLevel: 9, planHash: preview.planHash },
       admin,
     );
-    // fa4a3d6's names, the count of the times read through the links.
-    expect(callNames(world.calls)).toEqual(
-      FA4A3D6_EXECUTE_CALLS.map((name, index) =>
+    // fa4a3d6's names, the school's people lock first (lock-order.ts), the
+    // count of the times read through the links.
+    expect(callNames(world.calls)).toEqual([
+      PEOPLE_LOCK,
+      ...FA4A3D6_EXECUTE_CALLS.map((name, index) =>
         name === 'teacherDuty.count' && FA4A3D6_EXECUTE_CALLS.indexOf('teacherDuty.count') + 1 === index ? 'teacherDutySlot.count' : name,
       ),
-    );
+    ]);
     expect(result.staffing).toBeNull();
     expect(result.planHash).toBe(PINNED);
   });
@@ -2096,7 +2107,8 @@ describe('YearRolloverService — activation', () => {
     expect(homeOf(world, IDS.pGone)).toBe(IDS.g7a);
     const years = Object.fromEntries(world.rows['academicYear']!.map((year) => [year['id'], year['isActive']]));
     expect(years).toEqual({ [IDS.yearA]: false, [yearB]: true });
-    // Locks: the year FOR NO KEY UPDATE, the chain's groups FOR SHARE, the pupils FOR NO KEY UPDATE.
+    // Locks: the school's people lock first, the year FOR NO KEY UPDATE, the chain's groups FOR SHARE, the pupils FOR NO KEY UPDATE.
+    expect(world.calls[0]).toMatchObject({ model: '$executeRaw', sql: PEOPLE_LOCK, values: [`Users:${IDS.school}`] });
     expect(world.calls.filter((call) => call.model === '$queryRaw').map((call) => call.sql!.replace(/^SELECT "id" FROM /, ''))).toEqual([
       '"AcademicYears" WHERE "id" = ?::uuid FOR NO KEY UPDATE',
       '"StudentGroups" WHERE "academicYearId" = ANY(?::uuid[]) ORDER BY "id" FOR SHARE',
@@ -2112,7 +2124,7 @@ describe('YearRolloverService — activation', () => {
     }
 
     // The class history's hint, on this first activation, before the first move.
-    const hints = world.calls.filter((call) => call.model === '$executeRaw');
+    const hints = world.calls.filter((call) => call.model === '$executeRaw' && call.sql !== PEOPLE_LOCK);
     expect(hints.map((call) => [call.sql, call.values])).toEqual([
       ["SELECT set_config('app.enrolment_from', ?, true)", [`${yearB}:2027-08-16`]],
     ]);
@@ -2150,7 +2162,7 @@ describe('YearRolloverService — activation', () => {
     await service.executeActivation(yearB, { planHash: again.planHash }, admin, AFTER);
     expect(homeOf(world, IDS.pGone)).toBe(groupNamed(world, yearB, '8A'));
     // The active year's straggler run sets no hint: the straggler is recorded from today.
-    expect(world.calls.filter((call) => call.model === '$executeRaw')).toEqual([]);
+    expect(world.calls.filter((call) => call.model === '$executeRaw' && call.sql !== PEOPLE_LOCK)).toEqual([]);
     const into2028 = await service.previewRollover(yearB, next, admin);
     expect(into2028.planHash).toEqual(expect.any(String));
     // The tioårig grundskola's renumbering is said, never refused, and never hashed.
@@ -2464,5 +2476,66 @@ describe('YearRolloverService — delade lektioner (20261205090000)', () => {
     const writes = world.calls.filter((call) => call.model === 'teachingRequirement' && call.method.startsWith('create'));
     expect(writes.map((call) => call.method)).toEqual(['createMany']);
     expect(world.calls.some((call) => call.model === 'teachingRequirementShare')).toBe(false);
+  });
+});
+
+/**
+ * The school's people lock (src/common/lock-order.ts), first. The rollover and
+ * the activation hold a year's groups FOR SHARE and then rows of Users (the
+ * activation's pupils, a half's members the member trigger holds FOR SHARE,
+ * with tjänster the staff). An SS12000 apply holds the school's people
+ * exclusively, locks every pupil and then every group, so without the shared
+ * lock first each waits for what the other holds and Postgres aborts one: the
+ * activation answered 409 WRITE_CONFLICT in 80 of 80 forced overlaps
+ * (scripts/test/probe-massatgarder.ts, mv7, runs the real thing).
+ */
+describe('YearRolloverService — the school’s people lock, shared and first', () => {
+  const AFTER = { today: '2027-06-14' };
+  const lockIs = (call: RecordedCall | undefined) =>
+    expect(call).toMatchObject({ model: '$executeRaw', sql: PEOPLE_LOCK, values: [`Users:${IDS.school}`] });
+  const firstRowLock = (calls: RecordedCall[]) => calls.findIndex((call) => call.model === '$queryRaw');
+
+  it.each([
+    ['without tjänster', {}],
+    ['with tjänster', { carryStaffing: true }],
+  ])('the rollover %s takes it before the year, the groups and the staff', async (_label, option) => {
+    const { world, service } = setup(staffingRows());
+    await previewAndExecute(world, service, { ...OPTIONS, ...option });
+    lockIs(world.calls[0]);
+    expect(firstRowLock(world.calls)).toBeGreaterThan(0);
+    expect(world.calls.filter((call) => call.sql === PEOPLE_LOCK)).toHaveLength(1);
+  });
+
+  it('the activation takes it before the year, the chain’s groups and the pupils, and holds nothing of Users until it has it', async () => {
+    const { world, service } = setup();
+    const { result } = await previewAndExecute(world, service);
+    const yearB = result.academicYear.id;
+    const preview = await service.previewActivation(yearB, admin, AFTER);
+    world.calls.length = 0;
+    await service.executeActivation(yearB, { planHash: preview.planHash }, admin, AFTER);
+    lockIs(world.calls[0]);
+    expect(world.calls[firstRowLock(world.calls)]!.sql).toMatch(/FROM "AcademicYears" WHERE "id" = \?::uuid FOR NO KEY UPDATE$/);
+    expect(world.calls.filter((call) => call.sql === PEOPLE_LOCK)).toHaveLength(1);
+  });
+
+  it('a stale or blocked execute has taken it too: it comes before any read that could refuse', async () => {
+    const { world, service } = setup();
+    const { result } = await previewAndExecute(world, service);
+    world.calls.length = 0;
+    await expect(
+      service.executeActivation(result.academicYear.id, { planHash: 'f'.repeat(64) }, admin, AFTER),
+    ).rejects.toBeInstanceOf(ConflictException);
+    lockIs(world.calls[0]);
+  });
+
+  it('the previews are reads and take no lock', async () => {
+    const { world, service } = setup();
+    const preview = await service.previewRollover(IDS.yearA, OPTIONS, admin);
+    const { result } = await previewAndExecute(world, service);
+    world.calls.length = 0;
+    await service.previewActivation(result.academicYear.id, admin, AFTER);
+    expect(preview.blocking).toBe(false);
+    expect(world.calls.filter((call) => call.sql?.includes('advisory'))).toEqual([]);
+    expect(world.calls.filter((call) => call.model === '$queryRaw')).toEqual([]);
   });
 });
