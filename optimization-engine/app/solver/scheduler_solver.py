@@ -4,6 +4,7 @@ import itertools
 import logging
 import math
 import re
+import hashlib
 import time
 from bisect import bisect_left, bisect_right
 from collections import Counter, defaultdict
@@ -74,6 +75,13 @@ from app.solver.room_allocator import (
     collect_distinguished_room_ids,
 )
 from app.solver.time_grid import TimeGrid
+from app.solver.week_load import (
+    MAX_SHARED_TEACHERS_NAMED,
+    LunchFacts,
+    Relations,
+    StageLoad,
+    week_loads,
+)
 from app.solver.weeks import WEEKS, alternates, meet, tag as week_tag, week_parts
 from app.solver.travel import (
     CATEGORIES as TRAVEL_CATEGORIES,
@@ -2727,6 +2735,332 @@ class SchedulerSolver:
         memo[key] = held
         return held
 
+    def _week_loads(self, request: OptimizeScheduleRequest) -> list[StageLoad]:
+        """The years whose least week passes TIGHT_WEEK_LOAD of their frame time.
+
+        The count itself is week_load.week_loads, which says why it is sound.
+        What is read here is what only this module knows: who shares a pupil
+        (the model's own relation), whose lesson is whose, who eats and on
+        which days. Handed over as the model's own readers rather than
+        restated, so that the count and the model cannot disagree about who
+        may not overlap whom.
+        """
+        sharing = _groups_sharing_students(request.group_conflicts)
+        rules = request.rules
+        lunch: LunchFacts | None = None
+        if rules is not None and _lunch_window_is_set(rules):
+            window_start, window_end, lunch_slots = self._lunch_window_slots(rules)
+            eaters = _lunch_group_ids(
+                request.groups, _group_ids_with_lessons(request.requirements),
+            )
+            _, exempt_days = self._lunch_starts_blocked_by_constraints(
+                request.constraints, set(eaters),
+                window_start, window_end - lunch_slots, window_end, lunch_slots,
+            )
+            span_by_group = {
+                group.id: (group.min_grade_level, group.max_grade_level)
+                for group in request.groups
+                if group.min_grade_level is not None and group.max_grade_level is not None
+            }
+            lunch = LunchFacts(
+                group_spans={eater: span_by_group.get(eater) for eater in eaters},
+                window_start=window_start,
+                window_end=window_end,
+                slots=lunch_slots,
+                exempt_days=exempt_days,
+                pins=self._lunch_pins(request.lunch_placements, eaters),
+            )
+        return week_loads(
+            request.requirements,
+            request.frame_times,
+            self._grid,
+            Relations(
+                sharing=sharing,
+                pupil_key=pupil_key_of,
+                teachers_at=_teachers_at,
+                meal_clear_of=lambda eater, class_id: _meal_keeps_clear_of(eater, class_id, sharing),
+                home_classes=frozenset(group.id for group in request.groups),
+            ),
+            lunch,
+            threshold=self.TIGHT_WEEK_LOAD,
+            deadline=time.monotonic() + self.WEEK_LOAD_SECONDS,
+        )
+
+    @staticmethod
+    def _shared_teacher_details(loads: Sequence[StageLoad], limit: int) -> list[ConflictDetail]:
+        """One sentence per teacher who stands on groups that could run together.
+
+        Never a name: the teacher is said to be shared and the entries are
+        named by the school's own (a subject and a group), which the gateway
+        turns back from resourceIds. At most `limit` in all, heaviest year
+        first, so a school with a dozen such teachers reads the pattern and
+        not the list.
+        """
+        details: list[ConflictDetail] = []
+        for load in loads:
+            for teacher in load.shared:
+                if len(details) >= limit:
+                    return details
+                details.append(
+                    ConflictDetail(
+                        category="TEACHER_OVERLAP",
+                        code="TEACHER_SHARED_BY_PARALLEL_GROUPS",
+                        params={
+                            "groups": len(teacher.requirement_ids),
+                            "minutes": teacher.minutes,
+                            "grades": "any" if load.year is None else str(load.year),
+                        },
+                        requirement_ids=list(teacher.requirement_ids),
+                        resource_ids=list(teacher.requirement_ids),
+                    ),
+                )
+        return details
+
+    def _week_load_verdict(self, loads: Sequence[StageLoad]) -> ConflictAnalysis | None:
+        """A year whose least week is above everything its frames offer.
+
+        Proved, not measured: week_load's bound is a lower bound on the time
+        the year's lessons need under the model's own no-overlap rules, so a
+        year it puts above its supply has no timetable and the answer is
+        INFEASIBLE, in microseconds, instead of a TIMEOUT after the budget.
+        Named like the class counts that come before it: the year, the
+        minutes against the frame, and what makes the difference — the
+        teachers who cannot be in two places.
+        """
+        over = next((load for load in loads if load.over), None)
+        if over is None:
+            return None
+        # The sentence points at the teachers listed under it, so it says so
+        # only when there are some: a request without `groups` (the gateway
+        # always sends them) names no teacher, and "see below" would point at
+        # nothing.
+        shared = self._shared_teacher_details([over], MAX_SHARED_TEACHERS_NAMED)
+        return ConflictAnalysis(
+            summary_code="DEMAND_YEAR_WEEK_SHORT",
+            summary_params={
+                "grades": "any" if over.year is None else str(over.year),
+                "demandMinutes": over.demand_minutes,
+                "capacityMinutes": over.capacity_minutes,
+                "shared": "some" if shared else "none",
+            },
+            conflicts=[
+                ConflictDetail(
+                    category="REQUIREMENT_DEMAND",
+                    code="DEMAND_REQUIREMENTS_EXCEED_WEEK",
+                    params={
+                        "requirements": len(over.requirement_ids),
+                        "demandMinutes": over.demand_minutes,
+                        "capacityMinutes": over.capacity_minutes,
+                    },
+                    requirement_ids=list(over.requirement_ids),
+                ),
+                *shared,
+            ],
+        )
+
+    def _with_tight_week(
+        self, analysis: ConflictAnalysis | None, tight: Sequence[StageLoad],
+    ) -> ConflictAnalysis | None:
+        """A TIMEOUT's probe result, carrying the years the arithmetic found tight.
+
+        THE NOTICE COSTS NO PROBE TIME: the count ran before the models were
+        built. Where the probes found a rule that made the week solve, that
+        answer stands and the notice follows it. Where they found nothing —
+        or did not run — "the week may simply be large; try a longer budget"
+        would send a school to the one thing measured not to help (600 and
+        1,200 seconds found nothing on a week at 94-98 %), so the notice IS
+        the summary.
+        """
+        if not tight:
+            return analysis
+        details = [
+            ConflictDetail(
+                category="REQUIREMENT_DEMAND",
+                code="TIGHT_WEEK_LOAD",
+                params={
+                    "grades": "any" if load.year is None else str(load.year),
+                    "demandMinutes": load.demand_minutes,
+                    "capacityMinutes": load.capacity_minutes,
+                    "percent": int(load.load * 100),
+                },
+                requirement_ids=list(load.requirement_ids),
+            )
+            for load in tight
+        ] + self._shared_teacher_details(tight, MAX_SHARED_TEACHERS_NAMED)
+        if analysis is not None and analysis.summary_code == "PROBE_ONE_RULE_HELPED":
+            return analysis.model_copy(update={"conflicts": [*analysis.conflicts, *details]})
+        worst = tight[0]
+        return ConflictAnalysis(
+            summary_code="TIGHT_WEEK_TIMEOUT",
+            summary_params={
+                "budget": round(self._settings.solver_max_time_seconds),
+                "grades": "any" if worst.year is None else str(worst.year),
+                "demandMinutes": worst.demand_minutes,
+                "capacityMinutes": worst.capacity_minutes,
+                "percent": int(worst.load * 100),
+            },
+            # What the probes did say about the walk stands beside the notice.
+            conflicts=[
+                *(analysis.conflicts if analysis is not None else []),
+                *details,
+            ],
+        )
+
+    def _parallel_groups_probe(
+        self, request: OptimizeScheduleRequest, tight: Sequence[StageLoad],
+    ) -> OptimizeScheduleRequest | None:
+        """The tight years with a teacher of their own on each shared group, run as a block.
+
+        THE SCHOOL'S OWN FIX, MEASURED. In the week this was written for, a
+        teacher of their own for each of a year's language groups plus one
+        parallel block per year solved it in ten seconds, where the week as
+        written found nothing in twenty minutes. This builds that week from the
+        request: in each year, every entry a shared teacher stands on past the
+        first gets a teacher of its own (an id made from its own, so nobody
+        real is touched), and the year's groups that would then run together —
+        the same lessons, no pupil and no teacher in common, pupils from a
+        class they share — are declared one block. The block takes in the
+        siblings that no teacher was shared on: a block of the three would
+        leave the other two to queue behind it.
+
+        PER YEAR, NOT PER GROUP. The count names a year's groups waiting on
+        one teacher, so that is what is relaxed. A teacher with a group in each
+        of years 7, 8 and 9 keeps all three: they stay one person across the
+        years, and the years' blocks can still run at different times. A
+        teacher of their own for every group would relax more than the count
+        named, and "solved" would promise a school more than it can do.
+
+        A year that is tight in both weeks of an alternating school (the same
+        year in two loads) is taken once, with the entries and teachers of
+        both weeks together: a teacher shared on an odd group and an every-week
+        group in one week, on an even one and the every-week group in the other,
+        is shared on all three as far as the relaxed week is concerned.
+
+        None when no year has a shared teacher to relax, or nothing is left
+        that two entries could run together on. Not a promise that the relaxed
+        week is one the school can live with — the groups may not be
+        interchangeable, the teachers may not exist — only that it solves.
+        """
+        by_id = {requirement.id: requirement for requirement in request.requirements}
+        sharing = _groups_sharing_students(request.group_conflicts)
+        homes = {group.id for group in request.groups}
+        taken = {requirement.id for requirement in request.requirements if requirement.block_id is not None}
+        changes: dict[UUID, dict[str, UUID]] = {}
+        blocks: dict[UUID, UUID] = {}
+
+        def teachers_after(requirement: AnonymousRequirement) -> set[UUID]:
+            update = changes.get(requirement.id, {})
+            return {
+                teacher_id
+                for teacher_id in (
+                    update.get("teacher_id", requirement.teacher_id),
+                    update.get("co_teacher_id", requirement.co_teacher_id),
+                )
+                if teacher_id is not None
+            }
+
+        # One entry per year: the entries it holds and, per teacher, the
+        # entries that teacher is shared on, whichever week said so.
+        entries_of_year: dict[int | None, list[UUID]] = {}
+        shared_of_year: dict[int | None, dict[UUID, list[UUID]]] = {}
+        for load in tight:
+            held = entries_of_year.setdefault(load.year, [])
+            held.extend(i for i in load.requirement_ids if i not in held)
+            for teacher in load.shared:
+                on = shared_of_year.setdefault(load.year, {}).setdefault(teacher.teacher_id, [])
+                on.extend(i for i in teacher.requirement_ids if i not in on)
+
+        for year, year_entries in entries_of_year.items():
+            candidates: list[AnonymousRequirement] = []
+            for teacher_entries in shared_of_year.get(year, {}).values():
+                for requirement_id in teacher_entries:
+                    requirement = by_id[requirement_id]
+                    if (
+                        requirement.lesson_teacher_ids is None
+                        and requirement.id not in taken
+                        and requirement not in candidates
+                    ):
+                        candidates.append(requirement)
+            if not candidates:
+                continue
+            # The siblings: teaching groups of the year with the candidates'
+            # lessons, which share a class with one of them.
+            shapes = {tuple(candidate.lesson_minutes()) for candidate in candidates}
+            classes = {
+                home
+                for candidate in candidates
+                for home in homes.intersection(sharing.get(pupil_key_of(candidate), ()))
+            }
+            for requirement_id in year_entries:
+                requirement = by_id[requirement_id]
+                key = pupil_key_of(requirement)
+                if (
+                    requirement in candidates
+                    or requirement.id in taken
+                    or requirement.lesson_teacher_ids is not None
+                    or key in homes
+                    or tuple(requirement.lesson_minutes()) not in shapes
+                    or not classes.intersection(sharing.get(key, ()))
+                ):
+                    continue
+                candidates.append(requirement)
+            # A teacher of its own on each, within the year: the first entry
+            # of a teacher keeps them, every later one gets an id made from
+            # its own. `used` starts empty for every year.
+            used: set[UUID] = set()
+            for requirement in candidates:
+                for field_name, teacher_id in (
+                    ("teacher_id", requirement.teacher_id),
+                    ("co_teacher_id", requirement.co_teacher_id),
+                ):
+                    if teacher_id is None:
+                        continue
+                    if teacher_id in used:
+                        changes.setdefault(requirement.id, {})[field_name] = _derived_id(
+                            requirement.id, f"own-{field_name}",
+                        )
+                    used.add(teacher_id)
+            # One block per shape, filled greedily with entries that can run
+            # together: the first that fits a block joins it.
+            groups: list[list[AnonymousRequirement]] = []
+            for requirement in candidates:
+                key = pupil_key_of(requirement)
+                for members in groups:
+                    leader = members[0]
+                    if (
+                        tuple(leader.lesson_minutes()) == tuple(requirement.lesson_minutes())
+                        and leader.recurrence == requirement.recurrence
+                        and all(
+                            teachers_after(member).isdisjoint(teachers_after(requirement))
+                            and pupil_key_of(member) != key
+                            and key not in sharing.get(pupil_key_of(member), ())
+                            for member in members
+                        )
+                    ):
+                        members.append(requirement)
+                        break
+                else:
+                    groups.append([requirement])
+            for members in groups:
+                if len(members) < 2:
+                    continue
+                block_id = _derived_id(members[0].id, "block")
+                for member in members:
+                    blocks[member.id] = block_id
+        if not changes and not blocks:
+            return None
+        return request.model_copy(update={
+            "requirements": [
+                requirement.model_copy(update={
+                    **changes.get(requirement.id, {}),
+                    **({"block_id": blocks[requirement.id]} if requirement.id in blocks else {}),
+                })
+                if requirement.id in changes or requirement.id in blocks
+                else requirement
+                for requirement in request.requirements
+            ],
+        })
+
     def _teacher_hours_verdict(self, request: OptimizeScheduleRequest) -> ConflictAnalysis | None:
         """A teacher's week against the room their lessons can take, decided by arithmetic.
 
@@ -4336,6 +4670,26 @@ class SchedulerSolver:
     # it refuses it has paid for itself many times over; on a feasible week
     # this is the most it can cost, and its starts are hinted onward.
     LUNCH_STAGE_CAP_SECONDS = 10.0
+    # A year's least week, counted with its teachers in it (week_load.py): the
+    # most the count may spend before the models are built, and the share of a
+    # year's frame time at which a TIMEOUT starts to say the week is tight.
+    #
+    # 0.85 IS MEASURED, NOT GUESSED. The busiest benchmark weeks that solve are
+    # at 77 % (bench school) and 68 % (högstadium); of the variants of the
+    # school the count was written for, every one that found nothing in the
+    # budget was at 82.7 % or above and every one that found a timetable in
+    # seconds at 77 % or below. The edge is 81-83 %: the same bound, 81.4 %,
+    # took 92-165 s with a teacher each and 10 s with a block as well, and a
+    # count of lessons cannot see the block. So the threshold sits two points
+    # above the edge: a TIMEOUT at 85 % or more says the week is tight; one
+    # on the edge keeps the old summary rather than call tight a week that a
+    # block solves in ten seconds. The table is in docs/verification-baseline.md.
+    WEEK_LOAD_SECONDS = 4.0
+    TIGHT_WEEK_LOAD = 0.85
+    # The probe that gives a tight year's shared groups a teacher each
+    # and runs them as a block, and its share of the probe budget.
+    PARALLEL_GROUPS_PROBE = "PROBE_SOLVED_WITH_OWN_TEACHERS_AND_BLOCK"
+    PARALLEL_PROBE_SHARE = 0.6
     # Restid i generatorn: the most of the budget the week on planned sites
     # may take before phase 1a gets the rest, and the cap on planning them.
     # See _solve_on_planned_sites.
@@ -4608,6 +4962,9 @@ class SchedulerSolver:
         # week, the request itself, and is judged exactly as before.
         weeks = _week_requests(request)
         lunch_hints: dict[tuple[UUID, int], int] = {}
+        # The years found tight by the count below, heaviest first across
+        # the weeks: carried to a TIMEOUT, which then says so.
+        nearly_full: dict[int | None, StageLoad] = {}
         for week in weeks:
             # Arithmetic first, models second: a hall the school cannot fit in
             # is decided here in microseconds and reported the way a solve
@@ -4637,6 +4994,16 @@ class SchedulerSolver:
             # its classes by: after every verdict above, so a week one of them
             # decides keeps its answer. See _class_hours_verdict.
             verdict = verdict or self._class_hours_verdict(week)
+            # And last, the year's least week with its TEACHERS in the count,
+            # which the class counts leave out: after every verdict above, so
+            # a week one of them decides keeps its answer. See week_load.
+            if verdict is None:
+                loads = self._week_loads(week)
+                verdict = self._week_load_verdict(loads)
+                for load in loads:
+                    held = nearly_full.get(load.year)
+                    if held is None or load.load > held.load:
+                        nearly_full[load.year] = load
             if verdict is not None:
                 return OptimizeScheduleResponse(
                     request_id=request.request_id,
@@ -4669,6 +5036,24 @@ class SchedulerSolver:
 
         def _remaining() -> float:
             return total_budget - (time.monotonic() - started)
+
+        tight = sorted(nearly_full.values(), key=lambda load: -load.load)
+        if tight:
+            logger.info(
+                "tight: %s",
+                ", ".join(
+                    f"year {load.year}: {load.demand_minutes} of {load.capacity_minutes} min"
+                    for load in tight
+                ),
+            )
+
+        def _timeout_conflicts() -> ConflictAnalysis | None:
+            return self._with_tight_week(
+                self._probe_timeout(request)
+                if probe_deadline is None
+                else self._probe_timeout(request, deadline=probe_deadline),
+                tight,
+            )
 
         # Warm start: the previous schedule's slots seed the existence search.
         # Measured on the benchmark school, this is the difference between
@@ -4809,11 +5194,7 @@ class SchedulerSolver:
                     request_id=request.request_id,
                     status="TIMEOUT",
                     lessons=[],
-                    conflicts=(
-                        self._probe_timeout(request)
-                        if probe_deadline is None
-                        else self._probe_timeout(request, deadline=probe_deadline)
-                    ),
+                    conflicts=_timeout_conflicts(),
                 )
             clone_model = model.Clone()
             clone_model.ClearObjective()
@@ -4836,11 +5217,7 @@ class SchedulerSolver:
                     request_id=request.request_id,
                     status="TIMEOUT",
                     lessons=[],
-                    conflicts=(
-                        self._probe_timeout(request)
-                        if probe_deadline is None
-                        else self._probe_timeout(request, deadline=probe_deadline)
-                    ),
+                    conflicts=_timeout_conflicts(),
                 )
             # Clone() preserves variable indices, so the full model's own
             # variables read their values straight off the clone's solver.
@@ -9185,6 +9562,16 @@ class SchedulerSolver:
             relaxations.sort(key=lambda item: item[0] != "PROBE_SOLVED_WITHOUT_TRAVEL")
 
         slice_seconds = max(self.MIN_PHASE_SECONDS, budget / len(relaxations))
+        # THE PARALLEL-GROUPS PROBE IS GIVEN MORE, for the reason the walk's is:
+        # on the week it exists for the fix solved in about ten seconds, and a
+        # sixth of twenty is three. The other rules share what it leaves.
+        parallel_seconds = slice_seconds
+        if any(code == self.PARALLEL_GROUPS_PROBE for code, _ in relaxations):
+            parallel_seconds = budget * self.PARALLEL_PROBE_SHARE
+            if len(relaxations) > 1:
+                slice_seconds = max(
+                    self.MIN_PHASE_SECONDS, (budget - parallel_seconds) / (len(relaxations) - 1),
+                )
         found: list[tuple[str, float]] = []
         probed = 0
         # What the walk's own probe did: how long it searched and what it
@@ -9205,7 +9592,7 @@ class SchedulerSolver:
                 # A relaxation can also make the payload refuse by name (a
                 # sitting that no longer reaches a stage, say). Not a finding.
                 continue
-            seconds = slice_seconds
+            seconds = parallel_seconds if code == self.PARALLEL_GROUPS_PROBE else slice_seconds
             if keeps_walk and code == "PROBE_SOLVED_WITHOUT_TRAVEL":
                 # THE WALK'S PROBE TAKES THE WHOLE PROBE BUDGET. A slice of it
                 # was too short to say anything: the högstadium week at seven
@@ -9307,6 +9694,27 @@ class SchedulerSolver:
         sitting, count the chairs again, or move the window.
         """
         out: list[tuple[str, OptimizeScheduleRequest]] = []
+        # FIRST, where a year is tight and teachers are shared on its
+        # groups: the one probe that names the cause of that week. Counted again
+        # here (a tenth of a second) rather than passed in, so this stays what
+        # it was to everything that calls it with a request alone.
+        #
+        # ON EACH REAL WEEK, AS solve() COUNTS IT (_week_requests): a school
+        # with odd and even weeks has the odd week's lessons and the even
+        # week's, and one teacher on an odd group and an even group is never
+        # on both at once. Counted on the request as it stands they would look
+        # simultaneous, and a week that is 80 % per real week would be offered
+        # the probe at 88 %, with most of the probe time. A year tight in both
+        # weeks is listed once per week; the probe takes them together.
+        nearly_full = [
+            load
+            for week in _week_requests(request)
+            for load in self._week_loads(week)
+        ]
+        if any(load.shared for load in nearly_full):
+            relaxed = self._parallel_groups_probe(request, nearly_full)
+            if relaxed is not None:
+                out.append((self.PARALLEL_GROUPS_PROBE, relaxed))
         if any(f.changeover_minutes > 0 for f in request.frame_times):
             out.append((
                 "PROBE_SOLVED_WITHOUT_CHANGEOVER",
@@ -14684,6 +15092,16 @@ def _week_requests(request: OptimizeScheduleRequest) -> list[OptimizeScheduleReq
             ],
         }))
     return weeks
+
+
+def _derived_id(seed: UUID, label: str) -> UUID:
+    """An id made from another and a label: the same every time, and nobody's own.
+
+    A random id would make two runs of the same week build two different
+    relaxed requests; a UUID of version 4's shape because the schema's ids are.
+    """
+    digest = hashlib.sha256(f"{seed}:{label}".encode()).digest()
+    return UUID(bytes=digest[:16], version=4)
 
 
 def _without_blocks(request: OptimizeScheduleRequest) -> OptimizeScheduleRequest:

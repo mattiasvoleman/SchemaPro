@@ -99,7 +99,7 @@ services:
       APP_ENV: production
       API_KEY: ${AI_ENGINE_API_KEY:-local-dev-shared-key-not-a-secret-0000}
       ALLOWED_ORIGINS: http://api:4000
-      SOLVER_TIMEOUT_SECONDS: ${SOLVER_TIMEOUT_SECONDS:-60}
+      SOLVER_MAX_TIME_SECONDS: ${SOLVER_MAX_TIME_SECONDS:-60}
 
 volumes:
   db-data:

@@ -529,6 +529,18 @@ describe('OptimizationJobsService', () => {
       ...overrides,
     });
 
+    it('carries the longest a run can take, for the page to quote while it is going', async () => {
+      // The wait is the deployment's (AI_ENGINE_TIMEOUT_MS), the same for every
+      // run, so it rides every view and is read, not written into the page.
+      Object.assign(proxy, { waitSeconds: 240 });
+      tx.optimizationJob.findUnique.mockResolvedValue(row({ status: 'RUNNING', solverStatus: null }));
+
+      await expect(service.get(JOB_ID, testUser())).resolves.toMatchObject({
+        status: 'RUNNING',
+        waitSeconds: 240,
+      });
+    });
+
     it('returns the job as an API view with ISO timestamps', async () => {
       tx.optimizationJob.findUnique.mockResolvedValue(row());
 

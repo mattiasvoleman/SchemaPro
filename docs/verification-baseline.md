@@ -1583,6 +1583,157 @@ a test of their own, since the other cases require that something is priced.
   satisfaction reaches OPTIMAL and the optimising model finds nothing. Both were
   measured. The unifying explanation is the missing margin, not the objective.
 
+### A year's least week, counted with its teachers in it (`week_load.py`)
+
+**Why.** On 2026-11-03 a school's week found no timetable in 60 s, 180 s, 600 s
+or 1,200 s (eight workers), and the engine answered `TIMEOUT` with
+`PROBE_NOTHING_HELPED`. Years 7-9 each had three to six language groups, the
+same three teachers on them, and pupils from nearly every class in each group.
+The groups share no pupil with each other, so the class counts (`_clique_hours_verdict`,
+`_class_hours_verdict`) let them run side by side and said 80-81 %; one teacher
+cannot be in two rooms, so every class sits through them one after the other.
+`week_load.py` counts the least time such a year needs with the teachers in the
+graph: the weighted fractional chromatic number of the lessons (an edge when two
+entries share a pupil, a pair in `groupConflicts` or a teacher), plus each class's
+meals, against the union of the year's frame windows. A lower bound by
+construction, proved exactly (column generation; every bound is a rational
+`sum(weight*dual)/max-independent-set` with the maximum proved by CP-SAT, so a
+floating-point slip can lower a bound and never raise it). Above 100 % the week is
+refused by name before any model is built (`DEMAND_YEAR_WEEK_SHORT`, the minutes
+against the frame and the groups per shared teacher, never the teacher). Above
+**85 %** a `TIMEOUT` carries it (`TIGHT_WEEK_TIMEOUT` / `TIGHT_WEEK_LOAD`) instead of
+"the week may simply be large".
+
+**The bound on the school's week and its variants** (the 13 weeks of the
+investigation; the result column is the investigation's, eight workers, 120-180 s):
+
+| week | bound / frame | result |
+| :--- | ---: | :--- |
+| original | 97.7 % (year 8) | nothing in 180, 600, 1,200 s |
+| frame ends +20 / +40 / +60 / +80 min | 93.5 / 89.6 / 86.0 / 82.7 % | nothing in 120 s |
+| changeover 0 | 88.7 % | nothing in 180 s |
+| year 8 left out | 96.1 % (year 7) | found at 104 s |
+| frame ends +90 min | 81.1 % | found at 90 s |
+| own teacher per group (L1) | 81.4 % | found at 92, 117, 165 s |
+| own teacher per group + one block per year (L2) | 81.4 % | found at 9.4, 10.3, 10.3, 11.6 s |
+| frame ends +120 min | 76.8 % | found at 6.4 s |
+| frames of years 7-9 dropped | 63.5 / 64.3 / 62.3 % (years 7 / 8 / 9) | found at 8.4 s |
+| no frames | 64.3 % | found at 8.7 s |
+
+The bound reproduces the investigation's own figures (2,115 / 2,150 / 2,075 of
+2,200 minutes for years 7 / 8 / 9) to the minute. The benchmark weeks that solve
+sit at 77 % (bench school, any size) and 68 % (högstadium, every variant). **The
+threshold is 85 %**: every week that found nothing is at 82.7 % or above, and
+every week that found a timetable in seconds at 77 % or below, but the edge
+(81-83 %) is not separable by a count of lessons — L1 and L2 have the same bound
+and differ by a factor of ten because the block is something the search finds
+and the count cannot see. Two points above the edge keeps the notice off a
+week a block solves in ten seconds.
+
+**Cost** (`week_loads` alone, one core, a host at load 15-30 on eight cores):
+the school's week 0.06 s (0.13 s for L1 and L2, which still need column
+generation to be cleared); högstadium 0.03-0.04 s; the bench school at 400 /
+1,000 / 2,000 pupils 0.007 / 0.02 / 0.05 s, also with the day cut to 16:00
+(96 % — a refusal) and 17:00 (86 %). The graph is built for every year that
+survives one cheap test (all its weight in a row fits under the threshold), and
+a year of several classes rarely does, because the classes run side by side and
+that sum lines them up. After it an ordinary year is cheap (a greedy cover under
+the threshold needs no linear program); what costs is the graph and its clique
+cover, and the deadline does not interrupt them. The review's worst cases within
+the lesson cap: 2,000 entries on one teacher 6.2 s, and 416 shared entries of 12
+teachers each (4,992 lessons) 4.1 s, on a host at load 29. The clique cover of a
+graph of 800 nodes at 90 % density takes 1.3 s. The column generation is capped
+at `WEEK_LOAD_SECONDS` (4 s), after which what is proved is said and nothing
+more.
+
+**Soundness** (`tests/test_week_load.py`): 40 random graphs of up to nine nodes
+against the fractional chromatic number by enumerating every independent set
+(`lower <= exact <= upper`, and equal once converged); every edge of the clique
+cover is a real edge and every edge is covered; alternating weeks are counted
+one real week at a time (an odd-week and an even-week group of one teacher never
+queue, in the refusal and in the probe's offer); a meal placed by hand after the
+frame closes costs the frame nothing (this caught a first version that refused
+such a week); two classes' lessons under one teacher are no pattern and name
+nobody.
+
+**Never a false refusal, by exact weeks and by mutants.** The first version of
+the file left 15 of the 34 hand mutants of `week_load.py` that the review of #247
+made alive, and seven of those survived the 1,369 engine tests too; four of the
+seven (M04 the supply of one span only, M08 a meal for a closed day, M23 the
+union of windows dropping one window's end, M25 the margin of the widest span
+for every entry) refuse a week the model solves. Seven small weeks are
+now each counted to the minute and each one the real model finds a timetable
+for: two spans with different frames (450 of 620) and a window inside another
+(540 of 850), a class closed for a day (480 of 480; open, 495 and impossible),
+a meal placed by hand after the frame (480 of 480; unplaced, 510 and
+impossible), a post split between two teachers (150 of 150), unrelated parts of
+a year (150, not 300) and spans with different margins (150 of 160). An eighth
+test counts a meal placed across the frame's end four ways (0, 10, 10 and 30
+minutes inside). Against the 34 mutants, one run of the file each: 30 die. The
+four that live cannot raise the bound (M13: a meal for a class with no lessons
+in the year is no node; M18: rounding of a proved number, at most 1e-6; M32:
+the same pupil key left unjoined, only weaker; M34: the pricing time). Of the
+seven that survived the whole suite, M04, M08, M12, M23 and M25 now die, each
+of a test of its own. `pytest -m slow` also runs a smoke fuzz: 60 random small
+weeks, each with its day shortened until the count first refuses it; 58 are
+proved impossible by the model and none is solved (of the other two, the
+engine's own validation stopped one before the count refused it, and one was
+already refused at the longest day). It finds only
+gross errors; the review's 3,500-week fuzz found the subtle ones, and the exact
+weeks are what keep them found.
+
+**The probe** (`PROBE_SOLVED_WITH_OWN_TEACHERS_AND_BLOCK`): on a tight year with
+shared teachers the probe builds the school's own fix — in each year, a teacher
+of its own on each group that shares one with another group of the year (an id
+made from the entry's, so no real teacher is touched) and the year's groups that
+could then run together declared one block — and reports whether the relaxed
+week solves. A teacher with a group in each of years 7-9 keeps one group in each
+year: the pattern relaxed is a year's groups waiting on one teacher, not a
+teacher's every group. A school with odd and even weeks is offered the probe
+only for a year tight in a real week (counted a week at a time, as the refusal
+is), and a year tight in both weeks is relaxed on the teachers of both. It gets
+60 % of `SOLVER_PROBE_SECONDS`.
+Measured against the investigation's hand-made fix (L2), paired and started
+together on a host at load 9-21, so each had about half the machine: the probe's
+relaxed week reached a first timetable in 14.6 s and 14.8 s, L2 in 18.1 s and
+18.2 s. Alone on a quiet eight-core host the investigation measured L2 at
+9.4-11.6 s. So the probe's week is as easy as the hand-made one, and its 12 s
+slice (60 % of the default 20 s; the other rules share the remaining 8 s) fits a
+quiet eight-core host and not a loaded or smaller one — there it comes back
+unsolved, which says nothing. End to end on the school's week (budget 20 s,
+probe 20 s, host at load 20): `TIMEOUT` after 36.8 s, the probe's line at 7.3 s,
+the three years at 97 / 96 / 94 % and the three teachers named. **The notice does
+not depend on the probe**: it costs 0.1 s before the models are built and is
+present on every `TIMEOUT` of a tight year, so the probe is a bonus where the
+budget allows and the notice is what a school always gets.
+
+**Phase 1a's cap (`CLEAN_SAT_CAP_SECONDS`, 60 s): measured, not changed.** The
+investigation saw phase 1a find nothing in 60 s on seven weeks near the edge
+while phase 1b found them 1.2-94 s after its start. Each phase alone, started
+together (paired, so host load hits both alike; the host was at load 12-65, so
+absolute times are inflated and only the pairs mean anything), first solution:
+
+| week | phase 1a | phase 1b |
+| :--- | ---: | ---: |
+| högstadium, blocks | 19.9 s | 19.8 s |
+| högstadium, no blocks | 43.8 s | 50.1 s |
+| bench school, 250 pupils | 3.4 s | 6.6 s |
+| bench school, 400 pupils | 10.1 s | 18.4 s |
+| bench school, 500 pupils | 67.3 s | 67.6 s |
+| the school's week with a teacher each (L1) | nothing in 90 s | 74.7 s |
+| bench school, 1,000 pupils | nothing in 90 s | nothing in 150 s |
+
+Phase 1a is as fast or faster than 1b on every week that either solves. A
+shorter cap wins only where 1a finds nothing (L1: about 45 s with a 15 s cap) and
+loses wherever 1a finds the week between the cap and 60 s (högstadium without
+blocks: 15 + 50.1 = 65 s against 43.8 s; with blocks 35 s against 20 s; the
+docstring's 500-pupil week at its unloaded 35.4 / 44.4 s: 59 s against 35 s).
+Which side of the cap a week falls on moves with the host's speed — the 500-pupil
+row above flips sign between an unloaded host and this one — and the engine's
+production host is not known. A change that gains on some weeks and loses on
+others is not a gain without loss, so the cap stays at 60 s. Not tried, and not
+claimed: phases 1a and 1b at once with half the workers each.
+
 ## Security & accessibility
 
 | Metric | Target | Measured | Status |

@@ -191,7 +191,7 @@ Run it with:
 | `APP_ENV` | `production` |
 | `API_KEY` | the generated `AI_ENGINE_API_KEY` |
 | `ALLOWED_ORIGINS` | the API's origin, e.g. `https://api.yourschool.example` |
-| `SOLVER_TIMEOUT_SECONDS` | `60` (raise for very large schools) |
+| `SOLVER_MAX_TIME_SECONDS` | `60`: the solve budget in seconds (raise for very large schools). A solve that times out answers after this plus `SOLVER_PROBE_SECONDS` (default `20`). The old `SOLVER_TIMEOUT_SECONDS` is gone: nothing read it. |
 
 The solver needs no database and no PII ever reaches it. Keep it on a private
 network reachable only by the API if your host supports it.
@@ -219,7 +219,7 @@ Run it with (see `.env.example` for the full annotated list):
 | `SUPABASE_SERVICE_ROLE_KEY` | service role key |
 | `AI_ENGINE_URL` | solver base URL, scheme included (`https://…`) — a bare hostname is not a URL and surfaces as "AI engine unavailable" |
 | `AI_ENGINE_API_KEY` | the shared secret from step 0 |
-| `AI_ENGINE_TIMEOUT_MS` | `90000` (must exceed the solver timeout) |
+| `AI_ENGINE_TIMEOUT_MS` | `90000` (must exceed the solver's `SOLVER_MAX_TIME_SECONDS` + `SOLVER_PROBE_SECONDS`; at a 180 s budget use at least `240000`) |
 | `CANDIDATE_MAX_SECONDS` | optional, `5`–`120`, default `30`: Schemaförslag's solve budget for each candidate, the same for all of them so the emphases are compared at one budget (docs/verification-baseline.md). Each candidate call waits this plus 45 s (plus 20 s for the first call's probes), whatever `AI_ENGINE_TIMEOUT_MS` says |
 | `CANDIDATE_SOLVER_WORKERS` | optional, `1`–`16`, default `4`: the solver workers a candidate solve uses, so a plain Generera beside it keeps the other cores |
 | `CANDIDATE_RUNS_MAX` | optional, `1`–`10`, default `2`: candidate runs active across all schools at once; a start beyond it answers 409 `CANDIDATES_BUSY`. A run cut off by a redeploy while the engine was solving for it, or whose call timed out (cancelled or not), frees its year at once but keeps counting here until that solve could have ended (at most its call's timeout, about 1½ minutes at the defaults): the engine solves on once its caller stops waiting, whether the API restarted or only gave up on the call, and the engine's own 503 at its timeout does not stop the solve either. "Ta bort förslagen" hides such a run at once, and the sweep deletes its row after that |

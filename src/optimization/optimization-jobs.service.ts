@@ -141,6 +141,14 @@ export interface OptimizationJobView {
    * history, which shows no notes.
    */
   supersededBy: SupersedingCandidate | null;
+  /**
+   * The longest a run can take, in seconds (OptimizationProxyService.waitSeconds):
+   * what the Generera page quotes while a run is going, so that the sentence
+   * follows the deployment's budget instead of the number somebody once wrote
+   * into it. Set by the service on every view it returns; absent from a
+   * gateway before this field.
+   */
+  waitSeconds?: number;
   createdAt: string;
   finishedAt: string | null;
 }
@@ -594,8 +602,8 @@ export class OptimizationJobsService {
   }
 
   /** Runs as this reader is shown them: see jobView and work-days.ts. */
-  private forReader(jobs: JobRow[], user: AuthenticatedUser): Promise<OptimizationJobView[]> {
-    return this.shownTo(
+  private async forReader(jobs: JobRow[], user: AuthenticatedUser): Promise<OptimizationJobView[]> {
+    const views = await this.shownTo(
       user,
       jobs.map((job) => ({ academicYearId: job.academicYearId, sentences: hrSentencesOf(job) })),
       notedOf(jobs),
@@ -604,6 +612,9 @@ export class OptimizationJobsService {
         return { result: shown.map(({ view }) => view), revealed: shown.flatMap(({ revealed }) => revealed) };
       },
     );
+    // The same for every run: a property of the deployment, not of the row.
+    const waitSeconds = this.proxy.waitSeconds;
+    return views.map((view) => ({ ...view, waitSeconds }));
   }
 
   /**

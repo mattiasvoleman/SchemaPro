@@ -415,6 +415,29 @@ MESSAGES: dict[str, str] = {
         "difference could not be measured.}} Let these groups' lessons use rooms on one site, "
         "shorten the travel time under Rooms, Sites, or turn it off under School rules."
     ),
+    # A year's least week, counted with its teachers in it (app/solver/week_load.py).
+    # The class counts above see only pupils; this one also sees that one
+    # teacher on three groups of the same classes makes those groups run one
+    # after the other. `grades` is the year ("8") or "any" for entries whose
+    # years are unknown. `shared` is "some" when teachers are listed under the
+    # sentence and "none" when none could be named, so it points at rows only
+    # when there are rows.
+    "DEMAND_YEAR_WEEK_SHORT": (
+        "The week does not hold {grades, select, any {the classes with unknown years} "
+        "other {year {grades}}}: the lessons, the margins between them and the lunch breaks "
+        "need at least {demandMinutes} minutes, even if lessons could be cut into pieces, and the "
+        "frame times leave {capacityMinutes}. Widen the frame times or take lessons out"
+        "{shared, select, none {} other {, and see below for teachers who stand on groups that "
+        "would otherwise run together}}."
+    ),
+    "TEACHER_SHARED_BY_PARALLEL_GROUPS": (
+        "One teacher stands on {groups, plural, one {# group} other {# groups}} of "
+        "{grades, select, any {the classes with unknown years} other {year {grades}}} that take "
+        "pupils from the same classes, {minutes} minutes a week in all. A teacher cannot be in two "
+        "places, so those groups cannot run at the same time, and every class they share has to "
+        "sit through them one after the other. Give each group a teacher of its own and run "
+        "them as a parallel block, or let each group take pupils from fewer classes."
+    ),
     "LUNCH_BREAK_IS_THE_DIFFERENCE": (
         "Counted without the {lunchMinutes}-minute lunch break, the time these lessons can "
         "take has room for {freeMinutes} minutes of them, enough to hold them, so the lunch "
@@ -884,6 +907,23 @@ MESSAGES: dict[str, str] = {
         "and the other rules only had the time it left. The week may simply be large; try a "
         "longer budget."
     ),
+    # The probe found nothing, but the arithmetic before the solve did: a year
+    # whose least week is most of its frame time (app/solver/week_load.py).
+    # Said instead of "the week may simply be large; try a longer budget",
+    # which sends a school to the one thing measured not to be enough: 600 and
+    # 1,200 seconds found nothing on a week at 94-98 %.
+    "TIGHT_WEEK_TIMEOUT": (
+        "No timetable was found within {budget} s. The week of {grades, select, "
+        "any {the classes with unknown years} other {year {grades}}} is tight: its "
+        "lessons, the margins between them and the lunch breaks need at least {demandMinutes} of "
+        "the {capacityMinutes} minutes the frame times leave ({percent} %). A week that tight is "
+        "hard to place, and a longer budget may not be enough; free some of it as listed below."
+    ),
+    "TIGHT_WEEK_LOAD": (
+        "{grades, select, any {The classes with unknown years need} other {Year {grades} needs}} "
+        "at least {demandMinutes} of the {capacityMinutes} minutes the frame times leave "
+        "({percent} %)."
+    ),
     "PROBE_ONE_RULE_HELPED": (
         "No timetable was found within {budget} s, but relaxing a single rule made the same week "
         "solve. {rules, plural, one {The rule is listed below} other {The # rules are listed "
@@ -929,6 +969,11 @@ MESSAGES: dict[str, str] = {
         "The travel time between the school's sites is turned on. Searching without it for "
         "{seconds} s did not find a timetable either, so whether it is the difference was not "
         "measured. A run with it turned off under School rules shows that."
+    ),
+    "PROBE_SOLVED_WITH_OWN_TEACHERS_AND_BLOCK": (
+        "With a teacher of its own on each group that shared a teacher with another group of its "
+        "year, and the groups that could then run together placed in one parallel block, a "
+        "timetable was found in {seconds} s."
     ),
     "PROBE_SOLVED_WITHOUT_DISTRIBUTION": (
         "With the subjects' distribution rules dropped — at most a number of lessons a day, "

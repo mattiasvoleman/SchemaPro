@@ -117,7 +117,6 @@ services:
       APP_ENV: production
       API_KEY: ${AI_ENGINE_API_KEY:?Set AI_ENGINE_API_KEY (shared with api)}
       ALLOWED_ORIGINS: http://api:4000
-      SOLVER_TIMEOUT_SECONDS: ${SOLVER_TIMEOUT_SECONDS:-60}
       SOLVER_MAX_TIME_SECONDS: ${SOLVER_MAX_TIME_SECONDS:-60}
     healthcheck:
       test:

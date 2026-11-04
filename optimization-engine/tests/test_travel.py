@@ -803,9 +803,18 @@ class TestTheVerdict:
         assert any(d.code.endswith("TRAVEL_CANNOT_BE_KEPT") and d.params["measured"] == 1 for d in lines)
         assert not [d for d in lines if d.code.startswith(("LUNCH_", "BLOCK_"))]
 
-    def test_a_party_the_caps_left_unanswered_keeps_its_line(self) -> None:
+    def test_a_party_the_caps_left_unanswered_keeps_its_line(self, monkeypatch) -> None:
         """The pupils' families measured 2, the teacher's not answered inside its
-        cap: the teacher's line stays as the core gave it, measured 0."""
+        cap: the teacher's line stays as the core gave it, measured 0.
+
+        THIS FIXTURE IS IMPOSSIBLE BY HOURS ALONE: 780 minutes of lessons for two
+        groups that share pupils, in three days of three hours (540), and it
+        names no `groups` for the class counts to read. The year's least week
+        (week_load.py) now proves that before any model is built and refuses it
+        by name, which is right and is not what is under test here — the
+        walk's explanation of a refusal the model proves. So the early refusal
+        is held back and the model proves it, as it did when this was written."""
+        monkeypatch.setattr(SchedulerSolver, "_week_load_verdict", lambda self, loads: None)
         _data, _request, response = self._review("caps_drop_teacher_line_tight151")
         teacher = [d for d in response.conflicts.conflicts if d.code == "TEACHER_TRAVEL_CANNOT_BE_KEPT"]
         assert teacher and teacher[0].params["measured"] == 0

@@ -76,7 +76,8 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         "service_starting",
         app_env=settings.app_env,
         allowed_origins=settings.allowed_origins,
-        solver_timeout_seconds=settings.solver_max_time_seconds,
+        solver_max_time_seconds=settings.solver_max_time_seconds,
+        solver_probe_seconds=settings.solver_probe_seconds,
         slot_minutes=settings.slot_minutes,
         schedule_day=(
             f"{settings.schedule_day_start_minutes // 60:02d}:00-"

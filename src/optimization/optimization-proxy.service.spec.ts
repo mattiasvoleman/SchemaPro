@@ -5133,6 +5133,91 @@ describe('OptimizationProxyService', () => {
       expect(sent).not.toContain(TEACHER_ID);
     });
 
+    it('quotes the API’s own wait in whole seconds, rounded up', () => {
+      // 50 ms in this spec's configuration: a part of a second is a second,
+      // never a zero the page would read as "no wait".
+      expect(service.waitSeconds).toBe(1);
+    });
+
+    it('names the groups that share a teacher by their timplan rows, and never the teacher', async () => {
+      /*
+       * The year's least week (week_load.py) says that one teacher stands on
+       * groups that would otherwise run together. The groups are named by the
+       * rows the school knows ("Matematik för 7A"), carried in resourceIds as
+       * the engine's anonymous requirement ids, and the teacher is in no field
+       * at all. The same line rides a TIMEOUT beside the year's minutes.
+       */
+      const SVENSKA = '99999999-9999-4999-8999-999999999999';
+      arrange({
+        requirements: [
+          requirement({ subject: { requiredRoomTypeId: null, name: 'Matematik' } }),
+          requirement({ id: SVENSKA, subjectId: 'svenska', subject: { requiredRoomTypeId: null, name: 'Svenska' } }),
+        ],
+        groups: [{ id: GROUP_ID, gradeLevel: 7, kind: 'CLASS', name: '7A' }],
+      });
+      let anonymousTeacher = '';
+      http.post.mockImplementation((_url: string, payload: any) => {
+        anonymousTeacher = payload.requirements[0].teacherId;
+        const rows = payload.requirements.map((row: any) => row.id);
+        return of({
+          data: {
+            requestId: payload.requestId,
+            status: 'TIMEOUT',
+            lessons: [],
+            conflicts: {
+              summary: 'No timetable was found within 180 s.',
+              summaryCode: 'TIGHT_WEEK_TIMEOUT',
+              summaryParams: {
+                budget: 180, grades: '7', demandMinutes: 2115, capacityMinutes: 2200, percent: 96,
+              },
+              conflicts: [
+                {
+                  category: 'REQUIREMENT_DEMAND',
+                  code: 'TIGHT_WEEK_LOAD',
+                  params: { grades: '7', demandMinutes: 2115, capacityMinutes: 2200, percent: 96 },
+                  message: 'Year 7 needs at least 2115 of the 2200 minutes the frame times leave (96 %).',
+                  requirementIds: rows,
+                  roomIds: [],
+                  constraintIds: [],
+                  resourceIds: [],
+                },
+                {
+                  category: 'TEACHER_OVERLAP',
+                  code: 'TEACHER_SHARED_BY_PARALLEL_GROUPS',
+                  params: { groups: 2, minutes: 480, grades: '7' },
+                  message: 'One teacher stands on 2 groups of year 7 that take pupils from the same classes.',
+                  requirementIds: rows,
+                  roomIds: [],
+                  constraintIds: [],
+                  resourceIds: rows,
+                },
+              ],
+            },
+          },
+        });
+      });
+
+      const result = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(result.conflicts?.summaryCode).toBe('TIGHT_WEEK_TIMEOUT');
+      expect(result.conflicts?.summaryParams).toEqual({
+        budget: 180, grades: '7', demandMinutes: 2115, capacityMinutes: 2200, percent: 96,
+      });
+      expect(result.conflicts?.conflicts).toEqual([
+        expect.objectContaining({ code: 'TIGHT_WEEK_LOAD', resourceNames: [] }),
+        expect.objectContaining({
+          code: 'TEACHER_SHARED_BY_PARALLEL_GROUPS',
+          params: { groups: 2, minutes: 480, grades: '7' },
+          resourceIds: [REQ_ID, SVENSKA],
+          resourceNames: ['Matematik för 7A', 'Svenska för 7A'],
+        }),
+      ]);
+      const sent = JSON.stringify(result.conflicts);
+      expect(anonymousTeacher).not.toBe('');
+      expect(sent).not.toContain(anonymousTeacher);
+      expect(sent).not.toContain(TEACHER_ID);
+    });
+
     it('names the gaps by the class, its timplan rows and the lunch, and never the teacher', async () => {
       /*
        * The gaps verdict says which lessons the gaps cannot take, a line per
@@ -7909,6 +7994,79 @@ describe('OptimizationProxyService', () => {
           { grades: '10', minutes: 60 },
           { grades: '7–9', seats: 60 },
         ]);
+      });
+
+      it('names the year of a week count back too, on its summary and on every line under it', async () => {
+        /*
+         * week_load.py counts a year of the entries it was sent, and `grades`
+         * is that year in the payload's nioårig numbering: åk 9 of a tioårig
+         * läsår is the 8 it echoes. The four codes that carry it are in
+         * CLASS_SPAN_CODES, and the summary goes through yearGrades like the
+         * lines do: the refusal's summary is a code of its own.
+         */
+        yearNumbered('TIOARIG');
+        arrange({ groups: [{ id: GROUP_ID, gradeLevel: 9, kind: 'CLASS' }] });
+        const line = (code: string, params: Record<string, string | number>) => ({
+          category: 'REQUIREMENT_DEMAND',
+          code,
+          params,
+          message: 'A year’s week.',
+          requirementIds: [],
+          roomIds: [],
+          constraintIds: [],
+          resourceIds: [],
+        });
+        answerWithConflicts(() => ({
+          summary: 'The week does not hold year 8.',
+          summaryCode: 'DEMAND_YEAR_WEEK_SHORT',
+          summaryParams: { grades: '8', demandMinutes: 2210, capacityMinutes: 2200, shared: 'some' },
+          conflicts: [
+            line('TEACHER_SHARED_BY_PARALLEL_GROUPS', { groups: 3, minutes: 480, grades: '8' }),
+            line('TIGHT_WEEK_LOAD', { grades: '8', demandMinutes: 2100, capacityMinutes: 2200, percent: 95 }),
+            // The count of entries whose years nobody stated has no year to name.
+            line('TIGHT_WEEK_LOAD', { grades: 'any', demandMinutes: 10, capacityMinutes: 10, percent: 100 }),
+          ],
+        }));
+
+        const result = (await service.triggerScheduling(ACADEMIC_YEAR, testUser())).conflicts!;
+
+        expect(result.summaryParams).toEqual({
+          grades: '9', demandMinutes: 2210, capacityMinutes: 2200, shared: 'some',
+        });
+        expect(result.conflicts.map((detail) => detail.params)).toEqual([
+          { groups: 3, minutes: 480, grades: '9' },
+          { grades: '9', demandMinutes: 2100, capacityMinutes: 2200, percent: 95 },
+          { grades: 'any', demandMinutes: 10, capacityMinutes: 10, percent: 100 },
+        ]);
+      });
+
+      it('leaves a nioårig läsår’s week count as the engine said it', async () => {
+        yearNumbered('NIOARIG');
+        arrange({ groups: [{ id: GROUP_ID, gradeLevel: 8, kind: 'CLASS' }] });
+        answerWithConflicts(() => ({
+          summary: 'No timetable was found within 180 s.',
+          summaryCode: 'TIGHT_WEEK_TIMEOUT',
+          summaryParams: { budget: 180, grades: '8', demandMinutes: 2100, capacityMinutes: 2200, percent: 95 },
+          conflicts: [],
+        }));
+
+        const result = (await service.triggerScheduling(ACADEMIC_YEAR, testUser())).conflicts!;
+
+        expect(result.summaryParams).toEqual({
+          budget: 180, grades: '8', demandMinutes: 2100, capacityMinutes: 2200, percent: 95,
+        });
+      });
+
+      it.each([
+        ['DEMAND_YEAR_WEEK_SHORT', { grades: '8', demandMinutes: 2210, capacityMinutes: 2200, shared: 'none' }],
+        ['TEACHER_SHARED_BY_PARALLEL_GROUPS', { groups: 3, minutes: 480, grades: '8' }],
+        ['TIGHT_WEEK_LOAD', { grades: '8', demandMinutes: 2100, capacityMinutes: 2200, percent: 95 }],
+        [
+          'TIGHT_WEEK_TIMEOUT',
+          { budget: 180, grades: '8', demandMinutes: 2100, capacityMinutes: 2200, percent: 95 },
+        ],
+      ])('names %s’s year back, and nothing else of it', (code, params) => {
+        expect(yearGrades(code, params, { gradeNumbering: 'TIOARIG' })).toEqual({ ...params, grades: '9' });
       });
 
       /** A pupil whose home class is `studentGroupId`. */

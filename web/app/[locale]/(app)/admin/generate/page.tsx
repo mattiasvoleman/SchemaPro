@@ -690,7 +690,11 @@ export default function GeneratePage() {
               {isRunning ? (
                 <>
                   <Loader2 className="animate-spin" />
-                  {t("running")}
+                  {/* The gateway's own wait, rounded up to whole minutes: the
+                      number follows the deployment's budget, not this file. */}
+                  {job?.waitSeconds
+                    ? t("runningUpTo", { minutes: Math.ceil(job.waitSeconds / 60) })
+                    : t("running")}
                 </>
               ) : (
                 <>
