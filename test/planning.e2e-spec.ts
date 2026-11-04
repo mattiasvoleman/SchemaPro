@@ -4826,6 +4826,123 @@ describe('Planning surface (e2e)', () => {
       expect(harness.tx['academicYear']!['findUnique']).not.toHaveBeenCalled();
     });
 
+    describe('the planned layer’s pupils of one class (GET /timplan-coverage/planned/pupils)', () => {
+      /*
+       * The admin's round trip reaches the handler, which the 403 rows do not:
+       * a request stopped at the guard never runs it. The pupil here is short
+       * only because 7A is, so the overview counts them and lists no one; this
+       * route is where they can be read.
+       */
+      const PUPILS = `/api/v1/timplan-coverage/planned/pupils?academicYearId=${YEAR_ID}&studentGroupId=${GROUP_ID}`;
+
+      it('an admin reads every pupil of the class with every line, including the pupil the overview only counts', async () => {
+        givenTheYear();
+        const overview = await request(http())
+          .get(`/api/v1/timplan-coverage?academicYearId=${YEAR_ID}&layer=planned`)
+          .set('x-test-user', admin())
+          .expect(200);
+        expect(overview.body).toMatchObject({ pupils: [], pupilsBelowTarget: 1 });
+
+        const response = await request(http()).get(PUPILS).set('x-test-user', admin()).expect(200);
+
+        expect(response.body).toEqual({
+          academicYearId: YEAR_ID,
+          layer: 'planned',
+          studentGroupId: GROUP_ID,
+          gradeLevel: 7,
+          pupils: [
+            {
+              pupilId: STUDENT_ID,
+              homeGroupId: GROUP_ID,
+              gradeLevel: 7,
+              lines: [
+                {
+                  key: `subject:${SUBJECT_ID}`,
+                  alternativeCode: null,
+                  subjectIds: [SUBJECT_ID],
+                  targetMinutesPerWeek: 180,
+                  plannedMinutesPerWeek: 120,
+                  deltaMinutesPerWeek: -60,
+                  status: 'UNDER',
+                  sources: [{ studentGroupId: GROUP_ID, subjectId: SUBJECT_ID, minutesPerWeek: 120 }],
+                  doublePlannedSubjectIds: [],
+                  alternativeSubjectIds: [],
+                },
+              ],
+            },
+          ],
+        });
+        // The figures are the overview's: one pupil of one under target.
+        expect(overview.body.groups[0].lines[0].pupils).toEqual({ min: 120, median: 120, max: 120, below: 1 });
+      });
+
+      it('reads the ids in capitals as in lower case, as the overview’s query does', async () => {
+        // The pipe lower-cases both ids: the service compares the class id as
+        // a string, so a capital would be "no such class". A class id with
+        // letters in it, since the fixture ids above are all digits.
+        const CLASS_AB = 'abcdefab-abcd-4bcd-8bcd-abcdefabcdef';
+        givenTheYear();
+        harness.tx['studentGroup']!['findMany']!.mockResolvedValue([{ id: CLASS_AB, name: '7A', kind: 'CLASS', gradeLevel: 7 }]);
+        harness.tx['teachingRequirement']!['findMany']!.mockResolvedValue([
+          { id: TYPE_ID, studentGroupId: CLASS_AB, subjectId: SUBJECT_ID, lessonsPerWeek: 2, minutesPerLesson: 60, recurrence: 'ALL_WEEKS', startDate: null, endDate: null },
+        ]);
+        harness.tx['user']!['findMany']!.mockResolvedValue([{ id: STUDENT_ID, studentGroupId: CLASS_AB }]);
+        const url = (year: string, group: string) =>
+          `/api/v1/timplan-coverage/planned/pupils?academicYearId=${year}&studentGroupId=${group}`;
+
+        const lower = await request(http()).get(url(YEAR_ID, CLASS_AB)).set('x-test-user', admin()).expect(200);
+        const capitals = await request(http())
+          .get(url(YEAR_ID.toUpperCase(), CLASS_AB.toUpperCase()))
+          .set('x-test-user', admin())
+          .expect(200);
+
+        expect(capitals.body).toEqual(lower.body);
+        expect(capitals.body).toMatchObject({ studentGroupId: CLASS_AB, pupils: [{ pupilId: STUDENT_ID }] });
+      });
+
+      it('stops a teacher, a pupil and a guardian at the guard, before anything is read', async () => {
+        givenTheYear();
+        for (const role of ['TEACHER', 'STUDENT', 'GUARDIAN']) {
+          const response = await request(http())
+            .get(PUPILS)
+            .set('x-test-user', asUser({ role: role as never }))
+            .expect(403);
+          expect(JSON.stringify(response.body)).not.toContain(STUDENT_ID);
+        }
+        expect(harness.tx['academicYear']!['findUnique']).not.toHaveBeenCalled();
+      });
+
+      it('400s a missing or malformed year or class, naming the field, and reads nothing', async () => {
+        const cases: [string, string][] = [
+          [`?studentGroupId=${GROUP_ID}`, 'academicYearId: läsåret anges med sitt id.'],
+          [`?academicYearId=${YEAR_ID}`, 'studentGroupId: klassen anges med sitt id.'],
+          [`?academicYearId=${YEAR_ID}&studentGroupId=7A`, 'studentGroupId: klassen anges med sitt id.'],
+          [`?academicYearId=2026&studentGroupId=${GROUP_ID}`, 'academicYearId: läsåret anges med sitt id.'],
+        ];
+        for (const [query, message] of cases) {
+          const response = await request(http())
+            .get(`/api/v1/timplan-coverage/planned/pupils${query}`)
+            .set('x-test-user', admin())
+            .expect(400);
+          expect(JSON.stringify(response.body)).toContain(message);
+        }
+        expect(harness.tx['academicYear']!['findUnique']).not.toHaveBeenCalled();
+      });
+
+      it('404s a year RLS hides and a group that is no class of the year', async () => {
+        harness.tx['academicYear']!['findUnique']!.mockResolvedValue(null);
+        const year = await request(http()).get(PUPILS).set('x-test-user', admin()).expect(404);
+        expect(year.body.detail).toBe('Läsåret finns inte.');
+
+        givenTheYear();
+        const group = await request(http())
+          .get(PUPILS.replace(GROUP_ID, 'c9c9c9c9-c9c9-4c9c-8c9c-c9c9c9c9c9c9'))
+          .set('x-test-user', admin())
+          .expect(404);
+        expect(group.body.detail).toBe('Klassen finns inte i läsåret.');
+      });
+    });
+
     const t = (hhmm: string) => new Date(`1970-01-01T${hhmm}:00.000Z`);
     const givenTheSchedule = () => {
       givenTheYear();

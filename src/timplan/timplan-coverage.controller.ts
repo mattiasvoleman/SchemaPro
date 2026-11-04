@@ -5,10 +5,11 @@ import { Role } from '../auth/enums/role.enum';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
-import { TimplanCoverageQueryDto } from './dto/timplan-coverage.dto';
+import { TimplanCoverageQueryDto, TimplanPlannedPupilsQueryDto } from './dto/timplan-coverage.dto';
 import {
   TimplanCoverageService,
   type DeliveredCoverageResponse,
+  type PlannedClassPupilsResponse,
   type ScheduledCoverageResponse,
   type TimplanCoverageResponse,
 } from './timplan-coverage.service';
@@ -25,6 +26,11 @@ import {
  * TimplanCoverageService). Pupils and guardians are not here: the timplan
  * itself is theirs to read through PostgREST, a coverage report over other
  * pupils is not.
+ *
+ * GET /timplan-coverage/planned/pupils is the planned layer's drill-down, one
+ * class at a time: every pupil of it with every line. It is SCHOOL_ADMIN's
+ * alone, since a teacher's coverage strips every pupil figure and that answer
+ * is nothing else.
  *
  * Teacher minutes per subject are NOT here either: Fas 1/2's load report
  * (GET /staffing/load, /teacher/tjanst) already states them.
@@ -43,5 +49,14 @@ export class TimplanCoverageController {
     if (query.layer === 'scheduled') return this.coverage.scheduled(query, user);
     if (query.layer === 'delivered') return this.coverage.delivered(query, user);
     return this.coverage.planned(query, user);
+  }
+
+  @Get('planned/pupils')
+  @Roles(Role.SCHOOL_ADMIN)
+  plannedPupils(
+    @Query() query: TimplanPlannedPupilsQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<PlannedClassPupilsResponse> {
+    return this.coverage.plannedPupils(query, user);
   }
 }

@@ -18,6 +18,7 @@ import type {
   PlannedPupil,
   PlannedStatus,
   PlannedVerdict,
+  PupilLine,
 } from "@/lib/timplan-planned";
 import { compareSwedish } from "@/lib/sorting";
 
@@ -26,6 +27,26 @@ export interface TimplanCoverageResponse extends Omit<PlannedCoverage, "verdicts
   academicYearId: string;
   layer: "planned";
   verdicts: (PlannedVerdict & { message: string })[];
+}
+
+/** One line of a pupil's planned timplan with its difference; mirror of PlannedPupilFigure in src/timplan/timplan-coverage.service.ts. */
+export interface PlannedPupilFigure extends PupilLine {
+  /** Planned less target; null where the plan has no target for the line. */
+  deltaMinutesPerWeek: number | null;
+}
+
+/** One pupil of the drilled class, every line and not only the lines of a finding. */
+export interface PlannedClassPupil extends Omit<PlannedPupil, "lines"> {
+  lines: PlannedPupilFigure[];
+}
+
+/** Mirror of PlannedClassPupilsResponse: GET /timplan-coverage/planned/pupils, one class. */
+export interface PlannedClassPupilsResponse {
+  academicYearId: string;
+  layer: "planned";
+  studentGroupId: string;
+  gradeLevel: number | null;
+  pupils: PlannedClassPupil[];
 }
 
 /**

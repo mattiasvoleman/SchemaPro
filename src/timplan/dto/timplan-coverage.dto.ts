@@ -31,3 +31,18 @@ export class TimplanCoverageQueryDto {
   @IsUUID('4', { message: 'studentGroupId: gruppen anges med sitt id.' })
   studentGroupId?: string;
 }
+
+/**
+ * GET /timplan-coverage/planned/pupils: one class's pupils, each with every
+ * line of the planned layer. Both ids are required — the route has no
+ * overview to fall back to; GET /timplan-coverage?layer=planned is that.
+ */
+export class TimplanPlannedPupilsQueryDto {
+  @Transform(({ value }) => (typeof value === 'string' ? value.toLowerCase() : value))
+  @IsUUID('4', { message: 'academicYearId: läsåret anges med sitt id.' })
+  academicYearId!: string;
+
+  @Transform(({ value }) => (typeof value === 'string' ? value.toLowerCase() : value))
+  @IsUUID('4', { message: 'studentGroupId: klassen anges med sitt id.' })
+  studentGroupId!: string;
+}

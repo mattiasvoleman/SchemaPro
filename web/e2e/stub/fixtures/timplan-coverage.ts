@@ -8,7 +8,7 @@ import type {
   PlannedVerdict,
   PupilLine,
 } from "../../../lib/timplan-planned";
-import type { TimplanCoverageResponse } from "../../../lib/timplan-tackning";
+import type { PlannedClassPupilsResponse, TimplanCoverageResponse } from "../../../lib/timplan-tackning";
 import type { TeachingTimeCardResponse, TeachingTimeLine } from "../../../components/teaching-time-card";
 import { THIS_MONDAY, YEAR_END, YEAR_START } from "./calendar";
 import { GROUP_MEMBERS } from "./school-days";
@@ -144,8 +144,12 @@ const VERDICT_ORDER: PlannedVerdict["code"][] = [
   "TIMPLAN_PUPIL_DOUBLE_PLANNED",
 ];
 
-/** Layer 1 for one läsår, as an admin reads it (pupil figures included). */
-export function plannedCoverage(academicYearId: string): TimplanCoverageResponse {
+/**
+ * Layer 1 for one läsår, as an admin reads it (pupil figures included). With
+ * `drillGroupId`, the pupils of that class are listed with every line, as the
+ * gateway's drill-down does (plannedClassPupils below).
+ */
+export function plannedCoverage(academicYearId: string, drillGroupId: string | null = null): TimplanCoverageResponse {
   const groups = GROUP_LIST.filter((entry) => entry.academicYearId === academicYearId);
   const inYear = new Set(groups.map((entry) => entry.id));
   const planOfGrade = new Map(
@@ -319,6 +323,8 @@ export function plannedCoverage(academicYearId: string): TimplanCoverageResponse
     }
 
     // The pupils with a finding of their own: short where the class is not already flagged.
+    // The drilled class lists every pupil with every line.
+    const drilled = drillGroupId === group.id;
     for (const result of results) {
       const own: PupilLine[] = [];
       let isBelow = false;
@@ -326,26 +332,28 @@ export function plannedCoverage(academicYearId: string): TimplanCoverageResponse
         const planned = Math.round(draft.week);
         const target = draft.target;
         const status = target === null ? "NO_TARGET" : planned < target ? "UNDER" : "MET";
-        if (status !== "UNDER") continue;
-        isBelow = true;
-        if (flagged.has(draft.key)) continue;
         const subjectIds = [...draft.subjectIds].sort(subjectOrder);
-        verdicts.push({
-          code: "TIMPLAN_PUPIL_UNDERPLANNED",
-          severity: "warning",
-          pupilId: result.pupil.id,
-          studentGroupId: group.id,
-          subjectIds,
-          ...(draft.alternativeCode ? { alternativeCode: draft.alternativeCode } : {}),
-          params: {
-            groupName: group.name,
-            gradeLevel: level ?? "",
-            subjectName: name(subjectIds),
-            targetMinutesPerWeek: target!,
-            plannedMinutesPerWeek: planned,
-            deficitMinutesPerWeek: target! - planned,
-          },
-        });
+        const finding = status === "UNDER" && !flagged.has(draft.key);
+        if (status === "UNDER") isBelow = true;
+        if (finding) {
+          verdicts.push({
+            code: "TIMPLAN_PUPIL_UNDERPLANNED",
+            severity: "warning",
+            pupilId: result.pupil.id,
+            studentGroupId: group.id,
+            subjectIds,
+            ...(draft.alternativeCode ? { alternativeCode: draft.alternativeCode } : {}),
+            params: {
+              groupName: group.name,
+              gradeLevel: level ?? "",
+              subjectName: name(subjectIds),
+              targetMinutesPerWeek: target!,
+              plannedMinutesPerWeek: planned,
+              deficitMinutesPerWeek: target! - planned,
+            },
+          });
+        }
+        if (!finding && !drilled) continue;
         own.push({
           key: draft.key,
           alternativeCode: draft.alternativeCode,
@@ -361,7 +369,7 @@ export function plannedCoverage(academicYearId: string): TimplanCoverageResponse
         });
       }
       if (isBelow) pupilsBelow++;
-      if (own.length > 0) pupils.push({ pupilId: result.pupil.id, homeGroupId: group.id, gradeLevel: level, lines: own });
+      if (own.length > 0 || drilled) pupils.push({ pupilId: result.pupil.id, homeGroupId: group.id, gradeLevel: level, lines: own });
     }
 
     const week = rows.reduce((sum, row) => sum + weeklyMinutes(row), 0);
@@ -393,6 +401,28 @@ export function plannedCoverage(academicYearId: string): TimplanCoverageResponse
     pupilsBelowTarget: pupilsBelow,
     pupilsOutsideClasses: STUDENT_LIST.filter((pupil) => !classes.some((entry) => entry.id === pupil.studentGroupId)).length,
     verdicts: verdicts.map((verdict) => ({ ...verdict, message: describe(verdict) })),
+  };
+}
+
+/** GET /timplan-coverage/planned/pupils: one class's pupils, every line; null for a group that is no class of the year. */
+export function plannedClassPupils(academicYearId: string, classId: string): PlannedClassPupilsResponse | null {
+  const coverage = plannedCoverage(academicYearId, classId);
+  const summary = coverage.groups.find((entry) => entry.studentGroupId === classId);
+  if (!summary) return null;
+  return {
+    academicYearId,
+    layer: "planned",
+    studentGroupId: classId,
+    gradeLevel: summary.gradeLevel,
+    pupils: (coverage.pupils ?? [])
+      .filter((pupil) => pupil.homeGroupId === classId)
+      .map((pupil) => ({
+        ...pupil,
+        lines: pupil.lines.map((line) => ({
+          ...line,
+          deltaMinutesPerWeek: line.targetMinutesPerWeek === null ? null : line.plannedMinutesPerWeek - line.targetMinutesPerWeek,
+        })),
+      })),
   };
 }
 

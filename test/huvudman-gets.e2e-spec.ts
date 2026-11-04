@@ -131,6 +131,8 @@ maybe("Huvudman: every GET a läsare reaches, as the huvudman's reader (a real d
     const to = span[0]!.sunday;
     const pupil = await first('Users', `role = 'STUDENT' AND "isActive"`);
     const requirement = await first('TeachingRequirements');
+    // A class of that läsår: a class of another one is no class there, and 404 for both principals is "alike".
+    const classGroup = await first('StudentGroups', `kind = 'CLASS' AND "academicYearId" = '${year}'`);
     // The query each route needs, where it needs one.
     const needs: Readonly<Record<string, string>> = {
       '/api/v1/family/schedule': `?studentId=${pupil}&week=${from}`,
@@ -139,6 +141,7 @@ maybe("Huvudman: every GET a läsare reaches, as the huvudman's reader (a real d
       '/api/v1/staffing/delivered': `?academicYearId=${year}&from=${from}&to=${to}`,
       '/api/v1/staffing/suggest-teachers': `?requirementId=${requirement}`,
       '/api/v1/timplan-stages/card': `?studentId=${pupil}`,
+      '/api/v1/timplan-coverage/planned/pupils': `?academicYearId=${year}&studentGroupId=${classGroup}`,
       '/api/v1/print/timetables': `?kind=GROUP&date=${from}`,
       '/api/v1/timetable-validity': `?week=${from}`,
       '/api/v1/cover/board': `?from=${from}&to=${to}`,
