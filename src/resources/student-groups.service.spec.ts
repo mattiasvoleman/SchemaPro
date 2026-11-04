@@ -112,6 +112,17 @@ function sortedBy<T>(rows: T[], orderBy: unknown): T[] {
   );
 }
 
+/** The locks a write took, as sent with $executeRaw: the school's lock and the row locks, in order. */
+function lockStatements(tx: TxMock): string[] {
+  return (tx.$executeRaw.mock.calls as unknown[][])
+    .map(([first]) =>
+      (typeof (first as { text?: unknown }).text === 'string' ? (first as { text: string }).text : (first as string[]).join('?'))
+        .replace(/\s+/g, ' ')
+        .trim(),
+    )
+    .filter((sql) => / FOR (UPDATE|NO KEY UPDATE|SHARE|KEY SHARE)$|pg_advisory_xact_lock_shared/.test(sql));
+}
+
 describe('StudentGroupsService', () => {
   let service: StudentGroupsService;
   let tx: TxMock;
@@ -211,6 +222,28 @@ describe('StudentGroupsService', () => {
       tx.studentGroup.update.mockResolvedValueOnce({ id: GROUP_ID, kind: 'TEACHING_GROUP', schoolId: SCHOOL_ID });
       await service.update(GROUP_ID, { gradeLevel: 8 }, testUser());
       expect(tx.studentGroup.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("holds the class, and with an årskurs its halves and then its pupils, in the one order before it writes", async () => {
+      tx.studentGroup.update.mockResolvedValue({ id: GROUP_ID, kind: 'CLASS', schoolId: SCHOOL_ID });
+
+      await service.update(GROUP_ID, { gradeLevel: 8 }, testUser());
+
+      expect(lockStatements(tx)).toEqual([
+        'SELECT pg_advisory_xact_lock_shared(hashtextextended($1, 0))',
+        'SELECT 1 FROM "StudentGroups" g WHERE g."id" = ANY($1::uuid[]) OR g."halfOfId" = ANY($2::uuid[]) ' +
+          'ORDER BY g."id" FOR NO KEY UPDATE',
+        'SELECT 1 FROM "Users" WHERE "studentGroupId" = ANY($1::uuid[]) ORDER BY "id" FOR SHARE',
+      ]);
+      expect(tx.$executeRaw.mock.invocationCallOrder.at(-1)!).toBeLessThan(tx.studentGroup.update.mock.invocationCallOrder[0]!);
+
+      tx.$executeRaw.mockClear();
+      await service.update(GROUP_ID, { name: '7B' }, testUser());
+      expect(lockStatements(tx)).toEqual([
+        'SELECT pg_advisory_xact_lock_shared(hashtextextended($1, 0))',
+        'SELECT 1 FROM "StudentGroups" g WHERE g."id" = ANY($1::uuid[]) ' +
+          'ORDER BY g."id" FOR NO KEY UPDATE',
+      ]);
     });
 
     it('clears the grade level with an explicit null', async () => {
@@ -404,6 +437,20 @@ describe('StudentGroupsService', () => {
       });
     });
 
+    it('holds the group, its halves and its successors FOR UPDATE, in id order, before the delete', async () => {
+      tx.studentGroup.delete.mockResolvedValue({ id: GROUP_ID });
+
+      await service.remove(GROUP_ID, testUser());
+
+      expect(lockStatements(tx)).toEqual([
+        'SELECT pg_advisory_xact_lock_shared(hashtextextended($1, 0))',
+        'SELECT 1 FROM "StudentGroups" g WHERE g."id" = ANY($1::uuid[]) OR g."halfOfId" = ANY($2::uuid[]) ' +
+          'OR g."predecessorId" = ANY($3::uuid[]) OR g."predecessorId" IN (SELECT h."id" FROM "StudentGroups" h WHERE h."halfOfId" = ANY($4::uuid[])) ' +
+          'ORDER BY g."id" FOR UPDATE',
+      ]);
+      expect(tx.$executeRaw.mock.invocationCallOrder.at(-1)!).toBeLessThan(tx.studentGroup.delete.mock.invocationCallOrder[0]!);
+    });
+
     it('maps P2025 (unknown or cross-tenant id) to 404', async () => {
       tx.studentGroup.delete.mockRejectedValue(prismaError('P2025'));
 
@@ -476,9 +523,24 @@ describe('StudentGroupsService', () => {
     const expectCommitted = () => expect(lastTransaction()).resolves.toMatchObject({ applied: true });
     const expectRolledBack = () => expect(lastTransaction()).rejects.toThrow();
 
-    /** The SQL of every statement sent with $executeRaw: the savepoints a bulk write takes. */
+    /** The SQL of a raw call: a tagged template's strings joined by ?, or a Prisma.sql's text. */
+    const sqlOf = (first: unknown): string =>
+      (typeof (first as { text?: unknown }).text === 'string'
+        ? (first as { text: string }).text
+        : (first as string[]).join('?')
+      )
+        .replace(/\s+/g, ' ')
+        .trim();
+    /** The savepoints a bulk write takes, of the statements sent with $executeRaw. */
     const savepoints = () =>
-      tx.$executeRaw.mock.calls.map(([strings]) => (strings as readonly string[]).join('?'));
+      tx.$executeRaw.mock.calls.map(([first]) => sqlOf(first)).filter((sql) => /SAVEPOINT/.test(sql));
+    /** The row locks and the school's lock, as sent: the SQL and the values. */
+    const locks = () =>
+      tx.$executeRaw.mock.calls
+        .map(([first], index) => ({ sql: sqlOf(first), values: (first as { values?: unknown[] }).values, order: tx.$executeRaw.mock.invocationCallOrder[index]! }))
+        .filter(({ sql }) => / FOR (UPDATE|NO KEY UPDATE|SHARE|KEY SHARE)$|pg_advisory_xact_lock_shared/.test(sql));
+    const PEOPLE_LOCK = 'SELECT pg_advisory_xact_lock_shared(hashtextextended($1, 0))';
+    const ID_ORDER = 'ORDER BY g."id"';
 
     /**
      * A bulk statement's answer as Prisma gives it: the rows it wrote, here
@@ -502,16 +564,36 @@ describe('StudentGroupsService', () => {
         expect(prisma.withRls).not.toHaveBeenCalled();
       });
 
-      it('locks the groups FOR NO KEY UPDATE in id order before it judges them', async () => {
+      it("takes the school's lock, the groups and their halves in id order, then the classes' pupils, before it judges them", async () => {
         givenGroups(teachingGroup(G1), teachingGroup(G3));
 
         await service.bulkUpdate({ ids: [G3, G1], changes: { gradeLevel: 7 }, dryRun: false }, user);
 
-        const [first] = tx.$queryRaw.mock.calls;
-        expect((first![0] as string[]).join('?').replace(/\s+/g, ' ').trim()).toBe(
-          'SELECT 1 FROM "StudentGroups" WHERE "id" = ANY(?::uuid[]) ORDER BY "id" FOR NO KEY UPDATE',
-        );
-        expect(first![1]).toEqual([G1, G3]);
+        // The one order of lock-order.ts: every group row it writes, its
+        // halves among them, in one statement in id order, as the rollover
+        // holds a year's groups; the pupils, whose class history an årskurs
+        // rewrites, last.
+        expect(locks().map(({ sql, values }) => ({ sql, values }))).toEqual([
+          { sql: PEOPLE_LOCK, values: [`Users:${user.schoolId}`] },
+          {
+            sql: `SELECT 1 FROM "StudentGroups" g WHERE g."id" = ANY($1::uuid[]) OR g."halfOfId" = ANY($2::uuid[]) ${ID_ORDER} FOR NO KEY UPDATE`,
+            values: [[G1, G3], [G1, G3]],
+          },
+          { sql: 'SELECT 1 FROM "Users" WHERE "studentGroupId" = ANY($1::uuid[]) ORDER BY "id" FOR SHARE', values: [[G1, G3]] },
+        ]);
+        expect(locks().at(-1)!.order).toBeLessThan(tx.studentGroup.findMany.mock.invocationCallOrder[0]!);
+      });
+
+      it('holds neither the halves nor the pupils for a subject alone: only the groups it names are written', async () => {
+        tx.subject.findUnique.mockResolvedValue({ id: SUBJECT });
+        givenGroups(teachingGroup(G1));
+
+        await service.bulkUpdate({ ids: [G1], changes: { replacesSubjectId: SUBJECT }, dryRun: false }, user);
+
+        expect(locks().map(({ sql }) => sql)).toEqual([
+          PEOPLE_LOCK,
+          `SELECT 1 FROM "StudentGroups" g WHERE g."id" = ANY($1::uuid[]) ${ID_ORDER} FOR NO KEY UPDATE`,
+        ]);
       });
 
       it('reads each id once, in id order, in one transaction with the bulk timeout', async () => {
@@ -943,7 +1025,7 @@ describe('StudentGroupsService', () => {
         await expectCommitted();
       });
 
-      it('on a dry run counts what goes with the groups, every kind, and rolls the delete back', async () => {
+      it('on a dry run counts what goes with the groups, every kind, and deletes nothing', async () => {
         // G1 is a class with a half the call does not name; G2 is linked to the school’s SS12000 source.
         givenGroups(
           group(G1),
@@ -1001,9 +1083,11 @@ describe('StudentGroupsService', () => {
         expect(tx.studentGroup.count).toHaveBeenCalledWith({
           where: { predecessorId: { in: [G1, G2, HALF] }, id: { notIn: [G1, G2, HALF] } },
         });
-        // The delete was done, so it is counted before it is rolled back, and rolled back.
-        expect(tx.studentGroup.deleteMany).toHaveBeenCalledWith({ where: { id: { in: [G1, G2] } } });
-        await expectRolledBack();
+        // Counted, not done: no delete to roll back, and its transaction ends
+        // as a read does (src/common/bulk.ts, A DELETE'S DRY RUN DELETES NOTHING).
+        expect(tx.studentGroup.deleteMany).not.toHaveBeenCalled();
+        expect(tx.studentGroup.delete).not.toHaveBeenCalled();
+        await expect(lastTransaction()).resolves.toMatchObject({ dryRun: true, applied: false });
       });
 
       it('counts the halves a class takes with it once: not those the call names itself', async () => {
@@ -1017,18 +1101,34 @@ describe('StudentGroupsService', () => {
         expect(pupils?.values).toEqual([[G1, G2]]);
       });
 
-      it('locks the named groups and the halves they take along FOR UPDATE, in id order, before it reads or counts', async () => {
+      it('locks the named groups, the halves they take along and their successors FOR UPDATE, in id order, before it reads or counts', async () => {
+        givenGroups(group(G1));
+        givenCounts();
+
+        await service.bulkRemove({ ids: [G3, G1], dryRun: false, expected: {} }, user);
+
+        expect(locks().map(({ sql, values }) => ({ sql, values }))).toEqual([
+          { sql: PEOPLE_LOCK, values: [`Users:${user.schoolId}`] },
+          {
+            sql:
+              'SELECT 1 FROM "StudentGroups" g WHERE g."id" = ANY($1::uuid[]) OR g."halfOfId" = ANY($2::uuid[]) ' +
+              'OR g."predecessorId" = ANY($3::uuid[]) OR g."predecessorId" IN (SELECT h."id" FROM "StudentGroups" h WHERE h."halfOfId" = ANY($4::uuid[])) ' +
+              `${ID_ORDER} FOR UPDATE`,
+            values: [[G1, G3], [G1, G3], [G1, G3], [G1, G3]],
+          },
+        ]);
+        expect(locks().at(-1)!.order).toBeLessThan(tx.studentGroup.findMany.mock.invocationCallOrder[0]!);
+        expect(locks().at(-1)!.order).toBeLessThan(tx.$queryRaw.mock.invocationCallOrder[0]!);
+      });
+
+      it('takes no lock on a dry run: it reads and counts, and a teacher’s insert meanwhile waits on nothing of it', async () => {
         givenGroups(group(G1));
         givenCounts();
 
         await service.bulkRemove({ ids: [G1], dryRun: true }, user);
 
-        const [first] = tx.$queryRaw.mock.calls;
-        expect(textOf(first![0]).replace(/\s+/g, ' ').trim()).toBe(
-          'SELECT 1 FROM "StudentGroups" WHERE "id" = ANY(?::uuid[]) OR "halfOfId" = ANY(?::uuid[]) ORDER BY "id" FOR UPDATE',
-        );
-        expect(first!.slice(1)).toEqual([[G1], [G1]]);
-        expect(tx.$queryRaw.mock.invocationCallOrder[0]!).toBeLessThan(tx.studentGroup.findMany.mock.invocationCallOrder[0]!);
+        expect(locks()).toEqual([]);
+        expect(tx.$queryRaw.mock.calls.map(([first]) => sqlOf(first)).filter((sql) => /FOR (UPDATE|SHARE)/.test(sql))).toEqual([]);
       });
 
       describe('the confirmation binds the counts (expected)', () => {
@@ -1066,6 +1166,17 @@ describe('StudentGroupsService', () => {
             consequencesGrew: ['attendanceMarks', 'calendarLessons'],
             consequences: expect.objectContaining({ calendarLessons: 200, attendanceMarks: 1000 }),
           });
+          expect(tx.studentGroup.deleteMany).not.toHaveBeenCalled();
+          await expectRolledBack();
+        });
+
+        it('deletes nothing when a single kind grew, however many others held', async () => {
+          givenGroups(group(G1));
+          givenCounts();
+
+          const result = await service.bulkRemove({ ids: [G1], dryRun: false, expected: { ...dryRunCounts, lessonLogs: 8 } }, user);
+
+          expect(result).toMatchObject({ applied: false, consequencesGrew: ['lessonLogs'] });
           expect(tx.studentGroup.deleteMany).not.toHaveBeenCalled();
           await expectRolledBack();
         });
@@ -1548,16 +1659,20 @@ describe('StudentGroupsService — Halvklasser', () => {
       expect(tx.studentGroupMember.deleteMany.mock.invocationCallOrder[0]!).toBeLessThan(
         tx.studentGroupMember.createMany.mock.invocationCallOrder[0]!,
       );
-      // The class's row first, as split takes it: a second placement waits.
-      const [lock] = tx.$queryRaw.mock.calls[0]! as [readonly string[]];
-      expect(lock.join('?')).toMatch(/FROM "StudentGroups" WHERE "id" = \?::uuid FOR NO KEY UPDATE/);
-      expect(tx.$queryRaw.mock.invocationCallOrder[0]!).toBeLessThan(tx.studentGroup.findUnique.mock.invocationCallOrder[0]!);
+      // The class's row and its halves first, in id order, as a delete of the
+      // class holds them (src/common/lock-order.ts): a second placement waits.
+      expect(lockStatements(tx)).toEqual([
+        'SELECT pg_advisory_xact_lock_shared(hashtextextended($1, 0))',
+        'SELECT 1 FROM "StudentGroups" g WHERE g."id" = ANY($1::uuid[]) OR g."halfOfId" = ANY($2::uuid[]) ORDER BY g."id" FOR NO KEY UPDATE',
+      ]);
+      expect(tx.$executeRaw.mock.invocationCallOrder.at(-1)!).toBeLessThan(tx.studentGroup.findUnique.mock.invocationCallOrder[0]!);
       // Then the class's pupils, in id order, before any membership row: the
       // order a class change takes them in, so the two cannot deadlock.
-      const [held, ids] = tx.$queryRaw.mock.calls[1]! as [readonly string[], string[]];
+      const [held, ids] = tx.$queryRaw.mock.calls[0]! as [readonly string[], string[]];
       expect(held.join('?')).toMatch(/FROM "Users" WHERE "id" = ANY\(\?::uuid\[\]\) ORDER BY "id" FOR SHARE/);
       expect(ids).toEqual([pupil(1), pupil(2), pupil(3)].sort());
-      expect(tx.$queryRaw.mock.invocationCallOrder[1]!).toBeLessThan(
+      expect(tx.$queryRaw.mock.invocationCallOrder[0]!).toBeGreaterThan(tx.$executeRaw.mock.invocationCallOrder.at(-1)!);
+      expect(tx.$queryRaw.mock.invocationCallOrder[0]!).toBeLessThan(
         tx.studentGroupMember.deleteMany.mock.invocationCallOrder[0]!,
       );
     });
@@ -1648,9 +1763,16 @@ describe('StudentGroupsService — Halvklasser', () => {
         where: { studentGroupId: H1, studentId: { in: [pupil(1), pupil(2)] } },
       });
       expect(tx.studentGroupMember.createMany).not.toHaveBeenCalled();
-      // The class's pupils held first, as placeHalves holds them.
+      // The half before the class's pupils, as its membership rows' key holds
+      // it, and as a delete of the class holds the half and then empties the
+      // pupils (src/common/lock-order.ts); then the pupils, as placeHalves holds them.
+      expect(lockStatements(tx)).toEqual([
+        'SELECT pg_advisory_xact_lock_shared(hashtextextended($1, 0))',
+        'SELECT 1 FROM "StudentGroups" g WHERE g."id" = ANY($1::uuid[]) ORDER BY g."id" FOR KEY SHARE',
+      ]);
       const [held] = tx.$queryRaw.mock.calls[0]! as [readonly string[]];
       expect(held.join('?')).toMatch(/FROM "Users" .* FOR SHARE/);
+      expect(tx.$executeRaw.mock.invocationCallOrder.at(-1)!).toBeLessThan(tx.$queryRaw.mock.invocationCallOrder[0]!);
       expect(tx.$queryRaw.mock.invocationCallOrder[0]!).toBeLessThan(
         tx.studentGroupMember.deleteMany.mock.invocationCallOrder[0]!,
       );

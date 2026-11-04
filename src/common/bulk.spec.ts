@@ -9,7 +9,10 @@ import {
   BULK_ROW_NOT_FOUND,
   BULK_ROW_REFERENCE_GONE,
   BULK_ROW_TAKEN,
+  BULK_TIMED_OUT,
+  BULK_TIMEOUT_MS,
   assertSomeChange,
+  bulkTransaction,
   notFound,
   refusalOf,
   runBulk,
@@ -259,5 +262,64 @@ describe('bulk', () => {
       const error = new BadRequestException('replacesSubjectId: ämnet finns inte i skolan.');
       await expect(runBulk(run, false, async () => Promise.reject(error))).rejects.toBe(error);
     });
+  });
+});
+
+describe('bulkTransaction', () => {
+  /** A withRls that runs `fn` on a transaction whose statements are kept, or fails with `failure`. */
+  const withRls = (failure?: unknown) => {
+    const sent: string[] = [];
+    const tx = {
+      $executeRaw: jest.fn((strings: readonly string[], ...values: unknown[]) => {
+        sent.push(`${strings.join('?')} ${JSON.stringify(values)}`);
+        return Promise.resolve(1);
+      }),
+    } as unknown as PrismaClient;
+    const withRlsMock = jest.fn(async (_user: unknown, fn: (tx: PrismaClient) => Promise<unknown>) => {
+      const result = await fn(tx);
+      if (failure) throw failure;
+      return result;
+    });
+    const prisma = { withRls: withRlsMock } as unknown as Parameters<typeof bulkTransaction<string>>[0] & {
+      withRls: typeof withRlsMock;
+    };
+    return { prisma, sent };
+  };
+  const driverError = (originalCode: string) =>
+    new Prisma.PrismaClientKnownRequestError('Raw query failed.', {
+      code: 'P2010',
+      clientVersion: 'test',
+      meta: { driverAdapterError: { cause: { originalCode } } },
+    });
+
+  it("runs in withRls with the bulk timeout, and gives the database's statements the same", async () => {
+    const { prisma, sent } = withRls();
+
+    await expect(bulkTransaction(prisma, 'user')(() => Promise.resolve('done'))).resolves.toBe('done');
+
+    expect(prisma.withRls).toHaveBeenCalledWith('user', expect.any(Function), { timeoutMs: BULK_TIMEOUT_MS });
+    expect(sent).toEqual([`SELECT set_config('statement_timeout', ?, true) ["${BULK_TIMEOUT_MS}"]`]);
+  });
+
+  it.each([
+    ['Prisma’s expired transaction (P2028)', prismaError('P2028')],
+    ['the statement the database cancelled (57014)', driverError('57014')],
+  ])('answers %s as 409 BULK_TIMED_OUT: nothing written, fewer at a time', async (_what, failure) => {
+    const { prisma } = withRls(failure);
+
+    const error = await bulkTransaction(prisma, 'user')(() => Promise.resolve(null)).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toMatchObject({
+      code: BULK_TIMED_OUT,
+      message: expect.stringContaining('ingenting sparades'),
+    });
+  });
+
+  it('passes any other failure on as it is: a deadlock, another driver error', async () => {
+    for (const failure of [prismaError('P2034'), driverError('40P01'), new Error('connection reset')]) {
+      const { prisma } = withRls(failure);
+      await expect(bulkTransaction(prisma, 'user')(() => Promise.resolve(null))).rejects.toBe(failure);
+    }
   });
 });

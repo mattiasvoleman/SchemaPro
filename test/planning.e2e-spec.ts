@@ -442,8 +442,9 @@ describe('Planning surface (e2e)', () => {
             fromSource: 1,
           },
         });
-        // The delete was done to be counted and rolled back: the transaction threw, which withRls rolls back.
-        expect(groups()['deleteMany']).toHaveBeenCalledWith({ where: { id: { in: [GROUP_ID] } } });
+        // Counted, not done: a dry run deletes nothing (src/common/bulk.ts).
+        expect(groups()['deleteMany']).not.toHaveBeenCalled();
+        expect(groups()['delete']).not.toHaveBeenCalled();
       });
 
       it('deletes the selection in one request and answers 200 applied, with no consequences', async () => {
@@ -469,6 +470,29 @@ describe('Planning surface (e2e)', () => {
         expect(groups()['updateMany']).toHaveBeenCalledWith({
           where: { id: { in: [GROUP_ID] } },
           data: { gradeLevel: 7 },
+        });
+      });
+
+      it('takes an upper-case subject as the database has it, lower case: it is the subject, and written so', async () => {
+        // An id with letters, so that its upper case is another string.
+        const SVA = 'abcdef12-3456-4abc-8def-abcdef123456';
+        groups()['findMany']!.mockResolvedValueOnce([
+          { id: GROUP_ID, kind: 'TEACHING_GROUP', halfOfId: null, gradeLevel: 6, replacesSubjectId: SVA },
+          { id: OTHER_ID, kind: 'TEACHING_GROUP', halfOfId: null, gradeLevel: 6, replacesSubjectId: null },
+        ]);
+        harness.tx['subject']!['findUnique']!.mockResolvedValueOnce({ id: SVA });
+
+        const response = await post(UPDATE, {
+          ids: [GROUP_ID, OTHER_ID],
+          changes: { replacesSubjectId: SVA.toUpperCase() },
+          dryRun: false,
+        }).expect(200);
+
+        expect(response.body).toMatchObject({ applied: true, done: [GROUP_ID, OTHER_ID] });
+        // The group that has it already is not written again: compared as the database spells it.
+        expect(groups()['updateMany']).toHaveBeenCalledWith({
+          where: { id: { in: [OTHER_ID] } },
+          data: { replacesSubjectId: SVA },
         });
       });
 

@@ -1,5 +1,5 @@
-import { BadRequestException, HttpException, NotFoundException } from '@nestjs/common';
-import type { PrismaClient } from '@prisma/client';
+import { BadRequestException, ConflictException, HttpException, NotFoundException } from '@nestjs/common';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsObject, IsOptional, IsUUID } from 'class-validator';
 import { WRITE_CONFLICT, rethrowPrismaError } from './utils/prisma-errors';
@@ -11,14 +11,28 @@ import { WRITE_CONFLICT, rethrowPrismaError } from './utils/prisma-errors';
  *
  * ALL OR NOTHING PER CALL. A call writes every row it names or none: when
  * any row is refused, nothing is written and the answer lists each refused
- * row with the single-row route's own sentence and code. The web asks first
- * with `dryRun` (the same work, rolled back), shows what would go, what
- * would not and why, and then sends only the rows that would. So "the rest
- * goes" is the administrator's decision on a list they have read, and what
- * is written is exactly what they confirmed: a row refused only at the real
- * call (somebody changed it meanwhile) writes nothing and is shown again, and
- * a delete whose consequences grew since its dry run (removal-inventory.ts,
- * grownSince) deletes nothing either.
+ * row with the single-row route's own sentence and code. The web asks a
+ * delete first with `dryRun`, shows what would go, what would not and why,
+ * and then sends only the rows that would. So "the rest goes" is the
+ * administrator's decision on a list they have read, and what is written is
+ * exactly what they confirmed: a row refused only at the real call
+ * (somebody changed it meanwhile, or the database refused what no check
+ * foresaw) writes nothing and is shown with its reason, and a delete whose
+ * consequences grew since its dry run (removal-inventory.ts, grownSince)
+ * deletes nothing either.
+ *
+ * A DELETE'S DRY RUN DELETES NOTHING. It reads the rows, judges them with
+ * the real call's checks and counts what hangs on them, without a row lock
+ * and without the delete. The delete itself visits every table with a key
+ * to the rows, and some of those keys have no index: a pupil's delete scans
+ * AttendanceRecords for recordedById, 74 ms a pupil over 1.5 million marks.
+ * Rolled back, a dry run cost that much and held the pupils FOR UPDATE for
+ * it, and a teacher saving attendance for one of them waited. An update's
+ * dry run (no client asks one) is still the write, rolled back.
+ *
+ * ONE LOCK ORDER (lock-order.ts): the school's people lock, every group
+ * row the call writes in id order, then the pupils, as every other write of
+ * groups and pupils takes them.
  *
  * A 200 WITH THE REPORT, not a 409. The exception filter forwards a
  * problem's detail, code and flat params only (http-exception.filter.ts),
@@ -40,9 +54,14 @@ export const BULK_MAX = 500;
 /**
  * withRls's timeout for a bulk call. 15 s (withRls's own) is a single row's
  * transaction; a delete of 500 pupils cascades into every row that names
- * them, and a dry run does it twice over with the counts.
+ * them. The database's statement_timeout is the same (bulkTransaction): a
+ * statement still running when the transaction expires is cancelled and its
+ * locks released, rather than run on unseen after the answer.
  */
 export const BULK_TIMEOUT_MS = 60_000;
+
+/** A call that ran out of BULK_TIMEOUT_MS. Nothing was written. */
+export const BULK_TIMED_OUT = 'BULK_TIMED_OUT';
 
 /**
  * The problem code of a row that is not there, or not the caller's to change
@@ -261,6 +280,50 @@ export async function writeAll(
   }
   if (refused.length === 0 && failure) throw failure.error;
   return refused;
+}
+
+/**
+ * A bulk call's transaction: withRls with BULK_TIMEOUT_MS, and the same as
+ * the database's statement_timeout. A call that runs out of either (P2028
+ * from Prisma, 57014 from the database) is a 409 BULK_TIMED_OUT saying that
+ * nothing was written and to try fewer rows at a time, rather than a 500.
+ */
+export function bulkTransaction<U>(
+  prisma: { withRls<T>(user: U, fn: (tx: PrismaClient) => Promise<T>, options?: { timeoutMs?: number }): Promise<T> },
+  user: U,
+): <T>(fn: (tx: PrismaClient) => Promise<T>) => Promise<T> {
+  return async (fn) => {
+    try {
+      return await prisma.withRls(
+        user,
+        async (tx) => {
+          await tx.$executeRaw`SELECT set_config('statement_timeout', ${String(BULK_TIMEOUT_MS)}, true)`;
+          return fn(tx);
+        },
+        { timeoutMs: BULK_TIMEOUT_MS },
+      );
+    } catch (error) {
+      if (ranOutOfTime(error)) throw bulkTimedOut();
+      throw error;
+    }
+  };
+}
+
+/** P2028 (Prisma's transaction expired) or 57014 (the statement cancelled by statement_timeout). */
+export function ranOutOfTime(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
+  if (error.code === 'P2028') return true;
+  const cause = (error.meta as { driverAdapterError?: { cause?: { originalCode?: unknown } } } | undefined)
+    ?.driverAdapterError?.cause;
+  return cause?.originalCode === '57014';
+}
+
+function bulkTimedOut(): ConflictException {
+  return new ConflictException({
+    message: `Ändringen tog längre tid än ${BULK_TIMEOUT_MS / 1000} sekunder, så ingenting sparades. Försök med färre rader åt gången.`,
+    code: BULK_TIMED_OUT,
+    params: { seconds: BULK_TIMEOUT_MS / 1000 },
+  });
 }
 
 /** Thrown inside the transaction to roll it back with the report in hand. */

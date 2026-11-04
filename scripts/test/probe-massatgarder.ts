@@ -12,8 +12,21 @@
  *   mv2  a dry run's counts, made under the admin's RLS, are the rows the
  *        owner counts by the same keys, for a class with a half, pupils, a
  *        membership and class history, and for its pupils;
+ *        A level down too: every key to a table either delete reaches
+ *        through CASCADE keys, at any depth, is GROUP_BELOW's or STUDENT_BELOW's;
  *   mv3  a delete that carries its dry run's counts back deletes nothing when
- *        a kind grew meanwhile, says which, and deletes with the new counts.
+ *        a kind grew meanwhile, says which, and deletes with the new counts;
+ *   mv4  the bulk and single writes take a class and its half (the half's id
+ *        the lower) in one order (src/common/lock-order.ts): overlapping
+ *        pairs end without a deadlock (409 WRITE_CONFLICT), a pupils' move
+ *        between two classes being deleted included;
+ *   mv6  that order is the rollover's: a write over a class waits for a
+ *        transaction that holds the half and then the class FOR SHARE, as
+ *        the rollover and the year's activation hold a year's groups in id
+ *        order, rather than holding the class and deadlocking;
+ *   mv5  a delete's dry run holds no row lock: it answers while another
+ *        transaction holds a pupil's and a class's key, as a teacher's
+ *        attendance insert and a lesson's insert do.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -23,7 +36,16 @@ import type { Client } from 'pg';
 import { Role } from '../../src/auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
 import type { PrismaService } from '../../src/database/prisma.service';
-import { GROUP_KEYS, STUDENT_KEYS, type InventoryKey, type OnDelete } from '../../src/common/removal-inventory';
+import {
+  GROUP_BELOW,
+  GROUP_KEYS,
+  STUDENT_BELOW,
+  STUDENT_KEYS,
+  type BelowKey,
+  type InventoryKey,
+  type OnDelete,
+} from '../../src/common/removal-inventory';
+import { WRITE_CONFLICT } from '../../src/common/utils/prisma-errors';
 import { StudentGroupsService } from '../../src/resources/student-groups.service';
 import type { SupabaseAdminService } from '../../src/users/supabase-admin.service';
 import { UsersService } from '../../src/users/users.service';
@@ -91,6 +113,48 @@ export async function massvalChecks(owner: Client, api: PrismaService, marker: s
         `keys to ${parent} the inventory does not tell (src/common/removal-inventory.ts)`,
       );
       assert.deepEqual(told.filter((key) => !catalogue.includes(key)), [], `keys the inventory tells that ${parent} has no longer`);
+    }
+    // A level down: the catalogue's own cascade from each, walked to the end.
+    const { rows: below } = await owner.query<{ root: string; parent: string; child: string; cols: string; del: string }>(`
+      WITH RECURSIVE fk AS (
+        SELECT trim(both '"' from c.confrelid::regclass::text) COLLATE "C" AS parent,
+               trim(both '"' from c.conrelid::regclass::text) COLLATE "C" AS child, c.confdeltype AS del,
+               (SELECT string_agg(a.attname, ',' ORDER BY k.ord)
+                  FROM unnest(c.conkey) WITH ORDINALITY k(attnum, ord)
+                  JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum) COLLATE "C" AS cols
+          FROM pg_constraint c WHERE c.contype = 'f'
+      ), taken(root, tbl, depth) AS (
+        SELECT v.r COLLATE "C", fk.child, 1
+          FROM (VALUES ('StudentGroups'), ('Users')) v(r)
+          JOIN fk ON fk.parent = v.r AND fk.del = 'c' AND fk.child <> v.r
+        UNION
+        SELECT t.root, fk.child, t.depth + 1
+          FROM taken t JOIN fk ON fk.parent = t.tbl AND fk.del = 'c' AND fk.child <> t.tbl
+         WHERE t.depth < 10
+      )
+      SELECT DISTINCT t.root, fk.parent, fk.child, fk.cols, fk.del
+        FROM taken t JOIN fk ON fk.parent = t.tbl
+       WHERE fk.parent NOT IN ('StudentGroups', 'Users')`);
+    const asBelow = (entry: { parent: string; table: string; columns: readonly string[]; onDelete: string }) =>
+      `${entry.parent} > ${asKey(entry)}`;
+    for (const [root, inventory] of [
+      ['StudentGroups', GROUP_BELOW],
+      ['Users', STUDENT_BELOW],
+    ] as const) {
+      const catalogue = below
+        .filter((row) => row.root === root)
+        .map((row) =>
+          asBelow({ parent: row.parent, table: row.child, columns: row.cols.split(','), onDelete: ON_DELETE[row.del] ?? row.del }),
+        )
+        .sort();
+      const told = (inventory as readonly BelowKey<string>[]).map(asBelow).sort();
+      assert.ok(catalogue.length >= 9, `the cascade walk found ${catalogue.length} keys below ${root}`);
+      assert.deepEqual(
+        catalogue.filter((key) => !told.includes(key)),
+        [],
+        `keys a level down from ${root} the inventory does not tell (GROUP_BELOW / STUDENT_BELOW)`,
+      );
+      assert.deepEqual(told.filter((key) => !catalogue.includes(key)), [], `keys below ${root} the catalogue has no longer`);
     }
   });
 
@@ -202,6 +266,120 @@ export async function massvalChecks(owner: Client, api: PrismaService, marker: s
         (await one<{ n: number }>(`SELECT count(*)::int AS n FROM "Users" WHERE "schoolId" = $1 AND "studentGroupId" IS NOT NULL`, [s])).n,
         0,
       );
+    });
+    // A class and its half, the half's id the lower: a lock in plain id
+    // order takes the half first, the cascade and the single routes the class.
+    const family = async (label: string) => {
+      const [low, high] = [randomUUID(), randomUUID()].sort();
+      const cls = await one<{ id: string }>(
+        `INSERT INTO "StudentGroups" (id, "schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+         VALUES ($1, $2, $3, $4, 'CLASS', 7, now()) RETURNING id`,
+        [high, s, year.id, `MV-F${label}`],
+      );
+      await owner.query(
+        `INSERT INTO "StudentGroups" (id, "schoolId", "academicYearId", name, kind, "gradeLevel", "halfOfId", "updatedAt")
+         VALUES ($1, $2, $3, $4, 'TEACHING_GROUP', 7, $5, now())`,
+        [low, s, year.id, `MV-F${label}:1`, cls.id],
+      );
+      const pupils = [(await person('STUDENT', `f${label}a`, cls.id)).id, (await person('STUDENT', `f${label}b`, cls.id)).id];
+      return { cls: cls.id, half: low!, pupils };
+    };
+    type Family = Awaited<ReturnType<typeof family>>;
+
+    await check('(mv4) a class and its half are locked in one order by every write: overlapping pairs end without a deadlock', async () => {
+      const pairs: [string, (a: Family, b: Family) => Promise<unknown>, (a: Family, b: Family) => Promise<unknown>][] = [
+        ['update(A) × bulkRemove([A])', (a) => groups.update(a.cls, { gradeLevel: 8 }, asAdmin), (a) =>
+          groups.bulkRemove({ ids: [a.cls], dryRun: false }, asAdmin)],
+        ['bulkUpdate([A]) × bulkRemove([H, A])', (a) => groups.bulkUpdate({ ids: [a.cls], changes: { gradeLevel: 9 }, dryRun: false }, asAdmin), (a) =>
+          groups.bulkRemove({ ids: [a.half, a.cls], dryRun: false }, asAdmin)],
+        ['bulkUpdate([H, A]) × bulkUpdate([A])', (a) => groups.bulkUpdate({ ids: [a.half, a.cls], changes: { gradeLevel: 9 }, dryRun: false }, asAdmin), (a) =>
+          groups.bulkUpdate({ ids: [a.cls], changes: { gradeLevel: 6 }, dryRun: false }, asAdmin)],
+        ['remove(A) × bulkUpdate([H, A])', (a) => groups.remove(a.cls, asAdmin), (a) =>
+          groups.bulkUpdate({ ids: [a.half, a.cls], changes: { gradeLevel: 9 }, dryRun: false }, asAdmin)],
+        ['placeHalves(A) × bulkRemove([A])', (a) =>
+          groups.placeHalves(a.cls, { halves: [{ groupId: a.half, studentIds: [a.pupils[0]!] }] }, asAdmin), (a) =>
+          groups.bulkRemove({ ids: [a.cls], dryRun: false }, asAdmin)],
+        ['setMembers(H) × bulkRemove([A])', (a) => groups.setMembers(a.half, { studentIds: a.pupils }, asAdmin), (a) =>
+          groups.bulkRemove({ ids: [a.cls], dryRun: false }, asAdmin)],
+        ['bulkUpdateStudents(A → B) × bulkRemove([A, B])', (a, b) =>
+          users.bulkUpdateStudents({ ids: a.pupils, changes: { studentGroupId: b.cls }, dryRun: false }, asAdmin), (a, b) =>
+          groups.bulkRemove({ ids: [a.cls, b.cls], dryRun: false }, asAdmin)],
+      ];
+      const ended: string[] = [];
+      for (const [name, first, second] of pairs) {
+        for (let round = 0; round < 6; round += 1) {
+          const a = await family(`${pairs.findIndex(([n]) => n === name)}-${round}a`);
+          const b = await family(`${pairs.findIndex(([n]) => n === name)}-${round}b`);
+          const outcomes = await Promise.allSettled([
+            first(a, b),
+            new Promise((resolve) => setTimeout(resolve, round % 4)).then(() => second(a, b)),
+          ]);
+          for (const outcome of outcomes) {
+            if (outcome.status === 'fulfilled') continue;
+            const reason = outcome.reason as { response?: { code?: unknown }; getStatus?: () => number };
+            // A refusal of a row already gone is an answer; a deadlock or a 5xx is not.
+            const status = typeof reason.getStatus === 'function' ? reason.getStatus() : 500;
+            if (reason.response?.code === WRITE_CONFLICT || status >= 500) ended.push(`${name}: ${String(outcome.reason)}`);
+          }
+          await owner.query(`DELETE FROM "Users" WHERE id = ANY($1::uuid[])`, [[...a.pupils, ...b.pupils]]);
+          await owner.query(`DELETE FROM "StudentGroups" WHERE id = ANY($1::uuid[])`, [[a.half, a.cls, b.half, b.cls]]);
+        }
+      }
+      assert.deepEqual(ended, [], 'overlapping writes that ended in a deadlock or a 5xx');
+    });
+
+    await check('(mv6) a write over a class waits for a transaction that holds its half and then the class FOR SHARE, as the rollover does, and neither is aborted', async () => {
+      const writes: [string, (f: Family) => Promise<unknown>][] = [
+        ['update(A)', (f) => groups.update(f.cls, { gradeLevel: 8 }, asAdmin)],
+        ['bulkUpdate([A])', (f) => groups.bulkUpdate({ ids: [f.cls], changes: { gradeLevel: 9 }, dryRun: false }, asAdmin)],
+        ['remove(A)', (f) => groups.remove(f.cls, asAdmin)],
+        ['bulkRemove([A])', (f) => groups.bulkRemove({ ids: [f.cls], dryRun: false }, asAdmin)],
+      ];
+      for (const [index, [name, write]] of writes.entries()) {
+        const f = await family(`roll${index}`);
+        await owner.query('BEGIN');
+        try {
+          // The rollover's read of a year's groups, FOR SHARE in id order: the half first, its id the lower.
+          await owner.query(`SELECT 1 FROM "StudentGroups" WHERE id = $1 FOR SHARE`, [f.half]);
+          const pending = write(f).then(
+            () => null,
+            (error: unknown) => error,
+          );
+          // The write is now waiting for the half, and holds nothing the rollover needs next.
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          const aborted = await owner.query(`SELECT 1 FROM "StudentGroups" WHERE id = $1 FOR SHARE`, [f.cls]).then(
+            () => null,
+            (error: unknown) => error,
+          );
+          await owner.query(aborted ? 'ROLLBACK' : 'COMMIT');
+          assert.equal(aborted, null, `${name}: the rollover's lock of the class was aborted: ${String(aborted)}`);
+          assert.equal(await pending, null, `${name} failed after the rollover's commit`);
+        } finally {
+          await owner.query('ROLLBACK').catch(() => undefined);
+        }
+        await owner.query(`DELETE FROM "Users" WHERE id = ANY($1::uuid[])`, [f.pupils]);
+        await owner.query(`DELETE FROM "StudentGroups" WHERE id = ANY($1::uuid[])`, [[f.half, f.cls]]);
+      }
+    });
+
+    await check('(mv5) a delete’s dry run holds no row lock: it answers while a teacher’s insert holds a pupil’s and a class’s key', async () => {
+      const f = await family('lock');
+      const held = owner;
+      await held.query('BEGIN');
+      try {
+        // What an attendance insert and a lesson insert hold until they commit.
+        await held.query(`SELECT 1 FROM "Users" WHERE id = $1 FOR KEY SHARE`, [f.pupils[0]]);
+        await held.query(`SELECT 1 FROM "StudentGroups" WHERE id = $1 FOR KEY SHARE`, [f.cls]);
+        const within = <T>(work: Promise<T>) =>
+          Promise.race([work, new Promise<never>((_, reject) => setTimeout(() => reject(new Error('waited 10 s on a lock')), 10_000))]);
+        const pupils = await within(users.bulkRemoveStudents({ ids: f.pupils, dryRun: true }, asAdmin));
+        assert.deepEqual([...pupils.done].sort(), [...f.pupils].sort());
+        const classes = await within(groups.bulkRemove({ ids: [f.cls], dryRun: true }, asAdmin));
+        assert.deepEqual(classes.done, [f.cls]);
+        assert.equal(classes.consequences?.halves, 1);
+      } finally {
+        await held.query('ROLLBACK');
+      }
     });
   } finally {
     await sweepMassvalSchool(owner, marker);

@@ -27,8 +27,8 @@ import {
   type LoginOwner,
 } from './supabase-admin.service';
 import {
-  BULK_TIMEOUT_MS,
   assertSomeChange,
+  bulkTransaction,
   notFound,
   refusalOf,
   runBulk,
@@ -39,6 +39,7 @@ import {
   type BulkResult,
 } from '../common/bulk';
 import { STUDENT_KEYS, countByKind, grownSince, type StudentKeyKind } from '../common/removal-inventory';
+import { holdTheSchoolsPeople, lockGroups } from '../common/lock-order';
 import type { BulkUpdateStudentsDto, CreateUserDto, UpdateUserDto } from './dto/user.dto';
 
 /** A pseudonymised person (gallring, 20261021110000) cannot be made active again. */
@@ -518,6 +519,14 @@ export class UsersService {
   async update(id: string, dto: UpdateUserDto, user: AuthenticatedUser): Promise<User> {
     try {
       return await this.prisma.withRls(user, async (tx) => {
+        // A move into a class holds the class before the person's row, in
+        // the one order of groups and pupils (src/common/lock-order.ts): a
+        // bulk delete of the class and the one it leaves holds them first
+        // and then empties their pupils.
+        if (dto.studentGroupId) {
+          await holdTheSchoolsPeople(tx, requireSchoolId(user));
+          await lockGroups(tx, [dto.studentGroupId], 'SHARE');
+        }
         // Students-only is a rule about the row that results, not about the
         // patch, so the stored values are half the answer: a body naming only
         // a group says nothing about the role, and a body naming only a role
@@ -780,9 +789,12 @@ export class UsersService {
    *
    * The rows are read FOR NO KEY UPDATE in id order, as update() reads its
    * one: a role or a class written meanwhile waits, and the rule is judged on
-   * what is written. A row already in the class and status asked is judged
-   * but not written, so it keeps its updatedAt (the SS12000 sync reads a
-   * newer one as a local edit) and its class history.
+   * what is written. The class they move into is held FOR SHARE before them,
+   * in the one order of groups and pupils (src/common/lock-order.ts), so it
+   * stays a class of the school until they are in it. A row already in the
+   * class and status asked is judged but not written, so it keeps its
+   * updatedAt (the SS12000 sync reads a newer one as a local edit) and its
+   * class history.
    *
    * Answers ids only, so it reads nobody in the läslogg's sense: update()
    * records its echo of the whole row (PEOPLE), and the register the page
@@ -790,6 +802,7 @@ export class UsersService {
    */
   async bulkUpdateStudents(dto: BulkUpdateStudentsDto, user: AuthenticatedUser): Promise<BulkResult> {
     assertSomeChange(dto.changes);
+    const schoolId = requireSchoolId(user);
     const ids = uniqueIds(dto.ids);
     const { studentGroupId, isActive } = dto.changes;
     const dryRun = dto.dryRun === true;
@@ -799,9 +812,11 @@ export class UsersService {
     };
     try {
       return await runBulk(
-        (fn) => this.prisma.withRls(user, fn, { timeoutMs: BULK_TIMEOUT_MS }),
+        bulkTransaction(this.prisma, user),
         dryRun,
         async (tx) => {
+          await holdTheSchoolsPeople(tx, schoolId);
+          if (studentGroupId) await lockGroups(tx, [studentGroupId], 'SHARE');
           const rows = await tx.$queryRaw<
             Pick<User, 'id' | 'role' | 'studentGroupId' | 'isActive' | 'pseudonymisedAt'>[]
           >`
@@ -842,8 +857,8 @@ export class UsersService {
               (id) => tx.user.update({ where: { id }, data }),
             )),
           );
-          if (this.notifications && user.schoolId && moving.length > 0 && !dryRun && refused.length === 0) {
-            await tellNewMentors(this.notifications, tx, user.schoolId);
+          if (this.notifications && moving.length > 0 && !dryRun && refused.length === 0) {
+            await tellNewMentors(this.notifications, tx, schoolId);
           }
           const refusedIds = new Set(refused.map((refusal) => refusal.id));
           return { done: judged.map((row) => row.id).filter((id) => !refusedIds.has(id)), refused };
@@ -860,23 +875,28 @@ export class UsersService {
    * (src/common/bulk.ts), as remove() removes one: refused where it refuses
    * (a decided timplan names the person, a vikarie is booked for their
    * rastvaktspass — staff's, never a pupil's, but asked of every row as
-   * remove() asks), and every row naming them goes with them. A dry run
-   * counts those (StudentRemovalConsequences) in a read of its own after it,
-   * which commits: the counts are recorded in the läslogg, and a record
-   * written inside the dry run would be rolled back with it.
+   * remove() asks), and every row naming them goes with them.
+   *
+   * THE DRY RUN DELETES NOTHING. It judges the pupils with the real call's
+   * checks (judgeStudentRemoval) and counts what goes with them
+   * (StudentRemovalConsequences), without a row lock, and commits: the counts
+   * are a read of the pupils, recorded in the läslogg. The delete itself
+   * would scan AttendanceRecords once per pupil for a key without an index
+   * (recordedById), so a dry run of 500 pupils that deleted and rolled back
+   * ran for most of a minute and held them FOR UPDATE meanwhile.
    *
    * THE CONFIRMATION BINDS THE COUNTS. The real call carries the dry run's
    * counts back (`expected`) and counts again in its own transaction, after
    * the rows are locked: a kind that grew meanwhile (an absence reported, a
    * guardian linked) refuses the call (`consequencesGrew`), nothing deleted,
    * and the new counts come back as the dry run's do, read and recorded in a
-   * transaction of their own.
+   * transaction of their own, since the refused one is rolled back.
    *
-   * The rows are read FOR UPDATE in id order: the role is judged on what is
-   * deleted, so no row of the call becomes a teacher meanwhile, and two calls
-   * over the same pupils queue. remove()'s per-teacher cover lock is not
-   * taken: it guards the vikarietavla's passes and absences, and a pupil has
-   * none.
+   * The rows are read FOR UPDATE in id order, after the school's people lock
+   * (src/common/lock-order.ts): the role is judged on what is deleted, so no
+   * row of the call becomes a teacher meanwhile, and two calls over the same
+   * pupils queue. remove()'s per-teacher cover lock is not taken: it guards
+   * the vikarietavla's passes and absences, and a pupil has none.
    *
    * The logins of the invited go after the commit, as remove()'s does, and
    * after the answer too: a few hundred calls to the identity provider are
@@ -887,98 +907,72 @@ export class UsersService {
     dto: BulkDeleteDto,
     user: AuthenticatedUser,
   ): Promise<BulkResult<StudentRemovalConsequences>> {
+    const schoolId = requireSchoolId(user);
     const ids = uniqueIds(dto.ids);
-    const dryRun = dto.dryRun === true;
+    const transaction = bulkTransaction(this.prisma, user);
     let result: BulkResult<StudentRemovalConsequences>;
     try {
-      result = await runBulk<StudentRemovalConsequences>(
-        (fn) => this.prisma.withRls(user, fn, { timeoutMs: BULK_TIMEOUT_MS }),
-        dryRun,
-        async (tx) => {
-          const rows = await tx.$queryRaw<
-            Pick<User, 'id' | 'role' | 'authId' | 'invitedAt' | 'ss12000Id'>[]
-          >`
+      if (dto.dryRun === true) {
+        return await transaction(async (tx) => {
+          const rows = await tx.$queryRaw<StudentRemovalRow[]>`
             SELECT "id", "role", "authId", "invitedAt", "ss12000Id"
             FROM "Users"
             WHERE "id" = ANY(${ids}::uuid[])
             ORDER BY "id"
-            FOR UPDATE
           `;
-          const byId = new Map(rows.map((row) => [row.id, row]));
-          const refused: BulkRefusal[] = [];
-          const pupils = ids.flatMap((id) => {
-            const row = byId.get(id);
-            if (!row) refused.push(notFound(id));
-            else if (row.role !== 'STUDENT') refused.push(notAStudent(id));
-            else return [row];
-            return [];
-          });
-          const candidates = pupils.map((pupil) => pupil.id);
-          const decided = await tx.localTimplan.findMany({
-            where: { OR: [{ decidedByUserId: { in: candidates } }, { gradeSpanSetByUserId: { in: candidates } }] },
-            select: { name: true, decidedByUserId: true, gradeSpanSetByUserId: true },
-            orderBy: { name: 'asc' },
-          });
-          const booked = await tx.supervisionCover.findMany({
-            where: { absentTeacherId: { in: candidates }, decision: 'SUBSTITUTE', endsAt: { gt: new Date() } },
-            select: { absentTeacherId: true, date: true },
-            orderBy: { date: 'asc' },
-          });
-          const removable = pupils.filter((pupil) => {
-            const plans = decided.filter(
-              (plan) => plan.decidedByUserId === pupil.id || plan.gradeSpanSetByUserId === pupil.id,
-            );
-            const pass = booked.find((cover) => cover.absentTeacherId === pupil.id);
-            const why = plans.length > 0
-              ? recordedATimplanDecision(
-                  plans.map((plan) => plan.name),
-                  plans.some((plan) => plan.gradeSpanSetByUserId === pupil.id),
-                  plans.some((plan) => plan.decidedByUserId === pupil.id),
-                )
-              : pass
-                ? hasBookedPassCovers(pass.date.toISOString().slice(0, 10))
-                : null;
-            if (why) refused.push(refusalOf(pupil.id, why)!);
-            return why === null;
-          });
-          if (!dryRun && dto.expected) {
-            const consequencesGrew = grownSince(dto.expected, { ...(await studentRemovalConsequences(tx, removable)) });
-            if (consequencesGrew.length > 0) {
-              return { done: removable.map((pupil) => pupil.id), refused, consequencesGrew };
-            }
+          const { removable, refused } = await judgeStudentRemoval(tx, ids, rows);
+          const done = removable.map((pupil) => pupil.id);
+          const consequences = await studentRemovalConsequences(tx, removable);
+          if (done.length > 0) await studentRemovalReads(tx, done, user.channel);
+          return { applied: false, dryRun: true, done, refused, consequences };
+        });
+      }
+      result = await runBulk<StudentRemovalConsequences>(transaction, false, async (tx) => {
+        await holdTheSchoolsPeople(tx, schoolId);
+        const rows = await tx.$queryRaw<StudentRemovalRow[]>`
+          SELECT "id", "role", "authId", "invitedAt", "ss12000Id"
+          FROM "Users"
+          WHERE "id" = ANY(${ids}::uuid[])
+          ORDER BY "id"
+          FOR UPDATE
+        `;
+        const { removable, refused } = await judgeStudentRemoval(tx, ids, rows);
+        if (dto.expected) {
+          const consequencesGrew = grownSince(dto.expected, { ...(await studentRemovalConsequences(tx, removable)) });
+          if (consequencesGrew.length > 0) {
+            return { done: removable.map((pupil) => pupil.id), refused, consequencesGrew };
           }
-          refused.push(
-            ...(await writeAll(
-              tx,
-              removable.map((pupil) => pupil.id),
-              (rows) => tx.user.deleteMany({ where: { id: { in: rows } } }),
-              (id) =>
-                tx.user.delete({ where: { id } }).catch((error: unknown) => {
-                  const reference = timplanReference(error);
-                  if (reference) throw recordedATimplanDecision([], reference === 'span', reference === 'decision');
-                  throw error;
-                }),
-            )),
-          );
-          const logins = removable
-            .filter((pupil) => pupil.invitedAt !== null)
-            .map((pupil) => pupil.authId);
-          if (!dryRun && refused.length === 0 && logins.length > 0) {
-            this.prisma.onCommit(tx, () => this.removeLogins(logins, user));
-          }
-          const refusedIds = new Set(refused.map((refusal) => refusal.id));
-          return { done: removable.map((pupil) => pupil.id).filter((id) => !refusedIds.has(id)), refused };
-        },
-      );
+        }
+        refused.push(
+          ...(await writeAll(
+            tx,
+            removable.map((pupil) => pupil.id),
+            (rows) => tx.user.deleteMany({ where: { id: { in: rows } } }),
+            (id) =>
+              tx.user.delete({ where: { id } }).catch((error: unknown) => {
+                const reference = timplanReference(error);
+                if (reference) throw recordedATimplanDecision([], reference === 'span', reference === 'decision');
+                throw error;
+              }),
+          )),
+        );
+        const logins = removable
+          .filter((pupil) => pupil.invitedAt !== null)
+          .map((pupil) => pupil.authId);
+        if (refused.length === 0 && logins.length > 0) {
+          this.prisma.onCommit(tx, () => this.removeLogins(logins, user));
+        }
+        const refusedIds = new Set(refused.map((refusal) => refusal.id));
+        return { done: removable.map((pupil) => pupil.id).filter((id) => !refusedIds.has(id)), refused };
+      });
     } catch (error) {
       if (error instanceof HttpException) throw error;
       rethrowPrismaError(error);
     }
-    if ((!dryRun && !result.consequencesGrew) || result.done.length === 0) return result;
-    // The counts are a read of the pupils, and a read is recorded in a
-    // transaction that commits: the dry run's own is rolled back, its
-    // record with it, and so is a refused delete's. Counted after it, of the
-    // pupils it would take.
+    if (!result.consequencesGrew || result.done.length === 0) return result;
+    // The new counts are a read of the pupils, and a read is recorded in a
+    // transaction that commits: the refused delete's is rolled back, its
+    // record with it. Counted after it, of the pupils it would take.
     const consequences = await this.prisma.withRls(user, async (tx) => {
       const pupils = await tx.user.findMany({
         where: { id: { in: result.done } },
@@ -1285,6 +1279,59 @@ async function studentRemovalConsequences(
     logins: pupils.filter((pupil) => pupil.invitedAt !== null).length,
     fromSource: pupils.filter((pupil) => pupil.ss12000Id !== null).length,
   };
+}
+
+/** The row a pupil's removal is judged on. */
+type StudentRemovalRow = Pick<User, 'id' | 'role' | 'authId' | 'invitedAt' | 'ss12000Id'>;
+
+/**
+ * remove()'s refusals, asked of every row at once: not there (or not the
+ * caller's), no pupil, a decided timplan names the person, a vikarie is
+ * booked for their rastvaktspass. The dry run and the real call judge alike.
+ */
+async function judgeStudentRemoval(
+  tx: PrismaClient,
+  ids: readonly string[],
+  rows: readonly StudentRemovalRow[],
+): Promise<{ removable: StudentRemovalRow[]; refused: BulkRefusal[] }> {
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const refused: BulkRefusal[] = [];
+  const pupils = ids.flatMap((id) => {
+    const row = byId.get(id);
+    if (!row) refused.push(notFound(id));
+    else if (row.role !== 'STUDENT') refused.push(notAStudent(id));
+    else return [row];
+    return [];
+  });
+  const candidates = pupils.map((pupil) => pupil.id);
+  const decided = await tx.localTimplan.findMany({
+    where: { OR: [{ decidedByUserId: { in: candidates } }, { gradeSpanSetByUserId: { in: candidates } }] },
+    select: { name: true, decidedByUserId: true, gradeSpanSetByUserId: true },
+    orderBy: { name: 'asc' },
+  });
+  const booked = await tx.supervisionCover.findMany({
+    where: { absentTeacherId: { in: candidates }, decision: 'SUBSTITUTE', endsAt: { gt: new Date() } },
+    select: { absentTeacherId: true, date: true },
+    orderBy: { date: 'asc' },
+  });
+  const removable = pupils.filter((pupil) => {
+    const plans = decided.filter(
+      (plan) => plan.decidedByUserId === pupil.id || plan.gradeSpanSetByUserId === pupil.id,
+    );
+    const pass = booked.find((cover) => cover.absentTeacherId === pupil.id);
+    const why = plans.length > 0
+      ? recordedATimplanDecision(
+          plans.map((plan) => plan.name),
+          plans.some((plan) => plan.gradeSpanSetByUserId === pupil.id),
+          plans.some((plan) => plan.decidedByUserId === pupil.id),
+        )
+      : pass
+        ? hasBookedPassCovers(pass.date.toISOString().slice(0, 10))
+        : null;
+    if (why) refused.push(refusalOf(pupil.id, why)!);
+    return why === null;
+  });
+  return { removable, refused };
 }
 
 /** Records the read the counts are, in a transaction that commits. */

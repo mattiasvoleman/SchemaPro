@@ -28,6 +28,13 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *    before the delete (recordedATimplanDecision).
  * So "nothing else depends on them" is said only when it is true.
  *
+ * AND A LEVEL DOWN. The rows a delete takes are deleted in turn, and the
+ * keys to them are followed too: GROUP_BELOW and STUDENT_BELOW hold every key
+ * in the catalogue to a table the delete reaches through CASCADE keys, at
+ * any depth (the probe walks the catalogue's cascade). Each is counted into
+ * a consequence of its own, goes WITH rows a line of the dialog names (and
+ * that line says it as a kind), or keeps its row UNLINKED (SET NULL).
+ *
  * COUNTED THE SAME WAY THEY ARE CHECKED. The dry run counts a key's rows with
  * SQL built from the table and the key's first column here, the same names
  * the probe holds to the catalogue, under the caller's RLS. One statement per
@@ -204,6 +211,91 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   }),
   key('LocalTimplans', ['gradeSpanSetByUserId', 'schoolId'], 'RESTRICT', {
     refuses: 'recordedATimplanDecision: a decided plan keeps the name of who set its årskurs span',
+  }),
+];
+
+/** How a key a level down is told. */
+export type BelowTelling<Kind extends string> =
+  /** Counted into a consequence of its own. */
+  | { counted: Kind }
+  /** Goes with rows the dialog names by this line, which says it as a kind. */
+  | { with: string }
+  /** SET NULL: the row stays without the link, and why that is no loss to say. */
+  | { unlinked: string };
+
+/** A key to a table a delete reaches through CASCADE keys: `parent` is that table. */
+export interface BelowKey<Kind extends string> extends RowKey {
+  parent: string;
+  tell: BelowTelling<Kind>;
+}
+
+const below = <Kind extends string>(
+  parent: string,
+  table: string,
+  columns: readonly string[],
+  onDelete: OnDelete,
+  tell: BelowTelling<Kind>,
+): BelowKey<Kind> => ({ parent, table, columns, onDelete, tell });
+
+/** The kinds a group delete counts a level down (GroupRemovalConsequences). */
+export type GroupBelowKind = 'attendanceMarks' | 'lessonLogs';
+
+/**
+ * The line of a group's dialog that names what hangs on its lessons and its
+ * plan (bulk.groupConsequences.below in the web's messages), said whenever
+ * one of GROUP_BELOW_PARENTS is counted.
+ */
+export const GROUP_BELOW_LINE = 'below';
+const onTheLessons: BelowTelling<GroupBelowKind> = { with: GROUP_BELOW_LINE };
+
+/** Every key a level down from a group: what its lessons, plan rows and rules take with them. */
+export const GROUP_BELOW: readonly BelowKey<GroupBelowKind>[] = [
+  below('CalendarLessons', 'AttendanceRecords', ['calendarLessonId'], 'CASCADE', { counted: 'attendanceMarks' }),
+  below('CalendarLessons', 'LessonLogs', ['calendarLessonId', 'schoolId'], 'CASCADE', { counted: 'lessonLogs' }),
+  below('CalendarLessons', 'CalendarLessonGroups', ['calendarLessonId'], 'CASCADE', onTheLessons),
+  below('CalendarLessons', 'CalendarLessonStudents', ['calendarLessonId'], 'CASCADE', onTheLessons),
+  below('CalendarLessons', 'CalendarLessonTeachers', ['calendarLessonId'], 'CASCADE', onTheLessons),
+  below('CalendarLessons', 'CancellationBatchLessons', ['calendarLessonId', 'schoolId'], 'CASCADE', onTheLessons),
+  below('CalendarLessons', 'LessonSubstituteNotes', ['calendarLessonId', 'schoolId'], 'CASCADE', onTheLessons),
+  below('CalendarLessons', 'PublicationPendingRemovals', ['calendarLessonId', 'schoolId'], 'CASCADE', onTheLessons),
+  below('CalendarLessons', 'TeacherAbsenceCovers', ['calendarLessonId', 'schoolId'], 'CASCADE', onTheLessons),
+  below('MasterLessons', 'MasterLessonGroups', ['masterLessonId'], 'CASCADE', onTheLessons),
+  below('MasterLessons', 'MasterLessonStudents', ['masterLessonId'], 'CASCADE', onTheLessons),
+  below('MasterLessons', 'CalendarLessons', ['masterLessonId'], 'SET NULL', {
+    unlinked: 'a calendar lesson made from the grundschema is the group’s own, and goes by its own key (calendarLessons)',
+  }),
+  below('TeachingRequirements', 'TeachingRequirementShares', ['requirementId', 'schoolId'], 'CASCADE', onTheLessons),
+  below('TimplanCredits', 'CancellationBatchCredits', ['creditId', 'schoolId'], 'CASCADE', onTheLessons),
+  below('AvailabilityConstraints', 'TeacherDutySlots', ['availabilityConstraintId', 'schoolId'], 'CASCADE', onTheLessons),
+];
+
+/** The group kinds whose rows have rows below them told by GROUP_BELOW_LINE. */
+export const GROUP_BELOW_PARENTS = [
+  'calendarLessons',
+  'masterLessons',
+  'requirements',
+  'timplanCredits',
+  'availabilityConstraints',
+] as const satisfies readonly GroupKeyKind[];
+
+/**
+ * Every key a level down from a pupil. What a member of staff's rows take
+ * (passes, covers, employment periods) goes with otherRows, of which a pupil
+ * holds none; a leave request's notices go with the leave requests, and a
+ * device's push receipts with the account's devices (the dialog's accounts
+ * line).
+ */
+export const STUDENT_BELOW: readonly BelowKey<never>[] = [
+  below('LeaveRequests', 'LeaveRequestNotices', ['leaveRequestId'], 'CASCADE', { with: 'leaveRequests' }),
+  below('DevicePushTokens', 'PushTickets', ['tokenId', 'schoolId'], 'CASCADE', { with: 'accounts' }),
+  below('AvailabilityConstraints', 'TeacherDutySlots', ['availabilityConstraintId', 'schoolId'], 'CASCADE', { with: 'otherRows' }),
+  below('TeacherDuties', 'TeacherDutySlots', ['teacherDutyId', 'schoolId'], 'CASCADE', { with: 'otherRows' }),
+  below('SubstitutePoolMembers', 'SubstituteAvailabilities', ['userId', 'schoolId'], 'CASCADE', { with: 'otherRows' }),
+  below('SupervisionShifts', 'SupervisionCovers', ['shiftId', 'schoolId'], 'CASCADE', { with: 'otherRows' }),
+  below('TeacherAbsences', 'SupervisionCovers', ['absenceId', 'absentTeacherId', 'schoolId'], 'CASCADE', { with: 'otherRows' }),
+  below('TeacherAbsences', 'TeacherAbsenceCovers', ['absenceId', 'absentTeacherId', 'schoolId'], 'CASCADE', { with: 'otherRows' }),
+  below('TeacherEmployments', 'TeacherEmploymentPeriods', ['employmentId', 'schoolId', 'userId', 'academicYearId'], 'CASCADE', {
+    with: 'otherRows',
   }),
 ];
 

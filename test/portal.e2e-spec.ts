@@ -667,6 +667,23 @@ describe('Portal and platform surfaces (e2e)', () => {
         expect(recordedReads(harness.tx)).toEqual([]);
       });
 
+      it('takes an upper-case class as the database has it, lower case: a pupil already in it is not moved again', async () => {
+        givenRows([pupil(STUDENT_ID, { studentGroupId: CLASS_ID }), pupil(OTHER_ID)]);
+        harness.tx['studentGroup']!['findUnique']!.mockResolvedValueOnce({ kind: 'CLASS' });
+
+        const response = await post(UPDATE, {
+          ids: [OTHER_ID, STUDENT_ID],
+          changes: { studentGroupId: CLASS_ID.toUpperCase() },
+          dryRun: false,
+        }).expect(200);
+
+        expect(response.body).toMatchObject({ applied: true, done: [STUDENT_ID, OTHER_ID] });
+        expect(harness.tx['user']!['updateMany']).toHaveBeenCalledWith({
+          where: { id: { in: [OTHER_ID] } },
+          data: { studentGroupId: CLASS_ID },
+        });
+      });
+
       it('sets the status on a dry run and answers what would be done', async () => {
         givenRows([pupil(STUDENT_ID), pupil(OTHER_ID, { isActive: false })]);
 

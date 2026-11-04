@@ -1091,9 +1091,11 @@
   </p>
   <p>
     <strong>Ta bort</strong> kontrollerar först vad som skulle hända och visar
-    det innan något tas bort. Dialogen visar vilka rader som tas bort och vad
-    som försvinner med dem. För klasser och grupper räknas allt som hänger på
-    dem:
+    det innan något tas bort. Kontrollen räknar utan att ta bort något, så den
+    hindrar ingen annan, till exempel en lärare som registrerar närvaro för
+    någon av eleverna, och tar ett ögonblick även för hundratals rader.
+    Dialogen visar vilka rader som tas bort och vad som försvinner med dem.
+    För klasser och grupper räknas allt som hänger på dem:
   </p>
   <ul>
     <li>halvklasserna som hör till klasserna;</li>
@@ -1102,7 +1104,11 @@
     <li>lektioner, luncher och tillgänglighetsregler i grundschemat;</li>
     <li>lektioner i kalendern, även passerade, med närvaron och
       lektionsloggarna på dem, och kalenderns raster och luncher;</li>
-    <li>publika schemalänkar till grupperna, som slutar fungera.</li>
+    <li>publika schemalänkar till grupperna, som slutar fungera;</li>
+    <li>det som hänger på lektionerna, timplansposterna och reglerna:
+      deltagare och lärare på lektionerna, vikarieuppdrag och
+      vikarieanteckningar, inställda lektioner, andra gruppers plats på
+      lektionerna, delad lärartid och uppdragspass. Det står utan antal.</li>
   </ul>
   <p>
     Dialogen visar också vad som finns kvar men tappar kopplingen. Det gäller
@@ -1121,15 +1127,27 @@
     annan just har tagit bort. Då sparas inget, och knappen
     <span class="ui">Spara för de … andra</span> eller
     <span class="ui">Ta bort de … andra</span> gör det för resten. Det är
-    alltså du som bestämmer att resten ska gå, med listan framför dig.
+    alltså du som bestämmer att resten ska gå, med listan framför dig. Hindras
+    en rad först när den ska tas bort, av något kontrollen inte kunde se, tas
+    inget bort. Raden står då kvar i listan med det skälet, och knappen gäller
+    de andra.
+  </p>
+  <p>
+    Att ta bort många elever tar längre tid än kontrollen. Varje elev söks
+    upp i all närvaro som finns sparad, och med flera års närvaro tar hundra
+    elever runt tio sekunder. Tar ändringen mer än en minut avbryts den, och
+    ingenting sparas eller tas bort. Dialogen säger det, och då tar du bort
+    färre åt gången.
   </p>
   <p>
     När du bekräftar räknar Rastra Schema om det som följer med. Har något
-    tillkommit sedan dialogen öppnades, till exempel en lektion eller en elev
-    i klassen, tas inget bort. Dialogen visar de nya siffrorna, och du
-    bekräftar igen. Detsamma gäller om någon annan under tiden har tagit bort
-    en av raderna, eller ändrat den så att den inte längre kan ändras eller tas
-    bort.
+    tillkommit sedan dialogen öppnades som hör till raderna själva, till
+    exempel en lektion, en elev i klassen eller en publik länk, tas inget
+    bort. Dialogen visar de nya siffrorna, och du bekräftar igen. Detsamma
+    gäller om någon annan under tiden har tagit bort en av raderna, eller
+    ändrat den så att den inte längre kan ändras eller tas bort. Närvaro och
+    lektionsloggar som skrivs på en lektion som redan fanns, i samma stund som
+    du bekräftar, följer med lektionen utan att räknas om.
   </p>
 
   <h3><span class="num">3.5</span>Personer och inbjudningar</h3>

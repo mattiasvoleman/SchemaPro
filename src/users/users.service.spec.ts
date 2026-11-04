@@ -1067,6 +1067,27 @@ describe('UsersService', () => {
       expect(tx.studentGroup.findUnique).not.toHaveBeenCalled();
     });
 
+    it("holds the class a pupil moves into FOR SHARE before the person's row, after the school's lock, and no class for anything else", async () => {
+      tx.user.update.mockResolvedValue({ id: USER_ID });
+
+      await service.update(USER_ID, { studentGroupId: GROUP_ID }, testUser());
+
+      // The one order of groups and pupils (src/common/lock-order.ts): a bulk
+      // delete of the class holds it and then empties its pupils.
+      const sent = tx.$executeRaw.mock.calls.map((call) => rawSql(call).replace(/\s+/g, ' ').trim());
+      expect(sent.slice(0, 2)).toEqual([
+        'SELECT pg_advisory_xact_lock_shared(hashtextextended(?, 0))',
+        'SELECT 1 FROM "StudentGroups" g WHERE g."id" = ANY(?::uuid[]) ORDER BY g."id" FOR SHARE',
+      ]);
+      expect((tx.$executeRaw.mock.calls[1]![0] as { values: unknown[] }).values).toEqual([[GROUP_ID]]);
+      expect(tx.$executeRaw.mock.invocationCallOrder[1]!).toBeLessThan(tx.$queryRaw.mock.invocationCallOrder[0]!);
+
+      tx.$executeRaw.mockClear();
+      await service.update(USER_ID, { phone: null }, testUser());
+      await service.update(USER_ID, { studentGroupId: null }, testUser());
+      expect(tx.$executeRaw.mock.calls.some((call) => /pg_advisory|"StudentGroups"/.test(rawSql(call)))).toBe(false);
+    });
+
     it('rejects assigning a group while switching to a non-student role', async () => {
       await expect(
         service.update(
@@ -1668,10 +1689,10 @@ describe('UsersService', () => {
      * a read that drops its lock, its order or a column fails the test
      * instead of passing on rows it never asked for.
      */
-    const lockedRead = (lock: 'FOR UPDATE' | 'FOR NO KEY UPDATE', call: unknown[]) => {
+    const lockedRead = (lock: 'FOR UPDATE' | 'FOR NO KEY UPDATE' | 'no lock', call: unknown[]) => {
       const sql = rawSql(call).replace(/\s+/g, ' ').trim();
-      const read = /^SELECT (.+) FROM "Users" WHERE "id" = ANY\(\?::uuid\[\]\) ORDER BY "id" (FOR (?:NO KEY )?UPDATE)$/.exec(sql);
-      if (read === null || read[2] !== lock || call.length !== 2) throw new Error(`Not a ${lock} read of the call's pupils: ${sql}`);
+      const read = /^SELECT (.+) FROM "Users" WHERE "id" = ANY\(\?::uuid\[\]\) ORDER BY "id"(?: (FOR (?:NO KEY )?UPDATE))?$/.exec(sql);
+      if (read === null || (read[2] ?? 'no lock') !== lock || call.length !== 2) throw new Error(`Not a ${lock} read of the call's pupils: ${sql}`);
       const columns = read[1]!.split(',').map((column) => {
         const name = /^"(\w+)"$/.exec(column.trim())?.[1];
         if (name === undefined || !COLUMNS.includes(name)) throw new Error(`"Users" has no column ${column.trim()}`);
@@ -1683,7 +1704,7 @@ describe('UsersService', () => {
         .sort((a, b) => ((a['id'] as string) < (b['id'] as string) ? -1 : 1))
         .map((row) => Object.fromEntries(columns.map((column) => [column, row[column]])));
     };
-    const givenReadsUnder = (lock: 'FOR UPDATE' | 'FOR NO KEY UPDATE') => {
+    const givenReadsUnder = (lock: 'FOR UPDATE' | 'FOR NO KEY UPDATE' | 'no lock') => {
       queryRaw = jest.fn((...call: unknown[]) => {
         const sql = rawSql(call);
         if (sql.includes(HELD)) {
@@ -1732,11 +1753,17 @@ describe('UsersService', () => {
     const expectCommitted = () => expect(lastTransaction()).resolves.toMatchObject({ applied: true });
     const expectRolledBack = () => expect(lastTransaction()).rejects.toThrow();
 
-    /** The savepoint statements sent with $executeRaw's tagged template (the läslogg's are Prisma.sql objects). */
+    /** The savepoint statements sent with $executeRaw. */
     const savepoints = () =>
+      tx.$executeRaw.mock.calls.map((call) => rawSql(call)).filter((sql) => /SAVEPOINT/.test(sql));
+    /** The school's lock and the row locks sent with $executeRaw, in order (src/common/lock-order.ts). */
+    const lockOrder = () =>
       tx.$executeRaw.mock.calls
-        .filter(([statement]) => Array.isArray(statement))
-        .map(([strings]) => (strings as readonly string[]).join('?'));
+        .map((call) => rawSql(call).replace(/\s+/g, ' ').trim())
+        .filter((sql) => / FOR (UPDATE|NO KEY UPDATE|SHARE|KEY SHARE)$|pg_advisory_xact_lock_shared/.test(sql));
+    const PEOPLE_LOCK = 'SELECT pg_advisory_xact_lock_shared(hashtextextended(?, 0))';
+    const CLASS_SHARED =
+      'SELECT 1 FROM "StudentGroups" g WHERE g."id" = ANY(?::uuid[]) ORDER BY g."id" FOR SHARE';
 
     const told = () => queryRaw.mock.calls.filter((call) => rawSql(call).includes(TELL));
 
@@ -1781,6 +1808,27 @@ describe('UsersService', () => {
         // The answer is ids only: the register the page reads afterwards records its own read.
         expect(recordedReads(tx)).toEqual([]);
         await expectCommitted();
+      });
+
+      it("holds the class the pupils move into FOR SHARE before their rows, after the school's lock", async () => {
+        table = [pupil(P1), pupil(P2, { studentGroupId: CLASS_B })];
+
+        await service.bulkUpdateStudents({ ids: [P2, P1], changes: { studentGroupId: CLASS_A }, dryRun: false }, user);
+
+        // The one order of groups and pupils: a delete of the class holds it
+        // and then empties its pupils, so the move holds it first too.
+        expect(lockOrder()).toEqual([PEOPLE_LOCK, CLASS_SHARED]);
+        const classHeld = tx.$executeRaw.mock.calls.findIndex((call) => rawSql(call).includes('FOR SHARE'));
+        expect((tx.$executeRaw.mock.calls[classHeld]![0] as { values: unknown[] }).values).toEqual([[CLASS_A]]);
+        expect(tx.$executeRaw.mock.invocationCallOrder[classHeld]!).toBeLessThan(queryRaw.mock.invocationCallOrder[0]!);
+        expect(queryRaw.mock.invocationCallOrder[0]!).toBeLessThan(tx.studentGroup.findUnique.mock.invocationCallOrder[0]!);
+      });
+
+      it('holds no class for a status, nor for Ingen klass', async () => {
+        await service.bulkUpdateStudents({ ids: [P1], changes: { isActive: false }, dryRun: false }, user);
+        await service.bulkUpdateStudents({ ids: [P1], changes: { studentGroupId: null }, dryRun: false }, user);
+
+        expect(lockOrder()).toEqual([PEOPLE_LOCK, PEOPLE_LOCK]);
       });
 
       it('sets the status alone without asking about any class', async () => {
@@ -2089,6 +2137,11 @@ describe('UsersService', () => {
       it('deletes the pupils in one statement, counts nothing, and takes no cover lock a pupil has no use for', async () => {
         const result = await service.bulkRemoveStudents({ ids: [P2, P1, P3], dryRun: false }, user);
 
+        // The school's lock before the pupils' rows (src/common/lock-order.ts).
+        expect(lockOrder()).toEqual([PEOPLE_LOCK]);
+        const held = tx.$executeRaw.mock.calls.findIndex((call) => rawSql(call).includes('pg_advisory'));
+        expect(tx.$executeRaw.mock.invocationCallOrder[held]!).toBeLessThan(queryRaw.mock.invocationCallOrder[0]!);
+
         expect(result).toEqual({ applied: true, dryRun: false, done: [P1, P2, P3], refused: [] });
         expect(result).not.toHaveProperty('consequences');
         expect(tx.user.deleteMany).toHaveBeenCalledTimes(1);
@@ -2284,14 +2337,11 @@ describe('UsersService', () => {
 
       describe('a dry run', () => {
         beforeEach(() => {
+          givenReadsUnder('no lock');
           givenCounts();
-          givenPupilsToCount();
         });
 
-        it('counts what goes with the pupils in a transaction of its own after the rolled-back delete, and records the reads it counts', async () => {
-          const ranIn = transactionsOf(prisma);
-          const deletedIn = ranIn(tx.user.deleteMany);
-          const queriedIn = ranIn(queryRaw);
+        it('judges and counts in one transaction that deletes nothing, holds no row, and commits with the reads it counts', async () => {
           const app = testUser({ channel: 'APP' });
 
           const result = await service.bulkRemoveStudents({ ids: [TEACHER, P2, P1], dryRun: true }, app);
@@ -2316,22 +2366,21 @@ describe('UsersService', () => {
               fromSource: 1,
             },
           });
-          // Two transactions: the dry run's, rolled back with its delete, and the counts', which commits with its läslogg rows.
-          expect(prisma.withRls).toHaveBeenCalledTimes(2);
-          expect(prisma.withRls.mock.calls[1]!.slice(0, 2)).toEqual([app, expect.any(Function)]);
-          await expect(prisma.withRls.mock.results[0]!.value).rejects.toThrow();
-          await expect(prisma.withRls.mock.results[1]!.value).resolves.toMatchObject({ memberships: 5 });
-          const counts = countsSent(queriedIn);
-          expect(deletedIn).toHaveLength(1);
-          // Every count in the second transaction, after the rolled-back delete.
+          // One transaction, which commits: nothing in it to roll back, and
+          // its läslogg rows kept (src/common/bulk.ts, A DELETE'S DRY RUN
+          // DELETES NOTHING).
+          expect(prisma.withRls).toHaveBeenCalledTimes(1);
+          await expect(prisma.withRls.mock.results[0]!.value).resolves.toMatchObject({ dryRun: true });
+          expect(tx.user.deleteMany).not.toHaveBeenCalled();
+          expect(tx.user.delete).not.toHaveBeenCalled();
+          // No row held: the read is unlocked (givenReadsUnder) and no lock is sent.
+          expect(lockOrder()).toEqual([]);
+          // The same checks as the real call's, of the pupils alone.
+          expect(tx.localTimplan.findMany).toHaveBeenCalledWith(
+            expect.objectContaining({ where: { OR: [{ decidedByUserId: { in: [P1, P2] } }, { gradeSpanSetByUserId: { in: [P1, P2] } }] } }),
+          );
+          const counts = countsSent(queryRaw.mock.calls.map(() => undefined));
           expect(counts.length).toBeGreaterThan(30);
-          expect(new Set(counts.map((count) => count.transaction))).toEqual(new Set([queriedIn[queriedIn.length - 1]]));
-          expect(counts.map((count) => count.transaction)).not.toContain(deletedIn[0]);
-          // The pupils the dry run would take, and the figures about them only.
-          expect(tx.user.findMany).toHaveBeenCalledWith({
-            where: { id: { in: [P1, P2] } },
-            select: { id: true, invitedAt: true, ss12000Id: true },
-          });
           for (const count of counts) expect(count.ids.every((ids) => JSON.stringify(ids) === JSON.stringify([P1, P2]))).toBe(true);
           // Nothing of their accounts, which no administrator reads, is counted.
           for (const table of ['Notifications', 'NotificationOptOuts', 'DevicePushTokens', 'LeaveRequestNotices', 'CalendarFeeds']) {
@@ -2347,6 +2396,17 @@ describe('UsersService', () => {
           );
         });
 
+        it('refuses as the real call does: a pupil a decided timplan names', async () => {
+          tx.localTimplan.findMany.mockResolvedValue([decidedPlan('Grundskolan 2024', { decidedByUserId: P1 })]);
+
+          const result = await service.bulkRemoveStudents({ ids: [P1, P2], dryRun: true }, user);
+
+          expect(result.done).toEqual([P2]);
+          expect(result.refused).toEqual([
+            { id: P1, code: null, message: timplanSentence('den beslutade lokala timplanen "Grundskolan 2024"', 'beslutet om') },
+          ]);
+        });
+
         it('asks the provider for nothing, then or after, and takes no login from anyone', async () => {
           await service.bulkRemoveStudents({ ids: [P1, P2], dryRun: true }, user);
           await afterCommit();
@@ -2355,10 +2415,10 @@ describe('UsersService', () => {
           expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
         });
 
-        it('opens no second transaction when no pupil would be removed, and counts nothing', async () => {
+        it('counts nothing and records no read when no pupil would be removed', async () => {
           const result = await service.bulkRemoveStudents({ ids: [TEACHER, MISSING], dryRun: true }, user);
 
-          expect(result).toEqual({
+          expect(result).toMatchObject({
             applied: false,
             dryRun: true,
             done: [],
@@ -2367,6 +2427,8 @@ describe('UsersService', () => {
               { id: MISSING, ...NOT_FOUND },
             ],
           });
+          expect(Object.values(result.consequences!).every((count) => count === 0)).toBe(true);
+          expect(queryRaw.mock.calls.some((call) => rawSql(call).startsWith('SELECT count(*)'))).toBe(false);
           expect(prisma.withRls).toHaveBeenCalledTimes(1);
           expect(recordedReads(tx)).toEqual([]);
         });

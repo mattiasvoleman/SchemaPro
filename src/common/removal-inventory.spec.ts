@@ -2,11 +2,16 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { PrismaClient } from '@prisma/client';
 import {
+  GROUP_BELOW,
+  GROUP_BELOW_LINE,
+  GROUP_BELOW_PARENTS,
   GROUP_KEYS,
   STUDENT_ACCOUNT_KINDS,
+  STUDENT_BELOW,
   STUDENT_KEYS,
   countByKind,
   grownSince,
+  type BelowKey,
   type InventoryKey,
 } from './removal-inventory';
 
@@ -58,7 +63,36 @@ function declaredKeys(parent: string): string[] {
   return keys.sort();
 }
 
-const asKey = (entry: InventoryKey<string>) => `${entry.table}|${entry.columns.join(',')}|${entry.onDelete}`;
+const asKey = (entry: InventoryKey<string> | BelowKey<string>) => `${entry.table}|${entry.columns.join(',')}|${entry.onDelete}`;
+
+const modelOf = new Map([...models].map(([name, model]) => [model.table, name]));
+
+/**
+ * The tables a delete of `root` reaches through CASCADE keys, as the
+ * inventory has them, other than `root` itself: the first level's, then
+ * those below them, to the end.
+ */
+function cascadedTables(root: string, first: readonly InventoryKey<string>[], below: readonly BelowKey<string>[]): string[] {
+  const reached = new Set(first.filter((entry) => entry.onDelete === 'CASCADE' && entry.table !== root).map((entry) => entry.table));
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const entry of below) {
+      if (entry.onDelete === 'CASCADE' && reached.has(entry.parent) && !reached.has(entry.table) && entry.table !== root) {
+        reached.add(entry.table);
+        grew = true;
+      }
+    }
+  }
+  return [...reached].sort();
+}
+
+/** The web's messages, sv and en: the dialog's lines the gateway's kinds are said by. */
+const messages = (['sv', 'en'] as const).map(
+  (locale) =>
+    [locale, JSON.parse(readFileSync(join(__dirname, `../../web/messages/${locale}.json`), 'utf8')) as {
+      bulk: Record<string, Record<string, string>>;
+    }] as const,
+);
 
 describe('the inventory of what hangs on a deleted row', () => {
   it.each([
@@ -100,6 +134,66 @@ describe('the inventory of what hangs on a deleted row', () => {
 
   it('counts every key to a group: an administrator reads them all', () => {
     expect(GROUP_KEYS.filter((entry) => !('counted' in entry.tell))).toEqual([]);
+  });
+
+  it.each([
+    ['StudentGroups', GROUP_KEYS, GROUP_BELOW],
+    ['Users', STUDENT_KEYS, STUDENT_BELOW],
+  ] as const)('holds every key schema.prisma declares a level down from %s, to the end of the cascade', (root, first, below) => {
+    const tables = cascadedTables(root, first as readonly InventoryKey<string>[], below as readonly BelowKey<string>[]);
+    expect(tables.length).toBeGreaterThan(5);
+    const told = new Set((below as readonly BelowKey<string>[]).map((entry) => `${entry.parent}>${asKey(entry)}`));
+    const missing = tables.flatMap((table) =>
+      declaredKeys(modelOf.get(table)!)
+        .map((key) => `${table}>${key}`)
+        .filter((key) => !told.has(key)),
+    );
+    expect(missing).toEqual([]);
+    // And nothing below a table no delete reaches.
+    expect((below as readonly BelowKey<string>[]).filter((entry) => !tables.includes(entry.parent))).toEqual([]);
+  });
+
+  it('tells every key a level down by the line of the dialog that says it', () => {
+    const groupKindOf = new Map(GROUP_KEYS.filter((entry) => entry.onDelete === 'CASCADE').map((entry) => [entry.table, entry.tell]));
+    for (const entry of GROUP_BELOW) {
+      if (!('with' in entry.tell)) continue;
+      expect(entry.tell.with).toBe(GROUP_BELOW_LINE);
+      const parent = groupKindOf.get(entry.parent) as { counted: string } | undefined;
+      // The line is said whenever the rows it hangs on are counted.
+      expect(GROUP_BELOW_PARENTS).toContain(parent?.counted);
+    }
+    // Each parent the line is said for has something below it.
+    const parents = new Set(GROUP_BELOW.filter((entry) => 'with' in entry.tell).map((entry) => (groupKindOf.get(entry.parent) as { counted: string }).counted));
+    expect([...parents].sort()).toEqual([...GROUP_BELOW_PARENTS].sort());
+
+    const pupilTellOf = new Map(STUDENT_KEYS.filter((entry) => entry.onDelete === 'CASCADE').map((entry) => [entry.table, entry.tell]));
+    for (const entry of STUDENT_BELOW) {
+      const parent = pupilTellOf.get(entry.parent) as { counted?: string; account?: string } | undefined;
+      expect(entry.tell).toEqual({ with: parent?.counted ?? (parent?.account ? 'accounts' : undefined) });
+    }
+  });
+
+  it.each(messages)('has a line in the web’s %s messages for every kind a dry run answers', (_locale, { bulk }) => {
+    const groupKinds = new Set([
+      ...GROUP_KEYS.flatMap((entry) => ('counted' in entry.tell ? [entry.tell.counted] : [])),
+      ...GROUP_BELOW.flatMap((entry) => ('counted' in entry.tell ? [entry.tell.counted] : [])),
+      GROUP_BELOW_LINE,
+    ]);
+    expect([...groupKinds].filter((kind) => !bulk.groupConsequences?.[kind])).toEqual([]);
+    const pupilKinds = new Set([
+      ...STUDENT_KEYS.flatMap((entry) => ('counted' in entry.tell ? [entry.tell.counted] : [])),
+      'logins',
+      'accounts',
+    ]);
+    expect([...pupilKinds].filter((kind) => !bulk.studentConsequences?.[kind])).toEqual([]);
+  });
+
+  it('says the line a level down for the same kinds the web dialog does', () => {
+    const dialog = readFileSync(join(__dirname, '../../web/app/[locale]/(app)/admin/groups/groups-bulk-dialogs.tsx'), 'utf8');
+    const literal = /GROUP_BELOW_PARENTS\s*=\s*\[([^\]]*)\]/.exec(dialog)?.[1];
+    expect(literal).toBeDefined();
+    const kinds = [...literal!.matchAll(/"(\w+)"/g)].map((match) => match[1]);
+    expect(kinds.sort()).toEqual([...GROUP_BELOW_PARENTS].sort());
   });
 
   it("names a pupil's account kinds as the dialog says them, each of them used", () => {
