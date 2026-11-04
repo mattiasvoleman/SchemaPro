@@ -19,6 +19,7 @@ from __future__ import annotations
 import math
 import random
 import time
+import uuid
 from uuid import uuid4
 
 import pytest
@@ -30,6 +31,7 @@ from app.messages import render
 from app.schemas.schedule import ConflictAnalysis, ConflictDetail, OptimizeScheduleRequest
 from app.solver import scheduler_solver, week_load
 from app.solver.scheduler_solver import SchedulerSolver
+from app.solver.weeks import meet
 
 CLASSES = [str(uuid4()) for _ in range(5)]
 GROUPS = [str(uuid4()) for _ in range(5)]
@@ -56,15 +58,21 @@ def _year(
     block: bool = False,
     parity: dict[int, str] | None = None,
     extra: dict[str, object] | None = None,
+    grade: int = 8,
+    classes: list[str] = CLASSES,
+    groups: list[str] = GROUPS,
+    teacher_of_three: str = SHARED_TEACHER,
 ) -> dict[str, object]:
     """Year 8: five classes, five language groups, three of them one teacher's.
 
     `shared=False` gives every group a teacher of its own (the school's fix),
     `block=True` also declares the five a parallel block (their other half).
-    `parity` marks groups, by position, as odd or even weeks only.
+    `parity` marks groups, by position, as odd or even weeks only. Another
+    `grade` with its own `classes` and `groups` builds a second year, and the
+    same `teacher_of_three` puts one person on groups of both.
     """
     requirements: list[dict[str, object]] = []
-    for position, class_id in enumerate(CLASSES):
+    for position, class_id in enumerate(classes):
         requirements.append({
             "id": str(uuid4()),
             "subjectId": str(uuid4()),
@@ -73,13 +81,13 @@ def _year(
             "lessonsPerWeek": class_lessons,
             "minutesPerLesson": 50,
             "studentGroupSize": 24,
-            "minGradeLevel": 8,
-            "maxGradeLevel": 8,
+            "minGradeLevel": grade,
+            "maxGradeLevel": grade,
         })
     block_id = str(uuid4())
     group_rows: list[dict[str, object]] = []
-    for position, group_id in enumerate(GROUPS):
-        teacher = SHARED_TEACHER if shared and position < 3 else str(uuid4())
+    for position, group_id in enumerate(groups):
+        teacher = teacher_of_three if shared and position < 3 else str(uuid4())
         row: dict[str, object] = {
             "id": str(uuid4()),
             "subjectId": str(uuid4()),
@@ -88,8 +96,8 @@ def _year(
             "lessonsPerWeek": 4,
             "minutesPerLesson": 40,
             "studentGroupSize": 20,
-            "minGradeLevel": 8,
-            "maxGradeLevel": 8,
+            "minGradeLevel": grade,
+            "maxGradeLevel": grade,
         }
         if block:
             row["blockId"] = block_id
@@ -102,12 +110,12 @@ def _year(
         "academicYearId": str(uuid4()),
         "requirements": requirements,
         "groups": [
-            {"id": class_id, "lunchHeadcount": 24, "minGradeLevel": 8, "maxGradeLevel": 8}
-            for class_id in CLASSES
+            {"id": class_id, "lunchHeadcount": 24, "minGradeLevel": grade, "maxGradeLevel": grade}
+            for class_id in classes
         ],
         "rooms": [{"id": str(uuid4()), "capacity": 30} for _ in range(10)],
-        "groupConflicts": [[c, g] for c in CLASSES for g in GROUPS],
-        "frameTimes": [FRAME],
+        "groupConflicts": [[c, g] for c in classes for g in groups],
+        "frameTimes": [{**FRAME, "minGradeLevel": grade, "maxGradeLevel": grade}],
         "rules": {
             "lunchStartTime": "11:20:00",
             "lunchEndTime": "13:00:00",
@@ -124,6 +132,27 @@ def _request(payload: dict[str, object]) -> OptimizeScheduleRequest:
 
 def _loads(payload: dict[str, object], **settings: object) -> list[week_load.StageLoad]:
     return SchedulerSolver(_settings(**settings))._week_loads(_request(payload))
+
+
+def _has_timetable(
+    week: dict[str, object] | OptimizeScheduleRequest, *, days: str = "1,2", seconds: float = 20.0,
+) -> bool:
+    """Whether the real model (every rule, no objective) finds a timetable for the week.
+
+    The ground the count is held to: a count that refuses a week this finds a
+    timetable for is a false refusal.
+    """
+    request = week if isinstance(week, OptimizeScheduleRequest) else _request(week)
+    solver = SchedulerSolver(_settings(SCHEDULE_DAYS=days))
+    solver._validate_request(request)
+    model, *_ = solver._build_model(request, use_assumptions=False, include_objective=False)
+    search = cp_model.CpSolver()
+    search.parameters.num_workers = 4
+    search.parameters.random_seed = 0
+    search.parameters.max_time_in_seconds = seconds
+    status = search.Solve(model)
+    assert status != cp_model.UNKNOWN, "the real model gave no answer in time"
+    return status in (cp_model.OPTIMAL, cp_model.FEASIBLE)
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +178,7 @@ def test_the_same_year_with_a_teacher_of_each_group_is_not_tight() -> None:
     assert _loads(_year(class_lessons=27, shared=False, block=True)) == []
 
 
-def test_a_year_above_its_frame_is_refused_in_microseconds_and_named() -> None:
+def test_a_year_above_its_frame_is_refused_before_any_model_and_named() -> None:
     payload = _year(class_lessons=29)  # 29 x 55 + 540 + 75 = 2,210 > 2,200
 
     started = time.monotonic()
@@ -162,7 +191,7 @@ def test_a_year_above_its_frame_is_refused_in_microseconds_and_named() -> None:
     assert conflicts is not None
     assert conflicts.summary_code == "DEMAND_YEAR_WEEK_SHORT"
     assert conflicts.summary_params == {
-        "grades": "8", "demandMinutes": 2210, "capacityMinutes": WEEK,
+        "grades": "8", "demandMinutes": 2210, "capacityMinutes": WEEK, "shared": "some",
     }
     codes = [detail.code for detail in conflicts.conflicts]
     assert codes == ["DEMAND_REQUIREMENTS_EXCEED_WEEK", "TEACHER_SHARED_BY_PARALLEL_GROUPS"]
@@ -179,6 +208,38 @@ def test_a_year_above_its_frame_is_refused_in_microseconds_and_named() -> None:
     # Never a person: the teacher's id is in no field of the refusal.
     assert SHARED_TEACHER not in conflicts.model_dump_json()
     assert "8" in conflicts.summary and "2210" in conflicts.summary
+
+
+def test_a_refusal_points_at_the_teachers_below_it_only_when_there_are_some() -> None:
+    """31 x 55 + 540 = 2,245 > 2,200 with no `groups`: no home class, so no teacher can be named."""
+    payload = _year(class_lessons=31)
+    del payload["groups"]
+
+    response = SchedulerSolver(_settings()).solve(_request(payload))
+
+    conflicts = response.conflicts
+    assert response.status == "INFEASIBLE" and conflicts is not None
+    assert conflicts.summary_code == "DEMAND_YEAR_WEEK_SHORT"
+    assert conflicts.summary_params["shared"] == "none"
+    assert [detail.code for detail in conflicts.conflicts] == ["DEMAND_REQUIREMENTS_EXCEED_WEEK"]
+    assert "see below" not in conflicts.summary
+    assert conflicts.summary.endswith("take lessons out.")
+
+    # With the home classes the same year names its teachers, and says so.
+    named = SchedulerSolver(_settings()).solve(_request(_year(class_lessons=31))).conflicts
+    assert named is not None and named.summary_params["shared"] == "some"
+    assert "see below for teachers who stand on groups" in named.summary
+
+
+def test_a_shared_teacher_is_credited_only_the_lessons_they_lead() -> None:
+    """A post a teacher shares with another leads half of: 160 + 80 + 160, not 160 + 160 + 160."""
+    payload = _year(class_lessons=27)
+    split = _group_rows(payload)[1]
+    split["lessonTeacherIds"] = [SHARED_TEACHER, SHARED_TEACHER, str(uuid4()), str(uuid4())]
+
+    (load,) = _loads(payload)
+
+    assert [teacher.minutes for teacher in load.shared] == [160 + 2 * 40 + 160]
 
 
 def test_a_year_that_fits_is_not_refused_and_gets_a_timetable() -> None:
@@ -393,6 +454,106 @@ def test_the_probe_is_offered_first_for_a_nearly_full_year_and_not_otherwise() -
     assert "PROBE_SOLVED_WITH_OWN_TEACHERS_AND_BLOCK" not in loose
 
 
+ALTERNATING = {0: "ODD_WEEKS", 1: "EVEN_WEEKS"}
+
+
+def test_the_probe_is_not_offered_for_a_week_that_is_tight_only_when_odd_and_even_are_added() -> None:
+    """24 x 55 + 360 + 75 = 1,755 of 2,200 (79.8 %) in each real week; as one week, 1,935 (88 %).
+
+    The shared teacher's odd-week group and even-week group never meet, so the
+    year is not tight in either week. solve() counts it that way; the probe's
+    offer must too, or the probe that takes most of the probe time is spent on
+    a cause the week does not have.
+    """
+    payload = _year(class_lessons=24, parity=ALTERNATING)
+    solver = SchedulerSolver(_settings())
+    request = _request(payload)
+
+    # The trap, shown: counted as one week the year looks tight, with a shared teacher.
+    (as_one_week,) = solver._week_loads(request)
+    assert (as_one_week.demand_minutes, len(as_one_week.shared)) == (1935, 1)
+    assert not [load for week in scheduler_solver._week_requests(request)
+                for load in solver._week_loads(week)]
+
+    codes = [code for code, _ in solver._timeout_relaxations(request)]
+
+    assert "PROBE_SOLVED_WITH_OWN_TEACHERS_AND_BLOCK" not in codes
+
+
+def test_the_probe_for_alternating_weeks_takes_the_teachers_of_both_weeks() -> None:
+    """The year is tight in both weeks, and each week has a teacher the other has not.
+
+    Odd week: the teacher T is on group 0 (odd) and group 2 (every week).
+    Even week: a second teacher U is on group 1 (even) and group 3 (every
+    week). Year 8 reaches the probe as two loads with different teachers, and
+    the relaxed week has to give nobody two groups that can meet, in either
+    week: the heaviest of the two alone would leave the other week's teacher
+    where it was.
+    """
+    payload = _year(class_lessons=27, parity=ALTERNATING)
+    rows = _group_rows(payload)
+    other_teacher = str(uuid4())
+    rows[1]["teacherId"] = rows[3]["teacherId"] = other_teacher
+    solver = SchedulerSolver(_settings())
+    request = _request(payload)
+    per_week = [solver._week_loads(week) for week in scheduler_solver._week_requests(request)]
+    assert [[load.year for load in week] for week in per_week] == [[8], [8]]
+    shared_in = [
+        {str(i) for teacher in week[0].shared for i in teacher.requirement_ids} for week in per_week
+    ]
+    assert shared_in[0] == {rows[0]["id"], rows[2]["id"]}
+    assert shared_in[1] == {rows[1]["id"], rows[3]["id"]}
+
+    offered = solver._timeout_relaxations(request)
+
+    assert offered[0][0] == "PROBE_SOLVED_WITH_OWN_TEACHERS_AND_BLOCK"
+    relaxed = offered[0][1]
+    groups = [r for r in relaxed.requirements if str(r.student_group_id) in GROUPS]
+    for position, first in enumerate(groups):
+        for second in groups[position + 1:]:
+            if meet(first.recurrence, second.recurrence):
+                assert first.teacher_id != second.teacher_id, "two groups of one week share a teacher"
+    # A block runs in one week: it holds nothing of the other parity, and every
+    # block is more than one entry.
+    blocks: dict[object, list[object]] = {}
+    for r in groups:
+        if r.block_id is not None:
+            blocks.setdefault(r.block_id, []).append(r.recurrence)
+    assert blocks and all(len(members) > 1 for members in blocks.values())
+    assert all(len(set(members)) == 1 for members in blocks.values())
+    # And it is a week the model solves, in both weeks at once.
+    assert _has_timetable(relaxed, days="1,2,3,4,5")
+
+
+def test_a_teacher_with_a_group_in_each_year_keeps_one_group_in_each() -> None:
+    """The probe relaxes within a year: a person on groups of years 8 and 9 stays one person."""
+    second_classes = [str(uuid4()) for _ in range(5)]
+    second_groups = [str(uuid4()) for _ in range(5)]
+    first = _year(class_lessons=27)
+    second = _year(
+        class_lessons=27, grade=9, classes=second_classes, groups=second_groups,
+        teacher_of_three=SHARED_TEACHER,
+    )
+    payload = {
+        **first,
+        "requirements": [*first["requirements"], *second["requirements"]],  # type: ignore[misc]
+        "groups": [*first["groups"], *second["groups"]],  # type: ignore[misc]
+        "groupConflicts": [*first["groupConflicts"], *second["groupConflicts"]],  # type: ignore[misc]
+        "frameTimes": [*first["frameTimes"], *second["frameTimes"]],  # type: ignore[misc]
+    }
+    solver = SchedulerSolver(_settings())
+    request = _request(payload)
+    loads = solver._week_loads(request)
+    assert {load.year for load in loads} == {8, 9}
+
+    relaxed = solver._parallel_groups_probe(request, loads)
+
+    assert relaxed is not None
+    held = [r for r in relaxed.requirements if r.teacher_id == uuid.UUID(SHARED_TEACHER)]
+    # One group of year 8 and one of year 9, no more and no fewer.
+    assert sorted(r.min_grade_level for r in held) == [8, 9]
+
+
 def test_the_probe_takes_most_of_the_probe_budget_and_the_others_share_the_rest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -546,11 +707,11 @@ def test_the_frames_of_other_years_do_not_shrink_this_one() -> None:
 def test_the_sentences_read_as_sentences() -> None:
     assert render(
         "DEMAND_YEAR_WEEK_SHORT",
-        {"grades": "8", "demandMinutes": 2210, "capacityMinutes": 2200},
+        {"grades": "8", "demandMinutes": 2210, "capacityMinutes": 2200, "shared": "some"},
     ).startswith("The week does not hold year 8")
     assert "the classes with unknown years" in render(
         "DEMAND_YEAR_WEEK_SHORT",
-        {"grades": "any", "demandMinutes": 1, "capacityMinutes": 1},
+        {"grades": "any", "demandMinutes": 1, "capacityMinutes": 1, "shared": "none"},
     )
     assert "3 groups of year 8" in render(
         "TEACHER_SHARED_BY_PARALLEL_GROUPS", {"groups": 3, "minutes": 480, "grades": "8"},

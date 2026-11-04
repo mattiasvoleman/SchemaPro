@@ -43,10 +43,14 @@ floating-point slip in the linear program can lower the bound but never raise
 it past the truth. A week is refused only when that bound is above the supply.
 
 COST. A cheap feasible cover (a greedy colouring) is built first, and a year
-whose cover already fits under the threshold is done in microseconds: that is
-every ordinary school. Column generation runs only for a year that is close,
+whose cover already fits under the threshold needs no linear program. The graph
+and its cliques are still built for it: the school's own week (856 lessons)
+takes 0.04-0.07 s in all, a dense synthetic year of up to 440 entries 0.2-0.5 s.
+Column generation runs only for a year that is close,
 stops the moment the answer is decided, and gives up at the deadline with the
-best bound it holds — which is a bound, whatever it is.
+best bound it holds — which is a bound, whatever it is. The deadline is read
+by the column generation and between years; the graph and the clique cover
+before it are not interrupted (2,000 entries on one teacher: 6 s).
 """
 from __future__ import annotations
 
@@ -307,7 +311,9 @@ def week_loads(
             continue
         # The cheapest test first: with nothing running in parallel the whole
         # weight is a cover, so a year whose weight fits under the threshold
-        # is not tight. That is nearly every year of every ordinary school.
+        # is not tight. It saves the graph only for a year with little in it:
+        # the classes of a year run side by side and this sum lines them up
+        # one after the other, so a year of several classes passes it rarely.
         if sum(piece.weight for member in members for piece in pieces_of[member.id]) <= threshold * supply:
             continue
 
@@ -754,10 +760,14 @@ def _shared_teachers(
             SharedTeacher(
                 teacher_id=teacher_id,
                 requirement_ids=tuple(entry.id for entry in qualifying.values()),
+                # Only the lessons this teacher leads: an entry a post splits
+                # between teachers (lessonTeacherIds) counts here for the part
+                # that is theirs, not for the whole entry.
                 minutes=sum(
                     minutes
                     for entry in qualifying.values()
-                    for minutes in entry.lesson_minutes()
+                    for index, minutes in enumerate(entry.lesson_minutes())
+                    if teacher_id in relations.teachers_at(entry, index)
                 ),
             ),
         )

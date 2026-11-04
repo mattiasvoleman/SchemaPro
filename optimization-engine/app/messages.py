@@ -419,13 +419,16 @@ MESSAGES: dict[str, str] = {
     # The class counts above see only pupils; this one also sees that one
     # teacher on three groups of the same classes makes those groups run one
     # after the other. `grades` is the year ("8") or "any" for entries whose
-    # years are unknown.
+    # years are unknown. `shared` is "some" when teachers are listed under the
+    # sentence and "none" when none could be named, so it points at rows only
+    # when there are rows.
     "DEMAND_YEAR_WEEK_SHORT": (
         "The week does not hold {grades, select, any {the classes with unknown years} "
         "other {year {grades}}}: the lessons, the margins between them and the lunch breaks "
         "need at least {demandMinutes} minutes, even if lessons could be cut into pieces, and the "
-        "frame times leave {capacityMinutes}. Widen the frame times or take lessons out, and see "
-        "below for teachers who stand on groups that would otherwise run together."
+        "frame times leave {capacityMinutes}. Widen the frame times or take lessons out"
+        "{shared, select, none {} other {, and see below for teachers who stand on groups that "
+        "would otherwise run together}}."
     ),
     "TEACHER_SHARED_BY_PARALLEL_GROUPS": (
         "One teacher stands on {groups, plural, one {# group} other {# groups}} of "
@@ -968,8 +971,9 @@ MESSAGES: dict[str, str] = {
         "measured. A run with it turned off under School rules shows that."
     ),
     "PROBE_SOLVED_WITH_OWN_TEACHERS_AND_BLOCK": (
-        "With a teacher of its own on each group that shared one, and the groups that could then "
-        "run together placed in one parallel block, a timetable was found in {seconds} s."
+        "With a teacher of its own on each group that shared a teacher with another group of its "
+        "year, and the groups that could then run together placed in one parallel block, a "
+        "timetable was found in {seconds} s."
     ),
     "PROBE_SOLVED_WITHOUT_DISTRIBUTION": (
         "With the subjects' distribution rules dropped — at most a number of lessons a day, "

@@ -2830,12 +2830,18 @@ class SchedulerSolver:
         over = next((load for load in loads if load.over), None)
         if over is None:
             return None
+        # The sentence points at the teachers listed under it, so it says so
+        # only when there are some: a request without `groups` (the gateway
+        # always sends them) names no teacher, and "see below" would point at
+        # nothing.
+        shared = self._shared_teacher_details([over], MAX_SHARED_TEACHERS_NAMED)
         return ConflictAnalysis(
             summary_code="DEMAND_YEAR_WEEK_SHORT",
             summary_params={
                 "grades": "any" if over.year is None else str(over.year),
                 "demandMinutes": over.demand_minutes,
                 "capacityMinutes": over.capacity_minutes,
+                "shared": "some" if shared else "none",
             },
             conflicts=[
                 ConflictDetail(
@@ -2848,7 +2854,7 @@ class SchedulerSolver:
                     },
                     requirement_ids=list(over.requirement_ids),
                 ),
-                *self._shared_teacher_details([over], MAX_SHARED_TEACHERS_NAMED),
+                *shared,
             ],
         )
 
@@ -2909,13 +2915,26 @@ class SchedulerSolver:
         teacher of their own for each of a year's language groups plus one
         parallel block per year solved it in ten seconds, where the week as
         written found nothing in twenty minutes. This builds that week from the
-        request: every entry a shared teacher stands on past the first gets a
-        teacher of its own (an id made from its own, so nobody real is
-        touched), and the year's groups that would then run together — the
-        same lessons, no pupil and no teacher in common, pupils from a class
-        they share — are declared one block. The block takes in the siblings
-        that no teacher was shared on: a block of the three would leave the
-        other two to queue behind it.
+        request: in each year, every entry a shared teacher stands on past the
+        first gets a teacher of its own (an id made from its own, so nobody
+        real is touched), and the year's groups that would then run together —
+        the same lessons, no pupil and no teacher in common, pupils from a
+        class they share — are declared one block. The block takes in the
+        siblings that no teacher was shared on: a block of the three would
+        leave the other two to queue behind it.
+
+        PER YEAR, NOT PER GROUP. The count names a year's groups waiting on
+        one teacher, so that is what is relaxed. A teacher with a group in each
+        of years 7, 8 and 9 keeps all three: they stay one person across the
+        years, and the years' blocks can still run at different times. A
+        teacher of their own for every group would relax more than the count
+        named, and "solved" would promise a school more than it can do.
+
+        A year that is tight in both weeks of an alternating school (the same
+        year in two loads) is taken once, with the entries and teachers of
+        both weeks together: a teacher shared on an odd group and an every-week
+        group in one week, on an even one and the every-week group in the other,
+        is shared on all three as far as the relaxed week is concerned.
 
         None when no year has a shared teacher to relax, or nothing is left
         that two entries could run together on. Not a promise that the relaxed
@@ -2940,10 +2959,21 @@ class SchedulerSolver:
                 if teacher_id is not None
             }
 
+        # One entry per year: the entries it holds and, per teacher, the
+        # entries that teacher is shared on, whichever week said so.
+        entries_of_year: dict[int | None, list[UUID]] = {}
+        shared_of_year: dict[int | None, dict[UUID, list[UUID]]] = {}
         for load in tight:
-            candidates: list[AnonymousRequirement] = []
+            held = entries_of_year.setdefault(load.year, [])
+            held.extend(i for i in load.requirement_ids if i not in held)
             for teacher in load.shared:
-                for requirement_id in teacher.requirement_ids:
+                on = shared_of_year.setdefault(load.year, {}).setdefault(teacher.teacher_id, [])
+                on.extend(i for i in teacher.requirement_ids if i not in on)
+
+        for year, year_entries in entries_of_year.items():
+            candidates: list[AnonymousRequirement] = []
+            for teacher_entries in shared_of_year.get(year, {}).values():
+                for requirement_id in teacher_entries:
                     requirement = by_id[requirement_id]
                     if (
                         requirement.lesson_teacher_ids is None
@@ -2961,7 +2991,7 @@ class SchedulerSolver:
                 for candidate in candidates
                 for home in homes.intersection(sharing.get(pupil_key_of(candidate), ()))
             }
-            for requirement_id in load.requirement_ids:
+            for requirement_id in year_entries:
                 requirement = by_id[requirement_id]
                 key = pupil_key_of(requirement)
                 if (
@@ -2974,8 +3004,9 @@ class SchedulerSolver:
                 ):
                     continue
                 candidates.append(requirement)
-            # A teacher of its own on each: the first entry of a teacher keeps
-            # them, every later one gets an id made from its own.
+            # A teacher of its own on each, within the year: the first entry
+            # of a teacher keeps them, every later one gets an id made from
+            # its own. `used` starts empty for every year.
             used: set[UUID] = set()
             for requirement in candidates:
                 for field_name, teacher_id in (
@@ -9667,7 +9698,19 @@ class SchedulerSolver:
         # groups: the one probe that names the cause of that week. Counted again
         # here (a tenth of a second) rather than passed in, so this stays what
         # it was to everything that calls it with a request alone.
-        nearly_full = self._week_loads(request)
+        #
+        # ON EACH REAL WEEK, AS solve() COUNTS IT (_week_requests): a school
+        # with odd and even weeks has the odd week's lessons and the even
+        # week's, and one teacher on an odd group and an even group is never
+        # on both at once. Counted on the request as it stands they would look
+        # simultaneous, and a week that is 80 % per real week would be offered
+        # the probe at 88 %, with most of the probe time. A year tight in both
+        # weeks is listed once per week; the probe takes them together.
+        nearly_full = [
+            load
+            for week in _week_requests(request)
+            for load in self._week_loads(week)
+        ]
         if any(load.shared for load in nearly_full):
             relaxed = self._parallel_groups_probe(request, nearly_full)
             if relaxed is not None:
