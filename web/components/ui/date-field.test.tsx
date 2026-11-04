@@ -2,7 +2,7 @@ import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { DateField, placeCalendar } from "./date-field";
+import { DateField, hasTopLayer, placeCalendar } from "./date-field";
 import { Dialog, DialogContent, DialogTitle } from "./dialog";
 
 /*
@@ -764,6 +764,10 @@ describe("DateField", () => {
 
         await user.keyboard("{Escape}");
         fieldBox = { top: 200, bottom: 236, left: 648 };
+        // Both listeners, one at a time: a scroll anywhere in the app, then a
+        // resize. Either one left behind would place the closed box again.
+        screen.getByRole("textbox").dispatchEvent(new Event("scroll"));
+        expect(opened.style.top).toBe("360px");
         window.dispatchEvent(new Event("resize"));
 
         expect(screen.queryByRole("dialog")).toBeNull();
@@ -820,7 +824,9 @@ describe("DateField", () => {
         expect(panel().style.top).toBe("8px");
         expect(panel().style.maxHeight).toBe("184px");
         expect(panel().style.maxWidth).toBe("1264px");
-        expect(panel()).toHaveClass("overflow-auto");
+        // scroll-pt-10 keeps a focused day out from under the sticky row; that
+        // it does is a matter of layout, proved in e2e/date-field.smoke.spec.ts.
+        expect(panel()).toHaveClass("overflow-auto", "scroll-pt-10");
         expect(screen.getByRole("button", { name: "nextMonth" }).parentElement).toHaveClass("sticky", "top-0", "bg-card");
       });
 
@@ -841,6 +847,15 @@ describe("DateField", () => {
       const box = screen.getByRole("dialog");
       expect(box).not.toHaveAttribute("popover");
       expect(box).toHaveClass("absolute", "mt-1");
+    });
+
+    it("asks for the top layer without failing where there is no HTMLElement, as on the server", () => {
+      vi.stubGlobal("HTMLElement", undefined);
+      try {
+        expect(hasTopLayer()).toBe(false);
+      } finally {
+        vi.unstubAllGlobals();
+      }
     });
   });
 });

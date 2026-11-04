@@ -212,3 +212,40 @@ test("Lägg till lov: an open calendar follows its field when the window changes
 
   expect(misses, MISSES).toEqual([]);
 });
+
+test("Lägg till lov at 1280×200: the day the keyboard is on is never under the chevrons' row", async ({
+  page,
+  baseURL,
+}) => {
+  /*
+   * The chevrons' row is sticky, so in a calendar that scrolls it covers the
+   * top of the grid. Arrow up scrolls the box only until the day is inside
+   * it, and without scroll padding the browser stopped there: at 1280×200 the
+   * 3rd lay at y 23–55 under a row ending at 45, the keyboard on a day nobody
+   * could see. Opened on the 31st the calendar starts scrolled to its end, and
+   * each step up has to leave the day whole under the row.
+   */
+  const { dialog, misses } = await openBreakDialog(page, baseURL!, { width: 1280, height: 200 });
+  await dialog.getByRole("textbox", { name: "Sista dagen" }).fill(`${YEAR.startDate.slice(0, 4)}-10-31`);
+  await dialog.getByRole("button", { name: "Öppna kalender för Sista dagen" }).click();
+  const calendar = page.getByRole("dialog", { name: "Välj datum" });
+  await expect(calendar).toBeVisible();
+  expect(await calendar.evaluate((element) => element.scrollTop), "opened scrolled to the 31st").toBeGreaterThan(0);
+
+  for (const day of [24, 17, 10, 3]) {
+    await page.keyboard.press("ArrowUp");
+    await expect(page.locator(":focus")).toHaveText(String(day));
+    expect(
+      await calendar.evaluate((element) => {
+        const focused = document.activeElement as HTMLElement;
+        const row = element.querySelector('[aria-label="Nästa månad"]')!.parentElement!.getBoundingClientRect();
+        const box = focused.getBoundingClientRect();
+        const hit = document.elementFromPoint(box.left + box.width / 2, box.top + 2);
+        return { underTheRow: box.top >= row.bottom, onTop: hit !== null && focused.contains(hit) };
+      }),
+      `day ${day} is whole and under the chevrons' row`,
+    ).toEqual({ underTheRow: true, onTop: true });
+  }
+
+  expect(misses, MISSES).toEqual([]);
+});

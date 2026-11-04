@@ -183,7 +183,7 @@ function positionCalendar(field: HTMLElement, panel: HTMLElement, grid: HTMLTabl
  * import: on the server there is no HTMLElement, and nothing that differs is
  * rendered before the calendar is first opened, long after hydration.
  */
-const hasTopLayer = () =>
+export const hasTopLayer = () =>
   typeof HTMLElement !== "undefined" && typeof HTMLElement.prototype.showPopover === "function";
 
 export function DateField({
@@ -529,17 +529,21 @@ export function DateField({
             "rounded-md border bg-card p-2 pt-0 text-foreground shadow-md",
             // The UA's popover style centres the box with `inset: 0; margin:
             // auto` and scrolls an overflow; top and left are set inline.
-            topLayer ? "fixed inset-auto m-0 overflow-auto" : "absolute z-50 mt-1",
+            // scroll-pt-10 is the sticky row below (36 px) and its mb-1: a
+            // focus that scrolls the box stops a day under the row, not
+            // behind it.
+            topLayer ? "fixed inset-auto m-0 overflow-auto scroll-pt-10" : "absolute z-50 mt-1",
           )}
         >
           {/*
             Sticky, so the chevrons stay in reach when a window lower than the
             calendar makes it scroll: focus landing on a day near the bottom
             would otherwise scroll them out of the box. The box's top padding
-            is this row's own (pt-2, and pt-0 on the box, which also overrides
-            the UA's 0.25em popover padding): a sticky row stops at the box's
-            content edge, and with padding on the box the weeks scrolled past
-            in the strip above the chevrons.
+            is this row's own (pt-2, with pt-0 on the box): a sticky row stops
+            at the box's content edge, and with padding on the box the weeks
+            scrolled past in the strip above the chevrons. The row covers the
+            top of the scrolled grid, so the box's scroll-pt-10 keeps the day
+            the keyboard moves to out from under it.
           */}
           <div className="sticky top-0 mb-1 flex items-center justify-between gap-2 bg-card pt-2">
             <button
