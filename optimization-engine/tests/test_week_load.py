@@ -27,6 +27,7 @@ from ortools.linear_solver import pywraplp
 from ortools.sat.python import cp_model
 
 from app.config import Settings
+from app.exceptions import InvalidScheduleInputError
 from app.messages import render
 from app.schemas.schedule import ConflictAnalysis, ConflictDetail, OptimizeScheduleRequest
 from app.solver import scheduler_solver, week_load
@@ -697,6 +698,392 @@ def test_the_frames_of_other_years_do_not_shrink_this_one() -> None:
     (load,) = _loads(payload)
 
     assert load.capacity_minutes == WEEK
+
+
+# ---------------------------------------------------------------------------
+# Never a false refusal: small weeks the model solves, counted to the minute
+# ---------------------------------------------------------------------------
+#
+# A refusal is a claim that the week has no timetable, made without a search,
+# so the property that matters is that the count never exceeds the truth. Each
+# week below is one the real model solves (_has_timetable), counted exactly: a
+# change that made the supply smaller or the demand larger by a single meal
+# or margin would call it impossible, or move its numbers.
+#
+# Two days, five minutes of changeover unless a frame says otherwise.
+
+
+def _frame(
+    low: int, high: int, start: str, end: str, changeover: int = 5,
+) -> dict[str, object]:
+    return {
+        "minGradeLevel": low, "maxGradeLevel": high, "dayOfWeek": None,
+        "startTime": f"{start}:00", "endTime": f"{end}:00", "changeoverMinutes": changeover,
+    }
+
+
+def _entry(
+    group: str, teacher: str, lessons: int, minutes: int, low: int, high: int, **extra: object,
+) -> dict[str, object]:
+    return {
+        "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": group,
+        "teacherId": teacher, "lessonsPerWeek": lessons, "minutesPerLesson": minutes,
+        "studentGroupSize": 20, "minGradeLevel": low, "maxGradeLevel": high, **extra,
+    }
+
+
+def _small(
+    requirements: list[dict[str, object]],
+    frames: list[dict[str, object]],
+    *,
+    eating: tuple[tuple[str, int, int], ...] = (),
+    meal: tuple[str, str, int] | None = None,
+    closed: tuple[str, ...] = (),
+    sharing: tuple[tuple[str, str], ...] = (),
+    placed: tuple[tuple[str, int, str], ...] = (),
+) -> dict[str, object]:
+    """A week of a few entries: the classes that eat, a meal window, closed days, placed meals."""
+    payload: dict[str, object] = {
+        "requestId": str(uuid4()),
+        "academicYearId": str(uuid4()),
+        "requirements": requirements,
+        "rooms": [{"id": str(uuid4()), "capacity": 30} for _ in range(6)],
+        "frameTimes": frames,
+    }
+    if eating:
+        payload["groups"] = [
+            {"id": group, "lunchHeadcount": 20, "minGradeLevel": low, "maxGradeLevel": high}
+            for group, low, high in eating
+        ]
+    if meal is not None:
+        payload["rules"] = {
+            "lunchStartTime": f"{meal[0]}:00", "lunchEndTime": f"{meal[1]}:00", "lunchMinutes": meal[2],
+        }
+    if closed:
+        # The class is not taught on Monday at all: the row covers the whole day.
+        payload["constraints"] = [
+            {
+                "id": str(uuid4()), "resourceKind": "STUDENT_GROUP", "resourceId": group,
+                "dayOfWeek": 1, "startTime": "08:00:00", "endTime": "18:00:00", "kind": "UNAVAILABLE",
+            }
+            for group in closed
+        ]
+    if sharing:
+        payload["groupConflicts"] = [list(pair) for pair in sharing]
+    if placed:
+        payload["lunchPlacements"] = [
+            {"studentGroupId": group, "dayOfWeek": day, "startTime": f"{start}:00"}
+            for group, day, start in placed
+        ]
+    return payload
+
+
+def _exact(payload: dict[str, object], *, days: str = "1,2") -> dict[int | None, week_load.StageLoad]:
+    """Every year's bound with nothing left out: no threshold, time to finish the proof."""
+    solver = SchedulerSolver(_settings(SCHEDULE_DAYS=days))
+    solver.TIGHT_WEEK_LOAD = 0.0
+    solver.WEEK_LOAD_SECONDS = 20.0
+    return {load.year: load for load in solver._week_loads(_request(payload))}
+
+
+def _figures(
+    loads: dict[int | None, week_load.StageLoad],
+) -> dict[int | None, tuple[int, int, bool]]:
+    return {year: (l.demand_minutes, l.capacity_minutes, l.over) for year, l in loads.items()}
+
+
+def test_a_year_of_two_spans_has_the_time_of_both_spans_windows() -> None:
+    """Year 7 holds an entry of years 6-7 and one of years 7-8, on different frames.
+
+    The frames are 6: 08:00-10:00, 7: 08:00-15:00, 8: 12:00-15:00, so the
+    6-7 entry is held to 08:00-10:00 and the 7-8 entry to 12:00-15:00. Year 7
+    has both windows, 125 + 185 = 310 minutes a day with the margin after the
+    last lesson, 620 in two days. One teacher on both: 4 x 45 + 6 x 45 = 450
+    in a row, which fits. Counted on one span's window alone, 250 or 370, it
+    would not.
+    """
+    teacher = str(uuid4())
+    payload = _small(
+        [
+            _entry(str(uuid4()), teacher, 4, 40, 6, 7),
+            _entry(str(uuid4()), teacher, 6, 40, 7, 8),
+        ],
+        [_frame(6, 6, "08:00", "10:00"), _frame(7, 7, "08:00", "15:00"), _frame(8, 8, "12:00", "15:00")],
+    )
+
+    assert _figures(_exact(payload)) == {
+        6: (180, 250, False), 7: (450, 620, False), 8: (270, 370, False),
+    }
+    assert _loads(payload, SCHEDULE_DAYS="1,2") == []
+    assert _has_timetable(payload)
+
+
+def test_a_window_inside_another_adds_no_time_and_takes_none() -> None:
+    """Year 7's entries: one on 08:00-15:00 and one, also of year 8, held to 09:00-12:00.
+
+    The second window lies inside the first, so the year's time is the first
+    alone, 425 minutes a day with the margin, 850 in two days. A union that
+    kept the last window's end instead of the later of the two would cut it to
+    08:00-12:05, 245 a day, and call 540 minutes of one teacher's lessons
+    impossible.
+    """
+    teacher = str(uuid4())
+    payload = _small(
+        [
+            _entry(str(uuid4()), teacher, 8, 40, 7, 7),
+            _entry(str(uuid4()), teacher, 4, 40, 7, 8),
+        ],
+        [_frame(7, 7, "08:00", "15:00"), _frame(8, 8, "09:00", "12:00")],
+    )
+
+    assert _figures(_exact(payload)) == {7: (540, 850, False), 8: (180, 370, False)}
+    assert _loads(payload, SCHEDULE_DAYS="1,2") == []
+    assert _has_timetable(payload)
+
+
+def test_a_class_that_is_closed_for_a_day_owes_no_meal_that_day() -> None:
+    """The class is not taught on Monday, so it eats on Tuesday only.
+
+    Frame 08:00-11:55 (240 minutes a day with the margin), a meal of 15 in
+    09:00-10:30. The class's five lessons of 45 and the language group's six
+    of 40, which take pupils from it, and the one meal it eats: 225 + 240 + 15
+    = 480, exactly the two days, with the group on Monday and the class on
+    Tuesday. A meal counted for Monday too would make it 495.
+    """
+    home, group = str(uuid4()), str(uuid4())
+    payload = _small(
+        [
+            _entry(home, str(uuid4()), 5, 40, 8, 8),
+            _entry(group, str(uuid4()), 6, 35, 8, 8),
+        ],
+        [_frame(8, 8, "08:00", "11:55")],
+        eating=((home, 8, 8),),
+        meal=("09:00", "10:30", 15),
+        closed=(home,),
+        sharing=((home, group),),
+    )
+
+    assert _figures(_exact(payload)) == {8: (480, 480, False)}
+    assert _has_timetable(payload)
+
+    # Open on Monday the class eats twice, the week is 495 in 480, and it is
+    # impossible: the closed day is what the 15 minutes depend on.
+    del payload["constraints"]
+    assert _figures(_exact(payload)) == {8: (495, 480, True)}
+    assert not _has_timetable(payload)
+
+
+def test_a_meal_placed_by_hand_is_counted_where_it_was_placed() -> None:
+    """The same week with the meal placed at 16:00 on both days, after the frame has closed.
+
+    A meal outside the time the year has takes none of it: 240 + 240 = 480,
+    the two days to the minute, with the group on Monday and the class on
+    Tuesday. Left to the window the class would eat inside the frame, 15 a
+    day, and 510 do not fit.
+    """
+    home, group = str(uuid4()), str(uuid4())
+    payload = _small(
+        [
+            _entry(home, str(uuid4()), 6, 35, 8, 8),
+            _entry(group, str(uuid4()), 6, 35, 8, 8),
+        ],
+        [_frame(8, 8, "08:00", "11:55")],
+        eating=((home, 8, 8),),
+        meal=("09:00", "10:30", 15),
+        sharing=((home, group),),
+        placed=((home, 1, "16:00"), (home, 2, "16:00")),
+    )
+
+    assert _figures(_exact(payload)) == {8: (480, 480, False)}
+    assert _has_timetable(payload)
+
+    del payload["lunchPlacements"]
+    assert _figures(_exact(payload)) == {8: (510, 480, True)}
+    assert not _has_timetable(payload)
+
+
+@pytest.mark.parametrize(
+    ("placed", "owed"),
+    [
+        # The frame ends at 11:55 and the margin takes the year to 12:00.
+        (("16:00", "16:00"), 0),
+        (("11:50", "16:00"), 10),  # 10 of the 15 minutes are inside, none the other day
+        (("11:55", "11:55"), 10),  # 5 of the 15 minutes inside, twice
+        (("10:00", "10:00"), 30),  # inside, 15 twice
+    ],
+)
+def test_a_meal_placed_across_the_end_of_the_frame_counts_the_minutes_inside(
+    placed: tuple[str, str], owed: int,
+) -> None:
+    home, group = str(uuid4()), str(uuid4())
+    payload = _small(
+        [
+            _entry(home, str(uuid4()), 4, 35, 8, 8),
+            _entry(group, str(uuid4()), 4, 35, 8, 8),
+        ],
+        [_frame(8, 8, "08:00", "11:55")],
+        eating=((home, 8, 8),),
+        meal=("09:00", "10:30", 15),
+        sharing=((home, group),),
+        placed=((home, 1, placed[0]), (home, 2, placed[1])),
+    )
+
+    assert _figures(_exact(payload)) == {8: (320 + owed, 480, False)}
+
+
+def test_a_post_split_between_teachers_is_counted_by_the_teacher_of_each_lesson() -> None:
+    """One day 08:00-10:30, no margin. X teaches two lessons of group A and one of the split post.
+
+    The split post's two lessons are X's and Y's. Y teaches two lessons of
+    group B and the post's other. X and Y are each busy three lessons, 150
+    minutes, and the post's two lessons are not at once: lesson one with X
+    while Y teaches B, lesson two with Y, and the week is exactly full. Counted
+    as one entry that needs both teachers it would be 200 minutes.
+    """
+    x, y = str(uuid4()), str(uuid4())
+    payload = _small(
+        [
+            _entry(str(uuid4()), x, 2, 50, 8, 8),
+            _entry(str(uuid4()), y, 2, 50, 8, 8),
+            _entry(str(uuid4()), x, 2, 50, 8, 8, lessonTeacherIds=[x, y]),
+        ],
+        [_frame(8, 8, "08:00", "10:30", changeover=0)],
+    )
+
+    assert _figures(_exact(payload, days="1")) == {8: (150, 150, False)}
+    assert _has_timetable(payload, days="1")
+
+
+def test_unrelated_parts_of_a_year_are_not_added_to_each_other() -> None:
+    """Two classes with nothing in common each fill the morning; they run side by side.
+
+    The year's least week is its longest chain, not the sum of its chains:
+    150, not 300.
+    """
+    payload = _small(
+        [
+            _entry(str(uuid4()), str(uuid4()), 3, 50, 8, 8),
+            _entry(str(uuid4()), str(uuid4()), 3, 50, 8, 8),
+        ],
+        [_frame(8, 8, "08:00", "10:30", changeover=0)],
+    )
+
+    assert _figures(_exact(payload, days="1")) == {8: (150, 150, False)}
+    assert _has_timetable(payload, days="1")
+
+
+def test_each_entry_is_padded_by_the_margin_of_its_own_span() -> None:
+    """Frames 6 and 7 have no margin and frame 8 ten minutes: only the 7-8 entry is padded.
+
+    One teacher takes two lessons of 50 for years 6-7 and one of 40 for
+    years 7-8, which with its margin of 10 is 50: 150 of the 160 minutes year 7
+    has (08:00-10:30, and the 7-8 entry's margin after it). With the widest
+    margin on every entry the 6-7 lessons would be 60 each and the year 170.
+    """
+    teacher = str(uuid4())
+    payload = _small(
+        [
+            _entry(str(uuid4()), teacher, 2, 50, 6, 7),
+            _entry(str(uuid4()), teacher, 1, 40, 7, 8),
+        ],
+        [
+            _frame(6, 6, "08:00", "10:30", changeover=0),
+            _frame(7, 7, "08:00", "10:30", changeover=0),
+            _frame(8, 8, "08:00", "10:30", changeover=10),
+        ],
+    )
+
+    assert _figures(_exact(payload, days="1")) == {
+        6: (100, 150, False), 7: (150, 160, False), 8: (50, 160, False),
+    }
+    assert _has_timetable(payload, days="1")
+
+
+# A SMOKE FUZZ, AND WHAT IT IS NOT. Random small weeks of the kind the exact
+# tests above build by hand, each with its day shortened ten minutes at a time
+# until the count first refuses it; the real model then searches that week, and
+# finding a timetable would be a false refusal. 60 weeks catch only a gross
+# error: the review's fuzz (3,500 weeks, six seconds each) is what found the
+# subtle ones, and the exact weeks above are what keep them found. Run with
+# `pytest -m slow`; the ordinary run skips it (conftest.py).
+
+SMOKE_WEEKS = 60
+
+
+def _random_week(rng: random.Random, end_minutes: int) -> dict[str, object]:
+    """Years 8 or 7-8: two classes a year, teaching groups across them, a teacher pool, meals."""
+    years = rng.choice([[8], [7, 8]])
+    pool = [str(uuid4()) for _ in range(3)]
+    requirements: list[dict[str, object]] = []
+    eating: list[tuple[str, int, int]] = []
+    sharing: list[tuple[str, str]] = []
+    frames: list[dict[str, object]] = []
+    classes_of: dict[int, list[str]] = {}
+    for year in years:
+        classes = classes_of[year] = [str(uuid4()) for _ in range(2)]
+        frames.append(_frame(
+            year, year, "08:00",
+            f"{(end_minutes - (30 if year == 7 else 0)) // 60:02d}:{(end_minutes - (30 if year == 7 else 0)) % 60:02d}",
+            rng.choice([0, 5, 10]),
+        ))
+        for class_id in classes:
+            eating.append((class_id, year, year))
+            for _ in range(rng.randint(1, 2)):
+                requirements.append(_entry(
+                    class_id, rng.choice([*pool, str(uuid4())]),
+                    rng.randint(2, 4), rng.choice([40, 50]), year, year,
+                ))
+        for _ in range(rng.randint(1, 2)):
+            group = str(uuid4())
+            requirements.append(_entry(group, rng.choice(pool), rng.randint(2, 4), 40, year, year))
+            sharing.extend((class_id, group) for class_id in classes)
+    if len(years) == 2:
+        across = str(uuid4())
+        requirements.append(_entry(across, rng.choice(pool), rng.randint(2, 3), 40, 7, 8))
+        sharing.extend((classes_of[year][0], across) for year in years)
+    meal = ("10:00", "11:30", rng.choice([15, 20, 30])) if rng.random() < 0.8 else None
+    closed = (rng.choice(eating)[0],) if meal and rng.random() < 0.3 else ()
+    placed = (
+        ((rng.choice(eating)[0], 2, rng.choice(["10:00", "10:30", "16:00"])),)
+        if meal and rng.random() < 0.3 else ()
+    )
+    return _small(
+        requirements, frames, eating=tuple(eating) if meal else (), meal=meal,
+        closed=closed, sharing=tuple(sharing), placed=placed,
+    )
+
+
+@pytest.mark.slow
+def test_the_count_never_refuses_a_week_the_model_solves() -> None:
+    solver = SchedulerSolver(_settings(SCHEDULE_DAYS="1,2"))
+    conclusive = 0
+    for seed in range(SMOKE_WEEKS):
+        refused_at = None
+        for shorter in range(0, 40):
+            payload = _random_week(random.Random(seed), 15 * 60 - 10 * shorter)
+            try:
+                request = _request(payload)
+                solver._validate_request(request)
+            except InvalidScheduleInputError:
+                break
+            if any(load.over for load in solver._week_loads(request)):
+                refused_at = payload if shorter else None
+                break
+        if refused_at is None:
+            continue
+        request = _request(refused_at)
+        model, *_ = solver._build_model(request, use_assumptions=False, include_objective=False)
+        search = cp_model.CpSolver()
+        search.parameters.num_workers = 2
+        search.parameters.random_seed = 0
+        search.parameters.max_time_in_seconds = 8.0
+        status = search.Solve(model)
+        assert status not in (cp_model.OPTIMAL, cp_model.FEASIBLE), (
+            f"seed {seed}: the count refused a week the model solves"
+        )
+        if status == cp_model.INFEASIBLE:
+            conclusive += 1
+    assert conclusive >= SMOKE_WEEKS // 3, "too few weeks reached a refusal to mean anything"
 
 
 # ---------------------------------------------------------------------------
