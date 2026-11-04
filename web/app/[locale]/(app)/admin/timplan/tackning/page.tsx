@@ -35,7 +35,11 @@
 // teaching groups that carry its pupils, and the pupils' min / median / max
 // and how many are under mål; then the pupils with a finding of their OWN —
 // under mål where the class is not, or the same subject from two groups —
-// each with where their minutes come from.
+// each with where their minutes come from. "Visa alla elever" lists every
+// pupil of the class instead, line by line, so a pupil who is short only
+// because the class is can be read too: a lazy panel
+// (components/timplan/coverage-planned-pupils.tsx) that asks the gateway for
+// that one class's pupils when it is opened, so the overview stays small.
 //
 // WHY PER PUPIL. Skolinspektionen faults schools that follow up "på klass-
 // och gruppnivå" only: a class can be on mål while the pupils of one
@@ -70,6 +74,7 @@ import {
   type CoverageTone,
 } from "@/lib/timplan-tackning";
 import type { PupilLine } from "@/lib/timplan-planned";
+import type { Person, StudentGroup } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
@@ -117,9 +122,18 @@ const lazyStageTab = () =>
       default: module.CoverageStageTab,
     })),
   );
+// "Visa alla elever" in the planned layer's class drill-down: fetched on the
+// first choice, with its hook (components/timplan/coverage-planned-pupils.tsx).
+const lazyPlannedPupils = () =>
+  lazy(() =>
+    import("@/components/timplan/coverage-planned-pupils").then((module) => ({
+      default: module.PlannedClassPupils,
+    })),
+  );
 let CoverageScheduledTab = lazyScheduledTab();
 let CoverageDeliveredTab = lazyDeliveredTab();
 let CoverageStageTab = lazyStageTab();
+let PlannedClassPupils = lazyPlannedPupils();
 
 const LAYERS = ["planned", "scheduled", "delivered", "stage"] as const;
 type Layer = (typeof LAYERS)[number];
@@ -407,11 +421,15 @@ export default function TimplanCoveragePage() {
 
         {selected ? (
           <ClassDrillDown
+            key={selected.id}
             row={selected}
+            yearId={year.id}
             planName={selected.summary.localTimplanId ? (planName.get(selected.summary.localTimplanId) ?? "") : null}
             pupilLevel={matrix.coverage.pupilLevel}
             gradeName={gradeName}
             groupName={(id) => groupName.get(id) ?? id}
+            groups={groups ?? []}
+            people={people ?? []}
             subjectNames={(ids) => ids.map((id) => subjectName.get(id) ?? id).join(" / ")}
             pupilName={(id) => personName.get(id) ?? t("unknownPupil")}
           />
@@ -594,17 +612,35 @@ function CoverageCell({ view, subjectName }: { view: CoverageCellView; subjectNa
 
 interface DrillDownProps {
   row: CoverageClassRow;
+  yearId: string;
   planName: string | null;
   pupilLevel: boolean;
   gradeName: (grade: number | null) => string;
   groupName: (id: string) => string;
+  groups: StudentGroup[];
+  people: Person[];
   subjectNames: (ids: string[]) => string;
   pupilName: (id: string) => string;
 }
 
-function ClassDrillDown({ row, planName, pupilLevel, gradeName, groupName, subjectNames, pupilName }: DrillDownProps) {
+function ClassDrillDown({
+  row,
+  yearId,
+  planName,
+  pupilLevel,
+  gradeName,
+  groupName,
+  groups,
+  people,
+  subjectNames,
+  pupilName,
+}: DrillDownProps) {
   const t = useTranslations("timplanCoverage");
   const { summary } = row;
+  // Every pupil of the class instead of the ones with a finding of their own;
+  // a chunk that does not arrive is said in place, and the next try fetches afresh.
+  const [showAll, setShowAll] = useState(false);
+  const [load, setLoad] = useState({ failed: false, attempt: 0 });
   return (
     <SectionCard
       id="tackning-class"
@@ -695,28 +731,79 @@ function ClassDrillDown({ row, planName, pupilLevel, gradeName, groupName, subje
 
       {pupilLevel ? (
         <div className="space-y-2">
-          <h3 className="text-sm font-semibold">{t("pupilsTitle", { count: row.pupils.length })}</h3>
-          <p className="text-xs text-muted-foreground">{t("pupilsHint")}</p>
-          {row.pupils.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{t("pupilsNone")}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-semibold">
+              {showAll
+                ? t("plannedPupils.title", { count: summary.pupilCount })
+                : t("pupilsTitle", { count: row.pupils.length })}
+            </h3>
+            <Button size="sm" variant="outline" aria-pressed={showAll} onClick={() => setShowAll((on) => !on)}>
+              {showAll ? t("showOwnPupils") : t("showAllPupils")}
+            </Button>
+          </div>
+          {showAll ? (
+            load.failed ? (
+              <LoadError
+                variant="inline"
+                title={t("plannedPupils.loadFailed")}
+                hint={t("plannedPupils.loadFailedHint")}
+                action={
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setLoad((state) => ({ failed: false, attempt: state.attempt + 1 }))}
+                  >
+                    {t("plannedPupils.retry")}
+                  </Button>
+                }
+              />
+            ) : (
+              <DialogLoadBoundary
+                key={load.attempt}
+                onError={() => {
+                  PlannedClassPupils = lazyPlannedPupils();
+                  setLoad((state) => ({ ...state, failed: true }));
+                }}
+              >
+                <Suspense fallback={<Skeleton className="h-24 w-full" aria-busy="true" />}>
+                  <PlannedClassPupils
+                    yearId={yearId}
+                    classId={row.id}
+                    classLines={summary.lines}
+                    people={people}
+                    pupilName={pupilName}
+                    groupName={groupName}
+                    groups={groups}
+                    subjectNames={subjectNames}
+                  />
+                </Suspense>
+              </DialogLoadBoundary>
+            )
           ) : (
-            <ul className="space-y-2">
-              {row.pupils.map((pupil) => (
-                <li key={pupil.pupilId} className="rounded-md border px-3 py-2 text-sm">
-                  <p className="font-medium">{pupilName(pupil.pupilId)}</p>
-                  <ul className="mt-1 space-y-1">
-                    {pupil.lines.map((line) => (
-                      <PupilLineItem
-                        key={line.key}
-                        line={line}
-                        groupName={groupName}
-                        subjectNames={subjectNames}
-                      />
-                    ))}
-                  </ul>
-                </li>
-              ))}
-            </ul>
+            <>
+              <p className="text-xs text-muted-foreground">{t("pupilsHint")}</p>
+              {row.pupils.length === 0 ? (
+                <p className="text-sm text-muted-foreground">{t("pupilsNone")}</p>
+              ) : (
+                <ul className="space-y-2">
+                  {row.pupils.map((pupil) => (
+                    <li key={pupil.pupilId} className="rounded-md border px-3 py-2 text-sm">
+                      <p className="font-medium">{pupilName(pupil.pupilId)}</p>
+                      <ul className="mt-1 space-y-1">
+                        {pupil.lines.map((line) => (
+                          <PupilLineItem
+                            key={line.key}
+                            line={line}
+                            groupName={groupName}
+                            subjectNames={subjectNames}
+                          />
+                        ))}
+                      </ul>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
           )}
         </div>
       ) : null}
