@@ -11,7 +11,9 @@
 //
 // What the numbers mean — the standardvecka weight at the årskurs of whoever
 // is judged, whole minutes compared with the integer target, Svenska/SvA and
-// språkval as one line met at the highest target, OVER only past one lesson of
+// språkval as one line met at the highest target, the parts of one national
+// subject (Slöjd, Textilslöjd, Trä- och metallslöjd) as one line met at the
+// SUM of their entries, OVER only past one lesson of
 // surplus, a class whose teaching groups reach at least half of its pupils
 // judged through them, a pupil verdict only where the class's own does not
 // already say it, pupil ids and never names — is argued in the gateway file's
@@ -145,9 +147,16 @@ export interface PupilStats {
 }
 
 export interface PlannedLine {
-  /** 'subject:<id>' or 'alt:<code>'. */
+  /** 'subject:<id>', 'alt:<code>' or 'national:<code>'. */
   key: string;
   alternativeCode: string | null;
+  /**
+   * The national code of a line made of the parts of one national subject
+   * (key 'national:<code>'; see Lines in the gateway file). Absent on every
+   * other line, so a line that is not one reads as it did before the kind
+   * existed.
+   */
+  nationalCode?: string;
   subjectIds: string[];
   targetMinutesPerWeek: number | null;
   plannedMinutesPerWeek: number;
@@ -165,6 +174,8 @@ export interface PlannedCell {
   studentGroupId: string;
   subjectId: string;
   alternativeCode: string | null;
+  /** The code of a national line the subject is a part of; absent otherwise. */
+  nationalCode?: string;
   /** The subject's own entry for the årskurs; null when the plan has none. */
   targetMinutesPerWeek: number | null;
   plannedMinutesPerWeek: number;
@@ -199,6 +210,8 @@ export interface PupilSource {
 export interface PupilLine {
   key: string;
   alternativeCode: string | null;
+  /** As on PlannedLine: set on a national line only. */
+  nationalCode?: string;
   subjectIds: string[];
   targetMinutesPerWeek: number | null;
   plannedMinutesPerWeek: number;
@@ -273,6 +286,7 @@ const hours = (minutes: number): number => Math.round(minutes / 6) / 10;
 
 const subjectKey = (id: string): string => `subject:${id}`;
 const altKey = (code: string): string => `alt:${code}`;
+const nationalKey = (code: string): string => `national:${code}`;
 
 /** What one requirement gives one årskurs, cached per (row, grade). */
 interface Contribution {
@@ -286,6 +300,7 @@ interface Contribution {
 interface LineDraft {
   key: string;
   alternativeCode: string | null;
+  nationalCode: string | null;
   subjectIds: Set<string>;
   target: number | null;
   week: number;
@@ -390,11 +405,31 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
     rowsByGroup.set(row.studentGroupId, list);
   }
 
-  const lineKeyOf = (subjectId: string): { key: string; alternativeCode: string | null } => {
+  // The national codes that more than one counted subject carries: the school
+  // divides one national subject into parts (SL on Slöjd, Textilslöjd and
+  // Trä- och metallslöjd). The alternatives share theirs too and are keyed
+  // first, below. Read from the counted subjects of the school and not from
+  // what a class has rows or a target in, so a class and its pupils key the
+  // same line the same way.
+  const sharedCodes = new Set<string>();
+  const seenCodes = new Set<string>();
+  for (const subject of subjects.values()) {
+    const code = subject.nationalCode;
+    if (code === null) continue;
+    if (seenCodes.has(code)) sharedCodes.add(code);
+    seenCodes.add(code);
+  }
+
+  const lineKeyOf = (
+    subjectId: string,
+  ): { key: string; alternativeCode: string | null; nationalCode: string | null } => {
     const code = subjects.get(subjectId)?.nationalCode ?? null;
-    return code !== null && TIMPLAN_ALTERNATIVE_CODES.includes(code)
-      ? { key: altKey(code), alternativeCode: code }
-      : { key: subjectKey(subjectId), alternativeCode: null };
+    if (code !== null && TIMPLAN_ALTERNATIVE_CODES.includes(code)) {
+      return { key: altKey(code), alternativeCode: code, nationalCode: null };
+    }
+    return code !== null && sharedCodes.has(code)
+      ? { key: nationalKey(code), alternativeCode: null, nationalCode: code }
+      : { key: subjectKey(subjectId), alternativeCode: null, nationalCode: null };
   };
 
   /** Lines for one årskurs from its targets and the rows that reach it. */
@@ -405,12 +440,13 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
   ): Map<string, LineDraft> => {
     const lines = new Map<string, LineDraft>();
     const lineFor = (subjectId: string): LineDraft => {
-      const { key, alternativeCode } = lineKeyOf(subjectId);
+      const { key, alternativeCode, nationalCode } = lineKeyOf(subjectId);
       let line = lines.get(key);
       if (!line) {
         line = {
           key,
           alternativeCode,
+          nationalCode,
           subjectIds: new Set(),
           target: null,
           week: 0,
@@ -424,7 +460,11 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
     };
     for (const [subjectId, minutes] of targets ?? []) {
       const line = lineFor(subjectId);
-      line.target = Math.max(line.target ?? 0, minutes);
+      // The alternatives are read one OR the other, so the highest entry is
+      // the line, the parts of a national subject are read together, so
+      // theirs add up. A line of one subject is the same figure either way.
+      line.target =
+        line.alternativeCode !== null ? Math.max(line.target ?? 0, minutes) : (line.target ?? 0) + minutes;
     }
     for (const row of rows) {
       const share = contributionOf(row, grade);
@@ -669,6 +709,7 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
       const line: PlannedLine = {
         key: draft.key,
         alternativeCode: draft.alternativeCode,
+        ...(draft.nationalCode !== null ? { nationalCode: draft.nationalCode } : {}),
         subjectIds,
         targetMinutesPerWeek: target,
         plannedMinutesPerWeek: planned,
@@ -733,6 +774,7 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
           studentGroupId: classId,
           subjectId,
           alternativeCode: draft.alternativeCode,
+          ...(draft.nationalCode !== null ? { nationalCode: draft.nationalCode } : {}),
           targetMinutesPerWeek: ownTarget,
           plannedMinutesPerWeek: Math.round(week),
           targetHours: ownTarget === null ? null : hours(ownTarget * weeks),
@@ -982,6 +1024,7 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
         lines.push({
           key: draft.key,
           alternativeCode: draft.alternativeCode,
+          ...(draft.nationalCode !== null ? { nationalCode: draft.nationalCode } : {}),
           subjectIds,
           targetMinutesPerWeek: target,
           plannedMinutesPerWeek: planned,

@@ -180,6 +180,12 @@ export interface TargetCellView {
   tone: TargetTone;
   /** Part of an alternative line (SV_SVA, M2): the cell says so. */
   alternative: boolean;
+  /**
+   * Part of a national line: one of the parts the school divides a national
+   * subject into (Textilslöjd beside Slöjd). The cell shows its own minutes
+   * and its own entry, and the delta is the line, where the parts add up.
+   */
+  national: boolean;
   /** The line's subjects other than this cell's, for the sentence. */
   partnerSubjectIds: string[];
 }
@@ -336,6 +342,7 @@ export function buildTargetView(coverage: PlannedCoverage, plans: PlannedPlan[])
         delta: line.deltaMinutesPerWeek,
         tone: toneOf(cell.status),
         alternative: cell.alternativeCode !== null,
+        national: cell.nationalCode !== undefined,
         partnerSubjectIds: line.subjectIds.filter((id) => id !== subjectId),
       };
     },
@@ -402,6 +409,8 @@ export type DraftHint =
       lessonLengths: number[];
       /** The line's other subjects: SvA beside Svenska, the other språkval. */
       partnerSubjectIds: string[];
+      /** The line is a national one: its subjects are parts, and their minutes add up. */
+      national: boolean;
       /**
        * Teaching groups that carry the line for at least half the class
        * WITHOUT a class post in this subject — the cell the matrix draws
@@ -496,6 +505,10 @@ export function draftHint(
   // dialog says what the cell says. One class's pupils, cheap per keystroke.
   const teaching = input.groups.filter((entry) => entry.kind === "TEACHING_GROUP");
   const teachingIds = new Set(teaching.map((entry) => entry.id));
+  // A national line is found by its key as well as by the subject: without
+  // the class post being edited, the subject may be in no line of the class
+  // (the halves carry another part of the line and the plan has no entry on
+  // this one), and the line is still the one the post would join.
   const carried = computePlannedCoverage({
     ...input,
     groups: [group, ...teaching],
@@ -506,7 +519,11 @@ export function draftHint(
     includePupils: false,
   })
     .groups.find((entry) => entry.studentGroupId === groupId)
-    ?.lines.find((entry) => entry.subjectIds.includes(subjectId));
+    ?.lines.find(
+      (entry) =>
+        entry.subjectIds.includes(subjectId) ||
+        (entry.nationalCode !== undefined && entry.key === line.key),
+    );
   return {
     kind: "target",
     gradeLevel,
@@ -519,6 +536,7 @@ export function draftHint(
     minutesPerLesson: valid?.minutes ?? 0,
     lessonLengths: valid?.lengths ?? [],
     partnerSubjectIds: line.subjectIds.filter((id) => id !== subjectId),
+    national: line.nationalCode !== undefined,
     carriedBy:
       carried?.status === "PUPILS"
         ? carried.teachingGroupIds.filter(

@@ -557,9 +557,11 @@ function CoverageCell({ view, subjectName }: { view: CoverageCellView; subjectNa
       ? t("tagPupils")
       : cell.alternativeCode !== null && tone !== "under" && tone !== "unplanned"
         ? t("tagAlternative")
-        : delta !== null && delta !== 0
-          ? signedMinutes(delta)
-          : null;
+        : cell.nationalCode !== undefined && tone !== "under" && tone !== "unplanned"
+          ? t("tagParts")
+          : delta !== null && delta !== 0
+            ? signedMinutes(delta)
+            : null;
   const values = {
     subject: subjectName,
     planned: cell.plannedMinutesPerWeek,
@@ -643,6 +645,9 @@ function ClassDrillDown({ row, planName, pupilLevel, gradeName, groupName, subje
                   {subjectNames(line.subjectIds)}
                   {line.alternativeCode !== null ? (
                     <span className="ml-1 text-xs font-normal text-muted-foreground">{t("together")}</span>
+                  ) : null}
+                  {line.nationalCode !== undefined ? (
+                    <span className="ml-1 text-xs font-normal text-muted-foreground">{t("partsTogether")}</span>
                   ) : null}
                 </th>
                 <td className="py-1.5 pr-3 text-right tabular-nums">{line.targetMinutesPerWeek ?? "—"}</td>

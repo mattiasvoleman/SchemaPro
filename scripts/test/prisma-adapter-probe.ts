@@ -2065,7 +2065,9 @@ async function runChecks(
     const forAdmin = await coverage.planned({ academicYearId: year.id }, admin);
     const line = forAdmin.groups
       .find((group) => group.studentGroupId === classId)
-      ?.lines.find((entry) => entry.key === `subject:${subject.id}`);
+      // By membership, not by key: a subject whose national code another counted
+      // subject of the school carries is on a 'national:<code>' line, not 'subject:<id>'.
+      ?.lines.find((entry) => entry.subjectIds.includes(subject.id));
     assert.deepEqual(
       [line?.targetMinutesPerWeek, line?.plannedMinutesPerWeek, line?.status],
       [175, 180, 'MET'],
@@ -2088,7 +2090,7 @@ async function runChecks(
     assert.equal(forTeacher.pupils, null);
     assert.ok(!JSON.stringify(forTeacher).includes(fixture.pupilId), 'a pupil id reached the teacher');
     assert.equal(
-      forTeacher.groups[0]?.lines.find((entry) => entry.key === `subject:${subject.id}`)?.status,
+      forTeacher.groups[0]?.lines.find((entry) => entry.subjectIds.includes(subject.id))?.status,
       'MET',
     );
 

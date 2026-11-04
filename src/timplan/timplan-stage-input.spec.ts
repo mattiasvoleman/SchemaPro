@@ -271,6 +271,62 @@ describe('recordedBlocksOfYear', () => {
   });
 });
 
+describe('the parts of a national subject (slöjd)', () => {
+  // Textilslöjd and Trä- och metallslöjd are SL, like Slöjd. Anna reads textil
+  // from 7A:1 until 3 January and trä from it after; the stage rolls her
+  // minutes to the national code, so SL holds the two terms, each minute once.
+  // Lager 2's national line (timplan-planned.ts) is a comparison with the
+  // plan and takes no part in these figures: they are P3's, per subject.
+  const TX = id(5);
+  const TM = id(6);
+  const SL = id(7);
+  const half: PlannedGroup = { id: id(74), name: '7A:1', kind: 'TEACHING_GROUP', gradeLevel: 7, halfOfId: g7a.id };
+  const anna = id(101);
+  const segments = [seg(anna, g7a, '2026-08-17', null)];
+  const dated = (subjectId: string, startDate: string | null, endDate: string | null): PlannedRequirement => ({
+    ...req(half, subjectId, 1),
+    startDate,
+    endDate,
+  });
+  const school = (requirements: PlannedRequirement[]) =>
+    read({
+      planned: {
+        ...read().planned,
+        subjects: [
+          ...read().planned.subjects,
+          { id: SL, name: 'Slöjd', nationalCode: 'SL', countsTowardTimplan: true },
+          { id: TX, name: 'Textilslöjd', nationalCode: 'SL', countsTowardTimplan: true },
+          { id: TM, name: 'Trä- och metallslöjd', nationalCode: 'SL', countsTowardTimplan: true },
+        ],
+        groups: [g7a, g7b, half],
+        requirements,
+      },
+      memberships: [{ studentId: anna, studentGroupId: half.id }],
+    });
+  const slojd = (rows: PlannedRequirement[]) =>
+    recordedBlocksOfYear(school(rows), segments, '2026-10-10T08:00:00.000Z', '2026-10-10')
+      .get(anna)![0]!
+      .lines.filter((line) => line.code === 'SL');
+
+  it('totals a pupil’s textil and trä in the one SL line: the two terms, no minute counted twice or lost', () => {
+    const textil = dated(TX, null, '2027-01-03');
+    const tra = dated(TM, '2027-01-04', null);
+    const both = slojd([textil, tra]);
+    expect(both).toHaveLength(1);
+    const alone = [slojd([textil]), slojd([tra])].map(([line]) => line!.plannedMinutes);
+    expect(alone.every((minutes) => minutes > 0)).toBe(true);
+    expect(both[0]!.plannedMinutes).toBe(alone[0]! + alone[1]!);
+    // 60 minutes for the 43 teaching weeks of the year, the terms partitioning it.
+    expect(both[0]!.plannedMinutes).toBe(60 * 43);
+  });
+
+  it('holds a part and the subject itself in the same line, as before the line existed', () => {
+    const rows = [dated(TX, null, null), { ...req(half, SL, 2), startDate: null, endDate: null }];
+    const [line] = slojd(rows);
+    expect(line!.plannedMinutes).toBe(60 * 43 * 3);
+  });
+});
+
 describe('futureBlocks', () => {
   const plan = {
     id: id(500),

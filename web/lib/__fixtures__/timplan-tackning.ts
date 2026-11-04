@@ -40,3 +40,5 @@ export const EMPTY_PLAN = "åk 3 attached to a plan that gives it no minutes";
 export const TWO_ALTERNATIVES = "a pupil on two språkval rosters";
 /** Unplanned, under and over in one class (7B). */
 export const MIXED = "unplanned, underplanned and overplanned";
+/** A plan with an entry on each part of slöjd: four åk 5 classes, one national line each. */
+export const NATIONAL_ENTRIES = "national: a plan with an entry on each part";

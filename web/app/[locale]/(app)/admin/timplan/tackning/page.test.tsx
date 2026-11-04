@@ -5,6 +5,7 @@ import {
   coverageCase,
   EMPTY_PLAN,
   LANGUAGES,
+  NATIONAL_ENTRIES,
   TWO_ALTERNATIVES,
   UNATTACHED_AND_DRAFT,
 } from "@/lib/__fixtures__/timplan-tackning";
@@ -127,6 +128,26 @@ describe("TimplanCoveragePage", () => {
     expect(within(row).getByText("coverageLabel(5|6)")).toHaveClass("sr-only");
     expect(within(row).getByText("5/6")).toHaveAttribute("aria-hidden", "true");
     expect(screen.getByText("pupilsBelow(5|1)")).toBeInTheDocument();
+  });
+
+  it("tags the parts of a national subject and says in the drill-down that they count together", async () => {
+    // Slöjd, Textilslöjd and Trä- och metallslöjd are one line per class in åk 5;
+    // 5A plans textil alone and meets the 60 the three entries make.
+    state.case = coverageCase(NATIONAL_ENTRIES) as typeof state.case;
+    const user = userEvent.setup();
+    render(<TimplanCoveragePage />);
+    const row = screen.getByRole("row", { name: /5A/ });
+    expect(within(row).getByText("60 / 20")).toBeInTheDocument();
+    // Met with the cell's own 0 of 20: said in a word, not as a deficit it is not.
+    expect(within(row).getAllByText("tagParts")).toHaveLength(3);
+    // 5C is short on the line: the cells show the line's difference instead.
+    expect(within(screen.getByRole("row", { name: /5C/ })).queryByText("tagParts")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /5A/ }));
+    const section = screen.getByRole("region", { name: "5A" });
+    const line = within(section).getByRole("row", { name: /Textilslöjd/ });
+    expect(within(line).getByText("partsTogether")).toBeInTheDocument();
+    // An alternative's "together" is not said of parts: they add up, not stand in for one another.
+    expect(within(line).queryByText("together")).not.toBeInTheDocument();
   });
 
   it("says a class attached to a plan with no time for its årskurs has none, rather than 0/0", () => {
