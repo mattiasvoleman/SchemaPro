@@ -26,6 +26,28 @@
  * actually knows which layer is on top. What remains ours is the grid, the week
  * column and the keyboard, and those are tested rather than trusted.
  *
+ * WHERE THE CALENDAR IS DRAWN: in the browser's top layer, not under its field.
+ * It used to hang under the text box as an absolutely positioned box, and most
+ * of these fields sit in a <Dialog> that clips sideways (overflow-x-hidden,
+ * components/ui/dialog.tsx). In the right column of a two-column form the
+ * calendar is wider than what is left of the dialog, so its right third was
+ * cut off — Nästa månad with it. Reported on "Lägg till lov", whose Sista dagen
+ * calendar could not be stepped forward at all: at 1280 px the box ran to x 939
+ * and the dialog ended at 896.
+ *
+ * `popover="manual"` lifts the box above every overflow and transform without
+ * moving it in the DOM. That is why it is the Popover API and not a portal:
+ * the box stays inside the <Dialog>'s element, so the dialog's focus trap
+ * still counts the days as inside it, and the tab order is unchanged. A portal
+ * to <body> puts the days outside the trap, which pulls focus straight back
+ * out of them, and needs a FocusScope of its own to pause it. "manual" because
+ * light dismiss is the layer's job, as described above; an "auto" popover
+ * would add a second Escape handler racing it.
+ *
+ * Where in the window is ours, `placeCalendar`, because CSS anchor positioning
+ * is not in every browser this app supports. A browser without the Popover API
+ * (before Safari 17 or Firefox 125) keeps the old box under the field.
+ *
  * CONTRAST, MEASURED. Computed from the HSL tokens in app/globals.css, rounded
  * to 8-bit the way a browser paints them. Light theme first, then dark:
  *
@@ -96,6 +118,70 @@ function startOfMonth(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), 1);
 }
 
+/** The calendar's distance from its field (the old `mt-1`), and from the window's edges. */
+const GAP = 4;
+const EDGE = 8;
+
+/**
+ * Where the calendar goes, in window coordinates: under its field when it fits
+ * there, over it when it fits there instead, and inside the window either way.
+ *
+ * Its left edge lines up with the field's, as it always did, and is pushed left
+ * only as far as the window's right edge needs — the move that brings Sista
+ * dagen's Nästa månad back. Over the field comes second because under is where
+ * the eye already is.
+ *
+ * `size.height` is the TALLEST month's, not the month on show, so the answer
+ * does not change while the months are stepped through. Above the field that
+ * matters: placed by its own height, a four-week February would sit two rows
+ * lower than the March after it, and the chevron being clicked would move out
+ * from under the pointer.
+ *
+ * With room on neither side the calendar goes as low as the window allows and
+ * covers the field. A window shorter than the calendar itself gets its top, and
+ * the calendar scrolls (`maxHeight` in `positionCalendar`).
+ */
+export function placeCalendar(
+  field: { top: number; bottom: number; left: number },
+  size: { width: number; height: number },
+  view: { width: number; height: number },
+): { top: number; left: number } {
+  const left = Math.max(EDGE, Math.min(field.left, view.width - EDGE - size.width));
+  const below = field.bottom + GAP;
+  if (below + size.height <= view.height - EDGE) return { top: below, left };
+  const above = field.top - GAP - size.height;
+  if (above >= EDGE) return { top: above, left };
+  return { top: Math.max(EDGE, view.height - EDGE - size.height), left };
+}
+
+/** Measures what `placeCalendar` needs and writes its answer onto the calendar. */
+function positionCalendar(field: HTMLElement, panel: HTMLElement, grid: HTMLTableElement | null) {
+  // The layout viewport without its scrollbars, which is what `fixed` measures from.
+  const view = {
+    width: document.documentElement.clientWidth,
+    height: document.documentElement.clientHeight,
+  };
+  panel.style.maxWidth = `${view.width - 2 * EDGE}px`;
+  panel.style.maxHeight = `${view.height - 2 * EDGE}px`;
+  const box = panel.getBoundingClientRect();
+  // The month on show has four to six weeks (empty tails are dropped below);
+  // the rows it lacks are added back so the placement holds for every month.
+  const rows = grid?.tBodies[0]?.rows;
+  const rowHeight = rows?.[0]?.getBoundingClientRect().height ?? 0;
+  const height = box.height + (6 - (rows?.length ?? 6)) * rowHeight;
+  const { top, left } = placeCalendar(field.getBoundingClientRect(), { width: box.width, height }, view);
+  panel.style.top = `${top}px`;
+  panel.style.left = `${left}px`;
+}
+
+/**
+ * Whether this browser has the top layer for popovers. Asked at render, not at
+ * import: on the server there is no HTMLElement, and nothing that differs is
+ * rendered before the calendar is first opened, long after hydration.
+ */
+const hasTopLayer = () =>
+  typeof HTMLElement !== "undefined" && typeof HTMLElement.prototype.showPopover === "function";
+
 export function DateField({
   id,
   value,
@@ -136,6 +222,38 @@ export function DateField({
   const rootRef = React.useRef<HTMLDivElement>(null);
   const triggerRef = React.useRef<HTMLButtonElement>(null);
   const gridRef = React.useRef<HTMLTableElement>(null);
+  const panelRef = React.useRef<HTMLDivElement>(null);
+  const topLayer = hasTopLayer();
+
+  /*
+   * Into the top layer and onto its place before the first paint, so the
+   * calendar is never seen anywhere else. A layout effect for that reason.
+   *
+   * Placed again on every scroll and resize while open: the box is `fixed` now,
+   * so it no longer moves with its field by itself. Scroll is listened for in
+   * the capture phase because it does not bubble, and the scroll that moves the
+   * field is usually the dialog's own, not the window's.
+   */
+  React.useLayoutEffect(() => {
+    const panel = panelRef.current;
+    const field = rootRef.current;
+    if (!open || !topLayer || !panel || !field) return;
+    const place = () => positionCalendar(field, panel, gridRef.current);
+    panel.showPopover();
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+      // Closing the calendar removes the box first, and its top-layer place
+      // goes with it; a hidePopover on a box no longer connected would throw.
+      // The box is still connected when the whole field unmounts while open,
+      // or when React hides it in an <Activity> and shows it again later: the
+      // show above has its matching hide here.
+      if (panel.isConnected) panel.hidePopover();
+    };
+  }, [open, topLayer]);
 
   /*
    * ONE state for the calendar, not three.
@@ -401,7 +519,14 @@ export function DateField({
             setOpen(false);
             triggerRef.current?.focus();
           }}
-          className="absolute z-50 mt-1 rounded-md border bg-card p-2 shadow-md"
+          ref={panelRef}
+          popover={topLayer ? "manual" : undefined}
+          className={cn(
+            "rounded-md border bg-card p-2 text-foreground shadow-md",
+            // The UA's popover style centres the box with `inset: 0; margin:
+            // auto` and scrolls an overflow; top and left are set inline.
+            topLayer ? "fixed inset-auto m-0 overflow-auto" : "absolute z-50 mt-1",
+          )}
         >
           <div className="mb-1 flex items-center justify-between gap-2">
             <button
