@@ -21,8 +21,8 @@ could be evaluated at all.
 
 | Gate | Status |
 | :--- | :--- |
-| API dependency audit | ✓ pass (0 failing; 1 advisory allowlisted: minimatch 3.1.5, pinned through ^3 by fork-ts-checker-webpack-plugin 9 and by test-exclude 6 and glob 7 under jest, which call the module as a function and cannot take the patched 11.0.1; dev-only, lease expires 2026-12-03; glob 14.0.2 and minimatch 11.0.1 are locked by overrides since 2026-11-03; braces and sprintf-js still hold leases to 2026-11-20 but are no longer reported, measured 2026-11-03) |
-| Mobile dependency audit | ✓ pass (2 advisories allowlisted: zod, with no patch in the range the Expo CLI declares, lease expires 2026-11-20; and minimatch 3.1.5 under jest, which test-exclude 6 pins by calling the module as a function so it cannot take the patched 11.0.1, test time only, lease expires 2026-12-03; glob 14.0.2 and minimatch 11.0.1 are locked by overrides under the five @expo packages since 2026-11-03, and the nine node-forge entries are gone since #234 locked 1.4.2; braces and sprintf-js are no longer reported and image-size left with Expo SDK 57, measured 2026-11-03) |
+| API dependency audit | ✓ pass (0 failing, nothing allowlisted; braces and sprintf-js are no longer reported because GitHub withdrew their advisories on 2026-10-23 and 2026-10-22, and minimatch 3.1.5 left GHSA-g3hv-75wg-m249 when its range became >= 7.0.0, < 11.0.1 on 2026-11-04; glob 14.0.2 and minimatch 11.0.1 are locked by overrides since 2026-11-03, measured 2026-11-04) |
+| Mobile dependency audit | ✓ pass (0 failing, nothing allowlisted; zod 4.6.6 is locked by an override under @expo/cli, which declares ^3.25.76 and uses zod only to validate DevTools plugin manifests and plugin output, with the same outcome for 52 test inputs on 3.25.76 and 4.6.6 and only the wording of rejections differing, measured 2026-11-04; minimatch 3.1.5 left GHSA-g3hv-75wg-m249 when its range became >= 7.0.0, < 11.0.1 on 2026-11-04, and glob 14.0.2 and minimatch 11.0.1 are locked by overrides since 2026-11-03; braces and sprintf-js are no longer reported and image-size left with Expo SDK 57) |
 | WCAG 2.1 AA (axe-core) | ✓ pass (10/10, one real defect fixed) |
 | Visual regression | ✓ pass (16/16 on linux-x64 baselines) |
 | API coverage | ✗ 95.09% vs 95% (ratcheted at 95; remainder is module wiring) |
@@ -1739,8 +1739,8 @@ claimed: phases 1a and 1b at once with half the workers each.
 | Metric | Target | Measured | Status |
 | :--- | :--- | :--- | :--- |
 | RLS / tenancy policies | no cross-tenant leak | **all assertions pass** | ✓ |
-| API dependency audit | 0 critical/high/moderate | **0 failing** (1 suppressed — minimatch 3.1.5 under jest and @nestjs/cli's fork-ts-checker-webpack-plugin, which cannot take the patched 11.0.1; dev-only surface; expiring allowlist; measured 2026-11-03) | ✓ |
-| Mobile dependency audit | 0 critical/high/moderate | **0 failing** (2 suppressed — zod has no patch in range, minimatch 3.1.5 under jest cannot take the patched 11.0.1; build-time and test-time-only surface; expiring allowlist; measured 2026-11-03) | ✓ |
+| API dependency audit | 0 critical/high/moderate | **0 failing** (nothing suppressed; the braces, sprintf-js and minimatch advisories no longer match the locked versions; measured 2026-11-04) | ✓ |
+| Mobile dependency audit | 0 critical/high/moderate | **0 failing** (nothing suppressed; zod 4.6.6 is locked by an override under @expo/cli, whose declared ^3.25.76 is outside the advisory's fix; measured 2026-11-04) | ✓ |
 | Web dependency audit | 0 critical/high/moderate | **0 / 0 / 0** | ✓ |
 | Solver dependency audit (`pip-audit`) | 0 critical/high/moderate | not measured | — |
 | Semgrep SAST | 0 findings | not measured | — |
