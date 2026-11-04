@@ -140,6 +140,34 @@ describe("BulkDeleteDialog", () => {
     expect(screen.getByRole("button", { name: "deleteOthers(2)" })).toBeInTheDocument();
   });
 
+  it("remembers every round's refusals: a row the first delete refused is neither asked again nor offered after the second", async () => {
+    const remove = vi
+      .fn()
+      .mockResolvedValueOnce(report({ done: ["a", "b", "c"], consequences: { halves: 0 } }))
+      .mockResolvedValueOnce(report({ dryRun: false, done: ["a", "c"], refused: [{ id: "b", code: "BULK_ROW_REFERENCE_GONE", message: "x" }] }))
+      .mockResolvedValueOnce(report({ done: ["a", "c"], consequences: { halves: 0 } }))
+      .mockResolvedValueOnce(report({ dryRun: false, done: ["a"], refused: [{ id: "c", code: "BULK_ROW_TAKEN", message: "y" }] }))
+      .mockResolvedValueOnce(report({ done: ["a"], consequences: { halves: 0 } }));
+    const { onDeleted } = open(remove);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "deleteCount(3)" }));
+    await user.click(await screen.findByRole("button", { name: "deleteOthers(2)" }));
+    expect(await screen.findByRole("button", { name: "deleteOthers(1)" })).toBeInTheDocument();
+    // The second round's dry run asks only the row neither delete refused;
+    // the first round's row stays out of it as the second's does.
+    expect(remove.mock.calls.map((call) => call[0])).toEqual([
+      { ids: ["a", "b", "c"], dryRun: true },
+      { ids: ["a", "b", "c"], dryRun: false, expected: { halves: 0 } },
+      { ids: ["a", "c"], dryRun: true },
+      { ids: ["a", "c"], dryRun: false, expected: { halves: 0 } },
+      { ids: ["a"], dryRun: true },
+    ]);
+    expect(refusalLine("7B")).toBe("7B: refusal.BULK_ROW_REFERENCE_GONE");
+    expect(refusalLine("Ma71")).toBe("Ma71: refusal.BULK_ROW_TAKEN");
+    expect(within(screen.getByRole("list", { name: "goesTitle(groups|1)" })).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["7A"]);
+    expect(onDeleted).not.toHaveBeenCalled();
+  });
+
   it("asks no dry run when the delete refused every row, and offers nothing to delete", async () => {
     const remove = vi
       .fn()
